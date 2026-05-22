@@ -4,28 +4,9 @@ import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
 
-// 注册
-router.post('/register', async (req: Request, res: Response) => {
-  try {
-    const { email, username, password } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({ error: '邮箱和密码不能为空' });
-    }
-    if (password.length < 6) {
-      return res.status(400).json({ error: '密码至少6位' });
-    }
-
-    const result = await AuthService.register({
-      email,
-      username: username || email.split('@')[0],
-      password,
-    });
-
-    res.json(result);
-  } catch (err: any) {
-    res.status(err.status || 500).json({ error: err.message || '注册失败' });
-  }
+// 公开注册已关闭，用户由管理员在后台创建
+router.post('/register', (_req: Request, res: Response) => {
+  res.status(403).json({ error: '注册通道已关闭，请联系管理员开通账号' });
 });
 
 // 登录

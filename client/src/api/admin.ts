@@ -12,6 +12,7 @@ export const adminApi = {
     if (params.isActive !== undefined) qs.set('isActive', String(params.isActive));
     return api.get<any>(`/admin/users?${qs.toString()}`);
   },
+  createUser(data: { email: string; username?: string; password: string; tierId?: string }) { return api.post<any>('/admin/users', data); },
   updateUser(id: number, data: any) { return api.put<any>(`/admin/users/${id}`, data); },
   deleteUser(id: number) { return api.delete<any>(`/admin/users/${id}`); },
 

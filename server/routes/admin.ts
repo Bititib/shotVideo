@@ -35,6 +35,32 @@ router.get('/users', async (req: AuthRequest, res: Response) => {
   }
 });
 
+// 管理员创建用户
+router.post('/users', async (req: AuthRequest, res: Response) => {
+  try {
+    const { email, username, password, tierId } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: '邮箱和密码不能为空' });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ error: '密码至少6位' });
+    }
+    const { AuthService } = await import('../services/authService.js');
+    const result = await AuthService.register({
+      email,
+      username: username || email.split('@')[0],
+      password,
+    });
+    // 如果指定了等级，更新
+    if (tierId) {
+      AdminService.updateUser(result.user.id, { tierId: parseInt(tierId) });
+    }
+    res.json({ message: '用户创建成功', user: result.user });
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '创建用户失败' });
+  }
+});
+
 router.put('/users/:id', async (req: AuthRequest, res: Response) => {
   try {
     const userId = parseInt(req.params.id);

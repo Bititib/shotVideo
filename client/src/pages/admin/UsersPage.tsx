@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { adminApi } from '../../api/admin';
-import { Search, ChevronLeft, ChevronRight, X, Check, Ban } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, X, Check, Ban, UserPlus } from 'lucide-react';
 
 export default function UsersPage() {
   const [users, setUsers] = useState<any[]>([]);
@@ -10,6 +10,9 @@ export default function UsersPage() {
   const [tiers, setTiers] = useState<any[]>([]);
   const [editUser, setEditUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [showCreate, setShowCreate] = useState(false);
+  const [newUser, setNewUser] = useState({ email: '', username: '', password: '', tierId: '' });
+  const [createError, setCreateError] = useState('');
   const pageSize = 15;
 
   const load = useCallback(async () => {
@@ -45,13 +48,30 @@ export default function UsersPage() {
     try { await adminApi.deleteUser(id); load(); } catch (e: any) { alert(e.message); }
   };
 
+  const handleCreate = async () => {
+    if (!newUser.email || !newUser.password) { setCreateError('邮箱和密码不能为空'); return; }
+    if (newUser.password.length < 6) { setCreateError('密码至少6位'); return; }
+    setCreateError('');
+    try {
+      await adminApi.createUser(newUser);
+      setShowCreate(false);
+      setNewUser({ email: '', username: '', password: '', tierId: '' });
+      load();
+    } catch (e: any) { setCreateError(e.message); }
+  };
+
   const totalPages = Math.ceil(total / pageSize);
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-white">👥 用户管理</h1>
-        <span className="text-xs text-zinc-500">共 {total} 个用户</span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-zinc-500">共 {total} 个用户</span>
+          <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium transition-colors">
+            <UserPlus className="w-4 h-4" /> 创建用户
+          </button>
+        </div>
       </div>
 
       {/* Search */}
@@ -134,6 +154,41 @@ export default function UsersPage() {
             <div className="flex gap-3 mt-6">
               <button onClick={() => setEditUser(null)} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm transition-colors">取消</button>
               <button onClick={handleUpdate} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium transition-colors">保存</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create User Modal */}
+      {showCreate && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setShowCreate(false)}>
+          <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-white mb-5">创建新用户</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1.5">邮箱 *</label>
+                <input type="email" value={newUser.email} onChange={e => setNewUser({ ...newUser, email: e.target.value })} placeholder="user@example.com" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none placeholder:text-zinc-600" />
+              </div>
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1.5">用户名</label>
+                <input type="text" value={newUser.username} onChange={e => setNewUser({ ...newUser, username: e.target.value })} placeholder="留空则自动从邮箱提取" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none placeholder:text-zinc-600" />
+              </div>
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1.5">密码 *</label>
+                <input type="text" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} placeholder="至少6位" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none placeholder:text-zinc-600" />
+              </div>
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1.5">等级</label>
+                <select value={newUser.tierId} onChange={e => setNewUser({ ...newUser, tierId: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                  <option value="">默认等级</option>
+                  {tiers.map((t: any) => <option key={t.id} value={t.id}>{t.displayName}</option>)}
+                </select>
+              </div>
+              {createError && <div className="bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-2 text-sm text-red-400">{createError}</div>}
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setShowCreate(false)} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm transition-colors">取消</button>
+              <button onClick={handleCreate} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium transition-colors">创建</button>
             </div>
           </div>
         </div>

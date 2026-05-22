@@ -1,15 +1,13 @@
 import React, { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
-import { X, Mail, Lock, User, ArrowRight, Zap } from 'lucide-react';
+import { X, Mail, Lock, ArrowRight, Zap, MessageCircle } from 'lucide-react';
 
 export default function LoginModal() {
-  const { showLoginModal, closeLoginModal, login, register } = useAuthStore();
+  const { showLoginModal, closeLoginModal, login } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
-  const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
-  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -21,20 +19,14 @@ export default function LoginModal() {
     setError('');
     setLoading(true);
     try {
-      if (isLogin) {
-        await login(email, password);
-      } else {
-        if (!username.trim()) { setError('请输入用户名'); setLoading(false); return; }
-        await register(email, username, password);
-      }
-      // 登录成功后重置表单
-      setEmail(''); setUsername(''); setPassword(''); setError('');
+      await login(email, password);
+      setEmail(''); setPassword(''); setError('');
       // 如果在首页或登录页，跳转到工作台
       if (location.pathname === '/' || location.pathname === '/login') {
         navigate('/app', { replace: true });
       }
     } catch (err: any) {
-      setError(err.message || (isLogin ? '登录失败' : '注册失败'));
+      setError(err.message || '登录失败');
     } finally {
       setLoading(false);
     }
@@ -42,11 +34,6 @@ export default function LoginModal() {
 
   const handleClose = () => {
     closeLoginModal();
-    setError('');
-  };
-
-  const switchMode = () => {
-    setIsLogin(!isLogin);
     setError('');
   };
 
@@ -76,28 +63,10 @@ export default function LoginModal() {
             </span>
           </div>
 
-          <h2 className="text-xl font-bold text-white mb-1">
-            {isLogin ? '欢迎回来' : '创建账号'}
-          </h2>
-          <p className="text-zinc-500 text-sm mb-6">
-            {isLogin ? '登录你的账号继续使用' : '注册免费账号，每天赠送3次AI分析'}
-          </p>
+          <h2 className="text-xl font-bold text-white mb-1">欢迎回来</h2>
+          <p className="text-zinc-500 text-sm mb-6">请使用已授权的账号登录</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {!isLogin && (
-              <div>
-                <label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">用户名</label>
-                <div className="relative">
-                  <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-                  <input
-                    type="text" value={username} onChange={e => setUsername(e.target.value)}
-                    placeholder="你的昵称"
-                    className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl pl-10 pr-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all placeholder:text-zinc-600"
-                  />
-                </div>
-              </div>
-            )}
-
             <div>
               <label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">邮箱</label>
               <div className="relative">
@@ -116,7 +85,7 @@ export default function LoginModal() {
                 <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
                 <input
                   type="password" value={password} onChange={e => setPassword(e.target.value)}
-                  placeholder="至少6位密码" required minLength={6}
+                  placeholder="请输入密码" required minLength={6}
                   className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl pl-10 pr-4 py-3 text-sm text-white focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all placeholder:text-zinc-600"
                 />
               </div>
@@ -135,18 +104,17 @@ export default function LoginModal() {
               {loading ? (
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
-                <>{isLogin ? '登录' : '注册'}<ArrowRight className="w-4 h-4" /></>
+                <>登录<ArrowRight className="w-4 h-4" /></>
               )}
             </button>
           </form>
 
+          {/* 提示联系管理员 */}
           <div className="mt-5 text-center">
-            <p className="text-zinc-500 text-sm">
-              {isLogin ? '还没有账号？' : '已有账号？'}
-              <button onClick={switchMode} className="text-blue-400 hover:text-blue-300 ml-1 font-medium transition-colors">
-                {isLogin ? '立即注册' : '去登录'}
-              </button>
-            </p>
+            <div className="flex items-center justify-center gap-1.5 text-zinc-500 text-sm">
+              <MessageCircle className="w-3.5 h-3.5" />
+              <span>没有账号？请联系管理员开通</span>
+            </div>
           </div>
         </div>
       </div>
