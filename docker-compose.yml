@@ -1,0 +1,13 @@
+services:
+  app:
+    build: .
+    container_name: shot-video
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data        # SQLite 数据持久化
+    env_file:
+      - .env.production
+    environment:
+      - NODE_ENV=production

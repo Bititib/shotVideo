@@ -1,0 +1,11 @@
+node_modules
+data
+dist
+.env
+*.db
+*.mp4
+*.webm
+.git
+.gitignore
+tests
+*.md
