@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { X, Mail, Lock, User, ArrowRight, Zap } from 'lucide-react';
 
 export default function LoginModal() {
   const { showLoginModal, closeLoginModal, login, register } = useAuthStore();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
@@ -24,8 +27,12 @@ export default function LoginModal() {
         if (!username.trim()) { setError('请输入用户名'); setLoading(false); return; }
         await register(email, username, password);
       }
-      // 登录成功后 store 自动关闭弹窗，重置表单
+      // 登录成功后重置表单
       setEmail(''); setUsername(''); setPassword(''); setError('');
+      // 如果在首页或登录页，跳转到工作台
+      if (location.pathname === '/' || location.pathname === '/login') {
+        navigate('/app', { replace: true });
+      }
     } catch (err: any) {
       setError(err.message || (isLogin ? '登录失败' : '注册失败'));
     } finally {

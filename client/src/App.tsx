@@ -22,18 +22,21 @@ import ChannelsPage from './pages/admin/ChannelsPage';
 import TokensPage from './pages/admin/TokensPage';
 import PricingPage from './pages/admin/PricingPage';
 
-/** /login 路由 → 重定向到首页并弹出登录弹窗 */
+/** /login 路由 → 已登录跳工作台，未登录弹登录框 */
 function LoginRedirect() {
   const navigate = useNavigate();
-  const { openLoginModal, isAuthenticated } = useAuthStore();
+  const { isAuthenticated, isLoading, openLoginModal } = useAuthStore();
+
   useEffect(() => {
+    if (isLoading) return; // 等 checkAuth 完成
     if (isAuthenticated) {
       navigate('/app', { replace: true });
     } else {
       openLoginModal();
       navigate('/', { replace: true });
     }
-  }, []);
+  }, [isLoading, isAuthenticated]);
+
   return null;
 }
 
