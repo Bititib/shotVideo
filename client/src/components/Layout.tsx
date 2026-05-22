@@ -154,7 +154,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 className="flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-xl text-sm font-medium text-white transition-all shadow-lg shadow-blue-500/10"
               >
                 <LogIn className="w-4 h-4" />
-                登录 / 注册
+                登录
               </button>
             )}
           </div>
