@@ -4,7 +4,7 @@ services:
     container_name: shot-video
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3001:3000"            # 宿主机 3001 → 容器 3000（避免与已有项目冲突）
     volumes:
       - ./data:/app/data        # SQLite 数据持久化
     env_file:
