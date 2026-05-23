@@ -42,17 +42,17 @@ export default function LandingPage() {
     },
     {
       name: '基础会员', price: '¥99', period: '/月', desc: '内容创作者首选',
-      features: ['每日 30 次 AI 分析', '解锁全部 5 项分析功能', '优先生成通道排队', '基础客服支持'],
+      features: ['每日 30 次 AI 分析', '解锁全部 5 项分析功能', `视频/图片按标准费率生成`, '基础客服支持'],
       color: 'border-blue-500/30', bg: 'bg-gradient-to-b from-blue-500/5 to-transparent', badge: '',
     },
     {
       name: '专业会员', price: '¥299', period: '/月', desc: '电商团队及全职博主',
-      features: ['每日 100 次 AI 分析', '解锁 AI 生图及换品修改', '专属高级模型通道', '运营级数据洞察报告'],
+      features: ['每日 100 次 AI 分析', '解锁 AI 生图及换品修改', `视/图生成按量计费 (享优先排队)`, '运营级数据洞察报告'],
       color: 'border-purple-500/30', bg: 'bg-gradient-to-b from-purple-500/5 to-transparent', badge: '最受欢迎',
     },
     {
       name: '企业会员', price: '联系我们', period: '', desc: '大规模商用',
-      features: ['不限制 AI 分析次数', 'API 接口无缝对接', '专属大模型微调训练', '私有化独立部署方案'],
+      features: ['不限制 AI 分析次数', 'API 接口无缝对接', `大规模批量生成享内部折扣`, '私有化独立部署方案'],
       color: 'border-yellow-500/30', bg: 'bg-gradient-to-b from-yellow-500/5 to-transparent', badge: '',
     },
   ];
