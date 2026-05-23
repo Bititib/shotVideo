@@ -34,9 +34,13 @@ class ApiClient {
     });
 
     if (response.status === 401) {
-      localStorage.removeItem('token');
-      window.location.href = '/login';
-      throw new Error('登录已过期');
+      const hadToken = !!this.getToken();
+      if (hadToken) {
+        // token 过期 → 清除并提示重新登录
+        localStorage.removeItem('token');
+      }
+      // 不自动跳转，让调用方决定（如 useAuthGuard 弹登录框）
+      throw new Error(hadToken ? '登录已过期，请重新登录' : '请先登录');
     }
 
     if (!response.ok) {
