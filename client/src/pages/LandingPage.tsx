@@ -1,5 +1,7 @@
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
+import { getPublicSettings } from '../api/admin';
 import { Zap, PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, ArrowRight, Check, Star, Sparkles, TrendingUp, Shield, Globe } from 'lucide-react';
 
 const features = [
@@ -11,28 +13,7 @@ const features = [
   { icon: Sparkles, title: 'AI 图像生成', desc: '高质量产品底图、电商场景图一键合成', color: 'from-violet-500 to-indigo-500' },
 ];
 
-const tiers = [
-  {
-    name: '体验账户', price: '按量计费', period: '', desc: '适合尝鲜与轻量使用',
-    features: ['每日 5 次免费 AI 分析', '视频生成 ¥0.05 / 秒', '图片生成 ¥0.05 / 张', '基础客服支持'],
-    color: 'border-white/10', bg: 'bg-white/[0.02]', badge: '',
-  },
-  {
-    name: '专业版', price: '¥199', period: '/月', desc: '内容创作者首选',
-    features: ['每日 100 次 AI 分析', '每月赠送 ¥100 生成额度', '优先生成通道排队', '专属客服支持'],
-    color: 'border-blue-500/30', bg: 'bg-gradient-to-b from-blue-500/5 to-transparent', badge: '最受欢迎',
-  },
-  {
-    name: '团队版', price: '¥599', period: '/月', desc: '电商团队及MCN机构',
-    features: ['每日 500 次 AI 分析', '每月赠送 ¥400 生成额度', '支持多人账号共享', '运营级数据洞察报告'],
-    color: 'border-purple-500/30', bg: 'bg-gradient-to-b from-purple-500/5 to-transparent', badge: '',
-  },
-  {
-    name: '企业定制', price: '联系我们', period: '', desc: '大规模商用及二次开发',
-    features: ['API 接口无缝接入', '私有化独立部署方案', '专属大模型微调训练', '7×24小时专属技术顾问'],
-    color: 'border-yellow-500/30', bg: 'bg-gradient-to-b from-yellow-500/5 to-transparent', badge: '',
-  },
-];
+// 动态套餐放在组件内部
 
 const stats = [
   { value: '50,000+', label: '分析次数' },
@@ -44,6 +25,37 @@ const stats = [
 export default function LandingPage() {
   const navigate = useNavigate();
   const { user, openLoginModal } = useAuthStore();
+  const [settings, setSettings] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    getPublicSettings().then(setSettings).catch(() => {});
+  }, []);
+
+  const videoPrice = settings.video_rate_720p || '0.05';
+  const imagePrice = settings.image_rate || '0.05';
+
+  const tiers = [
+    {
+      name: '免费体验', price: '按需充值', period: '', desc: '适合个人尝鲜',
+      features: ['每日 3 次免费 AI 分析', '通用视频及图片逆向分析', `视频生成 ¥${videoPrice} / 秒起`, `图片生成 ¥${imagePrice} / 张`],
+      color: 'border-white/10', bg: 'bg-white/[0.02]', badge: '',
+    },
+    {
+      name: '基础会员', price: '¥99', period: '/月', desc: '内容创作者首选',
+      features: ['每日 30 次 AI 分析', '解锁全部 5 项分析功能', '优先生成通道排队', '基础客服支持'],
+      color: 'border-blue-500/30', bg: 'bg-gradient-to-b from-blue-500/5 to-transparent', badge: '',
+    },
+    {
+      name: '专业会员', price: '¥299', period: '/月', desc: '电商团队及全职博主',
+      features: ['每日 100 次 AI 分析', '解锁 AI 生图及换品修改', '专属高级模型通道', '运营级数据洞察报告'],
+      color: 'border-purple-500/30', bg: 'bg-gradient-to-b from-purple-500/5 to-transparent', badge: '最受欢迎',
+    },
+    {
+      name: '企业会员', price: '联系我们', period: '', desc: '大规模商用',
+      features: ['不限制 AI 分析次数', 'API 接口无缝对接', '专属大模型微调训练', '私有化独立部署方案'],
+      color: 'border-yellow-500/30', bg: 'bg-gradient-to-b from-yellow-500/5 to-transparent', badge: '',
+    },
+  ];
 
   const handleCTA = () => navigate('/app');
 
