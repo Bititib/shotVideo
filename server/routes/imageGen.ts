@@ -5,6 +5,7 @@ import { quotaMiddleware, logUsage } from '../middleware/quota.js';
 import { PricingService } from '../services/pricingService.js';
 import { ChannelService } from '../services/channelService.js';
 import { BalanceService } from '../services/balanceService.js';
+import { ContentService } from '../services/contentService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models } from '../db/schema.js';
@@ -38,8 +39,8 @@ function findImageChannel(modelId: string) {
   return null;
 }
 
-/** GET /api/image-gen/models — 可用的图片模型列表 */
-router.get('/models', authMiddleware, (_req: Request, res: Response) => {
+/** GET /api/image-gen/models — 可用的图片模型列表（公开，不需要登录） */
+router.get('/models', (_req: Request, res: Response) => {
   // 从数据库动态拉取所有具备 'image' 能力的模型
   const dbModels = db.select().from(models).where(like(models.capabilities, '%"image"%')).all();
 
@@ -112,8 +113,8 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
     return res.end();
   }
 
-  /** 生成完成后统一计费：按实际出图张数 × 单价，实际扣减用户余额 */
-  const billUsage = (actualCount: number) => {
+  /** 生成完成后统一计费 + 保存内容 */
+  const billUsage = (actualCount: number, imageUrls?: string[]) => {
     const duration = Date.now() - startTime;
     for (let i = 0; i < actualCount; i++) {
       logUsage(req.userId!, 'generate_image', undefined, duration);
@@ -124,6 +125,20 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
       const remaining = BalanceService.deduct(req.userId!, totalCost, 'generate_image');
       sendEvent({ type: 'billing', cost: totalCost, count: actualCount, unitCost, remainingBalance: remaining ?? 0 });
     }
+    // 保存到内容库
+    try {
+      ContentService.save({
+        userId: req.userId!,
+        orgId: req.orgId || null,
+        type: 'image',
+        title: (prompt as string).slice(0, 200),
+        inputText: (prompt as string).slice(0, 500),
+        resultUrl: imageUrls?.[0] || undefined,
+        modelId: model,
+        cost: totalCost,
+        metadata: { aspect_ratio, count: actualCount, imageUrls: imageUrls || [] },
+      });
+    } catch (e) { console.error('[content] 图片保存失败:', e); }
   };
 
   try {
@@ -175,7 +190,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
           sendEvent({ type: 'image_ready', imageUrl: url, index: idx, total: images.length });
         });
         sendEvent({ type: 'complete', imageUrls: images, total: images.length });
-        billUsage(images.length);
+        billUsage(images.length, images);
       } else {
         sendEvent({ type: 'error', message: '图片生成完成但未获取到图片地址' });
       }
@@ -294,7 +309,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
           if (completedCount === count) {
             const allUrls = completedImages.filter(Boolean);
             sendEvent({ type: 'complete', imageUrls: allUrls, total: count });
-            billUsage(allUrls.length);
+            billUsage(allUrls.length, allUrls);
             res.write('data: [DONE]\n\n');
             res.end();
           }

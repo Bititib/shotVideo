@@ -13,13 +13,39 @@ export const tiers = sqliteTable('tiers', {
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
 });
 
+// ============ 组织表 ============
+export const organizations = sqliteTable('organizations', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),                         // 企业名称
+  slug: text('slug').notNull().unique(),                 // URL 友好标识 (如: acme-corp)
+  logoUrl: text('logo_url'),                             // 企业 Logo
+  tierId: integer('tier_id').notNull().default(1),       // 组织等级 FK → tiers.id
+  balance: real('balance').notNull().default(0),          // 组织余额（统一结算）
+  maxMembers: integer('max_members').notNull().default(10), // 最大成员数
+  ownerId: integer('owner_id').notNull(),                // 创建者 FK → users.id
+  isActive: integer('is_active').notNull().default(1),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+});
+
+// ============ 组织成员表 ============
+export const orgMembers = sqliteTable('org_members', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  orgId: integer('org_id').notNull(),                    // FK → organizations.id
+  userId: integer('user_id').notNull(),                  // FK → users.id
+  role: text('role').notNull().default('member'),        // owner / admin / member
+  invitedBy: integer('invited_by'),                      // FK → users.id (谁邀请的)
+  joinedAt: text('joined_at').notNull().default(sql`(datetime('now'))`),
+});
+
 // ============ 用户表 ============
 export const users = sqliteTable('users', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   email: text('email').notNull().unique(),
   username: text('username').notNull(),
   passwordHash: text('password_hash').notNull(),
-  role: text('role').notNull().default('user'),      // admin | user
+  role: text('role').notNull().default('user'),      // super_admin | org_owner | org_admin | member | user
+  orgId: integer('org_id'),                          // 所属组织 FK → organizations.id, null = 散户
   tierId: integer('tier_id').notNull().default(1),   // FK → tiers.id
   tierExpiresAt: text('tier_expires_at'),             // null = 永久
   quotaOverride: integer('quota_override'),           // null = 使用等级默认配额
@@ -130,5 +156,22 @@ export const apiLogs = sqliteTable('api_logs', {
   status: text('status').notNull().default('success'),     // success / error
   errorMessage: text('error_message'),
   clientIp: text('client_ip'),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+});
+
+// ============ 生成内容表 ============
+export const contents = sqliteTable('contents', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: integer('user_id').notNull(),                   // 创建者 FK → users.id
+  orgId: integer('org_id'),                               // 所属组织 (null = 散户)
+  type: text('type').notNull(),                           // video / image / analysis / copywriting
+  title: text('title').notNull().default(''),              // 标题/摘要
+  inputText: text('input_text'),                          // 输入的原始素材描述
+  resultUrl: text('result_url'),                          // 生成结果 URL (视频/图片)
+  resultText: text('result_text'),                        // 生成结果文本 (分析/文案)
+  modelId: text('model_id'),                              // 使用的模型
+  cost: real('cost').notNull().default(0),                 // 本次消耗金额
+  metadata: text('metadata').notNull().default('{}'),      // JSON 额外信息
+  status: text('status').notNull().default('completed'),   // completed / failed / processing
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
 });

@@ -5,6 +5,7 @@ import { env } from '../config/env.js';
 export interface AuthRequest extends Request {
   userId?: number;
   userRole?: string;
+  orgId?: number | null;
 }
 
 /**
@@ -19,11 +20,34 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
 
   const token = authHeader.split(' ')[1];
   try {
-    const decoded = jwt.verify(token, env.JWT_SECRET) as { userId: number; role: string };
+    const decoded = jwt.verify(token, env.JWT_SECRET) as { userId: number; role: string; orgId?: number | null };
     req.userId = decoded.userId;
     req.userRole = decoded.role;
+    req.orgId = decoded.orgId || null;
     next();
   } catch (err) {
     return res.status(401).json({ error: '登录已过期，请重新登录' });
   }
 }
+
+/**
+ * 可选认证中间件
+ * 有 token 就解析用户身份，没有或无效也放行（userId 为 undefined）
+ * 适用于"浏览可见、操作再登录"的公开接口
+ */
+export function optionalAuthMiddleware(req: AuthRequest, _res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1];
+    try {
+      const decoded = jwt.verify(token, env.JWT_SECRET) as { userId: number; role: string; orgId?: number | null };
+      req.userId = decoded.userId;
+      req.userRole = decoded.role;
+      req.orgId = decoded.orgId || null;
+    } catch {
+      // token 无效，不阻塞，当做未登录处理
+    }
+  }
+  next();
+}
+

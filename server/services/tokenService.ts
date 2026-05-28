@@ -101,20 +101,24 @@ export class TokenService {
     db.delete(apiTokens).where(eq(apiTokens.id, id)).run();
   }
 
-  /** 扣减额度 */
+  /** 扣减额度（原子操作） */
   static deductBalance(tokenId: number, amount: number) {
+    if (amount <= 0) return;
+
     const token = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get();
     if (!token) return;
+
     if (token.balance === -1) {
       // 无限额度，只更新 usedAmount
       db.update(apiTokens).set({
-        usedAmount: token.usedAmount + amount,
+        usedAmount: sql`used_amount + ${amount}`,
         lastUsedAt: new Date().toISOString(),
       }).where(eq(apiTokens.id, tokenId)).run();
     } else {
+      // 有限额度：原子扣减，使用 MAX(0, ...) 防止负数
       db.update(apiTokens).set({
-        balance: Math.max(0, token.balance - amount),
-        usedAmount: token.usedAmount + amount,
+        balance: sql`MAX(0, balance - ${amount})`,
+        usedAmount: sql`used_amount + ${amount}`,
         lastUsedAt: new Date().toISOString(),
       }).where(eq(apiTokens.id, tokenId)).run();
     }

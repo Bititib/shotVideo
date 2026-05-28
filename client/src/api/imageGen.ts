@@ -27,9 +27,9 @@ export interface ImageSSEEvent {
 /** 获取可用的图片模型列表 */
 export async function fetchImageModels(): Promise<ImageModel[]> {
   const token = localStorage.getItem('token');
-  const res = await fetch('/api/image-gen/models', {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch('/api/image-gen/models', { headers });
   if (!res.ok) throw new Error('获取模型列表失败');
   return res.json();
 }

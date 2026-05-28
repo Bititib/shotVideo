@@ -4,6 +4,7 @@ import { tierMiddleware, TierRequest } from '../middleware/tier.js';
 import { quotaMiddleware, logUsage } from '../middleware/quota.js';
 import { ChannelService } from '../services/channelService.js';
 import { BalanceService } from '../services/balanceService.js';
+import { ContentService } from '../services/contentService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models, settings } from '../db/schema.js';
@@ -35,8 +36,8 @@ function findVideoChannel(modelId: string) {
   return null;
 }
 
-/** GET /api/video/models — 可用的视频模型列表 */
-router.get('/models', authMiddleware, (_req: Request, res: Response) => {
+/** GET /api/video/models — 可用的视频模型列表（公开，不需要登录） */
+router.get('/models', (_req: Request, res: Response) => {
   // 从数据库动态拉取所有具备 'video' 能力的模型
   const dbModels = db.select().from(models).where(like(models.capabilities, '%"video"%')).all();
   
@@ -109,8 +110,8 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
     return res.end();
   }
 
-  /** 生成成功后计费：按 分辨率 × 秒数，实际扣减用户余额 */
-  const billUsage = () => {
+  /** 生成成功后计费 + 保存内容 */
+  const billUsage = (finalVideoUrl: string) => {
     const elapsed = Date.now() - startTime;
     logUsage(req.userId!, 'generate_video', undefined, elapsed);
     const rate = VIDEO_RATE[resolution] || VIDEO_RATE['720p'];
@@ -120,6 +121,20 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
       const remaining = BalanceService.deduct(req.userId!, cost, 'generate_video');
       sendEvent({ type: 'billing', cost, resolution, seconds, rate, remainingBalance: remaining ?? 0 });
     }
+    // 保存到内容库
+    try {
+      ContentService.save({
+        userId: req.userId!,
+        orgId: req.orgId || null,
+        type: 'video',
+        title: (prompt as string).slice(0, 200),
+        inputText: (prompt as string).slice(0, 500),
+        resultUrl: finalVideoUrl || undefined,
+        modelId: model,
+        cost,
+        metadata: { resolution, seconds, aspect_ratio },
+      });
+    } catch (e) { console.error('[content] 视频保存失败:', e); }
   };
 
   const upstreamUrl = channel.baseUrl.replace(/\/+$/, '') + '/v1/chat/completions';
@@ -183,6 +198,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
     let buffer = '';
     let videoUrl = '';
     let lastProgress = -1;
+    let billed = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -195,9 +211,10 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
       for (const line of lines) {
         if (!line.startsWith('data: ') || line === 'data: [DONE]') {
           if (line === 'data: [DONE]') {
-            if (videoUrl) {
+            if (videoUrl && !billed) {
               sendEvent({ type: 'complete', videoUrl });
-              billUsage();
+              billUsage(videoUrl);
+              billed = true;
             }
             else sendEvent({ type: 'error', message: '视频生成完成但未获取到视频地址' });
           }
@@ -241,10 +258,11 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
       }
     }
 
-    // 流结束后兜底
-    if (videoUrl && lastProgress < 100) {
+    // 流结束后兜底：仅在 [DONE] 未触发扣费时才扣
+    if (videoUrl && !billed) {
       sendEvent({ type: 'complete', videoUrl });
-      billUsage();
+      billUsage(videoUrl);
+      billed = true;
     }
 
     res.write('data: [DONE]\n\n');

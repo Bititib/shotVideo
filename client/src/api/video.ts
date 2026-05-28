@@ -26,9 +26,9 @@ export interface VideoSSEEvent {
 /** 获取可用的视频模型列表 */
 export async function fetchVideoModels(): Promise<VideoModel[]> {
   const token = localStorage.getItem('token');
-  const res = await fetch('/api/video/models', {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch('/api/video/models', { headers });
   if (!res.ok) throw new Error('获取模型列表失败');
   return res.json();
 }

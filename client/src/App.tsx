@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
-import { ProtectedRoute, AdminRoute } from './components/ProtectedRoute';
+import { ProtectedRoute, AdminRoute, OrgAdminRoute } from './components/ProtectedRoute';
 import { useAuthStore } from './stores/authStore';
 import Layout from './components/Layout';
 import LoginModal from './components/LoginModal';
@@ -21,6 +21,11 @@ import ModelsPage from './pages/admin/ModelsPage';
 import ChannelsPage from './pages/admin/ChannelsPage';
 import TokensPage from './pages/admin/TokensPage';
 import PricingPage from './pages/admin/PricingPage';
+import OrgsPage from './pages/admin/OrgsPage';
+import OrgLayout from './pages/org/OrgLayout';
+import OrgDashboard from './pages/org/OrgDashboard';
+import OrgMembersPage from './pages/org/OrgMembersPage';
+import OrgContentsPage from './pages/org/OrgContentsPage';
 
 /** /login 路由 → 已登录跳工作台，未登录弹登录框 */
 function LoginRedirect() {
@@ -33,7 +38,7 @@ function LoginRedirect() {
       navigate('/app', { replace: true });
     } else {
       openLoginModal();
-      navigate('/', { replace: true });
+      navigate('/app', { replace: true });
     }
   }, [isLoading, isAuthenticated]);
 
@@ -65,7 +70,7 @@ export default function App() {
         <Route path="/app/video/studio" element={<VideoStudioPage />} />
         <Route path="/app/image-gen" element={<Layout><ImageGenPage /></Layout>} />
 
-        {/* Admin — 仍需登录+管理员权限 */}
+        {/* Admin — 仍需登录+超级管理员权限 */}
         <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
           <Route index element={<DashboardPage />} />
           <Route path="channels" element={<ChannelsPage />} />
@@ -74,6 +79,14 @@ export default function App() {
           <Route path="users" element={<UsersPage />} />
           <Route path="tiers" element={<TiersPage />} />
           <Route path="models" element={<ModelsPage />} />
+          <Route path="orgs" element={<OrgsPage />} />
+        </Route>
+
+        {/* Org — 组织管理员面板 */}
+        <Route path="/org" element={<OrgAdminRoute><OrgLayout /></OrgAdminRoute>}>
+          <Route index element={<OrgDashboard />} />
+          <Route path="members" element={<OrgMembersPage />} />
+          <Route path="contents" element={<OrgContentsPage />} />
         </Route>
 
         {/* Fallback */}
@@ -82,3 +95,4 @@ export default function App() {
     </>
   );
 }
+

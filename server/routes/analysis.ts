@@ -1,8 +1,9 @@
 import { Router, Response } from 'express';
-import { authMiddleware, AuthRequest } from '../middleware/auth.js';
+import { authMiddleware, optionalAuthMiddleware, AuthRequest } from '../middleware/auth.js';
 import { tierMiddleware, TierRequest } from '../middleware/tier.js';
 import { quotaMiddleware, logUsage } from '../middleware/quota.js';
 import { AIService } from '../services/aiService.js';
+import { ContentService } from '../services/contentService.js';
 import { db } from '../db/index.js';
 import { users, tiers, tierModelAccess, models } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
@@ -37,7 +38,7 @@ function resolveModel(
   return available.find(m => m.modelId.includes('flash') && !m.modelId.includes('image')) || available[0];
 }
 
-// 通用辅助：执行分析请求
+// 通用辅助：执行分析请求 + 保存内容
 async function handleAnalysis(
   req: TierRequest,
   res: Response,
@@ -52,6 +53,23 @@ async function handleAnalysis(
     // 记录使用日志
     const modelId = req.availableModels?.[0]?.id;
     logUsage(req.userId!, analysisType, modelId, duration);
+
+    // 保存到内容库
+    try {
+      const contentType = analysisType === 'copywriting' ? 'copywriting'
+        : analysisType === 'generate_image' || analysisType === 'modify_prompt' ? 'image'
+        : 'analysis';
+      const title = req.body?.videoTitle || req.body?.accountHandle || req.body?.prompt || analysisType;
+      ContentService.save({
+        userId: req.userId!,
+        orgId: req.orgId || null,
+        type: contentType,
+        title: typeof title === 'string' ? title.slice(0, 200) : analysisType,
+        inputText: (req.body?.videoTitle || req.body?.prompt || '').slice(0, 500),
+        resultText: typeof result === 'string' ? result.slice(0, 5000) : JSON.stringify(result).slice(0, 5000),
+        modelId: req.availableModels?.[0]?.modelId,
+      });
+    } catch (e) { console.error('[content] 保存失败:', e); }
 
     res.json(result);
   } catch (err: any) {
@@ -81,17 +99,27 @@ async function handleAnalysis(
   }
 }
 
-// ============ 用户可用模型列表 (登录后可调用) ============
+// ============ 用户可用模型列表（公开，未登录返回 free 等级模型）============
 router.get('/models',
-  authMiddleware,
+  optionalAuthMiddleware,
   (req: TierRequest, res: Response) => {
-    const user = db.select().from(users).where(eq(users.id, req.userId!)).get();
-    if (!user) return res.json([]);
+    let tierId: number | undefined;
 
-    const tier = db.select().from(tiers).where(eq(tiers.id, user.tierId)).get();
-    if (!tier) return res.json([]);
+    if (req.userId) {
+      // 已登录：按用户等级
+      const user = db.select().from(users).where(eq(users.id, req.userId)).get();
+      if (user) tierId = user.tierId;
+    }
 
-    const accessList = db.select().from(tierModelAccess).where(eq(tierModelAccess.tierId, tier.id)).all();
+    if (!tierId) {
+      // 未登录或用户不存在：使用 free 等级
+      const freeTier = db.select().from(tiers).where(eq(tiers.name, 'free')).get();
+      tierId = freeTier?.id;
+    }
+
+    if (!tierId) return res.json([]);
+
+    const accessList = db.select().from(tierModelAccess).where(eq(tierModelAccess.tierId, tierId)).all();
     const modelIds = accessList.map(a => a.modelId);
     if (modelIds.length === 0) return res.json([]);
 

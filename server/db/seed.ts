@@ -1,5 +1,5 @@
 import { db, sqlite } from './index.js';
-import { tiers, users, models, tierModelAccess, settings, channels, apiTokens, modelPricing } from './schema.js';
+import { tiers, users, models, tierModelAccess, settings, channels, apiTokens, modelPricing, organizations, orgMembers, contents } from './schema.js';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
@@ -314,11 +314,58 @@ export async function initDatabase() {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    -- ============ 新增：组织表 ============
+    CREATE TABLE IF NOT EXISTS organizations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      logo_url TEXT,
+      tier_id INTEGER NOT NULL DEFAULT 1,
+      balance REAL NOT NULL DEFAULT 0,
+      max_members INTEGER NOT NULL DEFAULT 10,
+      owner_id INTEGER NOT NULL,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- ============ 新增：组织成员表 ============
+    CREATE TABLE IF NOT EXISTS org_members (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      org_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      role TEXT NOT NULL DEFAULT 'member',
+      invited_by INTEGER,
+      joined_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(org_id, user_id)
+    );
+
+    -- ============ 新增：生成内容表 ============
+    CREATE TABLE IF NOT EXISTS contents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      org_id INTEGER,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      input_text TEXT,
+      result_url TEXT,
+      result_text TEXT,
+      model_id TEXT,
+      cost REAL NOT NULL DEFAULT 0,
+      metadata TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'completed',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_usage_logs_user_date ON usage_logs(user_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
     CREATE INDEX IF NOT EXISTS idx_api_tokens_key ON api_tokens(token_key);
     CREATE INDEX IF NOT EXISTS idx_api_logs_token ON api_logs(token_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_api_logs_channel ON api_logs(channel_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_org_members_org ON org_members(org_id);
+    CREATE INDEX IF NOT EXISTS idx_org_members_user ON org_members(user_id);
+    CREATE INDEX IF NOT EXISTS idx_contents_user ON contents(user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_contents_org ON contents(org_id, created_at);
   `);
 
   // 增量迁移：为已有 users 表添加 balance 列（新建数据库已包含，此处兼容旧库）
@@ -327,6 +374,23 @@ export async function initDatabase() {
     console.log('🔄 已迁移：users 表添加 balance 列');
   } catch {
     // 列已存在则忽略
+  }
+
+  // 增量迁移：为已有 users 表添加 org_id 列
+  try {
+    sqlite.exec(`ALTER TABLE users ADD COLUMN org_id INTEGER`);
+    console.log('🔄 已迁移：users 表添加 org_id 列');
+  } catch {
+    // 列已存在则忽略
+  }
+
+  // 增量迁移：admin → super_admin 角色升级
+  {
+    const oldAdmins = db.select().from(users).where(eq(users.role, 'admin')).all();
+    if (oldAdmins.length > 0) {
+      db.update(users).set({ role: 'super_admin' }).where(eq(users.role, 'admin')).run();
+      console.log(`🔄 已迁移：${oldAdmins.length} 个 admin → super_admin`);
+    }
   }
 
   // 2) 种子数据 - 等级
@@ -406,28 +470,28 @@ export async function initDatabase() {
     }
   }
 
-  // 5) 种子数据 - 管理员账号
-  const existingAdmin = db.select().from(users).where(eq(users.role, 'admin')).all();
-  if (existingAdmin.length === 0) {
-    console.log('📦 创建默认管理员账号...');
+  // 5) 种子数据 - 超级管理员账号
+  const existingSuperAdmin = db.select().from(users).where(eq(users.role, 'super_admin')).all();
+  if (existingSuperAdmin.length === 0) {
+    console.log('📦 创建默认超级管理员账号...');
     const enterpriseTier = db.select().from(tiers).where(eq(tiers.name, 'enterprise')).get();
     const hash = bcrypt.hashSync(env.ADMIN_PASSWORD, 12);
     db.insert(users).values({
       email: env.ADMIN_EMAIL,
-      username: '管理员',
+      username: '超级管理员',
       passwordHash: hash,
-      role: 'admin',
+      role: 'super_admin',
       tierId: enterpriseTier?.id || 4,
     }).run();
-    console.log(`✅ 管理员账号: ${env.ADMIN_EMAIL}`);
+    console.log(`✅ 超级管理员账号: ${env.ADMIN_EMAIL}`);
   } else {
-    // 已有管理员 → 同步 .env 中的密码（防止改了 .env 但旧哈希还在数据库）
-    const admin = existingAdmin[0];
+    // 已有超级管理员 → 同步 .env 中的密码（防止改了 .env 但旧哈希还在数据库）
+    const admin = existingSuperAdmin[0];
     const passwordChanged = !bcrypt.compareSync(env.ADMIN_PASSWORD, admin.passwordHash);
     if (passwordChanged) {
       const newHash = bcrypt.hashSync(env.ADMIN_PASSWORD, 12);
       db.update(users).set({ passwordHash: newHash }).where(eq(users.id, admin.id)).run();
-      console.log('🔄 管理员密码已同步更新');
+      console.log('🔄 超级管理员密码已同步更新');
     }
   }
 

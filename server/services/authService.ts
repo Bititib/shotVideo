@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { db } from '../db/index.js';
-import { users, tiers, usageLogs } from '../db/schema.js';
+import { users, tiers, usageLogs, organizations, orgMembers } from '../db/schema.js';
 import { eq, and, gte, sql } from 'drizzle-orm';
 import { env } from '../config/env.js';
 
@@ -118,13 +118,21 @@ export class AuthService {
       balance: user.balance,
       isActive: user.isActive,
       createdAt: user.createdAt,
+      // 组织信息
+      org: user.orgId ? (() => {
+        const org = db.select().from(organizations).where(eq(organizations.id, user.orgId!)).get();
+        const membership = db.select().from(orgMembers)
+          .where(and(eq(orgMembers.orgId, user.orgId!), eq(orgMembers.userId, userId)))
+          .get();
+        return org ? { id: org.id, name: org.name, slug: org.slug, myRole: membership?.role || 'member', balance: org.balance } : null;
+      })() : null,
     };
   }
 
   /** 生成 JWT token + 用户信息 */
   private static generateAuthResponse(user: typeof users.$inferSelect) {
     const token = jwt.sign(
-      { userId: user.id, role: user.role },
+      { userId: user.id, role: user.role, orgId: user.orgId || null },
       env.JWT_SECRET,
       { expiresIn: env.JWT_EXPIRES_IN }
     );
@@ -136,6 +144,7 @@ export class AuthService {
         email: user.email,
         username: user.username,
         role: user.role,
+        orgId: user.orgId || null,
       },
     };
   }

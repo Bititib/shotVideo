@@ -2,7 +2,15 @@ import { api } from './client';
 
 export interface LoginResponse {
   token: string;
-  user: { id: number; email: string; username: string; role: string };
+  user: { id: number; email: string; username: string; role: string; orgId: number | null };
+}
+
+export interface OrgInfo {
+  id: number;
+  name: string;
+  slug: string;
+  myRole: string;   // owner / admin / member
+  balance: number;
 }
 
 export interface UserProfile {
@@ -20,8 +28,10 @@ export interface UserProfile {
   tierExpiresAt: string | null;
   usedToday: number;
   remainingToday: number;
+  balance: number;
   isActive: number;
   createdAt: string;
+  org: OrgInfo | null;
 }
 
 export const authApi = {

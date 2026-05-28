@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { getPublicSettings } from '../api/admin';
-import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Zap, LogOut, LogIn, Crown, MessageCircle, Video } from 'lucide-react';
+import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Zap, LogOut, LogIn, Crown, MessageCircle, Video, Building2 } from 'lucide-react';
 
 const navItems = [
   { to: '/app', icon: PlaySquare, label: '通用分析', color: 'text-blue-400', feature: 'general' },
@@ -32,7 +32,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const handleLogout = () => { logout(); navigate('/'); };
 
   const allowedFeatures = user?.tier?.allowedFeatures || [];
-  const canAccess = (feature: string) => allowedFeatures.includes('*') || allowedFeatures.includes(feature) || user?.role === 'admin';
+  const canAccess = (feature: string) => allowedFeatures.includes('*') || allowedFeatures.includes(feature) || user?.role === 'admin' || user?.role === 'super_admin';
 
   return (
     <div className="min-h-screen bg-black text-white font-sans flex flex-col md:flex-row">
@@ -90,10 +90,17 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
           {/* User Info */}
           <div className="hidden md:flex flex-col gap-3 pt-4 border-t border-white/5 mt-auto">
-            {isAuthenticated && user?.role === 'admin' && (
+            {isAuthenticated && (user?.role === 'admin' || user?.role === 'super_admin') && (
               <NavLink to="/admin" className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-amber-400 hover:bg-amber-500/10 transition-all">
                 <Shield className="w-4 h-4" />
                 管理后台
+              </NavLink>
+            )}
+
+            {isAuthenticated && user?.org && (user?.role === 'org_owner' || user?.role === 'org_admin') && (
+              <NavLink to="/org" className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-teal-400 hover:bg-teal-500/10 transition-all">
+                <Building2 className="w-4 h-4" />
+                团队管理
               </NavLink>
             )}
 

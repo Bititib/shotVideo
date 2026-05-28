@@ -15,6 +15,8 @@ import pricingRoutes from './routes/pricing.js';
 import v1Routes from './routes/v1.js';
 import videoRoutes from './routes/video.js';
 import imageGenRoutes from './routes/imageGen.js';
+import orgRoutes from './routes/org.js';
+import contentRoutes from './routes/content.js';
 
 import { AdminService } from './services/adminService.js';
 
@@ -62,6 +64,8 @@ export async function createApp() {
   app.use('/api/admin/pricing', pricingRoutes);
   app.use('/api/video', videoRoutes);
   app.use('/api/image-gen', imageGenRoutes);
+  app.use('/api/org', orgRoutes);
+  app.use('/api/contents', contentRoutes);
 
   // 公开设置接口（联系方式等）
   app.get('/api/settings', (req, res) => {

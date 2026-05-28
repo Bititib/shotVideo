@@ -55,6 +55,14 @@ export const adminApi = {
   updateSettings(items: { key: string; value: string }[]) {
     return api.put<any>('/admin/settings', { items });
   },
+
+  // 组织管理
+  getOrgs() { return api.get<any[]>('/admin/orgs'); },
+  createOrg(data: { name: string; slug: string; ownerId: number; tierId?: number; balance?: number; maxMembers?: number }) {
+    return api.post<any>('/admin/orgs', data);
+  },
+  updateOrg(id: number, data: any) { return api.put<any>(`/admin/orgs/${id}`, data); },
+  deleteOrg(id: number) { return api.delete<any>(`/admin/orgs/${id}`); },
 };
 
 /** 公开接口 - 不需要登录 */

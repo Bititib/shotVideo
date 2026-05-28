@@ -47,7 +47,7 @@ export function tierMiddleware(feature: string) {
     const allowedFeatures: string[] = JSON.parse(tier.allowedFeatures);
 
     // 管理员或拥有通配符权限
-    if (user.role === 'admin' || allowedFeatures.includes('*') || allowedFeatures.includes(feature)) {
+    if (user.role === 'admin' || user.role === 'super_admin' || allowedFeatures.includes('*') || allowedFeatures.includes(feature)) {
       req.userTier = {
         id: tier.id,
         name: tier.name,

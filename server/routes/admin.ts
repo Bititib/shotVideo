@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
 import { AdminService } from '../services/adminService.js';
+import { OrgService } from '../services/orgService.js';
 
 const router = Router();
 
@@ -184,6 +185,49 @@ router.put('/settings', async (req: AuthRequest, res: Response) => {
     res.json({ message: '更新成功' });
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '更新失败' });
+  }
+});
+
+// ============ 组织管理（超级管理员） ============
+router.get('/orgs', async (req: AuthRequest, res: Response) => {
+  try {
+    const orgs = OrgService.getAll();
+    res.json(orgs);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || '获取组织列表失败' });
+  }
+});
+
+router.post('/orgs', async (req: AuthRequest, res: Response) => {
+  try {
+    const { name, slug, ownerId, tierId, balance, maxMembers } = req.body;
+    if (!name || !slug || !ownerId) {
+      return res.status(400).json({ error: '组织名称、标识和拥有者不能为空' });
+    }
+    const result = OrgService.create({ name, slug, ownerId, tierId, balance, maxMembers });
+    res.json({ message: '组织创建成功', orgId: result.orgId });
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '创建组织失败' });
+  }
+});
+
+router.put('/orgs/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const orgId = parseInt(req.params.id);
+    OrgService.update(orgId, req.body);
+    res.json({ message: '更新成功' });
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '更新失败' });
+  }
+});
+
+router.delete('/orgs/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const orgId = parseInt(req.params.id);
+    OrgService.delete(orgId);
+    res.json({ message: '组织已删除' });
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '删除失败' });
   }
 });
 

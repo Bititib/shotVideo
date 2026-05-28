@@ -117,8 +117,14 @@ export default function ImagePage() {
           <div className="max-w-4xl mx-auto space-y-6">
             <ResultSection icon={<ImageIcon className="w-5 h-5 text-pink-400" />} title="画面精准解析">
               <p className="text-sm text-zinc-300 whitespace-pre-wrap leading-relaxed">{result.overallConcept}</p>
+              {result.aspectRatio && (
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="text-[10px] uppercase tracking-wider text-zinc-500">建议宽高比</span>
+                  <span className="px-2.5 py-1 bg-pink-500/10 border border-pink-500/20 rounded-lg text-xs font-mono text-pink-300">{result.aspectRatio}</span>
+                </div>
+              )}
             </ResultSection>
-            <PromptDisplay title="逆向图片提示词 (Midjourney/SD)" english={result.reversePrompt} chinese={result.reversePromptTranslation} />
+            <PromptDisplay title="逆向图片生成提示词（通用）" english={result.reversePrompt} chinese={result.reversePromptTranslation} />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <ResultSection icon={<Tag className="w-4 h-4 text-blue-400" />} title="核心元素"><TagList items={result.keywords} /></ResultSection>
               <ResultSection icon={<Palette className="w-4 h-4 text-purple-400" />} title="风格标签"><TagList items={result.styleTags} /></ResultSection>
