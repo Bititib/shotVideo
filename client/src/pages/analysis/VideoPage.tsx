@@ -82,6 +82,7 @@ export default function VideoPage() {
   const abortRef = useRef<Map<string, AbortController>>(new Map());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isGenerating = tasks.some(t => t.status === 'generating');
+  const [playingVideo, setPlayingVideo] = useState<{ url: string; prompt: string } | null>(null);
 
   useEffect(() => {
     fetchVideoModels().then((m) => { setModels(m); if (m.length > 0 && !selectedModel) setSelectedModel(m[0].id); }).catch(() => {});
@@ -262,7 +263,7 @@ export default function VideoPage() {
                               <video src={task.videoUrl} className="w-full h-full object-cover" preload="metadata" playsInline muted loop
                                 onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
                                 onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
-                              <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors">
+                              <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors cursor-pointer" onClick={() => setPlayingVideo({ url: task.videoUrl!, prompt: task.prompt })}>
                                 <Play className="w-8 h-8 text-white/80 group-hover:text-white group-hover:scale-110 transition-all" />
                               </div>
                             </>
@@ -309,7 +310,7 @@ export default function VideoPage() {
                   <p className="text-xs text-zinc-500 mb-4 font-semibold tracking-wider uppercase">历史生成 ({history.length})</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {history.map((h) => (
-                      <div key={h.id} className="group relative rounded-2xl overflow-hidden border border-white/5 bg-white/[0.02] hover:border-indigo-500/30 transition-all flex flex-col cursor-pointer">
+                      <div key={h.id} onClick={() => setPlayingVideo({ url: h.resultUrl, prompt: h.title || h.inputText || '' })} className="group relative rounded-2xl overflow-hidden border border-white/5 bg-white/[0.02] hover:border-indigo-500/30 transition-all flex flex-col cursor-pointer">
                         <div className="relative aspect-video w-full bg-black flex items-center justify-center overflow-hidden">
                           <video src={h.resultUrl} className="w-full h-full object-cover" preload="metadata" playsInline muted loop
                             onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
@@ -336,6 +337,26 @@ export default function VideoPage() {
             </div>
           )}
         </div>
+
+        {/* 视频播放弹窗 */}
+        {playingVideo && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-8" onClick={() => setPlayingVideo(null)}>
+            <div className="relative w-full max-w-4xl" onClick={(e) => e.stopPropagation()}>
+              <video src={playingVideo.url} controls autoPlay className="w-full max-h-[75vh] rounded-2xl shadow-2xl bg-black" />
+              <div className="flex items-center justify-between mt-4">
+                <p className="text-sm text-zinc-300 line-clamp-1 flex-1 mr-4">{playingVideo.prompt}</p>
+                <div className="flex items-center gap-3 shrink-0">
+                  <a href={playingVideo.url} target="_blank" rel="noopener noreferrer" download className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
+                    <Download className="w-3.5 h-3.5" /> 下载
+                  </a>
+                  <button onClick={() => setPlayingVideo(null)} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
+                    <X className="w-3.5 h-3.5" /> 关闭
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {error && (
           <div className="absolute bottom-[180px] left-4 right-4 z-10 px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 flex items-center gap-2 backdrop-blur-sm">
