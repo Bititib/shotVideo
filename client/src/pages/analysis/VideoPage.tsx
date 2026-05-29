@@ -1,10 +1,22 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film } from 'lucide-react';
+import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw } from 'lucide-react';
 import { fetchVideoModels, generateVideo, type VideoModel, type VideoSSEEvent } from '../../api/video';
 import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+
+interface VideoTask {
+  id: string;
+  prompt: string;
+  status: 'generating' | 'complete' | 'error';
+  progress: number;
+  statusMessage: string;
+  videoUrl: string | null;
+  error: string | null;
+  metadata: { resolution: string; seconds: number; aspect_ratio: string; model: string };
+  createdAt: string;
+}
 
 const ASPECT_RATIOS = [
   { value: '16:9', label: '16:9', icon: RectangleHorizontal },
@@ -64,14 +76,12 @@ export default function VideoPage() {
   const [resolution, setResolution] = useState('720p');
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [statusMessage, setStatusMessage] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [currentVideo, setCurrentVideo] = useState<string | null>(null);
+  const [tasks, setTasks] = useState<VideoTask[]>([]);
   const [history, setHistory] = useState<any[]>([]);
-  const abortRef = useRef<AbortController | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef<Map<string, AbortController>>(new Map());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isGenerating = tasks.some(t => t.status === 'generating');
 
   useEffect(() => {
     fetchVideoModels().then((m) => { setModels(m); if (m.length > 0 && !selectedModel) setSelectedModel(m[0].id); }).catch(() => {});
@@ -122,47 +132,53 @@ export default function VideoPage() {
   useImageDropPaste(handleFileSelect);
 
   const handleGenerate = useCallback(() => {
-    if (!prompt.trim() || isGenerating) return;
+    if (!prompt.trim()) return;
     if (!guard()) return;
-    setIsGenerating(true); setProgress(0); setError(null); setCurrentVideo(null); setStatusMessage('正在连接...');
+    setError(null);
+
+    const taskId = `task_${Date.now()}`;
+    const newTask: VideoTask = {
+      id: taskId,
+      prompt: prompt.trim(),
+      status: 'generating',
+      progress: 0,
+      statusMessage: '正在连接...',
+      videoUrl: null,
+      error: null,
+      metadata: { resolution, seconds: duration, aspect_ratio: aspectRatio, model: selectedModel },
+      createdAt: new Date().toISOString(),
+    };
+    setTasks(prev => [newTask, ...prev]);
+
+    const updateTask = (patch: Partial<VideoTask>) => {
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...patch } : t));
+    };
+
     const ctrl = generateVideo(
       { prompt: prompt.trim(), model: selectedModel, aspect_ratio: aspectRatio, video_length: duration, resolution, reference_images: referenceImages.length > 0 ? referenceImages : undefined },
       (event: VideoSSEEvent) => {
         switch (event.type) {
-          case 'status': setStatusMessage(event.message || ''); break;
-          case 'progress': setProgress(event.progress || 0); setStatusMessage(`视频生成中 ${event.progress}%`); break;
-          case 'complete': 
-            setCurrentVideo(event.videoUrl || null); 
-            setIsGenerating(false); 
-            setProgress(100); 
-            setStatusMessage('');
-            if (event.videoUrl) {
-              setHistory(prev => [
-                {
-                  id: Date.now().toString(),
-                  title: prompt.trim(),
-                  resultUrl: event.videoUrl,
-                  createdAt: new Date().toISOString(),
-                  metadata: { resolution, seconds: duration, aspect_ratio: aspectRatio }
-                },
-                ...prev
-              ]);
-            }
+          case 'status': updateTask({ statusMessage: event.message || '' }); break;
+          case 'progress': updateTask({ progress: event.progress || 0, statusMessage: `视频生成中 ${event.progress}%` }); break;
+          case 'complete':
+            updateTask({ status: 'complete', progress: 100, videoUrl: event.videoUrl || null, statusMessage: '' });
+            abortRef.current.delete(taskId);
             break;
-          case 'error': setError(event.message || '生成失败'); setIsGenerating(false); setStatusMessage(''); break;
+          case 'error':
+            updateTask({ status: 'error', error: event.message || '生成失败', statusMessage: '' });
+            abortRef.current.delete(taskId);
+            break;
         }
       },
     );
-    abortRef.current = ctrl;
-  }, [prompt, selectedModel, aspectRatio, duration, resolution, isGenerating, referenceImages]);
+    abortRef.current.set(taskId, ctrl);
+    setPrompt('');
+  }, [prompt, selectedModel, aspectRatio, duration, resolution, referenceImages]);
 
-  const handleCancel = () => { abortRef.current?.abort(); setIsGenerating(false); setProgress(0); setStatusMessage(''); };
-
-  /** 进入工作室：将当前视频作为第一段 */
-  const enterStudio = () => {
-    const initData = currentVideo ? JSON.stringify([{ id: Date.now().toString(), prompt: prompt.trim(), videoUrl: currentVideo, duration, model: selectedModel, aspectRatio, resolution }]) : null;
-    if (initData) sessionStorage.setItem('studio_init', initData);
-    navigate('/app/video/studio');
+  const handleCancel = (taskId: string) => {
+    abortRef.current.get(taskId)?.abort();
+    abortRef.current.delete(taskId);
+    setTasks(prev => prev.filter(t => t.id !== taskId));
   };
 
   return (
@@ -202,103 +218,7 @@ export default function VideoPage() {
       {/* 右栏 */}
       <div className="flex-1 flex flex-col min-w-0 relative">
         <div className="flex-1 overflow-y-auto p-6 pb-40 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
-          {isGenerating ? (
-            <div className="h-full flex items-center justify-center">
-              <div className="w-full max-w-lg mx-auto">
-                {/* 视频骨架占位 - 模拟最终播放器外形 */}
-                <div className="relative aspect-video w-full rounded-2xl overflow-hidden border border-white/[0.06] bg-[#111] shadow-2xl shadow-black/50">
-                  {/* 闪光动画背景 */}
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.03] to-transparent animate-[shimmer_2s_infinite]" style={{ backgroundSize: '200% 100%' }} />
-                  {/* 中心图标 + 进度 */}
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-                    <div className="relative w-20 h-20">
-                      <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
-                        <circle cx="40" cy="40" r="34" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="4" />
-                        <circle cx="40" cy="40" r="34" fill="none" stroke="url(#vpg)" strokeWidth="4" strokeLinecap="round"
-                          strokeDasharray={`${2 * Math.PI * 34}`} strokeDashoffset={`${2 * Math.PI * 34 * (1 - progress / 100)}`} className="transition-all duration-700 ease-out" />
-                        <defs><linearGradient id="vpg" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#6366f1" /><stop offset="100%" stopColor="#a855f7" /></linearGradient></defs>
-                      </svg>
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <span className="text-lg font-bold text-white tabular-nums">{progress}%</span>
-                      </div>
-                    </div>
-                    <p className="text-sm text-zinc-400 font-medium">{statusMessage}</p>
-                  </div>
-                  {/* 底部进度条 - 模拟播放器进度栏 */}
-                  <div className="absolute bottom-0 left-0 right-0 px-4 pb-3 pt-8 bg-gradient-to-t from-black/60 to-transparent">
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 h-1 rounded-full bg-white/10 overflow-hidden">
-                        <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-700 ease-out" style={{ width: `${progress}%` }} />
-                      </div>
-                      <span className="text-[10px] text-zinc-500 tabular-nums shrink-0">{duration}s</span>
-                    </div>
-                    {/* 模拟播放控制栏骨架 */}
-                    <div className="flex items-center justify-between mt-2">
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full bg-white/[0.06]" />
-                        <div className="w-16 h-2.5 rounded bg-white/[0.04]" />
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-5 h-5 rounded bg-white/[0.04]" />
-                        <div className="w-5 h-5 rounded bg-white/[0.04]" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                {/* 底部操作 */}
-                <div className="flex items-center justify-center mt-4">
-                  <button onClick={handleCancel} className="flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 hover:text-red-400 hover:bg-red-500/5 rounded-xl transition-all">
-                    <Square className="w-3 h-3" /> 取消生成
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : currentVideo ? (
-            <div className="h-full flex items-center justify-center">
-              <div className="w-full max-w-lg mx-auto">
-                <video src={currentVideo} controls autoPlay className="w-full max-h-[60vh] rounded-2xl shadow-2xl shadow-black/50 bg-black" />
-                <div className="flex items-center justify-center gap-3 mt-4 flex-wrap">
-                  <a href={currentVideo} target="_blank" rel="noopener noreferrer" download className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
-                    <Download className="w-3.5 h-3.5" /> 下载视频
-                  </a>
-                  <button onClick={enterStudio}
-                    className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600/20 to-purple-600/20 hover:from-indigo-600/30 hover:to-purple-600/30 border border-indigo-500/20 hover:border-indigo-500/40 rounded-xl text-xs text-indigo-300 transition-all">
-                    <Film className="w-3.5 h-3.5" /> 进入工作室续写
-                  </button>
-                  <button onClick={() => { setCurrentVideo(null); setPrompt(''); }}
-                    className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
-                    新建生成
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : history.length > 0 ? (
-            <div className="w-full">
-              <p className="text-xs text-zinc-500 mb-4 font-semibold tracking-wider uppercase">历史生成视频 ({history.length})</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {history.map((h) => (
-                  <div key={h.id} onClick={() => { setCurrentVideo(h.resultUrl); setPrompt(h.title || h.inputText || ''); }}
-                    className="group relative rounded-2xl overflow-hidden border border-white/5 bg-white/[0.02] hover:border-indigo-500/30 transition-all flex flex-col cursor-pointer">
-                    <div className="relative aspect-video w-full bg-black flex items-center justify-center overflow-hidden">
-                      <video src={h.resultUrl} className="w-full h-full object-cover" preload="metadata" playsInline muted loop
-                        onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
-                        onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
-                      <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors">
-                        <Play className="w-8 h-8 text-white/80 group-hover:text-white transition-colors group-hover:scale-110 transition-transform" />
-                      </div>
-                    </div>
-                    <div className="p-3 flex-1 flex flex-col justify-between gap-1 bg-black/40">
-                      <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">{h.title || h.inputText || '无描述'}</p>
-                      <div className="flex items-center justify-between mt-2 text-[10px] text-zinc-500">
-                        <span>{h.metadata?.resolution || '720p'} · {h.metadata?.seconds || 6}秒</span>
-                        <span>{new Date(h.createdAt).toLocaleDateString()}</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : (
+          {tasks.length === 0 && history.length === 0 ? (
             <div className="h-full flex items-center justify-center">
               <div className="text-center">
                 <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-white/5 flex items-center justify-center">
@@ -307,6 +227,112 @@ export default function VideoPage() {
                 <p className="text-sm text-zinc-500 mb-1">输入描述，生成AI视频</p>
                 <p className="text-[11px] text-zinc-700">支持 6-30 秒视频 · 多种比例 · 多种分辨率</p>
               </div>
+            </div>
+          ) : (
+            <div className="w-full space-y-6">
+              {/* 当前会话任务 */}
+              {tasks.length > 0 && (
+                <div>
+                  <p className="text-xs text-zinc-500 mb-4 font-semibold tracking-wider uppercase">当前任务 ({tasks.length})</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {tasks.map((task) => (
+                      <div key={task.id} className={`group relative rounded-2xl overflow-hidden border flex flex-col transition-all ${task.status === 'generating' ? 'border-indigo-500/30 bg-indigo-500/[0.03]' : task.status === 'error' ? 'border-red-500/20 bg-red-500/[0.03]' : 'border-white/5 bg-white/[0.02] hover:border-indigo-500/30'}`}>
+                        {/* 视频区域 */}
+                        <div className="relative aspect-video w-full bg-black flex items-center justify-center overflow-hidden">
+                          {task.status === 'generating' ? (
+                            <>
+                              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.03] to-transparent animate-[shimmer_2s_infinite]" style={{ backgroundSize: '200% 100%' }} />
+                              <div className="flex flex-col items-center gap-2 z-10">
+                                <div className="relative w-14 h-14">
+                                  <svg className="w-14 h-14 -rotate-90" viewBox="0 0 56 56">
+                                    <circle cx="28" cy="28" r="24" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
+                                    <circle cx="28" cy="28" r="24" fill="none" stroke="url(#vpg)" strokeWidth="3" strokeLinecap="round"
+                                      strokeDasharray={`${2 * Math.PI * 24}`} strokeDashoffset={`${2 * Math.PI * 24 * (1 - task.progress / 100)}`} className="transition-all duration-700 ease-out" />
+                                    <defs><linearGradient id="vpg" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#6366f1" /><stop offset="100%" stopColor="#a855f7" /></linearGradient></defs>
+                                  </svg>
+                                  <div className="absolute inset-0 flex items-center justify-center">
+                                    <span className="text-sm font-bold text-white tabular-nums">{task.progress}%</span>
+                                  </div>
+                                </div>
+                                <p className="text-[11px] text-zinc-400 text-center px-3 line-clamp-1">{task.statusMessage}</p>
+                              </div>
+                            </>
+                          ) : task.status === 'complete' && task.videoUrl ? (
+                            <>
+                              <video src={task.videoUrl} className="w-full h-full object-cover" preload="metadata" playsInline muted loop
+                                onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+                                onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
+                              <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors">
+                                <Play className="w-8 h-8 text-white/80 group-hover:text-white group-hover:scale-110 transition-all" />
+                              </div>
+                            </>
+                          ) : task.status === 'error' ? (
+                            <div className="flex flex-col items-center gap-2 p-4">
+                              <AlertCircle className="w-8 h-8 text-red-400/60" />
+                              <p className="text-xs text-red-400/80 text-center line-clamp-2">{task.error}</p>
+                            </div>
+                          ) : null}
+                        </div>
+                        {/* 信息区 */}
+                        <div className="p-3 flex-1 flex flex-col justify-between gap-1.5 bg-black/40">
+                          <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">{task.prompt}</p>
+                          <div className="flex items-center justify-between mt-1">
+                            <span className="text-[10px] text-zinc-500">{task.metadata.resolution} · {task.metadata.seconds}秒</span>
+                            {task.status === 'generating' ? (
+                              <button onClick={() => handleCancel(task.id)} className="text-[10px] text-red-400/70 hover:text-red-400 transition-colors flex items-center gap-1">
+                                <Square className="w-2.5 h-2.5" /> 取消
+                              </button>
+                            ) : task.status === 'complete' && task.videoUrl ? (
+                              <div className="flex items-center gap-2">
+                                <a href={task.videoUrl} target="_blank" rel="noopener noreferrer" download className="text-[10px] text-zinc-500 hover:text-indigo-400 transition-colors">
+                                  <Download className="w-3 h-3" />
+                                </a>
+                                <button onClick={() => { const d = JSON.stringify([{ id: task.id, prompt: task.prompt, videoUrl: task.videoUrl, duration: task.metadata.seconds, model: task.metadata.model, aspectRatio: task.metadata.aspect_ratio, resolution: task.metadata.resolution }]); sessionStorage.setItem('studio_init', d); navigate('/app/video/studio'); }}
+                                  className="text-[10px] text-zinc-500 hover:text-indigo-400 transition-colors"><Film className="w-3 h-3" /></button>
+                              </div>
+                            ) : task.status === 'error' ? (
+                              <button onClick={() => setTasks(prev => prev.filter(t => t.id !== task.id))} className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors">
+                                <X className="w-3 h-3" />
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 历史记录 */}
+              {history.length > 0 && (
+                <div>
+                  <p className="text-xs text-zinc-500 mb-4 font-semibold tracking-wider uppercase">历史生成 ({history.length})</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {history.map((h) => (
+                      <div key={h.id} className="group relative rounded-2xl overflow-hidden border border-white/5 bg-white/[0.02] hover:border-indigo-500/30 transition-all flex flex-col cursor-pointer">
+                        <div className="relative aspect-video w-full bg-black flex items-center justify-center overflow-hidden">
+                          <video src={h.resultUrl} className="w-full h-full object-cover" preload="metadata" playsInline muted loop
+                            onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+                            onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
+                          <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors">
+                            <Play className="w-8 h-8 text-white/80 group-hover:text-white group-hover:scale-110 transition-all" />
+                          </div>
+                        </div>
+                        <div className="p-3 flex-1 flex flex-col justify-between gap-1 bg-black/40">
+                          <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">{h.title || h.inputText || '无描述'}</p>
+                          <div className="flex items-center justify-between mt-2 text-[10px] text-zinc-500">
+                            <span>{h.metadata?.resolution || '720p'} · {h.metadata?.seconds || 6}秒</span>
+                            <div className="flex items-center gap-2">
+                              <span>{new Date(h.createdAt).toLocaleDateString()}</span>
+                              <a href={h.resultUrl} target="_blank" rel="noopener noreferrer" download className="text-zinc-500 hover:text-indigo-400 transition-colors"><Download className="w-3 h-3" /></a>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -350,9 +376,9 @@ export default function VideoPage() {
                   placeholder="描述你想生成的视频内容..." rows={3}
                   className="w-full bg-transparent px-4 py-3 pr-16 text-sm text-white focus:outline-none placeholder:text-zinc-600 resize-none [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' } as React.CSSProperties} />
                 {/* 圆形发送按钮 */}
-                <button onClick={isGenerating ? handleCancel : handleGenerate} disabled={!prompt.trim() && !isGenerating}
-                  className={`absolute right-3 bottom-3 w-10 h-10 rounded-full flex items-center justify-center transition-all ${isGenerating ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/20' : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed'}`}>
-                  {isGenerating ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                <button onClick={handleGenerate} disabled={!prompt.trim()}
+                  className="absolute right-3 bottom-3 w-10 h-10 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed">
+                  <Play className="w-4 h-4 ml-0.5" />
                 </button>
               </div>
             </div>
