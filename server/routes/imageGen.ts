@@ -142,7 +142,11 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
   };
 
   try {
-    sendEvent({ type: 'status', message: hasRef ? '正在上传参考图并生成...' : `正在生成 ${count} 张图片...`, total: count });
+    if (hasRef && model !== 'grok-imagine-image-edit') {
+      sendEvent({ type: 'status', message: `检测到参考图，已自动切换为 Image Edit 模式生成...`, total: count });
+    } else {
+      sendEvent({ type: 'status', message: hasRef ? '正在上传参考图并生成...' : `正在生成 ${count} 张图片...`, total: count });
+    }
 
     if (hasRef) {
       // ===== 有参考图：走 POST /v1/images/edits (multipart/form-data) =====
