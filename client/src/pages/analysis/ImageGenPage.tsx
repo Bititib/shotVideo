@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Image as ImageIcon, Play, Square, Download, RotateCcw, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Grid2x2, Maximize2 } from 'lucide-react';
 import { fetchImageModels, generateImage, type ImageModel, type ImageSSEEvent } from '../../api/imageGen';
+import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 
@@ -64,7 +65,7 @@ function CustomSelect({ value, options, onChange, icon: Icon, prefix }: any) {
 function ImageCard({ url, index, onPreview }: { url: string; index: number; onPreview: () => void }) {
   return (
     <div className="group relative rounded-xl overflow-hidden border border-white/5 hover:border-pink-500/30 transition-all cursor-pointer bg-black/20" onClick={onPreview}>
-      <img src={url} alt={`生成图片 ${index + 1}`} className="w-full block" loading="lazy" />
+      <img src={url} alt={`生成图片 ${index + 1}`} className="w-full block max-h-[60vh] object-contain" loading="lazy" />
       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
         <div className="absolute bottom-2 right-2 flex gap-1.5">
           <button onClick={(e) => { e.stopPropagation(); onPreview(); }} className="p-1.5 bg-black/50 backdrop-blur rounded-lg text-white/80 hover:text-white"><Maximize2 className="w-3.5 h-3.5" /></button>
@@ -75,12 +76,35 @@ function ImageCard({ url, index, onPreview }: { url: string; index: number; onPr
   );
 }
 
-/** 生成中的占位卡片 */
+/** 生成中的占位卡片 - 骨架屏风格 */
 function PlaceholderCard({ index, progress }: { index: number; progress: number }) {
   return (
-    <div className="rounded-xl border border-white/5 bg-white/[0.02] aspect-square flex flex-col items-center justify-center gap-2">
-      <Loader2 className="w-6 h-6 text-pink-400/60 animate-spin" />
-      <span className="text-[11px] text-zinc-500">#{index + 1} {progress > 0 ? `${progress}%` : '等待中...'}</span>
+    <div className="relative h-[180px] w-[160px] rounded-xl border border-white/[0.06] bg-[#111] overflow-hidden flex flex-col items-center justify-center gap-2">
+      {/* 闪光扫描动画 */}
+      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.03] to-transparent animate-[shimmer_2s_infinite]" style={{ backgroundSize: '200% 100%' }} />
+      {/* 进度环 */}
+      <div className="relative w-12 h-12">
+        <svg className="w-12 h-12 -rotate-90" viewBox="0 0 48 48">
+          <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
+          <circle cx="24" cy="24" r="20" fill="none" stroke="url(#ipg)" strokeWidth="3" strokeLinecap="round"
+            strokeDasharray={`${2 * Math.PI * 20}`}
+            strokeDashoffset={`${2 * Math.PI * 20 * (1 - (progress || 0) / 100)}`}
+            className="transition-all duration-700 ease-out" />
+          <defs><linearGradient id="ipg" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#ec4899" /><stop offset="100%" stopColor="#f43f5e" /></linearGradient></defs>
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          {progress > 0 ? (
+            <span className="text-[11px] font-bold text-white tabular-nums">{progress}%</span>
+          ) : (
+            <Loader2 className="w-4 h-4 text-pink-400/60 animate-spin" />
+          )}
+        </div>
+      </div>
+      <span className="text-[10px] text-zinc-500 font-medium">#{index + 1} {progress > 0 ? '生成中' : '排队中'}</span>
+      {/* 底部进度条 */}
+      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/[0.04]">
+        <div className="h-full bg-gradient-to-r from-pink-500 to-rose-500 transition-all duration-700 ease-out" style={{ width: `${progress || 0}%` }} />
+      </div>
     </div>
   );
 }
@@ -120,6 +144,31 @@ export default function ImageGenPage() {
 
   useEffect(() => {
     fetchImageModels().then((m) => { setModels(m); if (m.length > 0 && !selectedModel) setSelectedModel(m[0].id); }).catch(() => {});
+    // 加载历史生成记录
+    contentApi.getMyContents({ type: 'image', pageSize: 50 })
+      .then((res: any) => {
+        const items = res?.items || res?.data || [];
+        const urls: string[] = [];
+        for (const item of items) {
+          if (item.resultUrl) urls.push(item.resultUrl);
+          if (item.metadata?.imageUrls) urls.push(...item.metadata.imageUrls);
+        }
+        // 去重
+        const unique = [...new Set(urls)].filter(Boolean);
+        if (unique.length > 0) setHistory(prev => {
+          const existingUrls = new Set(prev.map(h => h.imageUrl));
+          const newItems = unique.filter(u => !existingUrls.has(u)).map(url => ({
+            id: Date.now().toString() + Math.random(),
+            prompt: '',
+            imageUrl: url,
+            model: '',
+            createdAt: new Date(),
+            aspectRatio: '',
+          }));
+          return [...newItems, ...prev];
+        });
+      })
+      .catch(() => {});
   }, []);
 
   const readFileAsDataURL = (file: File): Promise<string> => new Promise((resolve, reject) => {
@@ -143,13 +192,19 @@ export default function ImageGenPage() {
   // 全局拖拽 + Ctrl+V 粘贴上传参考图
   useImageDropPaste(handleFileSelect);
 
+  // 记录本轮生成前已有的图片数量，用于追加偏移
+  const baseIndexRef = useRef(0);
+
   const handleGenerate = useCallback(() => {
     if (!prompt.trim() || isGenerating) return;
     if (!guard()) return;
+    const base = generatedImages.length;
+    baseIndexRef.current = base;
+    // 预分配 imageCount 个空槽位，确保 image_ready 可以按 index 精确填入
+    setGeneratedImages(prev => [...prev, ...new Array(imageCount).fill('')]);
     setIsGenerating(true);
     setProgresses(new Array(imageCount).fill(0));
     setError(null);
-    setGeneratedImages([]);
     setStatusMessage(`正在生成 ${imageCount} 张图片...`);
 
     const ctrl = generateImage(
@@ -164,15 +219,14 @@ export default function ImageGenPage() {
             if (idx >= 0) {
               setProgresses(prev => { const next = [...prev]; next[idx] = event.progress || 0; return next; });
             }
-            setStatusMessage(`生成中... ${event.progress || 0}%`);
             break;
           }
           case 'image_ready':
             if (event.imageUrl) {
+              const slotIdx = baseIndexRef.current + (event.index ?? 0);
               setGeneratedImages(prev => {
                 const next = [...prev];
-                const idx = event.index ?? next.length;
-                next[idx] = event.imageUrl!;
+                next[slotIdx] = event.imageUrl!;
                 return next;
               });
               setProgresses(prev => { const next = [...prev]; if (event.index !== undefined) next[event.index] = 100; return next; });
@@ -180,12 +234,18 @@ export default function ImageGenPage() {
             break;
           case 'image_error':
             setError(event.message || `图片 #${(event.index ?? 0) + 1} 生成失败`);
+            // 移除失败的空槽位
+            if (event.index !== undefined) {
+              const failIdx = baseIndexRef.current + event.index;
+              setGeneratedImages(prev => prev.filter((_, i) => i !== failIdx));
+            }
             break;
           case 'complete':
             setIsGenerating(false);
             setStatusMessage('');
+            // 清理剩余空槽位，追加历史
+            setGeneratedImages(prev => prev.filter(Boolean));
             if (event.imageUrls && event.imageUrls.length > 0) {
-              setGeneratedImages(event.imageUrls);
               event.imageUrls.forEach(url => {
                 setHistory(prev => [{ id: Date.now().toString() + Math.random(), prompt: prompt.trim(), imageUrl: url, model: selectedModel, createdAt: new Date(), aspectRatio }, ...prev]);
               });
@@ -195,6 +255,8 @@ export default function ImageGenPage() {
             setError(event.message || '生成失败');
             setIsGenerating(false);
             setStatusMessage('');
+            // 清理空槽位
+            setGeneratedImages(prev => prev.filter(Boolean));
             break;
         }
       },
@@ -205,9 +267,11 @@ export default function ImageGenPage() {
   const handleCancel = () => { abortRef.current?.abort(); setIsGenerating(false); setStatusMessage(''); };
   const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); } };
 
-  // 计算瀑布流列数
-  const colCount = generatedImages.length >= 4 ? 2 : generatedImages.length >= 2 ? 2 : 1;
-  const pendingSlots = isGenerating ? imageCount - generatedImages.filter(Boolean).length : 0;
+  // 当前本轮有多少空槽位（即尚未拿到图片的占位）
+  // generatedImages 中从 baseIndexRef 开始的空字符串就是待填充的占位
+  const currentBatchEmpty = isGenerating
+    ? generatedImages.slice(baseIndexRef.current).filter(v => !v).length
+    : 0;
 
   return (
     <div className="flex h-full">
@@ -238,19 +302,58 @@ export default function ImageGenPage() {
       </div>
 
       {/* ===== 右栏 ===== */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* 瀑布流预览区 */}
-        <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 flex flex-col min-w-0 relative">
+        {/* 图片预览区 - 保持原始比例 */}
+        <div className="flex-1 overflow-y-auto p-6 pb-40 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
           {(generatedImages.length > 0 || isGenerating) ? (
-            <div className={`columns-${colCount} gap-4 max-w-3xl mx-auto`} style={{ columnCount: colCount }}>
-              {generatedImages.map((url, i) => url ? (
-                <div key={i} className="mb-4 break-inside-avoid"><ImageCard url={url} index={i} onPreview={() => setLightboxUrl(url)} /></div>
-              ) : null)}
-              {/* 占位卡片 */}
-              {Array.from({ length: pendingSlots }).map((_, i) => (
-                <div key={`p-${i}`} className="mb-4 break-inside-avoid"><PlaceholderCard index={generatedImages.filter(Boolean).length + i} progress={progresses[generatedImages.filter(Boolean).length + i] || 0} /></div>
-              ))}
-            </div>
+            <>
+              {/* 当前生成的图片 */}
+              <div className="flex flex-wrap gap-3 items-start">
+                {generatedImages.map((url, i) => url ? (
+                  <div key={i} className="group relative rounded-xl overflow-hidden border border-white/5 hover:border-pink-500/40 transition-all cursor-pointer bg-black/30" onClick={() => setLightboxUrl(url)}>
+                    <img src={url} alt={`生成图片 ${i + 1}`} className="block h-[180px] w-auto object-contain" loading="lazy" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="absolute bottom-1.5 right-1.5 flex gap-1">
+                        <button onClick={(e) => { e.stopPropagation(); setLightboxUrl(url); }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Maximize2 className="w-3 h-3" /></button>
+                        <a href={url} target="_blank" rel="noopener noreferrer" download onClick={(e) => e.stopPropagation()} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Download className="w-3 h-3" /></a>
+                      </div>
+                    </div>
+                  </div>
+                ) : null)}
+                {/* 占位卡片 - 按后端 index 映射独立进度 */}
+                {isGenerating && generatedImages.slice(baseIndexRef.current).map((url, i) => {
+                  if (url) return null; // 已有图片，不显示占位
+                  const backendIdx = i; // 和后端 event.index 一致
+                  return <PlaceholderCard key={`p-${backendIdx}`} index={backendIdx} progress={progresses[backendIdx] || 0} />;
+                })}
+              </div>
+              {/* 操作栏 */}
+              {!isGenerating && generatedImages.length > 0 && (
+                <div className="flex items-center justify-center gap-3 mt-4">
+                  <button onClick={() => { setGeneratedImages([]); setPrompt(''); }} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
+                    <RotateCcw className="w-3.5 h-3.5" /> 新建生成
+                  </button>
+                  <span className="text-[11px] text-zinc-600">共 {generatedImages.length} 张 · 点击放大</span>
+                </div>
+              )}
+            </>
+          ) : history.length > 0 ? (
+            <>
+              <p className="text-xs text-zinc-500 mb-3">历史生成记录 ({history.length})</p>
+              <div className="flex flex-wrap gap-3 items-start">
+                {history.map((h) => (
+                  <div key={h.id} className="group relative rounded-xl overflow-hidden border border-white/5 hover:border-pink-500/40 transition-all cursor-pointer bg-black/30" onClick={() => setLightboxUrl(h.imageUrl)}>
+                    <img src={h.imageUrl} alt="历史图片" className="block h-[180px] w-auto object-contain" loading="lazy" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="absolute bottom-1.5 right-1.5 flex gap-1">
+                        <button onClick={(e) => { e.stopPropagation(); setLightboxUrl(h.imageUrl); }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Maximize2 className="w-3 h-3" /></button>
+                        <a href={h.imageUrl} target="_blank" rel="noopener noreferrer" download onClick={(e) => e.stopPropagation()} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Download className="w-3 h-3" /></a>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           ) : (
             <div className="h-full flex items-center justify-center">
               <div className="text-center">
@@ -258,27 +361,17 @@ export default function ImageGenPage() {
                   <Sparkles className="w-8 h-8 text-pink-400/60" />
                 </div>
                 <p className="text-sm text-zinc-500 mb-1">输入描述，生成AI图片</p>
-                <p className="text-[11px] text-zinc-700">支持多图生成 · 瀑布流展示</p>
+                <p className="text-[11px] text-zinc-700">支持多图生成 · 点击放大查看</p>
               </div>
-            </div>
-          )}
-
-          {/* 生成完成后的操作栏 */}
-          {!isGenerating && generatedImages.length > 0 && (
-            <div className="flex items-center justify-center gap-3 mt-4 max-w-3xl mx-auto">
-              <button onClick={() => { setGeneratedImages([]); setPrompt(''); }} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
-                <RotateCcw className="w-3.5 h-3.5" /> 新建生成
-              </button>
-              {generatedImages.length > 1 && (
-                <span className="text-[11px] text-zinc-600">共 {generatedImages.length} 张 · 点击图片放大</span>
-              )}
             </div>
           )}
 
           {/* 生成中状态 */}
           {isGenerating && (
             <div className="text-center mt-4">
-              <p className="text-sm text-zinc-400 mb-2">{statusMessage}</p>
+              <p className="text-sm text-zinc-400 mb-2">
+                {statusMessage || `已完成 ${generatedImages.slice(baseIndexRef.current).filter(Boolean).length} / ${imageCount} 张`}
+              </p>
               <button onClick={handleCancel} className="text-xs text-zinc-500 hover:text-red-400 transition-colors flex items-center gap-1.5 mx-auto">
                 <Square className="w-3 h-3" /> 取消生成
               </button>
@@ -288,54 +381,65 @@ export default function ImageGenPage() {
 
         {/* 错误提示 */}
         {error && (
-          <div className="mx-4 mb-2 px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 flex items-center gap-2">
+          <div className="absolute bottom-[180px] left-4 right-4 z-10 px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 flex items-center gap-2 backdrop-blur-sm">
             <AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{error}</span>
             <button onClick={() => setError(null)} className="text-red-500/60 hover:text-red-400 text-xs">✕</button>
           </div>
         )}
 
-        {/* 底部输入区 */}
-        <div className="shrink-0 border-t border-white/5 bg-black/40 backdrop-blur-sm p-4">
-          <div className="mb-3">
-            <div className="flex items-center gap-3 mb-2 flex-wrap">
-              <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={ASPECT_RATIOS} prefix="比例: " />
-              <CustomSelect value={imageCount} onChange={setImageCount} options={COUNT_OPTIONS} icon={Grid2x2} prefix="数量: " />
-              {referenceImages.length < 10 && (
-                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.03] hover:bg-white/[0.06] rounded-lg px-3 py-2 text-[11px] text-zinc-300 transition-colors border border-transparent hover:border-pink-500/20">
-                  <Upload className="w-3.5 h-3.5 text-pink-400" /> 参考图 ({referenceImages.length}/10)
+        {/* 悬浮输入区 */}
+        <div className="absolute bottom-0 left-0 right-0 z-10">
+          <div className="bg-gradient-to-t from-[#0c0c0c] via-[#0c0c0c]/95 to-transparent pt-8 px-6 pb-5">
+            <div className="max-w-5xl mx-auto">
+              {/* 工具栏 */}
+              <div className="flex items-center gap-2 mb-3 flex-wrap">
+                <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={ASPECT_RATIOS} prefix="比例: " />
+                <CustomSelect value={imageCount} onChange={setImageCount} options={COUNT_OPTIONS} icon={Grid2x2} prefix="数量: " />
+                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                  <Upload className="w-3 h-3 text-pink-400" /> 参考图 ({referenceImages.length}/10)
                 </button>
-              )}
-              <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
-            </div>
-
-            {referenceImages.length > 0 && (
-              <div className="flex gap-2 mb-2 flex-wrap">
-                {referenceImages.map((img, i) => (
-                  <div key={i} className="relative group w-14 h-14 rounded-lg overflow-hidden border border-white/10 hover:border-pink-500/30 transition-colors">
-                    <img src={img} alt={`ref-${i}`} className="w-full h-full object-cover" />
-                    <button onClick={() => removeRefImage(i)} className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"><X className="w-4 h-4 text-red-400" /></button>
-                  </div>
-                ))}
-                {referenceImages.length < 10 && (
-                  <button onClick={() => fileInputRef.current?.click()}
-                    className="w-14 h-14 rounded-lg border border-dashed border-white/10 hover:border-pink-500/30 flex items-center justify-center text-zinc-600 hover:text-pink-400 transition-colors">
-                    <Upload className="w-4 h-4" />
-                  </button>
-                )}
+                <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
               </div>
-            )}
-          </div>
-
-          <div className="flex gap-3 items-end">
-            <div className="flex-1 relative">
-              <textarea ref={textareaRef} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={handleKeyDown}
-                placeholder={referenceImages.length > 0 ? '描述你想基于参考图生成的内容...' : '描述你想生成的图片内容，例如：一只在太空漂浮的猫...'}
-                rows={2} className="w-full bg-white/[0.03] border border-white/5 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:ring-1 focus:ring-pink-500/30 focus:border-pink-500/30 placeholder:text-zinc-600 resize-none" />
+              {/* 输入容器 */}
+              <div className="relative bg-white/[0.04] border border-white/[0.08] focus-within:border-pink-500/30 rounded-2xl transition-all shadow-2xl shadow-black/30">
+                {referenceImages.length > 0 && (
+                  <>
+                    <div className="flex items-center gap-2 px-4 pt-3 pb-1 overflow-x-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+                      {referenceImages.map((img, i) => (
+                        <div key={i} className="relative w-12 h-12 rounded-lg overflow-hidden border border-white/10 group cursor-pointer shrink-0 hover:border-pink-500/30 transition-colors">
+                          <img src={img} alt="" className="w-full h-full object-cover" />
+                          {/* 序号标签 */}
+                          <div className="absolute top-0 left-0 bg-pink-500/80 text-white text-[8px] font-bold px-1 py-0.5 rounded-br-md leading-none">图{i + 1}</div>
+                          <button onClick={() => removeRefImage(i)}
+                            className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><X className="w-3.5 h-3.5 text-white" /></button>
+                        </div>
+                      ))}
+                      {referenceImages.length < 10 && (
+                        <button onClick={() => fileInputRef.current?.click()}
+                          className="w-12 h-12 rounded-lg border border-dashed border-white/10 hover:border-pink-500/30 flex items-center justify-center text-zinc-600 hover:text-pink-400 transition-colors shrink-0">
+                          <Upload className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    {/* 使用提示 */}
+                    <p className="px-4 pt-1 text-[10px] text-zinc-600">
+                      💡 在提示词中用「图1」「图2」引用对应参考图，如：<span className="text-zinc-500">参考图1中的人物，穿上图2中的衣服</span>
+                    </p>
+                  </>
+                )}
+                <textarea ref={textareaRef} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={handleKeyDown}
+                  placeholder={referenceImages.length > 0
+                    ? `在提示词中引用参考图，例如：\n• 参考图1中的人物站在海边，电影级画质\n• 把图1的人物放到图2的场景中`
+                    : '描述你想生成的图片内容，例如：一只在太空漂浮的猫...'}
+                  rows={3}
+                  className="w-full bg-transparent px-4 py-3 pr-16 text-sm text-white focus:outline-none placeholder:text-zinc-600 resize-none [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' } as React.CSSProperties} />
+                {/* 圆形发送按钮 */}
+                <button onClick={isGenerating ? handleCancel : handleGenerate} disabled={!prompt.trim() && !isGenerating}
+                  className={`absolute right-3 bottom-3 w-10 h-10 rounded-full flex items-center justify-center transition-all ${isGenerating ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/20' : 'bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white shadow-lg shadow-pink-500/20 disabled:opacity-30 disabled:cursor-not-allowed'}`}>
+                  {isGenerating ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                </button>
+              </div>
             </div>
-            <button onClick={isGenerating ? handleCancel : handleGenerate} disabled={!prompt.trim() && !isGenerating}
-              className={`shrink-0 h-[52px] px-6 rounded-xl font-medium text-sm flex items-center gap-2 transition-all ${isGenerating ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30' : 'bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white disabled:opacity-40 disabled:cursor-not-allowed'}`}>
-              {isGenerating ? <><Loader2 className="w-4 h-4 animate-spin" /> 停止</> : <><Play className="w-4 h-4" /> 生成</>}
-            </button>
           </div>
         </div>
       </div>

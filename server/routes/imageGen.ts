@@ -145,58 +145,134 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
     sendEvent({ type: 'status', message: hasRef ? '正在上传参考图并生成...' : `正在生成 ${count} 张图片...`, total: count });
 
     if (hasRef) {
-      // ===== 有参考图：走 /v1/images/generations（同步 JSON 响应），原生支持 n =====
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 300_000);
+      // ===== 有参考图：走 /v1/chat/completions + 多模态 messages，并发 n 个请求 =====
+      const upstreamUrl = baseUrl + '/v1/chat/completions';
+      const completedImages: string[] = new Array(count).fill('');
+      let completedCount = 0;
 
-      sendEvent({ type: 'progress', progress: 10, index: -1 });
+      // 构建多模态 messages：参考图作为 image_url，prompt 作为 text
+      const contentParts: any[] = [];
+      for (const refImg of reference_images.slice(0, 10)) {
+        contentParts.push({ type: 'image_url', image_url: { url: refImg } });
+      }
+      contentParts.push({ type: 'text', text: prompt.trim() });
 
-      const upstreamUrl = baseUrl + '/v1/images/generations';
-      const requestBody = {
-        model,
-        prompt: prompt.trim(),
-        n: count,
-        size,
-        response_format: 'url',
-        reference_images: reference_images.slice(0, 10),
+      const runSingle = async (index: number) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 180_000);
+
+        const requestBody = {
+          model,
+          messages: [{ role: 'user', content: contentParts }],
+          stream: true,
+          image_config: { n: 1, size, response_format: 'url' },
+        };
+
+        try {
+          const upstream = await fetch(upstreamUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(requestBody),
+            signal: controller.signal,
+          });
+          clearTimeout(timer);
+
+          if (!upstream.ok) {
+            const errText = await upstream.text().catch(() => '');
+            sendEvent({ type: 'image_error', index, message: `请求 #${index + 1} 失败 (${upstream.status}): ${errText.slice(0, 100)}` });
+            return;
+          }
+
+          const reader = upstream.body?.getReader();
+          if (!reader) return;
+
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let imageUrl = '';
+          let lastProgress = -1;
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (!line.startsWith('data: ') || line === 'data: [DONE]') {
+                if (line === 'data: [DONE]' && imageUrl) {
+                  sendEvent({ type: 'image_ready', imageUrl, index, total: count });
+                }
+                continue;
+              }
+              try {
+                const data = JSON.parse(line.slice(6));
+                const delta = data.choices?.[0]?.delta || {};
+                const msg = data.choices?.[0]?.message || {};
+
+                // 提取进度
+                const reasoning = delta.reasoning_content || '';
+                if (reasoning) {
+                  const m = reasoning.match(/(\d+)%/);
+                  if (m) {
+                    const p = parseInt(m[1]);
+                    if (p !== lastProgress) {
+                      lastProgress = p;
+                      sendEvent({ type: 'progress', progress: p, index });
+                    }
+                  }
+                }
+
+                // 提取图片 URL
+                const content = delta.content || msg.content || '';
+                if (content) {
+                  const urlMatch = content.match(/https?:\/\/[^\s"'<>]+/);
+                  if (urlMatch) imageUrl = urlMatch[0];
+                  const srcMatch = content.match(/src="([^"]+)"/);
+                  if (srcMatch) imageUrl = srcMatch[1];
+                  const localMatch = content.match(/(\/v1\/files\/image[^\s"'<>]*)/);
+                  if (localMatch) imageUrl = baseUrl + localMatch[1];
+                  const mdMatch = content.match(/!\[[^\]]*\]\(([^)]+)\)/);
+                  if (mdMatch) {
+                    imageUrl = mdMatch[1];
+                    if (imageUrl.startsWith('/')) imageUrl = baseUrl + imageUrl;
+                  }
+                }
+              } catch { /* ignore */ }
+            }
+          }
+
+          // 流结束
+          if (imageUrl) {
+            completedImages[index] = imageUrl;
+            if (!completedImages[index]) {
+              sendEvent({ type: 'image_ready', imageUrl, index, total: count });
+            }
+            completedImages[index] = imageUrl;
+          } else {
+            sendEvent({ type: 'image_error', index, message: `图片 #${index + 1} 未返回结果` });
+          }
+        } catch (err: any) {
+          clearTimeout(timer);
+          const msg = err.name === 'AbortError' ? '超时' : (err.message || '请求失败');
+          sendEvent({ type: 'image_error', index, message: `图片 #${index + 1}: ${msg}` });
+        } finally {
+          completedCount++;
+          if (completedCount === count) {
+            const allUrls = completedImages.filter(Boolean);
+            sendEvent({ type: 'complete', imageUrls: allUrls, total: count });
+            billUsage(allUrls.length, allUrls);
+            res.write('data: [DONE]\n\n');
+            res.end();
+          }
+        }
       };
 
-      const upstream = await fetch(upstreamUrl, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(requestBody),
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-
-      if (!upstream.ok) {
-        const errText = await upstream.text().catch(() => '');
-        sendEvent({ type: 'error', message: `上游服务返回 ${upstream.status}: ${errText.slice(0, 200)}` });
-        res.write('data: [DONE]\n\n');
-        return res.end();
+      // 并发启动
+      for (let i = 0; i < count; i++) {
+        runSingle(i);
       }
-
-      sendEvent({ type: 'progress', progress: 80, index: -1 });
-
-      const result = await upstream.json();
-      const images = (result.data || []).map((item: any) => {
-        const url = item?.url || '';
-        return url.startsWith('/') ? baseUrl + url : url;
-      }).filter(Boolean);
-
-      if (images.length > 0) {
-        // 逐张发送，前端可渐进渲染
-        images.forEach((url: string, idx: number) => {
-          sendEvent({ type: 'image_ready', imageUrl: url, index: idx, total: images.length });
-        });
-        sendEvent({ type: 'complete', imageUrls: images, total: images.length });
-        billUsage(images.length, images);
-      } else {
-        sendEvent({ type: 'error', message: '图片生成完成但未获取到图片地址' });
-      }
-
-      res.write('data: [DONE]\n\n');
-      res.end();
     } else {
       // ===== 无参考图：并发 n 个独立的 chat/completions SSE 请求 =====
       const upstreamUrl = baseUrl + '/v1/chat/completions';

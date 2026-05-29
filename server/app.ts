@@ -46,7 +46,9 @@ export async function createApp() {
   // CORS：生产环境限制为指定域名
   const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(s => s.trim()).filter(Boolean);
   app.use(cors(allowedOrigins?.length ? { origin: allowedOrigins, credentials: true } : undefined));
-  app.use(globalLimiter);
+  // 仅对 API 和 OpenAI 代理路由实施全局限流，避免干扰本地开发环境下 Vite 托管的大量静态资源与热更新请求
+  app.use('/api', globalLimiter);
+  app.use('/v1', globalLimiter);
 
   // Body parsing
   app.use(express.json({ limit: '50mb' }));

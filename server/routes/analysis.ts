@@ -127,10 +127,10 @@ router.get('/models',
     const available = allModels
       .filter(m => modelIds.includes(m.id))
       .filter(m => {
-        // 分析页面只显示具有 text 能力的模型
+        // 分析页面只显示纯文本分析模型，排除图片生成/视频/图片类模型
         try {
           const caps: string[] = JSON.parse(m.capabilities || '[]');
-          return caps.includes('text');
+          return caps.includes('text') && !caps.includes('image_gen') && !caps.includes('video') && !caps.includes('image');
         } catch { return false; }
       })
       .map(m => ({ modelId: m.modelId, displayName: m.displayName || m.modelId }));

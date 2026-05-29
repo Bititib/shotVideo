@@ -59,7 +59,7 @@ router.get('/models', (_req: Request, res: Response) => {
   res.json(result);
 });
 
-/** POST /api/video/generate — SSE 流式视频生成 */
+/** POST /api/video/generate — SSE 流式视频生成（异步轮询模式） */
 router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quotaMiddleware, async (req: TierRequest, res: Response) => {
   const {
     prompt,
@@ -91,7 +91,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
 
   const startTime = Date.now();
 
-  // 视频计费费率：从 settings 表读取，管理后台可动态调整
+  // 视频计费费率
   const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
   const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
   const VIDEO_RATE: Record<string, number> = {
@@ -121,7 +121,6 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
       const remaining = BalanceService.deduct(req.userId!, cost, 'generate_video');
       sendEvent({ type: 'billing', cost, resolution, seconds, rate, remainingBalance: remaining ?? 0 });
     }
-    // 保存到内容库
     try {
       ContentService.save({
         userId: req.userId!,
@@ -137,140 +136,132 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
     } catch (e) { console.error('[content] 视频保存失败:', e); }
   };
 
-  const upstreamUrl = channel.baseUrl.replace(/\/+$/, '') + '/v1/chat/completions';
+  const baseUrl = channel.baseUrl.replace(/\/+$/, '');
   const size = RATIO_TO_SIZE[aspect_ratio] || '1280x720';
-
-  // 有参考图时构建多模态 content（image_url + text）
   const hasRef = Array.isArray(reference_images) && reference_images.length > 0;
-  let messageContent: any = prompt;
-  if (hasRef) {
-    messageContent = [
-      ...reference_images.slice(0, 10).map((img: string) => ({
-        type: 'image_url',
-        image_url: { url: img },
-      })),
-      { type: 'text', text: prompt },
-    ];
-  }
-
-  const requestBody = {
-    model,
-    messages: [{ role: 'user', content: messageContent }],
-    stream: true,
-    video_config: { seconds: video_length, size, resolution_name: resolution },
-  };
 
   try {
-    const controller = new AbortController();
-    // 根据视频时长动态调整超时：每 10 秒视频给 3 分钟
-    const timeoutMs = Math.max(300_000, Math.ceil(video_length / 10) * 180_000);
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    // ━━━ Step 1: 创建视频任务（multipart/form-data） ━━━
+    sendEvent({ type: 'status', message: hasRef ? '正在上传参考图并提交任务...' : '正在提交视频生成任务...' });
 
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+    const formData = new FormData();
+    formData.append('model', model);
+    formData.append('prompt', prompt.trim());
+    formData.append('seconds', String(video_length));
+    formData.append('size', size);
+    formData.append('resolution_name', resolution);
 
-    console.log(`[video] 开始生成: model=${model} seconds=${video_length} timeout=${timeoutMs/1000}s url=${upstreamUrl}`);
-    sendEvent({ type: 'status', message: '正在连接视频生成服务...' });
-
-    const upstream = await fetch(upstreamUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(requestBody),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-
-    if (!upstream.ok) {
-      const errText = await upstream.text().catch(() => '');
-      sendEvent({ type: 'error', message: `上游服务返回 ${upstream.status}: ${errText.slice(0, 200)}` });
-      res.write('data: [DONE]\n\n');
-      return res.end();
-    }
-
-    const reader = upstream.body?.getReader();
-    if (!reader) {
-      sendEvent({ type: 'error', message: '上游无响应体' });
-      res.write('data: [DONE]\n\n');
-      return res.end();
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let videoUrl = '';
-    let lastProgress = -1;
-    let billed = false;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.startsWith('data: ') || line === 'data: [DONE]') {
-          if (line === 'data: [DONE]') {
-            if (videoUrl && !billed) {
-              sendEvent({ type: 'complete', videoUrl });
-              billUsage(videoUrl);
-              billed = true;
-            }
-            else sendEvent({ type: 'error', message: '视频生成完成但未获取到视频地址' });
-          }
-          continue;
+    // 参考图：将 base64 dataURL 转为 Blob 文件上传
+    if (hasRef) {
+      for (let i = 0; i < Math.min(reference_images.length, 5); i++) {
+        const dataUrl: string = reference_images[i];
+        const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (matches) {
+          const mimeType = matches[1];
+          const base64Data = matches[2];
+          const buffer = Buffer.from(base64Data, 'base64');
+          const blob = new Blob([buffer], { type: mimeType });
+          const ext = mimeType.includes('png') ? 'png' : 'jpg';
+          formData.append('input_reference[]', blob, `ref_${i}.${ext}`);
         }
-
-        try {
-          const data = JSON.parse(line.slice(6));
-          const delta = data.choices?.[0]?.delta || {};
-          const msg = data.choices?.[0]?.message || {};
-
-          // 提取进度（reasoning_content 中的百分比）
-          const reasoning = delta.reasoning_content || '';
-          if (reasoning) {
-            const m = reasoning.match(/(\d+)%/);
-            if (m) {
-              const p = parseInt(m[1]);
-              if (p !== lastProgress) {
-                lastProgress = p;
-                sendEvent({ type: 'progress', progress: p });
-              }
-            }
-          }
-
-          // 提取视频 URL（content 中的链接）
-          const content = delta.content || msg.content || '';
-          if (content) {
-            // 匹配 URL
-            const urlMatch = content.match(/https?:\/\/[^\s"'<>]+/);
-            if (urlMatch) videoUrl = urlMatch[0];
-            // 匹配 <video> 标签中的 src
-            const srcMatch = content.match(/src="([^"]+)"/);
-            if (srcMatch) videoUrl = srcMatch[1];
-            // 匹配 /v1/files/video 路径
-            const localMatch = content.match(/(\/v1\/files\/video[^\s"'<>]*)/);
-            if (localMatch) {
-              videoUrl = channel.baseUrl.replace(/\/+$/, '') + localMatch[1];
-            }
-          }
-        } catch { /* ignore parse errors */ }
       }
     }
 
-    // 流结束后兜底：仅在 [DONE] 未触发扣费时才扣
-    if (videoUrl && !billed) {
-      sendEvent({ type: 'complete', videoUrl });
-      billUsage(videoUrl);
-      billed = true;
+    const headers: Record<string, string> = {};
+    if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+
+    console.log(`[video] Step1 创建任务: model=${model} seconds=${video_length} hasRef=${hasRef} refCount=${hasRef ? Math.min(reference_images.length, 5) : 0}`);
+
+    const createResp = await fetch(`${baseUrl}/v1/videos`, {
+      method: 'POST',
+      headers,
+      body: formData,
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    if (!createResp.ok) {
+      const errText = await createResp.text().catch(() => '');
+      console.error(`[video] 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
+      sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+      res.write('data: [DONE]\n\n');
+      return res.end();
     }
 
+    const job = await createResp.json() as any;
+    const videoId = job.id;
+    console.log(`[video] 任务已创建: id=${videoId} status=${job.status}`);
+    sendEvent({ type: 'status', message: `任务已提交，等待生成... (${videoId})` });
+
+    if (!videoId) {
+      sendEvent({ type: 'error', message: '上游未返回任务 ID' });
+      res.write('data: [DONE]\n\n');
+      return res.end();
+    }
+
+    // ━━━ Step 2: 轮询任务状态 ━━━
+    const maxPollTime = Math.max(300_000, Math.ceil(video_length / 10) * 180_000); // 最长轮询时间
+    const pollInterval = 5000; // 5 秒轮询
+    const pollStart = Date.now();
+
+    while (Date.now() - pollStart < maxPollTime) {
+      await new Promise(r => setTimeout(r, pollInterval));
+
+      // 检查客户端是否断开
+      if (res.writableEnded || res.destroyed) {
+        console.log(`[video] 客户端已断开，停止轮询`);
+        return;
+      }
+
+      try {
+        const pollResp = await fetch(`${baseUrl}/v1/videos/${videoId}`, {
+          headers,
+          signal: AbortSignal.timeout(15_000),
+        });
+
+        if (!pollResp.ok) {
+          console.warn(`[video] 轮询返回 ${pollResp.status}`);
+          continue;
+        }
+
+        const status = await pollResp.json() as any;
+        const progress = status.progress || 0;
+
+        console.log(`[video] 轮询: status=${status.status} progress=${progress}%`);
+
+        if (status.status === 'processing' || status.status === 'queued') {
+          sendEvent({ type: 'progress', progress });
+          sendEvent({ type: 'status', message: `视频生成中 ${progress}%` });
+        } else if (status.status === 'completed') {
+          // ━━━ Step 3: 生成完成 ━━━
+          const videoUrl = status.url || `${baseUrl}/v1/files/video?id=${videoId}`;
+          console.log(`[video] ✅ 生成完成: ${videoUrl}`);
+          sendEvent({ type: 'progress', progress: 100 });
+          sendEvent({ type: 'complete', videoUrl });
+          billUsage(videoUrl);
+          res.write('data: [DONE]\n\n');
+          return res.end();
+        } else if (status.status === 'failed') {
+          const errMsg = status.error?.message || '视频生成失败';
+          console.error(`[video] ❌ 生成失败: ${errMsg}`);
+          sendEvent({ type: 'error', message: errMsg });
+          res.write('data: [DONE]\n\n');
+          return res.end();
+        }
+      } catch (pollErr: any) {
+        console.warn(`[video] 轮询异常: ${pollErr.message}`);
+        // 轮询失败不立即退出，继续重试
+      }
+    }
+
+    // 超时
+    sendEvent({ type: 'error', message: `视频生成超时（${Math.ceil(maxPollTime / 60000)}分钟）` });
     res.write('data: [DONE]\n\n');
     res.end();
+
   } catch (err: any) {
     console.error(`[video] 生成失败:`, err.name, err.message, err.cause?.message || '');
     const msg = err.name === 'AbortError'
-      ? `视频生成超时（${Math.ceil(video_length / 10) * 3}分钟）`
+      ? '请求超时'
       : (err.cause?.message || err.message || '请求失败');
     sendEvent({ type: 'error', message: msg });
     res.write('data: [DONE]\n\n');

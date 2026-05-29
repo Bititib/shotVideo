@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film } from 'lucide-react';
 import { fetchVideoModels, generateVideo, type VideoModel, type VideoSSEEvent } from '../../api/video';
+import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 
@@ -68,15 +69,44 @@ export default function VideoPage() {
   const [statusMessage, setStatusMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [currentVideo, setCurrentVideo] = useState<string | null>(null);
+  const [history, setHistory] = useState<any[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     fetchVideoModels().then((m) => { setModels(m); if (m.length > 0 && !selectedModel) setSelectedModel(m[0].id); }).catch(() => {});
+    
+    // 加载历史生成记录
+    contentApi.getMyContents({ type: 'video', pageSize: 50 })
+      .then((res: any) => {
+        const items = res?.items || res?.data || [];
+        setHistory(items.filter((item: any) => item.resultUrl));
+      })
+      .catch(() => {});
   }, []);
 
-  const readFileAsDataURL = (file: File): Promise<string> =>
-    new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result as string); r.onerror = reject; r.readAsDataURL(file); });
+  /** 压缩参考图：缩放到 maxSize 并转为 JPEG base64，避免请求体过大 */
+  const compressImage = (file: File, maxSize = 768, quality = 0.7): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxSize || height > maxSize) {
+          const scale = maxSize / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+        URL.revokeObjectURL(img.src);
+      };
+      img.onerror = () => { URL.revokeObjectURL(img.src); reject(new Error('图片加载失败')); };
+      img.src = URL.createObjectURL(file);
+    });
 
   const handleFileSelect = async (files: FileList | null) => {
     if (!files) return;
@@ -85,7 +115,7 @@ export default function VideoPage() {
     const valid = Array.from(files).filter(f => f.type.startsWith('image/')).slice(0, remaining);
     if (valid.length === 0) return;
     if (valid.find(f => f.size > 20 * 1024 * 1024)) { setError('参考图超过 20MB'); return; }
-    try { const urls = await Promise.all(valid.map(readFileAsDataURL)); setReferenceImages(prev => [...prev, ...urls]); } catch { setError('图片读取失败'); }
+    try { const urls = await Promise.all(valid.map(f => compressImage(f))); setReferenceImages(prev => [...prev, ...urls]); } catch { setError('图片读取失败'); }
   };
 
   // 全局拖拽 + Ctrl+V 粘贴上传参考图
@@ -101,7 +131,24 @@ export default function VideoPage() {
         switch (event.type) {
           case 'status': setStatusMessage(event.message || ''); break;
           case 'progress': setProgress(event.progress || 0); setStatusMessage(`视频生成中 ${event.progress}%`); break;
-          case 'complete': setCurrentVideo(event.videoUrl || null); setIsGenerating(false); setProgress(100); setStatusMessage(''); break;
+          case 'complete': 
+            setCurrentVideo(event.videoUrl || null); 
+            setIsGenerating(false); 
+            setProgress(100); 
+            setStatusMessage('');
+            if (event.videoUrl) {
+              setHistory(prev => [
+                {
+                  id: Date.now().toString(),
+                  title: prompt.trim(),
+                  resultUrl: event.videoUrl,
+                  createdAt: new Date().toISOString(),
+                  metadata: { resolution, seconds: duration, aspect_ratio: aspectRatio }
+                },
+                ...prev
+              ]);
+            }
+            break;
           case 'error': setError(event.message || '生成失败'); setIsGenerating(false); setStatusMessage(''); break;
         }
       },
@@ -154,45 +201,112 @@ export default function VideoPage() {
 
       {/* 右栏 */}
       <div className="flex-1 flex flex-col min-w-0 relative">
-        <div className="flex-1 flex items-center justify-center p-6 pb-40 overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
+        <div className="flex-1 overflow-y-auto p-6 pb-40 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
           {isGenerating ? (
-            <div className="text-center max-w-sm">
-              <div className="relative w-32 h-32 mx-auto mb-6">
-                <svg className="w-32 h-32 -rotate-90" viewBox="0 0 120 120">
-                  <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="6" />
-                  <circle cx="60" cy="60" r="52" fill="none" stroke="url(#pg)" strokeWidth="6" strokeLinecap="round"
-                    strokeDasharray={`${2 * Math.PI * 52}`} strokeDashoffset={`${2 * Math.PI * 52 * (1 - progress / 100)}`} className="transition-all duration-500" />
-                  <defs><linearGradient id="pg" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#6366f1" /><stop offset="100%" stopColor="#a855f7" /></linearGradient></defs>
-                </svg>
-                <div className="absolute inset-0 flex items-center justify-center"><span className="text-2xl font-bold text-white">{progress}%</span></div>
+            <div className="h-full flex items-center justify-center">
+              <div className="w-full max-w-lg mx-auto">
+                {/* 视频骨架占位 - 模拟最终播放器外形 */}
+                <div className="relative aspect-video w-full rounded-2xl overflow-hidden border border-white/[0.06] bg-[#111] shadow-2xl shadow-black/50">
+                  {/* 闪光动画背景 */}
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.03] to-transparent animate-[shimmer_2s_infinite]" style={{ backgroundSize: '200% 100%' }} />
+                  {/* 中心图标 + 进度 */}
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+                    <div className="relative w-20 h-20">
+                      <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
+                        <circle cx="40" cy="40" r="34" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="4" />
+                        <circle cx="40" cy="40" r="34" fill="none" stroke="url(#vpg)" strokeWidth="4" strokeLinecap="round"
+                          strokeDasharray={`${2 * Math.PI * 34}`} strokeDashoffset={`${2 * Math.PI * 34 * (1 - progress / 100)}`} className="transition-all duration-700 ease-out" />
+                        <defs><linearGradient id="vpg" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#6366f1" /><stop offset="100%" stopColor="#a855f7" /></linearGradient></defs>
+                      </svg>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <span className="text-lg font-bold text-white tabular-nums">{progress}%</span>
+                      </div>
+                    </div>
+                    <p className="text-sm text-zinc-400 font-medium">{statusMessage}</p>
+                  </div>
+                  {/* 底部进度条 - 模拟播放器进度栏 */}
+                  <div className="absolute bottom-0 left-0 right-0 px-4 pb-3 pt-8 bg-gradient-to-t from-black/60 to-transparent">
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 h-1 rounded-full bg-white/10 overflow-hidden">
+                        <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-700 ease-out" style={{ width: `${progress}%` }} />
+                      </div>
+                      <span className="text-[10px] text-zinc-500 tabular-nums shrink-0">{duration}s</span>
+                    </div>
+                    {/* 模拟播放控制栏骨架 */}
+                    <div className="flex items-center justify-between mt-2">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-full bg-white/[0.06]" />
+                        <div className="w-16 h-2.5 rounded bg-white/[0.04]" />
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-5 h-5 rounded bg-white/[0.04]" />
+                        <div className="w-5 h-5 rounded bg-white/[0.04]" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                {/* 底部操作 */}
+                <div className="flex items-center justify-center mt-4">
+                  <button onClick={handleCancel} className="flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 hover:text-red-400 hover:bg-red-500/5 rounded-xl transition-all">
+                    <Square className="w-3 h-3" /> 取消生成
+                  </button>
+                </div>
               </div>
-              <p className="text-sm text-zinc-400 mb-3">{statusMessage}</p>
-              <button onClick={handleCancel} className="text-xs text-zinc-500 hover:text-red-400 transition-colors flex items-center gap-1.5 mx-auto"><Square className="w-3 h-3" /> 取消</button>
             </div>
           ) : currentVideo ? (
-            <div className="w-full max-w-2xl">
-              <video src={currentVideo} controls autoPlay className="w-full rounded-2xl shadow-2xl shadow-black/50 bg-black" />
-              <div className="flex items-center justify-center gap-3 mt-4 flex-wrap">
-                <a href={currentVideo} target="_blank" rel="noopener noreferrer" download className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
-                  <Download className="w-3.5 h-3.5" /> 下载视频
-                </a>
-                <button onClick={enterStudio}
-                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600/20 to-purple-600/20 hover:from-indigo-600/30 hover:to-purple-600/30 border border-indigo-500/20 hover:border-indigo-500/40 rounded-xl text-xs text-indigo-300 transition-all">
-                  <Film className="w-3.5 h-3.5" /> 进入工作室续写
-                </button>
-                <button onClick={() => { setCurrentVideo(null); setPrompt(''); }}
-                  className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
-                  新建生成
-                </button>
+            <div className="h-full flex items-center justify-center">
+              <div className="w-full max-w-lg mx-auto">
+                <video src={currentVideo} controls autoPlay className="w-full max-h-[60vh] rounded-2xl shadow-2xl shadow-black/50 bg-black" />
+                <div className="flex items-center justify-center gap-3 mt-4 flex-wrap">
+                  <a href={currentVideo} target="_blank" rel="noopener noreferrer" download className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
+                    <Download className="w-3.5 h-3.5" /> 下载视频
+                  </a>
+                  <button onClick={enterStudio}
+                    className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-600/20 to-purple-600/20 hover:from-indigo-600/30 hover:to-purple-600/30 border border-indigo-500/20 hover:border-indigo-500/40 rounded-xl text-xs text-indigo-300 transition-all">
+                    <Film className="w-3.5 h-3.5" /> 进入工作室续写
+                  </button>
+                  <button onClick={() => { setCurrentVideo(null); setPrompt(''); }}
+                    className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
+                    新建生成
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : history.length > 0 ? (
+            <div className="w-full">
+              <p className="text-xs text-zinc-500 mb-4 font-semibold tracking-wider uppercase">历史生成视频 ({history.length})</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                {history.map((h) => (
+                  <div key={h.id} onClick={() => { setCurrentVideo(h.resultUrl); setPrompt(h.title || h.inputText || ''); }}
+                    className="group relative rounded-2xl overflow-hidden border border-white/5 bg-white/[0.02] hover:border-indigo-500/30 transition-all flex flex-col cursor-pointer">
+                    <div className="relative aspect-video w-full bg-black flex items-center justify-center overflow-hidden">
+                      <video src={h.resultUrl} className="w-full h-full object-cover" preload="metadata" playsInline muted loop
+                        onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+                        onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
+                      <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors">
+                        <Play className="w-8 h-8 text-white/80 group-hover:text-white transition-colors group-hover:scale-110 transition-transform" />
+                      </div>
+                    </div>
+                    <div className="p-3 flex-1 flex flex-col justify-between gap-1 bg-black/40">
+                      <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">{h.title || h.inputText || '无描述'}</p>
+                      <div className="flex items-center justify-between mt-2 text-[10px] text-zinc-500">
+                        <span>{h.metadata?.resolution || '720p'} · {h.metadata?.seconds || 6}秒</span>
+                        <span>{new Date(h.createdAt).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           ) : (
-            <div className="text-center">
-              <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-white/5 flex items-center justify-center">
-                <Sparkles className="w-8 h-8 text-indigo-400/60" />
+            <div className="h-full flex items-center justify-center">
+              <div className="text-center">
+                <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-white/5 flex items-center justify-center">
+                  <Sparkles className="w-8 h-8 text-indigo-400/60" />
+                </div>
+                <p className="text-sm text-zinc-500 mb-1">输入描述，生成AI视频</p>
+                <p className="text-[11px] text-zinc-700">支持 6-30 秒视频 · 多种比例 · 多种分辨率</p>
               </div>
-              <p className="text-sm text-zinc-500 mb-1">输入描述，生成AI视频</p>
-              <p className="text-[11px] text-zinc-700">支持 6-30 秒视频 · 多种比例 · 多种分辨率</p>
             </div>
           )}
         </div>

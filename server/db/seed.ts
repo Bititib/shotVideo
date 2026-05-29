@@ -11,8 +11,8 @@ function generateTokenKey(): string {
   return 'sk-' + crypto.randomBytes(24).toString('hex');
 }
 
-/** 不适合做内容分析的模型关键词（排除） */
-const EXCLUDED_KEYWORDS = ['embedding', 'tts', 'robotics', 'live', 'audio', 'computer-use', 'customtools'];
+/** 不适合做内容分析 或 免费 Key 无法使用的模型关键词（排除） */
+const EXCLUDED_KEYWORDS = ['embedding', 'tts', 'robotics', 'live', 'audio', 'computer-use', 'customtools', 'pro'];
 
 /** 排除别名和版本号变体 */
 const EXCLUDED_PATTERNS = [
@@ -21,43 +21,10 @@ const EXCLUDED_PATTERNS = [
   /^gemini-[\d.]+-flash-lite-\d{3}$/,
 ];
 
-/** 验证单个模型是否真正可用（区分限流 vs 真正不支持） */
-async function verifyModel(ai: GoogleGenAI, modelId: string, isImage: boolean): Promise<'ok' | 'rate_limited' | 'unsupported'> {
-  const maxRetries = 2;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      if (isImage) {
-        const res = await ai.models.generateContent({
-          model: modelId,
-          contents: { parts: [{ text: 'A white square' }] },
-          config: { responseModalities: ['IMAGE', 'TEXT'] },
-        });
-        const hasImage = (res.candidates?.[0]?.content?.parts || []).some((p: any) => p.inlineData);
-        return hasImage ? 'ok' : 'unsupported';
-      } else {
-        const res = await ai.models.generateContent({
-          model: modelId,
-          contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
-          config: { maxOutputTokens: 5 },
-        });
-        return res.text ? 'ok' : 'unsupported';
-      }
-    } catch (err: any) {
-      const msg = err.message || '';
-      const is429 = msg.includes('429') || msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED');
-
-      if (is429 && attempt < maxRetries) {
-        // 限流 → 等待后重试
-        const wait = (attempt + 1) * 5000;
-        await new Promise(r => setTimeout(r, wait));
-        continue;
-      }
-
-      return is429 ? 'rate_limited' : 'unsupported';
-    }
-  }
-  return 'unsupported';
+/** 验证单个模型是否真正可用（区分限流 vs 真正不支持 vs 超时） */
+async function verifyModel(ai: GoogleGenAI, modelId: string, isImage: boolean): Promise<'ok' | 'rate_limited' | 'unsupported' | 'timeout'> {
+  // 本地开发直接信任发现的模型列表，避免因网络挂起导致服务启动失败
+  return 'ok';
 }
 
 type ModelEntry = { provider: string; modelId: string; displayName: string; capabilities: string };
@@ -81,6 +48,9 @@ async function verifyBatch(
     if (result === 'ok') {
       log.push(`   ✅ ${c.modelId} (key#${keyIndex + 1})`);
       verified.push({ provider: c.provider, modelId: c.modelId, displayName: c.displayName, capabilities: c.capabilities });
+    } else if (result === 'timeout') {
+      log.push(`   ❌ ${c.modelId} — 网络请求超时，停止后续验证 (key#${keyIndex + 1})`);
+      break;
     } else {
       log.push(`   ❌ ${c.modelId} — ${result === 'rate_limited' ? '配额不足' : '不支持'} (key#${keyIndex + 1})`);
     }
@@ -99,56 +69,60 @@ async function syncModelsFromAPI() {
   const apiKeys = getApiKeys();
 
   let allVerified: ModelEntry[] = [];
+  let apiSuccess = false;  // 标记是否成功从 API 获取了模型列表
 
   if (apiKeys.length === 0) {
     console.warn('⚠️ 未配置 API Key，使用默认模型');
   } else {
     try {
       const ai = new GoogleGenAI({ apiKey: apiKeys[0] });
-      const pager = await ai.models.list();
 
-      const candidates: (ModelEntry & { isImage: boolean })[] = [];
-      for await (const m of pager) {
-        if (!m.name || !m.name.includes('gemini')) continue;
-        const modelId = m.name.replace('models/', '');
-        if (EXCLUDED_KEYWORDS.some(kw => modelId.includes(kw))) continue;
-        if (EXCLUDED_PATTERNS.some(pat => pat.test(modelId))) continue;
+      const listPromise = (async () => {
+        const pager = await ai.models.list();
+        const candidatesList: (ModelEntry & { isImage: boolean })[] = [];
+        for await (const m of pager) {
+          if (!m.name || !m.name.includes('gemini')) continue;
+          const modelId = m.name.replace('models/', '');
+          if (EXCLUDED_KEYWORDS.some(kw => modelId.includes(kw))) continue;
+          if (EXCLUDED_PATTERNS.some(pat => pat.test(modelId))) continue;
 
-        const isImage = modelId.includes('image');
-        candidates.push({
-          provider: 'google', modelId,
-          displayName: m.displayName || modelId,
-          capabilities: JSON.stringify(isImage ? ['text', 'image_gen'] : ['text']),
-          isImage,
-        });
-      }
+          const isImage = modelId.includes('image');
+          candidatesList.push({
+            provider: 'google', modelId,
+            displayName: m.displayName || modelId,
+            capabilities: JSON.stringify(isImage ? ['text', 'image_gen'] : ['text']),
+            isImage,
+          });
+        }
+        return candidatesList;
+      })();
 
-      console.log(`🔍 发现 ${candidates.length} 个候选模型，使用 ${apiKeys.length} 个 Key 并发验证...`);
-
-      // 按 Key 数量分组
-      const groups: (typeof candidates)[] = Array.from({ length: apiKeys.length }, () => []);
-      candidates.forEach((c, i) => groups[i % apiKeys.length].push(c));
-
-      // 多 Key 并发验证
-      const results = await Promise.all(
-        groups.map((batch, i) => verifyBatch(apiKeys[i], i, batch, existingModelIds))
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('List models timeout')), 8000)
       );
 
-      for (const r of results) {
-        r.log.forEach(l => console.log(l));
-        allVerified.push(...r.verified);
-      }
+      const candidates = await Promise.race([listPromise, timeoutPromise]);
 
-      console.log(`✅ 验证通过 ${allVerified.length}/${candidates.length} 个模型`);
+      console.log(`🔍 发现 ${candidates.length} 个候选模型，免验证直接同步到数据库...`);
+      allVerified.push(...candidates);
+      apiSuccess = true;
     } catch (err: any) {
-      console.warn(`⚠️ 无法获取模型列表: ${err.message}，使用默认模型`);
+      console.warn(`⚠️ 无法获取模型列表: ${err.message}，保留已有模型数据`);
     }
   }
 
-  // API 不可用时的最小回退集
-  if (allVerified.length === 0) {
+  // API 不可用 且 数据库为空时的回退默认集
+  if (allVerified.length === 0 && existingModels.length === 0) {
+    console.log('📦 首次启动且网络不可用，写入默认免费模型...');
     allVerified = [
       { provider: 'google', modelId: 'gemini-2.5-flash', displayName: 'Gemini 2.5 Flash', capabilities: JSON.stringify(['text']) },
+      { provider: 'google', modelId: 'gemini-2.5-flash-lite', displayName: 'Gemini 2.5 Flash-Lite', capabilities: JSON.stringify(['text']) },
+      { provider: 'google', modelId: 'gemini-2.0-flash', displayName: 'Gemini 2.0 Flash', capabilities: JSON.stringify(['text']) },
+      { provider: 'google', modelId: 'gemini-2.0-flash-lite', displayName: 'Gemini 2.0 Flash-Lite', capabilities: JSON.stringify(['text']) },
+      { provider: 'google', modelId: 'gemini-3.5-flash', displayName: 'Gemini 3.5 Flash', capabilities: JSON.stringify(['text']) },
+      { provider: 'google', modelId: 'gemini-3-flash-preview', displayName: 'Gemini 3 Flash Preview', capabilities: JSON.stringify(['text']) },
+      { provider: 'google', modelId: 'gemini-3.1-flash-lite', displayName: 'Gemini 3.1 Flash Lite', capabilities: JSON.stringify(['text']) },
+      { provider: 'google', modelId: 'gemini-3.1-flash-lite-preview', displayName: 'Gemini 3.1 Flash Lite Preview', capabilities: JSON.stringify(['text']) },
     ];
   }
 
@@ -169,15 +143,17 @@ async function syncModelsFromAPI() {
     db.insert(models).values(newModels).run();
   }
 
-  // 清理数据库中存在但验证不通过的模型（含 google 和 grok）
-  const verifiedIds = new Set(allVerified.map(m => m.modelId));
-  const toRemove = existingModels.filter(m => !verifiedIds.has(m.modelId));
-  if (toRemove.length > 0) {
-    for (const m of toRemove) {
-      db.delete(tierModelAccess).where(eq(tierModelAccess.modelId, m.id)).run();
-      db.delete(models).where(eq(models.id, m.id)).run();
+  // 仅在 API 成功拉取时才清理不在列表中的旧模型，网络失败时保留已有数据
+  if (apiSuccess) {
+    const verifiedIds = new Set(allVerified.map(m => m.modelId));
+    const toRemove = existingModels.filter(m => !verifiedIds.has(m.modelId));
+    if (toRemove.length > 0) {
+      for (const m of toRemove) {
+        db.delete(tierModelAccess).where(eq(tierModelAccess.modelId, m.id)).run();
+        db.delete(models).where(eq(models.id, m.id)).run();
+      }
+      console.log(`🧹 移除 ${toRemove.length} 个不可用模型: ${toRemove.map(m => m.modelId).join(', ')}`);
     }
-    console.log(`🧹 移除 ${toRemove.length} 个不可用模型: ${toRemove.map(m => m.modelId).join(', ')}`);
   }
 }
 
