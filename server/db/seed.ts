@@ -515,13 +515,6 @@ export async function initDatabase() {
         outputPrice: 0.03,  // ¥0.03 / 1M tokens
       },
       {
-        modelPattern: 'grok-imagine-video',
-        billingType: 'per_call',
-        inputPrice: 0.1,    // ¥0.1 / 次
-        outputPrice: 0,
-        extraParams: JSON.stringify({ '20s': 0.2 }),
-      },
-      {
         modelPattern: 'grok-imagine-image',
         billingType: 'per_call',
         inputPrice: 0.05,   // ¥0.05 / 次

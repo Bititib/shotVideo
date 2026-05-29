@@ -97,6 +97,15 @@ export default function PricingPage() {
         {rules.length === 0 && <div className="text-center text-zinc-500 py-12">暂无计费规则</div>}
       </div>
 
+      {/* 说明提示 */}
+      <div className="mt-6 px-5 py-4 bg-blue-500/5 border border-blue-500/10 rounded-2xl">
+        <p className="text-xs text-blue-400 font-medium mb-1.5">📋 计费说明</p>
+        <ul className="text-[11px] text-zinc-400 space-y-1">
+          <li>• 此页面管理 <span className="text-zinc-300">文本分析（Token）</span> 和 <span className="text-zinc-300">图片生成（按次）</span> 的计费规则</li>
+          <li>• <span className="text-zinc-300">视频生成费率（按秒）</span> 在「系统设置 → 特殊配置」中管理（video_rate_480p / video_rate_720p）</li>
+        </ul>
+      </div>
+
       {/* Edit Modal */}
       {edit && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setEdit(null)}>
