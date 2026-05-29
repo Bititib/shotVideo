@@ -45,8 +45,8 @@ router.get('/models', (_req: Request, res: Response) => {
   const dbModels = db.select().from(models).where(like(models.capabilities, '%"image"%')).all();
 
   // 如果数据库里还没配置，提供一个极简默认后备
-  const sourceModels = dbModels.length > 0 
-    ? dbModels.map(m => ({ id: m.modelId, name: m.displayName })) 
+  const sourceModels = dbModels.length > 0
+    ? dbModels.map(m => ({ id: m.modelId, name: m.displayName }))
     : DEFAULT_IMAGE_MODELS;
 
   const result = sourceModels.map(m => {

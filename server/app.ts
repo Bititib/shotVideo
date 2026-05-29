@@ -41,6 +41,11 @@ const authLimiter = rateLimit({
 export async function createApp() {
   const app = express();
 
+  // 生产环境通常在反向代理（Nginx/Cloudflare）后面，需要信任代理头
+  if (process.env.NODE_ENV === 'production') {
+    app.set('trust proxy', 1);
+  }
+
   // 安全中间件
   app.use(helmet({ contentSecurityPolicy: false }));  // CSP 关闭以兼容 Vite
   // CORS：生产环境限制为指定域名
