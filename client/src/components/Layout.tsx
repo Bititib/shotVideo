@@ -82,7 +82,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <span className="text-[10px] font-semibold text-emerald-400">生成成功才扣费，失败不计费</span>
             </div>
             <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px] text-zinc-500">
-              <span>💬 分析对话</span><span className="text-right text-zinc-400">¥{contactInfo.token_rate || '0.01'}/万字</span>
+              <span>💬 分析(输入)</span><span className="text-right text-zinc-400">¥{contactInfo.token_input_rate || '0.01'}/1M tokens</span>
+              <span>💬 分析(输出)</span><span className="text-right text-zinc-400">¥{contactInfo.token_output_rate || '0.03'}/1M tokens</span>
               <span>📹 视频 480p</span><span className="text-right text-zinc-400">¥{contactInfo.video_rate_480p || '0.03'}/秒</span>
               <span>📹 视频 720p</span><span className="text-right text-zinc-400">¥{contactInfo.video_rate_720p || '0.05'}/秒</span>
               <span>🎨 图片生成</span><span className="text-right text-zinc-400">¥{contactInfo.image_rate || '0.05'}/张</span>
