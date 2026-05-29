@@ -145,117 +145,96 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
     sendEvent({ type: 'status', message: hasRef ? '正在上传参考图并生成...' : `正在生成 ${count} 张图片...`, total: count });
 
     if (hasRef) {
-      // ===== 有参考图：走 /v1/chat/completions + 多模态 messages，并发 n 个请求 =====
-      const upstreamUrl = baseUrl + '/v1/chat/completions';
+      // ===== 有参考图：走 POST /v1/images/edits (multipart/form-data) =====
+      // 只有 grok-imagine-image-edit 支持参考图，强制使用该模型
+      const editModel = 'grok-imagine-image-edit';
+      const upstreamUrl = baseUrl + '/v1/images/edits';
       const completedImages: string[] = new Array(count).fill('');
       let completedCount = 0;
 
-      // 构建多模态 messages：参考图作为 image_url，prompt 作为 text
-      const contentParts: any[] = [];
-      for (const refImg of reference_images.slice(0, 10)) {
-        contentParts.push({ type: 'image_url', image_url: { url: refImg } });
+      // 将 base64 data URI 转为 Blob
+      const refBlobs: Blob[] = [];
+      for (const refImg of reference_images.slice(0, 5)) {
+        try {
+          if (typeof refImg === 'string' && refImg.startsWith('data:')) {
+            const [meta, b64] = refImg.split(',');
+            const mime = meta.match(/data:([^;]+)/)?.[1] || 'image/png';
+            const buf = Buffer.from(b64, 'base64');
+            refBlobs.push(new Blob([buf], { type: mime }));
+          } else if (typeof refImg === 'string' && refImg.startsWith('http')) {
+            // URL 类型：下载后转 Blob
+            const dl = await fetch(refImg);
+            if (dl.ok) refBlobs.push(await dl.blob());
+          }
+        } catch (e) {
+          console.error('[imageGen/edit] 参考图处理失败:', e);
+        }
       }
-      contentParts.push({ type: 'text', text: prompt.trim() });
+
+      if (refBlobs.length === 0) {
+        sendEvent({ type: 'error', message: '参考图解析失败，请重新上传' });
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+
+      console.log(`[imageGen/edit] 参考图 ${refBlobs.length} 张, 并发 ${count} 个请求, model=${editModel}`);
 
       const runSingle = async (index: number) => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 180_000);
 
-        const requestBody = {
-          model,
-          messages: [{ role: 'user', content: contentParts }],
-          stream: true,
-          image_config: { n: 1, size, response_format: 'url' },
-        };
-
         try {
+          // 发送生成中进度
+          sendEvent({ type: 'progress', progress: 10, index });
+
+          const formData = new FormData();
+          formData.append('model', editModel);
+          formData.append('prompt', prompt.trim());
+          formData.append('n', '1');
+          formData.append('size', size);
+          formData.append('response_format', 'url');
+          // 添加所有参考图
+          for (let ri = 0; ri < refBlobs.length; ri++) {
+            formData.append('image[]', refBlobs[ri], `ref_${ri}.png`);
+          }
+
+          sendEvent({ type: 'progress', progress: 30, index });
+
           const upstream = await fetch(upstreamUrl, {
             method: 'POST',
-            headers,
-            body: JSON.stringify(requestBody),
+            headers: { 'Authorization': `Bearer ${channel.apiKey}` },
+            body: formData,
             signal: controller.signal,
           });
           clearTimeout(timer);
 
+          sendEvent({ type: 'progress', progress: 70, index });
+
           if (!upstream.ok) {
             const errText = await upstream.text().catch(() => '');
-            sendEvent({ type: 'image_error', index, message: `请求 #${index + 1} 失败 (${upstream.status}): ${errText.slice(0, 100)}` });
+            console.error(`[imageGen/edit] #${index} 上游返回 ${upstream.status}: ${errText.slice(0, 200)}`);
+            sendEvent({ type: 'image_error', index, message: `请求 #${index + 1} 失败 (${upstream.status})` });
             return;
           }
 
-          const reader = upstream.body?.getReader();
-          if (!reader) return;
+          const result = await upstream.json() as any;
+          const imageUrl = result?.data?.[0]?.url || '';
+          console.log(`[imageGen/edit] #${index} 完成, url=${imageUrl ? '有' : '无'}`);
 
-          const decoder = new TextDecoder();
-          let buffer = '';
-          let imageUrl = '';
-          let lastProgress = -1;
+          sendEvent({ type: 'progress', progress: 100, index });
 
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-              if (!line.startsWith('data: ') || line === 'data: [DONE]') {
-                if (line === 'data: [DONE]' && imageUrl) {
-                  sendEvent({ type: 'image_ready', imageUrl, index, total: count });
-                }
-                continue;
-              }
-              try {
-                const data = JSON.parse(line.slice(6));
-                const delta = data.choices?.[0]?.delta || {};
-                const msg = data.choices?.[0]?.message || {};
-
-                // 提取进度
-                const reasoning = delta.reasoning_content || '';
-                if (reasoning) {
-                  const m = reasoning.match(/(\d+)%/);
-                  if (m) {
-                    const p = parseInt(m[1]);
-                    if (p !== lastProgress) {
-                      lastProgress = p;
-                      sendEvent({ type: 'progress', progress: p, index });
-                    }
-                  }
-                }
-
-                // 提取图片 URL
-                const content = delta.content || msg.content || '';
-                if (content) {
-                  const urlMatch = content.match(/https?:\/\/[^\s"'<>]+/);
-                  if (urlMatch) imageUrl = urlMatch[0];
-                  const srcMatch = content.match(/src="([^"]+)"/);
-                  if (srcMatch) imageUrl = srcMatch[1];
-                  const localMatch = content.match(/(\/v1\/files\/image[^\s"'<>]*)/);
-                  if (localMatch) imageUrl = baseUrl + localMatch[1];
-                  const mdMatch = content.match(/!\[[^\]]*\]\(([^)]+)\)/);
-                  if (mdMatch) {
-                    imageUrl = mdMatch[1];
-                    if (imageUrl.startsWith('/')) imageUrl = baseUrl + imageUrl;
-                  }
-                }
-              } catch { /* ignore */ }
-            }
-          }
-
-          // 流结束
           if (imageUrl) {
-            completedImages[index] = imageUrl;
-            if (!completedImages[index]) {
-              sendEvent({ type: 'image_ready', imageUrl, index, total: count });
-            }
-            completedImages[index] = imageUrl;
+            // 如果是相对路径，补全为完整 URL
+            const fullUrl = imageUrl.startsWith('/') ? baseUrl + imageUrl : imageUrl;
+            completedImages[index] = fullUrl;
+            sendEvent({ type: 'image_ready', imageUrl: fullUrl, index, total: count });
           } else {
             sendEvent({ type: 'image_error', index, message: `图片 #${index + 1} 未返回结果` });
           }
         } catch (err: any) {
           clearTimeout(timer);
           const msg = err.name === 'AbortError' ? '超时' : (err.message || '请求失败');
+          console.error(`[imageGen/edit] #${index} 异常:`, msg);
           sendEvent({ type: 'image_error', index, message: `图片 #${index + 1}: ${msg}` });
         } finally {
           completedCount++;
