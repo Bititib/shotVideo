@@ -4,6 +4,9 @@ export interface VideoModel {
   description: string;
   maxSeconds?: number;
   available: boolean;
+  allowedSeconds?: number[] | null;
+  requireRef?: boolean;
+  series?: string;
 }
 
 export interface VideoGenerateParams {

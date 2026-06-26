@@ -23,9 +23,26 @@ const RATIO_TO_SIZE: Record<string, string> = {
   '21:9': '1680x720',
 };
 
+/** 模型系列信息：计费、时长限制、是否强制参考图 */
+interface ModelMeta {
+  series: '1.0' | '1.5' | 'legacy';
+  allowedSeconds: number[] | null;   // null = 不限制
+  requireRef: boolean;               // 是否必须传参考图
+}
+const MODEL_META: Record<string, ModelMeta> = {
+  'grok-imagine-video-1.5-preview': { series: '1.5', allowedSeconds: [6, 10], requireRef: true },
+  'grok-imagine-1.0-video':         { series: '1.0', allowedSeconds: [6, 10], requireRef: false },
+  'grok-imagine-video-1.5-fast':    { series: '1.5', allowedSeconds: [6, 10], requireRef: false },
+  'grok-imagine-video':             { series: 'legacy', allowedSeconds: null, requireRef: false },
+  'grok-4.3-video':                 { series: 'legacy', allowedSeconds: null, requireRef: false },
+};
+
 const DEFAULT_VIDEO_MODELS = [
   { id: 'grok-imagine-video', name: 'Grok Video', description: 'Grok AI 视频生成，支持 6-30s', maxSeconds: 30, icon: '🎬' },
   { id: 'grok-4.3-video', name: 'Grok 4.3 Video', description: 'Grok 4.3 高级视频生成', maxSeconds: 30, icon: '🎥' },
+  { id: 'grok-imagine-video-1.5-preview', name: 'Grok 1.5 Preview', description: '图生视频，必须提供参考图，6/10秒', maxSeconds: 10, icon: '🖼️' },
+  { id: 'grok-imagine-1.0-video', name: 'Grok 1.0 Video', description: '文生/图生视频，6/10秒', maxSeconds: 10, icon: '🎥' },
+  { id: 'grok-imagine-video-1.5-fast', name: 'Grok 1.5 Fast', description: '快速文生/图生视频，6/10秒', maxSeconds: 10, icon: '⚡' },
 ];
 
 /** 查找支持指定视频模型的渠道 */
@@ -48,11 +65,16 @@ router.get('/models', (_req: Request, res: Response) => {
 
   const result = sourceModels.map(m => {
     const preset = DEFAULT_VIDEO_MODELS.find(d => d.id === m.id);
+    const meta = MODEL_META[m.id];
     return {
       id: m.id,
       name: m.name || preset?.name || m.id,
       description: preset?.description || 'AI 视频生成服务',
       available: findVideoChannel(m.id) !== null,
+      maxSeconds: preset?.maxSeconds,
+      allowedSeconds: meta?.allowedSeconds || null,
+      requireRef: meta?.requireRef || false,
+      series: meta?.series || 'legacy',
     };
   });
 
@@ -74,6 +96,19 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
     return res.status(400).json({ error: '请输入视频描述' });
   }
 
+  const meta = MODEL_META[model];
+
+  // 模型时长限制校验
+  if (meta?.allowedSeconds && !meta.allowedSeconds.includes(Number(video_length))) {
+    return res.status(400).json({ error: `模型 ${model} 只支持 ${meta.allowedSeconds.join('/')} 秒` });
+  }
+
+  // 强制参考图校验（grok-imagine-video-1.5-preview 必须提供且只能 1 张）
+  const hasRef = Array.isArray(reference_images) && reference_images.length > 0;
+  if (meta?.requireRef && !hasRef) {
+    return res.status(400).json({ error: `模型 ${model} 必须提供参考图` });
+  }
+
   const channel = findVideoChannel(model);
   if (!channel) {
     return res.status(503).json({ error: '未配置视频生成渠道。请在管理后台添加渠道或设置 GROK2API_BASE_URL。' });
@@ -91,12 +126,18 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
 
   const startTime = Date.now();
 
-  // 视频计费费率
+  // 视频计费费率——按模型系列分级
   const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
   const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
-  const VIDEO_RATE: Record<string, number> = {
+  const BASE_RATE: Record<string, number> = {
     '480p': parseFloat(rate480?.value || '0.03'),
     '720p': parseFloat(rate720?.value || '0.05'),
+  };
+  // 1.5 系列费率更高
+  const seriesMultiplier = meta?.series === '1.5' ? 1.67 : meta?.series === '1.0' ? 1.0 : 1.0;
+  const VIDEO_RATE: Record<string, number> = {
+    '480p': Math.round(BASE_RATE['480p'] * seriesMultiplier * 100) / 100,
+    '720p': Math.round(BASE_RATE['720p'] * seriesMultiplier * 100) / 100,
   };
 
   // 预估费用并检查余额
@@ -138,7 +179,6 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
 
   const baseUrl = channel.baseUrl.replace(/\/+$/, '');
   const size = RATIO_TO_SIZE[aspect_ratio] || '1280x720';
-  const hasRef = Array.isArray(reference_images) && reference_images.length > 0;
 
   try {
     // ━━━ Step 1: 创建视频任务（multipart/form-data） ━━━
@@ -152,8 +192,10 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
     formData.append('resolution_name', resolution);
 
     // 参考图：将 base64 dataURL 转为 Blob 文件上传
+    // 1.5-preview 只允许 1 张，其他模型最多 5 张
+    const maxRefs = meta?.requireRef ? 1 : 5;
     if (hasRef) {
-      for (let i = 0; i < Math.min(reference_images.length, 5); i++) {
+      for (let i = 0; i < Math.min(reference_images.length, maxRefs); i++) {
         const dataUrl: string = reference_images[i];
         const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
         if (matches) {
@@ -231,9 +273,9 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
         if (status.status === 'processing' || status.status === 'queued') {
           sendEvent({ type: 'progress', progress });
           sendEvent({ type: 'status', message: `视频生成中 ${progress}%` });
-        } else if (status.status === 'completed') {
-          // ━━━ Step 3: 生成完成 ━━━
-          const videoUrl = status.url || `${baseUrl}/v1/files/video?id=${videoId}`;
+        } else if (status.status === 'completed' || status.status === 'success') {
+          // ━━━ Step 3: 生成完成（兼容 url / video_url / result_url 三个字段） ━━━
+          const videoUrl = status.url || status.video_url || status.result_url || `${baseUrl}/v1/files/video?id=${videoId}`;
           console.log(`[video] ✅ 生成完成: ${videoUrl}`);
           sendEvent({ type: 'progress', progress: 100 });
           sendEvent({ type: 'complete', videoUrl });

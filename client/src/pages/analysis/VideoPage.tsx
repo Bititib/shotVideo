@@ -28,7 +28,7 @@ const ASPECT_RATIOS = [
   { value: '2:3', label: '2:3', icon: Smartphone },
   { value: '21:9', label: '21:9', icon: RectangleHorizontal },
 ];
-const DURATIONS = [
+const ALL_DURATIONS = [
   { value: 6, label: '6 秒' }, { value: 10, label: '10 秒' },
   { value: 12, label: '12 秒' }, { value: 16, label: '16 秒' },
   { value: 20, label: '20 秒' }, { value: 30, label: '30 秒' },
@@ -95,6 +95,18 @@ export default function VideoPage() {
       })
       .catch(() => {});
   }, []);
+
+  // 当选中模型变化时，动态调整可选时长
+  const currentModel = models.find(m => m.id === selectedModel);
+  const DURATIONS = currentModel?.allowedSeconds
+    ? ALL_DURATIONS.filter(d => currentModel.allowedSeconds!.includes(d.value))
+    : ALL_DURATIONS;
+
+  useEffect(() => {
+    if (currentModel?.allowedSeconds && !currentModel.allowedSeconds.includes(duration)) {
+      setDuration(currentModel.allowedSeconds[0]);
+    }
+  }, [selectedModel]);
 
   /** 压缩参考图：缩放到 maxSize 并转为 JPEG base64，避免请求体过大 */
   const compressImage = (file: File, maxSize = 768, quality = 0.7): Promise<string> =>
@@ -201,6 +213,7 @@ export default function VideoPage() {
                     {selectedModel === m.id && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
                   </div>
                   <p className="text-xs text-zinc-500 mt-1">{m.description}</p>
+                  {m.requireRef && <p className="text-[10px] text-amber-400/80 mt-1 flex items-center gap-1">⚠️ 必须提供参考图</p>}
                 </button>
               ))}
               <div className="p-4 rounded-xl border border-dashed border-white/5 opacity-40 mt-4">
@@ -226,7 +239,7 @@ export default function VideoPage() {
                   <Sparkles className="w-8 h-8 text-indigo-400/60" />
                 </div>
                 <p className="text-sm text-zinc-500 mb-1">输入描述，生成AI视频</p>
-                <p className="text-[11px] text-zinc-700">支持 6-30 秒视频 · 多种比例 · 多种分辨率</p>
+                <p className="text-[11px] text-zinc-700">支持多种模型 · 多种比例 · 多种分辨率</p>
               </div>
             </div>
           ) : (

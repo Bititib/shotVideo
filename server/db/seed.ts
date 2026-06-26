@@ -130,6 +130,9 @@ async function syncModelsFromAPI() {
   allVerified.push(
     { provider: 'grok', modelId: 'grok-imagine-video', displayName: 'Grok Video', capabilities: JSON.stringify(['video']) },
     { provider: 'grok', modelId: 'grok-4.3-video', displayName: 'Grok 4.3 Video', capabilities: JSON.stringify(['video']) },
+    { provider: 'grok', modelId: 'grok-imagine-video-1.5-preview', displayName: 'Grok Video 1.5 Preview', capabilities: JSON.stringify(['video']) },
+    { provider: 'grok', modelId: 'grok-imagine-1.0-video', displayName: 'Grok Video 1.0', capabilities: JSON.stringify(['video']) },
+    { provider: 'grok', modelId: 'grok-imagine-video-1.5-fast', displayName: 'Grok Video 1.5 Fast', capabilities: JSON.stringify(['video']) },
     { provider: 'grok', modelId: 'grok-imagine-image', displayName: 'Grok Image', capabilities: JSON.stringify(['image']) },
     { provider: 'grok', modelId: 'grok-imagine-image-lite', displayName: 'Grok Image Lite', capabilities: JSON.stringify(['image']) },
     { provider: 'grok', modelId: 'grok-imagine-image-pro', displayName: 'Grok Image Pro', capabilities: JSON.stringify(['image']) },
