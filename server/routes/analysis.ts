@@ -19,7 +19,8 @@ const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024
  */
 function resolveModel(
   req: TierRequest,
-  preferImageGen = false
+  preferImageGen = false,
+  preferTts = false
 ): { id: number; modelId: string; apiKey: string | null } | undefined {
   const available = req.availableModels || [];
   const requestedModelId = req.body?.modelId as string | undefined;
@@ -31,11 +32,14 @@ function resolveModel(
     // 指定的不在列表中，忽略，走自动选择
   }
 
-  // 自动选择：图像生成模型 vs 文本分析模型
+  // 自动选择：图像生成模型 vs 语音合成模型 vs 文本分析模型
   if (preferImageGen) {
     return available.find(m => m.modelId.includes('image'));
   }
-  return available.find(m => m.modelId.includes('flash') && !m.modelId.includes('image')) || available[0];
+  if (preferTts) {
+    return available.find(m => m.modelId.includes('tts')) || available.find(m => m.modelId.includes('flash'));
+  }
+  return available.find(m => m.modelId.includes('flash') && !m.modelId.includes('image') && !m.modelId.includes('tts')) || available[0];
 }
 
 // 通用辅助：执行分析请求 + 保存内容
@@ -58,15 +62,19 @@ async function handleAnalysis(
     try {
       const contentType = analysisType === 'copywriting' ? 'copywriting'
         : analysisType === 'generate_image' || analysisType === 'modify_prompt' ? 'image'
+        : analysisType === 'generate_tts' ? 'audio'
         : 'analysis';
-      const title = req.body?.videoTitle || req.body?.accountHandle || req.body?.prompt || analysisType;
+      const title = contentType === 'audio'
+        ? `语音合成 - ${req.body?.voice || '未知'}`
+        : (req.body?.videoTitle || req.body?.accountHandle || req.body?.prompt || req.body?.text || analysisType);
+      const resultTextStr = typeof result === 'string' ? result : JSON.stringify(result);
       ContentService.save({
         userId: req.userId!,
         orgId: req.orgId || null,
         type: contentType,
         title: typeof title === 'string' ? title.slice(0, 200) : analysisType,
-        inputText: (req.body?.videoTitle || req.body?.prompt || '').slice(0, 500),
-        resultText: typeof result === 'string' ? result.slice(0, 5000) : JSON.stringify(result).slice(0, 5000),
+        inputText: (req.body?.videoTitle || req.body?.prompt || req.body?.text || '').slice(0, 500),
+        resultText: contentType === 'audio' ? resultTextStr : resultTextStr.slice(0, 5000),
         modelId: req.availableModels?.[0]?.modelId,
       });
     } catch (e) { console.error('[content] 保存失败:', e); }
@@ -264,6 +272,23 @@ router.post('/generate-image',
       if (!modelConfig) throw { status: 403, message: '当前等级无法使用图像生成模型' };
 
       return AIService.generateImage(prompt, aspectRatio || '16:9', req.file, modelConfig);
+    });
+  }
+);
+
+// 语音合成 (TTS)
+router.post('/generate-tts',
+  authMiddleware,
+  tierMiddleware('tts'),
+  quotaMiddleware,
+  async (req: TierRequest, res: Response) => {
+    await handleAnalysis(req, res, 'generate_tts', async () => {
+      const { text, voice } = req.body;
+      if (!text) throw { status: 400, message: '请提供合成文本' };
+      if (!voice) throw { status: 400, message: '请提供音色名称' };
+
+      const modelConfig = resolveModel(req, false, true);
+      return AIService.generateTts(text, voice, modelConfig);
     });
   }
 );

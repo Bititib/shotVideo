@@ -69,4 +69,8 @@ export const analysisApi = {
   extractImage(url: string) {
     return api.post<Blob>('/proxy/image', { url });
   },
+
+  generateTts(text: string, voice: string, modelId?: string) {
+    return api.post<{ audioBase64: string; mimeType: string }>('/analysis/generate-tts', { text, voice, modelId });
+  },
 };

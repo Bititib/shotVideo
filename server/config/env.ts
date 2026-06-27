@@ -9,6 +9,7 @@ export const env = {
   JWT_SECRET: process.env.JWT_SECRET || 'dev-secret-change-in-production',
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
+  GEMINI_API_BASE_URL: process.env.GEMINI_API_BASE_URL || 'http://172.245.16.80:7860',
   ADMIN_EMAIL: process.env.ADMIN_EMAIL || 'admin@admin.com',
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'admin123',
   GROK2API_BASE_URL: process.env.GROK2API_BASE_URL || '',

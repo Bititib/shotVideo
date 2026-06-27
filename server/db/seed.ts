@@ -66,45 +66,52 @@ async function verifyBatch(
 async function syncModelsFromAPI() {
   const existingModels = db.select().from(models).all();
   const existingModelIds = new Set(existingModels.map(m => m.modelId));
-  const apiKeys = getApiKeys();
+  const apiKey = env.GEMINI_API_KEY;
 
   let allVerified: ModelEntry[] = [];
-  let apiSuccess = false;  // 标记是否成功从 API 获取了模型列表
+  let apiSuccess = false;
 
-  if (apiKeys.length === 0) {
+  if (!apiKey) {
     console.warn('⚠️ 未配置 API Key，使用默认模型');
   } else {
     try {
-      const ai = new GoogleGenAI({ apiKey: apiKeys[0] });
+      // 通过代理端 /v1/models 拉取可用模型列表
+      const res = await fetch(`${env.GEMINI_API_BASE_URL}/v1/models`, {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(8000),
+      });
 
-      const listPromise = (async () => {
-        const pager = await ai.models.list();
-        const candidatesList: (ModelEntry & { isImage: boolean })[] = [];
-        for await (const m of pager) {
-          if (!m.name || !m.name.includes('gemini')) continue;
-          const modelId = m.name.replace('models/', '');
-          if (EXCLUDED_KEYWORDS.some(kw => modelId.includes(kw))) continue;
-          if (EXCLUDED_PATTERNS.some(pat => pat.test(modelId))) continue;
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 
-          const isImage = modelId.includes('image');
-          candidatesList.push({
-            provider: 'google', modelId,
-            displayName: m.displayName || modelId,
-            capabilities: JSON.stringify(isImage ? ['text', 'image_gen'] : ['text']),
-            isImage,
-          });
-        }
-        return candidatesList;
-      })();
+      const data = await res.json() as any;
+      const modelList: { id: string }[] = data.data || data.models || [];
 
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('List models timeout')), 8000)
-      );
+      for (const m of modelList) {
+        const modelId = m.id;
+        if (!modelId) continue;
 
-      const candidates = await Promise.race([listPromise, timeoutPromise]);
+        // 确定 capabilities
+        let capabilities: string[] = ['text'];
+        if (modelId.includes('tts')) capabilities = ['tts'];
+        else if (modelId.includes('image')) capabilities = ['text', 'image_gen'];
+        else if (modelId.includes('embedding')) capabilities = ['embedding'];
+        else if (modelId.includes('imagen')) capabilities = ['image_gen'];
 
-      console.log(`🔍 发现 ${candidates.length} 个候选模型，免验证直接同步到数据库...`);
-      allVerified.push(...candidates);
+        // 排除不适合内容分析的模型
+        if (['embedding', 'robotics', 'computer-use'].some(kw => modelId.includes(kw))) continue;
+
+        // 生成友好的显示名
+        const displayName = modelId
+          .split('-')
+          .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ')
+          .replace('Preview', '(Preview)')
+          .replace('Tts', 'TTS');
+
+        allVerified.push({ provider: 'google', modelId, displayName, capabilities: JSON.stringify(capabilities) });
+      }
+
+      console.log(`🔍 从代理端发现 ${allVerified.length} 个可用模型`);
       apiSuccess = true;
     } catch (err: any) {
       console.warn(`⚠️ 无法获取模型列表: ${err.message}，保留已有模型数据`);
@@ -137,6 +144,8 @@ async function syncModelsFromAPI() {
     { provider: 'grok', modelId: 'grok-imagine-image-lite', displayName: 'Grok Image Lite', capabilities: JSON.stringify(['image']) },
     { provider: 'grok', modelId: 'grok-imagine-image-pro', displayName: 'Grok Image Pro', capabilities: JSON.stringify(['image']) },
     { provider: 'grok', modelId: 'grok-imagine-image-edit', displayName: 'Grok Image Edit', capabilities: JSON.stringify(['image']) },
+    { provider: 'google', modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', capabilities: JSON.stringify(['tts']) },
+    { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) }
   );
 
   // 增量插入新模型
@@ -388,14 +397,14 @@ export async function initDatabase() {
         name: 'basic',
         displayName: '基础会员',
         dailyQuota: 30,
-        allowedFeatures: JSON.stringify(['general', 'ecommerce', 'image', 'copywriting', 'account']),
+        allowedFeatures: JSON.stringify(['general', 'ecommerce', 'image', 'copywriting', 'account', 'tts']),
         sortOrder: 1,
       },
       {
         name: 'pro',
         displayName: '专业会员',
         dailyQuota: 100,
-        allowedFeatures: JSON.stringify(['general', 'ecommerce', 'image', 'copywriting', 'account', 'generate_image', 'modify_prompt']),
+        allowedFeatures: JSON.stringify(['general', 'ecommerce', 'image', 'copywriting', 'account', 'generate_image', 'modify_prompt', 'tts']),
         sortOrder: 2,
       },
       {
@@ -406,6 +415,20 @@ export async function initDatabase() {
         sortOrder: 3,
       },
     ]).run();
+  } else {
+    // 保证已存在等级具有 tts 权限
+    try {
+      for (const t of existingTiers) {
+        const allowed: string[] = JSON.parse(t.allowedFeatures || '[]');
+        if ((t.name === 'basic' || t.name === 'pro') && !allowed.includes('tts')) {
+          allowed.push('tts');
+          db.update(tiers).set({ allowedFeatures: JSON.stringify(allowed) }).where(eq(tiers.id, t.id)).run();
+          console.log(`🔄 已迁移：为 ${t.name} 等级添加 tts 权限`);
+        }
+      }
+    } catch (e) {
+      console.error('更新等级权限失败:', e);
+    }
   }
 
   // 3) 从 Google API 动态发现可用模型，同步到数据库
