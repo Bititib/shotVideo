@@ -212,9 +212,12 @@ export class AIService {
     }
   }
 
-  /** AI 图像生成 */
+  /** AI 图像生成 — 使用代理端图像生成接口 */
   static async generateImage(prompt: string, aspectRatio: string, referenceFile?: Express.Multer.File, modelConfig?: ModelConfig) {
-    const modelId = modelConfig?.modelId || 'gemini-3-pro-image-preview';
+    const modelId = modelConfig?.modelId || 'gemini-3-pro-image';
+    const apiKey = getApiKey(modelConfig);
+    // 代理端图片生成模型需要 models%2F 前缀
+    const url = `${env.GEMINI_API_BASE_URL}/v1beta/models/models%2F${modelId}:generateContent?key=${apiKey}`;
 
     let parts: any[] = [{ text: `${prompt} (aspect ratio: ${aspectRatio})` }];
 
@@ -228,16 +231,31 @@ export class AIService {
       try { fs.unlinkSync(referenceFile.path); } catch {}
     }
 
-    const response = await this.callGenerateContent(modelId, {
-      contents: [{ parts }]
-    }, modelConfig);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ contents: [{ role: 'user', parts }] }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      if (res.status === 429) {
+        throw new Error('AI 图像生成频率超限，请稍后再试');
+      }
+      throw new Error(`图像生成接口调用失败: ${res.status} - ${errText}`);
+    }
+
+    const response = await res.json() as any;
 
     for (const part of response.candidates?.[0]?.content?.parts || []) {
       if (part.inlineData) {
-        return { imageBase64: part.inlineData.data, mimeType: 'image/png' };
+        return { imageBase64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'image/png' };
       }
     }
-    throw new Error('图像生成失败');
+    throw new Error('图像生成失败：未返回图片数据');
   }
 
   /** 语音合成 (TTS) — 使用代理端专用 TTS 接口 */
