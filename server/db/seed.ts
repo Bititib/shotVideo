@@ -397,14 +397,14 @@ export async function initDatabase() {
         name: 'basic',
         displayName: '基础会员',
         dailyQuota: 30,
-        allowedFeatures: JSON.stringify(['general', 'ecommerce', 'image', 'copywriting', 'account', 'tts']),
+        allowedFeatures: JSON.stringify(['general', 'ecommerce', 'image', 'copywriting', 'account', 'tts', 'video']),
         sortOrder: 1,
       },
       {
         name: 'pro',
         displayName: '专业会员',
         dailyQuota: 100,
-        allowedFeatures: JSON.stringify(['general', 'ecommerce', 'image', 'copywriting', 'account', 'generate_image', 'modify_prompt', 'tts']),
+        allowedFeatures: JSON.stringify(['general', 'ecommerce', 'image', 'copywriting', 'account', 'generate_image', 'modify_prompt', 'tts', 'video']),
         sortOrder: 2,
       },
       {
@@ -416,14 +416,21 @@ export async function initDatabase() {
       },
     ]).run();
   } else {
-    // 保证已存在等级具有 tts 权限
+    // 保证已存在等级具有 tts / video 权限
     try {
       for (const t of existingTiers) {
         const allowed: string[] = JSON.parse(t.allowedFeatures || '[]');
-        if ((t.name === 'basic' || t.name === 'pro') && !allowed.includes('tts')) {
-          allowed.push('tts');
+        if (allowed.includes('*')) continue;
+        let changed = false;
+        for (const feat of ['tts', 'video']) {
+          if ((t.name === 'basic' || t.name === 'pro') && !allowed.includes(feat)) {
+            allowed.push(feat);
+            changed = true;
+            console.log(`🔄 已迁移：为 ${t.name} 等级添加 ${feat} 权限`);
+          }
+        }
+        if (changed) {
           db.update(tiers).set({ allowedFeatures: JSON.stringify(allowed) }).where(eq(tiers.id, t.id)).run();
-          console.log(`🔄 已迁移：为 ${t.name} 等级添加 tts 权限`);
         }
       }
     } catch (e) {

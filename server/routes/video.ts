@@ -82,7 +82,7 @@ router.get('/models', (_req: Request, res: Response) => {
 });
 
 /** POST /api/video/generate — SSE 流式视频生成（异步轮询模式） */
-router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quotaMiddleware, async (req: TierRequest, res: Response) => {
+router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddleware, async (req: TierRequest, res: Response) => {
   const {
     prompt,
     model = 'grok-imagine-video',
