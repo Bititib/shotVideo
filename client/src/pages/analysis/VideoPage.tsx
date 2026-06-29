@@ -36,6 +36,24 @@ const ALL_DURATIONS = [
 const RESOLUTIONS = [{ value: '480p', label: '480p' }, { value: '720p', label: '720p' }];
 const MAX_REFS = 10;
 
+/** 将比例字符串转换为 CSS aspect-ratio 数值 */
+const ASPECT_RATIO_CSS: Record<string, string> = {
+  '16:9': '16/9',
+  '9:16': '9/16',
+  '1:1': '1/1',
+  '4:3': '4/3',
+  '3:4': '3/4',
+  '3:2': '3/2',
+  '2:3': '2/3',
+  '21:9': '21/9',
+};
+const getAspectStyle = (ratio?: string) => {
+  const css = ratio ? ASPECT_RATIO_CSS[ratio] : undefined;
+  return css ? { aspectRatio: css } : undefined;
+};
+/** 竖屏比例需要限制卡片最大宽度，避免太高 */
+const isVertical = (ratio?: string) => ['9:16', '3:4', '2:3'].includes(ratio || '');
+
 function CustomSelect({ value, options, onChange }: any) {
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -248,11 +266,11 @@ export default function VideoPage() {
               {tasks.length > 0 && (
                 <div>
                   <p className="text-xs text-zinc-500 mb-4 font-semibold tracking-wider uppercase">当前任务 ({tasks.length})</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
                     {tasks.map((task) => (
-                      <div key={task.id} className={`group relative rounded-2xl overflow-hidden border flex flex-col transition-all ${task.status === 'generating' ? 'border-indigo-500/30 bg-indigo-500/[0.03]' : task.status === 'error' ? 'border-red-500/20 bg-red-500/[0.03]' : 'border-white/5 bg-white/[0.02] hover:border-indigo-500/30'}`}>
+                      <div key={task.id} className={`group relative rounded-2xl overflow-hidden border flex flex-col transition-all ${isVertical(task.metadata.aspect_ratio) ? 'max-w-[220px]' : ''} ${task.status === 'generating' ? 'border-indigo-500/30 bg-indigo-500/[0.03]' : task.status === 'error' ? 'border-red-500/20 bg-red-500/[0.03]' : 'border-white/5 bg-white/[0.02] hover:border-indigo-500/30'}`}>
                         {/* 视频区域 */}
-                        <div className="relative aspect-video w-full bg-black flex items-center justify-center overflow-hidden">
+                        <div className="relative w-full bg-black flex items-center justify-center overflow-hidden" style={getAspectStyle(task.metadata.aspect_ratio) || { aspectRatio: '16/9' }}>
                           {task.status === 'generating' ? (
                             <>
                               <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.03] to-transparent animate-[shimmer_2s_infinite]" style={{ backgroundSize: '200% 100%' }} />
@@ -273,7 +291,7 @@ export default function VideoPage() {
                             </>
                           ) : task.status === 'complete' && task.videoUrl ? (
                             <>
-                              <video src={task.videoUrl} className="w-full h-full object-cover" preload="metadata" playsInline muted loop
+                              <video src={task.videoUrl} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain' : 'object-cover'}`} preload="metadata" playsInline muted loop
                                 onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
                                 onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
                               <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors cursor-pointer" onClick={() => setPlayingVideo({ url: task.videoUrl!, prompt: task.prompt })}>
@@ -321,11 +339,11 @@ export default function VideoPage() {
               {history.length > 0 && (
                 <div>
                   <p className="text-xs text-zinc-500 mb-4 font-semibold tracking-wider uppercase">历史生成 ({history.length})</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
                     {history.map((h) => (
-                      <div key={h.id} onClick={() => setPlayingVideo({ url: h.resultUrl, prompt: h.title || h.inputText || '' })} className="group relative rounded-2xl overflow-hidden border border-white/5 bg-white/[0.02] hover:border-indigo-500/30 transition-all flex flex-col cursor-pointer">
-                        <div className="relative aspect-video w-full bg-black flex items-center justify-center overflow-hidden">
-                          <video src={h.resultUrl} className="w-full h-full object-cover" preload="metadata" playsInline muted loop
+                      <div key={h.id} onClick={() => setPlayingVideo({ url: h.resultUrl, prompt: h.title || h.inputText || '' })} className={`group relative rounded-2xl overflow-hidden border border-white/5 bg-white/[0.02] hover:border-indigo-500/30 transition-all flex flex-col cursor-pointer ${isVertical(h.metadata?.aspect_ratio) ? 'max-w-[220px]' : ''}`}>
+                        <div className="relative w-full bg-black flex items-center justify-center overflow-hidden" style={getAspectStyle(h.metadata?.aspect_ratio) || { aspectRatio: '16/9' }}>
+                          <video src={h.resultUrl} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain' : 'object-cover'}`} preload="metadata" playsInline muted loop
                             onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
                             onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
                           <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors">
