@@ -226,9 +226,25 @@ export default function VideoPage() {
               {models.map((m) => (
                 <button key={m.id} onClick={() => setSelectedModel(m.id)}
                   className={`w-full text-left px-4 py-3 rounded-xl border transition-all ${selectedModel === m.id ? 'border-indigo-500/50 bg-indigo-500/10' : 'border-white/5 bg-white/[0.02] hover:border-white/10'}`}>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-medium text-white">{m.name}</p>
-                    {selectedModel === m.id && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
+                    <div className="flex items-center gap-2">
+                      {m.rates && (
+                        <div className="group relative">
+                          <span className="text-[10px] bg-white/5 text-zinc-400 px-1.5 py-0.5 rounded border border-white/5 cursor-help hover:bg-indigo-500/20 hover:text-indigo-300 transition-colors">
+                            ¥{m.rates['720p']?.toFixed(2)}/秒
+                          </span>
+                          <div className="absolute bottom-full right-0 mb-2 w-36 hidden group-hover:block bg-[#161616] border border-white/10 p-2.5 rounded-lg shadow-2xl z-50 text-[10px] text-zinc-400 pointer-events-none">
+                            <p className="font-semibold text-zinc-200 mb-1.5 border-b border-white/5 pb-1">资费详情</p>
+                            <div className="space-y-1">
+                              <p className="flex justify-between"><span>• 480p(标清):</span> <span className="text-indigo-400 font-medium">¥{m.rates['480p']?.toFixed(2)}/秒</span></p>
+                              <p className="flex justify-between"><span>• 720p(高清):</span> <span className="text-indigo-400 font-medium">¥{m.rates['720p']?.toFixed(2)}/秒</span></p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {selectedModel === m.id && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
+                    </div>
                   </div>
                   <p className="text-xs text-zinc-500 mt-1">{m.description}</p>
                   {m.requireRef && <p className="text-[10px] text-amber-400/80 mt-1 flex items-center gap-1">⚠️ 必须提供参考图</p>}

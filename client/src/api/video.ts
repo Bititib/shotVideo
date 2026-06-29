@@ -7,6 +7,10 @@ export interface VideoModel {
   allowedSeconds?: number[] | null;
   requireRef?: boolean;
   series?: string;
+  rates?: {
+    '480p': number;
+    '720p': number;
+  };
 }
 
 export interface VideoGenerateParams {

@@ -63,9 +63,16 @@ router.get('/models', (_req: Request, res: Response) => {
     ? dbModels.map(m => ({ id: m.modelId, name: m.displayName })) 
     : DEFAULT_VIDEO_MODELS;
 
+  const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
+  const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
+  const base480 = parseFloat(rate480?.value || '0.03');
+  const base720 = parseFloat(rate720?.value || '0.05');
+
   const result = sourceModels.map(m => {
     const preset = DEFAULT_VIDEO_MODELS.find(d => d.id === m.id);
     const meta = MODEL_META[m.id];
+    const multiplier = meta?.series === '1.5' ? 1.67 : 1.0;
+
     return {
       id: m.id,
       name: m.name || preset?.name || m.id,
@@ -75,6 +82,10 @@ router.get('/models', (_req: Request, res: Response) => {
       allowedSeconds: meta?.allowedSeconds || null,
       requireRef: meta?.requireRef || false,
       series: meta?.series || 'legacy',
+      rates: {
+        '480p': Math.round(base480 * multiplier * 100) / 100,
+        '720p': Math.round(base720 * multiplier * 100) / 100,
+      }
     };
   });
 
