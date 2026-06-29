@@ -140,9 +140,45 @@ export default function TokensPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1.5">额度（元，-1=无限）</label>
+                  <label className="block text-xs text-zinc-400 mb-1.5 font-medium flex items-center justify-between">
+                    <span>额度（元，-1=无限）</span>
+                    <span className="text-[10px] text-zinc-500 font-normal">快捷充值</span>
+                  </label>
                   <input type="number" value={edit.balance} onChange={e => setEdit({ ...edit, balance: e.target.value })} step="0.01"
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
+                  <div className="flex gap-1.5 mt-2">
+                    {[50, 100, 500].map(amount => (
+                      <button
+                        key={amount}
+                        type="button"
+                        onClick={() => {
+                          const current = parseFloat(edit.balance);
+                          const base = isNaN(current) || current === -1 ? 0 : current;
+                          setEdit({ ...edit, balance: (base + amount).toFixed(2) });
+                        }}
+                        className="flex-1 py-1 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded-lg text-[10px] font-medium transition-colors border border-blue-500/15 text-center"
+                      >
+                        +{amount}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const amountStr = prompt('请输入充值金额（输入正数增加，负数扣减）：');
+                        if (amountStr) {
+                          const amount = parseFloat(amountStr);
+                          if (!isNaN(amount)) {
+                            const current = parseFloat(edit.balance);
+                            const base = isNaN(current) || current === -1 ? 0 : current;
+                            setEdit({ ...edit, balance: Math.max(-1, base + amount).toFixed(2) });
+                          }
+                        }
+                      }}
+                      className="px-2 py-1 bg-zinc-500/10 hover:bg-zinc-500/20 text-zinc-300 rounded-lg text-[10px] font-medium transition-colors border border-zinc-500/15 text-center"
+                    >
+                      自定义
+                    </button>
+                  </div>
                 </div>
                 <div>
                   <label className="block text-xs text-zinc-400 mb-1.5">频率限制（次/分，-1=不限）</label>

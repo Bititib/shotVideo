@@ -5,8 +5,8 @@ import { quotaMiddleware, logUsage } from '../middleware/quota.js';
 import { AIService } from '../services/aiService.js';
 import { ContentService } from '../services/contentService.js';
 import { db } from '../db/index.js';
-import { users, tiers, tierModelAccess, models } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { users, tiers, tierModelAccess, models, settings } from '../db/schema.js';
+import { eq, like } from 'drizzle-orm';
 import multer from 'multer';
 import os from 'os';
 
@@ -62,8 +62,8 @@ async function handleAnalysis(
     try {
       const contentType = analysisType === 'copywriting' ? 'copywriting'
         : analysisType === 'generate_image' || analysisType === 'modify_prompt' ? 'image'
-        : analysisType === 'generate_tts' ? 'audio'
-        : 'analysis';
+          : analysisType === 'generate_tts' ? 'audio'
+            : 'analysis';
       const title = contentType === 'audio'
         ? `语音合成 - ${req.body?.voice || '未知'}`
         : (req.body?.videoTitle || req.body?.accountHandle || req.body?.prompt || req.body?.text || analysisType);
@@ -87,7 +87,7 @@ async function handleAnalysis(
 
     // 尝试从嵌套 JSON 中提取可读信息
     let parsed: any = null;
-    try { parsed = JSON.parse(raw); } catch {}
+    try { parsed = JSON.parse(raw); } catch { }
     const deepMsg = parsed?.error?.message || parsed?.message || '';
     const combined = `${raw} ${deepMsg}`.toLowerCase();
 
@@ -144,6 +144,59 @@ router.get('/models',
       .map(m => ({ modelId: m.modelId, displayName: m.displayName || m.modelId }));
 
     res.json(available);
+  }
+);
+
+// ============ 语音合成可用模型列表 ============
+router.get('/tts-models',
+  optionalAuthMiddleware,
+  (req: TierRequest, res: Response) => {
+    // 从数据库中获取所有能力包含 'tts' 的模型
+    const dbModels = db.select().from(models).where(like(models.capabilities, '%"tts"%')).all();
+
+    // 如果没有，提供兜底
+    const sourceModels = dbModels.length > 0
+      ? dbModels.map(m => ({ modelId: m.modelId, displayName: m.displayName || m.modelId }))
+      : [
+        { modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS' },
+        { modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS' },
+      ];
+
+    // 获取语音合成的费率设置
+    let ttsRate = 0.01; // 默认 ¥0.01/字
+    const rateSetting = db.select().from(settings).where(eq(settings.key, 'tts_rate')).get();
+    if (rateSetting) {
+      ttsRate = parseFloat(rateSetting.value) || 0.01;
+    } else {
+      // 顺便在数据库中初始化这个设置
+      try {
+        db.insert(settings).values({ key: 'tts_rate', value: '0.01', label: '语音合成费率(¥/字)' }).run();
+      } catch { }
+    }
+
+    const result = sourceModels.map(m => {
+      // 优先从 model_pricing 匹配该模型的定价规则
+      const pricingRules = db.select().from(modelPricing).all();
+      const matchedRule = pricingRules.find(r => r.modelPattern === m.modelId);
+
+      let rate = ttsRate;
+      if (matchedRule) {
+        // 如果管理员在「计费设置」里单独配置了该模型的价格，则直接使用，不乘以任何倍率
+        rate = matchedRule.inputPrice;
+      } else {
+        // 否则走系统默认的 tts_rate 加上倍率的兜底逻辑
+        const multiplier = m.modelId.includes('pro') ? 2 : 1;
+        rate = ttsRate * multiplier;
+      }
+
+      return {
+        modelId: m.modelId,
+        displayName: m.displayName,
+        rate,
+      };
+    });
+
+    res.json(result);
   }
 );
 

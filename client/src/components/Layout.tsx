@@ -28,7 +28,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
   const [contactInfo, setContactInfo] = useState<Record<string, string>>({});
 
-  useEffect(() => { getPublicSettings().then(setContactInfo).catch(() => {}); }, []);
+  useEffect(() => { getPublicSettings().then(setContactInfo).catch(() => { }); }, []);
 
   const handleLogout = () => { logout(); navigate('/'); };
 
@@ -59,10 +59,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   to={item.to}
                   end={item.to === '/app'}
                   className={({ isActive }) =>
-                    `flex items-center gap-2 md:gap-3 px-3 py-2 md:px-4 md:py-3 rounded-lg md:rounded-xl text-xs md:text-sm font-medium transition-all shrink-0 md:w-full text-left group relative ${
-                      isActive
-                        ? 'bg-white/10 text-white'
-                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+                    `flex items-center gap-2 md:gap-3 px-3 py-2 md:px-4 md:py-3 rounded-lg md:rounded-xl text-xs md:text-sm font-medium transition-all shrink-0 md:w-full text-left group relative ${isActive
+                      ? 'bg-white/10 text-white'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
                     }`
                   }
                 >
@@ -152,6 +151,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                       </div>
                     </div>
                   )}
+                  {/* 账户余额 */}
+                  <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-white/5 text-[10px]">
+                    <span className="text-zinc-500">账户余额</span>
+                    <span className="font-bold text-emerald-400">¥{user?.balance?.toFixed(2) ?? '0.00'}</span>
+                  </div>
                 </div>
                 <button onClick={handleLogout} className="flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 hover:text-red-400 transition-colors">
                   <LogOut className="w-3.5 h-3.5" />

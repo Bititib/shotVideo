@@ -77,21 +77,19 @@ export default function TtsPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // 1. 初始化，加载可用模型与历史记录
+  // 1. 初始化，加载可用模型与历史记录
   useEffect(() => {
-    analysisApi.getAvailableModels()
+    analysisApi.getTtsModels()
       .then((res: any) => {
-        // 由于 TTS 模型的 capability 是 tts，不包含在 /models text model list 中，
-        // 我们可以直接过滤包含 tts 的模型，或者添加默认的 tts 模型
         const list = res?.data || res || [];
-        const ttsModels = list.filter((m: any) => m.modelId.includes('tts'));
-        if (ttsModels.length > 0) {
-          setModels(ttsModels);
-          setSelectedModel(ttsModels[0].modelId);
+        if (list.length > 0) {
+          setModels(list);
+          setSelectedModel(list[0].modelId);
         } else {
           // 兜底配置
           const defaultTts = [
-            { modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS' },
-            { modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS' },
+            { modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', rate: 0.01 },
+            { modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', rate: 0.02 },
           ];
           setModels(defaultTts);
           setSelectedModel(defaultTts[0].modelId);
@@ -99,8 +97,8 @@ export default function TtsPage() {
       })
       .catch(() => {
         const defaultTts = [
-          { modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS' },
-          { modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS' },
+          { modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', rate: 0.01 },
+          { modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', rate: 0.02 },
         ];
         setModels(defaultTts);
         setSelectedModel(defaultTts[0].modelId);
@@ -261,12 +259,19 @@ export default function TtsPage() {
                       : 'border-white/5 bg-white/[0.02] text-zinc-400 hover:border-white/10 hover:bg-white/[0.04]'
                   }`}
                 >
-                  <div>
-                    <p className="text-xs font-medium">{model.displayName}</p>
-                    <p className="text-[10px] text-zinc-500 mt-0.5">{model.modelId}</p>
+                  <div className="flex-1 min-w-0 pr-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-medium truncate">{model.displayName}</p>
+                      {model.rate !== undefined && (
+                        <span className="text-[9px] bg-yellow-500/10 text-yellow-500 px-1.5 py-0.5 rounded border border-yellow-500/20 font-medium shrink-0">
+                          ¥{model.rate.toFixed(2)}/字
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{model.modelId}</p>
                   </div>
                   {selectedModel === model.modelId && (
-                    <div className="w-4 h-4 rounded-full bg-yellow-500 flex items-center justify-center">
+                    <div className="w-4 h-4 rounded-full bg-yellow-500 flex items-center justify-center shrink-0">
                       <Check className="w-2.5 h-2.5 text-black font-bold" />
                     </div>
                   )}

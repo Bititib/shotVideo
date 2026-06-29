@@ -3,6 +3,7 @@ export interface ImageModel {
   name: string;
   description: string;
   available: boolean;
+  rate?: number;
 }
 
 export interface ImageGenerateParams {

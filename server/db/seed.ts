@@ -144,15 +144,29 @@ async function syncModelsFromAPI() {
     { provider: 'grok', modelId: 'grok-imagine-image-lite', displayName: 'Grok Image Lite', capabilities: JSON.stringify(['image']) },
     { provider: 'grok', modelId: 'grok-imagine-image-pro', displayName: 'Grok Image Pro', capabilities: JSON.stringify(['image']) },
     { provider: 'grok', modelId: 'grok-imagine-image-edit', displayName: 'Grok Image Edit', capabilities: JSON.stringify(['image']) },
+    { provider: 'openai', modelId: 'gpt-image-2', displayName: 'GPT Image 2', capabilities: JSON.stringify(['image']) },
+    { provider: 'openai', modelId: 'gpt-image-2-plus', displayName: 'GPT Image 2 Plus', capabilities: JSON.stringify(['image']) },
+    { provider: 'openai', modelId: 'gpt-image-2-pro', displayName: 'GPT Image 2 Pro', capabilities: JSON.stringify(['image']) },
+    { provider: 'openai', modelId: 'gpt-image-2-max', displayName: 'GPT Image 2 Max', capabilities: JSON.stringify(['image']) },
+    { provider: 'google', modelId: 'gemini-3.1-flash-image-preview', displayName: '🍌 nabanana flash', capabilities: JSON.stringify(['image']) },
+    { provider: 'google', modelId: 'gemini-3-pro-image-preview', displayName: '🍌 nabanana pro', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) }
   );
 
-  // 增量插入新模型
-  const newModels = allVerified.filter(m => !existingModelIds.has(m.modelId));
-  if (newModels.length > 0) {
-    console.log(`📦 添加 ${newModels.length} 个新模型: ${newModels.map(m => m.modelId).join(', ')}`);
-    db.insert(models).values(newModels).run();
+  // 同步或插入模型
+  for (const m of allVerified) {
+    const existing = db.select().from(models).where(eq(models.modelId, m.modelId)).get();
+    if (existing) {
+      if (existing.displayName !== m.displayName || existing.capabilities !== m.capabilities) {
+        db.update(models)
+          .set({ displayName: m.displayName, capabilities: m.capabilities })
+          .where(eq(models.modelId, m.modelId))
+          .run();
+      }
+    } else {
+      db.insert(models).values(m).run();
+    }
   }
 
   // 仅在 API 成功拉取时才清理不在列表中的旧模型，网络失败时保留已有数据
@@ -537,23 +551,88 @@ export async function initDatabase() {
   }
 
   // 8) 种子数据 - 默认计费规则
-  const existingPricing = db.select().from(modelPricing).all();
-  if (existingPricing.length === 0) {
-    console.log('📦 初始化默认计费规则...');
-    db.insert(modelPricing).values([
-      {
-        modelPattern: '*',
-        billingType: 'per_token',
-        inputPrice: 0.01,   // ¥0.01 / 1M tokens
-        outputPrice: 0.03,  // ¥0.03 / 1M tokens
-      },
-      {
-        modelPattern: 'grok-imagine-image',
-        billingType: 'per_call',
-        inputPrice: 0.05,   // ¥0.05 / 次
-        outputPrice: 0,
-      },
-    ]).run();
+  const IMAGE_MULTIPLIER = 3;
+
+  const defaultPricing = [
+    {
+      modelPattern: '*',
+      billingType: 'per_token',
+      inputPrice: 0.01,   // ¥0.01 / 1M tokens
+      outputPrice: 0.03,  // ¥0.03 / 1M tokens
+    },
+    {
+      modelPattern: 'grok-imagine-image',
+      billingType: 'per_call',
+      inputPrice: 0.05 * IMAGE_MULTIPLIER,   // 3x multiplier (0.15)
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'grok-imagine-image-lite',
+      billingType: 'per_call',
+      inputPrice: 0.03 * IMAGE_MULTIPLIER,   // 3x multiplier (0.09)
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'grok-imagine-image-pro',
+      billingType: 'per_call',
+      inputPrice: 0.10 * IMAGE_MULTIPLIER,   // 3x multiplier (0.30)
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'grok-imagine-image-edit',
+      billingType: 'per_call',
+      inputPrice: 0.04 * IMAGE_MULTIPLIER,   // 3x multiplier (0.12)
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'gpt-image-2',
+      billingType: 'per_call',
+      inputPrice: 0.04 * IMAGE_MULTIPLIER,   // 3x multiplier (0.12)
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'gpt-image-2-plus',
+      billingType: 'per_call',
+      inputPrice: 0.08 * IMAGE_MULTIPLIER,   // 3x multiplier (0.24)
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'gpt-image-2-pro',
+      billingType: 'per_call',
+      inputPrice: 0.08 * IMAGE_MULTIPLIER,   // 3x multiplier (0.24)
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'gpt-image-2-max',
+      billingType: 'per_call',
+      inputPrice: 0.12 * IMAGE_MULTIPLIER,   // 3x multiplier (0.36)
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'gemini-3.1-flash-image-preview',
+      billingType: 'per_call',
+      inputPrice: 0.14 * IMAGE_MULTIPLIER,   // 3x multiplier (0.42)
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'gemini-3-pro-image-preview',
+      billingType: 'per_call',
+      inputPrice: 0.20 * IMAGE_MULTIPLIER,   // 3x multiplier (0.60)
+      outputPrice: 0,
+    },
+  ];
+
+  console.log('📦 同步计费规则到数据库 (更新/插入)...');
+  for (const pricing of defaultPricing) {
+    const existing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, pricing.modelPattern)).get();
+    if (existing) {
+      db.update(modelPricing)
+        .set({ inputPrice: pricing.inputPrice, billingType: pricing.billingType, outputPrice: pricing.outputPrice })
+        .where(eq(modelPricing.modelPattern, pricing.modelPattern))
+        .run();
+    } else {
+      db.insert(modelPricing).values(pricing).run();
+    }
   }
 
   console.log('✅ 数据库初始化完成');

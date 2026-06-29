@@ -29,6 +29,12 @@ const DEFAULT_IMAGE_MODELS = [
   { id: 'grok-imagine-image-lite', name: 'Grok Image Lite', description: '快速出图，适合草图和灵感', icon: '⚡' },
   { id: 'grok-imagine-image-pro', name: 'Grok Image Pro', description: '专业级高质量图片生成', icon: '💎' },
   { id: 'grok-imagine-image-edit', name: 'Grok Image Edit', description: '图片编辑与局部重绘', icon: '🖌️' },
+  { id: 'gpt-image-2', name: 'GPT Image 2', description: '新一代高效图片生成模型', icon: '🤖' },
+  { id: 'gpt-image-2-plus', name: 'GPT Image 2 Plus', description: '更精细、细节更丰富的图片生成', icon: '✨' },
+  { id: 'gpt-image-2-pro', name: 'GPT Image 2 Pro', description: '专业版图像生成与编辑', icon: '💼' },
+  { id: 'gpt-image-2-max', name: 'GPT Image 2 Max', description: '极致画质，超高清图像渲染', icon: '👑' },
+  { id: 'gemini-3.1-flash-image-preview', name: '🍌 nabanana flash', description: '2k高清画质，极速生成', icon: '☄️' },
+  { id: 'gemini-3-pro-image-preview', name: '🍌 nabanana pro', description: '2k高清画质，极致细节', icon: '🪐' },
 ];
 
 /** 查找支持指定图片模型的渠道 */
@@ -51,11 +57,13 @@ router.get('/models', (_req: Request, res: Response) => {
 
   const result = sourceModels.map(m => {
     const preset = DEFAULT_IMAGE_MODELS.find(d => d.id === m.id);
+    const rate = PricingService.calculateCost(m.id, 0, 0);
     return {
       id: m.id,
       name: m.name || preset?.name || m.id,
       description: preset?.description || 'AI 图片生成服务',
       available: findImageChannel(m.id) !== null,
+      rate,
     };
   });
 
@@ -70,6 +78,10 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
     aspect_ratio = '1:1',
     n = 1,                       // 生成数量 1~4
     reference_images = [],       // base64 数据 URL 数组
+    quality,
+    output_format,
+    background,
+    output_compression,
   } = req.body;
 
   if (!prompt?.trim()) {
@@ -142,16 +154,17 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
   };
 
   try {
-    if (hasRef && model !== 'grok-imagine-image-edit') {
-      sendEvent({ type: 'status', message: `检测到参考图，已自动切换为 Image Edit 模式生成...`, total: count });
+    const isEditModel = model === 'grok-imagine-image-edit' || model === 'gpt-image-2-pro';
+    let editModel = model;
+    if (hasRef && !isEditModel) {
+      editModel = model.startsWith('gpt') ? 'gpt-image-2-pro' : 'grok-imagine-image-edit';
+      sendEvent({ type: 'status', message: `检测到参考图，已自动切换为 ${editModel === 'gpt-image-2-pro' ? 'GPT Image 2 Pro' : 'Grok Image Edit'} 模式生成...`, total: count });
     } else {
       sendEvent({ type: 'status', message: hasRef ? '正在上传参考图并生成...' : `正在生成 ${count} 张图片...`, total: count });
     }
 
     if (hasRef) {
       // ===== 有参考图：走 POST /v1/images/edits (multipart/form-data) =====
-      // 只有 grok-imagine-image-edit 支持参考图，强制使用该模型
-      const editModel = 'grok-imagine-image-edit';
       const upstreamUrl = baseUrl + '/v1/images/edits';
       const completedImages: string[] = new Array(count).fill('');
       let completedCount = 0;
@@ -197,6 +210,8 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
           formData.append('n', '1');
           formData.append('size', size);
           formData.append('response_format', 'url');
+          if (quality) formData.append('quality', quality);
+          if (output_format) formData.append('output_format', output_format);
           // 添加所有参考图
           for (let ri = 0; ri < refBlobs.length; ri++) {
             formData.append('image[]', refBlobs[ri], `ref_${ri}.png`);
@@ -266,12 +281,18 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 120_000);
 
-        const requestBody = {
+        const requestBody: Record<string, any> = {
           model,
           messages: [{ role: 'user', content: prompt }],
           stream: true,
           image_config: { n: 1, size, response_format: 'url' },
         };
+        if (quality) requestBody.image_config.quality = quality;
+        if (output_format) requestBody.image_config.output_format = output_format;
+        if (background) requestBody.image_config.background = background;
+        if (typeof output_compression === 'number') {
+          requestBody.image_config.output_compression = output_compression;
+        }
 
         try {
           const upstream = await fetch(upstreamUrl, {

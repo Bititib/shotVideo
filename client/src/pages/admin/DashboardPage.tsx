@@ -23,7 +23,7 @@ export default function DashboardPage() {
   const handleSaveSettings = async () => {
     setSaving(true);
     try {
-      const items = Object.entries(settingsForm).map(([key, value]) => ({ key, value }));
+      const items = Object.entries(settingsForm).map(([key, value]) => ({ key, value: value as string }));
       await adminApi.updateSettings(items);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);

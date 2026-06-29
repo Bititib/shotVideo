@@ -6,6 +6,11 @@ export const analysisApi = {
     return api.get<{ modelId: string; displayName: string }[]>('/analysis/models');
   },
 
+  /** 获取语音合成模型及费率 */
+  getTtsModels() {
+    return api.get<{ modelId: string; displayName: string; rate?: number }[]>('/analysis/tts-models');
+  },
+
   analyzeGeneral(file: File, videoTitle?: string, modelId?: string) {
     const formData = new FormData();
     formData.append('file', file);

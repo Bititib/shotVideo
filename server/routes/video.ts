@@ -71,7 +71,7 @@ router.get('/models', (_req: Request, res: Response) => {
   const result = sourceModels.map(m => {
     const preset = DEFAULT_VIDEO_MODELS.find(d => d.id === m.id);
     const meta = MODEL_META[m.id];
-    const multiplier = meta?.series === '1.5' ? 1.67 : 1.0;
+    const multiplier = meta?.series === '1.5' ? 1.2 : 1.0;
 
     return {
       id: m.id,
@@ -145,7 +145,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     '720p': parseFloat(rate720?.value || '0.05'),
   };
   // 1.5 系列费率更高
-  const seriesMultiplier = meta?.series === '1.5' ? 1.67 : meta?.series === '1.0' ? 1.0 : 1.0;
+  const seriesMultiplier = meta?.series === '1.5' ? 1.2 : meta?.series === '1.0' ? 1.0 : 1.0;
   const VIDEO_RATE: Record<string, number> = {
     '480p': Math.round(BASE_RATE['480p'] * seriesMultiplier * 100) / 100,
     '720p': Math.round(BASE_RATE['720p'] * seriesMultiplier * 100) / 100,

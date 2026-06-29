@@ -141,8 +141,42 @@ export default function UsersPage() {
                 <input type="number" value={editUser.quotaOverride || ''} onChange={e => setEditUser({ ...editUser, quotaOverride: e.target.value })} placeholder="例: 50" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none placeholder:text-zinc-600" />
               </div>
               <div>
-                <label className="block text-xs text-zinc-400 mb-1.5">💰 账户余额 (元)</label>
+                <label className="block text-xs text-zinc-400 mb-1.5 font-medium flex items-center justify-between">
+                  <span>💰 账户余额 (元)</span>
+                  <span className="text-[10px] text-zinc-500 font-normal">点击下方按钮快捷充值</span>
+                </label>
                 <input type="number" value={editUser.balance ?? 0} onChange={e => setEditUser({ ...editUser, balance: e.target.value })} step="0.01" min="0" placeholder="0.00" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none placeholder:text-zinc-600" />
+                <div className="flex gap-1.5 mt-2">
+                  {[10, 50, 100, 500, 1000].map(amount => (
+                    <button
+                      key={amount}
+                      type="button"
+                      onClick={() => {
+                        const current = parseFloat(editUser.balance) || 0;
+                        setEditUser({ ...editUser, balance: (current + amount).toFixed(2) });
+                      }}
+                      className="flex-1 py-1 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded-lg text-[10px] font-medium transition-colors border border-blue-500/15"
+                    >
+                      +{amount}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const amountStr = prompt('请输入充值金额（输入正数增加，负数扣减）：');
+                      if (amountStr) {
+                        const amount = parseFloat(amountStr);
+                        if (!isNaN(amount)) {
+                          const current = parseFloat(editUser.balance) || 0;
+                          setEditUser({ ...editUser, balance: Math.max(0, current + amount).toFixed(2) });
+                        }
+                      }
+                    }}
+                    className="px-2.5 py-1 bg-zinc-500/10 hover:bg-zinc-500/20 text-zinc-300 rounded-lg text-[10px] font-medium transition-colors border border-zinc-500/15"
+                  >
+                    自定义
+                  </button>
+                </div>
               </div>
               <div className="flex items-center gap-3">
                 <label className="text-xs text-zinc-400">账号状态</label>
