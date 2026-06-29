@@ -148,25 +148,45 @@ export default function ImageGenPage() {
     contentApi.getMyContents({ type: 'image', pageSize: 50 })
       .then((res: any) => {
         const items = res?.items || res?.data || [];
-        const urls: string[] = [];
+        const loadedHistory: GeneratedImage[] = [];
+        const existingUrls = new Set<string>();
+        
         for (const item of items) {
-          if (item.resultUrl) urls.push(item.resultUrl);
-          if (item.metadata?.imageUrls) urls.push(...item.metadata.imageUrls);
+          const promptText = item.inputText || item.title || '';
+          const model = item.model || '';
+          const createdAt = new Date(item.createdAt);
+          const aspectRatio = item.metadata?.aspectRatio || '';
+          
+          if (item.resultUrl && !existingUrls.has(item.resultUrl)) {
+            existingUrls.add(item.resultUrl);
+            loadedHistory.push({
+              id: item.id + '_main',
+              prompt: promptText,
+              imageUrl: item.resultUrl,
+              model,
+              createdAt,
+              aspectRatio,
+            });
+          }
+          if (item.metadata?.imageUrls) {
+            item.metadata.imageUrls.forEach((url: string, idx: number) => {
+              if (url && !existingUrls.has(url)) {
+                existingUrls.add(url);
+                loadedHistory.push({
+                  id: `${item.id}_${idx}`,
+                  prompt: promptText,
+                  imageUrl: url,
+                  model,
+                  createdAt,
+                  aspectRatio,
+                });
+              }
+            });
+          }
         }
-        // 去重
-        const unique = [...new Set(urls)].filter(Boolean);
-        if (unique.length > 0) setHistory(prev => {
-          const existingUrls = new Set(prev.map(h => h.imageUrl));
-          const newItems = unique.filter(u => !existingUrls.has(u)).map(url => ({
-            id: Date.now().toString() + Math.random(),
-            prompt: '',
-            imageUrl: url,
-            model: '',
-            createdAt: new Date(),
-            aspectRatio: '',
-          }));
-          return [...newItems, ...prev];
-        });
+        if (loadedHistory.length > 0) {
+          setHistory(loadedHistory);
+        }
       })
       .catch(() => {});
   }, []);
@@ -358,6 +378,11 @@ export default function ImageGenPage() {
                     <img src={h.imageUrl} alt="历史图片" className="block h-[180px] w-auto object-contain" loading="lazy" />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
                       <div className="absolute bottom-1.5 right-1.5 flex gap-1">
+                        {h.prompt && (
+                          <button onClick={(e) => { e.stopPropagation(); setPrompt(h.prompt); textareaRef.current?.focus(); }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white" title={`套用提示词: ${h.prompt}`}>
+                            <RotateCcw className="w-3 h-3" />
+                          </button>
+                        )}
                         <button onClick={(e) => { e.stopPropagation(); setLightboxUrl(h.imageUrl); }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Maximize2 className="w-3 h-3" /></button>
                         <a href={h.imageUrl} target="_blank" rel="noopener noreferrer" download onClick={(e) => e.stopPropagation()} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Download className="w-3 h-3" /></a>
                       </div>

@@ -330,6 +330,10 @@ export default function VideoPage() {
                               </button>
                             ) : task.status === 'complete' && task.videoUrl ? (
                               <div className="flex items-center gap-2">
+                                <button onClick={() => { setPrompt(task.prompt); textareaRef.current?.focus(); }}
+                                  className="text-[10px] text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-0.5" title="套用提示词">
+                                  <RotateCcw className="w-3 h-3" />套用
+                                </button>
                                 <a href={task.videoUrl} target="_blank" rel="noopener noreferrer" download className="text-[10px] text-zinc-500 hover:text-indigo-400 transition-colors">
                                   <Download className="w-3 h-3" />
                                 </a>
@@ -370,7 +374,11 @@ export default function VideoPage() {
                             <span>{h.metadata?.resolution || '720p'} · {h.metadata?.seconds || 6}秒</span>
                             <div className="flex items-center gap-2">
                               <span>{new Date(h.createdAt).toLocaleDateString()}</span>
-                              <a href={h.resultUrl} target="_blank" rel="noopener noreferrer" download className="text-zinc-500 hover:text-indigo-400 transition-colors"><Download className="w-3 h-3" /></a>
+                              <button onClick={(e) => { e.stopPropagation(); setPrompt(h.title || h.inputText || ''); textareaRef.current?.focus(); }}
+                                className="text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-0.5" title="套用提示词">
+                                <RotateCcw className="w-3 h-3" />套用
+                              </button>
+                              <a href={h.resultUrl} target="_blank" rel="noopener noreferrer" download onClick={(e) => e.stopPropagation()} className="text-zinc-500 hover:text-indigo-400 transition-colors"><Download className="w-3 h-3" /></a>
                             </div>
                           </div>
                         </div>
