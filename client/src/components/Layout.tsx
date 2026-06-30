@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { getPublicSettings } from '../api/admin';
-import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Zap, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2 } from 'lucide-react';
+import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Zap, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2, X } from 'lucide-react';
 
 const navItems = [
   { to: '/app', icon: PlaySquare, label: '通用分析', color: 'text-blue-400', feature: 'general' },
@@ -27,6 +27,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [contactInfo, setContactInfo] = useState<Record<string, string>>({});
+  const [showContact, setShowContact] = useState(() => localStorage.getItem('hide_contact') !== 'true');
 
   useEffect(() => { getPublicSettings().then(setContactInfo).catch(() => { }); }, []);
 
@@ -39,7 +40,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-black text-white font-sans flex flex-col md:flex-row">
       {/* Sidebar */}
       <div className="w-full md:w-64 shrink-0 bg-black flex flex-col md:h-screen sticky top-0 md:overflow-y-auto z-50 border-r border-white/5">
-        <div className="p-4 md:p-6 flex flex-col gap-3 md:gap-6 h-full">
+        <div className="p-4 md:p-6 flex flex-col gap-3 md:gap-6 h-full md:h-auto md:min-h-full">
           <header className="flex-shrink-0 flex items-center justify-between md:block">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
@@ -51,7 +52,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </div>
           </header>
 
-          <nav className="flex flex-row md:flex-col gap-1.5 flex-shrink-0 md:flex-1 overflow-x-auto overflow-y-hidden pb-1 md:pb-0 [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
+          <nav className="flex flex-row md:flex-col gap-1.5 flex-shrink-0 md:flex-1 overflow-x-auto overflow-y-hidden md:overflow-y-visible pb-1 md:pb-0 [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
             {navItems.map(item => {
               return (
                 <NavLink
@@ -72,22 +73,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             })}
           </nav>
 
-          {/* 计费提示 */}
-          <div className="hidden md:block px-3 py-2.5 mx-1 bg-gradient-to-br from-emerald-500/10 via-blue-500/5 to-purple-500/10 border border-emerald-500/15 rounded-xl">
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-              <span className="text-[10px] font-semibold text-emerald-400">生成成功才扣费，失败不计费</span>
-            </div>
-            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[9px] text-zinc-500">
-              <span>💬 分析(输入)</span><span className="text-right text-zinc-400">¥{contactInfo.token_input_rate || '0.01'}/1M tokens</span>
-              <span>💬 分析(输出)</span><span className="text-right text-zinc-400">¥{contactInfo.token_output_rate || '0.03'}/1M tokens</span>
-              <span>📹 视频 480p</span><span className="text-right text-zinc-400">¥{contactInfo.video_rate_480p || '0.03'}/秒</span>
-              <span>📹 视频 720p</span><span className="text-right text-zinc-400">¥{contactInfo.video_rate_720p || '0.05'}/秒</span>
-              <span>🎨 图片生成</span><span className="text-right text-zinc-400">¥{contactInfo.image_rate || '0.05'}/张</span>
-            </div>
+          {/* 联系客服 悬浮开关 */}
+          <div className="hidden md:flex flex-col gap-1 px-4 text-zinc-500 text-[10px] mt-2 border-t border-white/5 pt-2">
+            <button
+              onClick={() => { setShowContact(!showContact); if (showContact) { localStorage.setItem('hide_contact', 'true'); } else { localStorage.removeItem('hide_contact'); } }}
+              className="flex items-center gap-1.5 hover:text-zinc-300 transition-colors text-left py-1 cursor-pointer"
+            >
+              <MessageCircle className={`w-3.5 h-3.5 ${showContact ? 'text-blue-400' : 'text-zinc-500'}`} />
+              <span>联系客服 {showContact ? '(已开启)' : '(点击开启悬浮)'}</span>
+            </button>
           </div>
 
           {/* User Info */}
@@ -106,27 +100,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               </NavLink>
             )}
 
-            {/* 联系客服 */}
-            {(contactInfo.contact_wechat || contactInfo.contact_qq) && (
-              <div className="px-4 py-3 bg-gradient-to-r from-blue-500/5 to-purple-500/5 border border-white/5 rounded-xl">
-                <div className="flex items-center gap-1.5 mb-2">
-                  <MessageCircle className="w-3.5 h-3.5 text-blue-400" />
-                  <span className="text-[10px] font-medium text-zinc-300">联系客服 · 升级会员</span>
-                </div>
-                {contactInfo.contact_wechat && (
-                  <div className="flex items-center justify-between text-[10px] mb-1">
-                    <span className="text-zinc-500">微信</span>
-                    <span className="text-zinc-300 font-mono select-all">{contactInfo.contact_wechat}</span>
-                  </div>
-                )}
-                {contactInfo.contact_qq && (
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-zinc-500">QQ</span>
-                    <span className="text-zinc-300 font-mono select-all">{contactInfo.contact_qq}</span>
-                  </div>
-                )}
-              </div>
-            )}
+            {/* 联系客服已从静态列表移出，改用悬浮组件 */}
 
             {isAuthenticated ? (
               <>
@@ -180,6 +154,38 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-white/[0.01] via-transparent to-transparent pointer-events-none" />
         <div className="relative z-10 flex-1 md:overflow-y-auto">{children}</div>
       </div>
+
+      {/* 悬浮客服面板 */}
+      {showContact && (contactInfo.contact_wechat || contactInfo.contact_qq) && (
+        <div className="fixed bottom-6 right-6 z-[999] flex flex-col gap-3 items-end pointer-events-none hidden md:flex">
+          <div className="pointer-events-auto w-72 bg-zinc-950/95 border border-zinc-800 rounded-2xl p-4 shadow-2xl backdrop-blur-md relative text-zinc-100 flex flex-col gap-2.5 transition-all duration-300">
+            <button
+              onClick={() => { setShowContact(false); localStorage.setItem('hide_contact', 'true'); }}
+              className="absolute top-3.5 right-3.5 text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="flex items-center gap-1.5">
+              <MessageCircle className="w-4 h-4 text-blue-400" />
+              <span className="text-xs font-semibold text-zinc-100">联系客服 · 升级会员</span>
+            </div>
+            <div className="flex flex-col gap-2 border-t border-zinc-900 pt-2.5 text-xs text-zinc-400">
+              {contactInfo.contact_wechat && (
+                <div className="flex items-center justify-between">
+                  <span>微信</span>
+                  <span className="text-zinc-200 font-mono select-all bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800/50">{contactInfo.contact_wechat}</span>
+                </div>
+              )}
+              {contactInfo.contact_qq && (
+                <div className="flex items-center justify-between">
+                  <span>QQ</span>
+                  <span className="text-zinc-200 font-mono select-all bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800/50">{contactInfo.contact_qq}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
