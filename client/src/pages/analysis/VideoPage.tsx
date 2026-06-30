@@ -18,7 +18,7 @@ interface VideoTask {
   createdAt: string;
 }
 
-const ASPECT_RATIOS = [
+const ALL_ASPECT_RATIOS = [
   { value: '16:9', label: '16:9', icon: RectangleHorizontal },
   { value: '9:16', label: '9:16', icon: Smartphone },
   { value: '1:1', label: '1:1', icon: Monitor },
@@ -126,6 +126,13 @@ export default function VideoPage() {
     ? [{ value: '720p', label: '720p' }, { value: '1080p', label: '1080p' }]
     : [{ value: '480p', label: '480p' }, { value: '720p', label: '720p' }];
 
+  const ASPECT_RATIOS = isOmniModel
+    ? [
+        { value: '16:9', label: '16:9', icon: RectangleHorizontal },
+        { value: '9:16', label: '9:16', icon: Smartphone },
+      ]
+    : ALL_ASPECT_RATIOS;
+
   useEffect(() => {
     if (currentModel?.allowedSeconds && !currentModel.allowedSeconds.includes(duration)) {
       setDuration(currentModel.allowedSeconds[0]);
@@ -133,6 +140,9 @@ export default function VideoPage() {
     if (isOmniModel) {
       if (resolution !== '720p' && resolution !== '1080p') {
         setResolution('720p');
+      }
+      if (aspectRatio !== '16:9' && aspectRatio !== '9:16') {
+        setAspectRatio('16:9');
       }
     } else {
       if (resolution !== '480p' && resolution !== '720p') {
