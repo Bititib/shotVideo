@@ -411,9 +411,15 @@ export default function VideoPage() {
                                   className="text-[10px] text-zinc-500 hover:text-indigo-400 transition-colors"><Film className="w-3 h-3" /></button>
                               </div>
                             ) : task.status === 'error' ? (
-                              <button onClick={() => setTasks(prev => prev.filter(t => t.id !== task.id))} className="text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors">
-                                <X className="w-3 h-3" />
-                              </button>
+                              <div className="flex items-center gap-2">
+                                <button onClick={() => { setPrompt(task.prompt); textareaRef.current?.focus(); }}
+                                  className="text-[10px] text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-0.5" title="套用提示词">
+                                  <RotateCcw className="w-3 h-3" />套用
+                                </button>
+                                <button onClick={() => setTasks(prev => prev.filter(t => t.id !== task.id))} className="text-[10px] text-zinc-500 hover:text-red-400 transition-colors" title="移除">
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </div>
                             ) : null}
                           </div>
                         </div>
@@ -530,9 +536,18 @@ export default function VideoPage() {
                     ))}
                   </div>
                 )}
-                <textarea ref={textareaRef} value={prompt} onChange={(e) => setPrompt(e.target.value)}
+                <textarea ref={textareaRef} value={prompt} onChange={(e) => {
+                  const val = e.target.value;
+                  // 像 Flow 平台那样，输入 @ 时自动唤起图片选择
+                  if (val.endsWith('@') || val.endsWith(' @') || val.endsWith('\n@')) {
+                    fileInputRef.current?.click();
+                    setPrompt(val.slice(0, -1)); // 唤起后移除这个 @ 符号
+                  } else {
+                    setPrompt(val);
+                  }
+                }}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); } }}
-                  placeholder="描述你想生成的视频内容..." rows={3}
+                  placeholder="描述你想生成的视频内容... (输入 @ 可直接上传参考图)" rows={3}
                   className="w-full bg-transparent px-4 py-3 pr-16 text-sm text-white focus:outline-none placeholder:text-zinc-600 resize-none [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' } as React.CSSProperties} />
                 {/* 圆形发送按钮 */}
                 <button onClick={handleGenerate} disabled={!prompt.trim()}
