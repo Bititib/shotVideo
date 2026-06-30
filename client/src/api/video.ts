@@ -8,8 +8,9 @@ export interface VideoModel {
   requireRef?: boolean;
   series?: string;
   rates?: {
-    '480p': number;
-    '720p': number;
+    '480p'?: number;
+    '720p'?: number;
+    '1080p'?: number;
   };
 }
 
@@ -20,6 +21,7 @@ export interface VideoGenerateParams {
   video_length?: number;
   resolution?: string;
   reference_images?: string[];  // base64 dataURL 数组
+  reference_video?: string;     // base64 dataURL 或 URL
 }
 
 export interface VideoSSEEvent {

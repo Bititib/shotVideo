@@ -25,7 +25,7 @@ const RATIO_TO_SIZE: Record<string, string> = {
 
 /** 模型系列信息：计费、时长限制、是否强制参考图 */
 interface ModelMeta {
-  series: '1.0' | '1.5' | 'legacy';
+  series: '1.0' | '1.5' | 'legacy' | 'omni-flash' | 'omni-flash-vref';
   allowedSeconds: number[] | null;   // null = 不限制
   requireRef: boolean;               // 是否必须传参考图
 }
@@ -35,6 +35,8 @@ const MODEL_META: Record<string, ModelMeta> = {
   'grok-imagine-video-1.5-fast':    { series: '1.5', allowedSeconds: [6, 10], requireRef: false },
   'grok-imagine-video':             { series: 'legacy', allowedSeconds: null, requireRef: false },
   'grok-4.3-video':                 { series: 'legacy', allowedSeconds: null, requireRef: false },
+  'omni-flash':                     { series: 'omni-flash', allowedSeconds: [4, 6, 8, 10], requireRef: false },
+  'omni-flash-vref':                { series: 'omni-flash-vref', allowedSeconds: [10], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
@@ -43,6 +45,8 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'grok-imagine-video-1.5-preview', name: 'Grok 1.5 Preview', description: '图生视频，必须提供参考图，6/10秒', maxSeconds: 10, icon: '🖼️' },
   { id: 'grok-imagine-1.0-video', name: 'Grok 1.0 Video', description: '文生/图生视频，6/10秒', maxSeconds: 10, icon: '🎥' },
   { id: 'grok-imagine-video-1.5-fast', name: 'Grok 1.5 Fast', description: '快速文生/图生视频，6/10秒', maxSeconds: 10, icon: '⚡' },
+  { id: 'omni-flash', name: 'Omni Flash', description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', maxSeconds: 10, icon: '⚡' },
+  { id: 'omni-flash-vref', name: 'Omni Flash Vref', description: '视频风格编辑/改写，支持 1080p', maxSeconds: 10, icon: '✂️' },
 ];
 
 /** 查找支持指定视频模型的渠道 */
@@ -68,10 +72,33 @@ router.get('/models', (_req: Request, res: Response) => {
   const base480 = parseFloat(rate480?.value || '0.03');
   const base720 = parseFloat(rate720?.value || '0.05');
 
+  const omniFlash720 = parseFloat(db.select().from(settings).where(eq(settings.key, 'omni_flash_rate_720p')).get()?.value || '0.90');
+  const omniFlash1080 = parseFloat(db.select().from(settings).where(eq(settings.key, 'omni_flash_rate_1080p')).get()?.value || '1.50');
+  const omniVref720 = parseFloat(db.select().from(settings).where(eq(settings.key, 'omni_vref_rate_720p')).get()?.value || '1.60');
+  const omniVref1080 = parseFloat(db.select().from(settings).where(eq(settings.key, 'omni_vref_rate_1080p')).get()?.value || '2.20');
+
   const result = sourceModels.map(m => {
     const preset = DEFAULT_VIDEO_MODELS.find(d => d.id === m.id);
     const meta = MODEL_META[m.id];
     const multiplier = meta?.series === '1.5' ? 1.2 : 1.0;
+
+    let rates: Record<string, number>;
+    if (m.id === 'omni-flash') {
+      rates = {
+        '720p': omniFlash720,
+        '1080p': omniFlash1080,
+      };
+    } else if (m.id === 'omni-flash-vref') {
+      rates = {
+        '720p': omniVref720,
+        '1080p': omniVref1080,
+      };
+    } else {
+      rates = {
+        '480p': Math.round(base480 * multiplier * 100) / 100,
+        '720p': Math.round(base720 * multiplier * 100) / 100,
+      };
+    }
 
     return {
       id: m.id,
@@ -82,10 +109,7 @@ router.get('/models', (_req: Request, res: Response) => {
       allowedSeconds: meta?.allowedSeconds || null,
       requireRef: meta?.requireRef || false,
       series: meta?.series || 'legacy',
-      rates: {
-        '480p': Math.round(base480 * multiplier * 100) / 100,
-        '720p': Math.round(base720 * multiplier * 100) / 100,
-      }
+      rates,
     };
   });
 
@@ -101,6 +125,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     video_length = 6,
     resolution = '720p',
     reference_images = [],   // base64 dataURL 数组
+    reference_video = '',    // Base64 video data URL or URL
   } = req.body;
 
   if (!prompt?.trim()) {
@@ -118,6 +143,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const hasRef = Array.isArray(reference_images) && reference_images.length > 0;
   if (meta?.requireRef && !hasRef) {
     return res.status(400).json({ error: `模型 ${model} 必须提供参考图` });
+  }
+
+  if (model === 'omni-flash-vref' && !reference_video) {
+    return res.status(400).json({ error: '视频编辑/重绘模型必须提供参考视频' });
   }
 
   const channel = findVideoChannel(model);
@@ -138,22 +167,29 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const startTime = Date.now();
 
   // 视频计费费率——按模型系列分级
-  const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
-  const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
-  const BASE_RATE: Record<string, number> = {
-    '480p': parseFloat(rate480?.value || '0.03'),
-    '720p': parseFloat(rate720?.value || '0.05'),
-  };
-  // 1.5 系列费率更高
-  const seriesMultiplier = meta?.series === '1.5' ? 1.2 : meta?.series === '1.0' ? 1.0 : 1.0;
-  const VIDEO_RATE: Record<string, number> = {
-    '480p': Math.round(BASE_RATE['480p'] * seriesMultiplier * 100) / 100,
-    '720p': Math.round(BASE_RATE['720p'] * seriesMultiplier * 100) / 100,
-  };
+  let rate = 0.05;
+  if (model === 'omni-flash') {
+    const key = resolution === '1080p' ? 'omni_flash_rate_1080p' : 'omni_flash_rate_720p';
+    const row = db.select().from(settings).where(eq(settings.key, key)).get();
+    rate = parseFloat(row?.value || (resolution === '1080p' ? '1.50' : '0.90'));
+  } else if (model === 'omni-flash-vref') {
+    const key = resolution === '1080p' ? 'omni_vref_rate_1080p' : 'omni_vref_rate_720p';
+    const row = db.select().from(settings).where(eq(settings.key, key)).get();
+    rate = parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
+  } else {
+    const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
+    const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
+    const BASE_RATE: Record<string, number> = {
+      '480p': parseFloat(rate480?.value || '0.03'),
+      '720p': parseFloat(rate720?.value || '0.05'),
+    };
+    const seriesMultiplier = meta?.series === '1.5' ? 1.2 : 1.0;
+    rate = Math.round((BASE_RATE[resolution] || BASE_RATE['720p']) * seriesMultiplier * 100) / 100;
+  }
 
   // 预估费用并检查余额
-  const estimatedRate = VIDEO_RATE[resolution] || VIDEO_RATE['720p'];
-  const estimatedSeconds = Number(video_length) || 6;
+  const estimatedRate = rate;
+  const estimatedSeconds = model === 'omni-flash-vref' ? 10 : (Number(video_length) || 6);
   const estimatedCost = Math.round(estimatedRate * estimatedSeconds * 100) / 100;
   const { sufficient, balance: currentBalance } = BalanceService.checkBalance(req.userId!, estimatedCost);
   if (!sufficient) {
@@ -166,12 +202,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const billUsage = (finalVideoUrl: string) => {
     const elapsed = Date.now() - startTime;
     logUsage(req.userId!, 'generate_video', undefined, elapsed);
-    const rate = VIDEO_RATE[resolution] || VIDEO_RATE['720p'];
-    const seconds = Number(video_length) || 6;
-    const cost = Math.round(rate * seconds * 100) / 100;
+    const cost = Math.round(rate * estimatedSeconds * 100) / 100;
     if (cost > 0) {
       const remaining = BalanceService.deduct(req.userId!, cost, 'generate_video');
-      sendEvent({ type: 'billing', cost, resolution, seconds, rate, remainingBalance: remaining ?? 0 });
+      sendEvent({ type: 'billing', cost, resolution, seconds: estimatedSeconds, rate, remainingBalance: remaining ?? 0 });
     }
     try {
       ContentService.save({
@@ -183,66 +217,114 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         resultUrl: finalVideoUrl || undefined,
         modelId: model,
         cost,
-        metadata: { resolution, seconds, aspect_ratio },
+        metadata: { resolution, seconds: estimatedSeconds, aspect_ratio },
       });
     } catch (e) { console.error('[content] 视频保存失败:', e); }
   };
 
   const baseUrl = channel.baseUrl.replace(/\/+$/, '');
   const size = RATIO_TO_SIZE[aspect_ratio] || '1280x720';
+  const isOmni = model.startsWith('omni-flash');
 
   try {
-    // ━━━ Step 1: 创建视频任务（multipart/form-data） ━━━
-    sendEvent({ type: 'status', message: hasRef ? '正在上传参考图并提交任务...' : '正在提交视频生成任务...' });
+    let videoId = '';
 
-    const formData = new FormData();
-    formData.append('model', model);
-    formData.append('prompt', prompt.trim());
-    formData.append('seconds', String(video_length));
-    formData.append('size', size);
-    formData.append('resolution_name', resolution);
+    if (isOmni) {
+      sendEvent({ type: 'status', message: '正在提交 Omni 视频生成任务...' });
 
-    // 参考图：将 base64 dataURL 转为 Blob 文件上传
-    // 1.5-preview 只允许 1 张，其他模型最多 5 张
-    const maxRefs = meta?.requireRef ? 1 : 5;
-    if (hasRef) {
-      for (let i = 0; i < Math.min(reference_images.length, maxRefs); i++) {
-        const dataUrl: string = reference_images[i];
-        const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-        if (matches) {
-          const mimeType = matches[1];
-          const base64Data = matches[2];
-          const buffer = Buffer.from(base64Data, 'base64');
-          const blob = new Blob([buffer], { type: mimeType });
-          const ext = mimeType.includes('png') ? 'png' : 'jpg';
-          formData.append('input_reference[]', blob, `ref_${i}.${ext}`);
+      const getOmniAspectRatio = (ratio: string): 'landscape' | 'portrait' => {
+        if (['9:16', '3:4', '2:3'].includes(ratio)) return 'portrait';
+        return 'landscape';
+      };
+
+      const payload: Record<string, any> = {
+        model,
+        prompt: prompt.trim(),
+        duration: model === 'omni-flash-vref' ? 10 : Number(video_length),
+        aspect_ratio: getOmniAspectRatio(aspect_ratio),
+        resolution,
+        images: reference_images || [],
+      };
+      if (model === 'omni-flash-vref') {
+        payload.video = reference_video;
+      }
+
+      console.log(`[video] Step1 Omni 创建任务: model=${model} duration=${payload.duration} resolution=${resolution}`);
+
+      const createResp = await fetch(`${baseUrl}/v1/video/generations`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${channel.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(60_000),
+      });
+
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        console.error(`[video] Omni 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
+        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+
+      const job = await createResp.json() as any;
+      videoId = job.id || job.task_id;
+    } else {
+      // ━━━ Step 1: 创建视频任务（multipart/form-data） ━━━
+      sendEvent({ type: 'status', message: hasRef ? '正在上传参考图并提交任务...' : '正在提交视频生成任务...' });
+
+      const formData = new FormData();
+      formData.append('model', model);
+      formData.append('prompt', prompt.trim());
+      formData.append('seconds', String(video_length));
+      formData.append('size', size);
+      formData.append('resolution_name', resolution);
+
+      // 参考图：将 base64 dataURL 转为 Blob 文件上传
+      // 1.5-preview 只允许 1 张，其他模型最多 5 张
+      const maxRefs = meta?.requireRef ? 1 : 5;
+      if (hasRef) {
+        for (let i = 0; i < Math.min(reference_images.length, maxRefs); i++) {
+          const dataUrl: string = reference_images[i];
+          const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+          if (matches) {
+            const mimeType = matches[1];
+            const base64Data = matches[2];
+            const buffer = Buffer.from(base64Data, 'base64');
+            const blob = new Blob([buffer], { type: mimeType });
+            const ext = mimeType.includes('png') ? 'png' : 'jpg';
+            formData.append('input_reference[]', blob, `ref_${i}.${ext}`);
+          }
         }
       }
+
+      const headers: Record<string, string> = {};
+      if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+
+      console.log(`[video] Step1 创建任务: model=${model} seconds=${video_length} hasRef=${hasRef} refCount=${hasRef ? Math.min(reference_images.length, 5) : 0}`);
+
+      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+        method: 'POST',
+        headers,
+        body: formData,
+        signal: AbortSignal.timeout(60_000),
+      });
+
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        console.error(`[video] 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
+        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+
+      const job = await createResp.json() as any;
+      videoId = job.id;
     }
 
-    const headers: Record<string, string> = {};
-    if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
-
-    console.log(`[video] Step1 创建任务: model=${model} seconds=${video_length} hasRef=${hasRef} refCount=${hasRef ? Math.min(reference_images.length, 5) : 0}`);
-
-    const createResp = await fetch(`${baseUrl}/v1/videos`, {
-      method: 'POST',
-      headers,
-      body: formData,
-      signal: AbortSignal.timeout(60_000),
-    });
-
-    if (!createResp.ok) {
-      const errText = await createResp.text().catch(() => '');
-      console.error(`[video] 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-      sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
-      res.write('data: [DONE]\n\n');
-      return res.end();
-    }
-
-    const job = await createResp.json() as any;
-    const videoId = job.id;
-    console.log(`[video] 任务已创建: id=${videoId} status=${job.status}`);
+    console.log(`[video] 任务已创建: id=${videoId}`);
     sendEvent({ type: 'status', message: `任务已提交，等待生成... (${videoId})` });
 
     if (!videoId) {
@@ -252,9 +334,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     }
 
     // ━━━ Step 2: 轮询任务状态 ━━━
-    const maxPollTime = Math.max(300_000, Math.ceil(video_length / 10) * 180_000); // 最长轮询时间
+    const maxPollTime = Math.max(300_000, Math.ceil(estimatedSeconds / 10) * 180_000); // 最长轮询时间
     const pollInterval = 5000; // 5 秒轮询
     const pollStart = Date.now();
+
+    const headers: Record<string, string> = {};
+    if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
 
     while (Date.now() - pollStart < maxPollTime) {
       await new Promise(r => setTimeout(r, pollInterval));
@@ -266,7 +351,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       }
 
       try {
-        const pollResp = await fetch(`${baseUrl}/v1/videos/${videoId}`, {
+        let pollUrl = `${baseUrl}/v1/videos/${videoId}`;
+        if (isOmni) {
+          pollUrl = `${baseUrl}/v1/video/generations/${videoId}`;
+        }
+
+        const pollResp = await fetch(pollUrl, {
           headers,
           signal: AbortSignal.timeout(15_000),
         });
@@ -277,24 +367,45 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         }
 
         const status = await pollResp.json() as any;
-        const progress = status.progress || 0;
+        let taskStatus = status.status;
+        let progress = status.progress || 0;
+        let resultUrl = '';
+        let errMsg = '';
 
-        console.log(`[video] 轮询: status=${status.status} progress=${progress}%`);
+        if (isOmni) {
+          const dataBlock = status.data || {};
+          taskStatus = (dataBlock.status || status.status || '').toLowerCase();
 
-        if (status.status === 'processing' || status.status === 'queued') {
+          const progressStr = dataBlock.progress || status.progress || '0%';
+          progress = parseInt(progressStr) || 0;
+
+          if (taskStatus === 'success' || taskStatus === 'completed') {
+            resultUrl = dataBlock.result_url || (dataBlock.data && dataBlock.data.url) || status.result_url || status.url;
+          } else if (taskStatus === 'failure' || taskStatus === 'failed') {
+            errMsg = dataBlock.fail_reason || dataBlock.error || '视频生成失败';
+          }
+        } else {
+          taskStatus = status.status;
+          if (taskStatus === 'completed' || taskStatus === 'success') {
+            resultUrl = status.url || status.video_url || status.result_url || `${baseUrl}/v1/files/video?id=${videoId}`;
+          } else if (taskStatus === 'failed') {
+            errMsg = status.error?.message || '视频生成失败';
+          }
+        }
+
+        console.log(`[video] 轮询 (${isOmni ? 'Omni' : 'Grok'}): status=${taskStatus} progress=${progress}%`);
+
+        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending') {
           sendEvent({ type: 'progress', progress });
           sendEvent({ type: 'status', message: `视频生成中 ${progress}%` });
-        } else if (status.status === 'completed' || status.status === 'success') {
-          // ━━━ Step 3: 生成完成（兼容 url / video_url / result_url 三个字段） ━━━
-          const videoUrl = status.url || status.video_url || status.result_url || `${baseUrl}/v1/files/video?id=${videoId}`;
-          console.log(`[video] ✅ 生成完成: ${videoUrl}`);
+        } else if (taskStatus === 'completed' || taskStatus === 'success') {
+          console.log(`[video] ✅ 生成完成: ${resultUrl}`);
           sendEvent({ type: 'progress', progress: 100 });
-          sendEvent({ type: 'complete', videoUrl });
-          billUsage(videoUrl);
+          sendEvent({ type: 'complete', videoUrl: resultUrl });
+          billUsage(resultUrl);
           res.write('data: [DONE]\n\n');
           return res.end();
-        } else if (status.status === 'failed') {
-          const errMsg = status.error?.message || '视频生成失败';
+        } else if (taskStatus === 'failed' || taskStatus === 'failure') {
           console.error(`[video] ❌ 生成失败: ${errMsg}`);
           sendEvent({ type: 'error', message: errMsg });
           res.write('data: [DONE]\n\n');

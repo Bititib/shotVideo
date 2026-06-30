@@ -33,7 +33,6 @@ const ALL_DURATIONS = [
   { value: 12, label: '12 秒' }, { value: 16, label: '16 秒' },
   { value: 20, label: '20 秒' }, { value: 30, label: '30 秒' },
 ];
-const RESOLUTIONS = [{ value: '480p', label: '480p' }, { value: '720p', label: '720p' }];
 const MAX_REFS = 10;
 
 /** 将比例字符串转换为 CSS aspect-ratio 数值 */
@@ -93,7 +92,9 @@ export default function VideoPage() {
   const [duration, setDuration] = useState(6);
   const [resolution, setResolution] = useState('720p');
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
+  const [referenceVideo, setReferenceVideo] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoFileInputRef = useRef<HTMLInputElement>(null);
   const [tasks, setTasks] = useState<VideoTask[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -114,15 +115,29 @@ export default function VideoPage() {
       .catch(() => {});
   }, []);
 
-  // 当选中模型变化时，动态调整可选时长
+  // 当选中模型变化时，动态调整可选时长与分辨率
   const currentModel = models.find(m => m.id === selectedModel);
   const DURATIONS = currentModel?.allowedSeconds
     ? ALL_DURATIONS.filter(d => currentModel.allowedSeconds!.includes(d.value))
     : ALL_DURATIONS;
 
+  const isOmniModel = selectedModel.startsWith('omni-flash');
+  const RESOLUTIONS = isOmniModel
+    ? [{ value: '720p', label: '720p' }, { value: '1080p', label: '1080p' }]
+    : [{ value: '480p', label: '480p' }, { value: '720p', label: '720p' }];
+
   useEffect(() => {
     if (currentModel?.allowedSeconds && !currentModel.allowedSeconds.includes(duration)) {
       setDuration(currentModel.allowedSeconds[0]);
+    }
+    if (isOmniModel) {
+      if (resolution !== '720p' && resolution !== '1080p') {
+        setResolution('720p');
+      }
+    } else {
+      if (resolution !== '480p' && resolution !== '720p') {
+        setResolution('720p');
+      }
     }
   }, [selectedModel]);
 
@@ -159,12 +174,37 @@ export default function VideoPage() {
     try { const urls = await Promise.all(valid.map(f => compressImage(f))); setReferenceImages(prev => [...prev, ...urls]); } catch { setError('图片读取失败'); }
   };
 
+  const handleVideoSelect = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    if (!file.type.startsWith('video/')) {
+      setError('请选择视频文件');
+      return;
+    }
+    if (file.size > 50 * 1024 * 1024) {
+      setError('参考视频不能超过 50MB');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setReferenceVideo(reader.result as string);
+    };
+    reader.onerror = () => {
+      setError('读取视频失败');
+    };
+    reader.readAsDataURL(file);
+  };
+
   // 全局拖拽 + Ctrl+V 粘贴上传参考图
   useImageDropPaste(handleFileSelect);
 
   const handleGenerate = useCallback(() => {
     if (!prompt.trim()) return;
     if (!guard()) return;
+    if (selectedModel === 'omni-flash-vref' && !referenceVideo) {
+      setError('视频编辑模型必须上传参考视频');
+      return;
+    }
     setError(null);
 
     const taskId = `task_${Date.now()}`;
@@ -186,7 +226,15 @@ export default function VideoPage() {
     };
 
     const ctrl = generateVideo(
-      { prompt: prompt.trim(), model: selectedModel, aspect_ratio: aspectRatio, video_length: duration, resolution, reference_images: referenceImages.length > 0 ? referenceImages : undefined },
+      {
+        prompt: prompt.trim(),
+        model: selectedModel,
+        aspect_ratio: aspectRatio,
+        video_length: duration,
+        resolution,
+        reference_images: referenceImages.length > 0 ? referenceImages : undefined,
+        reference_video: referenceVideo || undefined,
+      },
       (event: VideoSSEEvent) => {
         switch (event.type) {
           case 'status': updateTask({ statusMessage: event.message || '' }); break;
@@ -204,7 +252,9 @@ export default function VideoPage() {
     );
     abortRef.current.set(taskId, ctrl);
     setPrompt('');
-  }, [prompt, selectedModel, aspectRatio, duration, resolution, referenceImages]);
+    setReferenceImages([]);
+    setReferenceVideo(null);
+  }, [prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideo]);
 
   const handleCancel = (taskId: string) => {
     abortRef.current.get(taskId)?.abort();
@@ -231,7 +281,7 @@ export default function VideoPage() {
                     <div className="flex items-center gap-2">
                       {m.rates && (
                         <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
-                          ¥{m.rates[resolution as '480p' | '720p']?.toFixed(2)}/秒
+                          ¥{m.rates[resolution as keyof typeof m.rates]?.toFixed(2)}/秒
                         </span>
                       )}
                       {selectedModel === m.id && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
@@ -240,9 +290,19 @@ export default function VideoPage() {
                   <p className="text-xs text-zinc-500 mt-1">{m.description}</p>
                   {m.rates && (
                     <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-600 border-t border-white/5 pt-1.5">
-                      <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}/秒</span></span>
-                      <span className="text-zinc-800">•</span>
-                      <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}/秒</span></span>
+                      {m.rates['1080p'] ? (
+                        <>
+                          <span>1080p: <span className="text-zinc-400">¥{m.rates['1080p']?.toFixed(2)}/秒</span></span>
+                          <span className="text-zinc-800">•</span>
+                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}/秒</span></span>
+                        </>
+                      ) : (
+                        <>
+                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}/秒</span></span>
+                          <span className="text-zinc-800">•</span>
+                          <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}/秒</span></span>
+                        </>
+                      )}
                     </div>
                   )}
                   {m.requireRef && <p className="text-[10px] text-amber-400/80 mt-1.5 flex items-center gap-1">⚠️ 必须提供参考图</p>}
@@ -427,6 +487,14 @@ export default function VideoPage() {
                 <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={ASPECT_RATIOS} />
                 <CustomSelect value={duration} onChange={(v: number) => setDuration(v)} options={DURATIONS} />
                 <CustomSelect value={resolution} onChange={setResolution} options={RESOLUTIONS} />
+                {selectedModel === 'omni-flash-vref' && (
+                  <>
+                    <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                      <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideo ? '(已上传)' : ''}
+                    </button>
+                    <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
+                  </>
+                )}
                 <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                   <Upload className="w-3 h-3 text-indigo-400" /> 参考图 ({referenceImages.length}/{MAX_REFS})
                 </button>
@@ -434,8 +502,15 @@ export default function VideoPage() {
               </div>
               {/* 输入容器 */}
               <div className="relative bg-white/[0.04] border border-white/[0.08] focus-within:border-indigo-500/30 rounded-2xl transition-all shadow-2xl shadow-black/30">
-                {referenceImages.length > 0 && (
-                  <div className="flex items-center gap-2 px-4 pt-3 pb-1">
+                {(referenceImages.length > 0 || referenceVideo) && (
+                  <div className="flex items-center gap-2 px-4 pt-3 pb-1 flex-wrap">
+                    {referenceVideo && (
+                      <div className="relative w-12 h-12 rounded-lg overflow-hidden border border-indigo-500/40 group cursor-pointer shrink-0 hover:border-red-500/30 transition-colors">
+                        <video src={referenceVideo} className="w-full h-full object-cover" />
+                        <button onClick={() => setReferenceVideo(null)}
+                          className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><X className="w-3.5 h-3.5 text-white" /></button>
+                      </div>
+                    )}
                     {referenceImages.map((img, idx) => (
                       <div key={idx} className="relative w-12 h-12 rounded-lg overflow-hidden border border-white/10 group cursor-pointer shrink-0 hover:border-indigo-500/30 transition-colors">
                         <img src={img} alt="" className="w-full h-full object-cover" />
