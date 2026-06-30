@@ -39,8 +39,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-black text-white font-sans flex flex-col md:flex-row">
       {/* Sidebar */}
-      <div className="w-full md:w-64 shrink-0 bg-black flex flex-col md:h-screen sticky top-0 md:overflow-y-auto z-50 border-r border-white/5">
-        <div className="p-4 md:p-6 flex flex-col gap-3 md:gap-6 h-full md:h-auto md:min-h-full">
+      <div className="w-full md:w-64 shrink-0 bg-black flex flex-col md:h-screen sticky top-0 z-50 border-r border-white/5 md:overflow-hidden">
+        <div className="p-4 md:p-6 flex flex-col gap-3 md:gap-6 h-full">
           <header className="flex-shrink-0 flex items-center justify-between md:block">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
@@ -51,8 +51,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               </h1>
             </div>
           </header>
-
-          <nav className="flex flex-row md:flex-col gap-1.5 flex-shrink-0 md:flex-1 overflow-x-auto overflow-y-hidden md:overflow-y-visible pb-1 md:pb-0 [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
+ 
+          <nav className="flex flex-row md:flex-col gap-1.5 flex-shrink-0 md:flex-1 overflow-x-auto overflow-y-hidden md:overflow-y-auto pb-1 md:pb-0 [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
             {navItems.map(item => {
               return (
                 <NavLink
