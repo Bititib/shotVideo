@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw } from 'lucide-react';
+import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw, Maximize2, Minimize2 } from 'lucide-react';
 import { fetchVideoModels, generateVideo, type VideoModel, type VideoSSEEvent } from '../../api/video';
 import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
@@ -108,6 +108,7 @@ export default function VideoPage() {
   const [showAssetPicker, setShowAssetPicker] = useState(false);
   const [myAssets, setMyAssets] = useState<Asset[]>([]);
   const [cursorPos, setCursorPos] = useState<number | null>(null);
+  const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
     fetchVideoModels().then((m) => { setModels(m); if (m.length > 0 && !selectedModel) setSelectedModel(m[0].id); }).catch(() => {});
@@ -123,6 +124,19 @@ export default function VideoPage() {
     // 加载本地资产库
     getAssets().then(setMyAssets).catch(() => {});
   }, []);
+
+  // 自动调整输入框高度
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      if (isMaximized) {
+        textarea.style.height = '360px';
+      } else {
+        textarea.style.height = 'auto';
+        textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
+      }
+    }
+  }, [prompt, isMaximized]);
 
   // 当选中模型变化时，动态调整可选时长与分辨率
   const currentModel = models.find(m => m.id === selectedModel);
@@ -567,7 +581,35 @@ export default function VideoPage() {
                 </button>
                 <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
               </div>
-              <div className="relative bg-white/[0.04] border border-white/[0.08] focus-within:border-indigo-500/30 rounded-2xl transition-all shadow-2xl shadow-black/30">
+              <div className="relative bg-white/[0.04] border border-white/[0.08] focus-within:border-indigo-500/30 rounded-2xl transition-all shadow-2xl shadow-black/30 flex flex-col overflow-hidden">
+                
+                {/* 顶部辅助工具栏 */}
+                <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.04] text-[11px] text-zinc-500 bg-white/[0.01]">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <Sparkles className="w-3 h-3 text-indigo-400" />
+                    提示词脚本编辑器
+                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono">{prompt.length} 字</span>
+                    <button 
+                      onClick={() => setIsMaximized(prev => !prev)}
+                      type="button"
+                      className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer select-none">
+                      {isMaximized ? (
+                        <>
+                          <Minimize2 className="w-3 h-3" />
+                          <span>收起</span>
+                        </>
+                      ) : (
+                        <>
+                          <Maximize2 className="w-3 h-3" />
+                          <span>展开长提示词</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
                 {/* 资产选择弹窗 */}
                 {showAssetPicker && (
                   <div className="absolute bottom-full left-4 mb-2 w-80 max-w-full bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl p-2 z-50">
@@ -662,31 +704,35 @@ export default function VideoPage() {
                     ))}
                   </div>
                 )}
-                <textarea ref={textareaRef} value={prompt} onChange={(e) => {
-                  const val = e.target.value;
-                  const nativeEvent = e.nativeEvent as any;
-                  // 监听任意位置输入的 @ 或全角 ＠ 
-                  if (nativeEvent.data === '@' || nativeEvent.data === '＠') {
-                    setShowAssetPicker(true);
-                    // 移除刚刚输入的那个 @ 符号，并记录光标位置
-                    const pos = e.target.selectionStart || val.length;
-                    const finalPos = Math.max(0, pos - 1);
-                    setCursorPos(finalPos);
-                    setPrompt(val.slice(0, finalPos) + val.slice(pos));
-                  } else {
-                    setPrompt(val);
-                    // 用户正常打字时重置或更新 cursor
-                    setCursorPos(e.target.selectionStart || null);
-                  }
-                }}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); } }}
-                  placeholder="描述你想生成的视频内容... (输入 @ 可直接上传参考图)" rows={3}
-                  className="w-full bg-transparent px-4 py-3 pr-16 text-sm text-white focus:outline-none placeholder:text-zinc-600 resize-none [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' } as React.CSSProperties} />
-                {/* 圆形发送按钮 */}
-                <button onClick={handleGenerate} disabled={!prompt.trim()}
-                  className="absolute right-3 bottom-3 w-10 h-10 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed">
-                  <Play className="w-4 h-4 ml-0.5" />
-                </button>
+
+                <div className="relative flex-1 flex">
+                  <textarea ref={textareaRef} value={prompt} onChange={(e) => {
+                    const val = e.target.value;
+                    const nativeEvent = e.nativeEvent as any;
+                    // 监听任意位置输入的 @ 或全角 ＠ 
+                    if (nativeEvent.data === '@' || nativeEvent.data === '＠') {
+                      setShowAssetPicker(true);
+                      // 移除刚刚输入的那个 @ 符号，并记录光标位置
+                      const pos = e.target.selectionStart || val.length;
+                      const finalPos = Math.max(0, pos - 1);
+                      setCursorPos(finalPos);
+                      setPrompt(val.slice(0, finalPos) + val.slice(pos));
+                    } else {
+                      setPrompt(val);
+                      // 用户正常打字时重置或更新 cursor
+                      setCursorPos(e.target.selectionStart || null);
+                    }
+                  }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); } }}
+                    placeholder="描述你想生成的视频内容... (输入 @ 可直接上传参考图)"
+                    className={`w-full bg-transparent px-4 py-3 pr-16 text-sm text-white focus:outline-none placeholder:text-zinc-600 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent ${isMaximized ? 'overflow-y-auto resize-y' : 'overflow-y-auto resize-none'}`} />
+                  
+                  {/* 圆形发送按钮 */}
+                  <button onClick={handleGenerate} disabled={!prompt.trim()}
+                    className="absolute right-3 bottom-3 w-10 h-10 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed">
+                    <Play className="w-4 h-4 ml-0.5" />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
