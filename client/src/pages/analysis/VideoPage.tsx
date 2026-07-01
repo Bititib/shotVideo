@@ -5,6 +5,7 @@ import { fetchVideoModels, generateVideo, type VideoModel, type VideoSSEEvent } 
 import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { saveAsset, getAssets, deleteAsset, type Asset } from '../../utils/idb';
 
 interface VideoTask {
   id: string;
@@ -102,6 +103,11 @@ export default function VideoPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isGenerating = tasks.some(t => t.status === 'generating');
   const [playingVideo, setPlayingVideo] = useState<{ url: string; prompt: string } | null>(null);
+  
+  // 资产库状态
+  const [showAssetPicker, setShowAssetPicker] = useState(false);
+  const [myAssets, setMyAssets] = useState<Asset[]>([]);
+  const [cursorPos, setCursorPos] = useState<number | null>(null);
 
   useEffect(() => {
     fetchVideoModels().then((m) => { setModels(m); if (m.length > 0 && !selectedModel) setSelectedModel(m[0].id); }).catch(() => {});
@@ -113,6 +119,9 @@ export default function VideoPage() {
         setHistory(items.filter((item: any) => item.resultUrl));
       })
       .catch(() => {});
+      
+    // 加载本地资产库
+    getAssets().then(setMyAssets).catch(() => {});
   }, []);
 
   // 当选中模型变化时，动态调整可选时长与分辨率
@@ -181,7 +190,28 @@ export default function VideoPage() {
     const valid = Array.from(files).filter(f => f.type.startsWith('image/')).slice(0, remaining);
     if (valid.length === 0) return;
     if (valid.find(f => f.size > 20 * 1024 * 1024)) { setError('参考图超过 20MB'); return; }
-    try { const urls = await Promise.all(valid.map(f => compressImage(f))); setReferenceImages(prev => [...prev, ...urls]); } catch { setError('图片读取失败'); }
+    try { 
+      const compressed = await Promise.all(valid.map(async f => ({
+        url: await compressImage(f),
+        name: f.name
+      })));
+      const urls = compressed.map(c => c.url);
+      setReferenceImages(prev => [...prev, ...urls]); 
+      
+      // 保存到本地持久化资产库
+      compressed.forEach(c => {
+        const newAsset: Asset = {
+          id: `img_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+          name: c.name,
+          dataUrl: c.url,
+          type: 'image',
+          createdAt: Date.now()
+        };
+        saveAsset(newAsset).then(() => setMyAssets(prev => [newAsset, ...prev])).catch(() => {});
+      });
+    } catch { 
+      setError('图片读取失败'); 
+    }
   };
 
   const handleVideoSelect = async (files: FileList | null) => {
@@ -197,7 +227,16 @@ export default function VideoPage() {
     }
     const reader = new FileReader();
     reader.onload = () => {
-      setReferenceVideo(reader.result as string);
+      const dataUrl = reader.result as string;
+      setReferenceVideo(dataUrl);
+      const newAsset: Asset = {
+        id: `vid_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+        name: file.name,
+        dataUrl,
+        type: 'video',
+        createdAt: Date.now()
+      };
+      saveAsset(newAsset).then(() => setMyAssets(prev => [newAsset, ...prev])).catch(() => {});
     };
     reader.onerror = () => {
       setError('读取视频失败');
@@ -205,8 +244,20 @@ export default function VideoPage() {
     reader.readAsDataURL(file);
   };
 
-  // 全局拖拽 + Ctrl+V 粘贴上传参考图
-  useImageDropPaste(handleFileSelect);
+  const handleMediaDrop = useCallback((files: FileList | null) => {
+    if (!files) return;
+    const imageFiles = new DataTransfer();
+    const videoFiles = new DataTransfer();
+    Array.from(files).forEach(f => {
+      if (f.type.startsWith('image/')) imageFiles.items.add(f);
+      else if (f.type.startsWith('video/')) videoFiles.items.add(f);
+    });
+    if (imageFiles.files.length > 0) handleFileSelect(imageFiles.files);
+    if (videoFiles.files.length > 0) handleVideoSelect(videoFiles.files);
+  }, [handleFileSelect, handleVideoSelect]);
+
+  // 全局拖拽 + Ctrl+V 粘贴上传媒体
+  const { isDragging } = useImageDropPaste(handleMediaDrop);
 
   const handleGenerate = useCallback(() => {
     if (!prompt.trim()) return;
@@ -516,8 +567,83 @@ export default function VideoPage() {
                 </button>
                 <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
               </div>
-              {/* 输入容器 */}
               <div className="relative bg-white/[0.04] border border-white/[0.08] focus-within:border-indigo-500/30 rounded-2xl transition-all shadow-2xl shadow-black/30">
+                {/* 资产选择弹窗 */}
+                {showAssetPicker && (
+                  <div className="absolute bottom-full left-4 mb-2 w-80 max-w-full bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl p-2 z-50">
+                    <div className="flex items-center justify-between px-2 pb-2 border-b border-white/10 mb-2">
+                      <span className="text-xs font-semibold text-zinc-400">选择参考资产</span>
+                      <button onClick={() => setShowAssetPicker(false)} className="text-zinc-500 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                    
+                    <button onClick={() => { fileInputRef.current?.click(); setShowAssetPicker(false); }} 
+                      className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors text-xs text-white mb-3">
+                      <Upload className="w-3.5 h-3.5 text-indigo-400" /> 从本地上传新文件
+                    </button>
+                    
+                    <div className="max-h-60 overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+                      <span className="text-[10px] text-zinc-500 mb-2 block px-1">我的本地资产库 ({myAssets.length})</span>
+                      {myAssets.length === 0 ? (
+                        <div className="text-center py-6 text-xs text-zinc-600">暂无历史保存的资产</div>
+                      ) : (
+                        <div className="grid grid-cols-4 gap-2">
+                          {myAssets.map(asset => {
+                            const isSelected = asset.type === 'video' ? referenceVideo === asset.dataUrl : referenceImages.includes(asset.dataUrl);
+                            
+                            return (
+                            <div key={asset.id} className={`relative group aspect-square rounded-lg overflow-hidden border cursor-pointer bg-black/50 transition-all ${isSelected ? 'border-indigo-500 shadow-[0_0_0_2px_rgba(99,102,241,0.3)]' : 'border-white/10 hover:border-indigo-500/50'}`} 
+                                 onClick={() => {
+                                   if (asset.type === 'video') {
+                                     setReferenceVideo(asset.dataUrl);
+                                     setShowAssetPicker(false);
+                                   } else {
+                                     // 图片允许多选，点击切换选中状态，不关闭面板
+                                     if (referenceImages.includes(asset.dataUrl)) {
+                                       setReferenceImages(prev => prev.filter(url => url !== asset.dataUrl));
+                                     } else if (referenceImages.length < MAX_REFS) {
+                                       setReferenceImages(prev => [...prev, asset.dataUrl]);
+                                       // 自动插入文件名到提示词中
+                                       if (cursorPos !== null) {
+                                         const textToInsert = asset.name ? `${asset.name} ` : `[图片] `;
+                                         setPrompt(prev => prev.slice(0, cursorPos) + textToInsert + prev.slice(cursorPos));
+                                         setCursorPos(cursorPos + textToInsert.length);
+                                       }
+                                     }
+                                   }
+                                 }}>
+                              {asset.type === 'image' ? (
+                                <img src={asset.dataUrl} className="w-full h-full object-cover" />
+                              ) : (
+                                <video src={asset.dataUrl} className="w-full h-full object-cover" />
+                              )}
+                              {/* 选中态遮罩与对号 */}
+                              {isSelected && (
+                                <div className="absolute inset-0 bg-indigo-500/20 flex items-center justify-center">
+                                  <div className="bg-indigo-500 rounded-full p-1 shadow-lg">
+                                    <Check className="w-4 h-4 text-white" />
+                                  </div>
+                                </div>
+                              )}
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteAsset(asset.id).then(() => {
+                                    setMyAssets(prev => prev.filter(a => a.id !== asset.id));
+                                  });
+                                }}
+                                className="absolute top-1 right-1 bg-black/70 rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/90 z-10">
+                                <X className="w-3 h-3 text-white" />
+                              </button>
+                              {asset.type === 'video' && <div className="absolute bottom-1 right-1"><Film className="w-4 h-4 text-white/90 drop-shadow-md" /></div>}
+                            </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
                 {(referenceImages.length > 0 || referenceVideo) && (
                   <div className="flex items-center gap-2 px-4 pt-3 pb-1 flex-wrap">
                     {referenceVideo && (
@@ -538,12 +664,19 @@ export default function VideoPage() {
                 )}
                 <textarea ref={textareaRef} value={prompt} onChange={(e) => {
                   const val = e.target.value;
-                  // 像 Flow 平台那样，输入 @ 时自动唤起图片选择
-                  if (val.endsWith('@') || val.endsWith(' @') || val.endsWith('\n@')) {
-                    fileInputRef.current?.click();
-                    setPrompt(val.slice(0, -1)); // 唤起后移除这个 @ 符号
+                  const nativeEvent = e.nativeEvent as any;
+                  // 监听任意位置输入的 @ 或全角 ＠ 
+                  if (nativeEvent.data === '@' || nativeEvent.data === '＠') {
+                    setShowAssetPicker(true);
+                    // 移除刚刚输入的那个 @ 符号，并记录光标位置
+                    const pos = e.target.selectionStart || val.length;
+                    const finalPos = Math.max(0, pos - 1);
+                    setCursorPos(finalPos);
+                    setPrompt(val.slice(0, finalPos) + val.slice(pos));
                   } else {
                     setPrompt(val);
+                    // 用户正常打字时重置或更新 cursor
+                    setCursorPos(e.target.selectionStart || null);
                   }
                 }}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); } }}
@@ -559,6 +692,17 @@ export default function VideoPage() {
           </div>
         </div>
       </div>
+      
+      {/* 全局拖拽遮罩 */}
+      {isDragging && (
+        <div className="fixed inset-0 z-[100] bg-indigo-500/10 backdrop-blur-sm border-4 border-indigo-500/50 border-dashed m-4 rounded-3xl flex items-center justify-center pointer-events-none transition-all">
+          <div className="bg-black/60 px-8 py-6 rounded-2xl flex flex-col items-center shadow-2xl">
+            <Upload className="w-12 h-12 text-indigo-400 mb-3 animate-bounce" />
+            <p className="text-xl font-semibold text-white">松开鼠标即可上传</p>
+            <p className="text-sm text-zinc-400 mt-2">支持拖拽图片或视频 (将自动加入资产库)</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
