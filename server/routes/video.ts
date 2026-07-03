@@ -217,7 +217,14 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         resultUrl: finalVideoUrl || undefined,
         modelId: model,
         cost,
-        metadata: { resolution, seconds: estimatedSeconds, aspect_ratio },
+        metadata: { 
+          resolution, 
+          seconds: estimatedSeconds, 
+          aspect_ratio,
+          model,
+          reference_images,
+          reference_video: reference_video || null
+        },
       });
     } catch (e) { console.error('[content] 视频保存失败:', e); }
   };

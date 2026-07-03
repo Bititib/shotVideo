@@ -5,7 +5,7 @@ import { authApi } from '../../api/auth';
 import { getPublicSettings } from '../../api/admin';
 
 export default function ProfilePage() {
-  const { user, fetchProfile } = useAuthStore();
+  const { user } = useAuthStore();
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -13,13 +13,6 @@ export default function ProfilePage() {
   const [cpSuccess, setCpSuccess] = useState<string | null>(null);
   const [cpLoading, setCpLoading] = useState(false);
 
-  // 充值相关状态
-  const [rechargeAmount, setRechargeAmount] = useState<number | ''>('');
-  const [showPayModal, setShowPayModal] = useState(false);
-  const [payAmount, setPayAmount] = useState<number>(0);
-  const [payType, setPayType] = useState<'wechat' | 'alipay'>('wechat');
-  const [rechargeLoading, setRechargeLoading] = useState(false);
-  const [rechargeSuccess, setRechargeSuccess] = useState(false);
   const [copied, setCopied] = useState(false);
   const [contactInfo, setContactInfo] = useState<Record<string, string>>({});
 
@@ -56,36 +49,6 @@ export default function ProfilePage() {
       setCpError(err.message || '密码修改失败，请重试');
     } finally {
       setCpLoading(false);
-    }
-  };
-
-  const handleQuickRecharge = (amount: number) => {
-    setPayAmount(amount);
-    setShowPayModal(true);
-  };
-
-  const handleCustomRechargeSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!rechargeAmount || rechargeAmount <= 0) return;
-    setPayAmount(Number(rechargeAmount));
-    setShowPayModal(true);
-  };
-
-  const handleConfirmPaymentSimulate = async () => {
-    setRechargeLoading(true);
-    try {
-      await authApi.recharge(payAmount);
-      setRechargeSuccess(true);
-      await fetchProfile();
-      setTimeout(() => {
-        setShowPayModal(false);
-        setRechargeSuccess(false);
-        setRechargeAmount('');
-      }, 2000);
-    } catch (err: any) {
-      alert(err.message || '充值失败');
-    } finally {
-      setRechargeLoading(false);
     }
   };
 
@@ -127,7 +90,7 @@ export default function ProfilePage() {
         <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
           <User className="w-6 h-6 text-indigo-400" /> 个人中心
         </h1>
-        <p className="text-xs text-zinc-500">管理您的账户信息、会员状态、进行余额充值与修改密码</p>
+        <p className="text-xs text-zinc-500">管理您的账户信息、会员状态与修改密码</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -287,7 +250,7 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        {/* 右侧：账户余额 & 充值结算 */}
+        {/* 右侧：账户余额 & 客服升级 */}
         <div className="space-y-6">
           {/* 账户余额卡片 */}
           <div className="bg-gradient-to-br from-indigo-950/40 via-purple-950/20 to-black border border-indigo-500/20 rounded-2xl p-6 relative overflow-hidden backdrop-blur-md">
@@ -301,40 +264,12 @@ export default function ProfilePage() {
               </span>
             </div>
 
-            {/* 快速充值 */}
+            {/* 充值指引 */}
             <div className="mt-6 border-t border-white/5 pt-4">
-              <span className="text-xs text-zinc-400 block mb-3 font-medium">快速购买/充值余额</span>
-              <div className="grid grid-cols-2 gap-2">
-                {[10, 50, 100, 500].map(amount => (
-                  <button
-                    key={amount}
-                    onClick={() => handleQuickRecharge(amount)}
-                    className="py-2.5 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-indigo-500/10 hover:border-indigo-500/30 text-xs text-zinc-300 font-medium transition-all"
-                  >
-                    充 ¥{amount}
-                  </button>
-                ))}
-              </div>
-
-              {/* 自定义充值 */}
-              <form onSubmit={handleCustomRechargeSubmit} className="mt-4 flex gap-2">
-                <input
-                  type="number"
-                  min="1"
-                  step="any"
-                  value={rechargeAmount}
-                  onChange={e => setRechargeAmount(e.target.value !== '' ? Number(e.target.value) : '')}
-                  placeholder="自定义充值金额"
-                  className="flex-1 bg-white/[0.02] border border-white/5 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder:text-zinc-700"
-                />
-                <button
-                  type="submit"
-                  disabled={!rechargeAmount || rechargeAmount <= 0}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-medium transition-colors disabled:opacity-30 shrink-0"
-                >
-                  充值
-                </button>
-              </form>
+              <span className="text-xs text-zinc-400 block mb-2 font-medium">充值与续费</span>
+              <p className="text-xs text-zinc-500 leading-relaxed">
+                本平台暂未开启在线自助充值通道。如需充值账户余额或购买/续费套餐，请联系系统管理员或下方客服，提供您的账户邮箱进行人工充值入账。
+              </p>
             </div>
           </div>
 
@@ -345,7 +280,7 @@ export default function ProfilePage() {
                 <Sparkles className="w-4 h-4 text-yellow-400" /> 升级专享尊贵特权
               </h3>
               <p className="text-xs text-zinc-400 leading-relaxed mb-4">
-                如需获得更高限额的日可用次数、专属大模型接口、专属服务器并发以及专业的定制短视频支持，请扫描或复制右侧客服微信号。
+                如需获得更高限额的日可用次数、专属大模型接口、专属服务器并发以及专业的定制短视频支持，请扫描或复制下方客服信息。
               </p>
               <div className="space-y-2 text-xs border-t border-white/5 pt-3">
                 {contactInfo.contact_wechat && (
@@ -378,95 +313,6 @@ export default function ProfilePage() {
           )}
         </div>
       </div>
-
-      {/* 充值付款仿真浮窗模态框 */}
-      {showPayModal && (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
-          <div className="w-full max-w-sm bg-[#121212] border border-white/10 rounded-2xl p-6 shadow-2xl relative">
-            <button
-              onClick={() => { if (!rechargeLoading) setShowPayModal(false); }}
-              className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-300 transition-colors"
-            >
-              关闭
-            </button>
-            <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
-              <CreditCard className="w-4 h-4 text-indigo-400" /> 订单支付
-            </h3>
-            <p className="text-xs text-zinc-400 mb-6">您正在进行账户余额充值，请选择支付方式并模拟支付：</p>
-
-            <div className="bg-zinc-950 rounded-xl p-4 border border-white/5 mb-6 text-center">
-              <span className="text-xs text-zinc-500 block mb-1">应付金额</span>
-              <span className="text-3xl font-extrabold text-white">¥{payAmount.toFixed(2)}</span>
-            </div>
-
-            {/* 支付方式切换 */}
-            <div className="grid grid-cols-2 gap-3 mb-6">
-              <button
-                onClick={() => setPayType('wechat')}
-                className={`py-2 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
-                  payType === 'wechat'
-                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
-                    : 'border-white/5 bg-white/[0.02] text-zinc-400'
-                }`}
-              >
-                微信支付
-              </button>
-              <button
-                onClick={() => setPayType('alipay')}
-                className={`py-2 rounded-xl border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${
-                  payType === 'alipay'
-                    ? 'border-blue-500/40 bg-blue-500/10 text-blue-400'
-                    : 'border-white/5 bg-white/[0.02] text-zinc-400'
-                }`}
-              >
-                支付宝支付
-              </button>
-            </div>
-
-            {/* 扫码模拟区域 */}
-            <div className="flex flex-col items-center justify-center border border-white/5 bg-black/40 rounded-xl p-6 mb-6">
-              <div className="w-36 h-36 border border-white/10 bg-white p-2 rounded-xl flex items-center justify-center relative overflow-hidden">
-                {/* 模拟生成一个漂亮的渐变扫码图案 */}
-                <div className={`w-full h-full rounded-lg bg-gradient-to-br flex flex-col items-center justify-center gap-1 p-2 ${
-                  payType === 'wechat' ? 'from-emerald-500 to-green-600' : 'from-blue-500 to-indigo-600'
-                }`}>
-                  <div className="w-8 h-8 rounded bg-white flex items-center justify-center text-xs font-bold font-mono">
-                    {payType === 'wechat' ? '微信' : '支付'}
-                  </div>
-                  <span className="text-[8px] text-white font-medium">扫一扫 模拟支付</span>
-                  <div className="flex gap-0.5 mt-1">
-                    {[1, 2, 3, 4, 5].map(x => (
-                      <div key={x} className="w-1.5 h-1.5 bg-white/40 rounded-full animate-pulse" style={{ animationDelay: `${x * 100}ms` }} />
-                    ))}
-                  </div>
-                </div>
-                {rechargeSuccess && (
-                  <div className="absolute inset-0 bg-zinc-950/90 flex flex-col items-center justify-center text-center p-4">
-                    <CheckCircle2 className="w-10 h-10 text-emerald-400 mb-1" />
-                    <span className="text-xs font-semibold text-white">支付成功</span>
-                  </div>
-                )}
-              </div>
-              <p className="text-[10px] text-zinc-600 mt-2">提示：系统会自动识别模拟支付状态</p>
-            </div>
-
-            {/* 模拟动作按钮 */}
-            <button
-              onClick={handleConfirmPaymentSimulate}
-              disabled={rechargeLoading || rechargeSuccess}
-              className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-600/30 text-white rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-600/10"
-            >
-              {rechargeLoading ? (
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-              ) : rechargeSuccess ? (
-                '充值入账中...'
-              ) : (
-                '模拟扫码成功付款'
-              )}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
