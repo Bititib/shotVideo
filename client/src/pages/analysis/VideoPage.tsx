@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw, Maximize2, Minimize2 } from 'lucide-react';
+import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw, Maximize2, Minimize2, Scissors, HelpCircle } from 'lucide-react';
 import { fetchVideoModels, generateVideo, type VideoModel, type VideoSSEEvent } from '../../api/video';
+import ImageSlicerModal from '../../components/ImageSlicerModal';
 import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
@@ -34,7 +35,14 @@ const ALL_DURATIONS = [
   { value: 12, label: '12 秒' }, { value: 16, label: '16 秒' },
   { value: 20, label: '20 秒' }, { value: 30, label: '30 秒' },
 ];
-const MAX_REFS = 10;
+const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  if (modelId === 'omni-flash') return 7;
+  if (modelId === 'omni-flash-vref') return 5;
+  const model = models.find(m => m.id === modelId);
+  if (model?.requireRef) return 1;
+  return 5;
+};
+
 
 /** 将比例字符串转换为 CSS aspect-ratio 数值 */
 const ASPECT_RATIO_CSS: Record<string, string> = {
@@ -93,6 +101,14 @@ export default function VideoPage() {
   const [duration, setDuration] = useState(6);
   const [resolution, setResolution] = useState('720p');
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
+  const maxRefs = getMaxReferenceImages(selectedModel, models);
+
+  useEffect(() => {
+    if (referenceImages.length > maxRefs) {
+      setReferenceImages(prev => prev.slice(0, maxRefs));
+    }
+  }, [selectedModel, maxRefs]);
+
   const [referenceVideo, setReferenceVideo] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoFileInputRef = useRef<HTMLInputElement>(null);
@@ -109,6 +125,22 @@ export default function VideoPage() {
   const [myAssets, setMyAssets] = useState<Asset[]>([]);
   const [cursorPos, setCursorPos] = useState<number | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
+
+  // 切分分镜拼图相关状态
+  const [slicingImageUrl, setSlicingImageUrl] = useState<string | null>(null);
+  const [slicingImageIndex, setSlicingImageIndex] = useState<number | null>(null);
+
+  const handleConfirmSlice = (sliced: string[]) => {
+    if (slicingImageIndex !== null) {
+      setReferenceImages(prev => {
+        const next = [...prev];
+        next.splice(slicingImageIndex, 1, ...sliced);
+        return next.slice(0, maxRefs);
+      });
+    }
+    setSlicingImageUrl(null);
+    setSlicingImageIndex(null);
+  };
 
   useEffect(() => {
     fetchVideoModels().then((m) => { setModels(m); if (m.length > 0 && !selectedModel) setSelectedModel(m[0].id); }).catch(() => {});
@@ -199,8 +231,8 @@ export default function VideoPage() {
 
   const handleFileSelect = async (files: FileList | null) => {
     if (!files) return;
-    const remaining = MAX_REFS - referenceImages.length;
-    if (remaining <= 0) { setError(`最多 ${MAX_REFS} 张参考图`); return; }
+    const remaining = maxRefs - referenceImages.length;
+    if (remaining <= 0) { setError(`当前模型最多支持 ${maxRefs} 张参考图`); return; }
     const valid = Array.from(files).filter(f => f.type.startsWith('image/')).slice(0, remaining);
     if (valid.length === 0) return;
     if (valid.find(f => f.size > 20 * 1024 * 1024)) { setError('参考图超过 20MB'); return; }
@@ -577,8 +609,15 @@ export default function VideoPage() {
                   </>
                 )}
                 <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
-                  <Upload className="w-3 h-3 text-indigo-400" /> 参考图 ({referenceImages.length}/{MAX_REFS})
+                  <Upload className="w-3 h-3 text-indigo-400" /> 参考图 ({referenceImages.length}/{maxRefs})
                 </button>
+                <div className="group relative flex items-center">
+                  <HelpCircle className="w-3.5 h-3.5 text-zinc-500 hover:text-zinc-300 transition-colors cursor-help" />
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-zinc-950 border border-white/10 rounded-xl shadow-2xl text-[10px] text-zinc-400 leading-normal pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-50">
+                    <p className="font-semibold text-yellow-400 mb-1 flex items-center gap-1">⚠️ 避免使用多格拼图</p>
+                    视频模型推荐使用连贯的单镜头画面。使用九宫格等拼图会导致生成失败或变形。如果上传了拼图，可使用参考图上的 <Scissors className="w-3 h-3 inline text-indigo-400" /> 按钮智能切分。
+                  </div>
+                </div>
                 <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
               </div>
               <div className="relative bg-white/[0.04] border border-white/[0.08] focus-within:border-indigo-500/30 rounded-2xl transition-all shadow-2xl shadow-black/30 flex flex-col overflow-hidden">
@@ -642,7 +681,7 @@ export default function VideoPage() {
                                      // 图片允许多选，点击切换选中状态，不关闭面板
                                      if (referenceImages.includes(asset.dataUrl)) {
                                        setReferenceImages(prev => prev.filter(url => url !== asset.dataUrl));
-                                     } else if (referenceImages.length < MAX_REFS) {
+                                     } else if (referenceImages.length < maxRefs) {
                                        setReferenceImages(prev => [...prev, asset.dataUrl]);
                                        // 自动插入文件名到提示词中
                                        if (cursorPos !== null) {
@@ -698,8 +737,31 @@ export default function VideoPage() {
                     {referenceImages.map((img, idx) => (
                       <div key={idx} className="relative w-12 h-12 rounded-lg overflow-hidden border border-white/10 group cursor-pointer shrink-0 hover:border-indigo-500/30 transition-colors">
                         <img src={img} alt="" className="w-full h-full object-cover" />
-                        <button onClick={() => setReferenceImages(prev => prev.filter((_, i) => i !== idx))}
-                          className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><X className="w-3.5 h-3.5 text-white" /></button>
+                        <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSlicingImageUrl(img);
+                              setSlicingImageIndex(idx);
+                            }}
+                            className="bg-indigo-600 hover:bg-indigo-500 p-0.5 rounded transition-colors"
+                            title="智能切分拼图"
+                          >
+                            <Scissors className="w-3 h-3 text-white" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setReferenceImages(prev => prev.filter((_, i) => i !== idx));
+                            }}
+                            className="bg-red-500/80 hover:bg-red-500 p-0.5 rounded transition-colors"
+                            title="删除"
+                          >
+                            <X className="w-3 h-3 text-white" />
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -748,6 +810,15 @@ export default function VideoPage() {
             <p className="text-sm text-zinc-400 mt-2">支持拖拽图片或视频 (将自动加入资产库)</p>
           </div>
         </div>
+      )}
+
+      {/* 切图模态框 */}
+      {slicingImageUrl && (
+        <ImageSlicerModal
+          imageUrl={slicingImageUrl}
+          onClose={() => { setSlicingImageUrl(null); setSlicingImageIndex(null); }}
+          onConfirm={handleConfirmSlice}
+        />
       )}
     </div>
   );

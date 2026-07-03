@@ -38,6 +38,7 @@ export default function UsersPage() {
         role: editUser.role,
         quotaOverride: editUser.quotaOverride ? parseInt(editUser.quotaOverride) : null,
         balance: parseFloat(editUser.balance) || 0,
+        password: editUser.password || undefined,
       });
       setEditUser(null); load();
     } catch (e: any) { alert(e.message); }
@@ -177,6 +178,10 @@ export default function UsersPage() {
                     自定义
                   </button>
                 </div>
+              </div>
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1.5">重置密码 (留空则不修改)</label>
+                <input type="text" value={editUser.password || ''} onChange={e => setEditUser({ ...editUser, password: e.target.value })} placeholder="输入新密码(至少6位)" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none placeholder:text-zinc-600" />
               </div>
               <div className="flex items-center gap-3">
                 <label className="text-xs text-zinc-400">账号状态</label>

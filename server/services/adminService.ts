@@ -1,6 +1,7 @@
 import { db } from '../db/index.js';
 import { users, tiers, models, tierModelAccess, usageLogs, settings } from '../db/schema.js';
 import { eq, like, and, gte, sql, desc, count } from 'drizzle-orm';
+import bcrypt from 'bcryptjs';
 
 interface GetUsersOptions {
   page: number;
@@ -137,6 +138,11 @@ export class AdminService {
     if (updates.quotaOverride !== undefined) allowedFields.quotaOverride = updates.quotaOverride || null;
     if (updates.balance !== undefined) allowedFields.balance = Math.max(0, Number(updates.balance) || 0);
     if (updates.username !== undefined) allowedFields.username = updates.username;
+    
+    if (updates.password !== undefined && updates.password.trim() !== '') {
+      if (updates.password.length < 6) throw { status: 400, message: '密码至少6位' };
+      allowedFields.passwordHash = bcrypt.hashSync(updates.password, 12);
+    }
 
     allowedFields.updatedAt = new Date().toISOString();
 

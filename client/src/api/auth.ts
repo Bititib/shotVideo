@@ -46,4 +46,12 @@ export const authApi = {
   getProfile() {
     return api.get<UserProfile>('/auth/me');
   },
+
+  changePassword(oldPassword: string, newPassword: string) {
+    return api.put<{ message: string }>('/auth/change-password', { oldPassword, newPassword });
+  },
+
+  recharge(amount: number) {
+    return api.post<{ success: boolean; balance: number }>('/auth/recharge', { amount });
+  },
 };

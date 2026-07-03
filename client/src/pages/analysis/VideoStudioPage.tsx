@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Film, Play, Square, Download, Loader2, AlertCircle, ArrowLeft, Plus, Trash2, FastForward, Upload, X, Pause, SkipForward, PackageOpen } from 'lucide-react';
+import { Film, Play, Square, Download, Loader2, AlertCircle, ArrowLeft, Plus, Trash2, FastForward, Upload, X, Pause, SkipForward, PackageOpen, Scissors, HelpCircle } from 'lucide-react';
 import { fetchVideoModels, generateVideo, type VideoModel, type VideoSSEEvent } from '../../api/video';
+import ImageSlicerModal from '../../components/ImageSlicerModal';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 
@@ -59,6 +60,14 @@ function captureLastFrame(url: string): Promise<string> {
 
 const DURATIONS = [{ value: 6, label: '6s' }, { value: 10, label: '10s' }, { value: 16, label: '16s' }, { value: 20, label: '20s' }];
 
+const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  if (modelId === 'omni-flash') return 7;
+  if (modelId === 'omni-flash-vref') return 5;
+  const model = models.find(m => m.id === modelId);
+  if (model?.requireRef) return 1;
+  return 5;
+};
+
 export default function VideoStudioPage() {
   const navigate = useNavigate();
   const guard = useAuthGuard();
@@ -69,6 +78,30 @@ export default function VideoStudioPage() {
   const [prompt, setPrompt] = useState('');
   const [duration, setDuration] = useState(6);
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
+  const maxRefs = getMaxReferenceImages(selectedModel, models);
+
+  useEffect(() => {
+    if (referenceImages.length > maxRefs) {
+      setReferenceImages(prev => prev.slice(0, maxRefs));
+    }
+  }, [selectedModel, maxRefs]);
+  
+  // 切分分镜拼图相关状态
+  const [slicingImageUrl, setSlicingImageUrl] = useState<string | null>(null);
+  const [slicingImageIndex, setSlicingImageIndex] = useState<number | null>(null);
+
+  const handleConfirmSlice = (sliced: string[]) => {
+    if (slicingImageIndex !== null) {
+      setReferenceImages(prev => {
+        const next = [...prev];
+        next.splice(slicingImageIndex, 1, ...sliced);
+        return next.slice(0, maxRefs);
+      });
+    }
+    setSlicingImageUrl(null);
+    setSlicingImageIndex(null);
+  };
+
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [statusMsg, setStatusMsg] = useState('');
@@ -92,8 +125,8 @@ export default function VideoStudioPage() {
 
   const handleFileSelect = async (files: FileList | null) => {
     if (!files) return;
-    const remaining = 10 - referenceImages.length;
-    if (remaining <= 0) { setError('最多 10 张参考图'); return; }
+    const remaining = maxRefs - referenceImages.length;
+    if (remaining <= 0) { setError(`当前模型最多支持 ${maxRefs} 张参考图`); return; }
     const valid = Array.from(files).filter(f => f.type.startsWith('image/')).slice(0, remaining);
     if (valid.length === 0) return;
     if (valid.find(f => f.size > 20 * 1024 * 1024)) { setError('参考图超过 20MB'); return; }
@@ -355,17 +388,48 @@ export default function VideoStudioPage() {
                 <CustomSelect value={selectedModel} onChange={(v: string) => setSelectedModel(v)} options={models.map(m => ({ value: m.id, label: m.name }))} />
               )}
               <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1 bg-white/[0.03] hover:bg-white/[0.05] rounded-lg px-2 py-1.5 text-[11px] text-zinc-300 border border-transparent hover:border-white/10">
-                <Upload className="w-3 h-3 text-indigo-400" /> {referenceImages.length > 0 ? `参考图(${referenceImages.length})` : '参考图'}
+                <Upload className="w-3 h-3 text-indigo-400" /> 参考图 ({referenceImages.length}/{maxRefs})
               </button>
+              <div className="group relative flex items-center">
+                <HelpCircle className="w-3.5 h-3.5 text-zinc-500 hover:text-zinc-300 transition-colors cursor-help" />
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-zinc-950 border border-white/10 rounded-xl shadow-2xl text-[10px] text-zinc-400 leading-normal pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-50">
+                  <p className="font-semibold text-yellow-400 mb-1 flex items-center gap-1">⚠️ 避免使用多格拼图</p>
+                  为了保证视频连贯性，请勿直接使用九宫格或多格拼图。点击参考图上的 <Scissors className="w-3 h-3 inline text-indigo-400" /> 剪刀按钮即可将其切分为单张画面。
+                </div>
+              </div>
               <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
             </div>
             {referenceImages.length > 0 && (
-              <div className="flex items-center gap-1.5 mb-2">
+              <div className="flex items-center gap-1.5 mb-2 flex-wrap">
                 {referenceImages.map((img, i) => (
                   <div key={i} className="relative w-10 h-10 rounded overflow-hidden border border-white/10 group">
                     <img src={img} className="w-full h-full object-cover" />
-                    {isExtendMode && i === 0 && <div className="absolute top-0 left-0 bg-indigo-500 text-[7px] text-white px-0.5 rounded-br">帧</div>}
-                    <button onClick={() => setReferenceImages(prev => prev.filter((_, idx) => idx !== i))} className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center"><X className="w-3 h-3 text-white" /></button>
+                    {isExtendMode && i === 0 && <div className="absolute top-0 left-0 bg-indigo-500 text-[7px] text-white px-0.5 rounded-br z-10">帧</div>}
+                    <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSlicingImageUrl(img);
+                          setSlicingImageIndex(i);
+                        }}
+                        className="bg-indigo-600 hover:bg-indigo-500 p-0.5 rounded transition-colors"
+                        title="智能切分拼图"
+                      >
+                        <Scissors className="w-2.5 h-2.5 text-white" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setReferenceImages(prev => prev.filter((_, idx) => idx !== i));
+                        }}
+                        className="bg-red-500/80 hover:bg-red-500 p-0.5 rounded transition-colors"
+                        title="删除"
+                      >
+                        <X className="w-2.5 h-2.5 text-white" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -417,6 +481,15 @@ export default function VideoStudioPage() {
           </div>
         </div>
       </div>
+
+      {/* 切图模态框 */}
+      {slicingImageUrl && (
+        <ImageSlicerModal
+          imageUrl={slicingImageUrl}
+          onClose={() => { setSlicingImageUrl(null); setSlicingImageIndex(null); }}
+          onConfirm={handleConfirmSlice}
+        />
+      )}
     </div>
   );
 }

@@ -67,5 +67,14 @@ export class BalanceService {
 
     return this.getBalance(userId);
   }
+
+  /** 充值个人余额 */
+  static recharge(userId: number, amount: number): number {
+    db.update(users)
+      .set({ balance: sql`balance + ${amount}`, updatedAt: new Date().toISOString() })
+      .where(eq(users.id, userId))
+      .run();
+    return this.getBalance(userId);
+  }
 }
 

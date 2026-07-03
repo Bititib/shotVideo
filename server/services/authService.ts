@@ -68,6 +68,27 @@ export class AuthService {
     return this.generateAuthResponse(user);
   }
 
+  /** 修改密码 */
+  static async changePassword(userId: number, oldPass: string, newPass: string) {
+    const user = db.select().from(users).where(eq(users.id, userId)).get();
+    if (!user) {
+      throw { status: 404, message: '用户不存在' };
+    }
+
+    const valid = bcrypt.compareSync(oldPass, user.passwordHash);
+    if (!valid) {
+      throw { status: 400, message: '当前密码输入错误' };
+    }
+
+    if (newPass.length < 6) {
+      throw { status: 400, message: '新密码至少为6位' };
+    }
+
+    const newHash = bcrypt.hashSync(newPass, 12);
+    db.update(users).set({ passwordHash: newHash, updatedAt: new Date().toISOString() }).where(eq(users.id, userId)).run();
+    return { message: '密码修改成功' };
+  }
+
   /** 获取当前用户信息（含等级 + 今日剩余配额） */
   static async getProfile(userId: number) {
     const user = db.select().from(users).where(eq(users.id, userId)).get();
@@ -134,7 +155,7 @@ export class AuthService {
     const token = jwt.sign(
       { userId: user.id, role: user.role, orgId: user.orgId || null },
       env.JWT_SECRET,
-      { expiresIn: env.JWT_EXPIRES_IN }
+      { expiresIn: env.JWT_EXPIRES_IN as any }
     );
 
     return {

@@ -41,7 +41,7 @@ export function PromptDisplay({ title, english, chinese }: { title: string; engl
   );
 }
 
-export function ResultSection({ icon, title, children, className = '' }: { icon: React.ReactNode; title: string; children: React.ReactNode; className?: string }) {
+export function ResultSection({ icon, title, children, className = '' }: { icon: React.ReactNode; title: string; children: React.ReactNode; className?: string; key?: any }) {
   return (
     <div className={`bg-white/[0.02] border border-white/5 rounded-2xl p-5 ${className}`}>
       <div className="flex items-center gap-2.5 mb-4">

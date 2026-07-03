@@ -77,7 +77,7 @@ function ImageCard({ url, index, onPreview }: { url: string; index: number; onPr
 }
 
 /** 生成中的占位卡片 - 骨架屏风格 */
-function PlaceholderCard({ index, progress }: { index: number; progress: number }) {
+function PlaceholderCard({ index, progress }: { index: number; progress: number; key?: any }) {
   return (
     <div className="relative h-[180px] w-[160px] rounded-xl border border-white/[0.06] bg-[#111] overflow-hidden flex flex-col items-center justify-center gap-2">
       {/* 闪光扫描动画 */}

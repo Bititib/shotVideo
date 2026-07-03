@@ -5,7 +5,7 @@ import { quotaMiddleware, logUsage } from '../middleware/quota.js';
 import { AIService } from '../services/aiService.js';
 import { ContentService } from '../services/contentService.js';
 import { db } from '../db/index.js';
-import { users, tiers, tierModelAccess, models, settings } from '../db/schema.js';
+import { users, tiers, tierModelAccess, models, settings, modelPricing } from '../db/schema.js';
 import { eq, like } from 'drizzle-orm';
 import multer from 'multer';
 import os from 'os';

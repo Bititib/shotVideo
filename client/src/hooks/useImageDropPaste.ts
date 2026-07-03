@@ -20,7 +20,7 @@ export function useImageDropPaste(
   const handlePaste = useCallback((e: ClipboardEvent) => {
     const items = e.clipboardData?.items;
     if (!items) return;
-    const imageFiles: File[] = [];
+    const mediaFiles: File[] = [];
     for (let i = 0; i < items.length; i++) {
       if (items[i].type.startsWith('image/') || items[i].type.startsWith('video/')) {
         const file = items[i].getAsFile();

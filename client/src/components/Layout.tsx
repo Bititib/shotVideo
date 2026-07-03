@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { getPublicSettings } from '../api/admin';
-import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Zap, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2, X } from 'lucide-react';
+import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Zap, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2, X, Key, User } from 'lucide-react';
 
 const navItems = [
   { to: '/app', icon: PlaySquare, label: '通用分析', color: 'text-blue-400', feature: 'general' },
@@ -29,7 +29,52 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const [contactInfo, setContactInfo] = useState<Record<string, string>>({});
   const [showContact, setShowContact] = useState(() => localStorage.getItem('hide_contact') !== 'true');
 
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [cpError, setCpError] = useState<string | null>(null);
+  const [cpSuccess, setCpSuccess] = useState<string | null>(null);
+  const [cpLoading, setCpLoading] = useState(false);
+
   useEffect(() => { getPublicSettings().then(setContactInfo).catch(() => { }); }, []);
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!oldPassword || !newPassword || !confirmPassword) {
+      setCpError('所有字段均为必填项');
+      return;
+    }
+    if (newPassword.length < 6) {
+      setCpError('新密码必须至少6位');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setCpError('两次输入的新密码不一致');
+      return;
+    }
+
+    setCpError(null);
+    setCpSuccess(null);
+    setCpLoading(true);
+
+    try {
+      const { authApi } = await import('../api/auth');
+      await authApi.changePassword(oldPassword, newPassword);
+      setCpSuccess('密码修改成功，请妥善保管新密码');
+      setOldPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setTimeout(() => {
+        setShowChangePassword(false);
+        setCpSuccess(null);
+      }, 2000);
+    } catch (err: any) {
+      setCpError(err.message || '密码修改失败，请重试');
+    } finally {
+      setCpLoading(false);
+    }
+  };
 
   const handleLogout = () => { logout(); navigate('/'); };
 
@@ -104,16 +149,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
             {isAuthenticated ? (
               <>
-                <div className="px-4 py-3 bg-white/[0.02] rounded-xl">
+                <NavLink to="/app/profile" className="block px-4 py-3 bg-white/[0.02] hover:bg-white/[0.04] rounded-xl border border-transparent hover:border-white/5 transition-all group">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs text-zinc-400">{user?.username || user?.email}</span>
-                    <span className={`text-xs font-medium ${tierColors[user?.tier?.name || 'free']}`}>
+                    <span className="text-xs text-zinc-400 group-hover:text-white transition-colors">{user?.username || user?.email}</span>
+                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded bg-white/5 ${tierColors[user?.tier?.name || 'free']}`}>
                       {user?.tier?.displayName || '免费用户'}
                     </span>
                   </div>
                   {user?.tier && user.tier.dailyQuota !== -1 && (
                     <div className="mt-2">
-                      <div className="flex justify-between text-[10px] text-zinc-500 mb-1">
+                      <div className="flex justify-between text-[9px] text-zinc-500 mb-1">
                         <span>今日用量</span>
                         <span>{user.usedToday} / {user.tier.dailyQuota}</span>
                       </div>
@@ -126,15 +171,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                     </div>
                   )}
                   {/* 账户余额 */}
-                  <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-white/5 text-[10px]">
+                  <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-white/5 text-[9px]">
                     <span className="text-zinc-500">账户余额</span>
                     <span className="font-bold text-emerald-400">¥{user?.balance?.toFixed(2) ?? '0.00'}</span>
                   </div>
+                </NavLink>
+                <div className="flex items-center justify-between px-4 py-2">
+                  <NavLink to="/app/profile" className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
+                    <User className="w-3.5 h-3.5" />
+                    个人中心
+                  </NavLink>
+                  <button onClick={handleLogout} className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-red-400 transition-colors">
+                    <LogOut className="w-3.5 h-3.5" />
+                    退出登录
+                  </button>
                 </div>
-                <button onClick={handleLogout} className="flex items-center gap-2 px-4 py-2 text-xs text-zinc-500 hover:text-red-400 transition-colors">
-                  <LogOut className="w-3.5 h-3.5" />
-                  退出登录
-                </button>
               </>
             ) : (
               <button
@@ -183,6 +234,41 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 修改密码模态框 */}
+      {showChangePassword && (
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/65 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm bg-[#121212] border border-white/10 rounded-2xl p-6 shadow-2xl relative">
+            <button onClick={() => { setShowChangePassword(false); setCpError(null); setCpSuccess(null); }} className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-300 transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+            <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+              <Key className="w-4 h-4 text-indigo-400" /> 修改登录密码
+            </h3>
+            <form onSubmit={handleChangePassword} className="space-y-4">
+              <div>
+                <label className="block text-[11px] text-zinc-400 mb-1">当前密码</label>
+                <input type="password" value={oldPassword} onChange={e => setOldPassword(e.target.value)} required className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500/50 transition-colors" />
+              </div>
+              <div>
+                <label className="block text-[11px] text-zinc-400 mb-1">新密码（至少6位）</label>
+                <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} required className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500/50 transition-colors" />
+              </div>
+              <div>
+                <label className="block text-[11px] text-zinc-400 mb-1">确认新密码</label>
+                <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500/50 transition-colors" />
+              </div>
+
+              {cpError && <p className="text-[11px] text-red-400 bg-red-500/10 border border-red-500/10 rounded-lg p-2.5">{cpError}</p>}
+              {cpSuccess && <p className="text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/10 rounded-lg p-2.5">{cpSuccess}</p>}
+
+              <button type="submit" disabled={cpLoading} className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-xs font-medium text-white rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                {cpLoading ? '保存中...' : '保存密码'}
+              </button>
+            </form>
           </div>
         </div>
       )}
