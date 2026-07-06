@@ -4,7 +4,7 @@ import { ChannelService } from '../services/channelService.js';
 import { PricingService } from '../services/pricingService.js';
 import { BalanceService } from '../services/balanceService.js';
 import { db } from '../db/index.js';
-import { apiLogs, settings } from '../db/schema.js';
+import { apiLogs, settings, models } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import multer from 'multer';
 import os from 'os';
@@ -111,12 +111,39 @@ router.get('/models', (req: Request, res: Response) => {
   const { valid, error, token } = TokenService.validateToken(tokenKey);
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
-  const activeChannels = ChannelService.getActiveChannels();
   const allModels = new Set<string>();
-  for (const ch of activeChannels) {
-    for (const m of ch.supportedModels) {
-      if (m !== '*') allModels.add(m);
+
+  // 1. 默认内置的所有视频模型（包括 sora-v4-fast）
+  const defaultVideoModels = [
+    'grok-imagine-video',
+    'grok-4.3-video',
+    'grok-imagine-video-1.5-preview',
+    'grok-imagine-1.0-video',
+    'grok-imagine-video-1.5-fast',
+    'omni-flash',
+    'omni-flash-vref',
+    'sora-v4-fast'
+  ];
+  defaultVideoModels.forEach(m => allModels.add(m));
+
+  // 2. 数据库注册的模型（包括文字和图片类模型）
+  try {
+    const dbModels = db.select().from(models).all();
+    dbModels.forEach(m => allModels.add(m.modelId));
+  } catch (e) {
+    console.error('[v1/models] 数据库模型读取失败:', e);
+  }
+
+  // 3. 启用渠道自定义支持的模型
+  try {
+    const activeChannels = ChannelService.getActiveChannels();
+    for (const ch of activeChannels) {
+      for (const m of ch.supportedModels) {
+        if (m !== '*') allModels.add(m);
+      }
     }
+  } catch (e) {
+    console.error('[v1/models] 渠道自定义模型读取失败:', e);
   }
 
   let modelList = Array.from(allModels);
