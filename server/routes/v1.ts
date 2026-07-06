@@ -909,7 +909,8 @@ router.get('/videos/:id', async (req: Request, res: Response) => {
     }
 
     const responseBody = await upstreamRes.json() as any;
-    if (responseBody.status === 'completed' || responseBody.status === 'success') {
+    const statusLower = (responseBody.status || '').toLowerCase();
+    if (statusLower === 'completed' || statusLower === 'success') {
       const origUrl = responseBody.url || responseBody.video_url || responseBody.result_url;
       if (origUrl) {
         responseBody.url = rewriteVideoUrl(origUrl, req, id);

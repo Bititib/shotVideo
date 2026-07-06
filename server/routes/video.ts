@@ -503,10 +503,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
             errMsg = dataBlock.fail_reason || dataBlock.error || '视频生成失败';
           }
         } else {
-          taskStatus = status.status;
+          taskStatus = (status.status || '').toLowerCase();
           if (taskStatus === 'completed' || taskStatus === 'success') {
             resultUrl = status.url || status.video_url || status.result_url || `${baseUrl}/v1/files/video?id=${videoId}`;
-          } else if (taskStatus === 'failed') {
+          } else if (taskStatus === 'failed' || taskStatus === 'failure') {
             errMsg = status.error?.message || '视频生成失败';
           }
         }
