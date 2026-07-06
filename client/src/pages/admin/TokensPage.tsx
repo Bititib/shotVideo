@@ -4,22 +4,35 @@ import { Plus, Key, Trash2, Pencil, Copy, Power, PowerOff, Check } from 'lucide-
 
 export default function TokensPage() {
   const [data, setData] = useState<{ items: any[]; total: number }>({ items: [], total: 0 });
+  const [userList, setUserList] = useState<any[]>([]);
   const [edit, setEdit] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [newTokenKey, setNewTokenKey] = useState<string | null>(null);
 
-  const load = async () => { setLoading(true); setData(await adminApi.getTokens()); setLoading(false); };
+  const load = async () => {
+    setLoading(true);
+    try {
+      const tokensData = await adminApi.getTokens();
+      const usersData = await adminApi.getUsers({ pageSize: 1000 });
+      setData(tokensData);
+      setUserList(usersData.items || []);
+    } catch (e) {
+      console.error(e);
+    }
+    setLoading(false);
+  };
   useEffect(() => { load(); }, []);
 
   const openNew = () => setEdit({
     name: '', allowedModels: [], balance: -1, rateLimit: -1, expiresAt: '', isNew: true,
-    modelsText: '',
+    modelsText: '', userId: '',
   });
 
   const openEdit = (t: any) => setEdit({
     ...t, isNew: false,
     modelsText: (t.allowedModels || []).join('\n'),
+    userId: t.userId || '',
   });
 
   const handleSave = async () => {
@@ -32,6 +45,7 @@ export default function TokensPage() {
         balance: parseFloat(edit.balance) || -1,
         rateLimit: parseInt(edit.rateLimit) || -1,
         expiresAt: edit.expiresAt || null,
+        userId: edit.userId ? parseInt(edit.userId) : null,
       };
 
       if (edit.isNew) {
@@ -137,6 +151,18 @@ export default function TokensPage() {
                 <label className="block text-xs text-zinc-400 mb-1.5">Token 名称（备注）</label>
                 <input type="text" value={edit.name} onChange={e => setEdit({ ...edit, name: e.target.value })} placeholder="如：前端测试用"
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs text-zinc-400 mb-1.5">关联用户</label>
+                <select value={edit.userId || ''} onChange={e => setEdit({ ...edit, userId: e.target.value })}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                  <option value="" className="bg-[#1a1a1a]">系统级 Token (不关联任何用户)</option>
+                  {userList.map(u => (
+                    <option key={u.id} value={u.id} className="bg-[#1a1a1a]">
+                      {u.username || u.email} ({u.email})
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

@@ -89,6 +89,7 @@ export class TokenService {
     if (data.balance !== undefined) updates.balance = data.balance;
     if (data.rateLimit !== undefined) updates.rateLimit = data.rateLimit;
     if (data.status !== undefined) updates.status = data.status;
+    if (data.userId !== undefined) updates.userId = data.userId || null;
     if (data.expiresAt !== undefined) updates.expiresAt = data.expiresAt || null;
 
     if (Object.keys(updates).length > 0) {
