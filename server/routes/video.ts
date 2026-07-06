@@ -25,7 +25,7 @@ const RATIO_TO_SIZE: Record<string, string> = {
 
 /** 模型系列信息：计费、时长限制、是否强制参考图 */
 interface ModelMeta {
-  series: '1.0' | '1.5' | 'legacy' | 'omni-flash' | 'omni-flash-vref';
+  series: string;
   allowedSeconds: number[] | null;   // null = 不限制
   requireRef: boolean;               // 是否必须传参考图
 }
@@ -37,6 +37,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'grok-4.3-video':                 { series: 'legacy', allowedSeconds: null, requireRef: false },
   'omni-flash':                     { series: 'omni-flash', allowedSeconds: [4, 6, 8, 10], requireRef: false },
   'omni-flash-vref':                { series: 'omni-flash-vref', allowedSeconds: [10], requireRef: false },
+  'sora-v4-fast':                   { series: 'sora-v4-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
@@ -47,6 +48,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'grok-imagine-video-1.5-fast', name: 'Grok 1.5 Fast', description: '快速文生/图生视频，6/10秒', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash', name: 'Omni Flash', description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash-vref', name: 'Omni Flash Vref', description: '视频风格编辑/改写，支持 1080p', maxSeconds: 10, icon: '✂️' },
+  { id: 'sora-v4-fast', name: 'Sora V4 Fast', description: 'Sora V4 快速视频生成，1.5积分/秒', maxSeconds: 15, icon: '⚡' },
 ];
 
 /** 查找支持指定视频模型的渠道 */
@@ -93,6 +95,9 @@ router.get('/models', (_req: Request, res: Response) => {
         '720p': omniVref720,
         '1080p': omniVref1080,
       };
+    } else if (m.id === 'sora-v4-fast') {
+      const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_rate_720p')).get();
+      rates = { '720p': parseFloat(row?.value || '1.50') };
     } else {
       rates = {
         '480p': Math.round(base480 * multiplier * 100) / 100,
@@ -176,6 +181,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     const key = resolution === '1080p' ? 'omni_vref_rate_1080p' : 'omni_vref_rate_720p';
     const row = db.select().from(settings).where(eq(settings.key, key)).get();
     rate = parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
+  } else if (model === 'sora-v4-fast') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_rate_720p')).get();
+    rate = parseFloat(row?.value || '1.50');
   } else {
     const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
     const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();

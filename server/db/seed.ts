@@ -153,7 +153,8 @@ async function syncModelsFromAPI() {
     { provider: 'google', modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'omni', modelId: 'omni-flash', displayName: 'Omni Flash', capabilities: JSON.stringify(['video']) },
-    { provider: 'omni', modelId: 'omni-flash-vref', displayName: 'Omni Flash Vref', capabilities: JSON.stringify(['video']) }
+    { provider: 'omni', modelId: 'omni-flash-vref', displayName: 'Omni Flash Vref', capabilities: JSON.stringify(['video']) },
+    { provider: 'openai', modelId: 'sora-v4-fast', displayName: 'Sora V4 Fast', capabilities: JSON.stringify(['video']) }
   );
 
   // 同步或插入模型
@@ -534,18 +535,19 @@ export async function initDatabase() {
     ]).run();
   }
 
-  // 保证 Omni 费率配置项存在
+  // 保证 Omni & Sora 费率配置项存在
   const omniSettings = [
     { key: 'omni_flash_rate_720p', value: '0.90', label: 'Omni Flash 720p费率(¥/秒)' },
     { key: 'omni_flash_rate_1080p', value: '1.50', label: 'Omni Flash 1080p费率(¥/秒)' },
     { key: 'omni_vref_rate_720p', value: '1.60', label: 'Omni Vref 720p费率(¥/秒)' },
     { key: 'omni_vref_rate_1080p', value: '2.20', label: 'Omni Vref 1080p费率(¥/秒)' },
+    { key: 'sora_v4_rate_720p', value: '1.50', label: 'Sora V4 720p费率(¥/秒)' },
   ];
   for (const s of omniSettings) {
     const existing = db.select().from(settings).where(eq(settings.key, s.key)).get();
     if (!existing) {
       db.insert(settings).values(s).run();
-      console.log(`📦 已迁移：添加 Omni 费率配置 ${s.key}`);
+      console.log(`📦 已迁移：添加 Omni / Sora 费率配置 ${s.key}`);
     }
   }
 

@@ -2,16 +2,105 @@ import { Router, Request, Response } from 'express';
 import { TokenService } from '../services/tokenService.js';
 import { ChannelService } from '../services/channelService.js';
 import { PricingService } from '../services/pricingService.js';
+import { BalanceService } from '../services/balanceService.js';
 import { db } from '../db/index.js';
-import { apiLogs } from '../db/schema.js';
+import { apiLogs, settings } from '../db/schema.js';
+import { eq } from 'drizzle-orm';
+import multer from 'multer';
+import os from 'os';
+import fs from 'fs';
+import { env } from '../config/env.js';
 
 const router = Router();
+const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
 
 /** 从请求头中提取 Bearer Token */
 function extractToken(req: Request): string | null {
   const auth = req.headers.authorization;
   if (!auth?.startsWith('Bearer ')) return null;
   return auth.slice(7).trim();
+}
+
+/** 检查 Token 或关联用户的余额 */
+function checkTokenOrUserBalance(token: any, cost: number): { sufficient: boolean; balance: number } {
+  if (cost <= 0) return { sufficient: true, balance: 0 };
+  if (token.balance === -1) {
+    if (token.userId) {
+      const check = BalanceService.checkBalance(token.userId, cost);
+      return { sufficient: check.sufficient, balance: check.balance };
+    }
+    return { sufficient: true, balance: 999999 };
+  }
+  return { sufficient: token.balance >= cost, balance: token.balance };
+}
+
+/** 扣除 Token 或关联用户的余额 */
+function deductTokenOrUserBalance(token: any, cost: number, model: string) {
+  if (cost <= 0) return;
+  if (token.balance === -1) {
+    if (token.userId) {
+      BalanceService.deduct(token.userId, cost, 'api_call', { tokenKey: token.tokenKey, model });
+    }
+    TokenService.deductBalance(token.id, cost);
+  } else {
+    TokenService.deductBalance(token.id, cost);
+  }
+}
+
+/** 获取视频计费费率 */
+function getVideoRate(model: string, resolution: string): number {
+  if (model === 'omni-flash') {
+    const key = resolution === '1080p' ? 'omni_flash_rate_1080p' : 'omni_flash_rate_720p';
+    const row = db.select().from(settings).where(eq(settings.key, key)).get();
+    return parseFloat(row?.value || (resolution === '1080p' ? '1.50' : '0.90'));
+  } else if (model === 'omni-flash-vref') {
+    const key = resolution === '1080p' ? 'omni_vref_rate_1080p' : 'omni_vref_rate_720p';
+    const row = db.select().from(settings).where(eq(settings.key, key)).get();
+    return parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
+  } else if (model === 'sora-v4-fast') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_rate_720p')).get();
+    return parseFloat(row?.value || '1.50');
+  } else {
+    const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
+    const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
+    const BASE_RATE: Record<string, number> = {
+      '480p': parseFloat(rate480?.value || '0.03'),
+      '720p': parseFloat(rate720?.value || '0.05'),
+    };
+    const isV1_5 = model.includes('1.5');
+    const seriesMultiplier = isV1_5 ? 1.2 : 1.0;
+    return Math.round((BASE_RATE[resolution] || BASE_RATE['720p']) * seriesMultiplier * 100) / 100;
+  }
+}
+
+/** 查找视频中转渠道配置 */
+function findUpstreamVideoConfig() {
+  let ch = ChannelService.findChannelForModel('grok-imagine-video');
+  if (!ch) ch = ChannelService.findChannelForModel('omni-flash');
+  if (!ch) {
+    const active = ChannelService.getActiveChannels();
+    ch = active.find(c => c.supportedModels.includes('video') || c.supportedModels.includes('*'));
+  }
+  if (ch) return { baseUrl: ch.baseUrl, apiKey: ch.apiKey };
+  if (env.GROK2API_BASE_URL) return { baseUrl: env.GROK2API_BASE_URL, apiKey: env.GROK2API_API_KEY };
+  return null;
+}
+
+/** 清理 Multer 临时文件 */
+function cleanupFiles(files: any) {
+  if (Array.isArray(files)) {
+    for (const f of files) {
+      try { fs.unlinkSync(f.path); } catch {}
+    }
+  }
+}
+
+/** 重写视频 URL 指向本地代理接口 */
+function rewriteVideoUrl(urlStr: string, req: Request, id: string): string {
+  if (!urlStr) return urlStr;
+  const host = req.get('host');
+  const protocol = req.protocol;
+  return `${protocol}://${host}/v1/files/video?id=${id}`;
 }
 
 /** GET /v1/models — 返回当前 Token 可用的模型列表 */
@@ -22,7 +111,6 @@ router.get('/models', (req: Request, res: Response) => {
   const { valid, error, token } = TokenService.validateToken(tokenKey);
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
-  // 汇总所有启用渠道支持的模型
   const activeChannels = ChannelService.getActiveChannels();
   const allModels = new Set<string>();
   for (const ch of activeChannels) {
@@ -31,7 +119,6 @@ router.get('/models', (req: Request, res: Response) => {
     }
   }
 
-  // 如果 Token 限制了模型范围，则取交集
   let modelList = Array.from(allModels);
   if (token.allowedModels.length > 0) {
     modelList = modelList.filter(m => token.allowedModels.includes(m));
@@ -48,38 +135,62 @@ router.get('/models', (req: Request, res: Response) => {
   });
 });
 
-/** POST /v1/chat/completions — 核心代理转发 */
-router.post('/chat/completions', async (req: Request, res: Response) => {
-  const startTime = Date.now();
-  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
-
-  // 1) Token 鉴权
+/** GET /v1/billing/balance — 余额查询 */
+router.get('/billing/balance', (req: Request, res: Response) => {
   const tokenKey = extractToken(req);
   if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
 
   const { valid, error, token } = TokenService.validateToken(tokenKey);
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
-  // 2) 解析请求
+  let balance = token.balance;
+  if (balance === -1 && token.userId) {
+    const check = BalanceService.checkBalance(token.userId, 0.01);
+    balance = check.balance;
+  }
+
+  res.json({
+    billing: true,
+    key_name: token.name || 'API Token',
+    balance: balance === -1 ? 999999 : balance,
+    total_charged: token.usedAmount,
+    status: token.status === 1 ? 'active' : 'disabled',
+    group: 'default',
+    is_admin: false
+  });
+});
+
+/** POST /v1/chat/completions — 核心对话代理转发 */
+router.post('/chat/completions', async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
+
+  const tokenKey = extractToken(req);
+  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
+
+  const { valid, error, token } = TokenService.validateToken(tokenKey);
+  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
+
   const { model, messages, stream = false, ...otherParams } = req.body;
   if (!model) return res.status(400).json({ error: { message: 'model is required', type: 'invalid_request_error' } });
   if (!messages) return res.status(400).json({ error: { message: 'messages is required', type: 'invalid_request_error' } });
 
-  // 3) 检查模型权限
   if (token.allowedModels.length > 0 && !token.allowedModels.includes(model)) {
     return res.status(403).json({ error: { message: `Token has no access to model ${model}`, type: 'permission_error' } });
   }
 
-  // 4) 查找可用渠道
+  // 检查余额 (预扣 0.01 元以验证有效性)
+  const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, 0.01);
+  if (!sufficient) {
+    return res.status(402).json({ error: { message: `Insufficient balance. Current: ¥${currentBalance.toFixed(2)}`, type: 'insufficient_balance_error' } });
+  }
+
   const channel = ChannelService.findChannelForModel(model);
   if (!channel) {
     return res.status(404).json({ error: { message: `No available channel for model ${model}`, type: 'not_found_error' } });
   }
 
-  // 5) 模型名映射
   const upstreamModel = channel.modelMapping[model] || model;
-
-  // 6) 构建上游请求
   const upstreamUrl = channel.baseUrl.replace(/\/+$/, '') + '/v1/chat/completions';
   const upstreamBody = JSON.stringify({
     model: upstreamModel,
@@ -107,22 +218,14 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
       const errBody = await upstreamRes.text();
       const durationMs = Date.now() - startTime;
 
-      // 记录错误日志
       db.insert(apiLogs).values({
-        tokenId: token.id,
-        channelId: channel.id,
-        model,
-        upstreamModel,
-        durationMs,
-        status: 'error',
-        errorMessage: `HTTP ${upstreamRes.status}: ${errBody.slice(0, 500)}`,
-        clientIp,
+        tokenId: token.id, channelId: channel.id, model, upstreamModel,
+        durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errBody.slice(0, 500)}`, clientIp,
       }).run();
 
       return res.status(upstreamRes.status).json(JSON.parse(errBody));
     }
 
-    // 7) 流式转发
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -143,7 +246,6 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
           const chunk = decoder.decode(value, { stream: true });
           res.write(chunk);
 
-          // 尝试从最后的 [DONE] 前的 chunk 中提取 usage 信息
           const lines = chunk.split('\n');
           for (const line of lines) {
             if (line.startsWith('data: ') && line !== 'data: [DONE]') {
@@ -153,7 +255,7 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
                   totalPromptTokens = data.usage.prompt_tokens || 0;
                   totalCompletionTokens = data.usage.completion_tokens || 0;
                 }
-              } catch { /* ignore parse errors in stream */ }
+              } catch {}
             }
           }
         }
@@ -163,9 +265,9 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
 
       res.end();
 
-      // 计费 + 日志
       const cost = PricingService.calculateCost(model, totalPromptTokens, totalCompletionTokens);
-      TokenService.deductBalance(token.id, cost);
+      deductTokenOrUserBalance(token, cost, model);
+
       db.insert(apiLogs).values({
         tokenId: token.id, channelId: channel.id, model, upstreamModel,
         promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens,
@@ -175,7 +277,6 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
       return;
     }
 
-    // 8) 非流式转发
     const responseBody = await upstreamRes.json();
     const durationMs = Date.now() - startTime;
 
@@ -183,11 +284,9 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
     const completionTokens = responseBody.usage?.completion_tokens || 0;
     const totalTokens = responseBody.usage?.total_tokens || promptTokens + completionTokens;
 
-    // 计费
     const cost = PricingService.calculateCost(model, promptTokens, completionTokens);
-    TokenService.deductBalance(token.id, cost);
+    deductTokenOrUserBalance(token, cost, model);
 
-    // 记录日志
     db.insert(apiLogs).values({
       tokenId: token.id, channelId: channel.id, model, upstreamModel,
       promptTokens, completionTokens, totalTokens,
@@ -205,6 +304,559 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
     }).run();
 
     res.status(502).json({ error: { message: `Upstream error: ${errorMessage}`, type: 'server_error' } });
+  }
+});
+
+/** POST /v1/images/generations — 图片生成代理转发 */
+router.post('/images/generations', async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
+
+  const tokenKey = extractToken(req);
+  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
+
+  const { valid, error, token } = TokenService.validateToken(tokenKey);
+  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
+
+  const { model, prompt, n = 1, size = '1024x1024', response_format = 'url', ...otherParams } = req.body;
+  if (!model) return res.status(400).json({ error: { message: 'model is required', type: 'invalid_request_error' } });
+  if (!prompt) return res.status(400).json({ error: { message: 'prompt is required', type: 'invalid_request_error' } });
+
+  if (token.allowedModels.length > 0 && !token.allowedModels.includes(model)) {
+    return res.status(403).json({ error: { message: `Token has no access to model ${model}`, type: 'permission_error' } });
+  }
+
+  const channel = ChannelService.findChannelForModel(model);
+  if (!channel) {
+    return res.status(404).json({ error: { message: `No available channel for model ${model}`, type: 'not_found_error' } });
+  }
+
+  const count = Math.max(1, Number(n) || 1);
+  const unitCost = PricingService.calculateCost(model, 0, 0);
+  const totalCost = Math.round(unitCost * count * 100) / 100;
+
+  const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, totalCost);
+  if (!sufficient) {
+    return res.status(402).json({ error: { message: `Insufficient balance. Required: ¥${totalCost.toFixed(2)}, Current: ¥${currentBalance.toFixed(2)}`, type: 'insufficient_balance_error' } });
+  }
+
+  const upstreamModel = channel.modelMapping[model] || model;
+  const baseUrl = channel.baseUrl.replace(/\/+$/, '');
+  const upstreamUrl = `${baseUrl}/v1/images/generations`;
+
+  try {
+    const upstreamRes = await fetch(upstreamUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${channel.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: upstreamModel,
+        prompt,
+        n,
+        size,
+        response_format,
+        ...otherParams,
+      }),
+      signal: AbortSignal.timeout(180_000),
+    });
+
+    if (!upstreamRes.ok) {
+      const errText = await upstreamRes.text();
+      const durationMs = Date.now() - startTime;
+      db.insert(apiLogs).values({
+        tokenId: token.id, channelId: channel.id, model, upstreamModel,
+        durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errText.slice(0, 500)}`, clientIp,
+      }).run();
+      return res.status(upstreamRes.status).json({ error: { message: `Upstream error: ${errText}`, type: 'upstream_error' } });
+    }
+
+    const responseBody = await upstreamRes.json() as any;
+    const durationMs = Date.now() - startTime;
+
+    deductTokenOrUserBalance(token, totalCost, model);
+
+    db.insert(apiLogs).values({
+      tokenId: token.id, channelId: channel.id, model, upstreamModel,
+      cost: totalCost, durationMs: durationMs, status: 'success', clientIp,
+    }).run();
+
+    // 补全相对路径
+    if (responseBody.data && Array.isArray(responseBody.data)) {
+      responseBody.data = responseBody.data.map((item: any) => {
+        if (item.url && item.url.startsWith('/')) {
+          return { ...item, url: baseUrl + item.url };
+        }
+        return item;
+      });
+    }
+
+    res.json(responseBody);
+  } catch (err: any) {
+    const durationMs = Date.now() - startTime;
+    const errorMessage = err.name === 'AbortError' ? 'upstream timeout' : err.message;
+    db.insert(apiLogs).values({
+      tokenId: token.id, channelId: channel.id, model, upstreamModel,
+      durationMs, status: 'error', errorMessage, clientIp,
+    }).run();
+    res.status(502).json({ error: { message: `Upstream error: ${errorMessage}`, type: 'server_error' } });
+  }
+});
+
+/** POST /v1/images/edits — 图像编辑与图生图代理转发 */
+router.post('/images/edits', upload.any(), async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
+
+  const tokenKey = extractToken(req);
+  if (!tokenKey) {
+    cleanupFiles(req.files);
+    return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
+  }
+
+  const { valid, error, token } = TokenService.validateToken(tokenKey);
+  if (!valid) {
+    cleanupFiles(req.files);
+    return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
+  }
+
+  const { model, prompt, n = 1, size = '1024x1024', response_format = 'url', ...otherParams } = req.body;
+  if (!model) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: { message: 'model is required', type: 'invalid_request_error' } });
+  }
+  if (!prompt) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: { message: 'prompt is required', type: 'invalid_request_error' } });
+  }
+
+  if (token.allowedModels.length > 0 && !token.allowedModels.includes(model)) {
+    cleanupFiles(req.files);
+    return res.status(403).json({ error: { message: `Token has no access to model ${model}`, type: 'permission_error' } });
+  }
+
+  const channel = ChannelService.findChannelForModel(model);
+  if (!channel) {
+    cleanupFiles(req.files);
+    return res.status(404).json({ error: { message: `No available channel for model ${model}`, type: 'not_found_error' } });
+  }
+
+  const count = Math.max(1, Number(n) || 1);
+  const unitCost = PricingService.calculateCost(model, 0, 0);
+  const totalCost = Math.round(unitCost * count * 100) / 100;
+
+  const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, totalCost);
+  if (!sufficient) {
+    cleanupFiles(req.files);
+    return res.status(402).json({ error: { message: `Insufficient balance. Required: ¥${totalCost.toFixed(2)}, Current: ¥${currentBalance.toFixed(2)}`, type: 'insufficient_balance_error' } });
+  }
+
+  const upstreamModel = channel.modelMapping[model] || model;
+  const baseUrl = channel.baseUrl.replace(/\/+$/, '');
+  const upstreamUrl = `${baseUrl}/v1/images/edits`;
+
+  try {
+    const formData = new FormData();
+    formData.append('model', upstreamModel);
+    formData.append('prompt', prompt);
+    formData.append('n', String(n));
+    formData.append('size', size);
+    formData.append('response_format', response_format);
+
+    for (const key of Object.keys(otherParams)) {
+      formData.append(key, otherParams[key]);
+    }
+
+    if (Array.isArray(req.files)) {
+      for (const file of req.files) {
+        const fileContent = fs.readFileSync(file.path);
+        const blob = new Blob([fileContent], { type: file.mimetype });
+        const name = file.fieldname === 'image' ? 'image[]' : file.fieldname;
+        formData.append(name, blob, file.originalname);
+      }
+    }
+
+    const headers: Record<string, string> = {};
+    if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+
+    const upstreamRes = await fetch(upstreamUrl, {
+      method: 'POST',
+      headers,
+      body: formData,
+      signal: AbortSignal.timeout(180_000),
+    });
+
+    cleanupFiles(req.files);
+
+    if (!upstreamRes.ok) {
+      const errText = await upstreamRes.text();
+      const durationMs = Date.now() - startTime;
+      db.insert(apiLogs).values({
+        tokenId: token.id, channelId: channel.id, model, upstreamModel,
+        durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errText.slice(0, 500)}`, clientIp,
+      }).run();
+      return res.status(upstreamRes.status).json({ error: { message: `Upstream error: ${errText}`, type: 'upstream_error' } });
+    }
+
+    const responseBody = await upstreamRes.json() as any;
+    const durationMs = Date.now() - startTime;
+
+    deductTokenOrUserBalance(token, totalCost, model);
+
+    db.insert(apiLogs).values({
+      tokenId: token.id, channelId: channel.id, model, upstreamModel,
+      cost: totalCost, durationMs, status: 'success', clientIp,
+    }).run();
+
+    if (responseBody.data && Array.isArray(responseBody.data)) {
+      responseBody.data = responseBody.data.map((item: any) => {
+        if (item.url && item.url.startsWith('/')) {
+          return { ...item, url: baseUrl + item.url };
+        }
+        return item;
+      });
+    }
+
+    res.json(responseBody);
+  } catch (err: any) {
+    cleanupFiles(req.files);
+    const durationMs = Date.now() - startTime;
+    const errorMessage = err.name === 'AbortError' ? 'upstream timeout' : err.message;
+    db.insert(apiLogs).values({
+      tokenId: token.id, channelId: channel.id, model, upstreamModel,
+      durationMs, status: 'error', errorMessage, clientIp,
+    }).run();
+    res.status(502).json({ error: { message: `Upstream error: ${errorMessage}`, type: 'server_error' } });
+  }
+});
+
+/** POST /v1/videos — Grok 视频生成任务代理 */
+router.post('/videos', upload.any(), async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
+
+  const tokenKey = extractToken(req);
+  if (!tokenKey) {
+    cleanupFiles(req.files);
+    return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
+  }
+
+  const { valid, error, token } = TokenService.validateToken(tokenKey);
+  if (!valid) {
+    cleanupFiles(req.files);
+    return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
+  }
+
+  const { model, prompt, seconds = 6, size = '720x1280', resolution_name = '720p', ...otherParams } = req.body;
+  if (!model) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: 'model is required' });
+  }
+  if (!prompt) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: 'prompt is required' });
+  }
+
+  if (token.allowedModels.length > 0 && !token.allowedModels.includes(model)) {
+    cleanupFiles(req.files);
+    return res.status(403).json({ error: `Token has no access to model ${model}` });
+  }
+
+  const channel = ChannelService.findChannelForModel(model);
+  if (!channel) {
+    cleanupFiles(req.files);
+    return res.status(404).json({ error: `No available channel for model ${model}` });
+  }
+
+  const rate = getVideoRate(model, resolution_name);
+  const totalCost = Math.round(rate * Number(seconds) * 100) / 100;
+
+  const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, totalCost);
+  if (!sufficient) {
+    cleanupFiles(req.files);
+    return res.status(402).json({ error: `Insufficient balance. Required: ¥${totalCost.toFixed(2)}, Current: ¥${currentBalance.toFixed(2)}` });
+  }
+
+  const upstreamModel = channel.modelMapping[model] || model;
+  const baseUrl = channel.baseUrl.replace(/\/+$/, '');
+  const upstreamUrl = `${baseUrl}/v1/videos`;
+
+  try {
+    const formData = new FormData();
+    formData.append('model', upstreamModel);
+    formData.append('prompt', prompt);
+    formData.append('seconds', String(seconds));
+    formData.append('size', size);
+    formData.append('resolution_name', resolution_name);
+
+    for (const key of Object.keys(otherParams)) {
+      formData.append(key, otherParams[key]);
+    }
+
+    if (Array.isArray(req.files)) {
+      for (const file of req.files) {
+        const fileContent = fs.readFileSync(file.path);
+        const blob = new Blob([fileContent], { type: file.mimetype });
+        formData.append(file.fieldname, blob, file.originalname);
+      }
+    }
+
+    const headers: Record<string, string> = {};
+    if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+
+    const upstreamRes = await fetch(upstreamUrl, {
+      method: 'POST',
+      headers,
+      body: formData,
+      signal: AbortSignal.timeout(120_000),
+    });
+
+    cleanupFiles(req.files);
+
+    if (!upstreamRes.ok) {
+      const errText = await upstreamRes.text();
+      const durationMs = Date.now() - startTime;
+      db.insert(apiLogs).values({
+        tokenId: token.id, channelId: channel.id, model, upstreamModel,
+        durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errText.slice(0, 500)}`, clientIp,
+      }).run();
+      return res.status(upstreamRes.status).json({ error: errText });
+    }
+
+    const responseBody = await upstreamRes.json() as any;
+    const durationMs = Date.now() - startTime;
+
+    deductTokenOrUserBalance(token, totalCost, model);
+
+    db.insert(apiLogs).values({
+      tokenId: token.id, channelId: channel.id, model, upstreamModel,
+      cost: totalCost, durationMs, status: 'success', clientIp,
+    }).run();
+
+    res.json(responseBody);
+  } catch (err: any) {
+    cleanupFiles(req.files);
+    const durationMs = Date.now() - startTime;
+    const errorMessage = err.name === 'AbortError' ? 'upstream timeout' : err.message;
+    db.insert(apiLogs).values({
+      tokenId: token.id, channelId: channel.id, model, upstreamModel,
+      durationMs, status: 'error', errorMessage, clientIp,
+    }).run();
+    res.status(502).json({ error: `Upstream error: ${errorMessage}` });
+  }
+});
+
+/** POST /v1/video/generations — Omni 视频生成任务代理 */
+router.post('/video/generations', async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
+
+  const tokenKey = extractToken(req);
+  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
+
+  const { valid, error, token } = TokenService.validateToken(tokenKey);
+  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
+
+  const { model, prompt, duration = 6, aspect_ratio = 'landscape', resolution = '720p', ...otherParams } = req.body;
+  if (!model) return res.status(400).json({ error: 'model is required' });
+  if (!prompt) return res.status(400).json({ error: 'prompt is required' });
+
+  if (token.allowedModels.length > 0 && !token.allowedModels.includes(model)) {
+    return res.status(403).json({ error: `Token has no access to model ${model}` });
+  }
+
+  const channel = ChannelService.findChannelForModel(model);
+  if (!channel) {
+    return res.status(404).json({ error: `No available channel for model ${model}` });
+  }
+
+  const rate = getVideoRate(model, resolution);
+  const seconds = model === 'omni-flash-vref' ? 10 : Number(duration);
+  const totalCost = Math.round(rate * seconds * 100) / 100;
+
+  const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, totalCost);
+  if (!sufficient) {
+    return res.status(402).json({ error: `Insufficient balance. Required: ¥${totalCost.toFixed(2)}, Current: ¥${currentBalance.toFixed(2)}` });
+  }
+
+  const upstreamModel = channel.modelMapping[model] || model;
+  const baseUrl = channel.baseUrl.replace(/\/+$/, '');
+  const upstreamUrl = `${baseUrl}/v1/video/generations`;
+
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+
+    const upstreamRes = await fetch(upstreamUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model: upstreamModel,
+        prompt,
+        duration,
+        aspect_ratio,
+        resolution,
+        ...otherParams,
+      }),
+      signal: AbortSignal.timeout(120_000),
+    });
+
+    if (!upstreamRes.ok) {
+      const errText = await upstreamRes.text();
+      const durationMs = Date.now() - startTime;
+      db.insert(apiLogs).values({
+        tokenId: token.id, channelId: channel.id, model, upstreamModel,
+        durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errText.slice(0, 500)}`, clientIp,
+      }).run();
+      return res.status(upstreamRes.status).json({ error: errText });
+    }
+
+    const responseBody = await upstreamRes.json() as any;
+    const durationMs = Date.now() - startTime;
+
+    deductTokenOrUserBalance(token, totalCost, model);
+
+    db.insert(apiLogs).values({
+      tokenId: token.id, channelId: channel.id, model, upstreamModel,
+      cost: totalCost, durationMs: durationMs, status: 'success', clientIp,
+    }).run();
+
+    res.json(responseBody);
+  } catch (err: any) {
+    const durationMs = Date.now() - startTime;
+    const errorMessage = err.name === 'AbortError' ? 'upstream timeout' : err.message;
+    db.insert(apiLogs).values({
+      tokenId: token.id, channelId: channel.id, model, upstreamModel,
+      durationMs, status: 'error', errorMessage, clientIp,
+    }).run();
+    res.status(502).json({ error: `Upstream error: ${errorMessage}` });
+  }
+});
+
+/** GET /v1/videos/:id — Grok 视频状态查询 */
+router.get('/videos/:id', async (req: Request, res: Response) => {
+  const tokenKey = extractToken(req);
+  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
+
+  const { valid, error } = TokenService.validateToken(tokenKey);
+  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
+
+  const config = findUpstreamVideoConfig();
+  if (!config) return res.status(503).json({ error: 'No video channel configured' });
+
+  const id = req.params.id;
+  const upstreamUrl = `${config.baseUrl.replace(/\/+$/, '')}/v1/videos/${id}`;
+
+  try {
+    const headers: Record<string, string> = {};
+    if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
+
+    const upstreamRes = await fetch(upstreamUrl, { headers, signal: AbortSignal.timeout(15_000) });
+    if (!upstreamRes.ok) {
+      const txt = await upstreamRes.text();
+      return res.status(upstreamRes.status).json({ error: txt });
+    }
+
+    const responseBody = await upstreamRes.json() as any;
+    if (responseBody.status === 'completed' || responseBody.status === 'success') {
+      const origUrl = responseBody.url || responseBody.video_url || responseBody.result_url;
+      if (origUrl) {
+        responseBody.url = rewriteVideoUrl(origUrl, req, id);
+        if (responseBody.video_url) responseBody.video_url = responseBody.url;
+        if (responseBody.result_url) responseBody.result_url = responseBody.url;
+      }
+    }
+
+    res.json(responseBody);
+  } catch (err: any) {
+    res.status(502).json({ error: `Upstream query failed: ${err.message}` });
+  }
+});
+
+/** GET /v1/video/generations/:id — Omni 视频状态查询 */
+router.get('/video/generations/:id', async (req: Request, res: Response) => {
+  const tokenKey = extractToken(req);
+  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
+
+  const { valid, error } = TokenService.validateToken(tokenKey);
+  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
+
+  const config = findUpstreamVideoConfig();
+  if (!config) return res.status(503).json({ error: 'No video channel configured' });
+
+  const id = req.params.id;
+  const upstreamUrl = `${config.baseUrl.replace(/\/+$/, '')}/v1/video/generations/${id}`;
+
+  try {
+    const headers: Record<string, string> = {};
+    if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
+
+    const upstreamRes = await fetch(upstreamUrl, { headers, signal: AbortSignal.timeout(15_000) });
+    if (!upstreamRes.ok) {
+      const txt = await upstreamRes.text();
+      return res.status(upstreamRes.status).json({ error: txt });
+    }
+
+    const responseBody = await upstreamRes.json() as any;
+    const taskStatus = (responseBody.status || responseBody.data?.status || '').toLowerCase();
+    if (taskStatus === 'completed' || taskStatus === 'success') {
+      const origUrl = responseBody.result_url || responseBody.url || responseBody.data?.result_url || responseBody.data?.url;
+      if (origUrl) {
+        const rewritten = rewriteVideoUrl(origUrl, req, id);
+        responseBody.result_url = rewritten;
+        if (responseBody.url) responseBody.url = rewritten;
+        if (responseBody.data) {
+          responseBody.data.result_url = rewritten;
+          responseBody.data.url = rewritten;
+        }
+      }
+    }
+
+    res.json(responseBody);
+  } catch (err: any) {
+    res.status(502).json({ error: `Upstream query failed: ${err.message}` });
+  }
+});
+
+/** GET /v1/files/video — 视频下载管道代理 */
+router.get('/files/video', async (req: Request, res: Response) => {
+  const id = req.query.id as string;
+  if (!id) return res.status(400).json({ error: 'Missing video id' });
+
+  const config = findUpstreamVideoConfig();
+  if (!config) return res.status(503).json({ error: 'No video channel configured' });
+
+  const upstreamUrl = `${config.baseUrl.replace(/\/+$/, '')}/v1/files/video?id=${id}`;
+
+  try {
+    const headers: Record<string, string> = {};
+    if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
+
+    const upstreamRes = await fetch(upstreamUrl, { headers, signal: AbortSignal.timeout(300_000) });
+    if (!upstreamRes.ok) {
+      return res.status(upstreamRes.status).send(`Failed to stream video: ${upstreamRes.statusText}`);
+    }
+
+    res.setHeader('Content-Type', upstreamRes.headers.get('Content-Type') || 'video/mp4');
+    const len = upstreamRes.headers.get('Content-Length');
+    if (len) res.setHeader('Content-Length', len);
+
+    const reader = upstreamRes.body?.getReader();
+    if (!reader) return res.status(500).send('No video stream body from upstream');
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    res.end();
+  } catch (err: any) {
+    res.status(502).send(`Video stream failed: ${err.message}`);
   }
 });
 

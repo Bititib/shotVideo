@@ -15,6 +15,7 @@ import VideoStudioPage from './pages/analysis/VideoStudioPage';
 import ImageGenPage from './pages/analysis/ImageGenPage';
 import TtsPage from './pages/analysis/TtsPage';
 import ProfilePage from './pages/analysis/ProfilePage';
+import DocsPage from './pages/DocsPage';
 import AdminLayout from './pages/admin/AdminLayout';
 import DashboardPage from './pages/admin/DashboardPage';
 import UsersPage from './pages/admin/UsersPage';
@@ -72,6 +73,7 @@ export default function App() {
         <Route path="/app/video/studio" element={<VideoStudioPage />} />
         <Route path="/app/image-gen" element={<Layout><ImageGenPage /></Layout>} />
         <Route path="/app/tts" element={<Layout><TtsPage /></Layout>} />
+        <Route path="/app/docs" element={<Layout><DocsPage /></Layout>} />
         <Route path="/app/profile" element={<ProtectedRoute><Layout><ProfilePage /></Layout></ProtectedRoute>} />
 
         {/* Admin — 仍需登录+超级管理员权限 */}

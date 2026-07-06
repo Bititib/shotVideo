@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { getPublicSettings } from '../api/admin';
-import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Zap, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2, X, Key, User } from 'lucide-react';
+import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Zap, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2, X, Key, User, FileText } from 'lucide-react';
 
 const navItems = [
   { to: '/app', icon: PlaySquare, label: '通用分析', color: 'text-blue-400', feature: 'general' },
@@ -13,6 +13,7 @@ const navItems = [
   { to: '/app/video', icon: Video, label: '视频生成', color: 'text-indigo-400', feature: 'video' },
   { to: '/app/image-gen', icon: ImageIcon, label: '图片生成', color: 'text-pink-400', feature: 'image_gen' },
   { to: '/app/tts', icon: Volume2, label: '语音合成', color: 'text-yellow-400', feature: 'tts' },
+  { to: '/app/docs', icon: FileText, label: '接口文档', color: 'text-rose-400', feature: 'docs' },
 ];
 
 const tierColors: Record<string, string> = {

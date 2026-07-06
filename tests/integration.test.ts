@@ -85,7 +85,7 @@ describe('种子数据完整性', () => {
   });
 
   it('应该自动创建管理员账号', () => {
-    const admin = db.select().from(users).where(eq(users.role, 'admin')).get();
+    const admin = db.select().from(users).where(eq(users.role, 'super_admin')).get();
     expect(admin).toBeDefined();
     expect(admin!.email).toBe(env.ADMIN_EMAIL);
   });
@@ -94,17 +94,17 @@ describe('种子数据完整性', () => {
 // ============ 认证服务测试 ============
 describe('认证逻辑', () => {
   it('密码应该被正确 hash (bcrypt)', () => {
-    const admin = db.select().from(users).where(eq(users.role, 'admin')).get();
+    const admin = db.select().from(users).where(eq(users.role, 'super_admin')).get();
     expect(admin!.passwordHash).not.toBe(env.ADMIN_PASSWORD);
     expect(bcrypt.compareSync(env.ADMIN_PASSWORD, admin!.passwordHash)).toBe(true);
   });
 
   it('JWT token 应该包含 userId 和 role', () => {
-    const admin = db.select().from(users).where(eq(users.role, 'admin')).get();
-    const token = jwt.sign({ userId: admin!.id, role: admin!.role }, env.JWT_SECRET, { expiresIn: '1h' });
+    const admin = db.select().from(users).where(eq(users.role, 'super_admin')).get();
+    const token = jwt.sign({ userId: admin!.id, role: admin!.role }, env.JWT_SECRET);
     const decoded = jwt.verify(token, env.JWT_SECRET) as any;
     expect(decoded.userId).toBe(admin!.id);
-    expect(decoded.role).toBe('admin');
+    expect(decoded.role).toBe(admin!.role);
   });
 
   it('JWT 使用错误 secret 应该验证失败', () => {
@@ -138,7 +138,7 @@ describe('认证逻辑', () => {
   });
 
   it('同一邮箱不能重复注册', () => {
-    const admin = db.select().from(users).where(eq(users.role, 'admin')).get();
+    const admin = db.select().from(users).where(eq(users.role, 'super_admin')).get();
     const existing = db.select().from(users).where(eq(users.email, admin!.email)).all();
     expect(existing.length).toBe(1);
   });
@@ -208,7 +208,7 @@ describe('等级权限逻辑', () => {
 // ============ 配额逻辑测试 ============
 describe('配额系统', () => {
   it('应该能正确记录使用日志', () => {
-    const admin = db.select().from(users).where(eq(users.role, 'admin')).get();
+    const admin = db.select().from(users).where(eq(users.role, 'super_admin')).get();
 
     db.insert(usageLogs).values({
       userId: admin!.id,
@@ -232,7 +232,7 @@ describe('配额系统', () => {
   });
 
   it('用户 quotaOverride 应该覆盖等级默认配额', () => {
-    const admin = db.select().from(users).where(eq(users.role, 'admin')).get();
+    const admin = db.select().from(users).where(eq(users.role, 'super_admin')).get();
     // quotaOverride 为 null 时使用等级默认
     expect(admin!.quotaOverride).toBeNull();
 
@@ -248,13 +248,13 @@ describe('配额系统', () => {
 
 // ============ 管理员功能测试 ============
 describe('管理员功能', () => {
-  it('管理员 role 应该是 admin', () => {
-    const admin = db.select().from(users).where(eq(users.role, 'admin')).get();
-    expect(admin!.role).toBe('admin');
+  it('管理员 role 应该是 super_admin', () => {
+    const admin = db.select().from(users).where(eq(users.role, 'super_admin')).get();
+    expect(admin!.role).toBe('super_admin');
   });
 
   it('应该能修改用户等级', () => {
-    const admin = db.select().from(users).where(eq(users.role, 'admin')).get();
+    const admin = db.select().from(users).where(eq(users.role, 'super_admin')).get();
     const pro = db.select().from(tiers).where(eq(tiers.name, 'pro')).get();
     const originalTier = admin!.tierId;
 
@@ -267,7 +267,7 @@ describe('管理员功能', () => {
   });
 
   it('应该能禁用/启用用户', () => {
-    const admin = db.select().from(users).where(eq(users.role, 'admin')).get();
+    const admin = db.select().from(users).where(eq(users.role, 'super_admin')).get();
 
     db.update(users).set({ isActive: 0 }).where(eq(users.id, admin!.id)).run();
     let u = db.select().from(users).where(eq(users.id, admin!.id)).get();
