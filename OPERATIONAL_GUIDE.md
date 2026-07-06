@@ -132,3 +132,165 @@ graph TD
 1. 进入 **「管理后台 -> 🤖 大模型管理」**，点击 **「添加模型」**。
 2. 登记其 `模型ID`、`显示名称`，勾选其支持的能力属性（如 `video`）。
 3. 进入 **「管理后台 -> 💰 计费设置」**，为新模型添加费率扣费标准，使其对客户生效。
+
+---
+
+## 🚀 5. 如何部署与更新项目到 VPS (Docker 方式)
+
+本系统已预配置好完整的 Docker 部署方案，包含 [Dockerfile](file:///d:/2026-07-04_0129/--main/Dockerfile)（多阶段构建）和 [docker-compose.yml](file:///d:/2026-07-04_0129/--main/docker-compose.yml)。
+
+> [!IMPORTANT]
+> **数据安全说明**：SQLite 数据库文件通过 Docker Volume 挂载在宿主机的 `./data` 目录下，重新构建镜像**不会**丢失数据。只要不手动删除 `./data` 目录，用户数据、渠道配置、余额等全部安全。
+
+### Docker 部署架构
+```mermaid
+flowchart LR
+    subgraph VPS 宿主机
+        Nginx["Nginx 反向代理 (443/80)"]
+        subgraph Docker 容器 shot-video
+            App["Node.js + Vite 静态文件 (端口 3000)"]
+        end
+        Data["./data/sqlite.db (持久化挂载)"]
+        EnvFile[".env.production (环境变量)"]
+    end
+    User([用户浏览器/API]) --> Nginx --> |"3001:3000"| App
+    App --> Data
+    App --> EnvFile
+```
+
+---
+
+### 首次部署 (全新 VPS)
+
+#### 步骤一：在本地提交并推送代码
+```bash
+git add .
+git commit -m "feat: 接入在线文档与 Sora V4 Fast (Seedance 2.0) 支持"
+git push
+```
+
+#### 步骤二：在 VPS 上克隆项目
+```bash
+# SSH 登录 VPS 后
+cd /www/wwwroot
+git clone https://github.com/你的用户名/你的仓库名.git video-creative-storm
+cd video-creative-storm
+```
+
+#### 步骤三：配置生产环境变量
+```bash
+# 创建生产环境变量文件（docker-compose 会自动加载此文件）
+cp .env .env.production
+
+# 编辑并填入真实的上游 API Key 等配置
+nano .env.production
+```
+
+> [!TIP]
+> `.env.production` 文件中需要确保以下关键配置项已填写：
+> ```ini
+> GROK2API_BASE_URL=https://api.xs-token.com
+> GROK2API_API_KEY=sk-你的真实APIKey
+> JWT_SECRET=你的JWT密钥（建议使用随机长字符串）
+> ```
+
+#### 步骤四：构建镜像并启动容器
+```bash
+# 一键构建并后台启动（首次会自动下载 node:22-alpine 基础镜像）
+docker compose up -d --build
+```
+
+#### 步骤五：验证运行状态
+```bash
+# 查看容器运行状态
+docker compose ps
+
+# 查看实时日志
+docker compose logs -f app
+
+# 测试本地端口是否正常响应
+curl http://localhost:3001
+```
+
+---
+
+### 日常更新 (代码改动后重新部署)
+
+当您在本地完成开发并推送到 GitHub 后，在 VPS 上只需执行以下命令即可完成热更新：
+
+```bash
+# 1. 进入项目目录
+cd /www/wwwroot/video-creative-storm
+
+# 2. 拉取最新代码
+git pull
+
+# 3. 重新构建镜像并重启容器（数据不会丢失）
+docker compose up -d --build
+```
+
+> [!NOTE]
+> `docker compose up -d --build` 会自动完成以下操作：
+> - 重新编译前端静态文件（Vite build）
+> - 重新安装后端生产依赖
+> - 用新镜像替换旧容器
+> - 自动挂载 `./data` 目录，保留所有数据库数据
+
+---
+
+### 常用 Docker 运维命令速查
+
+| 操作 | 命令 |
+|------|------|
+| 启动服务 | `docker compose up -d` |
+| 停止服务 | `docker compose down` |
+| 重新构建并启动 | `docker compose up -d --build` |
+| 查看运行状态 | `docker compose ps` |
+| 查看实时日志 | `docker compose logs -f app` |
+| 查看最近 100 行日志 | `docker compose logs --tail=100 app` |
+| 进入容器内部调试 | `docker compose exec app sh` |
+| 备份数据库 | `cp ./data/sqlite.db ./data/sqlite.db.bak` |
+| 清理旧镜像（释放磁盘） | `docker image prune -f` |
+
+---
+
+### Nginx 反向代理参考配置
+
+docker-compose.yml 中容器默认映射端口为 `宿主机 3001 → 容器 3000`，配合 Nginx 的参考配置如下：
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name your-domain.com;
+
+    ssl_certificate     /etc/ssl/your-domain.com.pem;
+    ssl_certificate_key /etc/ssl/your-domain.com.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 支持 SSE 流式响应（大模型对话需要）
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 300s;
+    }
+
+    # 视频文件下载代理（支持大文件）
+    location /v1/files/ {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_buffering off;
+        proxy_max_temp_file_size 0;
+    }
+}
+```
+

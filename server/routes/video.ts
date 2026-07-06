@@ -48,7 +48,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'grok-imagine-video-1.5-fast', name: 'Grok 1.5 Fast', description: '快速文生/图生视频，6/10秒', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash', name: 'Omni Flash', description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash-vref', name: 'Omni Flash Vref', description: '视频风格编辑/改写，支持 1080p', maxSeconds: 10, icon: '✂️' },
-  { id: 'sora-v4-fast', name: 'Sora V4 Fast', description: 'Sora V4 快速视频生成，1.5积分/秒', maxSeconds: 15, icon: '⚡' },
+  { id: 'sora-v4-fast', name: 'Seedance 2.0 Fast', description: 'Seedance 2.0 Fast，支持4图3视频1音频', maxSeconds: 15, icon: '⚡' },
 ];
 
 /** 查找支持指定视频模型的渠道 */
