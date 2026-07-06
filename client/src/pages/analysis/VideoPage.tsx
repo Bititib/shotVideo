@@ -50,6 +50,7 @@ const ALL_DURATIONS = [
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'omni-flash') return 7;
   if (modelId === 'omni-flash-vref') return 5;
+  if (modelId === 'sora-v4-fast') return 4;
   const model = models.find(m => m.id === modelId);
   if (model?.requireRef) return 1;
   return 5;
@@ -129,8 +130,10 @@ export default function VideoPage() {
   }, [selectedModel, maxRefs]);
 
   const [referenceVideo, setReferenceVideo] = useState<string | null>(null);
+  const [referenceAudio, setReferenceAudio] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoFileInputRef = useRef<HTMLInputElement>(null);
+  const audioFileInputRef = useRef<HTMLInputElement>(null);
   const [tasks, setTasks] = useState<VideoTask[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -223,6 +226,13 @@ export default function VideoPage() {
         setResolution('720p');
       }
     }
+
+    if (selectedModel !== 'omni-flash-vref' && selectedModel !== 'sora-v4-fast') {
+      setReferenceVideo(null);
+    }
+    if (selectedModel !== 'sora-v4-fast') {
+      setReferenceAudio(null);
+    }
   }, [selectedModel]);
 
   /** 压缩参考图：缩放到 maxSize 并转为 JPEG base64，避免请求体过大 */
@@ -309,6 +319,28 @@ export default function VideoPage() {
     reader.readAsDataURL(file);
   };
 
+  const handleAudioSelect = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    if (!file.type.startsWith('audio/')) {
+      setError('请选择音频文件');
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      setError('参考音频不能超过 20MB');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setReferenceAudio(dataUrl);
+    };
+    reader.onerror = () => {
+      setError('读取音频失败');
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleMediaDrop = useCallback((files: FileList | null) => {
     if (!files) return;
     const imageFiles = new DataTransfer();
@@ -347,9 +379,10 @@ export default function VideoPage() {
       if (meta.seconds) setDuration(meta.seconds);
       if (meta.aspect_ratio) setAspectRatio(meta.aspect_ratio);
       
-      // 恢复参考图与参考视频
+      // 恢复参考图与参考视频及参考音频
       setReferenceImages(meta.reference_images || []);
       setReferenceVideo(meta.reference_video || null);
+      setReferenceAudio(meta.audio_url || null);
     }
     
     setTimeout(() => {
@@ -381,7 +414,8 @@ export default function VideoPage() {
         aspect_ratio: aspectRatio, 
         model: selectedModel,
         reference_images: referenceImages,
-        reference_video: referenceVideo
+        reference_video: referenceVideo,
+        audio_url: referenceAudio
       },
       createdAt: new Date().toISOString(),
     };
@@ -400,6 +434,7 @@ export default function VideoPage() {
         resolution,
         reference_images: referenceImages.length > 0 ? referenceImages : undefined,
         reference_video: referenceVideo || undefined,
+        audio_url: referenceAudio || undefined,
       },
       (event: VideoSSEEvent) => {
         switch (event.type) {
@@ -420,7 +455,8 @@ export default function VideoPage() {
     setPrompt('');
     setReferenceImages([]);
     setReferenceVideo(null);
-  }, [prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideo]);
+    setReferenceAudio(null);
+  }, [prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideo, referenceAudio]);
 
   const handleCancel = (taskId: string) => {
     abortRef.current.get(taskId)?.abort();
@@ -465,8 +501,12 @@ export default function VideoPage() {
                       ) : (
                         <>
                           <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}/秒</span></span>
-                          <span className="text-zinc-800">•</span>
-                          <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}/秒</span></span>
+                          {m.rates['480p'] !== undefined && (
+                            <>
+                              <span className="text-zinc-800">•</span>
+                              <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}/秒</span></span>
+                            </>
+                          )}
                         </>
                       )}
                     </div>
@@ -693,12 +733,20 @@ export default function VideoPage() {
                 <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={ASPECT_RATIOS} />
                 <CustomSelect value={duration} onChange={(v: number) => setDuration(v)} options={DURATIONS} />
                 <CustomSelect value={resolution} onChange={setResolution} options={RESOLUTIONS} />
-                {selectedModel === 'omni-flash-vref' && (
+                {(selectedModel === 'omni-flash-vref' || selectedModel === 'sora-v4-fast') && (
                   <>
                     <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                       <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideo ? '(已上传)' : ''}
                     </button>
                     <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
+                  </>
+                )}
+                {selectedModel === 'sora-v4-fast' && (
+                  <>
+                    <button onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                      <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 {referenceAudio ? '(已上传)' : ''}
+                    </button>
+                    <input ref={audioFileInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
                   </>
                 )}
                 <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
@@ -864,12 +912,19 @@ export default function VideoPage() {
                   </div>
                 )}
                 
-                {(referenceImages.length > 0 || referenceVideo) && (
+                {(referenceImages.length > 0 || referenceVideo || referenceAudio) && (
                   <div className="flex items-center gap-2 px-4 pt-3 pb-1 flex-wrap">
                     {referenceVideo && (
                       <div className="relative w-12 h-12 rounded-lg overflow-hidden border border-indigo-500/40 group cursor-pointer shrink-0 hover:border-red-500/30 transition-colors">
                         <video src={referenceVideo} className="w-full h-full object-cover" />
                         <button onClick={() => setReferenceVideo(null)}
+                          className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><X className="w-3.5 h-3.5 text-white" /></button>
+                      </div>
+                    )}
+                    {referenceAudio && (
+                      <div className="relative h-12 px-3 flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/5 group cursor-pointer shrink-0 hover:border-red-500/30 transition-colors">
+                        <span className="text-[10px] text-indigo-300 max-w-[80px] truncate">🔊 包含音频</span>
+                        <button onClick={() => setReferenceAudio(null)}
                           className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><X className="w-3.5 h-3.5 text-white" /></button>
                       </div>
                     )}

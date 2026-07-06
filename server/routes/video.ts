@@ -9,6 +9,8 @@ import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models, settings } from '../db/schema.js';
 import { eq, like } from 'drizzle-orm';
+import fs from 'fs';
+import path from 'path';
 
 const router = Router();
 
@@ -22,6 +24,39 @@ const RATIO_TO_SIZE: Record<string, string> = {
   '2:3': '720x1080',
   '21:9': '1680x720',
 };
+
+/**
+ * 将 base64 数据转换并存储为本地静态文件，返回可外网访问的公网 URL
+ */
+function convertBase64ToPublicUrl(dataUrl: string, prefix: string, req: Request): string {
+  if (!dataUrl) return '';
+  if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
+    return dataUrl;
+  }
+  
+  try {
+    const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!matches) return dataUrl;
+
+    const mimeType = matches[1];
+    const base64Data = matches[2];
+    const buffer = Buffer.from(base64Data, 'base64');
+    
+    // 获取后缀名
+    const ext = mimeType.split('/')[1] || 'jpg';
+    const filename = `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+    const destPath = path.join(process.cwd(), 'data/uploads', filename);
+    
+    fs.writeFileSync(destPath, buffer);
+
+    // 优先使用环境变量配置的公网基准 URL
+    const baseUrl = process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+    return `${baseUrl.replace(/\/+$/, '')}/uploads/${filename}`;
+  } catch (err: any) {
+    console.error('[video] convertBase64ToPublicUrl 失败:', err.message);
+    return dataUrl;
+  }
+}
 
 /** 模型系列信息：计费、时长限制、是否强制参考图 */
 interface ModelMeta {
@@ -131,6 +166,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     resolution = '720p',
     reference_images = [],   // base64 dataURL 数组
     reference_video = '',    // Base64 video data URL or URL
+    audio_url = '',          // Base64 audio data URL or URL
   } = req.body;
 
   if (!prompt?.trim()) {
@@ -157,6 +193,16 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const channel = findVideoChannel(model);
   if (!channel) {
     return res.status(503).json({ error: '未配置视频生成渠道。请在管理后台添加渠道或设置 GROK2API_BASE_URL。' });
+  }
+
+  // Get the mapped model name from the database channel configuration
+  const dbChannel = ChannelService.findChannelForModel(model);
+  let upstreamModel = model;
+  if (dbChannel?.modelMapping) {
+    try {
+      const mapping = typeof dbChannel.modelMapping === 'string' ? JSON.parse(dbChannel.modelMapping) : dbChannel.modelMapping;
+      upstreamModel = mapping[model] || model;
+    } catch { /* skip */ }
   }
 
   // SSE headers
@@ -231,7 +277,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           aspect_ratio,
           model,
           reference_images,
-          reference_video: reference_video || null
+          reference_video: reference_video || null,
+          audio_url: audio_url || null
         },
       });
     } catch (e) { console.error('[content] 视频保存失败:', e); }
@@ -240,6 +287,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const baseUrl = channel.baseUrl.replace(/\/+$/, '');
   const size = RATIO_TO_SIZE[aspect_ratio] || '1280x720';
   const isOmni = model.startsWith('omni-flash');
+  const isSoraV4 = model === 'sora-v4-fast';
 
   try {
     let videoId = '';
@@ -286,6 +334,61 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       const job = await createResp.json() as any;
       videoId = job.id || job.task_id;
+    } else if (isSoraV4) {
+      sendEvent({ type: 'status', message: '正在上传多模态素材并提交任务...' });
+
+      // Convert images (up to 4) to public URLs
+      const referenceImagesUrls = reference_images
+        ? reference_images.slice(0, 4).map((img: string, idx: number) => convertBase64ToPublicUrl(img, `sora_img_${idx}`, req))
+        : [];
+
+      // Convert reference video to public URL
+      const referenceVideoUrl = reference_video ? convertBase64ToPublicUrl(reference_video, 'sora_vid', req) : undefined;
+
+      // Convert reference audio (audio_url) to public URL
+      const referenceAudioUrl = audio_url ? convertBase64ToPublicUrl(audio_url, 'sora_aud', req) : undefined;
+
+      const payload: Record<string, any> = {
+        model: upstreamModel,
+        prompt: prompt.trim(),
+        duration: Number(video_length) || 5,
+        video_config: {
+          aspect_ratio: aspect_ratio,
+          resolution_name: resolution
+        },
+        reference_images: referenceImagesUrls.length > 0 ? referenceImagesUrls : undefined,
+      };
+
+      if (referenceVideoUrl) {
+        payload.reference_video = referenceVideoUrl;
+        payload.reference_videos = [referenceVideoUrl];
+      }
+      if (referenceAudioUrl) {
+        payload.audio_url = referenceAudioUrl;
+      }
+
+      console.log(`[video] Step1 SoraV4 创建任务: model=${model} duration=${payload.duration} resolution=${resolution}`);
+
+      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${channel.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(60_000),
+      });
+
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        console.error(`[video] SoraV4 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
+        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+
+      const job = await createResp.json() as any;
+      videoId = job.id;
     } else {
       // ━━━ Step 1: 创建视频任务（multipart/form-data） ━━━
       sendEvent({ type: 'status', message: hasRef ? '正在上传参考图并提交任务...' : '正在提交视频生成任务...' });

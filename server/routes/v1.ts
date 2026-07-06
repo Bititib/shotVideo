@@ -9,6 +9,7 @@ import { eq } from 'drizzle-orm';
 import multer from 'multer';
 import os from 'os';
 import fs from 'fs';
+import path from 'path';
 import { env } from '../config/env.js';
 
 const router = Router();
@@ -610,6 +611,128 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
   const upstreamUrl = `${baseUrl}/v1/videos`;
 
   try {
+    const isSoraV4 = model === 'sora-v4-fast';
+
+    if (isSoraV4) {
+      // 1. Process files
+      const referenceImagesUrls: string[] = [];
+      let referenceVideoUrl: string | undefined = undefined;
+      let referenceAudioUrl: string | undefined = undefined;
+
+      // Extract existing URLs from body
+      if (req.body.reference_images) {
+        if (Array.isArray(req.body.reference_images)) {
+          referenceImagesUrls.push(...req.body.reference_images);
+        } else if (typeof req.body.reference_images === 'string') {
+          try {
+            const parsed = JSON.parse(req.body.reference_images);
+            if (Array.isArray(parsed)) referenceImagesUrls.push(...parsed);
+          } catch {
+            referenceImagesUrls.push(req.body.reference_images);
+          }
+        }
+      }
+      if (req.body.reference_video) referenceVideoUrl = req.body.reference_video;
+      if (req.body.audio_url) referenceAudioUrl = req.body.audio_url;
+
+      // Now copy and host files uploaded via multipart
+      if (Array.isArray(req.files)) {
+        for (const file of req.files) {
+          const fileContent = fs.readFileSync(file.path);
+          const ext = file.originalname.split('.').pop() || 'bin';
+          const filename = `${file.fieldname.replace(/\[\]/g, '')}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+          const destPath = path.join(process.cwd(), 'data/uploads', filename);
+          fs.writeFileSync(destPath, fileContent);
+
+          const baseUrlStr = process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+          const publicUrl = `${baseUrlStr.replace(/\/+$/, '')}/uploads/${filename}`;
+
+          if (file.fieldname === 'input_reference[]' || file.fieldname === 'reference_images') {
+            referenceImagesUrls.push(publicUrl);
+          } else if (file.fieldname === 'reference_video' || file.fieldname === 'reference_videos') {
+            referenceVideoUrl = publicUrl;
+          } else if (file.fieldname === 'audio_url' || file.fieldname === 'reference_audio') {
+            referenceAudioUrl = publicUrl;
+          }
+        }
+      }
+
+      const SIZE_TO_RATIO: Record<string, string> = {
+        '1280x720': '16:9',
+        '720x1280': '9:16',
+        '1024x1024': '1:1',
+        '1024x768': '4:3',
+        '768x1024': '3:4',
+        '1080x720': '3:2',
+        '720x1080': '2:3',
+        '1680x720': '21:9',
+      };
+      const aspect_ratio = SIZE_TO_RATIO[size] || '16:9';
+
+      const payload: Record<string, any> = {
+        model: upstreamModel,
+        prompt: prompt.trim(),
+        duration: Number(seconds) || 5,
+        video_config: {
+          aspect_ratio: aspect_ratio,
+          resolution_name: resolution_name
+        },
+        reference_images: referenceImagesUrls.length > 0 ? referenceImagesUrls : undefined,
+      };
+
+      if (referenceVideoUrl) {
+        payload.reference_video = referenceVideoUrl;
+        payload.reference_videos = [referenceVideoUrl];
+      }
+      if (referenceAudioUrl) {
+        payload.audio_url = referenceAudioUrl;
+      }
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+      if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+
+      const upstreamRes = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(120_000),
+      });
+
+      cleanupFiles(req.files);
+
+      if (!upstreamRes.ok) {
+        const errText = await upstreamRes.text();
+        const durationMs = Date.now() - startTime;
+        db.insert(apiLogs).values({
+          tokenId: token.id, channelId: channel.id, model, upstreamModel,
+          durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errText.slice(0, 500)}`, clientIp,
+        }).run();
+        return res.status(upstreamRes.status).json({ error: errText });
+      }
+
+      const job = await upstreamRes.json() as any;
+      const durationMs = Date.now() - startTime;
+      db.insert(apiLogs).values({
+        tokenId: token.id, channelId: channel.id, model, upstreamModel,
+        durationMs, status: 'success', clientIp,
+      }).run();
+
+      return res.json({
+        id: job.id,
+        object: 'video',
+        created_at: Math.floor(Date.now() / 1000),
+        status: 'queued',
+        model: model,
+        progress: 0,
+        prompt: prompt,
+        seconds: String(seconds),
+        size: size,
+        quality: 'standard'
+      });
+    }
+
     const formData = new FormData();
     formData.append('model', upstreamModel);
     formData.append('prompt', prompt);

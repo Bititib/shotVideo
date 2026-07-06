@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import helmet from 'helmet';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
@@ -58,6 +59,13 @@ export async function createApp() {
 
   // Body parsing
   app.use(express.json({ limit: '50mb' }));
+
+  // Static uploads directory serving
+  const uploadDir = path.resolve(process.cwd(), 'data/uploads');
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+  app.use('/uploads', express.static(uploadDir));
 
   // OpenAI 兼容代理层（不走 /api 前缀）
   app.use('/v1', v1Routes);

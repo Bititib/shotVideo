@@ -22,6 +22,7 @@ export interface VideoGenerateParams {
   resolution?: string;
   reference_images?: string[];  // base64 dataURL 数组
   reference_video?: string;     // base64 dataURL 或 URL
+  audio_url?: string;           // base64 dataURL 或 URL
 }
 
 export interface VideoSSEEvent {
