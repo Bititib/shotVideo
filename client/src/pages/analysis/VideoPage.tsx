@@ -167,17 +167,80 @@ export default function VideoPage() {
   useEffect(() => {
     fetchVideoModels().then((m) => { setModels(m); if (m.length > 0 && !selectedModel) setSelectedModel(m[0].id); }).catch(() => {});
     
-    // 加载历史生成记录
+    // 加载历史与生产中生成记录
     contentApi.getMyContents({ type: 'video', pageSize: 50 })
       .then((res: any) => {
         const items = res?.items || res?.data || [];
-        setHistory(items.filter((item: any) => item.resultUrl));
+        // 已完成或已失败的记录计入历史面板
+        setHistory(items.filter((item: any) => item.status === 'completed' || item.status === 'success' || item.resultUrl));
+        
+        // 正在生产中的记录恢复到 tasks 队列中继续展示生成进度
+        const processingTasks: VideoTask[] = items
+          .filter((item: any) => item.status === 'processing')
+          .map((item: any) => {
+            let meta = {};
+            try {
+              meta = item.metadata ? (typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata) : {};
+            } catch {}
+            return {
+              id: `db_${item.id}`,
+              prompt: item.inputText || item.title || '',
+              status: 'generating',
+              progress: 0,
+              statusMessage: '正在后台恢复生成...',
+              videoUrl: null,
+              error: null,
+              metadata: meta as any,
+              createdAt: item.createdAt,
+            };
+          });
+        setTasks(processingTasks);
       })
       .catch(() => {});
       
     // 加载本地资产库
     getAssets().then(setMyAssets).catch(() => {});
   }, []);
+
+  // 轮询在后台生成中的数据库任务
+  useEffect(() => {
+    const dbTasks = tasks.filter(t => t.status === 'generating' && t.id.startsWith('db_'));
+    if (dbTasks.length === 0) return;
+
+    let active = true;
+    const intervalId = setInterval(() => {
+      dbTasks.forEach(task => {
+        const dbId = parseInt(task.id.replace('db_', ''));
+        contentApi.getById(dbId)
+          .then((res: any) => {
+            if (!active) return;
+            const item = res;
+            if (item.status === 'completed' || item.status === 'success') {
+              setTasks(prev => prev.filter(t => t.id !== task.id));
+              // 刷新历史记录
+              contentApi.getMyContents({ type: 'video', pageSize: 50 })
+                .then((r: any) => {
+                  const items = r?.items || r?.data || [];
+                  setHistory(items.filter((x: any) => x.status === 'completed' || x.status === 'success' || x.resultUrl));
+                }).catch(() => {});
+            } else if (item.status === 'failed') {
+              setTasks(prev => prev.map(t => t.id === task.id ? {
+                ...t,
+                status: 'error',
+                statusMessage: '',
+                error: item.metadata?.error || '生成失败'
+              } : t));
+            }
+          })
+          .catch(() => {});
+      });
+    }, 5000);
+
+    return () => {
+      active = false;
+      clearInterval(intervalId);
+    };
+  }, [tasks]);
 
   // 自动调整输入框高度
   useEffect(() => {

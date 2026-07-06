@@ -7,7 +7,7 @@ import { BalanceService } from '../services/balanceService.js';
 import { ContentService } from '../services/contentService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
-import { models, settings } from '../db/schema.js';
+import { models, settings, contents } from '../db/schema.js';
 import { eq, like } from 'drizzle-orm';
 import fs from 'fs';
 import path from 'path';
@@ -212,7 +212,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   res.flushHeaders();
 
   const sendEvent = (data: Record<string, any>) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
+    if (!res.destroyed && !res.writableEnded) {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    }
   };
 
   const startTime = Date.now();
@@ -252,7 +254,33 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     return res.end();
   }
 
-  /** 生成成功后计费 + 保存内容 */
+  // 插入初始的 'processing' 内容记录，确保刷新页面时正在生成中的记录不会丢失
+  let contentId: number | null = null;
+  try {
+    contentId = ContentService.save({
+      userId: req.userId!,
+      orgId: req.orgId || null,
+      type: 'video',
+      title: (prompt as string).slice(0, 200),
+      inputText: (prompt as string).slice(0, 500),
+      modelId: model,
+      cost: estimatedCost,
+      status: 'processing',
+      metadata: {
+        resolution,
+        seconds: estimatedSeconds,
+        aspect_ratio,
+        model,
+        reference_images,
+        reference_video: reference_video || null,
+        audio_url: audio_url || null
+      }
+    });
+  } catch (e) {
+    console.error('[content] 初始视频记录保存失败:', e);
+  }
+
+  /** 生成成功后计费 + 更新内容 */
   const billUsage = (finalVideoUrl: string) => {
     const elapsed = Date.now() - startTime;
     logUsage(req.userId!, 'generate_video', undefined, elapsed);
@@ -261,27 +289,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       const remaining = BalanceService.deduct(req.userId!, cost, 'generate_video');
       sendEvent({ type: 'billing', cost, resolution, seconds: estimatedSeconds, rate, remainingBalance: remaining ?? 0 });
     }
-    try {
-      ContentService.save({
-        userId: req.userId!,
-        orgId: req.orgId || null,
-        type: 'video',
-        title: (prompt as string).slice(0, 200),
-        inputText: (prompt as string).slice(0, 500),
-        resultUrl: finalVideoUrl || undefined,
-        modelId: model,
-        cost,
-        metadata: { 
-          resolution, 
-          seconds: estimatedSeconds, 
-          aspect_ratio,
-          model,
-          reference_images,
-          reference_video: reference_video || null,
-          audio_url: audio_url || null
-        },
-      });
-    } catch (e) { console.error('[content] 视频保存失败:', e); }
+    if (contentId !== null) {
+      try {
+        db.update(contents).set({
+          status: 'completed',
+          resultUrl: finalVideoUrl || null,
+          cost: cost
+        }).where(eq(contents.id, contentId)).run();
+      } catch (e) { console.error('[content] 视频记录更新失败:', e); }
+    }
   };
 
   const baseUrl = channel.baseUrl.replace(/\/+$/, '');
@@ -462,10 +478,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     while (Date.now() - pollStart < maxPollTime) {
       await new Promise(r => setTimeout(r, pollInterval));
 
-      // 检查客户端是否断开
+      // 检查客户端是否断开仅进行日志记录，不终止后台轮询以完成计费和数据库更新
       if (res.writableEnded || res.destroyed) {
-        console.log(`[video] 客户端已断开，停止轮询`);
-        return;
+        console.log(`[video] 客户端已断开，后台继续轮询任务 ${videoId}...`);
       }
 
       try {
@@ -521,13 +536,24 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           sendEvent({ type: 'progress', progress: 100 });
           sendEvent({ type: 'complete', videoUrl: resultUrl });
           billUsage(resultUrl);
-          res.write('data: [DONE]\n\n');
-          return res.end();
+          if (!res.destroyed && !res.writableEnded) {
+            res.write('data: [DONE]\n\n');
+            res.end();
+          }
+          return;
         } else if (taskStatus === 'failed' || taskStatus === 'failure') {
           console.error(`[video] ❌ 生成失败: ${errMsg}`);
           sendEvent({ type: 'error', message: errMsg });
-          res.write('data: [DONE]\n\n');
-          return res.end();
+          if (contentId !== null) {
+            try {
+              db.update(contents).set({ status: 'failed' }).where(eq(contents.id, contentId)).run();
+            } catch (dbErr) { console.error('[video] 失败状态更新错误:', dbErr); }
+          }
+          if (!res.destroyed && !res.writableEnded) {
+            res.write('data: [DONE]\n\n');
+            res.end();
+          }
+          return;
         }
       } catch (pollErr: any) {
         console.warn(`[video] 轮询异常: ${pollErr.message}`);
@@ -537,8 +563,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
     // 超时
     sendEvent({ type: 'error', message: `视频生成超时（${Math.ceil(maxPollTime / 60000)}分钟）` });
-    res.write('data: [DONE]\n\n');
-    res.end();
+    if (contentId !== null) {
+      try {
+        db.update(contents).set({ status: 'failed' }).where(eq(contents.id, contentId)).run();
+      } catch (dbErr) { console.error('[video] 超时状态更新错误:', dbErr); }
+    }
+    if (!res.destroyed && !res.writableEnded) {
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
 
   } catch (err: any) {
     console.error(`[video] 生成失败:`, err.name, err.message, err.cause?.message || '');
