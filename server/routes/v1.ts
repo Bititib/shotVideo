@@ -256,8 +256,9 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
 
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
 
       const reader = upstreamRes.body?.getReader();
       if (!reader) return res.status(500).json({ error: { message: 'No response body', type: 'server_error' } });
