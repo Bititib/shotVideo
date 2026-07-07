@@ -518,6 +518,11 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           }
         } else {
           taskStatus = (status.status || '').toLowerCase();
+          // 解析进度：支持数字 (16) 和百分比字符串 ("16%") 两种格式
+          const rawProgress = status.progress;
+          if (rawProgress !== undefined && rawProgress !== null) {
+            progress = typeof rawProgress === 'number' ? rawProgress : (parseInt(String(rawProgress)) || 0);
+          }
           if (taskStatus === 'completed' || taskStatus === 'success') {
             resultUrl = status.url || status.video_url || status.result_url || `${baseUrl}/v1/files/video?id=${videoId}`;
           } else if (taskStatus === 'failed' || taskStatus === 'failure') {
