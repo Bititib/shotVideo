@@ -275,6 +275,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         audio_url: audio_url || null
       }
     });
+    if (contentId !== null) {
+      sendEvent({ type: 'content_id', contentId });
+    }
   } catch (e) {
     console.error('[content] 初始视频记录保存失败:', e);
   }

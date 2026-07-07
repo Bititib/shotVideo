@@ -26,11 +26,12 @@ export interface VideoGenerateParams {
 }
 
 export interface VideoSSEEvent {
-  type: 'status' | 'progress' | 'content' | 'complete' | 'error';
+  type: 'status' | 'progress' | 'content' | 'complete' | 'error' | 'content_id' | 'close';
   progress?: number;
   content?: string;
   videoUrl?: string;
   message?: string;
+  contentId?: number;
 }
 
 /** 获取可用的视频模型列表 */
@@ -78,7 +79,10 @@ export function generateVideo(
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          onEvent({ type: 'close' });
+          break;
+        }
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');

@@ -25,6 +25,7 @@ interface VideoTask {
     reference_video?: string | null;
   };
   createdAt: string;
+  dbId?: number;
 }
 
 const ALL_ASPECT_RATIOS = [
@@ -216,13 +217,24 @@ export default function VideoPage() {
             if (!active) return;
             const item = res;
             if (item.status === 'completed' || item.status === 'success') {
-              setTasks(prev => prev.filter(t => t.id !== task.id));
-              // 刷新历史记录
-              contentApi.getMyContents({ type: 'video', pageSize: 50 })
-                .then((r: any) => {
-                  const items = r?.items || r?.data || [];
-                  setHistory(items.filter((x: any) => x.status === 'completed' || x.status === 'success' || x.resultUrl));
-                }).catch(() => {});
+              // 先将任务标记为完成状态并显示视频，避免直接移除导致视觉"消失"
+              setTasks(prev => prev.map(t => t.id === task.id ? {
+                ...t,
+                status: 'complete',
+                progress: 100,
+                videoUrl: item.resultUrl || null,
+                statusMessage: '',
+              } : t));
+              // 延迟后刷新历史记录
+              setTimeout(() => {
+                contentApi.getMyContents({ type: 'video', pageSize: 50 })
+                  .then((r: any) => {
+                    const items = r?.items || r?.data || [];
+                    setHistory(items.filter((x: any) => x.status === 'completed' || x.status === 'success' || x.resultUrl));
+                    // 历史已加载，从当前任务中移除
+                    setTasks(prev => prev.filter(t => t.id !== task.id));
+                  }).catch(() => {});
+              }, 2000);
             } else if (item.status === 'failed') {
               setTasks(prev => prev.map(t => t.id === task.id ? {
                 ...t,
@@ -511,6 +523,9 @@ export default function VideoPage() {
       },
       (event: VideoSSEEvent) => {
         switch (event.type) {
+          case 'content_id':
+            updateTask({ dbId: event.contentId });
+            break;
           case 'status': updateTask({ statusMessage: event.message || '' }); break;
           case 'progress': updateTask({ progress: event.progress || 0, statusMessage: `视频生成中 ${event.progress}%` }); break;
           case 'complete':
@@ -519,6 +534,20 @@ export default function VideoPage() {
             break;
           case 'error':
             updateTask({ status: 'error', error: event.message || '生成失败', statusMessage: '' });
+            abortRef.current.delete(taskId);
+            break;
+          case 'close':
+            // SSE 连接中断，且任务没有完成/失败，有数据库 ID 的情况下，直接升级为 db_ 开头的后台轮询任务
+            setTasks(prev => prev.map(t => {
+              if (t.id === taskId && t.status === 'generating' && t.dbId) {
+                return {
+                  ...t,
+                  id: `db_${t.dbId}`,
+                  statusMessage: '连接已断开，正在后台恢复生成...'
+                };
+              }
+              return t;
+            }));
             abortRef.current.delete(taskId);
             break;
         }
