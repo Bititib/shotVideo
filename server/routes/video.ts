@@ -151,7 +151,7 @@ router.get('/models', (_req: Request, res: Response) => {
     };
   });
 
-  res.json(result);
+  res.json(result.filter(m => m.available));
 });
 
 /** POST /api/video/generate — SSE 流式视频生成（异步轮询模式） */
