@@ -33,7 +33,7 @@ function convertBase64ToPublicUrl(dataUrl: string, prefix: string, req: Request)
   if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
     return dataUrl;
   }
-  
+
   try {
     const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
     if (!matches) return dataUrl;
@@ -41,12 +41,12 @@ function convertBase64ToPublicUrl(dataUrl: string, prefix: string, req: Request)
     const mimeType = matches[1];
     const base64Data = matches[2];
     const buffer = Buffer.from(base64Data, 'base64');
-    
+
     // 获取后缀名
     const ext = mimeType.split('/')[1] || 'jpg';
     const filename = `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
     const destPath = path.join(process.cwd(), 'data/uploads', filename);
-    
+
     fs.writeFileSync(destPath, buffer);
 
     // 优先使用环境变量配置的公网基准 URL
@@ -66,24 +66,22 @@ interface ModelMeta {
 }
 const MODEL_META: Record<string, ModelMeta> = {
   'grok-imagine-video-1.5-preview': { series: '1.5', allowedSeconds: [6, 10], requireRef: true },
-  'grok-imagine-1.0-video':         { series: '1.0', allowedSeconds: [6, 10], requireRef: false },
-  'grok-imagine-video-1.5-fast':    { series: '1.5', allowedSeconds: [6, 10], requireRef: false },
-  'grok-imagine-video':             { series: 'legacy', allowedSeconds: null, requireRef: false },
-  'grok-4.3-video':                 { series: 'legacy', allowedSeconds: null, requireRef: false },
-  'omni-flash':                     { series: 'omni-flash', allowedSeconds: [4, 6, 8, 10], requireRef: false },
-  'omni-flash-vref':                { series: 'omni-flash-vref', allowedSeconds: [10], requireRef: false },
-  'sora-v4-fast':                   { series: 'sora-v4-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'grok-imagine-1.0-video': { series: '1.0', allowedSeconds: [6, 10], requireRef: false },
+  'grok-imagine-video-1.5-fast': { series: '1.5', allowedSeconds: [6, 10], requireRef: false },
+  'grok-imagine-video': { series: 'legacy', allowedSeconds: null, requireRef: false },
+  'grok-4.3-video': { series: 'legacy', allowedSeconds: null, requireRef: false },
+  'omni-flash': { series: 'omni-flash', allowedSeconds: [4, 6, 8, 10], requireRef: false },
+  'omni-flash-vref': { series: 'omni-flash-vref', allowedSeconds: [10], requireRef: false },
+  'sora-v4-fast': { series: 'sora-v4-fast', allowedSeconds: [10, 15], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
-  { id: 'grok-imagine-video', name: 'Grok Video', description: 'Grok AI 视频生成，支持 6-30s', maxSeconds: 30, icon: '🎬' },
-  { id: 'grok-4.3-video', name: 'Grok 4.3 Video', description: 'Grok 4.3 高级视频生成', maxSeconds: 30, icon: '🎥' },
   { id: 'grok-imagine-video-1.5-preview', name: 'Grok 1.5 Preview', description: '图生视频，必须提供参考图，6/10秒', maxSeconds: 10, icon: '🖼️' },
   { id: 'grok-imagine-1.0-video', name: 'Grok 1.0 Video', description: '文生/图生视频，6/10秒', maxSeconds: 10, icon: '🎥' },
   { id: 'grok-imagine-video-1.5-fast', name: 'Grok 1.5 Fast', description: '快速文生/图生视频，6/10秒', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash', name: 'Omni Flash', description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash-vref', name: 'Omni Flash Vref', description: '视频风格编辑/改写，支持 1080p', maxSeconds: 10, icon: '✂️' },
-  { id: 'sora-v4-fast', name: 'Seedance 2.0 Fast', description: 'Seedance 2.0 Fast，支持4图3视频1音频', maxSeconds: 15, icon: '⚡' },
+  { id: 'sora-v4-fast', name: 'Seedance 2.0 Fast', description: 'Seedance 2.0 Fast，10/15秒，支持4图3视频1音频', maxSeconds: 15, icon: '⚡' },
 ];
 
 /** 查找支持指定视频模型的渠道 */
@@ -98,10 +96,10 @@ function findVideoChannel(modelId: string) {
 router.get('/models', (_req: Request, res: Response) => {
   // 从数据库动态拉取所有具备 'video' 能力的模型
   const dbModels = db.select().from(models).where(like(models.capabilities, '%"video"%')).all();
-  
+
   // 如果数据库里还没配置视频模型，提供一个极简默认后备
-  const sourceModels = dbModels.length > 0 
-    ? dbModels.map(m => ({ id: m.modelId, name: m.displayName })) 
+  const sourceModels = dbModels.length > 0
+    ? dbModels.map(m => ({ id: m.modelId, name: m.displayName }))
     : DEFAULT_VIDEO_MODELS;
 
   const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
@@ -626,11 +624,11 @@ router.post('/merge', authMiddleware, async (req: Request, res: Response) => {
     stream.pipe(res);
     stream.on('end', () => {
       // 清理临时文件
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { }
     });
   } catch (err: any) {
     // 清理
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { }
     console.error('[video/merge]', err.message);
     res.status(500).json({ error: err.message || '合并失败' });
   }
