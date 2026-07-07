@@ -469,15 +469,13 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       return res.end();
     }
 
-    // ━━━ Step 2: 轮询任务状态 ━━━
-    const maxPollTime = Math.max(300_000, Math.ceil(estimatedSeconds / 10) * 180_000); // 最长轮询时间
+    // ━━━ Step 2: 轮询任务状态（无超时，直到上游返回完成或失败） ━━━
     const pollInterval = 5000; // 5 秒轮询
-    const pollStart = Date.now();
 
     const headers: Record<string, string> = {};
     if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
 
-    while (Date.now() - pollStart < maxPollTime) {
+    while (true) {
       await new Promise(r => setTimeout(r, pollInterval));
 
       // 检查客户端是否断开仅进行日志记录，不终止后台轮询以完成计费和数据库更新
@@ -577,18 +575,6 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         console.warn(`[video] 轮询异常: ${pollErr.message}`);
         // 轮询失败不立即退出，继续重试
       }
-    }
-
-    // 超时
-    sendEvent({ type: 'error', message: `视频生成超时（${Math.ceil(maxPollTime / 60000)}分钟）` });
-    if (contentId !== null) {
-      try {
-        db.update(contents).set({ status: 'failed' }).where(eq(contents.id, contentId)).run();
-      } catch (dbErr) { console.error('[video] 超时状态更新错误:', dbErr); }
-    }
-    if (!res.destroyed && !res.writableEnded) {
-      res.write('data: [DONE]\n\n');
-      res.end();
     }
 
   } catch (err: any) {
