@@ -582,6 +582,40 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   }
 });
 
+// 视频下载代理，解决浏览器跨域下载变成播放的问题
+router.get('/download', async (req: Request, res: Response) => {
+  const url = req.query.url as string;
+  if (!url) return res.status(400).json({ error: 'Missing url parameter' });
+
+  try {
+    const filename = req.query.filename as string || 'video.mp4';
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Failed to fetch video: ${response.statusText}`);
+
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+    res.setHeader('Content-Type', response.headers.get('Content-Type') || 'video/mp4');
+    const contentLength = response.headers.get('Content-Length');
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+
+    const reader = response.body?.getReader();
+    if (!reader) return res.status(500).send('No video stream body');
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    res.end();
+  } catch (err: any) {
+    console.error('[video/download] error:', err.message);
+    res.status(502).send(`Download failed: ${err.message}`);
+  }
+});
+
 // ═══ 视频合并接口 ═══
 router.post('/merge', authMiddleware, async (req: Request, res: Response) => {
   const { urls } = req.body;

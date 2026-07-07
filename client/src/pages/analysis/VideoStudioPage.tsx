@@ -467,7 +467,7 @@ export default function VideoStudioPage() {
                   {seg.lastFrame && <img src={seg.lastFrame} className="w-10 h-7 rounded object-cover shrink-0 border border-white/5" />}
                 </div>
                 <div className="flex items-center gap-1.5 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <a href={seg.videoUrl} download className="text-[10px] text-zinc-500 hover:text-zinc-300 flex items-center gap-0.5"><Download className="w-3 h-3"/>下载</a>
+                  <a href={`/api/video/download?url=${encodeURIComponent(seg.videoUrl)}&filename=segment_${i + 1}.mp4`} download className="text-[10px] text-zinc-500 hover:text-zinc-300 flex items-center gap-0.5"><Download className="w-3 h-3"/>下载</a>
                   <button onClick={(e) => { e.stopPropagation(); deleteSeg(i); }} className="text-[10px] text-zinc-500 hover:text-red-400 flex items-center gap-0.5 ml-auto"><Trash2 className="w-3 h-3"/>删除</button>
                 </div>
               </div>

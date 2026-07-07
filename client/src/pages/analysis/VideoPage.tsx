@@ -680,7 +680,7 @@ export default function VideoPage() {
                                   className="text-[10px] text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-0.5" title="套用历史配置（包含提示词与参考图片）">
                                   <RotateCcw className="w-3 h-3" />套用
                                 </button>
-                                <a href={task.videoUrl} target="_blank" rel="noopener noreferrer" download className="text-[10px] text-zinc-500 hover:text-indigo-400 transition-colors">
+                                <a href={`/api/video/download?url=${encodeURIComponent(task.videoUrl)}&filename=video_${task.id}.mp4`} download className="text-[10px] text-zinc-500 hover:text-indigo-400 transition-colors">
                                   <Download className="w-3 h-3" />
                                 </a>
                                 <button onClick={() => { const d = JSON.stringify([{ id: task.id, prompt: task.prompt, videoUrl: task.videoUrl, duration: task.metadata.seconds, model: task.metadata.model, aspectRatio: task.metadata.aspect_ratio, resolution: task.metadata.resolution }]); sessionStorage.setItem('studio_init', d); navigate('/app/video/studio'); }}
@@ -747,7 +747,7 @@ export default function VideoPage() {
                                 className="text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-0.5" title="套用历史配置（包含提示词与参考图片）">
                                 <RotateCcw className="w-3 h-3" />套用
                               </button>
-                              <a href={h.resultUrl} target="_blank" rel="noopener noreferrer" download onClick={(e) => e.stopPropagation()} className="text-zinc-500 hover:text-indigo-400 transition-colors"><Download className="w-3 h-3" /></a>
+                              <a href={`/api/video/download?url=${encodeURIComponent(h.resultUrl)}&filename=video_${h.id}.mp4`} download onClick={(e) => e.stopPropagation()} className="text-zinc-500 hover:text-indigo-400 transition-colors"><Download className="w-3 h-3" /></a>
                             </div>
                           </div>
                         </div>
@@ -768,7 +768,7 @@ export default function VideoPage() {
               <div className="flex items-center justify-between mt-4">
                 <p className="text-sm text-zinc-300 line-clamp-1 flex-1 mr-4">{playingVideo.prompt}</p>
                 <div className="flex items-center gap-3 shrink-0">
-                  <a href={playingVideo.url} target="_blank" rel="noopener noreferrer" download className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
+                  <a href={`/api/video/download?url=${encodeURIComponent(playingVideo.url)}&filename=video_download.mp4`} download className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
                     <Download className="w-3.5 h-3.5" /> 下载
                   </a>
                   <button onClick={() => setPlayingVideo(null)} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
