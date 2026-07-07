@@ -230,6 +230,16 @@ export default function VideoPage() {
                 statusMessage: '',
                 error: item.metadata?.error || '生成失败'
               } : t));
+            } else {
+              // processing 状态：从 metadata.progress 读取实时进度
+              let meta: any = {};
+              try { meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : (item.metadata || {}); } catch {}
+              const p = meta.progress || 0;
+              setTasks(prev => prev.map(t => t.id === task.id ? {
+                ...t,
+                progress: p,
+                statusMessage: p > 0 ? `视频生成中 ${p}%` : '正在后台生成中...'
+              } : t));
             }
           })
           .catch(() => {});

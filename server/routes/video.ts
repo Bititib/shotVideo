@@ -535,6 +535,17 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending') {
           sendEvent({ type: 'progress', progress });
           sendEvent({ type: 'status', message: `视频生成中 ${progress}%` });
+          // 将实时进度写入数据库，以便前端刷新页面后恢复时能读取
+          if (contentId !== null && progress > 0) {
+            try {
+              const row = db.select().from(contents).where(eq(contents.id, contentId)).get();
+              if (row) {
+                const meta = JSON.parse(row.metadata || '{}');
+                meta.progress = progress;
+                db.update(contents).set({ metadata: JSON.stringify(meta) }).where(eq(contents.id, contentId)).run();
+              }
+            } catch {}
+          }
         } else if (taskStatus === 'completed' || taskStatus === 'success') {
           console.log(`[video] ✅ 生成完成: ${resultUrl}`);
           sendEvent({ type: 'progress', progress: 100 });
