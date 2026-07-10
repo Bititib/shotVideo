@@ -6,7 +6,7 @@ import { AIService } from '../services/aiService.js';
 import { ContentService } from '../services/contentService.js';
 import { db } from '../db/index.js';
 import { users, tiers, tierModelAccess, models, settings, modelPricing } from '../db/schema.js';
-import { eq, like } from 'drizzle-orm';
+import { eq, like, and } from 'drizzle-orm';
 import multer from 'multer';
 import os from 'os';
 
@@ -151,16 +151,25 @@ router.get('/models',
 router.get('/tts-models',
   optionalAuthMiddleware,
   (req: TierRequest, res: Response) => {
-    // 从数据库中获取所有能力包含 'tts' 的模型
-    const dbModels = db.select().from(models).where(like(models.capabilities, '%"tts"%')).all();
+    // 从数据库中获取所有启用且能力包含 'tts' 的模型
+    const dbModels = db.select().from(models)
+      .where(and(eq(models.isActive, 1), like(models.capabilities, '%"tts"%')))
+      .all();
 
-    // 如果没有，提供兜底
+    // 获取所有在数据库中被禁用的模型 ID，用作后备过滤
+    const disabledModelIds = new Set<string>();
+    try {
+      const inactive = db.select().from(models).where(eq(models.isActive, 0)).all();
+      inactive.forEach(m => disabledModelIds.add(m.modelId));
+    } catch {}
+
+    // 如果没有，提供过滤了禁用模型的兜底
     const sourceModels = dbModels.length > 0
       ? dbModels.map(m => ({ modelId: m.modelId, displayName: m.displayName || m.modelId }))
       : [
         { modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS' },
         { modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS' },
-      ];
+      ].filter(m => !disabledModelIds.has(m.modelId));
 
     // 获取语音合成的费率设置
     let ttsRate = 0.01; // 默认 ¥0.01/字

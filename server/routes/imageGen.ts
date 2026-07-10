@@ -9,7 +9,7 @@ import { ContentService } from '../services/contentService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models } from '../db/schema.js';
-import { eq, like } from 'drizzle-orm';
+import { eq, like, and } from 'drizzle-orm';
 
 const router = Router();
 
@@ -47,13 +47,22 @@ function findImageChannel(modelId: string) {
 
 /** GET /api/image-gen/models — 可用的图片模型列表（公开，不需要登录） */
 router.get('/models', (_req: Request, res: Response) => {
-  // 从数据库动态拉取所有具备 'image' 能力的模型
-  const dbModels = db.select().from(models).where(like(models.capabilities, '%"image"%')).all();
+  // 从数据库动态拉取所有启用且具备 'image' 能力的模型
+  const dbModels = db.select().from(models)
+    .where(and(eq(models.isActive, 1), like(models.capabilities, '%"image"%')))
+    .all();
 
-  // 如果数据库里还没配置，提供一个极简默认后备
+  // 获取所有在数据库中被禁用的模型 ID，用作后备过滤
+  const disabledModelIds = new Set<string>();
+  try {
+    const inactive = db.select().from(models).where(eq(models.isActive, 0)).all();
+    inactive.forEach(m => disabledModelIds.add(m.modelId));
+  } catch {}
+
+  // 如果数据库里还没配置，提供一个过滤了禁用模型的默认后备
   const sourceModels = dbModels.length > 0
     ? dbModels.map(m => ({ id: m.modelId, name: m.displayName }))
-    : DEFAULT_IMAGE_MODELS;
+    : DEFAULT_IMAGE_MODELS.filter(m => !disabledModelIds.has(m.id));
 
   const result = sourceModels.map(m => {
     const preset = DEFAULT_IMAGE_MODELS.find(d => d.id === m.id);

@@ -8,7 +8,7 @@ import { ContentService } from '../services/contentService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models, settings, contents } from '../db/schema.js';
-import { eq, like } from 'drizzle-orm';
+import { eq, like, and } from 'drizzle-orm';
 import fs from 'fs';
 import path from 'path';
 
@@ -94,13 +94,22 @@ function findVideoChannel(modelId: string) {
 
 /** GET /api/video/models — 可用的视频模型列表（公开，不需要登录） */
 router.get('/models', (_req: Request, res: Response) => {
-  // 从数据库动态拉取所有具备 'video' 能力的模型
-  const dbModels = db.select().from(models).where(like(models.capabilities, '%"video"%')).all();
+  // 从数据库动态拉取所有启用且具备 'video' 能力的模型
+  const dbModels = db.select().from(models)
+    .where(and(eq(models.isActive, 1), like(models.capabilities, '%"video"%')))
+    .all();
 
-  // 如果数据库里还没配置视频模型，提供一个极简默认后备
+  // 获取所有在数据库中被禁用的模型 ID，用作后备过滤
+  const disabledModelIds = new Set<string>();
+  try {
+    const inactive = db.select().from(models).where(eq(models.isActive, 0)).all();
+    inactive.forEach(m => disabledModelIds.add(m.modelId));
+  } catch {}
+
+  // 如果数据库里还没配置视频模型，提供一个过滤了禁用模型的默认后备
   const sourceModels = dbModels.length > 0
     ? dbModels.map(m => ({ id: m.modelId, name: m.displayName }))
-    : DEFAULT_VIDEO_MODELS;
+    : DEFAULT_VIDEO_MODELS.filter(m => !disabledModelIds.has(m.id));
 
   const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
   const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();

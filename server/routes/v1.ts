@@ -114,7 +114,14 @@ router.get('/models', (req: Request, res: Response) => {
 
   const allModels = new Set<string>();
 
-  // 1. 默认内置的所有视频模型（包括 sora-v4-fast）
+  // 0. 获取所有在数据库中被禁用的模型 ID，用作过滤
+  const disabledModelIds = new Set<string>();
+  try {
+    const inactive = db.select().from(models).where(eq(models.isActive, 0)).all();
+    inactive.forEach(m => disabledModelIds.add(m.modelId));
+  } catch {}
+
+  // 1. 默认内置的所有视频模型（包括 sora-v4-fast，过滤已禁用的）
   const defaultVideoModels = [
     'grok-imagine-video',
     'grok-4.3-video',
@@ -125,11 +132,13 @@ router.get('/models', (req: Request, res: Response) => {
     'omni-flash-vref',
     'sora-v4-fast'
   ];
-  defaultVideoModels.forEach(m => allModels.add(m));
+  defaultVideoModels.forEach(m => {
+    if (!disabledModelIds.has(m)) allModels.add(m);
+  });
 
-  // 2. 数据库注册的模型（包括文字和图片类模型）
+  // 2. 数据库注册的模型（仅包含启用的模型）
   try {
-    const dbModels = db.select().from(models).all();
+    const dbModels = db.select().from(models).where(eq(models.isActive, 1)).all();
     dbModels.forEach(m => allModels.add(m.modelId));
   } catch (e) {
     console.error('[v1/models] 数据库模型读取失败:', e);
