@@ -23,6 +23,7 @@ interface VideoTask {
     model: string;
     reference_images?: string[];
     reference_video?: string | null;
+    audio_url?: string | null;
   };
   createdAt: string;
   dbId?: number;
@@ -112,6 +113,14 @@ const getRefFilename = (dataUrl: string, index: number) => {
   return `ref_${index}.${ext}`;
 };
 
+const restorePrompt = (targetPrompt: string) => {
+  if (!targetPrompt) return '';
+  return targetPrompt.replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (match, idxStr) => {
+    const idx = parseInt(idxStr, 10);
+    return `@图${idx + 1}`;
+  });
+};
+
 export default function VideoPage() {
   const navigate = useNavigate();
   const guard = useAuthGuard();
@@ -140,6 +149,7 @@ export default function VideoPage() {
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<Map<string, AbortController>>(new Map());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
   const isGenerating = tasks.some(t => t.status === 'generating');
   const [playingVideo, setPlayingVideo] = useState<{ url: string; prompt: string } | null>(null);
   
@@ -148,6 +158,33 @@ export default function VideoPage() {
   const [myAssets, setMyAssets] = useState<Asset[]>([]);
   const [cursorPos, setCursorPos] = useState<number | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
+
+  const renderHighlightedText = (text: string) => {
+    if (!text) return null;
+    const regex = /([@＠]图\d+)/g;
+    const parts = text.split(regex);
+    return parts.map((part, index) => {
+      if (regex.test(part)) {
+        const match = part.match(/\d+/);
+        const idx = match ? parseInt(match[0], 10) - 1 : -1;
+        const exists = idx >= 0 && idx < referenceImages.length;
+        
+        return (
+          <span 
+            key={index} 
+            className={`inline font-medium rounded px-0.5 transition-all ${
+              exists 
+                ? 'text-indigo-400 bg-indigo-500/15 border border-indigo-500/20 shadow-sm shadow-indigo-500/5 font-sans' 
+                : 'text-zinc-500 bg-zinc-500/10 line-through decoration-zinc-600 font-sans'
+            }`}
+          >
+            {part}
+          </span>
+        );
+      }
+      return <span key={index}>{part}</span>;
+    });
+  };
 
   // 切分分镜拼图相关状态
   const [slicingImageUrl, setSlicingImageUrl] = useState<string | null>(null);
@@ -276,6 +313,13 @@ export default function VideoPage() {
       }
     }
   }, [prompt, isMaximized]);
+
+  // 保持滚动条高度与输入框完全同步
+  useEffect(() => {
+    if (textareaRef.current && backdropRef.current) {
+      backdropRef.current.scrollTop = textareaRef.current.scrollTop;
+    }
+  }, [prompt]);
 
   // 当选中模型变化时，动态调整可选时长与分辨率
   const currentModel = models.find(m => m.id === selectedModel);
@@ -452,10 +496,11 @@ export default function VideoPage() {
       aspect_ratio?: string;
       reference_images?: string[];
       reference_video?: string | null;
+      audio_url?: string | null;
     };
   }) => {
     const targetPrompt = item.inputText || item.title || item.prompt || '';
-    setPrompt(targetPrompt);
+    setPrompt(restorePrompt(targetPrompt));
     
     if (item.metadata) {
       const meta = item.metadata;
@@ -484,10 +529,18 @@ export default function VideoPage() {
     }
     setError(null);
 
+    // 将 prompt 中的 @图1, @图2 翻译回后端 API 支持的 [ref_0.jpg] 格式
+    let finalPrompt = prompt.trim();
+    referenceImages.forEach((img, idx) => {
+      const refName = getRefFilename(img, idx);
+      const userRefLabelPattern = new RegExp(`[@＠]图${idx + 1}\\b|[@＠]图${idx + 1}`, 'g');
+      finalPrompt = finalPrompt.replace(userRefLabelPattern, `[${refName}]`);
+    });
+
     const taskId = `task_${Date.now()}`;
     const newTask: VideoTask = {
       id: taskId,
-      prompt: prompt.trim(),
+      prompt: finalPrompt,
       status: 'generating',
       progress: 0,
       statusMessage: '正在连接...',
@@ -512,7 +565,7 @@ export default function VideoPage() {
 
     const ctrl = generateVideo(
       {
-        prompt: prompt.trim(),
+        prompt: finalPrompt,
         model: selectedModel,
         aspect_ratio: aspectRatio,
         video_length: duration,
@@ -630,8 +683,8 @@ export default function VideoPage() {
       </div>
 
       {/* 右栏 */}
-      <div className="flex-1 flex flex-col min-w-0 relative">
-        <div className="flex-1 overflow-y-auto p-6 pb-40 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+      <div className="flex-1 flex flex-col min-w-0 relative h-full">
+        <div className="flex-1 overflow-y-auto p-6 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
           {tasks.length === 0 && history.length === 0 ? (
             <div className="h-full flex items-center justify-center">
               <div className="text-center">
@@ -676,7 +729,7 @@ export default function VideoPage() {
                               <video src={task.videoUrl} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain' : 'object-cover'}`} preload="metadata" playsInline muted loop
                                 onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
                                 onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
-                              <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors cursor-pointer" onClick={() => setPlayingVideo({ url: task.videoUrl!, prompt: task.prompt })}>
+                              <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors cursor-pointer" onClick={() => setPlayingVideo({ url: task.videoUrl!, prompt: restorePrompt(task.prompt) })}>
                                 <Play className="w-8 h-8 text-white/80 group-hover:text-white group-hover:scale-110 transition-all" />
                               </div>
                             </>
@@ -690,7 +743,7 @@ export default function VideoPage() {
                         {/* 信息区 */}
                         <div className="p-3 flex-1 flex flex-col justify-between gap-1.5 bg-black/40">
                           <div>
-                            <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">{task.prompt}</p>
+                            <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">{restorePrompt(task.prompt)}</p>
                             
                             {/* 参考图微缩图预览 */}
                             {task.metadata?.reference_images && task.metadata.reference_images.length > 0 && (
@@ -750,7 +803,7 @@ export default function VideoPage() {
                   <p className="text-xs text-zinc-500 mb-4 font-semibold tracking-wider uppercase">历史生成 ({history.length})</p>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
                     {history.map((h) => (
-                      <div key={h.id} onClick={() => setPlayingVideo({ url: h.resultUrl, prompt: h.title || h.inputText || '' })} className={`group relative rounded-2xl overflow-hidden border border-white/5 bg-white/[0.02] hover:border-indigo-500/30 transition-all flex flex-col cursor-pointer ${isVertical(h.metadata?.aspect_ratio) ? 'max-w-[220px]' : ''}`}>
+                      <div key={h.id} onClick={() => setPlayingVideo({ url: h.resultUrl, prompt: restorePrompt(h.title || h.inputText || '') })} className={`group relative rounded-2xl overflow-hidden border border-white/5 bg-white/[0.02] hover:border-indigo-500/30 transition-all flex flex-col cursor-pointer ${isVertical(h.metadata?.aspect_ratio) ? 'max-w-[220px]' : ''}`}>
                         <div className="relative w-full bg-black flex items-center justify-center overflow-hidden" style={getAspectStyle(h.metadata?.aspect_ratio) || { aspectRatio: '16/9' }}>
                           <video src={h.resultUrl} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain' : 'object-cover'}`} preload="metadata" playsInline muted loop
                             onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
@@ -761,7 +814,7 @@ export default function VideoPage() {
                         </div>
                         <div className="p-3 flex-1 flex flex-col justify-between gap-1 bg-black/40">
                           <div>
-                            <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">{h.title || h.inputText || '无描述'}</p>
+                            <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">{restorePrompt(h.title || h.inputText || '无描述')}</p>
                             
                             {/* 参考图微缩图预览 */}
                             {h.metadata?.reference_images && h.metadata.reference_images.length > 0 && (
@@ -805,7 +858,7 @@ export default function VideoPage() {
             <div className="relative w-full max-w-4xl" onClick={(e) => e.stopPropagation()}>
               <video src={playingVideo.url} controls autoPlay className="w-full max-h-[75vh] rounded-2xl shadow-2xl bg-black" />
               <div className="flex items-center justify-between mt-4">
-                <p className="text-sm text-zinc-300 line-clamp-1 flex-1 mr-4">{playingVideo.prompt}</p>
+                <p className="text-sm text-zinc-300 line-clamp-1 flex-1 mr-4">{restorePrompt(playingVideo.prompt)}</p>
                 <div className="flex items-center gap-3 shrink-0">
                   <a href={`/api/video/download?url=${encodeURIComponent(playingVideo.url)}&filename=video_download.mp4`} download className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
                     <Download className="w-3.5 h-3.5" /> 下载
@@ -819,16 +872,16 @@ export default function VideoPage() {
           </div>
         )}
 
-        {error && (
-          <div className="absolute bottom-[180px] left-4 right-4 z-10 px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 flex items-center gap-2 backdrop-blur-sm">
-            <AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{error}</span>
-            <button onClick={() => setError(null)} className="text-red-500/60 hover:text-red-400 text-xs">✕</button>
-          </div>
-        )}
+        {/* 输入区（不再是绝对定位的悬浮区，而是底栏） */}
+        <div className="border-t border-white/5 bg-[#0c0c0c]/95 backdrop-blur-md w-full shrink-0 z-10 relative">
+          {error && (
+            <div className="absolute bottom-full left-6 right-6 mb-3 z-20 px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 flex items-center gap-2 backdrop-blur-md shadow-2xl">
+              <AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{error}</span>
+              <button onClick={() => setError(null)} className="text-red-500/60 hover:text-red-400 text-xs">✕</button>
+            </div>
+          )}
 
-        {/* 悬浮输入区 */}
-        <div className="absolute bottom-0 left-0 right-0 z-10">
-          <div className="bg-gradient-to-t from-[#0c0c0c] via-[#0c0c0c]/95 to-transparent pt-8 px-6 pb-5">
+          <div className="px-6 py-4">
             <div className="max-w-3xl mx-auto">
               {/* 工具栏 */}
               <div className="flex items-center gap-2 mb-3 flex-wrap">
@@ -894,9 +947,9 @@ export default function VideoPage() {
 
                 {/* 资产选择弹窗 */}
                 {showAssetPicker && (
-                  <div className="absolute bottom-full left-4 mb-2 w-80 max-w-full bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl p-2 z-50">
+                  <div className="absolute bottom-full left-4 mb-2 w-80 max-w-full bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl p-2.5 z-50">
                     <div className="flex items-center justify-between px-2 pb-2 border-b border-white/10 mb-2">
-                      <span className="text-xs font-semibold text-zinc-400 font-medium">选择参考资产 (@引用)</span>
+                      <span className="text-xs font-semibold text-zinc-400 font-medium">选择图片引用</span>
                       <button onClick={() => setShowAssetPicker(false)} className="text-zinc-500 hover:text-white"><X className="w-3.5 h-3.5" /></button>
                     </div>
 
@@ -904,14 +957,13 @@ export default function VideoPage() {
                     {referenceImages.length > 0 && (
                       <div className="mb-3 pb-3 border-b border-white/5">
                         <span className="text-[10px] text-zinc-500 mb-2 block px-1 font-semibold">已上传参考图 (点击引用至文本)</span>
-                        <div className="grid grid-cols-4 gap-2">
+                        <div className="flex flex-col gap-1 max-h-40 overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
                           {referenceImages.map((img, idx) => {
-                            const refName = getRefFilename(img, idx);
                             return (
                               <div 
                                 key={`uploaded_${idx}`} 
                                 onClick={() => {
-                                  const textToInsert = `[${refName}] `;
+                                  const textToInsert = `@图${idx + 1} `;
                                   if (cursorPos !== null) {
                                     setPrompt(prev => prev.slice(0, cursorPos) + textToInsert + prev.slice(cursorPos));
                                     setCursorPos(cursorPos + textToInsert.length);
@@ -921,13 +973,11 @@ export default function VideoPage() {
                                   setShowAssetPicker(false);
                                   setTimeout(() => textareaRef.current?.focus(), 50);
                                 }}
-                                className="relative aspect-square rounded-lg overflow-hidden border border-white/10 hover:border-indigo-500 hover:shadow-lg hover:shadow-indigo-500/20 cursor-pointer bg-black/30 group transition-all"
-                                title={`点击在光标处插入 [${refName}]`}
+                                className="flex items-center gap-3 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-indigo-500/10 group transition-all text-xs text-zinc-300 hover:text-indigo-400"
+                                title={`点击在光标处插入 @图${idx + 1}`}
                               >
-                                <img src={img} className="w-full h-full object-cover" />
-                                <div className="absolute bottom-0 inset-x-0 bg-black/70 text-[9px] text-indigo-400 text-center font-mono py-0.5 truncate border-t border-white/5">
-                                  ref_{idx}
-                                </div>
+                                <img src={img} className="w-8 h-8 rounded-lg object-cover border border-white/5" />
+                                <span className="font-medium group-hover:text-indigo-400">@图{idx + 1}</span>
                               </div>
                             );
                           })}
@@ -968,9 +1018,8 @@ export default function VideoPage() {
                                        setReferenceImages(prev => [...prev, asset.dataUrl]);
                                      }
                                      
-                                     // 插入对应的 [ref_idx.jpg/png] 到文本中
-                                     const refName = getRefFilename(asset.dataUrl, idx);
-                                     const textToInsert = `[${refName}] `;
+                                     // 插入对应的 @图${idx + 1} 到文本中
+                                     const textToInsert = `@图${idx + 1} `;
                                      if (cursorPos !== null) {
                                        setPrompt(prev => prev.slice(0, cursorPos) + textToInsert + prev.slice(cursorPos));
                                        setCursorPos(cursorPos + textToInsert.length);
@@ -1067,31 +1116,49 @@ export default function VideoPage() {
                   </div>
                 )}
 
-                <div className="relative flex-1 flex">
-                  <textarea ref={textareaRef} value={prompt} onChange={(e) => {
-                    const val = e.target.value;
-                    const nativeEvent = e.nativeEvent as any;
-                    // 监听任意位置输入的 @ 或全角 ＠ 
-                    if (nativeEvent.data === '@' || nativeEvent.data === '＠') {
-                      setShowAssetPicker(true);
-                      // 移除刚刚输入的那个 @ 符号，并记录光标位置
-                      const pos = e.target.selectionStart || val.length;
-                      const finalPos = Math.max(0, pos - 1);
-                      setCursorPos(finalPos);
-                      setPrompt(val.slice(0, finalPos) + val.slice(pos));
-                    } else {
-                      setPrompt(val);
-                      // 用户正常打字时重置或更新 cursor
-                      setCursorPos(e.target.selectionStart || null);
-                    }
-                  }}
+                <div className="relative flex-1 flex min-h-[80px]">
+                  {/* 背景高亮层 */}
+                  <div 
+                    ref={backdropRef}
+                    className="absolute inset-0 pointer-events-none select-none px-4 py-3 pr-16 text-sm text-transparent font-sans leading-relaxed whitespace-pre-wrap break-words overflow-hidden [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-transparent [&::-webkit-scrollbar-track]:bg-transparent"
+                  >
+                    {renderHighlightedText(prompt)}
+                  </div>
+
+                  {/* 前景输入框 */}
+                  <textarea 
+                    ref={textareaRef} 
+                    value={prompt} 
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const nativeEvent = e.nativeEvent as any;
+                      // 监听任意位置输入的 @ 或全角 ＠ 
+                      if (nativeEvent.data === '@' || nativeEvent.data === '＠') {
+                        setShowAssetPicker(true);
+                        // 移除刚刚输入的那个 @ 符号，并记录光标位置
+                        const pos = e.target.selectionStart || val.length;
+                        const finalPos = Math.max(0, pos - 1);
+                        setCursorPos(finalPos);
+                        setPrompt(val.slice(0, finalPos) + val.slice(pos));
+                      } else {
+                        setPrompt(val);
+                        // 用户正常打字时重置或更新 cursor
+                        setCursorPos(e.target.selectionStart || null);
+                      }
+                    }}
+                    onScroll={(e) => {
+                      if (backdropRef.current) {
+                        backdropRef.current.scrollTop = e.currentTarget.scrollTop;
+                      }
+                    }}
                     onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); } }}
                     placeholder="描述你想生成的视频内容... (输入 @ 可直接上传参考图)"
-                    className={`w-full bg-transparent px-4 py-3 pr-16 text-sm text-white focus:outline-none placeholder:text-zinc-600 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent ${isMaximized ? 'overflow-y-auto resize-y' : 'overflow-y-auto resize-none'}`} />
+                    className={`w-full bg-transparent px-4 py-3 pr-16 text-sm text-transparent caret-white focus:outline-none placeholder:text-zinc-600 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent font-sans leading-relaxed overflow-y-auto ${isMaximized ? 'resize-y' : 'resize-none'}`} 
+                  />
                   
                   {/* 圆形发送按钮 */}
                   <button onClick={handleGenerate} disabled={!prompt.trim()}
-                    className="absolute right-3 bottom-3 w-10 h-10 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed">
+                    className="absolute right-3 bottom-3 w-10 h-10 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed z-10">
                     <Play className="w-4 h-4 ml-0.5" />
                   </button>
                 </div>

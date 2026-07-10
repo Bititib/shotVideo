@@ -515,7 +515,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           if (taskStatus === 'success' || taskStatus === 'completed') {
             resultUrl = dataBlock.result_url || (dataBlock.data && dataBlock.data.url) || status.result_url || status.url;
           } else if (taskStatus === 'failure' || taskStatus === 'failed') {
-            errMsg = dataBlock.fail_reason || dataBlock.error || '视频生成失败';
+            const errVal = dataBlock.error || status.error;
+            const detailMsg = (typeof errVal === 'object' && errVal) ? errVal.message : errVal;
+            errMsg = dataBlock.fail_reason || detailMsg || '视频生成失败';
           }
         } else {
           taskStatus = (status.status || '').toLowerCase();
@@ -527,7 +529,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           if (taskStatus === 'completed' || taskStatus === 'success') {
             resultUrl = status.url || status.video_url || status.result_url || `${baseUrl}/v1/files/video?id=${videoId}`;
           } else if (taskStatus === 'failed' || taskStatus === 'failure') {
-            errMsg = status.error?.message || '视频生成失败';
+            const errVal = status.error;
+            const detailMsg = (typeof errVal === 'object' && errVal) ? errVal.message : errVal;
+            errMsg = detailMsg || status.fail_reason || '视频生成失败';
           }
         }
 
