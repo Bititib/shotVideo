@@ -120,6 +120,8 @@ router.get('/models', (_req: Request, res: Response) => {
   const omniFlash1080 = parseFloat(db.select().from(settings).where(eq(settings.key, 'omni_flash_rate_1080p')).get()?.value || '1.50');
   const omniVref720 = parseFloat(db.select().from(settings).where(eq(settings.key, 'omni_vref_rate_720p')).get()?.value || '1.60');
   const omniVref1080 = parseFloat(db.select().from(settings).where(eq(settings.key, 'omni_vref_rate_1080p')).get()?.value || '2.20');
+  const soraV4Rate480 = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_rate_480p')).get()?.value || '1.00');
+  const soraV4Rate720 = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_rate_720p')).get()?.value || '1.50');
 
   const result = sourceModels.map(m => {
     const preset = DEFAULT_VIDEO_MODELS.find(d => d.id === m.id);
@@ -138,8 +140,10 @@ router.get('/models', (_req: Request, res: Response) => {
         '1080p': omniVref1080,
       };
     } else if (m.id === 'sora-v4-fast') {
-      const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_rate_720p')).get();
-      rates = { '720p': parseFloat(row?.value || '1.50') };
+      rates = {
+        '480p': soraV4Rate480,
+        '720p': soraV4Rate720,
+      };
     } else {
       rates = {
         '480p': Math.round(base480 * multiplier * 100) / 100,
@@ -238,8 +242,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     const row = db.select().from(settings).where(eq(settings.key, key)).get();
     rate = parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
   } else if (model === 'sora-v4-fast') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_rate_720p')).get();
-    rate = parseFloat(row?.value || '1.50');
+    const key = resolution === '480p' ? 'sora_v4_rate_480p' : 'sora_v4_rate_720p';
+    const row = db.select().from(settings).where(eq(settings.key, key)).get();
+    rate = parseFloat(row?.value || (resolution === '480p' ? '1.00' : '1.50'));
   } else {
     const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
     const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();

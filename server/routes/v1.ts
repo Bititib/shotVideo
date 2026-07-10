@@ -59,8 +59,9 @@ function getVideoRate(model: string, resolution: string): number {
     const row = db.select().from(settings).where(eq(settings.key, key)).get();
     return parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
   } else if (model === 'sora-v4-fast') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_rate_720p')).get();
-    return parseFloat(row?.value || '1.50');
+    const key = resolution === '480p' ? 'sora_v4_rate_480p' : 'sora_v4_rate_720p';
+    const row = db.select().from(settings).where(eq(settings.key, key)).get();
+    return parseFloat(row?.value || (resolution === '480p' ? '1.00' : '1.50'));
   } else {
     const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
     const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
