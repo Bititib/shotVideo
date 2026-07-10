@@ -16,10 +16,10 @@ interface VideoTask {
   statusMessage: string;
   videoUrl: string | null;
   error: string | null;
-  metadata: { 
-    resolution: string; 
-    seconds: number; 
-    aspect_ratio: string; 
+  metadata: {
+    resolution: string;
+    seconds: number;
+    aspect_ratio: string;
     model: string;
     reference_images?: string[];
     reference_video?: string | null;
@@ -152,7 +152,7 @@ export default function VideoPage() {
   const backdropRef = useRef<HTMLDivElement>(null);
   const isGenerating = tasks.some(t => t.status === 'generating');
   const [playingVideo, setPlayingVideo] = useState<{ url: string; prompt: string } | null>(null);
-  
+
   // 资产库状态
   const [showAssetPicker, setShowAssetPicker] = useState(false);
   const [myAssets, setMyAssets] = useState<Asset[]>([]);
@@ -168,15 +168,14 @@ export default function VideoPage() {
         const match = part.match(/\d+/);
         const idx = match ? parseInt(match[0], 10) - 1 : -1;
         const exists = idx >= 0 && idx < referenceImages.length;
-        
+
         return (
-          <span 
-            key={index} 
-            className={`inline font-medium rounded px-0.5 transition-all ${
-              exists 
-                ? 'text-indigo-400 bg-indigo-500/15 border border-indigo-500/20 shadow-sm shadow-indigo-500/5 font-sans' 
+          <span
+            key={index}
+            className={`inline font-medium rounded px-0.5 transition-all ${exists
+                ? 'text-indigo-400 bg-indigo-500/15 border border-indigo-500/20 shadow-sm shadow-indigo-500/5 font-sans'
                 : 'text-zinc-500 bg-zinc-500/10 line-through decoration-zinc-600 font-sans'
-            }`}
+              }`}
           >
             {part}
           </span>
@@ -203,15 +202,15 @@ export default function VideoPage() {
   };
 
   useEffect(() => {
-    fetchVideoModels().then((m) => { setModels(m); if (m.length > 0 && !selectedModel) setSelectedModel(m[0].id); }).catch(() => {});
-    
+    fetchVideoModels().then((m) => { setModels(m); if (m.length > 0 && !selectedModel) setSelectedModel(m[0].id); }).catch(() => { });
+
     // 加载历史与生产中生成记录
     contentApi.getMyContents({ type: 'video', pageSize: 50 })
       .then((res: any) => {
         const items = res?.items || res?.data || [];
         // 已完成或已失败的记录计入历史面板
         setHistory(items.filter((item: any) => item.status === 'completed' || item.status === 'success' || item.resultUrl));
-        
+
         // 正在生产中的记录恢复到 tasks 队列中继续展示生成进度
         const processingTasks: VideoTask[] = items
           .filter((item: any) => item.status === 'processing')
@@ -219,7 +218,7 @@ export default function VideoPage() {
             let meta = {};
             try {
               meta = item.metadata ? (typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata) : {};
-            } catch {}
+            } catch { }
             return {
               id: `db_${item.id}`,
               prompt: item.inputText || item.title || '',
@@ -234,10 +233,10 @@ export default function VideoPage() {
           });
         setTasks(processingTasks);
       })
-      .catch(() => {});
-      
+      .catch(() => { });
+
     // 加载本地资产库
-    getAssets().then(setMyAssets).catch(() => {});
+    getAssets().then(setMyAssets).catch(() => { });
   }, []);
 
   // 轮询在后台生成中的数据库任务
@@ -270,7 +269,7 @@ export default function VideoPage() {
                     setHistory(items.filter((x: any) => x.status === 'completed' || x.status === 'success' || x.resultUrl));
                     // 历史已加载，从当前任务中移除
                     setTasks(prev => prev.filter(t => t.id !== task.id));
-                  }).catch(() => {});
+                  }).catch(() => { });
               }, 2000);
             } else if (item.status === 'failed') {
               setTasks(prev => prev.map(t => t.id === task.id ? {
@@ -282,7 +281,7 @@ export default function VideoPage() {
             } else {
               // processing 状态：从 metadata.progress 读取实时进度
               let meta: any = {};
-              try { meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : (item.metadata || {}); } catch {}
+              try { meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : (item.metadata || {}); } catch { }
               const p = meta.progress || 0;
               setTasks(prev => prev.map(t => t.id === task.id ? {
                 ...t,
@@ -291,7 +290,7 @@ export default function VideoPage() {
               } : t));
             }
           })
-          .catch(() => {});
+          .catch(() => { });
       });
     }, 5000);
 
@@ -328,31 +327,33 @@ export default function VideoPage() {
     : ALL_DURATIONS;
 
   const isOmniModel = selectedModel.startsWith('omni-flash');
-  const RESOLUTIONS = isOmniModel
-    ? [{ value: '720p', label: '720p' }, { value: '1080p', label: '1080p' }]
-    : [{ value: '480p', label: '480p' }, { value: '720p', label: '720p' }];
+  const RESOLUTIONS = currentModel?.rates
+    ? Object.keys(currentModel.rates)
+        .sort((a, b) => parseInt(a) - parseInt(b))
+        .map(r => ({ value: r, label: r }))
+    : isOmniModel
+      ? [{ value: '720p', label: '720p' }, { value: '1080p', label: '1080p' }]
+      : [{ value: '480p', label: '480p' }, { value: '720p', label: '720p' }];
 
   const ASPECT_RATIOS = isOmniModel
     ? [
-        { value: '16:9', label: '16:9', icon: RectangleHorizontal },
-        { value: '9:16', label: '9:16', icon: Smartphone },
-      ]
+      { value: '16:9', label: '16:9', icon: RectangleHorizontal },
+      { value: '9:16', label: '9:16', icon: Smartphone },
+    ]
     : ALL_ASPECT_RATIOS;
 
   useEffect(() => {
     if (currentModel?.allowedSeconds && !currentModel.allowedSeconds.includes(duration)) {
       setDuration(currentModel.allowedSeconds[0]);
     }
+    // 自动修正分辨率：如果当前分辨率不在该模型支持的选项中，回退到第一个可用选项
+    const validResolutions = RESOLUTIONS.map(r => r.value);
+    if (!validResolutions.includes(resolution)) {
+      setResolution(validResolutions[validResolutions.length - 1] || '720p');
+    }
     if (isOmniModel) {
-      if (resolution !== '720p' && resolution !== '1080p') {
-        setResolution('720p');
-      }
       if (aspectRatio !== '16:9' && aspectRatio !== '9:16') {
         setAspectRatio('16:9');
-      }
-    } else {
-      if (resolution !== '480p' && resolution !== '720p') {
-        setResolution('720p');
       }
     }
 
@@ -394,14 +395,14 @@ export default function VideoPage() {
     const valid = Array.from(files).filter(f => f.type.startsWith('image/')).slice(0, remaining);
     if (valid.length === 0) return;
     if (valid.find(f => f.size > 20 * 1024 * 1024)) { setError('参考图超过 20MB'); return; }
-    try { 
+    try {
       const compressed = await Promise.all(valid.map(async f => ({
         url: await compressImage(f),
         name: f.name
       })));
       const urls = compressed.map(c => c.url);
-      setReferenceImages(prev => [...prev, ...urls]); 
-      
+      setReferenceImages(prev => [...prev, ...urls]);
+
       // 保存到本地持久化资产库
       compressed.forEach(c => {
         const newAsset: Asset = {
@@ -411,10 +412,10 @@ export default function VideoPage() {
           type: 'image',
           createdAt: Date.now()
         };
-        saveAsset(newAsset).then(() => setMyAssets(prev => [newAsset, ...prev])).catch(() => {});
+        saveAsset(newAsset).then(() => setMyAssets(prev => [newAsset, ...prev])).catch(() => { });
       });
-    } catch { 
-      setError('图片读取失败'); 
+    } catch {
+      setError('图片读取失败');
     }
   };
 
@@ -440,7 +441,7 @@ export default function VideoPage() {
         type: 'video',
         createdAt: Date.now()
       };
-      saveAsset(newAsset).then(() => setMyAssets(prev => [newAsset, ...prev])).catch(() => {});
+      saveAsset(newAsset).then(() => setMyAssets(prev => [newAsset, ...prev])).catch(() => { });
     };
     reader.onerror = () => {
       setError('读取视频失败');
@@ -501,20 +502,20 @@ export default function VideoPage() {
   }) => {
     const targetPrompt = item.inputText || item.title || item.prompt || '';
     setPrompt(restorePrompt(targetPrompt));
-    
+
     if (item.metadata) {
       const meta = item.metadata;
       if (meta.model) setSelectedModel(meta.model);
       if (meta.resolution) setResolution(meta.resolution);
       if (meta.seconds) setDuration(meta.seconds);
       if (meta.aspect_ratio) setAspectRatio(meta.aspect_ratio);
-      
+
       // 恢复参考图与参考视频及参考音频
       setReferenceImages(meta.reference_images || []);
       setReferenceVideo(meta.reference_video || null);
       setReferenceAudio(meta.audio_url || null);
     }
-    
+
     setTimeout(() => {
       textareaRef.current?.focus();
     }, 50);
@@ -546,10 +547,10 @@ export default function VideoPage() {
       statusMessage: '正在连接...',
       videoUrl: null,
       error: null,
-      metadata: { 
-        resolution, 
-        seconds: duration, 
-        aspect_ratio: aspectRatio, 
+      metadata: {
+        resolution,
+        seconds: duration,
+        aspect_ratio: aspectRatio,
         model: selectedModel,
         reference_images: referenceImages,
         reference_video: referenceVideo,
@@ -727,7 +728,7 @@ export default function VideoPage() {
                           ) : task.status === 'complete' && task.videoUrl ? (
                             <>
                               <video src={task.videoUrl} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain' : 'object-cover'}`} preload="metadata" playsInline muted loop
-                                onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+                                onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
                                 onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
                               <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors cursor-pointer" onClick={() => setPlayingVideo({ url: task.videoUrl!, prompt: restorePrompt(task.prompt) })}>
                                 <Play className="w-8 h-8 text-white/80 group-hover:text-white group-hover:scale-110 transition-all" />
@@ -744,7 +745,7 @@ export default function VideoPage() {
                         <div className="p-3 flex-1 flex flex-col justify-between gap-1.5 bg-black/40">
                           <div>
                             <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">{restorePrompt(task.prompt)}</p>
-                            
+
                             {/* 参考图微缩图预览 */}
                             {task.metadata?.reference_images && task.metadata.reference_images.length > 0 && (
                               <div className="flex gap-1.5 mt-2 flex-wrap">
@@ -759,7 +760,7 @@ export default function VideoPage() {
                               </div>
                             )}
                           </div>
-                          
+
                           <div className="flex items-center justify-between mt-1">
                             <span className="text-[10px] text-zinc-500">{task.metadata.resolution} · {task.metadata.seconds}秒</span>
                             {task.status === 'generating' ? (
@@ -806,7 +807,7 @@ export default function VideoPage() {
                       <div key={h.id} onClick={() => setPlayingVideo({ url: h.resultUrl, prompt: restorePrompt(h.title || h.inputText || '') })} className={`group relative rounded-2xl overflow-hidden border border-white/5 bg-white/[0.02] hover:border-indigo-500/30 transition-all flex flex-col cursor-pointer ${isVertical(h.metadata?.aspect_ratio) ? 'max-w-[220px]' : ''}`}>
                         <div className="relative w-full bg-black flex items-center justify-center overflow-hidden" style={getAspectStyle(h.metadata?.aspect_ratio) || { aspectRatio: '16/9' }}>
                           <video src={h.resultUrl} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain' : 'object-cover'}`} preload="metadata" playsInline muted loop
-                            onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+                            onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
                             onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
                           <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors">
                             <Play className="w-8 h-8 text-white/80 group-hover:text-white group-hover:scale-110 transition-all" />
@@ -815,7 +816,7 @@ export default function VideoPage() {
                         <div className="p-3 flex-1 flex flex-col justify-between gap-1 bg-black/40">
                           <div>
                             <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">{restorePrompt(h.title || h.inputText || '无描述')}</p>
-                            
+
                             {/* 参考图微缩图预览 */}
                             {h.metadata?.reference_images && h.metadata.reference_images.length > 0 && (
                               <div className="flex gap-1.5 mt-2 flex-wrap">
@@ -830,7 +831,7 @@ export default function VideoPage() {
                               </div>
                             )}
                           </div>
-                          
+
                           <div className="flex items-center justify-between mt-2 text-[10px] text-zinc-500">
                             <span>{h.metadata?.resolution || '720p'} · {h.metadata?.seconds || 6}秒</span>
                             <div className="flex items-center gap-2">
@@ -884,16 +885,50 @@ export default function VideoPage() {
           <div className="px-6 py-4">
             <div className="max-w-3xl mx-auto">
               <div className="relative bg-white/[0.04] border border-white/[0.08] focus-within:border-indigo-500/30 rounded-2xl transition-all shadow-2xl shadow-black/30 flex flex-col">
-                
-                {/* 顶部辅助工具栏 */}
-                <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.04] text-[11px] text-zinc-500 bg-white/[0.01] rounded-t-2xl">
+
+                {/* 参数工具栏 — 卡片顶部 */}
+                <div className="flex items-center gap-2 px-4 py-2 border-b border-white/[0.04] flex-wrap rounded-t-2xl">
+                  <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={ASPECT_RATIOS} />
+                  <CustomSelect value={duration} onChange={(v: number) => setDuration(v)} options={DURATIONS} />
+                  <CustomSelect value={resolution} onChange={setResolution} options={RESOLUTIONS} />
+                  {(selectedModel === 'omni-flash-vref' || selectedModel === 'sora-v4-fast') && (
+                    <>
+                      <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                        <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideo ? '(已上传)' : ''}
+                      </button>
+                      <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
+                    </>
+                  )}
+                  {selectedModel === 'sora-v4-fast' && (
+                    <>
+                      <button onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                        <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 {referenceAudio ? '(已上传)' : ''}
+                      </button>
+                      <input ref={audioFileInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
+                    </>
+                  )}
+                  <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                    <Upload className="w-3 h-3 text-indigo-400" /> 参考图 ({referenceImages.length}/{maxRefs})
+                  </button>
+                  <div className="group relative flex items-center">
+                    <HelpCircle className="w-3.5 h-3.5 text-zinc-500 hover:text-zinc-300 transition-colors cursor-help" />
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-zinc-950 border border-white/10 rounded-xl shadow-2xl text-[10px] text-zinc-400 leading-normal pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-50">
+                      <p className="font-semibold text-yellow-400 mb-1 flex items-center gap-1">⚠️ 避免使用多格拼图</p>
+                      视频模型推荐使用连贯的单镜头画面。使用九宫格等拼图会导致生成失败或变形。如果上传了拼图，可使用参考图上的 <Scissors className="w-3 h-3 inline text-indigo-400" /> 按钮智能切分。
+                    </div>
+                  </div>
+                  <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
+                </div>
+
+                {/* 标题栏 */}
+                <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.04] text-[11px] text-zinc-500 bg-white/[0.01]">
                   <span className="flex items-center gap-1.5 font-medium">
                     <Sparkles className="w-3 h-3 text-indigo-400" />
                     提示词脚本编辑器
                   </span>
                   <div className="flex items-center gap-3">
                     <span className="font-mono">{prompt.length} 字</span>
-                    <button 
+                    <button
                       onClick={() => setIsMaximized(prev => !prev)}
                       type="button"
                       className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300 transition-colors cursor-pointer select-none">
@@ -927,8 +962,8 @@ export default function VideoPage() {
                         <div className="flex flex-col gap-1 max-h-40 overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
                           {referenceImages.map((img, idx) => {
                             return (
-                              <div 
-                                key={`uploaded_${idx}`} 
+                              <div
+                                key={`uploaded_${idx}`}
                                 onClick={() => {
                                   const textToInsert = `@图${idx + 1} `;
                                   if (cursorPos !== null) {
@@ -951,12 +986,12 @@ export default function VideoPage() {
                         </div>
                       </div>
                     )}
-                    
-                    <button onClick={() => { fileInputRef.current?.click(); setShowAssetPicker(false); }} 
+
+                    <button onClick={() => { fileInputRef.current?.click(); setShowAssetPicker(false); }}
                       className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors text-xs text-white mb-3 cursor-pointer">
                       <Upload className="w-3.5 h-3.5 text-indigo-400" /> 从本地上传新文件
                     </button>
-                    
+
                     <div className="max-h-60 overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
                       <span className="text-[10px] text-zinc-500 mb-2 block px-1 font-semibold">本地资产库 (点击添加并插入引用)</span>
                       {myAssets.length === 0 ? (
@@ -965,63 +1000,63 @@ export default function VideoPage() {
                         <div className="grid grid-cols-4 gap-2">
                           {myAssets.map(asset => {
                             const isSelected = asset.type === 'video' ? referenceVideo === asset.dataUrl : referenceImages.includes(asset.dataUrl);
-                            
+
                             return (
-                            <div key={asset.id} className={`relative group aspect-square rounded-lg overflow-hidden border cursor-pointer bg-black/50 transition-all ${isSelected ? 'border-indigo-500 shadow-[0_0_0_2px_rgba(99,102,241,0.3)]' : 'border-white/10 hover:border-indigo-500/50'}`} 
-                                 onClick={() => {
-                                   if (asset.type === 'video') {
-                                     setReferenceVideo(asset.dataUrl);
-                                     setShowAssetPicker(false);
-                                     setTimeout(() => textareaRef.current?.focus(), 50);
-                                   } else {
-                                     let idx = referenceImages.indexOf(asset.dataUrl);
-                                     if (idx === -1) {
-                                       if (referenceImages.length >= maxRefs) {
-                                         setError(`当前模型最多支持 ${maxRefs} 张参考图`);
-                                         setShowAssetPicker(false);
-                                         return;
-                                       }
-                                       idx = referenceImages.length;
-                                       setReferenceImages(prev => [...prev, asset.dataUrl]);
-                                     }
-                                     
-                                     // 插入对应的 @图${idx + 1} 到文本中
-                                     const textToInsert = `@图${idx + 1} `;
-                                     if (cursorPos !== null) {
-                                       setPrompt(prev => prev.slice(0, cursorPos) + textToInsert + prev.slice(cursorPos));
-                                       setCursorPos(cursorPos + textToInsert.length);
-                                     } else {
-                                       setPrompt(prev => prev + textToInsert);
-                                     }
-                                     setShowAssetPicker(false);
-                                     setTimeout(() => textareaRef.current?.focus(), 50);
-                                   }
-                                 }}>
-                              {asset.type === 'image' ? (
-                                <img src={asset.dataUrl} className="w-full h-full object-cover" />
-                              ) : (
-                                <video src={asset.dataUrl} className="w-full h-full object-cover" />
-                              )}
-                              {/* 选中态遮罩与对号 */}
-                              {isSelected && (
-                                <div className="absolute inset-0 bg-indigo-500/20 flex items-center justify-center">
-                                  <div className="bg-indigo-500 rounded-full p-1 shadow-lg">
-                                    <Check className="w-4 h-4 text-white" />
+                              <div key={asset.id} className={`relative group aspect-square rounded-lg overflow-hidden border cursor-pointer bg-black/50 transition-all ${isSelected ? 'border-indigo-500 shadow-[0_0_0_2px_rgba(99,102,241,0.3)]' : 'border-white/10 hover:border-indigo-500/50'}`}
+                                onClick={() => {
+                                  if (asset.type === 'video') {
+                                    setReferenceVideo(asset.dataUrl);
+                                    setShowAssetPicker(false);
+                                    setTimeout(() => textareaRef.current?.focus(), 50);
+                                  } else {
+                                    let idx = referenceImages.indexOf(asset.dataUrl);
+                                    if (idx === -1) {
+                                      if (referenceImages.length >= maxRefs) {
+                                        setError(`当前模型最多支持 ${maxRefs} 张参考图`);
+                                        setShowAssetPicker(false);
+                                        return;
+                                      }
+                                      idx = referenceImages.length;
+                                      setReferenceImages(prev => [...prev, asset.dataUrl]);
+                                    }
+
+                                    // 插入对应的 @图${idx + 1} 到文本中
+                                    const textToInsert = `@图${idx + 1} `;
+                                    if (cursorPos !== null) {
+                                      setPrompt(prev => prev.slice(0, cursorPos) + textToInsert + prev.slice(cursorPos));
+                                      setCursorPos(cursorPos + textToInsert.length);
+                                    } else {
+                                      setPrompt(prev => prev + textToInsert);
+                                    }
+                                    setShowAssetPicker(false);
+                                    setTimeout(() => textareaRef.current?.focus(), 50);
+                                  }
+                                }}>
+                                {asset.type === 'image' ? (
+                                  <img src={asset.dataUrl} className="w-full h-full object-cover" />
+                                ) : (
+                                  <video src={asset.dataUrl} className="w-full h-full object-cover" />
+                                )}
+                                {/* 选中态遮罩与对号 */}
+                                {isSelected && (
+                                  <div className="absolute inset-0 bg-indigo-500/20 flex items-center justify-center">
+                                    <div className="bg-indigo-500 rounded-full p-1 shadow-lg">
+                                      <Check className="w-4 h-4 text-white" />
+                                    </div>
                                   </div>
-                                </div>
-                              )}
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  deleteAsset(asset.id).then(() => {
-                                    setMyAssets(prev => prev.filter(a => a.id !== asset.id));
-                                  });
-                                }}
-                                className="absolute top-1 right-1 bg-black/70 rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/90 z-10">
-                                <X className="w-3 h-3 text-white" />
-                              </button>
-                              {asset.type === 'video' && <div className="absolute bottom-1 right-1"><Film className="w-4 h-4 text-white/90 drop-shadow-md" /></div>}
-                            </div>
+                                )}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteAsset(asset.id).then(() => {
+                                      setMyAssets(prev => prev.filter(a => a.id !== asset.id));
+                                    });
+                                  }}
+                                  className="absolute top-1 right-1 bg-black/70 rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500/90 z-10">
+                                  <X className="w-3 h-3 text-white" />
+                                </button>
+                                {asset.type === 'video' && <div className="absolute bottom-1 right-1"><Film className="w-4 h-4 text-white/90 drop-shadow-md" /></div>}
+                              </div>
                             );
                           })}
                         </div>
@@ -1029,7 +1064,7 @@ export default function VideoPage() {
                     </div>
                   </div>
                 )}
-                
+
                 {(referenceImages.length > 0 || referenceVideo || referenceAudio) && (
                   <div className="flex items-center gap-2 px-4 pt-3 pb-1 flex-wrap">
                     {referenceVideo && (
@@ -1085,17 +1120,17 @@ export default function VideoPage() {
 
                 <div className="relative flex-1 flex min-h-[80px]">
                   {/* 背景高亮层 */}
-                  <div 
+                  <div
                     ref={backdropRef}
-                    className="absolute inset-0 pointer-events-none select-none px-4 py-3 pr-4 text-sm text-transparent font-sans leading-relaxed whitespace-pre-wrap break-words overflow-hidden [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-transparent [&::-webkit-scrollbar-track]:bg-transparent"
+                    className="absolute inset-0 pointer-events-none select-none px-4 py-3 pr-16 text-sm text-transparent font-sans leading-relaxed whitespace-pre-wrap break-words overflow-hidden [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-transparent [&::-webkit-scrollbar-track]:bg-transparent"
                   >
                     {renderHighlightedText(prompt)}
                   </div>
 
                   {/* 前景输入框 */}
-                  <textarea 
-                    ref={textareaRef} 
-                    value={prompt} 
+                  <textarea
+                    ref={textareaRef}
+                    value={prompt}
                     onChange={(e) => {
                       const val = e.target.value;
                       const nativeEvent = e.nativeEvent as any;
@@ -1120,52 +1155,13 @@ export default function VideoPage() {
                     }}
                     onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); } }}
                     placeholder="描述你想生成的视频内容... (输入 @ 可直接上传参考图)"
-                    className={`w-full bg-transparent px-4 py-3 pr-4 text-sm text-transparent caret-white focus:outline-none placeholder:text-zinc-600 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent font-sans leading-relaxed overflow-y-auto ${isMaximized ? 'resize-y' : 'resize-none'}`} 
+                    className={`w-full bg-transparent px-4 py-3 pr-16 text-sm text-transparent caret-white focus:outline-none placeholder:text-zinc-600 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent font-sans leading-relaxed overflow-y-auto ${isMaximized ? 'resize-y' : 'resize-none'}`}
                   />
-                </div>
 
-                {/* 底部辅助工具栏与生成按钮 */}
-                <div className="flex items-center justify-between px-4 py-2.5 border-t border-white/[0.04] bg-white/[0.01] rounded-b-2xl flex-wrap gap-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={ASPECT_RATIOS} />
-                    <CustomSelect value={duration} onChange={(v: number) => setDuration(v)} options={DURATIONS} />
-                    <CustomSelect value={resolution} onChange={setResolution} options={RESOLUTIONS} />
-                    {(selectedModel === 'omni-flash-vref' || selectedModel === 'sora-v4-fast') && (
-                      <>
-                        <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
-                          <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideo ? '(已上传)' : ''}
-                        </button>
-                        <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
-                      </>
-                    )}
-                    {selectedModel === 'sora-v4-fast' && (
-                      <>
-                        <button onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
-                          <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 {referenceAudio ? '(已上传)' : ''}
-                        </button>
-                        <input ref={audioFileInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
-                      </>
-                    )}
-                    <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
-                      <Upload className="w-3 h-3 text-indigo-400" /> 参考图 ({referenceImages.length}/{maxRefs})
-                    </button>
-                    <div className="group relative flex items-center">
-                      <HelpCircle className="w-3.5 h-3.5 text-zinc-500 hover:text-zinc-300 transition-colors cursor-help" />
-                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-zinc-950 border border-white/10 rounded-xl shadow-2xl text-[10px] text-zinc-400 leading-normal pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-50">
-                        <p className="font-semibold text-yellow-400 mb-1 flex items-center gap-1">⚠️ 避免使用多格拼图</p>
-                        视频模型推荐使用连贯的单镜头画面。使用九宫格等拼图会导致生成失败或变形。如果上传了拼图，可使用参考图上的 <Scissors className="w-3 h-3 inline text-indigo-400" /> 按钮智能切分。
-                      </div>
-                    </div>
-                    <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
-                  </div>
-
-                  <button 
-                    onClick={handleGenerate} 
-                    disabled={!prompt.trim()}
-                    className="w-8 h-8 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer shrink-0"
-                    title="生成视频"
-                  >
-                    <Play className="w-3.5 h-3.5 ml-0.5" />
+                  {/* 圆形发送按钮 */}
+                  <button onClick={handleGenerate} disabled={!prompt.trim()}
+                    className="absolute right-3 bottom-3 w-10 h-10 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed z-10">
+                    <Play className="w-4 h-4 ml-0.5" />
                   </button>
                 </div>
               </div>
@@ -1173,7 +1169,7 @@ export default function VideoPage() {
           </div>
         </div>
       </div>
-      
+
       {/* 全局拖拽遮罩 */}
       {isDragging && (
         <div className="fixed inset-0 z-[100] bg-indigo-500/10 backdrop-blur-sm border-4 border-indigo-500/50 border-dashed m-4 rounded-3xl flex items-center justify-center pointer-events-none transition-all">
