@@ -883,39 +883,6 @@ export default function VideoPage() {
 
           <div className="px-6 py-4">
             <div className="max-w-3xl mx-auto">
-              {/* 工具栏 */}
-              <div className="flex items-center gap-2 mb-3 flex-wrap">
-                <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={ASPECT_RATIOS} />
-                <CustomSelect value={duration} onChange={(v: number) => setDuration(v)} options={DURATIONS} />
-                <CustomSelect value={resolution} onChange={setResolution} options={RESOLUTIONS} />
-                {(selectedModel === 'omni-flash-vref' || selectedModel === 'sora-v4-fast') && (
-                  <>
-                    <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
-                      <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideo ? '(已上传)' : ''}
-                    </button>
-                    <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
-                  </>
-                )}
-                {selectedModel === 'sora-v4-fast' && (
-                  <>
-                    <button onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
-                      <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 {referenceAudio ? '(已上传)' : ''}
-                    </button>
-                    <input ref={audioFileInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
-                  </>
-                )}
-                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
-                  <Upload className="w-3 h-3 text-indigo-400" /> 参考图 ({referenceImages.length}/{maxRefs})
-                </button>
-                <div className="group relative flex items-center">
-                  <HelpCircle className="w-3.5 h-3.5 text-zinc-500 hover:text-zinc-300 transition-colors cursor-help" />
-                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-zinc-950 border border-white/10 rounded-xl shadow-2xl text-[10px] text-zinc-400 leading-normal pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-50">
-                    <p className="font-semibold text-yellow-400 mb-1 flex items-center gap-1">⚠️ 避免使用多格拼图</p>
-                    视频模型推荐使用连贯的单镜头画面。使用九宫格等拼图会导致生成失败或变形。如果上传了拼图，可使用参考图上的 <Scissors className="w-3 h-3 inline text-indigo-400" /> 按钮智能切分。
-                  </div>
-                </div>
-                <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
-              </div>
               <div className="relative bg-white/[0.04] border border-white/[0.08] focus-within:border-indigo-500/30 rounded-2xl transition-all shadow-2xl shadow-black/30 flex flex-col">
                 
                 {/* 顶部辅助工具栏 */}
@@ -1120,7 +1087,7 @@ export default function VideoPage() {
                   {/* 背景高亮层 */}
                   <div 
                     ref={backdropRef}
-                    className="absolute inset-0 pointer-events-none select-none px-4 py-3 pr-16 text-sm text-transparent font-sans leading-relaxed whitespace-pre-wrap break-words overflow-hidden [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-transparent [&::-webkit-scrollbar-track]:bg-transparent"
+                    className="absolute inset-0 pointer-events-none select-none px-4 py-3 pr-4 text-sm text-transparent font-sans leading-relaxed whitespace-pre-wrap break-words overflow-hidden [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-transparent [&::-webkit-scrollbar-track]:bg-transparent"
                   >
                     {renderHighlightedText(prompt)}
                   </div>
@@ -1153,13 +1120,52 @@ export default function VideoPage() {
                     }}
                     onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); } }}
                     placeholder="描述你想生成的视频内容... (输入 @ 可直接上传参考图)"
-                    className={`w-full bg-transparent px-4 py-3 pr-16 text-sm text-transparent caret-white focus:outline-none placeholder:text-zinc-600 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent font-sans leading-relaxed overflow-y-auto ${isMaximized ? 'resize-y' : 'resize-none'}`} 
+                    className={`w-full bg-transparent px-4 py-3 pr-4 text-sm text-transparent caret-white focus:outline-none placeholder:text-zinc-600 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent font-sans leading-relaxed overflow-y-auto ${isMaximized ? 'resize-y' : 'resize-none'}`} 
                   />
-                  
-                  {/* 圆形发送按钮 */}
-                  <button onClick={handleGenerate} disabled={!prompt.trim()}
-                    className="absolute right-3 bottom-3 w-10 h-10 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed z-10">
-                    <Play className="w-4 h-4 ml-0.5" />
+                </div>
+
+                {/* 底部辅助工具栏与生成按钮 */}
+                <div className="flex items-center justify-between px-4 py-2.5 border-t border-white/[0.04] bg-white/[0.01] rounded-b-2xl flex-wrap gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={ASPECT_RATIOS} />
+                    <CustomSelect value={duration} onChange={(v: number) => setDuration(v)} options={DURATIONS} />
+                    <CustomSelect value={resolution} onChange={setResolution} options={RESOLUTIONS} />
+                    {(selectedModel === 'omni-flash-vref' || selectedModel === 'sora-v4-fast') && (
+                      <>
+                        <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                          <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideo ? '(已上传)' : ''}
+                        </button>
+                        <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
+                      </>
+                    )}
+                    {selectedModel === 'sora-v4-fast' && (
+                      <>
+                        <button onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                          <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 {referenceAudio ? '(已上传)' : ''}
+                        </button>
+                        <input ref={audioFileInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
+                      </>
+                    )}
+                    <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                      <Upload className="w-3 h-3 text-indigo-400" /> 参考图 ({referenceImages.length}/{maxRefs})
+                    </button>
+                    <div className="group relative flex items-center">
+                      <HelpCircle className="w-3.5 h-3.5 text-zinc-500 hover:text-zinc-300 transition-colors cursor-help" />
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-zinc-950 border border-white/10 rounded-xl shadow-2xl text-[10px] text-zinc-400 leading-normal pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-50">
+                        <p className="font-semibold text-yellow-400 mb-1 flex items-center gap-1">⚠️ 避免使用多格拼图</p>
+                        视频模型推荐使用连贯的单镜头画面。使用九宫格等拼图会导致生成失败或变形。如果上传了拼图，可使用参考图上的 <Scissors className="w-3 h-3 inline text-indigo-400" /> 按钮智能切分。
+                      </div>
+                    </div>
+                    <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
+                  </div>
+
+                  <button 
+                    onClick={handleGenerate} 
+                    disabled={!prompt.trim()}
+                    className="w-8 h-8 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer shrink-0"
+                    title="生成视频"
+                  >
+                    <Play className="w-3.5 h-3.5 ml-0.5" />
                   </button>
                 </div>
               </div>
