@@ -685,7 +685,7 @@ export default function VideoPage() {
 
       {/* 右栏 */}
       <div className="flex-1 flex flex-col min-w-0 relative h-full">
-        <div className="flex-1 overflow-y-auto p-6 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+        <div className={`flex-1 overflow-y-auto p-6 ${isMaximized ? 'pb-[440px]' : 'pb-64'} [&::-webkit-scrollbar]:hidden`} style={{ scrollbarWidth: 'none' }}>
           {tasks.length === 0 && history.length === 0 ? (
             <div className="h-full flex items-center justify-center">
               <div className="text-center">
@@ -873,18 +873,18 @@ export default function VideoPage() {
           </div>
         )}
 
-        {/* 输入区（不再是绝对定位的悬浮区，而是底栏） */}
-        <div className="border-t border-white/5 bg-[#0c0c0c]/95 backdrop-blur-md w-full shrink-0 z-10 relative">
+        {/* 输入区（悬浮于底部，背景透明，支持穿透点击） */}
+        <div className="absolute bottom-0 left-0 right-0 z-10 bg-transparent pointer-events-none">
           {error && (
-            <div className="absolute bottom-full left-6 right-6 mb-3 z-20 px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 flex items-center gap-2 backdrop-blur-md shadow-2xl">
+            <div className="absolute bottom-full left-6 right-6 mb-3 z-20 px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 flex items-center gap-2 backdrop-blur-md shadow-2xl pointer-events-auto">
               <AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{error}</span>
               <button onClick={() => setError(null)} className="text-red-500/60 hover:text-red-400 text-xs">✕</button>
             </div>
           )}
 
-          <div className="px-6 py-4">
+          <div className="px-6 py-4 pointer-events-auto">
             <div className="max-w-3xl mx-auto">
-              <div className="relative bg-white/[0.04] border border-white/[0.08] focus-within:border-indigo-500/30 rounded-2xl transition-all shadow-2xl shadow-black/30 flex flex-col">
+              <div className="relative bg-[#0c0c0c] border border-white/[0.08] focus-within:border-indigo-500/30 rounded-2xl transition-all shadow-2xl shadow-black/30 flex flex-col">
 
                 {/* 参数工具栏 — 卡片顶部 */}
                 <div className="flex items-center gap-2 px-4 py-2 border-b border-white/[0.04] flex-wrap rounded-t-2xl">
@@ -1122,7 +1122,7 @@ export default function VideoPage() {
                   {/* 背景高亮层 */}
                   <div
                     ref={backdropRef}
-                    className="absolute inset-0 pointer-events-none select-none px-4 py-3 pr-16 text-sm text-transparent font-sans leading-relaxed whitespace-pre-wrap break-words overflow-hidden [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-transparent [&::-webkit-scrollbar-track]:bg-transparent"
+                    className="absolute inset-0 pointer-events-none select-none px-4 py-3 pr-16 text-sm text-zinc-300 font-sans leading-relaxed whitespace-pre-wrap break-words overflow-hidden [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-transparent [&::-webkit-scrollbar-track]:bg-transparent"
                   >
                     {renderHighlightedText(prompt)}
                   </div>
