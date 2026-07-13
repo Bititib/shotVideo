@@ -131,7 +131,13 @@ router.get('/models', (req: Request, res: Response) => {
     'grok-imagine-video-1.5-fast',
     'omni-flash',
     'omni-flash-vref',
-    'sora-v4-fast'
+    'sora-v4-fast',
+    'sd-api-2-fast-720p',
+    'sd-api-2-1080p',
+    'sd-2-720p',
+    'sd-2-1080p',
+    'xh-sdas-fast-933-720p',
+    'xh-sdas-pro-933-720p'
   ];
   defaultVideoModels.forEach(m => {
     if (!disabledModelIds.has(m)) allModels.add(m);

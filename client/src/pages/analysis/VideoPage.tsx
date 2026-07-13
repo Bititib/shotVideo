@@ -50,6 +50,7 @@ const ALL_DURATIONS = [
   { value: 30, label: '30 秒' },
 ];
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  if (modelId.startsWith('sd-') || modelId.includes('sdas-')) return 9;
   if (modelId === 'omni-flash') return 7;
   if (modelId === 'omni-flash-vref') return 5;
   if (modelId === 'sora-v4-fast') return 4;
@@ -357,10 +358,11 @@ export default function VideoPage() {
       }
     }
 
-    if (selectedModel !== 'omni-flash-vref' && selectedModel !== 'sora-v4-fast') {
+    const isSudashui = selectedModel.startsWith('sd-') || selectedModel.includes('sdas-');
+    if (selectedModel !== 'omni-flash-vref' && selectedModel !== 'sora-v4-fast' && !isSudashui) {
       setReferenceVideo(null);
     }
-    if (selectedModel !== 'sora-v4-fast') {
+    if (selectedModel !== 'sora-v4-fast' && !isSudashui) {
       setReferenceAudio(null);
     }
   }, [selectedModel]);
@@ -891,22 +893,6 @@ export default function VideoPage() {
                   <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={ASPECT_RATIOS} />
                   <CustomSelect value={duration} onChange={(v: number) => setDuration(v)} options={DURATIONS} />
                   <CustomSelect value={resolution} onChange={setResolution} options={RESOLUTIONS} />
-                  {(selectedModel === 'omni-flash-vref' || selectedModel === 'sora-v4-fast') && (
-                    <>
-                      <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
-                        <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideo ? '(已上传)' : ''}
-                      </button>
-                      <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
-                    </>
-                  )}
-                  {selectedModel === 'sora-v4-fast' && (
-                    <>
-                      <button onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
-                        <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 {referenceAudio ? '(已上传)' : ''}
-                      </button>
-                      <input ref={audioFileInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
-                    </>
-                  )}
                   <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                     <Upload className="w-3 h-3 text-indigo-400" /> 参考图 ({referenceImages.length}/{maxRefs})
                   </button>
@@ -918,6 +904,23 @@ export default function VideoPage() {
                     </div>
                   </div>
                   <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
+
+                  {(selectedModel === 'omni-flash-vref' || selectedModel === 'sora-v4-fast' || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-')) && (
+                    <>
+                      <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                        <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideo ? '(已上传)' : ''}
+                      </button>
+                      <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
+                    </>
+                  )}
+                  {(selectedModel === 'sora-v4-fast' || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-')) && (
+                    <>
+                      <button onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                        <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 {referenceAudio ? '(已上传)' : ''}
+                      </button>
+                      <input ref={audioFileInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
+                    </>
+                  )}
                 </div>
 
                 {/* 标题栏 */}

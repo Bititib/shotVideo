@@ -61,8 +61,10 @@ function captureLastFrame(url: string): Promise<string> {
 const DURATIONS = [{ value: 6, label: '6s' }, { value: 10, label: '10s' }, { value: 16, label: '16s' }, { value: 20, label: '20s' }];
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  if (modelId.startsWith('sd-') || modelId.includes('sdas-')) return 9;
   if (modelId === 'omni-flash') return 7;
   if (modelId === 'omni-flash-vref') return 5;
+  if (modelId === 'sora-v4-fast') return 4;
   const model = models.find(m => m.id === modelId);
   if (model?.requireRef) return 1;
   return 5;

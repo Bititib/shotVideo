@@ -63,6 +63,53 @@ function convertBase64ToPublicUrl(dataUrl: string, prefix: string, req: Request)
   }
 }
 
+/**
+ * 将 base64 数据上传到 SudaShuiAPI 文件服务
+ */
+async function uploadToSudaShui(dataUrl: string, apiKey: string): Promise<string> {
+  if (!dataUrl) return '';
+  if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
+    return dataUrl;
+  }
+
+  try {
+    const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!matches) return dataUrl;
+
+    const mimeType = matches[1];
+    const base64Data = matches[2];
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    let ext = mimeType.split('/')[1] || 'jpg';
+    if (mimeType === 'audio/mpeg') ext = 'mp3';
+    else if (mimeType.includes('wav')) ext = 'wav';
+
+    const formData = new FormData();
+    const blob = new Blob([buffer], { type: mimeType });
+    formData.append('file', blob, `file_${Date.now()}.${ext}`);
+
+    const resp = await fetch('https://files.sudashuiapi.com', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: formData,
+      signal: AbortSignal.timeout(60000)
+    });
+
+    if (!resp.ok) {
+      const errTxt = await resp.text().catch(() => '');
+      throw new Error(`SudaShui upload failed: ${resp.status} ${errTxt}`);
+    }
+
+    const data = await resp.json() as any;
+    return data.url;
+  } catch (err: any) {
+    console.error('[video] uploadToSudaShui 失败:', err.message);
+    throw err;
+  }
+}
+
 /** 模型系列信息：计费、时长限制、是否强制参考图 */
 interface ModelMeta {
   series: string;
@@ -78,6 +125,12 @@ const MODEL_META: Record<string, ModelMeta> = {
   'omni-flash': { series: 'omni-flash', allowedSeconds: [4, 6, 8, 10], requireRef: false },
   'omni-flash-vref': { series: 'omni-flash-vref', allowedSeconds: [10], requireRef: false },
   'sora-v4-fast': { series: 'sora-v4-fast', allowedSeconds: [10, 15], requireRef: false },
+  'sd-api-2-fast-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'sd-api-2-1080p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'sd-2-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'sd-2-1080p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'xh-sdas-fast-933-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'xh-sdas-pro-933-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
@@ -87,6 +140,10 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'omni-flash', name: 'Omni Flash', description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash-vref', name: 'Omni Flash Vref', description: '视频风格编辑/改写，支持 1080p', maxSeconds: 10, icon: '✂️' },
   { id: 'sora-v4-fast', name: 'Seedance 2.0 Fast', description: 'Seedance 2.0 Fast，10/15秒，支持4图3视频1音频', maxSeconds: 15, icon: '⚡' },
+  { id: 'sd-api-2-fast-720p', name: 'SudaShui 2.0 Fast (过脸)', description: '速答水快速生成，绕过人脸检测，4-15秒', maxSeconds: 15, icon: '✨' },
+  { id: 'sd-api-2-1080p', name: 'SudaShui 2.0 1080p (过脸)', description: '速答水高清生成，绕过人脸检测，4-15秒', maxSeconds: 15, icon: '✨' },
+  { id: 'xh-sdas-fast-933-720p', name: 'seedance2.0 fast版', description: '支持9图3视频3音频的参考，4-15s', maxSeconds: 15, icon: '⚡' },
+  { id: 'xh-sdas-pro-933-720p', name: 'seedance2.0满血版', description: '支持9图3视频3音频的参考，4-15s', maxSeconds: 15, icon: '🚀' },
 ];
 
 /** 查找支持指定视频模型的渠道 */
@@ -127,6 +184,8 @@ router.get('/models', (_req: Request, res: Response) => {
   const omniVref1080 = parseFloat(db.select().from(settings).where(eq(settings.key, 'omni_vref_rate_1080p')).get()?.value || '2.20');
   const soraV4Rate480 = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_rate_480p')).get()?.value || '1.00');
   const soraV4Rate720 = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_rate_720p')).get()?.value || '1.50');
+  const sdasFastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_fast_rate')).get()?.value || '0.18');
+  const sdasProRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_pro_rate')).get()?.value || '0.26');
 
   const result = sourceModels.map(m => {
     const preset = DEFAULT_VIDEO_MODELS.find(d => d.id === m.id);
@@ -148,6 +207,14 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '480p': soraV4Rate480,
         '720p': soraV4Rate720,
+      };
+    } else if (m.id === 'xh-sdas-fast-933-720p') {
+      rates = {
+        '720p': sdasFastRate,
+      };
+    } else if (m.id === 'xh-sdas-pro-933-720p') {
+      rates = {
+        '720p': sdasProRate,
       };
     } else {
       rates = {
@@ -250,6 +317,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     const key = resolution === '480p' ? 'sora_v4_rate_480p' : 'sora_v4_rate_720p';
     const row = db.select().from(settings).where(eq(settings.key, key)).get();
     rate = parseFloat(row?.value || (resolution === '480p' ? '1.00' : '1.50'));
+  } else if (model === 'xh-sdas-fast-933-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_fast_rate')).get();
+    rate = parseFloat(row?.value || '0.18');
+  } else if (model === 'xh-sdas-pro-933-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_pro_rate')).get();
+    rate = parseFloat(row?.value || '0.26');
   } else {
     const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
     const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
@@ -325,6 +398,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const size = RATIO_TO_SIZE[aspect_ratio] || '1280x720';
   const isOmni = model.startsWith('omni-flash');
   const isSoraV4 = model === 'sora-v4-fast';
+  const isSudaShui = meta?.series === 'sudashui';
 
   try {
     let videoId = '';
@@ -371,6 +445,61 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       const job = await createResp.json() as any;
       videoId = job.id || job.task_id;
+    } else if (isSudaShui) {
+      sendEvent({ type: 'status', message: '正在上传素材并提交 SudaShui 任务...' });
+
+      const imageUrls: string[] = [];
+      for (const img of (reference_images || [])) {
+        imageUrls.push(await uploadToSudaShui(img, channel.apiKey));
+      }
+      const videoUrl = reference_video ? await uploadToSudaShui(reference_video, channel.apiKey) : undefined;
+      const audioUrl = audio_url ? await uploadToSudaShui(audio_url, channel.apiKey) : undefined;
+
+      let finalPrompt = prompt.trim();
+      finalPrompt = finalPrompt.replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (match, idxStr) => {
+        const idx = parseInt(idxStr, 10);
+        return `@image${idx + 1}`;
+      });
+
+      const payloadMetadata = {
+        aspectRatio: aspect_ratio,
+        mode: 'references',
+        imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
+        videoUrls: videoUrl ? [videoUrl] : undefined,
+        audioUrls: audioUrl ? [audioUrl] : undefined,
+      };
+
+      const payload: Record<string, any> = {
+        model: upstreamModel,
+        prompt: finalPrompt,
+        duration: Number(video_length) || 6,
+        metadata: {
+          payload: JSON.stringify(payloadMetadata)
+        }
+      };
+
+      console.log(`[video] Step1 SudaShui 创建任务: model=${model} duration=${payload.duration} resolution=${resolution}`);
+
+      const createResp = await fetch(`${baseUrl}/v1/video/generations`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${channel.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(60_000),
+      });
+
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        console.error(`[video] SudaShui 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
+        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+
+      const job = await createResp.json() as any;
+      videoId = job.task_id || job.id;
     } else if (isSoraV4) {
       sendEvent({ type: 'status', message: '正在上传多模态素材并提交任务...' });
 
@@ -504,7 +633,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       try {
         let pollUrl = `${baseUrl}/v1/videos/${videoId}`;
-        if (isOmni) {
+        if (isOmni || isSudaShui) {
           pollUrl = `${baseUrl}/v1/video/generations/${videoId}`;
         }
 
@@ -524,7 +653,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         let resultUrl = '';
         let errMsg = '';
 
-        if (isOmni) {
+        if (isOmni || isSudaShui) {
           const dataBlock = status.data || {};
           taskStatus = (dataBlock.status || status.status || '').toLowerCase();
 
@@ -554,9 +683,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           }
         }
 
-        console.log(`[video] 轮询 (${isOmni ? 'Omni' : 'Grok'}): status=${taskStatus} progress=${progress}%`);
+        console.log(`[video] 轮询 (${isOmni ? 'Omni' : isSudaShui ? 'SudaShui' : 'Grok'}): status=${taskStatus} progress=${progress}%`);
 
-        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending') {
+        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'in_progress') {
           sendEvent({ type: 'progress', progress });
           sendEvent({ type: 'status', message: `视频生成中 ${progress}%` });
           // 将实时进度写入数据库，以便前端刷新页面后恢复时能读取
