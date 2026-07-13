@@ -43,7 +43,12 @@ function convertBase64ToPublicUrl(dataUrl: string, prefix: string, req: Request)
     const buffer = Buffer.from(base64Data, 'base64');
 
     // 获取后缀名
-    const ext = mimeType.split('/')[1] || 'jpg';
+    let ext = mimeType.split('/')[1] || 'jpg';
+    if (mimeType === 'audio/mpeg') {
+      ext = 'mp3';
+    } else if (mimeType.includes('wav')) {
+      ext = 'wav';
+    }
     const filename = `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
     const destPath = path.join(process.cwd(), 'data/uploads', filename);
 
