@@ -131,6 +131,9 @@ const MODEL_META: Record<string, ModelMeta> = {
   'sd-2-1080p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'xh-sdas-fast-933-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'xh-sdas-pro-933-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'lg-seedance-2.0-fast': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'sdas-d7-seedance-2.0-face-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'sdas-mo-seedance-2.0-dj-fast': { series: 'sudashui', allowedSeconds: [5, 10, 15], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
@@ -144,6 +147,9 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'sd-api-2-1080p', name: 'SudaShui 2.0 1080p (过脸)', description: '速答水高清生成，绕过人脸检测，4-15秒', maxSeconds: 15, icon: '✨' },
   { id: 'xh-sdas-fast-933-720p', name: 'seedance2.0 fast版', description: '支持9图3视频3音频的参考，4-15s', maxSeconds: 15, icon: '⚡' },
   { id: 'xh-sdas-pro-933-720p', name: 'seedance2.0满血版', description: '支持9图3视频3音频的参考，4-15s', maxSeconds: 15, icon: '🚀' },
+  { id: 'lg-seedance-2.0-fast', name: 'seedance2.0 fast-LG版', description: '支持9图3视频3音频的参考，不限字符，4-15s', maxSeconds: 15, icon: '⚡' },
+  { id: 'sdas-d7-seedance-2.0-face-720p', name: 'seedance2.0满血-D7版', description: '支持99图3视频3音频的参考，支持真人，4-15s', maxSeconds: 15, icon: '🚀' },
+  { id: 'sdas-mo-seedance-2.0-dj-fast', name: 'seedance2.0极速-DJ版', description: '支持9图参考，不支持音视频，支持5/10/15s', maxSeconds: 15, icon: '⚡' },
 ];
 
 /** 查找支持指定视频模型的渠道 */
@@ -166,7 +172,7 @@ router.get('/models', (_req: Request, res: Response) => {
   try {
     const inactive = db.select().from(models).where(eq(models.isActive, 0)).all();
     inactive.forEach(m => disabledModelIds.add(m.modelId));
-  } catch {}
+  } catch { }
 
   // 如果数据库里还没配置视频模型，提供一个过滤了禁用模型的默认后备
   const sourceModels = dbModels.length > 0
@@ -186,6 +192,9 @@ router.get('/models', (_req: Request, res: Response) => {
   const soraV4Rate720 = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_rate_720p')).get()?.value || '1.50');
   const sdasFastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_fast_rate')).get()?.value || '0.18');
   const sdasProRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_pro_rate')).get()?.value || '0.26');
+  const lgSeedanceFastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'lg_seedance_fast_rate')).get()?.value || '3.60');
+  const sdasD7FaceRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_d7_face_rate')).get()?.value || '4.30');
+  const sdasMoDjRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_mo_dj_rate')).get()?.value || '2.40');
 
   const result = sourceModels.map(m => {
     const preset = DEFAULT_VIDEO_MODELS.find(d => d.id === m.id);
@@ -215,6 +224,18 @@ router.get('/models', (_req: Request, res: Response) => {
     } else if (m.id === 'xh-sdas-pro-933-720p') {
       rates = {
         '720p': sdasProRate,
+      };
+    } else if (m.id === 'lg-seedance-2.0-fast') {
+      rates = {
+        '720p': lgSeedanceFastRate,
+      };
+    } else if (m.id === 'sdas-d7-seedance-2.0-face-720p') {
+      rates = {
+        '720p': sdasD7FaceRate,
+      };
+    } else if (m.id === 'sdas-mo-seedance-2.0-dj-fast') {
+      rates = {
+        '720p': sdasMoDjRate,
       };
     } else {
       rates = {
@@ -330,6 +351,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'xh-sdas-pro-933-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_pro_rate')).get();
     rate = parseFloat(row?.value || '0.26');
+  } else if (model === 'lg-seedance-2.0-fast') {
+    const row = db.select().from(settings).where(eq(settings.key, 'lg_seedance_fast_rate')).get();
+    rate = parseFloat(row?.value || '3.60');
+  } else if (model === 'sdas-d7-seedance-2.0-face-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_d7_face_rate')).get();
+    rate = parseFloat(row?.value || '4.30');
+  } else if (model === 'sdas-mo-seedance-2.0-dj-fast') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_mo_dj_rate')).get();
+    rate = parseFloat(row?.value || '2.40');
   } else {
     const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
     const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
@@ -342,9 +372,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   }
 
   // 预估费用并检查余额
+  const isFlatRate = ['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(model);
   const estimatedRate = rate;
-  const estimatedSeconds = model === 'omni-flash-vref' ? 10 : (Number(video_length) || 6);
-  const estimatedCost = Math.round(estimatedRate * estimatedSeconds * 100) / 100;
+  const estimatedSeconds = isFlatRate ? 1 : (model === 'omni-flash-vref' ? 10 : (Number(video_length) || 6));
+  const estimatedCost = isFlatRate ? estimatedRate : (Math.round(estimatedRate * estimatedSeconds * 100) / 100);
   const { sufficient, balance: currentBalance } = BalanceService.checkBalance(req.userId!, estimatedCost);
   if (!sufficient) {
     sendEvent({ type: 'error', message: `余额不足，预估费用 ¥${estimatedCost.toFixed(2)}，当前余额 ¥${currentBalance.toFixed(2)}` });
@@ -385,7 +416,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const billUsage = (finalVideoUrl: string) => {
     const elapsed = Date.now() - startTime;
     logUsage(req.userId!, 'generate_video', undefined, elapsed);
-    const cost = Math.round(rate * estimatedSeconds * 100) / 100;
+    const cost = isFlatRate ? rate : (Math.round(rate * estimatedSeconds * 100) / 100);
     if (cost > 0) {
       const remaining = BalanceService.deduct(req.userId!, cost, 'generate_video');
       sendEvent({ type: 'billing', cost, resolution, seconds: estimatedSeconds, rate, remainingBalance: remaining ?? 0 });
@@ -704,7 +735,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
                 meta.progress = progress;
                 db.update(contents).set({ metadata: JSON.stringify(meta) }).where(eq(contents.id, contentId)).run();
               }
-            } catch {}
+            } catch { }
           }
         } else if (taskStatus === 'completed' || taskStatus === 'success') {
           console.log(`[video] ✅ 生成完成: ${resultUrl}`);

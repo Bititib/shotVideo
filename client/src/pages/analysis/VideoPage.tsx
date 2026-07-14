@@ -50,7 +50,8 @@ const ALL_DURATIONS = [
   { value: 30, label: '30 秒' },
 ];
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
-  if (modelId.startsWith('sd-') || modelId.includes('sdas-')) return 9;
+  if (modelId === 'sdas-d7-seedance-2.0-face-720p') return 99;
+  if (modelId.startsWith('sd-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (modelId === 'omni-flash') return 7;
   if (modelId === 'omni-flash-vref') return 5;
   if (modelId === 'sora-v4-fast') return 4;
@@ -358,7 +359,7 @@ export default function VideoPage() {
       }
     }
 
-    const isSudashui = selectedModel.startsWith('sd-') || selectedModel.includes('sdas-');
+    const isSudashui = (selectedModel.startsWith('sd-') || selectedModel.includes('sdas-') || selectedModel.startsWith('lg-')) && selectedModel !== 'sdas-mo-seedance-2.0-dj-fast';
     if (selectedModel !== 'omni-flash-vref' && selectedModel !== 'sora-v4-fast' && !isSudashui) {
       setReferenceVideo(null);
     }
@@ -905,7 +906,7 @@ export default function VideoPage() {
                   </div>
                   <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
 
-                  {(selectedModel === 'omni-flash-vref' || selectedModel === 'sora-v4-fast' || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-')) && (
+                  {((selectedModel === 'omni-flash-vref' || selectedModel === 'sora-v4-fast' || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && selectedModel !== 'sdas-mo-seedance-2.0-dj-fast') && (
                     <>
                       <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideo ? '(已上传)' : ''}
@@ -913,7 +914,7 @@ export default function VideoPage() {
                       <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
                     </>
                   )}
-                  {(selectedModel === 'sora-v4-fast' || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-')) && (
+                  {((selectedModel === 'sora-v4-fast' || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && selectedModel !== 'sdas-mo-seedance-2.0-dj-fast') && (
                     <>
                       <button onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 {referenceAudio ? '(已上传)' : ''}

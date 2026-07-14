@@ -156,7 +156,10 @@ async function syncModelsFromAPI() {
     { provider: 'omni', modelId: 'omni-flash-vref', displayName: 'Omni Flash Vref', capabilities: JSON.stringify(['video']) },
     { provider: 'openai', modelId: 'sora-v4-fast', displayName: 'Sora V4 Fast', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'xh-sdas-fast-933-720p', displayName: 'seedance2.0 fast版', capabilities: JSON.stringify(['video']) },
-    { provider: 'sudashui', modelId: 'xh-sdas-pro-933-720p', displayName: 'seedance2.0满血版', capabilities: JSON.stringify(['video']) }
+    { provider: 'sudashui', modelId: 'xh-sdas-pro-933-720p', displayName: 'seedance2.0满血版', capabilities: JSON.stringify(['video']) },
+    { provider: 'sudashui', modelId: 'lg-seedance-2.0-fast', displayName: 'seedance2.0 fast-LG版', capabilities: JSON.stringify(['video']) },
+    { provider: 'sudashui', modelId: 'sdas-d7-seedance-2.0-face-720p', displayName: 'seedance2.0满血-D7版', capabilities: JSON.stringify(['video']) },
+    { provider: 'sudashui', modelId: 'sdas-mo-seedance-2.0-dj-fast', displayName: 'seedance2.0极速-DJ版', capabilities: JSON.stringify(['video']) }
   );
 
   // 同步或插入模型
@@ -547,6 +550,9 @@ export async function initDatabase() {
     { key: 'sora_v4_rate_720p', value: '1.50', label: 'Sora V4 720p费率(¥/秒)' },
     { key: 'sdas_fast_rate', value: '0.18', label: 'Sdas Fast费率(¥/秒)' },
     { key: 'sdas_pro_rate', value: '0.26', label: 'Sdas Pro费率(¥/秒)' },
+    { key: 'lg_seedance_fast_rate', value: '3.60', label: 'Seedance 2.0 LG-Fast费率(¥/次)' },
+    { key: 'sdas_d7_face_rate', value: '4.30', label: 'Seedance 2.0 D7-满血费率(¥/次)' },
+    { key: 'sdas_mo_dj_rate', value: '2.40', label: 'Seedance 2.0 DJ-极速费率(¥/次)' },
   ];
   for (const s of omniSettings) {
     const existing = db.select().from(settings).where(eq(settings.key, s.key)).get();
