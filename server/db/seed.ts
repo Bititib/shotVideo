@@ -154,7 +154,6 @@ async function syncModelsFromAPI() {
     { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'omni', modelId: 'omni-flash', displayName: 'Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'omni', modelId: 'omni-flash-vref', displayName: 'Omni Flash Vref', capabilities: JSON.stringify(['video']) },
-    { provider: 'openai', modelId: 'sora-v4-fast', displayName: 'Sora V4 Fast', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'lg-seedance-2.0-fast', displayName: 'seedance2.0 fast-LG版', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-d7-seedance-2.0-face-720p', displayName: 'seedance2.0满血-D7版', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-mo-seedance-2.0-dj-fast', displayName: 'seedance2.0极速-DJ版', capabilities: JSON.stringify(['video']) }
@@ -544,10 +543,6 @@ export async function initDatabase() {
     { key: 'omni_flash_rate_1080p', value: '1.50', label: 'Omni Flash 1080p费率(¥/秒)' },
     { key: 'omni_vref_rate_720p', value: '1.60', label: 'Omni Vref 720p费率(¥/秒)' },
     { key: 'omni_vref_rate_1080p', value: '2.20', label: 'Omni Vref 1080p费率(¥/秒)' },
-    { key: 'sora_v4_rate_480p', value: '1.00', label: 'Sora V4 480p费率(¥/秒)' },
-    { key: 'sora_v4_rate_720p', value: '1.50', label: 'Sora V4 720p费率(¥/秒)' },
-    { key: 'sdas_fast_rate', value: '0.18', label: 'Sdas Fast费率(¥/秒)' },
-    { key: 'sdas_pro_rate', value: '0.26', label: 'Sdas Pro费率(¥/秒)' },
     { key: 'lg_seedance_fast_rate', value: '5.10', label: 'Seedance 2.0 LG-Fast费率(¥/次)' },
     { key: 'sdas_d7_face_rate', value: '5.80', label: 'Seedance 2.0 D7-满血费率(¥/次)' },
     { key: 'sdas_mo_dj_rate', value: '3.90', label: 'Seedance 2.0 DJ-极速费率(¥/次)' },
