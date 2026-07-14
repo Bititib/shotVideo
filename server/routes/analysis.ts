@@ -161,7 +161,7 @@ router.get('/tts-models',
     try {
       const inactive = db.select().from(models).where(eq(models.isActive, 0)).all();
       inactive.forEach(m => disabledModelIds.add(m.modelId));
-    } catch {}
+    } catch { }
 
     // 如果没有，提供过滤了禁用模型的兜底
     const sourceModels = dbModels.length > 0

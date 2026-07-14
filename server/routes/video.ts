@@ -288,6 +288,13 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     } catch { /* skip */ }
   }
 
+  // SudaShui 模型名称回退映射
+  if (upstreamModel === 'xh-sdas-fast-933-720p') {
+    upstreamModel = 'sd-api-2-fast-720p';
+  } else if (upstreamModel === 'xh-sdas-pro-933-720p') {
+    upstreamModel = 'sd-api-2-720p';
+  }
+
   // SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
