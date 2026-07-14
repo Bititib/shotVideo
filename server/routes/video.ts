@@ -192,9 +192,9 @@ router.get('/models', (_req: Request, res: Response) => {
   const soraV4Rate720 = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_rate_720p')).get()?.value || '1.50');
   const sdasFastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_fast_rate')).get()?.value || '0.18');
   const sdasProRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_pro_rate')).get()?.value || '0.26');
-  const lgSeedanceFastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'lg_seedance_fast_rate')).get()?.value || '3.60');
-  const sdasD7FaceRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_d7_face_rate')).get()?.value || '4.30');
-  const sdasMoDjRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_mo_dj_rate')).get()?.value || '2.40');
+  const lgSeedanceFastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'lg_seedance_fast_rate')).get()?.value || '5.10');
+  const sdasD7FaceRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_d7_face_rate')).get()?.value || '5.80');
+  const sdasMoDjRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_mo_dj_rate')).get()?.value || '3.90');
 
   const result = sourceModels.map(m => {
     const preset = DEFAULT_VIDEO_MODELS.find(d => d.id === m.id);
@@ -353,13 +353,13 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     rate = parseFloat(row?.value || '0.26');
   } else if (model === 'lg-seedance-2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'lg_seedance_fast_rate')).get();
-    rate = parseFloat(row?.value || '3.60');
+    rate = parseFloat(row?.value || '5.10');
   } else if (model === 'sdas-d7-seedance-2.0-face-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_d7_face_rate')).get();
-    rate = parseFloat(row?.value || '4.30');
+    rate = parseFloat(row?.value || '5.80');
   } else if (model === 'sdas-mo-seedance-2.0-dj-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_mo_dj_rate')).get();
-    rate = parseFloat(row?.value || '2.40');
+    rate = parseFloat(row?.value || '3.90');
   } else {
     const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
     const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();

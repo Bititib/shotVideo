@@ -550,9 +550,9 @@ export async function initDatabase() {
     { key: 'sora_v4_rate_720p', value: '1.50', label: 'Sora V4 720p费率(¥/秒)' },
     { key: 'sdas_fast_rate', value: '0.18', label: 'Sdas Fast费率(¥/秒)' },
     { key: 'sdas_pro_rate', value: '0.26', label: 'Sdas Pro费率(¥/秒)' },
-    { key: 'lg_seedance_fast_rate', value: '3.60', label: 'Seedance 2.0 LG-Fast费率(¥/次)' },
-    { key: 'sdas_d7_face_rate', value: '4.30', label: 'Seedance 2.0 D7-满血费率(¥/次)' },
-    { key: 'sdas_mo_dj_rate', value: '2.40', label: 'Seedance 2.0 DJ-极速费率(¥/次)' },
+    { key: 'lg_seedance_fast_rate', value: '5.10', label: 'Seedance 2.0 LG-Fast费率(¥/次)' },
+    { key: 'sdas_d7_face_rate', value: '5.80', label: 'Seedance 2.0 D7-满血费率(¥/次)' },
+    { key: 'sdas_mo_dj_rate', value: '3.90', label: 'Seedance 2.0 DJ-极速费率(¥/次)' },
   ];
   for (const s of omniSettings) {
     const existing = db.select().from(settings).where(eq(settings.key, s.key)).get();
