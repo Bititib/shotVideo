@@ -155,8 +155,6 @@ async function syncModelsFromAPI() {
     { provider: 'omni', modelId: 'omni-flash', displayName: 'Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'omni', modelId: 'omni-flash-vref', displayName: 'Omni Flash Vref', capabilities: JSON.stringify(['video']) },
     { provider: 'openai', modelId: 'sora-v4-fast', displayName: 'Sora V4 Fast', capabilities: JSON.stringify(['video']) },
-    { provider: 'sudashui', modelId: 'xh-sdas-fast-933-720p', displayName: 'seedance2.0 fast版', capabilities: JSON.stringify(['video']) },
-    { provider: 'sudashui', modelId: 'xh-sdas-pro-933-720p', displayName: 'seedance2.0满血版', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'lg-seedance-2.0-fast', displayName: 'seedance2.0 fast-LG版', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-d7-seedance-2.0-face-720p', displayName: 'seedance2.0满血-D7版', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-mo-seedance-2.0-dj-fast', displayName: 'seedance2.0极速-DJ版', capabilities: JSON.stringify(['video']) }
