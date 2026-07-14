@@ -642,7 +642,7 @@ export default function VideoPage() {
                     <div className="flex items-center gap-2">
                       {m.rates && (
                         <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
-                          ¥{m.rates[resolution as keyof typeof m.rates]?.toFixed(2)}/秒
+                          ¥{m.rates[resolution as keyof typeof m.rates]?.toFixed(2)}{['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}
                         </span>
                       )}
                       {selectedModel === m.id && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
@@ -653,17 +653,17 @@ export default function VideoPage() {
                     <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-600 border-t border-white/5 pt-1.5">
                       {m.rates['1080p'] ? (
                         <>
-                          <span>1080p: <span className="text-zinc-400">¥{m.rates['1080p']?.toFixed(2)}/秒</span></span>
+                          <span>1080p: <span className="text-zinc-400">¥{m.rates['1080p']?.toFixed(2)}{['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
                           <span className="text-zinc-800">•</span>
-                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}/秒</span></span>
+                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
                         </>
                       ) : (
                         <>
-                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}/秒</span></span>
+                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
                           {m.rates['480p'] !== undefined && (
                             <>
                               <span className="text-zinc-800">•</span>
-                              <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}/秒</span></span>
+                              <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}{['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
                             </>
                           )}
                         </>
