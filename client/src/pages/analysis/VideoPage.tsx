@@ -167,10 +167,11 @@ export default function VideoPage() {
 
   const renderHighlightedText = (text: string) => {
     if (!text) return null;
-    const regex = /([@＠]图\d+)/g;
-    const parts = text.split(regex);
+    const splitRegex = /([@＠]图\d+)/g;
+    const testRegex = /^[@＠]图\d+$/;
+    const parts = text.split(splitRegex);
     return parts.map((part, index) => {
-      if (regex.test(part)) {
+      if (testRegex.test(part)) {
         const match = part.match(/\d+/);
         const idx = match ? parseInt(match[0], 10) - 1 : -1;
         const exists = idx >= 0 && idx < referenceImages.length;
@@ -178,8 +179,8 @@ export default function VideoPage() {
         return (
           <span
             key={index}
-            className={`inline font-medium rounded px-0.5 transition-all ${exists
-                ? 'text-indigo-400 bg-indigo-500/15 border border-indigo-500/20 shadow-sm shadow-indigo-500/5 font-sans'
+            className={`inline font-medium rounded px-0.5 transition-colors ${exists
+                ? 'text-indigo-400 bg-indigo-500/15 font-sans'
                 : 'text-zinc-500 bg-zinc-500/10 line-through decoration-zinc-600 font-sans'
               }`}
           >
@@ -306,15 +307,20 @@ export default function VideoPage() {
     };
   }, [tasks]);
 
-  // 自动调整输入框高度
+  // 自动调整输入框高度，并同步高亮层高度
   useEffect(() => {
     const textarea = textareaRef.current;
+    const backdrop = backdropRef.current;
     if (textarea) {
       if (isMaximized) {
         textarea.style.height = '360px';
       } else {
         textarea.style.height = 'auto';
         textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
+      }
+      // 同步高亮背景层高度，避免层叠错位
+      if (backdrop) {
+        backdrop.style.height = textarea.style.height;
       }
     }
   }, [prompt, isMaximized]);
