@@ -660,6 +660,47 @@ export async function initDatabase() {
     }
   }
 
+  // 9) 自动向已存在且包含 sudashuiapi.com 或 pidoi.com 的渠道添加支持的模型 ID，防止路由错误
+  try {
+    const sdaModels = ['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'xh-sdas-fast-933-720p', 'xh-sdas-pro-933-720p'];
+    const pidoiModels = ['sora-v3-pro'];
+    const allChannels = db.select().from(channels).all();
+    for (const c of allChannels) {
+      let currentModels: string[] = [];
+      try {
+        currentModels = JSON.parse(c.supportedModels || '[]');
+      } catch {}
+      if (!Array.isArray(currentModels)) currentModels = [];
+
+      let updated = false;
+      if (c.baseUrl && c.baseUrl.includes('sudashuiapi.com')) {
+        for (const m of sdaModels) {
+          if (!currentModels.includes(m)) {
+            currentModels.push(m);
+            updated = true;
+          }
+        }
+      } else if (c.baseUrl && c.baseUrl.includes('pidoi.com')) {
+        for (const m of pidoiModels) {
+          if (!currentModels.includes(m)) {
+            currentModels.push(m);
+            updated = true;
+          }
+        }
+      }
+
+      if (updated) {
+        db.update(channels)
+          .set({ supportedModels: JSON.stringify(currentModels), updatedAt: new Date().toISOString() })
+          .where(eq(channels.id, c.id))
+          .run();
+        console.log(`📦 已自动修复并扩展渠道 "${c.name}" 的支持模型列表: ${currentModels.join(', ')}`);
+      }
+    }
+  } catch (err: any) {
+    console.error('⚠️ 自动修补渠道模型出错:', err.message);
+  }
+
   console.log('✅ 数据库初始化完成');
 }
 

@@ -183,6 +183,42 @@ const DEFAULT_VIDEO_MODELS = [
 function findVideoChannel(modelId: string) {
   const channel = ChannelService.findChannelForModel(modelId);
   if (channel) return { baseUrl: channel.baseUrl, apiKey: channel.apiKey };
+
+  // 1. 如果是 SudaShui 的模型，但没有在渠道列表里明确指定支持，尝试寻找 baseUrl 包含 sudashui 或名称包含 SudaShui 的可用渠道作为后备
+  const meta = MODEL_META[modelId];
+  if (meta?.series === 'sudashui') {
+    try {
+      const allChannels = db.select().from(channels).where(eq(channels.status, 1)).all();
+      const sdaCh = allChannels.find(c => 
+        (c.baseUrl && c.baseUrl.toLowerCase().includes('sudashui')) || 
+        (c.name && c.name.toLowerCase().includes('sudashui'))
+      );
+      if (sdaCh) {
+        console.log(`[video] 未匹配到模型的专属渠道，模糊匹配到 SudaShui 渠道: ${sdaCh.name}`);
+        return { baseUrl: sdaCh.baseUrl, apiKey: sdaCh.apiKey };
+      }
+    } catch (e) {
+      console.error('[video] 模糊寻找 SudaShui 渠道出错:', e);
+    }
+  }
+
+  // 2. 如果是 Sora V3 Pro 模型，但没有在渠道列表里明确指定支持，尝试寻找 baseUrl 包含 pidoi 或名称包含 pidoi 的可用渠道作为后备
+  if (modelId === 'sora-v3-pro') {
+    try {
+      const allChannels = db.select().from(channels).where(eq(channels.status, 1)).all();
+      const pidoiCh = allChannels.find(c => 
+        (c.baseUrl && c.baseUrl.toLowerCase().includes('pidoi')) || 
+        (c.name && c.name.toLowerCase().includes('pidoi'))
+      );
+      if (pidoiCh) {
+        console.log(`[video] 未匹配到模型的专属渠道，模糊匹配到 Pidoi 渠道: ${pidoiCh.name}`);
+        return { baseUrl: pidoiCh.baseUrl, apiKey: pidoiCh.apiKey };
+      }
+    } catch (e) {
+      console.error('[video] 模糊寻找 Pidoi 渠道出错:', e);
+    }
+  }
+
   if (env.GROK2API_BASE_URL) return { baseUrl: env.GROK2API_BASE_URL, apiKey: env.GROK2API_API_KEY };
   return null;
 }
