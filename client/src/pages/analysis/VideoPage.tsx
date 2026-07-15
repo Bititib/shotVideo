@@ -52,6 +52,7 @@ const ALL_DURATIONS = [
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'sdas-d7-seedance-2.0-face-720p') return 99;
   if (modelId.startsWith('sd-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
+  if (modelId === 'sora-v3-pro') return 9;
   if (modelId === 'omni-flash') return 7;
   if (modelId === 'omni-flash-vref') return 5;
   if (modelId === 'sora-v4-fast') return 4;
@@ -143,9 +144,13 @@ export default function VideoPage() {
 
   const [referenceVideo, setReferenceVideo] = useState<string | null>(null);
   const [referenceAudio, setReferenceAudio] = useState<string | null>(null);
+  const [firstFrame, setFirstFrame] = useState<string | null>(null);
+  const [lastFrame, setLastFrame] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoFileInputRef = useRef<HTMLInputElement>(null);
   const audioFileInputRef = useRef<HTMLInputElement>(null);
+  const firstFrameInputRef = useRef<HTMLInputElement>(null);
+  const lastFrameInputRef = useRef<HTMLInputElement>(null);
   const [tasks, setTasks] = useState<VideoTask[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -360,11 +365,16 @@ export default function VideoPage() {
     }
 
     const isSudashui = (selectedModel.startsWith('sd-') || selectedModel.includes('sdas-') || selectedModel.startsWith('lg-')) && selectedModel !== 'sdas-mo-seedance-2.0-dj-fast';
-    if (selectedModel !== 'omni-flash-vref' && selectedModel !== 'sora-v4-fast' && !isSudashui) {
+    const isSoraV3Pro = selectedModel === 'sora-v3-pro';
+    if (selectedModel !== 'omni-flash-vref' && selectedModel !== 'sora-v4-fast' && !isSudashui && !isSoraV3Pro) {
       setReferenceVideo(null);
     }
-    if (selectedModel !== 'sora-v4-fast' && !isSudashui) {
+    if (selectedModel !== 'sora-v4-fast' && !isSudashui && !isSoraV3Pro) {
       setReferenceAudio(null);
+    }
+    if (!isSoraV3Pro) {
+      setFirstFrame(null);
+      setLastFrame(null);
     }
   }, [selectedModel]);
 
@@ -577,6 +587,8 @@ export default function VideoPage() {
         reference_images: referenceImages.length > 0 ? referenceImages : undefined,
         reference_video: referenceVideo || undefined,
         audio_url: referenceAudio || undefined,
+        first_frame: firstFrame || undefined,
+        last_frame: lastFrame || undefined,
       },
       (event: VideoSSEEvent) => {
         switch (event.type) {
@@ -615,7 +627,9 @@ export default function VideoPage() {
     setReferenceImages([]);
     setReferenceVideo(null);
     setReferenceAudio(null);
-  }, [prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideo, referenceAudio]);
+    setFirstFrame(null);
+    setLastFrame(null);
+  }, [prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideo, referenceAudio, firstFrame, lastFrame]);
 
   const handleCancel = (taskId: string) => {
     abortRef.current.get(taskId)?.abort();
@@ -906,7 +920,7 @@ export default function VideoPage() {
                   </div>
                   <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
 
-                  {((selectedModel === 'omni-flash-vref' || selectedModel === 'sora-v4-fast' || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && selectedModel !== 'sdas-mo-seedance-2.0-dj-fast') && (
+                  {((selectedModel === 'omni-flash-vref' || selectedModel === 'sora-v4-fast' || selectedModel === 'sora-v3-pro' || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && selectedModel !== 'sdas-mo-seedance-2.0-dj-fast') && (
                     <>
                       <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideo ? '(已上传)' : ''}
@@ -914,12 +928,24 @@ export default function VideoPage() {
                       <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
                     </>
                   )}
-                  {((selectedModel === 'sora-v4-fast' || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && selectedModel !== 'sdas-mo-seedance-2.0-dj-fast') && (
+                  {((selectedModel === 'sora-v4-fast' || selectedModel === 'sora-v3-pro' || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && selectedModel !== 'sdas-mo-seedance-2.0-dj-fast') && (
                     <>
                       <button onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 {referenceAudio ? '(已上传)' : ''}
                       </button>
                       <input ref={audioFileInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
+                    </>
+                  )}
+                  {selectedModel === 'sora-v3-pro' && (
+                    <>
+                      <button onClick={() => firstFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                        <Upload className="w-3 h-3 text-emerald-400" /> 首帧 {firstFrame ? '(已上传)' : ''}
+                      </button>
+                      <input ref={firstFrameInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { if (e.target.files?.[0]) { const url = await compressImage(e.target.files[0]); setFirstFrame(url); } e.target.value = ''; }} />
+                      <button onClick={() => lastFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                        <Upload className="w-3 h-3 text-amber-400" /> 尾帧 {lastFrame ? '(已上传)' : ''}
+                      </button>
+                      <input ref={lastFrameInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { if (e.target.files?.[0]) { const url = await compressImage(e.target.files[0]); setLastFrame(url); } e.target.value = ''; }} />
                     </>
                   )}
                 </div>
