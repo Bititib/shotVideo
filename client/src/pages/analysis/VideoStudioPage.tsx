@@ -66,7 +66,6 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'sora-v3-pro') return 9;
   if (modelId === 'omni-flash') return 7;
   if (modelId === 'omni-flash-vref') return 5;
-  if (modelId === 'sora-v4-fast') return 4;
   const model = models.find(m => m.id === modelId);
   if (model?.requireRef) return 1;
   return 5;

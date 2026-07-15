@@ -183,42 +183,6 @@ const DEFAULT_VIDEO_MODELS = [
 function findVideoChannel(modelId: string) {
   const channel = ChannelService.findChannelForModel(modelId);
   if (channel) return { baseUrl: channel.baseUrl, apiKey: channel.apiKey };
-
-  // 1. 如果是 SudaShui 的模型，但没有在渠道列表里明确指定支持，尝试寻找 baseUrl 包含 sudashui 或名称包含 SudaShui 的可用渠道作为后备
-  const meta = MODEL_META[modelId];
-  if (meta?.series === 'sudashui') {
-    try {
-      const allChannels = db.select().from(channels).where(eq(channels.status, 1)).all();
-      const sdaCh = allChannels.find(c => 
-        (c.baseUrl && c.baseUrl.toLowerCase().includes('sudashui')) || 
-        (c.name && c.name.toLowerCase().includes('sudashui'))
-      );
-      if (sdaCh) {
-        console.log(`[video] 未匹配到模型的专属渠道，模糊匹配到 SudaShui 渠道: ${sdaCh.name}`);
-        return { baseUrl: sdaCh.baseUrl, apiKey: sdaCh.apiKey };
-      }
-    } catch (e) {
-      console.error('[video] 模糊寻找 SudaShui 渠道出错:', e);
-    }
-  }
-
-  // 2. 如果是 Sora V3 Pro 模型，但没有在渠道列表里明确指定支持，尝试寻找 baseUrl 包含 pidoi 或名称包含 pidoi 的可用渠道作为后备
-  if (modelId === 'sora-v3-pro') {
-    try {
-      const allChannels = db.select().from(channels).where(eq(channels.status, 1)).all();
-      const pidoiCh = allChannels.find(c => 
-        (c.baseUrl && c.baseUrl.toLowerCase().includes('pidoi')) || 
-        (c.name && c.name.toLowerCase().includes('pidoi'))
-      );
-      if (pidoiCh) {
-        console.log(`[video] 未匹配到模型的专属渠道，模糊匹配到 Pidoi 渠道: ${pidoiCh.name}`);
-        return { baseUrl: pidoiCh.baseUrl, apiKey: pidoiCh.apiKey };
-      }
-    } catch (e) {
-      console.error('[video] 模糊寻找 Pidoi 渠道出错:', e);
-    }
-  }
-
   if (env.GROK2API_BASE_URL) return { baseUrl: env.GROK2API_BASE_URL, apiKey: env.GROK2API_API_KEY };
   return null;
 }
@@ -251,10 +215,6 @@ router.get('/models', (_req: Request, res: Response) => {
   const omniFlash1080 = parseFloat(db.select().from(settings).where(eq(settings.key, 'omni_flash_rate_1080p')).get()?.value || '1.50');
   const omniVref720 = parseFloat(db.select().from(settings).where(eq(settings.key, 'omni_vref_rate_720p')).get()?.value || '1.60');
   const omniVref1080 = parseFloat(db.select().from(settings).where(eq(settings.key, 'omni_vref_rate_1080p')).get()?.value || '2.20');
-  const soraV4Rate480 = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_rate_480p')).get()?.value || '1.00');
-  const soraV4Rate720 = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_rate_720p')).get()?.value || '1.50');
-  const sdasFastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_fast_rate')).get()?.value || '0.18');
-  const sdasProRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_pro_rate')).get()?.value || '0.26');
   const lgSeedanceFastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'lg_seedance_fast_rate')).get()?.value || '5.10');
   const sdasD7FaceRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_d7_face_rate')).get()?.value || '5.80');
   const sdasMoDjRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_mo_dj_rate')).get()?.value || '3.90');
@@ -275,19 +235,6 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': omniVref720,
         '1080p': omniVref1080,
-      };
-    } else if (m.id === 'sora-v4-fast') {
-      rates = {
-        '480p': soraV4Rate480,
-        '720p': soraV4Rate720,
-      };
-    } else if (m.id === 'xh-sdas-fast-933-720p') {
-      rates = {
-        '720p': sdasFastRate,
-      };
-    } else if (m.id === 'xh-sdas-pro-933-720p') {
-      rates = {
-        '720p': sdasProRate,
       };
     } else if (m.id === 'lg-seedance-2.0-fast') {
       rates = {
@@ -379,12 +326,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     } catch { /* skip */ }
   }
 
-  // SudaShui 模型名称回退映射
-  if (upstreamModel === 'xh-sdas-fast-933-720p') {
-    upstreamModel = 'sd-api-2-fast-720p';
-  } else if (upstreamModel === 'xh-sdas-pro-933-720p') {
-    upstreamModel = 'sd-api-2-720p';
-  }
+
 
   // SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
@@ -411,16 +353,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     const key = resolution === '1080p' ? 'omni_vref_rate_1080p' : 'omni_vref_rate_720p';
     const row = db.select().from(settings).where(eq(settings.key, key)).get();
     rate = parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
-  } else if (model === 'sora-v4-fast') {
-    const key = resolution === '480p' ? 'sora_v4_rate_480p' : 'sora_v4_rate_720p';
-    const row = db.select().from(settings).where(eq(settings.key, key)).get();
-    rate = parseFloat(row?.value || (resolution === '480p' ? '1.00' : '1.50'));
-  } else if (model === 'xh-sdas-fast-933-720p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sdas_fast_rate')).get();
-    rate = parseFloat(row?.value || '0.18');
-  } else if (model === 'xh-sdas-pro-933-720p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sdas_pro_rate')).get();
-    rate = parseFloat(row?.value || '0.26');
+
   } else if (model === 'lg-seedance-2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'lg_seedance_fast_rate')).get();
     rate = parseFloat(row?.value || '5.10');
@@ -661,61 +594,6 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       const job = await createResp.json() as any;
       videoId = job.task_id || job.id;
-    } else if (isSoraV4) {
-      sendEvent({ type: 'status', message: '正在上传多模态素材并提交任务...' });
-
-      // Convert images (up to 4) to public URLs
-      const referenceImagesUrls = reference_images
-        ? reference_images.slice(0, 4).map((img: string, idx: number) => convertBase64ToPublicUrl(img, `sora_img_${idx}`, req))
-        : [];
-
-      // Convert reference video to public URL
-      const referenceVideoUrl = reference_video ? convertBase64ToPublicUrl(reference_video, 'sora_vid', req) : undefined;
-
-      // Convert reference audio (audio_url) to public URL
-      const referenceAudioUrl = audio_url ? convertBase64ToPublicUrl(audio_url, 'sora_aud', req) : undefined;
-
-      const payload: Record<string, any> = {
-        model: upstreamModel,
-        prompt: prompt.trim(),
-        duration: Number(video_length) || 5,
-        video_config: {
-          aspect_ratio: aspect_ratio,
-          resolution_name: resolution
-        },
-        reference_images: referenceImagesUrls.length > 0 ? referenceImagesUrls : undefined,
-      };
-
-      if (referenceVideoUrl) {
-        payload.reference_video = referenceVideoUrl;
-        payload.reference_videos = [referenceVideoUrl];
-      }
-      if (referenceAudioUrl) {
-        payload.audio_url = referenceAudioUrl;
-      }
-
-      console.log(`[video] Step1 SoraV4 创建任务: model=${model} duration=${payload.duration} resolution=${resolution}`);
-
-      const createResp = await fetch(`${baseUrl}/v1/videos`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${channel.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(60_000),
-      });
-
-      if (!createResp.ok) {
-        const errText = await createResp.text().catch(() => '');
-        console.error(`[video] SoraV4 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
-        res.write('data: [DONE]\n\n');
-        return res.end();
-      }
-
-      const job = await createResp.json() as any;
-      videoId = job.id;
     } else {
       // ━━━ Step 1: 创建视频任务（multipart/form-data） ━━━
       sendEvent({ type: 'status', message: hasRef ? '正在上传参考图并提交任务...' : '正在提交视频生成任务...' });

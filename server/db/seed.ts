@@ -175,6 +175,17 @@ async function syncModelsFromAPI() {
     }
   }
 
+  // 强制删除已废弃或不能使用的旧视频模型
+  try {
+    const deadModels = ['xh-sdas-fast-933-720p', 'xh-sdas-pro-933-720p', 'sora-v4-fast'];
+    for (const modelId of deadModels) {
+      db.delete(models).where(eq(models.modelId, modelId)).run();
+    }
+    console.log('🧹 已从数据库强制清理废弃的模型列表');
+  } catch (err: any) {
+    console.error('⚠️ 清理废弃模型出错:', err.message);
+  }
+
   // 仅在 API 成功拉取时才清理不在列表中的旧模型，网络失败时保留已有数据
   if (apiSuccess) {
     const verifiedIds = new Set(allVerified.map(m => m.modelId));

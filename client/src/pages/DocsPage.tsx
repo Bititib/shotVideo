@@ -272,9 +272,9 @@ print(resp.json())
       title: '创建 Seedance 2.0 Fast 视频任务',
       method: 'POST',
       path: '/v1/videos',
-      description: '利用 Seedance 2.0 Fast (接口中调用模型标识为 sora-v4-fast) 视频生成引擎异步创建高动态视频任务，支持 5s ~ 15s。需要使用 multipart/form-data 上传参考图及配置。',
+      description: '利用 seedance2.0 fast-LG版 (接口中调用模型标识为 lg-seedance-2.0-fast) 视频生成引擎异步创建高动态视频任务，支持 5s ~ 15s。需要使用 multipart/form-data 上传参考图及配置。',
       parameters: [
-        { name: 'model', type: 'string', required: true, description: '视频模型标识：sora-v4-fast' },
+        { name: 'model', type: 'string', required: true, description: '视频模型标识：lg-seedance-2.0-fast' },
         { name: 'prompt', type: 'string', required: true, description: '视频画面的文字描述词' },
         { name: 'seconds', type: 'integer', required: false, defaultVal: '5', description: '视频长度（秒），可选：5 ~ 15' },
         { name: 'size', type: 'string', required: false, defaultVal: '1280x720', description: '宽高尺寸：1280x720 (横屏) / 720x1280 (竖屏) / 1024x1024 (方屏)' },
@@ -283,7 +283,7 @@ print(resp.json())
       ],
       curlExample: `curl -X POST "${getBaseUrl()}/videos" \\
   -H "Authorization: Bearer sk-你的令牌Key" \\
-  -F "model=sora-v4-fast" \\
+  -F "model=lg-seedance-2.0-fast" \\
   -F "prompt=科幻赛博朋克城市, 赛车在街道漂移" \\
   -F "seconds=5" \\
   -F "size=1280x720" \\
@@ -297,7 +297,7 @@ files = [
     ("input_reference[]", ("car.jpg", open("car.jpg", "rb"), "image/jpeg"))
 ]
 data = {
-    "model": "sora-v4-fast",
+    "model": "lg-seedance-2.0-fast",
     "prompt": "科幻赛博朋克城市, 赛车在街道漂移",
     "seconds": 5,
     "size": "1280x720"
@@ -311,7 +311,7 @@ print(resp.json())
   "object": "video",
   "created_at": 1783309400,
   "status": "queued",
-  "model": "sora-v4-fast",
+  "model": "lg-seedance-2.0-fast",
   "progress": 0,
   "prompt": "...",
   "seconds": "5",
