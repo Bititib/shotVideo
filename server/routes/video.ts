@@ -111,7 +111,11 @@ async function uploadToSudaShui(dataUrl: string, apiKey: string): Promise<string
 }
 
 /** 上传素材到 Pidoi（Sora V3 Pro）文件存储 */
-async function uploadToPidoi(dataUrl: string, apiKey: string): Promise<string> {
+async function uploadToPidoi(dataUrl: string, apiKey: string, baseUrl?: string): Promise<string> {
+  if (!dataUrl) return '';
+  if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
+    return dataUrl;
+  }
   try {
     const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
     if (!matches) throw new Error('Invalid data URL format');
@@ -128,8 +132,12 @@ async function uploadToPidoi(dataUrl: string, apiKey: string): Promise<string> {
     const blob = new Blob([buffer], { type: mimeType });
     formData.append('file', blob, `file_${Date.now()}.${ext}`);
 
-    const resp = await fetch('https://pidoi.com/seedance-assets/upload', {
+    const uploadBase = baseUrl ? baseUrl.replace(/\/v1\/?$/, '') : 'https://pidoi.com';
+    const resp = await fetch(`${uploadBase}/seedance-assets/upload`, {
       method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`
+      },
       body: formData,
       signal: AbortSignal.timeout(60000)
     });
@@ -137,6 +145,13 @@ async function uploadToPidoi(dataUrl: string, apiKey: string): Promise<string> {
     if (!resp.ok) {
       const errTxt = await resp.text().catch(() => '');
       throw new Error(`Pidoi upload failed: ${resp.status} ${errTxt}`);
+    }
+
+    // 防御性检查：网关可能以 200 返回 HTML 页面（鉴权失败等情况）
+    const contentType = resp.headers.get('content-type') || '';
+    if (contentType.includes('text/html')) {
+      const htmlSnippet = await resp.text().catch(() => '');
+      throw new Error(`Pidoi upload 返回了 HTML 而非 JSON（可能是鉴权失败或地址错误）: ${htmlSnippet.slice(0, 200)}`);
     }
 
     const data = await resp.json() as any;
@@ -551,12 +566,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       // Upload reference images to Pidoi
       const imageUrls: string[] = [];
       for (const img of (reference_images || []).slice(0, 9)) {
-        imageUrls.push(await uploadToPidoi(img, channel.apiKey));
+        imageUrls.push(await uploadToPidoi(img, channel.apiKey, baseUrl));
       }
-      const videoUrl = reference_video ? await uploadToPidoi(reference_video, channel.apiKey) : undefined;
-      const audioUrl = audio_url ? await uploadToPidoi(audio_url, channel.apiKey) : undefined;
-      const firstFrameUrl = first_frame ? await uploadToPidoi(first_frame, channel.apiKey) : undefined;
-      const lastFrameUrl = last_frame ? await uploadToPidoi(last_frame, channel.apiKey) : undefined;
+      const videoUrl = reference_video ? await uploadToPidoi(reference_video, channel.apiKey, baseUrl) : undefined;
+      const audioUrl = audio_url ? await uploadToPidoi(audio_url, channel.apiKey, baseUrl) : undefined;
+      const firstFrameUrl = first_frame ? await uploadToPidoi(first_frame, channel.apiKey, baseUrl) : undefined;
+      const lastFrameUrl = last_frame ? await uploadToPidoi(last_frame, channel.apiKey, baseUrl) : undefined;
 
       const payload: Record<string, any> = {
         model: upstreamModel,
