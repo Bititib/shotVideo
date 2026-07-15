@@ -630,10 +630,29 @@ export default function VideoPage() {
     setLastFrame(null);
   }, [prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideo, referenceAudio, firstFrame, lastFrame]);
 
+  const handleRemove = (taskId: string) => {
+    if (taskId.startsWith('db_')) {
+      const dbId = parseInt(taskId.replace('db_', ''), 10);
+      if (!isNaN(dbId)) {
+        contentApi.delete(dbId).catch(err => {
+          console.error('Failed to delete content from db:', err);
+        });
+      }
+    } else {
+      const task = tasks.find(t => t.id === taskId);
+      if (task?.dbId) {
+        contentApi.delete(task.dbId).catch(err => {
+          console.error('Failed to delete content from db:', err);
+        });
+      }
+    }
+    setTasks(prev => prev.filter(t => t.id !== taskId));
+  };
+
   const handleCancel = (taskId: string) => {
     abortRef.current.get(taskId)?.abort();
     abortRef.current.delete(taskId);
-    setTasks(prev => prev.filter(t => t.id !== taskId));
+    handleRemove(taskId);
   };
 
   return (
@@ -801,7 +820,7 @@ export default function VideoPage() {
                                   className="text-[10px] text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-0.5" title="套用历史配置（包含提示词与参考图片）">
                                   <RotateCcw className="w-3 h-3" />套用
                                 </button>
-                                <button onClick={() => setTasks(prev => prev.filter(t => t.id !== task.id))} className="text-[10px] text-zinc-500 hover:text-red-400 transition-colors" title="移除">
+                                <button onClick={() => handleRemove(task.id)} className="text-[10px] text-zinc-500 hover:text-red-400 transition-colors" title="移除">
                                   <X className="w-3 h-3" />
                                 </button>
                               </div>
