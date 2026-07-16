@@ -551,6 +551,18 @@ export async function initDatabase() {
     ]).run();
   }
 
+  // 强制清理与修正数据库中废弃的多余 Sora 4 / Seedance 费率设置项
+  const keysToDelete = [
+    'sora_v4_720p_rate',
+    'sora_v4_480p_rate',
+    'seedance_2_0_fast_rate',
+    'sdas_fast_rate',
+    'sdas_pro_rate'
+  ];
+  for (const k of keysToDelete) {
+    db.delete(settings).where(eq(settings.key, k)).run();
+  }
+
   // 保证 Omni & Sora 费率配置项存在
   const omniSettings = [
     { key: 'omni_flash_rate_720p', value: '0.90', label: 'Omni Flash 720p费率(¥/秒)' },
@@ -569,6 +581,12 @@ export async function initDatabase() {
     if (!existing) {
       db.insert(settings).values(s).run();
       console.log(`📦 已迁移：添加 Omni / Sora 费率配置 ${s.key}`);
+    } else {
+      // 强制修正数据库中已有的标签以纠正显示单位
+      if (existing.label !== s.label) {
+        db.update(settings).set({ label: s.label }).where(eq(settings.key, s.key)).run();
+        console.log(`🔄 已修正：更新设置项 ${s.key} 的标签为 ${s.label}`);
+      }
     }
   }
 
