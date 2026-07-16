@@ -319,7 +319,7 @@ export default function VideoPage() {
         return (
           <span
             key={index}
-            className={`inline font-medium rounded px-0.5 transition-colors ${exists
+            className={`inline rounded transition-colors ${exists
                 ? 'text-indigo-400 bg-indigo-500/15 font-sans'
                 : 'text-zinc-500 bg-zinc-500/10 line-through decoration-zinc-600 font-sans'
               }`}
@@ -1300,7 +1300,7 @@ export default function VideoPage() {
                   {/* 背景高亮层 */}
                   <div
                     ref={backdropRef}
-                    className="absolute inset-0 pointer-events-none select-none px-4 py-3 pr-16 text-sm text-zinc-300 font-sans leading-relaxed whitespace-pre-wrap break-words overflow-hidden [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-transparent [&::-webkit-scrollbar-track]:bg-transparent"
+                    className="absolute inset-0 pointer-events-none select-none px-4 py-3 pr-16 text-sm text-zinc-300 font-sans leading-relaxed whitespace-pre-wrap break-words overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-transparent [&::-webkit-scrollbar-track]:bg-transparent"
                   >
                     {renderHighlightedText(prompt)}
                   </div>
@@ -1333,7 +1333,7 @@ export default function VideoPage() {
                     }}
                     onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); } }}
                     placeholder="描述你想生成的视频内容... (输入 @ 可直接上传参考图)"
-                    className={`w-full bg-transparent px-4 py-3 pr-16 text-sm text-transparent caret-white focus:outline-none placeholder:text-zinc-600 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent font-sans leading-relaxed overflow-y-auto ${isMaximized ? 'resize-y' : 'resize-none'}`}
+                    className={`w-full bg-transparent px-4 py-3 pr-16 text-sm text-transparent caret-white focus:outline-none placeholder:text-zinc-600 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent font-sans leading-relaxed overflow-y-auto whitespace-pre-wrap break-words selection:text-transparent selection:bg-indigo-500/30 ${isMaximized ? 'resize-y' : 'resize-none'}`}
                   />
 
                   {/* 圆形发送按钮 */}
