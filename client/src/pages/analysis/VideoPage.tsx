@@ -40,14 +40,15 @@ const ALL_ASPECT_RATIOS = [
   { value: '21:9', label: '21:9', icon: RectangleHorizontal },
 ];
 const ALL_DURATIONS = [
-  { value: 4, label: '4 秒' }, { value: 5, label: '5 秒' },
-  { value: 6, label: '6 秒' }, { value: 7, label: '7 秒' },
-  { value: 8, label: '8 秒' }, { value: 9, label: '9 秒' },
-  { value: 10, label: '10 秒' }, { value: 11, label: '11 秒' },
-  { value: 12, label: '12 秒' }, { value: 13, label: '13 秒' },
-  { value: 14, label: '14 秒' }, { value: 15, label: '15 秒' },
-  { value: 16, label: '16 秒' }, { value: 20, label: '20 秒' },
-  { value: 30, label: '30 秒' },
+  { value: 1, label: '1 秒' }, { value: 2, label: '2 秒' },
+  { value: 3, label: '3 秒' }, { value: 4, label: '4 秒' },
+  { value: 5, label: '5 秒' }, { value: 6, label: '6 秒' },
+  { value: 7, label: '7 秒' }, { value: 8, label: '8 秒' },
+  { value: 9, label: '9 秒' }, { value: 10, label: '10 秒' },
+  { value: 11, label: '11 秒' }, { value: 12, label: '12 秒' },
+  { value: 13, label: '13 秒' }, { value: 14, label: '14 秒' },
+  { value: 15, label: '15 秒' }, { value: 16, label: '16 秒' },
+  { value: 20, label: '20 秒' }, { value: 30, label: '30 秒' },
 ];
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'sdas-d7-seedance-2.0-face-720p') return 99;

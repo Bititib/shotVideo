@@ -176,7 +176,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'grok-4.3-video': { series: 'legacy', allowedSeconds: null, requireRef: false },
   'omni-flash': { series: 'omni-flash', allowedSeconds: [4, 6, 8, 10], requireRef: false },
   'omni-flash-vref': { series: 'omni-flash-vref', allowedSeconds: [10], requireRef: false },
-  'sora-v3-pro': { series: 'sora-v3-pro', allowedSeconds: [10, 11, 12, 13, 14], requireRef: false },
+  'sora-v3-pro': { series: 'sora-v3-pro', allowedSeconds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], requireRef: false },
   'lg-seedance-2.0-fast': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-d7-seedance-2.0-face-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-mo-seedance-2.0-dj-fast': { series: 'sudashui', allowedSeconds: [5, 10, 15], requireRef: false },
@@ -730,11 +730,14 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
             progress = typeof rawProgress === 'number' ? rawProgress : (parseInt(String(rawProgress)) || 0);
           }
           if (taskStatus === 'completed' || taskStatus === 'success') {
-            resultUrl = status.url || status.video_url || status.result_url || `${baseUrl}/v1/files/video?id=${videoId}`;
+            resultUrl = status.video_url || status.url || status.result_url
+              || (Array.isArray(status.videos) && status.videos[0])
+              || (Array.isArray(status.outputs) && status.outputs[0]?.url)
+              || `${baseUrl}/v1/files/video?id=${videoId}`;
           } else if (taskStatus === 'failed' || taskStatus === 'failure') {
             const errVal = status.error;
             const detailMsg = (typeof errVal === 'object' && errVal) ? errVal.message : errVal;
-            errMsg = detailMsg || status.fail_reason || '视频生成失败';
+            errMsg = detailMsg || status.failure_reason || status.fail_reason || '视频生成失败';
           }
         }
 
