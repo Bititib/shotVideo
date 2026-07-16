@@ -561,17 +561,18 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       const job = await createResp.json() as any;
       videoId = job.task_id || job.id;
     } else if (isSoraV3Pro) {
-      sendEvent({ type: 'status', message: '正在上传素材并提交 Sora V3 Pro 任务...' });
+      sendEvent({ type: 'status', message: '正在处理素材并提交 Sora V3 Pro 任务...' });
 
-      // Upload reference images to Pidoi
+      // 将 base64 素材保存到本地并生成自托管公网 URL（Pidoi 网关不路由 /seedance-assets/upload）
       const imageUrls: string[] = [];
       for (const img of (reference_images || []).slice(0, 9)) {
-        imageUrls.push(await uploadToPidoi(img, channel.apiKey, baseUrl));
+        const url = convertBase64ToPublicUrl(img, 'sora_ref', req);
+        if (url) imageUrls.push(url);
       }
-      const videoUrl = reference_video ? await uploadToPidoi(reference_video, channel.apiKey, baseUrl) : undefined;
-      const audioUrl = audio_url ? await uploadToPidoi(audio_url, channel.apiKey, baseUrl) : undefined;
-      const firstFrameUrl = first_frame ? await uploadToPidoi(first_frame, channel.apiKey, baseUrl) : undefined;
-      const lastFrameUrl = last_frame ? await uploadToPidoi(last_frame, channel.apiKey, baseUrl) : undefined;
+      const videoUrl = reference_video ? convertBase64ToPublicUrl(reference_video, 'sora_vid', req) : undefined;
+      const audioUrl = audio_url ? convertBase64ToPublicUrl(audio_url, 'sora_aud', req) : undefined;
+      const firstFrameUrl = first_frame ? convertBase64ToPublicUrl(first_frame, 'sora_ff', req) : undefined;
+      const lastFrameUrl = last_frame ? convertBase64ToPublicUrl(last_frame, 'sora_lf', req) : undefined;
 
       const payload: Record<string, any> = {
         model: upstreamModel,
