@@ -188,7 +188,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'grok-imagine-video-1.5-fast', name: 'Grok 1.5 Fast', description: '快速文生/图生视频，6/10秒', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash', name: 'Omni Flash', description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash-vref', name: 'Omni Flash Vref', description: '视频风格编辑/改写，支持 1080p', maxSeconds: 10, icon: '✂️' },
-  { id: 'sora-v3-pro', name: 'Sora V3 Pro', description: '支持933字符，支持参考图/视频/音频/首尾帧，10-14s', maxSeconds: 14, icon: '🎬' },
+  { id: 'sora-v3-pro', name: 'Sora V3 Pro', description: '支持933字符，支持参考图/视频/音频/首尾帧，1-14s', maxSeconds: 14, icon: '🎬' },
   { id: 'lg-seedance-2.0-fast', name: 'seedance2.0 fast-LG版', description: '支持9图3视频3音频的参考，不限字符，4-15s', maxSeconds: 15, icon: '⚡' },
   { id: 'sdas-d7-seedance-2.0-face-720p', name: 'seedance2.0满血-D7版', description: '支持99图3视频3音频的参考，支持真人，4-15s', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-mo-seedance-2.0-dj-fast', name: 'seedance2.0极速-DJ版', description: '支持9图参考，不支持音视频，支持5/10/15s', maxSeconds: 15, icon: '⚡' },
