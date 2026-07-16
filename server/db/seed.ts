@@ -157,7 +157,7 @@ async function syncModelsFromAPI() {
     { provider: 'sudashui', modelId: 'lg-seedance-2.0-fast', displayName: 'seedance2.0 fast-LG版', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-d7-seedance-2.0-face-720p', displayName: 'seedance2.0满血-D7版', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-mo-seedance-2.0-dj-fast', displayName: 'seedance2.0极速-DJ版', capabilities: JSON.stringify(['video']) },
-    { provider: 'pidoi', modelId: 'sora-v3-pro', displayName: 'Sora V3 Pro', capabilities: JSON.stringify(['video']) }
+    { provider: 'pidoi', modelId: 'seedance-2.0-fast', displayName: 'seedance-2.0-fast', capabilities: JSON.stringify(['video']) }
   );
 
   // 同步或插入模型
@@ -558,7 +558,7 @@ export async function initDatabase() {
     { key: 'lg_seedance_fast_rate', value: '5.10', label: 'Seedance 2.0 LG-Fast费率(¥/次)' },
     { key: 'sdas_d7_face_rate', value: '5.80', label: 'Seedance 2.0 D7-满血费率(¥/次)' },
     { key: 'sdas_mo_dj_rate', value: '3.90', label: 'Seedance 2.0 DJ-极速费率(¥/次)' },
-    { key: 'sora_v3_pro_rate', value: '1.80', label: 'Sora V3 Pro费率(¥/秒)' },
+    { key: 'seedance_2_0_fast_rate', value: '1.80', label: 'Seedance 2.0 Fast 费率(¥/秒)' },
   ];
   for (const s of omniSettings) {
     const existing = db.select().from(settings).where(eq(settings.key, s.key)).get();
@@ -674,7 +674,7 @@ export async function initDatabase() {
   // 9) 自动向已存在且包含 sudashuiapi.com 或 pidoi.com 的渠道添加支持的模型 ID，防止路由错误
   try {
     const sdaModels = ['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'xh-sdas-fast-933-720p', 'xh-sdas-pro-933-720p'];
-    const pidoiModels = ['sora-v3-pro'];
+    const pidoiModels = ['seedance-2.0-fast'];
     const allChannels = db.select().from(channels).all();
     for (const c of allChannels) {
       let currentModels: string[] = [];

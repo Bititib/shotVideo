@@ -176,7 +176,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'grok-4.3-video': { series: 'legacy', allowedSeconds: null, requireRef: false },
   'omni-flash': { series: 'omni-flash', allowedSeconds: [4, 6, 8, 10], requireRef: false },
   'omni-flash-vref': { series: 'omni-flash-vref', allowedSeconds: [10], requireRef: false },
-  'sora-v3-pro': { series: 'sora-v3-pro', allowedSeconds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], requireRef: false },
+  'seedance-2.0-fast': { series: 'seedance-2.0-fast', allowedSeconds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], requireRef: false },
   'lg-seedance-2.0-fast': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-d7-seedance-2.0-face-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-mo-seedance-2.0-dj-fast': { series: 'sudashui', allowedSeconds: [5, 10, 15], requireRef: false },
@@ -188,7 +188,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'grok-imagine-video-1.5-fast', name: 'Grok 1.5 Fast', description: '快速文生/图生视频，6/10秒', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash', name: 'Omni Flash', description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash-vref', name: 'Omni Flash Vref', description: '视频风格编辑/改写，支持 1080p', maxSeconds: 10, icon: '✂️' },
-  { id: 'sora-v3-pro', name: 'Sora V3 Pro', description: '支持933字符，支持参考图/视频/音频/首尾帧，1-14s', maxSeconds: 14, icon: '🎬' },
+  { id: 'seedance-2.0-fast', name: 'Seedance 2.0 Fast', description: '支持933字符，支持参考图/视频/音频/首尾帧，1-14s', maxSeconds: 14, icon: '🎬' },
   { id: 'lg-seedance-2.0-fast', name: 'seedance2.0 fast-LG版', description: '支持9图3视频3音频的参考，不限字符，4-15s', maxSeconds: 15, icon: '⚡' },
   { id: 'sdas-d7-seedance-2.0-face-720p', name: 'seedance2.0满血-D7版', description: '支持99图3视频3音频的参考，支持真人，4-15s', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-mo-seedance-2.0-dj-fast', name: 'seedance2.0极速-DJ版', description: '支持9图参考，不支持音视频，支持5/10/15s', maxSeconds: 15, icon: '⚡' },
@@ -233,7 +233,7 @@ router.get('/models', (_req: Request, res: Response) => {
   const lgSeedanceFastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'lg_seedance_fast_rate')).get()?.value || '5.10');
   const sdasD7FaceRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_d7_face_rate')).get()?.value || '5.80');
   const sdasMoDjRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_mo_dj_rate')).get()?.value || '3.90');
-  const soraV3ProRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v3_pro_rate')).get()?.value || '1.80');
+  const seedance20FastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get()?.value || '1.80');
 
   const result = sourceModels.map(m => {
     const preset = DEFAULT_VIDEO_MODELS.find(d => d.id === m.id);
@@ -263,9 +263,9 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': sdasMoDjRate,
       };
-    } else if (m.id === 'sora-v3-pro') {
+    } else if (m.id === 'seedance-2.0-fast') {
       rates = {
-        '720p': soraV3ProRate,
+        '720p': seedance20FastRate,
       };
     } else {
       rates = {
@@ -378,8 +378,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'sdas-mo-seedance-2.0-dj-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_mo_dj_rate')).get();
     rate = parseFloat(row?.value || '3.90');
-  } else if (model === 'sora-v3-pro') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sora_v3_pro_rate')).get();
+  } else if (model === 'seedance-2.0-fast') {
+    const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get();
     rate = parseFloat(row?.value || '1.80');
   } else {
     const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
@@ -457,7 +457,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const size = RATIO_TO_SIZE[aspect_ratio] || '1280x720';
   const isOmni = model.startsWith('omni-flash');
   const isSoraV4 = model === 'sora-v4-fast';
-  const isSoraV3Pro = model === 'sora-v3-pro';
+  const isSoraV3Pro = model === 'seedance-2.0-fast';
   const isSudaShui = meta?.series === 'sudashui';
 
   try {

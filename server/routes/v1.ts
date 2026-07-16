@@ -127,7 +127,7 @@ router.get('/models', (req: Request, res: Response) => {
     'grok-imagine-video-1.5-fast',
     'omni-flash',
     'omni-flash-vref',
-    'sora-v3-pro',
+    'seedance-2.0-fast',
     'lg-seedance-2.0-fast',
     'sdas-d7-seedance-2.0-face-720p',
     'sdas-mo-seedance-2.0-dj-fast'
