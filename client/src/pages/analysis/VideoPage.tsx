@@ -355,29 +355,31 @@ export default function VideoPage() {
     contentApi.getMyContents({ type: 'video', pageSize: 50 })
       .then((res: any) => {
         const items = res?.items || res?.data || [];
+        const parsed = items.map((item: any) => {
+          let meta = {};
+          try {
+            meta = item.metadata ? (typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata) : {};
+          } catch { }
+          return { ...item, metadata: meta };
+        });
+
         // 已完成或已失败的记录计入历史面板
-        setHistory(items.filter((item: any) => item.status === 'completed' || item.status === 'success' || item.resultUrl));
+        setHistory(parsed.filter((item: any) => item.status === 'completed' || item.status === 'success' || item.resultUrl));
 
         // 正在生产中的记录恢复到 tasks 队列中继续展示生成进度
-        const processingTasks: VideoTask[] = items
+        const processingTasks: VideoTask[] = parsed
           .filter((item: any) => item.status === 'processing')
-          .map((item: any) => {
-            let meta = {};
-            try {
-              meta = item.metadata ? (typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata) : {};
-            } catch { }
-            return {
-              id: `db_${item.id}`,
-              prompt: item.inputText || item.title || '',
-              status: 'generating',
-              progress: 0,
-              statusMessage: '正在后台恢复生成...',
-              videoUrl: null,
-              error: null,
-              metadata: meta as any,
-              createdAt: item.createdAt,
-            };
-          });
+          .map((item: any) => ({
+            id: `db_${item.id}`,
+            prompt: item.inputText || item.title || '',
+            status: 'generating',
+            progress: 0,
+            statusMessage: '正在后台恢复生成...',
+            videoUrl: null,
+            error: null,
+            metadata: item.metadata as any,
+            createdAt: item.createdAt,
+          }));
         setTasks(processingTasks);
       })
       .catch(() => { });
@@ -413,7 +415,14 @@ export default function VideoPage() {
                 contentApi.getMyContents({ type: 'video', pageSize: 50 })
                   .then((r: any) => {
                     const items = r?.items || r?.data || [];
-                    setHistory(items.filter((x: any) => x.status === 'completed' || x.status === 'success' || x.resultUrl));
+                    const parsed = items.map((item: any) => {
+                      let meta = {};
+                      try {
+                        meta = item.metadata ? (typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata) : {};
+                      } catch { }
+                      return { ...item, metadata: meta };
+                    });
+                    setHistory(parsed.filter((x: any) => x.status === 'completed' || x.status === 'success' || x.resultUrl));
                     // 历史已加载，从当前任务中移除
                     setTasks(prev => prev.filter(t => t.id !== task.id));
                   }).catch(() => { });
