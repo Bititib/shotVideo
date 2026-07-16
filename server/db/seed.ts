@@ -157,7 +157,9 @@ async function syncModelsFromAPI() {
     { provider: 'sudashui', modelId: 'lg-seedance-2.0-fast', displayName: 'seedance2.0 fast-LG版', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-d7-seedance-2.0-face-720p', displayName: 'seedance2.0满血-D7版', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-mo-seedance-2.0-dj-fast', displayName: 'seedance2.0极速-DJ版', capabilities: JSON.stringify(['video']) },
-    { provider: 'pidoi', modelId: 'seedance-2.0-fast', displayName: 'seedance-2.0-fast', capabilities: JSON.stringify(['video']) }
+    { provider: 'pidoi', modelId: 'sora-v3-pro', displayName: 'Sora V3 Pro', capabilities: JSON.stringify(['video']) },
+    { provider: 'pidoi', modelId: 'sora-v4-fast', displayName: 'Sora V4 Fast', capabilities: JSON.stringify(['video']) },
+    { provider: 'pidoi', modelId: 'sora-v4-pro', displayName: 'Sora V4 Pro', capabilities: JSON.stringify(['video']) }
   );
 
   // 同步或插入模型
@@ -177,7 +179,7 @@ async function syncModelsFromAPI() {
 
   // 强制删除已废弃或不能使用的旧视频模型
   try {
-    const deadModels = ['xh-sdas-fast-933-720p', 'xh-sdas-pro-933-720p', 'sora-v4-fast'];
+    const deadModels = ['xh-sdas-fast-933-720p', 'xh-sdas-pro-933-720p', 'seedance-2.0-fast', 'seedance-2.0'];
     for (const modelId of deadModels) {
       db.delete(models).where(eq(models.modelId, modelId)).run();
     }
@@ -558,7 +560,9 @@ export async function initDatabase() {
     { key: 'lg_seedance_fast_rate', value: '5.10', label: 'Seedance 2.0 LG-Fast费率(¥/次)' },
     { key: 'sdas_d7_face_rate', value: '5.80', label: 'Seedance 2.0 D7-满血费率(¥/次)' },
     { key: 'sdas_mo_dj_rate', value: '3.90', label: 'Seedance 2.0 DJ-极速费率(¥/次)' },
-    { key: 'seedance_2_0_fast_rate', value: '1.80', label: 'Seedance 2.0 Fast 费率(¥/秒)' },
+    { key: 'sora_v3_pro_rate', value: '4.00', label: 'Sora V3 Pro 费率(¥/次)' },
+    { key: 'sora_v4_fast_rate', value: '0.189', label: 'Sora V4 Fast 费率(¥/秒)' },
+    { key: 'sora_v4_pro_rate', value: '0.25', label: 'Sora V4 Pro 费率(¥/秒)' },
   ];
   for (const s of omniSettings) {
     const existing = db.select().from(settings).where(eq(settings.key, s.key)).get();
@@ -674,13 +678,13 @@ export async function initDatabase() {
   // 9) 自动向已存在且包含 sudashuiapi.com 或 pidoi.com 的渠道添加支持的模型 ID，防止路由错误
   try {
     const sdaModels = ['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'xh-sdas-fast-933-720p', 'xh-sdas-pro-933-720p'];
-    const pidoiModels = ['seedance-2.0-fast'];
+    const pidoiModels = ['sora-v3-pro', 'sora-v4-fast', 'sora-v4-pro'];
     const allChannels = db.select().from(channels).all();
     for (const c of allChannels) {
       let currentModels: string[] = [];
       try {
         currentModels = JSON.parse(c.supportedModels || '[]');
-      } catch {}
+      } catch { }
       if (!Array.isArray(currentModels)) currentModels = [];
 
       let updated = false;
@@ -692,6 +696,11 @@ export async function initDatabase() {
           }
         }
       } else if (c.baseUrl && c.baseUrl.includes('pidoi.com')) {
+        const cleaned = currentModels.filter(m => !['seedance-2.0-fast', 'seedance-2.0'].includes(m));
+        if (cleaned.length !== currentModels.length) {
+          currentModels = cleaned;
+          updated = true;
+        }
         for (const m of pidoiModels) {
           if (!currentModels.includes(m)) {
             currentModels.push(m);

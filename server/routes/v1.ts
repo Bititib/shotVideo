@@ -58,6 +58,15 @@ function getVideoRate(model: string, resolution: string): number {
     const key = resolution === '1080p' ? 'omni_vref_rate_1080p' : 'omni_vref_rate_720p';
     const row = db.select().from(settings).where(eq(settings.key, key)).get();
     return parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
+  } else if (model === 'sora-v3-pro') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sora_v3_pro_rate')).get();
+    return parseFloat(row?.value || '4.00');
+  } else if (model === 'sora-v4-fast' || model === 'seedance-2.0-fast') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
+    return parseFloat(row?.value || '0.189');
+  } else if (model === 'sora-v4-pro' || model === 'seedance-2.0') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_pro_rate')).get();
+    return parseFloat(row?.value || '0.25');
   } else {
     const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
     const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
@@ -127,7 +136,9 @@ router.get('/models', (req: Request, res: Response) => {
     'grok-imagine-video-1.5-fast',
     'omni-flash',
     'omni-flash-vref',
-    'seedance-2.0-fast',
+    'sora-v3-pro',
+    'sora-v4-fast',
+    'sora-v4-pro',
     'lg-seedance-2.0-fast',
     'sdas-d7-seedance-2.0-face-720p',
     'sdas-mo-seedance-2.0-dj-fast'

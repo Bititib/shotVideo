@@ -176,7 +176,9 @@ const MODEL_META: Record<string, ModelMeta> = {
   'grok-4.3-video': { series: 'legacy', allowedSeconds: null, requireRef: false },
   'omni-flash': { series: 'omni-flash', allowedSeconds: [4, 6, 8, 10], requireRef: false },
   'omni-flash-vref': { series: 'omni-flash-vref', allowedSeconds: [10], requireRef: false },
-  'seedance-2.0-fast': { series: 'seedance-2.0-fast', allowedSeconds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14], requireRef: false },
+  'sora-v3-pro': { series: 'sora-v3', allowedSeconds: [14], requireRef: false },
+  'sora-v4-fast': { series: 'sora-v4', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'sora-v4-pro': { series: 'sora-v4', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'lg-seedance-2.0-fast': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-d7-seedance-2.0-face-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-mo-seedance-2.0-dj-fast': { series: 'sudashui', allowedSeconds: [5, 10, 15], requireRef: false },
@@ -188,7 +190,9 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'grok-imagine-video-1.5-fast', name: 'Grok 1.5 Fast', description: '快速文生/图生视频，6/10秒', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash', name: 'Omni Flash', description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash-vref', name: 'Omni Flash Vref', description: '视频风格编辑/改写，支持 1080p', maxSeconds: 10, icon: '✂️' },
-  { id: 'seedance-2.0-fast', name: 'Seedance 2.0 Fast', description: '支持933字符，支持参考图/视频/音频/首尾帧，1-14s', maxSeconds: 14, icon: '🎬' },
+  { id: 'sora-v3-pro', name: 'Sora V3 Pro', description: '支持933字符，不卡脸，支持9图3视频3音频参考，固定14s', maxSeconds: 14, icon: '🎬' },
+  { id: 'sora-v4-fast', name: 'Sora V4 Fast', description: '支持433字符，不卡脸，支持4图3视频1音频参考，5-15s', maxSeconds: 15, icon: '⚡' },
+  { id: 'sora-v4-pro', name: 'Sora V4 Pro', description: '支持433字符，不卡脸，支持4图3视频1音频参考，5-15s', maxSeconds: 15, icon: '🚀' },
   { id: 'lg-seedance-2.0-fast', name: 'seedance2.0 fast-LG版', description: '支持9图3视频3音频的参考，不限字符，4-15s', maxSeconds: 15, icon: '⚡' },
   { id: 'sdas-d7-seedance-2.0-face-720p', name: 'seedance2.0满血-D7版', description: '支持99图3视频3音频的参考，支持真人，4-15s', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-mo-seedance-2.0-dj-fast', name: 'seedance2.0极速-DJ版', description: '支持9图参考，不支持音视频，支持5/10/15s', maxSeconds: 15, icon: '⚡' },
@@ -233,7 +237,9 @@ router.get('/models', (_req: Request, res: Response) => {
   const lgSeedanceFastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'lg_seedance_fast_rate')).get()?.value || '5.10');
   const sdasD7FaceRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_d7_face_rate')).get()?.value || '5.80');
   const sdasMoDjRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_mo_dj_rate')).get()?.value || '3.90');
-  const seedance20FastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get()?.value || '1.80');
+  const soraV3ProRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v3_pro_rate')).get()?.value || '4.00');
+  const soraV4FastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get()?.value || '0.189');
+  const soraV4ProRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_pro_rate')).get()?.value || '0.25');
 
   const result = sourceModels.map(m => {
     const preset = DEFAULT_VIDEO_MODELS.find(d => d.id === m.id);
@@ -263,9 +269,17 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': sdasMoDjRate,
       };
-    } else if (m.id === 'seedance-2.0-fast') {
+    } else if (m.id === 'sora-v3-pro') {
       rates = {
-        '720p': seedance20FastRate,
+        '720p': soraV3ProRate,
+      };
+    } else if (m.id === 'sora-v4-fast') {
+      rates = {
+        '720p': soraV4FastRate,
+      };
+    } else if (m.id === 'sora-v4-pro') {
+      rates = {
+        '720p': soraV4ProRate,
       };
     } else {
       rates = {
@@ -378,9 +392,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'sdas-mo-seedance-2.0-dj-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_mo_dj_rate')).get();
     rate = parseFloat(row?.value || '3.90');
-  } else if (model === 'seedance-2.0-fast') {
-    const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get();
-    rate = parseFloat(row?.value || '1.80');
+  } else if (model === 'sora-v3-pro') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sora_v3_pro_rate')).get();
+    rate = parseFloat(row?.value || '4.00');
+  } else if (model === 'sora-v4-fast' || model === 'seedance-2.0-fast') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
+    rate = parseFloat(row?.value || '0.189');
+  } else if (model === 'sora-v4-pro' || model === 'seedance-2.0') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_pro_rate')).get();
+    rate = parseFloat(row?.value || '0.25');
   } else {
     const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
     const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
@@ -393,9 +413,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   }
 
   // 预估费用并检查余额
-  const isFlatRate = ['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(model);
+  const isFlatRate = ['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(model);
   const estimatedRate = rate;
-  const estimatedSeconds = isFlatRate ? 1 : (model === 'omni-flash-vref' ? 10 : (Number(video_length) || 6));
+  const estimatedSeconds = model === 'omni-flash-vref' ? 10 : (Number(video_length) || 6);
   const estimatedCost = isFlatRate ? estimatedRate : (Math.round(estimatedRate * estimatedSeconds * 100) / 100);
   const { sufficient, balance: currentBalance } = BalanceService.checkBalance(req.userId!, estimatedCost);
   if (!sufficient) {
@@ -456,8 +476,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const baseUrl = channel.baseUrl.replace(/\/+$/, '');
   const size = RATIO_TO_SIZE[aspect_ratio] || '1280x720';
   const isOmni = model.startsWith('omni-flash');
-  const isSoraV4 = model === 'sora-v4-fast';
-  const isSoraV3Pro = model === 'seedance-2.0-fast';
+  const isSoraV3 = model === 'sora-v3-pro';
+  const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0-fast' || model === 'seedance-2.0';
   const isSudaShui = meta?.series === 'sudashui';
 
   try {
@@ -560,7 +580,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       const job = await createResp.json() as any;
       videoId = job.task_id || job.id;
-    } else if (isSoraV3Pro) {
+    } else if (isSoraV3) {
       sendEvent({ type: 'status', message: '正在处理素材并提交 Sora V3 Pro 任务...' });
 
       // 将 base64 素材保存到本地并生成自托管公网 URL（Pidoi 网关不路由 /seedance-assets/upload）
@@ -603,6 +623,73 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] SoraV3Pro 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
+        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+
+      const job = await createResp.json() as any;
+      videoId = job.task_id || job.id;
+    } else if (isSoraV4) {
+      sendEvent({ type: 'status', message: '正在处理素材并提交 Sora V4 任务...' });
+
+      // 将 base64 素材保存到本地并生成自托管公网 URL
+      const imageUrls: string[] = [];
+      for (const img of (reference_images || []).slice(0, 4)) {
+        const url = convertBase64ToPublicUrl(img, 'sora_ref', req);
+        if (url) imageUrls.push(url);
+      }
+      const videoUrl = reference_video ? convertBase64ToPublicUrl(reference_video, 'sora_vid', req) : undefined;
+      const firstFrameUrl = first_frame ? convertBase64ToPublicUrl(first_frame, 'sora_ff', req) : undefined;
+      const lastFrameUrl = last_frame ? convertBase64ToPublicUrl(last_frame, 'sora_lf', req) : undefined;
+
+      // 确定参考模式和要传入的图片列表
+      let referenceMode = 'auto';
+      const refImages: string[] = [];
+      if (firstFrameUrl && lastFrameUrl) {
+        refImages.push(firstFrameUrl, lastFrameUrl);
+        referenceMode = 'start_end';
+      } else if (firstFrameUrl) {
+        refImages.push(firstFrameUrl);
+        referenceMode = 'start_frame';
+      } else if (imageUrls.length > 0) {
+        refImages.push(...imageUrls);
+        referenceMode = 'image_reference';
+      }
+
+      const payload: Record<string, any> = {
+        model: upstreamModel,
+        prompt: prompt.trim(),
+        duration: Number(video_length) || 5,
+        video_config: {
+          aspect_ratio: aspect_ratio,
+          resolution_name: resolution || '720p',
+          reference_mode: referenceMode
+        }
+      };
+
+      if (refImages.length > 0) {
+        payload.reference_images = refImages;
+      }
+      if (videoUrl) {
+        payload.reference_video = videoUrl;
+      }
+
+      console.log(`[video] Step1 SoraV4 创建任务: model=${model} upstreamModel=${upstreamModel} duration=${payload.duration} refs=${refImages.length} mode=${referenceMode} video=${!!videoUrl}`);
+
+      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${channel.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(60_000),
+      });
+
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        console.error(`[video] SoraV4 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
         sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
         res.write('data: [DONE]\n\n');
         return res.end();
@@ -741,7 +828,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           }
         }
 
-        console.log(`[video] 轮询 (${isOmni ? 'Omni' : isSudaShui ? 'SudaShui' : isSoraV3Pro ? 'SoraV3Pro' : 'Grok'}): status=${taskStatus} progress=${progress}%`);
+        console.log(`[video] 轮询 (${isOmni ? 'Omni' : isSudaShui ? 'SudaShui' : isSoraV3 ? 'SoraV3' : isSoraV4 ? 'SoraV4' : 'Grok'}): status=${taskStatus} progress=${progress}%`);
 
         if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'in_progress') {
           sendEvent({ type: 'progress', progress });

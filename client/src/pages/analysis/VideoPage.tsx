@@ -29,6 +29,136 @@ interface VideoTask {
   dbId?: number;
 }
 
+interface WoodenFishLoaderProps {
+  progress: number;
+  statusMessage?: string;
+}
+
+function WoodenFishLoader({ progress, statusMessage }: WoodenFishLoaderProps) {
+  const [floats, setFloats] = useState<{ id: number; text: string; x: number; y: number }[]>([]);
+  const [strike, setStrike] = useState(false);
+  const floatIdRef = useRef(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setStrike(true);
+      const id = floatIdRef.current++;
+      const text = `进度 ${progress}%`;
+      const x = Math.floor(Math.random() * 20) - 10;
+      const y = Math.floor(Math.random() * 10) - 5;
+      
+      setFloats(prev => [...prev, { id, text, x, y }]);
+      
+      setTimeout(() => setStrike(false), 150);
+      setTimeout(() => {
+        setFloats(prev => prev.filter(f => f.id !== id));
+      }, 1500);
+    }, 1200);
+
+    return () => clearInterval(interval);
+  }, [progress]);
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full w-full select-none relative py-2 bg-zinc-950/20 rounded-2xl">
+      <style>{`
+        @keyframes fishFloat {
+          0% {
+            transform: translateY(0) scale(0.85);
+            opacity: 0;
+          }
+          15% {
+            transform: translateY(-6px) scale(1.05);
+            opacity: 1;
+          }
+          100% {
+            transform: translateY(-40px) scale(0.9);
+            opacity: 0;
+          }
+        }
+        @keyframes woodenStrike {
+          0% { transform: rotate(0deg); }
+          45% { transform: rotate(-22deg); }
+          75% { transform: rotate(10deg); }
+          100% { transform: rotate(0deg); }
+        }
+        @keyframes fishSquish {
+          0% { transform: scale(1); }
+          30% { transform: scale(0.91, 0.95); }
+          60% { transform: scale(1.04, 1.01); }
+          100% { transform: scale(1); }
+        }
+      `}</style>
+
+      {/* 飘字容器 */}
+      <div className="absolute inset-x-0 bottom-[62px] top-0 pointer-events-none overflow-hidden flex items-end justify-center z-30">
+        <div className="relative w-full h-full">
+          {floats.map(f => (
+            <div
+              key={f.id}
+              style={{
+                left: `calc(50% + ${f.x}px - 40px)`,
+                transform: `translateY(${f.y}px)`,
+                animation: 'fishFloat 1.4s ease-out forwards'
+              }}
+              className="absolute bottom-6 w-20 text-center text-[11px] font-bold text-indigo-300 font-sans tracking-wide"
+            >
+              {f.text}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 核心图形区 */}
+      <div className="relative w-28 h-20 flex items-center justify-center mb-1">
+        {/* 木槌 */}
+        <div 
+          style={{
+            animation: strike ? 'woodenStrike 0.18s ease-in-out' : 'none'
+          }}
+          className="absolute right-4 top-1 w-10 h-10 origin-[80%_20%] z-20 pointer-events-none"
+        >
+          <svg className="w-full h-full filter drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]" viewBox="0 0 40 40">
+            <path d="M12 28 L28 12" stroke="#d97706" strokeWidth="2.5" strokeLinecap="round" />
+            <circle cx="10" cy="30" r="4.5" fill="#78350f" />
+          </svg>
+        </div>
+
+        {/* 木鱼 */}
+        <div 
+          style={{
+            animation: strike ? 'fishSquish 0.15s ease-out' : 'none'
+          }}
+          className="w-16 h-16 origin-center transition-transform"
+        >
+          <svg className="w-full h-full filter drop-shadow-[0_4px_8px_rgba(0,0,0,0.6)]" viewBox="0 0 64 64">
+            <path 
+              d="M32 10 C16 10, 8 24, 8 38 C8 48, 16 52, 32 52 C48 52, 56 48, 56 38 C56 24, 48 10, 32 10 Z" 
+              fill="url(#fishGrad)" 
+            />
+            <path d="M18 42 Q32 30 46 42" stroke="#3b1901" strokeWidth="2.5" fill="none" strokeLinecap="round" />
+            <circle cx="20" cy="24" r="3.5" fill="#3b1901" />
+            <defs>
+              <linearGradient id="fishGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#d97706" />
+                <stop offset="60%" stopColor="#78350f" />
+                <stop offset="100%" stopColor="#451a03" />
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+      </div>
+
+      {/* 底部信息 */}
+      <div className="text-center z-10 px-2 w-full">
+        <div className="text-xs font-bold text-white/90 tabular-nums">
+          生成进度 {progress}%
+        </div>
+        <p className="text-[10px] text-zinc-500 truncate mt-0.5 max-w-[180px] mx-auto">{statusMessage || '正在生成...'}</p>
+      </div>
+    </div>
+  );
+}
+
 const ALL_ASPECT_RATIOS = [
   { value: '16:9', label: '16:9', icon: RectangleHorizontal },
   { value: '9:16', label: '9:16', icon: Smartphone },
@@ -50,10 +180,19 @@ const ALL_DURATIONS = [
   { value: 15, label: '15 秒' }, { value: 16, label: '16 秒' },
   { value: 20, label: '20 秒' }, { value: 30, label: '30 秒' },
 ];
+const isSoraV3Model = (modelId: string) => {
+  return modelId === 'sora-v3-pro';
+};
+
+const isSoraV4Model = (modelId: string) => {
+  return modelId === 'seedance-2.0-fast' || modelId === 'seedance-2.0' || modelId === 'sora-v4-fast' || modelId === 'sora-v4-pro';
+};
+
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'sdas-d7-seedance-2.0-face-720p') return 99;
   if (modelId.startsWith('sd-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
-  if (modelId === 'seedance-2.0-fast') return 9;
+  if (isSoraV4Model(modelId)) return 4;
+  if (isSoraV3Model(modelId)) return 9;
   if (modelId === 'omni-flash') return 7;
   if (modelId === 'omni-flash-vref') return 5;
   const model = models.find(m => m.id === modelId);
@@ -681,7 +820,7 @@ export default function VideoPage() {
                     <div className="flex items-center gap-2">
                       {m.rates && (
                         <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
-                          ¥{m.rates[resolution as keyof typeof m.rates]?.toFixed(2)}{['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}
+                          ¥{m.rates[resolution as keyof typeof m.rates]?.toFixed(2)}{['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}
                         </span>
                       )}
                       {selectedModel === m.id && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
@@ -692,17 +831,17 @@ export default function VideoPage() {
                     <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-600 border-t border-white/5 pt-1.5">
                       {m.rates['1080p'] ? (
                         <>
-                          <span>1080p: <span className="text-zinc-400">¥{m.rates['1080p']?.toFixed(2)}{['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
+                          <span>1080p: <span className="text-zinc-400">¥{m.rates['1080p']?.toFixed(2)}{['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
                           <span className="text-zinc-800">•</span>
-                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
+                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
                         </>
                       ) : (
                         <>
-                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
+                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
                           {m.rates['480p'] !== undefined && (
                             <>
                               <span className="text-zinc-800">•</span>
-                              <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}{['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
+                              <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}{['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
                             </>
                           )}
                         </>
@@ -750,23 +889,7 @@ export default function VideoPage() {
                         {/* 视频区域 */}
                         <div className="relative w-full bg-black flex items-center justify-center overflow-hidden" style={getAspectStyle(task.metadata.aspect_ratio) || { aspectRatio: '16/9' }}>
                           {task.status === 'generating' ? (
-                            <>
-                              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.03] to-transparent animate-[shimmer_2s_infinite]" style={{ backgroundSize: '200% 100%' }} />
-                              <div className="flex flex-col items-center gap-2 z-10">
-                                <div className="relative w-14 h-14">
-                                  <svg className="w-14 h-14 -rotate-90" viewBox="0 0 56 56">
-                                    <circle cx="28" cy="28" r="24" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
-                                    <circle cx="28" cy="28" r="24" fill="none" stroke="url(#vpg)" strokeWidth="3" strokeLinecap="round"
-                                      strokeDasharray={`${2 * Math.PI * 24}`} strokeDashoffset={`${2 * Math.PI * 24 * (1 - task.progress / 100)}`} className="transition-all duration-700 ease-out" />
-                                    <defs><linearGradient id="vpg" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#6366f1" /><stop offset="100%" stopColor="#a855f7" /></linearGradient></defs>
-                                  </svg>
-                                  <div className="absolute inset-0 flex items-center justify-center">
-                                    <span className="text-sm font-bold text-white tabular-nums">{task.progress}%</span>
-                                  </div>
-                                </div>
-                                <p className="text-[11px] text-zinc-400 text-center px-3 line-clamp-1">{task.statusMessage}</p>
-                              </div>
-                            </>
+                            <WoodenFishLoader progress={task.progress} statusMessage={task.statusMessage} />
                           ) : task.status === 'complete' && task.videoUrl ? (
                             <>
                               <video src={task.videoUrl} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain' : 'object-cover'}`} preload="metadata" playsInline muted loop
@@ -945,7 +1068,7 @@ export default function VideoPage() {
                   </div>
                   <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
 
-                  {((selectedModel === 'omni-flash-vref' || selectedModel === 'seedance-2.0-fast' || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && selectedModel !== 'sdas-mo-seedance-2.0-dj-fast') && (
+                  {((selectedModel === 'omni-flash-vref' || isSoraV4Model(selectedModel) || isSoraV3Model(selectedModel) || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && selectedModel !== 'sdas-mo-seedance-2.0-dj-fast') && (
                     <>
                       <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideo ? '(已上传)' : ''}
@@ -953,7 +1076,7 @@ export default function VideoPage() {
                       <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
                     </>
                   )}
-                  {((selectedModel === 'seedance-2.0-fast' || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && selectedModel !== 'sdas-mo-seedance-2.0-dj-fast') && (
+                  {((isSoraV3Model(selectedModel) || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && selectedModel !== 'sdas-mo-seedance-2.0-dj-fast') && (
                     <>
                       <button onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 {referenceAudio ? '(已上传)' : ''}
@@ -961,7 +1084,7 @@ export default function VideoPage() {
                       <input ref={audioFileInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
                     </>
                   )}
-                  {selectedModel === 'seedance-2.0-fast' && (
+                  {(isSoraV3Model(selectedModel) || isSoraV4Model(selectedModel)) && (
                     <>
                       <button onClick={() => firstFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-emerald-400" /> 首帧 {firstFrame ? '(已上传)' : ''}
