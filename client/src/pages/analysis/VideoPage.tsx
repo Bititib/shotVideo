@@ -709,10 +709,6 @@ export default function VideoPage() {
       setError('视频编辑模型必须上传参考视频');
       return;
     }
-    if (selectedModel === 'veo-omni-flash' && referenceImages.length === 0) {
-      setError('Veo Omni Flash 模型必须上传参考图');
-      return;
-    }
     setError(null);
 
     // 将 prompt 中的 @图1, @图2 翻译回后端 API 支持的 [ref_0.jpg] 格式
