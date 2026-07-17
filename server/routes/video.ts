@@ -11,6 +11,11 @@ import { models, settings, contents } from '../db/schema.js';
 import { eq, like, and } from 'drizzle-orm';
 import fs from 'fs';
 import path from 'path';
+import { exec, execSync } from 'child_process';
+import { promisify } from 'util';
+import crypto from 'crypto';
+
+const execPromise = promisify(exec);
 const router = Router();
 
 export const activePolls = new Set<number>();
@@ -1036,6 +1041,75 @@ router.get('/download', async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error('[video/download] error:', err.message);
     res.status(502).send(`Download failed: ${err.message}`);
+  }
+});
+
+// Cache directory for H.264 transcoded files
+const videoCacheDir = path.resolve('data/video_cache');
+if (!fs.existsSync(videoCacheDir)) {
+  fs.mkdirSync(videoCacheDir, { recursive: true });
+}
+
+// 视频播放代理：检测并转码 H.265 (HEVC) -> H.264 (AVC)，并支持 206 Partial Content 分片加载
+router.get('/play', async (req: Request, res: Response) => {
+  const url = req.query.url as string;
+  if (!url) return res.status(400).json({ error: 'Missing url parameter' });
+
+  try {
+    const hash = crypto.createHash('md5').update(url).digest('hex');
+    const cachedFilePath = path.join(videoCacheDir, `${hash}.mp4`);
+
+    // 1. 如果缓存已存在，直接以支持分段 Range 的方式返回
+    if (fs.existsSync(cachedFilePath)) {
+      return res.sendFile(cachedFilePath);
+    }
+
+    console.log(`[video/play] 开始下载并检测视频是否需要转码: ${url}`);
+    
+    // 下载原始视频
+    const tempOriginalPath = path.join(videoCacheDir, `${hash}_temp.mp4`);
+    const fetchResp = await fetch(url);
+    if (!fetchResp.ok) throw new Error(`无法获取原始视频流: ${fetchResp.statusText}`);
+    const buffer = Buffer.from(await fetchResp.arrayBuffer());
+    fs.writeFileSync(tempOriginalPath, buffer);
+
+    try {
+      // 2. 使用 ffprobe 探测视频编码
+      let isHevc = false;
+      try {
+        const ffprobeOut = execSync(
+          `ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1 "${tempOriginalPath}"`,
+          { encoding: 'utf8' }
+        );
+        isHevc = ffprobeOut.includes('hevc');
+      } catch (probeErr: any) {
+        console.warn('[video/play] ffprobe 探测失败，默认尝试转码:', probeErr.message);
+        isHevc = true;
+      }
+
+      if (isHevc) {
+        console.log(`[video/play] 检测到 H.265 (HEVC) 编码，正在为 Chrome/Safari 转码至 H.264...`);
+        // 使用超级快速转码预设，yuv420p 色彩空间提供最高兼容性，复制音频轨道以节省 CPU
+        await execPromise(
+          `ffmpeg -y -i "${tempOriginalPath}" -c:v libx264 -pix_fmt yuv420p -preset superfast -movflags faststart -c:a copy "${cachedFilePath}"`
+        );
+        console.log(`[video/play] H.264 转码完成并缓存于: ${cachedFilePath}`);
+      } else {
+        console.log(`[video/play] 检测为标准 H.264 编码，跳过转码直接写入缓存`);
+        fs.copyFileSync(tempOriginalPath, cachedFilePath);
+      }
+    } finally {
+      // 清理临时下载文件
+      try {
+        if (fs.existsSync(tempOriginalPath)) fs.unlinkSync(tempOriginalPath);
+      } catch {}
+    }
+
+    // 3. 返回转码后的视频流
+    res.sendFile(cachedFilePath);
+  } catch (err: any) {
+    console.error('[video/play] 播放代理失败:', err.message);
+    res.status(502).send(`Playback proxy failed: ${err.message}`);
   }
 });
 

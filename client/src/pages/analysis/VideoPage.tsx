@@ -28,7 +28,13 @@ interface VideoTask {
   createdAt: string;
   dbId?: number;
 }
-
+function getVideoPlayUrl(url: string | null) {
+  if (!url) return '';
+  if (url.startsWith('/') || url.startsWith('http://localhost') || url.startsWith('http://127.0.0.1')) {
+    return url;
+  }
+  return `/api/video/play?url=${encodeURIComponent(url)}`;
+}
 interface WoodenFishLoaderProps {
   progress: number;
   statusMessage?: string;
@@ -901,7 +907,7 @@ export default function VideoPage() {
                             <WoodenFishLoader progress={task.progress} statusMessage={task.statusMessage} />
                           ) : task.status === 'complete' && task.videoUrl ? (
                             <>
-                              <video src={task.videoUrl} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain' : 'object-cover'}`} preload="metadata" playsInline muted loop
+                              <video src={getVideoPlayUrl(task.videoUrl)} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain' : 'object-cover'}`} preload="metadata" playsInline muted loop
                                 onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
                                 onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
                               <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors cursor-pointer" onClick={() => setPlayingVideo({ url: task.videoUrl!, prompt: restorePrompt(task.prompt) })}>
@@ -980,7 +986,7 @@ export default function VideoPage() {
                     {history.map((h) => (
                       <div key={h.id} onClick={() => setPlayingVideo({ url: h.resultUrl, prompt: restorePrompt(h.title || h.inputText || '') })} className={`group relative rounded-2xl overflow-hidden border border-white/5 bg-white/[0.02] hover:border-indigo-500/30 transition-all flex flex-col cursor-pointer ${isVertical(h.metadata?.aspect_ratio) ? 'max-w-[220px]' : ''}`}>
                         <div className="relative w-full bg-black flex items-center justify-center overflow-hidden" style={getAspectStyle(h.metadata?.aspect_ratio) || { aspectRatio: '16/9' }}>
-                          <video src={h.resultUrl} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain' : 'object-cover'}`} preload="metadata" playsInline muted loop
+                          <video src={getVideoPlayUrl(h.resultUrl)} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain' : 'object-cover'}`} preload="metadata" playsInline muted loop
                             onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
                             onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
                           <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors">
@@ -1031,7 +1037,7 @@ export default function VideoPage() {
         {playingVideo && (
           <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-8" onClick={() => setPlayingVideo(null)}>
             <div className="relative w-full max-w-4xl" onClick={(e) => e.stopPropagation()}>
-              <video src={playingVideo.url} controls autoPlay className="w-full max-h-[75vh] rounded-2xl shadow-2xl bg-black" />
+              <video src={getVideoPlayUrl(playingVideo.url)} controls autoPlay className="w-full max-h-[75vh] rounded-2xl shadow-2xl bg-black" />
               <div className="flex items-center justify-between mt-4">
                 <p className="text-sm text-zinc-300 line-clamp-1 flex-1 mr-4">{restorePrompt(playingVideo.prompt)}</p>
                 <div className="flex items-center gap-3 shrink-0">
