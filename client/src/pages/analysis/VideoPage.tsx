@@ -7,6 +7,7 @@ import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { saveAsset, getAssets, deleteAsset, type Asset } from '../../utils/idb';
+import { useAuthStore } from '../../stores/authStore';
 
 interface VideoTask {
   id: string;
@@ -35,6 +36,10 @@ function getVideoPlayUrl(url: string | null) {
   }
   return `/api/video/play?url=${encodeURIComponent(url)}`;
 }
+
+const isFlatRateModel = (modelId: string) => {
+  return ['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'seedance-2.0-fast'].includes(modelId);
+};
 interface WoodenFishLoaderProps {
   progress: number;
   statusMessage?: string;
@@ -416,6 +421,7 @@ export default function VideoPage() {
                 videoUrl: item.resultUrl || null,
                 statusMessage: '',
               } : t));
+              useAuthStore.getState().fetchProfile().catch(() => {});
               // 延迟后刷新历史记录
               setTimeout(() => {
                 contentApi.getMyContents({ type: 'video', pageSize: 50 })
@@ -440,6 +446,7 @@ export default function VideoPage() {
                 statusMessage: '',
                 error: item.metadata?.error || '生成失败'
               } : t));
+              useAuthStore.getState().fetchProfile().catch(() => {});
             } else {
               // processing 状态：从 metadata.progress 读取实时进度
               let meta: any = {};
@@ -760,10 +767,12 @@ export default function VideoPage() {
           case 'complete':
             updateTask({ status: 'complete', progress: 100, videoUrl: event.videoUrl || null, statusMessage: '' });
             abortRef.current.delete(taskId);
+            useAuthStore.getState().fetchProfile().catch(() => {});
             break;
           case 'error':
             updateTask({ status: 'error', error: event.message || '生成失败', statusMessage: '' });
             abortRef.current.delete(taskId);
+            useAuthStore.getState().fetchProfile().catch(() => {});
             break;
           case 'close':
             // SSE 连接中断，且任务没有完成/失败，有数据库 ID 的情况下，直接升级为 db_ 开头的后台轮询任务
@@ -835,7 +844,7 @@ export default function VideoPage() {
                     <div className="flex items-center gap-2">
                       {m.rates && (
                         <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
-                          ¥{m.rates[resolution as keyof typeof m.rates]?.toFixed(2)}{['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}
+                          ¥{m.rates[resolution as keyof typeof m.rates]?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}
                         </span>
                       )}
                       {selectedModel === m.id && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
@@ -846,17 +855,17 @@ export default function VideoPage() {
                     <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-600 border-t border-white/5 pt-1.5">
                       {m.rates['1080p'] ? (
                         <>
-                          <span>1080p: <span className="text-zinc-400">¥{m.rates['1080p']?.toFixed(2)}{['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
+                          <span>1080p: <span className="text-zinc-400">¥{m.rates['1080p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
                           <span className="text-zinc-800">•</span>
-                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
+                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
                         </>
                       ) : (
                         <>
-                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
+                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
                           {m.rates['480p'] !== undefined && (
                             <>
                               <span className="text-zinc-800">•</span>
-                              <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}{['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast'].includes(m.id) ? '/次' : '/秒'}</span></span>
+                              <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
                             </>
                           )}
                         </>
