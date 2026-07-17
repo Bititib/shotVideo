@@ -189,6 +189,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'sdas-d7-seedance-2.0-face-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-mo-seedance-2.0-dj-fast': { series: 'sudashui', allowedSeconds: [5, 10, 15], requireRef: false },
   'seedance-2.0-fast': { series: 'seedance-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'veo-omni-flash': { series: 'veo-omni-flash', allowedSeconds: [10], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
@@ -204,6 +205,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'sdas-d7-seedance-2.0-face-720p', name: 'seedance2.0满血-D7版', description: '支持99图3视频3音频的参考，支持真人，4-15s', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-mo-seedance-2.0-dj-fast', name: 'seedance2.0极速-DJ版', description: '支持9图参考，不支持音视频，支持5/10/15s', maxSeconds: 15, icon: '⚡' },
   { id: 'seedance-2.0-fast', name: 'Seedance 2.0 Fast', description: '高画质视频生成，支持5-15s', maxSeconds: 15, icon: '🚀' },
+  { id: 'veo-omni-flash', name: 'Veo Omni Flash', description: '多参考图生成视频，参考图字段 Ingredients_images，固定10s', maxSeconds: 10, icon: '🚀' },
 ];
 
 /** 查找支持指定视频模型的渠道 */
@@ -249,6 +251,7 @@ router.get('/models', (_req: Request, res: Response) => {
   const soraV4FastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get()?.value || '0.189');
   const soraV4ProRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_pro_rate')).get()?.value || '0.25');
   const seedance20FastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get()?.value || '4.00');
+  const veoOmniFlashRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get()?.value || '5.00');
 
   const result = sourceModels.map(m => {
     const preset = DEFAULT_VIDEO_MODELS.find(d => d.id === m.id);
@@ -293,6 +296,11 @@ router.get('/models', (_req: Request, res: Response) => {
     } else if (m.id === 'seedance-2.0-fast') {
       rates = {
         '720p': seedance20FastRate,
+      };
+    } else if (m.id === 'veo-omni-flash') {
+      rates = {
+        '720p': veoOmniFlashRate,
+        '1080p': veoOmniFlashRate,
       };
     } else {
       rates = {
@@ -411,6 +419,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'seedance-2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get();
     rate = parseFloat(row?.value || '4.00');
+  } else if (model === 'veo-omni-flash') {
+    const row = db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get();
+    rate = parseFloat(row?.value || '5.00');
   } else if (model === 'sora-v4-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
     rate = parseFloat(row?.value || '0.189');
@@ -429,7 +440,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   }
 
   // 预估费用并检查余额
-  const isFlatRate = ['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'seedance-2.0-fast'].includes(model);
+  const isFlatRate = ['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'seedance-2.0-fast', 'veo-omni-flash'].includes(model);
   const estimatedRate = rate;
   const estimatedSeconds = model === 'omni-flash-vref' ? 10 : (Number(video_length) || 6);
   const estimatedCost = isFlatRate ? estimatedRate : (Math.round(estimatedRate * estimatedSeconds * 100) / 100);
@@ -496,6 +507,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isSeedanceFast = model === 'seedance-2.0-fast';
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
   const isSudaShui = meta?.series === 'sudashui';
+  const isVeoOmni = model === 'veo-omni-flash';
 
   try {
     let videoId = '';
@@ -707,6 +719,48 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] SoraV4 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
+        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+
+      const job = await createResp.json() as any;
+      videoId = job.task_id || job.id;
+    } else if (isVeoOmni) {
+      sendEvent({ type: 'status', message: '正在处理素材并提交 Veo Omni Flash 任务...' });
+
+      const imageUrls: string[] = [];
+      for (const img of (reference_images || [])) {
+        const url = convertBase64ToPublicUrl(img, 'veo_ref', req);
+        if (url) imageUrls.push(url);
+      }
+
+      const payload: Record<string, any> = {
+        model: 'veo-omni-flash',
+        prompt: prompt.trim(),
+        duration: 10,
+        aspect_ratio: aspect_ratio === '9:16' ? '9:16' : '16:9',
+      };
+
+      if (imageUrls.length > 0) {
+        payload.Ingredients_images = imageUrls;
+      }
+
+      console.log(`[video] Step1 VeoOmni 创建任务: model=${model} aspect_ratio=${payload.aspect_ratio} refs=${imageUrls.length}`);
+
+      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${channel.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(60_000),
+      });
+
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        console.error(`[video] Veo Omni Flash 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
         sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
         res.write('data: [DONE]\n\n');
         return res.end();
@@ -1221,6 +1275,9 @@ export function resumePollForTask(contentId: number, record: any) {
   } else if (model === 'seedance-2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get();
     rate = parseFloat(row?.value || '4.00');
+  } else if (model === 'veo-omni-flash') {
+    const row = db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get();
+    rate = parseFloat(row?.value || '5.00');
   } else if (model === 'sora-v4-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
     rate = parseFloat(row?.value || '0.189');
@@ -1238,7 +1295,7 @@ export function resumePollForTask(contentId: number, record: any) {
     rate = Math.round((BASE_RATE[resolution] || BASE_RATE['720p']) * seriesMultiplier * 100) / 100;
   }
 
-  const isFlatRate = ['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'seedance-2.0-fast'].includes(model);
+  const isFlatRate = ['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'seedance-2.0-fast', 'veo-omni-flash'].includes(model);
 
   const baseUrl = channel.baseUrl.replace(/\/+$/, '');
   const isOmni = model.startsWith('omni-flash');

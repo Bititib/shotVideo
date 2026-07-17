@@ -160,7 +160,8 @@ async function syncModelsFromAPI() {
     { provider: 'pidoi', modelId: 'sora-v3-pro', displayName: 'Sora V3 Pro', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'sora-v4-fast', displayName: 'Sora V4 Fast', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'sora-v4-pro', displayName: 'Sora V4 Pro', capabilities: JSON.stringify(['video']) },
-    { provider: 'pidoi', modelId: 'seedance-2.0-fast', displayName: 'Seedance 2.0 Fast', capabilities: JSON.stringify(['video']) }
+    { provider: 'pidoi', modelId: 'seedance-2.0-fast', displayName: 'Seedance 2.0 Fast', capabilities: JSON.stringify(['video']) },
+    { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) }
   );
 
   // 同步或插入模型
@@ -576,6 +577,7 @@ export async function initDatabase() {
     { key: 'sora_v4_fast_rate', value: '0.189', label: 'Sora V4 Fast 费率(¥/秒)' },
     { key: 'sora_v4_pro_rate', value: '0.25', label: 'Sora V4 Pro 费率(¥/秒)' },
     { key: 'seedance_2_0_fast_rate', value: '4.00', label: 'Seedance 2.0 Fast 费率(¥/次)' },
+    { key: 'veo_omni_flash_rate', value: '5.00', label: 'Veo Omni Flash 费率(¥/次)' },
   ];
   for (const s of omniSettings) {
     const existing = db.select().from(settings).where(eq(settings.key, s.key)).get();
@@ -697,7 +699,7 @@ export async function initDatabase() {
   // 9) 自动向已存在且包含 sudashuiapi.com 或 pidoi.com 的渠道添加支持的模型 ID，防止路由错误
   try {
     const sdaModels = ['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'xh-sdas-fast-933-720p', 'xh-sdas-pro-933-720p'];
-    const pidoiModels = ['sora-v3-pro', 'sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast'];
+    const pidoiModels = ['sora-v3-pro', 'sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast', 'veo-omni-flash'];
     const allChannels = db.select().from(channels).all();
     for (const c of allChannels) {
       let currentModels: string[] = [];

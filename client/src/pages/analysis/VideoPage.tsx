@@ -38,7 +38,7 @@ function getVideoPlayUrl(url: string | null) {
 }
 
 const isFlatRateModel = (modelId: string) => {
-  return ['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'seedance-2.0-fast'].includes(modelId);
+  return ['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'seedance-2.0-fast', 'veo-omni-flash'].includes(modelId);
 };
 interface WoodenFishLoaderProps {
   progress: number;
@@ -206,6 +206,7 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (isSoraV3Model(modelId)) return 9;
   if (modelId === 'omni-flash') return 7;
   if (modelId === 'omni-flash-vref') return 5;
+  if (modelId === 'veo-omni-flash') return 6;
   const model = models.find(m => m.id === modelId);
   if (model?.requireRef) return 1;
   return 5;
@@ -500,7 +501,7 @@ export default function VideoPage() {
     ? ALL_DURATIONS.filter(d => currentModel.allowedSeconds!.includes(d.value))
     : ALL_DURATIONS;
 
-  const isOmniModel = selectedModel.startsWith('omni-flash');
+  const isOmniModel = selectedModel.startsWith('omni-flash') || selectedModel === 'veo-omni-flash';
   const RESOLUTIONS = currentModel?.rates
     ? Object.keys(currentModel.rates)
         .sort((a, b) => parseInt(a) - parseInt(b))
