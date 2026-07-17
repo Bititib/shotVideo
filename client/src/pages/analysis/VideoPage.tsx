@@ -38,7 +38,7 @@ function getVideoPlayUrl(url: string | null) {
 }
 
 const isFlatRateModel = (modelId: string) => {
-  return ['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'seedance-2.0-fast', 'veo-omni-flash'].includes(modelId);
+  return ['sora-v3-pro', 'sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p', 'seedance-2.0-fast', 'veo-omni-flash', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(modelId);
 };
 interface WoodenFishLoaderProps {
   progress: number;
@@ -200,8 +200,7 @@ const isSoraV4Model = (modelId: string) => {
 };
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
-  if (modelId === 'sdas-d7-seedance-2.0-face-720p') return 99;
-  if (modelId.startsWith('sd-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
+  if (modelId.startsWith('sd-') || modelId.startsWith('seedance-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (isSoraV4Model(modelId)) return 4;
   if (isSoraV3Model(modelId)) return 9;
   if (modelId === 'omni-flash') return 7;
@@ -532,7 +531,7 @@ export default function VideoPage() {
       }
     }
 
-    const isSudashui = (selectedModel.startsWith('sd-') || selectedModel.includes('sdas-') || selectedModel.startsWith('lg-')) && selectedModel !== 'sdas-mo-seedance-2.0-dj-fast';
+    const isSudashui = selectedModel.startsWith('sd-') || selectedModel.startsWith('seedance-') || selectedModel.includes('sdas-') || selectedModel.startsWith('lg-');
     const isSoraV3Pro = selectedModel === 'seedance-2.0-fast';
     if (selectedModel !== 'omni-flash-vref' && !isSudashui && !isSoraV3Pro) {
       setReferenceVideo(null);
@@ -1093,7 +1092,7 @@ export default function VideoPage() {
                   </div>
                   <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
 
-                  {((selectedModel === 'omni-flash-vref' || isSoraV4Model(selectedModel) || isSoraV3Model(selectedModel) || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && selectedModel !== 'sdas-mo-seedance-2.0-dj-fast') && (
+                  {(selectedModel === 'omni-flash-vref' || isSoraV4Model(selectedModel) || isSoraV3Model(selectedModel) || selectedModel?.startsWith('sd-') || selectedModel?.startsWith('seedance-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && (
                     <>
                       <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideo ? '(已上传)' : ''}
@@ -1101,7 +1100,7 @@ export default function VideoPage() {
                       <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
                     </>
                   )}
-                  {((isSoraV3Model(selectedModel) || selectedModel?.startsWith('sd-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && selectedModel !== 'sdas-mo-seedance-2.0-dj-fast') && (
+                  {(isSoraV3Model(selectedModel) || selectedModel?.startsWith('sd-') || selectedModel?.startsWith('seedance-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && (
                     <>
                       <button onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 {referenceAudio ? '(已上传)' : ''}
