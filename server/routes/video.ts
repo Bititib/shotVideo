@@ -11,8 +11,9 @@ import { models, settings, contents } from '../db/schema.js';
 import { eq, like, and } from 'drizzle-orm';
 import fs from 'fs';
 import path from 'path';
-
 const router = Router();
+
+export const activePolls = new Set<number>();
 
 const RATIO_TO_SIZE: Record<string, string> = {
   '16:9': '1280x720',
@@ -814,7 +815,24 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     console.log(`[video] 任务已创建: id=${videoId}`);
     sendEvent({ type: 'status', message: `任务已提交，等待生成... (${videoId})` });
 
+    if (contentId !== null) {
+      activePolls.add(contentId);
+      if (videoId) {
+        try {
+          const row = db.select().from(contents).where(eq(contents.id, contentId)).get();
+          if (row) {
+            const meta = JSON.parse(row.metadata || '{}');
+            meta.videoId = videoId;
+            db.update(contents).set({ metadata: JSON.stringify(meta) }).where(eq(contents.id, contentId)).run();
+          }
+        } catch (dbErr) {
+          console.error('[video] 写入 videoId 失败:', dbErr);
+        }
+      }
+    }
+
     if (!videoId) {
+      if (contentId !== null) activePolls.delete(contentId);
       sendEvent({ type: 'error', message: '上游未返回任务 ID' });
       res.write('data: [DONE]\n\n');
       return res.end();
@@ -949,6 +967,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           sendEvent({ type: 'progress', progress: 100 });
           sendEvent({ type: 'complete', videoUrl: resultUrl });
           billUsage(resultUrl);
+          if (contentId !== null) activePolls.delete(contentId);
           if (!res.destroyed && !res.writableEnded) {
             res.write('data: [DONE]\n\n');
             res.end();
@@ -958,6 +977,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           console.error(`[video] ❌ 生成失败: ${errMsg}`);
           sendEvent({ type: 'error', message: errMsg });
           if (contentId !== null) {
+            activePolls.delete(contentId);
             try {
               db.update(contents).set({ status: 'failed' }).where(eq(contents.id, contentId)).run();
             } catch (dbErr) { console.error('[video] 失败状态更新错误:', dbErr); }
@@ -1070,5 +1090,249 @@ router.post('/merge', authMiddleware, async (req: Request, res: Response) => {
     res.status(500).json({ error: err.message || '合并失败' });
   }
 });
+
+export function resumePollForTask(contentId: number, record: any) {
+  if (activePolls.has(contentId)) return;
+  activePolls.add(contentId);
+
+  const model = record.modelId || '';
+  const meta = MODEL_META[model];
+  const channel = findVideoChannel(model);
+  if (!channel) {
+    console.error(`[video-recover] No channel found for model ${model} in task ${contentId}`);
+    activePolls.delete(contentId);
+    return;
+  }
+
+  let videoId = '';
+  let metadata: any = {};
+  try {
+    metadata = typeof record.metadata === 'string' ? JSON.parse(record.metadata) : (record.metadata || {});
+    videoId = metadata.videoId || '';
+  } catch (e) {
+    console.error(`[video-recover] Parse metadata failed for task ${contentId}:`, e);
+  }
+
+  if (!videoId) {
+    console.error(`[video-recover] No videoId found in metadata for task ${contentId}`);
+    activePolls.delete(contentId);
+    return;
+  }
+
+  const resolution = metadata.resolution || '720p';
+  const video_length = metadata.seconds || 6;
+
+  // Calculate billing rate
+  let rate = 0.05;
+  if (model === 'omni-flash') {
+    const key = resolution === '1080p' ? 'omni_flash_rate_1080p' : 'omni_flash_rate_720p';
+    const row = db.select().from(settings).where(eq(settings.key, key)).get();
+    rate = parseFloat(row?.value || (resolution === '1080p' ? '1.50' : '0.90'));
+  } else if (model === 'omni-flash-vref') {
+    const key = resolution === '1080p' ? 'omni_vref_rate_1080p' : 'omni_vref_rate_720p';
+    const row = db.select().from(settings).where(eq(settings.key, key)).get();
+    rate = parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
+  } else if (model === 'lg-seedance-2.0-fast') {
+    const row = db.select().from(settings).where(eq(settings.key, 'lg_seedance_fast_rate')).get();
+    rate = parseFloat(row?.value || '5.10');
+  } else if (model === 'sdas-d7-seedance-2.0-face-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_d7_face_rate')).get();
+    rate = parseFloat(row?.value || '5.80');
+  } else if (model === 'sdas-mo-seedance-2.0-dj-fast') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_mo_dj_rate')).get();
+    rate = parseFloat(row?.value || '3.90');
+  } else if (model === 'sora-v3-pro') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sora_v3_pro_rate')).get();
+    rate = parseFloat(row?.value || '4.00');
+  } else if (model === 'seedance-2.0-fast') {
+    const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get();
+    rate = parseFloat(row?.value || '4.00');
+  } else if (model === 'sora-v4-fast') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
+    rate = parseFloat(row?.value || '0.189');
+  } else if (model === 'sora-v4-pro' || model === 'seedance-2.0') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_pro_rate')).get();
+    rate = parseFloat(row?.value || '0.25');
+  } else {
+    const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
+    const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
+    const BASE_RATE: Record<string, number> = {
+      '480p': parseFloat(rate480?.value || '0.03'),
+      '720p': parseFloat(rate720?.value || '0.05'),
+    };
+    const seriesMultiplier = meta?.series === '1.5' ? 1.2 : 1.0;
+    rate = Math.round((BASE_RATE[resolution] || BASE_RATE['720p']) * seriesMultiplier * 100) / 100;
+  }
+
+  const isFlatRate = ['sora-v3-pro', 'lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'seedance-2.0-fast'].includes(model);
+
+  const baseUrl = channel.baseUrl.replace(/\/+$/, '');
+  const isOmni = model.startsWith('omni-flash');
+  const isSoraV3 = model === 'sora-v3-pro';
+  const isSeedanceFast = model === 'seedance-2.0-fast';
+  const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
+  const isSudaShui = meta?.series === 'sudashui';
+
+  const headers: Record<string, string> = {};
+  if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+
+  (async () => {
+    console.log(`[video-recover] Starting polling for video task ${contentId} (videoId: ${videoId})`);
+    const pollInterval = 5000;
+    const startTime = Date.now();
+
+    while (true) {
+      const currentRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
+      if (!currentRecord || currentRecord.status !== 'processing') {
+        console.log(`[video-recover] Task ${contentId} is no longer in processing status (or was deleted)`);
+        break;
+      }
+
+      await new Promise(r => setTimeout(r, pollInterval));
+
+      try {
+        let pollUrl = `${baseUrl}/v1/videos/${videoId}`;
+        if (isOmni || isSudaShui) {
+          pollUrl = `${baseUrl}/v1/video/generations/${videoId}`;
+        }
+
+        const pollResp = await fetch(pollUrl, {
+          headers,
+          signal: AbortSignal.timeout(15_000),
+        });
+
+        if (!pollResp.ok) {
+          console.warn(`[video-recover] Poll returned ${pollResp.status}`);
+          continue;
+        }
+
+        const statusData = await pollResp.json() as any;
+        let taskStatus = statusData.status;
+        let progress = statusData.progress || 0;
+        let resultUrl = '';
+        let errMsg = '';
+
+        if (isOmni || isSudaShui) {
+          const dataBlock = statusData.data || {};
+          taskStatus = (dataBlock.status || statusData.status || '').toLowerCase();
+          const progressStr = dataBlock.progress || statusData.progress || '0%';
+          progress = parseInt(progressStr) || 0;
+          if (taskStatus === 'success' || taskStatus === 'completed') {
+            resultUrl = dataBlock.result_url || (dataBlock.data && dataBlock.data.url) || statusData.result_url || statusData.url;
+          } else if (taskStatus === 'failure' || taskStatus === 'failed') {
+            const errVal = dataBlock.error || statusData.error;
+            const detailMsg = (typeof errVal === 'object' && errVal) ? errVal.message : errVal;
+            errMsg = dataBlock.fail_reason || detailMsg || '视频生成失败';
+          }
+        } else if (isSeedanceFast) {
+          const outerData = statusData.data || {};
+          const isNested = statusData.data && statusData.data.status !== undefined;
+          if (isNested) {
+            const rawStatus = (outerData.status || '').toLowerCase();
+            if (rawStatus === 'not_start') {
+              taskStatus = 'pending';
+              progress = 0;
+            } else if (rawStatus === 'in_progress') {
+              taskStatus = 'in_progress';
+              progress = statusData.progress || outerData.progress || 50;
+            } else if (rawStatus === 'success') {
+              taskStatus = 'success';
+              progress = 100;
+              const innerData = outerData.data || {};
+              const content = innerData.content || {};
+              resultUrl = content.video_url || '';
+            } else if (rawStatus === 'failure') {
+              taskStatus = 'failure';
+              errMsg = '视频生成失败';
+            } else {
+              taskStatus = rawStatus;
+            }
+          } else {
+            taskStatus = (statusData.status || '').toLowerCase();
+            const rawProgress = statusData.progress;
+            if (rawProgress !== undefined && rawProgress !== null) {
+              progress = typeof rawProgress === 'number' ? rawProgress : (parseInt(String(rawProgress)) || 0);
+            }
+            if (taskStatus === 'completed' || taskStatus === 'success') {
+              resultUrl = statusData.video_url || statusData.url || statusData.result_url
+                || (Array.isArray(statusData.outputs) && statusData.outputs[0]?.url)
+                || `${baseUrl}/v1/files/video?id=${videoId}`;
+            } else if (taskStatus === 'failed' || taskStatus === 'failure') {
+              const errVal = statusData.error;
+              const detailMsg = (typeof errVal === 'object' && errVal) ? errVal.message : errVal;
+              errMsg = detailMsg || statusData.failure_reason || statusData.fail_reason || '视频生成失败';
+            }
+          }
+        } else {
+          taskStatus = (statusData.status || '').toLowerCase();
+          const rawProgress = statusData.progress;
+          if (rawProgress !== undefined && rawProgress !== null) {
+            progress = typeof rawProgress === 'number' ? rawProgress : (parseInt(String(rawProgress)) || 0);
+          }
+          if (taskStatus === 'completed' || taskStatus === 'success') {
+            resultUrl = statusData.video_url || statusData.url || statusData.result_url
+              || (Array.isArray(statusData.outputs) && statusData.outputs[0]?.url)
+              || `${baseUrl}/v1/files/video?id=${videoId}`;
+          } else if (taskStatus === 'failed' || taskStatus === 'failure') {
+            const errVal = statusData.error;
+            const detailMsg = (typeof errVal === 'object' && errVal) ? errVal.message : errVal;
+            errMsg = detailMsg || statusData.failure_reason || statusData.fail_reason || '视频生成失败';
+          }
+        }
+
+        console.log(`[video-recover] Polling task ${contentId}: status=${taskStatus} progress=${progress}%`);
+
+        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'in_progress') {
+          try {
+            const meta = JSON.parse(currentRecord.metadata || '{}');
+            meta.progress = progress;
+            db.update(contents).set({ metadata: JSON.stringify(meta) }).where(eq(contents.id, contentId)).run();
+          } catch {}
+        } else if (taskStatus === 'completed' || taskStatus === 'success') {
+          console.log(`[video-recover] ✅ Generating completed: ${resultUrl}`);
+          logUsage(record.userId, 'generate_video', undefined, Date.now() - startTime);
+          const cost = isFlatRate ? rate : (Math.round(rate * video_length * 100) / 100);
+          if (cost > 0) {
+            BalanceService.deduct(record.userId, cost, 'generate_video');
+          }
+          db.update(contents).set({
+            status: 'completed',
+            resultUrl: resultUrl || null,
+            cost: cost
+          }).where(eq(contents.id, contentId)).run();
+          break;
+        } else if (taskStatus === 'failed' || taskStatus === 'failure') {
+          console.error(`[video-recover] ❌ Generating failed: ${errMsg}`);
+          db.update(contents).set({ status: 'failed' }).where(eq(contents.id, contentId)).run();
+          break;
+        }
+      } catch (err: any) {
+        console.warn(`[video-recover] Polling exception: ${err.message}`);
+      }
+    }
+
+    activePolls.delete(contentId);
+    console.log(`[video-recover] Task ${contentId} polling terminated.`);
+  })();
+}
+
+export function resumeAllPendingVideoTasks() {
+  console.log('🔍 [video-recover] Scanning for stuck processing video tasks...');
+  try {
+    const pendingTasks = db.select().from(contents)
+      .where(and(eq(contents.status, 'processing'), eq(contents.type, 'video')))
+      .all();
+    console.log(`🔍 [video-recover] Found ${pendingTasks.length} pending video tasks to recover`);
+
+    pendingTasks.forEach((record: any) => {
+      const contentId = record.id;
+      if (!activePolls.has(contentId)) {
+        resumePollForTask(contentId, record);
+      }
+    });
+  } catch (err: any) {
+    console.error('⚠️ [video-recover] Scan pending tasks failed:', err.message);
+  }
+}
 
 export default router;

@@ -11,6 +11,14 @@ async function main() {
   // 创建 Express 应用
   const app = await createApp();
 
+  // 启动后恢复进行中的后台视频任务
+  try {
+    const { resumeAllPendingVideoTasks } = await import('./routes/video.js');
+    resumeAllPendingVideoTasks();
+  } catch (e: any) {
+    console.error('⚠️ [video-recover] 恢复视频任务失败:', e.message);
+  }
+
   // 启动
   app.listen(env.PORT, '0.0.0.0', () => {
     console.log(`✅ 服务器运行于 http://localhost:${env.PORT}`);
