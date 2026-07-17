@@ -189,7 +189,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'sdas-d7-seedance-2.0-face-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-mo-seedance-2.0-dj-fast': { series: 'sudashui', allowedSeconds: [5, 10, 15], requireRef: false },
   'seedance-2.0-fast': { series: 'seedance-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
-  'veo-omni-flash': { series: 'veo-omni-flash', allowedSeconds: [10], requireRef: false },
+  'veo-omni-flash': { series: 'veo-omni-flash', allowedSeconds: [10], requireRef: true },
 };
 
 const DEFAULT_VIDEO_MODELS = [
