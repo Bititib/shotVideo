@@ -872,24 +872,43 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           }
         } else if (isSeedanceFast) {
           const outerData = status.data || {};
-          const rawStatus = (outerData.status || '').toLowerCase();
-          if (rawStatus === 'not_start') {
-            taskStatus = 'pending';
-            progress = 0;
-          } else if (rawStatus === 'in_progress') {
-            taskStatus = 'in_progress';
-            progress = 50;
-          } else if (rawStatus === 'success') {
-            taskStatus = 'success';
-            progress = 100;
-            const innerData = outerData.data || {};
-            const content = innerData.content || {};
-            resultUrl = content.video_url || '';
-          } else if (rawStatus === 'failure') {
-            taskStatus = 'failure';
-            errMsg = '视频生成失败';
+          const isNested = status.data && status.data.status !== undefined;
+          
+          if (isNested) {
+            const rawStatus = (outerData.status || '').toLowerCase();
+            if (rawStatus === 'not_start') {
+              taskStatus = 'pending';
+              progress = 0;
+            } else if (rawStatus === 'in_progress') {
+              taskStatus = 'in_progress';
+              progress = status.progress || outerData.progress || 50;
+            } else if (rawStatus === 'success') {
+              taskStatus = 'success';
+              progress = 100;
+              const innerData = outerData.data || {};
+              const content = innerData.content || {};
+              resultUrl = content.video_url || '';
+            } else if (rawStatus === 'failure') {
+              taskStatus = 'failure';
+              errMsg = '视频生成失败';
+            } else {
+              taskStatus = rawStatus;
+            }
           } else {
-            taskStatus = rawStatus;
+            taskStatus = (status.status || '').toLowerCase();
+            const rawProgress = status.progress;
+            if (rawProgress !== undefined && rawProgress !== null) {
+              progress = typeof rawProgress === 'number' ? rawProgress : (parseInt(String(rawProgress)) || 0);
+            }
+            if (taskStatus === 'completed' || taskStatus === 'success') {
+              resultUrl = status.video_url || status.url || status.result_url
+                || (Array.isArray(status.outputs) && status.outputs[0]?.url)
+                || `${baseUrl}/v1/files/video?id=${videoId}`;
+            } else if (taskStatus === 'failed' || taskStatus === 'failure') {
+              const errVal = status.error;
+              const detailMsg = (typeof errVal === 'object' && errVal) ? errVal.message : errVal;
+              errMsg = detailMsg || status.failure_reason || status.fail_reason || '视频生成失败';
+            }
           }
         } else {
           taskStatus = (status.status || '').toLowerCase();
