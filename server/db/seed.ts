@@ -699,7 +699,7 @@ export async function initDatabase() {
   // 9) 自动向已存在且包含 sudashuiapi.com 或 pidoi.com 的渠道添加支持的模型 ID，防止路由错误
   try {
     const sdaModels = ['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'xh-sdas-fast-933-720p', 'xh-sdas-pro-933-720p'];
-    const pidoiModels = ['sora-v3-pro', 'sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast', 'veo-omni-flash'];
+    const pidoiModels = ['sora-v3-pro', 'sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast'];
     const allChannels = db.select().from(channels).all();
     for (const c of allChannels) {
       let currentModels: string[] = [];
@@ -717,7 +717,7 @@ export async function initDatabase() {
           }
         }
       } else if (c.baseUrl && c.baseUrl.includes('pidoi.com')) {
-        const cleaned = currentModels.filter(m => !['seedance-2.0'].includes(m));
+        const cleaned = currentModels.filter(m => !['seedance-2.0', 'veo-omni-flash'].includes(m));
         if (cleaned.length !== currentModels.length) {
           currentModels = cleaned;
           updated = true;
@@ -740,6 +740,38 @@ export async function initDatabase() {
     }
   } catch (err: any) {
     console.error('⚠️ 自动修补渠道模型出错:', err.message);
+  }
+
+  // 10) 保证 NewToken 渠道存在并且包含 veo-omni-flash 支持
+  try {
+    const existingNewToken = db.select().from(channels).where(eq(channels.baseUrl, 'https://newtoken.club')).get();
+    if (!existingNewToken) {
+      db.insert(channels).values({
+        name: 'NewToken 渠道',
+        type: 'openai',
+        baseUrl: 'https://newtoken.club',
+        apiKey: 'sk-22Vcwozkj2VvDsiTqr988NElCXPoTLFXg4tWWrGdYAWxac5o',
+        supportedModels: JSON.stringify(['veo-omni-flash']),
+        status: 1,
+        priority: 0,
+        weight: 1,
+        maxRetries: 3,
+        timeout: 120000,
+      }).run();
+      console.log('📦 已自动迁移：成功创建 NewToken 渠道并绑定 veo-omni-flash');
+    } else {
+      db.update(channels)
+        .set({
+          apiKey: 'sk-22Vcwozkj2VvDsiTqr988NElCXPoTLFXg4tWWrGdYAWxac5o',
+          supportedModels: JSON.stringify(['veo-omni-flash']),
+          updatedAt: new Date().toISOString()
+        })
+        .where(eq(channels.id, existingNewToken.id))
+        .run();
+      console.log('🔄 已自动迁移：更新 NewToken 渠道的 API Key 并指定支持 veo-omni-flash');
+    }
+  } catch (err: any) {
+    console.error('⚠️ 初始化 NewToken 渠道出错:', err.message);
   }
 
   console.log('✅ 数据库初始化完成');
