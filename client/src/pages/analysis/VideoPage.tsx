@@ -38,7 +38,7 @@ function getVideoPlayUrl(url: string | null) {
 }
 
 const isFlatRateModel = (modelId: string) => {
-  return ['sora-v3-pro', 'sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p', 'seedance-2.0-fast', 'veo-omni-flash', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(modelId);
+  return ['sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p', 'seedance-2.0-fast', 'veo-omni-flash', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(modelId);
 };
 interface WoodenFishLoaderProps {
   progress: number;
@@ -191,10 +191,6 @@ const ALL_DURATIONS = [
   { value: 15, label: '15 秒' }, { value: 16, label: '16 秒' },
   { value: 20, label: '20 秒' }, { value: 30, label: '30 秒' },
 ];
-const isSoraV3Model = (modelId: string) => {
-  return modelId === 'sora-v3-pro';
-};
-
 const isSoraV4Model = (modelId: string) => {
   return modelId === 'seedance-2.0-fast' || modelId === 'seedance-2.0' || modelId === 'sora-v4-fast' || modelId === 'sora-v4-pro';
 };
@@ -202,7 +198,6 @@ const isSoraV4Model = (modelId: string) => {
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId.startsWith('sd-') || modelId.startsWith('seedance-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (isSoraV4Model(modelId)) return 4;
-  if (isSoraV3Model(modelId)) return 9;
   if (modelId === 'omni-flash') return 7;
   if (modelId === 'omni-flash-vref') return 5;
   if (modelId === 'veo-omni-flash') return 6;
@@ -1092,7 +1087,7 @@ export default function VideoPage() {
                   </div>
                   <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
 
-                  {(selectedModel === 'omni-flash-vref' || isSoraV4Model(selectedModel) || isSoraV3Model(selectedModel) || selectedModel?.startsWith('sd-') || selectedModel?.startsWith('seedance-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && (
+                  {(selectedModel === 'omni-flash-vref' || isSoraV4Model(selectedModel) || selectedModel?.startsWith('sd-') || selectedModel?.startsWith('seedance-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && (
                     <>
                       <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideo ? '(已上传)' : ''}
@@ -1100,7 +1095,7 @@ export default function VideoPage() {
                       <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
                     </>
                   )}
-                  {(isSoraV3Model(selectedModel) || selectedModel?.startsWith('sd-') || selectedModel?.startsWith('seedance-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && (
+                  {(selectedModel?.startsWith('sd-') || selectedModel?.startsWith('seedance-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && (
                     <>
                       <button onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 {referenceAudio ? '(已上传)' : ''}
@@ -1108,7 +1103,7 @@ export default function VideoPage() {
                       <input ref={audioFileInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
                     </>
                   )}
-                  {(isSoraV3Model(selectedModel) || isSoraV4Model(selectedModel)) && (
+                  {isSoraV4Model(selectedModel) && (
                     <>
                       <button onClick={() => firstFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-emerald-400" /> 首帧 {firstFrame ? '(已上传)' : ''}

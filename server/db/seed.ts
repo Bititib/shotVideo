@@ -156,7 +156,6 @@ async function syncModelsFromAPI() {
     { provider: 'omni', modelId: 'omni-flash-vref', displayName: 'Omni Flash Vref', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-hn-sd2.0-720p', displayName: 'Seedance 2.0 满血-HN', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-hn-sd2.0-fast-720p', displayName: 'Seedance 2.0 Fast-HN', capabilities: JSON.stringify(['video']) },
-    { provider: 'pidoi', modelId: 'sora-v3-pro', displayName: 'Sora V3 Pro', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'sora-v4-fast', displayName: 'Sora V4 Fast', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'sora-v4-pro', displayName: 'Sora V4 Pro', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'seedance-2.0-fast', displayName: 'Seedance 2.0 Fast', capabilities: JSON.stringify(['video']) },
@@ -190,7 +189,8 @@ async function syncModelsFromAPI() {
       'lg-seedance-2.0-fast',
       'sdas-d7-seedance-2.0-face-720p',
       'sdas-mo-seedance-2.0-dj-fast',
-      'sd2-c8'
+      'sd2-c8',
+      'sora-v3-pro'
     ];
     for (const modelId of deadModels) {
       db.delete(models).where(eq(models.modelId, modelId)).run();
@@ -572,7 +572,8 @@ export async function initDatabase() {
     'lg_seedance_fast_rate',
     'sdas_d7_face_rate',
     'sdas_mo_dj_rate',
-    'sd2_c8_rate'
+    'sd2_c8_rate',
+    'sora_v3_pro_rate'
   ];
   for (const k of keysToDelete) {
     db.delete(settings).where(eq(settings.key, k)).run();
@@ -586,7 +587,6 @@ export async function initDatabase() {
     { key: 'omni_vref_rate_1080p', value: '2.20', label: 'Omni Vref 1080p费率(¥/秒)' },
     { key: 'sdas_hn_sd20_720p_rate', value: '3.80', label: 'Seedance 2.0 满血-HN费率(¥/次)' },
     { key: 'sdas_hn_sd20_fast_720p_rate', value: '2.80', label: 'Seedance 2.0 Fast-HN费率(¥/次)' },
-    { key: 'sora_v3_pro_rate', value: '4.00', label: 'Sora V3 Pro 费率(¥/次)' },
     { key: 'sora_v4_fast_rate', value: '0.189', label: 'Sora V4 Fast 费率(¥/秒)' },
     { key: 'sora_v4_pro_rate', value: '0.25', label: 'Sora V4 Pro 费率(¥/秒)' },
     { key: 'seedance_2_0_fast_rate', value: '4.00', label: 'Seedance 2.0 Fast 费率(¥/次)' },
@@ -715,7 +715,7 @@ export async function initDatabase() {
   // 9) 自动向已存在且包含 sudashuiapi.com 或 pidoi.com 的渠道添加支持的模型 ID，防止路由错误
   try {
     const sdaModels = ['sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p'];
-    const pidoiModels = ['sora-v3-pro', 'sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast'];
+    const pidoiModels = ['sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast'];
     const allChannels = db.select().from(channels).all();
     for (const c of allChannels) {
       let currentModels: string[] = [];
