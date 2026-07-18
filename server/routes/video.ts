@@ -1218,13 +1218,47 @@ router.get('/download', async (req: Request, res: Response) => {
 
   try {
     const filename = req.query.filename as string || 'video.mp4';
+
+    // 1. 判断是否是本地已存储的视频文件（如果是，直接使用 res.sendFile 返回，避免 fetch 报错）
+    let isLocalFile = false;
+    let localFilePath = '';
+
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      isLocalFile = true;
+      const cleanPath = url.replace(/^.*\/uploads\//, '');
+      localFilePath = path.join(process.cwd(), 'data/uploads', cleanPath);
+    } else {
+      const uploadsIndex = url.indexOf('/uploads/');
+      if (uploadsIndex !== -1) {
+        isLocalFile = true;
+        const cleanPath = url.substring(uploadsIndex + '/uploads/'.length);
+        localFilePath = path.join(process.cwd(), 'data/uploads', cleanPath);
+      }
+    }
+
+    if (isLocalFile) {
+      if (fs.existsSync(localFilePath)) {
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+        return res.sendFile(localFilePath);
+      } else {
+        return res.status(404).send('Local video file not found');
+      }
+    }
+
+    // 2. 如果是上游在线视频，代理下载并处理授权头
     const headers: Record<string, string> = {};
     if (url.includes('grokai') || url.includes('/v1/files/video')) {
       const channel = findVideoChannel('grok-imagine-video');
       if (channel?.apiKey) {
         headers['Authorization'] = `Bearer ${channel.apiKey}`;
       }
+    } else if (url.includes('llm.chre3.com')) {
+      const channel = findVideoChannel('sd2-c7');
+      if (channel?.apiKey) {
+        headers['Authorization'] = `Bearer ${channel.apiKey}`;
+      }
     }
+
     const response = await fetch(url, { headers });
     if (!response.ok) throw new Error(`Failed to fetch video: ${response.statusText}`);
 
