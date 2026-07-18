@@ -16,8 +16,8 @@ FROM node:22-alpine AS production
 
 WORKDIR /app
 
-# 安装 better-sqlite3 编译依赖
-RUN apk add --no-cache python3 make g++
+# 安装 better-sqlite3 编译依赖 + FFmpeg（视频 H.265→H.264 转码必需）
+RUN apk add --no-cache python3 make g++ ffmpeg
 
 # 仅安装生产依赖
 COPY package.json package-lock.json ./
