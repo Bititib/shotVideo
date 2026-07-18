@@ -38,7 +38,7 @@ function getVideoPlayUrl(url: string | null) {
 }
 
 const isFlatRateModel = (modelId: string) => {
-  return ['sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p', 'seedance-2.0-fast', 'veo-omni-flash', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(modelId);
+  return ['sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p', 'seedance-2.0-fast', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(modelId);
 };
 interface WoodenFishLoaderProps {
   progress: number;

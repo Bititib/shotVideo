@@ -452,7 +452,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   }
 
   // 预估费用并检查余额
-  const isFlatRate = ['sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p', 'seedance-2.0-fast', 'veo-omni-flash', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(model);
+  const isFlatRate = ['sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p', 'seedance-2.0-fast', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(model);
   const estimatedRate = rate;
   const estimatedSeconds = model === 'omni-flash-vref' ? 10 : (Number(video_length) || 6);
   const estimatedCost = isFlatRate ? estimatedRate : (Math.round(estimatedRate * estimatedSeconds * 100) / 100);
@@ -1313,7 +1313,7 @@ export function resumePollForTask(contentId: number, record: any) {
     rate = Math.round((BASE_RATE[resolution] || BASE_RATE['720p']) * seriesMultiplier * 100) / 100;
   }
 
-  const isFlatRate = ['sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p', 'seedance-2.0-fast', 'veo-omni-flash', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(model);
+  const isFlatRate = ['sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p', 'seedance-2.0-fast', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(model);
 
   const baseUrl = channel.baseUrl.replace(/\/+$/, '');
   const isOmni = model.startsWith('omni-flash');

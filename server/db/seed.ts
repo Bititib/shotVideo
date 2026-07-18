@@ -573,7 +573,8 @@ export async function initDatabase() {
     'sdas_d7_face_rate',
     'sdas_mo_dj_rate',
     'sd2_c8_rate',
-    'sora_v3_pro_rate'
+    'sora_v3_pro_rate',
+    'veo_omni_flash_rate'
   ];
   for (const k of keysToDelete) {
     db.delete(settings).where(eq(settings.key, k)).run();
@@ -590,7 +591,7 @@ export async function initDatabase() {
     { key: 'sora_v4_fast_rate', value: '0.189', label: 'Sora V4 Fast 费率(¥/秒)' },
     { key: 'sora_v4_pro_rate', value: '0.25', label: 'Sora V4 Pro 费率(¥/秒)' },
     { key: 'seedance_2_0_fast_rate', value: '4.00', label: 'Seedance 2.0 Fast 费率(¥/次)' },
-    { key: 'veo_omni_flash_rate', value: '5.00', label: 'Veo Omni Flash 费率(¥/次)' },
+    { key: 'veo_omni_flash_rate', value: '0.50', label: 'Veo Omni Flash 费率(¥/秒)' },
     { key: 'sd2_c7_rate', value: '0.50', label: 'Seedance 2.0 c7 费率(¥/次)' },
     { key: 'seedance_2_0_720p_rate', value: '3.00', label: 'Seedance 2.0 720p 费率(¥/次)' },
     { key: 'seedance_2_0_fast_720p_rate', value: '1.50', label: 'Seedance 2.0 Fast 720p 费率(¥/次)' },
