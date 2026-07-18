@@ -1238,8 +1238,7 @@ router.get('/download', async (req: Request, res: Response) => {
 
     if (isLocalFile) {
       if (fs.existsSync(localFilePath)) {
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
-        return res.sendFile(localFilePath);
+        return res.download(localFilePath, filename);
       } else {
         return res.status(404).send('Local video file not found');
       }
