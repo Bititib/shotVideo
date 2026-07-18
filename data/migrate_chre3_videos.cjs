@@ -41,6 +41,23 @@ async function migrateOne(row) {
     return;
   }
 
+  // 优先尝试从本地播放缓存 (video_cache) 恢复（应对上游链接过期 502 的情况）
+  const hash = crypto.createHash('md5').update(result_url).digest('hex');
+  const cachePath = path.join(process.cwd(), 'data/video_cache', `${hash}.mp4`);
+
+  if (fs.existsSync(cachePath)) {
+    console.log(`  [缓存命中] ID=${id}: 发现本地播放缓存 ${hash}.mp4，直接复制使用`);
+    try {
+      fs.copyFileSync(cachePath, finalPath);
+      const localUrl = `/uploads/${finalFilename}`;
+      db.prepare('UPDATE contents SET result_url = ? WHERE id = ?').run(localUrl, id);
+      console.log(`  [完成] ID=${id}: → ${localUrl}`);
+      return;
+    } catch (copyErr) {
+      console.error(`  [错误] 复制缓存文件失败: ${copyErr.message}`);
+    }
+  }
+
   const uuid = crypto.randomUUID();
   const tempDownload = path.join(uploadDir, `tmp_migrate_dl_${uuid}.mp4`);
   const tempTranscoded = path.join(uploadDir, `tmp_migrate_tc_${uuid}.mp4`);
