@@ -218,6 +218,45 @@ function findVideoChannel(modelId: string) {
   return null;
 }
 
+/**
+ * 自动将 Grok 视频下载并本地化保存到 `data/uploads` 目录中，防止上游链接失效或鉴权失败
+ */
+export async function downloadAndLocalizeGrokVideo(url: string, videoId: string, model: string): Promise<string> {
+  if (!url) return '';
+  // 如果已经是本地相对路径或本地 uploads 路径，无需重复本地化
+  if (url.startsWith('/') || url.includes('/uploads/')) {
+    return url;
+  }
+
+  console.log(`[video] 开始本地化 Grok 视频: ${url} (task: ${videoId})`);
+  
+  const channel = findVideoChannel(model);
+  const headers: Record<string, string> = {};
+  if (channel?.apiKey) {
+    headers['Authorization'] = `Bearer ${channel.apiKey}`;
+  }
+
+  const response = await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Grok video from upstream: ${response.statusText}`);
+  }
+
+  const uploadDir = path.join(process.cwd(), 'data/uploads');
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+
+  const filename = `grok_${videoId}.mp4`;
+  const destPath = path.join(uploadDir, filename);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  fs.writeFileSync(destPath, buffer);
+
+  const localizedUrl = `/uploads/${filename}`;
+  console.log(`[video] Grok 视频本地化成功: ${localizedUrl}`);
+  return localizedUrl;
+}
+
+
 /** GET /api/video/models — 可用的视频模型列表（公开，不需要登录） */
 router.get('/models', (_req: Request, res: Response) => {
   // 从数据库动态拉取所有启用且具备 'video' 能力的模型
@@ -1086,7 +1125,14 @@ router.get('/download', async (req: Request, res: Response) => {
 
   try {
     const filename = req.query.filename as string || 'video.mp4';
-    const response = await fetch(url);
+    const headers: Record<string, string> = {};
+    if (url.includes('grokai') || url.includes('/v1/files/video')) {
+      const channel = findVideoChannel('grok-imagine-video');
+      if (channel?.apiKey) {
+        headers['Authorization'] = `Bearer ${channel.apiKey}`;
+      }
+    }
+    const response = await fetch(url, { headers });
     if (!response.ok) throw new Error(`Failed to fetch video: ${response.statusText}`);
 
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
@@ -1119,6 +1165,38 @@ if (!fs.existsSync(videoCacheDir)) {
   fs.mkdirSync(videoCacheDir, { recursive: true });
 }
 
+// 自动清理 3 天前的缓存文件
+export function cleanVideoCache() {
+  console.log('[video-cache] 开始自动扫描清理 3 天前的过期视频缓存...');
+  try {
+    if (!fs.existsSync(videoCacheDir)) return;
+    const files = fs.readdirSync(videoCacheDir);
+    const now = Date.now();
+    const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+    let count = 0;
+    for (const file of files) {
+      const filePath = path.join(videoCacheDir, file);
+      const stat = fs.statSync(filePath);
+      if (stat.isFile()) {
+        const age = now - stat.mtimeMs;
+        if (age > threeDaysMs) {
+          fs.unlinkSync(filePath);
+          count++;
+        }
+      }
+    }
+    if (count > 0) {
+      console.log(`[video-cache] 缓存清理完成，共删除了 ${count} 个过期视频缓存文件`);
+    }
+  } catch (err: any) {
+    console.error('[video-cache] 自动清理视频缓存失败:', err.message);
+  }
+}
+
+// 启动时清理，并设定每 12 小时执行一次
+cleanVideoCache();
+setInterval(cleanVideoCache, 12 * 60 * 60 * 1000);
+
 // 视频播放代理：检测并转码 H.265 (HEVC) -> H.264 (AVC)，并支持 206 Partial Content 分片加载
 router.get('/play', async (req: Request, res: Response) => {
   const url = req.query.url as string;
@@ -1137,7 +1215,14 @@ router.get('/play', async (req: Request, res: Response) => {
     
     // 下载原始视频
     const tempOriginalPath = path.join(videoCacheDir, `${hash}_temp.mp4`);
-    const fetchResp = await fetch(url);
+    const headers: Record<string, string> = {};
+    if (url.includes('grokai') || url.includes('/v1/files/video')) {
+      const channel = findVideoChannel('grok-imagine-video');
+      if (channel?.apiKey) {
+        headers['Authorization'] = `Bearer ${channel.apiKey}`;
+      }
+    }
+    const fetchResp = await fetch(url, { headers });
     if (!fetchResp.ok) throw new Error(`无法获取原始视频流: ${fetchResp.statusText}`);
     const buffer = Buffer.from(await fetchResp.arrayBuffer());
     fs.writeFileSync(tempOriginalPath, buffer);
