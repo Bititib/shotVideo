@@ -753,6 +753,9 @@ export default function VideoPage() {
         last_frame: lastFrame || undefined,
       },
       (event: VideoSSEEvent) => {
+        // 如果已经被主动取消，忽略后续所有事件以防竞态将 ID 改为 db_ 后台轮询
+        if (!abortRef.current.has(taskId)) return;
+
         switch (event.type) {
           case 'content_id':
             updateTask({ dbId: event.contentId });
