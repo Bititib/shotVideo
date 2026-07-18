@@ -565,16 +565,12 @@ export async function initDatabase() {
 
   // 强制清理与修正数据库中废弃的多余 Sora 4 / Seedance 费率设置项
   const keysToDelete = [
-    'sora_v4_720p_rate',
-    'sora_v4_480p_rate',
     'sdas_fast_rate',
     'sdas_pro_rate',
     'lg_seedance_fast_rate',
     'sdas_d7_face_rate',
     'sdas_mo_dj_rate',
-    'sd2_c8_rate',
-    'sora_v3_pro_rate',
-    'veo_omni_flash_rate'
+    'sd2_c8_rate'
   ];
   for (const k of keysToDelete) {
     db.delete(settings).where(eq(settings.key, k)).run();
