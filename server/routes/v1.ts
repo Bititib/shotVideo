@@ -67,6 +67,19 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'sdas-pg-s2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_pg_s20_fast_rate')).get();
     return parseFloat(row?.value || '1.95');
+  } else if (model === 'jimeng-video-seedance-2.0-fast') {
+    const row = db.select().from(settings).where(eq(settings.key, 'jimeng_video_seedance_2_0_fast_rate')).get();
+    return parseFloat(row?.value || '0.40');
+  } else if (model === 'jimeng-video-seedance-2.0-vip') {
+    const key = resolution === '1080p' ? 'jimeng_video_seedance_2_0_vip_rate_1080p' : 'jimeng_video_seedance_2_0_vip_rate_720p';
+    const row = db.select().from(settings).where(eq(settings.key, key)).get();
+    return parseFloat(row?.value || (resolution === '1080p' ? '1.54' : '0.616'));
+  } else if (model === 'seedance2.0-full-9img') {
+    const row = db.select().from(settings).where(eq(settings.key, 'seedance20_full_9img_rate')).get();
+    return parseFloat(row?.value || '4.50');
+  } else if (model.startsWith('sora2-')) {
+    const row = db.select().from(settings).where(eq(settings.key, 'sora2_rate')).get();
+    return parseFloat(row?.value || '0.60');
   } else if (model === 'sora-v4-fast' || model === 'seedance-2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
     return parseFloat(row?.value || '0.189');

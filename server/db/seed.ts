@@ -161,7 +161,12 @@ async function syncModelsFromAPI() {
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']) },
-    { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']) }
+    { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']) },
+    { provider: 'openai', modelId: 'jimeng-video-seedance-2.0-fast', displayName: 'Jimeng Seedance 2.0 Fast (888API)', capabilities: JSON.stringify(['video']) },
+    { provider: 'openai', modelId: 'jimeng-video-seedance-2.0-vip', displayName: 'Jimeng Seedance 2.0 VIP (888API)', capabilities: JSON.stringify(['video']) },
+    { provider: 'openai', modelId: 'seedance2.0-full-9img', displayName: 'Seedance 2.0 Full 9图 (888API)', capabilities: JSON.stringify(['video']) },
+    { provider: 'openai', modelId: 'sora2-8s-16x9', displayName: 'Sora 2 横屏 8s (888API)', capabilities: JSON.stringify(['video']) },
+    { provider: 'openai', modelId: 'sora2-8s-9x16', displayName: 'Sora 2 竖屏 8s (888API)', capabilities: JSON.stringify(['video']) }
   );
 
   // 同步或插入模型
@@ -602,6 +607,11 @@ export async function initDatabase() {
     { key: 'sdas_wf_sd20_fast_933_720p_rate', value: '1.80', label: 'Seedance 2.0 Fast 933 (720p)费率(¥/秒)' },
     { key: 'sdas_wf_sd20_pro_933_480p_rate', value: '1.80', label: 'Seedance 2.0 Pro 933 (480p)费率(¥/秒)' },
     { key: 'sdas_pg_s20_fast_rate', value: '1.95', label: 'Seedance 2.0 PG Fast 费率(¥/次)' },
+    { key: 'jimeng_video_seedance_2_0_fast_rate', value: '0.40', label: 'Jimeng Seedance 2.0 Fast 费率(¥/秒)' },
+    { key: 'jimeng_video_seedance_2_0_vip_rate_720p', value: '0.616', label: 'Jimeng Seedance 2.0 VIP 720p费率(¥/秒)' },
+    { key: 'jimeng_video_seedance_2_0_vip_rate_1080p', value: '1.54', label: 'Jimeng Seedance 2.0 VIP 1080p费率(¥/秒)' },
+    { key: 'seedance20_full_9img_rate', value: '4.50', label: 'Seedance 2.0 Full 9图 费率(¥/次)' },
+    { key: 'sora2_rate', value: '0.60', label: 'Sora 2 视频生成费率(¥/次)' },
   ];
   for (const s of omniSettings) {
     const existing = db.select().from(settings).where(eq(settings.key, s.key)).get();
@@ -834,6 +844,45 @@ export async function initDatabase() {
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 4月天 渠道出错:', err.message);
+  }
+
+  // 12) 保证 888API 渠道存在并且包含相应支持的模型
+  try {
+    const existing888 = db.select().from(channels).where(eq(channels.baseUrl, 'https://888api.xin')).get();
+    const models888 = [
+      'jimeng-video-seedance-2.0-fast',
+      'jimeng-video-seedance-2.0-vip',
+      'seedance2.0-full-9img',
+      'sora2-8s-16x9',
+      'sora2-8s-9x16'
+    ];
+    if (!existing888) {
+      db.insert(channels).values({
+        name: '888API 渠道',
+        type: 'openai',
+        baseUrl: 'https://888api.xin',
+        apiKey: 'sk-888api-placeholder-key',
+        supportedModels: JSON.stringify(models888),
+        status: 1,
+        priority: 0,
+        weight: 1,
+        maxRetries: 3,
+        timeout: 120000,
+      }).run();
+      console.log('📦 已自动迁移：成功创建 888API 渠道');
+    } else {
+      db.update(channels)
+        .set({
+          name: '888API 渠道',
+          supportedModels: JSON.stringify(models888),
+          updatedAt: new Date().toISOString()
+        })
+        .where(eq(channels.id, existing888.id))
+        .run();
+      console.log('🔄 已自动迁移：更新 888API 渠道模型列表');
+    }
+  } catch (err: any) {
+    console.error('⚠️ 初始化 888API 渠道出错:', err.message);
   }
 
   console.log('✅ 数据库初始化完成');
