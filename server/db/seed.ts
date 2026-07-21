@@ -162,11 +162,9 @@ async function syncModelsFromAPI() {
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']) },
-    { provider: 'openai', modelId: 'jimeng-video-seedance-2.0-fast', displayName: 'Jimeng Seedance 2.0 Fast (888API)', capabilities: JSON.stringify(['video']) },
-    { provider: 'openai', modelId: 'jimeng-video-seedance-2.0-vip', displayName: 'Jimeng Seedance 2.0 VIP (888API)', capabilities: JSON.stringify(['video']) },
     { provider: 'openai', modelId: 'seedance2.0-full-9img', displayName: 'Seedance 2.0 Full 9图 (888API)', capabilities: JSON.stringify(['video']) },
-    { provider: 'openai', modelId: 'sora2-8s-16x9', displayName: 'Sora 2 横屏 8s (888API)', capabilities: JSON.stringify(['video']) },
-    { provider: 'openai', modelId: 'sora2-8s-9x16', displayName: 'Sora 2 竖屏 8s (888API)', capabilities: JSON.stringify(['video']) }
+    { provider: 'openai', modelId: 'seedance2.0-full-4img', displayName: 'Seedance 2.0 Full 4图 (888API)', capabilities: JSON.stringify(['video']) },
+    { provider: 'openai', modelId: 'seedance2.0-fast-4img', displayName: 'Seedance 2.0 Fast 4图 (888API)', capabilities: JSON.stringify(['video']) }
   );
 
   // 同步或插入模型
@@ -199,7 +197,11 @@ async function syncModelsFromAPI() {
       'sora-v4-pro',
       'seedance-2.0-fast',
       'sdas-hn-sd2.0-720p',
-      'sdas-hn-sd2.0-fast-720p'
+      'sdas-hn-sd2.0-fast-720p',
+      'jimeng-video-seedance-2.0-fast',
+      'jimeng-video-seedance-2.0-vip',
+      'sora2-8s-16x9',
+      'sora2-8s-9x16'
     ];
     for (const modelId of deadModels) {
       db.delete(models).where(eq(models.modelId, modelId)).run();
@@ -584,7 +586,11 @@ export async function initDatabase() {
     'sora_v4_pro_rate',
     'seedance_2_0_fast_rate',
     'sdas_hn_sd20_720p_rate',
-    'sdas_hn_sd20_fast_720p_rate'
+    'sdas_hn_sd20_fast_720p_rate',
+    'jimeng_video_seedance_2_0_fast_rate',
+    'jimeng_video_seedance_2_0_vip_rate_720p',
+    'jimeng_video_seedance_2_0_vip_rate_1080p',
+    'sora2_rate'
   ];
   for (const k of keysToDelete) {
     db.delete(settings).where(eq(settings.key, k)).run();
@@ -607,11 +613,9 @@ export async function initDatabase() {
     { key: 'sdas_wf_sd20_fast_933_720p_rate', value: '1.80', label: 'Seedance 2.0 Fast 933 (720p)费率(¥/秒)' },
     { key: 'sdas_wf_sd20_pro_933_480p_rate', value: '1.80', label: 'Seedance 2.0 Pro 933 (480p)费率(¥/秒)' },
     { key: 'sdas_pg_s20_fast_rate', value: '1.95', label: 'Seedance 2.0 PG Fast 费率(¥/次)' },
-    { key: 'jimeng_video_seedance_2_0_fast_rate', value: '0.40', label: 'Jimeng Seedance 2.0 Fast 费率(¥/秒)' },
-    { key: 'jimeng_video_seedance_2_0_vip_rate_720p', value: '0.616', label: 'Jimeng Seedance 2.0 VIP 720p费率(¥/秒)' },
-    { key: 'jimeng_video_seedance_2_0_vip_rate_1080p', value: '1.54', label: 'Jimeng Seedance 2.0 VIP 1080p费率(¥/秒)' },
     { key: 'seedance20_full_9img_rate', value: '4.50', label: 'Seedance 2.0 Full 9图 费率(¥/次)' },
-    { key: 'sora2_rate', value: '0.60', label: 'Sora 2 视频生成费率(¥/次)' },
+    { key: 'seedance20_full_4img_rate', value: '4.00', label: 'Seedance 2.0 Full 4图 费率(¥/次)' },
+    { key: 'seedance20_fast_4img_rate', value: '3.50', label: 'Seedance 2.0 Fast 4图 费率(¥/次)' },
   ];
   for (const s of omniSettings) {
     const existing = db.select().from(settings).where(eq(settings.key, s.key)).get();
@@ -850,11 +854,9 @@ export async function initDatabase() {
   try {
     const existing888 = db.select().from(channels).where(eq(channels.baseUrl, 'https://888api.xin')).get();
     const models888 = [
-      'jimeng-video-seedance-2.0-fast',
-      'jimeng-video-seedance-2.0-vip',
       'seedance2.0-full-9img',
-      'sora2-8s-16x9',
-      'sora2-8s-9x16'
+      'seedance2.0-full-4img',
+      'seedance2.0-fast-4img'
     ];
     if (!existing888) {
       db.insert(channels).values({

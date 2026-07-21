@@ -193,11 +193,9 @@ const MODEL_META: Record<string, ModelMeta> = {
   'sd2-c7': { series: 'sd2-c7', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-fast-720p': { series: 'seedance-fast-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
-  'jimeng-video-seedance-2.0-fast': { series: 'jimeng', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
-  'jimeng-video-seedance-2.0-vip': { series: 'jimeng', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance2.0-full-9img': { series: 'seedance20', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
-  'sora2-8s-16x9': { series: 'sora2', allowedSeconds: [8], requireRef: false },
-  'sora2-8s-9x16': { series: 'sora2', allowedSeconds: [8], requireRef: false },
+  'seedance2.0-full-4img': { series: 'seedance20', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'seedance2.0-fast-4img': { series: 'seedance20', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
@@ -214,11 +212,9 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 720p', description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '⚡' },
-  { id: 'jimeng-video-seedance-2.0-fast', name: 'Jimeng Seedance 2.0 Fast (888API)', description: '速度优先，适合快速预览和批量草稿，最多支持9图参考，4-15秒', maxSeconds: 15, icon: '⚡' },
-  { id: 'jimeng-video-seedance-2.0-vip', name: 'Jimeng Seedance 2.0 VIP (888API)', description: '质量优先，支持720p/1080p，支持最多9张图片、3个视频、3个音频参考，4-15秒', maxSeconds: 15, icon: '🚀' },
+  { id: 'seedance2.0-fast-4img', name: 'Seedance 2.0 Fast 4图 (888API)', description: '速度优先，适合快速预览和批量草稿，最多支持4图、3视频、3音频参考，4-15秒，固定按次计费', maxSeconds: 15, icon: '⚡' },
+  { id: 'seedance2.0-full-4img', name: 'Seedance 2.0 Full 4图 (888API)', description: '支持最多4图参考、3视频、3音频参考，4-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance2.0-full-9img', name: 'Seedance 2.0 Full 9图 (888API)', description: '支持最多9图参考、3视频、3音频参考，4-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
-  { id: 'sora2-8s-16x9', name: 'Sora 2 横屏 8s (888API)', description: 'Sora 2 视频生成，固定 8 秒，1280x720 横屏，固定按次计费', maxSeconds: 8, icon: '🎬' },
-  { id: 'sora2-8s-9x16', name: 'Sora 2 竖屏 8s (888API)', description: 'Sora 2 视频生成，固定 8 秒，720x1280 竖屏，固定按次计费', maxSeconds: 8, icon: '🎬' },
 ];
 
 /** 查找支持指定视频模型的渠道 */
@@ -561,19 +557,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'sdas-pg-s2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_pg_s20_fast_rate')).get();
     rate = parseFloat(row?.value || '1.95');
-  } else if (model === 'jimeng-video-seedance-2.0-fast') {
-    const row = db.select().from(settings).where(eq(settings.key, 'jimeng_video_seedance_2_0_fast_rate')).get();
-    rate = parseFloat(row?.value || '0.40');
-  } else if (model === 'jimeng-video-seedance-2.0-vip') {
-    const key = resolution === '1080p' ? 'jimeng_video_seedance_2_0_vip_rate_1080p' : 'jimeng_video_seedance_2_0_vip_rate_720p';
-    const row = db.select().from(settings).where(eq(settings.key, key)).get();
-    rate = parseFloat(row?.value || (resolution === '1080p' ? '1.54' : '0.616'));
   } else if (model === 'seedance2.0-full-9img') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance20_full_9img_rate')).get();
     rate = parseFloat(row?.value || '4.50');
-  } else if (model.startsWith('sora2-')) {
-    const row = db.select().from(settings).where(eq(settings.key, 'sora2_rate')).get();
-    rate = parseFloat(row?.value || '0.60');
+  } else if (model === 'seedance2.0-full-4img') {
+    const row = db.select().from(settings).where(eq(settings.key, 'seedance20_full_4img_rate')).get();
+    rate = parseFloat(row?.value || '4.00');
+  } else if (model === 'seedance2.0-fast-4img') {
+    const row = db.select().from(settings).where(eq(settings.key, 'seedance20_fast_4img_rate')).get();
+    rate = parseFloat(row?.value || '3.50');
   } else if (model === 'seedance-2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get();
     rate = parseFloat(row?.value || '4.00');
@@ -618,7 +610,6 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     rate = Math.round((BASE_RATE[resolution] || BASE_RATE['720p']) * seriesMultiplier * 100) / 100;
   }
 
-  // 预估费用并检查余额
   const isFlatRate = [
     'seedance-2.0-fast',
     'sd2-c7',
@@ -629,8 +620,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'grok-imagine-video-1.5-fast',
     'grok-imagine-video-1.5-preview',
     'sdas-pg-s2.0-fast',
-    'seedance2.0-full-9img'
-  ].includes(model) || model.startsWith('sora2-');
+    'seedance2.0-full-9img',
+    'seedance2.0-full-4img',
+    'seedance2.0-fast-4img'
+  ].includes(model);
   const estimatedRate = rate;
   const estimatedSeconds = model === 'omni-flash-vref' ? 10 : (Number(video_length) || 6);
   const estimatedCost = isFlatRate ? estimatedRate : (Math.round(estimatedRate * estimatedSeconds * 100) / 100);
@@ -697,9 +690,14 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
   const isSudaShui = meta?.series === 'sudashui';
   const isVeoOmni = model === 'veo-omni-flash';
-  const isSeedanceJsonModel = ['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p', 'seedance2.0-full-9img'].includes(model);
-  const isJimeng = model.startsWith('jimeng-video-');
-  const isSora2 = model.startsWith('sora2-');
+  const isSeedanceJsonModel = [
+    'sd2-c7',
+    'seedance-2.0-720p',
+    'seedance-2.0-fast-720p',
+    'seedance2.0-full-9img',
+    'seedance2.0-full-4img',
+    'seedance2.0-fast-4img'
+  ].includes(model);
 
   try {
     let videoId = '';
@@ -1016,7 +1014,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         aspect_ratio: aspect_ratio,
       };
 
-      if (model === 'seedance2.0-full-9img') {
+      if (model.startsWith('seedance2.0-')) {
         if (imageUrls.length > 0) payload.referenceImages = imageUrls;
         if (videoRefUrls.length > 0) payload.referenceVideos = videoRefUrls;
         if (audioRefUrls.length > 0) payload.referenceAudios = audioRefUrls;
@@ -1041,99 +1039,6 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] sd2 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
-        res.write('data: [DONE]\n\n');
-        return res.end();
-      }
-
-      const job = await createResp.json() as any;
-      videoId = job.task_id || job.id;
-    } else if (isJimeng) {
-      sendEvent({ type: 'status', message: '正在处理并提交 Jimeng 任务...' });
-      const imageUrls: string[] = [];
-      for (const img of (reference_images || [])) {
-        const url = convertBase64ToPublicUrl(img, 'jimeng_ref', req);
-        if (url) imageUrls.push(url);
-      }
-
-      let payload: Record<string, any> = {};
-      if (model === 'jimeng-video-seedance-2.0-fast') {
-        payload = {
-          model: upstreamModel,
-          prompt: prompt.trim(),
-          ratio: aspect_ratio,
-          duration: `${video_length}s`,
-          resolution: '720p',
-          generation_mode: imageUrls.length > 0 ? 'reference_video' : 'text_to_video',
-          reference_mode: imageUrls.length > 0 ? 'all_reference' : undefined,
-          referenceImages: imageUrls.length > 0 ? imageUrls : undefined,
-        };
-      } else {
-        payload = {
-          model: upstreamModel,
-          prompt: prompt.trim(),
-          functionMode: imageUrls.length > 0 ? 'omni_reference' : 'first_last_frames',
-          ratio: aspect_ratio,
-          duration: Number(video_length) || 5,
-          resolution: resolution || '720p',
-          referenceImages: imageUrls.length > 0 ? imageUrls : undefined,
-        };
-      }
-
-      console.log(`[video] Step1 Jimeng 创建任务: model=${model} duration=${payload.duration} refs=${imageUrls.length}`);
-      const createResp = await fetch(`${baseUrl}/v1/videos`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${channel.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(60_000),
-      });
-
-      if (!createResp.ok) {
-        const errText = await createResp.text().catch(() => '');
-        console.error(`[video] Jimeng 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
-        res.write('data: [DONE]\n\n');
-        return res.end();
-      }
-
-      const job = await createResp.json() as any;
-      videoId = job.task_id || job.id;
-    } else if (isSora2) {
-      sendEvent({ type: 'status', message: '正在处理并提交 Sora 2 任务...' });
-      const imageUrls: string[] = [];
-      for (const img of (reference_images || [])) {
-        const url = convertBase64ToPublicUrl(img, 'sora2_ref', req);
-        if (url) imageUrls.push(url);
-      }
-      const payload: Record<string, any> = {
-        model: upstreamModel,
-        prompt: prompt.trim(),
-      };
-      if (imageUrls.length > 0) {
-        payload.input_reference = {
-          type: "input_image",
-          image_url: {
-            url: imageUrls[0]
-          }
-        };
-      }
-      console.log(`[video] Step1 Sora2 创建任务: model=${model} upstreamModel=${upstreamModel} refs=${imageUrls.length}`);
-      const createResp = await fetch(`${baseUrl}/v1/videos`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${channel.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(60_000),
-      });
-
-      if (!createResp.ok) {
-        const errText = await createResp.text().catch(() => '');
-        console.error(`[video] Sora 2 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
         sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
         res.write('data: [DONE]\n\n');
         return res.end();
