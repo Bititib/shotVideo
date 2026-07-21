@@ -58,6 +58,15 @@ function getVideoRate(model: string, resolution: string): number {
     const key = resolution === '1080p' ? 'omni_vref_rate_1080p' : 'omni_vref_rate_720p';
     const row = db.select().from(settings).where(eq(settings.key, key)).get();
     return parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
+  } else if (model === 'sdas-wf-sd2.0-fast-933-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_wf_sd20_fast_933_720p_rate')).get();
+    return parseFloat(row?.value || '1.80');
+  } else if (model === 'sdas-wf-sd2.0-pro-933-480p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_wf_sd20_pro_933_480p_rate')).get();
+    return parseFloat(row?.value || '1.80');
+  } else if (model === 'sdas-pg-s2.0-fast') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_pg_s20_fast_rate')).get();
+    return parseFloat(row?.value || '1.95');
   } else if (model === 'sora-v4-fast' || model === 'seedance-2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
     return parseFloat(row?.value || '0.189');
@@ -131,13 +140,17 @@ router.get('/models', (req: Request, res: Response) => {
     'grok-imagine-video-1.5-preview',
     'grok-imagine-1.0-video',
     'grok-imagine-video-1.5-fast',
+    'grok-imagine-video-1.5-1080p',
     'omni-flash',
     'omni-flash-vref',
     'sora-v4-fast',
     'sora-v4-pro',
     'lg-seedance-2.0-fast',
     'sdas-d7-seedance-2.0-face-720p',
-    'sdas-mo-seedance-2.0-dj-fast'
+    'sdas-mo-seedance-2.0-dj-fast',
+    'sdas-wf-sd2.0-fast-933-720p',
+    'sdas-wf-sd2.0-pro-933-480p',
+    'sdas-pg-s2.0-fast'
   ];
   defaultVideoModels.forEach(m => {
     if (!disabledModelIds.has(m)) allModels.add(m);

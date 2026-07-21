@@ -38,7 +38,17 @@ function getVideoPlayUrl(url: string | null) {
 }
 
 const isFlatRateModel = (modelId: string) => {
-  return ['sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p', 'seedance-2.0-fast', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(modelId);
+  return [
+    'seedance-2.0-fast',
+    'sd2-c7',
+    'seedance-2.0-720p',
+    'seedance-2.0-fast-720p',
+    'grok-imagine-1.0-video',
+    'grok-imagine-video-1.5-1080p',
+    'grok-imagine-video-1.5-fast',
+    'grok-imagine-video-1.5-preview',
+    'sdas-pg-s2.0-fast'
+  ].includes(modelId);
 };
 interface WoodenFishLoaderProps {
   progress: number;
@@ -196,6 +206,9 @@ const isSoraV4Model = (modelId: string) => {
 };
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  if (modelId === 'grok-imagine-1.0-video' || modelId === 'grok-imagine-video-1.5-fast') return 7;
+  if (modelId === 'grok-imagine-video-1.5-1080p' || modelId === 'grok-imagine-video-1.5-preview') return 1;
+  if (modelId === 'sdas-pg-s2.0-fast') return 5;
   if (modelId.startsWith('sd-') || modelId.startsWith('seedance-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (isSoraV4Model(modelId)) return 4;
   if (modelId === 'omni-flash') return 7;
@@ -263,10 +276,13 @@ const getRefFilename = (dataUrl: string, index: number) => {
 
 const restorePrompt = (targetPrompt: string) => {
   if (!targetPrompt) return '';
-  return targetPrompt.replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (match, idxStr) => {
-    const idx = parseInt(idxStr, 10);
-    return `@图${idx + 1}`;
-  });
+  return targetPrompt
+    .replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (match, idxStr) => {
+      const idx = parseInt(idxStr, 10);
+      return `@图${idx + 1}`;
+    })
+    .replace(/\[ref_video\]/g, '@视频')
+    .replace(/\[ref_audio\]/g, '@音频');
 };
 
 export default function VideoPage() {
@@ -287,13 +303,29 @@ export default function VideoPage() {
     }
   }, [selectedModel, maxRefs]);
 
-  const [referenceVideo, setReferenceVideo] = useState<string | null>(null);
-  const [referenceAudio, setReferenceAudio] = useState<string | null>(null);
+  const [referenceVideos, setReferenceVideos] = useState<string[]>([]);
+  const [referenceAudios, setReferenceAudios] = useState<string[]>([]);
+  const [referenceAudioNames, setReferenceAudioNames] = useState<string[]>([]);
   const [firstFrame, setFirstFrame] = useState<string | null>(null);
   const [lastFrame, setLastFrame] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoFileInputRef = useRef<HTMLInputElement>(null);
   const audioFileInputRef = useRef<HTMLInputElement>(null);
+
+  // 各模型的参考视频/音频上限
+  const getMaxRefVideos = (m: string) => {
+    if (m === 'sdas-pg-s2.0-fast') return 1;
+    if (m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
+    if (m === 'omni-flash-vref') return 1;
+    return 0;
+  };
+  const getMaxRefAudios = (m: string) => {
+    if (m === 'sdas-pg-s2.0-fast') return 0;
+    if (m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
+    return 0;
+  };
+  const maxRefVideos = getMaxRefVideos(selectedModel);
+  const maxRefAudios = getMaxRefAudios(selectedModel);
   const firstFrameInputRef = useRef<HTMLInputElement>(null);
   const lastFrameInputRef = useRef<HTMLInputElement>(null);
   const [tasks, setTasks] = useState<VideoTask[]>([]);
@@ -313,11 +345,10 @@ export default function VideoPage() {
 
   const renderHighlightedText = (text: string) => {
     if (!text) return null;
-    const splitRegex = /([@＠]图\d+)/g;
-    const testRegex = /^[@＠]图\d+$/;
+    const splitRegex = /([@＠]图\d+|[@＠]视频\d*|[@＠]音频\d*)/g;
     const parts = text.split(splitRegex);
     return parts.map((part, index) => {
-      if (testRegex.test(part)) {
+      if (/^[@＠]图\d+$/.test(part)) {
         const match = part.match(/\d+/);
         const idx = match ? parseInt(match[0], 10) - 1 : -1;
         const exists = idx >= 0 && idx < referenceImages.length;
@@ -334,7 +365,70 @@ export default function VideoPage() {
           </span>
         );
       }
+
+      if (/^[@＠]视频\d*$/.test(part)) {
+        const numMatch = part.match(/\d+/);
+        const vidIdx = numMatch ? parseInt(numMatch[0], 10) - 1 : 0;
+        const exists = vidIdx >= 0 && vidIdx < referenceVideos.length;
+        return (
+          <span
+            key={index}
+            className={`inline rounded transition-colors px-1 ${exists
+                ? 'text-purple-400 bg-purple-500/20 font-sans font-medium'
+                : 'text-zinc-500 bg-zinc-500/10 line-through decoration-zinc-600 font-sans'
+              }`}
+          >
+            {part}
+          </span>
+        );
+      }
+
+      if (/^[@＠]音频\d*$/.test(part)) {
+        const numMatch = part.match(/\d+/);
+        const audIdx = numMatch ? parseInt(numMatch[0], 10) - 1 : 0;
+        const exists = audIdx >= 0 && audIdx < referenceAudios.length;
+        return (
+          <span
+            key={index}
+            className={`inline rounded transition-colors px-1 ${exists
+                ? 'text-emerald-400 bg-emerald-500/20 font-sans font-medium'
+                : 'text-zinc-500 bg-zinc-500/10 line-through decoration-zinc-600 font-sans'
+              }`}
+          >
+            {part}
+          </span>
+        );
+      }
+
       return <span key={index}>{part}</span>;
+    });
+  };
+
+  const insertTextAtCursor = (textToInsert: string) => {
+    const textarea = textareaRef.current;
+    const currentScrollTop = textarea ? textarea.scrollTop : 0;
+
+    let insertPos = cursorPos;
+    if (insertPos === null || insertPos < 0) {
+      insertPos = textarea ? textarea.selectionStart : prompt.length;
+    }
+
+    const newPrompt = prompt.slice(0, insertPos) + textToInsert + prompt.slice(insertPos);
+    const nextCursorPos = insertPos + textToInsert.length;
+
+    setPrompt(newPrompt);
+    setCursorPos(nextCursorPos);
+    setShowAssetPicker(false);
+
+    requestAnimationFrame(() => {
+      if (textarea) {
+        textarea.focus();
+        textarea.setSelectionRange(nextCursorPos, nextCursorPos);
+        textarea.scrollTop = currentScrollTop;
+        if (backdropRef.current) {
+          backdropRef.current.scrollTop = currentScrollTop;
+        }
+      }
     });
   };
 
@@ -529,10 +623,11 @@ export default function VideoPage() {
     const isSudashui = selectedModel.startsWith('sd-') || selectedModel.startsWith('seedance-') || selectedModel.includes('sdas-') || selectedModel.startsWith('lg-');
     const isSoraV3Pro = selectedModel === 'seedance-2.0-fast';
     if (selectedModel !== 'omni-flash-vref' && !isSudashui && !isSoraV3Pro) {
-      setReferenceVideo(null);
+      setReferenceVideos([]);
     }
     if (!isSudashui && !isSoraV3Pro) {
-      setReferenceAudio(null);
+      setReferenceAudios([]);
+      setReferenceAudioNames([]);
     }
     if (!isSoraV3Pro) {
       setFirstFrame(null);
@@ -605,45 +700,63 @@ export default function VideoPage() {
       setError('参考视频不能超过 50MB');
       return;
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      setReferenceVideo(dataUrl);
-      const newAsset: Asset = {
-        id: `vid_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-        name: file.name,
-        dataUrl,
-        type: 'video',
-        createdAt: Date.now()
+    const readFile = (f: File) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        setReferenceVideos(prev => {
+          if (prev.length >= maxRefVideos) return prev;
+          return [...prev, dataUrl];
+        });
+        const newAsset: Asset = {
+          id: `vid_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+          name: f.name,
+          dataUrl,
+          type: 'video',
+          createdAt: Date.now()
+        };
+        saveAsset(newAsset).then(() => setMyAssets(prev => [newAsset, ...prev])).catch(() => { });
       };
-      saveAsset(newAsset).then(() => setMyAssets(prev => [newAsset, ...prev])).catch(() => { });
+      reader.onerror = () => setError('读取视频失败');
+      reader.readAsDataURL(f);
     };
-    reader.onerror = () => {
-      setError('读取视频失败');
-    };
-    reader.readAsDataURL(file);
+    const remaining = maxRefVideos - referenceVideos.length;
+    const filesToRead = Array.from(files).filter(f => f.type.startsWith('video/')).slice(0, remaining > 0 ? remaining : 0);
+    if (filesToRead.length === 0 && remaining <= 0) {
+      setError(`最多只能上传 ${maxRefVideos} 个参考视频`);
+      return;
+    }
+    for (const f of filesToRead) {
+      if (f.size > 100 * 1024 * 1024) { setError('参考视频不能超过 100MB'); continue; }
+      readFile(f);
+    }
   };
 
   const handleAudioSelect = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const file = files[0];
-    if (!file.type.startsWith('audio/')) {
-      setError('请选择音频文件');
+    const remaining = maxRefAudios - referenceAudios.length;
+    const audioFiles = Array.from(files).filter(f => f.type.startsWith('audio/')).slice(0, remaining > 0 ? remaining : 0);
+    if (audioFiles.length === 0 && remaining <= 0) {
+      setError(`最多只能上传 ${maxRefAudios} 个参考音频`);
       return;
     }
-    if (file.size > 20 * 1024 * 1024) {
-      setError('参考音频不能超过 20MB');
-      return;
+    for (const file of audioFiles) {
+      if (file.size > 20 * 1024 * 1024) {
+        setError('参考音频不能超过 20MB');
+        continue;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        setReferenceAudios(prev => {
+          if (prev.length >= maxRefAudios) return prev;
+          return [...prev, dataUrl];
+        });
+        setReferenceAudioNames(prev => [...prev, file.name]);
+      };
+      reader.onerror = () => setError('读取音频失败');
+      reader.readAsDataURL(file);
     }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      setReferenceAudio(dataUrl);
-    };
-    reader.onerror = () => {
-      setError('读取音频失败');
-    };
-    reader.readAsDataURL(file);
   };
 
   const handleMediaDrop = useCallback((files: FileList | null) => {
@@ -687,8 +800,9 @@ export default function VideoPage() {
 
       // 恢复参考图与参考视频及参考音频
       setReferenceImages(meta.reference_images || []);
-      setReferenceVideo(meta.reference_video || null);
-      setReferenceAudio(meta.audio_url || null);
+      setReferenceVideos(meta.reference_videos || (meta.reference_video ? [meta.reference_video] : []));
+      setReferenceAudios(meta.audio_urls || (meta.audio_url ? [meta.audio_url] : []));
+      setReferenceAudioNames(meta.audio_names || []);
     }
 
     setTimeout(() => {
@@ -699,19 +813,21 @@ export default function VideoPage() {
   const handleGenerate = useCallback(() => {
     if (!prompt.trim()) return;
     if (!guard()) return;
-    if (selectedModel === 'omni-flash-vref' && !referenceVideo) {
+    if (selectedModel === 'omni-flash-vref' && referenceVideos.length === 0) {
       setError('视频编辑模型必须上传参考视频');
       return;
     }
     setError(null);
 
-    // 将 prompt 中的 @图1, @图2 翻译回后端 API 支持的 [ref_0.jpg] 格式
+    // 将 prompt 中的 @图1, @图2, @视频, @音频 翻译回后端 API 支持的 [ref_0.jpg], [ref_video], [ref_audio] 格式
     let finalPrompt = prompt.trim();
     referenceImages.forEach((img, idx) => {
       const refName = getRefFilename(img, idx);
       const userRefLabelPattern = new RegExp(`[@＠]图${idx + 1}\\b|[@＠]图${idx + 1}`, 'g');
       finalPrompt = finalPrompt.replace(userRefLabelPattern, `[${refName}]`);
     });
+    finalPrompt = finalPrompt.replace(/[@＠]视频(\d+)?/g, (_, n) => `[ref_video_${n || '1'}]`);
+    finalPrompt = finalPrompt.replace(/[@＠]音频(\d+)?/g, (_, n) => `[ref_audio_${n || '1'}]`);
 
     const taskId = `task_${Date.now()}`;
     const newTask: VideoTask = {
@@ -728,8 +844,8 @@ export default function VideoPage() {
         aspect_ratio: aspectRatio,
         model: selectedModel,
         reference_images: referenceImages,
-        reference_video: referenceVideo,
-        audio_url: referenceAudio
+        reference_videos: referenceVideos,
+        audio_urls: referenceAudios
       },
       createdAt: new Date().toISOString(),
     };
@@ -747,8 +863,8 @@ export default function VideoPage() {
         video_length: duration,
         resolution,
         reference_images: referenceImages.length > 0 ? referenceImages : undefined,
-        reference_video: referenceVideo || undefined,
-        audio_url: referenceAudio || undefined,
+        reference_videos: referenceVideos.length > 0 ? referenceVideos : undefined,
+        audio_urls: referenceAudios.length > 0 ? referenceAudios : undefined,
         first_frame: firstFrame || undefined,
         last_frame: lastFrame || undefined,
       },
@@ -792,11 +908,12 @@ export default function VideoPage() {
     abortRef.current.set(taskId, ctrl);
     setPrompt('');
     setReferenceImages([]);
-    setReferenceVideo(null);
-    setReferenceAudio(null);
+    setReferenceVideos([]);
+    setReferenceAudios([]);
+    setReferenceAudioNames([]);
     setFirstFrame(null);
     setLastFrame(null);
-  }, [prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideo, referenceAudio, firstFrame, lastFrame]);
+  }, [prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideos, referenceAudios, firstFrame, lastFrame]);
 
   const handleRemove = (taskId: string) => {
     if (taskId.startsWith('db_')) {
@@ -1093,17 +1210,17 @@ export default function VideoPage() {
                   {(selectedModel === 'omni-flash-vref' || isSoraV4Model(selectedModel) || selectedModel?.startsWith('sd-') || selectedModel?.startsWith('seedance-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && (
                     <>
                       <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
-                        <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideo ? '(已上传)' : ''}
+                        <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideos.length > 0 ? `(${referenceVideos.length}/${maxRefVideos})` : ''}
                       </button>
-                      <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
+                      <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" multiple className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
                     </>
                   )}
-                  {(selectedModel?.startsWith('sd-') || selectedModel?.startsWith('seedance-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && (
+                  {maxRefAudios > 0 && (
                     <>
                       <button onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
-                        <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 {referenceAudio ? '(已上传)' : ''}
+                        <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 {referenceAudios.length > 0 ? `(${referenceAudios.length}/${maxRefAudios})` : ''}
                       </button>
-                      <input ref={audioFileInputRef} type="file" accept="audio/*" className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
+                      <input ref={audioFileInputRef} type="file" accept="audio/*" multiple className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
                     </>
                   )}
                   {isSoraV4Model(selectedModel) && (
@@ -1112,7 +1229,7 @@ export default function VideoPage() {
                         <Upload className="w-3 h-3 text-emerald-400" /> 首帧 {firstFrame ? '(已上传)' : ''}
                       </button>
                       <input ref={firstFrameInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { if (e.target.files?.[0]) { const url = await compressImage(e.target.files[0]); setFirstFrame(url); } e.target.value = ''; }} />
-                      <button onClick={() => lastFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                              <button onClick={() => lastFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-amber-400" /> 尾帧 {lastFrame ? '(已上传)' : ''}
                       </button>
                       <input ref={lastFrameInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { if (e.target.files?.[0]) { const url = await compressImage(e.target.files[0]); setLastFrame(url); } e.target.value = ''; }} />
@@ -1151,38 +1268,54 @@ export default function VideoPage() {
                 {showAssetPicker && (
                   <div className="absolute bottom-full left-4 mb-2 w-80 max-w-full bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl p-2.5 z-50">
                     <div className="flex items-center justify-between px-2 pb-2 border-b border-white/10 mb-2">
-                      <span className="text-xs font-semibold text-zinc-400 font-medium">选择图片引用</span>
+                      <span className="text-xs font-semibold text-zinc-400 font-medium">选择素材引用 (@)</span>
                       <button onClick={() => setShowAssetPicker(false)} className="text-zinc-500 hover:text-white"><X className="w-3.5 h-3.5" /></button>
                     </div>
 
-                    {/* 第一部分：已上传的参考图列表 (直接在文本中@引用) */}
-                    {referenceImages.length > 0 && (
+                    {/* 第一部分：已上传素材列表 (直接在文本中@引用) */}
+                    {(referenceImages.length > 0 || referenceVideos.length > 0 || referenceAudios.length > 0) && (
                       <div className="mb-3 pb-3 border-b border-white/5">
-                        <span className="text-[10px] text-zinc-500 mb-2 block px-1 font-semibold">已上传参考图 (点击引用至文本)</span>
+                        <span className="text-[10px] text-zinc-500 mb-2 block px-1 font-semibold">已上传素材 (点击引用至文本)</span>
                         <div className="flex flex-col gap-1 max-h-40 overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
-                          {referenceImages.map((img, idx) => {
-                            return (
-                              <div
-                                key={`uploaded_${idx}`}
-                                onClick={() => {
-                                  const textToInsert = `@图${idx + 1} `;
-                                  if (cursorPos !== null) {
-                                    setPrompt(prev => prev.slice(0, cursorPos) + textToInsert + prev.slice(cursorPos));
-                                    setCursorPos(cursorPos + textToInsert.length);
-                                  } else {
-                                    setPrompt(prev => prev + textToInsert);
-                                  }
-                                  setShowAssetPicker(false);
-                                  setTimeout(() => textareaRef.current?.focus(), 50);
-                                }}
-                                className="flex items-center gap-3 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-indigo-500/10 group transition-all text-xs text-zinc-300 hover:text-indigo-400"
-                                title={`点击在光标处插入 @图${idx + 1}`}
-                              >
-                                <img src={img} className="w-8 h-8 rounded-lg object-cover border border-white/5" />
-                                <span className="font-medium group-hover:text-indigo-400">@图{idx + 1}</span>
+                          {referenceImages.map((img, idx) => (
+                            <div
+                              key={`uploaded_img_${idx}`}
+                              onClick={() => insertTextAtCursor(`@图${idx + 1} `)}
+                              className="flex items-center gap-3 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-indigo-500/10 group transition-all text-xs text-zinc-300 hover:text-indigo-400"
+                              title={`点击在光标处插入 @图${idx + 1}`}
+                            >
+                              <img src={img} className="w-8 h-8 rounded-lg object-cover border border-white/5" />
+                              <span className="font-medium group-hover:text-indigo-400">@图{idx + 1}</span>
+                            </div>
+                          ))}
+
+                          {referenceVideos.map((vid, idx) => (
+                            <div
+                              key={`uploaded_vid_${idx}`}
+                              onClick={() => insertTextAtCursor(`@视频${idx + 1} `)}
+                              className="flex items-center gap-3 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-purple-500/10 group transition-all text-xs text-purple-300 hover:text-purple-400"
+                              title={`点击在光标处插入 @视频${idx + 1}`}
+                            >
+                              <div className="w-8 h-8 rounded-lg overflow-hidden border border-purple-500/30 bg-black shrink-0 flex items-center justify-center">
+                                <Film className="w-4 h-4 text-purple-400" />
                               </div>
-                            );
-                          })}
+                              <span className="font-medium group-hover:text-purple-400">@视频{idx + 1}</span>
+                            </div>
+                          ))}
+
+                          {referenceAudios.map((aud, idx) => (
+                            <div
+                              key={`uploaded_aud_${idx}`}
+                              onClick={() => insertTextAtCursor(`@音频${idx + 1} `)}
+                              className="flex items-center gap-3 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-emerald-500/10 group transition-all text-xs text-emerald-300 hover:text-emerald-400"
+                              title={`点击在光标处插入 @音频${idx + 1}`}
+                            >
+                              <div className="w-8 h-8 rounded-lg overflow-hidden border border-emerald-500/30 bg-emerald-500/10 shrink-0 flex items-center justify-center">
+                                <span className="text-sm">🔊</span>
+                              </div>
+                              <span className="font-medium group-hover:text-emerald-400">@音频{idx + 1} {referenceAudioNames[idx] ? `(${referenceAudioNames[idx]})` : ''}</span>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     )}
@@ -1199,15 +1332,20 @@ export default function VideoPage() {
                       ) : (
                         <div className="grid grid-cols-4 gap-2">
                           {myAssets.map(asset => {
-                            const isSelected = asset.type === 'video' ? referenceVideo === asset.dataUrl : referenceImages.includes(asset.dataUrl);
+                            const isSelected = asset.type === 'video' ? referenceVideos.includes(asset.dataUrl) : referenceImages.includes(asset.dataUrl);
 
                             return (
                               <div key={asset.id} className={`relative group aspect-square rounded-lg overflow-hidden border cursor-pointer bg-black/50 transition-all ${isSelected ? 'border-indigo-500 shadow-[0_0_0_2px_rgba(99,102,241,0.3)]' : 'border-white/10 hover:border-indigo-500/50'}`}
                                 onClick={() => {
                                   if (asset.type === 'video') {
-                                    setReferenceVideo(asset.dataUrl);
-                                    setShowAssetPicker(false);
-                                    setTimeout(() => textareaRef.current?.focus(), 50);
+                                    if (referenceVideos.length >= maxRefVideos) {
+                                      setError(`当前模型最多支持 ${maxRefVideos} 个参考视频`);
+                                      setShowAssetPicker(false);
+                                      return;
+                                    }
+                                    const vidIdx = referenceVideos.length;
+                                    setReferenceVideos(prev => [...prev, asset.dataUrl]);
+                                    insertTextAtCursor(`@视频${vidIdx + 1} `);
                                   } else {
                                     let idx = referenceImages.indexOf(asset.dataUrl);
                                     if (idx === -1) {
@@ -1221,15 +1359,7 @@ export default function VideoPage() {
                                     }
 
                                     // 插入对应的 @图${idx + 1} 到文本中
-                                    const textToInsert = `@图${idx + 1} `;
-                                    if (cursorPos !== null) {
-                                      setPrompt(prev => prev.slice(0, cursorPos) + textToInsert + prev.slice(cursorPos));
-                                      setCursorPos(cursorPos + textToInsert.length);
-                                    } else {
-                                      setPrompt(prev => prev + textToInsert);
-                                    }
-                                    setShowAssetPicker(false);
-                                    setTimeout(() => textareaRef.current?.focus(), 50);
+                                    insertTextAtCursor(`@图${idx + 1} `);
                                   }
                                 }}>
                                 {asset.type === 'image' ? (
@@ -1265,22 +1395,23 @@ export default function VideoPage() {
                   </div>
                 )}
 
-                {(referenceImages.length > 0 || referenceVideo || referenceAudio) && (
+                {(referenceImages.length > 0 || referenceVideos.length > 0 || referenceAudios.length > 0) && (
                   <div className="flex items-center gap-2 px-4 pt-3 pb-1 flex-wrap">
-                    {referenceVideo && (
-                      <div className="relative w-12 h-12 rounded-lg overflow-hidden border border-indigo-500/40 group cursor-pointer shrink-0 hover:border-red-500/30 transition-colors">
-                        <video src={referenceVideo} className="w-full h-full object-cover" />
-                        <button onClick={() => setReferenceVideo(null)}
+                    {referenceVideos.map((v, idx) => (
+                      <div key={`pv_${idx}`} className="relative w-12 h-12 rounded-lg overflow-hidden border border-indigo-500/40 group cursor-pointer shrink-0 hover:border-red-500/30 transition-colors">
+                        <video src={v} className="w-full h-full object-cover" />
+                        <div className="absolute top-0 left-0 bg-purple-600/90 text-white text-[9px] px-1 py-0.5 rounded-br font-mono leading-none pointer-events-none group-hover:opacity-0 transition-opacity">V{idx + 1}</div>
+                        <button onClick={() => setReferenceVideos(prev => prev.filter((_, i) => i !== idx))}
                           className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><X className="w-3.5 h-3.5 text-white" /></button>
                       </div>
-                    )}
-                    {referenceAudio && (
-                      <div className="relative h-12 px-3 flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/5 group cursor-pointer shrink-0 hover:border-red-500/30 transition-colors">
-                        <span className="text-[10px] text-indigo-300 max-w-[80px] truncate">🔊 包含音频</span>
-                        <button onClick={() => setReferenceAudio(null)}
+                    ))}
+                    {referenceAudios.map((a, idx) => (
+                      <div key={`pa_${idx}`} className="relative h-12 px-3 flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/5 group cursor-pointer shrink-0 hover:border-red-500/30 transition-colors">
+                        <span className="text-[10px] text-indigo-300 max-w-[100px] truncate" title={referenceAudioNames[idx] || `音频${idx + 1}`}>🔊 {referenceAudioNames[idx] || `音频${idx + 1}`}</span>
+                        <button onClick={() => { setReferenceAudios(prev => prev.filter((_, i) => i !== idx)); setReferenceAudioNames(prev => prev.filter((_, i) => i !== idx)); }}
                           className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><X className="w-3.5 h-3.5 text-white" /></button>
                       </div>
-                    )}
+                    ))}
                     {referenceImages.map((img, idx) => (
                       <div key={idx} className="relative w-12 h-12 rounded-lg overflow-hidden border border-white/10 group cursor-pointer shrink-0 hover:border-indigo-500/30 transition-colors">
                         <img src={img} alt="" className="w-full h-full object-cover" />
@@ -1334,6 +1465,7 @@ export default function VideoPage() {
                     onChange={(e) => {
                       const val = e.target.value;
                       const nativeEvent = e.nativeEvent as any;
+                      const currentScrollTop = e.target.scrollTop;
                       // 监听任意位置输入的 @ 或全角 ＠ 
                       if (nativeEvent.data === '@' || nativeEvent.data === '＠') {
                         setShowAssetPicker(true);
@@ -1342,6 +1474,14 @@ export default function VideoPage() {
                         const finalPos = Math.max(0, pos - 1);
                         setCursorPos(finalPos);
                         setPrompt(val.slice(0, finalPos) + val.slice(pos));
+
+                        requestAnimationFrame(() => {
+                          if (textareaRef.current) {
+                            textareaRef.current.setSelectionRange(finalPos, finalPos);
+                            textareaRef.current.scrollTop = currentScrollTop;
+                            if (backdropRef.current) backdropRef.current.scrollTop = currentScrollTop;
+                          }
+                        });
                       } else {
                         setPrompt(val);
                         // 用户正常打字时重置或更新 cursor

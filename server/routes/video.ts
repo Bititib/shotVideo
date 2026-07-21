@@ -175,17 +175,19 @@ interface ModelMeta {
   requireRef: boolean;               // 是否必须传参考图
 }
 const MODEL_META: Record<string, ModelMeta> = {
-  'grok-imagine-video-1.5-preview': { series: '1.5', allowedSeconds: [6, 10], requireRef: true },
+  'grok-imagine-video-1.5-preview': { series: '1.5', allowedSeconds: [6, 10, 15], requireRef: true },
   'grok-imagine-1.0-video': { series: '1.0', allowedSeconds: [6, 10], requireRef: false },
   'grok-imagine-video-1.5-fast': { series: '1.5', allowedSeconds: [6, 10], requireRef: false },
+  'grok-imagine-video-1.5-1080p': { series: '1.5', allowedSeconds: [10, 15], requireRef: true },
   'grok-imagine-video': { series: 'legacy', allowedSeconds: null, requireRef: false },
   'grok-4.3-video': { series: 'legacy', allowedSeconds: null, requireRef: false },
   'omni-flash': { series: 'omni-flash', allowedSeconds: [4, 6, 8, 10], requireRef: false },
   'omni-flash-vref': { series: 'omni-flash-vref', allowedSeconds: [10], requireRef: false },
   'sora-v4-fast': { series: 'sora-v4', allowedSeconds: [10, 15], requireRef: false },
   'sora-v4-pro': { series: 'sora-v4', allowedSeconds: [10, 15], requireRef: false },
-  'sdas-hn-sd2.0-720p': { series: 'sudashui', allowedSeconds: [5, 10, 15], requireRef: false },
-  'sdas-hn-sd2.0-fast-720p': { series: 'sudashui', allowedSeconds: [5, 10, 15], requireRef: false },
+  'sdas-wf-sd2.0-fast-933-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'sdas-wf-sd2.0-pro-933-480p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'sdas-pg-s2.0-fast': { series: 'sudashui', allowedSeconds: [10, 15], requireRef: false },
   'seedance-2.0-fast': { series: 'seedance-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'veo-omni-flash': { series: 'veo-omni-flash', allowedSeconds: [10], requireRef: false },
   'sd2-c7': { series: 'sd2-c7', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
@@ -194,16 +196,15 @@ const MODEL_META: Record<string, ModelMeta> = {
 };
 
 const DEFAULT_VIDEO_MODELS = [
-  { id: 'grok-imagine-video-1.5-preview', name: 'Grok 1.5 Preview', description: '图生视频，必须提供参考图，6/10秒', maxSeconds: 10, icon: '🖼️' },
-  { id: 'grok-imagine-1.0-video', name: 'Grok 1.0 Video', description: '文生/图生视频，6/10秒', maxSeconds: 10, icon: '🎥' },
-  { id: 'grok-imagine-video-1.5-fast', name: 'Grok 1.5 Fast', description: '快速文生/图生视频，6/10秒', maxSeconds: 10, icon: '⚡' },
+  { id: 'grok-imagine-video-1.5-preview', name: 'Grok 1.5 Preview', description: '图生视频，必须提供参考图，6/10/15秒', maxSeconds: 15, icon: '🖼️' },
+  { id: 'grok-imagine-1.0-video', name: 'Grok 1.0 Video', description: '文生/图生视频，支持最多7张参考图，6/10秒', maxSeconds: 10, icon: '🎥' },
+  { id: 'grok-imagine-video-1.5-fast', name: 'Grok 1.5 Fast', description: '快速文生/图生视频，支持最多7张参考图，6/10秒', maxSeconds: 10, icon: '⚡' },
+  { id: 'grok-imagine-video-1.5-1080p', name: 'Grok 1.5 1080p', description: '单图参考模型，最多1张参考图，支持时长10和15秒，分辨率1080P', maxSeconds: 15, icon: '🎬' },
   { id: 'omni-flash', name: 'Omni Flash', description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash-vref', name: 'Omni Flash Vref', description: '视频风格编辑/改写，支持 1080p', maxSeconds: 10, icon: '✂️' },
-  { id: 'sora-v4-fast', name: 'Sora V4 Fast', description: '支持433字符，不卡脸，支持4图3视频1音频参考，10/15s', maxSeconds: 15, icon: '⚡' },
-  { id: 'sora-v4-pro', name: 'Sora V4 Pro', description: '支持433字符，不卡脸，支持4图3视频1音频参考，10/15s', maxSeconds: 15, icon: '🚀' },
-  { id: 'sdas-hn-sd2.0-720p', name: 'Seedance 2.0 满血-HN', description: '支持4图3视频1音频参考，5s、10s、15s，支持真人', maxSeconds: 15, icon: '🚀' },
-  { id: 'sdas-hn-sd2.0-fast-720p', name: 'Seedance 2.0 Fast-HN', description: '支持4图3视频1音频参考，5s、10s、15s，支持真人', maxSeconds: 15, icon: '⚡' },
-  { id: 'seedance-2.0-fast', name: 'Seedance 2.0 Fast', description: '高画质视频生成，支持5-15s', maxSeconds: 15, icon: '🚀' },
+  { id: 'sdas-wf-sd2.0-fast-933-720p', name: 'Seedance 2.0 Fast 933 (720p)', description: '支持9图/3视频/3音频参考，4-15秒，按秒计费', maxSeconds: 15, icon: '⚡' },
+  { id: 'sdas-wf-sd2.0-pro-933-480p', name: 'Seedance 2.0 Pro 933 (480p)', description: '支持9图/3视频/3音频参考，4-15秒，按秒计费，支持真人内容', maxSeconds: 15, icon: '🚀' },
+  { id: 'sdas-pg-s2.0-fast', name: 'Seedance 2.0 PG Fast', description: '极速新口子，按次收费，限10/15秒，图片+视频总数≤5（视频≤1，无音频），不支持真人', maxSeconds: 15, icon: '⚡' },
   { id: 'veo-omni-flash', name: 'Veo Omni Flash', description: '多参考图生成视频，参考图字段 Ingredients_images，固定10s', maxSeconds: 10, icon: '🚀' },
   { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
@@ -462,11 +463,21 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     video_length = 6,
     resolution = '720p',
     reference_images = [],   // base64 dataURL 数组
-    reference_video = '',    // Base64 video data URL or URL
-    audio_url = '',          // Base64 audio data URL or URL
+    reference_videos = [],   // 新多视频数组字段
+    reference_video = '',    // 旧单值兼容字段
+    audio_urls = [],         // 新多音频数组字段
+    audio_url = '',          // 旧单值兼容字段
     first_frame = '',        // Base64 首帧图片
     last_frame = '',         // Base64 尾帧图片
   } = req.body;
+
+  // 向后兼容：合并旧单值字段到新数组
+  const finalVideos: string[] = (Array.isArray(reference_videos) && reference_videos.length > 0)
+    ? reference_videos
+    : (reference_video ? [reference_video] : []);
+  const finalAudios: string[] = (Array.isArray(audio_urls) && audio_urls.length > 0)
+    ? audio_urls
+    : (audio_url ? [audio_url] : []);
 
   if (!prompt?.trim()) {
     return res.status(400).json({ error: '请输入视频描述' });
@@ -531,13 +542,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     const key = resolution === '1080p' ? 'omni_vref_rate_1080p' : 'omni_vref_rate_720p';
     const row = db.select().from(settings).where(eq(settings.key, key)).get();
     rate = parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
-
-  } else if (model === 'sdas-hn-sd2.0-720p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sdas_hn_sd20_720p_rate')).get();
-    rate = parseFloat(row?.value || '3.80');
-  } else if (model === 'sdas-hn-sd2.0-fast-720p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sdas_hn_sd20_fast_720p_rate')).get();
-    rate = parseFloat(row?.value || '2.80');
+  } else if (model === 'sdas-wf-sd2.0-fast-933-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_wf_sd20_fast_933_720p_rate')).get();
+    rate = parseFloat(row?.value || '1.80');
+  } else if (model === 'sdas-wf-sd2.0-pro-933-480p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_wf_sd20_pro_933_480p_rate')).get();
+    rate = parseFloat(row?.value || '1.80');
+  } else if (model === 'sdas-pg-s2.0-fast') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_pg_s20_fast_rate')).get();
+    rate = parseFloat(row?.value || '1.95');
   } else if (model === 'seedance-2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get();
     rate = parseFloat(row?.value || '4.00');
@@ -559,6 +572,18 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'seedance-2.0-fast-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_720p_rate')).get();
     rate = parseFloat(row?.value || '1.50');
+  } else if (model === 'grok-imagine-1.0-video') {
+    const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_1_0_video_rate')).get();
+    rate = parseFloat(row?.value || '0.288');
+  } else if (model === 'grok-imagine-video-1.5-1080p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_video_1_5_1080p_rate')).get();
+    rate = parseFloat(row?.value || '0.800');
+  } else if (model === 'grok-imagine-video-1.5-fast') {
+    const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_video_1_5_fast_rate')).get();
+    rate = parseFloat(row?.value || '0.288');
+  } else if (model === 'grok-imagine-video-1.5-preview') {
+    const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_video_1_5_preview_rate')).get();
+    rate = parseFloat(row?.value || '0.480');
   } else {
     const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
     const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
@@ -571,7 +596,17 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   }
 
   // 预估费用并检查余额
-  const isFlatRate = ['sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p', 'seedance-2.0-fast', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(model);
+  const isFlatRate = [
+    'seedance-2.0-fast',
+    'sd2-c7',
+    'seedance-2.0-720p',
+    'seedance-2.0-fast-720p',
+    'grok-imagine-1.0-video',
+    'grok-imagine-video-1.5-1080p',
+    'grok-imagine-video-1.5-fast',
+    'grok-imagine-video-1.5-preview',
+    'sdas-pg-s2.0-fast'
+  ].includes(model);
   const estimatedRate = rate;
   const estimatedSeconds = model === 'omni-flash-vref' ? 10 : (Number(video_length) || 6);
   const estimatedCost = isFlatRate ? estimatedRate : (Math.round(estimatedRate * estimatedSeconds * 100) / 100);
@@ -600,8 +635,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         aspect_ratio,
         model,
         reference_images,
-        reference_video: reference_video || null,
-        audio_url: audio_url || null
+        reference_videos: finalVideos,
+        audio_urls: finalAudios
       }
     });
     if (contentId !== null) {
@@ -692,21 +727,36 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       for (const img of (reference_images || [])) {
         imageUrls.push(await uploadToSudaShui(img, channel.apiKey));
       }
-      const videoUrl = reference_video ? await uploadToSudaShui(reference_video, channel.apiKey) : undefined;
-      const audioUrl = audio_url ? await uploadToSudaShui(audio_url, channel.apiKey) : undefined;
+      const videoUrls: string[] = [];
+      for (const v of finalVideos.slice(0, 3)) {
+        videoUrls.push(await uploadToSudaShui(v, channel.apiKey));
+      }
+      const audioUpUrls: string[] = [];
+      for (const a of finalAudios.slice(0, 3)) {
+        audioUpUrls.push(await uploadToSudaShui(a, channel.apiKey));
+      }
 
       let finalPrompt = prompt.trim();
       finalPrompt = finalPrompt.replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (match, idxStr) => {
         const idx = parseInt(idxStr, 10);
         return `@image${idx + 1}`;
       });
+      for (let i = 0; i < videoUrls.length; i++) {
+        finalPrompt = finalPrompt.replace(new RegExp(`\\[ref_video_${i + 1}\\]`, 'g'), `@video${i + 1}`);
+      }
+      // 兼容旧的单值占位符
+      finalPrompt = finalPrompt.replace(/\[ref_video\]/g, '@video1');
+      for (let i = 0; i < audioUpUrls.length; i++) {
+        finalPrompt = finalPrompt.replace(new RegExp(`\\[ref_audio_${i + 1}\\]`, 'g'), `@audio${i + 1}`);
+      }
+      finalPrompt = finalPrompt.replace(/\[ref_audio\]/g, '@audio1');
 
       const payloadMetadata = {
         aspectRatio: aspect_ratio,
         mode: 'references',
         imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
-        videoUrls: videoUrl ? [videoUrl] : undefined,
-        audioUrls: audioUrl ? [audioUrl] : undefined,
+        videoUrls: videoUrls.length > 0 ? videoUrls : undefined,
+        audioUrls: audioUpUrls.length > 0 ? audioUpUrls : undefined,
       };
 
       const payload: Record<string, any> = {
@@ -908,16 +958,30 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         const url = convertBase64ToPublicUrl(img, 'sd2_ref', req);
         if (url) imageUrls.push(url);
       }
-      const videoUrl = reference_video ? convertBase64ToPublicUrl(reference_video, 'sd2_vid', req) : undefined;
-      const audioUrl = audio_url ? convertBase64ToPublicUrl(audio_url, 'sd2_aud', req) : undefined;
+      const videoRefUrls: string[] = [];
+      for (const v of finalVideos.slice(0, 3)) {
+        const url = convertBase64ToPublicUrl(v, 'sd2_vid', req);
+        if (url) videoRefUrls.push(url);
+      }
+      const audioRefUrls: string[] = [];
+      for (const a of finalAudios.slice(0, 3)) {
+        const url = convertBase64ToPublicUrl(a, 'sd2_aud', req);
+        if (url) audioRefUrls.push(url);
+      }
 
       let finalPrompt = prompt.trim();
       finalPrompt = finalPrompt.replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (match, idxStr) => {
         const idx = parseInt(idxStr, 10);
         return `@Image${idx + 1}`;
       });
-      finalPrompt = finalPrompt.replace(/[@＠]视频1/g, '@Video1');
-      finalPrompt = finalPrompt.replace(/[@＠]音频1/g, '@Audio1');
+      for (let i = 0; i < videoRefUrls.length; i++) {
+        finalPrompt = finalPrompt.replace(new RegExp(`\\[ref_video_${i + 1}\\]`, 'g'), `@Video${i + 1}`);
+      }
+      finalPrompt = finalPrompt.replace(/\[ref_video\]/g, '@Video1');
+      for (let i = 0; i < audioRefUrls.length; i++) {
+        finalPrompt = finalPrompt.replace(new RegExp(`\\[ref_audio_${i + 1}\\]`, 'g'), `@Audio${i + 1}`);
+      }
+      finalPrompt = finalPrompt.replace(/\[ref_audio\]/g, '@Audio1');
 
       const payload: Record<string, any> = {
         model: upstreamModel,
@@ -927,10 +991,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       };
 
       if (imageUrls.length > 0) payload.image_refs = imageUrls;
-      if (videoUrl) payload.video_refs = [videoUrl];
-      if (audioUrl) payload.audio_refs = [audioUrl];
+      if (videoRefUrls.length > 0) payload.video_refs = videoRefUrls;
+      if (audioRefUrls.length > 0) payload.audio_refs = audioRefUrls;
 
-      console.log(`[video] Step1 sd2 创建任务: model=${model} upstreamModel=${upstreamModel} duration=${payload.duration} resolution=${resolution} refs=${imageUrls.length} video=${!!videoUrl} audio=${!!audioUrl}`);
+      console.log(`[video] Step1 sd2 创建任务: model=${model} upstreamModel=${upstreamModel} duration=${payload.duration} resolution=${resolution} refs=${imageUrls.length} video=${videoRefUrls.length} audio=${audioRefUrls.length}`);
 
       const createResp = await fetch(`${baseUrl}/v1/videos`, {
         method: 'POST',
@@ -964,8 +1028,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       formData.append('resolution_name', resolution);
 
       // 参考图：将 base64 dataURL 转为 Blob 文件上传
-      // 1.5-preview 只允许 1 张，其他模型最多 5 张
-      const maxRefs = meta?.requireRef ? 1 : 5;
+      // 1.0-video 和 1.5-fast 支持最多 7 张参考图，其余 1.5-preview/1.5-1080p 仅允许 1 张，其它默认最多 5 张
+      const maxRefs = (model === 'grok-imagine-1.0-video' || model === 'grok-imagine-video-1.5-fast') ? 7 : (meta?.requireRef ? 1 : 5);
       if (hasRef) {
         for (let i = 0; i < Math.min(reference_images.length, maxRefs); i++) {
           const dataUrl: string = reference_images[i];
@@ -1402,7 +1466,10 @@ router.get('/play', async (req: Request, res: Response) => {
       })();
 
       playTranscodeLocks.set(hash, transcodePromise);
-      transcodePromise.finally(() => playTranscodeLocks.delete(hash));
+      // 在 chain 的最末尾挂载 catch，防止 finally 返回的 Rejected Promise 导致 Node 进程崩溃 (unhandledRejection)
+      transcodePromise
+        .finally(() => playTranscodeLocks.delete(hash))
+        .catch(() => {});
     } else {
       console.log(`[video/play] 复用正在进行的转码任务: ${hash}`);
     }
@@ -1478,6 +1545,11 @@ export function resumePollForTask(contentId: number, record: any) {
   if (!channel) {
     console.error(`[video-recover] No channel found for model ${model} in task ${contentId}`);
     activePolls.delete(contentId);
+    try {
+      db.update(contents).set({ status: 'failed', updatedAt: new Date().toISOString() }).where(eq(contents.id, contentId)).run();
+    } catch (dbErr) {
+      console.error(`[video-recover] Failed to set status to failed for task ${contentId}:`, dbErr);
+    }
     return;
   }
 
@@ -1493,6 +1565,11 @@ export function resumePollForTask(contentId: number, record: any) {
   if (!videoId) {
     console.error(`[video-recover] No videoId found in metadata for task ${contentId}`);
     activePolls.delete(contentId);
+    try {
+      db.update(contents).set({ status: 'failed', updatedAt: new Date().toISOString() }).where(eq(contents.id, contentId)).run();
+    } catch (dbErr) {
+      console.error(`[video-recover] Failed to set status to failed for task ${contentId}:`, dbErr);
+    }
     return;
   }
 

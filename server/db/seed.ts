@@ -140,6 +140,7 @@ async function syncModelsFromAPI() {
     { provider: 'grok', modelId: 'grok-imagine-video-1.5-preview', displayName: 'Grok Video 1.5 Preview', capabilities: JSON.stringify(['video']) },
     { provider: 'grok', modelId: 'grok-imagine-1.0-video', displayName: 'Grok Video 1.0', capabilities: JSON.stringify(['video']) },
     { provider: 'grok', modelId: 'grok-imagine-video-1.5-fast', displayName: 'Grok Video 1.5 Fast', capabilities: JSON.stringify(['video']) },
+    { provider: 'grok', modelId: 'grok-imagine-video-1.5-1080p', displayName: 'Grok Video 1.5 1080p', capabilities: JSON.stringify(['video']) },
     { provider: 'grok', modelId: 'grok-imagine-image', displayName: 'Grok Image', capabilities: JSON.stringify(['image']) },
     { provider: 'grok', modelId: 'grok-imagine-image-lite', displayName: 'Grok Image Lite', capabilities: JSON.stringify(['image']) },
     { provider: 'grok', modelId: 'grok-imagine-image-pro', displayName: 'Grok Image Pro', capabilities: JSON.stringify(['image']) },
@@ -154,11 +155,9 @@ async function syncModelsFromAPI() {
     { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'omni', modelId: 'omni-flash', displayName: 'Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'omni', modelId: 'omni-flash-vref', displayName: 'Omni Flash Vref', capabilities: JSON.stringify(['video']) },
-    { provider: 'sudashui', modelId: 'sdas-hn-sd2.0-720p', displayName: 'Seedance 2.0 满血-HN', capabilities: JSON.stringify(['video']) },
-    { provider: 'sudashui', modelId: 'sdas-hn-sd2.0-fast-720p', displayName: 'Seedance 2.0 Fast-HN', capabilities: JSON.stringify(['video']) },
-    { provider: 'pidoi', modelId: 'sora-v4-fast', displayName: 'Sora V4 Fast', capabilities: JSON.stringify(['video']) },
-    { provider: 'pidoi', modelId: 'sora-v4-pro', displayName: 'Sora V4 Pro', capabilities: JSON.stringify(['video']) },
-    { provider: 'pidoi', modelId: 'seedance-2.0-fast', displayName: 'Seedance 2.0 Fast', capabilities: JSON.stringify(['video']) },
+    { provider: 'sudashui', modelId: 'sdas-wf-sd2.0-fast-933-720p', displayName: 'Seedance 2.0 Fast 933 (720p)', capabilities: JSON.stringify(['video']) },
+    { provider: 'sudashui', modelId: 'sdas-wf-sd2.0-pro-933-480p', displayName: 'Seedance 2.0 Pro 933 (480p)', capabilities: JSON.stringify(['video']) },
+    { provider: 'sudashui', modelId: 'sdas-pg-s2.0-fast', displayName: 'Seedance 2.0 PG Fast', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']) },
@@ -190,7 +189,12 @@ async function syncModelsFromAPI() {
       'sdas-d7-seedance-2.0-face-720p',
       'sdas-mo-seedance-2.0-dj-fast',
       'sd2-c8',
-      'sora-v3-pro'
+      'sora-v3-pro',
+      'sora-v4-fast',
+      'sora-v4-pro',
+      'seedance-2.0-fast',
+      'sdas-hn-sd2.0-720p',
+      'sdas-hn-sd2.0-fast-720p'
     ];
     for (const modelId of deadModels) {
       db.delete(models).where(eq(models.modelId, modelId)).run();
@@ -570,27 +574,34 @@ export async function initDatabase() {
     'lg_seedance_fast_rate',
     'sdas_d7_face_rate',
     'sdas_mo_dj_rate',
-    'sd2_c8_rate'
+    'sd2_c8_rate',
+    'sora_v4_fast_rate',
+    'sora_v4_pro_rate',
+    'seedance_2_0_fast_rate',
+    'sdas_hn_sd20_720p_rate',
+    'sdas_hn_sd20_fast_720p_rate'
   ];
   for (const k of keysToDelete) {
     db.delete(settings).where(eq(settings.key, k)).run();
   }
 
-  // 保证 Omni & Sora 费率配置项存在
+  // 保证 Omni & Sora & Grok 费率配置项存在
   const omniSettings = [
     { key: 'omni_flash_rate_720p', value: '0.90', label: 'Omni Flash 720p费率(¥/秒)' },
     { key: 'omni_flash_rate_1080p', value: '1.50', label: 'Omni Flash 1080p费率(¥/秒)' },
     { key: 'omni_vref_rate_720p', value: '1.60', label: 'Omni Vref 720p费率(¥/秒)' },
     { key: 'omni_vref_rate_1080p', value: '2.20', label: 'Omni Vref 1080p费率(¥/秒)' },
-    { key: 'sdas_hn_sd20_720p_rate', value: '3.80', label: 'Seedance 2.0 满血-HN费率(¥/次)' },
-    { key: 'sdas_hn_sd20_fast_720p_rate', value: '2.80', label: 'Seedance 2.0 Fast-HN费率(¥/次)' },
-    { key: 'sora_v4_fast_rate', value: '0.189', label: 'Sora V4 Fast 费率(¥/秒)' },
-    { key: 'sora_v4_pro_rate', value: '0.25', label: 'Sora V4 Pro 费率(¥/秒)' },
-    { key: 'seedance_2_0_fast_rate', value: '4.00', label: 'Seedance 2.0 Fast 费率(¥/次)' },
     { key: 'veo_omni_flash_rate', value: '0.50', label: 'Veo Omni Flash 费率(¥/秒)' },
     { key: 'sd2_c7_rate', value: '0.50', label: 'Seedance 2.0 c7 费率(¥/次)' },
     { key: 'seedance_2_0_720p_rate', value: '3.00', label: 'Seedance 2.0 720p 费率(¥/次)' },
     { key: 'seedance_2_0_fast_720p_rate', value: '1.50', label: 'Seedance 2.0 Fast 720p 费率(¥/次)' },
+    { key: 'grok_imagine_1_0_video_rate', value: '0.288', label: 'Grok 1.0 Video 费率(¥/次)' },
+    { key: 'grok_imagine_video_1_5_1080p_rate', value: '0.80', label: 'Grok 1.5 1080p 费率(¥/次)' },
+    { key: 'grok_imagine_video_1_5_fast_rate', value: '0.288', label: 'Grok 1.5 Fast 费率(¥/次)' },
+    { key: 'grok_imagine_video_1_5_preview_rate', value: '0.48', label: 'Grok 1.5 Preview 费率(¥/次)' },
+    { key: 'sdas_wf_sd20_fast_933_720p_rate', value: '1.80', label: 'Seedance 2.0 Fast 933 (720p)费率(¥/秒)' },
+    { key: 'sdas_wf_sd20_pro_933_480p_rate', value: '1.80', label: 'Seedance 2.0 Pro 933 (480p)费率(¥/秒)' },
+    { key: 'sdas_pg_s20_fast_rate', value: '1.95', label: 'Seedance 2.0 PG Fast 费率(¥/次)' },
   ];
   for (const s of omniSettings) {
     const existing = db.select().from(settings).where(eq(settings.key, s.key)).get();
@@ -711,8 +722,8 @@ export async function initDatabase() {
 
   // 9) 自动向已存在且包含 sudashuiapi.com 或 pidoi.com 的渠道添加支持的模型 ID，防止路由错误
   try {
-    const sdaModels = ['sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p'];
-    const pidoiModels = ['sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast'];
+    const sdaModels = ['sdas-wf-sd2.0-fast-933-720p', 'sdas-wf-sd2.0-pro-933-480p', 'sdas-pg-s2.0-fast'];
+    const pidoiModels = ['grok-imagine-1.0-video', 'grok-imagine-video-1.5-1080p', 'grok-imagine-video-1.5-fast', 'grok-imagine-video-1.5-preview'];
     const allChannels = db.select().from(channels).all();
     for (const c of allChannels) {
       let currentModels: string[] = [];
@@ -723,7 +734,7 @@ export async function initDatabase() {
 
       let updated = false;
       if (c.baseUrl && c.baseUrl.includes('sudashuiapi.com')) {
-        const cleaned = currentModels.filter(m => !['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'xh-sdas-fast-933-720p', 'xh-sdas-pro-933-720p'].includes(m));
+        const cleaned = currentModels.filter(m => !['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'xh-sdas-fast-933-720p', 'xh-sdas-pro-933-720p', 'sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p'].includes(m));
         if (cleaned.length !== currentModels.length) {
           currentModels = cleaned;
           updated = true;
@@ -735,7 +746,8 @@ export async function initDatabase() {
           }
         }
       } else if (c.baseUrl && c.baseUrl.includes('pidoi.com')) {
-        const cleaned = currentModels.filter(m => !['seedance-2.0', 'veo-omni-flash'].includes(m));
+        // 清理已被废弃不复存在的旧模型
+        const cleaned = currentModels.filter(m => !['seedance-2.0', 'veo-omni-flash', 'sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast', 'sora-v3-pro'].includes(m));
         if (cleaned.length !== currentModels.length) {
           currentModels = cleaned;
           updated = true;

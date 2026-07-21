@@ -21,8 +21,10 @@ export interface VideoGenerateParams {
   video_length?: number;
   resolution?: string;
   reference_images?: string[];  // base64 dataURL 数组
-  reference_video?: string;     // base64 dataURL 或 URL
-  audio_url?: string;           // base64 dataURL 或 URL
+  reference_video?: string;     // 旧兼容字段
+  reference_videos?: string[];  // 多视频数组
+  audio_url?: string;           // 旧兼容字段
+  audio_urls?: string[];        // 多音频数组
   first_frame?: string;         // base64 首帧图片
   last_frame?: string;          // base64 尾帧图片
 }
