@@ -64,6 +64,9 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'sdas-xh-sd2.0-pro-933-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_xh_sd20_pro_933_720p_rate')).get();
     return parseFloat(row?.value || '3.00');
+  } else if (model === 'sd2-c6') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get();
+    return parseFloat(row?.value || '2.50');
   } else if (model === 'sora-v4-fast' || model === 'seedance-2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
     return parseFloat(row?.value || '0.189');

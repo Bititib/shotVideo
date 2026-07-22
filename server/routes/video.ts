@@ -190,6 +190,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'seedance-2.0-fast': { series: 'seedance-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'veo-omni-flash': { series: 'veo-omni-flash', allowedSeconds: [10], requireRef: false },
   'sd2-c7': { series: 'sd2-c7', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'sd2-c6': { series: 'sd2-c6', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-fast-720p': { series: 'seedance-fast-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
 };
@@ -204,7 +205,8 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'sdas-xh-sd2.0-fast-933-720p', name: 'Seedance 2.0 Fast 933 (720p) (不过人脸)', description: '支持9图/3视频/3音频参考，10秒或15秒，固定按次计费，人脸内容受限', maxSeconds: 15, icon: '⚡' },
   { id: 'sdas-xh-sd2.0-pro-933-720p', name: 'Seedance 2.0 Pro 933 (720p) (不过人脸)', description: '支持9图/3视频/3音频参考，10秒或15秒，固定按次计费，人脸内容受限', maxSeconds: 15, icon: '🚀' },
   { id: 'veo-omni-flash', name: 'Veo Omni Flash', description: '多参考图生成视频，参考图字段 Ingredients_images，固定10s', maxSeconds: 10, icon: '🚀' },
-  { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
+  { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
+  { id: 'sd2-c6', name: 'Seedance 2.0 c6', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 720p', description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '⚡' },
 ];
@@ -561,6 +563,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'sd2-c7') {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_c7_rate')).get();
     rate = parseFloat(row?.value || '0.50');
+  } else if (model === 'sd2-c6') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get();
+    rate = parseFloat(row?.value || '2.50');
   } else if (model === 'seedance-2.0-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_720p_rate')).get();
     rate = parseFloat(row?.value || '3.00');
@@ -593,6 +598,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isFlatRate = [
     'seedance-2.0-fast',
     'sd2-c7',
+    'sd2-c6',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
     'grok-imagine-1.0-video',
