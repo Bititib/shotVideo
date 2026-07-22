@@ -672,13 +672,14 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isOmni = model.startsWith('omni-flash');
   const isSeedanceFast = model === 'seedance-2.0-fast';
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
-  const isSudaShui = meta?.series === 'sudashui';
-  const isVeoOmni = model === 'veo-omni-flash';
-  const isSeedanceJsonModel = [
+  const isSudaShui = meta?.series === 'sudashui' || [
     'sd2-c7',
+    'sd2-c6',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p'
   ].includes(model);
+  const isVeoOmni = model === 'veo-omni-flash';
+  const isSeedanceJsonModel = false;
 
   try {
     let videoId = '';
@@ -947,73 +948,6 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] Seedance 2.0 Fast 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
-        res.write('data: [DONE]\n\n');
-        return res.end();
-      }
-
-      const job = await createResp.json() as any;
-      videoId = job.task_id || job.id;
-    } else if (isSeedanceJsonModel) {
-      sendEvent({ type: 'status', message: '正在处理素材并提交 Seedance 2.0 任务...' });
-
-      // 将 base64 素材保存到本地并生成自托管公网 URL
-      const imageUrls: string[] = [];
-      for (const img of (reference_images || []).slice(0, 9)) {
-        const url = convertBase64ToPublicUrl(img, 'sd2_ref', req);
-        if (url) imageUrls.push(url);
-      }
-      const videoRefUrls: string[] = [];
-      for (const v of finalVideos.slice(0, 3)) {
-        const url = convertBase64ToPublicUrl(v, 'sd2_vid', req);
-        if (url) videoRefUrls.push(url);
-      }
-      const audioRefUrls: string[] = [];
-      for (const a of finalAudios.slice(0, 3)) {
-        const url = convertBase64ToPublicUrl(a, 'sd2_aud', req);
-        if (url) audioRefUrls.push(url);
-      }
-
-      let finalPrompt = prompt.trim();
-      finalPrompt = finalPrompt.replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (match, idxStr) => {
-        const idx = parseInt(idxStr, 10);
-        return `@Image${idx + 1}`;
-      });
-      for (let i = 0; i < videoRefUrls.length; i++) {
-        finalPrompt = finalPrompt.replace(new RegExp(`\\[ref_video_${i + 1}\\]`, 'g'), `@Video${i + 1}`);
-      }
-      finalPrompt = finalPrompt.replace(/\[ref_video\]/g, '@Video1');
-      for (let i = 0; i < audioRefUrls.length; i++) {
-        finalPrompt = finalPrompt.replace(new RegExp(`\\[ref_audio_${i + 1}\\]`, 'g'), `@Audio${i + 1}`);
-      }
-      finalPrompt = finalPrompt.replace(/\[ref_audio\]/g, '@Audio1');
-
-      const payload: Record<string, any> = {
-        model: upstreamModel,
-        prompt: finalPrompt,
-        duration: Number(video_length) || 8,
-        aspect_ratio: aspect_ratio,
-      };
-
-      if (imageUrls.length > 0) payload.image_refs = imageUrls;
-      if (videoRefUrls.length > 0) payload.video_refs = videoRefUrls;
-      if (audioRefUrls.length > 0) payload.audio_refs = audioRefUrls;
-
-      console.log(`[video] Step1 sd2 创建任务: model=${model} upstreamModel=${upstreamModel} duration=${payload.duration} resolution=${resolution} refs=${imageUrls.length} video=${videoRefUrls.length} audio=${audioRefUrls.length}`);
-
-      const createResp = await fetch(`${baseUrl}/v1/videos`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${channel.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(60_000),
-      });
-
-      if (!createResp.ok) {
-        const errText = await createResp.text().catch(() => '');
-        console.error(`[video] sd2 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
         sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
         res.write('data: [DONE]\n\n');
         return res.end();
