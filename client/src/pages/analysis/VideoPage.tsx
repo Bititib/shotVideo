@@ -44,14 +44,36 @@ const isFlatRateModel = (modelId: string) => {
   return [
     'seedance-2.0-fast',
     'sd2-c7',
+    'sd2-c6',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
     'grok-imagine-1.0-video',
     'grok-imagine-video-1.5-1080p',
     'grok-imagine-video-1.5-fast',
     'grok-imagine-video-1.5-preview',
-    'sdas-pg-s2.0-fast'
+    'sdas-pg-s2.0-fast',
+    'sdas-xh-sd2.0-fast-933-720p',
+    'sdas-xh-sd2.0-pro-933-720p'
   ].includes(modelId);
+};
+
+const GROUP_ORDER = [
+  'Grok (Luma) 系列',
+  'Omni 系列',
+  'Veo (Google) 系列',
+  'Seedance 系列',
+  'Sora 系列',
+  '其他模型'
+];
+
+const getModelGroup = (modelId: string) => {
+  const id = modelId.toLowerCase();
+  if (id.includes('grok')) return 'Grok (Luma) 系列';
+  if (id.includes('veo')) return 'Veo (Google) 系列';
+  if (id.includes('omni')) return 'Omni 系列';
+  if (id.includes('seedance') || id.includes('sd2') || id.includes('sdas') || id.includes('lg-')) return 'Seedance 系列';
+  if (id.includes('sora')) return 'Sora 系列';
+  return '其他模型';
 };
 interface WoodenFishLoaderProps {
   progress: number;
@@ -293,6 +315,17 @@ export default function VideoPage() {
   const navigate = useNavigate();
   const guard = useAuthGuard();
   const [models, setModels] = useState<VideoModel[]>([]);
+  
+  const groupedModels = React.useMemo(() => {
+    const groups: Record<string, VideoModel[]> = {};
+    models.forEach(m => {
+      const g = getModelGroup(m.id);
+      if (!groups[g]) groups[g] = [];
+      groups[g].push(m);
+    });
+    return groups;
+  }, [models]);
+
   const [selectedModel, setSelectedModel] = useState('');
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState('16:9');
@@ -961,46 +994,60 @@ export default function VideoPage() {
           </h2>
           <div className="mb-6">
             <label className="block text-xs font-semibold text-zinc-400 mb-3 uppercase tracking-wider">生成模型</label>
-            <div className="space-y-2">
-              {models.map((m) => (
-                <button key={m.id} onClick={() => setSelectedModel(m.id)}
-                  className={`w-full text-left px-4 py-3 rounded-xl border transition-all ${selectedModel === m.id ? 'border-indigo-500/50 bg-indigo-500/10' : 'border-white/5 bg-white/[0.02] hover:border-white/10'}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium text-white">{m.name}</p>
-                    <div className="flex items-center gap-2">
-                      {m.rates && (
-                        <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
-                          ¥{m.rates[resolution as keyof typeof m.rates]?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}
-                        </span>
-                      )}
-                      {selectedModel === m.id && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
+            <div className="space-y-4">
+              {GROUP_ORDER.map(groupName => {
+                const groupModels = groupedModels[groupName];
+                if (!groupModels || groupModels.length === 0) return null;
+                return (
+                  <div key={groupName} className="space-y-2">
+                    <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider px-1 flex items-center gap-2">
+                      <span className="w-1 h-3 rounded-full bg-gradient-to-b from-indigo-500 to-indigo-600"></span>
+                      {groupName}
+                    </div>
+                    <div className="space-y-2">
+                      {groupModels.map((m) => (
+                        <button key={m.id} onClick={() => setSelectedModel(m.id)}
+                          className={`w-full text-left px-4 py-3 rounded-xl border transition-all ${selectedModel === m.id ? 'border-indigo-500/50 bg-indigo-500/10' : 'border-white/5 bg-white/[0.02] hover:border-white/10'}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-medium text-white">{m.name}</p>
+                            <div className="flex items-center gap-2">
+                              {m.rates && (
+                                <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
+                                  ¥{m.rates[resolution as keyof typeof m.rates]?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}
+                                </span>
+                              )}
+                              {selectedModel === m.id && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
+                            </div>
+                          </div>
+                          <p className="text-xs text-zinc-500 mt-1">{m.description}</p>
+                          {m.rates && (
+                            <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-600 border-t border-white/5 pt-1.5">
+                              {m.rates['1080p'] ? (
+                                <>
+                                  <span>1080p: <span className="text-zinc-400">¥{m.rates['1080p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
+                                  <span className="text-zinc-800">•</span>
+                                  <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
+                                </>
+                              ) : (
+                                <>
+                                  <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
+                                  {m.rates['480p'] !== undefined && (
+                                    <>
+                                      <span className="text-zinc-800">•</span>
+                                      <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
+                                    </>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          )}
+                          {m.requireRef && <p className="text-[10px] text-amber-400/80 mt-1.5 flex items-center gap-1">⚠️ 必须提供参考图</p>}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  <p className="text-xs text-zinc-500 mt-1">{m.description}</p>
-                  {m.rates && (
-                    <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-600 border-t border-white/5 pt-1.5">
-                      {m.rates['1080p'] ? (
-                        <>
-                          <span>1080p: <span className="text-zinc-400">¥{m.rates['1080p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
-                          <span className="text-zinc-800">•</span>
-                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
-                        </>
-                      ) : (
-                        <>
-                          <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
-                          {m.rates['480p'] !== undefined && (
-                            <>
-                              <span className="text-zinc-800">•</span>
-                              <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
-                            </>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  )}
-                  {m.requireRef && <p className="text-[10px] text-amber-400/80 mt-1.5 flex items-center gap-1">⚠️ 必须提供参考图</p>}
-                </button>
-              ))}
+                );
+              })}
               <div className="p-4 rounded-xl border border-dashed border-white/5 opacity-40 mt-4">
                 <p className="text-sm text-zinc-600 mb-1">更多模型</p><p className="text-xs text-zinc-700">即将支持...</p>
               </div>
