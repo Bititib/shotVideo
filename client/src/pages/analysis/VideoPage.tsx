@@ -208,7 +208,6 @@ const isSoraV4Model = (modelId: string) => {
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'grok-imagine-1.0-video' || modelId === 'grok-imagine-video-1.5-fast') return 7;
   if (modelId === 'grok-imagine-video-1.5-1080p' || modelId === 'grok-imagine-video-1.5-preview') return 1;
-  if (modelId === 'sdas-pg-s2.0-fast') return 5;
   if (modelId.startsWith('sd-') || modelId.startsWith('seedance-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (isSoraV4Model(modelId)) return 4;
   if (modelId === 'omni-flash') return 7;
@@ -314,13 +313,11 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
-    if (m === 'sdas-pg-s2.0-fast') return 1;
     if (m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     if (m === 'omni-flash-vref') return 1;
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
-    if (m === 'sdas-pg-s2.0-fast') return 0;
     if (m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     return 0;
   };

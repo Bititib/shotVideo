@@ -185,9 +185,8 @@ const MODEL_META: Record<string, ModelMeta> = {
   'omni-flash-vref': { series: 'omni-flash-vref', allowedSeconds: [10], requireRef: false },
   'sora-v4-fast': { series: 'sora-v4', allowedSeconds: [10, 15], requireRef: false },
   'sora-v4-pro': { series: 'sora-v4', allowedSeconds: [10, 15], requireRef: false },
-  'sdas-wf-sd2.0-fast-933-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
-  'sdas-wf-sd2.0-pro-933-480p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
-  'sdas-pg-s2.0-fast': { series: 'sudashui', allowedSeconds: [10, 15], requireRef: false },
+  'sdas-xh-sd2.0-fast-933-720p': { series: 'sudashui', allowedSeconds: [10, 15], requireRef: false },
+  'sdas-xh-sd2.0-pro-933-720p': { series: 'sudashui', allowedSeconds: [10, 15], requireRef: false },
   'seedance-2.0-fast': { series: 'seedance-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'veo-omni-flash': { series: 'veo-omni-flash', allowedSeconds: [10], requireRef: false },
   'sd2-c7': { series: 'sd2-c7', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
@@ -202,9 +201,8 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'grok-imagine-video-1.5-1080p', name: 'Grok 1.5 1080p', description: '单图参考模型，最多1张参考图，支持时长10和15秒，分辨率1080P', maxSeconds: 15, icon: '🎬' },
   { id: 'omni-flash', name: 'Omni Flash', description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash-vref', name: 'Omni Flash Vref', description: '视频风格编辑/改写，支持 1080p', maxSeconds: 10, icon: '✂️' },
-  { id: 'sdas-wf-sd2.0-fast-933-720p', name: 'Seedance 2.0 Fast 933 (720p)', description: '支持9图/3视频/3音频参考，4-15秒，按秒计费', maxSeconds: 15, icon: '⚡' },
-  { id: 'sdas-wf-sd2.0-pro-933-480p', name: 'Seedance 2.0 Pro 933 (480p)', description: '支持9图/3视频/3音频参考，4-15秒，按秒计费，支持真人内容', maxSeconds: 15, icon: '🚀' },
-  { id: 'sdas-pg-s2.0-fast', name: 'Seedance 2.0 PG Fast', description: '极速新口子，按次收费，限10/15秒，图片+视频总数≤5（视频≤1，无音频），不支持真人', maxSeconds: 15, icon: '⚡' },
+  { id: 'sdas-xh-sd2.0-fast-933-720p', name: 'Seedance 2.0 Fast 933 (720p)', description: '支持9图/3视频/3音频参考，10秒或15秒，固定按次计费', maxSeconds: 15, icon: '⚡' },
+  { id: 'sdas-xh-sd2.0-pro-933-720p', name: 'Seedance 2.0 Pro 933 (720p)', description: '支持9图/3视频/3音频参考，10秒或15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
   { id: 'veo-omni-flash', name: 'Veo Omni Flash', description: '多参考图生成视频，参考图字段 Ingredients_images，固定10s', maxSeconds: 10, icon: '🚀' },
   { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
@@ -542,15 +540,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     const key = resolution === '1080p' ? 'omni_vref_rate_1080p' : 'omni_vref_rate_720p';
     const row = db.select().from(settings).where(eq(settings.key, key)).get();
     rate = parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
-  } else if (model === 'sdas-wf-sd2.0-fast-933-720p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sdas_wf_sd20_fast_933_720p_rate')).get();
-    rate = parseFloat(row?.value || '1.80');
-  } else if (model === 'sdas-wf-sd2.0-pro-933-480p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sdas_wf_sd20_pro_933_480p_rate')).get();
-    rate = parseFloat(row?.value || '1.80');
-  } else if (model === 'sdas-pg-s2.0-fast') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sdas_pg_s20_fast_rate')).get();
-    rate = parseFloat(row?.value || '1.95');
+  } else if (model === 'sdas-xh-sd2.0-fast-933-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_xh_sd20_fast_933_720p_rate')).get();
+    rate = parseFloat(row?.value || '2.50');
+  } else if (model === 'sdas-xh-sd2.0-pro-933-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_xh_sd20_pro_933_720p_rate')).get();
+    rate = parseFloat(row?.value || '3.00');
   } else if (model === 'seedance-2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get();
     rate = parseFloat(row?.value || '4.00');
@@ -604,7 +599,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'grok-imagine-video-1.5-1080p',
     'grok-imagine-video-1.5-fast',
     'grok-imagine-video-1.5-preview',
-    'sdas-pg-s2.0-fast'
+    'sdas-xh-sd2.0-fast-933-720p',
+    'sdas-xh-sd2.0-pro-933-720p'
   ].includes(model);
   const estimatedRate = rate;
   const estimatedSeconds = model === 'omni-flash-vref' ? 10 : (Number(video_length) || 6);
