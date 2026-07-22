@@ -814,8 +814,8 @@ export default function VideoPage() {
       setError('视频编辑模型必须上传参考视频');
       return;
     }
-    if (referenceAudios.length > 0 && referenceImages.length === 0) {
-      setError('参考音频模式下必须上传至少一张参考图');
+    if ((referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
+      setError('参考视频或音频模式下必须上传至少一张参考图');
       return;
     }
     setError(null);
