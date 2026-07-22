@@ -230,7 +230,7 @@ export async function downloadAndLocalizeGrokVideo(url: string, videoId: string,
   }
 
   console.log(`[video] 开始本地化 Grok 视频: ${url} (task: ${videoId})`);
-  
+
   const channel = findVideoChannel(model);
   const headers: Record<string, string> = {};
   if (channel?.apiKey) {
@@ -334,8 +334,8 @@ export async function localizeChre3Video(url: string, videoId: string, model: st
     return url;
   } finally {
     // 清理临时文件
-    try { if (fs.existsSync(tempDownload)) fs.unlinkSync(tempDownload); } catch {}
-    try { if (fs.existsSync(tempTranscoded)) fs.unlinkSync(tempTranscoded); } catch {}
+    try { if (fs.existsSync(tempDownload)) fs.unlinkSync(tempDownload); } catch { }
+    try { if (fs.existsSync(tempTranscoded)) fs.unlinkSync(tempTranscoded); } catch { }
   }
 }
 /** GET /api/video/models — 可用的视频模型列表（公开，不需要登录） */
@@ -672,14 +672,13 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isOmni = model.startsWith('omni-flash');
   const isSeedanceFast = model === 'seedance-2.0-fast';
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
-  const isSudaShui = meta?.series === 'sudashui' || [
+  const isSudaShui = meta?.series === 'sudashui';
+  const isVeoOmni = model === 'veo-omni-flash';
+  const isSeedanceJsonModel = [
     'sd2-c7',
-    'sd2-c6',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p'
   ].includes(model);
-  const isVeoOmni = model === 'veo-omni-flash';
-  const isSeedanceJsonModel = false;
 
   try {
     let videoId = '';
@@ -955,6 +954,73 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       const job = await createResp.json() as any;
       videoId = job.task_id || job.id;
+    } else if (isSeedanceJsonModel) {
+      sendEvent({ type: 'status', message: '正在处理素材并提交 Seedance 2.0 任务...' });
+
+      // 将 base64 素材保存到本地并生成自托管公网 URL
+      const imageUrls: string[] = [];
+      for (const img of (reference_images || []).slice(0, 9)) {
+        const url = convertBase64ToPublicUrl(img, 'sd2_ref', req);
+        if (url) imageUrls.push(url);
+      }
+      const videoRefUrls: string[] = [];
+      for (const v of finalVideos.slice(0, 3)) {
+        const url = convertBase64ToPublicUrl(v, 'sd2_vid', req);
+        if (url) videoRefUrls.push(url);
+      }
+      const audioRefUrls: string[] = [];
+      for (const a of finalAudios.slice(0, 3)) {
+        const url = convertBase64ToPublicUrl(a, 'sd2_aud', req);
+        if (url) audioRefUrls.push(url);
+      }
+
+      let finalPrompt = prompt.trim();
+      finalPrompt = finalPrompt.replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (match, idxStr) => {
+        const idx = parseInt(idxStr, 10);
+        return `@Image${idx + 1}`;
+      });
+      for (let i = 0; i < videoRefUrls.length; i++) {
+        finalPrompt = finalPrompt.replace(new RegExp(`\\[ref_video_${i + 1}\\]`, 'g'), `@Video${i + 1}`);
+      }
+      finalPrompt = finalPrompt.replace(/\[ref_video\]/g, '@Video1');
+      for (let i = 0; i < audioRefUrls.length; i++) {
+        finalPrompt = finalPrompt.replace(new RegExp(`\\[ref_audio_${i + 1}\\]`, 'g'), `@Audio${i + 1}`);
+      }
+      finalPrompt = finalPrompt.replace(/\[ref_audio\]/g, '@Audio1');
+
+      const payload: Record<string, any> = {
+        model: upstreamModel,
+        prompt: finalPrompt,
+        duration: Number(video_length) || 8,
+        aspect_ratio: aspect_ratio,
+      };
+
+      if (imageUrls.length > 0) payload.image_refs = imageUrls;
+      if (videoRefUrls.length > 0) payload.video_refs = videoRefUrls;
+      if (audioRefUrls.length > 0) payload.audio_refs = audioRefUrls;
+
+      console.log(`[video] Step1 sd2 创建任务: model=${model} upstreamModel=${upstreamModel} duration=${payload.duration} resolution=${resolution} refs=${imageUrls.length} video=${videoRefUrls.length} audio=${audioRefUrls.length}`);
+
+      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${channel.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(60_000),
+      });
+
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        console.error(`[video] sd2 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
+        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+
+      const job = await createResp.json() as any;
+      videoId = job.task_id || job.id;
     } else {
       // ━━━ Step 1: 创建视频任务（multipart/form-data） ━━━
       sendEvent({ type: 'status', message: hasRef ? '正在上传参考图并提交任务...' : '正在提交视频生成任务...' });
@@ -1087,7 +1153,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         } else if (isSeedanceFast) {
           const outerData = status.data || {};
           const isNested = status.data && status.data.status !== undefined;
-          
+
           if (isNested) {
             const rawStatus = (outerData.status || '').toLowerCase();
             if (rawStatus === 'not_start') {
@@ -1399,8 +1465,8 @@ router.get('/play', async (req: Request, res: Response) => {
           return cachedFilePath;
         } finally {
           // 清理临时文件
-          try { if (fs.existsSync(tempOriginalPath)) fs.unlinkSync(tempOriginalPath); } catch {}
-          try { if (fs.existsSync(tempTranscodedPath)) fs.unlinkSync(tempTranscodedPath); } catch {}
+          try { if (fs.existsSync(tempOriginalPath)) fs.unlinkSync(tempOriginalPath); } catch { }
+          try { if (fs.existsSync(tempTranscodedPath)) fs.unlinkSync(tempTranscodedPath); } catch { }
         }
       })();
 
@@ -1408,7 +1474,7 @@ router.get('/play', async (req: Request, res: Response) => {
       // 在 chain 的最末尾挂载 catch，防止 finally 返回的 Rejected Promise 导致 Node 进程崩溃 (unhandledRejection)
       transcodePromise
         .finally(() => playTranscodeLocks.delete(hash))
-        .catch(() => {});
+        .catch(() => { });
     } else {
       console.log(`[video/play] 复用正在进行的转码任务: ${hash}`);
     }
@@ -1651,7 +1717,7 @@ export function resumePollForTask(contentId: number, record: any) {
             if (rawProgress !== undefined && rawProgress !== null) {
               progress = typeof rawProgress === 'number' ? rawProgress : (parseInt(String(rawProgress)) || 0);
             }
-             if (taskStatus === 'completed' || taskStatus === 'success') {
+            if (taskStatus === 'completed' || taskStatus === 'success') {
               resultUrl = statusData.video_url || statusData.url || statusData.result_url || (statusData.result && statusData.result.url)
                 || (Array.isArray(statusData.outputs) && statusData.outputs[0]?.url)
                 || `${baseUrl}/v1/files/video?id=${videoId}`;
@@ -1685,7 +1751,7 @@ export function resumePollForTask(contentId: number, record: any) {
             const meta = JSON.parse(currentRecord.metadata || '{}');
             meta.progress = progress;
             db.update(contents).set({ metadata: JSON.stringify(meta) }).where(eq(contents.id, contentId)).run();
-          } catch {}
+          } catch { }
         } else if (taskStatus === 'completed' || taskStatus === 'success') {
           console.log(`[video-recover] ✅ Generating completed: ${resultUrl}`);
           logUsage(record.userId, 'generate_video', undefined, Date.now() - startTime);

@@ -742,7 +742,14 @@ export async function initDatabase() {
 
   // 9) 自动向已存在且包含 sudashuiapi.com 或 pidoi.com 的渠道添加支持的模型 ID，防止路由错误
   try {
-    const sdaModels = ['sdas-xh-sd2.0-fast-933-720p', 'sdas-xh-sd2.0-pro-933-720p'];
+    const sdaModels = [
+      'sdas-xh-sd2.0-fast-933-720p',
+      'sdas-xh-sd2.0-pro-933-720p',
+      'sd2-c7',
+      'sd2-c6',
+      'seedance-2.0-720p',
+      'seedance-2.0-fast-720p'
+    ];
     const pidoiModels = ['grok-imagine-1.0-video', 'grok-imagine-video-1.5-1080p', 'grok-imagine-video-1.5-fast', 'grok-imagine-video-1.5-preview'];
     const allChannels = db.select().from(channels).all();
     for (const c of allChannels) {
@@ -826,7 +833,7 @@ export async function initDatabase() {
   // 11) 保证 llm.chre3.com 渠道存在并且包含 sd2-c8, sd2-c7, seedance-2.0-720p, seedance-2.0-fast-720p 支持
   try {
     const existingChre3 = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get();
-    const chre3Models = ['sd2-c7', 'sd2-c6', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'];
+    const chre3Models: string[] = [];
     if (!existingChre3) {
       db.insert(channels).values({
         name: '4月天 渠道',
@@ -840,7 +847,7 @@ export async function initDatabase() {
         maxRetries: 3,
         timeout: 120000,
       }).run();
-      console.log('📦 已自动迁移：成功创建 4月天 渠道并绑定 sd2 和 seedance-720p 系列模型');
+      console.log('📦 已自动迁移：成功创建 4月天 渠道');
     } else {
       db.update(channels)
         .set({
@@ -850,7 +857,7 @@ export async function initDatabase() {
         })
         .where(eq(channels.id, existingChre3.id))
         .run();
-      console.log('🔄 已自动迁移：更新 4月天 渠道支持 sd2 和 seedance-720p 系列模型');
+      console.log('🔄 已自动迁移：更新 4月天 渠道支持模型列表为空');
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 4月天 渠道出错:', err.message);
