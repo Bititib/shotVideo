@@ -230,7 +230,7 @@ export async function downloadAndLocalizeGrokVideo(url: string, videoId: string,
   }
 
   console.log(`[video] 开始本地化 Grok 视频: ${url} (task: ${videoId})`);
-
+  
   const channel = findVideoChannel(model);
   const headers: Record<string, string> = {};
   if (channel?.apiKey) {
@@ -334,8 +334,8 @@ export async function localizeChre3Video(url: string, videoId: string, model: st
     return url;
   } finally {
     // 清理临时文件
-    try { if (fs.existsSync(tempDownload)) fs.unlinkSync(tempDownload); } catch { }
-    try { if (fs.existsSync(tempTranscoded)) fs.unlinkSync(tempTranscoded); } catch { }
+    try { if (fs.existsSync(tempDownload)) fs.unlinkSync(tempDownload); } catch {}
+    try { if (fs.existsSync(tempTranscoded)) fs.unlinkSync(tempTranscoded); } catch {}
   }
 }
 /** GET /api/video/models — 可用的视频模型列表（公开，不需要登录） */
@@ -1153,7 +1153,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         } else if (isSeedanceFast) {
           const outerData = status.data || {};
           const isNested = status.data && status.data.status !== undefined;
-
+          
           if (isNested) {
             const rawStatus = (outerData.status || '').toLowerCase();
             if (rawStatus === 'not_start') {
@@ -1465,8 +1465,8 @@ router.get('/play', async (req: Request, res: Response) => {
           return cachedFilePath;
         } finally {
           // 清理临时文件
-          try { if (fs.existsSync(tempOriginalPath)) fs.unlinkSync(tempOriginalPath); } catch { }
-          try { if (fs.existsSync(tempTranscodedPath)) fs.unlinkSync(tempTranscodedPath); } catch { }
+          try { if (fs.existsSync(tempOriginalPath)) fs.unlinkSync(tempOriginalPath); } catch {}
+          try { if (fs.existsSync(tempTranscodedPath)) fs.unlinkSync(tempTranscodedPath); } catch {}
         }
       })();
 
@@ -1474,7 +1474,7 @@ router.get('/play', async (req: Request, res: Response) => {
       // 在 chain 的最末尾挂载 catch，防止 finally 返回的 Rejected Promise 导致 Node 进程崩溃 (unhandledRejection)
       transcodePromise
         .finally(() => playTranscodeLocks.delete(hash))
-        .catch(() => { });
+        .catch(() => {});
     } else {
       console.log(`[video/play] 复用正在进行的转码任务: ${hash}`);
     }
@@ -1717,7 +1717,7 @@ export function resumePollForTask(contentId: number, record: any) {
             if (rawProgress !== undefined && rawProgress !== null) {
               progress = typeof rawProgress === 'number' ? rawProgress : (parseInt(String(rawProgress)) || 0);
             }
-            if (taskStatus === 'completed' || taskStatus === 'success') {
+             if (taskStatus === 'completed' || taskStatus === 'success') {
               resultUrl = statusData.video_url || statusData.url || statusData.result_url || (statusData.result && statusData.result.url)
                 || (Array.isArray(statusData.outputs) && statusData.outputs[0]?.url)
                 || `${baseUrl}/v1/files/video?id=${videoId}`;
@@ -1751,7 +1751,7 @@ export function resumePollForTask(contentId: number, record: any) {
             const meta = JSON.parse(currentRecord.metadata || '{}');
             meta.progress = progress;
             db.update(contents).set({ metadata: JSON.stringify(meta) }).where(eq(contents.id, contentId)).run();
-          } catch { }
+          } catch {}
         } else if (taskStatus === 'completed' || taskStatus === 'success') {
           console.log(`[video-recover] ✅ Generating completed: ${resultUrl}`);
           logUsage(record.userId, 'generate_video', undefined, Date.now() - startTime);
