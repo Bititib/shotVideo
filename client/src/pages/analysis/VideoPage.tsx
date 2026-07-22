@@ -315,13 +315,13 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
-    if (m === 'sd2-c6') return 0;
+    if (m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     if (m === 'omni-flash-vref') return 1;
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
-    if (m === 'sd2-c6') return 0;
+    if (m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     return 0;
   };
