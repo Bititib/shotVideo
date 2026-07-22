@@ -58,7 +58,7 @@ export async function createApp() {
   app.use('/v1', globalLimiter);
 
   // Body parsing
-  app.use(express.json({ limit: '50mb' }));
+  app.use(express.json({ limit: '150mb' }));
 
   // Static uploads directory serving
   const uploadDir = path.resolve(process.cwd(), 'data/uploads');

@@ -269,6 +269,9 @@ server {
     listen 443 ssl http2;
     server_name your-domain.com;
 
+    # 限制上传体大小（需与后端 body-parser 限制一致或更大，支持参考视频上传）
+    client_max_body_size 150m;
+
     ssl_certificate     /etc/ssl/your-domain.com.pem;
     ssl_certificate_key /etc/ssl/your-domain.com.key;
 

@@ -1551,7 +1551,7 @@ export function resumePollForTask(contentId: number, record: any) {
     console.error(`[video-recover] No channel found for model ${model} in task ${contentId}`);
     activePolls.delete(contentId);
     try {
-      db.update(contents).set({ status: 'failed', updatedAt: new Date().toISOString() }).where(eq(contents.id, contentId)).run();
+      db.update(contents).set({ status: 'failed' }).where(eq(contents.id, contentId)).run();
     } catch (dbErr) {
       console.error(`[video-recover] Failed to set status to failed for task ${contentId}:`, dbErr);
     }
@@ -1571,7 +1571,7 @@ export function resumePollForTask(contentId: number, record: any) {
     console.error(`[video-recover] No videoId found in metadata for task ${contentId}`);
     activePolls.delete(contentId);
     try {
-      db.update(contents).set({ status: 'failed', updatedAt: new Date().toISOString() }).where(eq(contents.id, contentId)).run();
+      db.update(contents).set({ status: 'failed' }).where(eq(contents.id, contentId)).run();
     } catch (dbErr) {
       console.error(`[video-recover] Failed to set status to failed for task ${contentId}:`, dbErr);
     }

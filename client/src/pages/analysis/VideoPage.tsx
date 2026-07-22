@@ -24,7 +24,10 @@ interface VideoTask {
     model: string;
     reference_images?: string[];
     reference_video?: string | null;
+    reference_videos?: string[];
     audio_url?: string | null;
+    audio_urls?: string[];
+    audio_names?: string[];
   };
   createdAt: string;
   dbId?: number;
@@ -697,8 +700,8 @@ export default function VideoPage() {
       setError('请选择视频文件');
       return;
     }
-    if (file.size > 50 * 1024 * 1024) {
-      setError('参考视频不能超过 50MB');
+    if (file.size > 100 * 1024 * 1024) {
+      setError('参考视频不能超过 100MB');
       return;
     }
     const readFile = (f: File) => {
@@ -786,7 +789,10 @@ export default function VideoPage() {
       aspect_ratio?: string;
       reference_images?: string[];
       reference_video?: string | null;
+      reference_videos?: string[];
       audio_url?: string | null;
+      audio_urls?: string[];
+      audio_names?: string[];
     };
   }) => {
     const targetPrompt = item.inputText || item.title || item.prompt || '';
