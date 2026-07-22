@@ -193,9 +193,6 @@ const MODEL_META: Record<string, ModelMeta> = {
   'sd2-c7': { series: 'sd2-c7', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-fast-720p': { series: 'seedance-fast-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
-  'seedance2.0-full-9img': { series: 'seedance20', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
-  'seedance2.0-full-4img': { series: 'seedance20', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
-  'seedance2.0-fast-4img': { series: 'seedance20', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
@@ -212,9 +209,6 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 720p', description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '⚡' },
-  { id: 'seedance2.0-fast-4img', name: 'Seedance 2.0 Fast 4图 (888API)', description: '速度优先，适合快速预览和批量草稿，最多支持4图、3视频、3音频参考，4-15秒，固定按次计费', maxSeconds: 15, icon: '⚡' },
-  { id: 'seedance2.0-full-4img', name: 'Seedance 2.0 Full 4图 (888API)', description: '支持最多4图参考、3视频、3音频参考，4-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
-  { id: 'seedance2.0-full-9img', name: 'Seedance 2.0 Full 9图 (888API)', description: '支持最多9图参考、3视频、3音频参考，4-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
 ];
 
 /** 查找支持指定视频模型的渠道 */
@@ -557,15 +551,6 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'sdas-pg-s2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_pg_s20_fast_rate')).get();
     rate = parseFloat(row?.value || '1.95');
-  } else if (model === 'seedance2.0-full-9img') {
-    const row = db.select().from(settings).where(eq(settings.key, 'seedance20_full_9img_rate')).get();
-    rate = parseFloat(row?.value || '4.50');
-  } else if (model === 'seedance2.0-full-4img') {
-    const row = db.select().from(settings).where(eq(settings.key, 'seedance20_full_4img_rate')).get();
-    rate = parseFloat(row?.value || '4.00');
-  } else if (model === 'seedance2.0-fast-4img') {
-    const row = db.select().from(settings).where(eq(settings.key, 'seedance20_fast_4img_rate')).get();
-    rate = parseFloat(row?.value || '3.50');
   } else if (model === 'seedance-2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get();
     rate = parseFloat(row?.value || '4.00');
@@ -619,10 +604,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'grok-imagine-video-1.5-1080p',
     'grok-imagine-video-1.5-fast',
     'grok-imagine-video-1.5-preview',
-    'sdas-pg-s2.0-fast',
-    'seedance2.0-full-9img',
-    'seedance2.0-full-4img',
-    'seedance2.0-fast-4img'
+    'sdas-pg-s2.0-fast'
   ].includes(model);
   const estimatedRate = rate;
   const estimatedSeconds = model === 'omni-flash-vref' ? 10 : (Number(video_length) || 6);
@@ -693,10 +675,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isSeedanceJsonModel = [
     'sd2-c7',
     'seedance-2.0-720p',
-    'seedance-2.0-fast-720p',
-    'seedance2.0-full-9img',
-    'seedance2.0-full-4img',
-    'seedance2.0-fast-4img'
+    'seedance-2.0-fast-720p'
   ].includes(model);
 
   try {
@@ -1014,15 +993,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         aspect_ratio: aspect_ratio,
       };
 
-      if (model.startsWith('seedance2.0-')) {
-        if (imageUrls.length > 0) payload.referenceImages = imageUrls;
-        if (videoRefUrls.length > 0) payload.referenceVideos = videoRefUrls;
-        if (audioRefUrls.length > 0) payload.referenceAudios = audioRefUrls;
-      } else {
-        if (imageUrls.length > 0) payload.image_refs = imageUrls;
-        if (videoRefUrls.length > 0) payload.video_refs = videoRefUrls;
-        if (audioRefUrls.length > 0) payload.audio_refs = audioRefUrls;
-      }
+      if (imageUrls.length > 0) payload.image_refs = imageUrls;
+      if (videoRefUrls.length > 0) payload.video_refs = videoRefUrls;
+      if (audioRefUrls.length > 0) payload.audio_refs = audioRefUrls;
 
       console.log(`[video] Step1 sd2 创建任务: model=${model} upstreamModel=${upstreamModel} duration=${payload.duration} resolution=${resolution} refs=${imageUrls.length} video=${videoRefUrls.length} audio=${audioRefUrls.length}`);
 

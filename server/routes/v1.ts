@@ -67,15 +67,6 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'sdas-pg-s2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_pg_s20_fast_rate')).get();
     return parseFloat(row?.value || '1.95');
-  } else if (model === 'seedance2.0-full-9img') {
-    const row = db.select().from(settings).where(eq(settings.key, 'seedance20_full_9img_rate')).get();
-    return parseFloat(row?.value || '4.50');
-  } else if (model === 'seedance2.0-full-4img') {
-    const row = db.select().from(settings).where(eq(settings.key, 'seedance20_full_4img_rate')).get();
-    return parseFloat(row?.value || '4.00');
-  } else if (model === 'seedance2.0-fast-4img') {
-    const row = db.select().from(settings).where(eq(settings.key, 'seedance20_fast_4img_rate')).get();
-    return parseFloat(row?.value || '3.50');
   } else if (model === 'sora-v4-fast' || model === 'seedance-2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
     return parseFloat(row?.value || '0.189');
