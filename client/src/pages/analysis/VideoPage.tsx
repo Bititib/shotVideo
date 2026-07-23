@@ -40,24 +40,16 @@ function getVideoPlayUrl(url: string | null) {
   return `/api/video/play?url=${encodeURIComponent(url)}`;
 }
 
-const isFlatRateModel = (modelId: string) => {
-  return [
-    'seedance-2.0-fast',
-    'sd2-c7',
-    'sd2-c6',
-    'seedance-2.0-720p',
-    'seedance-2.0-fast-720p',
-    'grok-imagine-1.0-video',
-    'grok-imagine-video-1.5-1080p',
-    'grok-imagine-video-1.5-fast',
-    'grok-imagine-video-1.5-preview',
-    'sdas-pg-s2.0-fast',
-    'sdas-xh-sd2.0-fast-933-720p',
-    'sdas-xh-sd2.0-pro-933-720p'
-  ].includes(modelId);
+const isFlatRateModel = (m: VideoModel | string, modelsList?: VideoModel[]) => {
+  if (typeof m === 'object') return m.billingType === 'flat';
+  if (modelsList) {
+    const found = modelsList.find(item => item.id === m);
+    if (found?.billingType) return found.billingType === 'flat';
+  }
+  return false;
 };
 
-const GROUP_ORDER = [
+const DEFAULT_GROUP_ORDER = [
   'Grok (Luma) 系列',
   'Omni 系列',
   'Veo (Google) 系列',
@@ -66,8 +58,9 @@ const GROUP_ORDER = [
   '其他模型'
 ];
 
-const getModelGroup = (modelId: string) => {
-  const id = modelId.toLowerCase();
+const getModelGroup = (m: VideoModel) => {
+  if (m.group) return m.group;
+  const id = m.id.toLowerCase();
   if (id.includes('grok')) return 'Grok (Luma) 系列';
   if (id.includes('veo')) return 'Veo (Google) 系列';
   if (id.includes('omni')) return 'Omni 系列';
@@ -319,12 +312,32 @@ export default function VideoPage() {
   const groupedModels = React.useMemo(() => {
     const groups: Record<string, VideoModel[]> = {};
     models.forEach(m => {
-      const g = getModelGroup(m.id);
+      const g = getModelGroup(m);
       if (!groups[g]) groups[g] = [];
       groups[g].push(m);
     });
     return groups;
   }, [models]);
+
+  const groupOrder = React.useMemo(() => {
+    const seen = new Set<string>();
+    const order: string[] = [];
+    // 优先保持 DEFAULT_GROUP_ORDER 的相对顺序
+    DEFAULT_GROUP_ORDER.forEach(g => {
+      if (groupedModels[g] && groupedModels[g].length > 0) {
+        seen.add(g);
+        order.push(g);
+      }
+    });
+    // 追加新增的自定义分组
+    Object.keys(groupedModels).forEach(g => {
+      if (!seen.has(g) && groupedModels[g].length > 0) {
+        seen.add(g);
+        order.push(g);
+      }
+    });
+    return order;
+  }, [groupedModels]);
 
   const [selectedModel, setSelectedModel] = useState('');
   const [prompt, setPrompt] = useState('');
@@ -995,7 +1008,7 @@ export default function VideoPage() {
           <div className="mb-6">
             <label className="block text-xs font-semibold text-zinc-400 mb-3 uppercase tracking-wider">生成模型</label>
             <div className="space-y-4">
-              {GROUP_ORDER.map(groupName => {
+              {groupOrder.map(groupName => {
                 const groupModels = groupedModels[groupName];
                 if (!groupModels || groupModels.length === 0) return null;
                 return (
@@ -1013,7 +1026,7 @@ export default function VideoPage() {
                             <div className="flex items-center gap-2">
                               {m.rates && (
                                 <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
-                                  ¥{m.rates[resolution as keyof typeof m.rates]?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}
+                                  ¥{m.rates[resolution as keyof typeof m.rates]?.toFixed(2)}{isFlatRateModel(m) ? '/次' : '/秒'}
                                 </span>
                               )}
                               {selectedModel === m.id && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
@@ -1024,17 +1037,17 @@ export default function VideoPage() {
                             <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-600 border-t border-white/5 pt-1.5">
                               {m.rates['1080p'] ? (
                                 <>
-                                  <span>1080p: <span className="text-zinc-400">¥{m.rates['1080p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
+                                  <span>1080p: <span className="text-zinc-400">¥{m.rates['1080p']?.toFixed(2)}{isFlatRateModel(m) ? '/次' : '/秒'}</span></span>
                                   <span className="text-zinc-800">•</span>
-                                  <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
+                                  <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m) ? '/次' : '/秒'}</span></span>
                                 </>
                               ) : (
                                 <>
-                                  <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
+                                  <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m) ? '/次' : '/秒'}</span></span>
                                   {m.rates['480p'] !== undefined && (
                                     <>
                                       <span className="text-zinc-800">•</span>
-                                      <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
+                                      <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}{isFlatRateModel(m) ? '/次' : '/秒'}</span></span>
                                     </>
                                   )}
                                 </>

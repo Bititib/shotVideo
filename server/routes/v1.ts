@@ -12,6 +12,8 @@ import fs from 'fs';
 import path from 'path';
 import { env } from '../config/env.js';
 
+import { getModelRate } from '../services/videoConfigService.js';
+
 const router = Router();
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
 
@@ -50,40 +52,7 @@ function deductTokenOrUserBalance(token: any, cost: number, model: string) {
 
 /** 获取视频计费费率 */
 function getVideoRate(model: string, resolution: string): number {
-  if (model === 'omni-flash') {
-    const key = resolution === '1080p' ? 'omni_flash_rate_1080p' : 'omni_flash_rate_720p';
-    const row = db.select().from(settings).where(eq(settings.key, key)).get();
-    return parseFloat(row?.value || (resolution === '1080p' ? '1.50' : '0.90'));
-  } else if (model === 'omni-flash-vref') {
-    const key = resolution === '1080p' ? 'omni_vref_rate_1080p' : 'omni_vref_rate_720p';
-    const row = db.select().from(settings).where(eq(settings.key, key)).get();
-    return parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
-  } else if (model === 'sdas-xh-sd2.0-fast-933-720p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sdas_xh_sd20_fast_933_720p_rate')).get();
-    return parseFloat(row?.value || '2.50');
-  } else if (model === 'sdas-xh-sd2.0-pro-933-720p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sdas_xh_sd20_pro_933_720p_rate')).get();
-    return parseFloat(row?.value || '3.00');
-  } else if (model === 'sd2-c6') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get();
-    return parseFloat(row?.value || '2.50');
-  } else if (model === 'sora-v4-fast' || model === 'seedance-2.0-fast') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
-    return parseFloat(row?.value || '0.189');
-  } else if (model === 'sora-v4-pro' || model === 'seedance-2.0') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_pro_rate')).get();
-    return parseFloat(row?.value || '0.25');
-  } else {
-    const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
-    const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
-    const BASE_RATE: Record<string, number> = {
-      '480p': parseFloat(rate480?.value || '0.03'),
-      '720p': parseFloat(rate720?.value || '0.05'),
-    };
-    const isV1_5 = model.includes('1.5');
-    const seriesMultiplier = isV1_5 ? 1.2 : 1.0;
-    return Math.round((BASE_RATE[resolution] || BASE_RATE['720p']) * seriesMultiplier * 100) / 100;
-  }
+  return getModelRate(model, resolution);
 }
 
 /** 查找视频中转渠道配置 */

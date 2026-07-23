@@ -164,18 +164,104 @@ async function syncModelsFromAPI() {
     { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']) }
   );
 
+  const INITIAL_VIDEO_CONFIGS: Record<string, any> = {
+    'grok-imagine-video-1.5-preview': {
+      series: '1.5', allowedSeconds: [6, 10, 15], requireRef: true, maxSeconds: 15,
+      billingType: 'flat', rateSettingKey: 'grok_imagine_video_1_5_preview_rate', defaultRate: 0.48,
+      description: '图生视频，必须提供参考图，6/10/15秒', icon: '🖼️', group: 'Grok (Luma) 系列'
+    },
+    'grok-imagine-1.0-video': {
+      series: '1.0', allowedSeconds: [6, 10], requireRef: false, maxSeconds: 10,
+      billingType: 'flat', rateSettingKey: 'grok_imagine_1_0_video_rate', defaultRate: 0.288,
+      description: '文生/图生视频，支持最多7张参考图，6/10秒', icon: '🎥', group: 'Grok (Luma) 系列'
+    },
+    'grok-imagine-video-1.5-fast': {
+      series: '1.5', allowedSeconds: [6, 10], requireRef: false, maxSeconds: 10,
+      billingType: 'flat', rateSettingKey: 'grok_imagine_video_1_5_fast_rate', defaultRate: 0.288,
+      description: '快速文生/图生视频，支持最多7张参考图，6/10秒', icon: '⚡', group: 'Grok (Luma) 系列'
+    },
+    'grok-imagine-video-1.5-1080p': {
+      series: '1.5', allowedSeconds: [10, 15], requireRef: true, maxSeconds: 15,
+      billingType: 'flat', rateSettingKey: 'grok_imagine_video_1_5_1080p_rate', defaultRate: 0.80,
+      description: '单图参考模型，最多1张参考图，支持时长10和15秒，分辨率1080P', icon: '🎬', group: 'Grok (Luma) 系列'
+    },
+    'grok-imagine-video': {
+      series: 'legacy', allowedSeconds: null, requireRef: false, maxSeconds: 10,
+      billingType: 'per_second', rateSettingKey: 'video_rate_720p', defaultRate: 0.05,
+      description: 'Grok 基础视频生成模型', icon: '🎥', group: 'Grok (Luma) 系列'
+    },
+    'grok-4.3-video': {
+      series: 'legacy', allowedSeconds: null, requireRef: false, maxSeconds: 10,
+      billingType: 'per_second', rateSettingKey: 'video_rate_720p', defaultRate: 0.05,
+      description: 'Grok 4.3 视频生成', icon: '🎥', group: 'Grok (Luma) 系列'
+    },
+    'omni-flash': {
+      series: 'omni-flash', allowedSeconds: [4, 6, 8, 10], requireRef: false, maxSeconds: 10,
+      billingType: 'per_second', rateSettingKey: 'omni_flash_rate_720p', defaultRate: 0.90,
+      rate1080pKey: 'omni_flash_rate_1080p', defaultRate1080p: 1.50,
+      description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', icon: '⚡', group: 'Omni 系列'
+    },
+    'omni-flash-vref': {
+      series: 'omni-flash-vref', allowedSeconds: [10], requireRef: false, maxSeconds: 10,
+      billingType: 'per_second', rateSettingKey: 'omni_vref_rate_720p', defaultRate: 1.60,
+      rate1080pKey: 'omni_vref_rate_1080p', defaultRate1080p: 2.20,
+      description: '视频风格编辑/改写，支持 1080p', icon: '✂️', group: 'Omni 系列'
+    },
+    'sdas-xh-sd2.0-fast-933-720p': {
+      series: 'sudashui', allowedSeconds: [10, 15], requireRef: false, maxSeconds: 15,
+      billingType: 'flat', rateSettingKey: 'sdas_xh_sd20_fast_933_720p_rate', defaultRate: 2.50,
+      description: '支持9图/3视频/3音频参考，10秒或15秒，固定按次计费，人脸内容受限', icon: '⚡', group: 'Seedance 系列'
+    },
+    'sdas-xh-sd2.0-pro-933-720p': {
+      series: 'sudashui', allowedSeconds: [10, 15], requireRef: false, maxSeconds: 15,
+      billingType: 'flat', rateSettingKey: 'sdas_xh_sd20_pro_933_720p_rate', defaultRate: 3.00,
+      description: '支持9图/3视频/3音频参考，10秒或15秒，固定按次计费，人脸内容受限', icon: '🚀', group: 'Seedance 系列'
+    },
+    'veo-omni-flash': {
+      series: 'veo-omni-flash', allowedSeconds: [10], requireRef: false, maxSeconds: 10,
+      billingType: 'per_second', rateSettingKey: 'veo_omni_flash_rate', defaultRate: 5.00,
+      description: '多参考图生成视频，参考图字段 Ingredients_images，固定10s', icon: '🚀', group: 'Veo (Google) 系列'
+    },
+    'sd2-c7': {
+      series: 'sd2-c7', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false, maxSeconds: 15,
+      billingType: 'flat', rateSettingKey: 'sd2_c7_rate', defaultRate: 0.50,
+      description: 'OpenAI 兼容，支持720p固定分辨率，支持最多10张图片参考（无视频/音频参考），5-15秒，固定按次计费', icon: '🚀', group: 'Seedance 系列'
+    },
+    'sd2-c6': {
+      series: 'sd2-c6', allowedSeconds: [15], requireRef: false, maxSeconds: 15,
+      billingType: 'flat', rateSettingKey: 'sd2_c6_rate', defaultRate: 2.50,
+      description: 'OpenAI 兼容，支持720p固定分辨率，支持最多9张图片参考（无视频/音频参考），固定15秒，固定按次计费', icon: '🚀', group: 'Seedance 系列'
+    },
+    'seedance-2.0-720p': {
+      series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false, maxSeconds: 15,
+      billingType: 'flat', rateSettingKey: 'seedance_2_0_720p_rate', defaultRate: 3.00,
+      description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', icon: '🚀', group: 'Seedance 系列'
+    },
+    'seedance-2.0-fast-720p': {
+      series: 'seedance-fast-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false, maxSeconds: 15,
+      billingType: 'flat', rateSettingKey: 'seedance_2_0_fast_720p_rate', defaultRate: 1.50,
+      description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', icon: '⚡', group: 'Seedance 系列'
+    }
+  };
+
   // 同步或插入模型
   for (const m of allVerified) {
+    const vConfig = INITIAL_VIDEO_CONFIGS[m.modelId] ? JSON.stringify(INITIAL_VIDEO_CONFIGS[m.modelId]) : null;
     const existing = db.select().from(models).where(eq(models.modelId, m.modelId)).get();
     if (existing) {
-      if (existing.displayName !== m.displayName || existing.capabilities !== m.capabilities) {
+      const updates: Record<string, any> = {};
+      if (existing.displayName !== m.displayName) updates.displayName = m.displayName;
+      if (existing.capabilities !== m.capabilities) updates.capabilities = m.capabilities;
+      if (vConfig && existing.videoConfig !== vConfig) updates.videoConfig = vConfig;
+
+      if (Object.keys(updates).length > 0) {
         db.update(models)
-          .set({ displayName: m.displayName, capabilities: m.capabilities })
+          .set(updates)
           .where(eq(models.modelId, m.modelId))
           .run();
       }
     } else {
-      db.insert(models).values(m).run();
+      db.insert(models).values({ ...m, videoConfig: vConfig }).run();
     }
   }
 
@@ -427,6 +513,14 @@ export async function initDatabase() {
   try {
     sqlite.exec(`ALTER TABLE users ADD COLUMN org_id INTEGER`);
     console.log('🔄 已迁移：users 表添加 org_id 列');
+  } catch {
+    // 列已存在则忽略
+  }
+
+  // 增量迁移：为已有 models 表添加 video_config 列
+  try {
+    sqlite.exec(`ALTER TABLE models ADD COLUMN video_config TEXT`);
+    console.log('🔄 已迁移：models 表添加 video_config 列');
   } catch {
     // 列已存在则忽略
   }

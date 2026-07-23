@@ -7,6 +7,9 @@ export interface VideoModel {
   allowedSeconds?: number[] | null;
   requireRef?: boolean;
   series?: string;
+  billingType?: 'flat' | 'per_second';
+  group?: string;
+  icon?: string;
   rates?: {
     '480p'?: number;
     '720p'?: number;

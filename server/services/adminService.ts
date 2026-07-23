@@ -2,6 +2,7 @@ import { db } from '../db/index.js';
 import { users, tiers, models, tierModelAccess, usageLogs, settings } from '../db/schema.js';
 import { eq, like, and, gte, sql, desc, count } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
+import { invalidateVideoConfigCache } from './videoConfigService.js';
 
 interface GetUsersOptions {
   page: number;
@@ -267,7 +268,7 @@ export class AdminService {
   }
 
   static createModel(data: any) {
-    const { provider, modelId, displayName, apiKey, capabilities } = data;
+    const { provider, modelId, displayName, apiKey, capabilities, videoConfig } = data;
     if (!modelId || !displayName) throw { status: 400, message: '模型ID和名称不能为空' };
 
     db.insert(models).values({
@@ -276,7 +277,9 @@ export class AdminService {
       displayName,
       apiKey: apiKey || null,
       capabilities: JSON.stringify(capabilities || ['text']),
+      videoConfig: videoConfig ? (typeof videoConfig === 'string' ? videoConfig : JSON.stringify(videoConfig)) : null,
     }).run();
+    invalidateVideoConfigCache();
   }
 
   static updateModel(modelId: number, data: any) {
@@ -289,15 +292,20 @@ export class AdminService {
     if (data.apiKey !== undefined) updates.apiKey = data.apiKey || null;
     if (data.capabilities !== undefined) updates.capabilities = JSON.stringify(data.capabilities);
     if (data.isActive !== undefined) updates.isActive = data.isActive;
+    if (data.videoConfig !== undefined) {
+      updates.videoConfig = typeof data.videoConfig === 'string' ? data.videoConfig : JSON.stringify(data.videoConfig);
+    }
 
     if (Object.keys(updates).length > 0) {
       db.update(models).set(updates).where(eq(models.id, modelId)).run();
+      invalidateVideoConfigCache();
     }
   }
 
   static deleteModel(modelId: number) {
     db.delete(tierModelAccess).where(eq(tierModelAccess.modelId, modelId)).run();
     db.delete(models).where(eq(models.id, modelId)).run();
+    invalidateVideoConfigCache();
   }
 
   // ============ 系统设置 ============
@@ -312,6 +320,7 @@ export class AdminService {
         .where(eq(settings.key, item.key))
         .run();
     }
+    invalidateVideoConfigCache();
   }
 
   /** 公开接口：返回 key-value 对象 */

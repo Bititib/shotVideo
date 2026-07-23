@@ -10,14 +10,44 @@ export default function ModelsPage() {
   const load = async () => { setLoading(true); setModels(await adminApi.getModels()); setLoading(false); };
   useEffect(() => { load(); }, []);
 
-  const openNew = () => setEdit({ provider: 'google', modelId: '', displayName: '', apiKey: '', capabilities: ['text'], isActive: 1, isNew: true });
-  const openEdit = (m: any) => setEdit({ ...m, apiKey: '', isNew: false }); // apiKey is masked, user must re-enter
+  const openNew = () => setEdit({
+    provider: 'google',
+    modelId: '',
+    displayName: '',
+    apiKey: '',
+    capabilities: ['text'],
+    isActive: 1,
+    videoConfig: '',
+    isNew: true
+  });
+
+  const openEdit = (m: any) => setEdit({
+    ...m,
+    apiKey: '',
+    videoConfig: m.videoConfig ? (typeof m.videoConfig === 'object' ? JSON.stringify(m.videoConfig, null, 2) : m.videoConfig) : '',
+    isNew: false
+  });
 
   const handleSave = async () => {
     if (!edit) return;
     try {
-      const data: any = { provider: edit.provider, modelId: edit.modelId, displayName: edit.displayName, capabilities: edit.capabilities, isActive: edit.isActive };
-      if (edit.apiKey) data.apiKey = edit.apiKey; // Only send if user entered a new key
+      const data: any = {
+        provider: edit.provider,
+        modelId: edit.modelId,
+        displayName: edit.displayName,
+        capabilities: edit.capabilities,
+        isActive: edit.isActive
+      };
+      if (edit.apiKey) data.apiKey = edit.apiKey;
+      if (edit.capabilities.includes('video') && edit.videoConfig) {
+        try {
+          JSON.parse(edit.videoConfig);
+          data.videoConfig = edit.videoConfig;
+        } catch {
+          alert('视频模型配置 (videoConfig) 的 JSON 格式无效，请校验后再提交');
+          return;
+        }
+      }
       if (edit.isNew) { await adminApi.createModel(data); } else { await adminApi.updateModel(edit.id, data); }
       setEdit(null); load();
     } catch (e: any) { alert(e.message); }
@@ -71,15 +101,15 @@ export default function ModelsPage() {
 
       {/* Edit Modal */}
       {edit && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setEdit(null)}>
-          <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setEdit(null)}>
+          <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <h3 className="text-lg font-semibold text-white mb-5">{edit.isNew ? '添加新模型' : `编辑: ${edit.displayName}`}</h3>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs text-zinc-400 mb-1.5">供应商</label>
                   <select value={edit.provider} onChange={e => setEdit({ ...edit, provider: e.target.value })} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
-                    <option value="google">Google</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="grok">Grok (xAI)</option><option value="other">其他</option>
+                    <option value="google">Google</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="grok">Grok (xAI)</option><option value="sudashui">速大水 (sudashui)</option><option value="pidoi">Pidoi</option><option value="seedance">Seedance</option><option value="other">其他</option>
                   </select>
                 </div>
                 <div><label className="block text-xs text-zinc-400 mb-1.5">模型ID</label><input type="text" value={edit.modelId} onChange={e => setEdit({ ...edit, modelId: e.target.value })} placeholder="gemini-2.5-pro" disabled={!edit.isNew} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none disabled:opacity-50" /></div>
@@ -95,6 +125,19 @@ export default function ModelsPage() {
                   ))}
                 </div>
               </div>
+              {edit.capabilities.includes('video') && (
+                <div>
+                  <label className="block text-xs text-zinc-400 mb-1.5">视频模型配置 (JSON)</label>
+                  <textarea
+                    rows={6}
+                    value={edit.videoConfig || ''}
+                    onChange={e => setEdit({ ...edit, videoConfig: e.target.value })}
+                    placeholder={`{\n  "series": "sudashui",\n  "allowedSeconds": [10, 15],\n  "requireRef": false,\n  "maxSeconds": 15,\n  "billingType": "flat",\n  "rateSettingKey": "my_rate_key",\n  "defaultRate": 2.5,\n  "description": "模型说明",\n  "icon": "⚡",\n  "group": "Seedance 系列"\n}`}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs font-mono text-zinc-200 focus:outline-none"
+                  />
+                  <p className="text-[10px] text-zinc-500 mt-1">配置包含：series, allowedSeconds, requireRef, billingType ("flat"|"per_second"), rateSettingKey, defaultRate, description, icon, group 等</p>
+                </div>
+              )}
             </div>
             <div className="flex gap-3 mt-6">
               <button onClick={() => setEdit(null)} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm transition-colors">取消</button>
