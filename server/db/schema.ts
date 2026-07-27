@@ -65,7 +65,6 @@ export const models = sqliteTable('models', {
   apiKey: text('api_key'),                                    // 可选，留空则用全局 GEMINI_API_KEY
   capabilities: text('capabilities').notNull().default('["text"]'), // JSON: text/image_gen/video
   isActive: integer('is_active').notNull().default(1),
-  videoConfig: text('video_config'),                          // JSON: 视频模型专有配置（系列/时长/计费/费率/描述/图标/分组等）
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
 });
 

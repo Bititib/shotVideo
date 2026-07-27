@@ -40,16 +40,23 @@ function getVideoPlayUrl(url: string | null) {
   return `/api/video/play?url=${encodeURIComponent(url)}`;
 }
 
-const isFlatRateModel = (m: VideoModel | string, modelsList?: VideoModel[]) => {
-  if (typeof m === 'object') return m.billingType === 'flat';
-  if (modelsList) {
-    const found = modelsList.find(item => item.id === m);
-    if (found?.billingType) return found.billingType === 'flat';
-  }
-  return false;
+const isFlatRateModel = (modelId: string) => {
+  return [
+    'seedance-2.0-fast',
+    'sd2-c7',
+    'sd2-c6',
+    'seedance-2.0-720p',
+    'seedance-2.0-fast-720p',
+    'grok-imagine-1.0-video',
+    'grok-imagine-video-1.5-1080p',
+    'grok-imagine-video-1.5-fast',
+    'grok-imagine-video-1.5-preview',
+    'sdas-pg-s2.0-fast',
+    'sdas-xh-sd2.0-933-3-pro-720p'
+  ].includes(modelId);
 };
 
-const DEFAULT_GROUP_ORDER = [
+const GROUP_ORDER = [
   'Grok (Luma) 系列',
   'Omni 系列',
   'Veo (Google) 系列',
@@ -58,9 +65,8 @@ const DEFAULT_GROUP_ORDER = [
   '其他模型'
 ];
 
-const getModelGroup = (m: VideoModel) => {
-  if (m.group) return m.group;
-  const id = m.id.toLowerCase();
+const getModelGroup = (modelId: string) => {
+  const id = modelId.toLowerCase();
   if (id.includes('grok')) return 'Grok (Luma) 系列';
   if (id.includes('veo')) return 'Veo (Google) 系列';
   if (id.includes('omni')) return 'Omni 系列';
@@ -85,9 +91,9 @@ function WoodenFishLoader({ progress, statusMessage }: WoodenFishLoaderProps) {
       const text = `进度 ${progress}%`;
       const x = Math.floor(Math.random() * 20) - 10;
       const y = Math.floor(Math.random() * 10) - 5;
-      
+
       setFloats(prev => [...prev, { id, text, x, y }]);
-      
+
       setTimeout(() => setStrike(false), 150);
       setTimeout(() => {
         setFloats(prev => prev.filter(f => f.id !== id));
@@ -150,7 +156,7 @@ function WoodenFishLoader({ progress, statusMessage }: WoodenFishLoaderProps) {
       {/* 核心图形区 */}
       <div className="relative w-28 h-20 flex items-center justify-center mb-1">
         {/* 木槌 */}
-        <div 
+        <div
           style={{
             animation: strike ? 'woodenStrike 0.18s ease-in-out' : 'none'
           }}
@@ -163,16 +169,16 @@ function WoodenFishLoader({ progress, statusMessage }: WoodenFishLoaderProps) {
         </div>
 
         {/* 木鱼 */}
-        <div 
+        <div
           style={{
             animation: strike ? 'fishSquish 0.15s ease-out' : 'none'
           }}
           className="w-16 h-16 origin-center transition-transform"
         >
           <svg className="w-full h-full filter drop-shadow-[0_4px_8px_rgba(0,0,0,0.6)]" viewBox="0 0 64 64">
-            <path 
-              d="M32 10 C16 10, 8 24, 8 38 C8 48, 16 52, 32 52 C48 52, 56 48, 56 38 C56 24, 48 10, 32 10 Z" 
-              fill="url(#fishGrad)" 
+            <path
+              d="M32 10 C16 10, 8 24, 8 38 C8 48, 16 52, 32 52 C48 52, 56 48, 56 38 C56 24, 48 10, 32 10 Z"
+              fill="url(#fishGrad)"
             />
             <path d="M18 42 Q32 30 46 42" stroke="#3b1901" strokeWidth="2.5" fill="none" strokeLinecap="round" />
             <circle cx="20" cy="24" r="3.5" fill="#3b1901" />
@@ -308,36 +314,16 @@ export default function VideoPage() {
   const navigate = useNavigate();
   const guard = useAuthGuard();
   const [models, setModels] = useState<VideoModel[]>([]);
-  
+
   const groupedModels = React.useMemo(() => {
     const groups: Record<string, VideoModel[]> = {};
     models.forEach(m => {
-      const g = getModelGroup(m);
+      const g = getModelGroup(m.id);
       if (!groups[g]) groups[g] = [];
       groups[g].push(m);
     });
     return groups;
   }, [models]);
-
-  const groupOrder = React.useMemo(() => {
-    const seen = new Set<string>();
-    const order: string[] = [];
-    // 优先保持 DEFAULT_GROUP_ORDER 的相对顺序
-    DEFAULT_GROUP_ORDER.forEach(g => {
-      if (groupedModels[g] && groupedModels[g].length > 0) {
-        seen.add(g);
-        order.push(g);
-      }
-    });
-    // 追加新增的自定义分组
-    Object.keys(groupedModels).forEach(g => {
-      if (!seen.has(g) && groupedModels[g].length > 0) {
-        seen.add(g);
-        order.push(g);
-      }
-    });
-    return order;
-  }, [groupedModels]);
 
   const [selectedModel, setSelectedModel] = useState('');
   const [prompt, setPrompt] = useState('');
@@ -407,8 +393,8 @@ export default function VideoPage() {
           <span
             key={index}
             className={`inline rounded transition-colors ${exists
-                ? 'text-indigo-400 bg-indigo-500/15 font-sans'
-                : 'text-zinc-500 bg-zinc-500/10 line-through decoration-zinc-600 font-sans'
+              ? 'text-indigo-400 bg-indigo-500/15 font-sans'
+              : 'text-zinc-500 bg-zinc-500/10 line-through decoration-zinc-600 font-sans'
               }`}
           >
             {part}
@@ -424,8 +410,8 @@ export default function VideoPage() {
           <span
             key={index}
             className={`inline rounded transition-colors px-1 ${exists
-                ? 'text-purple-400 bg-purple-500/20 font-sans font-medium'
-                : 'text-zinc-500 bg-zinc-500/10 line-through decoration-zinc-600 font-sans'
+              ? 'text-purple-400 bg-purple-500/20 font-sans font-medium'
+              : 'text-zinc-500 bg-zinc-500/10 line-through decoration-zinc-600 font-sans'
               }`}
           >
             {part}
@@ -441,8 +427,8 @@ export default function VideoPage() {
           <span
             key={index}
             className={`inline rounded transition-colors px-1 ${exists
-                ? 'text-emerald-400 bg-emerald-500/20 font-sans font-medium'
-                : 'text-zinc-500 bg-zinc-500/10 line-through decoration-zinc-600 font-sans'
+              ? 'text-emerald-400 bg-emerald-500/20 font-sans font-medium'
+              : 'text-zinc-500 bg-zinc-500/10 line-through decoration-zinc-600 font-sans'
               }`}
           >
             {part}
@@ -485,6 +471,10 @@ export default function VideoPage() {
   // 切分分镜拼图相关状态
   const [slicingImageUrl, setSlicingImageUrl] = useState<string | null>(null);
   const [slicingImageIndex, setSlicingImageIndex] = useState<number | null>(null);
+
+  // 人脸合规参数状态 (针对四月天/Seedance系列模型)
+  const [complianceEnabled, setComplianceEnabled] = useState(false);
+  const [complianceMode, setComplianceMode] = useState<string>('colored-pencil');
 
   const handleConfirmSlice = (sliced: string[]) => {
     if (slicingImageIndex !== null) {
@@ -560,7 +550,7 @@ export default function VideoPage() {
                 videoUrl: item.resultUrl || null,
                 statusMessage: '',
               } : t));
-              useAuthStore.getState().fetchProfile().catch(() => {});
+              useAuthStore.getState().fetchProfile().catch(() => { });
               // 延迟后刷新历史记录
               setTimeout(() => {
                 contentApi.getMyContents({ type: 'video', pageSize: 50 })
@@ -585,7 +575,7 @@ export default function VideoPage() {
                 statusMessage: '',
                 error: item.metadata?.error || '生成失败'
               } : t));
-              useAuthStore.getState().fetchProfile().catch(() => {});
+              useAuthStore.getState().fetchProfile().catch(() => { });
             } else {
               // processing 状态：从 metadata.progress 读取实时进度
               let meta: any = {};
@@ -642,8 +632,8 @@ export default function VideoPage() {
   const isOmniModel = selectedModel.startsWith('omni-flash') || selectedModel === 'veo-omni-flash';
   const RESOLUTIONS = currentModel?.rates
     ? Object.keys(currentModel.rates)
-        .sort((a, b) => parseInt(a) - parseInt(b))
-        .map(r => ({ value: r, label: r }))
+      .sort((a, b) => parseInt(a) - parseInt(b))
+      .map(r => ({ value: r, label: r }))
     : isOmniModel
       ? [{ value: '720p', label: '720p' }, { value: '1080p', label: '1080p' }]
       : [{ value: '480p', label: '480p' }, { value: '720p', label: '720p' }];
@@ -924,6 +914,8 @@ export default function VideoPage() {
         audio_urls: referenceAudios.length > 0 ? referenceAudios : undefined,
         first_frame: firstFrame || undefined,
         last_frame: lastFrame || undefined,
+        compliance_enabled: ['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(selectedModel) ? complianceEnabled : undefined,
+        compliance_mode: (['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(selectedModel) && complianceEnabled) ? complianceMode : undefined,
       },
       (event: VideoSSEEvent) => {
         // 如果已经被主动取消，忽略后续所有事件以防竞态将 ID 改为 db_ 后台轮询
@@ -938,12 +930,12 @@ export default function VideoPage() {
           case 'complete':
             updateTask({ status: 'complete', progress: 100, videoUrl: event.videoUrl || null, statusMessage: '' });
             abortRef.current.delete(taskId);
-            useAuthStore.getState().fetchProfile().catch(() => {});
+            useAuthStore.getState().fetchProfile().catch(() => { });
             break;
           case 'error':
             updateTask({ status: 'error', error: event.message || '生成失败', statusMessage: '' });
             abortRef.current.delete(taskId);
-            useAuthStore.getState().fetchProfile().catch(() => {});
+            useAuthStore.getState().fetchProfile().catch(() => { });
             break;
           case 'close':
             // SSE 连接中断，且任务没有完成/失败，有数据库 ID 的情况下，直接升级为 db_ 开头的后台轮询任务
@@ -1008,7 +1000,7 @@ export default function VideoPage() {
           <div className="mb-6">
             <label className="block text-xs font-semibold text-zinc-400 mb-3 uppercase tracking-wider">生成模型</label>
             <div className="space-y-4">
-              {groupOrder.map(groupName => {
+              {GROUP_ORDER.map(groupName => {
                 const groupModels = groupedModels[groupName];
                 if (!groupModels || groupModels.length === 0) return null;
                 return (
@@ -1026,7 +1018,7 @@ export default function VideoPage() {
                             <div className="flex items-center gap-2">
                               {m.rates && (
                                 <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
-                                  ¥{m.rates[resolution as keyof typeof m.rates]?.toFixed(2)}{isFlatRateModel(m) ? '/次' : '/秒'}
+                                  ¥{m.rates[resolution as keyof typeof m.rates]?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}
                                 </span>
                               )}
                               {selectedModel === m.id && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
@@ -1037,17 +1029,17 @@ export default function VideoPage() {
                             <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-600 border-t border-white/5 pt-1.5">
                               {m.rates['1080p'] ? (
                                 <>
-                                  <span>1080p: <span className="text-zinc-400">¥{m.rates['1080p']?.toFixed(2)}{isFlatRateModel(m) ? '/次' : '/秒'}</span></span>
+                                  <span>1080p: <span className="text-zinc-400">¥{m.rates['1080p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
                                   <span className="text-zinc-800">•</span>
-                                  <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m) ? '/次' : '/秒'}</span></span>
+                                  <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
                                 </>
                               ) : (
                                 <>
-                                  <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m) ? '/次' : '/秒'}</span></span>
+                                  <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
                                   {m.rates['480p'] !== undefined && (
                                     <>
                                       <span className="text-zinc-800">•</span>
-                                      <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}{isFlatRateModel(m) ? '/次' : '/秒'}</span></span>
+                                      <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
                                     </>
                                   )}
                                 </>
@@ -1300,11 +1292,42 @@ export default function VideoPage() {
                         <Upload className="w-3 h-3 text-emerald-400" /> 首帧 {firstFrame ? '(已上传)' : ''}
                       </button>
                       <input ref={firstFrameInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { if (e.target.files?.[0]) { const url = await compressImage(e.target.files[0]); setFirstFrame(url); } e.target.value = ''; }} />
-                              <button onClick={() => lastFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                      <button onClick={() => lastFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-amber-400" /> 尾帧 {lastFrame ? '(已上传)' : ''}
                       </button>
                       <input ref={lastFrameInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { if (e.target.files?.[0]) { const url = await compressImage(e.target.files[0]); setLastFrame(url); } e.target.value = ''; }} />
                     </>
+                  )}
+                  {['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(selectedModel) && (
+                    <div className="flex items-center gap-2 bg-white/[0.04] hover:bg-white/[0.06] rounded-lg px-2.5 py-1 text-[11px] text-zinc-300 border border-white/5 transition-all">
+                      <div
+                        onClick={() => setComplianceEnabled(!complianceEnabled)}
+                        className="flex items-center gap-1.5 cursor-pointer select-none"
+                      >
+                        <div className={`relative w-7 h-4 rounded-full transition-colors ${complianceEnabled ? 'bg-indigo-600' : 'bg-zinc-700'}`}>
+                          <div className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${complianceEnabled ? 'translate-x-3' : 'translate-x-0'}`} />
+                        </div>
+                        <span className={complianceEnabled ? 'text-indigo-300 font-medium' : 'text-zinc-400'}>
+                          {complianceEnabled ? '已开启过人脸' : '是否过人脸'}
+                        </span>
+                      </div>
+
+                      {complianceEnabled && (
+                        <div className="flex items-center gap-1 pl-1.5 border-l border-white/10">
+                          <span className="text-[10px] text-zinc-400">方式:</span>
+                          <select
+                            value={complianceMode}
+                            onChange={(e) => setComplianceMode(e.target.value)}
+                            className="bg-zinc-900 text-zinc-200 border border-white/10 rounded px-1.5 py-0.5 text-[10px] focus:outline-none focus:border-indigo-500/50"
+                          >
+                            <option value="colored-pencil">彩铅风格 (colored-pencil)</option>
+                            <option value="watercolor">水彩风格 (watercolor)</option>
+                            <option value="fishnet">渔网风格 (fishnet)</option>
+                            <option value="grid">眼部遮罩 (grid)</option>
+                          </select>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
 
