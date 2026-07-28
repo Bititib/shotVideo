@@ -159,7 +159,8 @@ async function syncModelsFromAPI() {
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']) },
-    { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']) }
+    { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']) },
+    { provider: 'seedance', modelId: 'seedance-720', displayName: 'Seedance 720 满血版', capabilities: JSON.stringify(['video']) }
   );
 
   // 同步或插入模型
@@ -619,6 +620,7 @@ export async function initDatabase() {
     { key: 'grok_imagine_video_1_5_preview_rate', value: '0.48', label: 'Grok 1.5 Preview 费率(¥/次)' },
     { key: 'sdas_xh_sd20_933_3_pro_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro 933-3 (720p) 费率(¥/次)' },
     { key: 'sd2_c6_rate', value: '2.50', label: 'Seedance 2.0 c6 费率(¥/次)' },
+    { key: 'seedance_720_rate', value: '3.00', label: 'Seedance 720 满血版 费率(¥/次)' },
   ];
   for (const s of omniSettings) {
     const existing = db.select().from(settings).where(eq(settings.key, s.key)).get();
@@ -823,7 +825,7 @@ export async function initDatabase() {
   // 11) 保证 llm.chre3.com 渠道存在并且包含 sd2-c8, sd2-c7, seedance-2.0-720p, seedance-2.0-fast-720p 支持
   try {
     const existingChre3 = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get();
-    const chre3Models = ['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'];
+    const chre3Models = ['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p', 'seedance-720'];
     if (!existingChre3) {
       db.insert(channels).values({
         name: '4月天 渠道',

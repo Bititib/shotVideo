@@ -70,6 +70,9 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'sora-v4-pro' || model === 'seedance-2.0') {
     const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_pro_rate')).get();
     return parseFloat(row?.value || '0.25');
+  } else if (model === 'seedance-720') {
+    const row = db.select().from(settings).where(eq(settings.key, 'seedance_720_rate')).get();
+    return parseFloat(row?.value || '3.00');
   } else {
     const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
     const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();

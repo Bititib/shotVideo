@@ -191,6 +191,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'sd2-c7': { series: 'sd2-c7', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-fast-720p': { series: 'seedance-fast-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'seedance-720': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
@@ -205,6 +206,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多10张图片参考（无视频/音频参考），5-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 720p', description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '⚡' },
+  { id: 'seedance-720', name: 'Seedance 720 满血版', description: '满血模型，支持933，过人脸，720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🔥' },
 ];
 
 /** 查找支持指定视频模型的渠道 */
@@ -427,6 +429,11 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
+    } else if (m.id === 'seedance-720') {
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'seedance_720_rate')).get()?.value || '3.00');
+      rates = {
+        '720p': rate,
+      };
     } else if (m.id === 'sdas-xh-sd2.0-933-3-pro-720p') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_xh_sd20_933_3_pro_720p_rate')).get()?.value || '4.50');
       rates = {
@@ -597,6 +604,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'seedance-2.0-fast-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_720p_rate')).get();
     rate = parseFloat(row?.value || '1.50');
+  } else if (model === 'seedance-720') {
+    const row = db.select().from(settings).where(eq(settings.key, 'seedance_720_rate')).get();
+    rate = parseFloat(row?.value || '3.00');
   } else if (model === 'grok-imagine-1.0-video') {
     const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_1_0_video_rate')).get();
     rate = parseFloat(row?.value || '0.288');
@@ -626,6 +636,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'sd2-c6',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
+    'seedance-720',
     'grok-imagine-1.0-video',
     'grok-imagine-video-1.5-1080p',
     'grok-imagine-video-1.5-fast',
@@ -701,7 +712,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isSeedanceJsonModel = [
     'sd2-c7',
     'seedance-2.0-720p',
-    'seedance-2.0-fast-720p'
+    'seedance-2.0-fast-720p',
+    'seedance-720'
   ].includes(model);
 
   try {
@@ -1644,6 +1656,9 @@ export function resumePollForTask(contentId: number, record: any) {
   } else if (model === 'seedance-2.0-fast-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_720p_rate')).get();
     rate = parseFloat(row?.value || '1.50');
+  } else if (model === 'seedance-720') {
+    const row = db.select().from(settings).where(eq(settings.key, 'seedance_720_rate')).get();
+    rate = parseFloat(row?.value || '3.00');
   } else if (model === 'sdas-xh-sd2.0-933-3-pro-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_xh_sd20_933_3_pro_720p_rate')).get();
     rate = parseFloat(row?.value || '4.50');
@@ -1680,6 +1695,7 @@ export function resumePollForTask(contentId: number, record: any) {
     'sd2-c7',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
+    'seedance-720',
     'sdas-xh-sd2.0-933-3-pro-720p',
     'sd2-c6',
     'grok-imagine-1.0-video',

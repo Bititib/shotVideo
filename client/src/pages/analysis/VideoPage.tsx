@@ -52,7 +52,8 @@ const isFlatRateModel = (modelId: string) => {
     'grok-imagine-video-1.5-fast',
     'grok-imagine-video-1.5-preview',
     'sdas-pg-s2.0-fast',
-    'sdas-xh-sd2.0-933-3-pro-720p'
+    'sdas-xh-sd2.0-933-3-pro-720p',
+    'seedance-720'
   ].includes(modelId);
 };
 
