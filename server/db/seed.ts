@@ -133,18 +133,8 @@ async function syncModelsFromAPI() {
     ];
   }
 
-  // 强制追加静态模型 (Grok 视频/图片 等)
+  // 强制追加静态模型 (图片/音频/视频 等)
   allVerified.push(
-    { provider: 'grok', modelId: 'grok-imagine-video', displayName: 'Grok Video', capabilities: JSON.stringify(['video']) },
-    { provider: 'grok', modelId: 'grok-4.3-video', displayName: 'Grok 4.3 Video', capabilities: JSON.stringify(['video']) },
-    { provider: 'grok', modelId: 'grok-imagine-video-1.5-preview', displayName: 'Grok Video 1.5 Preview', capabilities: JSON.stringify(['video']) },
-    { provider: 'grok', modelId: 'grok-imagine-1.0-video', displayName: 'Grok Video 1.0', capabilities: JSON.stringify(['video']) },
-    { provider: 'grok', modelId: 'grok-imagine-video-1.5-fast', displayName: 'Grok Video 1.5 Fast', capabilities: JSON.stringify(['video']) },
-    { provider: 'grok', modelId: 'grok-imagine-video-1.5-1080p', displayName: 'Grok Video 1.5 1080p', capabilities: JSON.stringify(['video']) },
-    { provider: 'grok', modelId: 'grok-imagine-image', displayName: 'Grok Image', capabilities: JSON.stringify(['image']) },
-    { provider: 'grok', modelId: 'grok-imagine-image-lite', displayName: 'Grok Image Lite', capabilities: JSON.stringify(['image']) },
-    { provider: 'grok', modelId: 'grok-imagine-image-pro', displayName: 'Grok Image Pro', capabilities: JSON.stringify(['image']) },
-    { provider: 'grok', modelId: 'grok-imagine-image-edit', displayName: 'Grok Image Edit', capabilities: JSON.stringify(['image']) },
     { provider: 'openai', modelId: 'gpt-image-2', displayName: 'GPT Image 2', capabilities: JSON.stringify(['image']) },
     { provider: 'openai', modelId: 'gpt-image-2-plus', displayName: 'GPT Image 2 Plus', capabilities: JSON.stringify(['image']) },
     { provider: 'openai', modelId: 'gpt-image-2-pro', displayName: 'GPT Image 2 Pro', capabilities: JSON.stringify(['image']) },
@@ -157,6 +147,7 @@ async function syncModelsFromAPI() {
     { provider: 'omni', modelId: 'omni-flash-vref', displayName: 'Omni Flash Vref', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-xh-sd2.0-933-3-pro-720p', displayName: 'Seedance 2.0 Pro 933-3 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
+    { provider: 'pidoi', modelId: 'tejiasd2', displayName: '特价 SD 2.0', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']) },
@@ -181,6 +172,16 @@ async function syncModelsFromAPI() {
   // 强制删除已废弃或不能使用的旧视频模型
   try {
     const deadModels = [
+      'grok-imagine-video',
+      'grok-4.3-video',
+      'grok-imagine-video-1.5-preview',
+      'grok-imagine-1.0-video',
+      'grok-imagine-video-1.5-fast',
+      'grok-imagine-video-1.5-1080p',
+      'grok-imagine-image',
+      'grok-imagine-image-lite',
+      'grok-imagine-image-pro',
+      'grok-imagine-image-edit',
       'xh-sdas-fast-933-720p',
       'xh-sdas-pro-933-720p',
       'seedance-2.0',
@@ -598,13 +599,17 @@ export async function initDatabase() {
     'seedance20_fast_4img_rate',
     'sdas_wf_sd20_fast_933_720p_rate',
     'sdas_wf_sd20_pro_933_480p_rate',
-    'sdas_pg_s20_fast_rate'
+    'sdas_pg_s20_fast_rate',
+    'grok_imagine_1_0_video_rate',
+    'grok_imagine_video_1_5_1080p_rate',
+    'grok_imagine_video_1_5_fast_rate',
+    'grok_imagine_video_1_5_preview_rate'
   ];
   for (const k of keysToDelete) {
     db.delete(settings).where(eq(settings.key, k)).run();
   }
 
-  // 保证 Omni & Sora & Grok 费率配置项存在
+  // 保证 Omni & Sora 费率配置项存在
   const omniSettings = [
     { key: 'omni_flash_rate_720p', value: '0.90', label: 'Omni Flash 720p费率(¥/秒)' },
     { key: 'omni_flash_rate_1080p', value: '1.50', label: 'Omni Flash 1080p费率(¥/秒)' },
@@ -614,13 +619,10 @@ export async function initDatabase() {
     { key: 'sd2_c7_rate', value: '0.50', label: 'Seedance 2.0 c7 费率(¥/次)' },
     { key: 'seedance_2_0_720p_rate', value: '3.00', label: 'Seedance 2.0 720p 费率(¥/次)' },
     { key: 'seedance_2_0_fast_720p_rate', value: '1.50', label: 'Seedance 2.0 Fast 720p 费率(¥/次)' },
-    { key: 'grok_imagine_1_0_video_rate', value: '0.288', label: 'Grok 1.0 Video 费率(¥/次)' },
-    { key: 'grok_imagine_video_1_5_1080p_rate', value: '0.80', label: 'Grok 1.5 1080p 费率(¥/次)' },
-    { key: 'grok_imagine_video_1_5_fast_rate', value: '0.288', label: 'Grok 1.5 Fast 费率(¥/次)' },
-    { key: 'grok_imagine_video_1_5_preview_rate', value: '0.48', label: 'Grok 1.5 Preview 费率(¥/次)' },
     { key: 'sdas_xh_sd20_933_3_pro_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro 933-3 (720p) 费率(¥/次)' },
     { key: 'sd2_c6_rate', value: '2.50', label: 'Seedance 2.0 c6 费率(¥/次)' },
     { key: 'seedance_720_rate', value: '3.00', label: 'Seedance 720 满血版 费率(¥/次)' },
+    { key: 'tejiasd2_rate', value: '3.00', label: '特价 SD 2.0 费率(¥/次)' },
   ];
   for (const s of omniSettings) {
     const existing = db.select().from(settings).where(eq(settings.key, s.key)).get();
@@ -665,30 +667,6 @@ export async function initDatabase() {
       outputPrice: 0.03,  // ¥0.03 / 1M tokens
     },
     {
-      modelPattern: 'grok-imagine-image',
-      billingType: 'per_call',
-      inputPrice: 0.05 * IMAGE_MULTIPLIER,   // 3x multiplier (0.15)
-      outputPrice: 0,
-    },
-    {
-      modelPattern: 'grok-imagine-image-lite',
-      billingType: 'per_call',
-      inputPrice: 0.03 * IMAGE_MULTIPLIER,   // 3x multiplier (0.09)
-      outputPrice: 0,
-    },
-    {
-      modelPattern: 'grok-imagine-image-pro',
-      billingType: 'per_call',
-      inputPrice: 0.10 * IMAGE_MULTIPLIER,   // 3x multiplier (0.30)
-      outputPrice: 0,
-    },
-    {
-      modelPattern: 'grok-imagine-image-edit',
-      billingType: 'per_call',
-      inputPrice: 0.04 * IMAGE_MULTIPLIER,   // 3x multiplier (0.12)
-      outputPrice: 0,
-    },
-    {
       modelPattern: 'gpt-image-2',
       billingType: 'per_call',
       inputPrice: 0.04 * IMAGE_MULTIPLIER,   // 3x multiplier (0.12)
@@ -724,7 +702,16 @@ export async function initDatabase() {
       inputPrice: 0.20 * IMAGE_MULTIPLIER,   // 3x multiplier (0.60)
       outputPrice: 0,
     },
+    {
+      modelPattern: 'tejiasd2',
+      billingType: 'per_call',
+      inputPrice: 3.00,
+      outputPrice: 0,
+    },
   ];
+
+  // 清理废弃的 Grok 模型计费规则
+  sqlite.exec("DELETE FROM model_pricing WHERE model_pattern LIKE 'grok%'");
 
   console.log('📦 同步计费规则到数据库 (更新/插入)...');
   for (const pricing of defaultPricing) {
@@ -742,7 +729,7 @@ export async function initDatabase() {
   // 9) 自动向已存在且包含 sudashuiapi.com 或 pidoi.com 的渠道添加支持的模型 ID，防止路由错误
   try {
     const sdaModels = ['sdas-xh-sd2.0-933-3-pro-720p'];
-    const pidoiModels = ['grok-imagine-1.0-video', 'grok-imagine-video-1.5-1080p', 'grok-imagine-video-1.5-fast', 'grok-imagine-video-1.5-preview'];
+    const pidoiModels = ['tejiasd2'];
     const allChannels = db.select().from(channels).all();
     for (const c of allChannels) {
       let currentModels: string[] = [];
@@ -765,8 +752,8 @@ export async function initDatabase() {
           }
         }
       } else if (c.baseUrl && c.baseUrl.includes('pidoi.com')) {
-        // 清理已被废弃不复存在的旧模型
-        const cleaned = currentModels.filter(m => !['seedance-2.0', 'veo-omni-flash', 'sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast', 'sora-v3-pro'].includes(m));
+        // 清理已被废弃不复存在的旧模型，以及全部的 Grok 视频模型
+        const cleaned = currentModels.filter(m => !['seedance-2.0', 'veo-omni-flash', 'sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast', 'sora-v3-pro', 'grok-imagine-1.0-video', 'grok-imagine-video-1.5-1080p', 'grok-imagine-video-1.5-fast', 'grok-imagine-video-1.5-preview'].includes(m));
         if (cleaned.length !== currentModels.length) {
           currentModels = cleaned;
           updated = true;

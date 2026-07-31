@@ -61,6 +61,9 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'sdas-xh-sd2.0-933-3-pro-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_xh_sd20_933_3_pro_720p_rate')).get();
     return parseFloat(row?.value || '4.50');
+  } else if (model === 'tejiasd2') {
+    const row = db.select().from(settings).where(eq(settings.key, 'tejiasd2_rate')).get();
+    return parseFloat(row?.value || '3.00');
   } else if (model === 'sd2-c6') {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get();
     return parseFloat(row?.value || '2.50');
@@ -628,7 +631,23 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
   }
 
   const rate = getVideoRate(model, resolution_name);
-  const totalCost = Math.round(rate * Number(seconds) * 100) / 100;
+  const isFlatRate = [
+    'sdas-hn-sd2.0-720p',
+    'sdas-hn-sd2.0-fast-720p',
+    'seedance-2.0-fast',
+    'sd2-c7',
+    'seedance-2.0-720p',
+    'seedance-2.0-fast-720p',
+    'seedance-720',
+    'sdas-xh-sd2.0-933-3-pro-720p',
+    'sd2-c6',
+    'grok-imagine-1.0-video',
+    'grok-imagine-video-1.5-1080p',
+    'grok-imagine-video-1.5-fast',
+    'grok-imagine-video-1.5-preview',
+    'tejiasd2'
+  ].includes(model);
+  const totalCost = isFlatRate ? rate : (Math.round(rate * Number(seconds) * 100) / 100);
 
   const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, totalCost);
   if (!sufficient) {
@@ -733,7 +752,23 @@ router.post('/video/generations', async (req: Request, res: Response) => {
 
   const rate = getVideoRate(model, resolution);
   const seconds = model === 'omni-flash-vref' ? 10 : Number(duration);
-  const totalCost = Math.round(rate * seconds * 100) / 100;
+  const isFlatRate = [
+    'sdas-hn-sd2.0-720p',
+    'sdas-hn-sd2.0-fast-720p',
+    'seedance-2.0-fast',
+    'sd2-c7',
+    'seedance-2.0-720p',
+    'seedance-2.0-fast-720p',
+    'seedance-720',
+    'sdas-xh-sd2.0-933-3-pro-720p',
+    'sd2-c6',
+    'grok-imagine-1.0-video',
+    'grok-imagine-video-1.5-1080p',
+    'grok-imagine-video-1.5-fast',
+    'grok-imagine-video-1.5-preview',
+    'tejiasd2'
+  ].includes(model);
+  const totalCost = isFlatRate ? rate : (Math.round(rate * seconds * 100) / 100);
 
   const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, totalCost);
   if (!sufficient) {

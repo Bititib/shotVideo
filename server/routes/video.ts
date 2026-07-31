@@ -192,13 +192,10 @@ const MODEL_META: Record<string, ModelMeta> = {
   'seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-fast-720p': { series: 'seedance-fast-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-720': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'tejiasd2': { series: 'seedance-720p', allowedSeconds: [10], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
-  { id: 'grok-imagine-video-1.5-preview', name: 'Grok 1.5 Preview', description: '图生视频，必须提供参考图，6/10/15秒', maxSeconds: 15, icon: '🖼️' },
-  { id: 'grok-imagine-1.0-video', name: 'Grok 1.0 Video', description: '文生/图生视频，支持最多7张参考图，6/10秒', maxSeconds: 10, icon: '🎥' },
-  { id: 'grok-imagine-video-1.5-fast', name: 'Grok 1.5 Fast', description: '快速文生/图生视频，支持最多7张参考图，6/10秒', maxSeconds: 10, icon: '⚡' },
-  { id: 'grok-imagine-video-1.5-1080p', name: 'Grok 1.5 1080p', description: '单图参考模型，最多1张参考图，支持时长10和15秒，分辨率1080P', maxSeconds: 15, icon: '🎬' },
   { id: 'omni-flash', name: 'Omni Flash', description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash-vref', name: 'Omni Flash Vref', description: '视频风格编辑/改写，支持 1080p', maxSeconds: 10, icon: '✂️' },
   { id: 'sdas-xh-sd2.0-933-3-pro-720p', name: 'Seedance 2.0 Pro 933-3 (720p)', description: 'S2.0 满血版，支持真人、不糊脸、无网格，支持 9图/3视频/3音频，固定按次计费', maxSeconds: 15, icon: '🚀' },
@@ -207,6 +204,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 720p', description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '⚡' },
   { id: 'seedance-720', name: 'Seedance 720 满血版', description: '满血模型，支持933，过人脸，720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🔥' },
+  { id: 'tejiasd2', name: 'tejiasd2', description: 'SD 2.0 9张参考图 3个参考视频 3个参考音频 不卡真人 只支持10秒 特价模型', maxSeconds: 10, icon: '🚀' },
 ];
 
 /** 查找支持指定视频模型的渠道 */
@@ -439,6 +437,11 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
+    } else if (m.id === 'tejiasd2') {
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'tejiasd2_rate')).get()?.value || '3.00');
+      rates = {
+        '720p': rate,
+      };
     } else if (m.id === 'sd2-c6') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get()?.value || '2.50');
       rates = {
@@ -580,6 +583,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'sdas-xh-sd2.0-933-3-pro-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_xh_sd20_933_3_pro_720p_rate')).get();
     rate = parseFloat(row?.value || '4.50');
+  } else if (model === 'tejiasd2') {
+    const row = db.select().from(settings).where(eq(settings.key, 'tejiasd2_rate')).get();
+    rate = parseFloat(row?.value || '3.00');
   } else if (model === 'seedance-2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get();
     rate = parseFloat(row?.value || '4.00');
@@ -641,7 +647,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'grok-imagine-video-1.5-1080p',
     'grok-imagine-video-1.5-fast',
     'grok-imagine-video-1.5-preview',
-    'sdas-xh-sd2.0-933-3-pro-720p'
+    'sdas-xh-sd2.0-933-3-pro-720p',
+    'tejiasd2'
   ].includes(model);
   const estimatedRate = rate;
   const estimatedSeconds = model === 'omni-flash-vref' ? 10 : (Number(video_length) || 6);
@@ -713,7 +720,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'sd2-c7',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
-    'seedance-720'
+    'seedance-720',
+    'tejiasd2'
   ].includes(model);
 
   try {
@@ -1701,7 +1709,8 @@ export function resumePollForTask(contentId: number, record: any) {
     'grok-imagine-1.0-video',
     'grok-imagine-video-1.5-1080p',
     'grok-imagine-video-1.5-fast',
-    'grok-imagine-video-1.5-preview'
+    'grok-imagine-video-1.5-preview',
+    'tejiasd2'
   ].includes(model);
 
   const baseUrl = channel.baseUrl.replace(/\/+$/, '');
