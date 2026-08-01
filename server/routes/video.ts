@@ -444,6 +444,11 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
+    } else if (m.id === 'sd2.0-fast-480p') {
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd20_fast_480p_rate')).get()?.value || '0.22');
+      rates = {
+        '480p': rate,
+      };
     } else if (m.id === 'sd2-c6') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get()?.value || '2.50');
       rates = {
