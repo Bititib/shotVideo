@@ -64,6 +64,9 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'tejiasd2') {
     const row = db.select().from(settings).where(eq(settings.key, 'tejiasd2_rate')).get();
     return parseFloat(row?.value || '3.00');
+  } else if (model === 'sd2.0-fast-480p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sd20_fast_480p_rate')).get();
+    return parseFloat(row?.value || '0.22');
   } else if (model === 'sd2-c6') {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get();
     return parseFloat(row?.value || '2.50');

@@ -236,7 +236,7 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'grok-imagine-video-1.5-1080p' || modelId === 'grok-imagine-video-1.5-preview') return 1;
   if (modelId === 'sd2-c7') return 10;
   if (modelId === 'sd2-c6') return 9;
-  if (modelId === 'tejiasd2' || modelId.startsWith('sd-') || modelId.startsWith('sd2-') || modelId.startsWith('seedance-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
+  if (modelId === 'tejiasd2' || modelId === 'sd2.0-fast-480p' || modelId.startsWith('sd-') || modelId.startsWith('sd2-') || modelId.startsWith('seedance-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (isSoraV4Model(modelId)) return 4;
   if (modelId === 'omni-flash') return 7;
   if (modelId === 'omni-flash-vref') return 5;
@@ -353,13 +353,13 @@ export default function VideoPage() {
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
     if (m === 'sd2-c6' || m === 'sd2-c7') return 0;
-    if (m === 'tejiasd2' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
+    if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     if (m === 'omni-flash-vref') return 1;
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
     if (m === 'sd2-c6' || m === 'sd2-c7') return 0;
-    if (m === 'tejiasd2' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
+    if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     return 0;
   };
   const maxRefVideos = getMaxRefVideos(selectedModel);
@@ -1272,7 +1272,7 @@ export default function VideoPage() {
                   </div>
                   <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
 
-                  {(selectedModel === 'omni-flash-vref' || isSoraV4Model(selectedModel) || selectedModel === 'tejiasd2' || selectedModel?.startsWith('sd-') || selectedModel?.startsWith('seedance-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && (
+                  {(selectedModel === 'omni-flash-vref' || isSoraV4Model(selectedModel) || selectedModel === 'tejiasd2' || selectedModel === 'sd2.0-fast-480p' || selectedModel?.startsWith('sd-') || selectedModel?.startsWith('seedance-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && (
                     <>
                       <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideos.length > 0 ? `(${referenceVideos.length}/${maxRefVideos})` : ''}

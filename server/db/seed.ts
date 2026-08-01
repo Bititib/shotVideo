@@ -151,7 +151,8 @@ async function syncModelsFromAPI() {
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']) },
-    { provider: 'seedance', modelId: 'seedance-720', displayName: 'Seedance 720 满血版', capabilities: JSON.stringify(['video']) }
+    { provider: 'seedance', modelId: 'seedance-720', displayName: 'Seedance 720 满血版', capabilities: JSON.stringify(['video']) },
+    { provider: 'newtoken', modelId: 'sd2.0-fast-480p', displayName: 'SD 2.0 Fast (480p)', capabilities: JSON.stringify(['video']) }
   );
 
   // 同步或插入模型
@@ -623,6 +624,7 @@ export async function initDatabase() {
     { key: 'sd2_c6_rate', value: '2.50', label: 'Seedance 2.0 c6 费率(¥/次)' },
     { key: 'seedance_720_rate', value: '3.00', label: 'Seedance 720 满血版 费率(¥/次)' },
     { key: 'tejiasd2_rate', value: '3.00', label: '特价 SD 2.0 费率(¥/次)' },
+    { key: 'sd20_fast_480p_rate', value: '0.22', label: 'SD 2.0 Fast (480p) 费率(¥/秒)' },
   ];
   for (const s of omniSettings) {
     const existing = db.select().from(settings).where(eq(settings.key, s.key)).get();
@@ -787,23 +789,23 @@ export async function initDatabase() {
         type: 'openai',
         baseUrl: 'https://newtoken.club',
         apiKey: 'sk-22Vcwozkj2VvDsiTqr988NElCXPoTLFXg4tWWrGdYAWxac5o',
-        supportedModels: JSON.stringify(['veo-omni-flash']),
+        supportedModels: JSON.stringify(['veo-omni-flash', 'sd2.0-fast-480p']),
         status: 1,
         priority: 0,
         weight: 1,
         maxRetries: 3,
         timeout: 120000,
       }).run();
-      console.log('📦 已自动迁移：成功创建 NewToken 渠道并绑定 veo-omni-flash');
+      console.log('📦 已自动迁移：成功创建 NewToken 渠道并绑定 veo-omni-flash 与 sd2.0-fast-480p');
     } else {
       db.update(channels)
         .set({
-          supportedModels: JSON.stringify(['veo-omni-flash']),
+          supportedModels: JSON.stringify(['veo-omni-flash', 'sd2.0-fast-480p']),
           updatedAt: new Date().toISOString()
         })
         .where(eq(channels.id, existingNewToken.id))
         .run();
-      console.log('🔄 已自动迁移：更新 NewToken 渠道支持 veo-omni-flash');
+      console.log('🔄 已自动迁移：更新 NewToken 渠道支持 veo-omni-flash 与 sd2.0-fast-480p');
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 NewToken 渠道出错:', err.message);

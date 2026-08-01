@@ -193,6 +193,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'seedance-2.0-fast-720p': { series: 'seedance-fast-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-720': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'tejiasd2': { series: 'seedance-720p', allowedSeconds: [10], requireRef: false },
+  'sd2.0-fast-480p': { series: 'seedance-fast-480p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
@@ -205,6 +206,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 720p', description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '⚡' },
   { id: 'seedance-720', name: 'Seedance 720 满血版', description: '满血模型，支持933，过人脸，720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🔥' },
   { id: 'tejiasd2', name: 'tejiasd2', description: 'SD 2.0 9张参考图 3个参考视频 3个参考音频 不卡真人 只支持10秒 特价模型', maxSeconds: 10, icon: '🚀' },
+  { id: 'sd2.0-fast-480p', name: 'SD 2.0 Fast (480p)', description: '快速 480p 满血版，概率卡脸，适合漫剧/线图。支持 9张参考图 3个参考视频 3个参考音频，4-15秒', maxSeconds: 15, icon: '⚡' },
 ];
 
 /** 查找支持指定视频模型的渠道 */
@@ -586,6 +588,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'tejiasd2') {
     const row = db.select().from(settings).where(eq(settings.key, 'tejiasd2_rate')).get();
     rate = parseFloat(row?.value || '3.00');
+  } else if (model === 'sd2.0-fast-480p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sd20_fast_480p_rate')).get();
+    rate = parseFloat(row?.value || '0.22');
   } else if (model === 'seedance-2.0-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get();
     rate = parseFloat(row?.value || '4.00');
@@ -721,7 +726,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
     'seedance-720',
-    'tejiasd2'
+    'tejiasd2',
+    'sd2.0-fast-480p'
   ].includes(model);
 
   try {
