@@ -1020,7 +1020,7 @@ export default function VideoPage() {
                             <div className="flex items-center gap-2">
                               {m.rates && (
                                 <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
-                                  ¥{m.rates[resolution as keyof typeof m.rates]?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}
+                                  ¥{(m.rates[resolution as keyof typeof m.rates] !== undefined ? m.rates[resolution as keyof typeof m.rates] : Object.values(m.rates)[0])?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}
                                 </span>
                               )}
                               {selectedModel === m.id && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
@@ -1028,24 +1028,15 @@ export default function VideoPage() {
                           </div>
                           <p className="text-xs text-zinc-500 mt-1">{m.description}</p>
                           {m.rates && (
-                            <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-600 border-t border-white/5 pt-1.5">
-                              {m.rates['1080p'] ? (
-                                <>
-                                  <span>1080p: <span className="text-zinc-400">¥{m.rates['1080p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
-                                  <span className="text-zinc-800">•</span>
-                                  <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
-                                </>
-                              ) : (
-                                <>
-                                  <span>720p: <span className="text-zinc-400">¥{m.rates['720p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
-                                  {m.rates['480p'] !== undefined && (
-                                    <>
-                                      <span className="text-zinc-800">•</span>
-                                      <span>480p: <span className="text-zinc-400">¥{m.rates['480p']?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span></span>
-                                    </>
-                                  )}
-                                </>
-                              )}
+                            <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-600 border-t border-white/5 pt-1.5 flex-wrap">
+                              {Object.entries(m.rates).map(([resKey, resRate], rIdx, arr) => (
+                                <React.Fragment key={resKey}>
+                                  <span>
+                                    {resKey}: <span className="text-zinc-400">¥{resRate?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span>
+                                  </span>
+                                  {rIdx < arr.length - 1 && <span className="text-zinc-800">•</span>}
+                                </React.Fragment>
+                              ))}
                             </div>
                           )}
                           {m.requireRef && <p className="text-[10px] text-amber-400/80 mt-1.5 flex items-center gap-1">⚠️ 必须提供参考图</p>}
