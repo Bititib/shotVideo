@@ -67,6 +67,9 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'sd2.0-fast-480p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sd20_fast_480p_rate')).get();
     return parseFloat(row?.value || '0.22');
+  } else if (model === 'sd2.5') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get();
+    return parseFloat(row?.value || '4.50');
   } else if (model === 'sd2-c6') {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get();
     return parseFloat(row?.value || '2.50');
@@ -639,6 +642,7 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     'sdas-hn-sd2.0-fast-720p',
     'seedance-2.0-fast',
     'sd2-c7',
+    'sd2.5',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
     'seedance-720',
@@ -760,6 +764,7 @@ router.post('/video/generations', async (req: Request, res: Response) => {
     'sdas-hn-sd2.0-fast-720p',
     'seedance-2.0-fast',
     'sd2-c7',
+    'sd2.5',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
     'seedance-720',

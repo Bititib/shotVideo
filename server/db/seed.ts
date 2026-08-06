@@ -149,6 +149,7 @@ async function syncModelsFromAPI() {
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'tejiasd2', displayName: '特价 SD 2.0', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']) },
+    { provider: 'seedance', modelId: 'sd2.5', displayName: 'Seedance 2.5 (sd2.5)', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'seedance-720', displayName: 'Seedance 720 满血版', capabilities: JSON.stringify(['video']) },
@@ -618,6 +619,7 @@ export async function initDatabase() {
     { key: 'omni_vref_rate_1080p', value: '2.20', label: 'Omni Vref 1080p费率(¥/秒)' },
     { key: 'veo_omni_flash_rate', value: '0.50', label: 'Veo Omni Flash 费率(¥/秒)' },
     { key: 'sd2_c7_rate', value: '0.50', label: 'Seedance 2.0 c7 费率(¥/次)' },
+    { key: 'sd2_5_rate', value: '4.50', label: 'Seedance 2.5 (sd2.5) 费率(¥/次)' },
     { key: 'seedance_2_0_720p_rate', value: '3.00', label: 'Seedance 2.0 720p 费率(¥/次)' },
     { key: 'seedance_2_0_fast_720p_rate', value: '1.50', label: 'Seedance 2.0 Fast 720p 费率(¥/次)' },
     { key: 'sdas_xh_sd20_933_3_pro_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro 933-3 (720p) 费率(¥/次)' },
@@ -811,10 +813,10 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 NewToken 渠道出错:', err.message);
   }
 
-  // 11) 保证 llm.chre3.com 渠道存在并且包含 sd2-c8, sd2-c7, seedance-2.0-720p, seedance-2.0-fast-720p 支持
+  // 11) 保证 llm.chre3.com 渠道存在并且包含 sd2.5, sd2-c7, seedance-2.0-720p, seedance-2.0-fast-720p 支持
   try {
     const existingChre3 = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get();
-    const chre3Models = ['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p', 'seedance-720'];
+    const chre3Models = ['sd2.5', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p', 'seedance-720'];
     if (!existingChre3) {
       db.insert(channels).values({
         name: '4月天 渠道',

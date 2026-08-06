@@ -44,6 +44,7 @@ const isFlatRateModel = (modelId: string) => {
   return [
     'seedance-2.0-fast',
     'sd2-c7',
+    'sd2.5',
     'sd2-c6',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
@@ -234,6 +235,7 @@ const isSoraV4Model = (modelId: string) => {
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'grok-imagine-1.0-video' || modelId === 'grok-imagine-video-1.5-fast') return 7;
   if (modelId === 'grok-imagine-video-1.5-1080p' || modelId === 'grok-imagine-video-1.5-preview') return 1;
+  if (modelId === 'sd2.5') return 50;
   if (modelId === 'sd2-c7') return 10;
   if (modelId === 'sd2-c6') return 9;
   if (modelId === 'tejiasd2' || modelId === 'sd2.0-fast-480p' || modelId.startsWith('sd-') || modelId.startsWith('sd2-') || modelId.startsWith('seedance-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
@@ -352,12 +354,14 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
+    if (m === 'sd2.5') return 10;
     if (m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     if (m === 'omni-flash-vref') return 1;
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
+    if (m === 'sd2.5') return 10;
     if (m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     return 0;
@@ -1032,7 +1036,7 @@ export default function VideoPage() {
                               {Object.entries(m.rates).map(([resKey, resRate], rIdx, arr) => (
                                 <React.Fragment key={resKey}>
                                   <span>
-                                    {resKey}: <span className="text-zinc-400">¥{resRate?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span>
+                                    {resKey}: <span className="text-zinc-400">¥{(Number(resRate) || 0).toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span>
                                   </span>
                                   {rIdx < arr.length - 1 && <span className="text-zinc-800">•</span>}
                                 </React.Fragment>

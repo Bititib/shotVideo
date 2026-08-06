@@ -189,6 +189,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'seedance-2.0-fast': { series: 'seedance-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'veo-omni-flash': { series: 'veo-omni-flash', allowedSeconds: [10], requireRef: false },
   'sd2-c7': { series: 'sd2-c7', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'sd2.5': { series: 'sd2.5', allowedSeconds: [15], requireRef: false },
   'seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-fast-720p': { series: 'seedance-fast-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-720': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
@@ -202,6 +203,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'sdas-xh-sd2.0-933-3-pro-720p', name: 'Seedance 2.0 Pro 933-3 (720p)', description: 'S2.0 满血版，支持真人、不糊脸、无网格，支持 9图/3视频/3音频，固定按次计费', maxSeconds: 15, icon: '🚀' },
   { id: 'veo-omni-flash', name: 'Veo Omni Flash', description: '多参考图生成视频，参考图字段 Ingredients_images，固定10s', maxSeconds: 10, icon: '🚀' },
   { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多10张图片参考（无视频/音频参考），5-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
+  { id: 'sd2.5', name: 'Seedance 2.5 (sd2.5)', description: '支持最多50张图片、10个视频、10个音频参考，概率过人脸，只支持 15 秒，固定按次计费 ¥4.500/次', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 720p', description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '⚡' },
   { id: 'seedance-720', name: 'Seedance 720 满血版', description: '满血模型，支持933，过人脸，720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🔥' },
@@ -419,6 +421,11 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
+    } else if (m.id === 'sd2.5') {
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get()?.value || '4.50');
+      rates = {
+        '720p': rate,
+      };
     } else if (m.id === 'seedance-2.0-720p') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'seedance_2_0_720p_rate')).get()?.value || '3.00');
       rates = {
@@ -611,6 +618,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'sd2-c7') {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_c7_rate')).get();
     rate = parseFloat(row?.value || '0.50');
+  } else if (model === 'sd2.5') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get();
+    rate = parseFloat(row?.value || '4.50');
   } else if (model === 'sd2-c6') {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get();
     rate = parseFloat(row?.value || '2.50');
@@ -649,6 +659,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isFlatRate = [
     'seedance-2.0-fast',
     'sd2-c7',
+    'sd2.5',
     'sd2-c6',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
@@ -728,6 +739,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isVeoOmni = model === 'veo-omni-flash';
   const isSeedanceJsonModel = [
     'sd2-c7',
+    'sd2.5',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
     'seedance-720',
@@ -1014,17 +1026,20 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       // 将 base64 素材保存到本地并生成自托管公网 URL
       const imageUrls: string[] = [];
-      for (const img of (reference_images || []).slice(0, 9)) {
+      const maxImgCount = model === 'sd2.5' ? 50 : 9;
+      for (const img of (reference_images || []).slice(0, maxImgCount)) {
         const url = convertBase64ToPublicUrl(img, 'sd2_ref', req);
         if (url) imageUrls.push(url);
       }
       const videoRefUrls: string[] = [];
-      for (const v of finalVideos.slice(0, 3)) {
+      const maxVidCount = model === 'sd2.5' ? 10 : 3;
+      for (const v of finalVideos.slice(0, maxVidCount)) {
         const url = convertBase64ToPublicUrl(v, 'sd2_vid', req);
         if (url) videoRefUrls.push(url);
       }
       const audioRefUrls: string[] = [];
-      for (const a of finalAudios.slice(0, 3)) {
+      const maxAudCount = model === 'sd2.5' ? 10 : 3;
+      for (const a of finalAudios.slice(0, maxAudCount)) {
         const url = convertBase64ToPublicUrl(a, 'sd2_aud', req);
         if (url) audioRefUrls.push(url);
       }
@@ -1669,6 +1684,9 @@ export function resumePollForTask(contentId: number, record: any) {
   } else if (model === 'sd2-c7') {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_c7_rate')).get();
     rate = parseFloat(row?.value || '0.50');
+  } else if (model === 'sd2.5') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get();
+    rate = parseFloat(row?.value || '4.50');
   } else if (model === 'seedance-2.0-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_720p_rate')).get();
     rate = parseFloat(row?.value || '3.00');
@@ -1712,6 +1730,7 @@ export function resumePollForTask(contentId: number, record: any) {
     'sdas-hn-sd2.0-fast-720p',
     'seedance-2.0-fast',
     'sd2-c7',
+    'sd2.5',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
     'seedance-720',
