@@ -54,6 +54,8 @@ const isFlatRateModel = (modelId: string) => {
     'grok-imagine-video-1.5-preview',
     'sdas-pg-s2.0-fast',
     'sdas-xh-sd2.0-933-3-pro-720p',
+    'ld-sdas-cvk-pro-933-720p',
+    'sdas-xh-minimax-h3-2k',
     'seedance-720',
     'tejiasd2'
   ].includes(modelId);
