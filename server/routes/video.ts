@@ -200,6 +200,12 @@ const MODEL_META: Record<string, ModelMeta> = {
 };
 
 const DEFAULT_VIDEO_MODELS = [
+  { id: 'grok-imagine-video-1.5-preview', name: 'Grok 1.5 Preview', description: '图生视频，必须提供参考图，6/10/15秒', maxSeconds: 15, icon: '🖼️' },
+  { id: 'grok-imagine-1.0-video', name: 'Grok 1.0 Video', description: '文生/图生视频，支持最多7张参考图，6/10秒', maxSeconds: 10, icon: '🎥' },
+  { id: 'grok-imagine-video-1.5-fast', name: 'Grok 1.5 Fast', description: '快速文生/图生视频，支持最多7张参考图，6/10秒', maxSeconds: 10, icon: '⚡' },
+  { id: 'grok-imagine-video-1.5-1080p', name: 'Grok 1.5 1080p', description: '单图参考模型，最多1张参考图，支持时长10和15秒，分辨率1080P', maxSeconds: 15, icon: '🎬' },
+  { id: 'grok-imagine-video', name: 'Grok Imagine Video', description: '标准视频生成模型', maxSeconds: 15, icon: '🚀' },
+  { id: 'grok-4.3-video', name: 'Grok 4.3 Video', description: 'Grok 4.3 视频模型', maxSeconds: 15, icon: '🚀' },
   { id: 'omni-flash', name: 'Omni Flash', description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash-vref', name: 'Omni Flash Vref', description: '视频风格编辑/改写，支持 1080p', maxSeconds: 10, icon: '✂️' },
   { id: 'sdas-xh-sd2.0-933-3-pro-720p', name: 'Seedance 2.0 Pro 933-3 (720p)', description: 'S2.0 满血版，支持真人、不糊脸、无网格，支持 9图/3视频/3音频，固定按次计费', maxSeconds: 15, icon: '🚀' },

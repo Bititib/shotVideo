@@ -155,7 +155,13 @@ async function syncModelsFromAPI() {
     { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'seedance-720', displayName: 'Seedance 720 满血版', capabilities: JSON.stringify(['video']) },
-    { provider: 'newtoken', modelId: 'sd2.0-fast-480p', displayName: 'SD 2.0 Fast (480p)', capabilities: JSON.stringify(['video']) }
+    { provider: 'newtoken', modelId: 'sd2.0-fast-480p', displayName: 'SD 2.0 Fast (480p)', capabilities: JSON.stringify(['video']) },
+    { provider: 'grok', modelId: 'grok-imagine-1.0-video', displayName: 'Grok 1.0 Video', capabilities: JSON.stringify(['video']) },
+    { provider: 'grok', modelId: 'grok-imagine-video-1.5-fast', displayName: 'Grok 1.5 Fast', capabilities: JSON.stringify(['video']) },
+    { provider: 'grok', modelId: 'grok-imagine-video-1.5-preview', displayName: 'Grok 1.5 Preview', capabilities: JSON.stringify(['video']) },
+    { provider: 'grok', modelId: 'grok-imagine-video-1.5-1080p', displayName: 'Grok 1.5 1080p', capabilities: JSON.stringify(['video']) },
+    { provider: 'grok', modelId: 'grok-imagine-video', displayName: 'Grok Imagine Video', capabilities: JSON.stringify(['video']) },
+    { provider: 'grok', modelId: 'grok-4.3-video', displayName: 'Grok 4.3 Video', capabilities: JSON.stringify(['video']) }
   );
 
   // 同步或插入模型
@@ -176,12 +182,6 @@ async function syncModelsFromAPI() {
   // 强制删除已废弃或不能使用的旧视频模型
   try {
     const deadModels = [
-      'grok-imagine-video',
-      'grok-4.3-video',
-      'grok-imagine-video-1.5-preview',
-      'grok-imagine-1.0-video',
-      'grok-imagine-video-1.5-fast',
-      'grok-imagine-video-1.5-1080p',
       'grok-imagine-image',
       'grok-imagine-image-lite',
       'grok-imagine-image-pro',
@@ -603,11 +603,7 @@ export async function initDatabase() {
     'seedance20_fast_4img_rate',
     'sdas_wf_sd20_fast_933_720p_rate',
     'sdas_wf_sd20_pro_933_480p_rate',
-    'sdas_pg_s20_fast_rate',
-    'grok_imagine_1_0_video_rate',
-    'grok_imagine_video_1_5_1080p_rate',
-    'grok_imagine_video_1_5_fast_rate',
-    'grok_imagine_video_1_5_preview_rate'
+    'sdas_pg_s20_fast_rate'
   ];
   for (const k of keysToDelete) {
     db.delete(settings).where(eq(settings.key, k)).run();
@@ -631,6 +627,10 @@ export async function initDatabase() {
     { key: 'seedance_720_rate', value: '3.00', label: 'Seedance 720 满血版 费率(¥/次)' },
     { key: 'tejiasd2_rate', value: '3.00', label: '特价 SD 2.0 费率(¥/次)' },
     { key: 'sd20_fast_480p_rate', value: '0.22', label: 'SD 2.0 Fast (480p) 费率(¥/秒)' },
+    { key: 'grok_imagine_1_0_video_rate', value: '0.288', label: 'Grok Imagine 1.0 Video 费率(¥/秒)' },
+    { key: 'grok_imagine_video_1_5_1080p_rate', value: '0.80', label: 'Grok Imagine 1.5 1080p 费率(¥/秒)' },
+    { key: 'grok_imagine_video_1_5_fast_rate', value: '0.288', label: 'Grok Imagine 1.5 Fast 费率(¥/秒)' },
+    { key: 'grok_imagine_video_1_5_preview_rate', value: '0.48', label: 'Grok Imagine 1.5 Preview 费率(¥/秒)' },
   ];
   for (const s of omniSettings) {
     const existing = db.select().from(settings).where(eq(settings.key, s.key)).get();
@@ -716,10 +716,43 @@ export async function initDatabase() {
       inputPrice: 3.00,
       outputPrice: 0,
     },
+    {
+      modelPattern: 'grok-imagine-1.0-video',
+      billingType: 'per_call',
+      inputPrice: 2.88,
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'grok-imagine-video-1.5-preview',
+      billingType: 'per_call',
+      inputPrice: 4.80,
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'grok-imagine-video-1.5-fast',
+      billingType: 'per_call',
+      inputPrice: 2.88,
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'grok-imagine-video-1.5-1080p',
+      billingType: 'per_call',
+      inputPrice: 8.00,
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'grok-imagine-video',
+      billingType: 'per_call',
+      inputPrice: 2.00,
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'grok-4.3-video',
+      billingType: 'per_call',
+      inputPrice: 2.00,
+      outputPrice: 0,
+    },
   ];
-
-  // 清理废弃的 Grok 模型计费规则
-  sqlite.exec("DELETE FROM model_pricing WHERE model_pattern LIKE 'grok%'");
 
   console.log('📦 同步计费规则到数据库 (更新/插入)...');
   for (const pricing of defaultPricing) {

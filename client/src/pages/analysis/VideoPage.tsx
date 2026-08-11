@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw, Maximize2, Minimize2, Scissors, HelpCircle } from 'lucide-react';
+import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw, Maximize2, Minimize2, Scissors, HelpCircle, Trash2 } from 'lucide-react';
 import { fetchVideoModels, generateVideo, type VideoModel, type VideoSSEEvent } from '../../api/video';
 import ImageSlicerModal from '../../components/ImageSlicerModal';
 import { contentApi } from '../../api/content';
@@ -1205,6 +1205,21 @@ export default function VideoPage() {
                               <button onClick={(e) => { e.stopPropagation(); handleApplyHistory(h); }}
                                 className="text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-0.5" title="套用历史配置（包含提示词与参考图片）">
                                 <RotateCcw className="w-3 h-3" />套用
+                              </button>
+                              <button onClick={async (e) => {
+                                e.stopPropagation();
+                                if (window.confirm('确定要删除这条视频生成记录吗？')) {
+                                  try {
+                                    await contentApi.delete(h.id);
+                                    setHistory(prev => prev.filter(item => item.id !== h.id));
+                                  } catch (err) {
+                                    console.error('Failed to delete history record:', err);
+                                    alert('删除失败');
+                                  }
+                                }
+                              }}
+                                className="text-zinc-500 hover:text-red-400 transition-colors flex items-center gap-0.5" title="删除记录">
+                                <Trash2 className="w-3 h-3" />删除
                               </button>
                               <a href={`/api/video/download?url=${encodeURIComponent(h.resultUrl)}&filename=video_${h.id}.mp4`} download onClick={(e) => e.stopPropagation()} className="text-zinc-500 hover:text-indigo-400 transition-colors"><Download className="w-3 h-3" /></a>
                             </div>

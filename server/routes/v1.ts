@@ -637,7 +637,25 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
   }
 
   const channel = ChannelService.findChannelForModel(model);
-  if (!channel) {
+  let upstreamModel = model;
+  let baseUrl = '';
+  let apiKey = '';
+  let channelId: number | null = null;
+
+  if (channel) {
+    if (channel.modelMapping) {
+      try {
+        const mapping = typeof channel.modelMapping === 'string' ? JSON.parse(channel.modelMapping) : channel.modelMapping;
+        upstreamModel = mapping[model] || model;
+      } catch { /* skip */ }
+    }
+    baseUrl = channel.baseUrl.replace(/\/+$/, '');
+    apiKey = channel.apiKey;
+    channelId = channel.id;
+  } else if (model.startsWith('grok') && env.GROK2API_BASE_URL) {
+    baseUrl = env.GROK2API_BASE_URL.replace(/\/+$/, '');
+    apiKey = env.GROK2API_API_KEY || '';
+  } else {
     cleanupFiles(req.files);
     return res.status(404).json({ error: `No available channel for model ${model}` });
   }
@@ -670,8 +688,6 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     return res.status(402).json({ error: `Insufficient balance. Required: ¥${totalCost.toFixed(2)}, Current: ¥${currentBalance.toFixed(2)}` });
   }
 
-  const upstreamModel = channel.modelMapping[model] || model;
-  const baseUrl = channel.baseUrl.replace(/\/+$/, '');
   const upstreamUrl = `${baseUrl}/v1/videos`;
 
   try {
@@ -697,7 +713,7 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     }
 
     const headers: Record<string, string> = {};
-    if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
     const upstreamRes = await fetch(upstreamUrl, {
       method: 'POST',
@@ -712,7 +728,7 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
       const errText = await upstreamRes.text();
       const durationMs = Date.now() - startTime;
       db.insert(apiLogs).values({
-        tokenId: token.id, channelId: channel.id, model, upstreamModel,
+        tokenId: token.id, channelId, model, upstreamModel,
         durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errText.slice(0, 500)}`, clientIp,
       }).run();
       return res.status(upstreamRes.status).json({ error: errText });
@@ -724,7 +740,7 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     deductTokenOrUserBalance(token, totalCost, model);
 
     db.insert(apiLogs).values({
-      tokenId: token.id, channelId: channel.id, model, upstreamModel,
+      tokenId: token.id, channelId, model, upstreamModel,
       cost: totalCost, durationMs, status: 'success', clientIp,
     }).run();
 
@@ -734,7 +750,7 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     const durationMs = Date.now() - startTime;
     const errorMessage = err.name === 'AbortError' ? 'upstream timeout' : err.message;
     db.insert(apiLogs).values({
-      tokenId: token.id, channelId: channel.id, model, upstreamModel,
+      tokenId: token.id, channelId, model, upstreamModel,
       durationMs, status: 'error', errorMessage, clientIp,
     }).run();
     res.status(502).json({ error: `Upstream error: ${errorMessage}` });
@@ -761,7 +777,25 @@ router.post('/video/generations', async (req: Request, res: Response) => {
   }
 
   const channel = ChannelService.findChannelForModel(model);
-  if (!channel) {
+  let upstreamModel = model;
+  let baseUrl = '';
+  let apiKey = '';
+  let channelId: number | null = null;
+
+  if (channel) {
+    if (channel.modelMapping) {
+      try {
+        const mapping = typeof channel.modelMapping === 'string' ? JSON.parse(channel.modelMapping) : channel.modelMapping;
+        upstreamModel = mapping[model] || model;
+      } catch { /* skip */ }
+    }
+    baseUrl = channel.baseUrl.replace(/\/+$/, '');
+    apiKey = channel.apiKey;
+    channelId = channel.id;
+  } else if (model.startsWith('grok') && env.GROK2API_BASE_URL) {
+    baseUrl = env.GROK2API_BASE_URL.replace(/\/+$/, '');
+    apiKey = env.GROK2API_API_KEY || '';
+  } else {
     return res.status(404).json({ error: `No available channel for model ${model}` });
   }
 
@@ -793,13 +827,11 @@ router.post('/video/generations', async (req: Request, res: Response) => {
     return res.status(402).json({ error: `Insufficient balance. Required: ¥${totalCost.toFixed(2)}, Current: ¥${currentBalance.toFixed(2)}` });
   }
 
-  const upstreamModel = channel.modelMapping[model] || model;
-  const baseUrl = channel.baseUrl.replace(/\/+$/, '');
   const upstreamUrl = `${baseUrl}/v1/video/generations`;
 
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
     const upstreamRes = await fetch(upstreamUrl, {
       method: 'POST',
@@ -819,7 +851,7 @@ router.post('/video/generations', async (req: Request, res: Response) => {
       const errText = await upstreamRes.text();
       const durationMs = Date.now() - startTime;
       db.insert(apiLogs).values({
-        tokenId: token.id, channelId: channel.id, model, upstreamModel,
+        tokenId: token.id, channelId, model, upstreamModel,
         durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errText.slice(0, 500)}`, clientIp,
       }).run();
       return res.status(upstreamRes.status).json({ error: errText });
@@ -831,7 +863,7 @@ router.post('/video/generations', async (req: Request, res: Response) => {
     deductTokenOrUserBalance(token, totalCost, model);
 
     db.insert(apiLogs).values({
-      tokenId: token.id, channelId: channel.id, model, upstreamModel,
+      tokenId: token.id, channelId, model, upstreamModel,
       cost: totalCost, durationMs: durationMs, status: 'success', clientIp,
     }).run();
 
@@ -840,7 +872,7 @@ router.post('/video/generations', async (req: Request, res: Response) => {
     const durationMs = Date.now() - startTime;
     const errorMessage = err.name === 'AbortError' ? 'upstream timeout' : err.message;
     db.insert(apiLogs).values({
-      tokenId: token.id, channelId: channel.id, model, upstreamModel,
+      tokenId: token.id, channelId, model, upstreamModel,
       durationMs, status: 'error', errorMessage, clientIp,
     }).run();
     res.status(502).json({ error: `Upstream error: ${errorMessage}` });

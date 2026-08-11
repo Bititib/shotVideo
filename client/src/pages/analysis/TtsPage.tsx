@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Volume2, Play, Pause, Download, Loader2, Sparkles, AlertCircle, RefreshCw, FileText, Check, Music } from 'lucide-react';
+import { Volume2, Play, Pause, Download, Loader2, Sparkles, AlertCircle, RefreshCw, FileText, Check, Music, Trash2 } from 'lucide-react';
 import { analysisApi } from '../../api/analysis';
 import { contentApi } from '../../api/content';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
@@ -486,13 +486,33 @@ export default function TtsPage() {
                       <p className="text-[10px] text-zinc-500 truncate leading-relaxed">{h.text}</p>
                     </div>
 
-                    <button className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 text-zinc-300 transition-colors shrink-0">
-                      {currentAudio?.id === h.id && isPlaying ? (
-                        <Pause className="w-3.5 h-3.5 fill-current" />
-                      ) : (
-                        <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
-                      )}
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button onClick={async (e) => {
+                        e.stopPropagation();
+                        if (window.confirm('确定要删除这条语音合成记录吗？')) {
+                          try {
+                            await contentApi.delete(h.id);
+                            setHistory(prev => prev.filter(item => item.id !== h.id));
+                            if (currentAudio?.id === h.id) {
+                              setCurrentAudio(null);
+                              setIsPlaying(false);
+                            }
+                          } catch (err) {
+                            console.error('Failed to delete tts history:', err);
+                            alert('删除失败');
+                          }
+                        }
+                      }} className="w-8 h-8 rounded-full bg-white/5 hover:bg-red-500/10 text-zinc-400 hover:text-red-400 flex items-center justify-center transition-colors" title="删除记录">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 text-zinc-300 transition-colors">
+                        {currentAudio?.id === h.id && isPlaying ? (
+                          <Pause className="w-3.5 h-3.5 fill-current" />
+                        ) : (
+                          <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
+                        )}
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>

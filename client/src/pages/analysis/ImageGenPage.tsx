@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Image as ImageIcon, Play, Square, Download, RotateCcw, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Grid2x2, Maximize2 } from 'lucide-react';
+import { Image as ImageIcon, Play, Square, Download, RotateCcw, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Grid2x2, Maximize2, Trash2 } from 'lucide-react';
 import { fetchImageModels, generateImage, type ImageModel, type ImageSSEEvent } from '../../api/imageGen';
 import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
@@ -384,6 +384,20 @@ export default function ImageGenPage() {
                           </button>
                         )}
                         <button onClick={(e) => { e.stopPropagation(); setLightboxUrl(h.imageUrl); }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Maximize2 className="w-3 h-3" /></button>
+                        <button onClick={async (e) => {
+                          e.stopPropagation();
+                          if (window.confirm('确定要删除这条图片生成记录吗？')) {
+                            try {
+                              await contentApi.delete(h.id);
+                              setHistory(prev => prev.filter(item => item.id !== h.id));
+                            } catch (err) {
+                              console.error('Failed to delete image history:', err);
+                              alert('删除失败');
+                            }
+                          }
+                        }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-red-400" title="删除记录">
+                          <Trash2 className="w-3 h-3" />
+                        </button>
                         <a href={h.imageUrl} target="_blank" rel="noopener noreferrer" download onClick={(e) => e.stopPropagation()} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Download className="w-3 h-3" /></a>
                       </div>
                     </div>
