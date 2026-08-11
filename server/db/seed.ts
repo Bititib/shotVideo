@@ -774,7 +774,7 @@ export async function initDatabase() {
       'ld-sdas-cvk-pro-933-720p',
       'sdas-xh-minimax-h3-2k'
     ];
-    const pidoiModels = ['tejiasd2'];
+    const pidoiModels = ['tejiasd2', 'gpt-image-2', 'gpt-image-2-plus', 'gpt-image-2-pro', 'gpt-image-2-max'];
     const allChannels = db.select().from(channels).all();
     for (const c of allChannels) {
       let currentModels: string[] = [];
