@@ -10,8 +10,54 @@ import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models } from '../db/schema.js';
 import { eq, like, and } from 'drizzle-orm';
+import fs from 'fs';
+import path from 'path';
 
 const router = Router();
+
+/**
+ * 将 base64 数据转换并存储为本地静态文件，返回可外网访问的公网 URL
+ */
+function convertBase64ToPublicUrl(dataUrl: string, prefix: string, req: Request): string {
+  if (!dataUrl) return '';
+  if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
+    return dataUrl;
+  }
+
+  try {
+    const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!matches) return dataUrl;
+
+    const mimeType = matches[1];
+    const base64Data = matches[2];
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    // 获取后缀名
+    let ext = mimeType.split('/')[1] || 'jpg';
+    if (mimeType === 'audio/mpeg') {
+      ext = 'mp3';
+    } else if (mimeType.includes('wav')) {
+      ext = 'wav';
+    }
+    const filename = `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+    const destPath = path.join(process.cwd(), 'data/uploads', filename);
+
+    // 确保 uploads 目录存在
+    const dir = path.dirname(destPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    fs.writeFileSync(destPath, buffer);
+
+    // 优先使用环境变量配置的公网基准 URL
+    const baseUrl = process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+    return `${baseUrl.replace(/\/+$/, '')}/uploads/${filename}`;
+  } catch (err: any) {
+    console.error('[imageGen] convertBase64ToPublicUrl 失败:', err.message);
+    return dataUrl;
+  }
+}
 
 const RATIO_TO_SIZE: Record<string, string> = {
   '16:9': '1280x720',
@@ -336,10 +382,11 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
 
             sendEvent({ type: 'progress', progress: 100, index });
 
-            if (imageUrl) {
-              const fullUrl = imageUrl.startsWith('/') ? baseUrl + imageUrl : imageUrl;
-              completedImages[index] = fullUrl;
-              sendEvent({ type: 'image_ready', imageUrl: fullUrl, index, total: count });
+             if (imageUrl) {
+               const savedUrl = convertBase64ToPublicUrl(imageUrl, 'gpt_img', req);
+               const fullUrl = savedUrl.startsWith('/') ? baseUrl + savedUrl : savedUrl;
+               completedImages[index] = fullUrl;
+               sendEvent({ type: 'image_ready', imageUrl: fullUrl, index, total: count });
             } else {
               sendEvent({ type: 'image_error', index, message: `图片 #${index + 1} 未返回结果` });
             }
