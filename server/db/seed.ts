@@ -757,7 +757,7 @@ export async function initDatabase() {
       'ld-sdas-cvk-pro-933-720p',
       'sdas-xh-minimax-h3-2k'
     ];
-    const pidoiModels = ['tejiasd2', 'gpt-image-2'];
+    const pidoiModels = ['tejiasd2'];
     const allChannels = db.select().from(channels).all();
     for (const c of allChannels) {
       let currentModels: string[] = [];
@@ -779,9 +779,9 @@ export async function initDatabase() {
             updated = true;
           }
         }
-      } else if (c.baseUrl && c.baseUrl.includes('pidoi.com')) {
+      } else if (c.baseUrl && c.baseUrl.includes('pidoi.com') && !c.name?.includes('图片')) {
         // 清理已被废弃不复存在的旧模型，以及全部的 Grok 视频模型
-        const cleaned = currentModels.filter(m => !['seedance-2.0', 'veo-omni-flash', 'sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast', 'sora-v3-pro', 'grok-imagine-1.0-video', 'grok-imagine-video-1.5-1080p', 'grok-imagine-video-1.5-fast', 'grok-imagine-video-1.5-preview', 'gpt-image-2-plus', 'gpt-image-2-pro', 'gpt-image-2-max'].includes(m));
+        const cleaned = currentModels.filter(m => !['seedance-2.0', 'veo-omni-flash', 'sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast', 'sora-v3-pro', 'grok-imagine-1.0-video', 'grok-imagine-video-1.5-1080p', 'grok-imagine-video-1.5-fast', 'grok-imagine-video-1.5-preview', 'gpt-image-2-plus', 'gpt-image-2-pro', 'gpt-image-2-max', 'gpt-image-2'].includes(m));
         if (cleaned.length !== currentModels.length) {
           currentModels = cleaned;
           updated = true;
@@ -876,6 +876,41 @@ export async function initDatabase() {
     console.log('🧹 已从数据库强制物理删除 888API 渠道');
   } catch (err: any) {
     console.error('⚠️ 删除 888API 渠道出错:', err.message);
+  }
+
+  // 13) 保证 Pidoi 图片渠道存在（独立 API Key，与视频渠道分离）
+  try {
+    // 查找已有的 Pidoi 图片渠道
+    const existingPidoiImg = db.select().from(channels).all()
+      .find(c => c.name === 'Pidoi 图片渠道' || (c.baseUrl?.includes('pidoi.com') && c.name?.includes('图片')));
+    const pidoiImgModels = ['gpt-image-2'];
+    if (!existingPidoiImg) {
+      db.insert(channels).values({
+        name: 'Pidoi 图片渠道',
+        type: 'openai',
+        baseUrl: 'https://pidoi.com',
+        apiKey: 'sk-EWZUHbYAtE0T9aCqb2HeMbq8JBJk7ycaw731mFBWPe0CBLJ0',
+        supportedModels: JSON.stringify(pidoiImgModels),
+        status: 1,
+        priority: 0,
+        weight: 1,
+        maxRetries: 3,
+        timeout: 120000,
+      }).run();
+      console.log('📦 已自动创建 Pidoi 图片渠道（独立 Key）并绑定 gpt-image-2');
+    } else {
+      db.update(channels)
+        .set({
+          supportedModels: JSON.stringify(pidoiImgModels),
+          apiKey: 'sk-EWZUHbYAtE0T9aCqb2HeMbq8JBJk7ycaw731mFBWPe0CBLJ0',
+          updatedAt: new Date().toISOString()
+        })
+        .where(eq(channels.id, existingPidoiImg.id))
+        .run();
+      console.log('🔄 已更新 Pidoi 图片渠道 Key 与模型绑定');
+    }
+  } catch (err: any) {
+    console.error('⚠️ 初始化 Pidoi 图片渠道出错:', err.message);
   }
 
   console.log('✅ 数据库初始化完成');
