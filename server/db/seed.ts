@@ -135,10 +135,7 @@ async function syncModelsFromAPI() {
 
   // 强制追加静态模型 (图片/音频/视频 等)
   allVerified.push(
-    { provider: 'openai', modelId: 'gpt-image-2', displayName: 'GPT Image 2', capabilities: JSON.stringify(['image']) },
-    { provider: 'openai', modelId: 'gpt-image-2-plus', displayName: 'GPT Image 2 Plus', capabilities: JSON.stringify(['image']) },
-    { provider: 'openai', modelId: 'gpt-image-2-pro', displayName: 'GPT Image 2 Pro', capabilities: JSON.stringify(['image']) },
-    { provider: 'openai', modelId: 'gpt-image-2-max', displayName: 'GPT Image 2 Max', capabilities: JSON.stringify(['image']) },
+    { provider: 'openai', modelId: 'gpt-image-2', displayName: 'gpt-image-2', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-3.1-flash-image-preview', displayName: '🍌 nabanana flash', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-3-pro-image-preview', displayName: '🍌 nabanana pro', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', capabilities: JSON.stringify(['tts']) },
@@ -186,6 +183,9 @@ async function syncModelsFromAPI() {
       'grok-imagine-image-lite',
       'grok-imagine-image-pro',
       'grok-imagine-image-edit',
+      'gpt-image-2-plus',
+      'gpt-image-2-pro',
+      'gpt-image-2-max',
       'xh-sdas-fast-933-720p',
       'xh-sdas-pro-933-720p',
       'seedance-2.0',
@@ -680,24 +680,7 @@ export async function initDatabase() {
       inputPrice: 0.04 * IMAGE_MULTIPLIER,   // 3x multiplier (0.12)
       outputPrice: 0,
     },
-    {
-      modelPattern: 'gpt-image-2-plus',
-      billingType: 'per_call',
-      inputPrice: 0.08 * IMAGE_MULTIPLIER,   // 3x multiplier (0.24)
-      outputPrice: 0,
-    },
-    {
-      modelPattern: 'gpt-image-2-pro',
-      billingType: 'per_call',
-      inputPrice: 0.08 * IMAGE_MULTIPLIER,   // 3x multiplier (0.24)
-      outputPrice: 0,
-    },
-    {
-      modelPattern: 'gpt-image-2-max',
-      billingType: 'per_call',
-      inputPrice: 0.12 * IMAGE_MULTIPLIER,   // 3x multiplier (0.36)
-      outputPrice: 0,
-    },
+
     {
       modelPattern: 'gemini-3.1-flash-image-preview',
       billingType: 'per_call',
@@ -774,7 +757,7 @@ export async function initDatabase() {
       'ld-sdas-cvk-pro-933-720p',
       'sdas-xh-minimax-h3-2k'
     ];
-    const pidoiModels = ['tejiasd2', 'gpt-image-2', 'gpt-image-2-plus', 'gpt-image-2-pro', 'gpt-image-2-max'];
+    const pidoiModels = ['tejiasd2', 'gpt-image-2'];
     const allChannels = db.select().from(channels).all();
     for (const c of allChannels) {
       let currentModels: string[] = [];
@@ -798,7 +781,7 @@ export async function initDatabase() {
         }
       } else if (c.baseUrl && c.baseUrl.includes('pidoi.com')) {
         // 清理已被废弃不复存在的旧模型，以及全部的 Grok 视频模型
-        const cleaned = currentModels.filter(m => !['seedance-2.0', 'veo-omni-flash', 'sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast', 'sora-v3-pro', 'grok-imagine-1.0-video', 'grok-imagine-video-1.5-1080p', 'grok-imagine-video-1.5-fast', 'grok-imagine-video-1.5-preview'].includes(m));
+        const cleaned = currentModels.filter(m => !['seedance-2.0', 'veo-omni-flash', 'sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast', 'sora-v3-pro', 'grok-imagine-1.0-video', 'grok-imagine-video-1.5-1080p', 'grok-imagine-video-1.5-fast', 'grok-imagine-video-1.5-preview', 'gpt-image-2-plus', 'gpt-image-2-pro', 'gpt-image-2-max'].includes(m));
         if (cleaned.length !== currentModels.length) {
           currentModels = cleaned;
           updated = true;

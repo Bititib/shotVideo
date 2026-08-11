@@ -29,10 +29,7 @@ const DEFAULT_IMAGE_MODELS = [
   { id: 'grok-imagine-image-lite', name: 'Grok Image Lite', description: '快速出图，适合草图和灵感', icon: '⚡' },
   { id: 'grok-imagine-image-pro', name: 'Grok Image Pro', description: '专业级高质量图片生成', icon: '💎' },
   { id: 'grok-imagine-image-edit', name: 'Grok Image Edit', description: '图片编辑与局部重绘', icon: '🖌️' },
-  { id: 'gpt-image-2', name: 'GPT Image 2', description: '新一代高效图片生成模型', icon: '🤖' },
-  { id: 'gpt-image-2-plus', name: 'GPT Image 2 Plus', description: '更精细、细节更丰富的图片生成', icon: '✨' },
-  { id: 'gpt-image-2-pro', name: 'GPT Image 2 Pro', description: '专业版图像生成与编辑', icon: '💼' },
-  { id: 'gpt-image-2-max', name: 'GPT Image 2 Max', description: '极致画质，超高清图像渲染', icon: '👑' },
+  { id: 'gpt-image-2', name: 'gpt-image-2', description: '4K分辨率', icon: '🤖' },
   { id: 'gemini-3.1-flash-image-preview', name: '🍌 nabanana flash', description: '2k高清画质，极速生成', icon: '☄️' },
   { id: 'gemini-3-pro-image-preview', name: '🍌 nabanana pro', description: '2k高清画质，极致细节', icon: '🪐' },
 ];
@@ -164,11 +161,11 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
   };
 
   try {
-    const isEditModel = model === 'grok-imagine-image-edit' || model === 'gpt-image-2-pro';
+    const isEditModel = model === 'grok-imagine-image-edit' || model === 'gpt-image-2';
     let editModel = model;
     if (hasRef && !isEditModel) {
-      editModel = model.startsWith('gpt') ? 'gpt-image-2-pro' : 'grok-imagine-image-edit';
-      sendEvent({ type: 'status', message: `检测到参考图，已自动切换为 ${editModel === 'gpt-image-2-pro' ? 'GPT Image 2 Pro' : 'Grok Image Edit'} 模式生成...`, total: count });
+      editModel = model.startsWith('gpt') ? 'gpt-image-2' : 'grok-imagine-image-edit';
+      sendEvent({ type: 'status', message: `检测到参考图，已自动切换为 ${editModel === 'gpt-image-2' ? 'GPT Image 2' : 'Grok Image Edit'} 模式生成...`, total: count });
     } else {
       sendEvent({ type: 'status', message: hasRef ? '正在上传参考图并生成...' : `正在生成 ${count} 张图片...`, total: count });
     }
