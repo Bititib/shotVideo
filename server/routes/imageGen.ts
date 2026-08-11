@@ -282,133 +282,219 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
         runSingle(i);
       }
     } else {
-      // ===== 无参考图：并发 n 个独立的 chat/completions SSE 请求 =====
-      const upstreamUrl = baseUrl + '/v1/chat/completions';
-      const completedImages: string[] = new Array(count).fill('');
-      let completedCount = 0;
+      const isGptImageModel = model.startsWith('gpt-image');
+      if (isGptImageModel) {
+        // ===== GPT Image 2 无参考图：并发 n 个独立的 v1/images/generations 请求 =====
+        const upstreamUrl = baseUrl + '/v1/images/generations';
+        const completedImages: string[] = new Array(count).fill('');
+        let completedCount = 0;
 
-      const runSingle = async (index: number) => {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 120_000);
+        const runSingle = async (index: number) => {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 120_000);
 
-        const requestBody: Record<string, any> = {
-          model,
-          messages: [{ role: 'user', content: prompt }],
-          stream: true,
-          image_config: { n: 1, size, response_format: 'url' },
-        };
-        if (quality) requestBody.image_config.quality = quality;
-        if (output_format) requestBody.image_config.output_format = output_format;
-        if (background) requestBody.image_config.background = background;
-        if (typeof output_compression === 'number') {
-          requestBody.image_config.output_compression = output_compression;
-        }
-
-        try {
-          const upstream = await fetch(upstreamUrl, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(requestBody),
-            signal: controller.signal,
-          });
-          clearTimeout(timer);
-
-          if (!upstream.ok) {
-            sendEvent({ type: 'image_error', index, message: `请求 #${index + 1} 失败 (${upstream.status})` });
-            return;
+          const requestBody: Record<string, any> = {
+            model,
+            prompt,
+            n: 1,
+            size,
+            response_format: 'url',
+          };
+          if (quality) requestBody.quality = quality;
+          if (output_format) requestBody.output_format = output_format;
+          if (background) requestBody.background = background;
+          if (typeof output_compression === 'number') {
+            requestBody.output_compression = output_compression;
           }
 
-          const reader = upstream.body?.getReader();
-          if (!reader) return;
+          try {
+            sendEvent({ type: 'progress', progress: 15, index });
 
-          const decoder = new TextDecoder();
-          let buffer = '';
-          let imageUrl = '';
-          let lastProgress = -1;
+            const upstream = await fetch(upstreamUrl, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(requestBody),
+              signal: controller.signal,
+            });
+            clearTimeout(timer);
 
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
+            sendEvent({ type: 'progress', progress: 60, index });
 
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
+            if (!upstream.ok) {
+              const errText = await upstream.text().catch(() => '');
+              console.error(`[imageGen/gpt] #${index} 上游返回 ${upstream.status}: ${errText.slice(0, 200)}`);
+              sendEvent({ type: 'image_error', index, message: `请求 #${index + 1} 失败 (${upstream.status})` });
+              return;
+            }
 
-            for (const line of lines) {
-              if (!line.startsWith('data: ') || line === 'data: [DONE]') {
-                if (line === 'data: [DONE]' && imageUrl) {
-                  sendEvent({ type: 'image_ready', imageUrl, index, total: count });
+            const result = await upstream.json() as any;
+            let imageUrl = result?.data?.[0]?.url || '';
+
+            // 兼容 b64_json 返回格式
+            if (!imageUrl && result?.data?.[0]?.b64_json) {
+              const b64 = result.data[0].b64_json;
+              const mime = 'image/png';
+              imageUrl = `data:${mime};base64,${b64}`;
+            }
+
+            sendEvent({ type: 'progress', progress: 100, index });
+
+            if (imageUrl) {
+              const fullUrl = imageUrl.startsWith('/') ? baseUrl + imageUrl : imageUrl;
+              completedImages[index] = fullUrl;
+              sendEvent({ type: 'image_ready', imageUrl: fullUrl, index, total: count });
+            } else {
+              sendEvent({ type: 'image_error', index, message: `图片 #${index + 1} 未返回结果` });
+            }
+          } catch (err: any) {
+            clearTimeout(timer);
+            const msg = err.name === 'AbortError' ? '超时' : (err.message || '请求失败');
+            console.error(`[imageGen/gpt] #${index} 异常:`, msg);
+            sendEvent({ type: 'image_error', index, message: `图片 #${index + 1}: ${msg}` });
+          } finally {
+            completedCount++;
+            if (completedCount === count) {
+              const allUrls = completedImages.filter(Boolean);
+              sendEvent({ type: 'complete', imageUrls: allUrls, total: count });
+              billUsage(allUrls.length, allUrls);
+              res.write('data: [DONE]\n\n');
+              res.end();
+            }
+          }
+        };
+
+        for (let i = 0; i < count; i++) {
+          runSingle(i);
+        }
+      } else {
+        // ===== 无参考图：并发 n 个独立的 chat/completions SSE 请求 =====
+        const upstreamUrl = baseUrl + '/v1/chat/completions';
+        const completedImages: string[] = new Array(count).fill('');
+        let completedCount = 0;
+
+        const runSingle = async (index: number) => {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 120_000);
+
+          const requestBody: Record<string, any> = {
+            model,
+            messages: [{ role: 'user', content: prompt }],
+            stream: true,
+            image_config: { n: 1, size, response_format: 'url' },
+          };
+          if (quality) requestBody.image_config.quality = quality;
+          if (output_format) requestBody.image_config.output_format = output_format;
+          if (background) requestBody.image_config.background = background;
+          if (typeof output_compression === 'number') {
+            requestBody.image_config.output_compression = output_compression;
+          }
+
+          try {
+            const upstream = await fetch(upstreamUrl, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(requestBody),
+              signal: controller.signal,
+            });
+            clearTimeout(timer);
+
+            if (!upstream.ok) {
+              sendEvent({ type: 'image_error', index, message: `请求 #${index + 1} 失败 (${upstream.status})` });
+              return;
+            }
+
+            const reader = upstream.body?.getReader();
+            if (!reader) return;
+
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let imageUrl = '';
+            let lastProgress = -1;
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (!line.startsWith('data: ') || line === 'data: [DONE]') {
+                  if (line === 'data: [DONE]' && imageUrl) {
+                    sendEvent({ type: 'image_ready', imageUrl, index, total: count });
+                  }
+                  continue;
                 }
-                continue;
-              }
 
-              try {
-                const data = JSON.parse(line.slice(6));
-                const delta = data.choices?.[0]?.delta || {};
-                const msg = data.choices?.[0]?.message || {};
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  const delta = data.choices?.[0]?.delta || {};
+                  const msg = data.choices?.[0]?.message || {};
 
-                // 提取进度
-                const reasoning = delta.reasoning_content || '';
-                if (reasoning) {
-                  const m = reasoning.match(/(\d+)%/);
-                  if (m) {
-                    const p = parseInt(m[1]);
-                    if (p !== lastProgress) {
-                      lastProgress = p;
-                      sendEvent({ type: 'progress', progress: p, index });
+                  // 提取进度
+                  const reasoning = delta.reasoning_content || '';
+                  if (reasoning) {
+                    const m = reasoning.match(/(\d+)%/);
+                    if (m) {
+                      const p = parseInt(m[1]);
+                      if (p !== lastProgress) {
+                        lastProgress = p;
+                        sendEvent({ type: 'progress', progress: p, index });
+                      }
                     }
                   }
-                }
 
-                // 提取图片 URL
-                const content = delta.content || msg.content || '';
-                if (content) {
-                  const urlMatch = content.match(/https?:\/\/[^\s"'<>]+/);
-                  if (urlMatch) imageUrl = urlMatch[0];
-                  const srcMatch = content.match(/src="([^"]+)"/);
-                  if (srcMatch) imageUrl = srcMatch[1];
-                  const localMatch = content.match(/(\/v1\/files\/image[^\s"'<>]*)/);
-                  if (localMatch) imageUrl = baseUrl + localMatch[1];
-                  const mdMatch = content.match(/!\[[^\]]*\]\(([^)]+)\)/);
-                  if (mdMatch) {
-                    imageUrl = mdMatch[1];
-                    if (imageUrl.startsWith('/')) imageUrl = baseUrl + imageUrl;
+                  // 提取图片 URL
+                  const content = delta.content || msg.content || '';
+                  if (content) {
+                    const urlMatch = content.match(/https?:\/\/[^\s"'<>]+/);
+                    if (urlMatch) imageUrl = urlMatch[0];
+                    const srcMatch = content.match(/src="([^"]+)"/);
+                    if (srcMatch) imageUrl = srcMatch[1];
+                    const localMatch = content.match(/(\/v1\/files\/image[^\s"'<>]*)/);
+                    if (localMatch) imageUrl = baseUrl + localMatch[1];
+                    const mdMatch = content.match(/!\[[^\]]*\]\(([^)]+)\)/);
+                    if (mdMatch) {
+                      imageUrl = mdMatch[1];
+                      if (imageUrl.startsWith('/')) imageUrl = baseUrl + imageUrl;
+                    }
                   }
-                }
-              } catch { /* ignore parse errors */ }
+                } catch { /* ignore parse errors */ }
+              }
             }
-          }
 
-          // 流结束但未通过 [DONE] 发送的情况
-          if (imageUrl) {
-            completedImages[index] = imageUrl;
-            if (!completedImages[index]) {
-              sendEvent({ type: 'image_ready', imageUrl, index, total: count });
+            // 流结束但未通过 [DONE] 发送的情况
+            if (imageUrl) {
+              completedImages[index] = imageUrl;
+              if (!completedImages[index]) {
+                sendEvent({ type: 'image_ready', imageUrl, index, total: count });
+              }
+              completedImages[index] = imageUrl;
+            } else {
+              sendEvent({ type: 'image_error', index, message: `图片 #${index + 1} 未返回结果` });
             }
-            completedImages[index] = imageUrl;
-          } else {
-            sendEvent({ type: 'image_error', index, message: `图片 #${index + 1} 未返回结果` });
+          } catch (err: any) {
+            clearTimeout(timer);
+            const msg = err.name === 'AbortError' ? '超时' : (err.message || '请求失败');
+            sendEvent({ type: 'image_error', index, message: `图片 #${index + 1}: ${msg}` });
+          } finally {
+            completedCount++;
+            // 所有任务完成后发送 complete
+            if (completedCount === count) {
+              const allUrls = completedImages.filter(Boolean);
+              sendEvent({ type: 'complete', imageUrls: allUrls, total: count });
+              billUsage(allUrls.length, allUrls);
+              res.write('data: [DONE]\n\n');
+              res.end();
+            }
           }
-        } catch (err: any) {
-          clearTimeout(timer);
-          const msg = err.name === 'AbortError' ? '超时' : (err.message || '请求失败');
-          sendEvent({ type: 'image_error', index, message: `图片 #${index + 1}: ${msg}` });
-        } finally {
-          completedCount++;
-          // 所有任务完成后发送 complete
-          if (completedCount === count) {
-            const allUrls = completedImages.filter(Boolean);
-            sendEvent({ type: 'complete', imageUrls: allUrls, total: count });
-            billUsage(allUrls.length, allUrls);
-            res.write('data: [DONE]\n\n');
-            res.end();
-          }
+        };
+
+        // 并发启动所有请求
+        for (let i = 0; i < count; i++) {
+          runSingle(i);
         }
-      };
-
-      // 并发启动所有请求
-      for (let i = 0; i < count; i++) {
-        runSingle(i);
       }
     }
   } catch (err: any) {
