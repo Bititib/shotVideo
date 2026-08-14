@@ -183,6 +183,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'sora-v4-fast': { series: 'sora-v4', allowedSeconds: [10, 15], requireRef: false },
   'sora-v4-pro': { series: 'sora-v4', allowedSeconds: [10, 15], requireRef: false },
   'sdas-pd-sd2.0-pro-933-5-720p': { series: 'sudashui', allowedSeconds: [10], requireRef: false },
+  'sdas-my-seedance-2.0-fast-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'ld-sdas-cvk-pro-933-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-xh-minimax-h3-2k': { series: 'sudashui', allowedSeconds: [15], requireRef: false },
   'seedance-2.0-fast': { series: 'seedance-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
@@ -204,6 +205,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'omni-flash', name: 'Omni Flash', description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash-vref', name: 'Omni Flash Vref', description: '视频风格编辑/改写，支持 1080p', maxSeconds: 10, icon: '✂️' },
   { id: 'sdas-pd-sd2.0-pro-933-5-720p', name: 'Seedance 2.0 Pro 933-5 (720p)', description: '9图3视频3音频，只能10s，S2.0 满血版，支持真人，固定按次计费', maxSeconds: 10, icon: '🚀' },
+  { id: 'sdas-my-seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 933 (720p)', description: '4图3视频1音频，4-15s，S2.0 Fast 满血版，支持真人，固定按次计费', maxSeconds: 15, icon: '⚡' },
   { id: 'ld-sdas-cvk-pro-933-720p', name: 'SudaShui CVK Pro 933 (720p)', description: 'CVK 满血版，支持真人、4-15秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.800/次', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-xh-minimax-h3-2k', name: 'SudaShui Minimax H3 (2K)', description: '海螺 h3 2K版，固定 15 秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.000/次', maxSeconds: 15, icon: '🔥' },
   { id: 'veo-omni-flash', name: 'Veo Omni Flash', description: '多参考图生成视频，参考图字段 Ingredients_images，固定10s', maxSeconds: 10, icon: '🚀' },
@@ -458,6 +460,11 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
+    } else if (m.id === 'sdas-my-seedance-2.0-fast-720p') {
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_my_seedance_20_fast_720p_rate')).get()?.value || '3.00');
+      rates = {
+        '720p': rate,
+      };
     } else if (m.id === 'ld-sdas-cvk-pro-933-720p') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'ld_sdas_cvk_pro_933_720p_rate')).get()?.value || '3.80');
       rates = {
@@ -579,6 +586,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   let upstreamModel = model;
   if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
     upstreamModel = 'sdas-pd-sd2.0-pro-933-5-720p';
+  } else if (model === 'sdas-my-seedance-2.0-fast-720p') {
+    upstreamModel = 'sdas-my-seedance-2.0-fast-720p';
   } else if (dbChannel?.modelMapping) {
     try {
       const mapping = typeof dbChannel.modelMapping === 'string' ? JSON.parse(dbChannel.modelMapping) : dbChannel.modelMapping;
@@ -616,6 +625,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_pd_sd20_pro_933_5_720p_rate')).get();
     rate = parseFloat(row?.value || '4.50');
+  } else if (model === 'sdas-my-seedance-2.0-fast-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_my_seedance_20_fast_720p_rate')).get();
+    rate = parseFloat(row?.value || '3.00');
   } else if (model === 'ld-sdas-cvk-pro-933-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'ld_sdas_cvk_pro_933_720p_rate')).get();
     rate = parseFloat(row?.value || '3.80');
@@ -693,6 +705,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'grok-imagine-video-1.5-fast',
     'grok-imagine-video-1.5-preview',
     'sdas-pd-sd2.0-pro-933-5-720p',
+    'sdas-my-seedance-2.0-fast-720p',
     'ld-sdas-cvk-pro-933-720p',
     'sdas-xh-minimax-h3-2k',
     'tejiasd2'
@@ -1779,6 +1792,9 @@ export function resumePollForTask(contentId: number, record: any) {
   } else if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_pd_sd20_pro_933_5_720p_rate')).get();
     rate = parseFloat(row?.value || '4.50');
+  } else if (model === 'sdas-my-seedance-2.0-fast-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_my_seedance_20_fast_720p_rate')).get();
+    rate = parseFloat(row?.value || '3.00');
   } else if (model === 'ld-sdas-cvk-pro-933-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'ld_sdas_cvk_pro_933_720p_rate')).get();
     rate = parseFloat(row?.value || '3.80');
@@ -1821,6 +1837,7 @@ export function resumePollForTask(contentId: number, record: any) {
     'seedance-2.0-fast-720p',
     'seedance-720',
     'sdas-pd-sd2.0-pro-933-5-720p',
+    'sdas-my-seedance-2.0-fast-720p',
     'ld-sdas-cvk-pro-933-720p',
     'sdas-xh-minimax-h3-2k',
     'sd2-c6',

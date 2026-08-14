@@ -143,6 +143,7 @@ async function syncModelsFromAPI() {
     { provider: 'omni', modelId: 'omni-flash', displayName: 'Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'omni', modelId: 'omni-flash-vref', displayName: 'Omni Flash Vref', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-pd-sd2.0-pro-933-5-720p', displayName: 'Seedance 2.0 Pro 933-5 (720p)', capabilities: JSON.stringify(['video']) },
+    { provider: 'sudashui', modelId: 'sdas-my-seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 933 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-xh-minimax-h3-2k', displayName: 'SudaShui Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
@@ -633,6 +634,7 @@ export async function initDatabase() {
     { key: 'seedance_2_0_720p_rate', value: '3.00', label: 'Seedance 2.0 720p 费率(¥/次)' },
     { key: 'seedance_2_0_fast_720p_rate', value: '1.50', label: 'Seedance 2.0 Fast 720p 费率(¥/次)' },
     { key: 'sdas_pd_sd20_pro_933_5_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro 933-5 (720p) 费率(¥/次)' },
+    { key: 'sdas_my_seedance_20_fast_720p_rate', value: '3.00', label: 'Seedance 2.0 Fast 933 (720p) 费率(¥/次)' },
     { key: 'ld_sdas_cvk_pro_933_720p_rate', value: '3.80', label: 'SudaShui CVK Pro 933 (720p) 费率(¥/次)' },
     { key: 'sdas_xh_minimax_h3_2k_rate', value: '3.00', label: 'SudaShui Minimax H3 (2K) 费率(¥/次)' },
     { key: 'sd2_c6_rate', value: '2.50', label: 'Seedance 2.0 c6 费率(¥/次)' },
@@ -757,6 +759,7 @@ export async function initDatabase() {
   try {
     const sdaModels = [
       'sdas-pd-sd2.0-pro-933-5-720p',
+      'sdas-my-seedance-2.0-fast-720p',
       'ld-sdas-cvk-pro-933-720p',
       'sdas-xh-minimax-h3-2k'
     ];
