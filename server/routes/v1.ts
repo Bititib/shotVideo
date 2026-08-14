@@ -58,8 +58,8 @@ function getVideoRate(model: string, resolution: string): number {
     const key = resolution === '1080p' ? 'omni_vref_rate_1080p' : 'omni_vref_rate_720p';
     const row = db.select().from(settings).where(eq(settings.key, key)).get();
     return parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
-  } else if (model === 'sdas-xh-sd2.0-933-3-pro-720p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sdas_xh_sd20_933_3_pro_720p_rate')).get();
+  } else if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_pd_sd20_pro_933_5_720p_rate')).get();
     return parseFloat(row?.value || '4.50');
   } else if (model === 'ld-sdas-cvk-pro-933-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'ld_sdas_cvk_pro_933_720p_rate')).get();
@@ -649,8 +649,8 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
   let channelId: number | null = null;
 
   if (channel) {
-    if (model === 'sdas-xh-sd2.0-933-3-pro-720p') {
-      upstreamModel = 'ld-sdas-cvk-pro-933-720p';
+    if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
+      upstreamModel = 'sdas-pd-sd2.0-pro-933-5-720p';
     } else if (channel.modelMapping) {
       try {
         const mapping = typeof channel.modelMapping === 'string' ? JSON.parse(channel.modelMapping) : channel.modelMapping;
@@ -678,7 +678,7 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
     'seedance-720',
-    'sdas-xh-sd2.0-933-3-pro-720p',
+    'sdas-pd-sd2.0-pro-933-5-720p',
     'ld-sdas-cvk-pro-933-720p',
     'sdas-xh-minimax-h3-2k',
     'sd2-c6',
@@ -791,8 +791,8 @@ router.post('/video/generations', async (req: Request, res: Response) => {
   let channelId: number | null = null;
 
   if (channel) {
-    if (model === 'sdas-xh-sd2.0-933-3-pro-720p') {
-      upstreamModel = 'ld-sdas-cvk-pro-933-720p';
+    if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
+      upstreamModel = 'sdas-pd-sd2.0-pro-933-5-720p';
     } else if (channel.modelMapping) {
       try {
         const mapping = typeof channel.modelMapping === 'string' ? JSON.parse(channel.modelMapping) : channel.modelMapping;
@@ -820,7 +820,7 @@ router.post('/video/generations', async (req: Request, res: Response) => {
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
     'seedance-720',
-    'sdas-xh-sd2.0-933-3-pro-720p',
+    'sdas-pd-sd2.0-pro-933-5-720p',
     'ld-sdas-cvk-pro-933-720p',
     'sdas-xh-minimax-h3-2k',
     'sd2-c6',

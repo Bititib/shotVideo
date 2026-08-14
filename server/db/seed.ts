@@ -142,7 +142,7 @@ async function syncModelsFromAPI() {
     { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'omni', modelId: 'omni-flash', displayName: 'Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'omni', modelId: 'omni-flash-vref', displayName: 'Omni Flash Vref', capabilities: JSON.stringify(['video']) },
-    { provider: 'sudashui', modelId: 'sdas-xh-sd2.0-933-3-pro-720p', displayName: 'Seedance 2.0 Pro 933-3 (720p)', capabilities: JSON.stringify(['video']) },
+    { provider: 'sudashui', modelId: 'sdas-pd-sd2.0-pro-933-5-720p', displayName: 'Seedance 2.0 Pro 933-5 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-xh-minimax-h3-2k', displayName: 'SudaShui Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
@@ -216,7 +216,8 @@ async function syncModelsFromAPI() {
       'sdas-pg-s2.0-fast',
       'grok-imagine-video-1.5-1080p',
       'grok-imagine-video',
-      'grok-4.3-video'
+      'grok-4.3-video',
+      'sdas-xh-sd2.0-933-3-pro-720p'
     ];
     for (const modelId of deadModels) {
       db.delete(models).where(eq(models.modelId, modelId)).run();
@@ -612,7 +613,8 @@ export async function initDatabase() {
     'sdas_wf_sd20_fast_933_720p_rate',
     'sdas_wf_sd20_pro_933_480p_rate',
     'sdas_pg_s20_fast_rate',
-    'grok_imagine_video_1_5_1080p_rate'
+    'grok_imagine_video_1_5_1080p_rate',
+    'sdas_xh_sd20_933_3_pro_720p_rate'
   ];
   for (const k of keysToDelete) {
     db.delete(settings).where(eq(settings.key, k)).run();
@@ -630,7 +632,7 @@ export async function initDatabase() {
     { key: 'sd2_5_rate', value: '4.50', label: 'Seedance 2.5 (sd2.5) 费率(¥/次)' },
     { key: 'seedance_2_0_720p_rate', value: '3.00', label: 'Seedance 2.0 720p 费率(¥/次)' },
     { key: 'seedance_2_0_fast_720p_rate', value: '1.50', label: 'Seedance 2.0 Fast 720p 费率(¥/次)' },
-    { key: 'sdas_xh_sd20_933_3_pro_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro 933-3 (720p) 费率(¥/次)' },
+    { key: 'sdas_pd_sd20_pro_933_5_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro 933-5 (720p) 费率(¥/次)' },
     { key: 'ld_sdas_cvk_pro_933_720p_rate', value: '3.80', label: 'SudaShui CVK Pro 933 (720p) 费率(¥/次)' },
     { key: 'sdas_xh_minimax_h3_2k_rate', value: '3.00', label: 'SudaShui Minimax H3 (2K) 费率(¥/次)' },
     { key: 'sd2_c6_rate', value: '2.50', label: 'Seedance 2.0 c6 费率(¥/次)' },
@@ -754,7 +756,7 @@ export async function initDatabase() {
   // 9) 自动向已存在且包含 sudashuiapi.com 或 pidoi.com 的渠道添加支持的模型 ID，防止路由错误
   try {
     const sdaModels = [
-      'sdas-xh-sd2.0-933-3-pro-720p',
+      'sdas-pd-sd2.0-pro-933-5-720p',
       'ld-sdas-cvk-pro-933-720p',
       'sdas-xh-minimax-h3-2k'
     ];
