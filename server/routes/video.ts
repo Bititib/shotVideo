@@ -377,7 +377,7 @@ router.get('/models', (_req: Request, res: Response) => {
   const soraV4FastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get()?.value || '0.189');
   const soraV4ProRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_pro_rate')).get()?.value || '0.25');
   const seedance20FastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get()?.value || '4.00');
-  const veoOmniFlashRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get()?.value || '5.00');
+  const veoOmniFlashRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get()?.value || '0.25');
 
   const result = sourceModels.map(m => {
     const preset = DEFAULT_VIDEO_MODELS.find(d => d.id === m.id);
@@ -423,7 +423,7 @@ router.get('/models', (_req: Request, res: Response) => {
         '1080p': veoOmniFlashRate,
       };
     } else if (m.id === 'veo-3-1') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get()?.value || '0.07');
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get()?.value || '0.20');
       rates = {
         '720p': rate,
         '1080p': rate,
@@ -633,10 +633,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     rate = parseFloat(row?.value || '4.00');
   } else if (model === 'veo-omni-flash') {
     const row = db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get();
-    rate = parseFloat(row?.value || '5.00');
+    rate = parseFloat(row?.value || '0.25');
   } else if (model === 'veo-3-1') {
     const row = db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get();
-    rate = parseFloat(row?.value || '0.07');
+    rate = parseFloat(row?.value || '0.20');
   } else if (model === 'sora-v4-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
     rate = parseFloat(row?.value || '0.189');
@@ -1751,7 +1751,10 @@ export function resumePollForTask(contentId: number, record: any) {
     rate = parseFloat(row?.value || '4.00');
   } else if (model === 'veo-omni-flash') {
     const row = db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get();
-    rate = parseFloat(row?.value || '5.00');
+    rate = parseFloat(row?.value || '0.25');
+  } else if (model === 'veo-3-1') {
+    const row = db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get();
+    rate = parseFloat(row?.value || '0.20');
   } else if (model === 'sora-v4-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
     rate = parseFloat(row?.value || '0.189');

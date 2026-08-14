@@ -624,8 +624,8 @@ export async function initDatabase() {
     { key: 'omni_flash_rate_1080p', value: '1.50', label: 'Omni Flash 1080p费率(¥/秒)' },
     { key: 'omni_vref_rate_720p', value: '1.60', label: 'Omni Vref 720p费率(¥/秒)' },
     { key: 'omni_vref_rate_1080p', value: '2.20', label: 'Omni Vref 1080p费率(¥/秒)' },
-    { key: 'veo_omni_flash_rate', value: '0.50', label: 'Veo Omni Flash 费率(¥/秒)' },
-    { key: 'veo_3_1_rate', value: '0.07', label: 'Veo 3-1 费率(¥/秒)' },
+    { key: 'veo_omni_flash_rate', value: '0.25', label: 'Veo Omni Flash 费率(¥/秒)' },
+    { key: 'veo_3_1_rate', value: '0.20', label: 'Veo 3-1 费率(¥/秒)' },
     { key: 'sd2_c7_rate', value: '0.50', label: 'Seedance 2.0 c7 费率(¥/次)' },
     { key: 'sd2_5_rate', value: '4.50', label: 'Seedance 2.5 (sd2.5) 费率(¥/次)' },
     { key: 'seedance_2_0_720p_rate', value: '3.00', label: 'Seedance 2.0 720p 费率(¥/次)' },
@@ -648,9 +648,19 @@ export async function initDatabase() {
       console.log(`📦 已迁移：添加 Omni / Sora 费率配置 ${s.key}`);
     } else {
       // 强制修正数据库中已有的标签以纠正显示单位
+      const updateData: Partial<typeof s> = {};
       if (existing.label !== s.label) {
-        db.update(settings).set({ label: s.label }).where(eq(settings.key, s.key)).run();
-        console.log(`🔄 已修正：更新设置项 ${s.key} 的标签为 ${s.label}`);
+        updateData.label = s.label;
+      }
+      // 对于这两个价格发生变化的设置项，如果存在且值不同，则强制更新数值
+      if (s.key === 'veo_omni_flash_rate' || s.key === 'veo_3_1_rate') {
+        if (existing.value !== s.value) {
+          updateData.value = s.value;
+        }
+      }
+      if (Object.keys(updateData).length > 0) {
+        db.update(settings).set(updateData).where(eq(settings.key, s.key)).run();
+        console.log(`🔄 已修正：更新设置项 ${s.key} -> ${JSON.stringify(updateData)}`);
       }
     }
   }

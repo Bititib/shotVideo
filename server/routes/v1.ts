@@ -88,9 +88,12 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'seedance-720') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_720_rate')).get();
     return parseFloat(row?.value || '3.00');
+  } else if (model === 'veo-omni-flash') {
+    const row = db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get();
+    return parseFloat(row?.value || '0.25');
   } else if (model === 'veo-3-1') {
     const row = db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get();
-    return parseFloat(row?.value || '0.07');
+    return parseFloat(row?.value || '0.20');
   } else {
     const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
     const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
