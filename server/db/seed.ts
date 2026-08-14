@@ -27,7 +27,7 @@ async function verifyModel(ai: GoogleGenAI, modelId: string, isImage: boolean): 
   return 'ok';
 }
 
-type ModelEntry = { provider: string; modelId: string; displayName: string; capabilities: string };
+type ModelEntry = { provider: string; modelId: string; displayName: string; capabilities: string; isActive?: number };
 
 /** 使用单个 Key 串行验证一批模型（同 Key 内间隔 2s 防限流） */
 async function verifyBatch(
@@ -146,33 +146,38 @@ async function syncModelsFromAPI() {
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-xh-minimax-h3-2k', displayName: 'SudaShui Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
+    { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'tejiasd2', displayName: '特价 SD 2.0', capabilities: JSON.stringify(['video']) },
-    { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']) },
-    { provider: 'seedance', modelId: 'sd2.5', displayName: 'Seedance 2.5 (sd2.5)', capabilities: JSON.stringify(['video']) },
-    { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']) },
-    { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']) },
-    { provider: 'seedance', modelId: 'seedance-720', displayName: 'Seedance 720 满血版', capabilities: JSON.stringify(['video']) },
+    { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']), isActive: 0 },
+    { provider: 'seedance', modelId: 'sd2.5', displayName: 'Seedance 2.5 (sd2.5)', capabilities: JSON.stringify(['video']), isActive: 0 },
+    { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']), isActive: 0 },
+    { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']), isActive: 0 },
+    { provider: 'seedance', modelId: 'seedance-720', displayName: 'Seedance 720 满血版', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'newtoken', modelId: 'sd2.0-fast-480p', displayName: 'SD 2.0 Fast (480p)', capabilities: JSON.stringify(['video']) },
     { provider: 'grok', modelId: 'grok-imagine-1.0-video', displayName: 'Grok 1.0 Video', capabilities: JSON.stringify(['video']) },
     { provider: 'grok', modelId: 'grok-imagine-video-1.5-fast', displayName: 'Grok 1.5 Fast', capabilities: JSON.stringify(['video']) },
-    { provider: 'grok', modelId: 'grok-imagine-video-1.5-preview', displayName: 'Grok 1.5 Preview', capabilities: JSON.stringify(['video']) },
-    { provider: 'grok', modelId: 'grok-imagine-video-1.5-1080p', displayName: 'Grok 1.5 1080p', capabilities: JSON.stringify(['video']) },
-    { provider: 'grok', modelId: 'grok-imagine-video', displayName: 'Grok Imagine Video', capabilities: JSON.stringify(['video']) },
-    { provider: 'grok', modelId: 'grok-4.3-video', displayName: 'Grok 4.3 Video', capabilities: JSON.stringify(['video']) }
+    { provider: 'grok', modelId: 'grok-imagine-video-1.5-preview', displayName: 'Grok 1.5 Preview', capabilities: JSON.stringify(['video']) }
   );
 
   // 同步或插入模型
   for (const m of allVerified) {
     const existing = db.select().from(models).where(eq(models.modelId, m.modelId)).get();
+    const targetIsActive = m.isActive !== undefined ? m.isActive : 1;
     if (existing) {
-      if (existing.displayName !== m.displayName || existing.capabilities !== m.capabilities) {
+      if (existing.displayName !== m.displayName || existing.capabilities !== m.capabilities || existing.isActive !== targetIsActive) {
         db.update(models)
-          .set({ displayName: m.displayName, capabilities: m.capabilities })
+          .set({ displayName: m.displayName, capabilities: m.capabilities, isActive: targetIsActive })
           .where(eq(models.modelId, m.modelId))
           .run();
       }
     } else {
-      db.insert(models).values(m).run();
+      db.insert(models).values({
+        provider: m.provider,
+        modelId: m.modelId,
+        displayName: m.displayName,
+        capabilities: m.capabilities,
+        isActive: targetIsActive,
+      }).run();
     }
   }
 
@@ -208,7 +213,10 @@ async function syncModelsFromAPI() {
       'seedance2.0-fast-4img',
       'sdas-wf-sd2.0-fast-933-720p',
       'sdas-wf-sd2.0-pro-933-480p',
-      'sdas-pg-s2.0-fast'
+      'sdas-pg-s2.0-fast',
+      'grok-imagine-video-1.5-1080p',
+      'grok-imagine-video',
+      'grok-4.3-video'
     ];
     for (const modelId of deadModels) {
       db.delete(models).where(eq(models.modelId, modelId)).run();
@@ -603,7 +611,8 @@ export async function initDatabase() {
     'seedance20_fast_4img_rate',
     'sdas_wf_sd20_fast_933_720p_rate',
     'sdas_wf_sd20_pro_933_480p_rate',
-    'sdas_pg_s20_fast_rate'
+    'sdas_pg_s20_fast_rate',
+    'grok_imagine_video_1_5_1080p_rate'
   ];
   for (const k of keysToDelete) {
     db.delete(settings).where(eq(settings.key, k)).run();
@@ -616,6 +625,7 @@ export async function initDatabase() {
     { key: 'omni_vref_rate_720p', value: '1.60', label: 'Omni Vref 720p费率(¥/秒)' },
     { key: 'omni_vref_rate_1080p', value: '2.20', label: 'Omni Vref 1080p费率(¥/秒)' },
     { key: 'veo_omni_flash_rate', value: '0.50', label: 'Veo Omni Flash 费率(¥/秒)' },
+    { key: 'veo_3_1_rate', value: '0.07', label: 'Veo 3-1 费率(¥/秒)' },
     { key: 'sd2_c7_rate', value: '0.50', label: 'Seedance 2.0 c7 费率(¥/次)' },
     { key: 'sd2_5_rate', value: '4.50', label: 'Seedance 2.5 (sd2.5) 费率(¥/次)' },
     { key: 'seedance_2_0_720p_rate', value: '3.00', label: 'Seedance 2.0 720p 费率(¥/次)' },
@@ -628,7 +638,6 @@ export async function initDatabase() {
     { key: 'tejiasd2_rate', value: '3.00', label: '特价 SD 2.0 费率(¥/次)' },
     { key: 'sd20_fast_480p_rate', value: '0.22', label: 'SD 2.0 Fast (480p) 费率(¥/秒)' },
     { key: 'grok_imagine_1_0_video_rate', value: '0.288', label: 'Grok Imagine 1.0 Video 费率(¥/秒)' },
-    { key: 'grok_imagine_video_1_5_1080p_rate', value: '0.80', label: 'Grok Imagine 1.5 1080p 费率(¥/秒)' },
     { key: 'grok_imagine_video_1_5_fast_rate', value: '0.288', label: 'Grok Imagine 1.5 Fast 费率(¥/秒)' },
     { key: 'grok_imagine_video_1_5_preview_rate', value: '0.48', label: 'Grok Imagine 1.5 Preview 费率(¥/秒)' },
   ];
@@ -717,24 +726,6 @@ export async function initDatabase() {
       inputPrice: 2.88,
       outputPrice: 0,
     },
-    {
-      modelPattern: 'grok-imagine-video-1.5-1080p',
-      billingType: 'per_call',
-      inputPrice: 8.00,
-      outputPrice: 0,
-    },
-    {
-      modelPattern: 'grok-imagine-video',
-      billingType: 'per_call',
-      inputPrice: 2.00,
-      outputPrice: 0,
-    },
-    {
-      modelPattern: 'grok-4.3-video',
-      billingType: 'per_call',
-      inputPrice: 2.00,
-      outputPrice: 0,
-    },
   ];
 
   console.log('📦 同步计费规则到数据库 (更新/插入)...');
@@ -814,24 +805,25 @@ export async function initDatabase() {
         name: 'NewToken 渠道',
         type: 'openai',
         baseUrl: 'https://newtoken.club',
-        apiKey: 'sk-22Vcwozkj2VvDsiTqr988NElCXPoTLFXg4tWWrGdYAWxac5o',
-        supportedModels: JSON.stringify(['veo-omni-flash', 'sd2.0-fast-480p']),
+        apiKey: 'sk-tO4xRDsMI4XmyVw5gcsWwdYbC9s14NJieyZDuPmIqNgpA3jW',
+        supportedModels: JSON.stringify(['veo-omni-flash', 'sd2.0-fast-480p', 'veo-3-1']),
         status: 1,
         priority: 0,
         weight: 1,
         maxRetries: 3,
         timeout: 120000,
       }).run();
-      console.log('📦 已自动迁移：成功创建 NewToken 渠道并绑定 veo-omni-flash 与 sd2.0-fast-480p');
+      console.log('📦 已自动迁移：成功创建 NewToken 渠道并绑定 veo-omni-flash, sd2.0-fast-480p 与 veo-3-1');
     } else {
       db.update(channels)
         .set({
-          supportedModels: JSON.stringify(['veo-omni-flash', 'sd2.0-fast-480p']),
+          apiKey: 'sk-tO4xRDsMI4XmyVw5gcsWwdYbC9s14NJieyZDuPmIqNgpA3jW',
+          supportedModels: JSON.stringify(['veo-omni-flash', 'sd2.0-fast-480p', 'veo-3-1']),
           updatedAt: new Date().toISOString()
         })
         .where(eq(channels.id, existingNewToken.id))
         .run();
-      console.log('🔄 已自动迁移：更新 NewToken 渠道支持 veo-omni-flash 与 sd2.0-fast-480p');
+      console.log('🔄 已自动迁移：更新 NewToken 渠道支持 veo-omni-flash, sd2.0-fast-480p 与 veo-3-1');
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 NewToken 渠道出错:', err.message);
@@ -848,23 +840,24 @@ export async function initDatabase() {
         baseUrl: 'https://llm.chre3.com',
         apiKey: 'sk-jONZxfxNTSIMij2f7CgUIIdZjQkCmadK8nG51dHa3WcZMvgG',
         supportedModels: JSON.stringify(chre3Models),
-        status: 1,
+        status: 0,
         priority: 0,
         weight: 1,
         maxRetries: 3,
         timeout: 120000,
       }).run();
-      console.log('📦 已自动迁移：成功创建 4月天 渠道并绑定 sd2 和 seedance-720p 系列模型');
+      console.log('📦 已自动迁移：成功创建 4月天 渠道并绑定 sd2 和 seedance-720p 系列模型 (已默认禁用)');
     } else {
       db.update(channels)
         .set({
           name: '4月天 渠道',
+          status: 0,
           supportedModels: JSON.stringify(chre3Models),
           updatedAt: new Date().toISOString()
         })
         .where(eq(channels.id, existingChre3.id))
         .run();
-      console.log('🔄 已自动迁移：更新 4月天 渠道支持 sd2 和 seedance-720p 系列模型');
+      console.log('🔄 已自动迁移：更新 4月天 渠道并将其标记为禁用状态');
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 4月天 渠道出错:', err.message);

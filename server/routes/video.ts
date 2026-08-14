@@ -178,9 +178,6 @@ const MODEL_META: Record<string, ModelMeta> = {
   'grok-imagine-video-1.5-preview': { series: '1.5', allowedSeconds: [6, 10, 15], requireRef: true },
   'grok-imagine-1.0-video': { series: '1.0', allowedSeconds: [6, 10], requireRef: false },
   'grok-imagine-video-1.5-fast': { series: '1.5', allowedSeconds: [6, 10], requireRef: false },
-  'grok-imagine-video-1.5-1080p': { series: '1.5', allowedSeconds: [10, 15], requireRef: true },
-  'grok-imagine-video': { series: 'legacy', allowedSeconds: null, requireRef: false },
-  'grok-4.3-video': { series: 'legacy', allowedSeconds: null, requireRef: false },
   'omni-flash': { series: 'omni-flash', allowedSeconds: [4, 6, 8, 10], requireRef: false },
   'omni-flash-vref': { series: 'omni-flash-vref', allowedSeconds: [10], requireRef: false },
   'sora-v4-fast': { series: 'sora-v4', allowedSeconds: [10, 15], requireRef: false },
@@ -190,6 +187,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'sdas-xh-minimax-h3-2k': { series: 'sudashui', allowedSeconds: [15], requireRef: false },
   'seedance-2.0-fast': { series: 'seedance-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'veo-omni-flash': { series: 'veo-omni-flash', allowedSeconds: [10], requireRef: false },
+  'veo-3-1': { series: 'veo-3-1', allowedSeconds: [8], requireRef: false },
   'sd2-c7': { series: 'sd2-c7', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sd2.5': { series: 'sd2.5', allowedSeconds: [15], requireRef: false },
   'seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
@@ -203,15 +201,13 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'grok-imagine-video-1.5-preview', name: 'Grok 1.5 Preview', description: '图生视频，必须提供参考图，6/10/15秒', maxSeconds: 15, icon: '🖼️' },
   { id: 'grok-imagine-1.0-video', name: 'Grok 1.0 Video', description: '文生/图生视频，支持最多7张参考图，6/10秒', maxSeconds: 10, icon: '🎥' },
   { id: 'grok-imagine-video-1.5-fast', name: 'Grok 1.5 Fast', description: '快速文生/图生视频，支持最多7张参考图，6/10秒', maxSeconds: 10, icon: '⚡' },
-  { id: 'grok-imagine-video-1.5-1080p', name: 'Grok 1.5 1080p', description: '单图参考模型，最多1张参考图，支持时长10和15秒，分辨率1080P', maxSeconds: 15, icon: '🎬' },
-  { id: 'grok-imagine-video', name: 'Grok Imagine Video', description: '标准视频生成模型', maxSeconds: 15, icon: '🚀' },
-  { id: 'grok-4.3-video', name: 'Grok 4.3 Video', description: 'Grok 4.3 视频模型', maxSeconds: 15, icon: '🚀' },
   { id: 'omni-flash', name: 'Omni Flash', description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash-vref', name: 'Omni Flash Vref', description: '视频风格编辑/改写，支持 1080p', maxSeconds: 10, icon: '✂️' },
   { id: 'sdas-xh-sd2.0-933-3-pro-720p', name: 'Seedance 2.0 Pro 933-3 (720p)', description: 'S2.0 满血版，支持真人、不糊脸、无网格，支持 9图/3视频/3音频，固定按次计费', maxSeconds: 15, icon: '🚀' },
   { id: 'ld-sdas-cvk-pro-933-720p', name: 'SudaShui CVK Pro 933 (720p)', description: 'CVK 满血版，支持真人、4-15秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.800/次', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-xh-minimax-h3-2k', name: 'SudaShui Minimax H3 (2K)', description: '海螺 h3 2K版，固定 15 秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.000/次', maxSeconds: 15, icon: '🔥' },
   { id: 'veo-omni-flash', name: 'Veo Omni Flash', description: '多参考图生成视频，参考图字段 Ingredients_images，固定10s', maxSeconds: 10, icon: '🚀' },
+  { id: 'veo-3-1', name: 'Veo 3-1', description: '【不卡人脸-定制版】无水印视频；只支持8秒；支持首尾帧、支持多图参考，最多9张图', maxSeconds: 8, icon: '🚀' },
   { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多10张图片参考（无视频/音频参考），5-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
   { id: 'sd2.5', name: 'Seedance 2.5 (sd2.5)', description: '支持最多50张图片、10个视频、10个音频参考，概率过人脸，只支持 15 秒，固定按次计费 ¥4.500/次', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
@@ -426,6 +422,12 @@ router.get('/models', (_req: Request, res: Response) => {
         '720p': veoOmniFlashRate,
         '1080p': veoOmniFlashRate,
       };
+    } else if (m.id === 'veo-3-1') {
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get()?.value || '0.07');
+      rates = {
+        '720p': rate,
+        '1080p': rate,
+      };
     } else if (m.id === 'sd2-c7') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_c7_rate')).get()?.value || '0.50');
       rates = {
@@ -486,11 +488,6 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
-    } else if (m.id === 'grok-imagine-video-1.5-1080p') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'grok_imagine_video_1_5_1080p_rate')).get()?.value || '0.80');
-      rates = {
-        '720p': rate,
-      };
     } else if (m.id === 'grok-imagine-video-1.5-fast') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'grok_imagine_video_1_5_fast_rate')).get()?.value || '0.288');
       rates = {
@@ -528,7 +525,7 @@ router.get('/models', (_req: Request, res: Response) => {
 router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddleware, async (req: TierRequest, res: Response) => {
   const {
     prompt,
-    model = 'grok-imagine-video',
+    model = 'grok-imagine-1.0-video',
     aspect_ratio = '16:9',
     video_length = 6,
     resolution = '720p',
@@ -635,6 +632,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'veo-omni-flash') {
     const row = db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get();
     rate = parseFloat(row?.value || '5.00');
+  } else if (model === 'veo-3-1') {
+    const row = db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get();
+    rate = parseFloat(row?.value || '0.07');
   } else if (model === 'sora-v4-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
     rate = parseFloat(row?.value || '0.189');
@@ -662,9 +662,6 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'grok-imagine-1.0-video') {
     const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_1_0_video_rate')).get();
     rate = parseFloat(row?.value || '0.288');
-  } else if (model === 'grok-imagine-video-1.5-1080p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_video_1_5_1080p_rate')).get();
-    rate = parseFloat(row?.value || '0.800');
   } else if (model === 'grok-imagine-video-1.5-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_video_1_5_fast_rate')).get();
     rate = parseFloat(row?.value || '0.288');
@@ -691,7 +688,6 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'seedance-2.0-fast-720p',
     'seedance-720',
     'grok-imagine-1.0-video',
-    'grok-imagine-video-1.5-1080p',
     'grok-imagine-video-1.5-fast',
     'grok-imagine-video-1.5-preview',
     'sdas-xh-sd2.0-933-3-pro-720p',
@@ -765,6 +761,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
   const isSudaShui = meta?.series === 'sudashui';
   const isVeoOmni = model === 'veo-omni-flash';
+  const isVeo31 = model === 'veo-3-1';
   const isSeedanceJsonModel = [
     'sd2-c7',
     'sd2.5',
@@ -992,6 +989,56 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] Veo Omni Flash 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
+        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+
+      const job = await createResp.json() as any;
+      videoId = job.task_id || job.id;
+    } else if (isVeo31) {
+      sendEvent({ type: 'status', message: '正在处理素材并提交 Veo 3-1 任务...' });
+
+      const imageUrls: string[] = [];
+      for (const img of (reference_images || []).slice(0, 9)) {
+        const url = convertBase64ToPublicUrl(img, 'veo31_ref', req);
+        if (url) imageUrls.push(url);
+      }
+      const firstFrameUrl = first_frame ? convertBase64ToPublicUrl(first_frame, 'veo31_ff', req) : undefined;
+      const lastFrameUrl = last_frame ? convertBase64ToPublicUrl(last_frame, 'veo31_lf', req) : undefined;
+
+      const payload: Record<string, any> = {
+        model: 'veo-3-1',
+        prompt: prompt.trim(),
+        duration: 8,
+        aspect_ratio: aspect_ratio === '9:16' ? '9:16' : '16:9',
+      };
+
+      if (imageUrls.length > 0) {
+        payload.reference_images = imageUrls;
+      }
+      if (firstFrameUrl) {
+        payload.first_frame_image = firstFrameUrl;
+      }
+      if (lastFrameUrl) {
+        payload.last_frame_image = lastFrameUrl;
+      }
+
+      console.log(`[video] Step1 Veo31 创建任务: model=${model} aspect_ratio=${payload.aspect_ratio} refs=${imageUrls.length} ff=${!!firstFrameUrl} lf=${!!lastFrameUrl}`);
+
+      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${channel.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(60_000),
+      });
+
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        console.error(`[video] Veo 3-1 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
         sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
         res.write('data: [DONE]\n\n');
         return res.end();

@@ -49,7 +49,6 @@ const isFlatRateModel = (modelId: string) => {
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
     'grok-imagine-1.0-video',
-    'grok-imagine-video-1.5-1080p',
     'grok-imagine-video-1.5-fast',
     'grok-imagine-video-1.5-preview',
     'sdas-pg-s2.0-fast',
@@ -236,7 +235,7 @@ const isSoraV4Model = (modelId: string) => {
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'grok-imagine-1.0-video' || modelId === 'grok-imagine-video-1.5-fast') return 7;
-  if (modelId === 'grok-imagine-video-1.5-1080p' || modelId === 'grok-imagine-video-1.5-preview') return 1;
+  if (modelId === 'grok-imagine-video-1.5-preview') return 1;
   if (modelId === 'sd2.5') return 50;
   if (modelId === 'sd2-c7') return 10;
   if (modelId === 'sd2-c6') return 9;
@@ -245,6 +244,7 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'omni-flash') return 7;
   if (modelId === 'omni-flash-vref') return 5;
   if (modelId === 'veo-omni-flash') return 6;
+  if (modelId === 'veo-3-1') return 9;
   const model = models.find(m => m.id === modelId);
   if (model?.requireRef) return 1;
   return 5;
@@ -677,7 +677,8 @@ export default function VideoPage() {
       setReferenceAudios([]);
       setReferenceAudioNames([]);
     }
-    if (!isSoraV3Pro) {
+    const supportsFirstLast = isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1';
+    if (!supportsFirstLast) {
       setFirstFrame(null);
       setLastFrame(null);
     }
@@ -1300,7 +1301,7 @@ export default function VideoPage() {
                       <input ref={audioFileInputRef} type="file" accept="audio/*" multiple className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
                     </>
                   )}
-                  {isSoraV4Model(selectedModel) && (
+                  {(isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1') && (
                     <>
                       <button onClick={() => firstFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-emerald-400" /> 首帧 {firstFrame ? '(已上传)' : ''}

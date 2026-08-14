@@ -62,7 +62,7 @@ const DURATIONS = [{ value: 6, label: '6s' }, { value: 10, label: '10s' }, { val
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'grok-imagine-1.0-video' || modelId === 'grok-imagine-video-1.5-fast') return 7;
-  if (modelId === 'grok-imagine-video-1.5-1080p' || modelId === 'grok-imagine-video-1.5-preview') return 1;
+  if (modelId === 'grok-imagine-video-1.5-preview') return 1;
   if (modelId === 'sdas-pg-s2.0-fast') return 5;
   if (modelId === 'sdas-d7-seedance-2.0-face-720p') return 99;
   if (modelId.startsWith('sd-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
