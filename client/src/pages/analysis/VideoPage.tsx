@@ -228,7 +228,13 @@ const ALL_DURATIONS = [
   { value: 11, label: '11 秒' }, { value: 12, label: '12 秒' },
   { value: 13, label: '13 秒' }, { value: 14, label: '14 秒' },
   { value: 15, label: '15 秒' }, { value: 16, label: '16 秒' },
-  { value: 20, label: '20 秒' }, { value: 30, label: '30 秒' },
+  { value: 17, label: '17 秒' }, { value: 18, label: '18 秒' },
+  { value: 19, label: '19 秒' }, { value: 20, label: '20 秒' },
+  { value: 21, label: '21 秒' }, { value: 22, label: '22 秒' },
+  { value: 23, label: '23 秒' }, { value: 24, label: '24 秒' },
+  { value: 25, label: '25 秒' }, { value: 26, label: '26 秒' },
+  { value: 27, label: '27 秒' }, { value: 28, label: '28 秒' },
+  { value: 29, label: '29 秒' }, { value: 30, label: '30 秒' },
 ];
 const isSoraV4Model = (modelId: string) => {
   return modelId === 'seedance-2.0-fast' || modelId === 'seedance-2.0' || modelId === 'sora-v4-fast' || modelId === 'sora-v4-pro';

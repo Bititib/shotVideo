@@ -78,7 +78,7 @@ function getVideoRate(model: string, resolution: string): number {
     return parseFloat(row?.value || '0.22');
   } else if (model === 'sd2.5') {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get();
-    return parseFloat(row?.value || '4.50');
+    return parseFloat(row?.value || '5.00');
   } else if (model === 'sd2-c6') {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get();
     return parseFloat(row?.value || '2.50');
