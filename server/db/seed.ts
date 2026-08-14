@@ -850,24 +850,24 @@ export async function initDatabase() {
         baseUrl: 'https://llm.chre3.com',
         apiKey: 'sk-jONZxfxNTSIMij2f7CgUIIdZjQkCmadK8nG51dHa3WcZMvgG',
         supportedModels: JSON.stringify(chre3Models),
-        status: 0,
+        status: 1,
         priority: 0,
         weight: 1,
         maxRetries: 3,
         timeout: 120000,
       }).run();
-      console.log('📦 已自动迁移：成功创建 4月天 渠道并绑定 sd2 和 seedance-720p 系列模型 (已默认禁用)');
+      console.log('📦 已自动迁移：成功创建 4月天 渠道并绑定 sd2 和 seedance-720p 系列模型 (已启用)');
     } else {
       db.update(channels)
         .set({
           name: '4月天 渠道',
-          status: 0,
+          status: 1,
           supportedModels: JSON.stringify(chre3Models),
           updatedAt: new Date().toISOString()
         })
         .where(eq(channels.id, existingChre3.id))
         .run();
-      console.log('🔄 已自动迁移：更新 4月天 渠道并将其标记为禁用状态');
+      console.log('🔄 已自动迁移：更新 4月天 渠道并将其标记为启用状态');
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 4月天 渠道出错:', err.message);
