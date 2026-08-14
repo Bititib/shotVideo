@@ -810,7 +810,7 @@ router.post('/video/generations', async (req: Request, res: Response) => {
   }
 
   const rate = getVideoRate(model, resolution);
-  const seconds = model === 'omni-flash-vref' ? 10 : Number(duration);
+  const seconds = (model === 'omni-flash-vref' || model === 'sdas-pd-sd2.0-pro-933-5-720p') ? 10 : Number(duration);
   const isFlatRate = [
     'sdas-hn-sd2.0-720p',
     'sdas-hn-sd2.0-fast-720p',
@@ -849,7 +849,7 @@ router.post('/video/generations', async (req: Request, res: Response) => {
       body: JSON.stringify({
         model: upstreamModel,
         prompt,
-        duration,
+        duration: model === 'sdas-pd-sd2.0-pro-933-5-720p' ? 10 : duration,
         aspect_ratio,
         resolution,
         ...otherParams,

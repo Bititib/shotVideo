@@ -698,7 +698,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'tejiasd2'
   ].includes(model);
   const estimatedRate = rate;
-  const estimatedSeconds = model === 'omni-flash-vref' ? 10 : (Number(video_length) || 6);
+  const estimatedSeconds = (model === 'omni-flash-vref' || model === 'sdas-pd-sd2.0-pro-933-5-720p') ? 10 : (Number(video_length) || 6);
   const estimatedCost = isFlatRate ? estimatedRate : (Math.round(estimatedRate * estimatedSeconds * 100) / 100);
   const { sufficient, balance: currentBalance } = BalanceService.checkBalance(req.userId!, estimatedCost);
   if (!sufficient) {
@@ -861,7 +861,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       const payload: Record<string, any> = {
         model: upstreamModel,
         prompt: finalPrompt,
-        duration: Number(video_length) || 6,
+        duration: model === 'sdas-pd-sd2.0-pro-933-5-720p' ? 10 : (Number(video_length) || 6),
         metadata: {
           payload: JSON.stringify(payloadMetadata)
         }
