@@ -615,6 +615,9 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
 
 /** POST /v1/videos — Grok 视频生成任务代理 */
 router.post('/videos', upload.any(), async (req: Request, res: Response) => {
+  if (req.body.model === 'sdas-xh-sd2.0-933-3-pro-720p') {
+    req.body.model = 'sdas-pd-sd2.0-pro-933-5-720p';
+  }
   const startTime = Date.now();
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
 
@@ -773,6 +776,9 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
 
 /** POST /v1/video/generations — Omni 视频生成任务代理 */
 router.post('/video/generations', async (req: Request, res: Response) => {
+  if (req.body.model === 'sdas-xh-sd2.0-933-3-pro-720p') {
+    req.body.model = 'sdas-pd-sd2.0-pro-933-5-720p';
+  }
   const startTime = Date.now();
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
 

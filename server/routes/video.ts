@@ -530,6 +530,9 @@ router.get('/models', (_req: Request, res: Response) => {
 
 /** POST /api/video/generate — SSE 流式视频生成（异步轮询模式） */
 router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddleware, async (req: TierRequest, res: Response) => {
+  if (req.body.model === 'sdas-xh-sd2.0-933-3-pro-720p') {
+    req.body.model = 'sdas-pd-sd2.0-pro-933-5-720p';
+  }
   const {
     prompt,
     model = 'grok-imagine-1.0-video',
@@ -1706,7 +1709,10 @@ export function resumePollForTask(contentId: number, record: any) {
   if (activePolls.has(contentId)) return;
   activePolls.add(contentId);
 
-  const model = record.modelId || '';
+  let model = record.modelId || '';
+  if (model === 'sdas-xh-sd2.0-933-3-pro-720p') {
+    model = 'sdas-pd-sd2.0-pro-933-5-720p';
+  }
   const meta = MODEL_META[model];
   const channel = findVideoChannel(model);
   if (!channel) {
