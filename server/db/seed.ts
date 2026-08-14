@@ -150,7 +150,7 @@ async function syncModelsFromAPI() {
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'tejiasd2', displayName: '特价 SD 2.0', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']), isActive: 0 },
-    { provider: 'seedance', modelId: 'sd2.5', displayName: 'Seedance 2.5 (sd2.5)', capabilities: JSON.stringify(['video']), isActive: 0 },
+    { provider: 'seedance', modelId: 'sd2.5', displayName: 'Seedance 2.5 (sd2.5)', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'seedance', modelId: 'seedance-720', displayName: 'Seedance 720 满血版', capabilities: JSON.stringify(['video']), isActive: 0 },
