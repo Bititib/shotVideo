@@ -211,7 +211,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'veo-omni-flash', name: 'Veo Omni Flash', description: '多参考图生成视频，参考图字段 Ingredients_images，固定10s', maxSeconds: 10, icon: '🚀' },
   { id: 'veo-3-1', name: 'Veo 3-1', description: '【不卡人脸-定制版】无水印视频；只支持8秒；支持首尾帧、支持多图参考，最多9张图', maxSeconds: 8, icon: '🚀' },
   { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多10张图片参考（无视频/音频参考），5-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
-  { id: 'sd2.5', name: 'Seedance 2.5 (sd2.5)', description: '支持最多30张图片、无视频、无音频参考，概率过人脸，支持 10-30 秒，固定按次计费 ¥5.00/次', maxSeconds: 30, icon: '🚀' },
+  { id: 'sd2.5', name: 'Seedance 2.5 (sd2.5)', description: '支持最多9张图片、无视频、无音频参考，概率过人脸，支持 10-30 秒，固定按次计费 ¥3.50/次', maxSeconds: 30, icon: '🚀' },
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 720p', description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '⚡' },
   { id: 'seedance-720', name: 'Seedance 720 满血版', description: '满血模型，支持933，过人脸，720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🔥' },
@@ -436,7 +436,7 @@ router.get('/models', (_req: Request, res: Response) => {
         '720p': rate,
       };
     } else if (m.id === 'sd2.5') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get()?.value || '5.00');
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get()?.value || '3.50');
       rates = {
         '720p': rate,
       };
@@ -839,7 +839,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       sendEvent({ type: 'status', message: '正在上传素材并提交 SudaShui 任务...' });
 
       const imageUrls: string[] = [];
-      for (const img of (reference_images || [])) {
+      for (const img of (reference_images || []).slice(0, 9)) {
         imageUrls.push(await uploadToSudaShui(img, channel.apiKey));
       }
       const videoUrls: string[] = [];
@@ -1119,7 +1119,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       // 将 base64 素材保存到本地并生成自托管公网 URL
       const imageUrls: string[] = [];
-      const maxImgCount = model === 'sd2.5' ? 30 : 9;
+      const maxImgCount = 9;
       for (const img of (reference_images || []).slice(0, maxImgCount)) {
         const url = convertBase64ToPublicUrl(img, 'sd2_ref', req);
         if (url) imageUrls.push(url);
@@ -1785,7 +1785,7 @@ export function resumePollForTask(contentId: number, record: any) {
     rate = parseFloat(row?.value || '0.50');
   } else if (model === 'sd2.5') {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get();
-    rate = parseFloat(row?.value || '5.00');
+    rate = parseFloat(row?.value || '3.50');
   } else if (model === 'seedance-2.0-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_720p_rate')).get();
     rate = parseFloat(row?.value || '3.00');

@@ -243,7 +243,7 @@ const isSoraV4Model = (modelId: string) => {
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'grok-imagine-1.0-video' || modelId === 'grok-imagine-video-1.5-fast') return 7;
   if (modelId === 'grok-imagine-video-1.5-preview') return 1;
-  if (modelId === 'sd2.5') return 30;
+  if (modelId === 'sd2.5') return 9;
   if (modelId === 'sd2-c7') return 10;
   if (modelId === 'sd2-c6') return 9;
   if (modelId === 'tejiasd2' || modelId === 'sd2.0-fast-480p' || modelId.startsWith('sd-') || modelId.startsWith('sd2-') || modelId.startsWith('seedance-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;

@@ -630,7 +630,7 @@ export async function initDatabase() {
     { key: 'veo_omni_flash_rate', value: '0.25', label: 'Veo Omni Flash 费率(¥/秒)' },
     { key: 'veo_3_1_rate', value: '0.20', label: 'Veo 3-1 费率(¥/秒)' },
     { key: 'sd2_c7_rate', value: '0.50', label: 'Seedance 2.0 c7 费率(¥/次)' },
-    { key: 'sd2_5_rate', value: '5.00', label: 'Seedance 2.5 (sd2.5) 费率(¥/次)' },
+    { key: 'sd2_5_rate', value: '3.50', label: 'Seedance 2.5 (sd2.5) 费率(¥/次)' },
     { key: 'seedance_2_0_720p_rate', value: '3.00', label: 'Seedance 2.0 720p 费率(¥/次)' },
     { key: 'seedance_2_0_fast_720p_rate', value: '1.50', label: 'Seedance 2.0 Fast 720p 费率(¥/次)' },
     { key: 'sdas_pd_sd20_pro_933_5_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro 933-5 (720p) 费率(¥/次)' },

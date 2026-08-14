@@ -65,7 +65,7 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'grok-imagine-video-1.5-preview') return 1;
   if (modelId === 'sdas-pg-s2.0-fast') return 5;
   if (modelId === 'sdas-d7-seedance-2.0-face-720p') return 99;
-  if (modelId === 'sd2.5') return 30;
+  if (modelId === 'sd2.5') return 9;
   if (modelId.startsWith('sd-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (modelId === 'seedance-2.0-fast' || modelId === 'seedance-2.0' || modelId === 'sora-v4-fast' || modelId === 'sora-v4-pro') return 4;
   if (modelId === 'omni-flash') return 7;
