@@ -646,7 +646,9 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
   let channelId: number | null = null;
 
   if (channel) {
-    if (channel.modelMapping) {
+    if (model === 'sdas-xh-sd2.0-933-3-pro-720p') {
+      upstreamModel = 'ld-sdas-cvk-pro-933-720p';
+    } else if (channel.modelMapping) {
       try {
         const mapping = typeof channel.modelMapping === 'string' ? JSON.parse(channel.modelMapping) : channel.modelMapping;
         upstreamModel = mapping[model] || model;
@@ -786,7 +788,9 @@ router.post('/video/generations', async (req: Request, res: Response) => {
   let channelId: number | null = null;
 
   if (channel) {
-    if (channel.modelMapping) {
+    if (model === 'sdas-xh-sd2.0-933-3-pro-720p') {
+      upstreamModel = 'ld-sdas-cvk-pro-933-720p';
+    } else if (channel.modelMapping) {
       try {
         const mapping = typeof channel.modelMapping === 'string' ? JSON.parse(channel.modelMapping) : channel.modelMapping;
         upstreamModel = mapping[model] || model;

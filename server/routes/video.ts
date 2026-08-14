@@ -577,7 +577,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   // Get the mapped model name from the database channel configuration
   const dbChannel = ChannelService.findChannelForModel(model);
   let upstreamModel = model;
-  if (dbChannel?.modelMapping) {
+  if (model === 'sdas-xh-sd2.0-933-3-pro-720p') {
+    upstreamModel = 'ld-sdas-cvk-pro-933-720p';
+  } else if (dbChannel?.modelMapping) {
     try {
       const mapping = typeof dbChannel.modelMapping === 'string' ? JSON.parse(dbChannel.modelMapping) : dbChannel.modelMapping;
       upstreamModel = mapping[model] || model;
