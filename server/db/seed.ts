@@ -774,7 +774,7 @@ export async function initDatabase() {
 
       let updated = false;
       if (c.baseUrl && c.baseUrl.includes('sudashuiapi.com')) {
-        const cleaned = currentModels.filter(m => !['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'xh-sdas-fast-933-720p', 'xh-sdas-pro-933-720p', 'sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p', 'sdas-wf-sd2.0-fast-933-720p', 'sdas-wf-sd2.0-pro-933-480p', 'sdas-pg-s2.0-fast'].includes(m));
+        const cleaned = currentModels.filter(m => !['lg-seedance-2.0-fast', 'sdas-d7-seedance-2.0-face-720p', 'sdas-mo-seedance-2.0-dj-fast', 'xh-sdas-fast-933-720p', 'xh-sdas-pro-933-720p', 'sdas-hn-sd2.0-720p', 'sdas-hn-sd2.0-fast-720p', 'sdas-wf-sd2.0-fast-933-720p', 'sdas-wf-sd2.0-pro-933-480p', 'sdas-pg-s2.0-fast', 'sdas-xh-sd2.0-933-3-pro-720p'].includes(m));
         if (cleaned.length !== currentModels.length) {
           currentModels = cleaned;
           updated = true;
