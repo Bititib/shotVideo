@@ -58,7 +58,17 @@ function captureLastFrame(url: string): Promise<string> {
   });
 }
 
-const DURATIONS = [{ value: 6, label: '6s' }, { value: 10, label: '10s' }, { value: 16, label: '16s' }, { value: 20, label: '20s' }];
+const ALL_DURATIONS = [
+  { value: 4, label: '4s' }, { value: 5, label: '5s' }, { value: 6, label: '6s' },
+  { value: 7, label: '7s' }, { value: 8, label: '8s' }, { value: 9, label: '9s' },
+  { value: 10, label: '10s' }, { value: 11, label: '11s' }, { value: 12, label: '12s' },
+  { value: 13, label: '13s' }, { value: 14, label: '14s' }, { value: 15, label: '15s' },
+  { value: 16, label: '16s' }, { value: 17, label: '17s' }, { value: 18, label: '18s' },
+  { value: 19, label: '19s' }, { value: 20, label: '20s' }, { value: 21, label: '21s' },
+  { value: 22, label: '22s' }, { value: 23, label: '23s' }, { value: 24, label: '24s' },
+  { value: 25, label: '25s' }, { value: 26, label: '26s' }, { value: 27, label: '27s' },
+  { value: 28, label: '28s' }, { value: 29, label: '29s' }, { value: 30, label: '30s' },
+];
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'grok-imagine-1.0-video' || modelId === 'grok-imagine-video-1.5-fast') return 7;
@@ -126,6 +136,19 @@ export default function VideoStudioPage() {
   const totalDur = segments.reduce((s, seg) => s + seg.duration, 0);
 
   useEffect(() => { fetchVideoModels().then(m => { setModels(m); if (m.length > 0) setSelectedModel(m[0].id); }).catch(() => {}); }, []);
+
+  // Dynamic duration filtering based on model's allowedSeconds
+  const currentModel = models.find(m => m.id === selectedModel);
+  const DURATIONS = currentModel?.allowedSeconds
+    ? ALL_DURATIONS.filter(d => currentModel.allowedSeconds!.includes(d.value))
+    : ALL_DURATIONS;
+
+  // Auto-correct duration when model changes
+  useEffect(() => {
+    if (currentModel?.allowedSeconds && !currentModel.allowedSeconds.includes(duration)) {
+      setDuration(currentModel.allowedSeconds[0]);
+    }
+  }, [selectedModel]);
 
   const readFileAsDataURL = (file: File): Promise<string> =>
     new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result as string); r.onerror = reject; r.readAsDataURL(file); });
