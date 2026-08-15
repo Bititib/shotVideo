@@ -73,6 +73,12 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'cd-seedance-2.0-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'cd_seedance_2_0_720p_rate')).get();
     return parseFloat(row?.value || '3.00');
+  } else if (model === 'nd-seedance-2.0-480p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_480p_rate')).get();
+    return parseFloat(row?.value || '2.15');
+  } else if (model === 'nd-seedance-2.0-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_720p_rate')).get();
+    return parseFloat(row?.value || '3.50');
   } else if (model === 'ld-sdas-cvk-pro-933-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'ld_sdas_cvk_pro_933_720p_rate')).get();
     return parseFloat(row?.value || '3.80');
@@ -702,6 +708,8 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     'sdas-bl-sd2.0-933-pro-720p',
     'sdas-bl-sd2.0-933-pro-noface-720p',
     'cd-seedance-2.0-720p',
+    'nd-seedance-2.0-480p',
+    'nd-seedance-2.0-720p',
     'sd2-c6',
     'grok-imagine-1.0-video',
     'grok-imagine-video-1.5-1080p',
@@ -853,6 +861,8 @@ router.post('/video/generations', async (req: Request, res: Response) => {
     'sdas-bl-sd2.0-933-pro-720p',
     'sdas-bl-sd2.0-933-pro-noface-720p',
     'cd-seedance-2.0-720p',
+    'nd-seedance-2.0-480p',
+    'nd-seedance-2.0-720p',
     'sd2-c6',
     'grok-imagine-1.0-video',
     'grok-imagine-video-1.5-1080p',
