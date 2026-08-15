@@ -1024,8 +1024,8 @@ export async function initDatabase() {
     const existingRd = db.select().from(channels).where(eq(channels.name, 'MJNewAPI rd-seedance 渠道')).get();
     const rdModels = ['rd-seedance-2.5-480p', 'rd-seedance-2.5-720p'];
     const rdMapping = {
-      'rd-seedance-2.5-480p': 'rd-seedance-2.5 480p',
-      'rd-seedance-2.5-720p': 'rd-seedance-2.5 720p'
+      'rd-seedance-2.5-480p': 'rd-seedance-2.5-480p',
+      'rd-seedance-2.5-720p': 'rd-seedance-2.5-720p'
     };
     if (!existingRd) {
       db.insert(channels).values({
