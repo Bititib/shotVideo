@@ -56,6 +56,8 @@ const isFlatRateModel = (modelId: string) => {
     'sdas-my-seedance-2.0-fast-720p',
     'ld-sdas-cvk-pro-933-720p',
     'sdas-xh-minimax-h3-2k',
+    'sdas-bl-sd2.0-933-pro-720p',
+    'sdas-bl-sd2.0-933-pro-noface-720p',
     'seedance-720',
     'tejiasd2'
   ].includes(modelId);

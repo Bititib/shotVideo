@@ -146,6 +146,8 @@ async function syncModelsFromAPI() {
     { provider: 'sudashui', modelId: 'sdas-my-seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 933 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-xh-minimax-h3-2k', displayName: 'SudaShui Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
+    { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },
+    { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-noface-720p', displayName: 'Seedance 2.0 Pro (933无脸版)', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'tejiasd2', displayName: '特价 SD 2.0', capabilities: JSON.stringify(['video']) },
@@ -637,6 +639,8 @@ export async function initDatabase() {
     { key: 'sdas_my_seedance_20_fast_720p_rate', value: '3.00', label: 'Seedance 2.0 Fast 933 (720p) 费率(¥/次)' },
     { key: 'ld_sdas_cvk_pro_933_720p_rate', value: '3.80', label: 'SudaShui CVK Pro 933 (720p) 费率(¥/次)' },
     { key: 'sdas_xh_minimax_h3_2k_rate', value: '3.00', label: 'SudaShui Minimax H3 (2K) 费率(¥/次)' },
+    { key: 'sdas_bl_sd20_933_pro_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro (933人脸版) 费率(¥/次)' },
+    { key: 'sdas_bl_sd20_933_pro_noface_720p_rate', value: '4.00', label: 'Seedance 2.0 Pro (933无脸版) 费率(¥/次)' },
     { key: 'sd2_c6_rate', value: '2.50', label: 'Seedance 2.0 c6 费率(¥/次)' },
     { key: 'seedance_720_rate', value: '3.00', label: 'Seedance 720 满血版 费率(¥/次)' },
     { key: 'tejiasd2_rate', value: '3.00', label: '特价 SD 2.0 费率(¥/次)' },
@@ -740,6 +744,18 @@ export async function initDatabase() {
       inputPrice: 2.88,
       outputPrice: 0,
     },
+    {
+      modelPattern: 'sdas-bl-sd2.0-933-pro-720p',
+      billingType: 'per_call',
+      inputPrice: 4.50,
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'sdas-bl-sd2.0-933-pro-noface-720p',
+      billingType: 'per_call',
+      inputPrice: 4.00,
+      outputPrice: 0,
+    },
   ];
 
   console.log('📦 同步计费规则到数据库 (更新/插入)...');
@@ -761,7 +777,9 @@ export async function initDatabase() {
       'sdas-pd-sd2.0-pro-933-5-720p',
       'sdas-my-seedance-2.0-fast-720p',
       'ld-sdas-cvk-pro-933-720p',
-      'sdas-xh-minimax-h3-2k'
+      'sdas-xh-minimax-h3-2k',
+      'sdas-bl-sd2.0-933-pro-720p',
+      'sdas-bl-sd2.0-933-pro-noface-720p'
     ];
     const pidoiModels = ['tejiasd2'];
     const allChannels = db.select().from(channels).all();
