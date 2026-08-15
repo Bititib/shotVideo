@@ -656,7 +656,7 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
 
   if (channel) {
     if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
-      upstreamModel = 'sdas-pd-sd2.0-pro-933-5-720p';
+      upstreamModel = 'ld-sdas-cvk-pro-933-720p';
     } else if (model === 'sdas-my-seedance-2.0-fast-720p') {
       upstreamModel = 'sdas-my-seedance-2.0-fast-720p';
     } else if (channel.modelMapping) {
@@ -804,7 +804,7 @@ router.post('/video/generations', async (req: Request, res: Response) => {
 
   if (channel) {
     if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
-      upstreamModel = 'sdas-pd-sd2.0-pro-933-5-720p';
+      upstreamModel = 'ld-sdas-cvk-pro-933-720p';
     } else if (model === 'sdas-my-seedance-2.0-fast-720p') {
       upstreamModel = 'sdas-my-seedance-2.0-fast-720p';
     } else if (channel.modelMapping) {

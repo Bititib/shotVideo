@@ -588,7 +588,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const dbChannel = ChannelService.findChannelForModel(model);
   let upstreamModel = model;
   if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
-    upstreamModel = 'sdas-pd-sd2.0-pro-933-5-720p';
+    upstreamModel = 'ld-sdas-cvk-pro-933-720p';
   } else if (model === 'sdas-my-seedance-2.0-fast-720p') {
     upstreamModel = 'sdas-my-seedance-2.0-fast-720p';
   } else if (dbChannel?.modelMapping) {
