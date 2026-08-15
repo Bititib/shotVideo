@@ -996,7 +996,7 @@ export async function initDatabase() {
         name: 'MJNewAPI 渠道',
         type: 'openai',
         baseUrl: 'https://mjnewapi.diwdiw.cn',
-        apiKey: '', // 留空，等管理员在后台手动配置
+        apiKey: 'sk-ypnbPu4siWgwzp5EcpqvDTtU4z6q8gHqP3gYj4FV10kku4it',
         supportedModels: JSON.stringify(diwdiwModels), 
         modelMapping: JSON.stringify(modelMapping),
         status: 1,
@@ -1010,6 +1010,7 @@ export async function initDatabase() {
       db.update(channels)
         .set({
           name: 'MJNewAPI 渠道',
+          apiKey: 'sk-ypnbPu4siWgwzp5EcpqvDTtU4z6q8gHqP3gYj4FV10kku4it',
           status: 1,
           supportedModels: JSON.stringify(diwdiwModels),
           modelMapping: JSON.stringify(modelMapping),
