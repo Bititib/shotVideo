@@ -59,6 +59,8 @@ const isFlatRateModel = (modelId: string) => {
     'sdas-bl-sd2.0-933-pro-720p',
     'sdas-bl-sd2.0-933-pro-noface-720p',
     'cd-seedance-2.0-720p',
+    'rd-seedance-2.5-480p',
+    'rd-seedance-2.5-720p',
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
     'seedance-720',

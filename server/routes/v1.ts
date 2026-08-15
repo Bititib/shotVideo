@@ -73,6 +73,12 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'cd-seedance-2.0-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'cd_seedance_2_0_720p_rate')).get();
     return parseFloat(row?.value || '3.00');
+  } else if (model === 'rd-seedance-2.5-480p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'rd_seedance_2_5_480p_rate')).get();
+    return parseFloat(row?.value || '0.32');
+  } else if (model === 'rd-seedance-2.5-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'rd_seedance_2_5_720p_rate')).get();
+    return parseFloat(row?.value || '0.50');
   } else if (model === 'nd-seedance-2.0-480p') {
     const row = db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_480p_rate')).get();
     return parseFloat(row?.value || '2.15');

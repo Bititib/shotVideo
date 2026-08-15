@@ -149,6 +149,8 @@ async function syncModelsFromAPI() {
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-noface-720p', displayName: 'Seedance 2.0 Pro (933无脸版)', capabilities: JSON.stringify(['video']) },
     { provider: 'diwdiw', modelId: 'cd-seedance-2.0-720p', displayName: 'MJNewAPI Seedance 2.0 720p', capabilities: JSON.stringify(['video']) },
+    { provider: 'diwdiw', modelId: 'rd-seedance-2.5-480p', displayName: 'MJNewAPI Seedance 2.5 (480p)', capabilities: JSON.stringify(['video']) },
+    { provider: 'diwdiw', modelId: 'rd-seedance-2.5-720p', displayName: 'MJNewAPI Seedance 2.5 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'newtoken', modelId: 'nd-seedance-2.0-480p', displayName: 'Seedance 2.0 (480p/不卡脸)', capabilities: JSON.stringify(['video']) },
     { provider: 'newtoken', modelId: 'nd-seedance-2.0-720p', displayName: 'Seedance 2.0 (720p/不卡脸)', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
@@ -645,6 +647,8 @@ export async function initDatabase() {
     { key: 'sdas_bl_sd20_933_pro_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro (933人脸版) 费率(¥/次)' },
     { key: 'sdas_bl_sd20_933_pro_noface_720p_rate', value: '4.00', label: 'Seedance 2.0 Pro (933无脸版) 费率(¥/次)' },
     { key: 'cd_seedance_2_0_720p_rate', value: '3.00', label: 'MJNewAPI Seedance 2.0 720p 费率(¥/次)' },
+    { key: 'rd_seedance_2_5_480p_rate', value: '0.32', label: 'MJNewAPI Seedance 2.5 (480p) 费率(¥/秒)' },
+    { key: 'rd_seedance_2_5_720p_rate', value: '0.50', label: 'MJNewAPI Seedance 2.5 (720p) 费率(¥/秒)' },
     { key: 'nd_seedance_2_0_480p_rate', value: '2.15', label: 'Seedance 2.0 (480p/不卡脸) 费率(¥/次)' },
     { key: 'nd_seedance_2_0_720p_rate', value: '3.50', label: 'Seedance 2.0 (720p/不卡脸) 费率(¥/次)' },
     { key: 'sd2_c6_rate', value: '2.50', label: 'Seedance 2.0 c6 费率(¥/次)' },
@@ -778,6 +782,18 @@ export async function initDatabase() {
       modelPattern: 'nd-seedance-2.0-720p',
       billingType: 'per_call',
       inputPrice: 3.50,
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'rd-seedance-2.5-480p',
+      billingType: 'per_token',
+      inputPrice: 0.32,
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'rd-seedance-2.5-720p',
+      billingType: 'per_token',
+      inputPrice: 0.50,
       outputPrice: 0,
     },
   ];
@@ -969,9 +985,11 @@ export async function initDatabase() {
   // 14) 保证 MJNewAPI 渠道存在
   try {
     const existingDiwdiw = db.select().from(channels).where(eq(channels.baseUrl, 'https://mjnewapi.diwdiw.cn')).get();
-    const diwdiwModels = ['cd-seedance-2.0-720p'];
+    const diwdiwModels = ['cd-seedance-2.0-720p', 'rd-seedance-2.5-480p', 'rd-seedance-2.5-720p'];
     const modelMapping = {
-      'cd-seedance-2.0-720p': 'cd-seedance 2.0 720p'
+      'cd-seedance-2.0-720p': 'cd-seedance 2.0 720p',
+      'rd-seedance-2.5-480p': 'rd-seedance-2.5 480p',
+      'rd-seedance-2.5-720p': 'rd-seedance-2.5 720p'
     };
     if (!existingDiwdiw) {
       db.insert(channels).values({
@@ -987,7 +1005,7 @@ export async function initDatabase() {
         maxRetries: 3,
         timeout: 120000,
       }).run();
-      console.log('📦 已自动迁移：成功创建 MJNewAPI 渠道并绑定 cd-seedance 2.0 720p');
+      console.log('📦 已自动迁移：成功创建 MJNewAPI 渠道并绑定 cd-seedance 2.0 及 rd-seedance 2.5 系列');
     } else {
       db.update(channels)
         .set({
@@ -999,7 +1017,7 @@ export async function initDatabase() {
         })
         .where(eq(channels.id, existingDiwdiw.id))
         .run();
-      console.log('🔄 已自动迁移：更新 MJNewAPI 渠道绑定模型与映射，只保留 cd-seedance 2.0 720p');
+      console.log('🔄 已自动迁移：更新 MJNewAPI 渠道绑定模型与映射，支持 cd-seedance 与 rd-seedance 系列');
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 MJNewAPI 渠道出错:', err.message);
