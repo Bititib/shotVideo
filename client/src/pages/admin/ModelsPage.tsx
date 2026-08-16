@@ -250,7 +250,7 @@ export default function ModelsPage() {
                     <option value="openai">OpenAI</option>
                     <option value="anthropic">Anthropic</option>
                     <option value="grok">Grok (xAI)</option>
-                    <option value="diwdiw">MJNewAPI (diwdiw)</option>
+                    <option value="diwdiw">DiwDiw 渠道</option>
                     <option value="newtoken">NewToken</option>
                     <option value="sudashui">SudaShui</option>
                     <option value="pidoi">Pidoi</option>
