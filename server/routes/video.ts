@@ -212,7 +212,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'omni-flash', name: 'Omni Flash', description: '多参考图生成/纯文生视频，4/6/8/10秒，支持 1080p', maxSeconds: 10, icon: '⚡' },
   { id: 'omni-flash-vref', name: 'Omni Flash Vref', description: '视频风格编辑/改写，支持 1080p', maxSeconds: 10, icon: '✂️' },
   { id: 'sdas-pd-sd2.0-pro-933-5-720p', name: 'Seedance 2.0 Pro 933-5 (720p)', description: '9图3视频3音频，只能10s，S2.0 满血版，支持真人，固定按次计费', maxSeconds: 10, icon: '🚀' },
-  { id: 'sdas-my-seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 933 (720p)', description: '4图3视频1音频，4-15s，S2.0 Fast 满血版，支持真人，固定按次计费', maxSeconds: 15, icon: '⚡' },
+  { id: 'sdas-my-seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 431 (720p)', description: '4图3视频1音频，4-15s，S2.0 Fast 满血版，支持真人，固定按次计费', maxSeconds: 15, icon: '⚡' },
   { id: 'ld-sdas-cvk-pro-933-720p', name: 'SudaShui CVK Pro 933 (720p)', description: 'CVK 满血版，支持真人、4-15秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.800/次', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-xh-minimax-h3-2k', name: 'SudaShui Minimax H3 (2K)', description: '海螺 h3 2K版，固定 15 秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.000/次', maxSeconds: 15, icon: '🔥' },
   { id: 'sdas-bl-sd2.0-933-pro-720p', name: 'Seedance 2.0 Pro (933人脸版)', description: '9图3视频3音频，支持 4-15s，支持真人，固定按次计费 ¥4.50/次', maxSeconds: 15, icon: '🚀' },
