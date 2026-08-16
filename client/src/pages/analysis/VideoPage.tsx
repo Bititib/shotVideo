@@ -1046,13 +1046,18 @@ export default function VideoPage() {
                         const isSelected = selectedModel === m.id;
                         return (
                           <button key={m.id} onClick={() => setSelectedModel(m.id)}
-                            className={`w-full text-left px-4 py-3 rounded-xl border transition-all ${
+                            className={`w-full text-left px-4 py-3 rounded-xl border transition-all relative overflow-hidden ${
                               isSelected
-                                ? 'border-indigo-500/50 bg-indigo-500/10 shadow-[0_0_12px_rgba(99,102,241,0.15)]'
+                                ? isComic
+                                  ? 'border-purple-400 bg-gradient-to-r from-purple-500/20 via-indigo-500/15 to-purple-500/10 shadow-[0_0_16px_rgba(168,85,247,0.3)] ring-1 ring-purple-400/50'
+                                  : 'border-indigo-500/50 bg-indigo-500/10 shadow-[0_0_12px_rgba(99,102,241,0.15)]'
                                 : isComic
-                                  ? 'border-purple-500/25 bg-white/[0.02] hover:border-purple-500/40 shadow-[0_0_8px_rgba(168,85,247,0.06)]'
+                                  ? 'border-purple-500/50 bg-gradient-to-r from-purple-500/[0.08] via-indigo-500/[0.04] to-transparent hover:border-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.18)] ring-1 ring-purple-500/20'
                                   : 'border-white/5 bg-white/[0.02] hover:border-white/10'
                             }`}>
+                            {isComic && (
+                              <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-purple-400 via-indigo-400 to-purple-500" />
+                            )}
                             <div className="flex items-center justify-between gap-2">
                               <p className="text-sm font-medium text-white">{m.name}</p>
                               <div className="flex items-center gap-2 flex-wrap justify-end">
