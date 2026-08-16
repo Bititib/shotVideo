@@ -66,6 +66,16 @@ const isFlatRateModel = (modelId: string) => {
   ].includes(modelId);
 };
 
+export const isComicDramaModel = (modelId: string) => {
+  return [
+    'sd2.0-fast-480p',
+    'nd-seedance-2.0-480p',
+    'nd-seedance-2.0-720p',
+    'sdas-my-seedance-2.0-fast-720p',
+    'rd-seedance-2.5-480p'
+  ].includes(modelId);
+};
+
 const GROUP_ORDER = [
   'Grok (Luma) 系列',
   'Omni 系列',
@@ -1034,7 +1044,12 @@ export default function VideoPage() {
                           className={`w-full text-left px-4 py-3 rounded-xl border transition-all ${selectedModel === m.id ? 'border-indigo-500/50 bg-indigo-500/10' : 'border-white/5 bg-white/[0.02] hover:border-white/10'}`}>
                           <div className="flex items-center justify-between gap-2">
                             <p className="text-sm font-medium text-white">{m.name}</p>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap justify-end">
+                              {isComicDramaModel(m.id) && (
+                                <span className="text-[10px] bg-pink-500/10 text-pink-400 px-1.5 py-0.5 rounded border border-pink-500/20 font-medium">
+                                  🎨 漫剧首选
+                                </span>
+                              )}
                               {m.rates && (
                                 <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
                                   ¥{(m.rates[resolution as keyof typeof m.rates] !== undefined ? m.rates[resolution as keyof typeof m.rates] : Object.values(m.rates)[0])?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}
