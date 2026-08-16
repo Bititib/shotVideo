@@ -1039,25 +1039,36 @@ export default function VideoPage() {
                       {groupName}
                     </div>
                     <div className="space-y-2">
-                      {groupModels.map((m) => (
-                        <button key={m.id} onClick={() => setSelectedModel(m.id)}
-                          className={`w-full text-left px-4 py-3 rounded-xl border transition-all ${selectedModel === m.id ? 'border-indigo-500/50 bg-indigo-500/10' : 'border-white/5 bg-white/[0.02] hover:border-white/10'}`}>
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-sm font-medium text-white">{m.name}</p>
-                            <div className="flex items-center gap-2 flex-wrap justify-end">
-                              {isComicDramaModel(m.id) && (
-                                <span className="text-[10px] bg-pink-500/10 text-pink-400 px-1.5 py-0.5 rounded border border-pink-500/20 font-medium">
-                                  🎨 漫剧首选
-                                </span>
-                              )}
-                              {m.rates && (
-                                <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
-                                  ¥{(m.rates[resolution as keyof typeof m.rates] !== undefined ? m.rates[resolution as keyof typeof m.rates] : Object.values(m.rates)[0])?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}
-                                </span>
-                              )}
-                              {selectedModel === m.id && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
+                      {groupModels.map((m) => {
+                        const isComic = isComicDramaModel(m.id);
+                        const isSelected = selectedModel === m.id;
+                        return (
+                          <button key={m.id} onClick={() => setSelectedModel(m.id)}
+                            className={`w-full text-left px-4 py-3 rounded-xl border transition-all ${
+                              isSelected
+                                ? isComic
+                                  ? 'border-pink-500/60 bg-gradient-to-r from-pink-500/15 via-purple-500/10 to-indigo-500/15 shadow-[0_0_15px_rgba(236,72,153,0.2)] ring-1 ring-pink-500/30'
+                                  : 'border-indigo-500/50 bg-indigo-500/10'
+                                : isComic
+                                  ? 'border-pink-500/35 bg-gradient-to-r from-pink-500/[0.05] to-purple-500/[0.03] hover:border-pink-500/60 shadow-[0_0_12px_rgba(236,72,153,0.08)]'
+                                  : 'border-white/5 bg-white/[0.02] hover:border-white/10'
+                            }`}>
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-medium text-white">{m.name}</p>
+                              <div className="flex items-center gap-2 flex-wrap justify-end">
+                                {isComic && (
+                                  <span className="text-[10px] bg-pink-500/15 text-pink-300 px-1.5 py-0.5 rounded border border-pink-500/30 font-medium">
+                                    🎨 漫剧
+                                  </span>
+                                )}
+                                {m.rates && (
+                                  <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
+                                    ¥{(m.rates[resolution as keyof typeof m.rates] !== undefined ? m.rates[resolution as keyof typeof m.rates] : Object.values(m.rates)[0])?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}
+                                  </span>
+                                )}
+                                {isSelected && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
+                              </div>
                             </div>
-                          </div>
                           <p className="text-xs text-zinc-500 mt-1">{m.description}</p>
                           {m.rates && (
                             <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-600 border-t border-white/5 pt-1.5 flex-wrap">
@@ -1073,7 +1084,8 @@ export default function VideoPage() {
                           )}
                           {m.requireRef && <p className="text-[10px] text-amber-400/80 mt-1.5 flex items-center gap-1">⚠️ 必须提供参考图</p>}
                         </button>
-                      ))}
+                      );
+                    })}
                     </div>
                   </div>
                 );

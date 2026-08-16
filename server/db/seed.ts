@@ -649,8 +649,8 @@ export async function initDatabase() {
     { key: 'cd_seedance_2_0_720p_rate', value: '3.00', label: 'MJNewAPI Seedance 2.0 720p 费率(¥/次)' },
     { key: 'rd_seedance_2_5_480p_rate', value: '0.32', label: 'MJNewAPI Seedance 2.5 (480p) 费率(¥/秒)' },
     { key: 'rd_seedance_2_5_720p_rate', value: '0.50', label: 'MJNewAPI Seedance 2.5 (720p) 费率(¥/秒)' },
-    { key: 'nd_seedance_2_0_480p_rate', value: '2.15', label: 'Seedance 2.0 (480p/不卡脸) 费率(¥/次)' },
-    { key: 'nd_seedance_2_0_720p_rate', value: '3.50', label: 'Seedance 2.0 (720p/不卡脸) 费率(¥/次)' },
+    { key: 'nd_seedance_2_0_480p_rate', value: '3.75', label: 'Seedance 2.0 (480p/不卡脸) 费率(¥/次)' },
+    { key: 'nd_seedance_2_0_720p_rate', value: '4.30', label: 'Seedance 2.0 (720p/不卡脸) 费率(¥/次)' },
     { key: 'sd2_c6_rate', value: '2.50', label: 'Seedance 2.0 c6 费率(¥/次)' },
     { key: 'seedance_720_rate', value: '3.00', label: 'Seedance 720 满血版 费率(¥/次)' },
     { key: 'tejiasd2_rate', value: '3.00', label: '特价 SD 2.0 费率(¥/次)' },
@@ -670,8 +670,8 @@ export async function initDatabase() {
       if (existing.label !== s.label) {
         updateData.label = s.label;
       }
-      // 对于这两个价格发生变化的设置项，如果存在且值不同，则强制更新数值
-      if (s.key === 'veo_omni_flash_rate' || s.key === 'veo_3_1_rate' || s.key === 'sd2_5_rate') {
+      // 对于价格发生变化的设置项，如果存在且值不同，则强制更新数值
+      if (s.key === 'veo_omni_flash_rate' || s.key === 'veo_3_1_rate' || s.key === 'sd2_5_rate' || s.key === 'nd_seedance_2_0_480p_rate' || s.key === 'nd_seedance_2_0_720p_rate') {
         if (existing.value !== s.value) {
           updateData.value = s.value;
         }
@@ -775,13 +775,13 @@ export async function initDatabase() {
     {
       modelPattern: 'nd-seedance-2.0-480p',
       billingType: 'per_call',
-      inputPrice: 2.15,
+      inputPrice: 3.75,
       outputPrice: 0,
     },
     {
       modelPattern: 'nd-seedance-2.0-720p',
       billingType: 'per_call',
-      inputPrice: 3.50,
+      inputPrice: 4.30,
       outputPrice: 0,
     },
     {

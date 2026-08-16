@@ -81,10 +81,10 @@ function getVideoRate(model: string, resolution: string): number {
     return parseFloat(row?.value || '0.50');
   } else if (model === 'nd-seedance-2.0-480p') {
     const row = db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_480p_rate')).get();
-    return parseFloat(row?.value || '2.15');
+    return parseFloat(row?.value || '3.75');
   } else if (model === 'nd-seedance-2.0-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_720p_rate')).get();
-    return parseFloat(row?.value || '3.50');
+    return parseFloat(row?.value || '4.30');
   } else if (model === 'ld-sdas-cvk-pro-933-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'ld_sdas_cvk_pro_933_720p_rate')).get();
     return parseFloat(row?.value || '3.80');
