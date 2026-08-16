@@ -1048,21 +1048,14 @@ export default function VideoPage() {
                           <button key={m.id} onClick={() => setSelectedModel(m.id)}
                             className={`w-full text-left px-4 py-3 rounded-xl border transition-all ${
                               isSelected
-                                ? isComic
-                                  ? 'border-pink-500/60 bg-gradient-to-r from-pink-500/15 via-purple-500/10 to-indigo-500/15 shadow-[0_0_15px_rgba(236,72,153,0.2)] ring-1 ring-pink-500/30'
-                                  : 'border-indigo-500/50 bg-indigo-500/10'
+                                ? 'border-indigo-500/50 bg-indigo-500/10 shadow-[0_0_12px_rgba(99,102,241,0.15)]'
                                 : isComic
-                                  ? 'border-pink-500/35 bg-gradient-to-r from-pink-500/[0.05] to-purple-500/[0.03] hover:border-pink-500/60 shadow-[0_0_12px_rgba(236,72,153,0.08)]'
+                                  ? 'border-purple-500/25 bg-white/[0.02] hover:border-purple-500/40 shadow-[0_0_8px_rgba(168,85,247,0.06)]'
                                   : 'border-white/5 bg-white/[0.02] hover:border-white/10'
                             }`}>
                             <div className="flex items-center justify-between gap-2">
                               <p className="text-sm font-medium text-white">{m.name}</p>
                               <div className="flex items-center gap-2 flex-wrap justify-end">
-                                {isComic && (
-                                  <span className="text-[10px] bg-pink-500/15 text-pink-300 px-1.5 py-0.5 rounded border border-pink-500/30 font-medium">
-                                    🎨 漫剧
-                                  </span>
-                                )}
                                 {m.rates && (
                                   <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
                                     ¥{(m.rates[resolution as keyof typeof m.rates] !== undefined ? m.rates[resolution as keyof typeof m.rates] : Object.values(m.rates)[0])?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}
