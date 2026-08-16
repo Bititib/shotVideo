@@ -68,13 +68,16 @@ const isFlatRateModel = (modelId: string) => {
 
 export const isComicDramaModel = (modelId: string) => {
   return [
-    'sd2.0-fast-480p',
+    'sdas-bl-sd2.0-933-pro-720p',
+    'sdas-bl-sd2.0-933-pro-noface-720p',
+    'ld-sdas-cvk-pro-933-720p',
+    'sdas-pd-sd2.0-pro-933-5-720p',
+    'sdas-mj-minimax-h3-2k',
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
-    'sdas-my-seedance-2.0-fast-720p',
+    'cd-seedance-2.0-720p',
     'rd-seedance-2.5-480p',
-    'rd-seedance-2.5-720p',
-    'cd-seedance-2.0-720p'
+    'rd-seedance-2.5-720p'
   ].includes(modelId);
 };
 
