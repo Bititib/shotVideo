@@ -145,7 +145,7 @@ async function syncModelsFromAPI() {
     { provider: 'sudashui', modelId: 'sdas-pd-sd2.0-pro-933-5-720p', displayName: 'Seedance 2.0 Pro 933-5 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-my-seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 431 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
-    { provider: 'sudashui', modelId: 'sdas-xh-minimax-h3-2k', displayName: 'SudaShui Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
+    { provider: 'sudashui', modelId: 'sdas-mj-minimax-h3-2k', displayName: 'Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-noface-720p', displayName: 'Seedance 2.0 Pro (933无脸版)', capabilities: JSON.stringify(['video']) },
     { provider: 'diwdiw', modelId: 'cd-seedance-2.0-720p', displayName: 'MJNewAPI Seedance 2.0 720p', capabilities: JSON.stringify(['video']) },
@@ -643,7 +643,7 @@ export async function initDatabase() {
     { key: 'sdas_pd_sd20_pro_933_5_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro 933-5 (720p) 费率(¥/次)' },
     { key: 'sdas_my_seedance_20_fast_720p_rate', value: '3.00', label: 'Seedance 2.0 Fast 431 (720p) 费率(¥/次)' },
     { key: 'ld_sdas_cvk_pro_933_720p_rate', value: '3.80', label: 'SudaShui CVK Pro 933 (720p) 费率(¥/次)' },
-    { key: 'sdas_xh_minimax_h3_2k_rate', value: '3.00', label: 'SudaShui Minimax H3 (2K) 费率(¥/次)' },
+    { key: 'sdas_mj_minimax_h3_2k_rate', value: '3.00', label: 'Minimax H3 (2K) 费率(¥/次)' },
     { key: 'sdas_bl_sd20_933_pro_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro (933人脸版) 费率(¥/次)' },
     { key: 'sdas_bl_sd20_933_pro_noface_720p_rate', value: '4.00', label: 'Seedance 2.0 Pro (933无脸版) 费率(¥/次)' },
     { key: 'cd_seedance_2_0_720p_rate', value: '3.00', label: 'MJNewAPI Seedance 2.0 720p 费率(¥/次)' },
@@ -817,7 +817,7 @@ export async function initDatabase() {
       'sdas-pd-sd2.0-pro-933-5-720p',
       'sdas-my-seedance-2.0-fast-720p',
       'ld-sdas-cvk-pro-933-720p',
-      'sdas-xh-minimax-h3-2k',
+      'sdas-mj-minimax-h3-2k',
       'sdas-bl-sd2.0-933-pro-720p',
       'sdas-bl-sd2.0-933-pro-noface-720p'
     ];

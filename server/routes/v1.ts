@@ -88,8 +88,8 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'ld-sdas-cvk-pro-933-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'ld_sdas_cvk_pro_933_720p_rate')).get();
     return parseFloat(row?.value || '3.80');
-  } else if (model === 'sdas-xh-minimax-h3-2k') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sdas_xh_minimax_h3_2k_rate')).get();
+  } else if (model === 'sdas-mj-minimax-h3-2k') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_mj_minimax_h3_2k_rate')).get();
     return parseFloat(row?.value || '3.00');
   } else if (model === 'tejiasd2') {
     const row = db.select().from(settings).where(eq(settings.key, 'tejiasd2_rate')).get();
@@ -710,7 +710,7 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     'sdas-pd-sd2.0-pro-933-5-720p',
     'sdas-my-seedance-2.0-fast-720p',
     'ld-sdas-cvk-pro-933-720p',
-    'sdas-xh-minimax-h3-2k',
+    'sdas-mj-minimax-h3-2k',
     'sdas-bl-sd2.0-933-pro-720p',
     'sdas-bl-sd2.0-933-pro-noface-720p',
     'cd-seedance-2.0-720p',
@@ -863,7 +863,7 @@ router.post('/video/generations', async (req: Request, res: Response) => {
     'sdas-pd-sd2.0-pro-933-5-720p',
     'sdas-my-seedance-2.0-fast-720p',
     'ld-sdas-cvk-pro-933-720p',
-    'sdas-xh-minimax-h3-2k',
+    'sdas-mj-minimax-h3-2k',
     'sdas-bl-sd2.0-933-pro-720p',
     'sdas-bl-sd2.0-933-pro-noface-720p',
     'cd-seedance-2.0-720p',
