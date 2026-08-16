@@ -72,7 +72,8 @@ export const isComicDramaModel = (modelId: string) => {
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
     'sdas-my-seedance-2.0-fast-720p',
-    'rd-seedance-2.5-480p'
+    'rd-seedance-2.5-480p',
+    'cd-seedance-2.0-720p'
   ].includes(modelId);
 };
 
