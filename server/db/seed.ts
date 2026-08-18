@@ -288,6 +288,7 @@ export async function initDatabase() {
       provider TEXT NOT NULL DEFAULT 'google',
       model_id TEXT NOT NULL UNIQUE,
       display_name TEXT NOT NULL,
+      description TEXT,
       api_key TEXT,
       capabilities TEXT NOT NULL DEFAULT '["text"]',
       is_active INTEGER NOT NULL DEFAULT 1,
@@ -448,6 +449,14 @@ export async function initDatabase() {
   try {
     sqlite.exec(`ALTER TABLE users ADD COLUMN org_id INTEGER`);
     console.log('🔄 已迁移：users 表添加 org_id 列');
+  } catch {
+    // 列已存在则忽略
+  }
+
+  // 增量迁移：为已有 models 表添加 description 列
+  try {
+    sqlite.exec(`ALTER TABLE models ADD COLUMN description TEXT`);
+    console.log('🔄 已迁移：models 表添加 description 列');
   } catch {
     // 列已存在则忽略
   }
