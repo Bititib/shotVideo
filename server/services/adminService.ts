@@ -267,13 +267,14 @@ export class AdminService {
   }
 
   static createModel(data: any) {
-    const { provider, modelId, displayName, apiKey, capabilities } = data;
+    const { provider, modelId, displayName, description, apiKey, capabilities } = data;
     if (!modelId || !displayName) throw { status: 400, message: '模型ID和名称不能为空' };
 
     db.insert(models).values({
       provider: provider || 'google',
       modelId,
       displayName,
+      description: description || null,
       apiKey: apiKey || null,
       capabilities: JSON.stringify(capabilities || ['text']),
     }).run();
@@ -285,6 +286,7 @@ export class AdminService {
 
     const updates: Record<string, any> = {};
     if (data.displayName !== undefined) updates.displayName = data.displayName;
+    if (data.description !== undefined) updates.description = data.description || null;
     if (data.provider !== undefined) updates.provider = data.provider;
     if (data.apiKey !== undefined) updates.apiKey = data.apiKey || null;
     if (data.capabilities !== undefined) updates.capabilities = JSON.stringify(data.capabilities);

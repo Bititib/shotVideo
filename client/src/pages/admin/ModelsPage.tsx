@@ -30,13 +30,13 @@ export default function ModelsPage() {
     load();
   }, []);
 
-  const openNew = () => setEdit({ provider: 'google', modelId: '', displayName: '', apiKey: '', capabilities: ['text'], isActive: 1, isNew: true });
-  const openEdit = (m: any) => setEdit({ ...m, apiKey: '', isNew: false }); // apiKey is masked, user must re-enter
+  const openNew = () => setEdit({ provider: 'google', modelId: '', displayName: '', description: '', apiKey: '', capabilities: ['text'], isActive: 1, isNew: true });
+  const openEdit = (m: any) => setEdit({ ...m, description: m.description || '', apiKey: '', isNew: false }); // apiKey is masked, user must re-enter
 
   const handleSave = async () => {
     if (!edit) return;
     try {
-      const data: any = { provider: edit.provider, modelId: edit.modelId, displayName: edit.displayName, capabilities: edit.capabilities, isActive: edit.isActive };
+      const data: any = { provider: edit.provider, modelId: edit.modelId, displayName: edit.displayName, description: edit.description, capabilities: edit.capabilities, isActive: edit.isActive };
       if (edit.apiKey) data.apiKey = edit.apiKey; // Only send if user entered a new key
       if (edit.isNew) { await adminApi.createModel(data); } else { await adminApi.updateModel(edit.id, data); }
       setEdit(null); load();
@@ -208,6 +208,13 @@ export default function ModelsPage() {
                   </button>
                 </div>
 
+                {/* Description preview */}
+                {m.description && (
+                  <p className="text-xs text-zinc-400 mb-3 bg-white/[0.02] p-2 rounded-lg border border-white/5 line-clamp-2">
+                    {m.description}
+                  </p>
+                )}
+
                 {/* Capabilities Badges */}
                 <div className="flex flex-wrap gap-1.5 mb-4">
                   {Array.isArray(m.capabilities) && m.capabilities.map(cap => (
@@ -260,6 +267,7 @@ export default function ModelsPage() {
                 <div><label className="block text-xs text-zinc-400 mb-1.5">模型ID</label><input type="text" value={edit.modelId} onChange={e => setEdit({ ...edit, modelId: e.target.value })} placeholder="gemini-2.5-pro" disabled={!edit.isNew} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none disabled:opacity-50" /></div>
               </div>
               <div><label className="block text-xs text-zinc-400 mb-1.5">显示名称</label><input type="text" value={edit.displayName} onChange={e => setEdit({ ...edit, displayName: e.target.value })} placeholder="Gemini 2.5 Pro" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" /></div>
+              <div><label className="block text-xs text-zinc-400 mb-1.5">模型描述 / 提示说明 (留空则使用默认提示)</label><textarea rows={2} value={edit.description} onChange={e => setEdit({ ...edit, description: e.target.value })} placeholder="支持最多30张图片、10个视频、10个音频参考，4-30秒，不卡人脸..." className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none placeholder:text-zinc-600 resize-none" /></div>
               <div><label className="block text-xs text-zinc-400 mb-1.5">API Key (留空=使用全局 .env Key)</label><input type="password" value={edit.apiKey} onChange={e => setEdit({ ...edit, apiKey: e.target.value })} placeholder={edit.isNew ? '可选' : '留空=不修改'} className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none placeholder:text-zinc-600" /></div>
               <div>
                 <label className="block text-xs text-zinc-400 mb-2">能力</label>

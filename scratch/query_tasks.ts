@@ -1,28 +1,17 @@
-import { db } from '../server/db';
-import { contents } from '../server/db/schema';
-import { desc } from 'drizzle-orm';
+import Database from 'better-sqlite3';
+import path from 'path';
 
-function queryLastTasks() {
-  const lastTask = db.select().from(contents).orderBy(desc(contents.createdAt)).limit(1).get();
-  if (lastTask) {
-    console.log(`ID: ${lastTask.id}, Model: ${lastTask.model}, Status: ${lastTask.status}`);
-    console.log(`Prompt: ${lastTask.prompt}`);
-    console.log(`CreatedAt: ${lastTask.createdAt}`);
-    console.log(`ErrorMsg: ${lastTask.errorMsg}`);
-    try {
-      const meta = JSON.parse(lastTask.metadata || '{}');
-      console.log('Metadata Info:');
-      console.log(`- resolution: ${meta.resolution}`);
-      console.log(`- seconds: ${meta.seconds}`);
-      console.log(`- aspect_ratio: ${meta.aspect_ratio}`);
-      console.log(`- model: ${meta.model}`);
-      console.log(`- reference_images count: ${meta.reference_images?.length || 0}`);
-      console.log(`- reference_videos count: ${meta.reference_videos?.length || 0}`);
-      console.log(`- audio_urls count: ${meta.audio_urls?.length || 0}`);
-    } catch {
-      console.log('Metadata (Raw):', lastTask.metadata?.slice(0, 100));
-    }
+const dbPath = path.resolve('data/app.db');
+const sqlite = new Database(dbPath);
+
+const chre3Models = ['sd2.5', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p', 'seedance-720'];
+console.log('=== 4月天渠道模型的 isActive 状态 ===\n');
+for (const id of chre3Models) {
+  const row = sqlite.prepare('SELECT model_id, display_name, is_active FROM models WHERE model_id = ?').get(id) as any;
+  if (row) {
+    console.log(`  ${row.model_id.padEnd(30)} ${row.is_active === 1 ? '✅ 前端可见' : '❌ 前端隐藏'}  (${row.display_name})`);
+  } else {
+    console.log(`  ${id.padEnd(30)} ⚠️ 不在数据库中`);
   }
 }
-
-queryLastTasks();
+sqlite.close();

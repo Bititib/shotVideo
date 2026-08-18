@@ -189,8 +189,8 @@ const MODEL_META: Record<string, ModelMeta> = {
   'sdas-bl-sd2.0-933-pro-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-bl-sd2.0-933-pro-noface-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'cd-seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
-  'rd-seedance-2.5-480p': { series: 'seedance-480p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
-  'rd-seedance-2.5-720p': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'rd-seedance-2.5-480p': { series: 'seedance-480p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
+  'rd-seedance-2.5-720p': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   'nd-seedance-2.0-480p': { series: 'seedance-480p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'nd-seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-fast': { series: 'seedance-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
@@ -218,14 +218,14 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'sdas-bl-sd2.0-933-pro-720p', name: 'Seedance 2.0 Pro (933人脸版)', description: '9图3视频3音频，支持 4-15s，支持真人，固定按次计费 ¥4.50/次', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-bl-sd2.0-933-pro-noface-720p', name: 'Seedance 2.0 Pro (933无脸版)', description: '9图3视频3音频，支持 4-15s，固定按次计费 ¥4.00/次', maxSeconds: 15, icon: '🚀' },
   { id: 'cd-seedance-2.0-720p', name: 'Seedance 2.0 (720p/CD版)', description: '支持最多9张图片、3个视频、3个音频参考，5-15秒，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🚀' },
-  { id: 'rd-seedance-2.5-480p', name: 'Seedance 2.5 (480p)', description: '支持最多9张图片、3个视频、3个音频参考，5-15秒，按秒计费 ¥0.32/秒', maxSeconds: 15, icon: '⚡' },
-  { id: 'rd-seedance-2.5-720p', name: 'Seedance 2.5 (720p)', description: '支持最多9张图片、3个视频、3个音频参考，5-15秒，按秒计费 ¥0.50/秒', maxSeconds: 15, icon: '🚀' },
+  { id: 'rd-seedance-2.5-480p', name: 'Seedance 2.5 (480p)', description: '支持最多30张图片、10个视频、10个音频参考，4-30秒，不卡人脸，按秒计费 ¥0.32/秒', maxSeconds: 30, icon: '⚡' },
+  { id: 'rd-seedance-2.5-720p', name: 'Seedance 2.5 (720p)', description: '支持最多30张图片、10个视频、10个音频参考，4-30秒，不卡人脸，按秒计费 ¥0.50/秒', maxSeconds: 30, icon: '🚀' },
   { id: 'nd-seedance-2.0-480p', name: 'Seedance 2.0 (480p/不卡脸)', description: '9图3视频3音频，支持 4-15s，不卡人脸，固定按次计费 ¥3.75/次', maxSeconds: 15, icon: '⚡' },
   { id: 'nd-seedance-2.0-720p', name: 'Seedance 2.0 (720p/不卡脸)', description: '9图3视频3音频，支持 4-15s，不卡人脸，固定按次计费 ¥4.30/次', maxSeconds: 15, icon: '🚀' },
   { id: 'veo-omni-flash', name: 'Veo Omni Flash', description: '多参考图生成视频，参考图字段 Ingredients_images，固定10s', maxSeconds: 10, icon: '🚀' },
   { id: 'veo-3-1', name: 'Veo 3-1', description: '【不卡人脸-定制版】无水印视频；只支持8秒；支持首尾帧、支持多图参考，最多9张图', maxSeconds: 8, icon: '🚀' },
   { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多10张图片参考（无视频/音频参考），5-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
-  { id: 'sd2.5', name: 'Seedance 2.5 (sd2.5)', description: '支持最多9张图片、无视频、无音频参考，概率过人脸，固定 30 秒，固定按次计费 ¥3.50/次', maxSeconds: 30, icon: '🚀' },
+  { id: 'sd2.5', name: 'Seedance 2.5 (sd2.5)', description: '支持最多30张图片、10个视频、10个音频参考，4-30秒，不卡人脸，固定 30 秒，固定按次计费 ¥3.50/次', maxSeconds: 30, icon: '🚀' },
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 720p', description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '⚡' },
   { id: 'seedance-720', name: 'Seedance 720 满血版', description: '满血模型，支持933，过人脸，720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🔥' },
@@ -376,7 +376,7 @@ router.get('/models', (_req: Request, res: Response) => {
 
   // 如果数据库里还没配置视频模型，提供一个过滤了禁用模型的默认后备
   const sourceModels = dbModels.length > 0
-    ? dbModels.map(m => ({ id: m.modelId, name: m.displayName }))
+    ? dbModels.map(m => ({ id: m.modelId, name: m.displayName, description: m.description }))
     : DEFAULT_VIDEO_MODELS.filter(m => !disabledModelIds.has(m.id));
 
   const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
@@ -564,7 +564,7 @@ router.get('/models', (_req: Request, res: Response) => {
     return {
       id: m.id,
       name: m.name || preset?.name || m.id,
-      description: preset?.description || 'AI 视频生成服务',
+      description: m.description || preset?.description || 'AI 视频生成服务',
       available: findVideoChannel(m.id) !== null,
       maxSeconds: preset?.maxSeconds,
       allowedSeconds: meta?.allowedSeconds || null,

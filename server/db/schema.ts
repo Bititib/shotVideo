@@ -62,6 +62,7 @@ export const models = sqliteTable('models', {
   provider: text('provider').notNull().default('google'),   // google / openai / ...
   modelId: text('model_id').notNull().unique(),              // gemini-2.5-flash
   displayName: text('display_name').notNull(),
+  description: text('description'),                           // 模型描述 / 提示说明
   apiKey: text('api_key'),                                    // 可选，留空则用全局 GEMINI_API_KEY
   capabilities: text('capabilities').notNull().default('["text"]'), // JSON: text/image_gen/video
   isActive: integer('is_active').notNull().default(1),
