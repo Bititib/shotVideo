@@ -27,7 +27,7 @@ async function verifyModel(ai: GoogleGenAI, modelId: string, isImage: boolean): 
   return 'ok';
 }
 
-type ModelEntry = { provider: string; modelId: string; displayName: string; capabilities: string; isActive?: number };
+type ModelEntry = { provider: string; modelId: string; displayName: string; description?: string | null; capabilities: string; isActive?: number };
 
 /** 使用单个 Key 串行验证一批模型（同 Key 内间隔 2s 防限流） */
 async function verifyBatch(
@@ -158,6 +158,8 @@ async function syncModelsFromAPI() {
     { provider: 'pidoi', modelId: 'tejiasd2', displayName: '特价 SD 2.0', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'seedance', modelId: 'sd2.5', displayName: 'Seedance 2.5 (sd2.5)', capabilities: JSON.stringify(['video']) },
+    { provider: 'seedance', modelId: 'sd2-mini', displayName: 'Seedance Mini (sd2-mini)', description: 'Seedance Mini 720p，支持933、图片、视频、音频参考素材', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'seedance', modelId: 'seedance2.0-933', displayName: 'seedance2.0 933', description: 'seedance2.0 933 模型（映射至 sd2-mini 渠道），支持933、图片、视频、音频参考素材', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'seedance', modelId: 'seedance-720', displayName: 'Seedance 720 满血版', capabilities: JSON.stringify(['video']), isActive: 0 },
@@ -647,6 +649,8 @@ export async function initDatabase() {
     { key: 'veo_3_1_rate', value: '0.20', label: 'Veo 3-1 费率(¥/秒)' },
     { key: 'sd2_c7_rate', value: '0.50', label: 'Seedance 2.0 c7 费率(¥/次)' },
     { key: 'sd2_5_rate', value: '3.50', label: 'Seedance 2.5 (sd2.5) 费率(¥/次)' },
+    { key: 'sd2_mini_rate', value: '2.00', label: 'Seedance Mini (sd2-mini) 费率(¥/次)' },
+    { key: 'seedance2_0_933_rate', value: '3.00', label: 'seedance2.0 933 费率(¥/次)' },
     { key: 'seedance_2_0_720p_rate', value: '3.00', label: 'Seedance 2.0 720p 费率(¥/次)' },
     { key: 'seedance_2_0_fast_720p_rate', value: '1.50', label: 'Seedance 2.0 Fast 720p 费率(¥/次)' },
     { key: 'sdas_pd_sd20_pro_933_5_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro 933-5 (720p) 费率(¥/次)' },
@@ -777,6 +781,24 @@ export async function initDatabase() {
     },
     {
       modelPattern: 'cd-seedance-2.0-720p',
+      billingType: 'per_call',
+      inputPrice: 3.00,
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'sd2-mini',
+      billingType: 'per_call',
+      inputPrice: 2.00,
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'seedance2.0-933',
+      billingType: 'per_call',
+      inputPrice: 3.00,
+      outputPrice: 0,
+    },
+    {
+      modelPattern: 'seedance2.0 933',
       billingType: 'per_call',
       inputPrice: 3.00,
       outputPrice: 0,
@@ -917,7 +939,7 @@ export async function initDatabase() {
   // 11) 保证 llm.chre3.com 渠道存在并且包含 sd2.5, sd2-c7, seedance-2.0-720p, seedance-2.0-fast-720p 支持
   try {
     const existingChre3 = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get();
-    const chre3Models = ['sd2.5', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p', 'seedance-720'];
+    const chre3Models = ['sd2.5', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p', 'seedance-720', 'sd2-mini'];
     if (!existingChre3) {
       db.insert(channels).values({
         name: '4月天 渠道',

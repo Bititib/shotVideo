@@ -83,6 +83,7 @@ export const usageLogs = sqliteTable('usage_logs', {
   analysisType: text('analysis_type').notNull(),   // general/ecommerce/image/copywriting/account
   modelId: integer('model_id'),
   durationMs: integer('duration_ms'),
+  status: text('status').notNull().default('success'), // success / error / failed
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
 });
 

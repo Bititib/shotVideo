@@ -1,5 +1,5 @@
 import { db } from '../db/index.js';
-import { users, tiers, models, tierModelAccess, usageLogs, settings } from '../db/schema.js';
+import { users, tiers, models, tierModelAccess, usageLogs, settings, contents, apiLogs } from '../db/schema.js';
 import { eq, like, and, gte, sql, desc, count } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 
@@ -252,16 +252,110 @@ export class AdminService {
   static getModels() {
     const allModels = db.select().from(models).all();
     return allModels.map(m => {
-      const totalCalls = db.select({ count: sql<number>`count(*)` })
-        .from(usageLogs)
+      // 1. contents 表 (视频/多媒体生成任务)
+      const contentRows = db.select().from(contents)
+        .where(eq(contents.modelId, m.modelId))
+        .all();
+
+      let contentTotal = contentRows.length;
+      let contentSuccessCount = 0;
+      let contentFailCount = 0;
+      let contentTotalDurationMs = 0;
+
+      for (const row of contentRows) {
+        if (row.status === 'completed' && row.resultUrl && row.resultUrl.trim() !== '') {
+          contentSuccessCount++;
+          let dur = 0;
+          try {
+            const meta = row.metadata ? JSON.parse(row.metadata) : {};
+            if (meta.durationMs && typeof meta.durationMs === 'number') {
+              dur = meta.durationMs;
+            }
+          } catch {}
+          if (!dur && row.createdAt) {
+            const createdTime = new Date(row.createdAt).getTime();
+            if (!isNaN(createdTime) && createdTime > 0) {
+              dur = Math.max(1000, Date.now() - createdTime);
+            }
+          }
+          contentTotalDurationMs += dur;
+        } else if (row.status === 'failed') {
+          contentFailCount++;
+        }
+      }
+
+      // 2. apiLogs 表 (开放 API 接口调用)
+      const apiLogRows = db.select().from(apiLogs)
+        .where(eq(apiLogs.model, m.modelId))
+        .all();
+
+      let apiTotal = apiLogRows.length;
+      let apiSuccessCount = 0;
+      let apiFailCount = 0;
+      let apiTotalDurationMs = 0;
+
+      for (const row of apiLogRows) {
+        if (row.status === 'success') {
+          apiSuccessCount++;
+          if (row.durationMs && row.durationMs > 0) {
+            apiTotalDurationMs += row.durationMs;
+          }
+        } else {
+          apiFailCount++;
+        }
+      }
+
+      // 3. usageLogs 表 (系统内部分析调用)
+      const usageLogRows = db.select().from(usageLogs)
         .where(eq(usageLogs.modelId, m.id))
-        .get()?.count || 0;
+        .all();
+
+      let usageTotal = usageLogRows.length;
+      let usageSuccessCount = 0;
+      let usageFailCount = 0;
+      let usageTotalDurationMs = 0;
+
+      for (const row of usageLogRows) {
+        if (row.status === 'error' || row.status === 'failed') {
+          usageFailCount++;
+        } else {
+          usageSuccessCount++;
+          if (row.durationMs && row.durationMs > 0) {
+            usageTotalDurationMs += row.durationMs;
+          }
+        }
+      }
+
+      // 综合统计
+      const totalCalls = contentTotal + apiTotal + usageTotal;
+      const totalSuccessCalls = contentSuccessCount + apiSuccessCount + usageSuccessCount;
+      const totalFailCalls = contentFailCount + apiFailCount + usageFailCount;
+      const totalDurationMs = contentTotalDurationMs + apiTotalDurationMs + usageTotalDurationMs;
+
+      // 平均耗时（按分钟计算，仅根据成功获取到 URL / 成功调用的任务）
+      let avgDurationMinutes = 0;
+      if (totalSuccessCalls > 0) {
+        avgDurationMinutes = Number((totalDurationMs / totalSuccessCalls / 1000 / 60).toFixed(1));
+      }
+
+      // 正常率与失败率 (%)
+      let successRate = 100;
+      let failureRate = 0;
+      if (totalCalls > 0) {
+        successRate = Number(((totalSuccessCalls / totalCalls) * 100).toFixed(1));
+        failureRate = Number(((totalFailCalls / totalCalls) * 100).toFixed(1));
+      }
 
       return {
         ...m,
         capabilities: JSON.parse(m.capabilities),
         apiKey: m.apiKey ? '****' + m.apiKey.slice(-4) : null, // 脱敏显示
         totalCalls,
+        successCalls: totalSuccessCalls,
+        failCalls: totalFailCalls,
+        avgDurationMinutes,
+        successRate,
+        failureRate,
       };
     });
   }

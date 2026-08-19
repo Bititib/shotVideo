@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { adminApi } from '../../api/admin';
-import { Plus, Cpu, Power, PowerOff, Search, Filter } from 'lucide-react';
+import { Plus, Cpu, Power, PowerOff, Search, Filter, Clock, CheckCircle2, XCircle } from 'lucide-react';
 
 export default function ModelsPage() {
   const [models, setModels] = useState<any[]>([]);
@@ -227,10 +227,32 @@ export default function ModelsPage() {
 
               {/* Footer Info & Actions */}
               <div className="border-t border-white/5 pt-4 mt-2">
-                <div className="grid grid-cols-2 gap-y-2 text-[11px] text-zinc-400 mb-4">
-                  <div>累计调用: <span className="text-zinc-200">{m.totalCalls?.toLocaleString() || 0}次</span></div>
-                  <div>状态: <span className={m.isActive ? 'text-green-400' : 'text-red-400'}>{m.isActive ? '启用' : '禁用'}</span></div>
-                  <div className="col-span-2 truncate">API Key: <span className="text-zinc-300 font-mono">{m.apiKey ? '已配置独立Key' : '使用全局Key'}</span></div>
+                {/* Metric Cards Grid */}
+                <div className="grid grid-cols-2 gap-2 text-[11px] mb-3">
+                  <div className="bg-white/[0.02] border border-white/5 rounded-xl p-2 flex flex-col justify-between">
+                    <span className="text-zinc-500 flex items-center gap-1"><Clock className="w-3 h-3 text-amber-400" /> 平均耗时</span>
+                    <span className="text-zinc-200 font-medium text-xs mt-1">{m.avgDurationMinutes ?? 0} 分钟</span>
+                  </div>
+
+                  <div className="bg-white/[0.02] border border-white/5 rounded-xl p-2 flex flex-col justify-between">
+                    <span className="text-zinc-500 flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-400" /> 生成正常率</span>
+                    <span className="text-emerald-400 font-medium text-xs mt-1">{m.successRate ?? 100}%</span>
+                  </div>
+
+                  <div className="bg-white/[0.02] border border-white/5 rounded-xl p-2 flex flex-col justify-between">
+                    <span className="text-zinc-500 flex items-center gap-1"><XCircle className="w-3 h-3 text-red-400" /> 失败率</span>
+                    <span className={`${m.failureRate > 0 ? 'text-red-400 font-semibold' : 'text-zinc-400'} text-xs mt-1`}>{m.failureRate ?? 0}%</span>
+                  </div>
+
+                  <div className="bg-white/[0.02] border border-white/5 rounded-xl p-2 flex flex-col justify-between">
+                    <span className="text-zinc-500">累计调用</span>
+                    <span className="text-zinc-200 font-medium text-xs mt-1">{m.totalCalls?.toLocaleString() || 0} 次</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-zinc-400 mb-3 px-1">
+                  <span>状态: <span className={m.isActive ? 'text-green-400' : 'text-red-400'}>{m.isActive ? '启用' : '禁用'}</span></span>
+                  <span className="truncate max-w-[180px]">Key: <span className="text-zinc-300 font-mono">{m.apiKey ? '已设独立Key' : '使用全局Key'}</span></span>
                 </div>
 
                 <div className="flex gap-2 w-full">

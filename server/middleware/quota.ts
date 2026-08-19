@@ -46,11 +46,12 @@ export function quotaMiddleware(req: TierRequest, res: Response, next: NextFunct
 /**
  * 记录使用日志（在响应完成后调用）
  */
-export function logUsage(userId: number, analysisType: string, modelId?: number, durationMs?: number) {
+export function logUsage(userId: number, analysisType: string, modelId?: number, durationMs?: number, status: string = 'success') {
   db.insert(usageLogs).values({
     userId,
     analysisType,
     modelId,
     durationMs,
+    status,
   }).run();
 }
