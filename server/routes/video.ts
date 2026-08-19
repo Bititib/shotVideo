@@ -203,6 +203,9 @@ const MODEL_META: Record<string, ModelMeta> = {
   'seedance-720': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'tejiasd2': { series: 'seedance-720p', allowedSeconds: [10], requireRef: false },
   'sd2.0-fast-480p': { series: 'seedance-fast-480p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'sd2-mini': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'seedance2.0-933': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'seedance2.0 933': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
@@ -231,6 +234,9 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'seedance-720', name: 'Seedance 720 满血版', description: '满血模型，支持933，过人脸，720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🔥' },
   { id: 'tejiasd2', name: 'tejiasd2', description: 'SD 2.0 9张参考图 3个参考视频 3个参考音频 不卡真人 只支持10秒 特价模型', maxSeconds: 10, icon: '🚀' },
   { id: 'sd2.0-fast-480p', name: 'SD 2.0 Fast (480p)', description: '快速 480p 满血版，概率卡脸，适合漫剧/线图。支持 9张参考图 3个参考视频 3个参考音频，4-15秒', maxSeconds: 15, icon: '⚡' },
+  { id: 'sd2-mini', name: 'Seedance Mini (sd2-mini)', description: 'Seedance Mini 720p，支持933、图片、视频、音频参考素材，固定按次计费 ¥2.00/次', maxSeconds: 15, icon: '⚡' },
+  { id: 'seedance2.0-933', name: 'seedance2.0 933', description: 'seedance2.0 933 模型（映射至 sd2-mini 渠道），支持933、图片、视频、音频参考素材，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🚀' },
+  { id: 'seedance2.0 933', name: 'seedance2.0 933', description: 'seedance2.0 933 模型（映射至 sd2-mini 渠道），支持933、图片、视频、音频参考素材，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🚀' },
 ];
 
 /** 查找支持指定视频模型的渠道 */
@@ -451,6 +457,16 @@ router.get('/models', (_req: Request, res: Response) => {
       };
     } else if (m.id === 'sd2.5') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get()?.value || '3.50');
+      rates = {
+        '720p': rate,
+      };
+    } else if (m.id === 'sd2-mini') {
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_mini_rate')).get()?.value || '2.00');
+      rates = {
+        '720p': rate,
+      };
+    } else if (m.id === 'seedance2.0-933' || m.id === 'seedance2.0 933') {
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'seedance2_0_933_rate')).get()?.value || '3.00');
       rates = {
         '720p': rate,
       };

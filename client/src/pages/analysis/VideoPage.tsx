@@ -62,7 +62,10 @@ const isFlatRateModel = (modelId: string) => {
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
     'seedance-720',
-    'tejiasd2'
+    'tejiasd2',
+    'sd2-mini',
+    'seedance2.0-933',
+    'seedance2.0 933'
   ].includes(modelId);
 };
 
