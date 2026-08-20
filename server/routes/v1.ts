@@ -61,9 +61,9 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_pd_sd20_pro_933_5_720p_rate')).get();
     return parseFloat(row?.value || '4.50');
-  } else if (model === 'sdas-my-seedance-2.0-fast-720p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sdas_my_seedance_20_fast_720p_rate')).get();
-    return parseFloat(row?.value || '3.00');
+  } else if (model === 'sdas-hn-sd2.0-fast-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_hn_sd20_fast_720p_rate')).get();
+    return parseFloat(row?.value || '2.80');
   } else if (model === 'sdas-bl-sd2.0-933-pro-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_bl_sd20_933_pro_720p_rate')).get();
     return parseFloat(row?.value || '4.50');
@@ -678,8 +678,8 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
   if (channel) {
     if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
       upstreamModel = 'ld-sdas-cvk-pro-933-720p';
-    } else if (model === 'sdas-my-seedance-2.0-fast-720p') {
-      upstreamModel = 'sdas-my-seedance-2.0-fast-720p';
+    } else if (model === 'sdas-hn-sd2.0-fast-720p') {
+      upstreamModel = 'sdas-hn-sd2.0-fast-720p';
     } else if (channel.modelMapping) {
       try {
         const mapping = typeof channel.modelMapping === 'string' ? JSON.parse(channel.modelMapping) : channel.modelMapping;
@@ -708,7 +708,6 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     'seedance-2.0-fast-720p',
     'seedance-720',
     'sdas-pd-sd2.0-pro-933-5-720p',
-    'sdas-my-seedance-2.0-fast-720p',
     'ld-sdas-cvk-pro-933-720p',
     'sdas-mj-minimax-h3-2k',
     'sdas-bl-sd2.0-933-pro-720p',
@@ -831,8 +830,8 @@ router.post('/video/generations', async (req: Request, res: Response) => {
   if (channel) {
     if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
       upstreamModel = 'ld-sdas-cvk-pro-933-720p';
-    } else if (model === 'sdas-my-seedance-2.0-fast-720p') {
-      upstreamModel = 'sdas-my-seedance-2.0-fast-720p';
+    } else if (model === 'sdas-hn-sd2.0-fast-720p') {
+      upstreamModel = 'sdas-hn-sd2.0-fast-720p';
     } else if (channel.modelMapping) {
       try {
         const mapping = typeof channel.modelMapping === 'string' ? JSON.parse(channel.modelMapping) : channel.modelMapping;
@@ -861,7 +860,6 @@ router.post('/video/generations', async (req: Request, res: Response) => {
     'seedance-2.0-fast-720p',
     'seedance-720',
     'sdas-pd-sd2.0-pro-933-5-720p',
-    'sdas-my-seedance-2.0-fast-720p',
     'ld-sdas-cvk-pro-933-720p',
     'sdas-mj-minimax-h3-2k',
     'sdas-bl-sd2.0-933-pro-720p',

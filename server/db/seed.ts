@@ -142,7 +142,7 @@ async function syncModelsFromAPI() {
     { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'omni', modelId: 'omni-flash', displayName: 'Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'omni', modelId: 'omni-flash-vref', displayName: 'Omni Flash Vref', capabilities: JSON.stringify(['video']) },
-    { provider: 'sudashui', modelId: 'sdas-my-seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 431 (720p)', capabilities: JSON.stringify(['video']) },
+    { provider: 'sudashui', modelId: 'sdas-hn-sd2.0-fast-720p', displayName: 'Seedance 2.0 Fast 431 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-mj-minimax-h3-2k', displayName: 'Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },
@@ -846,7 +846,7 @@ export async function initDatabase() {
   try {
     const sdaModels = [
       'sdas-pd-sd2.0-pro-933-5-720p',
-      'sdas-my-seedance-2.0-fast-720p',
+      'sdas-hn-sd2.0-fast-720p',
       'ld-sdas-cvk-pro-933-720p',
       'sdas-mj-minimax-h3-2k',
       'sdas-bl-sd2.0-933-pro-720p',
