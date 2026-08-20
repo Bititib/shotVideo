@@ -2093,7 +2093,12 @@ export function resumePollForTask(contentId: number, record: any) {
           } catch { }
         } else if (taskStatus === 'completed' || taskStatus === 'success') {
           console.log(`[video-recover] ✅ Generating completed: ${resultUrl}`);
-          const durationMs = Date.now() - startTime;
+          const completedTime = Date.now();
+          const createdTime = new Date(currentRecord.createdAt).getTime();
+          const durationMs = (!isNaN(createdTime) && createdTime > 0 && completedTime >= createdTime)
+            ? (completedTime - createdTime)
+            : (Date.now() - startTime);
+
           logUsage(record.userId, 'generate_video', undefined, durationMs);
           const cost = isFlatRate ? rate : (Math.round(rate * video_length * 100) / 100);
           if (cost > 0) {
@@ -2103,7 +2108,7 @@ export function resumePollForTask(contentId: number, record: any) {
           try {
             meta = JSON.parse(currentRecord.metadata || '{}');
           } catch {}
-          meta = { ...meta, durationMs, completedAt: new Date().toISOString() };
+          meta = { ...meta, durationMs, completedAt: new Date(completedTime).toISOString() };
           db.update(contents).set({
             status: 'completed',
             resultUrl: resultUrl || null,
