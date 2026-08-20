@@ -577,6 +577,11 @@ router.get('/models', (_req: Request, res: Response) => {
       };
     }
 
+    const contentRows = db.select().from(contents).where(eq(contents.modelId, m.id)).all();
+    const totalCalls = contentRows.length;
+    const successCalls = contentRows.filter(r => r.status === 'completed' || r.status === 'success' || (r.resultUrl && r.resultUrl.trim() !== '')).length;
+    const successRate = totalCalls > 0 ? Number(((successCalls / totalCalls) * 100).toFixed(1)) : 100;
+
     return {
       id: m.id,
       name: m.name || preset?.name || m.id,
@@ -587,6 +592,8 @@ router.get('/models', (_req: Request, res: Response) => {
       requireRef: meta?.requireRef || false,
       series: meta?.series || 'legacy',
       rates,
+      successRate,
+      totalCalls,
     };
   });
 

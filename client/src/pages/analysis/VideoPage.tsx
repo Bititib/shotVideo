@@ -1072,6 +1072,17 @@ export default function VideoPage() {
                                     ¥{(m.rates[resolution as keyof typeof m.rates] !== undefined ? m.rates[resolution as keyof typeof m.rates] : Object.values(m.rates)[0])?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}
                                   </span>
                                 )}
+                                {m.successRate !== undefined && (
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${
+                                    m.successRate >= 80
+                                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                      : m.successRate >= 50
+                                      ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                                      : 'bg-red-500/10 text-red-400 border-red-500/20'
+                                  }`}>
+                                    成功率 {m.successRate}%
+                                  </span>
+                                )}
                                 {isSelected && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
                               </div>
                             </div>

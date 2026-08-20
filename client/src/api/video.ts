@@ -12,6 +12,8 @@ export interface VideoModel {
     '720p'?: number;
     '1080p'?: number;
   };
+  successRate?: number;
+  totalCalls?: number;
 }
 
 export interface VideoGenerateParams {
