@@ -151,11 +151,8 @@ async function syncModelsFromAPI() {
     { provider: 'diwdiw', modelId: 'cd-seedance-2.0-720p', displayName: 'Seedance 2.0 (720p/CD版)', capabilities: JSON.stringify(['video']) },
     { provider: 'diwdiw', modelId: 'rd-seedance-2.5-480p', displayName: 'Seedance 2.5 (480p)', capabilities: JSON.stringify(['video']) },
     { provider: 'diwdiw', modelId: 'rd-seedance-2.5-720p', displayName: 'Seedance 2.5 (720p)', capabilities: JSON.stringify(['video']) },
-    { provider: 'newtoken', modelId: 'nd-seedance-2.0-480p', displayName: 'Seedance 2.0 (480p/不卡脸)', capabilities: JSON.stringify(['video']) },
-    { provider: 'newtoken', modelId: 'nd-seedance-2.0-720p', displayName: 'Seedance 2.0 (720p/不卡脸)', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
-    { provider: 'pidoi', modelId: 'tejiasd2', displayName: '特价 SD 2.0', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'seedance', modelId: 'sd2.5', displayName: 'Seedance 2.5 (sd2.5)', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-mini', displayName: 'Seedance Mini (sd2-mini)', description: 'Seedance Mini 720p，支持933、图片、视频、音频参考素材', capabilities: JSON.stringify(['video']), isActive: 1 },
@@ -163,7 +160,6 @@ async function syncModelsFromAPI() {
     { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'seedance', modelId: 'seedance-720', displayName: 'Seedance 720 满血版', capabilities: JSON.stringify(['video']), isActive: 0 },
-    { provider: 'newtoken', modelId: 'sd2.0-fast-480p', displayName: 'SD 2.0 Fast (480p)', capabilities: JSON.stringify(['video']) },
     { provider: 'grok', modelId: 'grok-imagine-1.0-video', displayName: 'Grok 1.0 Video', capabilities: JSON.stringify(['video']) },
     { provider: 'grok', modelId: 'grok-imagine-video-1.5-fast', displayName: 'Grok 1.5 Fast', capabilities: JSON.stringify(['video']) },
     { provider: 'grok', modelId: 'grok-imagine-video-1.5-preview', displayName: 'Grok 1.5 Preview', capabilities: JSON.stringify(['video']) }
@@ -227,7 +223,11 @@ async function syncModelsFromAPI() {
       'grok-imagine-video-1.5-1080p',
       'grok-imagine-video',
       'grok-4.3-video',
-      'sdas-xh-sd2.0-933-3-pro-720p'
+      'sdas-xh-sd2.0-933-3-pro-720p',
+      'nd-seedance-2.0-480p',
+      'nd-seedance-2.0-720p',
+      'sd2.0-fast-480p',
+      'tejiasd2'
     ];
     for (const modelId of deadModels) {
       db.delete(models).where(eq(models.modelId, modelId)).run();
