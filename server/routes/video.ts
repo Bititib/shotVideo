@@ -8,7 +8,7 @@ import { ContentService } from '../services/contentService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models, settings, contents } from '../db/schema.js';
-import { eq, like, and } from 'drizzle-orm';
+import { eq, like, and, inArray } from 'drizzle-orm';
 import fs from 'fs';
 import path from 'path';
 import { exec, execSync } from 'child_process';
@@ -577,10 +577,11 @@ router.get('/models', (_req: Request, res: Response) => {
       };
     }
 
-    const contentRows = db.select().from(contents).where(eq(contents.modelId, m.id)).all();
+    const targetIds = Array.from(new Set([m.id, ...(m.id.includes('seedance2.0') || m.id === 'sd2-mini' ? ['seedance2.0-933', 'seedance2.0 933', 'sd2-mini'] : [])]));
+    const contentRows = db.select().from(contents).where(inArray(contents.modelId, targetIds)).all();
     const totalCalls = contentRows.length;
     const successCalls = contentRows.filter(r => r.status === 'completed' || r.status === 'success' || (r.resultUrl && r.resultUrl.trim() !== '')).length;
-    const successRate = totalCalls > 0 ? Number(((successCalls / totalCalls) * 100).toFixed(1)) : 100;
+    const successRate = totalCalls > 0 ? Number(((successCalls / totalCalls) * 100).toFixed(1)) : null;
 
     return {
       id: m.id,
