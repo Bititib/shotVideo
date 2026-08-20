@@ -847,6 +847,7 @@ export async function initDatabase() {
     const sdaModels = [
       'sdas-pd-sd2.0-pro-933-5-720p',
       'sdas-hn-sd2.0-fast-720p',
+      'sdas-my-seedance-2.0-fast-720p',
       'ld-sdas-cvk-pro-933-720p',
       'sdas-mj-minimax-h3-2k',
       'sdas-bl-sd2.0-933-pro-720p',
