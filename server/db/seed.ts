@@ -63,7 +63,7 @@ async function verifyBatch(
  * 从 Google API 动态发现可用模型，多 Key 并发验证后同步到数据库
  * N 个 Key = 验证速度提升 N 倍，运行时请求也自动轮询分散限速
  */
-async function syncModelsFromAPI() {
+export async function syncModelsFromAPI() {
   const existingModels = db.select().from(models).all();
   const existingModelIds = new Set(existingModels.map(m => m.modelId));
   const apiKey = env.GEMINI_API_KEY;
@@ -148,8 +148,8 @@ async function syncModelsFromAPI() {
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-noface-720p', displayName: 'Seedance 2.0 Pro (933无脸版)', capabilities: JSON.stringify(['video']) },
     { provider: 'diwdiw', modelId: 'cd-seedance-2.0-720p', displayName: 'Seedance 2.0 (720p/CD版)', capabilities: JSON.stringify(['video']) },
-    { provider: 'diwdiw', modelId: 'rd-seedance-2.5-480p', displayName: 'Seedance 2.5 (480p)', capabilities: JSON.stringify(['video']) },
-    { provider: 'diwdiw', modelId: 'rd-seedance-2.5-720p', displayName: 'Seedance 2.5 (720p)', capabilities: JSON.stringify(['video']) },
+    { provider: 'diwdiw', modelId: 'vd-seedance-2.5-480p', displayName: 'Seedance 2.5 (480p)', capabilities: JSON.stringify(['video']) },
+    { provider: 'diwdiw', modelId: 'vd-seedance-2.5-720p', displayName: 'Seedance 2.5 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']), isActive: 0 },
@@ -227,7 +227,9 @@ async function syncModelsFromAPI() {
       'nd-seedance-2.0-720p',
       'sd2.0-fast-480p',
       'tejiasd2',
-      'sdas-pd-sd2.0-pro-933-5-720p'
+      'sdas-pd-sd2.0-pro-933-5-720p',
+      'rd-seedance-2.5-480p',
+      'rd-seedance-2.5-720p'
     ];
     for (const modelId of deadModels) {
       db.delete(models).where(eq(models.modelId, modelId)).run();
@@ -660,8 +662,8 @@ export async function initDatabase() {
     { key: 'sdas_bl_sd20_933_pro_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro (933人脸版) 费率(¥/次)' },
     { key: 'sdas_bl_sd20_933_pro_noface_720p_rate', value: '4.00', label: 'Seedance 2.0 Pro (933无脸版) 费率(¥/次)' },
     { key: 'cd_seedance_2_0_720p_rate', value: '3.00', label: 'Seedance 2.0 (720p/CD版) 费率(¥/次)' },
-    { key: 'rd_seedance_2_5_480p_rate', value: '0.32', label: 'Seedance 2.5 (480p) 费率(¥/秒)' },
-    { key: 'rd_seedance_2_5_720p_rate', value: '0.50', label: 'Seedance 2.5 (720p) 费率(¥/秒)' },
+    { key: 'vd_seedance_2_5_480p_rate', value: '0.62', label: 'Seedance 2.5 (480p) 费率(¥/秒)' },
+    { key: 'vd_seedance_2_5_720p_rate', value: '1.00', label: 'Seedance 2.5 (720p) 费率(¥/秒)' },
     { key: 'nd_seedance_2_0_480p_rate', value: '3.75', label: 'Seedance 2.0 (480p/不卡脸) 费率(¥/次)' },
     { key: 'nd_seedance_2_0_720p_rate', value: '4.30', label: 'Seedance 2.0 (720p/不卡脸) 费率(¥/次)' },
     { key: 'sd2_c6_rate', value: '2.50', label: 'Seedance 2.0 c6 费率(¥/次)' },
@@ -672,6 +674,10 @@ export async function initDatabase() {
     { key: 'grok_imagine_video_1_5_fast_rate', value: '0.288', label: 'Grok Imagine 1.5 Fast 费率(¥/秒)' },
     { key: 'grok_imagine_video_1_5_preview_rate', value: '0.48', label: 'Grok Imagine 1.5 Preview 费率(¥/秒)' },
   ];
+  // 物理清理旧的 rd_seedance 相关的设置项
+  db.delete(settings).where(eq(settings.key, 'rd_seedance_2_5_480p_rate')).run();
+  db.delete(settings).where(eq(settings.key, 'rd_seedance_2_5_720p_rate')).run();
+
   for (const s of omniSettings) {
     const existing = db.select().from(settings).where(eq(settings.key, s.key)).get();
     if (!existing) {
@@ -684,7 +690,7 @@ export async function initDatabase() {
         updateData.label = s.label;
       }
       // 对于价格发生变化的设置项，如果存在且值不同，则强制更新数值
-      if (s.key === 'veo_omni_flash_rate' || s.key === 'veo_3_1_rate' || s.key === 'sd2_5_rate' || s.key === 'nd_seedance_2_0_480p_rate' || s.key === 'nd_seedance_2_0_720p_rate') {
+      if (s.key === 'veo_omni_flash_rate' || s.key === 'veo_3_1_rate' || s.key === 'sd2_5_rate' || s.key === 'nd_seedance_2_0_480p_rate' || s.key === 'nd_seedance_2_0_720p_rate' || s.key.startsWith('vd_seedance_2_5_')) {
         if (existing.value !== s.value) {
           updateData.value = s.value;
         }
@@ -816,18 +822,22 @@ export async function initDatabase() {
       outputPrice: 0,
     },
     {
-      modelPattern: 'rd-seedance-2.5-480p',
+      modelPattern: 'vd-seedance-2.5-480p',
       billingType: 'per_token',
-      inputPrice: 0.32,
+      inputPrice: 0.62,
       outputPrice: 0,
     },
     {
-      modelPattern: 'rd-seedance-2.5-720p',
+      modelPattern: 'vd-seedance-2.5-720p',
       billingType: 'per_token',
-      inputPrice: 0.50,
+      inputPrice: 1.00,
       outputPrice: 0,
     },
   ];
+
+  // 物理清理旧的 rd-seedance 模型计费规则
+  db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'rd-seedance-2.5-480p')).run();
+  db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'rd-seedance-2.5-720p')).run();
 
   console.log('📦 同步计费规则到数据库 (更新/插入)...');
   for (const pricing of defaultPricing) {
@@ -1051,44 +1061,56 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 MJNewAPI cd-seedance 渠道出错:', err.message);
   }
 
-  // 14b) MJNewAPI 渠道 - rd-seedance-2.5 系列
+  // 14b) MJNewAPI 渠道 - vd-seedance-2.5 系列
   try {
-    const existingRd = db.select().from(channels).where(eq(channels.name, 'MJNewAPI rd-seedance 渠道')).get();
-    const rdModels = ['rd-seedance-2.5-480p', 'rd-seedance-2.5-720p'];
-    const rdMapping = {
-      'rd-seedance-2.5-480p': 'rd-seedance-2.5-480p',
-      'rd-seedance-2.5-720p': 'rd-seedance-2.5-720p'
+    const existingVd = db.select().from(channels).all().find(c => c.name === 'MJNewAPI vd-seedance 渠道' || c.name === 'MJNewAPI rd-seedance 渠道');
+    const vdModels = ['vd-seedance-2.5-480p', 'vd-seedance-2.5-720p'];
+    const vdMapping = {
+      'vd-seedance-2.5-480p': 'vd-seedance-2.5-480p',
+      'vd-seedance-2.5-720p': 'vd-seedance-2.5-720p'
     };
-    if (!existingRd) {
+    if (!existingVd) {
       db.insert(channels).values({
-        name: 'MJNewAPI rd-seedance 渠道',
+        name: 'MJNewAPI vd-seedance 渠道',
         type: 'openai',
         baseUrl: 'https://mjnewapi.diwdiw.cn',
         apiKey: 'sk-ypnbPu4siWgwzp5EcpqvDTtU4z6q8gHqP3gYj4FV10kku4it',
-        supportedModels: JSON.stringify(rdModels),
-        modelMapping: JSON.stringify(rdMapping),
+        supportedModels: JSON.stringify(vdModels),
+        modelMapping: JSON.stringify(vdMapping),
         status: 1,
         priority: 0,
         weight: 1,
         maxRetries: 3,
         timeout: 120000,
       }).run();
-      console.log('📦 已创建 MJNewAPI rd-seedance 渠道');
+      console.log('📦 已创建 MJNewAPI vd-seedance 渠道');
     } else {
       db.update(channels)
         .set({
+          name: 'MJNewAPI vd-seedance 渠道',
           apiKey: 'sk-ypnbPu4siWgwzp5EcpqvDTtU4z6q8gHqP3gYj4FV10kku4it',
-          supportedModels: JSON.stringify(rdModels),
-          modelMapping: JSON.stringify(rdMapping),
+          supportedModels: JSON.stringify(vdModels),
+          modelMapping: JSON.stringify(vdMapping),
           status: 1,
           updatedAt: new Date().toISOString()
         })
-        .where(eq(channels.id, existingRd.id))
+        .where(eq(channels.id, existingVd.id))
         .run();
-      console.log('🔄 已更新 MJNewAPI rd-seedance 渠道');
+      console.log('🔄 已更新 MJNewAPI vd-seedance 渠道');
     }
   } catch (err: any) {
-    console.error('⚠️ 初始化 MJNewAPI rd-seedance 渠道出错:', err.message);
+    console.error('⚠️ 初始化 MJNewAPI vd-seedance 渠道出错:', err.message);
+  }
+
+  // 清理旧的 "MJNewAPI rd-seedance 渠道"（如存在）
+  try {
+    const oldRdChannel = db.select().from(channels).where(eq(channels.name, 'MJNewAPI rd-seedance 渠道')).get();
+    if (oldRdChannel) {
+      db.delete(channels).where(eq(channels.id, oldRdChannel.id)).run();
+      console.log('🧹 已删除旧的 MJNewAPI rd-seedance 渠道，已被 vd-seedance 替代');
+    }
+  } catch (err: any) {
+    console.error('⚠️ 清理旧 rd-seedance 渠道出错:', err.message);
   }
 
   // 清理旧的合并渠道 "MJNewAPI 渠道"（如存在）
@@ -1096,7 +1118,7 @@ export async function initDatabase() {
     const oldChannel = db.select().from(channels).where(eq(channels.name, 'MJNewAPI 渠道')).get();
     if (oldChannel) {
       db.delete(channels).where(eq(channels.id, oldChannel.id)).run();
-      console.log('🧹 已删除旧的合并 MJNewAPI 渠道，已拆分为 cd-seedance 和 rd-seedance 两个独立渠道');
+      console.log('🧹 已删除旧的合并 MJNewAPI 渠道，已拆分为 cd-seedance 和 vd-seedance 两个独立渠道');
     }
   } catch (err: any) {
     console.error('⚠️ 清理旧 MJNewAPI 渠道出错:', err.message);
@@ -1105,3 +1127,11 @@ export async function initDatabase() {
   console.log('✅ 数据库初始化完成');
 }
 
+export const seed = async () => {
+  await initDatabase();
+  await syncModelsFromAPI();
+};
+
+if (process.argv[1]?.includes('seed.ts') || process.argv[1]?.includes('seed.js')) {
+  seed().catch(console.error);
+}

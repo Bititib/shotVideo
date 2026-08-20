@@ -79,8 +79,8 @@ export const isComicDramaModel = (modelId: string) => {
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
     'cd-seedance-2.0-720p',
-    'rd-seedance-2.5-480p',
-    'rd-seedance-2.5-720p'
+    'vd-seedance-2.5-480p',
+    'vd-seedance-2.5-720p'
   ].includes(modelId);
 };
 
@@ -264,9 +264,9 @@ const isSoraV4Model = (modelId: string) => {
 };
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  if (modelId === 'vd-seedance-2.5-480p' || modelId === 'vd-seedance-2.5-720p' || modelId === 'sd2.5') return 30;
   if (modelId === 'grok-imagine-1.0-video' || modelId === 'grok-imagine-video-1.5-fast') return 7;
   if (modelId === 'grok-imagine-video-1.5-preview') return 1;
-  if (modelId === 'sd2.5') return 9;
   if (modelId === 'sd2-c7') return 10;
   if (modelId === 'sd2-c6') return 9;
   if (modelId === 'tejiasd2' || modelId === 'sd2.0-fast-480p' || modelId.startsWith('sd-') || modelId.startsWith('sd2-') || modelId.startsWith('seedance-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
@@ -386,13 +386,15 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
-    if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
+    if (m === 'sd2.5' || m === 'vd-seedance-2.5-480p' || m === 'vd-seedance-2.5-720p') return 10;
+    if (m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     if (m === 'omni-flash-vref') return 1;
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
-    if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
+    if (m === 'sd2.5' || m === 'vd-seedance-2.5-480p' || m === 'vd-seedance-2.5-720p') return 10;
+    if (m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     return 0;
   };
