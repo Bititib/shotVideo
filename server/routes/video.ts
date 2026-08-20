@@ -815,11 +815,18 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const estimatedRate = rate;
   const estimatedSeconds = (model === 'omni-flash-vref' || model === 'sdas-pd-sd2.0-pro-933-5-720p') ? 10 : (Number(video_length) || 6);
   const estimatedCost = isFlatRate ? estimatedRate : (Math.round(estimatedRate * estimatedSeconds * 100) / 100);
-  const { sufficient, balance: currentBalance } = BalanceService.checkBalance(req.userId!, estimatedCost);
-  if (!sufficient) {
-    sendEvent({ type: 'error', message: `余额不足，预估费用 ¥${estimatedCost.toFixed(2)}，当前余额 ¥${currentBalance.toFixed(2)}` });
-    res.write('data: [DONE]\n\n');
-    return res.end();
+
+  // 1. 提交任务时优先原子预扣费
+  let predeductedBalance: number | null = null;
+  if (estimatedCost > 0) {
+    predeductedBalance = BalanceService.deduct(req.userId!, estimatedCost, 'generate_video_prededuct');
+    if (predeductedBalance === null) {
+      const { balance: currentBalance } = BalanceService.checkBalance(req.userId!, estimatedCost);
+      sendEvent({ type: 'error', message: `余额不足，预估费用 ¥${estimatedCost.toFixed(2)}，当前余额 ¥${currentBalance.toFixed(2)}` });
+      res.write('data: [DONE]\n\n');
+      return res.end();
+    }
+    sendEvent({ type: 'billing', cost: estimatedCost, resolution, seconds: estimatedSeconds, rate, remainingBalance: predeductedBalance });
   }
 
   // 插入初始的 'processing' 内容记录，确保刷新页面时正在生成中的记录不会丢失
@@ -851,23 +858,33 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     console.error('[content] 初始视频记录保存失败:', e);
   }
 
-  /** 生成成功后计费 + 更新内容 */
+  /** 生成成功后更新内容（已在前置预扣费，无需重复扣费） */
   const billUsage = (finalVideoUrl: string) => {
     const elapsed = Date.now() - startTime;
     logUsage(req.userId!, 'generate_video', undefined, elapsed);
-    const cost = isFlatRate ? rate : (Math.round(rate * estimatedSeconds * 100) / 100);
-    if (cost > 0) {
-      const remaining = BalanceService.deduct(req.userId!, cost, 'generate_video');
-      sendEvent({ type: 'billing', cost, resolution, seconds: estimatedSeconds, rate, remainingBalance: remaining ?? 0 });
-    }
     if (contentId !== null) {
       try {
         db.update(contents).set({
           status: 'completed',
           resultUrl: finalVideoUrl || null,
-          cost: cost
+          cost: estimatedCost
         }).where(eq(contents.id, contentId)).run();
       } catch (e) { console.error('[content] 视频记录更新失败:', e); }
+    }
+  };
+
+  /** 任务失败时自动退款 */
+  const refundFailedTask = (errMsg: string) => {
+    console.error(`[video] ❌ 生成失败: ${errMsg}`);
+    sendEvent({ type: 'error', message: errMsg });
+    if (estimatedCost > 0) {
+      BalanceService.refund(req.userId!, estimatedCost, 'generate_video_refund');
+    }
+    if (contentId !== null) {
+      activePolls.delete(contentId);
+      try {
+        db.update(contents).set({ status: 'failed', cost: 0 }).where(eq(contents.id, contentId)).run();
+      } catch (dbErr) { console.error('[video] 失败状态更新错误:', dbErr); }
     }
   };
 
@@ -1518,14 +1535,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           }
           return;
         } else if (taskStatus === 'failed' || taskStatus === 'failure') {
-          console.error(`[video] ❌ 生成失败: ${errMsg}`);
-          sendEvent({ type: 'error', message: errMsg });
-          if (contentId !== null) {
-            activePolls.delete(contentId);
-            try {
-              db.update(contents).set({ status: 'failed' }).where(eq(contents.id, contentId)).run();
-            } catch (dbErr) { console.error('[video] 失败状态更新错误:', dbErr); }
-          }
+          refundFailedTask(errMsg);
           if (!res.destroyed && !res.writableEnded) {
             res.write('data: [DONE]\n\n');
             res.end();
@@ -2107,10 +2117,7 @@ export function resumePollForTask(contentId: number, record: any) {
             : (Date.now() - startTime);
 
           logUsage(record.userId, 'generate_video', undefined, durationMs);
-          const cost = isFlatRate ? rate : (Math.round(rate * video_length * 100) / 100);
-          if (cost > 0) {
-            BalanceService.deduct(record.userId, cost, 'generate_video');
-          }
+          const cost = Number(record.cost) || (isFlatRate ? rate : (Math.round(rate * video_length * 100) / 100));
           let meta = {};
           try {
             meta = JSON.parse(currentRecord.metadata || '{}');
@@ -2125,7 +2132,12 @@ export function resumePollForTask(contentId: number, record: any) {
           break;
         } else if (taskStatus === 'failed' || taskStatus === 'failure') {
           console.error(`[video-recover] ❌ Generating failed: ${errMsg}`);
-          db.update(contents).set({ status: 'failed' }).where(eq(contents.id, contentId)).run();
+          // 任务失败，为预扣费退款并将 cost 清零
+          const refundAmount = Number(record.cost) || 0;
+          if (refundAmount > 0) {
+            BalanceService.refund(record.userId, refundAmount, 'generate_video_refund');
+          }
+          db.update(contents).set({ status: 'failed', cost: 0 }).where(eq(contents.id, contentId)).run();
           break;
         }
       } catch (err: any) {
@@ -2141,6 +2153,9 @@ export function resumePollForTask(contentId: number, record: any) {
 export function resumeAllPendingVideoTasks() {
   console.log('🔍 [video-recover] Scanning for stuck processing video tasks...');
   try {
+    // 自动修正历史错误数据：包含 status = 'failed' 却残留 cost > 0 的记录，将 cost 修正为 0
+    db.update(contents).set({ cost: 0 }).where(eq(contents.status, 'failed')).run();
+
     const pendingTasks = db.select().from(contents)
       .where(and(eq(contents.status, 'processing'), eq(contents.type, 'video')))
       .all();

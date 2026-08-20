@@ -108,9 +108,11 @@ export function generateVideo(
     })
     .catch((err) => {
       if (err.name !== 'AbortError') {
-        onEvent({ type: 'error', message: err.message });
+        // 网络闪断或连接中断时，触发 close 事件提升为后台轮询，防止硬报错误导用户
+        onEvent({ type: 'close' });
       }
     });
+
 
   return controller;
 }

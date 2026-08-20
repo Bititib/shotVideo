@@ -981,7 +981,7 @@ export default function VideoPage() {
                 return {
                   ...t,
                   id: `db_${t.dbId}`,
-                  statusMessage: '连接已断开，正在后台恢复生成...'
+                  statusMessage: '已提交后台生成中，请勿重复操作，可稍后刷新查看'
                 };
               }
               return t;

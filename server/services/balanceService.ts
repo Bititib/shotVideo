@@ -76,5 +76,30 @@ export class BalanceService {
       .run();
     return this.getBalance(userId);
   }
+
+  /**
+   * 退还余额（生成失败时退还扣款）
+   */
+  static refund(userId: number, amount: number, type: string = 'refund', meta?: Record<string, any>): number {
+    if (amount <= 0) return this.getBalance(userId);
+
+    const user = db.select({ orgId: users.orgId }).from(users).where(eq(users.id, userId)).get();
+
+    // 优先加回组织余额
+    if (user?.orgId) {
+      db.update(organizations)
+        .set({ balance: sql`balance + ${amount}`, updatedAt: new Date().toISOString() })
+        .where(eq(organizations.id, user.orgId))
+        .run();
+      return this.getOrgBalance(user.orgId);
+    }
+
+    // 加回个人余额
+    db.update(users)
+      .set({ balance: sql`balance + ${amount}`, updatedAt: new Date().toISOString() })
+      .where(eq(users.id, userId))
+      .run();
+    return this.getBalance(userId);
+  }
 }
 
