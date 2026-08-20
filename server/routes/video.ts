@@ -2093,15 +2093,22 @@ export function resumePollForTask(contentId: number, record: any) {
           } catch { }
         } else if (taskStatus === 'completed' || taskStatus === 'success') {
           console.log(`[video-recover] ✅ Generating completed: ${resultUrl}`);
-          logUsage(record.userId, 'generate_video', undefined, Date.now() - startTime);
+          const durationMs = Date.now() - startTime;
+          logUsage(record.userId, 'generate_video', undefined, durationMs);
           const cost = isFlatRate ? rate : (Math.round(rate * video_length * 100) / 100);
           if (cost > 0) {
             BalanceService.deduct(record.userId, cost, 'generate_video');
           }
+          let meta = {};
+          try {
+            meta = JSON.parse(currentRecord.metadata || '{}');
+          } catch {}
+          meta = { ...meta, durationMs, completedAt: new Date().toISOString() };
           db.update(contents).set({
             status: 'completed',
             resultUrl: resultUrl || null,
-            cost: cost
+            cost: cost,
+            metadata: JSON.stringify(meta)
           }).where(eq(contents.id, contentId)).run();
           break;
         } else if (taskStatus === 'failed' || taskStatus === 'failure') {

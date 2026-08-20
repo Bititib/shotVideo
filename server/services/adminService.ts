@@ -261,6 +261,7 @@ export class AdminService {
       let contentSuccessCount = 0;
       let contentFailCount = 0;
       let contentTotalDurationMs = 0;
+      let contentDurationSamples = 0;
 
       for (const row of contentRows) {
         if (row.status === 'completed' && row.resultUrl && row.resultUrl.trim() !== '') {
@@ -268,17 +269,21 @@ export class AdminService {
           let dur = 0;
           try {
             const meta = row.metadata ? JSON.parse(row.metadata) : {};
-            if (meta.durationMs && typeof meta.durationMs === 'number') {
+            if (meta.durationMs && typeof meta.durationMs === 'number' && meta.durationMs > 0) {
               dur = meta.durationMs;
+            } else if (meta.completedAt || meta.finishedAt) {
+              const compTime = new Date(meta.completedAt || meta.finishedAt).getTime();
+              const createdTime = new Date(row.createdAt).getTime();
+              if (!isNaN(compTime) && !isNaN(createdTime) && compTime >= createdTime) {
+                dur = compTime - createdTime;
+              }
             }
           } catch {}
-          if (!dur && row.createdAt) {
-            const createdTime = new Date(row.createdAt).getTime();
-            if (!isNaN(createdTime) && createdTime > 0) {
-              dur = Math.max(1000, Date.now() - createdTime);
-            }
+
+          if (dur > 0) {
+            contentTotalDurationMs += dur;
+            contentDurationSamples++;
           }
-          contentTotalDurationMs += dur;
         } else if (row.status === 'failed') {
           contentFailCount++;
         }
@@ -330,12 +335,14 @@ export class AdminService {
       const totalCalls = contentTotal + apiTotal + usageTotal;
       const totalSuccessCalls = contentSuccessCount + apiSuccessCount + usageSuccessCount;
       const totalFailCalls = contentFailCount + apiFailCount + usageFailCount;
+      
       const totalDurationMs = contentTotalDurationMs + apiTotalDurationMs + usageTotalDurationMs;
+      const totalDurationSamples = contentDurationSamples + apiSuccessCount + usageSuccessCount;
 
-      // 平均耗时（按分钟计算，仅根据成功获取到 URL / 成功调用的任务）
+      // 平均耗时（按分钟计算，仅统计获取到有效耗时记录的样本）
       let avgDurationMinutes = 0;
-      if (totalSuccessCalls > 0) {
-        avgDurationMinutes = Number((totalDurationMs / totalSuccessCalls / 1000 / 60).toFixed(1));
+      if (totalDurationSamples > 0 && totalDurationMs > 0) {
+        avgDurationMinutes = Number((totalDurationMs / totalDurationSamples / 1000 / 60).toFixed(1));
       }
 
       // 正常率与失败率 (%)
