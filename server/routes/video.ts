@@ -221,8 +221,8 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'sdas-bl-sd2.0-933-pro-720p', name: 'Seedance 2.0 Pro (933人脸版)', description: '9图3视频3音频，支持 4-15s，支持真人，固定按次计费 ¥4.50/次', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-bl-sd2.0-933-pro-noface-720p', name: 'Seedance 2.0 Pro (933无脸版)', description: '9图3视频3音频，支持 4-15s，固定按次计费 ¥4.00/次', maxSeconds: 15, icon: '🚀' },
   { id: 'cd-seedance-2.0-720p', name: 'Seedance 2.0 (720p/CD版)', description: '支持最多9张图片、3个视频、3个音频参考，5-15秒，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🚀' },
-  { id: 'vd-seedance-2.5-480p', name: 'Seedance 2.5 (480p)', description: '支持最多30张图片、10个视频、10个音频参考，4-29秒，！！不卡真人，按秒计费 ¥0.62/秒', maxSeconds: 29, icon: '⚡' },
-  { id: 'vd-seedance-2.5-720p', name: 'Seedance 2.5 (720p)', description: '支持最多30张图片、10个视频、10个音频参考，4-29秒，！！不卡真人，按秒计费 ¥1.00/秒', maxSeconds: 29, icon: '🚀' },
+  { id: 'vd-seedance-2.5-480p', name: 'Seedance 2.5 (480p)', description: '支持最多30张图片、10个音频参考（无视频参考），4-29秒，！！不卡真人，按秒计费 ¥0.62/秒', maxSeconds: 29, icon: '⚡' },
+  { id: 'vd-seedance-2.5-720p', name: 'Seedance 2.5 (720p)', description: '支持最多30张图片、10个音频参考（无视频参考），4-29秒，！！不卡真人，按秒计费 ¥1.00/秒', maxSeconds: 29, icon: '🚀' },
   { id: 'nd-seedance-2.0-480p', name: 'Seedance 2.0 (480p/不卡脸)', description: '9图3视频3音频，支持 4-15s，不卡人脸，固定按次计费 ¥3.75/次', maxSeconds: 15, icon: '⚡' },
   { id: 'nd-seedance-2.0-720p', name: 'Seedance 2.0 (720p/不卡脸)', description: '9图3视频3音频，支持 4-15s，不卡人脸，固定按次计费 ¥4.30/次', maxSeconds: 15, icon: '🚀' },
   { id: 'veo-omni-flash', name: 'Veo Omni Flash', description: '多参考图生成视频，参考图字段 Ingredients_images，固定10s', maxSeconds: 10, icon: '🚀' },
@@ -234,9 +234,9 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'seedance-720', name: 'Seedance 720 满血版', description: '满血模型，支持933，过人脸，720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🔥' },
   { id: 'tejiasd2', name: 'tejiasd2', description: 'SD 2.0 9张参考图 3个参考视频 3个参考音频 不卡真人 只支持10秒 特价模型', maxSeconds: 10, icon: '🚀' },
   { id: 'sd2.0-fast-480p', name: 'SD 2.0 Fast (480p)', description: '快速 480p 满血版，概率卡脸，适合漫剧/线图。支持 9张参考图 3个参考视频 3个参考音频，4-15秒', maxSeconds: 15, icon: '⚡' },
-  { id: 'sd2-mini', name: 'Seedance Mini (sd2-mini)', description: 'Seedance Mini 720p，支持933、图片、视频、音频参考素材，固定按次计费 ¥2.00/次', maxSeconds: 15, icon: '⚡' },
-  { id: 'seedance2.0-933', name: 'seedance2.0 933', description: 'seedance2.0 933 模型（映射至 sd2-mini 渠道），支持933、图片、视频、音频参考素材，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🚀' },
-  { id: 'seedance2.0 933', name: 'seedance2.0 933', description: 'seedance2.0 933 模型（映射至 sd2-mini 渠道），支持933、图片、视频、音频参考素材，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🚀' },
+  { id: 'sd2-mini', name: 'Seedance Mini (sd2-mini)', description: 'Seedance Mini 720p (933)，支持9图、3音频参考（无视频参考），固定按次计费 ¥2.00/次', maxSeconds: 15, icon: '⚡' },
+  { id: 'seedance2.0-933', name: 'seedance2.0 933', description: 'seedance2.0 933 模型，支持9图、3音频参考（无视频参考），固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🚀' },
+  { id: 'seedance2.0 933', name: 'seedance2.0 933', description: 'seedance2.0 933 模型，支持9图、3音频参考（无视频参考），固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🚀' },
 ];
 
 /** 查找支持指定视频模型的渠道 */
@@ -1251,7 +1251,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         if (url) imageUrls.push(url);
       }
       const videoRefUrls: string[] = [];
-      const maxVidCount = (model === 'sd2.5' || isVd25) ? 0 : 3;
+      const isNoVideoModel = isVd25 || model === 'sd2.5' || model === 'sd2-mini' || model === 'seedance2.0-933' || model === 'seedance2.0 933' || model.includes('noface');
+      const maxVidCount = isNoVideoModel ? 0 : 3;
       for (const v of finalVideos.slice(0, maxVidCount)) {
         const url = convertBase64ToPublicUrl(v, 'sd2_vid', req);
         if (url) videoRefUrls.push(url);
