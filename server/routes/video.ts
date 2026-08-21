@@ -1312,9 +1312,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         aspect_ratio: aspect_ratio,
       };
 
-      if (imageUrls.length > 0) payload.image_refs = imageUrls;
-      if (videoRefUrls.length > 0) payload.video_refs = videoRefUrls;
-      if (audioRefUrls.length > 0) payload.audio_refs = audioRefUrls;
+      if (imageUrls.length > 0) payload.images = imageUrls;
+      if (videoRefUrls.length > 0) payload.videos = videoRefUrls;
+      if (audioRefUrls.length > 0) payload.audios = audioRefUrls;
+      if (resolution) payload.resolution = resolution;
       if (compliance_enabled !== undefined) payload.compliance_enabled = Boolean(compliance_enabled);
       if (compliance_mode) payload.compliance_mode = compliance_mode;
 
