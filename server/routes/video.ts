@@ -228,7 +228,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'veo-omni-flash', name: 'Veo Omni Flash', description: '多参考图生成视频，参考图字段 Ingredients_images，固定10s', maxSeconds: 10, icon: '🚀' },
   { id: 'veo-3-1', name: 'Veo 3-1', description: '【不卡人脸-定制版】无水印视频；只支持8秒；支持首尾帧、支持多图参考，最多9张图', maxSeconds: 8, icon: '🚀' },
   { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多10张图片参考（无视频/音频参考），5-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
-  { id: 'sd2.5', name: 'Seedance 2.5 (sd2.5)', description: '支持最多30张图片、10个视频、10个音频参考，4-30秒，不卡人脸，固定 30 秒，固定按次计费 ¥3.50/次', maxSeconds: 30, icon: '🚀' },
+  { id: 'sd2.5', name: 'Seedance 2.5 (sd2.5)', description: '支持9图0视频0音频，卡人脸；适合制作带货视频，固定按次计费 ¥3.50/次', maxSeconds: 30, icon: '🚀' },
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 720p', description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '⚡' },
   { id: 'seedance-720', name: 'Seedance 720 满血版', description: '满血模型，支持933，过人脸，720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🔥' },
@@ -1251,13 +1251,13 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         if (url) imageUrls.push(url);
       }
       const videoRefUrls: string[] = [];
-      const maxVidCount = (model === 'sd2.5' || isVd25) ? 10 : 3;
+      const maxVidCount = (model === 'sd2.5' || isVd25) ? 0 : 3;
       for (const v of finalVideos.slice(0, maxVidCount)) {
         const url = convertBase64ToPublicUrl(v, 'sd2_vid', req);
         if (url) videoRefUrls.push(url);
       }
       const audioRefUrls: string[] = [];
-      const maxAudCount = (model === 'sd2.5' || isVd25) ? 10 : 3;
+      const maxAudCount = isVd25 ? 10 : (model === 'sd2.5' ? 0 : 3);
       for (const a of finalAudios.slice(0, maxAudCount)) {
         const url = convertBase64ToPublicUrl(a, 'sd2_aud', req);
         if (url) audioRefUrls.push(url);
