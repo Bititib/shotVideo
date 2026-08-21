@@ -148,12 +148,12 @@ export async function syncModelsFromAPI() {
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-noface-720p', displayName: 'Seedance 2.0 Pro (933无脸版)', capabilities: JSON.stringify(['video']) },
     { provider: 'diwdiw', modelId: 'cd-seedance-2.0-720p', displayName: 'Seedance 2.0 (720p/CD版)', capabilities: JSON.stringify(['video']) },
-    { provider: 'diwdiw', modelId: 'vd-seedance-2.5-480p', displayName: 'Seedance 2.5 (480p)', capabilities: JSON.stringify(['video']) },
-    { provider: 'diwdiw', modelId: 'vd-seedance-2.5-720p', displayName: 'Seedance 2.5 (720p)', capabilities: JSON.stringify(['video']) },
+    { provider: 'diwdiw', modelId: 'vd-seedance-2.5-480p', displayName: 'Seedance 2.5 (480p)', description: '支持最多30张图片、10个视频、10个音频参考，4-29秒，！！不卡真人，按秒计费 ¥0.62/秒', capabilities: JSON.stringify(['video']) },
+    { provider: 'diwdiw', modelId: 'vd-seedance-2.5-720p', displayName: 'Seedance 2.5 (720p)', description: '支持最多30张图片、10个视频、10个音频参考，4-29秒，！！不卡真人，按秒计费 ¥1.00/秒', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']), isActive: 0 },
-    { provider: 'seedance', modelId: 'sd2.5', displayName: 'Seedance 2.5 (sd2.5)', capabilities: JSON.stringify(['video']) },
+    { provider: 'seedance', modelId: 'sd2.5', displayName: 'Seedance 2.5 (sd2.5)', description: '支持最多30张图片、10个视频、10个音频参考，4-30秒，不卡人脸，固定 30 秒，固定按次计费 ¥3.50/次', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-mini', displayName: 'Seedance Mini (sd2-mini)', description: 'Seedance Mini 720p，支持933、图片、视频、音频参考素材', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance2.0-933', displayName: 'seedance2.0 933', description: 'seedance2.0 933 模型（映射至 sd2-mini 渠道），支持933、图片、视频、音频参考素材', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']), isActive: 0 },
@@ -169,9 +169,9 @@ export async function syncModelsFromAPI() {
     const existing = db.select().from(models).where(eq(models.modelId, m.modelId)).get();
     const targetIsActive = m.isActive !== undefined ? m.isActive : 1;
     if (existing) {
-      if (existing.displayName !== m.displayName || existing.capabilities !== m.capabilities || existing.isActive !== targetIsActive) {
+      if (existing.displayName !== m.displayName || existing.capabilities !== m.capabilities || existing.isActive !== targetIsActive || existing.description !== (m.description || null)) {
         db.update(models)
-          .set({ displayName: m.displayName, capabilities: m.capabilities, isActive: targetIsActive })
+          .set({ displayName: m.displayName, capabilities: m.capabilities, isActive: targetIsActive, description: m.description || null })
           .where(eq(models.modelId, m.modelId))
           .run();
       }
@@ -180,6 +180,7 @@ export async function syncModelsFromAPI() {
         provider: m.provider,
         modelId: m.modelId,
         displayName: m.displayName,
+        description: m.description || null,
         capabilities: m.capabilities,
         isActive: targetIsActive,
       }).run();

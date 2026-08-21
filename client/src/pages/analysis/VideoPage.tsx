@@ -1343,7 +1343,7 @@ export default function VideoPage() {
                   </div>
                   <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
 
-                  {(selectedModel === 'omni-flash-vref' || isSoraV4Model(selectedModel) || selectedModel === 'tejiasd2' || selectedModel === 'sd2.0-fast-480p' || selectedModel?.startsWith('sd-') || selectedModel?.startsWith('seedance-') || selectedModel?.includes('sdas-') || selectedModel?.startsWith('lg-')) && (
+                  {maxRefVideos > 0 && (
                     <>
                       <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideos.length > 0 ? `(${referenceVideos.length}/${maxRefVideos})` : ''}
