@@ -1062,7 +1062,7 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 MJNewAPI cd-seedance 渠道出错:', err.message);
   }
 
-  // 14b) MJNewAPI 渠道 - vd-seedance-2.5 系列
+  // 14b) MJNewAPI 渠道 - md-seedance-2.5 系列
   try {
     const existingVd = db.select().from(channels).all().find(c => c.name === 'MJNewAPI vd-seedance 渠道' || c.name === 'MJNewAPI rd-seedance 渠道');
     const vdModels = ['md-seedance-2.5-480p', 'md-seedance-2.5-720p'];
