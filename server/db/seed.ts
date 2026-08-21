@@ -147,6 +147,8 @@ export async function syncModelsFromAPI() {
     { provider: 'sudashui', modelId: 'sdas-mj-minimax-h3-2k', displayName: 'Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-noface-720p', displayName: 'Seedance 2.0 Pro (933无脸版)', capabilities: JSON.stringify(['video']) },
+    { provider: 'sudashui', modelId: 'sdas-gf7-seedance-2.5-480p', displayName: 'Seedance 2.5 (480p/星河版)', description: '支持30图10视频10音频参考，4-30秒，！！不卡真人，按秒计费 ¥0.65/秒', capabilities: JSON.stringify(['video']) },
+    { provider: 'sudashui', modelId: 'sdas-gf7-seedance-2.5-720p', displayName: 'Seedance 2.5 (720p/星河版)', description: '支持30图10视频10音频参考，4-30秒，！！不卡真人，按秒计费 ¥1.10/秒', capabilities: JSON.stringify(['video']) },
     { provider: 'diwdiw', modelId: 'cd-seedance-2.0-720p', displayName: 'Seedance 2.0 (720p/CD版)', capabilities: JSON.stringify(['video']) },
     { provider: 'diwdiw', modelId: 'md-seedance-2.5-480p', displayName: 'Seedance 2.5 (480p)', description: '支持最多30张图片、10个音频参考（无视频参考），4-29秒，！！不卡真人，按秒计费 ¥0.62/秒', capabilities: JSON.stringify(['video']) },
     { provider: 'diwdiw', modelId: 'md-seedance-2.5-720p', displayName: 'Seedance 2.5 (720p)', description: '支持最多30张图片、10个音频参考（无视频参考），4-29秒，！！不卡真人，按秒计费 ¥1.00/秒', capabilities: JSON.stringify(['video']) },
@@ -662,6 +664,8 @@ export async function initDatabase() {
     { key: 'sdas_mj_minimax_h3_2k_rate', value: '3.00', label: 'Minimax H3 (2K) 费率(¥/次)' },
     { key: 'sdas_bl_sd20_933_pro_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro (933人脸版) 费率(¥/次)' },
     { key: 'sdas_bl_sd20_933_pro_noface_720p_rate', value: '4.00', label: 'Seedance 2.0 Pro (933无脸版) 费率(¥/次)' },
+    { key: 'sdas_gf7_seedance_2_5_480p_rate', value: '0.65', label: 'Seedance 2.5 (480p/星河版) 费率(¥/秒)' },
+    { key: 'sdas_gf7_seedance_2_5_720p_rate', value: '1.10', label: 'Seedance 2.5 (720p/星河版) 费率(¥/秒)' },
     { key: 'cd_seedance_2_0_720p_rate', value: '3.00', label: 'Seedance 2.0 (720p/CD版) 费率(¥/次)' },
     { key: 'vd_seedance_2_5_480p_rate', value: '0.62', label: 'Seedance 2.5 (480p) 费率(¥/秒)' },
     { key: 'vd_seedance_2_5_720p_rate', value: '1.00', label: 'Seedance 2.5 (720p) 费率(¥/秒)' },
@@ -862,7 +866,9 @@ export async function initDatabase() {
       'ld-sdas-cvk-pro-933-720p',
       'sdas-mj-minimax-h3-2k',
       'sdas-bl-sd2.0-933-pro-720p',
-      'sdas-bl-sd2.0-933-pro-noface-720p'
+      'sdas-bl-sd2.0-933-pro-noface-720p',
+      'sdas-gf7-seedance-2.5-480p',
+      'sdas-gf7-seedance-2.5-720p'
     ];
     const pidoiModels = ['tejiasd2'];
     const allChannels = db.select().from(channels).all();

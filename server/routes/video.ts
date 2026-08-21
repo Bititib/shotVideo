@@ -188,6 +188,8 @@ const MODEL_META: Record<string, ModelMeta> = {
   'sdas-mj-minimax-h3-2k': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-bl-sd2.0-933-pro-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-bl-sd2.0-933-pro-noface-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'sdas-gf7-seedance-2.5-480p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
+  'sdas-gf7-seedance-2.5-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   'cd-seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'md-seedance-2.5-480p': { series: 'seedance-480p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29], requireRef: false },
   'md-seedance-2.5-720p': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29], requireRef: false },
@@ -220,6 +222,8 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'sdas-mj-minimax-h3-2k', name: 'Minimax H3 (2K)', description: '海螺h3，9图3视频3音频，4-15s，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🔥' },
   { id: 'sdas-bl-sd2.0-933-pro-720p', name: 'Seedance 2.0 Pro (933人脸版)', description: '9图3视频3音频，支持 4-15s，支持真人，固定按次计费 ¥4.50/次', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-bl-sd2.0-933-pro-noface-720p', name: 'Seedance 2.0 Pro (933无脸版)', description: '9图3视频3音频，支持 4-15s，固定按次计费 ¥4.00/次', maxSeconds: 15, icon: '🚀' },
+  { id: 'sdas-gf7-seedance-2.5-480p', name: 'Seedance 2.5 (480p/星河版)', description: '支持30图10视频10音频参考，4-30秒，！！不卡真人，按秒计费 ¥0.65/秒', maxSeconds: 30, icon: '⚡' },
+  { id: 'sdas-gf7-seedance-2.5-720p', name: 'Seedance 2.5 (720p/星河版)', description: '支持30图10视频10音频参考，4-30秒，！！不卡真人，按秒计费 ¥1.10/秒', maxSeconds: 30, icon: '🚀' },
   { id: 'cd-seedance-2.0-720p', name: 'Seedance 2.0 (720p/CD版)', description: '支持最多9张图片、3个视频、3个音频参考，5-15秒，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🚀' },
   { id: 'md-seedance-2.5-480p', name: 'Seedance 2.5 (480p)', description: '支持最多30张图片、10个音频参考（无视频参考），4-29秒，！！不卡真人，按秒计费 ¥0.62/秒', maxSeconds: 29, icon: '⚡' },
   { id: 'md-seedance-2.5-720p', name: 'Seedance 2.5 (720p)', description: '支持最多30张图片、10个音频参考（无视频参考），4-29秒，！！不卡真人，按秒计费 ¥1.00/秒', maxSeconds: 29, icon: '🚀' },
@@ -505,6 +509,16 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
+    } else if (m.id === 'sdas-gf7-seedance-2.5-480p') {
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_gf7_seedance_2_5_480p_rate')).get()?.value || '0.65');
+      rates = {
+        '480p': rate,
+      };
+    } else if (m.id === 'sdas-gf7-seedance-2.5-720p') {
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_gf7_seedance_2_5_720p_rate')).get()?.value || '1.10');
+      rates = {
+        '720p': rate,
+      };
     } else if (m.id === 'cd-seedance-2.0-720p') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'cd_seedance_2_0_720p_rate')).get()?.value || '3.00');
       rates = {
@@ -714,6 +728,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'sdas-bl-sd2.0-933-pro-noface-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_bl_sd20_933_pro_noface_720p_rate')).get();
     rate = parseFloat(row?.value || '4.00');
+  } else if (model === 'sdas-gf7-seedance-2.5-480p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_gf7_seedance_2_5_480p_rate')).get();
+    rate = parseFloat(row?.value || '0.65');
+  } else if (model === 'sdas-gf7-seedance-2.5-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_gf7_seedance_2_5_720p_rate')).get();
+    rate = parseFloat(row?.value || '1.10');
   } else if (model === 'cd-seedance-2.0-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'cd_seedance_2_0_720p_rate')).get();
     rate = parseFloat(row?.value || '3.00');
@@ -963,16 +983,21 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     } else if (isSudaShui) {
       sendEvent({ type: 'status', message: '正在上传素材并提交 SudaShui 任务...' });
 
+      const isVd25Sdas = model === 'sdas-gf7-seedance-2.5-480p' || model === 'sdas-gf7-seedance-2.5-720p';
+      const maxImgs = isVd25Sdas ? 30 : 9;
+      const maxVids = isVd25Sdas ? 10 : 3;
+      const maxAuds = isVd25Sdas ? 10 : 3;
+
       const imageUrls: string[] = [];
-      for (const img of (reference_images || []).slice(0, 9)) {
+      for (const img of (reference_images || []).slice(0, maxImgs)) {
         imageUrls.push(await uploadToSudaShui(img, channel.apiKey));
       }
       const videoUrls: string[] = [];
-      for (const v of finalVideos.slice(0, 3)) {
+      for (const v of finalVideos.slice(0, maxVids)) {
         videoUrls.push(await uploadToSudaShui(v, channel.apiKey));
       }
       const audioUpUrls: string[] = [];
-      for (const a of finalAudios.slice(0, 3)) {
+      for (const a of finalAudios.slice(0, maxAuds)) {
         audioUpUrls.push(await uploadToSudaShui(a, channel.apiKey));
       }
 
