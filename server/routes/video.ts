@@ -1002,6 +1002,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       }
 
       let finalPrompt = prompt.trim();
+      finalPrompt = finalPrompt.replace(/[@＠]图(\d+)/g, (_, numStr) => `@image${numStr}`);
       finalPrompt = finalPrompt.replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (match, idxStr) => {
         const idx = parseInt(idxStr, 10);
         return `@image${idx + 1}`;
@@ -1290,6 +1291,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       }
 
       let finalPrompt = prompt.trim();
+      finalPrompt = finalPrompt.replace(/[@＠]图(\d+)/g, (_, numStr) => `@Image${numStr}`);
       finalPrompt = finalPrompt.replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (match, idxStr) => {
         const idx = parseInt(idxStr, 10);
         return `@Image${idx + 1}`;
