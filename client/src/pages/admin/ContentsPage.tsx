@@ -114,23 +114,25 @@ export default function ContentsPage() {
         <select
           value={typeFilter}
           onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}
-          className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500/50"
+          className="px-3 py-2 bg-[#1a1a1a] border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500/50 appearance-none cursor-pointer"
+          style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center', paddingRight: '28px' }}
         >
-          <option value="">全部类型</option>
-          <option value="video">视频</option>
-          <option value="image">图片</option>
-          <option value="analysis">分析</option>
+          <option value="" className="bg-[#1a1a1a] text-white">全部类型</option>
+          <option value="video" className="bg-[#1a1a1a] text-white">视频</option>
+          <option value="image" className="bg-[#1a1a1a] text-white">图片</option>
+          <option value="analysis" className="bg-[#1a1a1a] text-white">分析</option>
         </select>
 
         <select
           value={statusFilter}
           onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-          className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500/50"
+          className="px-3 py-2 bg-[#1a1a1a] border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500/50 appearance-none cursor-pointer"
+          style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 10px center', paddingRight: '28px' }}
         >
-          <option value="">全部状态</option>
-          <option value="completed">成功</option>
-          <option value="processing">生成中</option>
-          <option value="failed">失败</option>
+          <option value="" className="bg-[#1a1a1a] text-white">全部状态</option>
+          <option value="completed" className="bg-[#1a1a1a] text-white">成功</option>
+          <option value="processing" className="bg-[#1a1a1a] text-white">生成中</option>
+          <option value="failed" className="bg-[#1a1a1a] text-white">失败</option>
         </select>
       </div>
 
