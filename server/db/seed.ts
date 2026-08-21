@@ -148,8 +148,8 @@ export async function syncModelsFromAPI() {
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-noface-720p', displayName: 'Seedance 2.0 Pro (933无脸版)', capabilities: JSON.stringify(['video']) },
     { provider: 'diwdiw', modelId: 'cd-seedance-2.0-720p', displayName: 'Seedance 2.0 (720p/CD版)', capabilities: JSON.stringify(['video']) },
-    { provider: 'diwdiw', modelId: 'vd-seedance-2.5-480p', displayName: 'Seedance 2.5 (480p)', description: '支持最多30张图片、10个音频参考（无视频参考），4-29秒，！！不卡真人，按秒计费 ¥0.62/秒', capabilities: JSON.stringify(['video']) },
-    { provider: 'diwdiw', modelId: 'vd-seedance-2.5-720p', displayName: 'Seedance 2.5 (720p)', description: '支持最多30张图片、10个音频参考（无视频参考），4-29秒，！！不卡真人，按秒计费 ¥1.00/秒', capabilities: JSON.stringify(['video']) },
+    { provider: 'diwdiw', modelId: 'md-seedance-2.5-480p', displayName: 'Seedance 2.5 (480p)', description: '支持最多30张图片、10个音频参考（无视频参考），4-29秒，！！不卡真人，按秒计费 ¥0.62/秒', capabilities: JSON.stringify(['video']) },
+    { provider: 'diwdiw', modelId: 'md-seedance-2.5-720p', displayName: 'Seedance 2.5 (720p)', description: '支持最多30张图片、10个音频参考（无视频参考），4-29秒，！！不卡真人，按秒计费 ¥1.00/秒', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']), isActive: 0 },
@@ -823,13 +823,13 @@ export async function initDatabase() {
       outputPrice: 0,
     },
     {
-      modelPattern: 'vd-seedance-2.5-480p',
+      modelPattern: 'md-seedance-2.5-480p',
       billingType: 'per_token',
       inputPrice: 0.62,
       outputPrice: 0,
     },
     {
-      modelPattern: 'vd-seedance-2.5-720p',
+      modelPattern: 'md-seedance-2.5-720p',
       billingType: 'per_token',
       inputPrice: 1.00,
       outputPrice: 0,
@@ -1065,10 +1065,10 @@ export async function initDatabase() {
   // 14b) MJNewAPI 渠道 - vd-seedance-2.5 系列
   try {
     const existingVd = db.select().from(channels).all().find(c => c.name === 'MJNewAPI vd-seedance 渠道' || c.name === 'MJNewAPI rd-seedance 渠道');
-    const vdModels = ['vd-seedance-2.5-480p', 'vd-seedance-2.5-720p'];
+    const vdModels = ['md-seedance-2.5-480p', 'md-seedance-2.5-720p'];
     const vdMapping = {
-      'vd-seedance-2.5-480p': 'vd-seedance-2.5-480p',
-      'vd-seedance-2.5-720p': 'vd-seedance-2.5-720p'
+      'md-seedance-2.5-480p': 'md-seedance-2.5-480p',
+      'md-seedance-2.5-720p': 'md-seedance-2.5-720p'
     };
     if (!existingVd) {
       db.insert(channels).values({
