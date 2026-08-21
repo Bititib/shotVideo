@@ -668,6 +668,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     upstreamModel = 'ld-sdas-cvk-pro-933-720p';
   } else if (model === 'sdas-hn-sd2.0-fast-720p') {
     upstreamModel = 'sdas-hn-sd2.0-fast-720p';
+  } else if (model === 'vd-seedance-2.5-480p') {
+    upstreamModel = 'md-seedance-2.5-480p';
+  } else if (model === 'vd-seedance-2.5-720p') {
+    upstreamModel = 'md-seedance-2.5-720p';
   } else if (dbChannel?.modelMapping) {
     try {
       const mapping = typeof dbChannel.modelMapping === 'string' ? JSON.parse(dbChannel.modelMapping) : dbChannel.modelMapping;
