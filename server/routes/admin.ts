@@ -231,4 +231,35 @@ router.delete('/orgs/:id', async (req: AuthRequest, res: Response) => {
   }
 });
 
+// ============ 内容管理（管理员查看所有用户生成内容） ============
+router.get('/contents', async (req: AuthRequest, res: Response) => {
+  try {
+    const { page = '1', pageSize = '20', type, userId, modelId, status, search } = req.query;
+    const { ContentService } = await import('../services/contentService.js');
+    const result = ContentService.getAllContents({
+      page: parseInt(page as string),
+      pageSize: parseInt(pageSize as string),
+      type: type as string,
+      userId: userId ? parseInt(userId as string) : undefined,
+      modelId: modelId as string,
+      status: status as string,
+      search: search as string,
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || '获取内容列表失败' });
+  }
+});
+
+router.get('/contents/:id', async (req: AuthRequest, res: Response) => {
+  try {
+    const contentId = parseInt(req.params.id);
+    const { ContentService } = await import('../services/contentService.js');
+    const item = ContentService.getById(contentId);
+    res.json(item);
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '获取内容失败' });
+  }
+});
+
 export default router;

@@ -133,4 +133,50 @@ export class ContentService {
 
     db.delete(contents).where(eq(contents.id, contentId)).run();
   }
+
+  /** 管理员查询所有内容（分页+筛选） */
+  static getAllContents(options: { page: number; pageSize: number; type?: string; userId?: number; modelId?: string; status?: string; search?: string }) {
+    const { page, pageSize, type, userId, modelId, status, search } = options;
+    const offset = (page - 1) * pageSize;
+
+    const conditions: any[] = [];
+    if (type) conditions.push(eq(contents.type, type));
+    if (userId) conditions.push(eq(contents.userId, userId));
+    if (modelId) conditions.push(eq(contents.modelId, modelId));
+    if (status) conditions.push(eq(contents.status, status));
+    if (search) conditions.push(like(contents.title, `%${search}%`));
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const items = db.select({
+      id: contents.id,
+      userId: contents.userId,
+      orgId: contents.orgId,
+      type: contents.type,
+      title: contents.title,
+      inputText: contents.inputText,
+      resultUrl: contents.resultUrl,
+      resultText: contents.resultText,
+      modelId: contents.modelId,
+      cost: contents.cost,
+      metadata: contents.metadata,
+      status: contents.status,
+      createdAt: contents.createdAt,
+      userEmail: users.email,
+      userName: users.username,
+    }).from(contents)
+      .leftJoin(users, eq(contents.userId, users.id))
+      .where(whereClause)
+      .orderBy(desc(contents.createdAt))
+      .limit(pageSize)
+      .offset(offset)
+      .all();
+
+    const total = db.select({ count: sql<number>`count(*)` })
+      .from(contents)
+      .where(whereClause)
+      .get()?.count || 0;
+
+    return { items, total, page, pageSize };
+  }
 }

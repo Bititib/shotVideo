@@ -25,6 +25,7 @@ import ChannelsPage from './pages/admin/ChannelsPage';
 import TokensPage from './pages/admin/TokensPage';
 import PricingPage from './pages/admin/PricingPage';
 import OrgsPage from './pages/admin/OrgsPage';
+import ContentsPage from './pages/admin/ContentsPage';
 import OrgLayout from './pages/org/OrgLayout';
 import OrgDashboard from './pages/org/OrgDashboard';
 import OrgMembersPage from './pages/org/OrgMembersPage';
@@ -86,6 +87,7 @@ export default function App() {
           <Route path="tiers" element={<TiersPage />} />
           <Route path="models" element={<ModelsPage />} />
           <Route path="orgs" element={<OrgsPage />} />
+          <Route path="contents" element={<ContentsPage />} />
         </Route>
 
         {/* Org — 组织管理员面板 */}

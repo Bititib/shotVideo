@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw, Maximize2, Minimize2, Scissors, HelpCircle, Trash2 } from 'lucide-react';
 import { fetchVideoModels, generateVideo, type VideoModel, type VideoSSEEvent } from '../../api/video';
 import ImageSlicerModal from '../../components/ImageSlicerModal';
@@ -566,6 +566,73 @@ export default function VideoPage() {
     // 加载本地资产库
     getAssets().then(setMyAssets).catch(() => { });
   }, []);
+
+  // ========== 一键复刻：从管理后台跳转过来时自动填充参数 ==========
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const replicateId = searchParams.get('replicate');
+    if (!replicateId) return;
+
+    // 从 sessionStorage 读取完整内容数据
+    const raw = sessionStorage.getItem('replicate_content');
+    if (!raw) return;
+    sessionStorage.removeItem('replicate_content');
+
+    try {
+      const item = JSON.parse(raw);
+      const meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata || '{}') : (item.metadata || {});
+
+      // 恢复模型
+      if (meta.model || item.modelId) {
+        setSelectedModel(meta.model || item.modelId);
+      }
+
+      // 恢复提示词
+      if (item.inputText) {
+        setPrompt(item.inputText);
+      } else if (item.title) {
+        setPrompt(item.title);
+      }
+
+      // 恢复分辨率
+      if (meta.resolution) {
+        setResolution(meta.resolution);
+      }
+
+      // 恢复时长
+      if (meta.seconds) {
+        setDuration(Number(meta.seconds));
+      }
+
+      // 恢复宽高比
+      if (meta.aspect_ratio) {
+        setAspectRatio(meta.aspect_ratio);
+      }
+
+      // 恢复参考图片
+      if (Array.isArray(meta.reference_images) && meta.reference_images.length > 0) {
+        setReferenceImages(meta.reference_images);
+      }
+
+      // 恢复参考视频
+      if (Array.isArray(meta.reference_videos) && meta.reference_videos.length > 0) {
+        setReferenceVideos(meta.reference_videos);
+      }
+
+      // 恢复参考音频
+      if (Array.isArray(meta.audio_urls) && meta.audio_urls.length > 0) {
+        setReferenceAudios(meta.audio_urls);
+        setReferenceAudioNames(meta.audio_urls.map((_: any, i: number) => `音频_${i + 1}`));
+      }
+
+      // 清除 URL 参数，避免刷新页面重复触发
+      setSearchParams({}, { replace: true });
+
+      console.log('[replicate] 已恢复任务参数:', { model: meta.model, resolution: meta.resolution, seconds: meta.seconds, refImages: meta.reference_images?.length || 0, refVideos: meta.reference_videos?.length || 0, refAudios: meta.audio_urls?.length || 0 });
+    } catch (e) {
+      console.error('[replicate] 解析复刻数据失败:', e);
+    }
+  }, [searchParams]);
 
   // 轮询在后台生成中的数据库任务
   useEffect(() => {
