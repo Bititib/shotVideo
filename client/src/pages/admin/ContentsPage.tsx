@@ -65,6 +65,14 @@ export default function ContentsPage() {
     try { return JSON.parse(metaStr || '{}'); } catch { return {}; }
   };
 
+  const getVideoPlayUrl = (url: string | null) => {
+    if (!url) return '';
+    if (url.startsWith('/') || url.startsWith('http://localhost') || url.startsWith('http://127.0.0.1')) {
+      return url;
+    }
+    return `/api/video/play?url=${encodeURIComponent(url)}`;
+  };
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'completed': case 'success':
@@ -158,7 +166,7 @@ export default function ContentsPage() {
                 >
                   {hasVideo ? (
                     <video
-                      src={item.resultUrl!}
+                      src={getVideoPlayUrl(item.resultUrl)}
                       className="w-full h-full object-cover"
                       muted
                       preload="metadata"
@@ -333,7 +341,7 @@ export default function ContentsPage() {
                 <>
                   {/* Video */}
                   {previewItem.resultUrl && previewItem.resultUrl.trim() !== '' && (
-                    <video src={previewItem.resultUrl} controls className="w-full rounded-xl bg-black" />
+                    <video src={getVideoPlayUrl(previewItem.resultUrl)} controls className="w-full rounded-xl bg-black" />
                   )}
 
                   {/* Info grid */}
