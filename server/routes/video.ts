@@ -1423,8 +1423,24 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           const progressStr = dataBlock.progress || status.progress || '0%';
           progress = parseInt(progressStr) || 0;
 
+          // 详细日志：记录上游返回的完整状态以便排查
+          if (isSudaShui) {
+            console.log(`[video] SudaShui 原始响应: status.status=${status.status} data.status=${dataBlock.status} taskStatus=${taskStatus} keys=${JSON.stringify(Object.keys(status))} dataKeys=${JSON.stringify(Object.keys(dataBlock))}`);
+          }
+
           if (taskStatus === 'success' || taskStatus === 'completed') {
-            resultUrl = dataBlock.result_url || (dataBlock.data && dataBlock.data.url) || status.result_url || status.url;
+            // 尝试从多种可能的字段路径提取视频 URL
+            resultUrl = dataBlock.result_url
+              || dataBlock.video_url
+              || (dataBlock.data && (dataBlock.data.url || dataBlock.data.video_url))
+              || (dataBlock.result && (typeof dataBlock.result === 'string' ? dataBlock.result : dataBlock.result.url || dataBlock.result.video_url))
+              || status.result_url
+              || status.video_url
+              || status.url
+              || '';
+            if (isSudaShui && !resultUrl) {
+              console.error(`[video] ⚠️ SudaShui 状态为 success 但未找到视频 URL! 完整响应: ${JSON.stringify(status).slice(0, 500)}`);
+            }
           } else if (taskStatus === 'failure' || taskStatus === 'failed') {
             const errVal = dataBlock.error || status.error;
             const detailMsg = (typeof errVal === 'object' && errVal) ? errVal.message : errVal;
@@ -1490,7 +1506,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
         console.log(`[video] 轮询 (${isOmni ? 'Omni' : isSudaShui ? 'SudaShui' : isSoraV4 ? 'SoraV4' : isSeedanceFast ? 'SeedanceFast' : 'Grok'}): status=${taskStatus} progress=${progress}%`);
 
-        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'in_progress') {
+        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'in_progress' || taskStatus === 'running' || taskStatus === 'generating') {
           sendEvent({ type: 'progress', progress });
           sendEvent({ type: 'status', message: `视频生成中 ${progress}%` });
           // 将实时进度写入数据库，以便前端刷新页面后恢复时能读取
@@ -2060,7 +2076,14 @@ export function resumePollForTask(contentId: number, record: any) {
           const progressStr = dataBlock.progress || statusData.progress || '0%';
           progress = parseInt(progressStr) || 0;
           if (taskStatus === 'success' || taskStatus === 'completed') {
-            resultUrl = dataBlock.result_url || (dataBlock.data && dataBlock.data.url) || statusData.result_url || statusData.url;
+            resultUrl = dataBlock.result_url
+              || dataBlock.video_url
+              || (dataBlock.data && (dataBlock.data.url || dataBlock.data.video_url))
+              || (dataBlock.result && (typeof dataBlock.result === 'string' ? dataBlock.result : dataBlock.result.url || dataBlock.result.video_url))
+              || statusData.result_url
+              || statusData.video_url
+              || statusData.url
+              || '';
           } else if (taskStatus === 'failure' || taskStatus === 'failed') {
             const errVal = dataBlock.error || statusData.error;
             const detailMsg = (typeof errVal === 'object' && errVal) ? errVal.message : errVal;
@@ -2124,7 +2147,7 @@ export function resumePollForTask(contentId: number, record: any) {
 
         console.log(`[video-recover] Polling task ${contentId}: status=${taskStatus} progress=${progress}%`);
 
-        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'in_progress') {
+        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'in_progress' || taskStatus === 'running' || taskStatus === 'generating') {
           try {
             const meta = JSON.parse(currentRecord.metadata || '{}');
             meta.progress = progress;
