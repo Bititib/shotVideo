@@ -63,6 +63,18 @@ export const adminApi = {
   },
   updateOrg(id: number, data: any) { return api.put<any>(`/admin/orgs/${id}`, data); },
   deleteOrg(id: number) { return api.delete<any>(`/admin/orgs/${id}`); },
+
+  // 内容管理
+  getContents(params: { page?: number; pageSize?: number; type?: string; status?: string; search?: string } = {}) {
+    const qs = new URLSearchParams();
+    if (params.page) qs.set('page', String(params.page));
+    if (params.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params.type) qs.set('type', params.type);
+    if (params.status) qs.set('status', params.status);
+    if (params.search) qs.set('search', params.search);
+    return api.get<any>(`/admin/contents?${qs.toString()}`);
+  },
+  getContent(id: number) { return api.get<any>(`/admin/contents/${id}`); },
 };
 
 /** 公开接口 - 不需要登录 */

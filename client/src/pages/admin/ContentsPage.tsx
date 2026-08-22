@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Film, Copy, ChevronLeft, ChevronRight, Filter, Image, Video, Music, Eye, X, Play } from 'lucide-react';
+import { adminApi } from '../../api/admin';
 
 interface ContentItem {
   id: number;
@@ -34,20 +35,13 @@ export default function ContentsPage() {
   const fetchContents = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        pageSize: pageSize.toString(),
+      const data = await adminApi.getContents({
+        page,
+        pageSize,
+        search: search || undefined,
+        status: statusFilter || undefined,
+        type: typeFilter || undefined
       });
-      if (search) params.set('search', search);
-      if (statusFilter) params.set('status', statusFilter);
-      if (typeFilter) params.set('type', typeFilter);
-
-      const token = localStorage.getItem('token');
-      const resp = await fetch(`/api/admin/contents?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!resp.ok) throw new Error('获取失败');
-      const data = await resp.json();
       setItems(data.items || []);
       setTotal(data.total || 0);
     } catch (e) {
