@@ -200,6 +200,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'veo-3-1': { series: 'veo-3-1', allowedSeconds: [8], requireRef: false },
   'sd2-c7': { series: 'sd2-c7', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sd2.5': { series: 'sd2.5', allowedSeconds: [30], requireRef: false },
+  'seedance-2.5-c1': { series: 'seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   'seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-fast-720p': { series: 'seedance-fast-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-720': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
@@ -233,6 +234,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'veo-3-1', name: 'Veo 3-1', description: '【不卡人脸-定制版】无水印视频；只支持8秒；支持首尾帧、支持多图参考，最多9张图', maxSeconds: 8, icon: '🚀' },
   { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多10张图片参考（无视频/音频参考），5-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
   { id: 'sd2.5', name: 'Seedance 2.5 (sd2.5)', description: '支持9图0视频0音频，卡人脸；适合制作带货视频，固定按次计费 ¥3.50/次', maxSeconds: 30, icon: '🚀' },
+  { id: 'seedance-2.5-c1', name: 'Seedance 2.5 (c1/888API)', description: '支持最多9图、3视频、3音频参考，4-30秒，按秒计费 ¥0.25/秒', maxSeconds: 30, icon: '🚀' },
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 720p', description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '⚡' },
   { id: 'seedance-720', name: 'Seedance 720 满血版', description: '满血模型，支持933，过人脸，720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🔥' },
@@ -445,6 +447,12 @@ router.get('/models', (_req: Request, res: Response) => {
     } else if (m.id === 'sd2.5') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get()?.value || '3.50');
       rates = {
+        '720p': rate,
+      };
+    } else if (m.id === 'seedance-2.5-c1') {
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'seedance_2_5_c1_rate')).get()?.value || '0.25');
+      rates = {
+        '480p': rate,
         '720p': rate,
       };
     } else if (m.id === 'sd2-mini') {
@@ -726,6 +734,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'vd-seedance-2.5-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'vd_seedance_2_5_720p_rate')).get();
     rate = parseFloat(row?.value || '1.00');
+  } else if (model === 'seedance-2.5-c1') {
+    const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_5_c1_rate')).get();
+    rate = parseFloat(row?.value || '0.25');
   } else if (model === 'nd-seedance-2.0-480p') {
     const row = db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_480p_rate')).get();
     rate = parseFloat(row?.value || '3.75');
@@ -906,6 +917,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isSeedanceJsonModel = [
     'sd2-c7',
     'sd2.5',
+    'seedance-2.5-c1',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
     'seedance-720',
@@ -1285,14 +1297,22 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         model: upstreamModel,
         prompt: finalPrompt,
         duration: Number(video_length) || 8,
-        aspect_ratio: aspect_ratio,
       };
 
-      if (imageUrls.length > 0) payload.image_refs = imageUrls;
-      if (videoRefUrls.length > 0) payload.video_refs = videoRefUrls;
-      if (audioRefUrls.length > 0) payload.audio_refs = audioRefUrls;
-      if (compliance_enabled !== undefined) payload.compliance_enabled = Boolean(compliance_enabled);
-      if (compliance_mode) payload.compliance_mode = compliance_mode;
+      if (model === 'seedance-2.5-c1') {
+        payload.ratio = aspect_ratio;
+        payload.resolution = resolution || '720p';
+        if (imageUrls.length > 0) payload.image_urls = imageUrls;
+        if (videoRefUrls.length > 0) payload.video_urls = videoRefUrls;
+        if (audioRefUrls.length > 0) payload.audio_urls = audioRefUrls;
+      } else {
+        payload.aspect_ratio = aspect_ratio;
+        if (imageUrls.length > 0) payload.image_refs = imageUrls;
+        if (videoRefUrls.length > 0) payload.video_refs = videoRefUrls;
+        if (audioRefUrls.length > 0) payload.audio_refs = audioRefUrls;
+        if (compliance_enabled !== undefined) payload.compliance_enabled = Boolean(compliance_enabled);
+        if (compliance_mode) payload.compliance_mode = compliance_mode;
+      }
 
       console.log(`[video] Step1 sd2 创建任务: model=${model} upstreamModel=${upstreamModel} duration=${payload.duration} resolution=${resolution} refs=${imageUrls.length} video=${videoRefUrls.length} audio=${audioRefUrls.length}`);
 

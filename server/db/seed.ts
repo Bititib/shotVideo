@@ -678,8 +678,9 @@ export async function initDatabase() {
     { key: 'grok_imagine_1_0_video_rate', value: '0.288', label: 'Grok Imagine 1.0 Video 费率(¥/秒)' },
     { key: 'grok_imagine_video_1_5_fast_rate', value: '0.288', label: 'Grok Imagine 1.5 Fast 费率(¥/秒)' },
     { key: 'grok_imagine_video_1_5_preview_rate', value: '0.48', label: 'Grok Imagine 1.5 Preview 费率(¥/秒)' },
+    { key: 'seedance_2_5_c1_rate', value: '0.25', label: 'Seedance 2.5 (c1) 费率(¥/秒)' },
   ];
-  // 物理清理旧的 rd_seedance 相关的设置项
+  // 物理清理旧 of rd_seedance 相关的设置项
   db.delete(settings).where(eq(settings.key, 'rd_seedance_2_5_480p_rate')).run();
   db.delete(settings).where(eq(settings.key, 'rd_seedance_2_5_720p_rate')).run();
 
@@ -695,7 +696,7 @@ export async function initDatabase() {
         updateData.label = s.label;
       }
       // 对于价格发生变化的设置项，如果存在且值不同，则强制更新数值
-      if (s.key === 'veo_omni_flash_rate' || s.key === 'veo_3_1_rate' || s.key === 'sd2_5_rate' || s.key === 'nd_seedance_2_0_480p_rate' || s.key === 'nd_seedance_2_0_720p_rate' || s.key.startsWith('vd_seedance_2_5_')) {
+      if (s.key === 'veo_omni_flash_rate' || s.key === 'veo_3_1_rate' || s.key === 'sd2_5_rate' || s.key === 'nd_seedance_2_0_480p_rate' || s.key === 'nd_seedance_2_0_720p_rate' || s.key.startsWith('vd_seedance_2_5_') || s.key === 'seedance_2_5_c1_rate') {
         if (existing.value !== s.value) {
           updateData.value = s.value;
         }
