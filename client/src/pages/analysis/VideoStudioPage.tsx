@@ -71,7 +71,6 @@ const ALL_DURATIONS = [
 ];
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
-  if (modelId === 'md-seedance-2.5-480p' || modelId === 'md-seedance-2.5-720p' || modelId === 'sdas-gf7-seedance-2.5-480p' || modelId === 'sdas-gf7-seedance-2.5-720p') return 30;
   if (modelId === 'grok-imagine-1.0-video' || modelId === 'grok-imagine-video-1.5-fast') return 7;
   if (modelId === 'grok-imagine-video-1.5-preview') return 1;
   if (modelId === 'sdas-pg-s2.0-fast') return 5;

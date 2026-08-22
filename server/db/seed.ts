@@ -658,11 +658,7 @@ export async function initDatabase() {
     { key: 'sdas_mj_minimax_h3_2k_rate', value: '3.00', label: 'Minimax H3 (2K) 费率(¥/次)' },
     { key: 'sdas_bl_sd20_933_pro_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro (933人脸版) 费率(¥/次)' },
     { key: 'sdas_bl_sd20_933_pro_noface_720p_rate', value: '4.00', label: 'Seedance 2.0 Pro (933无脸版) 费率(¥/次)' },
-    { key: 'sdas_gf7_seedance_2_5_480p_rate', value: '0.65', label: 'Seedance 2.5 (480p/星河版) 费率(¥/秒)' },
-    { key: 'sdas_gf7_seedance_2_5_720p_rate', value: '1.10', label: 'Seedance 2.5 (720p/星河版) 费率(¥/秒)' },
     { key: 'cd_seedance_2_0_720p_rate', value: '3.00', label: 'Seedance 2.0 (720p/CD版) 费率(¥/次)' },
-    { key: 'vd_seedance_2_5_480p_rate', value: '0.62', label: 'Seedance 2.5 (480p) 费率(¥/秒)' },
-    { key: 'vd_seedance_2_5_720p_rate', value: '1.00', label: 'Seedance 2.5 (720p) 费率(¥/秒)' },
     { key: 'nd_seedance_2_0_480p_rate', value: '3.15', label: 'Seedance 2.0 (480p/不卡脸) 费率(¥/次)' },
     { key: 'nd_seedance_2_0_720p_rate', value: '4.30', label: 'Seedance 2.0 (720p/不卡脸) 费率(¥/次)' },
     { key: 'sd2_c6_rate', value: '2.50', label: 'Seedance 2.0 c6 费率(¥/次)' },
@@ -679,6 +675,10 @@ export async function initDatabase() {
   db.delete(settings).where(eq(settings.key, 'sd20_fast_480p_rate')).run();
   db.delete(settings).where(eq(settings.key, 'sdas_pd_sd20_pro_933_5_720p_rate')).run();
   db.delete(settings).where(eq(settings.key, 'sdas_my_seedance_20_fast_720p_rate')).run();
+  db.delete(settings).where(eq(settings.key, 'sdas_gf7_seedance_2_5_480p_rate')).run();
+  db.delete(settings).where(eq(settings.key, 'sdas_gf7_seedance_2_5_720p_rate')).run();
+  db.delete(settings).where(eq(settings.key, 'vd_seedance_2_5_480p_rate')).run();
+  db.delete(settings).where(eq(settings.key, 'vd_seedance_2_5_720p_rate')).run();
 
   // 物理清理废弃的 Seedance 2.5 相关的模型
   db.delete(models).where(eq(models.modelId, 'md-seedance-2.5-480p')).run();
