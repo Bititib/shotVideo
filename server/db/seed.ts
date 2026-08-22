@@ -831,15 +831,9 @@ export async function initDatabase() {
       outputPrice: 0,
     },
     {
-      modelPattern: 'md-seedance-2.5-480p',
+      modelPattern: 'seedance-2.5-c1',
       billingType: 'per_token',
-      inputPrice: 0.62,
-      outputPrice: 0,
-    },
-    {
-      modelPattern: 'md-seedance-2.5-720p',
-      billingType: 'per_token',
-      inputPrice: 1.00,
+      inputPrice: 0.25,
       outputPrice: 0,
     },
   ];
@@ -870,9 +864,7 @@ export async function initDatabase() {
       'ld-sdas-cvk-pro-933-720p',
       'sdas-mj-minimax-h3-2k',
       'sdas-bl-sd2.0-933-pro-720p',
-      'sdas-bl-sd2.0-933-pro-noface-720p',
-      'sdas-gf7-seedance-2.5-480p',
-      'sdas-gf7-seedance-2.5-720p'
+      'sdas-bl-sd2.0-933-pro-noface-720p'
     ];
     const pidoiModels = ['tejiasd2'];
     const allChannels = db.select().from(channels).all();
@@ -992,12 +984,51 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 4月天 渠道出错:', err.message);
   }
 
-  // 12) 强制清理已下线的 888API 渠道
+  // 12) 保证 888API 渠道存在并绑定 seedance-2.5-c1 模型
   try {
-    db.delete(channels).where(eq(channels.baseUrl, 'https://888api.xin')).run();
-    console.log('🧹 已从数据库强制物理删除 888API 渠道');
+    const existing888 = db.select().from(channels).where(eq(channels.baseUrl, 'https://888api.xin')).get();
+    const api888Models = ['seedance-2.5-c1'];
+    const api888Mapping = { 'seedance-2.5-c1': 'seedance-2.5-c1' };
+    if (!existing888) {
+      db.insert(channels).values({
+        name: '888API 渠道',
+        type: 'openai',
+        baseUrl: 'https://888api.xin',
+        apiKey: 'sk-请填写你的888API密钥',
+        supportedModels: JSON.stringify(api888Models),
+        modelMapping: JSON.stringify(api888Mapping),
+        status: 1,
+        priority: 0,
+        weight: 1,
+        maxRetries: 3,
+        timeout: 120000,
+      }).run();
+      console.log('📦 已自动创建 888API 渠道并绑定 seedance-2.5-c1');
+    } else {
+      // 确保已有的 888API 渠道包含 seedance-2.5-c1
+      let currentModels: string[] = [];
+      try { currentModels = JSON.parse(existing888.supportedModels || '[]'); } catch {}
+      let updated = false;
+      for (const m of api888Models) {
+        if (!currentModels.includes(m)) {
+          currentModels.push(m);
+          updated = true;
+        }
+      }
+      if (updated) {
+        db.update(channels)
+          .set({
+            supportedModels: JSON.stringify(currentModels),
+            modelMapping: JSON.stringify(api888Mapping),
+            updatedAt: new Date().toISOString()
+          })
+          .where(eq(channels.id, existing888.id))
+          .run();
+        console.log('🔄 已更新 888API 渠道支持模型列表');
+      }
+    }
   } catch (err: any) {
-    console.error('⚠️ 删除 888API 渠道出错:', err.message);
+    console.error('⚠️ 初始化 888API 渠道出错:', err.message);
   }
 
   // 13) 保证 Pidoi 图片渠道存在（独立 API Key，与视频渠道分离）
