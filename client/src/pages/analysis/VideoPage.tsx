@@ -268,7 +268,7 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'sd2.5') return 9;
   if (modelId === 'sd2-c7') return 10;
   if (modelId === 'sd2-c6') return 9;
-  if (modelId === 'tejiasd2' || modelId === 'sd2.0-fast-480p' || modelId.startsWith('sd-') || modelId.startsWith('sd2-') || modelId.startsWith('seedance-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
+  if (modelId === 'tejiasd2' || modelId === 'sd2.0-fast-480p' || modelId.startsWith('sd-') || modelId.startsWith('sd2-') || modelId.startsWith('seedance') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (isSoraV4Model(modelId)) return 4;
   if (modelId === 'omni-flash') return 7;
   if (modelId === 'omni-flash-vref') return 5;
@@ -384,17 +384,24 @@ export default function VideoPage() {
   const audioFileInputRef = useRef<HTMLInputElement>(null);
 
   // 各模型的参考视频/音频上限
+  const isNoVideoModel = (modelName: string) => {
+    return modelName === 'sd2.5' || modelName === 'sd2-mini' || modelName === 'seedance2.0-933' || modelName === 'seedance2.0 933' || modelName === 'sd2-c6' || modelName === 'sd2-c7' || modelName.includes('noface');
+  };
+  const isNoAudioModel = (modelName: string) => {
+    return modelName === 'sd2.5' || modelName === 'sd2-c6' || modelName === 'sd2-c7';
+  };
+
   const getMaxRefVideos = (m: string) => {
     if (m === 'seedance-2.5-c1') return 10;
-    if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
-    if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
+    if (isNoVideoModel(m)) return 0;
+    if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance') || m.startsWith('lg-')) return 3;
     if (m === 'omni-flash-vref') return 1;
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
     if (m === 'seedance-2.5-c1') return 10;
-    if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
-    if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
+    if (isNoAudioModel(m)) return 0;
+    if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance') || m.startsWith('lg-')) return 3;
     return 0;
   };
   const maxRefVideos = getMaxRefVideos(selectedModel);
