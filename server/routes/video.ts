@@ -349,9 +349,6 @@ export async function downloadAndLocalizeVideo(url: string, videoId: string, mod
     try { if (fs.existsSync(tempTranscoded)) fs.unlinkSync(tempTranscoded); } catch { }
   }
 }
-    try { if (fs.existsSync(tempTranscoded)) fs.unlinkSync(tempTranscoded); } catch { }
-  }
-}
 /** GET /api/video/models — 可用的视频模型列表（公开，不需要登录） */
 router.get('/models', (_req: Request, res: Response) => {
   // 从数据库动态拉取所有启用且具备 'video' 能力的模型
