@@ -927,6 +927,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] Omni 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
         sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`Omni 创建任务失败: ${createResp.status}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -997,6 +998,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] SudaShui 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
         sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`SudaShui 创建任务失败: ${createResp.status}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1064,6 +1066,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] SoraV4 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
         sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`SoraV4 创建任务失败: ${createResp.status}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1106,6 +1109,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] Veo Omni Flash 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
         sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`Veo Omni Flash 创建任务失败: ${createResp.status}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1156,6 +1160,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] Veo 3-1 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
         sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`Veo 3-1 创建任务失败: ${createResp.status}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1206,6 +1211,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] Seedance 2.0 Fast 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
         sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`Seedance 2.0 Fast 创建任务失败: ${createResp.status}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1287,6 +1293,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] sd2 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
         sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`sd2 创建任务失败: ${createResp.status}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1338,6 +1345,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
         sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`创建任务失败: ${createResp.status}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1367,7 +1375,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
     if (!videoId) {
       if (contentId !== null) activePolls.delete(contentId);
-      sendEvent({ type: 'error', message: '上游未返回任务 ID' });
+      refundFailedTask('上游未返回任务 ID');
       res.write('data: [DONE]\n\n');
       return res.end();
     }
@@ -1536,7 +1544,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     const msg = err.name === 'AbortError'
       ? '请求超时'
       : (err.cause?.message || err.message || '请求失败');
-    sendEvent({ type: 'error', message: msg });
+    refundFailedTask(msg);
     res.write('data: [DONE]\n\n');
     res.end();
   }
