@@ -188,6 +188,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'sdas-mj-minimax-h3-2k': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-bl-sd2.0-933-pro-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-bl-sd2.0-933-pro-noface-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'cd-seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'nd-seedance-2.0-480p': { series: 'seedance-480p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'nd-seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-fast': { series: 'seedance-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
@@ -491,6 +492,11 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
+    } else if (m.id === 'cd-seedance-2.0-720p') {
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'cd_seedance_2_0_720p_rate')).get()?.value || '3.00');
+      rates = {
+        '720p': rate,
+      };
     } else if (m.id === 'nd-seedance-2.0-480p') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_480p_rate')).get()?.value || '3.75');
       rates = {
@@ -688,9 +694,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'seedance-2.5-c1') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_5_c1_rate')).get();
     rate = parseFloat(row?.value || '0.25');
+  } else if (model === 'cd-seedance-2.0-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'cd_seedance_2_0_720p_rate')).get();
+    rate = parseFloat(row?.value || '3.00');
   } else if (model === 'nd-seedance-2.0-480p') {
     const row = db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_480p_rate')).get();
-    rate = parseFloat(row?.value || '3.75');
+    rate = parseFloat(row?.value || '3.15');
   } else if (model === 'nd-seedance-2.0-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_720p_rate')).get();
     rate = parseFloat(row?.value || '4.30');
@@ -1920,7 +1929,7 @@ export function resumePollForTask(contentId: number, record: any) {
     rate = parseFloat(row?.value || '3.00');
   } else if (model === 'nd-seedance-2.0-480p') {
     const row = db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_480p_rate')).get();
-    rate = parseFloat(row?.value || '3.75');
+    rate = parseFloat(row?.value || '3.15');
   } else if (model === 'nd-seedance-2.0-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_720p_rate')).get();
     rate = parseFloat(row?.value || '4.30');
