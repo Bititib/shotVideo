@@ -65,6 +65,39 @@ export default function ContentsPage() {
     try { return JSON.parse(metaStr || '{}'); } catch { return {}; }
   };
 
+  const parseRefAssets = (metaStr: string) => {
+    try {
+      const meta = JSON.parse(metaStr || '{}');
+      const refImgs: string[] = Array.isArray(meta.reference_images) ? meta.reference_images : [];
+
+      let refVids: string[] = [];
+      if (Array.isArray(meta.reference_videos)) {
+        refVids = meta.reference_videos;
+      } else if (typeof meta.reference_video === 'string' && meta.reference_video) {
+        refVids = [meta.reference_video];
+      } else if (Array.isArray(meta.videos)) {
+        refVids = meta.videos;
+      } else if (Array.isArray(meta.video_refs)) {
+        refVids = meta.video_refs;
+      }
+
+      let refAuds: string[] = [];
+      if (Array.isArray(meta.audio_urls)) {
+        refAuds = meta.audio_urls;
+      } else if (typeof meta.audio_url === 'string' && meta.audio_url) {
+        refAuds = [meta.audio_url];
+      } else if (Array.isArray(meta.audios)) {
+        refAuds = meta.audios;
+      } else if (Array.isArray(meta.audio_refs)) {
+        refAuds = meta.audio_refs;
+      }
+
+      return { refImgs, refVids, refAuds };
+    } catch {
+      return { refImgs: [], refVids: [], refAuds: [] };
+    }
+  };
+
   const getVideoPlayUrl = (url: string | null) => {
     if (!url) return '';
     if (url.startsWith('/') || url.startsWith('http://localhost') || url.startsWith('http://127.0.0.1')) {
@@ -152,9 +185,7 @@ export default function ContentsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {items.map(item => {
             const meta = parseMeta(item.metadata);
-            const refImgs: string[] = meta.reference_images || [];
-            const refVids: string[] = meta.reference_videos || [];
-            const refAuds: string[] = meta.audio_urls || [];
+            const { refImgs, refVids, refAuds } = parseRefAssets(item.metadata);
             const hasVideo = item.resultUrl && item.resultUrl.trim() !== '';
 
             return (
@@ -329,8 +360,8 @@ export default function ContentsPage() {
                 className={`px-3 py-1.5 rounded-lg text-xs transition-colors ${previewTab === 'refs' ? 'bg-white/10 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
               >
                 参考素材 ({(() => {
-                  const m = parseMeta(previewItem.metadata);
-                  return (m.reference_images?.length || 0) + (m.reference_videos?.length || 0) + (m.audio_urls?.length || 0);
+                  const { refImgs, refVids, refAuds } = parseRefAssets(previewItem.metadata);
+                  return refImgs.length + refVids.length + refAuds.length;
                 })()})
               </button>
             </div>
@@ -400,10 +431,7 @@ export default function ContentsPage() {
               ) : (
                 /* Reference Assets Tab */
                 (() => {
-                  const m = parseMeta(previewItem.metadata);
-                  const refImgs: string[] = m.reference_images || [];
-                  const refVids: string[] = m.reference_videos || [];
-                  const refAuds: string[] = m.audio_urls || [];
+                  const { refImgs, refVids, refAuds } = parseRefAssets(previewItem.metadata);
                   return (
                     <div className="space-y-4">
                       {/* Reference Images */}
