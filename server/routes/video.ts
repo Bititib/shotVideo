@@ -248,53 +248,14 @@ function findVideoChannel(modelId: string) {
 }
 
 /**
- * 自动将 Grok 视频下载并本地化保存到 `data/uploads` 目录中，防止上游链接失效或鉴权失败
+ * 将成功生成的视频（不管是哪个模型）下载、转码为 H.264 并本地化保存至 `/uploads/` 目录。
+ * 能够自动提取对应的渠道 API Key 作为 Authorization 头进行下载，防止 401 错误。
+ * 转换完成后，以 `video_` 加清洗后的 `videoId` 命名，实现永久本地缓存。
  */
-export async function downloadAndLocalizeGrokVideo(url: string, videoId: string, model: string): Promise<string> {
+export async function downloadAndLocalizeVideo(url: string, videoId: string, model: string): Promise<string> {
   if (!url) return '';
-  // 如果已经是本地相对路径或本地 uploads 路径，无需重复本地化
-  if (url.startsWith('/') || url.includes('/uploads/')) {
-    return url;
-  }
-
-  console.log(`[video] 开始本地化 Grok 视频: ${url} (task: ${videoId})`);
-
-  const channel = findVideoChannel(model);
-  const headers: Record<string, string> = {};
-  if (channel?.apiKey) {
-    headers['Authorization'] = `Bearer ${channel.apiKey}`;
-  }
-
-  const response = await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch Grok video from upstream: ${response.statusText}`);
-  }
-
-  const uploadDir = path.join(process.cwd(), 'data/uploads');
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-  }
-
-  const filename = `grok_${videoId}.mp4`;
-  const destPath = path.join(uploadDir, filename);
-  const buffer = Buffer.from(await response.arrayBuffer());
-  fs.writeFileSync(destPath, buffer);
-
-  const localizedUrl = `/uploads/${filename}`;
-  console.log(`[video] Grok 视频本地化成功: ${localizedUrl}`);
-  return localizedUrl;
-}
-
-/**
- * 将 4月天渠道 (llm.chre3.com) 的 H.265 视频下载、转码为 H.264 并本地化保存。
- * 使用 UUID 唯一临时文件名，防止并发冲突；转码完成后原子 rename 交付。
- */
-export async function localizeChre3Video(url: string, videoId: string, model: string): Promise<string> {
-  if (!url) return '';
-  // 已经是本地路径，跳过
+  // 如果已经是本地路径，跳过
   if (url.startsWith('/') || url.includes('/uploads/')) return url;
-  // 仅处理 4月天渠道
-  if (!url.includes('llm.chre3.com')) return url;
 
   const uploadDir = path.join(process.cwd(), 'data/uploads');
   if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
@@ -305,7 +266,7 @@ export async function localizeChre3Video(url: string, videoId: string, model: st
 
   // 如果此视频已经本地化过，直接返回
   if (fs.existsSync(finalPath)) {
-    console.log(`[video/transcode] 已存在本地缓存: ${finalFilename}`);
+    console.log(`[video/localize] 已存在本地缓存: ${finalFilename}`);
     return `/uploads/${finalFilename}`;
   }
 
@@ -314,18 +275,43 @@ export async function localizeChre3Video(url: string, videoId: string, model: st
   const tempTranscoded = path.join(uploadDir, `tmp_tc_${uuid}.mp4`);
 
   try {
-    console.log(`[video/transcode] 开始下载 4月天渠道视频: ${url}`);
+    console.log(`[video/localize] 开始下载并缓存视频 (task: ${videoId}, url: ${url})`);
 
     // 获取渠道授权头
-    const channel = findVideoChannel(model);
     const headers: Record<string, string> = {};
-    if (channel?.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+    if (url.includes('grokai') || url.includes('/v1/files/video')) {
+      const channel = findVideoChannel('grok-imagine-video');
+      if (channel?.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+    } else if (url.includes('llm.chre3.com')) {
+      const channel = findVideoChannel('sd2-c7');
+      if (channel?.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+    } else {
+      // 动态检索对应渠道域名
+      try {
+        const activeChannels = ChannelService.getActiveChannels();
+        const matchedChannel = activeChannels.find(ch => {
+          if (!ch.baseUrl) return false;
+          try {
+            const chHost = new URL(ch.baseUrl).hostname;
+            const urlHost = new URL(url).hostname;
+            return chHost === urlHost;
+          } catch {
+            return url.includes(ch.baseUrl);
+          }
+        });
+        if (matchedChannel?.apiKey) {
+          headers['Authorization'] = `Bearer ${matchedChannel.apiKey}`;
+        }
+      } catch (err: any) {
+        console.warn('[video/localize] 自动匹配渠道 Authorization 失败:', err.message);
+      }
+    }
 
     const resp = await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
     if (!resp.ok) throw new Error(`下载失败: ${resp.status} ${resp.statusText}`);
     const buffer = Buffer.from(await resp.arrayBuffer());
     fs.writeFileSync(tempDownload, buffer);
-    console.log(`[video/transcode] 下载完成: ${buffer.length} bytes`);
+    console.log(`[video/localize] 下载完成: ${buffer.length} 字节`);
 
     // ffprobe 检测编码
     let isHevc = false;
@@ -335,34 +321,34 @@ export async function localizeChre3Video(url: string, videoId: string, model: st
         { encoding: 'utf8' }
       );
       isHevc = probeOut.includes('hevc');
-      console.log(`[video/transcode] 编码检测: ${probeOut.trim()} (HEVC=${isHevc})`);
+      console.log(`[video/localize] 编码检测: ${probeOut.trim()} (HEVC=${isHevc})`);
     } catch {
-      console.warn('[video/transcode] ffprobe 检测失败，默认视为 HEVC');
+      console.warn('[video/localize] ffprobe 检测失败，默认视为 HEVC 进行兼容性转码');
       isHevc = true;
     }
 
     if (isHevc) {
-      console.log('[video/transcode] 检测到 HEVC (H.265)，启动 FFmpeg 转码为 H.264...');
+      console.log('[video/localize] 检测到 HEVC (H.265)，启动 FFmpeg 转码为 H.264...');
       await execPromise(
         `ffmpeg -y -i "${tempDownload}" -c:v libx264 -pix_fmt yuv420p -preset superfast -movflags faststart -c:a copy "${tempTranscoded}"`
       );
-      // 原子 rename 到最终路径
       fs.renameSync(tempTranscoded, finalPath);
-      console.log(`[video/transcode] H.264 转码完成: ${finalFilename}`);
+      console.log(`[video/localize] H.264 转码完成: ${finalFilename}`);
     } else {
-      // 非 HEVC，直接 rename
       fs.renameSync(tempDownload, finalPath);
-      console.log(`[video/transcode] 非 HEVC 编码，直接本地化: ${finalFilename}`);
+      console.log(`[video/localize] 标准 H.264 编码，已直接保存为本地文件: ${finalFilename}`);
     }
 
     return `/uploads/${finalFilename}`;
   } catch (err: any) {
-    console.error(`[video/transcode] 4月天视频本地化失败: ${err.message}`);
-    // 返回原始 URL 作为 fallback，仍可通过 /play 代理播放
+    console.error(`[video/localize] 本地化缓存失败: ${err.message}`);
+    // 如果下载转码失败，返回原始 url 做兜底，让前端能够播放
     return url;
   } finally {
-    // 清理临时文件
     try { if (fs.existsSync(tempDownload)) fs.unlinkSync(tempDownload); } catch { }
+    try { if (fs.existsSync(tempTranscoded)) fs.unlinkSync(tempTranscoded); } catch { }
+  }
+}
     try { if (fs.existsSync(tempTranscoded)) fs.unlinkSync(tempTranscoded); } catch { }
   }
 }
@@ -1520,16 +1506,13 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           console.log(`[video] ✅ 生成完成: ${resultUrl}`);
           sendEvent({ type: 'progress', progress: 100 });
 
-          // 4月天渠道视频自动预转码本地化（H.265→H.264）
+          // 自动本地化所有生成成功的视频（转码为 H.264 并存到本地 uploads 目录），防止上游链接失效
           let finalVideoUrl = resultUrl;
-          if (resultUrl && resultUrl.includes('llm.chre3.com')) {
-            try {
-              finalVideoUrl = await localizeChre3Video(resultUrl, videoId, model);
-              console.log(`[video] 4月天视频已本地化: ${finalVideoUrl}`);
-            } catch (localErr: any) {
-              console.error(`[video] 4月天视频本地化失败，使用原始URL: ${localErr.message}`);
-              finalVideoUrl = resultUrl;
-            }
+          try {
+            finalVideoUrl = await downloadAndLocalizeVideo(resultUrl, videoId, model);
+            console.log(`[video] 视频已本地化完成: ${finalVideoUrl}`);
+          } catch (localErr: any) {
+            console.error(`[video] 视频本地化失败，使用原始URL: ${localErr.message}`);
           }
 
           sendEvent({ type: 'complete', videoUrl: finalVideoUrl });
@@ -2136,6 +2119,16 @@ export function resumePollForTask(contentId: number, record: any) {
           } catch { }
         } else if (taskStatus === 'completed' || taskStatus === 'success') {
           console.log(`[video-recover] ✅ Generating completed: ${resultUrl}`);
+
+          // 自动下载并缓存该恢复出的视频（本地化 + 兼容性转码为 H.264）
+          let finalVideoUrl = resultUrl;
+          try {
+            finalVideoUrl = await downloadAndLocalizeVideo(resultUrl, videoId, model);
+            console.log(`[video-recover] 视频本地化成功: ${finalVideoUrl}`);
+          } catch (localErr: any) {
+            console.error(`[video-recover] 视频本地化失败，使用原始URL: ${localErr.message}`);
+          }
+
           const completedTime = Date.now();
           const createdTime = new Date(currentRecord.createdAt).getTime();
           const durationMs = (!isNaN(createdTime) && createdTime > 0 && completedTime >= createdTime)
@@ -2151,7 +2144,7 @@ export function resumePollForTask(contentId: number, record: any) {
           meta = { ...meta, durationMs, completedAt: new Date(completedTime).toISOString() };
           db.update(contents).set({
             status: 'completed',
-            resultUrl: resultUrl || null,
+            resultUrl: finalVideoUrl || null,
             cost: cost,
             metadata: JSON.stringify(meta)
           }).where(eq(contents.id, contentId)).run();
