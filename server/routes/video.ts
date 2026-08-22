@@ -1714,6 +1714,26 @@ router.get('/play', async (req: Request, res: Response) => {
           } else if (url.includes('llm.chre3.com')) {
             const channel = findVideoChannel('sd2-c7');
             if (channel?.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+          } else {
+            // 自动检索数据库中所有启用的渠道，若 URL 与渠道的 Base URL 域名匹配，自动补全授权 Token
+            try {
+              const activeChannels = ChannelService.getActiveChannels();
+              const matchedChannel = activeChannels.find(ch => {
+                if (!ch.baseUrl) return false;
+                try {
+                  const chHost = new URL(ch.baseUrl).hostname;
+                  const urlHost = new URL(url).hostname;
+                  return chHost === urlHost;
+                } catch {
+                  return url.includes(ch.baseUrl);
+                }
+              });
+              if (matchedChannel?.apiKey) {
+                headers['Authorization'] = `Bearer ${matchedChannel.apiKey}`;
+              }
+            } catch (err: any) {
+              console.warn('[video/play] 动态匹配渠道 Authorization 失败:', err.message);
+            }
           }
 
           const fetchResp = await fetch(url, { headers });
