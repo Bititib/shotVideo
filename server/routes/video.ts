@@ -188,8 +188,6 @@ const MODEL_META: Record<string, ModelMeta> = {
   'sdas-mj-minimax-h3-2k': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-bl-sd2.0-933-pro-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sdas-bl-sd2.0-933-pro-noface-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
-  'md-seedance-2.5-480p': { series: 'seedance-480p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29], requireRef: false },
-  'md-seedance-2.5-720p': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29], requireRef: false },
   'nd-seedance-2.0-480p': { series: 'seedance-480p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'nd-seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-fast': { series: 'seedance-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
@@ -221,8 +219,6 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'sdas-bl-sd2.0-933-pro-720p', name: 'Seedance 2.0 Pro (933人脸版)', description: '9图3视频3音频，支持 4-15s，支持真人，固定按次计费 ¥4.50/次', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-bl-sd2.0-933-pro-noface-720p', name: 'Seedance 2.0 Pro (933无脸版)', description: '9图3视频3音频，支持 4-15s，固定按次计费 ¥4.00/次', maxSeconds: 15, icon: '🚀' },
   { id: 'cd-seedance-2.0-720p', name: 'Seedance 2.0 (720p/CD版)', description: '支持最多9张图片、3个视频、3个音频参考，5-15秒，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🚀' },
-  { id: 'md-seedance-2.5-480p', name: 'Seedance 2.5 (480p)', description: '支持最多30张图片、10个音频参考（无视频参考），4-29秒，！！不卡真人，按秒计费 ¥0.62/秒', maxSeconds: 29, icon: '⚡' },
-  { id: 'md-seedance-2.5-720p', name: 'Seedance 2.5 (720p)', description: '支持最多30张图片、10个音频参考（无视频参考），4-29秒，！！不卡真人，按秒计费 ¥1.00/秒', maxSeconds: 29, icon: '🚀' },
   { id: 'nd-seedance-2.0-480p', name: 'Seedance 2.0 (480p/不卡脸)', description: '9图3视频3音频，支持 4-15s，不卡人脸，固定按次计费 ¥3.75/次', maxSeconds: 15, icon: '⚡' },
   { id: 'nd-seedance-2.0-720p', name: 'Seedance 2.0 (720p/不卡脸)', description: '9图3视频3音频，支持 4-15s，不卡人脸，固定按次计费 ¥4.30/次', maxSeconds: 15, icon: '🚀' },
   { id: 'veo-omni-flash', name: 'Veo Omni Flash', description: '多参考图生成视频，参考图字段 Ingredients_images，固定10s', maxSeconds: 10, icon: '🚀' },
@@ -495,16 +491,6 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
-    } else if (m.id === 'md-seedance-2.5-480p') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'vd_seedance_2_5_480p_rate')).get()?.value || '0.62');
-      rates = {
-        '480p': rate,
-      };
-    } else if (m.id === 'md-seedance-2.5-720p') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'vd_seedance_2_5_720p_rate')).get()?.value || '1.00');
-      rates = {
-        '720p': rate,
-      };
     } else if (m.id === 'nd-seedance-2.0-480p') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_480p_rate')).get()?.value || '3.75');
       rates = {
@@ -699,12 +685,6 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'sdas-bl-sd2.0-933-pro-noface-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_bl_sd20_933_pro_noface_720p_rate')).get();
     rate = parseFloat(row?.value || '4.00');
-  } else if (model === 'md-seedance-2.5-480p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'vd_seedance_2_5_480p_rate')).get();
-    rate = parseFloat(row?.value || '0.62');
-  } else if (model === 'md-seedance-2.5-720p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'vd_seedance_2_5_720p_rate')).get();
-    rate = parseFloat(row?.value || '1.00');
   } else if (model === 'seedance-2.5-c1') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_5_c1_rate')).get();
     rate = parseFloat(row?.value || '0.25');
@@ -895,8 +875,6 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'tejiasd2',
     'sd2.0-fast-480p',
     'cd-seedance-2.0-720p',
-    'md-seedance-2.5-480p',
-    'md-seedance-2.5-720p',
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p'
   ].includes(model);
@@ -1230,21 +1208,20 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       // 将 base64 素材保存到本地并生成自托管公网 URL
       const imageUrls: string[] = [];
-      const isVd25 = model === 'md-seedance-2.5-480p' || model === 'md-seedance-2.5-720p';
-      const maxImgCount = (isVd25 || model === 'sd2.5' || model === 'seedance-2.5-c1') ? 30 : 9;
+      const maxImgCount = (model === 'sd2.5' || model === 'seedance-2.5-c1') ? 30 : 9;
       for (const img of (reference_images || []).slice(0, maxImgCount)) {
         const url = convertBase64ToPublicUrl(img, 'sd2_ref', req);
         if (url) imageUrls.push(url);
       }
       const videoRefUrls: string[] = [];
-      const isNoVideoModel = isVd25 || model === 'sd2.5' || model === 'sd2-mini' || model === 'seedance2.0-933' || model === 'seedance2.0 933' || model.includes('noface');
+      const isNoVideoModel = model === 'sd2.5' || model === 'sd2-mini' || model === 'seedance2.0-933' || model === 'seedance2.0 933' || model.includes('noface');
       const maxVidCount = model === 'seedance-2.5-c1' ? 10 : (isNoVideoModel ? 0 : 3);
       for (const v of finalVideos.slice(0, maxVidCount)) {
         const url = convertBase64ToPublicUrl(v, 'sd2_vid', req);
         if (url) videoRefUrls.push(url);
       }
       const audioRefUrls: string[] = [];
-      const maxAudCount = (isVd25 || model === 'seedance-2.5-c1') ? 10 : (model === 'sd2.5' ? 0 : 3);
+      const maxAudCount = model === 'seedance-2.5-c1' ? 10 : (model === 'sd2.5' ? 0 : 3);
       for (const a of finalAudios.slice(0, maxAudCount)) {
         const url = convertBase64ToPublicUrl(a, 'sd2_aud', req);
         if (url) audioRefUrls.push(url);

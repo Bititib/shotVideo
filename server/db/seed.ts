@@ -147,15 +147,12 @@ export async function syncModelsFromAPI() {
     { provider: 'sudashui', modelId: 'sdas-mj-minimax-h3-2k', displayName: 'Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-noface-720p', displayName: 'Seedance 2.0 Pro (933无脸版)', capabilities: JSON.stringify(['video']) },
-    { provider: 'sudashui', modelId: 'sdas-gf7-seedance-2.5-480p', displayName: 'Seedance 2.5 (480p/星河版)', description: '适合漫剧，支持30图10视频10音频参考，4-30秒，！！不卡真人，按秒计费 ¥0.65/秒', capabilities: JSON.stringify(['video']) },
-    { provider: 'sudashui', modelId: 'sdas-gf7-seedance-2.5-720p', displayName: 'Seedance 2.5 (720p/星河版)', description: '适合漫剧，支持30图10视频10音频参考，4-30秒，！！不卡真人，按秒计费 ¥1.10/秒', capabilities: JSON.stringify(['video']) },
     { provider: 'diwdiw', modelId: 'cd-seedance-2.0-720p', displayName: 'Seedance 2.0 (720p/CD版)', capabilities: JSON.stringify(['video']) },
-    { provider: 'diwdiw', modelId: 'md-seedance-2.5-480p', displayName: 'Seedance 2.5 (480p)', description: '不适合漫剧，支持最多30张图片、10个音频参考（无视频参考），4-29秒，！！不卡真人，按秒计费 ¥0.62/秒', capabilities: JSON.stringify(['video']) },
-    { provider: 'diwdiw', modelId: 'md-seedance-2.5-720p', displayName: 'Seedance 2.5 (720p)', description: '不适合漫剧，支持最多30张图片、10个音频参考（无视频参考），4-29秒，！！不卡真人，按秒计费 ¥1.00/秒', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'seedance', modelId: 'sd2.5', displayName: 'Seedance 2.5 (sd2.5)', description: '支持9图0视频0音频，卡人脸；适合制作带货视频，固定按次计费 ¥3.50/次', capabilities: JSON.stringify(['video']) },
+    { provider: 'seedance', modelId: 'seedance-2.5-c1', displayName: 'Seedance 2.5 (c1/888API)', description: '支持最多30张图片、10个视频、10个音频参考，4-30秒，按秒计费 ¥0.25/秒', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-mini', displayName: 'Seedance Mini (sd2-mini)', description: 'Seedance Mini 720p (933)，支持9图、3音频参考（无视频参考），固定按次计费 ¥2.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance2.0-933', displayName: 'seedance2.0 933', description: 'seedance2.0 933 模型，支持9图、3音频参考（无视频参考），固定按次计费 ¥3.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']), isActive: 0 },
@@ -683,6 +680,12 @@ export async function initDatabase() {
   // 物理清理旧 of rd_seedance 相关的设置项
   db.delete(settings).where(eq(settings.key, 'rd_seedance_2_5_480p_rate')).run();
   db.delete(settings).where(eq(settings.key, 'rd_seedance_2_5_720p_rate')).run();
+
+  // 物理清理废弃的 Seedance 2.5 相关的模型
+  db.delete(models).where(eq(models.modelId, 'md-seedance-2.5-480p')).run();
+  db.delete(models).where(eq(models.modelId, 'md-seedance-2.5-720p')).run();
+  db.delete(models).where(eq(models.modelId, 'sdas-gf7-seedance-2.5-480p')).run();
+  db.delete(models).where(eq(models.modelId, 'sdas-gf7-seedance-2.5-720p')).run();
 
   for (const s of omniSettings) {
     const existing = db.select().from(settings).where(eq(settings.key, s.key)).get();
