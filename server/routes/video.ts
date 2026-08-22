@@ -7,8 +7,8 @@ import { BalanceService } from '../services/balanceService.js';
 import { ContentService } from '../services/contentService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
-import { models, settings, contents } from '../db/schema.js';
-import { eq, like, and, inArray } from 'drizzle-orm';
+import { models, settings, contents, users, organizations } from '../db/schema.js';
+import { eq, like, and, inArray, sql } from 'drizzle-orm';
 import fs from 'fs';
 import path from 'path';
 import { exec, execSync } from 'child_process';
@@ -2222,6 +2222,425 @@ export function resumeAllPendingVideoTasks() {
         resumePollForTask(contentId, record);
       }
     });
+
+    // 智能找回：扫描过去 24 小时内标记为 failed 但拥有 videoId 的任务，检测上游是否其实成功或仍在生成
+    const potentiallyStuckFailedTasks = db.select().from(contents)
+      .where(and(
+        eq(contents.status, 'failed'),
+        eq(contents.type, 'video'),
+        sql`created_at >= datetime('now', '-24 hours')`
+      ))
+      .all();
+
+    (async () => {
+      console.log(`🔍 [video-recover] Checking ${potentiallyStuckFailedTasks.length} failed video tasks for potential upstream success...`);
+      for (const record of potentiallyStuckFailedTasks) {
+        let videoId = '';
+        let metadata: any = {};
+        try {
+          metadata = typeof record.metadata === 'string' ? JSON.parse(record.metadata) : (record.metadata || {});
+          videoId = metadata.videoId || '';
+        } catch { continue; }
+
+        if (!videoId) continue;
+
+        let model = record.modelId || '';
+        if (model === 'sdas-xh-sd2.0-933-3-pro-720p') {
+          model = 'sdas-pd-sd2.0-pro-933-5-720p';
+        }
+        const meta = MODEL_META[model];
+        const channel = findVideoChannel(model);
+        if (!channel) continue;
+
+        const isOmni = model.startsWith('omni-flash');
+        const isSeedanceFast = model === 'seedance-2.0-fast';
+        const isSudaShui = meta?.series === 'sudashui';
+
+        const baseUrl = channel.baseUrl.replace(/\/+$/, '');
+        const headers: Record<string, string> = {};
+        if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+
+        try {
+          let pollUrl = `${baseUrl}/v1/videos/${videoId}`;
+          if (isOmni || isSudaShui) {
+            pollUrl = `${baseUrl}/v1/video/generations/${videoId}`;
+          }
+
+          const pollResp = await fetch(pollUrl, { headers, signal: AbortSignal.timeout(15_000) });
+          if (!pollResp.ok) continue;
+
+          const statusData = await pollResp.json() as any;
+          let taskStatus = '';
+          let resultUrl = '';
+
+          if (isOmni || isSudaShui) {
+            const dataBlock = statusData.data || {};
+            taskStatus = (dataBlock.status || statusData.status || '').toLowerCase();
+            if (taskStatus === 'success' || taskStatus === 'completed') {
+              resultUrl = dataBlock.result_url
+                || dataBlock.video_url
+                || (dataBlock.data && (dataBlock.data.url || dataBlock.data.video_url))
+                || (dataBlock.result && (typeof dataBlock.result === 'string' ? dataBlock.result : dataBlock.result.url || dataBlock.result.video_url))
+                || statusData.result_url
+                || statusData.video_url
+                || statusData.url
+                || '';
+            }
+          } else if (isSeedanceFast) {
+            const outerData = statusData.data || {};
+            const isNested = statusData.data && statusData.data.status !== undefined;
+            if (isNested) {
+              const rawStatus = (outerData.status || '').toLowerCase();
+              if (rawStatus === 'success') {
+                taskStatus = 'success';
+                const innerData = outerData.data || {};
+                const content = innerData.content || {};
+                resultUrl = content.video_url || '';
+              } else {
+                taskStatus = rawStatus;
+              }
+            } else {
+              taskStatus = (statusData.status || '').toLowerCase();
+              if (taskStatus === 'completed' || taskStatus === 'success') {
+                resultUrl = statusData.video_url || statusData.url || statusData.result_url || (statusData.result && statusData.result.url)
+                  || (Array.isArray(statusData.outputs) && statusData.outputs[0]?.url)
+                  || `${baseUrl}/v1/files/video?id=${videoId}`;
+              }
+            }
+          } else {
+            taskStatus = (statusData.status || '').toLowerCase();
+            if (taskStatus === 'completed' || taskStatus === 'success') {
+              resultUrl = statusData.video_url || statusData.url || statusData.result_url || (statusData.result && statusData.result.url)
+                || (Array.isArray(statusData.outputs) && statusData.outputs[0]?.url)
+                || `${baseUrl}/v1/files/video?id=${videoId}`;
+            }
+          }
+
+          if (taskStatus === 'completed' || taskStatus === 'success') {
+            if (!resultUrl) continue;
+            console.log(`[video-recover] 💡 Found completed video upstream for failed task ${record.id} (videoId: ${videoId})! Recovering...`);
+
+            // Calculate cost manually using settings queries
+            const resolution = metadata.resolution || '720p';
+            const video_length = metadata.seconds || 6;
+            let rate = 0.05;
+            
+            if (model === 'omni-flash') {
+              const key = resolution === '1080p' ? 'omni_flash_rate_1080p' : 'omni_flash_rate_720p';
+              const row = db.select().from(settings).where(eq(settings.key, key)).get();
+              rate = parseFloat(row?.value || (resolution === '1080p' ? '1.50' : '0.90'));
+            } else if (model === 'omni-flash-vref') {
+              const key = resolution === '1080p' ? 'omni_vref_rate_1080p' : 'omni_vref_rate_720p';
+              const row = db.select().from(settings).where(eq(settings.key, key)).get();
+              rate = parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
+            } else if (model === 'sdas-hn-sd2.0-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sdas_hn_sd20_720p_rate')).get();
+              rate = parseFloat(row?.value || '3.80');
+            } else if (model === 'sdas-hn-sd2.0-fast-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sdas_hn_sd20_fast_720p_rate')).get();
+              rate = parseFloat(row?.value || '2.80');
+            } else if (model === 'seedance-2.0-fast') {
+              const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get();
+              rate = parseFloat(row?.value || '4.00');
+            } else if (model === 'veo-omni-flash') {
+              const row = db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get();
+              rate = parseFloat(row?.value || '0.25');
+            } else if (model === 'veo-3-1') {
+              const row = db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get();
+              rate = parseFloat(row?.value || '0.20');
+            } else if (model === 'sora-v4-fast') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
+              rate = parseFloat(row?.value || '0.189');
+            } else if (model === 'sora-v4-pro' || model === 'seedance-2.0') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_pro_rate')).get();
+              rate = parseFloat(row?.value || '0.25');
+            } else if (model === 'sd2-c7') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sd2_c7_rate')).get();
+              rate = parseFloat(row?.value || '0.50');
+            } else if (model === 'sd2.5') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get();
+              rate = parseFloat(row?.value || '3.50');
+            } else if (model === 'seedance-2.0-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_720p_rate')).get();
+              rate = parseFloat(row?.value || '3.00');
+            } else if (model === 'seedance-2.0-fast-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_720p_rate')).get();
+              rate = parseFloat(row?.value || '1.50');
+            } else if (model === 'seedance-720') {
+              const row = db.select().from(settings).where(eq(settings.key, 'seedance_720_rate')).get();
+              rate = parseFloat(row?.value || '3.00');
+            } else if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sdas_pd_sd20_pro_933_5_720p_rate')).get();
+              rate = parseFloat(row?.value || '4.50');
+            } else if (model === 'sdas-bl-sd2.0-933-pro-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sdas_bl_sd20_933_pro_720p_rate')).get();
+              rate = parseFloat(row?.value || '4.50');
+            } else if (model === 'sdas-bl-sd2.0-933-pro-noface-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sdas_bl_sd20_933_pro_noface_720p_rate')).get();
+              rate = parseFloat(row?.value || '4.00');
+            } else if (model === 'cd-seedance-2.0-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'cd_seedance_2_0_720p_rate')).get();
+              rate = parseFloat(row?.value || '3.00');
+            } else if (model === 'nd-seedance-2.0-480p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_480p_rate')).get();
+              rate = parseFloat(row?.value || '3.15');
+            } else if (model === 'nd-seedance-2.0-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_720p_rate')).get();
+              rate = parseFloat(row?.value || '4.30');
+            } else if (model === 'ld-sdas-cvk-pro-933-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'ld_sdas_cvk_pro_933_720p_rate')).get();
+              rate = parseFloat(row?.value || '3.80');
+            } else if (model === 'sdas-mj-minimax-h3-2k') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sdas_mj_minimax_h3_2k_rate')).get();
+              rate = parseFloat(row?.value || '3.00');
+            } else if (model === 'sd2-c6') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get();
+              rate = parseFloat(row?.value || '2.50');
+            } else if (model === 'grok-imagine-1.0-video') {
+              const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_1_0_video_rate')).get();
+              rate = parseFloat(row?.value || '0.288');
+            } else if (model === 'grok-imagine-video-1.5-1080p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_video_1_5_1080p_rate')).get();
+              rate = parseFloat(row?.value || '0.80');
+            } else if (model === 'grok-imagine-video-1.5-fast') {
+              const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_video_1_5_fast_rate')).get();
+              rate = parseFloat(row?.value || '0.288');
+            } else if (model === 'grok-imagine-video-1.5-preview') {
+              const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_video_1_5_preview_rate')).get();
+              rate = parseFloat(row?.value || '0.48');
+            } else {
+              const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
+              const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
+              const BASE_RATE: Record<string, number> = {
+                '480p': parseFloat(rate480?.value || '0.03'),
+                '720p': parseFloat(rate720?.value || '0.05'),
+              };
+              const seriesMultiplier = meta?.series === '1.5' ? 1.2 : 1.0;
+              rate = Math.round((BASE_RATE[resolution] || BASE_RATE['720p']) * seriesMultiplier * 100) / 100;
+            }
+
+            const isFlatRateModel = [
+              'sdas-hn-sd2.0-720p',
+              'sdas-hn-sd2.0-fast-720p',
+              'seedance-2.0-fast',
+              'sd2-c7',
+              'sd2.5',
+              'seedance-2.0-720p',
+              'seedance-2.0-fast-720p',
+              'seedance-720',
+              'sdas-pd-sd2.0-pro-933-5-720p',
+              'ld-sdas-cvk-pro-933-720p',
+              'sdas-mj-minimax-h3-2k',
+              'sdas-bl-sd2.0-933-pro-720p',
+              'sdas-bl-sd2.0-933-pro-noface-720p',
+              'cd-seedance-2.0-720p',
+              'nd-seedance-2.0-480p',
+              'nd-seedance-2.0-720p',
+              'sd2-c6',
+              'grok-imagine-1.0-video',
+              'grok-imagine-video-1.5-1080p',
+              'grok-imagine-video-1.5-fast',
+              'grok-imagine-video-1.5-preview',
+              'tejiasd2'
+            ].includes(model);
+
+            const cost = isFlatRateModel ? rate : (Math.round(rate * video_length * 100) / 100);
+
+            // Re-deduct from balance
+            const user = db.select({ orgId: users.orgId }).from(users).where(eq(users.id, record.userId)).get();
+            if (user?.orgId) {
+              db.update(organizations)
+                .set({ balance: sql`balance - ${cost}`, updatedAt: new Date().toISOString() })
+                .where(eq(organizations.id, user.orgId))
+                .run();
+            } else {
+              db.update(users)
+                .set({ balance: sql`balance - ${cost}`, updatedAt: new Date().toISOString() })
+                .where(eq(users.id, record.userId))
+                .run();
+            }
+
+            // Localize video
+            let finalVideoUrl = resultUrl;
+            try {
+              finalVideoUrl = await downloadAndLocalizeVideo(resultUrl, videoId, model);
+            } catch (localErr: any) {
+              console.error(`[video-recover] Localization failed: ${localErr.message}`);
+            }
+
+            const completedTime = Date.now();
+            const createdTime = new Date(record.createdAt).getTime();
+            const durationMs = (!isNaN(createdTime) && createdTime > 0 && completedTime >= createdTime)
+              ? (completedTime - createdTime)
+              : 0;
+
+            metadata = { ...metadata, durationMs, completedAt: new Date(completedTime).toISOString() };
+            db.update(contents).set({
+              status: 'completed',
+              resultUrl: finalVideoUrl || null,
+              cost: cost,
+              metadata: JSON.stringify(metadata)
+            }).where(eq(contents.id, record.id)).run();
+
+            console.log(`[video-recover] Successfully recovered completed task ${record.id} (videoId: ${videoId})`);
+          } else if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'in_progress' || taskStatus === 'running' || taskStatus === 'generating') {
+            console.log(`[video-recover] Stuck failed task ${record.id} is actually ${taskStatus} upstream. Putting back to processing...`);
+            
+            // Set status to processing so resumePollForTask can continue
+            db.update(contents).set({ status: 'processing' }).where(eq(contents.id, record.id)).run();
+            
+            // Calculate and re-deduct estimated cost
+            const resolution = metadata.resolution || '720p';
+            const video_length = metadata.seconds || 6;
+            let rate = 0.05;
+            if (model === 'omni-flash') {
+              const key = resolution === '1080p' ? 'omni_flash_rate_1080p' : 'omni_flash_rate_720p';
+              const row = db.select().from(settings).where(eq(settings.key, key)).get();
+              rate = parseFloat(row?.value || (resolution === '1080p' ? '1.50' : '0.90'));
+            } else if (model === 'omni-flash-vref') {
+              const key = resolution === '1080p' ? 'omni_vref_rate_1080p' : 'omni_vref_rate_720p';
+              const row = db.select().from(settings).where(eq(settings.key, key)).get();
+              rate = parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
+            } else if (model === 'sdas-hn-sd2.0-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sdas_hn_sd20_720p_rate')).get();
+              rate = parseFloat(row?.value || '3.80');
+            } else if (model === 'sdas-hn-sd2.0-fast-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sdas_hn_sd20_fast_720p_rate')).get();
+              rate = parseFloat(row?.value || '2.80');
+            } else if (model === 'seedance-2.0-fast') {
+              const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_rate')).get();
+              rate = parseFloat(row?.value || '4.00');
+            } else if (model === 'veo-omni-flash') {
+              const row = db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get();
+              rate = parseFloat(row?.value || '0.25');
+            } else if (model === 'veo-3-1') {
+              const row = db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get();
+              rate = parseFloat(row?.value || '0.20');
+            } else if (model === 'sora-v4-fast') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
+              rate = parseFloat(row?.value || '0.189');
+            } else if (model === 'sora-v4-pro' || model === 'seedance-2.0') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_pro_rate')).get();
+              rate = parseFloat(row?.value || '0.25');
+            } else if (model === 'sd2-c7') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sd2_c7_rate')).get();
+              rate = parseFloat(row?.value || '0.50');
+            } else if (model === 'sd2.5') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get();
+              rate = parseFloat(row?.value || '3.50');
+            } else if (model === 'seedance-2.0-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_720p_rate')).get();
+              rate = parseFloat(row?.value || '3.00');
+            } else if (model === 'seedance-2.0-fast-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_720p_rate')).get();
+              rate = parseFloat(row?.value || '1.50');
+            } else if (model === 'seedance-720') {
+              const row = db.select().from(settings).where(eq(settings.key, 'seedance_720_rate')).get();
+              rate = parseFloat(row?.value || '3.00');
+            } else if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sdas_pd_sd20_pro_933_5_720p_rate')).get();
+              rate = parseFloat(row?.value || '4.50');
+            } else if (model === 'sdas-bl-sd2.0-933-pro-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sdas_bl_sd20_933_pro_720p_rate')).get();
+              rate = parseFloat(row?.value || '4.50');
+            } else if (model === 'sdas-bl-sd2.0-933-pro-noface-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sdas_bl_sd20_933_pro_noface_720p_rate')).get();
+              rate = parseFloat(row?.value || '4.00');
+            } else if (model === 'cd-seedance-2.0-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'cd_seedance_2_0_720p_rate')).get();
+              rate = parseFloat(row?.value || '3.00');
+            } else if (model === 'nd-seedance-2.0-480p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_480p_rate')).get();
+              rate = parseFloat(row?.value || '3.15');
+            } else if (model === 'nd-seedance-2.0-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_720p_rate')).get();
+              rate = parseFloat(row?.value || '4.30');
+            } else if (model === 'ld-sdas-cvk-pro-933-720p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'ld_sdas_cvk_pro_933_720p_rate')).get();
+              rate = parseFloat(row?.value || '3.80');
+            } else if (model === 'sdas-mj-minimax-h3-2k') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sdas_mj_minimax_h3_2k_rate')).get();
+              rate = parseFloat(row?.value || '3.00');
+            } else if (model === 'sd2-c6') {
+              const row = db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get();
+              rate = parseFloat(row?.value || '2.50');
+            } else if (model === 'grok-imagine-1.0-video') {
+              const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_1_0_video_rate')).get();
+              rate = parseFloat(row?.value || '0.288');
+            } else if (model === 'grok-imagine-video-1.5-1080p') {
+              const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_video_1_5_1080p_rate')).get();
+              rate = parseFloat(row?.value || '0.80');
+            } else if (model === 'grok-imagine-video-1.5-fast') {
+              const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_video_1_5_fast_rate')).get();
+              rate = parseFloat(row?.value || '0.288');
+            } else if (model === 'grok-imagine-video-1.5-preview') {
+              const row = db.select().from(settings).where(eq(settings.key, 'grok_imagine_video_1_5_preview_rate')).get();
+              rate = parseFloat(row?.value || '0.48');
+            } else {
+              const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
+              const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
+              const BASE_RATE: Record<string, number> = {
+                '480p': parseFloat(rate480?.value || '0.03'),
+                '720p': parseFloat(rate720?.value || '0.05'),
+              };
+              const seriesMultiplier = meta?.series === '1.5' ? 1.2 : 1.0;
+              rate = Math.round((BASE_RATE[resolution] || BASE_RATE['720p']) * seriesMultiplier * 100) / 100;
+            }
+
+            const isFlatRateModel = [
+              'sdas-hn-sd2.0-720p',
+              'sdas-hn-sd2.0-fast-720p',
+              'seedance-2.0-fast',
+              'sd2-c7',
+              'sd2.5',
+              'seedance-2.0-720p',
+              'seedance-2.0-fast-720p',
+              'seedance-720',
+              'sdas-pd-sd2.0-pro-933-5-720p',
+              'ld-sdas-cvk-pro-933-720p',
+              'sdas-mj-minimax-h3-2k',
+              'sdas-bl-sd2.0-933-pro-720p',
+              'sdas-bl-sd2.0-933-pro-noface-720p',
+              'cd-seedance-2.0-720p',
+              'nd-seedance-2.0-480p',
+              'nd-seedance-2.0-720p',
+              'sd2-c6',
+              'grok-imagine-1.0-video',
+              'grok-imagine-video-1.5-1080p',
+              'grok-imagine-video-1.5-fast',
+              'grok-imagine-video-1.5-preview',
+              'tejiasd2'
+            ].includes(model);
+
+            const cost = isFlatRateModel ? rate : (Math.round(rate * video_length * 100) / 100);
+
+            // Re-deduct from balance
+            const user = db.select({ orgId: users.orgId }).from(users).where(eq(users.id, record.userId)).get();
+            if (user?.orgId) {
+              db.update(organizations)
+                .set({ balance: sql`balance - ${cost}`, updatedAt: new Date().toISOString() })
+                .where(eq(organizations.id, user.orgId))
+                .run();
+            } else {
+              db.update(users)
+                .set({ balance: sql`balance - ${cost}`, updatedAt: new Date().toISOString() })
+                .where(eq(users.id, record.userId))
+                .run();
+            }
+
+            db.update(contents).set({ cost }).where(eq(contents.id, record.id)).run();
+
+            // Resume active polling
+            const updatedRecord = db.select().from(contents).where(eq(contents.id, record.id)).get();
+            if (updatedRecord) {
+              resumePollForTask(record.id, updatedRecord);
+            }
+          }
+        } catch (pollErr: any) {
+          console.warn(`[video-recover] Error checking failed task ${record.id}: ${pollErr.message}`);
+        }
+      }
+    })();
   } catch (err: any) {
     console.error('⚠️ [video-recover] Scan pending tasks failed:', err.message);
   }
