@@ -234,7 +234,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'veo-3-1', name: 'Veo 3-1', description: '【不卡人脸-定制版】无水印视频；只支持8秒；支持首尾帧、支持多图参考，最多9张图', maxSeconds: 8, icon: '🚀' },
   { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多10张图片参考（无视频/音频参考），5-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
   { id: 'sd2.5', name: 'Seedance 2.5 (sd2.5)', description: '支持9图0视频0音频，卡人脸；适合制作带货视频，固定按次计费 ¥3.50/次', maxSeconds: 30, icon: '🚀' },
-  { id: 'seedance-2.5-c1', name: 'Seedance 2.5 (c1/888API)', description: '支持最多9图、3视频、3音频参考，4-30秒，按秒计费 ¥0.25/秒', maxSeconds: 30, icon: '🚀' },
+  { id: 'seedance-2.5-c1', name: 'Seedance 2.5 (c1/888API)', description: '支持最多30张图片、10个视频、10个音频参考，4-30秒，按秒计费 ¥0.25/秒', maxSeconds: 30, icon: '🚀' },
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 720p', description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '⚡' },
   { id: 'seedance-720', name: 'Seedance 720 满血版', description: '满血模型，支持933，过人脸，720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🔥' },
@@ -1260,20 +1260,20 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       // 将 base64 素材保存到本地并生成自托管公网 URL
       const imageUrls: string[] = [];
       const isVd25 = model === 'vd-seedance-2.5-480p' || model === 'vd-seedance-2.5-720p';
-      const maxImgCount = (isVd25 || model === 'sd2.5') ? 30 : 9;
+      const maxImgCount = (isVd25 || model === 'sd2.5' || model === 'seedance-2.5-c1') ? 30 : 9;
       for (const img of (reference_images || []).slice(0, maxImgCount)) {
         const url = convertBase64ToPublicUrl(img, 'sd2_ref', req);
         if (url) imageUrls.push(url);
       }
       const videoRefUrls: string[] = [];
       const isNoVideoModel = isVd25 || model === 'sd2.5' || model === 'sd2-mini' || model === 'seedance2.0-933' || model === 'seedance2.0 933' || model.includes('noface');
-      const maxVidCount = isNoVideoModel ? 0 : 3;
+      const maxVidCount = model === 'seedance-2.5-c1' ? 10 : (isNoVideoModel ? 0 : 3);
       for (const v of finalVideos.slice(0, maxVidCount)) {
         const url = convertBase64ToPublicUrl(v, 'sd2_vid', req);
         if (url) videoRefUrls.push(url);
       }
       const audioRefUrls: string[] = [];
-      const maxAudCount = isVd25 ? 10 : (model === 'sd2.5' ? 0 : 3);
+      const maxAudCount = (isVd25 || model === 'seedance-2.5-c1') ? 10 : (model === 'sd2.5' ? 0 : 3);
       for (const a of finalAudios.slice(0, maxAudCount)) {
         const url = convertBase64ToPublicUrl(a, 'sd2_aud', req);
         if (url) audioRefUrls.push(url);
