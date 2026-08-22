@@ -42,7 +42,7 @@ export default function ContentsPage() {
       if (statusFilter) params.set('status', statusFilter);
       if (typeFilter) params.set('type', typeFilter);
 
-      const token = localStorage.getItem('auth_token');
+      const token = localStorage.getItem('token');
       const resp = await fetch(`/api/admin/contents?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
