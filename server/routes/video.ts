@@ -498,7 +498,7 @@ router.get('/models', (_req: Request, res: Response) => {
         '720p': rate,
       };
     } else if (m.id === 'nd-seedance-2.0-480p') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_480p_rate')).get()?.value || '3.75');
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_480p_rate')).get()?.value || '3.15');
       rates = {
         '480p': rate,
       };
