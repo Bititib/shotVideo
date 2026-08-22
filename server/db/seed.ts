@@ -142,7 +142,6 @@ export async function syncModelsFromAPI() {
     { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'omni', modelId: 'omni-flash', displayName: 'Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'omni', modelId: 'omni-flash-vref', displayName: 'Omni Flash Vref', capabilities: JSON.stringify(['video']) },
-    { provider: 'sudashui', modelId: 'sdas-hn-sd2.0-fast-720p', displayName: 'Seedance 2.0 Fast 431 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-mj-minimax-h3-2k', displayName: 'Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },
@@ -210,6 +209,7 @@ export async function syncModelsFromAPI() {
       'sora-v4-pro',
       'seedance-2.0-fast',
       'sdas-hn-sd2.0-720p',
+      'sdas-hn-sd2.0-fast-720p',
       'jimeng-video-seedance-2.0-fast',
       'jimeng-video-seedance-2.0-vip',
       'sora2-8s-16x9',
@@ -654,8 +654,6 @@ export async function initDatabase() {
     { key: 'seedance2_0_933_rate', value: '3.00', label: 'seedance2.0 933 费率(¥/次)' },
     { key: 'seedance_2_0_720p_rate', value: '3.00', label: 'Seedance 2.0 720p 费率(¥/次)' },
     { key: 'seedance_2_0_fast_720p_rate', value: '1.50', label: 'Seedance 2.0 Fast 720p 费率(¥/次)' },
-    { key: 'sdas_pd_sd20_pro_933_5_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro 933-5 (720p) 费率(¥/次)' },
-    { key: 'sdas_my_seedance_20_fast_720p_rate', value: '3.00', label: 'Seedance 2.0 Fast 431 (720p) 费率(¥/次)' },
     { key: 'ld_sdas_cvk_pro_933_720p_rate', value: '3.80', label: 'SudaShui CVK Pro 933 (720p) 费率(¥/次)' },
     { key: 'sdas_mj_minimax_h3_2k_rate', value: '3.00', label: 'Minimax H3 (2K) 费率(¥/次)' },
     { key: 'sdas_bl_sd20_933_pro_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro (933人脸版) 费率(¥/次)' },
@@ -669,8 +667,6 @@ export async function initDatabase() {
     { key: 'nd_seedance_2_0_720p_rate', value: '4.30', label: 'Seedance 2.0 (720p/不卡脸) 费率(¥/次)' },
     { key: 'sd2_c6_rate', value: '2.50', label: 'Seedance 2.0 c6 费率(¥/次)' },
     { key: 'seedance_720_rate', value: '3.00', label: 'Seedance 720 满血版 费率(¥/次)' },
-    { key: 'tejiasd2_rate', value: '3.00', label: '特价 SD 2.0 费率(¥/次)' },
-    { key: 'sd20_fast_480p_rate', value: '0.22', label: 'SD 2.0 Fast (480p) 费率(¥/秒)' },
     { key: 'grok_imagine_1_0_video_rate', value: '0.288', label: 'Grok Imagine 1.0 Video 费率(¥/秒)' },
     { key: 'grok_imagine_video_1_5_fast_rate', value: '0.288', label: 'Grok Imagine 1.5 Fast 费率(¥/秒)' },
     { key: 'grok_imagine_video_1_5_preview_rate', value: '0.48', label: 'Grok Imagine 1.5 Preview 费率(¥/秒)' },
@@ -679,6 +675,10 @@ export async function initDatabase() {
   // 物理清理旧 of rd_seedance 相关的设置项
   db.delete(settings).where(eq(settings.key, 'rd_seedance_2_5_480p_rate')).run();
   db.delete(settings).where(eq(settings.key, 'rd_seedance_2_5_720p_rate')).run();
+  db.delete(settings).where(eq(settings.key, 'tejiasd2_rate')).run();
+  db.delete(settings).where(eq(settings.key, 'sd20_fast_480p_rate')).run();
+  db.delete(settings).where(eq(settings.key, 'sdas_pd_sd20_pro_933_5_720p_rate')).run();
+  db.delete(settings).where(eq(settings.key, 'sdas_my_seedance_20_fast_720p_rate')).run();
 
   // 物理清理废弃的 Seedance 2.5 相关的模型
   db.delete(models).where(eq(models.modelId, 'md-seedance-2.5-480p')).run();
@@ -755,12 +755,6 @@ export async function initDatabase() {
       modelPattern: 'gemini-3-pro-image-preview',
       billingType: 'per_call',
       inputPrice: 0.20 * IMAGE_MULTIPLIER,   // 3x multiplier (0.60)
-      outputPrice: 0,
-    },
-    {
-      modelPattern: 'tejiasd2',
-      billingType: 'per_call',
-      inputPrice: 3.00,
       outputPrice: 0,
     },
     {
@@ -857,15 +851,13 @@ export async function initDatabase() {
   // 9) 自动向已存在且包含 sudashuiapi.com 或 pidoi.com 的渠道添加支持的模型 ID，防止路由错误
   try {
     const sdaModels = [
-      'sdas-pd-sd2.0-pro-933-5-720p',
-      'sdas-hn-sd2.0-fast-720p',
       'sdas-my-seedance-2.0-fast-720p',
       'ld-sdas-cvk-pro-933-720p',
       'sdas-mj-minimax-h3-2k',
       'sdas-bl-sd2.0-933-pro-720p',
       'sdas-bl-sd2.0-933-pro-noface-720p'
     ];
-    const pidoiModels = ['tejiasd2'];
+    const pidoiModels: string[] = [];
     const allChannels = db.select().from(channels).all();
     for (const c of allChannels) {
       let currentModels: string[] = [];
@@ -884,7 +876,7 @@ export async function initDatabase() {
         }
       } else if (c.baseUrl && c.baseUrl.includes('pidoi.com') && !c.name?.includes('图片')) {
         // 清理已被废弃不复存在的旧模型，以及全部的 Grok 视频模型
-        const cleaned = currentModels.filter(m => !['seedance-2.0', 'veo-omni-flash', 'sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast', 'sora-v3-pro', 'grok-imagine-1.0-video', 'grok-imagine-video-1.5-1080p', 'grok-imagine-video-1.5-fast', 'grok-imagine-video-1.5-preview', 'gpt-image-2-plus', 'gpt-image-2-pro', 'gpt-image-2-max', 'gpt-image-2'].includes(m));
+        const cleaned = currentModels.filter(m => !['seedance-2.0', 'veo-omni-flash', 'sora-v4-fast', 'sora-v4-pro', 'seedance-2.0-fast', 'sora-v3-pro', 'grok-imagine-1.0-video', 'grok-imagine-video-1.5-1080p', 'grok-imagine-video-1.5-fast', 'grok-imagine-video-1.5-preview', 'gpt-image-2-plus', 'gpt-image-2-pro', 'gpt-image-2-max', 'gpt-image-2', 'tejiasd2'].includes(m));
         if (cleaned.length !== currentModels.length) {
           currentModels = cleaned;
           updated = true;
@@ -918,7 +910,7 @@ export async function initDatabase() {
         type: 'openai',
         baseUrl: 'https://newtoken.club',
         apiKey: 'sk-tO4xRDsMI4XmyVw5gcsWwdYbC9s14NJieyZDuPmIqNgpA3jW',
-        supportedModels: JSON.stringify(['veo-omni-flash', 'sd2.0-fast-480p', 'veo-3-1', 'nd-seedance-2.0-480p', 'nd-seedance-2.0-720p']),
+        supportedModels: JSON.stringify(['veo-omni-flash', 'veo-3-1', 'nd-seedance-2.0-480p', 'nd-seedance-2.0-720p']),
         modelMapping: JSON.stringify({
           'nd-seedance-2.0-480p': 'nd-seedance-2.0 480p',
           'nd-seedance-2.0-720p': 'nd-seedance-2.0 720p'
@@ -929,12 +921,12 @@ export async function initDatabase() {
         maxRetries: 3,
         timeout: 120000,
       }).run();
-      console.log('📦 已自动迁移：成功创建 NewToken 渠道并绑定 veo-omni-flash, sd2.0-fast-480p, veo-3-1 与 nd-seedance 2.0 系列');
+      console.log('📦 已自动迁移：成功创建 NewToken 渠道并绑定 veo-omni-flash, veo-3-1 与 nd-seedance 2.0 系列');
     } else {
       db.update(channels)
         .set({
           apiKey: 'sk-tO4xRDsMI4XmyVw5gcsWwdYbC9s14NJieyZDuPmIqNgpA3jW',
-          supportedModels: JSON.stringify(['veo-omni-flash', 'sd2.0-fast-480p', 'veo-3-1', 'nd-seedance-2.0-480p', 'nd-seedance-2.0-720p']),
+          supportedModels: JSON.stringify(['veo-omni-flash', 'veo-3-1', 'nd-seedance-2.0-480p', 'nd-seedance-2.0-720p']),
           modelMapping: JSON.stringify({
             'nd-seedance-2.0-480p': 'nd-seedance-2.0 480p',
             'nd-seedance-2.0-720p': 'nd-seedance-2.0 720p'
@@ -943,7 +935,7 @@ export async function initDatabase() {
         })
         .where(eq(channels.id, existingNewToken.id))
         .run();
-      console.log('🔄 已自动迁移：更新 NewToken 渠道支持 veo-omni-flash, sd2.0-fast-480p 与 veo-3-1');
+      console.log('🔄 已自动迁移：更新 NewToken 渠道支持 veo-omni-flash 与 veo-3-1');
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 NewToken 渠道出错:', err.message);

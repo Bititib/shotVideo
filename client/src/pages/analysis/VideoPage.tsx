@@ -52,8 +52,6 @@ const isFlatRateModel = (modelId: string) => {
     'grok-imagine-video-1.5-fast',
     'grok-imagine-video-1.5-preview',
     'sdas-pg-s2.0-fast',
-    'sdas-pd-sd2.0-pro-933-5-720p',
-    'sdas-hn-sd2.0-fast-720p',
     'ld-sdas-cvk-pro-933-720p',
     'sdas-mj-minimax-h3-2k',
     'sdas-bl-sd2.0-933-pro-720p',
@@ -62,7 +60,6 @@ const isFlatRateModel = (modelId: string) => {
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
     'seedance-720',
-    'tejiasd2',
     'sd2-mini',
     'seedance2.0-933',
     'seedance2.0 933'
@@ -74,7 +71,6 @@ export const isComicDramaModel = (modelId: string) => {
     'sdas-bl-sd2.0-933-pro-720p',
     'sdas-bl-sd2.0-933-pro-noface-720p',
     'ld-sdas-cvk-pro-933-720p',
-    'sdas-pd-sd2.0-pro-933-5-720p',
     'sdas-mj-minimax-h3-2k',
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
@@ -268,7 +264,7 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'sd2.5') return 9;
   if (modelId === 'sd2-c7') return 10;
   if (modelId === 'sd2-c6') return 9;
-  if (modelId === 'tejiasd2' || modelId === 'sd2.0-fast-480p' || modelId.startsWith('sd-') || modelId.startsWith('sd2-') || modelId.startsWith('seedance') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
+  if (modelId.startsWith('sd-') || modelId.startsWith('sd2-') || modelId.startsWith('seedance') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (isSoraV4Model(modelId)) return 4;
   if (modelId === 'omni-flash') return 7;
   if (modelId === 'omni-flash-vref') return 5;
@@ -394,14 +390,14 @@ export default function VideoPage() {
   const getMaxRefVideos = (m: string) => {
     if (m === 'seedance-2.5-c1') return 10;
     if (isNoVideoModel(m)) return 0;
-    if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance') || m.startsWith('lg-')) return 3;
+    if (m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance') || m.startsWith('lg-')) return 3;
     if (m === 'omni-flash-vref') return 1;
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
     if (m === 'seedance-2.5-c1') return 10;
     if (isNoAudioModel(m)) return 0;
-    if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance') || m.startsWith('lg-')) return 3;
+    if (m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance') || m.startsWith('lg-')) return 3;
     return 0;
   };
   const maxRefVideos = getMaxRefVideos(selectedModel);

@@ -97,12 +97,6 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'sdas-mj-minimax-h3-2k') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_mj_minimax_h3_2k_rate')).get();
     return parseFloat(row?.value || '3.00');
-  } else if (model === 'tejiasd2') {
-    const row = db.select().from(settings).where(eq(settings.key, 'tejiasd2_rate')).get();
-    return parseFloat(row?.value || '3.00');
-  } else if (model === 'sd2.0-fast-480p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sd20_fast_480p_rate')).get();
-    return parseFloat(row?.value || '0.22');
   } else if (model === 'sd2.5') {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get();
     return parseFloat(row?.value || '3.50');
@@ -705,15 +699,12 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
 
   const rate = getVideoRate(model, resolution_name);
   const isFlatRate = [
-    'sdas-hn-sd2.0-720p',
-    'sdas-hn-sd2.0-fast-720p',
     'seedance-2.0-fast',
     'sd2-c7',
     'sd2.5',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
     'seedance-720',
-    'sdas-pd-sd2.0-pro-933-5-720p',
     'ld-sdas-cvk-pro-933-720p',
     'sdas-mj-minimax-h3-2k',
     'sdas-bl-sd2.0-933-pro-720p',
@@ -725,8 +716,7 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     'grok-imagine-1.0-video',
     'grok-imagine-video-1.5-1080p',
     'grok-imagine-video-1.5-fast',
-    'grok-imagine-video-1.5-preview',
-    'tejiasd2'
+    'grok-imagine-video-1.5-preview'
   ].includes(model);
   const totalCost = isFlatRate ? rate : (Math.round(rate * Number(seconds) * 100) / 100);
 
@@ -855,17 +845,14 @@ router.post('/video/generations', async (req: Request, res: Response) => {
   }
 
   const rate = getVideoRate(model, resolution);
-  const seconds = (model === 'omni-flash-vref' || model === 'sdas-pd-sd2.0-pro-933-5-720p') ? 10 : Number(duration);
+  const seconds = (model === 'omni-flash-vref') ? 10 : Number(duration);
   const isFlatRate = [
-    'sdas-hn-sd2.0-720p',
-    'sdas-hn-sd2.0-fast-720p',
     'seedance-2.0-fast',
     'sd2-c7',
     'sd2.5',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
     'seedance-720',
-    'sdas-pd-sd2.0-pro-933-5-720p',
     'ld-sdas-cvk-pro-933-720p',
     'sdas-mj-minimax-h3-2k',
     'sdas-bl-sd2.0-933-pro-720p',
@@ -877,8 +864,7 @@ router.post('/video/generations', async (req: Request, res: Response) => {
     'grok-imagine-1.0-video',
     'grok-imagine-video-1.5-1080p',
     'grok-imagine-video-1.5-fast',
-    'grok-imagine-video-1.5-preview',
-    'tejiasd2'
+    'grok-imagine-video-1.5-preview'
   ].includes(model);
   const totalCost = isFlatRate ? rate : (Math.round(rate * seconds * 100) / 100);
 
