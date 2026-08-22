@@ -888,8 +888,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'nd-seedance-2.0-720p'
   ].includes(model);
 
+  let videoId = '';
   try {
-    let videoId = '';
 
     if (isOmni) {
       sendEvent({ type: 'status', message: '正在提交 Omni 视频生成任务...' });
@@ -1544,9 +1544,20 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     const msg = err.name === 'AbortError'
       ? '请求超时'
       : (err.cause?.message || err.message || '请求失败');
-    refundFailedTask(msg);
-    res.write('data: [DONE]\n\n');
-    res.end();
+
+    if (videoId) {
+      // 已经拿到上游任务 ID → 任务可能仍在上游处理中，不退款
+      // 保留 processing 状态，让服务重启时的恢复系统 (resumeAllPendingVideoTasks) 继续轮询
+      console.warn(`[video] ⚠️ 任务 ${videoId} 已提交到上游但本次连接异常，不退款，等待恢复系统跟踪`);
+      sendEvent({ type: 'error', message: `连接异常，任务 ${videoId} 已提交到上游，系统将自动恢复跟踪` });
+    } else {
+      // 未拿到上游任务 ID → 任务从未被上游接受，安全退款
+      refundFailedTask(msg);
+    }
+    if (!res.destroyed && !res.writableEnded) {
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
   }
 });
 
