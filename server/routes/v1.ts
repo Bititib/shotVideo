@@ -92,6 +92,21 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'veo-3-1') {
     const row = db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get();
     return parseFloat(row?.value || '0.20');
+  } else if (model === 'md-seedance-2.0-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'md_seedance_2_0_720p_rate')).get();
+    return parseFloat(row?.value || '2.00');
+  } else if (model === 'md-seedance-2.5-480p-15s') {
+    const row = db.select().from(settings).where(eq(settings.key, 'md_seedance_2_5_480p_15s_rate')).get();
+    return parseFloat(row?.value || '2.50');
+  } else if (model === 'md-seedance-2.5-480p-30s') {
+    const row = db.select().from(settings).where(eq(settings.key, 'md_seedance_2_5_480p_30s_rate')).get();
+    return parseFloat(row?.value || '4.50');
+  } else if (model === 'md-seedance-2.5-720p-15s') {
+    const row = db.select().from(settings).where(eq(settings.key, 'md_seedance_2_5_720p_15s_rate')).get();
+    return parseFloat(row?.value || '4.50');
+  } else if (model === 'md-seedance-2.5-720p-30s') {
+    const row = db.select().from(settings).where(eq(settings.key, 'md_seedance_2_5_720p_30s_rate')).get();
+    return parseFloat(row?.value || '6.50');
   } else {
     const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
     const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
@@ -666,7 +681,12 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     'cd-seedance-2.0-720p',
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
-    'sd2-c6'
+    'sd2-c6',
+    'md-seedance-2.0-720p',
+    'md-seedance-2.5-480p-15s',
+    'md-seedance-2.5-480p-30s',
+    'md-seedance-2.5-720p-15s',
+    'md-seedance-2.5-720p-30s'
   ].includes(model);
   const totalCost = isFlatRate ? rate : (Math.round(rate * Number(seconds) * 100) / 100);
 
@@ -803,7 +823,12 @@ router.post('/video/generations', async (req: Request, res: Response) => {
     'cd-seedance-2.0-720p',
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
-    'sd2-c6'
+    'sd2-c6',
+    'md-seedance-2.0-720p',
+    'md-seedance-2.5-480p-15s',
+    'md-seedance-2.5-480p-30s',
+    'md-seedance-2.5-720p-15s',
+    'md-seedance-2.5-720p-30s'
   ].includes(model);
   const totalCost = isFlatRate ? rate : (Math.round(rate * seconds * 100) / 100);
 

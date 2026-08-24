@@ -71,6 +71,8 @@ const ALL_DURATIONS = [
 ];
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  if (modelId.startsWith('md-seedance-2.5')) return 30;
+  if (modelId.startsWith('md-seedance-2.0')) return 9;
   if (modelId === 'sd2.5') return 9;
   if (modelId.startsWith('sd-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (modelId === 'seedance-2.0-fast' || modelId === 'seedance-2.0' || modelId === 'sora-v4-fast' || modelId === 'sora-v4-pro') return 4;

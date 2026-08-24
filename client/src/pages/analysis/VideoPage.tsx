@@ -48,9 +48,6 @@ const isFlatRateModel = (modelId: string) => {
     'sd2-c6',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
-    'grok-imagine-1.0-video',
-    'grok-imagine-video-1.5-fast',
-    'grok-imagine-video-1.5-preview',
     'sdas-pg-s2.0-fast',
     'sdas-pd-sd2.0-pro-933-5-720p',
     'sdas-hn-sd2.0-fast-720p',
@@ -65,7 +62,12 @@ const isFlatRateModel = (modelId: string) => {
     'tejiasd2',
     'sd2-mini',
     'seedance2.0-933',
-    'seedance2.0 933'
+    'seedance2.0 933',
+    'md-seedance-2.0-720p',
+    'md-seedance-2.5-480p-15s',
+    'md-seedance-2.5-480p-30s',
+    'md-seedance-2.5-720p-15s',
+    'md-seedance-2.5-720p-30s'
   ].includes(modelId);
 };
 
@@ -83,8 +85,6 @@ export const isComicDramaModel = (modelId: string) => {
 };
 
 const GROUP_ORDER = [
-  'Grok (Luma) 系列',
-  'Omni 系列',
   'Veo (Google) 系列',
   'Seedance 系列',
   'Sora 系列',
@@ -93,9 +93,7 @@ const GROUP_ORDER = [
 
 const getModelGroup = (modelId: string) => {
   const id = modelId.toLowerCase();
-  if (id.includes('grok')) return 'Grok (Luma) 系列';
   if (id.includes('veo')) return 'Veo (Google) 系列';
-  if (id.includes('omni')) return 'Omni 系列';
   if (id.includes('seedance') || id.includes('sd2') || id.includes('sdas') || id.includes('lg-')) return 'Seedance 系列';
   if (id.includes('sora')) return 'Sora 系列';
   return '其他模型';
@@ -262,16 +260,14 @@ const isSoraV4Model = (modelId: string) => {
 };
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  if (modelId.startsWith('md-seedance-2.5')) return 30;
+  if (modelId.startsWith('md-seedance-2.0')) return 9;
   if (modelId === 'seedance-2.5-c1') return 30;
-  if (modelId === 'grok-imagine-1.0-video' || modelId === 'grok-imagine-video-1.5-fast') return 7;
-  if (modelId === 'grok-imagine-video-1.5-preview') return 1;
   if (modelId === 'sd2.5') return 9;
   if (modelId === 'sd2-c7') return 10;
   if (modelId === 'sd2-c6') return 9;
   if (modelId === 'tejiasd2' || modelId === 'sd2.0-fast-480p' || modelId.startsWith('sd-') || modelId.startsWith('sd2-') || modelId.startsWith('seedance-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (isSoraV4Model(modelId)) return 4;
-  if (modelId === 'omni-flash') return 7;
-  if (modelId === 'omni-flash-vref') return 5;
   if (modelId === 'veo-omni-flash') return 6;
   if (modelId === 'veo-3-1') return 9;
   const model = models.find(m => m.id === modelId);
@@ -385,13 +381,14 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
+    if (m.startsWith('md-seedance')) return 0;
     if (m === 'seedance-2.5-c1') return 10;
     if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
-    if (m === 'omni-flash-vref') return 1;
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
+    if (m.startsWith('md-seedance')) return 0;
     if (m === 'seedance-2.5-c1') return 10;
     if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
