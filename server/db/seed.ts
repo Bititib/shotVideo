@@ -1052,152 +1052,78 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 Pidoi 图片渠道出错:', err.message);
   }
 
-  // 14a) MJNewAPI 渠道 - cd-seedance-2.0-720p (独立 Key)
+  // 14) MJNewAPI 渠道 - 整合所有 Seedance 系列模型
   try {
-    const existingCd = db.select().from(channels).where(eq(channels.name, 'MJNewAPI cd-seedance 渠道')).get();
-    const cdModels = ['cd-seedance-2.0-720p'];
-    const cdMapping = { 'cd-seedance-2.0-720p': 'cd-seedance 2.0 720p' };
-    if (!existingCd) {
-      db.insert(channels).values({
-        name: 'MJNewAPI cd-seedance 渠道',
-        type: 'openai',
-        baseUrl: 'https://mjnewapi.diwdiw.cn',
-        apiKey: 'sk-VqxSZX2Us1podJuaeSwszM1btCz5VMuS70FVCQKcjXbhRBpy',
-        supportedModels: JSON.stringify(cdModels),
-        modelMapping: JSON.stringify(cdMapping),
-        status: 1,
-        priority: 0,
-        weight: 1,
-        maxRetries: 3,
-        timeout: 120000,
-      }).run();
-      console.log('📦 已创建 MJNewAPI cd-seedance 渠道（独立 Key）');
-    } else {
-      db.update(channels)
-        .set({
-          apiKey: 'sk-VqxSZX2Us1podJuaeSwszM1btCz5VMuS70FVCQKcjXbhRBpy',
-          supportedModels: JSON.stringify(cdModels),
-          modelMapping: JSON.stringify(cdMapping),
-          status: 1,
-          updatedAt: new Date().toISOString()
-        })
-        .where(eq(channels.id, existingCd.id))
-        .run();
-      console.log('🔄 已更新 MJNewAPI cd-seedance 渠道（独立 Key）');
-    }
-  } catch (err: any) {
-    console.error('⚠️ 初始化 MJNewAPI cd-seedance 渠道出错:', err.message);
-  }
-
-  // 14b) MJNewAPI 渠道 - nd-seedance-2.0-480p (不卡脸)
-  try {
-    const existingNd = db.select().from(channels).all().find(c => c.name === 'MJNewAPI nd-seedance 渠道' || c.name === 'MJNewAPI vd-seedance 渠道' || c.name === 'MJNewAPI rd-seedance 渠道');
-    const ndModels = ['nd-seedance-2.0-480p'];
-    const ndMapping = {
-      'nd-seedance-2.0-480p': 'nd-seedance-2.0 480p'
-    };
-    if (!existingNd) {
-      db.insert(channels).values({
-        name: 'MJNewAPI nd-seedance 渠道',
-        type: 'openai',
-        baseUrl: 'https://mjnewapi.diwdiw.cn',
-        apiKey: 'sk-ypnbPu4siWgwzp5EcpqvDTtU4z6q8gHqP3gYj4FV10kku4it',
-        supportedModels: JSON.stringify(ndModels),
-        modelMapping: JSON.stringify(ndMapping),
-        status: 1,
-        priority: 0,
-        weight: 1,
-        maxRetries: 3,
-        timeout: 120000,
-      }).run();
-      console.log('📦 已创建 MJNewAPI nd-seedance 渠道');
-    } else {
-      db.update(channels)
-        .set({
-          name: 'MJNewAPI nd-seedance 渠道',
-          apiKey: 'sk-ypnbPu4siWgwzp5EcpqvDTtU4z6q8gHqP3gYj4FV10kku4it',
-          supportedModels: JSON.stringify(ndModels),
-          modelMapping: JSON.stringify(ndMapping),
-          status: 1,
-          updatedAt: new Date().toISOString()
-        })
-        .where(eq(channels.id, existingNd.id))
-        .run();
-      console.log('🔄 已更新 MJNewAPI nd-seedance 渠道');
-    }
-  } catch (err: any) {
-    console.error('⚠️ 初始化 MJNewAPI nd-seedance 渠道出错:', err.message);
-  }
-
-  // 14c) MJNewAPI 渠道 - md-seedance 渠道
-  try {
-    const existingMd = db.select().from(channels).where(eq(channels.name, 'MJNewAPI md-seedance 渠道')).get();
-    const mdModels = [
+    const existingMj = db.select().from(channels).where(eq(channels.name, 'MJNewAPI 渠道')).get();
+    const mjModels = [
+      'cd-seedance-2.0-720p',
+      'nd-seedance-2.0-480p',
       'md-seedance-2.0-720p',
       'md-seedance-2.5-480p-15s',
       'md-seedance-2.5-480p-30s',
       'md-seedance-2.5-720p-15s',
       'md-seedance-2.5-720p-30s'
     ];
-    const mdMapping = {
+    const mjMapping = {
+      'cd-seedance-2.0-720p': 'cd-seedance 2.0 720p',
+      'nd-seedance-2.0-480p': 'nd-seedance-2.0 480p',
       'md-seedance-2.0-720p': 'md-seedance-2.0-720p',
       'md-seedance-2.5-480p-15s': 'md-seedance-2.5-480p-15s',
       'md-seedance-2.5-480p-30s': 'md-seedance-2.5-480p-30s',
       'md-seedance-2.5-720p-15s': 'md-seedance-2.5-720p-15s',
       'md-seedance-2.5-720p-30s': 'md-seedance-2.5-720p-30s'
     };
-    if (!existingMd) {
+
+    if (!existingMj) {
       db.insert(channels).values({
-        name: 'MJNewAPI md-seedance 渠道',
+        name: 'MJNewAPI 渠道',
         type: 'openai',
         baseUrl: 'https://mjnewapi.diwdiw.cn',
         apiKey: 'sk-ypnbPu4siWgwzp5EcpqvDTtU4z6q8gHqP3gYj4FV10kku4it',
-        supportedModels: JSON.stringify(mdModels),
-        modelMapping: JSON.stringify(mdMapping),
+        supportedModels: JSON.stringify(mjModels),
+        modelMapping: JSON.stringify(mjMapping),
         status: 1,
         priority: 0,
         weight: 1,
         maxRetries: 3,
         timeout: 120000,
       }).run();
-      console.log('📦 已创建 MJNewAPI md-seedance 渠道');
+      console.log('📦 已创建整合的 MJNewAPI 渠道');
     } else {
       db.update(channels)
         .set({
           apiKey: 'sk-ypnbPu4siWgwzp5EcpqvDTtU4z6q8gHqP3gYj4FV10kku4it',
-          supportedModels: JSON.stringify(mdModels),
-          modelMapping: JSON.stringify(mdMapping),
+          supportedModels: JSON.stringify(mjModels),
+          modelMapping: JSON.stringify(mjMapping),
           status: 1,
           updatedAt: new Date().toISOString()
         })
-        .where(eq(channels.id, existingMd.id))
+        .where(eq(channels.id, existingMj.id))
         .run();
-      console.log('🔄 已更新 MJNewAPI md-seedance 渠道');
+      console.log('🔄 已更新整合的 MJNewAPI 渠道');
     }
   } catch (err: any) {
-    console.error('⚠️ 初始化 MJNewAPI md-seedance 渠道出错:', err.message);
+    console.error('⚠️ 初始化 MJNewAPI 渠道出错:', err.message);
   }
 
-  // 清理旧的 "MJNewAPI rd-seedance 渠道"（如存在）
+  // 清除所有历史拆分的 MJNewAPI 渠道以保持干净
   try {
-    const oldRdChannel = db.select().from(channels).where(eq(channels.name, 'MJNewAPI rd-seedance 渠道')).get();
-    if (oldRdChannel) {
-      db.delete(channels).where(eq(channels.id, oldRdChannel.id)).run();
-      console.log('🧹 已删除旧的 MJNewAPI rd-seedance 渠道，已被 vd-seedance 替代');
+    const splitNames = [
+      'MJNewAPI cd-seedance 渠道',
+      'MJNewAPI nd-seedance 渠道',
+      'MJNewAPI md-seedance 渠道',
+      'MJNewAPI rd-seedance 渠道',
+      'MJNewAPI vd-seedance 渠道'
+    ];
+    for (const name of splitNames) {
+      const oldChan = db.select().from(channels).where(eq(channels.name, name)).get();
+      if (oldChan) {
+        db.delete(channels).where(eq(channels.id, oldChan.id)).run();
+        console.log(`🧹 已清理旧的拆分渠道: ${name}`);
+      }
     }
   } catch (err: any) {
-    console.error('⚠️ 清理旧 rd-seedance 渠道出错:', err.message);
-  }
-
-  // 清理旧的合并渠道 "MJNewAPI 渠道"（如存在）
-  try {
-    const oldChannel = db.select().from(channels).where(eq(channels.name, 'MJNewAPI 渠道')).get();
-    if (oldChannel) {
-      db.delete(channels).where(eq(channels.id, oldChannel.id)).run();
-      console.log('🧹 已删除旧的合并 MJNewAPI 渠道，已拆分为 cd-seedance 和 vd-seedance 两个独立渠道');
-    }
-  } catch (err: any) {
-    console.error('⚠️ 清理旧 MJNewAPI 渠道出错:', err.message);
+    console.error('⚠️ 清理旧拆分渠道出错:', err.message);
   }
 
   console.log('✅ 数据库初始化完成');
