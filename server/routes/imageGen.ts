@@ -71,10 +71,6 @@ const RATIO_TO_SIZE: Record<string, string> = {
 };
 
 const DEFAULT_IMAGE_MODELS = [
-  { id: 'grok-imagine-image', name: 'Grok Image', description: 'Grok AI 高质量图片生成', icon: '🎨' },
-  { id: 'grok-imagine-image-lite', name: 'Grok Image Lite', description: '快速出图，适合草图和灵感', icon: '⚡' },
-  { id: 'grok-imagine-image-pro', name: 'Grok Image Pro', description: '专业级高质量图片生成', icon: '💎' },
-  { id: 'grok-imagine-image-edit', name: 'Grok Image Edit', description: '图片编辑与局部重绘', icon: '🖌️' },
   { id: 'gpt-image-2', name: 'gpt-image-2', description: '4K分辨率', icon: '🤖' },
   { id: 'gemini-3.1-flash-image-preview', name: '🍌 nabanana flash', description: '2k高清画质，极速生成', icon: '☄️' },
   { id: 'gemini-3-pro-image-preview', name: '🍌 nabanana pro', description: '2k高清画质，极致细节', icon: '🪐' },
@@ -84,7 +80,6 @@ const DEFAULT_IMAGE_MODELS = [
 function findImageChannel(modelId: string) {
   const channel = ChannelService.findChannelForModel(modelId);
   if (channel) return { baseUrl: channel.baseUrl, apiKey: channel.apiKey };
-  if (env.GROK2API_BASE_URL) return { baseUrl: env.GROK2API_BASE_URL, apiKey: env.GROK2API_API_KEY };
   return null;
 }
 
@@ -126,7 +121,7 @@ router.get('/models', (_req: Request, res: Response) => {
 router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quotaMiddleware, async (req: TierRequest, res: Response) => {
   const {
     prompt,
-    model = 'grok-imagine-image',
+    model = 'gpt-image-2',
     aspect_ratio = '1:1',
     n = 1,                       // 生成数量 1~4
     reference_images = [],       // base64 数据 URL 数组
@@ -144,7 +139,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
 
   const channel = findImageChannel(model);
   if (!channel) {
-    return res.status(503).json({ error: '未配置图片生成渠道。请在管理后台添加渠道或设置 GROK2API_BASE_URL。' });
+    return res.status(503).json({ error: '未配置图片生成渠道。请在管理后台添加渠道。' });
   }
 
   // SSE headers
@@ -207,11 +202,11 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
   };
 
   try {
-    const isEditModel = model === 'grok-imagine-image-edit' || model === 'gpt-image-2';
+    const isEditModel = model === 'gpt-image-2';
     let editModel = model;
     if (hasRef && !isEditModel) {
-      editModel = model.startsWith('gpt') ? 'gpt-image-2' : 'grok-imagine-image-edit';
-      sendEvent({ type: 'status', message: `检测到参考图，已自动切换为 ${editModel === 'gpt-image-2' ? 'GPT Image 2' : 'Grok Image Edit'} 模式生成...`, total: count });
+      editModel = 'gpt-image-2';
+      sendEvent({ type: 'status', message: `检测到参考图，已自动切换为 GPT Image 2 模式生成...`, total: count });
     } else {
       sendEvent({ type: 'status', message: hasRef ? '正在上传参考图并生成...' : `正在生成 ${count} 张图片...`, total: count });
     }

@@ -12,8 +12,6 @@ export const env = {
   GEMINI_API_BASE_URL: process.env.GEMINI_API_BASE_URL || 'http://172.245.16.80:7860',
   ADMIN_EMAIL: process.env.ADMIN_EMAIL || 'admin@admin.com',
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'admin123',
-  GROK2API_BASE_URL: process.env.GROK2API_BASE_URL || '',
-  GROK2API_API_KEY: process.env.GROK2API_API_KEY || '',
 };
 
 /**

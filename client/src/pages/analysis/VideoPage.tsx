@@ -52,6 +52,8 @@ const isFlatRateModel = (modelId: string) => {
     'grok-imagine-video-1.5-fast',
     'grok-imagine-video-1.5-preview',
     'sdas-pg-s2.0-fast',
+    'sdas-pd-sd2.0-pro-933-5-720p',
+    'sdas-hn-sd2.0-fast-720p',
     'ld-sdas-cvk-pro-933-720p',
     'sdas-mj-minimax-h3-2k',
     'sdas-bl-sd2.0-933-pro-720p',
@@ -60,6 +62,7 @@ const isFlatRateModel = (modelId: string) => {
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
     'seedance-720',
+    'tejiasd2',
     'sd2-mini',
     'seedance2.0-933',
     'seedance2.0 933'
@@ -71,6 +74,7 @@ export const isComicDramaModel = (modelId: string) => {
     'sdas-bl-sd2.0-933-pro-720p',
     'sdas-bl-sd2.0-933-pro-noface-720p',
     'ld-sdas-cvk-pro-933-720p',
+    'sdas-pd-sd2.0-pro-933-5-720p',
     'sdas-mj-minimax-h3-2k',
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
@@ -264,7 +268,7 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'sd2.5') return 9;
   if (modelId === 'sd2-c7') return 10;
   if (modelId === 'sd2-c6') return 9;
-  if (modelId.startsWith('sd-') || modelId.startsWith('sd2-') || modelId.startsWith('seedance') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
+  if (modelId === 'tejiasd2' || modelId === 'sd2.0-fast-480p' || modelId.startsWith('sd-') || modelId.startsWith('sd2-') || modelId.startsWith('seedance-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (isSoraV4Model(modelId)) return 4;
   if (modelId === 'omni-flash') return 7;
   if (modelId === 'omni-flash-vref') return 5;
@@ -380,24 +384,17 @@ export default function VideoPage() {
   const audioFileInputRef = useRef<HTMLInputElement>(null);
 
   // 各模型的参考视频/音频上限
-  const isNoVideoModel = (modelName: string) => {
-    return modelName === 'sd2.5' || modelName === 'sd2-mini' || modelName === 'seedance2.0-933' || modelName === 'seedance2.0 933' || modelName === 'sd2-c6' || modelName === 'sd2-c7' || modelName.includes('noface');
-  };
-  const isNoAudioModel = (modelName: string) => {
-    return modelName === 'sd2.5' || modelName === 'sd2-c6' || modelName === 'sd2-c7';
-  };
-
   const getMaxRefVideos = (m: string) => {
     if (m === 'seedance-2.5-c1') return 10;
-    if (isNoVideoModel(m)) return 0;
-    if (m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance') || m.startsWith('lg-')) return 3;
+    if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
+    if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     if (m === 'omni-flash-vref') return 1;
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
     if (m === 'seedance-2.5-c1') return 10;
-    if (isNoAudioModel(m)) return 0;
-    if (m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance') || m.startsWith('lg-')) return 3;
+    if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
+    if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     return 0;
   };
   const maxRefVideos = getMaxRefVideos(selectedModel);
@@ -1123,15 +1120,14 @@ export default function VideoPage() {
                         const isSelected = selectedModel === m.id;
                         return (
                           <button key={m.id} onClick={() => setSelectedModel(m.id)}
-                            className={`w-full text-left px-4 py-3 rounded-xl border transition-all relative overflow-hidden ${
-                              isSelected
-                                ? isComic
-                                  ? 'border-purple-400 bg-gradient-to-r from-purple-500/20 via-indigo-500/15 to-purple-500/10 shadow-[0_0_16px_rgba(168,85,247,0.3)] ring-1 ring-purple-400/50'
-                                  : 'border-indigo-500/50 bg-indigo-500/10 shadow-[0_0_12px_rgba(99,102,241,0.15)]'
-                                : isComic
-                                  ? 'border-purple-500/50 bg-gradient-to-r from-purple-500/[0.08] via-indigo-500/[0.04] to-transparent hover:border-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.18)] ring-1 ring-purple-500/20'
-                                  : 'border-white/5 bg-white/[0.02] hover:border-white/10'
-                            }`}>
+                            className={`w-full text-left px-4 py-3 rounded-xl border transition-all relative overflow-hidden ${isSelected
+                              ? isComic
+                                ? 'border-purple-400 bg-gradient-to-r from-purple-500/20 via-indigo-500/15 to-purple-500/10 shadow-[0_0_16px_rgba(168,85,247,0.3)] ring-1 ring-purple-400/50'
+                                : 'border-indigo-500/50 bg-indigo-500/10 shadow-[0_0_12px_rgba(99,102,241,0.15)]'
+                              : isComic
+                                ? 'border-purple-500/50 bg-gradient-to-r from-purple-500/[0.08] via-indigo-500/[0.04] to-transparent hover:border-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.18)] ring-1 ring-purple-500/20'
+                                : 'border-white/5 bg-white/[0.02] hover:border-white/10'
+                              }`}>
                             {isComic && (
                               <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-purple-400 via-indigo-400 to-purple-500" />
                             )}
@@ -1144,38 +1140,37 @@ export default function VideoPage() {
                                   </span>
                                 )}
                                 {m.successRate !== undefined && (
-                                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${
-                                    m.totalCalls === 0 || m.successRate === null
-                                      ? 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20'
-                                      : (m.successRate ?? 100) >= 80
+                                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${m.totalCalls === 0 || m.successRate === null
+                                    ? 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20'
+                                    : (m.successRate ?? 100) >= 80
                                       ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                                       : (m.successRate ?? 100) >= 50
-                                      ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                                      : 'bg-red-500/10 text-red-400 border-red-500/20'
-                                  }`}>
+                                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                                        : 'bg-red-500/10 text-red-400 border-red-500/20'
+                                    }`}>
                                     {m.totalCalls === 0 || m.successRate === null ? '暂无调用' : `成功率 ${m.successRate}%`}
                                   </span>
                                 )}
                                 {isSelected && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
                               </div>
                             </div>
-                          <p className="text-xs text-zinc-500 mt-1">{m.description}</p>
-                          {m.rates && (
-                            <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-600 border-t border-white/5 pt-1.5 flex-wrap">
-                              {Object.entries(m.rates).map(([resKey, resRate], rIdx, arr) => (
-                                <React.Fragment key={resKey}>
-                                  <span>
-                                    {resKey}: <span className="text-zinc-400">¥{(Number(resRate) || 0).toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span>
-                                  </span>
-                                  {rIdx < arr.length - 1 && <span className="text-zinc-800">•</span>}
-                                </React.Fragment>
-                              ))}
-                            </div>
-                          )}
-                          {m.requireRef && <p className="text-[10px] text-amber-400/80 mt-1.5 flex items-center gap-1">⚠️ 必须提供参考图</p>}
-                        </button>
-                      );
-                    })}
+                            <p className="text-xs text-zinc-500 mt-1">{m.description}</p>
+                            {m.rates && (
+                              <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-600 border-t border-white/5 pt-1.5 flex-wrap">
+                                {Object.entries(m.rates).map(([resKey, resRate], rIdx, arr) => (
+                                  <React.Fragment key={resKey}>
+                                    <span>
+                                      {resKey}: <span className="text-zinc-400">¥{(Number(resRate) || 0).toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span>
+                                    </span>
+                                    {rIdx < arr.length - 1 && <span className="text-zinc-800">•</span>}
+                                  </React.Fragment>
+                                ))}
+                              </div>
+                            )}
+                            {m.requireRef && <p className="text-[10px] text-amber-400/80 mt-1.5 flex items-center gap-1">⚠️ 必须提供参考图</p>}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 );

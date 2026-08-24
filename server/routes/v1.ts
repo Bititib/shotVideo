@@ -50,21 +50,7 @@ function deductTokenOrUserBalance(token: any, cost: number, model: string) {
 
 /** 获取视频计费费率 */
 function getVideoRate(model: string, resolution: string): number {
-  if (model === 'omni-flash') {
-    const key = resolution === '1080p' ? 'omni_flash_rate_1080p' : 'omni_flash_rate_720p';
-    const row = db.select().from(settings).where(eq(settings.key, key)).get();
-    return parseFloat(row?.value || (resolution === '1080p' ? '1.50' : '0.90'));
-  } else if (model === 'omni-flash-vref') {
-    const key = resolution === '1080p' ? 'omni_vref_rate_1080p' : 'omni_vref_rate_720p';
-    const row = db.select().from(settings).where(eq(settings.key, key)).get();
-    return parseFloat(row?.value || (resolution === '1080p' ? '2.20' : '1.60'));
-  } else if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sdas_pd_sd20_pro_933_5_720p_rate')).get();
-    return parseFloat(row?.value || '4.50');
-  } else if (model === 'sdas-hn-sd2.0-fast-720p') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sdas_hn_sd20_fast_720p_rate')).get();
-    return parseFloat(row?.value || '2.80');
-  } else if (model === 'sdas-bl-sd2.0-933-pro-720p') {
+  if (model === 'sdas-bl-sd2.0-933-pro-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_bl_sd20_933_pro_720p_rate')).get();
     return parseFloat(row?.value || '4.50');
   } else if (model === 'sdas-bl-sd2.0-933-pro-noface-720p') {
@@ -121,14 +107,9 @@ function getVideoRate(model: string, resolution: string): number {
 
 /** 查找视频中转渠道配置 */
 function findUpstreamVideoConfig() {
-  let ch = ChannelService.findChannelForModel('grok-imagine-video');
-  if (!ch) ch = ChannelService.findChannelForModel('omni-flash');
-  if (!ch) {
-    const active = ChannelService.getActiveChannels();
-    ch = active.find(c => c.supportedModels.includes('video') || c.supportedModels.includes('*'));
-  }
+  const active = ChannelService.getActiveChannels();
+  let ch = active.find(c => c.supportedModels.includes('video') || c.supportedModels.includes('*'));
   if (ch) return { baseUrl: ch.baseUrl, apiKey: ch.apiKey };
-  if (env.GROK2API_BASE_URL) return { baseUrl: env.GROK2API_BASE_URL, apiKey: env.GROK2API_API_KEY };
   return null;
 }
 
@@ -168,14 +149,6 @@ router.get('/models', (req: Request, res: Response) => {
 
   // 1. 默认内置的所有视频模型（包括 sora-v4-fast，过滤已禁用的）
   const defaultVideoModels = [
-    'grok-imagine-video',
-    'grok-4.3-video',
-    'grok-imagine-video-1.5-preview',
-    'grok-imagine-1.0-video',
-    'grok-imagine-video-1.5-fast',
-    'grok-imagine-video-1.5-1080p',
-    'omni-flash',
-    'omni-flash-vref',
     'sora-v4-fast',
     'sora-v4-pro',
     'lg-seedance-2.0-fast',
@@ -664,11 +637,7 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
   let channelId: number | null = null;
 
   if (channel) {
-    if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
-      upstreamModel = 'ld-sdas-cvk-pro-933-720p';
-    } else if (model === 'sdas-hn-sd2.0-fast-720p') {
-      upstreamModel = 'sdas-hn-sd2.0-fast-720p';
-    } else if (channel.modelMapping) {
+    if (channel.modelMapping) {
       try {
         const mapping = typeof channel.modelMapping === 'string' ? JSON.parse(channel.modelMapping) : channel.modelMapping;
         upstreamModel = mapping[model] || model;
@@ -677,9 +646,6 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     baseUrl = channel.baseUrl.replace(/\/+$/, '');
     apiKey = channel.apiKey;
     channelId = channel.id;
-  } else if (model.startsWith('grok') && env.GROK2API_BASE_URL) {
-    baseUrl = env.GROK2API_BASE_URL.replace(/\/+$/, '');
-    apiKey = env.GROK2API_API_KEY || '';
   } else {
     cleanupFiles(req.files);
     return res.status(404).json({ error: `No available channel for model ${model}` });
@@ -700,11 +666,7 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     'cd-seedance-2.0-720p',
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
-    'sd2-c6',
-    'grok-imagine-1.0-video',
-    'grok-imagine-video-1.5-1080p',
-    'grok-imagine-video-1.5-fast',
-    'grok-imagine-video-1.5-preview'
+    'sd2-c6'
   ].includes(model);
   const totalCost = isFlatRate ? rate : (Math.round(rate * Number(seconds) * 100) / 100);
 
@@ -812,11 +774,7 @@ router.post('/video/generations', async (req: Request, res: Response) => {
   let channelId: number | null = null;
 
   if (channel) {
-    if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
-      upstreamModel = 'ld-sdas-cvk-pro-933-720p';
-    } else if (model === 'sdas-hn-sd2.0-fast-720p') {
-      upstreamModel = 'sdas-hn-sd2.0-fast-720p';
-    } else if (channel.modelMapping) {
+    if (channel.modelMapping) {
       try {
         const mapping = typeof channel.modelMapping === 'string' ? JSON.parse(channel.modelMapping) : channel.modelMapping;
         upstreamModel = mapping[model] || model;
@@ -825,15 +783,12 @@ router.post('/video/generations', async (req: Request, res: Response) => {
     baseUrl = channel.baseUrl.replace(/\/+$/, '');
     apiKey = channel.apiKey;
     channelId = channel.id;
-  } else if (model.startsWith('grok') && env.GROK2API_BASE_URL) {
-    baseUrl = env.GROK2API_BASE_URL.replace(/\/+$/, '');
-    apiKey = env.GROK2API_API_KEY || '';
   } else {
     return res.status(404).json({ error: `No available channel for model ${model}` });
   }
 
   const rate = getVideoRate(model, resolution);
-  const seconds = (model === 'omni-flash-vref') ? 10 : Number(duration);
+  const seconds = Number(duration);
   const isFlatRate = [
     'seedance-2.0-fast',
     'sd2-c7',
@@ -848,11 +803,7 @@ router.post('/video/generations', async (req: Request, res: Response) => {
     'cd-seedance-2.0-720p',
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
-    'sd2-c6',
-    'grok-imagine-1.0-video',
-    'grok-imagine-video-1.5-1080p',
-    'grok-imagine-video-1.5-fast',
-    'grok-imagine-video-1.5-preview'
+    'sd2-c6'
   ].includes(model);
   const totalCost = isFlatRate ? rate : (Math.round(rate * seconds * 100) / 100);
 
@@ -873,7 +824,7 @@ router.post('/video/generations', async (req: Request, res: Response) => {
       body: JSON.stringify({
         model: upstreamModel,
         prompt,
-        duration: model === 'sdas-pd-sd2.0-pro-933-5-720p' ? 10 : duration,
+        duration,
         aspect_ratio,
         resolution,
         ...otherParams,

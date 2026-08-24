@@ -140,8 +140,6 @@ export async function syncModelsFromAPI() {
     { provider: 'google', modelId: 'gemini-3-pro-image-preview', displayName: '🍌 nabanana pro', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) },
-    { provider: 'omni', modelId: 'omni-flash', displayName: 'Omni Flash', capabilities: JSON.stringify(['video']) },
-    { provider: 'omni', modelId: 'omni-flash-vref', displayName: 'Omni Flash Vref', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-mj-minimax-h3-2k', displayName: 'Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },
@@ -158,10 +156,7 @@ export async function syncModelsFromAPI() {
     { provider: 'seedance', modelId: 'seedance2.0-933', displayName: 'seedance2.0 933', description: 'seedance2.0 933 模型，支持9图、3音频参考（无视频参考），固定按次计费 ¥3.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']), isActive: 0 },
-    { provider: 'seedance', modelId: 'seedance-720', displayName: 'Seedance 720 满血版', capabilities: JSON.stringify(['video']), isActive: 0 },
-    { provider: 'grok', modelId: 'grok-imagine-1.0-video', displayName: 'Grok 1.0 Video', capabilities: JSON.stringify(['video']) },
-    { provider: 'grok', modelId: 'grok-imagine-video-1.5-fast', displayName: 'Grok 1.5 Fast', capabilities: JSON.stringify(['video']) },
-    { provider: 'grok', modelId: 'grok-imagine-video-1.5-preview', displayName: 'Grok 1.5 Preview', capabilities: JSON.stringify(['video']) }
+    { provider: 'seedance', modelId: 'seedance-720', displayName: 'Seedance 720 满血版', capabilities: JSON.stringify(['video']), isActive: 0 }
   );
 
   // 同步或插入模型
@@ -228,7 +223,12 @@ export async function syncModelsFromAPI() {
       'tejiasd2',
       'sdas-pd-sd2.0-pro-933-5-720p',
       'rd-seedance-2.5-480p',
-      'rd-seedance-2.5-720p'
+      'rd-seedance-2.5-720p',
+      'grok-imagine-video-1.5-preview',
+      'grok-imagine-1.0-video',
+      'grok-imagine-video-1.5-fast',
+      'omni-flash',
+      'omni-flash-vref'
     ];
     for (const modelId of deadModels) {
       db.delete(models).where(eq(models.modelId, modelId)).run();
@@ -642,10 +642,6 @@ export async function initDatabase() {
 
   // 保证 Omni & Sora 费率配置项存在
   const omniSettings = [
-    { key: 'omni_flash_rate_720p', value: '0.90', label: 'Omni Flash 720p费率(¥/秒)' },
-    { key: 'omni_flash_rate_1080p', value: '1.50', label: 'Omni Flash 1080p费率(¥/秒)' },
-    { key: 'omni_vref_rate_720p', value: '1.60', label: 'Omni Vref 720p费率(¥/秒)' },
-    { key: 'omni_vref_rate_1080p', value: '2.20', label: 'Omni Vref 1080p费率(¥/秒)' },
     { key: 'veo_omni_flash_rate', value: '0.25', label: 'Veo Omni Flash 费率(¥/秒)' },
     { key: 'veo_3_1_rate', value: '0.20', label: 'Veo 3-1 费率(¥/秒)' },
     { key: 'sd2_c7_rate', value: '0.50', label: 'Seedance 2.0 c7 费率(¥/次)' },
@@ -663,9 +659,6 @@ export async function initDatabase() {
     { key: 'nd_seedance_2_0_720p_rate', value: '4.30', label: 'Seedance 2.0 (720p/不卡脸) 费率(¥/次)' },
     { key: 'sd2_c6_rate', value: '2.50', label: 'Seedance 2.0 c6 费率(¥/次)' },
     { key: 'seedance_720_rate', value: '3.00', label: 'Seedance 720 满血版 费率(¥/次)' },
-    { key: 'grok_imagine_1_0_video_rate', value: '0.288', label: 'Grok Imagine 1.0 Video 费率(¥/秒)' },
-    { key: 'grok_imagine_video_1_5_fast_rate', value: '0.288', label: 'Grok Imagine 1.5 Fast 费率(¥/秒)' },
-    { key: 'grok_imagine_video_1_5_preview_rate', value: '0.48', label: 'Grok Imagine 1.5 Preview 费率(¥/秒)' },
     { key: 'seedance_2_5_c1_rate', value: '0.25', label: 'Seedance 2.5 (c1) 费率(¥/秒)' },
   ];
   // 物理清理旧 of rd_seedance 相关的设置项
@@ -679,6 +672,13 @@ export async function initDatabase() {
   db.delete(settings).where(eq(settings.key, 'sdas_gf7_seedance_2_5_720p_rate')).run();
   db.delete(settings).where(eq(settings.key, 'vd_seedance_2_5_480p_rate')).run();
   db.delete(settings).where(eq(settings.key, 'vd_seedance_2_5_720p_rate')).run();
+  db.delete(settings).where(eq(settings.key, 'omni_flash_rate_720p')).run();
+  db.delete(settings).where(eq(settings.key, 'omni_flash_rate_1080p')).run();
+  db.delete(settings).where(eq(settings.key, 'omni_vref_rate_720p')).run();
+  db.delete(settings).where(eq(settings.key, 'omni_vref_rate_1080p')).run();
+  db.delete(settings).where(eq(settings.key, 'grok_imagine_1_0_video_rate')).run();
+  db.delete(settings).where(eq(settings.key, 'grok_imagine_video_1_5_fast_rate')).run();
+  db.delete(settings).where(eq(settings.key, 'grok_imagine_video_1_5_preview_rate')).run();
 
   // 物理清理废弃的 Seedance 2.5 相关的模型
   db.delete(models).where(eq(models.modelId, 'md-seedance-2.5-480p')).run();
@@ -757,24 +757,7 @@ export async function initDatabase() {
       inputPrice: 0.20 * IMAGE_MULTIPLIER,   // 3x multiplier (0.60)
       outputPrice: 0,
     },
-    {
-      modelPattern: 'grok-imagine-1.0-video',
-      billingType: 'per_call',
-      inputPrice: 2.88,
-      outputPrice: 0,
-    },
-    {
-      modelPattern: 'grok-imagine-video-1.5-preview',
-      billingType: 'per_call',
-      inputPrice: 4.80,
-      outputPrice: 0,
-    },
-    {
-      modelPattern: 'grok-imagine-video-1.5-fast',
-      billingType: 'per_call',
-      inputPrice: 2.88,
-      outputPrice: 0,
-    },
+
     {
       modelPattern: 'sdas-bl-sd2.0-933-pro-720p',
       billingType: 'per_call',
@@ -831,9 +814,11 @@ export async function initDatabase() {
     },
   ];
 
-  // 物理清理旧的 rd-seedance 模型计费规则
   db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'rd-seedance-2.5-480p')).run();
   db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'rd-seedance-2.5-720p')).run();
+  db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'grok-imagine-1.0-video')).run();
+  db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'grok-imagine-video-1.5-preview')).run();
+  db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'grok-imagine-video-1.5-fast')).run();
 
   console.log('📦 同步计费规则到数据库 (更新/插入)...');
   for (const pricing of defaultPricing) {
