@@ -62,12 +62,7 @@ const isFlatRateModel = (modelId: string) => {
     'tejiasd2',
     'sd2-mini',
     'seedance2.0-933',
-    'seedance2.0 933',
-    'md-seedance-2.0-720p',
-    'md-seedance-2.5-480p-15s',
-    'md-seedance-2.5-480p-30s',
-    'md-seedance-2.5-720p-15s',
-    'md-seedance-2.5-720p-30s'
+    'seedance2.0 933'
   ].includes(modelId);
 };
 
@@ -260,8 +255,6 @@ const isSoraV4Model = (modelId: string) => {
 };
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
-  if (modelId.startsWith('md-seedance-2.5')) return 30;
-  if (modelId.startsWith('md-seedance-2.0')) return 9;
   if (modelId === 'seedance-2.5-c1') return 30;
   if (modelId === 'sd2.5') return 9;
   if (modelId === 'sd2-c7') return 10;
@@ -381,14 +374,12 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
-    if (m.startsWith('md-seedance')) return 0;
     if (m === 'seedance-2.5-c1') return 10;
     if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
-    if (m.startsWith('md-seedance')) return 0;
     if (m === 'seedance-2.5-c1') return 10;
     if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
