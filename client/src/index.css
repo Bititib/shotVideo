@@ -459,6 +459,24 @@ input:focus, textarea:focus, select:focus {
 input::placeholder, textarea::placeholder { color: #8c7969 !important; opacity: 1; }
 option { background: var(--earth-surface-raised) !important; color: var(--earth-ink) !important; }
 
+/* Prompt editor uses a colored backdrop for @ references. Keep the real
+   textarea glyphs invisible so the two text layers never overlap. */
+textarea.prompt-highlight-textarea,
+textarea.prompt-highlight-textarea:hover,
+textarea.prompt-highlight-textarea:focus {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  caret-color: var(--earth-primary) !important;
+}
+textarea.prompt-highlight-textarea::placeholder {
+  color: #8c7969 !important;
+  -webkit-text-fill-color: #8c7969 !important;
+  opacity: 1;
+}
+
 button, a { transition: color 180ms var(--ease-earth), background-color 180ms var(--ease-earth), border-color 180ms var(--ease-earth), box-shadow 180ms var(--ease-earth), opacity 180ms var(--ease-earth), transform 180ms var(--ease-earth); }
 button:active:not(:disabled), a:active { transform: translateY(1px); }
 button.bg-gradient-to-r, a.bg-gradient-to-r, div.bg-gradient-to-r {

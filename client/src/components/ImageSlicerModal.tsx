@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Grid, Sliders, Scissors } from 'lucide-react';
 
 interface ImageSlicerModalProps {
@@ -81,17 +82,17 @@ export default function ImageSlicerModal({ imageUrl, onClose, onConfirm }: Image
     }, 100);
   };
 
-  return (
-    <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4">
-      <div className="w-full max-w-4xl bg-zinc-950 border border-white/10 rounded-2xl overflow-hidden shadow-2xl flex flex-col md:flex-row max-h-[90vh]">
+  return createPortal(
+    <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-[#302721]/65 backdrop-blur-sm p-4">
+      <div className="w-full max-w-4xl bg-[#fffaf2] border border-[#d9bea0] rounded-2xl overflow-hidden shadow-[0_28px_80px_rgba(57,39,27,0.28)] flex flex-col md:flex-row max-h-[90vh]">
         {/* 左侧：图片预览 + 网格线 */}
-        <div className="flex-1 bg-black p-6 flex items-center justify-center relative min-h-[300px] md:min-h-[450px] overflow-hidden border-b md:border-b-0 md:border-r border-white/5">
+        <div className="flex-1 bg-[#f7eee3] p-6 flex items-center justify-center relative min-h-[300px] md:min-h-[450px] overflow-hidden border-b md:border-b-0 md:border-r border-[#dfc9ad]">
           <div className="relative max-w-full max-h-[60vh] md:max-h-[75vh] flex items-center justify-center">
             <img
               ref={imageRef}
               src={imageUrl}
               alt="Slice Preview"
-              className="max-w-full max-h-[60vh] md:max-h-[75vh] object-contain rounded-lg pointer-events-none"
+              className="max-w-full max-h-[60vh] md:max-h-[75vh] object-contain rounded-lg pointer-events-none shadow-[0_12px_32px_rgba(72,48,31,0.18)] ring-1 ring-[#b99572]/30"
             />
             {/* 叠加上方的虚线网格 */}
             {imageRef.current && (
@@ -108,7 +109,7 @@ export default function ImageSlicerModal({ imageUrl, onClose, onConfirm }: Image
                 {Array.from({ length: rows - 1 }).map((_, i) => (
                   <div
                     key={`row-${i}`}
-                    className="absolute w-full border-t border-dashed border-yellow-400/80 drop-shadow-[0_0_2px_rgba(0,0,0,0.8)]"
+                    className="absolute w-full border-t border-dashed border-[#c2613d] drop-shadow-[0_0_2px_rgba(255,250,242,0.9)]"
                     style={{ top: `${((i + 1) / rows) * 100}%` }}
                   />
                 ))}
@@ -116,12 +117,12 @@ export default function ImageSlicerModal({ imageUrl, onClose, onConfirm }: Image
                 {Array.from({ length: cols - 1 }).map((_, i) => (
                   <div
                     key={`col-${i}`}
-                    className="absolute h-full border-l border-dashed border-yellow-400/80 drop-shadow-[0_0_2px_rgba(0,0,0,0.8)]"
+                    className="absolute h-full border-l border-dashed border-[#c2613d] drop-shadow-[0_0_2px_rgba(255,250,242,0.9)]"
                     style={{ left: `${((i + 1) / cols) * 100}%` }}
                   />
                 ))}
                 {/* 网格格数角标 */}
-                <div className="absolute bottom-2 right-2 bg-black/80 backdrop-blur border border-white/10 text-[10px] text-yellow-400 font-mono px-2 py-1 rounded-md">
+                <div className="absolute bottom-2 right-2 bg-[#4e3428]/90 backdrop-blur border border-[#f2d9bd]/40 text-[10px] text-[#ffe4c5] font-mono px-2 py-1 rounded-md shadow-sm">
                   {cols} 列 x {rows} 行 ({cols * rows} 个分镜)
                 </div>
               </div>
@@ -130,25 +131,25 @@ export default function ImageSlicerModal({ imageUrl, onClose, onConfirm }: Image
         </div>
 
         {/* 右侧：操作面板 */}
-        <div className="w-full md:w-[320px] shrink-0 p-6 flex flex-col justify-between bg-zinc-900/40">
+        <div className="w-full md:w-[320px] shrink-0 p-6 flex flex-col justify-between bg-[#fbf3e8]">
           <div>
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                <Scissors className="w-4 h-4 text-indigo-400" /> 分镜拼图智能切分
+              <h3 className="text-sm font-semibold text-[#4c3328] flex items-center gap-2">
+                <Scissors className="w-4 h-4 text-[#a65332]" /> 分镜拼图智能切分
               </h3>
-              <button onClick={onClose} className="text-zinc-500 hover:text-white transition-colors">
+              <button onClick={onClose} aria-label="关闭" className="rounded-lg p-1 text-[#9a7a65] hover:bg-[#ead8c4] hover:text-[#6b412f] transition-colors">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <p className="text-xs text-zinc-400 mb-5 leading-relaxed">
+            <p className="text-xs text-[#806858] mb-5 leading-relaxed">
               视频生成模型需要连贯且清晰的单场景镜头。通过本工具，你可以直接将多格拼图切分成多张独立的参考图，以保证生成质量。
             </p>
 
             {/* 预设布局 */}
             <div className="mb-6">
-              <span className="block text-[11px] font-semibold text-zinc-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                <Grid className="w-3.5 h-3.5 text-zinc-500" /> 预设网格布局
+              <span className="block text-[11px] font-semibold text-[#8a6e5a] uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                <Grid className="w-3.5 h-3.5 text-[#b45b38]" /> 预设网格布局
               </span>
               <div className="grid grid-cols-2 gap-2">
                 {presets.map(p => (
@@ -157,8 +158,8 @@ export default function ImageSlicerModal({ imageUrl, onClose, onConfirm }: Image
                     onClick={() => { setRows(p.r); setCols(p.c); }}
                     className={`px-3 py-2 rounded-xl text-left text-xs font-medium border transition-all ${
                       rows === p.r && cols === p.c
-                        ? 'bg-indigo-500/10 border-indigo-500/50 text-indigo-300'
-                        : 'bg-white/[0.02] border-white/5 text-zinc-400 hover:bg-white/5 hover:text-zinc-200'
+                        ? 'bg-[#ead1b8] border-[#b65d39] text-[#783f2a] shadow-[0_4px_12px_rgba(151,77,47,0.12)]'
+                        : 'bg-[#fffaf2] border-[#dec5a7] text-[#684f40] hover:bg-[#f3e4d3] hover:border-[#c99d78]'
                     }`}
                   >
                     {p.name}
@@ -168,12 +169,12 @@ export default function ImageSlicerModal({ imageUrl, onClose, onConfirm }: Image
             </div>
 
             {/* 自定义调整 */}
-            <div className="space-y-4 mb-6 border-t border-white/5 pt-4">
-              <span className="block text-[11px] font-semibold text-zinc-500 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                <Sliders className="w-3.5 h-3.5 text-zinc-500" /> 自定义网格数量
+            <div className="space-y-4 mb-6 border-t border-[#dfc9ad] pt-4">
+              <span className="block text-[11px] font-semibold text-[#8a6e5a] uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                <Sliders className="w-3.5 h-3.5 text-[#b45b38]" /> 自定义网格数量
               </span>
               <div>
-                <div className="flex justify-between text-xs text-zinc-400 mb-1.5">
+                <div className="flex justify-between text-xs text-[#765d4d] mb-1.5">
                   <span>行数 (Row): {rows}</span>
                 </div>
                 <input
@@ -182,11 +183,11 @@ export default function ImageSlicerModal({ imageUrl, onClose, onConfirm }: Image
                   max="6"
                   value={rows}
                   onChange={e => setRows(parseInt(e.target.value))}
-                  className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                  className="w-full h-1.5 bg-[#dfc9ad] rounded-lg appearance-none cursor-pointer accent-[#a65332]"
                 />
               </div>
               <div>
-                <div className="flex justify-between text-xs text-zinc-400 mb-1.5">
+                <div className="flex justify-between text-xs text-[#765d4d] mb-1.5">
                   <span>列数 (Column): {cols}</span>
                 </div>
                 <input
@@ -195,36 +196,37 @@ export default function ImageSlicerModal({ imageUrl, onClose, onConfirm }: Image
                   max="6"
                   value={cols}
                   onChange={e => setCols(parseInt(e.target.value))}
-                  className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                  className="w-full h-1.5 bg-[#dfc9ad] rounded-lg appearance-none cursor-pointer accent-[#a65332]"
                 />
               </div>
             </div>
 
             {dimensions.width > 0 && (
-              <div className="text-[10px] text-zinc-500 bg-white/[0.02] border border-white/5 p-3 rounded-xl font-mono space-y-1">
+              <div className="text-[10px] text-[#806858] bg-[#fffaf2] border border-[#dec5a7] p-3 rounded-xl font-mono space-y-1 shadow-sm">
                 <p>原始分辨率: {dimensions.width} x {dimensions.height}</p>
                 <p>单图分辨率: {Math.round(dimensions.width / cols)} x {Math.round(dimensions.height / rows)}</p>
               </div>
             )}
           </div>
 
-          <div className="flex gap-3 mt-6 border-t border-white/5 pt-4">
+          <div className="flex gap-3 mt-6 border-t border-[#dfc9ad] pt-4">
             <button
               onClick={onClose}
-              className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors"
+              className="flex-1 py-2.5 bg-[#fffaf2] hover:bg-[#efe0cf] border border-[#dec5a7] rounded-xl text-xs font-medium text-[#684f40] transition-colors"
             >
               取消
             </button>
             <button
               onClick={handleSlice}
               disabled={loading || (rows === 1 && cols === 1)}
-              className="flex-1 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-xs font-semibold text-white rounded-xl transition-all disabled:opacity-40"
+              className="flex-1 py-2.5 bg-[#a64f30] hover:bg-[#8f4027] border border-[#8f4027] text-xs font-semibold text-white rounded-xl shadow-[0_6px_16px_rgba(145,65,39,0.2)] transition-all disabled:opacity-40 disabled:shadow-none"
             >
               {loading ? '处理中...' : '确认切分'}
             </button>
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

@@ -284,15 +284,15 @@ function CustomSelect({ value, options, onChange }: any) {
   return (
     <div className="relative" ref={ref}>
       <button onClick={() => setIsOpen(!isOpen)}
-        className={`flex items-center gap-2 bg-white/[0.03] hover:bg-white/[0.05] rounded-lg px-3 py-2 text-[11px] text-zinc-300 transition-colors border ${isOpen ? 'border-indigo-500/30' : 'border-transparent'}`}>
-        {selected?.icon && <selected.icon className="w-3.5 h-3.5 text-indigo-400" />}
+        className={`flex items-center gap-2 rounded-lg px-3 py-2 text-[11px] text-[#654838] transition-colors border bg-[#f8efe3] hover:bg-[#f1e1cf] ${isOpen ? 'border-[#b86a44] shadow-[0_0_0_3px_rgba(184,106,68,0.10)]' : 'border-[#e2cfb8]'}`}>
+        {selected?.icon && <selected.icon className="w-3.5 h-3.5 text-[#a45736]" />}
         {selected?.label || value}
       </button>
       {isOpen && (
-        <div className="absolute bottom-full left-0 mb-2 min-w-full w-max bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl p-1 z-50 flex flex-col max-h-[240px] overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+        <div className="absolute bottom-full left-0 mb-2 min-w-full w-max bg-[#fffaf2] border border-[#d5b996] rounded-xl shadow-[0_18px_45px_rgba(78,48,31,0.18)] p-1.5 z-50 flex flex-col max-h-[240px] overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
           {options.map((o: any) => (
             <button key={o.value} onClick={() => { onChange(o.value); setIsOpen(false); }}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-left text-[11px] transition-colors ${value === o.value ? 'bg-indigo-500/20 text-indigo-300' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'}`}>
+              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-left text-[11px] transition-colors ${value === o.value ? 'bg-[#ead4bf] text-[#7c3f29] font-semibold' : 'text-[#6f594a] hover:text-[#7c3f29] hover:bg-[#f5e8d8]'}`}>
               {o.icon && <o.icon className="w-3.5 h-3.5" />}{o.label}
             </button>
           ))}
@@ -422,8 +422,8 @@ export default function VideoPage() {
         return (
           <span
             key={index}
-            className={`inline rounded transition-colors px-1 ${exists
-              ? 'text-purple-400 bg-purple-500/20 font-sans font-medium'
+            className={`inline rounded transition-colors ${exists
+              ? 'text-purple-400 bg-purple-500/20 font-sans'
               : 'text-zinc-500 bg-zinc-500/10 line-through decoration-zinc-600 font-sans'
               }`}
           >
@@ -439,8 +439,8 @@ export default function VideoPage() {
         return (
           <span
             key={index}
-            className={`inline rounded transition-colors px-1 ${exists
-              ? 'text-emerald-400 bg-emerald-500/20 font-sans font-medium'
+            className={`inline rounded transition-colors ${exists
+              ? 'text-emerald-400 bg-emerald-500/20 font-sans'
               : 'text-zinc-500 bg-zinc-500/10 line-through decoration-zinc-600 font-sans'
               }`}
           >
@@ -1408,8 +1408,8 @@ export default function VideoPage() {
                   </button>
                   <div className="group relative flex items-center">
                     <HelpCircle className="w-3.5 h-3.5 text-zinc-500 hover:text-zinc-300 transition-colors cursor-help" />
-                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-zinc-950 border border-white/10 rounded-xl shadow-2xl text-[10px] text-zinc-400 leading-normal pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-50">
-                      <p className="font-semibold text-yellow-400 mb-1 flex items-center gap-1">⚠️ 避免使用多格拼图</p>
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-[#fffaf2] border border-[#d5b996] rounded-xl shadow-[0_16px_38px_rgba(78,48,31,0.16)] text-[10px] text-[#70594a] leading-normal pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-50">
+                      <p className="font-semibold text-[#9b5335] mb-1 flex items-center gap-1">⚠️ 避免使用多格拼图</p>
                       视频模型推荐使用连贯的单镜头画面。使用九宫格等拼图会导致生成失败或变形。如果上传了拼图，可使用参考图上的 <Scissors className="w-3 h-3 inline text-indigo-400" /> 按钮智能切分。
                     </div>
                   </div>
@@ -1510,26 +1510,26 @@ export default function VideoPage() {
 
                 {/* 资产选择弹窗 */}
                 {showAssetPicker && (
-                  <div className="absolute bottom-full left-4 mb-2 w-80 max-w-full bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl p-2.5 z-50">
-                    <div className="flex items-center justify-between px-2 pb-2 border-b border-white/10 mb-2">
-                      <span className="text-xs font-semibold text-zinc-400 font-medium">选择素材引用 (@)</span>
-                      <button onClick={() => setShowAssetPicker(false)} className="text-zinc-500 hover:text-white"><X className="w-3.5 h-3.5" /></button>
+                  <div className="absolute bottom-full left-4 mb-3 w-80 max-w-[calc(100%_-_2rem)] bg-[#fffaf2] border border-[#cfae8c] rounded-2xl shadow-[0_22px_55px_rgba(78,48,31,0.20)] p-3 z-50">
+                    <div className="flex items-center justify-between px-1 pb-3 border-b border-[#e1cdb4] mb-3">
+                      <span className="text-xs font-semibold text-[#543b2d]">选择素材引用 <span className="text-[#a45736]">(@)</span></span>
+                      <button aria-label="关闭素材选择" onClick={() => setShowAssetPicker(false)} className="!min-w-7 !min-h-7 w-7 h-7 rounded-lg flex items-center justify-center text-[#8d725f] hover:text-[#7c3f29] hover:bg-[#f0dfcc]"><X className="w-3.5 h-3.5" /></button>
                     </div>
 
                     {/* 第一部分：已上传素材列表 (直接在文本中@引用) */}
                     {(referenceImages.length > 0 || referenceVideos.length > 0 || referenceAudios.length > 0) && (
-                      <div className="mb-3 pb-3 border-b border-white/5">
-                        <span className="text-[10px] text-zinc-500 mb-2 block px-1 font-semibold">已上传素材 (点击引用至文本)</span>
+                      <div className="mb-3 pb-3 border-b border-[#eadbc8]">
+                        <span className="text-[10px] text-[#8a6d59] mb-2 block px-1 font-semibold tracking-wide">已上传素材（点击插入提示词）</span>
                         <div className="flex flex-col gap-1 max-h-40 overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
                           {referenceImages.map((img, idx) => (
                             <div
                               key={`uploaded_img_${idx}`}
                               onClick={() => insertTextAtCursor(`@图${idx + 1} `)}
-                              className="flex items-center gap-3 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-indigo-500/10 group transition-all text-xs text-zinc-300 hover:text-indigo-400"
+                              className="flex items-center gap-3 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-[#f1dfcd] group transition-all text-xs text-[#5d4638] hover:text-[#8e472e]"
                               title={`点击在光标处插入 @图${idx + 1}`}
                             >
-                              <img src={img} className="w-8 h-8 rounded-lg object-cover border border-white/5" />
-                              <span className="font-medium group-hover:text-indigo-400">@图{idx + 1}</span>
+                              <img src={img} className="w-8 h-8 rounded-lg object-cover border border-[#d8b995]" />
+                              <span className="font-medium group-hover:text-[#8e472e]">@图{idx + 1}</span>
                             </div>
                           ))}
 
@@ -1537,11 +1537,11 @@ export default function VideoPage() {
                             <div
                               key={`uploaded_vid_${idx}`}
                               onClick={() => insertTextAtCursor(`@视频${idx + 1} `)}
-                              className="flex items-center gap-3 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-purple-500/10 group transition-all text-xs text-purple-300 hover:text-purple-400"
+                              className="flex items-center gap-3 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-[#f1dfcd] group transition-all text-xs text-[#6d5140] hover:text-[#8e472e]"
                               title={`点击在光标处插入 @视频${idx + 1}`}
                             >
-                              <div className="w-8 h-8 rounded-lg overflow-hidden border border-purple-500/30 bg-black shrink-0 flex items-center justify-center">
-                                <Film className="w-4 h-4 text-purple-400" />
+                              <div className="w-8 h-8 rounded-lg overflow-hidden border border-[#d8b995] bg-[#f2e3d2] shrink-0 flex items-center justify-center">
+                                <Film className="w-4 h-4 text-[#a45736]" />
                               </div>
                               <span className="font-medium group-hover:text-purple-400">@视频{idx + 1}</span>
                             </div>
@@ -1551,10 +1551,10 @@ export default function VideoPage() {
                             <div
                               key={`uploaded_aud_${idx}`}
                               onClick={() => insertTextAtCursor(`@音频${idx + 1} `)}
-                              className="flex items-center gap-3 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-emerald-500/10 group transition-all text-xs text-emerald-300 hover:text-emerald-400"
+                              className="flex items-center gap-3 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-[#edf0df] group transition-all text-xs text-[#65704b] hover:text-[#4f6136]"
                               title={`点击在光标处插入 @音频${idx + 1}`}
                             >
-                              <div className="w-8 h-8 rounded-lg overflow-hidden border border-emerald-500/30 bg-emerald-500/10 shrink-0 flex items-center justify-center">
+                              <div className="w-8 h-8 rounded-lg overflow-hidden border border-[#bcc59e] bg-[#edf0df] shrink-0 flex items-center justify-center">
                                 <span className="text-sm">🔊</span>
                               </div>
                               <span className="font-medium group-hover:text-emerald-400">@音频{idx + 1} {referenceAudioNames[idx] ? `(${referenceAudioNames[idx]})` : ''}</span>
@@ -1565,21 +1565,21 @@ export default function VideoPage() {
                     )}
 
                     <button onClick={() => { fileInputRef.current?.click(); setShowAssetPicker(false); }}
-                      className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 transition-colors text-xs text-white mb-3 cursor-pointer">
-                      <Upload className="w-3.5 h-3.5 text-indigo-400" /> 从本地上传新文件
+                      className="w-full flex items-center gap-2 px-3 py-2.5 rounded-xl bg-[#f3e4d3] hover:bg-[#ead5bf] border border-[#dec3a3] transition-colors text-xs font-medium text-[#704a36] mb-3 cursor-pointer">
+                      <Upload className="w-3.5 h-3.5 text-[#a45736]" /> 从本地上传新文件
                     </button>
 
                     <div className="max-h-60 overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
-                      <span className="text-[10px] text-zinc-500 mb-2 block px-1 font-semibold">本地资产库 (点击添加并插入引用)</span>
+                      <span className="text-[10px] text-[#8a6d59] mb-2 block px-1 font-semibold tracking-wide">本地资产库（点击添加并引用）</span>
                       {myAssets.length === 0 ? (
-                        <div className="text-center py-6 text-xs text-zinc-600">暂无历史保存的资产</div>
+                        <div className="rounded-xl border border-dashed border-[#dfc8aa] bg-[#faf2e8] text-center py-6 text-xs text-[#9a806b]">暂无已保存的资产</div>
                       ) : (
                         <div className="grid grid-cols-4 gap-2">
                           {myAssets.map(asset => {
                             const isSelected = asset.type === 'video' ? referenceVideos.includes(asset.dataUrl) : referenceImages.includes(asset.dataUrl);
 
                             return (
-                              <div key={asset.id} className={`relative group aspect-square rounded-lg overflow-hidden border cursor-pointer bg-black/50 transition-all ${isSelected ? 'border-indigo-500 shadow-[0_0_0_2px_rgba(99,102,241,0.3)]' : 'border-white/10 hover:border-indigo-500/50'}`}
+                              <div key={asset.id} className={`relative group aspect-square rounded-lg overflow-hidden border cursor-pointer bg-[#eee0cf] transition-all ${isSelected ? 'border-[#a45736] shadow-[0_0_0_2px_rgba(164,87,54,0.20)]' : 'border-[#dbc1a0] hover:border-[#b86a44]'}`}
                                 onClick={() => {
                                   if (asset.type === 'video') {
                                     if (referenceVideos.length >= maxRefVideos) {
@@ -1613,8 +1613,8 @@ export default function VideoPage() {
                                 )}
                                 {/* 选中态遮罩与对号 */}
                                 {isSelected && (
-                                  <div className="absolute inset-0 bg-indigo-500/20 flex items-center justify-center">
-                                    <div className="bg-indigo-500 rounded-full p-1 shadow-lg">
+                                  <div className="absolute inset-0 bg-[#a45736]/20 flex items-center justify-center">
+                                    <div className="bg-[#a45736] rounded-full p-1 shadow-lg">
                                       <Check className="w-4 h-4 text-white" />
                                     </div>
                                   </div>
@@ -1739,7 +1739,7 @@ export default function VideoPage() {
                     }}
                     onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); } }}
                     placeholder="描述你想生成的视频内容... (输入 @ 可直接上传参考图)"
-                    className={`w-full bg-transparent px-4 py-3 pr-16 text-sm text-transparent caret-white focus:outline-none placeholder:text-zinc-600 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent font-sans leading-relaxed overflow-y-auto whitespace-pre-wrap break-words selection:text-transparent selection:bg-indigo-500/30 ${isMaximized ? 'resize-y' : 'resize-none'}`}
+                    className={`prompt-highlight-textarea w-full bg-transparent px-4 py-3 pr-16 text-sm text-transparent focus:outline-none [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-[#c9aa8d] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent font-sans leading-relaxed overflow-y-auto whitespace-pre-wrap break-words selection:text-transparent selection:bg-[#c77a50]/25 ${isMaximized ? 'resize-y' : 'resize-none'}`}
                   />
 
                   {/* 圆形发送按钮 */}
