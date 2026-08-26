@@ -140,6 +140,7 @@ export async function syncModelsFromAPI() {
     { provider: 'google', modelId: 'gemini-3-pro-image-preview', displayName: '🍌 nabanana pro', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) },
+    { provider: 'julun', modelId: 'wan3.0th', displayName: 'Wan 3.0 视频大模型 (wan3.0th)', description: 'AI开放平台 Wan3.0 高清视频生产模型，支持4-30s，720p，多比例，支持多图/视频/音频参考，固定按次计费 ¥4.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-mj-minimax-h3-2k', displayName: 'Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },
@@ -1101,16 +1102,17 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 MJNewAPI 渠道出错:', err.message);
   }
 
-  // 15) 保证 julun.cc 渠道存在并绑定唯一的 wan3.0th 视频生成模型
+  // 15) 保证 julun.cc 渠道存在、填入 API Key 并绑定唯一的 wan3.0th 视频生成模型
   try {
     const julunModels = ['wan3.0th'];
+    const julunApiKey = 'sk-yYbcd3cH5lrl6Za89O8beER0iomYfHOyPWSqb9XMv0MLAgWS';
     const existingJulun = db.select().from(channels).where(like(channels.baseUrl, '%julun.cc%')).get();
     if (!existingJulun) {
       db.insert(channels).values({
         name: 'AI开放平台 (julun.cc) 渠道',
         type: 'openai',
         baseUrl: 'https://julun.cc',
-        apiKey: '',
+        apiKey: julunApiKey,
         supportedModels: JSON.stringify(julunModels),
         status: 1,
         priority: 1,
@@ -1118,17 +1120,18 @@ export async function initDatabase() {
         maxRetries: 3,
         timeout: 120000,
       }).run();
-      console.log('📦 已自动迁移：成功创建 AI开放平台 (julun.cc) 渠道并仅绑定 wan3.0th 模型');
+      console.log('📦 已自动迁移：成功创建 AI开放平台 (julun.cc) 渠道并配置 API Key');
     } else {
       db.update(channels)
         .set({
+          apiKey: julunApiKey,
           supportedModels: JSON.stringify(julunModels),
           status: 1,
           updatedAt: new Date().toISOString()
         })
         .where(eq(channels.id, existingJulun.id))
         .run();
-      console.log('🔄 已自动迁移：更新 AI开放平台 (julun.cc) 渠道并仅保留 wan3.0th 模型');
+      console.log('🔄 已自动迁移：更新 AI开放平台 (julun.cc) 渠道 Key 并保证启用状态');
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 julun.cc 渠道出错:', err.message);

@@ -195,15 +195,16 @@ const MODEL_META: Record<string, ModelMeta> = {
   'sd2-mini': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance2.0-933': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance2.0 933': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
-  'grok-video-1.5（按秒）': { series: 'grok-1.5', allowedSeconds: [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30], requireRef: false },
-  'grok-imagine-video-1.5（按次）': { series: 'grok-1.5', allowedSeconds: [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30], requireRef: false },
+  'grok-video-1.5（按秒）': { series: 'grok-1.5', allowedSeconds: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
+  'grok-imagine-video-1.5（按次）': { series: 'grok-1.5', allowedSeconds: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   'grok-imagine-video-1.5-preview': { series: 'grok-1.5', allowedSeconds: [10, 15], requireRef: false },
-  'seedance-2.5-deal': { series: 'seedance-2.5', allowedSeconds: [4,5,6,7,8,9,10,11,12,13,14,15], requireRef: false },
-  'seedance-2.5m': { series: 'seedance-2.5', allowedSeconds: [4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25], requireRef: false },
-  'wan3.0th': { series: 'wan3.0', allowedSeconds: [4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30], requireRef: false },
+  'seedance-2.5-deal': { series: 'seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'seedance-2.5m': { series: 'seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25], requireRef: false },
+  'wan3.0th': { series: 'wan3.0', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
+  { id: 'wan3.0th', name: 'Wan 3.0 视频大模型 (wan3.0th)', description: ' Wan3.0 高清视频生成模型，支持4-30s，720p，多比例（16:9/9:16/1:1），支持多图/视频/音频参考，固定按次计费 ¥4.00/次', maxSeconds: 30, icon: '🌟' },
   { id: 'ld-sdas-cvk-pro-933-720p', name: 'SudaShui CVK Pro 933 (720p)', description: 'CVK 满血版，支持真人、4-15秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.800/次', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-mj-minimax-h3-2k', name: 'Minimax H3 (2K)', description: '海螺h3，9图3视频3音频，4-15s，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🔥' },
   { id: 'sdas-bl-sd2.0-933-pro-720p', name: 'Seedance 2.0 Pro (933人脸版)', description: '9图3视频3音频，支持 4-15s，支持真人，固定按次计费 ¥4.50/次', maxSeconds: 15, icon: '🚀' },
@@ -471,6 +472,11 @@ router.get('/models', (_req: Request, res: Response) => {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_mj_minimax_h3_2k_rate')).get()?.value || '3.00');
       rates = {
         '2k': rate,
+      };
+    } else if (m.id === 'wan3.0th') {
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'wan3_0th_rate')).get()?.value || '4.00');
+      rates = {
+        '720p': rate,
       };
     } else if (m.id === 'sd2-c6') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get()?.value || '2.50');
@@ -1910,7 +1916,7 @@ export function resumePollForTask(contentId: number, record: any) {
           const refundAmount = Number(record.cost) || 0;
           if (refundAmount > 0) {
             let meta: any = {};
-            try { meta = JSON.parse(record.metadata || '{}'); } catch {}
+            try { meta = JSON.parse(record.metadata || '{}'); } catch { }
             if (meta.tokenId) {
               const { TokenService } = await import('../services/tokenService.js');
               TokenService.deductBalance(meta.tokenId, -refundAmount);
