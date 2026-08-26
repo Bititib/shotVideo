@@ -1,7 +1,7 @@
 import React from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
-import { LayoutDashboard, Users, Star, Cpu, ArrowLeft, Zap, LogOut, Radio, Key, Coins, Building2, Film } from 'lucide-react';
+import { LayoutDashboard, Users, Star, Cpu, ArrowLeft, Layers3, LogOut, Radio, Key, Coins, Building2, Film } from 'lucide-react';
 
 const adminNavItems = [
   { to: '/admin', icon: LayoutDashboard, label: '仪表盘', end: true },
@@ -20,24 +20,24 @@ export default function AdminLayout() {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-white flex">
+    <div className="admin-shell min-h-screen flex flex-col md:flex-row">
       {/* Sidebar */}
-      <div className="w-60 shrink-0 bg-black border-r border-white/5 flex flex-col h-screen sticky top-0">
-        <div className="p-5">
-          <div className="flex items-center gap-2.5 mb-6">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
-              <Zap className="w-4 h-4 text-white" />
+      <aside className="admin-sidebar w-full md:w-60 shrink-0 flex flex-col md:h-screen sticky top-0 z-40">
+        <div className="p-4 md:p-5 flex-1 min-h-0">
+          <div className="flex items-center gap-3 mb-4 md:mb-7">
+            <div className="admin-brand-mark w-9 h-9 rounded-xl flex items-center justify-center" aria-hidden="true">
+              <Layers3 className="w-[18px] h-[18px]" strokeWidth={1.8} />
             </div>
-            <div>
-              <h1 className="text-sm font-bold text-white">管理后台</h1>
-              <p className="text-[10px] text-zinc-500">{user?.email}</p>
+            <div className="min-w-0">
+              <h1 className="admin-brand-title text-sm font-bold">管理后台</h1>
+              <p className="admin-brand-subtitle text-[10px] truncate">{user?.email}</p>
             </div>
           </div>
 
-          <nav className="space-y-1">
+          <nav className="admin-nav flex md:block gap-1.5 md:space-y-1 overflow-x-auto md:overflow-y-auto pb-1 md:pb-0" aria-label="管理员导航">
             {adminNavItems.map(item => (
               <NavLink key={item.to} to={item.to} end={item.end}
-                className={({ isActive }) => `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${isActive ? 'bg-white/10 text-white' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'}`}>
+                className={({ isActive }) => `admin-nav-link flex items-center gap-2.5 md:gap-3 px-3 py-2.5 rounded-xl text-xs md:text-sm font-medium whitespace-nowrap shrink-0 ${isActive ? 'is-active' : ''}`}>
                 <item.icon className="w-4 h-4" />
                 {item.label}
               </NavLink>
@@ -45,20 +45,20 @@ export default function AdminLayout() {
           </nav>
         </div>
 
-        <div className="mt-auto p-5 space-y-2 border-t border-white/5">
-          <button onClick={() => navigate('/app')} className="flex items-center gap-2 px-3 py-2 text-xs text-zinc-500 hover:text-zinc-300 transition-colors w-full">
+        <div className="admin-sidebar-footer hidden md:block mt-auto p-5 space-y-2 border-t">
+          <button onClick={() => navigate('/app')} className="admin-quiet-action flex items-center gap-2 px-3 py-2 text-xs w-full rounded-lg">
             <ArrowLeft className="w-3.5 h-3.5" /> 返回前台
           </button>
-          <button onClick={() => { logout(); navigate('/login'); }} className="flex items-center gap-2 px-3 py-2 text-xs text-zinc-500 hover:text-red-400 transition-colors w-full">
+          <button onClick={() => { logout(); navigate('/login'); }} className="admin-quiet-action is-danger flex items-center gap-2 px-3 py-2 text-xs w-full rounded-lg">
             <LogOut className="w-3.5 h-3.5" /> 退出登录
           </button>
         </div>
-      </div>
+      </aside>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
+      <main className="admin-content flex-1 min-w-0 overflow-y-auto">
         <Outlet />
-      </div>
+      </main>
     </div>
   );
 }

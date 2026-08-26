@@ -5,21 +5,55 @@ import { PricingService } from '../services/pricingService.js';
 import { BalanceService } from '../services/balanceService.js';
 import { db } from '../db/index.js';
 import { apiLogs, settings, models, contents, apiTokens } from '../db/schema.js';
-import { eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import multer from 'multer';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { env } from '../config/env.js';
 
 const router = Router();
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
 
 /** 从请求头中提取 Bearer Token */
-function extractToken(req: Request): string | null {
+export function extractToken(req: Pick<Request, 'headers'>): string | null {
   const auth = req.headers.authorization;
-  if (!auth?.startsWith('Bearer ')) return null;
-  return auth.slice(7).trim();
+  if (auth?.startsWith('Bearer ')) {
+    const token = auth.slice(7).trim();
+    if (token) return token;
+  }
+
+  const apiKeyHeader = req.headers['x-api-key'];
+  const apiKey = Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader;
+  return typeof apiKey === 'string' && apiKey.trim() ? apiKey.trim() : null;
+}
+
+export function filterRoutableModels(
+  modelIds: string[],
+  activeChannels: Array<{ supportedModels: string[] }>,
+): string[] {
+  const hasWildcardChannel = activeChannels.some(ch => ch.supportedModels.includes('*'));
+  if (hasWildcardChannel) return modelIds;
+
+  const routableModels = new Set(
+    activeChannels.flatMap(ch => ch.supportedModels.filter(modelId => modelId !== '*')),
+  );
+  return modelIds.filter(modelId => routableModels.has(modelId));
+}
+
+/** 仅允许创建任务的 Token（或同一用户的旧任务）访问本地视频记录。 */
+export function canAccessVideoRecord(record: any, token: any): boolean {
+  try {
+    const metadata = JSON.parse(record.metadata || '{}');
+    if (metadata.tokenId !== undefined && metadata.tokenId !== null) {
+      return Number(metadata.tokenId) === Number(token.id);
+    }
+  } catch { }
+
+  return token.userId !== null
+    && token.userId !== undefined
+    && Number(record.userId) === Number(token.userId);
 }
 
 /** 检查 Token 或关联用户的余额 */
@@ -134,6 +168,75 @@ function cleanupFiles(files: any) {
   }
 }
 
+function normalizeImageExtension(value: unknown): string {
+  const format = String(value || 'png').toLowerCase().replace('jpg', 'jpeg');
+  return ['png', 'jpeg', 'webp'].includes(format) ? format : 'png';
+}
+
+/** 将开放 API 返回的每张图片保存为独立内容资产。资产入库失败不影响已成功的上游响应。 */
+export function saveApiImageAssets(options: {
+  token: any;
+  responseBody: any;
+  model: string;
+  prompt: string;
+  size: string;
+  responseFormat: string;
+  outputFormat?: string;
+  operation: 'generation' | 'edit';
+  totalCost: number;
+  referenceFileNames?: string[];
+}): number[] {
+  const items = Array.isArray(options.responseBody?.data) ? options.responseBody.data : [];
+  const validItems = items.filter((item: any) => item?.url || item?.b64_json);
+  if (validItems.length === 0) return [];
+
+  const totalCents = Math.max(0, Math.round(options.totalCost * 100));
+  const baseCents = Math.floor(totalCents / validItems.length);
+  const remainder = totalCents % validItems.length;
+  const assetIds: number[] = [];
+
+  validItems.forEach((item: any, index: number) => {
+    let resultUrl = item.url || '';
+
+    if (!resultUrl && item.b64_json) {
+      const outputDir = path.join(process.cwd(), 'data', 'uploads', 'api-images');
+      fs.mkdirSync(outputDir, { recursive: true });
+      const extension = normalizeImageExtension(options.outputFormat);
+      const filename = `api_${Date.now()}_${crypto.randomUUID()}.${extension}`;
+      const base64 = String(item.b64_json).replace(/^data:image\/[^;]+;base64,/, '');
+      fs.writeFileSync(path.join(outputDir, filename), Buffer.from(base64, 'base64'));
+      resultUrl = `/uploads/api-images/${filename}`;
+    }
+
+    const assetCost = (baseCents + (index < remainder ? 1 : 0)) / 100;
+    const inserted = db.insert(contents).values({
+      userId: options.token.userId || 1,
+      orgId: null,
+      type: 'image',
+      title: options.prompt.slice(0, 200),
+      inputText: options.prompt.slice(0, 5000),
+      resultUrl,
+      modelId: options.model,
+      cost: assetCost,
+      status: 'completed',
+      metadata: JSON.stringify({
+        source: 'api',
+        operation: options.operation,
+        tokenId: options.token.id,
+        tokenName: options.token.name || '',
+        size: options.size,
+        response_format: options.responseFormat,
+        output_format: normalizeImageExtension(options.outputFormat),
+        response_index: index,
+        reference_file_names: options.referenceFileNames || [],
+      }),
+    }).run();
+    assetIds.push(Number(inserted.lastInsertRowid));
+  });
+
+  return assetIds;
+}
+
 /** 重写视频 URL 指向本地代理接口 */
 function rewriteVideoUrl(urlStr: string, req: Request, id: string): string {
   if (!urlStr) return urlStr;
@@ -194,7 +297,9 @@ router.get('/models', (req: Request, res: Response) => {
     console.error('[v1/models] 渠道自定义模型读取失败:', e);
   }
 
-  let modelList = Array.from(allModels);
+  // 仅返回至少有一个启用渠道能够实际路由的模型；通配符渠道除外。
+  const activeChannels = ChannelService.getActiveChannels();
+  let modelList = filterRoutableModels(Array.from(allModels), activeChannels);
   if (token.allowedModels.length > 0) {
     modelList = modelList.filter(m => token.allowedModels.includes(m));
   }
@@ -232,6 +337,100 @@ router.get('/billing/balance', (req: Request, res: Response) => {
     status: token.status === 1 ? 'active' : 'disabled',
     group: 'default',
     is_admin: false
+  });
+});
+
+/** GET /v1/billing/usage — 当前 Token 的调用明细与汇总 */
+router.get('/billing/usage', (req: Request, res: Response) => {
+  const tokenKey = extractToken(req);
+  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
+
+  const { valid, error, token } = TokenService.validateToken(tokenKey);
+  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
+
+  const page = Math.max(1, Number.parseInt(String(req.query.page || '1'), 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number.parseInt(String(req.query.page_size || '50'), 10) || 50));
+  const startTime = req.query.start_time === undefined ? null : Number(req.query.start_time);
+  const endTime = req.query.end_time === undefined ? null : Number(req.query.end_time);
+
+  if ((startTime !== null && (!Number.isFinite(startTime) || startTime < 0))
+    || (endTime !== null && (!Number.isFinite(endTime) || endTime < 0))) {
+    return res.status(400).json({ error: { message: 'start_time and end_time must be millisecond timestamps', type: 'invalid_request_error' } });
+  }
+  if (startTime !== null && endTime !== null && startTime > endTime) {
+    return res.status(400).json({ error: { message: 'start_time must not be greater than end_time', type: 'invalid_request_error' } });
+  }
+
+  const conditions: any[] = [eq(apiLogs.tokenId, token.id)];
+  if (startTime !== null) {
+    conditions.push(sql`${apiLogs.createdAt} >= datetime(${Math.floor(startTime / 1000)}, 'unixepoch')`);
+  }
+  if (endTime !== null) {
+    conditions.push(sql`${apiLogs.createdAt} <= datetime(${Math.floor(endTime / 1000)}, 'unixepoch')`);
+  }
+  const where = and(...conditions);
+
+  const rows = db.select({
+    id: apiLogs.id,
+    model: apiLogs.model,
+    upstreamModel: apiLogs.upstreamModel,
+    promptTokens: apiLogs.promptTokens,
+    completionTokens: apiLogs.completionTokens,
+    totalTokens: apiLogs.totalTokens,
+    cost: apiLogs.cost,
+    durationMs: apiLogs.durationMs,
+    status: apiLogs.status,
+    errorMessage: apiLogs.errorMessage,
+    createdAt: apiLogs.createdAt,
+  }).from(apiLogs)
+    .where(where)
+    .orderBy(desc(apiLogs.createdAt), desc(apiLogs.id))
+    .limit(pageSize)
+    .offset((page - 1) * pageSize)
+    .all();
+
+  const aggregate = db.select({
+    totalRequests: sql<number>`count(*)`,
+    totalPromptTokens: sql<number>`coalesce(sum(${apiLogs.promptTokens}), 0)`,
+    totalCompletionTokens: sql<number>`coalesce(sum(${apiLogs.completionTokens}), 0)`,
+    totalTokens: sql<number>`coalesce(sum(${apiLogs.totalTokens}), 0)`,
+    totalCost: sql<number>`coalesce(sum(${apiLogs.cost}), 0)`,
+    successCount: sql<number>`coalesce(sum(case when ${apiLogs.status} = 'success' then 1 else 0 end), 0)`,
+    errorCount: sql<number>`coalesce(sum(case when ${apiLogs.status} != 'success' then 1 else 0 end), 0)`,
+  }).from(apiLogs).where(where).get();
+
+  let balance = token.balance;
+  if (balance === -1 && token.userId) {
+    balance = BalanceService.checkBalance(token.userId, 0.01).balance;
+  }
+
+  res.json({
+    balance: balance === -1 ? 999999 : balance,
+    summary: {
+      total_requests: Number(aggregate?.totalRequests || 0),
+      total_prompt_tokens: Number(aggregate?.totalPromptTokens || 0),
+      total_completion_tokens: Number(aggregate?.totalCompletionTokens || 0),
+      total_tokens: Number(aggregate?.totalTokens || 0),
+      total_cost: Number(aggregate?.totalCost || 0),
+      success_count: Number(aggregate?.successCount || 0),
+      error_count: Number(aggregate?.errorCount || 0),
+    },
+    items: rows.map(row => ({
+      id: row.id,
+      model: row.model,
+      upstream_model: row.upstreamModel,
+      prompt_tokens: row.promptTokens,
+      completion_tokens: row.completionTokens,
+      total_tokens: row.totalTokens,
+      cost: row.cost,
+      duration_ms: row.durationMs,
+      status: row.status,
+      error_message: row.errorMessage,
+      created_at: row.createdAt,
+    })),
+    total: Number(aggregate?.totalRequests || 0),
+    page,
+    page_size: pageSize,
   });
 });
 
@@ -398,6 +597,11 @@ router.post('/images/generations', async (req: Request, res: Response) => {
   if (!model) return res.status(400).json({ error: { message: 'model is required', type: 'invalid_request_error' } });
   if (!prompt) return res.status(400).json({ error: { message: 'prompt is required', type: 'invalid_request_error' } });
 
+  const count = Number(n);
+  if (!Number.isInteger(count) || count < 1 || count > 4) {
+    return res.status(400).json({ error: { message: 'n must be an integer between 1 and 4', type: 'invalid_request_error' } });
+  }
+
   if (token.allowedModels.length > 0 && !token.allowedModels.includes(model)) {
     return res.status(403).json({ error: { message: `Token has no access to model ${model}`, type: 'permission_error' } });
   }
@@ -407,7 +611,6 @@ router.post('/images/generations', async (req: Request, res: Response) => {
     return res.status(404).json({ error: { message: `No available channel for model ${model}`, type: 'not_found_error' } });
   }
 
-  const count = Math.max(1, Number(n) || 1);
   const unitCost = PricingService.calculateCost(model, 0, 0);
   const totalCost = Math.round(unitCost * count * 100) / 100;
 
@@ -430,7 +633,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
       body: JSON.stringify({
         model: upstreamModel,
         prompt,
-        n,
+        n: count,
         size,
         response_format,
         ...otherParams,
@@ -466,6 +669,22 @@ router.post('/images/generations', async (req: Request, res: Response) => {
         }
         return item;
       });
+    }
+
+    try {
+      saveApiImageAssets({
+        token,
+        responseBody,
+        model,
+        prompt,
+        size,
+        responseFormat: response_format,
+        outputFormat: otherParams.output_format,
+        operation: 'generation',
+        totalCost,
+      });
+    } catch (assetError) {
+      console.error('[v1/images/generations] 保存图片资产失败:', assetError);
     }
 
     res.json(responseBody);
@@ -507,6 +726,23 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
     return res.status(400).json({ error: { message: 'prompt is required', type: 'invalid_request_error' } });
   }
 
+  const uploadedFiles = Array.isArray(req.files) ? req.files : [];
+  const imageFiles = uploadedFiles.filter(file => file.fieldname === 'image' || file.fieldname === 'image[]');
+  if (imageFiles.length === 0) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: { message: 'at least one image file is required', type: 'invalid_request_error' } });
+  }
+  if (imageFiles.length > 5) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: { message: 'a maximum of 5 image files is allowed', type: 'invalid_request_error' } });
+  }
+
+  const count = Number(n);
+  if (!Number.isInteger(count) || count < 1 || count > 4) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: { message: 'n must be an integer between 1 and 4', type: 'invalid_request_error' } });
+  }
+
   if (token.allowedModels.length > 0 && !token.allowedModels.includes(model)) {
     cleanupFiles(req.files);
     return res.status(403).json({ error: { message: `Token has no access to model ${model}`, type: 'permission_error' } });
@@ -518,7 +754,6 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
     return res.status(404).json({ error: { message: `No available channel for model ${model}`, type: 'not_found_error' } });
   }
 
-  const count = Math.max(1, Number(n) || 1);
   const unitCost = PricingService.calculateCost(model, 0, 0);
   const totalCost = Math.round(unitCost * count * 100) / 100;
 
@@ -536,7 +771,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
     const formData = new FormData();
     formData.append('model', upstreamModel);
     formData.append('prompt', prompt);
-    formData.append('n', String(n));
+    formData.append('n', String(count));
     formData.append('size', size);
     formData.append('response_format', response_format);
 
@@ -592,6 +827,23 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
         }
         return item;
       });
+    }
+
+    try {
+      saveApiImageAssets({
+        token,
+        responseBody,
+        model,
+        prompt,
+        size,
+        responseFormat: response_format,
+        outputFormat: otherParams.output_format,
+        operation: 'edit',
+        totalCost,
+        referenceFileNames: imageFiles.map(file => file.originalname),
+      });
+    } catch (assetError) {
+      console.error('[v1/images/edits] 保存图片资产失败:', assetError);
     }
 
     res.json(responseBody);
@@ -792,7 +1044,12 @@ async function handleVideoCreation(req: Request, res: Response) {
     'nd-seedance-2.0-720p',
     'sd2-c6'
   ].includes(model);
-  const totalCost = isFlatRate ? rate : (Math.round(rate * seconds * 100) / 100);
+  const pricingQuote = PricingService.quote(model, { resolution, seconds, count: 1 }, false);
+  if (!pricingQuote.billingType) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: `Model ${model} has no pricing rule. Configure it in Admin > Pricing.` });
+  }
+  const totalCost = pricingQuote.cost;
 
   const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, totalCost);
   if (!sufficient) {
@@ -1044,7 +1301,7 @@ async function handleVideoQuery(req: Request, res: Response) {
   const tokenKey = extractToken(req);
   if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
 
-  const { valid, error } = TokenService.validateToken(tokenKey);
+  const { valid, error, token } = TokenService.validateToken(tokenKey);
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
   const idParam = req.params.id;
@@ -1061,6 +1318,10 @@ async function handleVideoQuery(req: Request, res: Response) {
   }
 
   if (record) {
+    if (!canAccessVideoRecord(record, token)) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
     const status = record.status;
     let progress = 0;
     try {
@@ -1146,7 +1407,7 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
   const tokenKey = extractToken(req);
   if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
 
-  const { valid, error } = TokenService.validateToken(tokenKey);
+  const { valid, error, token } = TokenService.validateToken(tokenKey);
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
   const idParam = req.params.id;
@@ -1163,6 +1424,10 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
   }
 
   if (!record) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
+
+  if (!canAccessVideoRecord(record, token)) {
     return res.status(404).json({ error: 'Task not found' });
   }
 
@@ -1243,6 +1508,12 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
 
 /** GET /v1/files/video — 视频下载管道代理 */
 router.get('/files/video', async (req: Request, res: Response) => {
+  const tokenKey = extractToken(req);
+  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
+
+  const { valid, error } = TokenService.validateToken(tokenKey);
+  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
+
   const id = req.query.id as string;
   if (!id) return res.status(400).json({ error: 'Missing video id' });
 

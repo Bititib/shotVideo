@@ -4,6 +4,7 @@ import { tierMiddleware, TierRequest } from '../middleware/tier.js';
 import { quotaMiddleware, logUsage } from '../middleware/quota.js';
 import { AIService } from '../services/aiService.js';
 import { ContentService } from '../services/contentService.js';
+import { PricingService } from '../services/pricingService.js';
 import { db } from '../db/index.js';
 import { users, tiers, tierModelAccess, models, settings, modelPricing } from '../db/schema.js';
 import { eq, like, and } from 'drizzle-orm';
@@ -198,10 +199,15 @@ router.get('/tts-models',
         rate = ttsRate * multiplier;
       }
 
+      // 管理后台「计费设置」是唯一有效价格来源。
+      const unifiedQuote = PricingService.quote(m.modelId, { characters: 1 }, false);
+      rate = unifiedQuote.rate;
+
       return {
         modelId: m.modelId,
         displayName: m.displayName,
         rate,
+        billingType: unifiedQuote.billingType,
       };
     });
 

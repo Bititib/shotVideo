@@ -7,7 +7,15 @@ const router = Router();
 router.use(authMiddleware, adminMiddleware);
 
 router.get('/', async (req: AuthRequest, res: Response) => {
-  try { res.json(PricingService.getPricingRules()); }
+  try {
+    const { category, billingType, search } = req.query;
+    res.json(PricingService.getPricingRules({
+      scope: 'active',
+      category: typeof category === 'string' ? category : undefined,
+      billingType: typeof billingType === 'string' ? billingType : undefined,
+      search: typeof search === 'string' ? search : undefined,
+    }));
+  }
   catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 

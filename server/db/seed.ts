@@ -160,14 +160,24 @@ export async function syncModelsFromAPI() {
     { provider: 'seedance', modelId: 'seedance-720', displayName: 'Seedance 720 满血版', capabilities: JSON.stringify(['video']), isActive: 0 }
   );
 
+  // Models explicitly deleted by an administrator must not be resurrected by
+  // upstream discovery or the static fallback catalog on the next restart.
+  const deletedModelRow = db.select().from(settings).where(eq(settings.key, 'deleted_model_ids')).get();
+  let deletedModelIds = new Set<string>();
+  try {
+    const parsed = JSON.parse(deletedModelRow?.value || '[]');
+    if (Array.isArray(parsed)) deletedModelIds = new Set(parsed.map(String));
+  } catch { /* ignore malformed legacy value */ }
+  allVerified = allVerified.filter(model => !deletedModelIds.has(model.modelId));
+
   // 同步或插入模型
   for (const m of allVerified) {
     const existing = db.select().from(models).where(eq(models.modelId, m.modelId)).get();
     const targetIsActive = m.isActive !== undefined ? m.isActive : 1;
     if (existing) {
-      if (existing.displayName !== m.displayName || existing.capabilities !== m.capabilities || existing.isActive !== targetIsActive || existing.description !== (m.description || null)) {
+      if (existing.displayName !== m.displayName || existing.capabilities !== m.capabilities || existing.description !== (m.description || null)) {
         db.update(models)
-          .set({ displayName: m.displayName, capabilities: m.capabilities, isActive: targetIsActive, description: m.description || null })
+          .set({ displayName: m.displayName, capabilities: m.capabilities, description: m.description || null })
           .where(eq(models.modelId, m.modelId))
           .run();
       }
@@ -232,6 +242,7 @@ export async function syncModelsFromAPI() {
       'omni-flash-vref'
     ];
     for (const modelId of deadModels) {
+      db.delete(modelPricing).where(eq(modelPricing.modelPattern, modelId)).run();
       db.delete(models).where(eq(models.modelId, modelId)).run();
     }
     console.log('🧹 已从数据库强制清理废弃的模型列表');
@@ -245,6 +256,7 @@ export async function syncModelsFromAPI() {
     const toRemove = existingModels.filter(m => !verifiedIds.has(m.modelId));
     if (toRemove.length > 0) {
       for (const m of toRemove) {
+        db.delete(modelPricing).where(eq(modelPricing.modelPattern, m.modelId)).run();
         db.delete(tierModelAccess).where(eq(tierModelAccess.modelId, m.id)).run();
         db.delete(models).where(eq(models.id, m.id)).run();
       }
@@ -838,14 +850,74 @@ export async function initDatabase() {
 
   console.log('📦 同步计费规则到数据库 (更新/插入)...');
   for (const pricing of defaultPricing) {
+    const modelExists = pricing.modelPattern === '*'
+      || Boolean(db.select().from(models).where(eq(models.modelId, pricing.modelPattern)).get());
+    if (!modelExists) continue;
     const existing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, pricing.modelPattern)).get();
-    if (existing) {
-      db.update(modelPricing)
-        .set({ inputPrice: pricing.inputPrice, billingType: pricing.billingType, outputPrice: pricing.outputPrice })
-        .where(eq(modelPricing.modelPattern, pricing.modelPattern))
-        .run();
-    } else {
+    if (!existing) {
       db.insert(modelPricing).values(pricing).run();
+    }
+  }
+
+  // Migrate legacy dashboard prices once. Existing pricing rules always win, so
+  // restarting the server can never overwrite a price edited by an administrator.
+  const legacyRate = (key: string, fallback: number) => {
+    const row = db.select().from(settings).where(eq(settings.key, key)).get();
+    const value = Number(row?.value);
+    return Number.isFinite(value) && value >= 0 ? value : fallback;
+  };
+  const unifiedPricing = [
+    { modelPattern: 'veo-omni-flash', billingType: 'per_second', inputPrice: legacyRate('veo_omni_flash_rate', 0.25), category: 'video' },
+    { modelPattern: 'veo-3-1', billingType: 'per_second', inputPrice: legacyRate('veo_3_1_rate', 0.20), category: 'video' },
+    { modelPattern: 'sd2-c7', billingType: 'per_call', inputPrice: legacyRate('sd2_c7_rate', 0.50), category: 'video' },
+    { modelPattern: 'sd2.5', billingType: 'per_call', inputPrice: legacyRate('sd2_5_rate', 3.50), category: 'video' },
+    { modelPattern: 'sd2-c6', billingType: 'per_call', inputPrice: legacyRate('sd2_c6_rate', 2.50), category: 'video' },
+    { modelPattern: 'sd2-mini', billingType: 'per_call', inputPrice: legacyRate('sd2_mini_rate', 2.00), category: 'video' },
+    { modelPattern: 'seedance2.0-933', billingType: 'per_call', inputPrice: legacyRate('seedance2_0_933_rate', 3.00), category: 'video' },
+    { modelPattern: 'seedance2.0 933', billingType: 'per_call', inputPrice: legacyRate('seedance2_0_933_rate', 3.00), category: 'video' },
+    { modelPattern: 'seedance-2.0-720p', billingType: 'per_call', inputPrice: legacyRate('seedance_2_0_720p_rate', 3.00), category: 'video' },
+    { modelPattern: 'seedance-2.0-fast-720p', billingType: 'per_call', inputPrice: legacyRate('seedance_2_0_fast_720p_rate', 1.50), category: 'video' },
+    { modelPattern: 'seedance-720', billingType: 'per_call', inputPrice: legacyRate('seedance_720_rate', 3.00), category: 'video' },
+    { modelPattern: 'ld-sdas-cvk-pro-933-720p', billingType: 'per_call', inputPrice: legacyRate('ld_sdas_cvk_pro_933_720p_rate', 3.80), category: 'video' },
+    { modelPattern: 'sdas-mj-minimax-h3-2k', billingType: 'per_call', inputPrice: legacyRate('sdas_mj_minimax_h3_2k_rate', 3.00), category: 'video' },
+    { modelPattern: 'sdas-bl-sd2.0-933-pro-720p', billingType: 'per_call', inputPrice: legacyRate('sdas_bl_sd20_933_pro_720p_rate', 4.50), category: 'video' },
+    { modelPattern: 'sdas-bl-sd2.0-933-pro-noface-720p', billingType: 'per_call', inputPrice: legacyRate('sdas_bl_sd20_933_pro_noface_720p_rate', 4.00), category: 'video' },
+    { modelPattern: 'cd-seedance-2.0-720p', billingType: 'per_call', inputPrice: legacyRate('cd_seedance_2_0_720p_rate', 3.00), category: 'video' },
+    { modelPattern: 'nd-seedance-2.0-480p', billingType: 'per_call', inputPrice: legacyRate('nd_seedance_2_0_480p_rate', 3.15), category: 'video' },
+    { modelPattern: 'nd-seedance-2.0-720p', billingType: 'per_call', inputPrice: legacyRate('nd_seedance_2_0_720p_rate', 4.30), category: 'video' },
+    { modelPattern: 'seedance-2.5-c1', billingType: 'per_second', inputPrice: legacyRate('seedance_2_5_c1_rate', 0.25), category: 'video' },
+    { modelPattern: 'seedance-2.5-deal', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5_deal_rate', 1.80), category: 'video' },
+    { modelPattern: 'seedance-2.5m', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5m_rate', 3.00), category: 'video' },
+    { modelPattern: 'wan3.0th', billingType: 'per_call', inputPrice: legacyRate('wan3_0th_rate', 4.00), category: 'video' },
+    { modelPattern: 'grok-video-1.5', billingType: 'per_second', inputPrice: legacyRate('grok_video_1_5_per_sec_rate', 0.09), category: 'video' },
+    { modelPattern: 'grok-imagine-video-1.5', billingType: 'per_call', inputPrice: legacyRate('grok_imagine_video_1_5_per_req_rate', 0.60), category: 'video' },
+    { modelPattern: 'grok-imagine-video-1.5-preview', billingType: 'per_call', inputPrice: legacyRate('grok_imagine_video_1_5_preview_rate', 0.70), category: 'video' },
+    { modelPattern: 'gemini-2.5-flash-preview-tts', billingType: 'per_character', inputPrice: legacyRate('tts_rate', 0.01), category: 'tts' },
+    { modelPattern: 'gemini-2.5-pro-preview-tts', billingType: 'per_character', inputPrice: legacyRate('tts_rate', 0.01) * 2, category: 'tts' },
+  ];
+
+  for (const pricing of unifiedPricing) {
+    const modelExists = Boolean(db.select().from(models).where(eq(models.modelId, pricing.modelPattern)).get());
+    if (!modelExists) continue;
+    const existing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, pricing.modelPattern)).get();
+    if (!existing) {
+      db.insert(modelPricing).values({
+        modelPattern: pricing.modelPattern,
+        billingType: pricing.billingType,
+        inputPrice: pricing.inputPrice,
+        outputPrice: 0,
+        extraParams: JSON.stringify({ category: pricing.category }),
+      }).run();
+    } else if (
+      (pricing.modelPattern === 'seedance-2.5-c1' && existing.billingType === 'per_token')
+      || (pricing.category === 'tts' && existing.billingType !== 'per_character')
+    ) {
+      let extraParams: Record<string, any> = {};
+      try { extraParams = JSON.parse(existing.extraParams || '{}'); } catch { /* ignore invalid legacy JSON */ }
+      db.update(modelPricing).set({
+        billingType: pricing.billingType,
+        extraParams: JSON.stringify({ ...extraParams, category: pricing.category }),
+      }).where(eq(modelPricing.id, existing.id)).run();
     }
   }
 

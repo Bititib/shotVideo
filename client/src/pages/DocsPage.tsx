@@ -42,7 +42,7 @@ export default function DocsPage() {
       title: '获取可用模型列表',
       method: 'GET',
       path: '/v1/models',
-      description: '获取当前 API Key 拥有访问权限的全部活跃 AI 模型列表。返回结果格式完全兼容 OpenAI 规范。',
+      description: '获取当前 API Key 有权访问且已配置可用渠道的模型列表。调用其他接口时，请始终使用本接口实时返回的模型 ID。返回结构兼容 OpenAI 模型列表格式。',
       parameters: [],
       curlExample: `curl -X GET "${getBaseUrl()}/models" \\
   -H "Authorization: Bearer sk-你的令牌Key"`,
@@ -60,13 +60,13 @@ for model in models:
   "object": "list",
   "data": [
     {
-      "id": "gemini-2.5-flash",
+      "id": "gpt-image-2",
       "object": "model",
       "created": 1783309000,
       "owned_by": "system"
     },
     {
-      "id": "gpt-image-2-pro",
+      "id": "sd2.5",
       "object": "model",
       "created": 1783309000,
       "owned_by": "system"
@@ -79,18 +79,18 @@ for model in models:
       title: '智能对话补全 (Chat Completions)',
       method: 'POST',
       path: '/v1/chat/completions',
-      description: '提供基础对话、思维链推理（Thinking）和多模态图像分析服务。流式与非流式调用均直接由组织/个人账户以 Token 消费计费扣减。',
+      description: '提供 OpenAI Chat Completions 兼容转发。仅当 /v1/models 返回可用于对话的模型时才可调用；当前没有对话模型时，请勿使用本接口。流式与非流式响应由上游模型能力决定。',
       parameters: [
-        { name: 'model', type: 'string', required: true, description: '可用的对话模型 ID（如 gemini-2.5-flash）' },
+        { name: 'model', type: 'string', required: true, description: '从 GET /v1/models 实时获取的对话模型 ID' },
         { name: 'messages', type: 'array', required: true, description: '对话上下文消息数组，格式如 [{"role": "user", "content": "你好"}]' },
         { name: 'stream', type: 'boolean', required: false, defaultVal: 'false', description: '是否使用流式传输。如果为 true，将采用 text/event-stream 协议持续推送生成片段' },
-        { name: 'reasoning_effort', type: 'string', required: false, defaultVal: 'none', description: '推理强度选项（支持 expert 等级别启用思维链推理）' }
+        { name: 'reasoning_effort', type: 'string', required: false, description: '透传给上游的推理强度；可选值与目标模型能力保持一致' }
       ],
       curlExample: `curl -X POST "${getBaseUrl()}/chat/completions" \\
   -H "Authorization: Bearer sk-你的令牌Key" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "gemini-2.5-flash",
+    "model": "YOUR_CHAT_MODEL_ID",
     "messages": [{"role": "user", "content": "用一句话解释相对论"}],
     "stream": false
   }'`,
@@ -102,7 +102,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="gemini-2.5-flash",
+    model="YOUR_CHAT_MODEL_ID",
     messages=[{"role": "user", "content": "用一句话解释相对论"}],
     stream=False
 )
@@ -111,7 +111,7 @@ print(response.choices[0].message.content)`,
   "id": "chatcmpl-xxxxx",
   "object": "chat.completion",
   "created": 1783309100,
-  "model": "gemini-2.5-flash",
+  "model": "YOUR_CHAT_MODEL_ID",
   "choices": [
     {
       "index": 0,
@@ -136,7 +136,7 @@ print(response.choices[0].message.content)`,
       path: '/v1/images/generations',
       description: '生成全新高质感 AI 场景摄影或设计图像，支持指定分辨率和多样控制参数。',
       parameters: [
-        { name: 'model', type: 'string', required: true, description: '图像生成模型 ID（如 gpt-image-2-pro、gemini-3-pro-image-preview）' },
+        { name: 'model', type: 'string', required: true, description: '图像生成模型 ID；当前可用示例：gpt-image-2' },
         { name: 'prompt', type: 'string', required: true, description: '生图提示词，用于精细刻画生成画面' },
         { name: 'size', type: 'string', required: false, defaultVal: '1024x1024', description: '图片画幅：1024x1024 / 1280x720 / 720x1280 等' },
         { name: 'n', type: 'integer', required: false, defaultVal: '1', description: '一次生成的图片张数，支持 1~4 张' },
@@ -147,7 +147,7 @@ print(response.choices[0].message.content)`,
   -H "Authorization: Bearer sk-你的令牌Key" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "gpt-image-2-pro",
+    "model": "gpt-image-2",
     "prompt": "一只现代极简主义设计水杯, 3D 渲染, 白色背景",
     "size": "1024x1024",
     "n": 1,
@@ -161,7 +161,7 @@ client = OpenAI(
 )
 
 response = client.images.generate(
-    model="gpt-image-2-pro",
+    model="gpt-image-2",
     prompt="一只现代极简主义设计水杯, 3D 渲染, 白色背景",
     size="1024x1024",
     n=1
@@ -183,14 +183,14 @@ print(response.data[0].url)`,
       path: '/v1/images/edits',
       description: '提供参考图生图和局部细节修改能力。需要通过 multipart/form-data 方式发送文件。',
       parameters: [
-        { name: 'model', type: 'string', required: true, description: '图像编辑模型（如 gpt-image-2-pro、grok-imagine-image-edit）' },
+        { name: 'model', type: 'string', required: true, description: '支持图片编辑的模型 ID；请以 GET /v1/models 返回结果和模型能力为准' },
         { name: 'prompt', type: 'string', required: true, description: '图像改写/编辑修改描述词' },
         { name: 'image', type: 'file', required: true, description: '参考图文件（多文件时使用 image[]，最大可传 5 张）' },
         { name: 'size', type: 'string', required: false, defaultVal: '1024x1024', description: '目前固定输出 1024x1024 分辨率' }
       ],
       curlExample: `curl -X POST "${getBaseUrl()}/images/edits" \\
   -H "Authorization: Bearer sk-你的令牌Key" \\
-  -F "model=gpt-image-2-pro" \\
+  -F "model=gpt-image-2" \\
   -F "prompt=将图片中的背景替换为繁华霓虹都市" \\
   -F "image=@/local/path/to/origin.png"`,
       pythonExample: `# 使用 requests 发送 multipart/form-data
@@ -200,7 +200,7 @@ url = "${getBaseUrl()}/images/edits"
 headers = {"Authorization": "Bearer sk-你的令牌Key"}
 files = {"image": ("origin.png", open("origin.png", "rb"), "image/png")}
 data = {
-    "model": "gpt-image-2-pro",
+    "model": "gpt-image-2",
     "prompt": "将图片中的背景替换为繁华霓虹都市"
 }
 
@@ -220,9 +220,9 @@ print(resp.json()["data"][0]["url"])`,
       title: '统一视频任务创建 (Unified Video Entry)',
       method: 'POST',
       path: '/v1/videos',
-      description: '统一视频生成入口，支持全新视频模型（如 seedance-2.5m, seedance-2.5-deal, wan3.0th, grok-video-1.5 等）。自动进行参数标准化归一与第三方渠道分发。',
+      description: '统一视频生成入口，自动完成参数归一和渠道分发。可用模型会随渠道配置变化，提交任务前必须先通过 GET /v1/models 获取当前模型 ID。',
       parameters: [
-        { name: 'model', type: 'string', required: true, description: '模型 ID，可选：seedance-2.5m, seedance-2.5-deal, wan3.0th, grok-video-1.5（按秒）, grok-imagine-video-1.5（按次）, grok-imagine-video-1.5-preview' },
+        { name: 'model', type: 'string', required: true, description: '从 GET /v1/models 获取的视频模型 ID；当前示例：sd2.5、wan3.0th、veo-3-1' },
         { name: 'prompt', type: 'string', required: true, description: '视频画面的文字描述词' },
         { name: 'seconds', type: 'integer', required: false, defaultVal: '6', description: '视频时长（秒），支持别名 duration' },
         { name: 'ratio', type: 'string', required: false, defaultVal: '16:9', description: '画面比例：16:9 / 9:16 / 1:1 / 4:3 / 3:4，支持别名 aspect_ratio' },
@@ -235,9 +235,9 @@ print(resp.json()["data"][0]["url"])`,
   -H "Authorization: Bearer sk-你的令牌Key" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "seedance-2.5m",
+    "model": "sd2.5",
     "prompt": "电影感的雨夜街巷打斗，动作清楚连贯，镜头稳定",
-    "seconds": 15,
+    "seconds": 10,
     "ratio": "9:16",
     "resolution": "480p",
     "image_urls": ["https://cdn.example.com/character.jpg"]
@@ -250,9 +250,9 @@ headers = {
     "Content-Type": "application/json"
 }
 payload = {
-    "model": "seedance-2.5m",
+    "model": "sd2.5",
     "prompt": "电影感的雨夜街巷打斗，动作清楚连贯，镜头稳定",
-    "seconds": 15,
+    "seconds": 10,
     "ratio": "9:16",
     "resolution": "480p",
     "image_urls": ["https://cdn.example.com/character.jpg"]
@@ -265,7 +265,7 @@ print(resp.json())
   "id": "task_123",
   "task_id": "task_123",
   "object": "video",
-  "model": "seedance-2.5m",
+  "model": "sd2.5",
   "status": "queued",
   "progress": 0
 }`
@@ -308,7 +308,7 @@ while True:
   "id": "task_123",
   "task_id": "task_123",
   "object": "video",
-  "model": "seedance-2.5m",
+  "model": "sd2.5",
   "status": "completed",
   "progress": 100,
   "url": "${getBaseUrl()}/videos/task_123/content",
@@ -341,11 +341,48 @@ print(f"当前账户可用余额: ¥{data['balance']} 元 (已消费 ¥{data['to
   "group": "default",
   "is_admin": false
 }`
+    },
+    {
+      id: 'billing-usage',
+      title: '查询 API 调用明细',
+      method: 'GET',
+      path: '/v1/billing/usage',
+      description: '按当前 API Key 隔离查询调用记录、Token 用量和费用汇总。时间筛选参数使用毫秒时间戳。',
+      parameters: [
+        { name: 'page', type: 'integer', required: false, defaultVal: '1', description: '页码，从 1 开始' },
+        { name: 'page_size', type: 'integer', required: false, defaultVal: '50', description: '每页数量，范围 1~100' },
+        { name: 'start_time', type: 'integer', required: false, description: '开始时间，Unix 毫秒时间戳' },
+        { name: 'end_time', type: 'integer', required: false, description: '结束时间，Unix 毫秒时间戳' }
+      ],
+      curlExample: `curl "${getBaseUrl()}/billing/usage?page=1&page_size=20" \\
+  -H "Authorization: Bearer sk-你的令牌Key"`,
+      pythonExample: `import requests
+
+url = "${getBaseUrl()}/billing/usage"
+headers = {"Authorization": "Bearer sk-你的令牌Key"}
+resp = requests.get(url, headers=headers, params={"page": 1, "page_size": 20})
+print(resp.json())`,
+      responseExample: `{
+  "balance": 4820.64,
+  "summary": {
+    "total_requests": 42,
+    "total_prompt_tokens": 12500,
+    "total_completion_tokens": 8300,
+    "total_tokens": 20800,
+    "total_cost": 12.4,
+    "success_count": 41,
+    "error_count": 1
+  },
+  "items": [],
+  "total": 42,
+  "page": 1,
+  "page_size": 20
+}`
     }
   ];
 
   return (
-    <div className="min-h-screen bg-[#09090b] text-zinc-100 p-4 md:p-8">
+    <div className="docs-page min-h-screen bg-[#09090b] text-zinc-100 p-4 md:p-8">
       {/* 头部面板 */}
       <div className="max-w-6xl mx-auto mb-8 border border-zinc-800/60 bg-zinc-950/80 backdrop-blur-md rounded-2xl p-6 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-80 h-80 bg-rose-500/5 rounded-full blur-[100px] pointer-events-none" />
@@ -369,7 +406,8 @@ print(f"当前账户可用余额: ¥{data['balance']} 元 (已消费 ¥{data['to
             <span className="font-mono text-zinc-100 select-all font-semibold">{getBaseUrl()}</span>
             <button
               onClick={() => triggerCopy(getBaseUrl(), 'baseurl')}
-              className="ml-2 hover:text-white text-zinc-400 transition-colors cursor-pointer"
+              className="ml-2 w-9 h-9 inline-flex items-center justify-center rounded-lg hover:bg-white/10 hover:text-white text-zinc-400 transition-colors cursor-pointer"
+              aria-label="复制接口地址"
             >
               {copiedText === 'baseurl' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
@@ -432,14 +470,14 @@ print(f"当前账户可用余额: ¥{data['balance']} 元 (已消费 ¥{data['to
                     <ShieldCheck className="w-5 h-5 text-rose-400" /> API 接入说明 (快速开始)
                   </h3>
                   <p className="text-xs text-zinc-400 leading-relaxed">
-                    本系统内嵌了兼容标准的 OpenAI 规范的 API 转发层。任何支持 OpenAI 格式的第三方软件、客户端、框架（如 Dify、FastGPT、LangChain 或 OpenAI SDK）在将 Base URL 指向本系统接口，并设置相应 Token 后，均能无缝调用本系统的对话、生图和生视频能力。
+                    本系统提供 OpenAI 风格的模型、对话和图片接口，并扩展了异步视频接口。第三方客户端能否直接使用取决于其支持的接口类型；调用前请先请求 `/v1/models`，并只使用实时返回的模型 ID。
                   </p>
                 </div>
 
                 <div className="border-t border-zinc-800/40 pt-4">
                   <h4 className="text-xs font-semibold text-zinc-200 mb-2">1. 接口授权凭证</h4>
                   <p className="text-xs text-zinc-400 leading-relaxed mb-3">
-                    调用所有 `/v1` 接口均需验证鉴权。企业用户/开发团队请先前往控制台「令牌管理 / API Token」页面创建 `sk-` 密钥，创建时可为具体 Token 限定允许消费的余额以及允许访问的模型。
+                    调用所有 `/v1` 接口均需验证鉴权。企业用户/开发团队请先前往控制台「令牌管理 / API Token」页面创建 `sk-` 密钥，创建时可为具体 Token 限定允许消费的余额以及允许访问的模型。视频内容下载同样需要携带鉴权头。
                   </p>
                   <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-2">
                     <p className="text-xs text-zinc-300 font-semibold">支持两种鉴权头部写法：</p>

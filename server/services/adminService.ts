@@ -1,5 +1,5 @@
 import { db } from '../db/index.js';
-import { users, tiers, models, tierModelAccess, usageLogs, settings, contents, apiLogs } from '../db/schema.js';
+import { users, tiers, models, tierModelAccess, usageLogs, settings, contents, apiLogs, modelPricing } from '../db/schema.js';
 import { eq, like, and, gte, sql, desc, count } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 
@@ -9,6 +9,37 @@ interface GetUsersOptions {
   search?: string;
   tierId?: number;
   isActive?: number;
+}
+
+const DELETED_MODELS_SETTING = 'deleted_model_ids';
+
+function getDeletedModelIds(): Set<string> {
+  const row = db.select().from(settings).where(eq(settings.key, DELETED_MODELS_SETTING)).get();
+  try {
+    const values = JSON.parse(row?.value || '[]');
+    return new Set(Array.isArray(values) ? values.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveDeletedModelIds(ids: Set<string>) {
+  const value = JSON.stringify(Array.from(ids).sort());
+  const existing = db.select().from(settings).where(eq(settings.key, DELETED_MODELS_SETTING)).get();
+  if (existing) {
+    db.update(settings).set({ value, updatedAt: new Date().toISOString() }).where(eq(settings.key, DELETED_MODELS_SETTING)).run();
+  } else {
+    db.insert(settings).values({ key: DELETED_MODELS_SETTING, value, label: '管理员已删除模型' }).run();
+  }
+}
+
+function categoryFromCapabilities(capabilities: unknown): string {
+  const values = Array.isArray(capabilities) ? capabilities.map(String) : [];
+  if (values.includes('video')) return 'video';
+  if (values.includes('image') || values.includes('image_gen')) return 'image';
+  if (values.includes('tts')) return 'tts';
+  if (values.includes('text')) return 'text';
+  return 'other';
 }
 
 export class AdminService {
@@ -368,8 +399,12 @@ export class AdminService {
   }
 
   static createModel(data: any) {
-    const { provider, modelId, displayName, description, apiKey, capabilities } = data;
+    const { provider, displayName, description, apiKey, capabilities } = data;
+    const modelId = String(data.modelId || '').trim();
     if (!modelId || !displayName) throw { status: 400, message: '模型ID和名称不能为空' };
+    if (db.select().from(models).where(eq(models.modelId, modelId)).get()) {
+      throw { status: 409, message: `模型 ${modelId} 已存在` };
+    }
 
     db.insert(models).values({
       provider: provider || 'google',
@@ -378,7 +413,11 @@ export class AdminService {
       description: description || null,
       apiKey: apiKey || null,
       capabilities: JSON.stringify(capabilities || ['text']),
+      isActive: data.isActive === 0 ? 0 : 1,
     }).run();
+
+    const deletedIds = getDeletedModelIds();
+    if (deletedIds.delete(modelId)) saveDeletedModelIds(deletedIds);
   }
 
   static updateModel(modelId: number, data: any) {
@@ -386,6 +425,16 @@ export class AdminService {
     if (!model) throw { status: 404, message: '模型不存在' };
 
     const updates: Record<string, any> = {};
+    const nextModelId = data.modelId !== undefined ? String(data.modelId).trim() : model.modelId;
+    if (!nextModelId) throw { status: 400, message: '模型 ID 不能为空' };
+    if (nextModelId !== model.modelId) {
+      const duplicateModel = db.select().from(models).where(eq(models.modelId, nextModelId)).get();
+      if (duplicateModel) throw { status: 409, message: `模型 ${nextModelId} 已存在` };
+      const oldPricing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, model.modelId)).get();
+      const targetPricing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, nextModelId)).get();
+      if (oldPricing && targetPricing) throw { status: 409, message: `新模型 ID ${nextModelId} 已存在计费规则` };
+      updates.modelId = nextModelId;
+    }
     if (data.displayName !== undefined) updates.displayName = data.displayName;
     if (data.description !== undefined) updates.description = data.description || null;
     if (data.provider !== undefined) updates.provider = data.provider;
@@ -394,22 +443,59 @@ export class AdminService {
     if (data.isActive !== undefined) updates.isActive = data.isActive;
 
     if (Object.keys(updates).length > 0) {
-      db.update(models).set(updates).where(eq(models.id, modelId)).run();
+      db.transaction(tx => {
+        if (nextModelId !== model.modelId) {
+          tx.update(modelPricing).set({ modelPattern: nextModelId }).where(eq(modelPricing.modelPattern, model.modelId)).run();
+        }
+        if (data.capabilities !== undefined) {
+          const pricing = tx.select().from(modelPricing).where(eq(modelPricing.modelPattern, nextModelId)).get();
+          if (pricing) {
+            let extraParams: Record<string, any> = {};
+            try { extraParams = JSON.parse(pricing.extraParams || '{}'); } catch { }
+            tx.update(modelPricing)
+              .set({ extraParams: JSON.stringify({ ...extraParams, category: categoryFromCapabilities(data.capabilities) }) })
+              .where(eq(modelPricing.modelPattern, nextModelId))
+              .run();
+          }
+        }
+        tx.update(models).set(updates).where(eq(models.id, modelId)).run();
+      });
+    }
+
+    if (nextModelId !== model.modelId) {
+      const deletedIds = getDeletedModelIds();
+      deletedIds.add(model.modelId);
+      deletedIds.delete(nextModelId);
+      saveDeletedModelIds(deletedIds);
     }
   }
 
   static deleteModel(modelId: number) {
-    db.delete(tierModelAccess).where(eq(tierModelAccess.modelId, modelId)).run();
-    db.delete(models).where(eq(models.id, modelId)).run();
+    const model = db.select().from(models).where(eq(models.id, modelId)).get();
+    if (!model) throw { status: 404, message: '模型不存在' };
+
+    db.transaction(tx => {
+      tx.delete(modelPricing).where(eq(modelPricing.modelPattern, model.modelId)).run();
+      tx.delete(tierModelAccess).where(eq(tierModelAccess.modelId, modelId)).run();
+      tx.delete(models).where(eq(models.id, modelId)).run();
+    });
+
+    const deletedIds = getDeletedModelIds();
+    deletedIds.add(model.modelId);
+    saveDeletedModelIds(deletedIds);
   }
 
   // ============ 系统设置 ============
   static getSettings() {
-    return db.select().from(settings).all();
+    // Prices are managed exclusively through model_pricing (/admin/pricing).
+    return db.select().from(settings).all().filter(item => !item.key.includes('_rate') && item.key !== 'image_rate' && item.key !== DELETED_MODELS_SETTING);
   }
 
   static updateSettings(items: { key: string; value: string }[]) {
     for (const item of items) {
+      if (item.key.includes('_rate') || item.key === 'image_rate' || item.key === DELETED_MODELS_SETTING) {
+        throw { status: 400, message: '模型价格请在「计费设置」中修改' };
+      }
       db.update(settings)
         .set({ value: item.value, updatedAt: new Date().toISOString() })
         .where(eq(settings.key, item.key))

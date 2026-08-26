@@ -10,6 +10,7 @@ import bcrypt from 'bcryptjs';
 import { BalanceService } from '../server/services/balanceService.js';
 import { TokenService } from '../server/services/tokenService.js';
 import { PricingService } from '../server/services/pricingService.js';
+import { AdminService } from '../server/services/adminService.js';
 
 // ============ 测试用户管理 ============
 let testUserId: number;
@@ -65,6 +66,29 @@ beforeAll(() => {
       output_price REAL NOT NULL DEFAULT 0,
       extra_params TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS models (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT NOT NULL DEFAULT 'google',
+      model_id TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      description TEXT,
+      api_key TEXT,
+      capabilities TEXT NOT NULL DEFAULT '["text"]',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS tier_model_access (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tier_id INTEGER NOT NULL,
+      model_id INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS settings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT NOT NULL UNIQUE,
+      value TEXT NOT NULL DEFAULT '',
+      label TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
 
@@ -416,6 +440,51 @@ describe('PricingService', () => {
     });
   });
 
+  describe('quote - unified usage pricing', () => {
+    it('calculates per-second pricing from the same rule used by model display', () => {
+      PricingService.createPricingRule({
+        modelPattern: TEST_PATTERN,
+        billingType: 'per_second',
+        inputPrice: 0.25,
+        extraParams: { category: 'video' },
+      });
+
+      const quote = PricingService.quote(TEST_PATTERN, { seconds: 8 }, false);
+      expect(quote.rate).toBe(0.25);
+      expect(quote.cost).toBe(2);
+      expect(quote.billingType).toBe('per_second');
+    });
+
+    it('calculates per-character pricing', () => {
+      PricingService.createPricingRule({
+        modelPattern: TEST_PATTERN,
+        billingType: 'per_character',
+        inputPrice: 0.01,
+      });
+
+      expect(PricingService.calculateUsageCost(TEST_PATTERN, { characters: 120 })).toBe(1.2);
+    });
+
+    it('uses a resolution-specific price when configured', () => {
+      PricingService.createPricingRule({
+        modelPattern: TEST_PATTERN,
+        billingType: 'per_call',
+        inputPrice: 0.12,
+        extraParams: { category: 'image', '4k': 0.35 },
+      });
+
+      const quote = PricingService.quote(TEST_PATTERN, { resolution: '4k' }, false);
+      expect(quote.rate).toBe(0.35);
+      expect(quote.cost).toBe(0.35);
+    });
+
+    it('rejects duplicate model rules and negative prices', () => {
+      PricingService.createPricingRule({ modelPattern: TEST_PATTERN, billingType: 'per_call', inputPrice: 1 });
+      expect(() => PricingService.createPricingRule({ modelPattern: TEST_PATTERN, billingType: 'per_call', inputPrice: 2 })).toThrow();
+      expect(() => PricingService.createPricingRule({ modelPattern: 'negative-price-model', billingType: 'per_call', inputPrice: -1 })).toThrow();
+    });
+  });
+
   describe('calculateCost - 匹配规则', () => {
     it('无匹配规则时返回 0', () => {
       // 临时移除通配符规则，确保无匹配
@@ -487,6 +556,51 @@ describe('PricingService', () => {
       const deleted = PricingService.getPricingRules().find(r => r.id === rule!.id);
       expect(deleted).toBeUndefined();
     });
+  });
+});
+
+describe('模型管理与计费设置同步', () => {
+  const MODEL_A = 'test-sync-model-a';
+  const MODEL_B = 'test-sync-model-b';
+
+  const cleanup = () => {
+    sqlite.prepare('DELETE FROM model_pricing WHERE model_pattern IN (?, ?)').run(MODEL_A, MODEL_B);
+    sqlite.prepare('DELETE FROM models WHERE model_id IN (?, ?)').run(MODEL_A, MODEL_B);
+    const row = sqlite.prepare("SELECT value FROM settings WHERE key = 'deleted_model_ids'").get() as any;
+    if (row) {
+      let ids: string[] = [];
+      try { ids = JSON.parse(row.value || '[]'); } catch { }
+      ids = ids.filter(id => id !== MODEL_A && id !== MODEL_B);
+      sqlite.prepare("UPDATE settings SET value = ? WHERE key = 'deleted_model_ids'").run(JSON.stringify(ids));
+    }
+  };
+
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  it('同步启停、模型 ID 修改和永久删除', () => {
+    AdminService.createModel({
+      provider: 'test', modelId: MODEL_A, displayName: '同步测试模型', capabilities: ['video'], isActive: 1,
+    });
+    const model = sqlite.prepare('SELECT * FROM models WHERE model_id = ?').get(MODEL_A) as any;
+    expect(model).toBeDefined();
+    expect(PricingService.getPricingRules({ scope: 'active' }).some(rule => rule.modelPattern === MODEL_A)).toBe(true);
+
+    PricingService.createPricingRule({ modelPattern: MODEL_A, billingType: 'per_call', inputPrice: 1.25, extraParams: { category: 'video' } });
+    AdminService.updateModel(model.id, { isActive: 0 });
+    expect(PricingService.getPricingRules({ scope: 'active' }).some(rule => rule.modelPattern === MODEL_A)).toBe(false);
+
+    AdminService.updateModel(model.id, { isActive: 1, modelId: MODEL_B, capabilities: ['tts'] });
+    expect(sqlite.prepare('SELECT input_price FROM model_pricing WHERE model_pattern = ?').get(MODEL_A)).toBeUndefined();
+    expect((sqlite.prepare('SELECT input_price FROM model_pricing WHERE model_pattern = ?').get(MODEL_B) as any).input_price).toBe(1.25);
+    const migratedExtra = JSON.parse((sqlite.prepare('SELECT extra_params FROM model_pricing WHERE model_pattern = ?').get(MODEL_B) as any).extra_params);
+    expect(migratedExtra.category).toBe('tts');
+
+    AdminService.deleteModel(model.id);
+    expect(sqlite.prepare('SELECT id FROM models WHERE model_id = ?').get(MODEL_B)).toBeUndefined();
+    expect(sqlite.prepare('SELECT id FROM model_pricing WHERE model_pattern = ?').get(MODEL_B)).toBeUndefined();
+    const deleted = JSON.parse((sqlite.prepare("SELECT value FROM settings WHERE key = 'deleted_model_ids'").get() as any).value);
+    expect(deleted).toContain(MODEL_B);
   });
 });
 

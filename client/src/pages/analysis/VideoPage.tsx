@@ -1083,7 +1083,7 @@ export default function VideoPage() {
   };
 
   return (
-    <div className="flex h-full">
+    <div className="flex flex-col lg:flex-row min-h-full lg:h-full">
       {/* 左栏 */}
       <div className="w-full lg:w-[320px] shrink-0 h-fit lg:h-full lg:overflow-y-auto border-r border-white/5 bg-black [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
         <div className="p-6 flex flex-col min-h-full">
@@ -1108,7 +1108,7 @@ export default function VideoPage() {
                         const isSelected = selectedModel === m.id;
                         return (
                           <button key={m.id} onClick={() => setSelectedModel(m.id)}
-                            className={`w-full text-left px-4 py-3 rounded-xl border transition-all relative overflow-hidden ${isSelected
+                            className={`earth-model-card w-full text-left px-4 py-3 rounded-xl border transition-all relative overflow-hidden ${isSelected
                               ? isComic
                                 ? 'border-purple-400 bg-gradient-to-r from-purple-500/20 via-indigo-500/15 to-purple-500/10 shadow-[0_0_16px_rgba(168,85,247,0.3)] ring-1 ring-purple-400/50'
                                 : 'border-indigo-500/50 bg-indigo-500/10 shadow-[0_0_12px_rgba(99,102,241,0.15)]'
@@ -1719,7 +1719,7 @@ export default function VideoPage() {
 
                   {/* 圆形发送按钮 */}
                   <button onClick={handleGenerate} disabled={!prompt.trim()}
-                    className="absolute right-3 bottom-3 w-10 h-10 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed z-10">
+                    className="absolute right-3 bottom-3 w-11 h-11 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed z-10" aria-label="开始生成视频">
                     <Play className="w-4 h-4 ml-0.5" />
                   </button>
                 </div>

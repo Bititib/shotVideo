@@ -9,7 +9,7 @@ export function CopyButton({ text, className = '' }: { text: string; className?:
     setTimeout(() => setCopied(false), 2000);
   };
   return (
-    <button onClick={handleCopy} className={`p-1.5 rounded-lg hover:bg-white/10 transition-colors ${className}`} title="复制">
+    <button onClick={handleCopy} className={`w-9 h-9 inline-flex items-center justify-center rounded-lg hover:bg-white/10 transition-colors ${className}`} title="复制" aria-label={copied ? '已复制' : '复制内容'}>
       {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5 text-zinc-500" />}
     </button>
   );

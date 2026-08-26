@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { adminApi } from '../../api/admin';
 import { Users, Zap, TrendingUp, BarChart, Settings, Save, Check } from 'lucide-react';
 
@@ -23,7 +24,9 @@ export default function DashboardPage() {
   const handleSaveSettings = async () => {
     setSaving(true);
     try {
-      const items = Object.entries(settingsForm).map(([key, value]) => ({ key, value: value as string }));
+      const items = Object.entries(settingsForm)
+        .filter(([key]) => !key.includes('_rate') && key !== 'image_rate')
+        .map(([key, value]) => ({ key, value: value as string }));
       await adminApi.updateSettings(items);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -43,10 +46,10 @@ export default function DashboardPage() {
       {/* Stats Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         {[
-          { label: '总用户', value: stats?.totalUsers || 0, icon: Users, color: 'from-blue-500 to-blue-600' },
-          { label: '今日活跃', value: stats?.todayActiveUsers || 0, icon: Zap, color: 'from-green-500 to-emerald-600' },
-          { label: '今日调用', value: stats?.todayCalls || 0, icon: TrendingUp, color: 'from-purple-500 to-pink-600' },
-          { label: '总调用量', value: stats?.totalCalls || 0, icon: BarChart, color: 'from-orange-500 to-amber-600' },
+          { label: '总用户', value: stats?.totalUsers || 0, icon: Users, color: 'from-[#a95b38] to-[#7f3e25]' },
+          { label: '今日活跃', value: stats?.todayActiveUsers || 0, icon: Zap, color: 'from-[#78855b] to-[#596740]' },
+          { label: '今日调用', value: stats?.todayCalls || 0, icon: TrendingUp, color: 'from-[#c18a45] to-[#9c682c]' },
+          { label: '总调用量', value: stats?.totalCalls || 0, icon: BarChart, color: 'from-[#c47750] to-[#97482f]' },
         ].map((card, i) => (
           <div key={i} className="bg-white/[0.03] border border-white/5 rounded-2xl p-5">
             <div className="flex items-center justify-between mb-3">
@@ -88,7 +91,7 @@ export default function DashboardPage() {
           <div className="space-y-3">
             {stats?.tierDistribution?.map((d: any, i: number) => {
               const total = stats.tierDistribution.reduce((s: number, x: any) => s + x.count, 0) || 1;
-              const colors = ['bg-zinc-500', 'bg-yellow-500', 'bg-blue-500', 'bg-purple-500'];
+              const colors = ['bg-[#9a4f2f]', 'bg-[#ba7a32]', 'bg-[#65724a]', 'bg-[#c28c62]'];
               return (
                 <div key={i} className="flex items-center gap-3">
                   <span className="text-xs text-zinc-400 w-20">{d.tierName || '未知'}</span>
@@ -143,7 +146,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {settingsList.map(s => (
+          {settingsList.filter(s => !s.key.includes('_rate') && s.key !== 'image_rate').map(s => (
             <div key={s.key} className={s.key === 'site_notice' ? 'md:col-span-2' : ''}>
               <label className="block text-xs text-zinc-400 mb-1.5">{s.label}</label>
               {s.key === 'site_notice' ? (
@@ -166,7 +169,10 @@ export default function DashboardPage() {
             </div>
           ))}
         </div>
-        <p className="text-[10px] text-zinc-600 mt-3">提示：联系方式将展示在用户工作台侧边栏底部</p>
+        <div className="mt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3">
+          <p className="text-xs text-zinc-500">模型价格已统一迁移，不再在仪表盘中重复维护。</p>
+          <Link to="/admin/pricing" className="text-xs font-semibold text-amber-400 hover:underline">前往计费设置 →</Link>
+        </div>
       </div>
     </div>
   );

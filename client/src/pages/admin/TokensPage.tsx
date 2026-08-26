@@ -1,13 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { adminApi } from '../../api/admin';
-import { Plus, Key, Trash2, Pencil, Copy, Power, PowerOff, Check } from 'lucide-react';
+import { Plus, Key, Trash2, Pencil, Copy, Power, PowerOff } from 'lucide-react';
 
 export default function TokensPage() {
   const [data, setData] = useState<{ items: any[]; total: number }>({ items: [], total: 0 });
   const [userList, setUserList] = useState<any[]>([]);
   const [edit, setEdit] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [copiedId, setCopiedId] = useState<number | null>(null);
   const [newTokenKey, setNewTokenKey] = useState<string | null>(null);
 
   const load = async () => {
@@ -69,12 +68,6 @@ export default function TokensPage() {
     catch (e: any) { alert(e.message); }
   };
 
-  const copyToken = (tokenKey: string, id: number) => {
-    navigator.clipboard.writeText(tokenKey);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
-  };
-
   if (loading) return <div className="flex items-center justify-center h-full"><div className="w-8 h-8 border-2 border-white/10 border-t-white rounded-full animate-spin" /></div>;
 
   return (
@@ -112,9 +105,6 @@ export default function TokensPage() {
                   <h3 className="text-sm font-semibold text-white">{t.name || '未命名 Token'}</h3>
                   <div className="flex items-center gap-2">
                     <code className="text-[10px] text-zinc-500 font-mono">{t.tokenKeyMasked}</code>
-                    <button onClick={() => copyToken(t.tokenKey, t.id)} className="text-zinc-500 hover:text-zinc-300">
-                      {copiedId === t.id ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
-                    </button>
                   </div>
                 </div>
               </div>

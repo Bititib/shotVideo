@@ -39,11 +39,14 @@ export class TokenService {
     if (conditions.length > 0) query = query.where(and(...conditions));
 
     const items = query.orderBy(desc(apiTokens.createdAt)).limit(pageSize).offset(offset).all()
-      .map(t => ({
-        ...t,
-        allowedModels: JSON.parse(t.allowedModels as string),
-        tokenKeyMasked: t.tokenKey.slice(0, 6) + '****' + t.tokenKey.slice(-4),
-      }));
+      .map(t => {
+        const { tokenKey, ...safeToken } = t;
+        return {
+          ...safeToken,
+          allowedModels: JSON.parse(t.allowedModels as string),
+          tokenKeyMasked: tokenKey.slice(0, 6) + '****' + tokenKey.slice(-4),
+        };
+      });
 
     let countQuery = db.select({ count: sql<number>`count(*)` }).from(apiTokens).$dynamic();
     if (conditions.length > 0) countQuery = countQuery.where(and(...conditions));

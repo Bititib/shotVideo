@@ -27,7 +27,7 @@ export default function ContentsPage() {
   const [pageSize] = useState(12);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [typeFilter, setTypeFilter] = useState('video');
+  const [typeFilter, setTypeFilter] = useState('');
   const [loading, setLoading] = useState(false);
   const [previewItem, setPreviewItem] = useState<ContentItem | null>(null);
   const [previewTab, setPreviewTab] = useState<'video' | 'refs'>('video');
@@ -186,16 +186,24 @@ export default function ContentsPage() {
           {items.map(item => {
             const meta = parseMeta(item.metadata);
             const { refImgs, refVids, refAuds } = parseRefAssets(item.metadata);
-            const hasVideo = item.resultUrl && item.resultUrl.trim() !== '';
+            const isImage = item.type === 'image';
+            const hasResult = Boolean(item.resultUrl && item.resultUrl.trim() !== '');
 
             return (
               <div key={item.id} className="group bg-white/[0.03] border border-white/5 rounded-xl overflow-hidden hover:border-white/10 transition-all">
-                {/* Video Preview / Thumbnail */}
+                {/* Asset Preview / Thumbnail */}
                 <div
                   className="relative aspect-video bg-black/50 cursor-pointer"
                   onClick={() => { setPreviewItem(item); setPreviewTab('video'); }}
                 >
-                  {hasVideo ? (
+                  {hasResult && isImage ? (
+                    <img
+                      src={item.resultUrl!}
+                      alt={item.title || '生成图片'}
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : hasResult ? (
                     <video
                       src={getVideoPlayUrl(item.resultUrl)}
                       className="w-full h-full object-cover"
@@ -206,12 +214,12 @@ export default function ContentsPage() {
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center text-zinc-600">
-                      <Film className="w-8 h-8" />
+                      {isImage ? <Image className="w-8 h-8" /> : <Film className="w-8 h-8" />}
                     </div>
                   )}
-                  {hasVideo && (
+                  {hasResult && (
                     <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/30">
-                      <Play className="w-8 h-8 text-white/80" />
+                      {isImage ? <Eye className="w-8 h-8 text-white/80" /> : <Play className="w-8 h-8 text-white/80" />}
                     </div>
                   )}
                   {/* Status badge */}
@@ -219,7 +227,7 @@ export default function ContentsPage() {
                     {getStatusBadge(item.status)}
                   </div>
                   {/* Duration & resolution */}
-                  {meta.seconds && (
+                  {!isImage && meta.seconds && (
                     <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
                       <span className="px-1.5 py-0.5 rounded bg-black/60 text-[10px] text-white/80">{meta.seconds}秒</span>
                       {meta.resolution && <span className="px-1.5 py-0.5 rounded bg-black/60 text-[10px] text-white/80">{meta.resolution}</span>}
@@ -231,7 +239,10 @@ export default function ContentsPage() {
                 <div className="p-3 space-y-2">
                   {/* User & Model */}
                   <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-indigo-400 truncate max-w-[120px]">{item.userName || item.userEmail || `用户#${item.userId}`}</span>
+                    <span className="text-indigo-400 truncate max-w-[120px]">
+                      {item.userName || item.userEmail || `用户#${item.userId}`}
+                      {meta.source === 'api' ? ' · API' : ''}
+                    </span>
                     <span className="text-zinc-500 truncate max-w-[120px]">{item.modelId || '未知模型'}</span>
                   </div>
 
@@ -282,12 +293,14 @@ export default function ContentsPage() {
                     >
                       <Eye className="w-3 h-3" /> 查看
                     </button>
-                    <button
-                      onClick={() => handleReplicate(item)}
-                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-xs text-indigo-400 hover:text-indigo-300 transition-colors border border-indigo-500/20"
-                    >
-                      <Copy className="w-3 h-3" /> 复刻
-                    </button>
+                    {!isImage && (
+                      <button
+                        onClick={() => handleReplicate(item)}
+                        className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-xs text-indigo-400 hover:text-indigo-300 transition-colors border border-indigo-500/20"
+                      >
+                        <Copy className="w-3 h-3" /> 复刻
+                      </button>
+                    )}
                   </div>
 
                   {/* Time */}
@@ -335,12 +348,14 @@ export default function ContentsPage() {
                 {getStatusBadge(previewItem.status)}
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  onClick={() => handleReplicate(previewItem)}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-xs text-indigo-400 border border-indigo-500/20 transition-colors"
-                >
-                  <Copy className="w-3 h-3" /> 一键复刻
-                </button>
+                {previewItem.type !== 'image' && (
+                  <button
+                    onClick={() => handleReplicate(previewItem)}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-xs text-indigo-400 border border-indigo-500/20 transition-colors"
+                  >
+                    <Copy className="w-3 h-3" /> 一键复刻
+                  </button>
+                )}
                 <button onClick={() => setPreviewItem(null)} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors">
                   <X className="w-4 h-4 text-zinc-400" />
                 </button>
@@ -353,7 +368,7 @@ export default function ContentsPage() {
                 onClick={() => setPreviewTab('video')}
                 className={`px-3 py-1.5 rounded-lg text-xs transition-colors ${previewTab === 'video' ? 'bg-white/10 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
               >
-                视频 & 信息
+                {previewItem.type === 'image' ? '图片 & 信息' : '视频 & 信息'}
               </button>
               <button
                 onClick={() => setPreviewTab('refs')}
@@ -370,9 +385,11 @@ export default function ContentsPage() {
             <div className="p-4 space-y-4">
               {previewTab === 'video' ? (
                 <>
-                  {/* Video */}
+                  {/* Generated asset */}
                   {previewItem.resultUrl && previewItem.resultUrl.trim() !== '' && (
-                    <video src={getVideoPlayUrl(previewItem.resultUrl)} controls className="w-full rounded-xl bg-black" />
+                    previewItem.type === 'image'
+                      ? <img src={previewItem.resultUrl} alt={previewItem.title || '生成图片'} className="w-full max-h-[65vh] object-contain rounded-xl bg-black" />
+                      : <video src={getVideoPlayUrl(previewItem.resultUrl)} controls className="w-full rounded-xl bg-black" />
                   )}
 
                   {/* Info grid */}

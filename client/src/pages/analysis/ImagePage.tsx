@@ -92,8 +92,9 @@ export default function ImagePage() {
           )}
 
           <div className="mb-6 flex items-center gap-3">
-            <button onClick={() => setRequiresText(!requiresText)} className={`relative w-11 h-6 rounded-full transition-colors ${requiresText ? 'bg-pink-500' : 'bg-white/10'}`}>
-              <div className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${requiresText ? 'translate-x-5' : ''}`} />
+            <button onClick={() => setRequiresText(!requiresText)} className="relative w-11 h-11 rounded-full transition-colors" role="switch" aria-checked={requiresText} aria-label="分析画面文字">
+              <span className={`absolute inset-x-0 top-2.5 h-6 rounded-full transition-colors ${requiresText ? 'bg-pink-500' : 'bg-white/10'}`} aria-hidden="true" />
+              <div className={`absolute top-3 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${requiresText ? 'translate-x-5' : ''}`} />
             </button>
             <span className="text-xs text-zinc-400">保留文字排版</span>
           </div>

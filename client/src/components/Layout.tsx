@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { getPublicSettings } from '../api/admin';
-import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Zap, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2, X, Key, User, FileText } from 'lucide-react';
+import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Layers3, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2, X, Key, User, FileText } from 'lucide-react';
 
 const navItems = [
   { to: '/app', icon: PlaySquare, label: '通用分析', color: 'text-blue-400', feature: 'general' },
@@ -83,18 +83,19 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const canAccess = (feature: string) => allowedFeatures.includes('*') || allowedFeatures.includes(feature) || user?.role === 'admin' || user?.role === 'super_admin';
 
   return (
-    <div className="min-h-screen bg-black text-white font-sans flex flex-col md:flex-row">
+    <div className="earth-app-shell min-h-screen bg-black text-white font-sans flex flex-col md:flex-row">
       {/* Sidebar */}
-      <div className="w-full md:w-64 shrink-0 bg-black flex flex-col md:h-screen sticky top-0 z-50 border-r border-white/5 md:overflow-hidden">
+      <aside className="earth-sidebar w-full md:w-64 shrink-0 bg-black flex flex-col md:h-screen sticky top-0 z-50 border-r border-white/5 md:overflow-hidden" aria-label="主导航">
         <div className="p-4 md:p-6 flex flex-col gap-3 md:gap-6 h-full">
           <header className="flex-shrink-0 flex items-center justify-between md:block">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 via-amber-500 to-yellow-500 shadow-md shadow-amber-500/20 flex items-center justify-center">
-                <Zap className="w-4 h-4 text-black font-bold" />
+            <div className="earth-brand flex items-center gap-3">
+              <div className="earth-brand-mark w-9 h-9 rounded-xl flex items-center justify-center" aria-hidden="true">
+                <Layers3 className="w-[18px] h-[18px]" strokeWidth={1.8} />
               </div>
-              <h1 className="text-lg md:text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-yellow-400 to-amber-500">
-                短视频创意风暴
-              </h1>
+              <div className="min-w-0">
+                <h1 className="earth-brand-name text-base md:text-lg font-bold whitespace-nowrap">短视频创意风暴</h1>
+                <p className="earth-brand-subtitle hidden md:block">AI CREATIVE STUDIO</p>
+              </div>
             </div>
           </header>
 
@@ -199,13 +200,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             )}
           </div>
         </div>
-      </div>
+      </aside>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-h-screen md:h-screen md:overflow-hidden bg-[#0c0c0c] relative">
+      <main className="earth-workspace flex-1 flex flex-col min-h-screen md:h-screen md:overflow-hidden bg-[#0c0c0c] relative" id="main-content">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-white/[0.01] via-transparent to-transparent pointer-events-none" />
         <div className="relative z-10 flex-1 md:overflow-y-auto">{children}</div>
-      </div>
+      </main>
 
       {/* 悬浮客服面板 */}
       {showContact && (contactInfo.contact_wechat || contactInfo.contact_qq) && (

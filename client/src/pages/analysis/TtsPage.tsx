@@ -231,7 +231,7 @@ export default function TtsPage() {
   };
 
   return (
-    <div className="flex h-full flex-col lg:flex-row">
+    <div className="tts-page flex h-full flex-col lg:flex-row">
       {/* ===== 左栏：控制配置 ===== */}
       <div className="w-full lg:w-[360px] shrink-0 h-fit lg:h-full lg:overflow-y-auto border-r border-white/5 bg-black p-6 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
         <div className="flex flex-col gap-6">
@@ -321,7 +321,7 @@ export default function TtsPage() {
       </div>
 
       {/* ===== 右栏：文本输入与音频播放 ===== */}
-      <div className="flex-1 flex flex-col min-w-0 bg-[#070707] relative p-6 lg:overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+      <div className="tts-content-panel flex-1 flex flex-col min-w-0 bg-[#070707] relative p-6 lg:overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
         <div className="max-w-4xl mx-auto w-full flex flex-col gap-6 h-full">
           {/* 输入及合成区 */}
           <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-5 flex flex-col gap-4">

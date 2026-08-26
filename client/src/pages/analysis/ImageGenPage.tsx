@@ -294,7 +294,7 @@ export default function ImageGenPage() {
     : 0;
 
   return (
-    <div className="flex h-full">
+    <div className="imagegen-page flex flex-col lg:flex-row min-h-full lg:h-full">
       {/* ===== 左栏 ===== */}
       <div className="w-full lg:w-[320px] shrink-0 h-fit lg:h-full lg:overflow-y-auto border-r border-white/5 bg-black [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
         <div className="p-6 flex flex-col min-h-full">
@@ -304,7 +304,7 @@ export default function ImageGenPage() {
             <div className="space-y-3">
               {models.map((model) => (
                 <button key={model.id} onClick={() => setSelectedModel(model.id)}
-                  className={`w-full text-left px-4 py-3 rounded-xl border transition-all ${selectedModel === model.id ? 'border-pink-500/50 bg-pink-500/10 shadow-lg shadow-pink-500/5' : 'border-white/5 bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.04]'}`}>
+                  className={`earth-image-model-card w-full text-left px-4 py-3 rounded-xl border transition-all ${selectedModel === model.id ? 'is-selected border-pink-500/50 bg-pink-500/10 shadow-lg shadow-pink-500/5' : 'border-white/5 bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.04]'}`}>
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-medium text-white">{model.name}</p>
                     <div className="flex items-center gap-2">
@@ -440,7 +440,7 @@ export default function ImageGenPage() {
 
         {/* 悬浮输入区 */}
         <div className="absolute bottom-0 left-0 right-0 z-10">
-          <div className="bg-gradient-to-t from-[#0c0c0c] via-[#0c0c0c]/95 to-transparent pt-8 px-6 pb-5">
+          <div className="imagegen-composer bg-gradient-to-t from-[#0c0c0c] via-[#0c0c0c]/95 to-transparent pt-8 px-6 pb-5">
             <div className="max-w-5xl mx-auto">
               {/* 工具栏 */}
               <div className="flex items-center gap-2 mb-3 flex-wrap">
@@ -486,7 +486,7 @@ export default function ImageGenPage() {
                   className="w-full bg-transparent px-4 py-3 pr-16 text-sm text-white focus:outline-none placeholder:text-zinc-600 resize-none [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' } as React.CSSProperties} />
                 {/* 圆形发送按钮 */}
                 <button onClick={isGenerating ? handleCancel : handleGenerate} disabled={!prompt.trim() && !isGenerating}
-                  className={`absolute right-3 bottom-3 w-10 h-10 rounded-full flex items-center justify-center transition-all ${isGenerating ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/20' : 'bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white shadow-lg shadow-pink-500/20 disabled:opacity-30 disabled:cursor-not-allowed'}`}>
+                  className={`absolute right-3 bottom-3 w-11 h-11 rounded-full flex items-center justify-center transition-all ${isGenerating ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/20' : 'bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white shadow-lg shadow-pink-500/20 disabled:opacity-30 disabled:cursor-not-allowed'}`} aria-label={isGenerating ? '停止生成图片' : '开始生成图片'}>
                   {isGenerating ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
                 </button>
               </div>

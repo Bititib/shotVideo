@@ -5,6 +5,7 @@ import { quotaMiddleware, logUsage } from '../middleware/quota.js';
 import { ChannelService } from '../services/channelService.js';
 import { BalanceService } from '../services/balanceService.js';
 import { ContentService } from '../services/contentService.js';
+import { PricingService } from '../services/pricingService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models, settings, contents } from '../db/schema.js';
@@ -490,6 +491,15 @@ router.get('/models', (_req: Request, res: Response) => {
       };
     }
 
+    // The pricing table is authoritative; legacy setting reads above are retained
+    // only so old databases can be migrated without losing their former values.
+    const billingType = PricingService.quote(m.id, {}, false).billingType;
+    const configuredResolutions = Object.keys(rates).length > 0 ? Object.keys(rates) : ['720p'];
+    rates = Object.fromEntries(configuredResolutions.map(resolution => [
+      resolution,
+      PricingService.quote(m.id, { resolution }, false).rate,
+    ]));
+
     const targetIds = Array.from(new Set([m.id, ...(m.id.includes('seedance2.0') || m.id === 'sd2-mini' ? ['seedance2.0-933', 'seedance2.0 933', 'sd2-mini'] : [])]));
     const contentRows = db.select().from(contents).where(inArray(contents.modelId, targetIds)).all();
     const totalCalls = contentRows.length;
@@ -506,6 +516,7 @@ router.get('/models', (_req: Request, res: Response) => {
       requireRef: meta?.requireRef || false,
       series: meta?.series || 'legacy',
       rates,
+      billingType,
       successRate,
       totalCalls,
     };
@@ -677,9 +688,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p'
   ].includes(model);
-  const estimatedRate = rate;
   const estimatedSeconds = Number(video_length) || 6;
-  const estimatedCost = isFlatRate ? estimatedRate : (Math.round(estimatedRate * estimatedSeconds * 100) / 100);
+  const unifiedQuote = PricingService.quote(model, { resolution, seconds: estimatedSeconds, count: 1 }, false);
+  if (!unifiedQuote.billingType) {
+    sendEvent({ type: 'error', message: `模型 ${model} 尚未在计费设置中配置价格` });
+    res.write('data: [DONE]\n\n');
+    return res.end();
+  }
+  const estimatedRate = unifiedQuote.rate;
+  const estimatedCost = unifiedQuote.cost;
 
   // 1. 提交任务时优先原子预扣费
   let predeductedBalance: number | null = null;
@@ -691,7 +708,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       res.write('data: [DONE]\n\n');
       return res.end();
     }
-    sendEvent({ type: 'billing', cost: estimatedCost, resolution, seconds: estimatedSeconds, rate, remainingBalance: predeductedBalance });
+    sendEvent({ type: 'billing', cost: estimatedCost, resolution, seconds: estimatedSeconds, rate: estimatedRate, billingType: unifiedQuote.billingType, remainingBalance: predeductedBalance });
   }
 
   // 插入初始的 'processing' 内容记录，确保刷新页面时正在生成中的记录不会丢失
@@ -1897,7 +1914,11 @@ export function resumePollForTask(contentId: number, record: any) {
             : (Date.now() - startTime);
 
           logUsage(record.userId, 'generate_video', undefined, durationMs);
-          const cost = Number(record.cost) || (isFlatRate ? rate : (Math.round(rate * video_length * 100) / 100));
+          const cost = Number(record.cost) || PricingService.calculateUsageCost(model, {
+            resolution,
+            seconds: Number(video_length) || 0,
+            count: 1,
+          });
           let meta = {};
           try {
             meta = JSON.parse(currentRecord.metadata || '{}');

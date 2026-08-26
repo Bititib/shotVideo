@@ -46,7 +46,13 @@ export const adminApi = {
   deleteToken(id: number) { return api.delete<any>(`/admin/tokens/${id}`); },
 
   // 计费管理
-  getPricing() { return api.get<any[]>('/admin/pricing'); },
+  getPricing(params?: { category?: string; billingType?: string; search?: string }) {
+    const query = new URLSearchParams();
+    if (params?.category && params.category !== 'all') query.set('category', params.category);
+    if (params?.billingType && params.billingType !== 'all') query.set('billingType', params.billingType);
+    if (params?.search) query.set('search', params.search);
+    return api.get<any[]>(`/admin/pricing${query.size ? `?${query.toString()}` : ''}`);
+  },
   createPricing(data: any) { return api.post<any>('/admin/pricing', data); },
   updatePricing(id: number, data: any) { return api.put<any>(`/admin/pricing/${id}`, data); },
   deletePricing(id: number) { return api.delete<any>(`/admin/pricing/${id}`); },
