@@ -89,15 +89,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div className="p-4 md:p-6 flex flex-col gap-3 md:gap-6 h-full">
           <header className="flex-shrink-0 flex items-center justify-between md:block">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-                <Zap className="w-4 h-4 text-white" />
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 via-amber-500 to-yellow-500 shadow-md shadow-amber-500/20 flex items-center justify-center">
+                <Zap className="w-4 h-4 text-black font-bold" />
               </div>
-              <h1 className="text-lg md:text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
+              <h1 className="text-lg md:text-xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-yellow-400 to-amber-500">
                 短视频创意风暴
               </h1>
             </div>
           </header>
- 
+
           <nav className="flex flex-row md:flex-col gap-1.5 flex-shrink-0 md:flex-1 overflow-x-auto overflow-y-hidden md:overflow-y-auto pb-1 md:pb-0 [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
             {navItems.map(item => {
               return (
@@ -107,8 +107,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   end={item.to === '/app'}
                   className={({ isActive }) =>
                     `flex items-center gap-2 md:gap-3 px-3 py-2 md:px-4 md:py-3 rounded-lg md:rounded-xl text-xs md:text-sm font-medium transition-all shrink-0 md:w-full text-left group relative ${isActive
-                      ? 'bg-white/10 text-white'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+                      ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30 shadow-sm shadow-amber-500/10'
+                      : 'text-zinc-400 hover:text-amber-200 hover:bg-amber-500/5'
                     }`
                   }
                 >

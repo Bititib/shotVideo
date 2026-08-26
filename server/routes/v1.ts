@@ -4,8 +4,8 @@ import { ChannelService } from '../services/channelService.js';
 import { PricingService } from '../services/pricingService.js';
 import { BalanceService } from '../services/balanceService.js';
 import { db } from '../db/index.js';
-import { apiLogs, settings, models } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { apiLogs, settings, models, contents, apiTokens } from '../db/schema.js';
+import { eq, sql } from 'drizzle-orm';
 import multer from 'multer';
 import os from 'os';
 import fs from 'fs';
@@ -50,7 +50,19 @@ function deductTokenOrUserBalance(token: any, cost: number, model: string) {
 
 /** 获取视频计费费率 */
 function getVideoRate(model: string, resolution: string): number {
-  if (model === 'sdas-bl-sd2.0-933-pro-720p') {
+  if (model === 'grok-video-1.5（按秒）') {
+    return 0.09;
+  } else if (model === 'grok-imagine-video-1.5（按次）') {
+    return 0.60;
+  } else if (model === 'grok-imagine-video-1.5-preview') {
+    return 0.70;
+  } else if (model === 'seedance-2.5-deal') {
+    return 1.80;
+  } else if (model === 'seedance-2.5m') {
+    return 3.00;
+  } else if (model === 'wan3.0th') {
+    return 4.00;
+  } else if (model === 'sdas-bl-sd2.0-933-pro-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_bl_sd20_933_pro_720p_rate')).get();
     return parseFloat(row?.value || '4.50');
   } else if (model === 'sdas-bl-sd2.0-933-pro-noface-720p') {
@@ -595,8 +607,8 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
   }
 });
 
-/** POST /v1/videos — Grok 视频生成任务代理 */
-router.post('/videos', upload.any(), async (req: Request, res: Response) => {
+/** 统一视频任务创建核心逻辑 (Unified Video Creation Controller) */
+async function handleVideoCreation(req: Request, res: Response) {
   if (req.body.model === 'sdas-xh-sd2.0-933-3-pro-720p') {
     req.body.model = 'sdas-pd-sd2.0-pro-933-5-720p';
   }
@@ -615,7 +627,11 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
   }
 
-  const { model, prompt, seconds = 6, size = '720x1280', resolution_name = '720p', ...otherParams } = req.body;
+  const body = req.body || {};
+
+  const model = body.model;
+  const prompt = body.prompt;
+
   if (!model) {
     cleanupFiles(req.files);
     return res.status(400).json({ error: 'model is required' });
@@ -630,6 +646,108 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     return res.status(403).json({ error: `Token has no access to model ${model}` });
   }
 
+  // 规范化并提取入参别名 (seconds / duration)
+  let seconds = body.seconds !== undefined ? Number(body.seconds) : undefined;
+  const duration = body.duration !== undefined ? Number(body.duration) : undefined;
+
+  if (seconds !== undefined && duration !== undefined && seconds !== duration) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: 'seconds and duration must be equal when both are provided' });
+  }
+  if (seconds === undefined) {
+    seconds = duration !== undefined ? duration : 6;
+  }
+
+  const ratio = body.ratio || body.aspect_ratio || '16:9';
+  const resolution = body.resolution || body.resolution_name || '720p';
+
+  // 提取图片素材别名
+  let image_urls: string[] = [];
+  if (Array.isArray(body.image_urls)) {
+    image_urls = body.image_urls;
+  } else if (Array.isArray(body.images)) {
+    image_urls = body.images;
+  } else if (Array.isArray(body.image_refs)) {
+    image_urls = body.image_refs;
+  } else if (typeof body.image_urls === 'string') {
+    image_urls = [body.image_urls];
+  } else if (typeof body.images === 'string') {
+    image_urls = [body.images];
+  }
+
+  if (Array.isArray(req.files)) {
+    const uploadedImages = req.files
+      .filter((f: any) => f.fieldname === 'input_reference[]' || f.fieldname === 'image' || f.fieldname === 'images')
+      .map((f: any) => {
+        const fileContent = fs.readFileSync(f.path);
+        const filename = `uploaded_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${path.extname(f.originalname)}`;
+        const destPath = path.join(process.cwd(), 'data/uploads', filename);
+        fs.writeFileSync(destPath, fileContent);
+        const backendUrl = process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+        return `${backendUrl.replace(/\/+$/, '')}/uploads/${filename}`;
+      });
+    if (uploadedImages.length > 0) {
+      image_urls = [...image_urls, ...uploadedImages];
+    }
+  }
+
+  // 提取视频素材别名
+  let video_urls: string[] = [];
+  if (Array.isArray(body.video_urls)) {
+    video_urls = body.video_urls;
+  } else if (Array.isArray(body.videos)) {
+    video_urls = body.videos;
+  } else if (typeof body.video_urls === 'string') {
+    video_urls = [body.video_urls];
+  } else if (typeof body.videos === 'string') {
+    video_urls = [body.videos];
+  }
+
+  if (Array.isArray(req.files)) {
+    const uploadedVideos = req.files
+      .filter((f: any) => f.fieldname === 'video' || f.fieldname === 'videos' || f.fieldname === 'reference_video')
+      .map((f: any) => {
+        const fileContent = fs.readFileSync(f.path);
+        const filename = `uploaded_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${path.extname(f.originalname)}`;
+        const destPath = path.join(process.cwd(), 'data/uploads', filename);
+        fs.writeFileSync(destPath, fileContent);
+        const backendUrl = process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+        return `${backendUrl.replace(/\/+$/, '')}/uploads/${filename}`;
+      });
+    if (uploadedVideos.length > 0) {
+      video_urls = [...video_urls, ...uploadedVideos];
+    }
+  }
+
+  // 提取音频素材别名
+  let audio_urls: string[] = [];
+  if (Array.isArray(body.audio_urls)) {
+    audio_urls = body.audio_urls;
+  } else if (Array.isArray(body.audios)) {
+    audio_urls = body.audios;
+  } else if (typeof body.audio_urls === 'string') {
+    audio_urls = [body.audio_urls];
+  } else if (typeof body.audios === 'string') {
+    audio_urls = [body.audios];
+  }
+
+  if (Array.isArray(req.files)) {
+    const uploadedAudios = req.files
+      .filter((f: any) => f.fieldname === 'audio' || f.fieldname === 'audios' || f.fieldname === 'reference_audio')
+      .map((f: any) => {
+        const fileContent = fs.readFileSync(f.path);
+        const filename = `uploaded_${Date.now()}_${Math.random().toString(36).substring(2, 8)}${path.extname(f.originalname)}`;
+        const destPath = path.join(process.cwd(), 'data/uploads', filename);
+        fs.writeFileSync(destPath, fileContent);
+        const backendUrl = process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+        return `${backendUrl.replace(/\/+$/, '')}/uploads/${filename}`;
+      });
+    if (uploadedAudios.length > 0) {
+      audio_urls = [...audio_urls, ...uploadedAudios];
+    }
+  }
+
+  // 动态查找支持该模型的渠道 (从后台注册的渠道中选取)
   const channel = ChannelService.findChannelForModel(model);
   let upstreamModel = model;
   let baseUrl = '';
@@ -651,145 +769,14 @@ router.post('/videos', upload.any(), async (req: Request, res: Response) => {
     return res.status(404).json({ error: `No available channel for model ${model}` });
   }
 
-  const rate = getVideoRate(model, resolution_name);
-  const isFlatRate = [
-    'seedance-2.0-fast',
-    'sd2-c7',
-    'sd2.5',
-    'seedance-2.0-720p',
-    'seedance-2.0-fast-720p',
-    'seedance-720',
-    'ld-sdas-cvk-pro-933-720p',
-    'sdas-mj-minimax-h3-2k',
-    'sdas-bl-sd2.0-933-pro-720p',
-    'sdas-bl-sd2.0-933-pro-noface-720p',
-    'cd-seedance-2.0-720p',
-    'nd-seedance-2.0-480p',
-    'nd-seedance-2.0-720p',
-    'sd2-c6'
-  ].includes(model);
-  const totalCost = isFlatRate ? rate : (Math.round(rate * Number(seconds) * 100) / 100);
-
-  const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, totalCost);
-  if (!sufficient) {
-    cleanupFiles(req.files);
-    return res.status(402).json({ error: `Insufficient balance. Required: ¥${totalCost.toFixed(2)}, Current: ¥${currentBalance.toFixed(2)}` });
-  }
-
-  const upstreamUrl = `${baseUrl}/v1/videos`;
-
-  try {
-
-
-    const formData = new FormData();
-    formData.append('model', upstreamModel);
-    formData.append('prompt', prompt);
-    formData.append('seconds', String(seconds));
-    formData.append('size', size);
-    formData.append('resolution_name', resolution_name);
-
-    for (const key of Object.keys(otherParams)) {
-      formData.append(key, otherParams[key]);
-    }
-
-    if (Array.isArray(req.files)) {
-      for (const file of req.files) {
-        const fileContent = fs.readFileSync(file.path);
-        const blob = new Blob([fileContent], { type: file.mimetype });
-        formData.append(file.fieldname, blob, file.originalname);
-      }
-    }
-
-    const headers: Record<string, string> = {};
-    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-
-    const upstreamRes = await fetch(upstreamUrl, {
-      method: 'POST',
-      headers,
-      body: formData,
-      signal: AbortSignal.timeout(120_000),
-    });
-
-    cleanupFiles(req.files);
-
-    if (!upstreamRes.ok) {
-      const errText = await upstreamRes.text();
-      const durationMs = Date.now() - startTime;
-      db.insert(apiLogs).values({
-        tokenId: token.id, channelId, model, upstreamModel,
-        durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errText.slice(0, 500)}`, clientIp,
-      }).run();
-      return res.status(upstreamRes.status).json({ error: errText });
-    }
-
-    const responseBody = await upstreamRes.json() as any;
-    const durationMs = Date.now() - startTime;
-
-    deductTokenOrUserBalance(token, totalCost, model);
-
-    db.insert(apiLogs).values({
-      tokenId: token.id, channelId, model, upstreamModel,
-      cost: totalCost, durationMs, status: 'success', clientIp,
-    }).run();
-
-    res.json(responseBody);
-  } catch (err: any) {
-    cleanupFiles(req.files);
-    const durationMs = Date.now() - startTime;
-    const errorMessage = err.name === 'AbortError' ? 'upstream timeout' : err.message;
-    db.insert(apiLogs).values({
-      tokenId: token.id, channelId, model, upstreamModel,
-      durationMs, status: 'error', errorMessage, clientIp,
-    }).run();
-    res.status(502).json({ error: `Upstream error: ${errorMessage}` });
-  }
-});
-
-/** POST /v1/video/generations — Omni 视频生成任务代理 */
-router.post('/video/generations', async (req: Request, res: Response) => {
-  if (req.body.model === 'sdas-xh-sd2.0-933-3-pro-720p') {
-    req.body.model = 'sdas-pd-sd2.0-pro-933-5-720p';
-  }
-  const startTime = Date.now();
-  const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
-
-  const tokenKey = extractToken(req);
-  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
-
-  const { valid, error, token } = TokenService.validateToken(tokenKey);
-  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
-
-  const { model, prompt, duration = 6, aspect_ratio = 'landscape', resolution = '720p', ...otherParams } = req.body;
-  if (!model) return res.status(400).json({ error: 'model is required' });
-  if (!prompt) return res.status(400).json({ error: 'prompt is required' });
-
-  if (token.allowedModels.length > 0 && !token.allowedModels.includes(model)) {
-    return res.status(403).json({ error: `Token has no access to model ${model}` });
-  }
-
-  const channel = ChannelService.findChannelForModel(model);
-  let upstreamModel = model;
-  let baseUrl = '';
-  let apiKey = '';
-  let channelId: number | null = null;
-
-  if (channel) {
-    if (channel.modelMapping) {
-      try {
-        const mapping = typeof channel.modelMapping === 'string' ? JSON.parse(channel.modelMapping) : channel.modelMapping;
-        upstreamModel = mapping[model] || model;
-      } catch { /* skip */ }
-    }
-    baseUrl = channel.baseUrl.replace(/\/+$/, '');
-    apiKey = channel.apiKey;
-    channelId = channel.id;
-  } else {
-    return res.status(404).json({ error: `No available channel for model ${model}` });
-  }
-
+  // 计费计算与校验
   const rate = getVideoRate(model, resolution);
-  const seconds = Number(duration);
   const isFlatRate = [
+    'grok-imagine-video-1.5（按次）',
+    'grok-imagine-video-1.5-preview',
+    'seedance-2.5-deal',
+    'seedance-2.5m',
+    'wan3.0th',
     'seedance-2.0-fast',
     'sd2-c7',
     'sd2.5',
@@ -809,28 +796,168 @@ router.post('/video/generations', async (req: Request, res: Response) => {
 
   const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, totalCost);
   if (!sufficient) {
+    cleanupFiles(req.files);
     return res.status(402).json({ error: `Insufficient balance. Required: ¥${totalCost.toFixed(2)}, Current: ¥${currentBalance.toFixed(2)}` });
   }
 
-  const upstreamUrl = `${baseUrl}/v1/video/generations`;
+  // 先在本地 contents 数据库创建初始任务记录 (status = 'processing')
+  let contentId: number | null = null;
+  try {
+    const insertResult = db.insert(contents).values({
+      userId: token.userId || 1,
+      orgId: null,
+      type: 'video',
+      title: prompt.slice(0, 200),
+      inputText: prompt.slice(0, 500),
+      modelId: model,
+      cost: totalCost,
+      status: 'processing',
+      metadata: JSON.stringify({
+        resolution,
+        seconds,
+        aspect_ratio: ratio,
+        model,
+        image_urls,
+        video_urls,
+        audio_urls,
+        tokenId: token.id
+      })
+    }).run();
+    contentId = Number(insertResult.lastInsertRowid);
+  } catch (e) {
+    console.error('[v1-video] Failed to save content record:', e);
+    cleanupFiles(req.files);
+    return res.status(500).json({ error: 'Database error' });
+  }
+
+  const isSudaShuiModel = [
+    'ld-sdas-cvk-pro-933-720p',
+    'sdas-mj-minimax-h3-2k',
+    'sdas-bl-sd2.0-933-pro-720p',
+    'sdas-bl-sd2.0-933-pro-noface-720p',
+    'veo-omni-flash',
+    'veo-3-1',
+    'omni-flash',
+    'omni-flash-vref'
+  ].includes(model) || model.startsWith('omni-') || model.startsWith('veo-omni-');
+
+  const upstreamUrl = isSudaShuiModel
+    ? `${baseUrl}/v1/video/generations`
+    : `${baseUrl}/v1/videos`;
 
   try {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    let upstreamRes;
+    const { ...otherParams } = body;
+    delete otherParams.model;
+    delete otherParams.prompt;
+    delete otherParams.seconds;
+    delete otherParams.duration;
+    delete otherParams.ratio;
+    delete otherParams.aspect_ratio;
+    delete otherParams.resolution;
+    delete otherParams.resolution_name;
+    delete otherParams.image_urls;
+    delete otherParams.images;
+    delete otherParams.image_refs;
+    delete otherParams.video_urls;
+    delete otherParams.videos;
+    delete otherParams.audio_urls;
+    delete otherParams.audios;
 
-    const upstreamRes = await fetch(upstreamUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        model: upstreamModel,
-        prompt,
-        duration,
-        aspect_ratio,
-        resolution,
-        ...otherParams,
-      }),
-      signal: AbortSignal.timeout(120_000),
-    });
+    if (Array.isArray(req.files) && req.files.length > 0) {
+      const formData = new FormData();
+      formData.append('model', upstreamModel);
+      formData.append('prompt', prompt);
+
+      if (isSudaShuiModel) {
+        formData.append('duration', String(seconds));
+        formData.append('aspect_ratio', ratio);
+        formData.append('resolution', resolution);
+        if (image_urls.length > 0) formData.append('images', JSON.stringify(image_urls));
+        if (video_urls.length > 0) formData.append('video', video_urls[0]);
+      } else {
+        formData.append('seconds', String(seconds));
+        formData.append('ratio', ratio);
+        formData.append('resolution', resolution);
+        if (image_urls.length > 0) formData.append('image_urls', JSON.stringify(image_urls));
+        if (video_urls.length > 0) formData.append('video_urls', JSON.stringify(video_urls));
+        if (audio_urls.length > 0) formData.append('audio_urls', JSON.stringify(audio_urls));
+      }
+
+      for (const key of Object.keys(otherParams)) {
+        formData.append(key, String(otherParams[key]));
+      }
+
+      for (const file of req.files) {
+        const fileContent = fs.readFileSync(file.path);
+        const blob = new Blob([fileContent], { type: file.mimetype });
+        formData.append(file.fieldname, blob, file.originalname);
+      }
+
+      const headers: Record<string, string> = {};
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+      upstreamRes = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers,
+        body: formData,
+        signal: AbortSignal.timeout(120_000),
+      });
+    } else {
+      let payload: Record<string, any>;
+      if (isSudaShuiModel) {
+        payload = {
+          model: upstreamModel,
+          prompt,
+          duration: seconds,
+          aspect_ratio: ratio,
+          resolution,
+          images: image_urls,
+          video: video_urls[0] || undefined,
+          ...otherParams,
+        };
+      } else if (model.includes('grok-imagine-video') || model.includes('grok-video')) {
+        const extra: Record<string, any> = {
+          aspect_ratio: ratio,
+          resolution: resolution
+        };
+        if (image_urls.length > 1) {
+          extra.reference_images = image_urls.map(url => ({ url }));
+        }
+        payload = {
+          model: upstreamModel,
+          prompt,
+          duration: seconds,
+          extra,
+          input_reference: image_urls.length === 1 ? image_urls[0] : undefined,
+          ...otherParams,
+        };
+      } else {
+        payload = {
+          model: upstreamModel,
+          prompt,
+          seconds,
+          ratio,
+          resolution,
+          image_urls: image_urls.length > 0 ? image_urls : undefined,
+          video_urls: video_urls.length > 0 ? video_urls : undefined,
+          audio_urls: audio_urls.length > 0 ? audio_urls : undefined,
+          ...otherParams,
+        };
+      }
+
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+      upstreamRes = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(120_000),
+      });
+    }
+
+    cleanupFiles(req.files);
 
     if (!upstreamRes.ok) {
       const errText = await upstreamRes.text();
@@ -839,6 +966,8 @@ router.post('/video/generations', async (req: Request, res: Response) => {
         tokenId: token.id, channelId, model, upstreamModel,
         durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errText.slice(0, 500)}`, clientIp,
       }).run();
+
+      db.update(contents).set({ status: 'failed', cost: 0 }).where(eq(contents.id, contentId)).run();
       return res.status(upstreamRes.status).json({ error: errText });
     }
 
@@ -849,75 +978,131 @@ router.post('/video/generations', async (req: Request, res: Response) => {
 
     db.insert(apiLogs).values({
       tokenId: token.id, channelId, model, upstreamModel,
-      cost: totalCost, durationMs: durationMs, status: 'success', clientIp,
+      cost: totalCost, durationMs, status: 'success', clientIp,
     }).run();
 
-    res.json(responseBody);
+    const upstreamTaskId = responseBody.task_id || responseBody.id;
+    if (!upstreamTaskId) {
+      db.update(contents).set({ status: 'failed', cost: 0 }).where(eq(contents.id, contentId)).run();
+      return res.status(502).json({ error: 'Upstream did not return a task ID' });
+    }
+
+    const localMeta = {
+      model,
+      prompt,
+      seconds,
+      ratio,
+      resolution,
+      image_urls,
+      video_urls,
+      audio_urls,
+      videoId: upstreamTaskId,
+      channelId: channel.id,
+      progress: 0,
+      tokenId: token.id
+    };
+    db.update(contents).set({ metadata: JSON.stringify(localMeta) }).where(eq(contents.id, contentId)).run();
+
+    // 开启后台轮询
+    try {
+      const { resumePollForTask } = await import('./video.js');
+      const updatedRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
+      if (updatedRecord) {
+        resumePollForTask(contentId, updatedRecord);
+      }
+    } catch (pollErr: any) {
+      console.warn('[v1-video] resumePollForTask failed:', pollErr.message);
+    }
+
+    res.json({
+      id: `task_${contentId}`,
+      task_id: `task_${contentId}`,
+      object: 'video',
+      model: model,
+      status: 'queued',
+      progress: 0
+    });
   } catch (err: any) {
+    cleanupFiles(req.files);
     const durationMs = Date.now() - startTime;
     const errorMessage = err.name === 'AbortError' ? 'upstream timeout' : err.message;
     db.insert(apiLogs).values({
       tokenId: token.id, channelId, model, upstreamModel,
       durationMs, status: 'error', errorMessage, clientIp,
     }).run();
+
+    if (contentId !== null) {
+      db.update(contents).set({ status: 'failed', cost: 0 }).where(eq(contents.id, contentId)).run();
+    }
+
     res.status(502).json({ error: `Upstream error: ${errorMessage}` });
   }
-});
+}
 
-/** GET /v1/videos/:id — Grok 视频状态查询 */
-router.get('/videos/:id', async (req: Request, res: Response) => {
+/** 统一视频任务轮询核心逻辑 (Unified Video Query Controller) */
+async function handleVideoQuery(req: Request, res: Response) {
   const tokenKey = extractToken(req);
   if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
 
   const { valid, error } = TokenService.validateToken(tokenKey);
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
-  const config = findUpstreamVideoConfig();
-  if (!config) return res.status(503).json({ error: 'No video channel configured' });
-
-  const id = req.params.id;
-  const upstreamUrl = `${config.baseUrl.replace(/\/+$/, '')}/v1/videos/${id}`;
-
-  try {
-    const headers: Record<string, string> = {};
-    if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
-
-    const upstreamRes = await fetch(upstreamUrl, { headers, signal: AbortSignal.timeout(15_000) });
-    if (!upstreamRes.ok) {
-      const txt = await upstreamRes.text();
-      return res.status(upstreamRes.status).json({ error: txt });
-    }
-
-    const responseBody = await upstreamRes.json() as any;
-    const statusLower = (responseBody.status || '').toLowerCase();
-    if (statusLower === 'completed' || statusLower === 'success') {
-      const origUrl = responseBody.url || responseBody.video_url || responseBody.result_url;
-      if (origUrl) {
-        responseBody.url = rewriteVideoUrl(origUrl, req, id);
-        if (responseBody.video_url) responseBody.video_url = responseBody.url;
-        if (responseBody.result_url) responseBody.result_url = responseBody.url;
-      }
-    }
-
-    res.json(responseBody);
-  } catch (err: any) {
-    res.status(502).json({ error: `Upstream query failed: ${err.message}` });
+  const idParam = req.params.id;
+  let contentId = NaN;
+  if (idParam.startsWith('task_')) {
+    contentId = parseInt(idParam.slice(5), 10);
+  } else {
+    contentId = parseInt(idParam, 10);
   }
-});
 
-/** GET /v1/video/generations/:id — Omni 视频状态查询 */
-router.get('/video/generations/:id', async (req: Request, res: Response) => {
-  const tokenKey = extractToken(req);
-  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
+  let record = null;
+  if (!isNaN(contentId)) {
+    record = db.select().from(contents).where(eq(contents.id, contentId)).get();
+  }
 
-  const { valid, error } = TokenService.validateToken(tokenKey);
-  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
+  if (record) {
+    const status = record.status;
+    let progress = 0;
+    try {
+      const meta = JSON.parse(record.metadata || '{}');
+      progress = meta.progress || (status === 'completed' ? 100 : 0);
+    } catch {}
 
+    let mappedStatus = 'queued';
+    if (status === 'completed') mappedStatus = 'completed';
+    else if (status === 'failed') mappedStatus = 'failed';
+    else if (status === 'processing') {
+      mappedStatus = progress > 0 ? 'processing' : 'queued';
+    }
+
+    const host = req.get('host');
+    const protocol = req.protocol;
+    const contentUrl = `${protocol}://${host}/v1/videos/task_${record.id}/content`;
+
+    const responseJson: Record<string, any> = {
+      id: `task_${record.id}`,
+      task_id: `task_${record.id}`,
+      object: 'video',
+      model: record.modelId,
+      status: mappedStatus,
+      progress: progress
+    };
+
+    if (mappedStatus === 'completed') {
+      responseJson.url = contentUrl;
+      responseJson.result_url = contentUrl;
+    }
+
+    return res.json(responseJson);
+  }
+
+  // 兜底回退：若本地找不到记录，按旧逻辑向上游查询
   const config = findUpstreamVideoConfig();
-  if (!config) return res.status(503).json({ error: 'No video channel configured' });
+  if (!config) return res.status(404).json({ error: 'Task not found locally and no video channel configured' });
 
-  const id = req.params.id;
-  const upstreamUrl = `${config.baseUrl.replace(/\/+$/, '')}/v1/video/generations/${id}`;
+  const upstreamUrl = idParam.includes('task_') || idParam.startsWith('zerof:')
+    ? `${config.baseUrl.replace(/\/+$/, '')}/v1/video/generations/${idParam}`
+    : `${config.baseUrl.replace(/\/+$/, '')}/v1/videos/${idParam}`;
 
   try {
     const headers: Record<string, string> = {};
@@ -932,14 +1117,14 @@ router.get('/video/generations/:id', async (req: Request, res: Response) => {
     const responseBody = await upstreamRes.json() as any;
     const taskStatus = (responseBody.status || responseBody.data?.status || '').toLowerCase();
     if (taskStatus === 'completed' || taskStatus === 'success') {
-      const origUrl = responseBody.result_url || responseBody.url || responseBody.data?.result_url || responseBody.data?.url;
+      const origUrl = responseBody.url || responseBody.video_url || responseBody.result_url || responseBody.data?.url || responseBody.data?.result_url;
       if (origUrl) {
-        const rewritten = rewriteVideoUrl(origUrl, req, id);
-        responseBody.result_url = rewritten;
-        if (responseBody.url) responseBody.url = rewritten;
+        responseBody.url = rewriteVideoUrl(origUrl, req, idParam);
+        if (responseBody.video_url) responseBody.video_url = responseBody.url;
+        if (responseBody.result_url) responseBody.result_url = responseBody.url;
         if (responseBody.data) {
-          responseBody.data.result_url = rewritten;
-          responseBody.data.url = rewritten;
+          responseBody.data.url = responseBody.url;
+          responseBody.data.result_url = responseBody.url;
         }
       }
     }
@@ -947,6 +1132,112 @@ router.get('/video/generations/:id', async (req: Request, res: Response) => {
     res.json(responseBody);
   } catch (err: any) {
     res.status(502).json({ error: `Upstream query failed: ${err.message}` });
+  }
+}
+
+/** 注册统一视频接口路由 */
+router.post('/videos', upload.any(), handleVideoCreation);
+router.post('/video/generations', upload.any(), handleVideoCreation);
+router.get('/videos/:id', handleVideoQuery);
+router.get('/video/generations/:id', handleVideoQuery);
+
+/** GET /v1/videos/:id/content — 统一视频内容直连下载/播放 */
+router.get('/videos/:id/content', async (req: Request, res: Response) => {
+  const tokenKey = extractToken(req);
+  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
+
+  const { valid, error } = TokenService.validateToken(tokenKey);
+  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
+
+  const idParam = req.params.id;
+  let contentId = NaN;
+  if (idParam.startsWith('task_')) {
+    contentId = parseInt(idParam.slice(5), 10);
+  } else {
+    contentId = parseInt(idParam, 10);
+  }
+
+  let record = null;
+  if (!isNaN(contentId)) {
+    record = db.select().from(contents).where(eq(contents.id, contentId)).get();
+  }
+
+  if (!record) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
+
+  if (record.status !== 'completed') {
+    return res.status(400).json({ error: `Task status is ${record.status}, not completed yet` });
+  }
+
+  const url = record.resultUrl;
+  if (!url) {
+    return res.status(404).json({ error: 'Video URL not found in completed task' });
+  }
+
+  let isLocalFile = false;
+  let localFilePath = '';
+
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    isLocalFile = true;
+    const cleanPath = url.replace(/^.*\/uploads\//, '');
+    localFilePath = path.join(process.cwd(), 'data/uploads', cleanPath);
+  } else {
+    const uploadsIndex = url.indexOf('/uploads/');
+    if (uploadsIndex !== -1) {
+      isLocalFile = true;
+      const cleanPath = url.substring(uploadsIndex + '/uploads/'.length);
+      localFilePath = path.join(process.cwd(), 'data/uploads', cleanPath);
+    }
+  }
+
+  if (isLocalFile) {
+    if (fs.existsSync(localFilePath)) {
+      res.setHeader('Content-Type', 'video/mp4');
+      return res.sendFile(localFilePath);
+    }
+  }
+
+  try {
+    const config = findUpstreamVideoConfig();
+    const headers: Record<string, string> = {};
+    if (config?.apiKey) {
+      headers['Authorization'] = `Bearer ${config.apiKey}`;
+    }
+
+    let streamUrl = url;
+    if (url.includes('/v1/files/video')) {
+      const match = url.match(/[?&]id=([^&]+)/);
+      const fileId = match ? match[1] : '';
+      if (fileId && config) {
+        streamUrl = `${config.baseUrl.replace(/\/+$/, '')}/v1/files/video?id=${fileId}`;
+      }
+    }
+
+    const upstreamRes = await fetch(streamUrl, { headers, signal: AbortSignal.timeout(300_000) });
+    if (!upstreamRes.ok) {
+      return res.status(upstreamRes.status).send(`Failed to stream video from upstream: ${upstreamRes.statusText}`);
+    }
+
+    res.setHeader('Content-Type', upstreamRes.headers.get('Content-Type') || 'video/mp4');
+    const len = upstreamRes.headers.get('Content-Length');
+    if (len) res.setHeader('Content-Length', len);
+
+    const reader = upstreamRes.body?.getReader();
+    if (!reader) return res.status(502).send('No video stream body from upstream');
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    res.end();
+  } catch (err: any) {
+    res.status(502).send(`Video stream failed: ${err.message}`);
   }
 });
 

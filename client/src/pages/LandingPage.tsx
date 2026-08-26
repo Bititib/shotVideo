@@ -28,7 +28,7 @@ export default function LandingPage() {
   const [settings, setSettings] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    getPublicSettings().then(setSettings).catch(() => {});
+    getPublicSettings().then(setSettings).catch(() => { });
   }, []);
 
   const videoPrice = settings.video_rate_720p || '0.05';
@@ -65,25 +65,25 @@ export default function LandingPage() {
       <nav className="fixed top-0 left-0 right-0 z-50 bg-black/80 backdrop-blur-xl border-b border-white/5">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-              <Zap className="w-4 h-4 text-white" />
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-400 via-amber-500 to-yellow-500 shadow-md shadow-amber-500/25 flex items-center justify-center">
+              <Zap className="w-4 h-4 text-black font-bold" />
             </div>
-            <span className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">短视频创意风暴</span>
+            <span className="text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500">短视频创意风暴</span>
           </div>
           <div className="hidden md:flex items-center gap-8 text-sm text-zinc-400">
-            <a href="#features" className="hover:text-white transition-colors">功能</a>
-            <a href="#pricing" className="hover:text-white transition-colors">定价</a>
-            <a href="#faq" className="hover:text-white transition-colors">FAQ</a>
+            <a href="#features" className="hover:text-amber-300 transition-colors">功能</a>
+            <a href="#pricing" className="hover:text-amber-300 transition-colors">定价</a>
+            <a href="#faq" className="hover:text-amber-300 transition-colors">FAQ</a>
           </div>
           <div className="flex items-center gap-3">
             {user ? (
-              <button onClick={() => navigate('/app')} className="px-5 py-2 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl text-sm font-medium hover:from-blue-500 hover:to-purple-500 transition-all">
+              <button onClick={() => navigate('/app')} className="px-5 py-2 bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-black font-bold rounded-xl text-sm hover:from-amber-400 hover:to-yellow-300 transition-all shadow-md shadow-amber-500/20">
                 进入工作台
               </button>
             ) : (
               <>
-                <button onClick={() => navigate('/app')} className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors">进入工作台</button>
-                <button onClick={openLoginModal} className="px-5 py-2 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl text-sm font-medium hover:from-blue-500 hover:to-purple-500 transition-all">
+                <button onClick={() => navigate('/app')} className="px-4 py-2 text-sm text-zinc-400 hover:text-amber-200 transition-colors">进入工作台</button>
+                <button onClick={openLoginModal} className="px-5 py-2 bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-black font-bold rounded-xl text-sm hover:from-amber-400 hover:to-yellow-300 transition-all shadow-md shadow-amber-500/20">
                   登录
                 </button>
               </>
@@ -94,20 +94,20 @@ export default function LandingPage() {
 
       {/* Hero */}
       <section className="relative pt-32 pb-20 md:pt-44 md:pb-32 px-6">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-blue-600/10 via-transparent to-transparent" />
-        <div className="absolute top-20 left-1/4 w-96 h-96 bg-purple-600/10 rounded-full blur-[120px]" />
-        <div className="absolute top-40 right-1/4 w-72 h-72 bg-blue-600/10 rounded-full blur-[100px]" />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-amber-500/15 via-transparent to-transparent" />
+        <div className="absolute top-20 left-1/4 w-96 h-96 bg-amber-500/10 rounded-full blur-[120px]" />
+        <div className="absolute top-40 right-1/4 w-72 h-72 bg-yellow-500/10 rounded-full blur-[100px]" />
 
         <div className="relative max-w-5xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-white/[0.05] border border-white/10 rounded-full text-xs text-zinc-400 mb-8">
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-amber-500/10 border border-amber-500/25 rounded-full text-xs text-amber-300 mb-8">
             <Sparkles className="w-3.5 h-3.5 text-yellow-400" />
-            <span>基于 Gemini 2.5 大模型深度分析</span>
+            <span>基于 AI 大模型深度分析与生成</span>
           </div>
 
           <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold leading-tight tracking-tight mb-6">
             <span className="text-white">一键逆向</span>
             <br />
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400">
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-yellow-400 to-amber-500">
               爆款短视频的创意密码
             </span>
           </h1>
@@ -118,9 +118,9 @@ export default function LandingPage() {
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
-            <button onClick={handleCTA} className="group px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 rounded-2xl text-base font-semibold transition-all flex items-center gap-2 shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30">
+            <button onClick={handleCTA} className="group px-8 py-4 bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 hover:from-amber-400 hover:to-yellow-300 text-black rounded-2xl text-base font-bold transition-all flex items-center gap-2 shadow-lg shadow-amber-500/25 hover:shadow-amber-500/40">
               免费开始使用
-              <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+              <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform text-black" />
             </button>
             <a href="#features" className="px-8 py-4 border border-white/10 hover:border-white/20 rounded-2xl text-base text-zinc-300 transition-colors">
               了解更多
@@ -220,11 +220,10 @@ export default function LandingPage() {
                     </li>
                   ))}
                 </ul>
-                <button onClick={handleCTA} className={`w-full py-3 rounded-xl text-sm font-medium transition-all ${
-                  t.badge
+                <button onClick={handleCTA} className={`w-full py-3 rounded-xl text-sm font-medium transition-all ${t.badge
                     ? 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white'
                     : 'bg-white/5 hover:bg-white/10 text-zinc-300'
-                }`}>
+                  }`}>
                   {t.price === '联系我们' ? '联系我们' : '立即开始'}
                 </button>
               </div>

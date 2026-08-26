@@ -216,208 +216,103 @@ print(resp.json()["data"][0]["url"])`,
 }`
     },
     {
-      id: 'grok-video',
-      title: '创建 Grok 视频任务',
+      id: 'unified-video',
+      title: '统一视频任务创建 (Unified Video Entry)',
       method: 'POST',
       path: '/v1/videos',
-      description: '利用 Grok 视频生成引擎异步创建长视频任务，支持 6s ~ 30s。需要使用 multipart/form-data 上传参考图及配置。',
+      description: '统一视频生成入口，支持全新视频模型（如 seedance-2.5m, seedance-2.5-deal, wan3.0th, grok-video-1.5 等）。自动进行参数标准化归一与第三方渠道分发。',
       parameters: [
-        { name: 'model', type: 'string', required: true, description: '视频模型标识：grok-imagine-video' },
+        { name: 'model', type: 'string', required: true, description: '模型 ID，可选：seedance-2.5m, seedance-2.5-deal, wan3.0th, grok-video-1.5（按秒）, grok-imagine-video-1.5（按次）, grok-imagine-video-1.5-preview' },
         { name: 'prompt', type: 'string', required: true, description: '视频画面的文字描述词' },
-        { name: 'seconds', type: 'integer', required: false, defaultVal: '6', description: '视频长度（秒），可选：6, 10, 12, 16, 20, 30' },
-        { name: 'size', type: 'string', required: false, defaultVal: '720x1280', description: '宽高尺寸：720x1280 / 1280x720 / 1024x1024 / 1792x1024' },
-        { name: 'resolution_name', type: 'string', required: false, defaultVal: '720p', description: '清晰度：480p 或 720p' },
-        { name: 'input_reference[]', type: 'file', required: false, description: '最多 5 张参考图像文件引导生成' }
+        { name: 'seconds', type: 'integer', required: false, defaultVal: '6', description: '视频时长（秒），支持别名 duration' },
+        { name: 'ratio', type: 'string', required: false, defaultVal: '16:9', description: '画面比例：16:9 / 9:16 / 1:1 / 4:3 / 3:4，支持别名 aspect_ratio' },
+        { name: 'resolution', type: 'string', required: false, defaultVal: '720p', description: '分辨率：480p / 720p / 1080p，支持别名 resolution_name' },
+        { name: 'image_urls', type: 'array', required: false, description: '公网参考图 URL 数组，支持别名 images 或 image_refs' },
+        { name: 'video_urls', type: 'array', required: false, description: '公网参考视频 URL 数组，支持别名 videos' },
+        { name: 'audio_urls', type: 'array', required: false, description: '公网参考音频 URL 数组，支持别名 audios' }
       ],
       curlExample: `curl -X POST "${getBaseUrl()}/videos" \\
-  -H "Authorization: Bearer sk-你的令牌Key" \\
-  -F "model=grok-imagine-video" \\
-  -F "prompt=科幻赛博朋克城市, 赛车在街道漂移" \\
-  -F "seconds=6" \\
-  -F "size=1280x720" \\
-  -F "input_reference[]=@/local/car.jpg"`,
-      pythonExample: `# 使用 requests 发送多图视频任务
-import requests
-
-url = "${getBaseUrl()}/videos"
-headers = {"Authorization": "Bearer sk-你的令牌Key"}
-files = [
-    ("input_reference[]", ("car.jpg", open("car.jpg", "rb"), "image/jpeg"))
-]
-data = {
-    "model": "grok-imagine-video",
-    "prompt": "科幻赛博朋克城市, 赛车在街道漂移",
-    "seconds": 6,
-    "size": "1280x720"
-}
-
-resp = requests.post(url, headers=headers, data=data, files=files)
-print(resp.json())
-# {"id": "video_xxxx", "status": "queued", ...}`,
-      responseExample: `{
-  "id": "video_61be39094ee24240b27a09c673beb068",
-  "object": "video",
-  "created_at": 1783309400,
-  "status": "queued",
-  "model": "grok-imagine-video",
-  "progress": 0,
-  "prompt": "...",
-  "seconds": "6",
-  "size": "1280x720",
-  "quality": "standard"
-}`
-    },
-    {
-      id: 'seedance-video',
-      title: '创建 Seedance 2.0 Fast 视频任务',
-      method: 'POST',
-      path: '/v1/videos',
-      description: '利用 seedance2.0 fast-LG版 (接口中调用模型标识为 lg-seedance-2.0-fast) 视频生成引擎异步创建高动态视频任务，支持 5s ~ 15s。需要使用 multipart/form-data 上传参考图及配置。',
-      parameters: [
-        { name: 'model', type: 'string', required: true, description: '视频模型标识：lg-seedance-2.0-fast' },
-        { name: 'prompt', type: 'string', required: true, description: '视频画面的文字描述词' },
-        { name: 'seconds', type: 'integer', required: false, defaultVal: '5', description: '视频长度（秒），可选：5 ~ 15' },
-        { name: 'size', type: 'string', required: false, defaultVal: '1280x720', description: '宽高尺寸：1280x720 (横屏) / 720x1280 (竖屏) / 1024x1024 (方屏)' },
-        { name: 'resolution_name', type: 'string', required: false, defaultVal: '720p', description: '清晰度：720p' },
-        { name: 'input_reference[]', type: 'file', required: false, description: '最多 5 张参考图像文件引导生成' }
-      ],
-      curlExample: `curl -X POST "${getBaseUrl()}/videos" \\
-  -H "Authorization: Bearer sk-你的令牌Key" \\
-  -F "model=lg-seedance-2.0-fast" \\
-  -F "prompt=科幻赛博朋克城市, 赛车在街道漂移" \\
-  -F "seconds=5" \\
-  -F "size=1280x720" \\
-  -F "input_reference[]=@/local/car.jpg"`,
-      pythonExample: `# 使用 requests 发送多图视频任务
-import requests
-
-url = "${getBaseUrl()}/videos"
-headers = {"Authorization": "Bearer sk-你的令牌Key"}
-files = [
-    ("input_reference[]", ("car.jpg", open("car.jpg", "rb"), "image/jpeg"))
-]
-data = {
-    "model": "lg-seedance-2.0-fast",
-    "prompt": "科幻赛博朋克城市, 赛车在街道漂移",
-    "seconds": 5,
-    "size": "1280x720"
-}
-
-resp = requests.post(url, headers=headers, data=data, files=files)
-print(resp.json())
-# {"id": "video_xxxx", "status": "queued", ...}`,
-      responseExample: `{
-  "id": "video_61be39094ee24240b27a09c673beb068",
-  "object": "video",
-  "created_at": 1783309400,
-  "status": "queued",
-  "model": "lg-seedance-2.0-fast",
-  "progress": 0,
-  "prompt": "...",
-  "seconds": "5",
-  "size": "1280x720",
-  "quality": "standard"
-}`
-    },
-    {
-      id: 'omni-video',
-      title: '创建 Omni 视频任务',
-      method: 'POST',
-      path: '/v1/video/generations',
-      description: '支持纯文生视频、多图生成（omni-flash）以及高级视频风格编辑与重绘（omni-flash-vref）。请求以 JSON 格式提交。',
-      parameters: [
-        { name: 'model', type: 'string', required: true, description: '模型 ID：omni-flash 或 omni-flash-vref' },
-        { name: 'prompt', type: 'string', required: true, description: '视频效果或改写指令提示词' },
-        { name: 'duration', type: 'integer', required: false, defaultVal: '6', description: '视频时长：4, 6, 8, 10 秒 (vref 强制固定为 10)' },
-        { name: 'aspect_ratio', type: 'string', required: false, defaultVal: 'landscape', description: '画面比例：landscape (横屏) / portrait (竖屏)' },
-        { name: 'resolution', type: 'string', required: false, defaultVal: '720p', description: '输出分辨率：720p 或 1080p' },
-        { name: 'images', type: 'array', required: false, description: '参考图数据数组（支持 URL 或 base64 data URI）' },
-        { name: 'video', type: 'string', required: false, description: '（仅vref必须）原视频数据（支持 URL 或 base64 data URI）' }
-      ],
-      curlExample: `curl -X POST "${getBaseUrl()}/video/generations" \\
   -H "Authorization: Bearer sk-你的令牌Key" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "omni-flash",
-    "prompt": "动漫少女在绚丽霓虹都市奔跑, 电影级光影",
-    "duration": 6,
-    "aspect_ratio": "landscape",
-    "resolution": "720p"
+    "model": "seedance-2.5m",
+    "prompt": "电影感的雨夜街巷打斗，动作清楚连贯，镜头稳定",
+    "seconds": 15,
+    "ratio": "9:16",
+    "resolution": "480p",
+    "image_urls": ["https://cdn.example.com/character.jpg"]
   }'`,
       pythonExample: `import requests
 
-url = "${getBaseUrl()}/video/generations"
+url = "${getBaseUrl()}/videos"
 headers = {
     "Authorization": "Bearer sk-你的令牌Key",
     "Content-Type": "application/json"
 }
 payload = {
-    "model": "omni-flash",
-    "prompt": "动漫少女在绚丽霓虹都市奔跑, 电影级光影",
-    "duration": 6,
-    "aspect_ratio": "landscape",
-    "resolution": "720p",
-    "images": ["https://example.com/character.png"]
+    "model": "seedance-2.5m",
+    "prompt": "电影感的雨夜街巷打斗，动作清楚连贯，镜头稳定",
+    "seconds": 15,
+    "ratio": "9:16",
+    "resolution": "480p",
+    "image_urls": ["https://cdn.example.com/character.jpg"]
 }
 
 resp = requests.post(url, headers=headers, json=payload)
 print(resp.json())
-# {"id": "zerof:task_xxxx", "status": "pending", ...}`,
+# {"id": "task_123", "task_id": "task_123", "status": "queued", ...}`,
       responseExample: `{
-  "id": "zerof:task_8KajbDLyPR5EOKqG3gif9Nuk5x3Bcw8n",
-  "task_id": "zerof:task_8KajbDLyPR5EOKqG3gif9Nuk5x3Bcw8n",
-  "object": "video_generation",
-  "model": "omni-flash",
-  "status": "pending",
-  "created_at": 1783309500
+  "id": "task_123",
+  "task_id": "task_123",
+  "object": "video",
+  "model": "seedance-2.5m",
+  "status": "queued",
+  "progress": 0
 }`
     },
     {
       id: 'video-poll',
-      title: '轮询与下载生成视频',
+      title: '统一视频任务轮询与查询',
       method: 'GET',
-      path: '/v1/videos/{id}',
-      description: '由于视频生成较耗时，提交任务后需要每 5 秒轮询查询一次该 ID 的状态，当状态为 completed 时即可获取本地代理直链进行视频播放与下载。',
+      path: '/v1/videos/{task_id}',
+      description: '使用创建接口返回的 task_id（格式如 task_123）进行状态轮询。当 status 为 completed 时，直接使用返回的 content 直链下载视频。',
       parameters: [
-        { name: 'id', type: 'path_param', required: true, description: '创建任务时返回的视频任务 ID（如 video_xxxx 或 zerof:task_xxxx）' }
+        { name: 'task_id', type: 'path_param', required: true, description: '创建任务时返回的任务 ID（如 task_123）' }
       ],
-      curlExample: `# 1. 轮询 Sora 视频状态 (Sora 接口)：
-curl "${getBaseUrl()}/videos/video_61be39094ee24240b27a09c673beb068" \\
+      curlExample: `# 1. 轮询视频生成状态：
+curl "${getBaseUrl()}/videos/task_123" \\
   -H "Authorization: Bearer sk-你的令牌Key"
 
-# 2. 轮询 Omni 视频状态 (Omni 接口)：
-curl "${getBaseUrl()}/video/generations/zerof:task_8KajbDLyPR5EOKqG3gif9Nuk5x3Bcw8n" \\
-  -H "Authorization: Bearer sk-你的令牌Key"
-
-# 3. 本地直链下载视频（返回 video/mp4 格式流，无需鉴权即可公开下载）：
-curl -o final.mp4 "${getBaseUrl()}/files/video?id=video_61be39094ee24240b27a09c673beb068"`,
-      pythonExample: `# 以 Sora 视频流轮询为例
-import time
+# 2. 视频生成完成后，直接流式下载视频文件：
+curl -o final.mp4 "${getBaseUrl()}/videos/task_123/content" \\
+  -H "Authorization: Bearer sk-你的令牌Key"`,
+      pythonExample: `import time
 import requests
 
 headers = {"Authorization": "Bearer sk-你的令牌Key"}
-video_id = "video_61be39094ee24240b27a09c673beb068"
+task_id = "task_123"
 
+# 轮询状态
 while True:
-    res = requests.get(f"${getBaseUrl()}/videos/{video_id}", headers=headers).json()
+    res = requests.get(f"${getBaseUrl()}/videos/{task_id}", headers=headers).json()
     status = res.get("status")
-    print(f"当前生成进度: {res.get('progress', 0)}% | 状态: {status}")
+    print(f"进度: {res.get('progress', 0)}% | 状态: {status}")
     if status == "completed":
-        print(f"✅ 生成完成，本地代理直链: {res.get('url')}")
+        print(f"✅ 生成成功! 下载地址: {res.get('url')}")
         break
     elif status == "failed":
-        print(f"❌ 失败: {res.get('error', {}).get('message', '未知错误')}")
+        print("❌ 失败")
         break
     time.sleep(5)`,
       responseExample: `{
-  "id": "video_61be39094ee24240b27a09c673beb068",
+  "id": "task_123",
+  "task_id": "task_123",
   "object": "video",
+  "model": "seedance-2.5m",
   "status": "completed",
   "progress": 100,
-  "completed_at": 1783309600,
-  "url": "${getBaseUrl()}/files/video?id=video_61be39094ee24240b27a09c673beb068",
-  "model": "grok-imagine-video",
-  "prompt": "..."
+  "url": "${getBaseUrl()}/videos/task_123/content",
+  "result_url": "${getBaseUrl()}/videos/task_123/content"
 }`
     },
     {

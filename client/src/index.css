@@ -1,7 +1,147 @@
 @import "tailwindcss";
 
+@layer base {
+  :root {
+    --color-amber-primary: #f59e0b;
+    --color-amber-light: #fbbf24;
+    --color-amber-dark: #d97706;
+    --color-bg-warm: #181410;
+  }
+
+  body {
+    background-color: #181410 !important;
+    color: #fef3c7;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  }
+
+  /* 高亮选中 */
+  ::selection {
+    background-color: rgba(245, 158, 11, 0.4);
+    color: #ffffff;
+  }
+}
+
+/* 暖黄色调全局环境重构 */
+.bg-black {
+  background-color: #17130e !important;
+}
+
+.bg-zinc-950,
+.bg-zinc-900 {
+  background-color: #201913 !important;
+}
+
+.bg-zinc-900\/50,
+.bg-zinc-900\/80,
+.bg-zinc-900\/90,
+.bg-zinc-800 {
+  background-color: rgba(35, 27, 20, 0.88) !important;
+}
+
+.bg-white\/\[0\.02\],
+.bg-white\/\[0\.03\],
+.bg-white\/\[0\.05\],
+.bg-white\/5 {
+  background-color: rgba(245, 158, 11, 0.09) !important;
+}
+
+.border-white\/5,
+.border-white\/10 {
+  border-color: rgba(245, 158, 11, 0.18) !important;
+}
+
+/* 将紫色/蓝色为主的按钮全量重置为活力暖金色 */
+button.bg-gradient-to-r,
+a.bg-gradient-to-r,
+div.bg-gradient-to-r {
+  background-image: linear-gradient(135deg, #f59e0b 0%, #eab308 50%, #d97706 100%) !important;
+  color: #000000 !important;
+  font-weight: 700 !important;
+  box-shadow: 0 4px 18px rgba(245, 158, 11, 0.3) !important;
+}
+
+button.bg-gradient-to-r:hover,
+a.bg-gradient-to-r:hover {
+  background-image: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%) !important;
+  box-shadow: 0 6px 22px rgba(245, 158, 11, 0.45) !important;
+  color: #000000 !important;
+}
+
+.bg-blue-600,
+.bg-purple-600,
+.bg-indigo-600 {
+  background-color: #f59e0b !important;
+  color: #000000 !important;
+}
+
+.text-blue-400,
+.text-purple-400,
+.text-indigo-400 {
+  color: #fbbf24 !important;
+}
+
+.text-zinc-400 {
+  color: #dfd0b7 !important;
+}
+
+.text-zinc-500 {
+  color: #b5a287 !important;
+}
+
+.text-zinc-300 {
+  color: #fef08a !important;
+}
+
+.text-white {
+  color: #fffbeb !important;
+}
+
+/* 暖黄微光卡片 */
+.bg-warm-card {
+  background-color: rgba(30, 24, 18, 0.9);
+  border-color: rgba(245, 158, 11, 0.25);
+}
+
+.glow-warm {
+  box-shadow: 0 0 25px rgba(245, 158, 11, 0.25);
+}
+
+.glow-warm-lg {
+  box-shadow: 0 0 45px rgba(245, 158, 11, 0.35);
+}
+
+.text-gradient-gold {
+  background: linear-gradient(135deg, #fef08a 0%, #f59e0b 50%, #d97706 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* 自定义暖黄滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #17130e;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(245, 158, 11, 0.35);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(245, 158, 11, 0.65);
+}
+
 /* 骨架屏闪光扫描动画 */
 @keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
 }

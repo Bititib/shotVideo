@@ -195,6 +195,12 @@ const MODEL_META: Record<string, ModelMeta> = {
   'sd2-mini': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance2.0-933': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance2.0 933': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  'grok-video-1.5（按秒）': { series: 'grok-1.5', allowedSeconds: [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30], requireRef: false },
+  'grok-imagine-video-1.5（按次）': { series: 'grok-1.5', allowedSeconds: [6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30], requireRef: false },
+  'grok-imagine-video-1.5-preview': { series: 'grok-1.5', allowedSeconds: [10, 15], requireRef: false },
+  'seedance-2.5-deal': { series: 'seedance-2.5', allowedSeconds: [4,5,6,7,8,9,10,11,12,13,14,15], requireRef: false },
+  'seedance-2.5m': { series: 'seedance-2.5', allowedSeconds: [4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25], requireRef: false },
+  'wan3.0th': { series: 'wan3.0', allowedSeconds: [4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
@@ -1903,7 +1909,14 @@ export function resumePollForTask(contentId: number, record: any) {
           // 任务失败，为预扣费退款并将 cost 清零
           const refundAmount = Number(record.cost) || 0;
           if (refundAmount > 0) {
-            BalanceService.refund(record.userId, refundAmount, 'generate_video_refund');
+            let meta: any = {};
+            try { meta = JSON.parse(record.metadata || '{}'); } catch {}
+            if (meta.tokenId) {
+              const { TokenService } = await import('../services/tokenService.js');
+              TokenService.deductBalance(meta.tokenId, -refundAmount);
+            } else {
+              BalanceService.refund(record.userId, refundAmount, 'generate_video_refund');
+            }
           }
           db.update(contents).set({ status: 'failed', cost: 0 }).where(eq(contents.id, contentId)).run();
           break;

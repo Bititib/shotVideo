@@ -669,6 +669,12 @@ export async function initDatabase() {
     { key: 'sd2_c6_rate', value: '2.50', label: 'Seedance 2.0 c6 费率(¥/次)' },
     { key: 'seedance_720_rate', value: '3.00', label: 'Seedance 720 满血版 费率(¥/次)' },
     { key: 'seedance_2_5_c1_rate', value: '0.25', label: 'Seedance 2.5 (c1) 费率(¥/秒)' },
+    { key: 'grok_video_1_5_per_sec_rate', value: '0.09', label: 'grok-video-1.5（按秒） 费率(¥/秒)' },
+    { key: 'grok_imagine_video_1_5_per_req_rate', value: '0.60', label: 'grok-imagine-video-1.5（按次） 费率(¥/次)' },
+    { key: 'grok_imagine_video_1_5_preview_rate', value: '0.70', label: 'grok-imagine-video-1.5-preview 费率(¥/次)' },
+    { key: 'seedance_2_5_deal_rate', value: '1.80', label: 'seedance-2.5-deal 费率(¥/次)' },
+    { key: 'seedance_2_5m_rate', value: '3.00', label: 'seedance-2.5m 费率(¥/次)' },
+    { key: 'wan3_0th_rate', value: '4.00', label: 'wan3.0th 费率(¥/次)' },
   ];
   // 物理清理旧 of rd_seedance 相关的设置项
   db.delete(settings).where(eq(settings.key, 'rd_seedance_2_5_480p_rate')).run();
@@ -1093,6 +1099,39 @@ export async function initDatabase() {
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 MJNewAPI 渠道出错:', err.message);
+  }
+
+  // 15) 保证 julun.cc 渠道存在并绑定唯一的 wan3.0th 视频生成模型
+  try {
+    const julunModels = ['wan3.0th'];
+    const existingJulun = db.select().from(channels).where(like(channels.baseUrl, '%julun.cc%')).get();
+    if (!existingJulun) {
+      db.insert(channels).values({
+        name: 'AI开放平台 (julun.cc) 渠道',
+        type: 'openai',
+        baseUrl: 'https://julun.cc',
+        apiKey: '',
+        supportedModels: JSON.stringify(julunModels),
+        status: 1,
+        priority: 1,
+        weight: 1,
+        maxRetries: 3,
+        timeout: 120000,
+      }).run();
+      console.log('📦 已自动迁移：成功创建 AI开放平台 (julun.cc) 渠道并仅绑定 wan3.0th 模型');
+    } else {
+      db.update(channels)
+        .set({
+          supportedModels: JSON.stringify(julunModels),
+          status: 1,
+          updatedAt: new Date().toISOString()
+        })
+        .where(eq(channels.id, existingJulun.id))
+        .run();
+      console.log('🔄 已自动迁移：更新 AI开放平台 (julun.cc) 渠道并仅保留 wan3.0th 模型');
+    }
+  } catch (err: any) {
+    console.error('⚠️ 初始化 julun.cc 渠道出错:', err.message);
   }
 
   // 清除所有历史拆分的 MJNewAPI 渠道以保持干净
