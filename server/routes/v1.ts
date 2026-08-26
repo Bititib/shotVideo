@@ -95,7 +95,7 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'seedance-2.5m') {
     return 3.00;
   } else if (model === 'wan3.0th') {
-    return 0.30;
+    return 0.14;
   } else if (model === 'sdas-bl-sd2.0-933-pro-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_bl_sd20_933_pro_720p_rate')).get();
     return parseFloat(row?.value || '4.50');
@@ -1000,6 +1000,35 @@ async function handleVideoCreation(req: Request, res: Response) {
   }
 
   // 动态查找支持该模型的渠道 (从后台注册的渠道中选取)
+  if (model === 'wan3.0th') {
+    const allowedRatios = ['1:1', '16:9', '9:16', '4:3', '3:4'];
+    if (!Number.isInteger(seconds) || seconds < 4 || seconds > 30) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'wan3.0th seconds must be an integer from 4 to 30' });
+    }
+    if (!allowedRatios.includes(ratio)) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'wan3.0th ratio must be one of 1:1, 16:9, 9:16, 4:3, 3:4' });
+    }
+    if (resolution !== '720p') {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'wan3.0th only supports 720p' });
+    }
+    if (image_urls.length > 10 || video_urls.length > 5 || audio_urls.length > 5) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'wan3.0th supports at most 10 images, 5 videos, and 5 audio files' });
+    }
+    const invalidAudio = audio_urls.some(audio => {
+      const value = String(audio).toLowerCase();
+      if (value.startsWith('data:audio/wav') || value.startsWith('data:audio/x-wav')) return false;
+      try { return !new URL(value).pathname.endsWith('.wav'); } catch { return !value.split('?')[0].endsWith('.wav'); }
+    });
+    if (invalidAudio) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'wan3.0th audio references must be WAV files' });
+    }
+  }
+
   const channel = ChannelService.findChannelForModel(model);
   let upstreamModel = model;
   let baseUrl = '';

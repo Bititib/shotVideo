@@ -255,6 +255,7 @@ const isSoraV4Model = (modelId: string) => {
 };
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  if (modelId === 'wan3.0th') return 10;
   if (modelId === 'seedance-2.5-c1') return 30;
   if (modelId === 'sd2.5') return 9;
   if (modelId === 'sd2-c7') return 10;
@@ -269,21 +270,6 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
 };
 
 
-/** 将比例字符串转换为 CSS aspect-ratio 数值 */
-const ASPECT_RATIO_CSS: Record<string, string> = {
-  '16:9': '16/9',
-  '9:16': '9/16',
-  '1:1': '1/1',
-  '4:3': '4/3',
-  '3:4': '3/4',
-  '3:2': '3/2',
-  '2:3': '2/3',
-  '21:9': '21/9',
-};
-const getAspectStyle = (ratio?: string) => {
-  const css = ratio ? ASPECT_RATIO_CSS[ratio] : undefined;
-  return css ? { aspectRatio: css } : undefined;
-};
 /** 竖屏比例需要限制卡片最大宽度，避免太高 */
 const isVertical = (ratio?: string) => ['9:16', '3:4', '2:3'].includes(ratio || '');
 
@@ -374,12 +360,14 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
+    if (m === 'wan3.0th') return 5;
     if (m === 'seedance-2.5-c1') return 10;
     if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
+    if (m === 'wan3.0th') return 5;
     if (m === 'seedance-2.5-c1') return 10;
     if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
@@ -730,7 +718,15 @@ export default function VideoPage() {
       ? [{ value: '720p', label: '720p' }, { value: '1080p', label: '1080p' }]
       : [{ value: '480p', label: '480p' }, { value: '720p', label: '720p' }];
 
-  const ASPECT_RATIOS = isOmniModel
+  const ASPECT_RATIOS = selectedModel === 'wan3.0th'
+    ? [
+      { value: '1:1', label: '1:1', icon: Square },
+      { value: '16:9', label: '16:9', icon: RectangleHorizontal },
+      { value: '9:16', label: '9:16', icon: Smartphone },
+      { value: '4:3', label: '4:3', icon: RectangleHorizontal },
+      { value: '3:4', label: '3:4', icon: Smartphone },
+    ]
+    : isOmniModel
     ? [
       { value: '16:9', label: '16:9', icon: RectangleHorizontal },
       { value: '9:16', label: '9:16', icon: Smartphone },
@@ -752,12 +748,18 @@ export default function VideoPage() {
       }
     }
 
+    if (selectedModel === 'wan3.0th') {
+      const wanRatios = ['1:1', '16:9', '9:16', '4:3', '3:4'];
+      if (!wanRatios.includes(aspectRatio)) setAspectRatio('16:9');
+    }
+
     const isSudashui = selectedModel.startsWith('sd-') || selectedModel.startsWith('seedance-') || selectedModel.includes('sdas-') || selectedModel.startsWith('lg-');
     const isSoraV3Pro = selectedModel === 'seedance-2.0-fast';
-    if (selectedModel !== 'omni-flash-vref' && !isSudashui && !isSoraV3Pro) {
+    const isWan30 = selectedModel === 'wan3.0th';
+    if (selectedModel !== 'omni-flash-vref' && !isSudashui && !isSoraV3Pro && !isWan30) {
       setReferenceVideos([]);
     }
-    if (!isSudashui && !isSoraV3Pro) {
+    if (!isSudashui && !isSoraV3Pro && !isWan30) {
       setReferenceAudios([]);
       setReferenceAudioNames([]);
     }
@@ -868,7 +870,14 @@ export default function VideoPage() {
   const handleAudioSelect = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const remaining = maxRefAudios - referenceAudios.length;
-    const audioFiles = Array.from(files).filter(f => f.type.startsWith('audio/')).slice(0, remaining > 0 ? remaining : 0);
+    const selectedFiles = Array.from(files);
+    const invalidWanAudio = selectedModel === 'wan3.0th'
+      && selectedFiles.some(file => file.type !== 'audio/wav' && file.type !== 'audio/x-wav' && !file.name.toLowerCase().endsWith('.wav'));
+    if (invalidWanAudio) {
+      setError('WAN3.0 的参考音频仅支持 WAV 文件');
+      return;
+    }
+    const audioFiles = selectedFiles.filter(f => f.type.startsWith('audio/') || f.name.toLowerCase().endsWith('.wav')).slice(0, remaining > 0 ? remaining : 0);
     if (audioFiles.length === 0 && remaining <= 0) {
       setError(`最多只能上传 ${maxRefAudios} 个参考音频`);
       return;
@@ -896,13 +905,16 @@ export default function VideoPage() {
     if (!files) return;
     const imageFiles = new DataTransfer();
     const videoFiles = new DataTransfer();
+    const audioFiles = new DataTransfer();
     Array.from(files).forEach(f => {
       if (f.type.startsWith('image/')) imageFiles.items.add(f);
       else if (f.type.startsWith('video/')) videoFiles.items.add(f);
+      else if (f.type.startsWith('audio/') || f.name.toLowerCase().endsWith('.wav')) audioFiles.items.add(f);
     });
     if (imageFiles.files.length > 0) handleFileSelect(imageFiles.files);
     if (videoFiles.files.length > 0) handleVideoSelect(videoFiles.files);
-  }, [handleFileSelect, handleVideoSelect]);
+    if (audioFiles.files.length > 0) handleAudioSelect(audioFiles.files);
+  }, [handleFileSelect, handleVideoSelect, handleAudioSelect]);
 
   // 全局拖拽 + Ctrl+V 粘贴上传媒体
   const { isDragging } = useImageDropPaste(handleMediaDrop);
@@ -953,7 +965,7 @@ export default function VideoPage() {
       setError('视频编辑模型必须上传参考视频');
       return;
     }
-    if ((referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
+    if (selectedModel !== 'wan3.0th' && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
       setError('参考视频或音频模式下必须上传至少一张参考图');
       return;
     }
@@ -1194,21 +1206,24 @@ export default function VideoPage() {
               {/* 当前会话任务 */}
               {tasks.length > 0 && (
                 <div>
-                  <p className="text-xs text-zinc-500 mb-4 font-semibold tracking-wider uppercase">当前任务 ({tasks.length})</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
+                  <div className="mb-4 flex items-center justify-between">
+                    <p className="text-xs text-[#8a6048] font-semibold tracking-wider uppercase">当前任务</p>
+                    <span className="rounded-full border border-[#d8c0a3] bg-[#f5eadb] px-2.5 py-1 text-[10px] font-semibold text-[#8a6048]">{tasks.length}</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-5 auto-rows-fr">
                     {tasks.map((task) => (
-                      <div key={task.id} className={`group relative rounded-2xl overflow-hidden border flex flex-col transition-all ${isVertical(task.metadata.aspect_ratio) ? 'max-w-[220px]' : ''} ${task.status === 'generating' ? 'border-indigo-500/30 bg-indigo-500/[0.03]' : task.status === 'error' ? 'border-red-500/20 bg-red-500/[0.03]' : 'border-white/5 bg-white/[0.02] hover:border-indigo-500/30'}`}>
+                      <article key={task.id} className={`group relative h-full min-h-[330px] rounded-2xl overflow-hidden border flex flex-col transition-all duration-200 shadow-[0_10px_30px_rgba(89,55,35,0.07)] ${task.status === 'generating' ? 'border-[#c98a61] bg-[#fbf3e7]' : task.status === 'error' ? 'border-red-300 bg-red-50/60' : 'border-[#d8c0a3] bg-[#fbf5eb] hover:-translate-y-0.5 hover:border-[#b66a45] hover:shadow-[0_16px_36px_rgba(89,55,35,0.12)]'}`}>
                         {/* 视频区域 */}
-                        <div className="relative w-full bg-black flex items-center justify-center overflow-hidden" style={getAspectStyle(task.metadata.aspect_ratio) || { aspectRatio: '16/9' }}>
+                        <div className="relative w-full aspect-video bg-[#211a16] flex items-center justify-center overflow-hidden border-b border-[#d8c0a3]">
                           {task.status === 'generating' ? (
                             <WoodenFishLoader progress={task.progress} statusMessage={task.statusMessage} />
                           ) : task.status === 'complete' && task.videoUrl ? (
                             <>
-                              <video src={getVideoPlayUrl(task.videoUrl)} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain' : 'object-cover'}`} preload="metadata" playsInline muted loop
+                              <video src={getVideoPlayUrl(task.videoUrl)} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="metadata" playsInline muted loop
                                 onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
                                 onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
-                              <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors cursor-pointer" onClick={() => setPlayingVideo({ url: task.videoUrl!, prompt: restorePrompt(task.prompt) })}>
-                                <Play className="w-8 h-8 text-white/80 group-hover:text-white group-hover:scale-110 transition-all" />
+                              <div className="absolute inset-0 bg-black/20 flex items-center justify-center group-hover:bg-black/5 transition-colors cursor-pointer" onClick={() => setPlayingVideo({ url: task.videoUrl!, prompt: restorePrompt(task.prompt) })}>
+                                <span className="w-11 h-11 rounded-full border border-white/70 bg-black/20 backdrop-blur-sm flex items-center justify-center group-hover:scale-105 transition-transform"><Play className="w-5 h-5 text-white fill-white/10 translate-x-0.5" /></span>
                               </div>
                             </>
                           ) : task.status === 'error' ? (
@@ -1219,27 +1234,28 @@ export default function VideoPage() {
                           ) : null}
                         </div>
                         {/* 信息区 */}
-                        <div className="p-3 flex-1 flex flex-col justify-between gap-1.5 bg-black/40">
+                        <div className="p-4 flex-1 min-h-[140px] flex flex-col justify-between gap-3 bg-[#fbf5eb]">
                           <div>
-                            <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">{restorePrompt(task.prompt)}</p>
+                            <p className="min-h-10 text-[13px] text-[#4a3529] line-clamp-2 leading-relaxed">{restorePrompt(task.prompt)}</p>
 
                             {/* 参考图微缩图预览 */}
                             {task.metadata?.reference_images && task.metadata.reference_images.length > 0 && (
-                              <div className="flex gap-1.5 mt-2 flex-wrap">
-                                {task.metadata.reference_images.map((imgUrl, imgIdx) => (
-                                  <div key={imgIdx} className="relative w-7 h-7 rounded-md border border-white/10 overflow-hidden shrink-0" title={`ref_${imgIdx}`}>
+                              <div className="flex gap-1.5 mt-3 h-8 overflow-hidden">
+                                {task.metadata.reference_images.slice(0, 6).map((imgUrl, imgIdx) => (
+                                  <div key={imgIdx} className="relative w-8 h-8 rounded-md border border-[#d8c0a3] overflow-hidden shrink-0" title={`ref_${imgIdx}`}>
                                     <img src={imgUrl} className="w-full h-full object-cover" />
                                     <div className="absolute top-0 left-0 bg-black/70 text-[7px] text-zinc-400 font-mono px-0.5 rounded-br scale-90 origin-top-left">
                                       ref_{imgIdx}
                                     </div>
                                   </div>
                                 ))}
+                                {task.metadata.reference_images.length > 6 && <span className="h-8 px-2 rounded-md border border-[#d8c0a3] bg-[#f2e4d2] text-[10px] text-[#8a6048] flex items-center">+{task.metadata.reference_images.length - 6}</span>}
                               </div>
                             )}
                           </div>
 
-                          <div className="flex items-center justify-between mt-1">
-                            <span className="text-[10px] text-zinc-500">{task.metadata.resolution} · {task.metadata.seconds}秒</span>
+                          <div className="flex items-center justify-between pt-3 border-t border-[#e4d2bd]">
+                            <span className="text-[10px] font-medium text-[#9a7259]">{task.metadata.resolution} · {task.metadata.seconds}秒 · {task.metadata.aspect_ratio}</span>
                             {task.status === 'generating' ? (
                               <button onClick={() => handleCancel(task.id)} className="text-[10px] text-red-400/70 hover:text-red-400 transition-colors flex items-center gap-1">
                                 <Square className="w-2.5 h-2.5" /> 取消
@@ -1269,7 +1285,7 @@ export default function VideoPage() {
                             ) : null}
                           </div>
                         </div>
-                      </div>
+                      </article>
                     ))}
                   </div>
                 </div>
@@ -1278,39 +1294,43 @@ export default function VideoPage() {
               {/* 历史记录 */}
               {history.length > 0 && (
                 <div>
-                  <p className="text-xs text-zinc-500 mb-4 font-semibold tracking-wider uppercase">历史生成 ({history.length})</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
+                  <div className="mb-4 flex items-center justify-between">
+                    <p className="text-xs text-[#8a6048] font-semibold tracking-wider uppercase">历史生成</p>
+                    <span className="rounded-full border border-[#d8c0a3] bg-[#f5eadb] px-2.5 py-1 text-[10px] font-semibold text-[#8a6048]">{history.length}</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-5 auto-rows-fr">
                     {history.map((h) => (
-                      <div key={h.id} onClick={() => setPlayingVideo({ url: h.resultUrl, prompt: restorePrompt(h.title || h.inputText || '') })} className={`group relative rounded-2xl overflow-hidden border border-white/5 bg-white/[0.02] hover:border-indigo-500/30 transition-all flex flex-col cursor-pointer ${isVertical(h.metadata?.aspect_ratio) ? 'max-w-[220px]' : ''}`}>
-                        <div className="relative w-full bg-black flex items-center justify-center overflow-hidden" style={getAspectStyle(h.metadata?.aspect_ratio) || { aspectRatio: '16/9' }}>
-                          <video src={getVideoPlayUrl(h.resultUrl)} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain' : 'object-cover'}`} preload="metadata" playsInline muted loop
+                      <article key={h.id} onClick={() => setPlayingVideo({ url: h.resultUrl, prompt: restorePrompt(h.title || h.inputText || '') })} className="group relative h-full min-h-[330px] rounded-2xl overflow-hidden border border-[#d8c0a3] bg-[#fbf5eb] hover:-translate-y-0.5 hover:border-[#b66a45] transition-all duration-200 flex flex-col cursor-pointer shadow-[0_10px_30px_rgba(89,55,35,0.07)] hover:shadow-[0_16px_36px_rgba(89,55,35,0.12)]">
+                        <div className="relative w-full aspect-video bg-[#211a16] flex items-center justify-center overflow-hidden border-b border-[#d8c0a3]">
+                          <video src={getVideoPlayUrl(h.resultUrl)} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="metadata" playsInline muted loop
                             onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
                             onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
-                          <div className="absolute inset-0 bg-black/30 flex items-center justify-center group-hover:bg-black/10 transition-colors">
-                            <Play className="w-8 h-8 text-white/80 group-hover:text-white group-hover:scale-110 transition-all" />
+                          <div className="absolute inset-0 bg-black/20 flex items-center justify-center group-hover:bg-black/5 transition-colors">
+                            <span className="w-11 h-11 rounded-full border border-white/70 bg-black/20 backdrop-blur-sm flex items-center justify-center group-hover:scale-105 transition-transform"><Play className="w-5 h-5 text-white fill-white/10 translate-x-0.5" /></span>
                           </div>
                         </div>
-                        <div className="p-3 flex-1 flex flex-col justify-between gap-1 bg-black/40">
+                        <div className="p-4 flex-1 min-h-[140px] flex flex-col justify-between gap-3 bg-[#fbf5eb]">
                           <div>
-                            <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">{restorePrompt(h.title || h.inputText || '无描述')}</p>
+                            <p className="min-h-10 text-[13px] text-[#4a3529] line-clamp-2 leading-relaxed">{restorePrompt(h.title || h.inputText || '无描述')}</p>
 
                             {/* 参考图微缩图预览 */}
                             {h.metadata?.reference_images && h.metadata.reference_images.length > 0 && (
-                              <div className="flex gap-1.5 mt-2 flex-wrap">
-                                {h.metadata.reference_images.map((imgUrl: string, imgIdx: number) => (
-                                  <div key={imgIdx} className="relative w-7 h-7 rounded-md border border-white/10 overflow-hidden shrink-0" title={`ref_${imgIdx}`}>
+                              <div className="flex gap-1.5 mt-3 h-8 overflow-hidden">
+                                {h.metadata.reference_images.slice(0, 6).map((imgUrl: string, imgIdx: number) => (
+                                  <div key={imgIdx} className="relative w-8 h-8 rounded-md border border-[#d8c0a3] overflow-hidden shrink-0" title={`ref_${imgIdx}`}>
                                     <img src={imgUrl} className="w-full h-full object-cover" />
                                     <div className="absolute top-0 left-0 bg-black/70 text-[7px] text-zinc-400 font-mono px-0.5 rounded-br scale-90 origin-top-left">
                                       ref_{imgIdx}
                                     </div>
                                   </div>
                                 ))}
+                                {h.metadata.reference_images.length > 6 && <span className="h-8 px-2 rounded-md border border-[#d8c0a3] bg-[#f2e4d2] text-[10px] text-[#8a6048] flex items-center">+{h.metadata.reference_images.length - 6}</span>}
                               </div>
                             )}
                           </div>
 
-                          <div className="flex items-center justify-between mt-2 text-[10px] text-zinc-500">
-                            <span>{h.metadata?.resolution || '720p'} · {h.metadata?.seconds || 6}秒</span>
+                          <div className="flex items-center justify-between pt-3 border-t border-[#e4d2bd] text-[10px] text-[#9a7259]">
+                            <span className="font-medium">{h.metadata?.resolution || '720p'} · {h.metadata?.seconds || 6}秒 · {h.metadata?.aspect_ratio || '16:9'}</span>
                             <div className="flex items-center gap-2">
                               <span>{new Date(h.createdAt).toLocaleDateString()}</span>
                               <button onClick={(e) => { e.stopPropagation(); handleApplyHistory(h); }}
@@ -1336,7 +1356,7 @@ export default function VideoPage() {
                             </div>
                           </div>
                         </div>
-                      </div>
+                      </article>
                     ))}
                   </div>
                 </div>
@@ -1383,7 +1403,7 @@ export default function VideoPage() {
                   <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={ASPECT_RATIOS} />
                   <CustomSelect value={duration} onChange={(v: number) => setDuration(v)} options={DURATIONS} />
                   <CustomSelect value={resolution} onChange={setResolution} options={RESOLUTIONS} />
-                  <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                  <button aria-label={`上传参考图片，最多 ${maxRefs} 张`} onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                     <Upload className="w-3 h-3 text-indigo-400" /> 参考图 ({referenceImages.length}/{maxRefs})
                   </button>
                   <div className="group relative flex items-center">
@@ -1397,19 +1417,24 @@ export default function VideoPage() {
 
                   {maxRefVideos > 0 && (
                     <>
-                      <button onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
-                        <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 {referenceVideos.length > 0 ? `(${referenceVideos.length}/${maxRefVideos})` : ''}
+                      <button aria-label={`上传参考视频，最多 ${maxRefVideos} 个`} onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                        <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 ({referenceVideos.length}/{maxRefVideos})
                       </button>
                       <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" multiple className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
                     </>
                   )}
                   {maxRefAudios > 0 && (
                     <>
-                      <button onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
-                        <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 {referenceAudios.length > 0 ? `(${referenceAudios.length}/${maxRefAudios})` : ''}
+                      <button aria-label={`上传参考音频，最多 ${maxRefAudios} 段`} title={selectedModel === 'wan3.0th' ? '仅支持 WAV，上传后自动转换为本站公网 URL' : undefined} onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                        <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 ({referenceAudios.length}/{maxRefAudios})
                       </button>
-                      <input ref={audioFileInputRef} type="file" accept="audio/*" multiple className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
+                      <input ref={audioFileInputRef} type="file" accept={selectedModel === 'wan3.0th' ? '.wav,audio/wav,audio/x-wav' : 'audio/*'} multiple className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
                     </>
+                  )}
+                  {selectedModel === 'wan3.0th' && (
+                    <span className="basis-full text-[10px] text-[#9a684b] pt-0.5">
+                      WAN3.0 支持 10 图 · 5 视频 · 5 段 WAV 音频，上传后自动转换为本站公网 URL
+                    </span>
                   )}
                   {(isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1') && (
                     <>

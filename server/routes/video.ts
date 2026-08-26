@@ -205,7 +205,7 @@ const MODEL_META: Record<string, ModelMeta> = {
 };
 
 const DEFAULT_VIDEO_MODELS = [
-  { id: 'wan3.0th', name: 'Wan 3.0 视频大模型 (wan3.0th)', description: 'Wan3.0 高清视频生成模型，支持4-30s，720p，多比例（16:9/9:16/1:1），支持多图/视频/音频参考，按秒计费 ¥0.30/秒', maxSeconds: 30, icon: '🌟' },
+  { id: 'wan3.0th', name: 'Wan 3.0 视频大模型 (wan3.0th)', description: '按秒计费，¥0.14/秒；720p；支持4-30秒文生视频和多参考视频；最多10张图片、5个视频、5段音频公网URL，音频仅支持WAV；支持1:1、16:9、9:16、4:3、3:4', maxSeconds: 30, icon: '🌟' },
   { id: 'ld-sdas-cvk-pro-933-720p', name: 'SudaShui CVK Pro 933 (720p)', description: 'CVK 满血版，支持真人、4-15秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.800/次', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-mj-minimax-h3-2k', name: 'Minimax H3 (2K)', description: '海螺h3，9图3视频3音频，4-15s，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🔥' },
   { id: 'sdas-bl-sd2.0-933-pro-720p', name: 'Seedance 2.0 Pro (933人脸版)', description: '9图3视频3音频，支持 4-15s，支持真人，固定按次计费 ¥4.50/次', maxSeconds: 15, icon: '🚀' },
@@ -537,7 +537,7 @@ router.get('/models', (_req: Request, res: Response) => {
         '2k': rate,
       };
     } else if (m.id === 'wan3.0th') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'wan3_0th_rate')).get()?.value || '0.30');
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'wan3_0th_rate')).get()?.value || '0.14');
       rates = {
         '720p': rate,
       };
@@ -623,6 +623,17 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   }
 
   const meta = MODEL_META[model];
+
+  if (model === 'wan3.0th') {
+    const wanRatios = ['1:1', '16:9', '9:16', '4:3', '3:4'];
+    if (!wanRatios.includes(aspect_ratio)) return res.status(400).json({ error: 'WAN3.0 仅支持 1:1、16:9、9:16、4:3、3:4' });
+    if (resolution !== '720p') return res.status(400).json({ error: 'WAN3.0 仅支持 720p' });
+    if (reference_images.length > 10) return res.status(400).json({ error: 'WAN3.0 最多支持 10 张参考图片' });
+    if (finalVideos.length > 5) return res.status(400).json({ error: 'WAN3.0 最多支持 5 个参考视频' });
+    if (finalAudios.length > 5) return res.status(400).json({ error: 'WAN3.0 最多支持 5 段参考音频' });
+    const invalidAudio = finalAudios.some(audio => !audio.startsWith('data:audio/wav') && !audio.startsWith('data:audio/x-wav') && !audio.toLowerCase().split('?')[0].endsWith('.wav'));
+    if (invalidAudio) return res.status(400).json({ error: 'WAN3.0 的参考音频仅支持 WAV' });
+  }
 
   // 模型时长限制校验
   if (meta?.allowedSeconds && !meta.allowedSeconds.includes(Number(video_length))) {
@@ -840,6 +851,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isSudaShui = meta?.series === 'sudashui';
   const isVeoOmni = model === 'veo-omni-flash';
   const isVeo31 = model === 'veo-3-1';
+  const isWan30 = model === 'wan3.0th';
   const isSeedanceJsonModel = [
     'sd2-c7',
     'sd2.5',
@@ -1131,6 +1143,43 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         return res.end();
       }
 
+      const job = await createResp.json() as any;
+      videoId = job.task_id || job.id;
+    } else if (isWan30) {
+      sendEvent({ type: 'status', message: '正在整理 WAN3.0 多模态参考素材...' });
+
+      const imageUrls = (reference_images || []).slice(0, 10)
+        .map((item: string) => convertBase64ToPublicUrl(item, 'wan3_img', req));
+      const videoUrls = finalVideos.slice(0, 5)
+        .map(item => convertBase64ToPublicUrl(item, 'wan3_video', req));
+      const audioUrls = finalAudios.slice(0, 5)
+        .map(item => convertBase64ToPublicUrl(item, 'wan3_audio', req));
+
+      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(channel.apiKey ? { Authorization: `Bearer ${channel.apiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          model: upstreamModel,
+          prompt: prompt.trim(),
+          seconds: Number(video_length),
+          ratio: aspect_ratio,
+          resolution: '720p',
+          image_urls: imageUrls,
+          video_urls: videoUrls,
+          audio_urls: audioUrls,
+        }),
+        signal: AbortSignal.timeout(300_000),
+      });
+
+      if (!createResp.ok) {
+        const errText = await createResp.text();
+        refundFailedTask(`WAN3.0 提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
       const job = await createResp.json() as any;
       videoId = job.task_id || job.id;
     } else if (isSeedanceJsonModel) {
