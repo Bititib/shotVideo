@@ -205,7 +205,7 @@ const MODEL_META: Record<string, ModelMeta> = {
 };
 
 const DEFAULT_VIDEO_MODELS = [
-  { id: 'wan3.0th', name: 'Wan 3.0 视频大模型 (wan3.0th)', description: ' Wan3.0 高清视频生成模型，支持4-30s，720p，多比例（16:9/9:16/1:1），支持多图/视频/音频参考，固定按次计费 ¥4.00/次', maxSeconds: 30, icon: '🌟' },
+  { id: 'wan3.0th', name: 'Wan 3.0 视频大模型 (wan3.0th)', description: 'Wan3.0 高清视频生成模型，支持4-30s，720p，多比例（16:9/9:16/1:1），支持多图/视频/音频参考，按秒计费 ¥0.30/秒', maxSeconds: 30, icon: '🌟' },
   { id: 'ld-sdas-cvk-pro-933-720p', name: 'SudaShui CVK Pro 933 (720p)', description: 'CVK 满血版，支持真人、4-15秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.800/次', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-mj-minimax-h3-2k', name: 'Minimax H3 (2K)', description: '海螺h3，9图3视频3音频，4-15s，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🔥' },
   { id: 'sdas-bl-sd2.0-933-pro-720p', name: 'Seedance 2.0 Pro (933人脸版)', description: '9图3视频3音频，支持 4-15s，支持真人，固定按次计费 ¥4.50/次', maxSeconds: 15, icon: '🚀' },
@@ -230,6 +230,68 @@ function findVideoChannel(modelId: string) {
   const channel = ChannelService.findChannelForModel(modelId);
   if (channel) return { baseUrl: channel.baseUrl, apiKey: channel.apiKey };
   return null;
+}
+
+/**
+ * Download a completed upstream video to VPS storage before exposing it to users.
+ * The channel selected when the task was created is preferred so weighted routing
+ * cannot accidentally use another channel's API key during the download.
+ */
+export async function downloadAndLocalizeVideo(
+  url: string,
+  videoId: string,
+  model: string,
+  channelId?: number | null,
+): Promise<string> {
+  if (!url) throw new Error('Upstream completed without a video URL');
+  if (url.startsWith('/uploads/')) return url;
+
+  const exactChannel = channelId ? ChannelService.getChannelRaw(channelId) : null;
+  const channel = exactChannel || ChannelService.findChannelForModel(model);
+  const headers: Record<string, string> = {};
+  if (channel?.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
+
+  const uploadDir = path.join(process.cwd(), 'data', 'uploads', 'videos');
+  fs.mkdirSync(uploadDir, { recursive: true });
+
+  const safeId = `${model}_${videoId}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 160);
+  for (const extension of ['mp4', 'webm']) {
+    const existingName = `video_${safeId}.${extension}`;
+    const existingPath = path.join(uploadDir, existingName);
+    if (fs.existsSync(existingPath) && fs.statSync(existingPath).size > 0) {
+      return `/uploads/videos/${existingName}`;
+    }
+  }
+
+  const response = await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch video from upstream: ${response.status} ${response.statusText}`);
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length === 0) throw new Error('Upstream returned an empty video file');
+
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+  const isMp4 = buffer.length >= 12 && buffer.subarray(4, 8).toString('ascii') === 'ftyp';
+  const isWebm = buffer.length >= 4
+    && buffer[0] === 0x1a && buffer[1] === 0x45 && buffer[2] === 0xdf && buffer[3] === 0xa3;
+  if (!contentType.startsWith('video/') && !isMp4 && !isWebm) {
+    throw new Error(`Upstream response is not a video (${contentType || 'unknown content type'})`);
+  }
+
+  const extension = isWebm && !isMp4 ? 'webm' : 'mp4';
+  const filename = `video_${safeId}.${extension}`;
+  const finalPath = path.join(uploadDir, filename);
+  const tempPath = `${finalPath}.${crypto.randomUUID()}.part`;
+  try {
+    fs.writeFileSync(tempPath, buffer);
+    fs.renameSync(tempPath, finalPath);
+  } finally {
+    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+  }
+
+  console.log(`[video] Video localized to VPS: /uploads/videos/${filename}`);
+  return `/uploads/videos/${filename}`;
 }
 
 /**
@@ -475,7 +537,7 @@ router.get('/models', (_req: Request, res: Response) => {
         '2k': rate,
       };
     } else if (m.id === 'wan3.0th') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'wan3_0th_rate')).get()?.value || '4.00');
+      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'wan3_0th_rate')).get()?.value || '0.30');
       rates = {
         '720p': rate,
       };
@@ -728,6 +790,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         seconds: estimatedSeconds,
         aspect_ratio,
         model,
+        channelId: dbChannel?.id ?? null,
         reference_images,
         reference_videos: finalVideos,
         audio_urls: finalAudios
@@ -1351,16 +1414,18 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           console.log(`[video] ✅ 生成完成: ${resultUrl}`);
           sendEvent({ type: 'progress', progress: 100 });
 
-          // 4月天渠道视频自动预转码本地化（H.265→H.264）
-          let finalVideoUrl = resultUrl;
-          if (resultUrl && resultUrl.includes('llm.chre3.com')) {
-            try {
+          // Persist every completed video on the VPS before exposing it to users.
+          let finalVideoUrl = '';
+          try {
+            if (resultUrl && resultUrl.includes('llm.chre3.com')) {
               finalVideoUrl = await localizeChre3Video(resultUrl, videoId, model);
-              console.log(`[video] 4月天视频已本地化: ${finalVideoUrl}`);
-            } catch (localErr: any) {
-              console.error(`[video] 4月天视频本地化失败，使用原始URL: ${localErr.message}`);
-              finalVideoUrl = resultUrl;
+            } else {
+              finalVideoUrl = await downloadAndLocalizeVideo(resultUrl, videoId, model, dbChannel?.id);
             }
+          } catch (localErr: any) {
+            console.error(`[video] VPS localization failed; task remains processing: ${localErr.message}`);
+            sendEvent({ type: 'status', message: '视频已生成，正在保存到本站存储' });
+            continue;
           }
 
           sendEvent({ type: 'complete', videoUrl: finalVideoUrl });
@@ -1907,6 +1972,18 @@ export function resumePollForTask(contentId: number, record: any) {
           } catch { }
         } else if (taskStatus === 'completed' || taskStatus === 'success') {
           console.log(`[video-recover] ✅ Generating completed: ${resultUrl}`);
+          let finalVideoUrl = '';
+          try {
+            if (resultUrl && resultUrl.includes('llm.chre3.com')) {
+              finalVideoUrl = await localizeChre3Video(resultUrl, videoId, model);
+            } else {
+              finalVideoUrl = await downloadAndLocalizeVideo(resultUrl, videoId, model, metadata.channelId);
+            }
+          } catch (localErr: any) {
+            console.error(`[video-recover] VPS localization failed; will retry: ${localErr.message}`);
+            continue;
+          }
+
           const completedTime = Date.now();
           const createdTime = new Date(currentRecord.createdAt).getTime();
           const durationMs = (!isNaN(createdTime) && createdTime > 0 && completedTime >= createdTime)
@@ -1923,10 +2000,16 @@ export function resumePollForTask(contentId: number, record: any) {
           try {
             meta = JSON.parse(currentRecord.metadata || '{}');
           } catch { }
-          meta = { ...meta, durationMs, completedAt: new Date(completedTime).toISOString() };
+          meta = {
+            ...meta,
+            progress: 100,
+            localizedAt: new Date(completedTime).toISOString(),
+            durationMs,
+            completedAt: new Date(completedTime).toISOString()
+          };
           db.update(contents).set({
             status: 'completed',
-            resultUrl: resultUrl || null,
+            resultUrl: finalVideoUrl,
             cost: cost,
             metadata: JSON.stringify(meta)
           }).where(eq(contents.id, contentId)).run();

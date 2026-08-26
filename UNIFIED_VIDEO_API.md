@@ -85,7 +85,7 @@
 | `grok-imagine-video-1.5-preview` | 按次 | ¥0.70 / 请求 | 10s / 15s |
 | `seedance-2.5-deal` | 按次 | ¥1.80 / 请求 | 4s ~ 15s |
 | `seedance-2.5m` | 按次 | ¥3.00 / 请求 | 4s ~ 25s |
-| `wan3.0th` | 按次 | ¥4.00 / 请求 | 4s ~ 30s |
+| `wan3.0th` | 按秒 | ¥0.30 / 秒 | 4s ~ 30s |
 
 ---
 

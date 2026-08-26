@@ -140,7 +140,7 @@ export async function syncModelsFromAPI() {
     { provider: 'google', modelId: 'gemini-3-pro-image-preview', displayName: '🍌 nabanana pro', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) },
-    { provider: 'julun', modelId: 'wan3.0th', displayName: 'Wan 3.0 视频大模型 (wan3.0th)', description: 'AI开放平台 Wan3.0 高清视频生产模型，支持4-30s，720p，多比例，支持多图/视频/音频参考，固定按次计费 ¥4.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'julun', modelId: 'wan3.0th', displayName: 'Wan 3.0 视频大模型 (wan3.0th)', description: 'AI开放平台 Wan3.0 高清视频生产模型，支持4-30s，720p，多比例，支持多图/视频/音频参考，按秒计费 ¥0.30/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-mj-minimax-h3-2k', displayName: 'Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },
@@ -687,7 +687,7 @@ export async function initDatabase() {
     { key: 'grok_imagine_video_1_5_preview_rate', value: '0.70', label: 'grok-imagine-video-1.5-preview 费率(¥/次)' },
     { key: 'seedance_2_5_deal_rate', value: '1.80', label: 'seedance-2.5-deal 费率(¥/次)' },
     { key: 'seedance_2_5m_rate', value: '3.00', label: 'seedance-2.5m 费率(¥/次)' },
-    { key: 'wan3_0th_rate', value: '4.00', label: 'wan3.0th 费率(¥/次)' },
+    { key: 'wan3_0th_rate', value: '0.30', label: 'wan3.0th 费率(¥/秒)' },
   ];
   // 物理清理旧 of rd_seedance 相关的设置项
   db.delete(settings).where(eq(settings.key, 'rd_seedance_2_5_480p_rate')).run();
@@ -888,7 +888,7 @@ export async function initDatabase() {
     { modelPattern: 'seedance-2.5-c1', billingType: 'per_second', inputPrice: legacyRate('seedance_2_5_c1_rate', 0.25), category: 'video' },
     { modelPattern: 'seedance-2.5-deal', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5_deal_rate', 1.80), category: 'video' },
     { modelPattern: 'seedance-2.5m', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5m_rate', 3.00), category: 'video' },
-    { modelPattern: 'wan3.0th', billingType: 'per_call', inputPrice: legacyRate('wan3_0th_rate', 4.00), category: 'video' },
+    { modelPattern: 'wan3.0th', billingType: 'per_second', inputPrice: legacyRate('wan3_0th_rate', 0.30), category: 'video' },
     { modelPattern: 'grok-video-1.5', billingType: 'per_second', inputPrice: legacyRate('grok_video_1_5_per_sec_rate', 0.09), category: 'video' },
     { modelPattern: 'grok-imagine-video-1.5', billingType: 'per_call', inputPrice: legacyRate('grok_imagine_video_1_5_per_req_rate', 0.60), category: 'video' },
     { modelPattern: 'grok-imagine-video-1.5-preview', billingType: 'per_call', inputPrice: legacyRate('grok_imagine_video_1_5_preview_rate', 0.70), category: 'video' },
@@ -919,6 +919,34 @@ export async function initDatabase() {
         extraParams: JSON.stringify({ ...extraParams, category: pricing.category }),
       }).where(eq(modelPricing.id, existing.id)).run();
     }
+  }
+
+  // One-time production migration: switch WAN3.0 from ¥4/request to ¥0.30/second.
+  // The marker prevents future restarts from overwriting administrator edits.
+  const wanPricingMigrationKey = 'migration_wan3_0th_per_second_030_v1';
+  const wanPricingMigrated = db.select().from(settings).where(eq(settings.key, wanPricingMigrationKey)).get();
+  if (!wanPricingMigrated) {
+    const wanRule = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, 'wan3.0th')).get();
+    if (wanRule) {
+      let extraParams: Record<string, any> = {};
+      try { extraParams = JSON.parse(wanRule.extraParams || '{}'); } catch { /* ignore invalid legacy JSON */ }
+      db.update(modelPricing).set({
+        billingType: 'per_second',
+        inputPrice: 0.30,
+        extraParams: JSON.stringify({ ...extraParams, category: 'video' }),
+      }).where(eq(modelPricing.id, wanRule.id)).run();
+    }
+    db.update(settings).set({ value: '0.30', label: 'wan3.0th 费率(¥/秒)' })
+      .where(eq(settings.key, 'wan3_0th_rate')).run();
+    db.update(models).set({
+      description: 'AI开放平台 Wan3.0 高清视频生产模型，支持4-30s，720p，多比例，支持多图/视频/音频参考，按秒计费 ¥0.30/秒',
+    }).where(eq(models.modelId, 'wan3.0th')).run();
+    db.insert(settings).values({
+      key: wanPricingMigrationKey,
+      value: '1',
+      label: 'WAN3.0 按秒计费迁移标记',
+    }).run();
+    console.log('🔄 已迁移：WAN3.0 改为按秒计费 ¥0.30/秒');
   }
 
   // 9) 自动向已存在且包含 sudashuiapi.com 或 pidoi.com 的渠道添加支持的模型 ID，防止路由错误

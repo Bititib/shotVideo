@@ -95,7 +95,7 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'seedance-2.5m') {
     return 3.00;
   } else if (model === 'wan3.0th') {
-    return 4.00;
+    return 0.30;
   } else if (model === 'sdas-bl-sd2.0-933-pro-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_bl_sd20_933_pro_720p_rate')).get();
     return parseFloat(row?.value || '4.50');
@@ -1028,7 +1028,6 @@ async function handleVideoCreation(req: Request, res: Response) {
     'grok-imagine-video-1.5-preview',
     'seedance-2.5-deal',
     'seedance-2.5m',
-    'wan3.0th',
     'seedance-2.0-fast',
     'sd2-c7',
     'sd2.5',
@@ -1326,7 +1325,7 @@ async function handleVideoQuery(req: Request, res: Response) {
     let progress = 0;
     try {
       const meta = JSON.parse(record.metadata || '{}');
-      progress = meta.progress || (status === 'completed' ? 100 : 0);
+      progress = status === 'completed' ? 100 : (meta.progress || 0);
     } catch {}
 
     let mappedStatus = 'queued';
@@ -1443,66 +1442,55 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
   let isLocalFile = false;
   let localFilePath = '';
 
-  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+  if (url.startsWith('/uploads/')) {
     isLocalFile = true;
     const cleanPath = url.replace(/^.*\/uploads\//, '');
     localFilePath = path.join(process.cwd(), 'data/uploads', cleanPath);
+  } else if (url.startsWith('http://') || url.startsWith('https://')) {
+    try {
+      const parsedUrl = new URL(url);
+      if (parsedUrl.host === req.get('host') && parsedUrl.pathname.startsWith('/uploads/')) {
+        isLocalFile = true;
+        const cleanPath = parsedUrl.pathname.slice('/uploads/'.length);
+        localFilePath = path.join(process.cwd(), 'data/uploads', cleanPath);
+      }
+    } catch { }
   } else {
-    const uploadsIndex = url.indexOf('/uploads/');
-    if (uploadsIndex !== -1) {
-      isLocalFile = true;
-      const cleanPath = url.substring(uploadsIndex + '/uploads/'.length);
-      localFilePath = path.join(process.cwd(), 'data/uploads', cleanPath);
-    }
+    return res.status(502).json({ error: 'Invalid stored video URL' });
   }
 
   if (isLocalFile) {
     if (fs.existsSync(localFilePath)) {
-      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Content-Type', path.extname(localFilePath).toLowerCase() === '.webm' ? 'video/webm' : 'video/mp4');
       return res.sendFile(localFilePath);
     }
   }
 
   try {
-    const config = findUpstreamVideoConfig();
-    const headers: Record<string, string> = {};
-    if (config?.apiKey) {
-      headers['Authorization'] = `Bearer ${config.apiKey}`;
-    }
+    let metadata: any = {};
+    try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
 
-    let streamUrl = url;
-    if (url.includes('/v1/files/video')) {
-      const match = url.match(/[?&]id=([^&]+)/);
-      const fileId = match ? match[1] : '';
-      if (fileId && config) {
-        streamUrl = `${config.baseUrl.replace(/\/+$/, '')}/v1/files/video?id=${fileId}`;
-      }
-    }
+    const { downloadAndLocalizeVideo } = await import('./video.js');
+    const localizedUrl = await downloadAndLocalizeVideo(
+      url,
+      idParam,
+      record.modelId || metadata.model || 'video',
+      metadata.channelId,
+    );
+    const cleanPath = localizedUrl.replace(/^.*\/uploads\//, '');
+    const localizedPath = path.join(process.cwd(), 'data', 'uploads', cleanPath);
 
-    const upstreamRes = await fetch(streamUrl, { headers, signal: AbortSignal.timeout(300_000) });
-    if (!upstreamRes.ok) {
-      return res.status(upstreamRes.status).send(`Failed to stream video from upstream: ${upstreamRes.statusText}`);
-    }
+    metadata.progress = 100;
+    metadata.localizedAt = metadata.localizedAt || new Date().toISOString();
+    db.update(contents).set({
+      resultUrl: localizedUrl,
+      metadata: JSON.stringify(metadata),
+    }).where(eq(contents.id, contentId)).run();
 
-    res.setHeader('Content-Type', upstreamRes.headers.get('Content-Type') || 'video/mp4');
-    const len = upstreamRes.headers.get('Content-Length');
-    if (len) res.setHeader('Content-Length', len);
-
-    const reader = upstreamRes.body?.getReader();
-    if (!reader) return res.status(502).send('No video stream body from upstream');
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    res.end();
+    res.setHeader('Content-Type', path.extname(localizedPath).toLowerCase() === '.webm' ? 'video/webm' : 'video/mp4');
+    return res.sendFile(localizedPath);
   } catch (err: any) {
-    res.status(502).send(`Video stream failed: ${err.message}`);
+    res.status(502).send(`Video localization failed: ${err.message}`);
   }
 });
 
