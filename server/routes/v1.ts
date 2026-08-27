@@ -96,6 +96,8 @@ function getVideoRate(model: string, resolution: string): number {
     return 3.00;
   } else if (model === 'wan3.0th') {
     return 0.14;
+  } else if (model === 'ad-seedance-2.5-480p') {
+    return 0.35;
   } else if (model === 'sdas-bl-sd2.0-933-pro-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_bl_sd20_933_pro_720p_rate')).get();
     return parseFloat(row?.value || '4.50');
@@ -1026,6 +1028,21 @@ async function handleVideoCreation(req: Request, res: Response) {
     if (invalidAudio) {
       cleanupFiles(req.files);
       return res.status(400).json({ error: 'wan3.0th audio references must be WAV files' });
+    }
+  }
+
+  if (model === 'ad-seedance-2.5-480p') {
+    if (!Number.isInteger(seconds) || seconds < 4 || seconds > 30) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'ad-seedance-2.5-480p seconds must be an integer from 4 to 30' });
+    }
+    if (resolution !== '480p') {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'ad-seedance-2.5-480p only supports 480p' });
+    }
+    if (image_urls.length > 30 || video_urls.length > 10 || audio_urls.length > 10) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'ad-seedance-2.5-480p supports at most 30 images, 10 videos, and 10 audio files' });
     }
   }
 

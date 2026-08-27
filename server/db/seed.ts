@@ -148,6 +148,7 @@ export async function syncModelsFromAPI() {
     { provider: 'diwdiw', modelId: 'cd-seedance-2.0-720p', displayName: 'Seedance 2.0 (720p/CD版)', capabilities: JSON.stringify(['video']) },
     { provider: 'diwdiw', modelId: 'nd-seedance-2.0-480p', displayName: 'Seedance 2.0 (480p/不卡脸)', description: '9图3视频3音频，支持 4-15s，不卡人脸，固定按次计费 ¥3.15/次', capabilities: JSON.stringify(['video']) },
     { provider: 'diwdiw', modelId: 'nd-seedance-2.0-720p', displayName: 'Seedance 2.0 (720p/不卡脸)', description: '9图3视频3音频，支持 4-15s，不卡人脸，固定按次计费 ¥4.30/次', capabilities: JSON.stringify(['video']) },
+    { provider: 'diwdiw', modelId: 'ad-seedance-2.5-480p', displayName: 'Seedance 2.5 480p（AD）', description: '支持最多30张图片、10个视频、10段音频参考，不限制人脸，按秒计费 ¥0.35/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']), isActive: 0 },
@@ -885,6 +886,7 @@ export async function initDatabase() {
     { modelPattern: 'cd-seedance-2.0-720p', billingType: 'per_call', inputPrice: legacyRate('cd_seedance_2_0_720p_rate', 3.00), category: 'video' },
     { modelPattern: 'nd-seedance-2.0-480p', billingType: 'per_call', inputPrice: legacyRate('nd_seedance_2_0_480p_rate', 3.15), category: 'video' },
     { modelPattern: 'nd-seedance-2.0-720p', billingType: 'per_call', inputPrice: legacyRate('nd_seedance_2_0_720p_rate', 4.30), category: 'video' },
+    { modelPattern: 'ad-seedance-2.5-480p', billingType: 'per_second', inputPrice: 0.35, category: 'video' },
     { modelPattern: 'seedance-2.5-c1', billingType: 'per_second', inputPrice: legacyRate('seedance_2_5_c1_rate', 0.25), category: 'video' },
     { modelPattern: 'seedance-2.5-deal', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5_deal_rate', 1.80), category: 'video' },
     { modelPattern: 'seedance-2.5m', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5m_rate', 3.00), category: 'video' },
@@ -1076,53 +1078,6 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 4月天 渠道出错:', err.message);
   }
 
-  // 12) 保证 888API 渠道存在并绑定 seedance-2.5-c1 模型
-  try {
-    const existing888 = db.select().from(channels).where(eq(channels.baseUrl, 'https://888api.xin')).get();
-    const api888Models = ['seedance-2.5-c1'];
-    const api888Mapping = { 'seedance-2.5-c1': 'seedance-2.5-c1' };
-    if (!existing888) {
-      db.insert(channels).values({
-        name: '888API 渠道',
-        type: 'openai',
-        baseUrl: 'https://888api.xin',
-        apiKey: 'sk-请填写你的888API密钥',
-        supportedModels: JSON.stringify(api888Models),
-        modelMapping: JSON.stringify(api888Mapping),
-        status: 1,
-        priority: 0,
-        weight: 1,
-        maxRetries: 3,
-        timeout: 120000,
-      }).run();
-      console.log('📦 已自动创建 888API 渠道并绑定 seedance-2.5-c1');
-    } else {
-      // 确保已有的 888API 渠道包含 seedance-2.5-c1
-      let currentModels: string[] = [];
-      try { currentModels = JSON.parse(existing888.supportedModels || '[]'); } catch {}
-      let updated = false;
-      for (const m of api888Models) {
-        if (!currentModels.includes(m)) {
-          currentModels.push(m);
-          updated = true;
-        }
-      }
-      if (updated) {
-        db.update(channels)
-          .set({
-            supportedModels: JSON.stringify(currentModels),
-            modelMapping: JSON.stringify(api888Mapping),
-            updatedAt: new Date().toISOString()
-          })
-          .where(eq(channels.id, existing888.id))
-          .run();
-        console.log('🔄 已更新 888API 渠道支持模型列表');
-      }
-    }
-  } catch (err: any) {
-    console.error('⚠️ 初始化 888API 渠道出错:', err.message);
-  }
-
   // 13) 保证 Pidoi 图片渠道存在（独立 API Key，与视频渠道分离）
   try {
     // 查找已有的 Pidoi 图片渠道
@@ -1163,11 +1118,13 @@ export async function initDatabase() {
     const existingMj = db.select().from(channels).where(eq(channels.name, 'MJNewAPI 渠道')).get();
     const mjModels = [
       'cd-seedance-2.0-720p',
-      'nd-seedance-2.0-480p'
+      'nd-seedance-2.0-480p',
+      'ad-seedance-2.5-480p'
     ];
     const mjMapping = {
       'cd-seedance-2.0-720p': 'cd-seedance 2.0 720p',
-      'nd-seedance-2.0-480p': 'nd-seedance-2.0 480p'
+      'nd-seedance-2.0-480p': 'nd-seedance-2.0 480p',
+      'ad-seedance-2.5-480p': 'ad-seedance-2.5-480p'
     };
 
     if (!existingMj) {

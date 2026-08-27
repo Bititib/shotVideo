@@ -75,7 +75,8 @@ export const isComicDramaModel = (modelId: string) => {
     'sdas-mj-minimax-h3-2k',
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
-    'cd-seedance-2.0-720p'
+    'cd-seedance-2.0-720p',
+    'ad-seedance-2.5-480p'
   ].includes(modelId);
 };
 
@@ -257,6 +258,7 @@ const isSoraV4Model = (modelId: string) => {
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'wan3.0th') return 10;
   if (modelId === 'seedance-2.5-c1') return 30;
+  if (modelId === 'ad-seedance-2.5-480p') return 30;
   if (modelId === 'sd2.5') return 9;
   if (modelId === 'sd2-c7') return 10;
   if (modelId === 'sd2-c6') return 9;
@@ -362,6 +364,7 @@ export default function VideoPage() {
   const getMaxRefVideos = (m: string) => {
     if (m === 'wan3.0th') return 5;
     if (m === 'seedance-2.5-c1') return 10;
+    if (m === 'ad-seedance-2.5-480p') return 10;
     if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     return 0;
@@ -369,6 +372,7 @@ export default function VideoPage() {
   const getMaxRefAudios = (m: string) => {
     if (m === 'wan3.0th') return 5;
     if (m === 'seedance-2.5-c1') return 10;
+    if (m === 'ad-seedance-2.5-480p') return 10;
     if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     return 0;
