@@ -283,6 +283,7 @@ export default function ModelsPage() {
                     <option value="newtoken">NewToken</option>
                     <option value="sudashui">SudaShui</option>
                     <option value="pidoi">Pidoi</option>
+                    <option value="hmstudio">HM Studio</option>
                     <option value="other">其他</option>
                   </select>
                 </div>

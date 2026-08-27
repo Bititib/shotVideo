@@ -6,7 +6,7 @@
 
 ## 1. 统一创建视频任务
 
-- **请求路径**：`POST /v1/videos` （或 `POST /v1/video/generations`）
+- **请求路径**：`POST /v1/videos` （兼容 `POST /v1/video/generations`、`POST /v1/videos/generations`）
 - **请求头**：
   - `Authorization: Bearer sk-xxx`
   - `Content-Type: application/json` 或 `multipart/form-data`
@@ -41,7 +41,7 @@
 
 ## 2. 统一查询任务状态
 
-- **请求路径**：`GET /v1/videos/{task_id}` （或 `GET /v1/video/generations/{task_id}`）
+- **请求路径**：`GET /v1/videos/{task_id}` （兼容 `GET /v1/video/generations/{task_id}`、`GET /v1/videos/generations/{task_id}`）
 - **请求头**：`Authorization: Bearer sk-xxx`
 
 ### 响应状态定义 (`status`)

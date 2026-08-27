@@ -1,5 +1,5 @@
 import { db } from '../db/index.js';
-import { users, tiers, models, tierModelAccess, usageLogs, settings, contents, apiLogs, modelPricing } from '../db/schema.js';
+import { users, tiers, models, tierModelAccess, usageLogs, settings, contents, apiLogs, modelPricing, channels } from '../db/schema.js';
 import { eq, like, and, gte, sql, desc, count } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 
@@ -12,6 +12,42 @@ interface GetUsersOptions {
 }
 
 const DELETED_MODELS_SETTING = 'deleted_model_ids';
+const HM_STUDIO_BASE_URL = 'https://dnyovzpgyokm.sealosbja.site';
+
+function linkHmStudioModel(modelId: string, apiKey?: string | null) {
+  let channel = db.select().from(channels).all().find(item =>
+    item.type === 'hmstudio' || item.baseUrl?.replace(/\/+$/, '') === HM_STUDIO_BASE_URL
+  );
+  if (!channel) {
+    const result = db.insert(channels).values({
+      name: 'HM Studio 渠道', type: 'hmstudio', baseUrl: HM_STUDIO_BASE_URL,
+      apiKey: apiKey || '', supportedModels: '[]', modelMapping: '{}',
+      status: apiKey ? 1 : 0, priority: 10, weight: 1, maxRetries: 3, timeout: 120000,
+    }).run();
+    channel = db.select().from(channels).where(eq(channels.id, Number(result.lastInsertRowid))).get();
+  }
+  if (!channel) return;
+
+  let supportedModels: string[] = [];
+  let modelMapping: Record<string, string> = {};
+  try { supportedModels = JSON.parse(channel.supportedModels || '[]'); } catch { }
+  try { modelMapping = JSON.parse(channel.modelMapping || '{}'); } catch { }
+  if (!Array.isArray(supportedModels)) supportedModels = [];
+  if (!supportedModels.includes(modelId)) supportedModels.push(modelId);
+  modelMapping[modelId] = modelId;
+
+  const updates: Record<string, any> = {
+    name: 'HM Studio 渠道', type: 'hmstudio', baseUrl: HM_STUDIO_BASE_URL,
+    supportedModels: JSON.stringify(supportedModels),
+    modelMapping: JSON.stringify(modelMapping),
+    updatedAt: new Date().toISOString(),
+  };
+  if (apiKey) {
+    updates.apiKey = apiKey;
+    updates.status = 1;
+  }
+  db.update(channels).set(updates).where(eq(channels.id, channel.id)).run();
+}
 
 function getDeletedModelIds(): Set<string> {
   const row = db.select().from(settings).where(eq(settings.key, DELETED_MODELS_SETTING)).get();
@@ -416,6 +452,8 @@ export class AdminService {
       isActive: data.isActive === 0 ? 0 : 1,
     }).run();
 
+    if (provider === 'hmstudio') linkHmStudioModel(modelId, apiKey);
+
     const deletedIds = getDeletedModelIds();
     if (deletedIds.delete(modelId)) saveDeletedModelIds(deletedIds);
   }
@@ -467,6 +505,11 @@ export class AdminService {
       deletedIds.add(model.modelId);
       deletedIds.delete(nextModelId);
       saveDeletedModelIds(deletedIds);
+    }
+
+    const nextProvider = data.provider !== undefined ? data.provider : model.provider;
+    if (nextProvider === 'hmstudio') {
+      linkHmStudioModel(nextModelId, data.apiKey !== undefined ? data.apiKey : model.apiKey);
     }
   }
 

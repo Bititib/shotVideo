@@ -6,6 +6,7 @@ import { ChannelService } from '../services/channelService.js';
 import { BalanceService } from '../services/balanceService.js';
 import { ContentService } from '../services/contentService.js';
 import { PricingService } from '../services/pricingService.js';
+import { calculateSuccessRate, isWithinRecentDays } from '../services/successRateService.js';
 import {
   buildHmStudioVideoForm,
   hmStudioCreateUrl,
@@ -193,6 +194,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'nd-seedance-2.0-480p': { series: 'seedance-480p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'nd-seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'ad-seedance-2.5-480p': { series: 'seedance-2.5-480p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
+  'seedance_v2.5': { series: 'hmstudio-seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   'seedance-2.0-fast': { series: 'seedance-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'veo-omni-flash': { series: 'veo-omni-flash', allowedSeconds: [10], requireRef: false },
   'veo-3-1': { series: 'veo-3-1', allowedSeconds: [8], requireRef: false },
@@ -213,6 +215,7 @@ const MODEL_META: Record<string, ModelMeta> = {
 };
 
 const DEFAULT_VIDEO_MODELS = [
+  { id: 'seedance_v2.5', name: 'Seedance V2.5（HM Studio）', description: '720p；支持4-30秒；最多10张图片参考，不支持音频和视频参考', maxSeconds: 30, icon: '🎬' },
   { id: 'ad-seedance-2.5-480p', name: 'Seedance 2.5 480p（AD）', description: '支持最多30张图片、10个视频、10段音频参考，不限制人脸，按秒计费 ¥0.35/秒', maxSeconds: 30, icon: '🎬' },
   { id: 'wan3.0th', name: 'Wan 3.0 视频大模型 (wan3.0th)', description: '按秒计费，¥0.14/秒；720p；支持4-30秒文生视频和多参考视频；最多10张图片、5个视频、5段音频公网URL，音频仅支持WAV；支持1:1、16:9、9:16、4:3、3:4', maxSeconds: 30, icon: '🌟' },
   { id: 'ld-sdas-cvk-pro-933-720p', name: 'SudaShui CVK Pro 933 (720p)', description: 'CVK 满血版，支持真人、4-15秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.800/次', maxSeconds: 15, icon: '🚀' },
@@ -541,6 +544,10 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
+    } else if (m.id === 'seedance_v2.5') {
+      rates = {
+        '720p': PricingService.quote(m.id, { resolution: '720p' }, false).rate,
+      };
     } else if (m.id === 'ad-seedance-2.5-480p') {
       rates = {
         '480p': 0.35,
@@ -582,10 +589,12 @@ router.get('/models', (_req: Request, res: Response) => {
     ]));
 
     const targetIds = Array.from(new Set([m.id, ...(m.id.includes('seedance2.0') || m.id === 'sd2-mini' ? ['seedance2.0-933', 'seedance2.0 933', 'sd2-mini'] : [])]));
-    const contentRows = db.select().from(contents).where(inArray(contents.modelId, targetIds)).all();
-    const totalCalls = contentRows.length;
-    const successCalls = contentRows.filter(r => r.status === 'completed' || r.status === 'success' || (r.resultUrl && r.resultUrl.trim() !== '')).length;
-    const successRate = totalCalls > 0 ? Number(((successCalls / totalCalls) * 100).toFixed(1)) : null;
+    const recentTerminalRows = db.select().from(contents).where(inArray(contents.modelId, targetIds)).all()
+      .filter(row => isWithinRecentDays(row.createdAt))
+      .filter(row => row.status === 'failed' || row.status === 'completed' || row.status === 'success' || Boolean(row.resultUrl?.trim()));
+    const successCalls = recentTerminalRows.filter(r => r.status === 'completed' || r.status === 'success' || Boolean(r.resultUrl?.trim())).length;
+    const failureCalls = recentTerminalRows.filter(r => r.status === 'failed').length;
+    const successStats = calculateSuccessRate(successCalls, failureCalls);
 
     return {
       id: m.id,
@@ -598,8 +607,9 @@ router.get('/models', (_req: Request, res: Response) => {
       series: meta?.series || 'legacy',
       rates,
       billingType,
-      successRate,
-      totalCalls,
+      successRate: successStats.rate,
+      successRateEstimated: successStats.estimated,
+      totalCalls: successStats.sampleSize,
     };
   });
 
@@ -659,6 +669,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     if (reference_images.length > 30) return res.status(400).json({ error: 'ad-seedance-2.5-480p 最多支持 30 张参考图片' });
     if (finalVideos.length > 10) return res.status(400).json({ error: 'ad-seedance-2.5-480p 最多支持 10 个参考视频' });
     if (finalAudios.length > 10) return res.status(400).json({ error: 'ad-seedance-2.5-480p 最多支持 10 段参考音频' });
+  }
+
+  if (model === 'seedance_v2.5') {
+    if (resolution !== '720p') return res.status(400).json({ error: 'seedance_v2.5 仅支持 720p' });
+    if (reference_images.length > 10) return res.status(400).json({ error: 'seedance_v2.5 最多支持 10 张参考图片' });
+    if (finalVideos.length > 0 || finalAudios.length > 0) return res.status(400).json({ error: 'seedance_v2.5 不支持视频或音频参考' });
   }
 
   // 模型时长限制校验

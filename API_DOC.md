@@ -169,7 +169,7 @@ POST /v1/videos
 Content-Type: application/json 或 multipart/form-data
 ```
 
-兼容别名：`POST /v1/video/generations`。
+兼容别名：`POST /v1/video/generations`、`POST /v1/videos/generations`。
 
 ```bash
 curl -X POST "https://你的域名/v1/videos" \
@@ -216,7 +216,7 @@ curl -X POST "https://你的域名/v1/videos" \
 GET /v1/videos/{task_id}
 ```
 
-兼容别名：`GET /v1/video/generations/{task_id}`。
+兼容别名：`GET /v1/video/generations/{task_id}`、`GET /v1/videos/generations/{task_id}`。
 
 只有创建该任务的 API Key 可以查询任务；旧任务按关联用户校验。
 
@@ -303,4 +303,3 @@ GET /v1/billing/usage?page=1&page_size=50
 - 只有上游成功返回后才扣费；失败请求会写入调用日志但不会扣除生成费用。
 - 当前公开 `/v1/models` 不返回价格。实际单价以管理后台当前启用的模型计费规则为准。
 - 余额不足时返回 `402 Payment Required`。
-

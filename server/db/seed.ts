@@ -1211,6 +1211,51 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 julun.cc 渠道出错:', err.message);
   }
 
+  // 16) 保证 HM Studio 渠道存在。密钥仅从服务器环境变量读取，不写入代码仓库。
+  try {
+    const hmStudioBaseUrl = 'https://dnyovzpgyokm.sealosbja.site';
+    const hmStudioApiKey = env.HM_STUDIO_API_KEY.trim();
+    const existingHmStudio = db.select().from(channels).all().find(channel =>
+      channel.type === 'hmstudio'
+      || channel.baseUrl?.replace(/\/+$/, '') === hmStudioBaseUrl
+      || channel.name === 'HM Studio 渠道'
+    );
+
+    if (!existingHmStudio) {
+      db.insert(channels).values({
+        name: 'HM Studio 渠道',
+        type: 'hmstudio',
+        baseUrl: hmStudioBaseUrl,
+        apiKey: hmStudioApiKey,
+        supportedModels: '[]',
+        modelMapping: '{}',
+        status: hmStudioApiKey ? 1 : 0,
+        priority: 10,
+        weight: 1,
+        maxRetries: 3,
+        timeout: 120000,
+      }).run();
+      console.log(`📦 已自动创建 HM Studio 渠道（${hmStudioApiKey ? '已启用' : '等待配置 API Key'}）`);
+    } else {
+      const updates: Record<string, any> = {
+        name: 'HM Studio 渠道',
+        type: 'hmstudio',
+        baseUrl: hmStudioBaseUrl,
+        updatedAt: new Date().toISOString(),
+      };
+      if (hmStudioApiKey) {
+        updates.apiKey = hmStudioApiKey;
+        updates.status = 1;
+      } else if (!existingHmStudio.apiKey) {
+        updates.status = 0;
+      }
+      db.update(channels).set(updates).where(eq(channels.id, existingHmStudio.id)).run();
+      console.log(`🔄 已校准 HM Studio 渠道（${hmStudioApiKey || existingHmStudio.apiKey ? '密钥已配置' : '等待配置 API Key'}）`);
+    }
+  } catch (err: any) {
+    console.error('⚠️ 初始化 HM Studio 渠道出错:', err.message);
+  }
+
   // 清除所有历史拆分的 MJNewAPI 渠道以保持干净
   try {
     const splitNames = [

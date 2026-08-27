@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { initDatabase } from '../server/db/seed.js';
 import { db, sqlite } from '../server/db/index.js';
-import { users, tiers, models, tierModelAccess, usageLogs } from '../server/db/schema.js';
+import { users, tiers, models, tierModelAccess, usageLogs, channels } from '../server/db/schema.js';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -77,6 +77,13 @@ describe('种子数据完整性', () => {
     for (const m of allModels) {
       expect(m.apiKey).toBeNull();
     }
+  });
+
+  it('启动时应该自动创建 HM Studio 渠道占位记录', () => {
+    const channel = db.select().from(channels).where(eq(channels.type, 'hmstudio')).get();
+    expect(channel).toBeDefined();
+    expect(channel!.baseUrl).toBe('https://dnyovzpgyokm.sealosbja.site');
+    expect(channel!.status).toBe(0);
   });
 
   it('应该有等级-模型关联数据', () => {

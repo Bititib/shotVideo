@@ -1167,6 +1167,21 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
   }
 
+  if (model === 'seedance_v2.5') {
+    if (!Number.isInteger(seconds) || seconds < 4 || seconds > 30) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'seedance_v2.5 seconds must be an integer from 4 to 30' });
+    }
+    if (resolution !== '720p') {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'seedance_v2.5 only supports 720p' });
+    }
+    if (image_urls.length > 10 || video_urls.length > 0 || audio_urls.length > 0) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'seedance_v2.5 supports at most 10 images and does not support video/audio references' });
+    }
+  }
+
   const channel = ChannelService.findChannelForModel(model);
   let upstreamModel = model;
   let baseUrl = '';
@@ -1590,8 +1605,10 @@ async function handleVideoQuery(req: Request, res: Response) {
 
 /** 注册统一视频接口路由 */
 router.post('/videos', upload.any(), handleVideoCreation);
+router.post('/videos/generations', upload.any(), handleVideoCreation);
 router.post('/video/generations', upload.any(), handleVideoCreation);
 router.get('/videos/:id', handleVideoQuery);
+router.get('/videos/generations/:id', handleVideoQuery);
 router.get('/video/generations/:id', handleVideoQuery);
 
 /** GET /v1/videos/:id/content — 统一视频内容直连下载/播放 */

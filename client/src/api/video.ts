@@ -13,6 +13,7 @@ export interface VideoModel {
     '1080p'?: number;
   };
   successRate?: number;
+  successRateEstimated?: boolean;
   totalCalls?: number;
 }
 
