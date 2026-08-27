@@ -19,6 +19,7 @@ import imageGenRoutes from './routes/imageGen.js';
 import orgRoutes from './routes/org.js';
 import contentRoutes from './routes/content.js';
 import userTokenRoutes from './routes/userTokens.js';
+import feedbackRoutes from './routes/feedback.js';
 
 import { AdminService } from './services/adminService.js';
 
@@ -82,6 +83,7 @@ export async function createApp() {
   app.use('/api/tokens', userTokenRoutes);
   app.use('/api/org', orgRoutes);
   app.use('/api/contents', contentRoutes);
+  app.use('/api/feedback', feedbackRoutes);
 
   // 公开设置接口（联系方式等）
   app.get('/api/settings', (req, res) => {

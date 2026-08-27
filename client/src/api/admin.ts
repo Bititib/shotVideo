@@ -81,6 +81,20 @@ export const adminApi = {
     return api.get<any>(`/admin/contents?${qs.toString()}`);
   },
   getContent(id: number) { return api.get<any>(`/admin/contents/${id}`); },
+
+  // 模型故障反馈
+  getFeedback(params: { page?: number; pageSize?: number; status?: string; modelId?: string; search?: string } = {}) {
+    const qs = new URLSearchParams();
+    if (params.page) qs.set('page', String(params.page));
+    if (params.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params.status) qs.set('status', params.status);
+    if (params.modelId) qs.set('modelId', params.modelId);
+    if (params.search) qs.set('search', params.search);
+    return api.get<any>(`/admin/feedback?${qs.toString()}`);
+  },
+  updateFeedback(id: number, data: { status?: string; adminNote?: string }) {
+    return api.put<any>(`/admin/feedback/${id}`, data);
+  },
 };
 
 /** 公开接口 - 不需要登录 */

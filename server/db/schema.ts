@@ -177,3 +177,18 @@ export const contents = sqliteTable('contents', {
   status: text('status').notNull().default('completed'),   // completed / failed / processing
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
 });
+
+// ============ 模型故障反馈表 ============
+export const modelFeedbacks = sqliteTable('model_feedbacks', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: integer('user_id').notNull(),
+  contentId: integer('content_id'),
+  modelId: text('model_id').notNull(),
+  errorMessage: text('error_message').notNull().default(''),
+  description: text('description').notNull().default(''),
+  status: text('status').notNull().default('pending'),
+  adminNote: text('admin_note').notNull().default(''),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+  resolvedAt: text('resolved_at'),
+});

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw, Maximize2, Minimize2, Scissors, HelpCircle, Trash2 } from 'lucide-react';
+import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw, Maximize2, Minimize2, Scissors, HelpCircle, Trash2, MessageSquareWarning, Send } from 'lucide-react';
 import { fetchVideoModels, generateVideo, type VideoModel, type VideoSSEEvent } from '../../api/video';
 import ImageSlicerModal from '../../components/ImageSlicerModal';
 import { contentApi } from '../../api/content';
@@ -8,6 +9,7 @@ import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { saveAsset, getAssets, deleteAsset, type Asset } from '../../utils/idb';
 import { useAuthStore } from '../../stores/authStore';
+import { feedbackApi } from '../../api/feedback';
 
 interface VideoTask {
   id: string;
@@ -382,6 +384,10 @@ export default function VideoPage() {
   const firstFrameInputRef = useRef<HTMLInputElement>(null);
   const lastFrameInputRef = useRef<HTMLInputElement>(null);
   const [tasks, setTasks] = useState<VideoTask[]>([]);
+  const [feedbackTask, setFeedbackTask] = useState<VideoTask | null>(null);
+  const [feedbackDescription, setFeedbackDescription] = useState('');
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState<Set<string>>(new Set());
   const [history, setHistory] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<Map<string, AbortController>>(new Map());
@@ -1098,6 +1104,28 @@ export default function VideoPage() {
     handleRemove(taskId);
   };
 
+  const handleSubmitFeedback = async () => {
+    if (!feedbackTask?.error || feedbackSubmitting) return;
+    setFeedbackSubmitting(true);
+    try {
+      const contentId = feedbackTask.dbId
+        || (feedbackTask.id.startsWith('db_') ? parseInt(feedbackTask.id.slice(3), 10) : null);
+      await feedbackApi.create({
+        contentId: contentId && !isNaN(contentId) ? contentId : null,
+        modelId: feedbackTask.metadata.model,
+        errorMessage: feedbackTask.error,
+        description: feedbackDescription,
+      });
+      setFeedbackSubmitted(prev => new Set(prev).add(feedbackTask.id));
+      setFeedbackTask(null);
+      setFeedbackDescription('');
+    } catch (err: any) {
+      setError(err.message || '反馈提交失败，请稍后重试');
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
+
   return (
     <div className="flex flex-col lg:flex-row min-h-full lg:h-full">
       {/* 左栏 */}
@@ -1281,6 +1309,15 @@ export default function VideoPage() {
                                 <button onClick={() => handleApplyHistory(task)}
                                   className="text-[10px] text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-0.5" title="套用历史配置（包含提示词与参考图片）">
                                   <RotateCcw className="w-3 h-3" />套用
+                                </button>
+                                <button
+                                  onClick={() => { setFeedbackTask(task); setFeedbackDescription(''); }}
+                                  disabled={feedbackSubmitted.has(task.id)}
+                                  className="text-[10px] text-[#a45736] hover:text-[#7c3f29] disabled:text-emerald-600 disabled:cursor-default transition-colors flex items-center gap-1"
+                                  title="向管理员反馈模型故障"
+                                >
+                                  {feedbackSubmitted.has(task.id) ? <Check className="w-3 h-3" /> : <MessageSquareWarning className="w-3 h-3" />}
+                                  {feedbackSubmitted.has(task.id) ? '已反馈' : '反馈'}
                                 </button>
                                 <button onClick={() => handleRemove(task.id)} className="text-[10px] text-zinc-500 hover:text-red-400 transition-colors" title="移除">
                                   <X className="w-3 h-3" />
@@ -1767,6 +1804,57 @@ export default function VideoPage() {
             <p className="text-sm text-zinc-400 mt-2">支持拖拽图片或视频 (将自动加入资产库)</p>
           </div>
         </div>
+      )}
+
+      {feedbackTask && createPortal(
+        <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-[#302721]/60 p-4 backdrop-blur-sm" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setFeedbackTask(null); }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="feedback-dialog-title" className="w-full max-w-lg overflow-hidden rounded-2xl border border-[#d9bea0] bg-[#fffaf2] shadow-[0_28px_80px_rgba(57,39,27,0.28)]">
+            <div className="flex items-start justify-between border-b border-[#e2ccb1] px-6 py-5">
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#f2ddc8] text-[#a45736]">
+                  <MessageSquareWarning className="h-4.5 w-4.5" />
+                </span>
+                <div>
+                  <h3 id="feedback-dialog-title" className="text-base font-semibold text-[#4c3328]">反馈模型故障</h3>
+                  <p className="mt-1 text-xs text-[#876b59]">错误信息和任务编号会自动发送给管理员。</p>
+                </div>
+              </div>
+              <button onClick={() => setFeedbackTask(null)} aria-label="关闭反馈弹窗" className="rounded-lg p-1.5 text-[#9a7a65] transition-colors hover:bg-[#ead8c4] hover:text-[#6b412f]">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 px-6 py-5">
+              <div className="rounded-xl border border-[#dec5a7] bg-[#fbf2e7] p-4">
+                <div className="flex items-center justify-between gap-3 text-xs">
+                  <span className="font-medium text-[#725442]">失败模型</span>
+                  <code className="max-w-[70%] truncate rounded-md bg-[#ead8c4] px-2 py-1 text-[11px] text-[#7c3f29]">{feedbackTask.metadata.model}</code>
+                </div>
+                <p className="mt-3 max-h-24 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-[#a04432]">{feedbackTask.error}</p>
+              </div>
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-semibold text-[#725442]">补充说明 <span className="font-normal text-[#a58a77]">（选填）</span></span>
+                <textarea
+                  value={feedbackDescription}
+                  onChange={(e) => setFeedbackDescription(e.target.value.slice(0, 1000))}
+                  rows={4}
+                  placeholder="例如：重复尝试次数、使用了哪些参考素材，或期望管理员如何协助……"
+                  className="w-full resize-none rounded-xl border border-[#dec5a7] bg-[#fffdf8] px-3.5 py-3 text-sm text-[#4c3328] outline-none transition focus:border-[#b86a44] focus:ring-4 focus:ring-[#b86a44]/10 placeholder:text-[#b19a89]"
+                />
+                <span className="mt-1 block text-right text-[10px] text-[#a58a77]">{feedbackDescription.length}/1000</span>
+              </label>
+            </div>
+
+            <div className="flex gap-3 border-t border-[#e2ccb1] bg-[#fbf3e8] px-6 py-4">
+              <button onClick={() => setFeedbackTask(null)} className="flex-1 rounded-xl border border-[#dec5a7] bg-[#fffaf2] py-2.5 text-xs font-medium text-[#684f40] transition hover:bg-[#efe0cf]">取消</button>
+              <button onClick={handleSubmitFeedback} disabled={feedbackSubmitting} className="flex-1 rounded-xl border border-[#8f4027] bg-[#a64f30] py-2.5 text-xs font-semibold text-white shadow-[0_6px_16px_rgba(145,65,39,0.2)] transition hover:bg-[#8f4027] disabled:cursor-wait disabled:opacity-60">
+                <span className="flex items-center justify-center gap-1.5"><Send className="h-3.5 w-3.5" />{feedbackSubmitting ? '提交中…' : '提交给管理员'}</span>
+              </button>
+            </div>
+          </section>
+        </div>,
+        document.body
       )}
 
       {/* 切图模态框 */}

@@ -1,7 +1,7 @@
 import React from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
-import { LayoutDashboard, Users, Star, Cpu, ArrowLeft, Layers3, LogOut, Radio, Key, Coins, Building2, Film } from 'lucide-react';
+import { LayoutDashboard, Users, Star, Cpu, ArrowLeft, Layers3, LogOut, Radio, Key, Coins, Building2, Film, MessageSquareWarning } from 'lucide-react';
 
 const adminNavItems = [
   { to: '/admin', icon: LayoutDashboard, label: '仪表盘', end: true },
@@ -13,6 +13,7 @@ const adminNavItems = [
   { to: '/admin/models', icon: Cpu, label: '模型管理' },
   { to: '/admin/orgs', icon: Building2, label: '组织管理' },
   { to: '/admin/contents', icon: Film, label: '内容管理' },
+  { to: '/admin/feedback', icon: MessageSquareWarning, label: '故障反馈' },
 ];
 
 export default function AdminLayout() {

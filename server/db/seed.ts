@@ -443,6 +443,20 @@ export async function initDatabase() {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS model_feedbacks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      content_id INTEGER,
+      model_id TEXT NOT NULL,
+      error_message TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending',
+      admin_note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      resolved_at TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_usage_logs_user_date ON usage_logs(user_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
     CREATE INDEX IF NOT EXISTS idx_api_tokens_key ON api_tokens(token_key);
@@ -452,6 +466,9 @@ export async function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_org_members_user ON org_members(user_id);
     CREATE INDEX IF NOT EXISTS idx_contents_user ON contents(user_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_contents_org ON contents(org_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_model_feedbacks_user ON model_feedbacks(user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_model_feedbacks_status ON model_feedbacks(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_model_feedbacks_model ON model_feedbacks(model_id, created_at);
   `);
 
   // 增量迁移：为已有 users 表添加 balance 列（新建数据库已包含，此处兼容旧库）

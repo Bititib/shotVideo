@@ -3,6 +3,7 @@ import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
 import { AdminService } from '../services/adminService.js';
 import { OrgService } from '../services/orgService.js';
+import { FeedbackService } from '../services/feedbackService.js';
 
 const router = Router();
 
@@ -259,6 +260,32 @@ router.get('/contents/:id', async (req: AuthRequest, res: Response) => {
     res.json(item);
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '获取内容失败' });
+  }
+});
+
+// ============ 模型故障反馈 ============
+router.get('/feedback', (req: AuthRequest, res: Response) => {
+  try {
+    const { page = '1', pageSize = '20', status, modelId, search } = req.query;
+    const result = FeedbackService.getAdminList({
+      page: Math.max(1, parseInt(page as string) || 1),
+      pageSize: Math.min(100, Math.max(1, parseInt(pageSize as string) || 20)),
+      status: status as string,
+      modelId: modelId as string,
+      search: search as string,
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '获取反馈列表失败' });
+  }
+});
+
+router.put('/feedback/:id', (req: AuthRequest, res: Response) => {
+  try {
+    FeedbackService.update(parseInt(req.params.id), req.body || {});
+    res.json({ message: '反馈已更新' });
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '更新反馈失败' });
   }
 });
 
