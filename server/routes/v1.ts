@@ -1167,6 +1167,22 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
   }
 
+  if (model === 'vd-seedance-2.5-480p' || model === 'vd-seedance-2.5-720p') {
+    const requiredResolution = model.endsWith('480p') ? '480p' : '720p';
+    if (!Number.isInteger(seconds) || seconds < 4 || seconds > 30) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `${model} seconds must be an integer from 4 to 30` });
+    }
+    if (resolution !== requiredResolution) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `${model} only supports ${requiredResolution}` });
+    }
+    if (image_urls.length > 9 || video_urls.length > 3 || audio_urls.length > 0) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `${model} supports at most 9 images, 3 videos, and no audio files` });
+    }
+  }
+
   if (model === 'seedance_v2.5') {
     if (!Number.isInteger(seconds) || seconds < 4 || seconds > 30) {
       cleanupFiles(req.files);

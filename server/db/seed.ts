@@ -156,6 +156,8 @@ export async function syncModelsFromAPI() {
     { provider: 'diwdiw', modelId: 'nd-seedance-2.0-480p', displayName: 'Seedance 2.0 (480p/不卡脸)', description: '9图3视频3音频，支持 4-15s，不卡人脸，固定按次计费 ¥3.15/次', capabilities: JSON.stringify(['video']) },
     { provider: 'diwdiw', modelId: 'nd-seedance-2.0-720p', displayName: 'Seedance 2.0 (720p/不卡脸)', description: '9图3视频3音频，支持 4-15s，不卡人脸，固定按次计费 ¥4.30/次', capabilities: JSON.stringify(['video']) },
     { provider: 'diwdiw', modelId: 'ad-seedance-2.5-480p', displayName: 'Seedance 2.5 480p（AD）', description: '支持最多30张图片、10个视频、10段音频参考，不限制人脸，按秒计费 ¥0.35/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'diwdiw', modelId: 'vd-seedance-2.5-480p', displayName: 'Seedance 2.5 480p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.25/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'diwdiw', modelId: 'vd-seedance-2.5-720p', displayName: 'Seedance 2.5 720p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.30/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']), isActive: 0 },
@@ -726,8 +728,6 @@ export async function initDatabase() {
   db.delete(settings).where(eq(settings.key, 'sdas_my_seedance_20_fast_720p_rate')).run();
   db.delete(settings).where(eq(settings.key, 'sdas_gf7_seedance_2_5_480p_rate')).run();
   db.delete(settings).where(eq(settings.key, 'sdas_gf7_seedance_2_5_720p_rate')).run();
-  db.delete(settings).where(eq(settings.key, 'vd_seedance_2_5_480p_rate')).run();
-  db.delete(settings).where(eq(settings.key, 'vd_seedance_2_5_720p_rate')).run();
   db.delete(settings).where(eq(settings.key, 'omni_flash_rate_720p')).run();
   db.delete(settings).where(eq(settings.key, 'omni_flash_rate_1080p')).run();
   db.delete(settings).where(eq(settings.key, 'omni_vref_rate_720p')).run();
@@ -914,6 +914,8 @@ export async function initDatabase() {
     { modelPattern: 'nd-seedance-2.0-480p', billingType: 'per_call', inputPrice: legacyRate('nd_seedance_2_0_480p_rate', 3.15), category: 'video' },
     { modelPattern: 'nd-seedance-2.0-720p', billingType: 'per_call', inputPrice: legacyRate('nd_seedance_2_0_720p_rate', 4.30), category: 'video' },
     { modelPattern: 'ad-seedance-2.5-480p', billingType: 'per_second', inputPrice: 0.35, category: 'video' },
+    { modelPattern: 'vd-seedance-2.5-480p', billingType: 'per_second', inputPrice: 0.25, category: 'video' },
+    { modelPattern: 'vd-seedance-2.5-720p', billingType: 'per_second', inputPrice: 0.30, category: 'video' },
     { modelPattern: 'seedance-2.5-c1', billingType: 'per_second', inputPrice: legacyRate('seedance_2_5_c1_rate', 0.25), category: 'video' },
     { modelPattern: 'seedance-2.5-deal', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5_deal_rate', 1.80), category: 'video' },
     { modelPattern: 'seedance-2.5m', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5m_rate', 3.00), category: 'video' },
@@ -1146,12 +1148,16 @@ export async function initDatabase() {
     const mjModels = [
       'cd-seedance-2.0-720p',
       'nd-seedance-2.0-480p',
-      'ad-seedance-2.5-480p'
+      'ad-seedance-2.5-480p',
+      'vd-seedance-2.5-480p',
+      'vd-seedance-2.5-720p'
     ];
     const mjMapping = {
       'cd-seedance-2.0-720p': 'cd-seedance 2.0 720p',
       'nd-seedance-2.0-480p': 'nd-seedance-2.0 480p',
-      'ad-seedance-2.5-480p': 'ad-seedance-2.5-480p'
+      'ad-seedance-2.5-480p': 'ad-seedance-2.5-480p',
+      'vd-seedance-2.5-480p': 'vd-seedance-2.5-480p',
+      'vd-seedance-2.5-720p': 'vd-seedance-2.5-720p'
     };
 
     if (!existingMj) {
