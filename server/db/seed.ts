@@ -29,6 +29,13 @@ async function verifyModel(ai: GoogleGenAI, modelId: string, isImage: boolean): 
 
 type ModelEntry = { provider: string; modelId: string; displayName: string; description?: string | null; capabilities: string; isActive?: number };
 
+export function shouldRemoveMissingGoogleModel(
+  model: Pick<typeof models.$inferSelect, 'provider' | 'modelId'>,
+  verifiedIds: Set<string>,
+): boolean {
+  return model.provider === 'google' && !verifiedIds.has(model.modelId);
+}
+
 /** 使用单个 Key 串行验证一批模型（同 Key 内间隔 2s 防限流） */
 async function verifyBatch(
   apiKey: string, keyIndex: number,
@@ -254,7 +261,10 @@ export async function syncModelsFromAPI() {
   // 仅在 API 成功拉取时才清理不在列表中的旧模型，网络失败时保留已有数据
   if (apiSuccess) {
     const verifiedIds = new Set(allVerified.map(m => m.modelId));
-    const toRemove = existingModels.filter(m => !verifiedIds.has(m.modelId));
+    // Google discovery must only manage Google-owned rows. Dynamic HM Studio,
+    // OpenAI and administrator-created models are managed by their own channel
+    // sync and must survive every restart/deployment.
+    const toRemove = existingModels.filter(m => shouldRemoveMissingGoogleModel(m, verifiedIds));
     if (toRemove.length > 0) {
       for (const m of toRemove) {
         db.delete(modelPricing).where(eq(modelPricing.modelPattern, m.modelId)).run();

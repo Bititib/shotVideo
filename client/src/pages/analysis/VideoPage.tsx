@@ -10,6 +10,7 @@ import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { saveAsset, getAssets, deleteAsset, type Asset } from '../../utils/idb';
 import { useAuthStore } from '../../stores/authStore';
 import { feedbackApi } from '../../api/feedback';
+import { getBillingUnit } from '../../utils/billing';
 
 interface VideoTask {
   id: string;
@@ -41,32 +42,6 @@ function getVideoPlayUrl(url: string | null) {
   }
   return `/api/video/play?url=${encodeURIComponent(url)}`;
 }
-
-const isFlatRateModel = (modelId: string) => {
-  return [
-    'seedance-2.0-fast',
-    'sd2-c7',
-    'sd2.5',
-    'sd2-c6',
-    'seedance-2.0-720p',
-    'seedance-2.0-fast-720p',
-    'sdas-pg-s2.0-fast',
-    'sdas-pd-sd2.0-pro-933-5-720p',
-    'sdas-hn-sd2.0-fast-720p',
-    'ld-sdas-cvk-pro-933-720p',
-    'sdas-mj-minimax-h3-2k',
-    'sdas-bl-sd2.0-933-pro-720p',
-    'sdas-bl-sd2.0-933-pro-noface-720p',
-    'cd-seedance-2.0-720p',
-    'nd-seedance-2.0-480p',
-    'nd-seedance-2.0-720p',
-    'seedance-720',
-    'tejiasd2',
-    'sd2-mini',
-    'seedance2.0-933',
-    'seedance2.0 933'
-  ].includes(modelId);
-};
 
 export const isComicDramaModel = (modelId: string) => {
   return [
@@ -1168,7 +1143,7 @@ export default function VideoPage() {
                               <div className="flex items-center gap-2 flex-wrap justify-end">
                                 {m.rates && (
                                   <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
-                                    ¥{(m.rates[resolution as keyof typeof m.rates] !== undefined ? m.rates[resolution as keyof typeof m.rates] : Object.values(m.rates)[0])?.toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}
+                                    ¥{(m.rates[resolution as keyof typeof m.rates] !== undefined ? m.rates[resolution as keyof typeof m.rates] : Object.values(m.rates)[0])?.toFixed(2)}{getBillingUnit(m.billingType)}
                                   </span>
                                 )}
                                 {m.successRate !== undefined && (
@@ -1192,7 +1167,7 @@ export default function VideoPage() {
                                 {Object.entries(m.rates).map(([resKey, resRate], rIdx, arr) => (
                                   <React.Fragment key={resKey}>
                                     <span>
-                                      {resKey}: <span className="text-zinc-400">¥{(Number(resRate) || 0).toFixed(2)}{isFlatRateModel(m.id) ? '/次' : '/秒'}</span>
+                                      {resKey}: <span className="text-zinc-400">¥{(Number(resRate) || 0).toFixed(2)}{getBillingUnit(m.billingType)}</span>
                                     </span>
                                     {rIdx < arr.length - 1 && <span className="text-zinc-800">•</span>}
                                   </React.Fragment>
