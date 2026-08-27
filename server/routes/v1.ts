@@ -12,6 +12,13 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { env } from '../config/env.js';
+import {
+  buildHmStudioImageForm,
+  buildHmStudioVideoForm,
+  hmStudioCreateUrl,
+  isHmStudioChannel,
+  waitForHmStudioTask,
+} from '../services/hmStudioAdapter.js';
 
 const router = Router();
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
@@ -626,6 +633,63 @@ router.post('/images/generations', async (req: Request, res: Response) => {
   const upstreamUrl = `${baseUrl}/v1/images/generations`;
 
   try {
+    if (isHmStudioChannel(channel)) {
+      const submitOne = async () => {
+        const formData = buildHmStudioImageForm({
+          model: upstreamModel,
+          prompt,
+          ratio: otherParams.ratio || otherParams.aspect_ratio || '1:1',
+          resolution: otherParams.resolution || '2k',
+          negativePrompt: otherParams.negative_prompt,
+          sampleStrength: otherParams.sample_strength !== undefined ? Number(otherParams.sample_strength) : undefined,
+          intelligentRatio: otherParams.intelligent_ratio,
+          upstreamChannel: otherParams.channel,
+        });
+        const requestHeaders: Record<string, string> = {};
+        if (channel.apiKey) requestHeaders.Authorization = `Bearer ${channel.apiKey}`;
+        const createResponse = await fetch(hmStudioCreateUrl(baseUrl, 'image'), {
+          method: 'POST',
+          headers: requestHeaders,
+          body: formData,
+          signal: AbortSignal.timeout(channel.timeout || 120_000),
+        });
+        if (!createResponse.ok) {
+          const detail = await createResponse.text().catch(() => '');
+          throw new Error(`HTTP ${createResponse.status}: ${detail.slice(0, 500)}`);
+        }
+        const job = await createResponse.json() as any;
+        const taskId = job.task_id || job.id;
+        if (!taskId) throw new Error('HM Studio did not return a task ID');
+        const task = await waitForHmStudioTask({ baseUrl, taskId, apiKey: channel.apiKey });
+        return { url: task.resultUrl };
+      };
+
+      const data = await Promise.all(Array.from({ length: count }, () => submitOne()));
+      const responseBody = { created: Math.floor(Date.now() / 1000), data };
+      const durationMs = Date.now() - startTime;
+      deductTokenOrUserBalance(token, totalCost, model);
+      db.insert(apiLogs).values({
+        tokenId: token.id, channelId: channel.id, model, upstreamModel,
+        cost: totalCost, durationMs, status: 'success', clientIp,
+      }).run();
+      try {
+        saveApiImageAssets({
+          token,
+          responseBody,
+          model,
+          prompt,
+          size,
+          responseFormat: response_format,
+          outputFormat: otherParams.output_format,
+          operation: 'generation',
+          totalCost,
+        });
+      } catch (assetError) {
+        console.error('[v1/images/generations] HM Studio asset save failed:', assetError);
+      }
+      return res.json(responseBody);
+    }
+
     const upstreamRes = await fetch(upstreamUrl, {
       method: 'POST',
       headers: {
@@ -770,6 +834,63 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
   const upstreamUrl = `${baseUrl}/v1/images/edits`;
 
   try {
+    if (isHmStudioChannel(channel)) {
+      const imageSources = imageFiles.map(file => {
+        const content = fs.readFileSync(file.path).toString('base64');
+        return `data:${file.mimetype || 'image/png'};base64,${content}`;
+      });
+      const submitOne = async () => {
+        const hmForm = buildHmStudioImageForm({
+          model: upstreamModel,
+          prompt,
+          ratio: otherParams.ratio || otherParams.aspect_ratio || '1:1',
+          resolution: otherParams.resolution || '2k',
+          imageSources,
+          negativePrompt: otherParams.negative_prompt,
+          sampleStrength: otherParams.sample_strength !== undefined ? Number(otherParams.sample_strength) : 0.5,
+          intelligentRatio: otherParams.intelligent_ratio,
+          upstreamChannel: otherParams.channel,
+        });
+        const hmHeaders: Record<string, string> = {};
+        if (channel.apiKey) hmHeaders.Authorization = `Bearer ${channel.apiKey}`;
+        const createResponse = await fetch(hmStudioCreateUrl(baseUrl, 'image'), {
+          method: 'POST', headers: hmHeaders, body: hmForm,
+          signal: AbortSignal.timeout(channel.timeout || 120_000),
+        });
+        if (!createResponse.ok) {
+          const detail = await createResponse.text().catch(() => '');
+          throw new Error(`HTTP ${createResponse.status}: ${detail.slice(0, 500)}`);
+        }
+        const job = await createResponse.json() as any;
+        const taskId = job.task_id || job.id;
+        if (!taskId) throw new Error('HM Studio did not return a task ID');
+        const task = await waitForHmStudioTask({ baseUrl, taskId, apiKey: channel.apiKey });
+        return { url: task.resultUrl };
+      };
+
+      const data = await Promise.all(Array.from({ length: count }, () => submitOne()));
+      cleanupFiles(req.files);
+      const responseBody = { created: Math.floor(Date.now() / 1000), data };
+      const durationMs = Date.now() - startTime;
+      deductTokenOrUserBalance(token, totalCost, model);
+      db.insert(apiLogs).values({
+        tokenId: token.id, channelId: channel.id, model, upstreamModel,
+        cost: totalCost, durationMs, status: 'success', clientIp,
+      }).run();
+      try {
+        saveApiImageAssets({
+          token, responseBody, model, prompt, size,
+          responseFormat: response_format,
+          outputFormat: otherParams.output_format,
+          operation: 'edit', totalCost,
+          referenceFileNames: imageFiles.map(file => file.originalname),
+        });
+      } catch (assetError) {
+        console.error('[v1/images/edits] HM Studio asset save failed:', assetError);
+      }
+      return res.json(responseBody);
+    }
+
     const formData = new FormData();
     formData.append('model', upstreamModel);
     formData.append('prompt', prompt);
@@ -1142,8 +1263,11 @@ async function handleVideoCreation(req: Request, res: Response) {
     'omni-flash',
     'omni-flash-vref'
   ].includes(model) || model.startsWith('omni-') || model.startsWith('veo-omni-');
+  const isHmStudio = isHmStudioChannel(channel);
 
-  const upstreamUrl = isSudaShuiModel
+  const upstreamUrl = isHmStudio
+    ? hmStudioCreateUrl(baseUrl, 'video')
+    : isSudaShuiModel
     ? `${baseUrl}/v1/video/generations`
     : `${baseUrl}/v1/videos`;
 
@@ -1166,7 +1290,30 @@ async function handleVideoCreation(req: Request, res: Response) {
     delete otherParams.audio_urls;
     delete otherParams.audios;
 
-    if (Array.isArray(req.files) && req.files.length > 0) {
+    if (isHmStudio) {
+      const formData = buildHmStudioVideoForm({
+        model: upstreamModel,
+        prompt,
+        duration: seconds,
+        ratio,
+        resolution,
+        imageSources: image_urls,
+        videoSources: video_urls,
+        audioSources: audio_urls,
+        firstFrame: body.first_frame_url,
+        lastFrame: body.end_frame_url || body.last_frame_url,
+        functionMode: body.function_mode,
+        upstreamChannel: body.channel,
+      });
+      const headers: Record<string, string> = {};
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+      upstreamRes = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers,
+        body: formData,
+        signal: AbortSignal.timeout(channel.timeout || 120_000),
+      });
+    } else if (Array.isArray(req.files) && req.files.length > 0) {
       const formData = new FormData();
       formData.append('model', upstreamModel);
       formData.append('prompt', prompt);

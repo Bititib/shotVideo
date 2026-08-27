@@ -1,5 +1,5 @@
 import { db } from '../db/index.js';
-import { channels } from '../db/schema.js';
+import { channels, models } from '../db/schema.js';
 import { eq, sql, desc } from 'drizzle-orm';
 
 export class ChannelService {
@@ -151,5 +151,70 @@ export class ChannelService {
 
       return { success: false, message, durationMs };
     }
+  }
+
+  /** Pull the currently enabled upstream models into channel routing and model management. */
+  static async syncModels(id: number): Promise<{ count: number; added: number; models: string[] }> {
+    const channel = db.select().from(channels).where(eq(channels.id, id)).get();
+    if (!channel) throw { status: 404, message: '渠道不存在' };
+    if (!channel.apiKey) throw { status: 400, message: '请先配置渠道 API Key' };
+
+    const url = channel.baseUrl.replace(/\/+$/, '') + '/v1/models';
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${channel.apiKey}` },
+      signal: AbortSignal.timeout(channel.timeout || 30_000),
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw { status: response.status, message: `拉取模型失败: HTTP ${response.status} ${detail.slice(0, 300)}` };
+    }
+
+    const payload = await response.json() as any;
+    const rawModels = Array.isArray(payload) ? payload
+      : Array.isArray(payload.data) ? payload.data
+      : Array.isArray(payload.models) ? payload.models
+      : [];
+    const normalized = rawModels.map((item: any) => {
+      const modelId = String(typeof item === 'string' ? item : item.id || item.model || item.model_id || '').trim();
+      const displayName = String(typeof item === 'string' ? item : item.display_name || item.name || modelId).trim();
+      const explicitType = String(typeof item === 'object' ? item.type || item.category || '' : '').toLowerCase();
+      const capability = explicitType.includes('lip') || /lip-sync/i.test(modelId)
+        ? 'lip_sync'
+        : explicitType.includes('video') || /video|seedance/i.test(modelId)
+        ? 'video'
+        : explicitType.includes('image') || /image|jimeng|banana/i.test(modelId)
+          ? 'image'
+          : 'text';
+      return { modelId, displayName: displayName || modelId, capability };
+    }).filter((item: any) => item.modelId);
+
+    const unique = [...new Map(normalized.map((item: any) => [item.modelId, item])).values()] as Array<{
+      modelId: string; displayName: string; capability: string;
+    }>;
+    let added = 0;
+    for (const item of unique) {
+      const existing = db.select().from(models).where(eq(models.modelId, item.modelId)).get();
+      if (!existing) {
+        db.insert(models).values({
+          provider: channel.type,
+          modelId: item.modelId,
+          displayName: item.displayName,
+          description: `由 ${channel.name} 同步`,
+          capabilities: JSON.stringify([item.capability]),
+          isActive: 1,
+        }).run();
+        added++;
+      }
+    }
+
+    const modelIds = unique.map(item => item.modelId);
+    const mapping = Object.fromEntries(modelIds.map(modelId => [modelId, modelId]));
+    db.update(channels).set({
+      supportedModels: JSON.stringify(modelIds),
+      modelMapping: JSON.stringify(mapping),
+      updatedAt: new Date().toISOString(),
+    }).where(eq(channels.id, id)).run();
+
+    return { count: modelIds.length, added, models: modelIds };
   }
 }

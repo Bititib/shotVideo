@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { adminApi } from '../../api/admin';
-import { Plus, Radio, Trash2, Pencil, Zap, Loader2, Power, PowerOff } from 'lucide-react';
+import { Plus, Radio, Trash2, Pencil, Zap, Loader2, Power, PowerOff, RefreshCw } from 'lucide-react';
 
 export default function ChannelsPage() {
   const [channels, setChannels] = useState<any[]>([]);
   const [edit, setEdit] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState<number | null>(null);
+  const [syncing, setSyncing] = useState<number | null>(null);
 
   const load = async () => { setLoading(true); setChannels(await adminApi.getChannels()); setLoading(false); };
   useEffect(() => { load(); }, []);
@@ -73,6 +74,16 @@ export default function ChannelsPage() {
     catch (e: any) { alert(e.message); }
   };
 
+  const syncModels = async (ch: any) => {
+    setSyncing(ch.id);
+    try {
+      const result = await adminApi.syncChannelModels(ch.id);
+      alert(`同步完成：上游 ${result.count} 个模型，新增 ${result.added} 个模型配置`);
+      load();
+    } catch (e: any) { alert('同步失败: ' + e.message); }
+    finally { setSyncing(null); }
+  };
+
   if (loading) return <div className="flex items-center justify-center h-full"><div className="w-8 h-8 border-2 border-white/10 border-t-white rounded-full animate-spin" /></div>;
 
   return (
@@ -94,10 +105,14 @@ export default function ChannelsPage() {
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-white">{ch.name}</h3>
-                  <p className="text-[10px] text-zinc-500 font-mono"><span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold mr-1.5 ${ch.type === 'gemini' ? 'bg-emerald-500/15 text-emerald-400' : ch.type === 'grok2api' ? 'bg-orange-500/15 text-orange-400' : 'bg-blue-500/15 text-blue-400'}`}>{ch.type === 'openai' ? 'OpenAI' : ch.type === 'gemini' ? 'Gemini' : ch.type === 'grok2api' ? 'Grok2API' : ch.type}</span>{ch.baseUrl}</p>
+                  <p className="text-[10px] text-zinc-500 font-mono"><span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold mr-1.5 ${ch.type === 'gemini' ? 'bg-emerald-500/15 text-emerald-400' : ch.type === 'grok2api' ? 'bg-orange-500/15 text-orange-400' : ch.type === 'hmstudio' ? 'bg-amber-500/15 text-amber-300' : 'bg-blue-500/15 text-blue-400'}`}>{ch.type === 'openai' ? 'OpenAI' : ch.type === 'gemini' ? 'Gemini' : ch.type === 'grok2api' ? 'Grok2API' : ch.type === 'hmstudio' ? 'HM Studio' : ch.type}</span>{ch.baseUrl}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <button onClick={() => syncModels(ch)} disabled={syncing === ch.id}
+                  className="flex items-center gap-1 text-[10px] px-3 py-1 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg text-amber-300 disabled:opacity-50">
+                  <RefreshCw className={`w-3 h-3 ${syncing === ch.id ? 'animate-spin' : ''}`} /> 同步模型
+                </button>
                 <button onClick={() => handleTest(ch.id)} disabled={testing === ch.id}
                   className="flex items-center gap-1 text-[10px] px-3 py-1 bg-yellow-500/10 hover:bg-yellow-500/20 rounded-lg text-yellow-400 disabled:opacity-50">
                   {testing === ch.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />} 测试
@@ -138,6 +153,7 @@ export default function ChannelsPage() {
                   <select value={edit.type} onChange={e => setEdit({ ...edit, type: e.target.value })}
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
                     <option value="openai">OpenAI 兼容（Chat 代理）</option>
+                    <option value="hmstudio">HM Studio（图片/视频异步任务）</option>
                     <option value="gemini">Gemini（分析服务）</option>
                     <option value="grok2api">Grok2API（视频/图片生成）</option>
                     <option value="custom">自定义</option>

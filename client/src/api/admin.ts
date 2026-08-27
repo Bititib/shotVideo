@@ -32,6 +32,7 @@ export const adminApi = {
   updateChannel(id: number, data: any) { return api.put<any>(`/admin/channels/${id}`, data); },
   deleteChannel(id: number) { return api.delete<any>(`/admin/channels/${id}`); },
   testChannel(id: number) { return api.post<any>(`/admin/channels/${id}/test`); },
+  syncChannelModels(id: number) { return api.post<any>(`/admin/channels/${id}/sync-models`); },
 
   // Token 管理
   getTokens(params: { page?: number; pageSize?: number; search?: string } = {}) {

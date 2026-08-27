@@ -45,4 +45,12 @@ router.post('/:id/test', async (req: AuthRequest, res: Response) => {
   } catch (err: any) { res.status(err.status || 500).json({ error: err.message }); }
 });
 
+// 从上游同步当前可用模型
+router.post('/:id/sync-models', async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await ChannelService.syncModels(parseInt(req.params.id));
+    res.json(result);
+  } catch (err: any) { res.status(err.status || 500).json({ error: err.message }); }
+});
+
 export default router;

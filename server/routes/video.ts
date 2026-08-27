@@ -6,6 +6,13 @@ import { ChannelService } from '../services/channelService.js';
 import { BalanceService } from '../services/balanceService.js';
 import { ContentService } from '../services/contentService.js';
 import { PricingService } from '../services/pricingService.js';
+import {
+  buildHmStudioVideoForm,
+  hmStudioCreateUrl,
+  hmStudioTaskUrl,
+  isHmStudioChannel,
+  normalizeHmStudioTask,
+} from '../services/hmStudioAdapter.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models, settings, contents } from '../db/schema.js';
@@ -230,7 +237,13 @@ const DEFAULT_VIDEO_MODELS = [
 /** 查找支持指定视频模型的渠道 */
 function findVideoChannel(modelId: string) {
   const channel = ChannelService.findChannelForModel(modelId);
-  if (channel) return { baseUrl: channel.baseUrl, apiKey: channel.apiKey };
+  if (channel) return {
+    id: channel.id,
+    type: channel.type,
+    baseUrl: channel.baseUrl,
+    apiKey: channel.apiKey,
+    modelMapping: channel.modelMapping,
+  };
   return null;
 }
 
@@ -863,6 +876,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isSeedanceFast = model === 'seedance-2.0-fast';
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
   const isSudaShui = meta?.series === 'sudashui';
+  const isHmStudio = isHmStudioChannel(channel);
   const isVeoOmni = model === 'veo-omni-flash';
   const isVeo31 = model === 'veo-3-1';
   const isWan30 = model === 'wan3.0th';
@@ -880,7 +894,38 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   try {
     let videoId = '';
 
-    if (isSudaShui) {
+    if (isHmStudio) {
+      sendEvent({ type: 'status', message: '正在整理素材并提交 HM Studio 任务...' });
+      const formData = buildHmStudioVideoForm({
+        model: upstreamModel,
+        prompt: prompt.trim(),
+        duration: Number(video_length) || 5,
+        ratio: aspect_ratio,
+        resolution: resolution || '720p',
+        imageSources: reference_images,
+        videoSources: finalVideos,
+        audioSources: finalAudios,
+        firstFrame: first_frame,
+        lastFrame: last_frame,
+      });
+      const headers: Record<string, string> = {};
+      if (channel.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
+
+      const createResp = await fetch(hmStudioCreateUrl(baseUrl, 'video'), {
+        method: 'POST',
+        headers,
+        body: formData,
+        signal: AbortSignal.timeout(dbChannel?.timeout || 120_000),
+      });
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        refundFailedTask(`HM Studio 提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+      const job = await createResp.json() as any;
+      videoId = job.task_id || job.id;
+    } else if (isSudaShui) {
       sendEvent({ type: 'status', message: '正在上传素材并提交 SudaShui 任务...' });
 
       const imageUrls: string[] = [];
@@ -1366,7 +1411,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       try {
         let pollUrl = `${baseUrl}/v1/videos/${videoId}`;
-        if (isSudaShui) {
+        if (isHmStudio) {
+          pollUrl = hmStudioTaskUrl(baseUrl, videoId);
+        } else if (isSudaShui) {
           pollUrl = `${baseUrl}/v1/video/generations/${videoId}`;
         }
 
@@ -1386,7 +1433,13 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         let resultUrl = '';
         let errMsg = '';
 
-        if (isSudaShui) {
+        if (isHmStudio) {
+          const normalized = normalizeHmStudioTask(status, baseUrl);
+          taskStatus = normalized.status;
+          progress = normalized.progress;
+          resultUrl = normalized.resultUrl;
+          errMsg = normalized.error || 'HM Studio 视频生成失败';
+        } else if (isSudaShui) {
           const dataBlock = status.data || {};
           taskStatus = (dataBlock.status || status.status || '').toLowerCase();
 
@@ -1460,7 +1513,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
         console.log(`[video] 轮询 (${isSudaShui ? 'SudaShui' : isSoraV4 ? 'SoraV4' : isSeedanceFast ? 'SeedanceFast' : 'Default'}): status=${taskStatus} progress=${progress}%`);
 
-        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'in_progress') {
+        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'generating' || taskStatus === 'post_processing' || taskStatus === 'finalizing' || taskStatus === 'in_progress') {
           sendEvent({ type: 'progress', progress });
           sendEvent({ type: 'status', message: `视频生成中 ${progress}%` });
           // 将实时进度写入数据库，以便前端刷新页面后恢复时能读取
@@ -1786,7 +1839,24 @@ export function resumePollForTask(contentId: number, record: any) {
     model = 'sdas-pd-sd2.0-pro-933-5-720p';
   }
   const meta = MODEL_META[model];
-  const channel = findVideoChannel(model);
+  let videoId = '';
+  let metadata: any = {};
+  try {
+    metadata = typeof record.metadata === 'string' ? JSON.parse(record.metadata) : (record.metadata || {});
+    videoId = metadata.videoId || '';
+  } catch (e) {
+    console.error(`[video-recover] Parse metadata failed for task ${contentId}:`, e);
+  }
+
+  const originalChannel = metadata.channelId ? ChannelService.getChannelRaw(Number(metadata.channelId)) : null;
+  const fallbackChannel = findVideoChannel(model);
+  const channel = originalChannel ? {
+    id: originalChannel.id,
+    type: originalChannel.type,
+    baseUrl: originalChannel.baseUrl,
+    apiKey: originalChannel.apiKey,
+    modelMapping: originalChannel.modelMapping,
+  } : fallbackChannel;
   if (!channel) {
     console.error(`[video-recover] No channel found for model ${model} in task ${contentId}`);
     activePolls.delete(contentId);
@@ -1796,15 +1866,6 @@ export function resumePollForTask(contentId: number, record: any) {
       console.error(`[video-recover] Failed to set status to failed for task ${contentId}:`, dbErr);
     }
     return;
-  }
-
-  let videoId = '';
-  let metadata: any = {};
-  try {
-    metadata = typeof record.metadata === 'string' ? JSON.parse(record.metadata) : (record.metadata || {});
-    videoId = metadata.videoId || '';
-  } catch (e) {
-    console.error(`[video-recover] Parse metadata failed for task ${contentId}:`, e);
   }
 
   if (!videoId) {
@@ -1918,6 +1979,7 @@ export function resumePollForTask(contentId: number, record: any) {
   const isSeedanceFast = model === 'seedance-2.0-fast';
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
   const isSudaShui = meta?.series === 'sudashui';
+  const isHmStudio = isHmStudioChannel(channel);
 
   const headers: Record<string, string> = {};
   if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
@@ -1938,7 +2000,9 @@ export function resumePollForTask(contentId: number, record: any) {
 
       try {
         let pollUrl = `${baseUrl}/v1/videos/${videoId}`;
-        if (isSudaShui) {
+        if (isHmStudio) {
+          pollUrl = hmStudioTaskUrl(baseUrl, videoId);
+        } else if (isSudaShui) {
           pollUrl = `${baseUrl}/v1/video/generations/${videoId}`;
         }
 
@@ -1958,7 +2022,13 @@ export function resumePollForTask(contentId: number, record: any) {
         let resultUrl = '';
         let errMsg = '';
 
-        if (isSudaShui) {
+        if (isHmStudio) {
+          const normalized = normalizeHmStudioTask(statusData, baseUrl);
+          taskStatus = normalized.status;
+          progress = normalized.progress;
+          resultUrl = normalized.resultUrl;
+          errMsg = normalized.error || 'HM Studio 视频生成失败';
+        } else if (isSudaShui) {
           const dataBlock = statusData.data || {};
           taskStatus = (dataBlock.status || statusData.status || '').toLowerCase();
           const progressStr = dataBlock.progress || statusData.progress || '0%';
@@ -2028,7 +2098,7 @@ export function resumePollForTask(contentId: number, record: any) {
 
         console.log(`[video-recover] Polling task ${contentId}: status=${taskStatus} progress=${progress}%`);
 
-        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'in_progress') {
+        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'generating' || taskStatus === 'post_processing' || taskStatus === 'finalizing' || taskStatus === 'in_progress') {
           try {
             const meta = JSON.parse(currentRecord.metadata || '{}');
             meta.progress = progress;
