@@ -1531,16 +1531,17 @@ async function handleVideoQuery(req: Request, res: Response) {
 
     const status = record.status;
     let progress = 0;
+    let metadata: Record<string, any> = {};
     try {
-      const meta = JSON.parse(record.metadata || '{}');
-      progress = status === 'completed' ? 100 : (meta.progress || 0);
+      metadata = JSON.parse(record.metadata || '{}');
+      progress = status === 'completed' ? 100 : (metadata.progress || 0);
     } catch {}
 
     let mappedStatus = 'queued';
     if (status === 'completed') mappedStatus = 'completed';
     else if (status === 'failed') mappedStatus = 'failed';
     else if (status === 'processing') {
-      mappedStatus = progress > 0 ? 'processing' : 'queued';
+      mappedStatus = metadata.upstreamStatus || (progress > 0 ? 'processing' : 'queued');
     }
 
     const host = req.get('host');
@@ -1553,7 +1554,10 @@ async function handleVideoQuery(req: Request, res: Response) {
       object: 'video',
       model: record.modelId,
       status: mappedStatus,
-      progress: progress
+      progress,
+      progress_pct: progress,
+      progress_text: metadata.progressText || undefined,
+      upstream_task_id: metadata.videoId || undefined,
     };
 
     if (mappedStatus === 'completed') {

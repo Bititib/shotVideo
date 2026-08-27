@@ -18,6 +18,7 @@ export type HmStudioVideoOptions = {
 export type NormalizedHmStudioTask = {
   status: string;
   progress: number;
+  progressText: string;
   resultUrl: string;
   error: string;
 };
@@ -215,7 +216,10 @@ export function normalizeHmStudioTask(raw: any, baseUrl: string): NormalizedHmSt
 
   return {
     status,
-    progress: status === 'success' || status === 'completed' ? 100 : parseProgress(payload.progress ?? raw?.progress),
+    progress: status === 'success' || status === 'completed'
+      ? 100
+      : parseProgress(payload.progress_pct ?? raw?.progress_pct ?? payload.progress ?? raw?.progress),
+    progressText: String(payload.progress_text || raw?.progress_text || ''),
     resultUrl,
     error,
   };

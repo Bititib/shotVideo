@@ -1531,14 +1531,17 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
         if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'generating' || taskStatus === 'post_processing' || taskStatus === 'finalizing' || taskStatus === 'in_progress') {
           sendEvent({ type: 'progress', progress });
-          sendEvent({ type: 'status', message: `视频生成中 ${progress}%` });
+          const hmProgressText = isHmStudio ? normalizeHmStudioTask(status, baseUrl).progressText : '';
+          sendEvent({ type: 'status', message: hmProgressText || `视频生成中 ${progress}%` });
           // 将实时进度写入数据库，以便前端刷新页面后恢复时能读取
-          if (contentId !== null && progress > 0) {
+          if (contentId !== null) {
             try {
               const row = db.select().from(contents).where(eq(contents.id, contentId)).get();
               if (row) {
                 const meta = JSON.parse(row.metadata || '{}');
                 meta.progress = progress;
+                meta.upstreamStatus = taskStatus;
+                if (hmProgressText) meta.progressText = hmProgressText;
                 db.update(contents).set({ metadata: JSON.stringify(meta) }).where(eq(contents.id, contentId)).run();
               }
             } catch { }
@@ -2118,6 +2121,11 @@ export function resumePollForTask(contentId: number, record: any) {
           try {
             const meta = JSON.parse(currentRecord.metadata || '{}');
             meta.progress = progress;
+            meta.upstreamStatus = taskStatus;
+            if (isHmStudio) {
+              const progressText = normalizeHmStudioTask(statusData, baseUrl).progressText;
+              if (progressText) meta.progressText = progressText;
+            }
             db.update(contents).set({ metadata: JSON.stringify(meta) }).where(eq(contents.id, contentId)).run();
           } catch { }
         } else if (taskStatus === 'completed' || taskStatus === 'success') {

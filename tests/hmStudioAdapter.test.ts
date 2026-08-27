@@ -77,4 +77,16 @@ describe('HM Studio adapter', () => {
       error: 'upstream rejected',
     });
   });
+
+  it('reads HM Studio progress_pct and progress_text fields', () => {
+    expect(normalizeHmStudioTask({
+      status: 'generating',
+      progress_pct: 37,
+      progress_text: '视频生成中',
+    }, 'https://example.test')).toMatchObject({
+      status: 'generating',
+      progress: 37,
+      progressText: '视频生成中',
+    });
+  });
 });
