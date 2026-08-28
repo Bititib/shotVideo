@@ -14,6 +14,11 @@ import {
   isHmStudioChannel,
   normalizeHmStudioTask,
 } from '../services/hmStudioAdapter.js';
+import {
+  buildMjNewApiVideoPayload,
+  findInvalidMjNewApiMaterialUrls,
+  isMjNewApiChannel,
+} from '../services/mjNewApiAdapter.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models, settings, contents } from '../db/schema.js';
@@ -910,6 +915,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
   const isSudaShui = meta?.series === 'sudashui';
   const isHmStudio = isHmStudioChannel(channel);
+  const isMjNewApi = isMjNewApiChannel(channel);
   const isVeoOmni = model === 'veo-omni-flash';
   const isVeo31 = model === 'veo-3-1';
   const isWan30 = model === 'wan3.0th';
@@ -960,6 +966,58 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       }
       const job = await createResp.json() as any;
       videoId = job.task_id || job.id;
+    } else if (isMjNewApi) {
+      sendEvent({ type: 'status', message: '正在处理素材并提交 MJNewAPI 任务...' });
+
+      const imageUrls = (reference_images || [])
+        .map((item: string) => convertBase64ToPublicUrl(item, 'mj_img', req))
+        .filter(Boolean);
+      const videoUrls = finalVideos
+        .map(item => convertBase64ToPublicUrl(item, 'mj_video', req))
+        .filter(Boolean);
+      const audioUrls = finalAudios
+        .map(item => convertBase64ToPublicUrl(item, 'mj_audio', req))
+        .filter(Boolean);
+      const invalidUrls = findInvalidMjNewApiMaterialUrls(imageUrls, videoUrls, audioUrls);
+
+      if (invalidUrls.length > 0) {
+        refundFailedTask('MJNewAPI 参考素材必须是外网可访问的 HTTPS URL，请检查 BACKEND_URL 配置');
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+
+      const payload = buildMjNewApiVideoPayload({
+        model: upstreamModel,
+        prompt,
+        duration: Number(video_length) || 6,
+        aspectRatio: aspect_ratio,
+        resolution,
+        images: imageUrls,
+        videos: videoUrls,
+        audios: audioUrls,
+      });
+
+      console.log(`[video] MJNewAPI 创建任务: model=${model} upstreamModel=${upstreamModel} duration=${payload.duration} resolution=${resolution} images=${imageUrls.length} videos=${videoUrls.length} audios=${audioUrls.length}`);
+
+      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${channel.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(dbChannel?.timeout || 120_000),
+      });
+
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        refundFailedTask(`MJNewAPI 提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+
+      const job = await createResp.json() as any;
+      videoId = job.id || job.task_id;
     } else if (isSudaShui) {
       sendEvent({ type: 'status', message: '正在上传素材并提交 SudaShui 任务...' });
 

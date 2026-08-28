@@ -19,6 +19,11 @@ import {
   isHmStudioChannel,
   waitForHmStudioTask,
 } from '../services/hmStudioAdapter.js';
+import {
+  buildMjNewApiVideoPayload,
+  findInvalidMjNewApiMaterialUrls,
+  isMjNewApiChannel,
+} from '../services/mjNewApiAdapter.js';
 
 const router = Router();
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
@@ -1295,6 +1300,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     'omni-flash-vref'
   ].includes(model) || model.startsWith('omni-') || model.startsWith('veo-omni-');
   const isHmStudio = isHmStudioChannel(channel);
+  const isMjNewApi = isMjNewApiChannel(channel);
 
   const upstreamUrl = isHmStudio
     ? hmStudioCreateUrl(baseUrl, 'video')
@@ -1342,6 +1348,35 @@ async function handleVideoCreation(req: Request, res: Response) {
         method: 'POST',
         headers,
         body: formData,
+        signal: AbortSignal.timeout(channel.timeout || 120_000),
+      });
+    } else if (isMjNewApi) {
+      const invalidUrls = findInvalidMjNewApiMaterialUrls(image_urls, video_urls, audio_urls);
+      if (invalidUrls.length > 0) {
+        cleanupFiles(req.files);
+        db.update(contents).set({ status: 'failed', cost: 0 }).where(eq(contents.id, contentId)).run();
+        return res.status(400).json({ error: 'MJNewAPI reference materials must use publicly accessible HTTPS URLs. Check BACKEND_URL.' });
+      }
+
+      const payload = buildMjNewApiVideoPayload({
+        model: upstreamModel,
+        prompt,
+        duration: seconds,
+        aspectRatio: ratio,
+        resolution,
+        images: image_urls,
+        videos: video_urls,
+        audios: audio_urls,
+      });
+
+      console.log(`[v1-video] MJNewAPI create: model=${model} upstreamModel=${upstreamModel} duration=${seconds} resolution=${resolution} images=${image_urls.length} videos=${video_urls.length} audios=${audio_urls.length}`);
+
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+      upstreamRes = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(channel.timeout || 120_000),
       });
     } else if (Array.isArray(req.files) && req.files.length > 0) {
