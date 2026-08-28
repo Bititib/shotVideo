@@ -307,8 +307,10 @@ print(resp.json())
   "status": "queued",
   "progress": 0,
   "queue_position": 3,
-  "queue_running": 10,
-  "queue_limit": 10,
+  "queue_running": 18,
+  "queue_limit": 20,
+  "channel_running": 9,
+  "channel_limit": 10,
   "user_concurrency_limit": 2
 }`
     },
@@ -365,7 +367,7 @@ while True:
       title: '查询 HM Studio 队列策略',
       method: 'GET',
       path: '/v1/queue',
-      description: '查询 HM Studio 当前运行数、排队数和调度上限。图片与视频共用名额，用户之间轮询调度，同一用户内部 FIFO。',
+      description: '查询 HM Studio 当前运行数、排队数和调度上限。每个不同 API Key 独立提供 10 并发，两个 Key 总容量为 20；重复 Key 不会增加容量。',
       parameters: [],
       curlExample: `curl "${getBaseUrl()}/queue" \\
   -H "Authorization: Bearer sk-你的令牌Key"`,
@@ -380,9 +382,11 @@ print(f"运行 {data['running']}/{data['concurrency_limit']}，排队 {data['que
   "object": "queue_status",
   "provider": "hmstudio",
   "strategy": "round_robin_by_user_fifo_within_user",
-  "running": 10,
+  "running": 18,
   "queued": 6,
-  "concurrency_limit": 10,
+  "concurrency_limit": 20,
+  "pool_count": 2,
+  "per_key_concurrency_limit": 10,
   "user_concurrency_limit": 2,
   "max_user_queue": 10,
   "max_queue": 200

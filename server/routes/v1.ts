@@ -19,7 +19,7 @@ import {
   isHmStudioChannel,
   waitForHmStudioTask,
 } from '../services/hmStudioAdapter.js';
-import { hmStudioQueue } from '../services/hmStudioQueueService.js';
+import { hmStudioPoolKey, hmStudioQueue } from '../services/hmStudioQueueService.js';
 import {
   buildMjNewApiVideoPayload,
   findInvalidMjNewApiMaterialUrls,
@@ -381,6 +381,7 @@ router.get('/queue', (req: Request, res: Response) => {
   const { valid, error } = TokenService.validateToken(tokenKey);
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
+  ChannelService.getActiveChannels();
   const limits = hmStudioQueue.getLimits();
   res.json({
     object: 'queue_status',
@@ -389,9 +390,12 @@ router.get('/queue', (req: Request, res: Response) => {
     running: limits.running,
     queued: limits.queued,
     concurrency_limit: limits.concurrencyLimit,
+    pool_count: limits.poolCount,
+    per_key_concurrency_limit: limits.poolConcurrencyLimit,
     user_concurrency_limit: limits.userConcurrencyLimit,
     max_user_queue: limits.maxUserQueue,
     max_queue: limits.maxQueue,
+    pools: hmStudioQueue.getPoolStats(),
   });
 });
 
@@ -739,6 +743,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
       const submitOne = async () => hmStudioQueue.enqueue({
         id: `image:api:${token.id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
         userKey: queueUserKey,
+        poolKey: hmStudioPoolKey(channel),
         task: executeOne,
       }).completion;
 
@@ -951,6 +956,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
       const submitOne = async () => hmStudioQueue.enqueue({
         id: `image-edit:api:${token.id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
         userKey: queueUserKey,
+        poolKey: hmStudioPoolKey(channel),
         task: executeOne,
       }).completion;
 
@@ -1413,6 +1419,8 @@ async function handleVideoCreation(req: Request, res: Response) {
         queue_position: queue.position,
         queue_running: queue.running,
         queue_limit: queue.concurrencyLimit,
+        channel_running: queue.poolRunning,
+        channel_limit: queue.poolConcurrencyLimit,
         user_concurrency_limit: queue.userConcurrencyLimit,
       });
     } catch (queueError: any) {
@@ -1745,6 +1753,8 @@ async function handleVideoQuery(req: Request, res: Response) {
       queue_position: mappedStatus === 'queued' ? Number(metadata.queuePosition || 1) : 0,
       queue_running: Number(metadata.queueRunning || 0),
       queue_limit: Number(metadata.queueLimit || 10),
+      channel_running: Number(metadata.queuePoolRunning || 0),
+      channel_limit: Number(metadata.queuePoolLimit || 10),
       user_concurrency_limit: Number(metadata.queueUserLimit || 2),
     };
 

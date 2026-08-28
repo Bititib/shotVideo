@@ -253,8 +253,10 @@ curl -X POST "https://你的域名/v1/videos" \
   "status": "queued",
   "progress": 0,
   "queue_position": 3,
-  "queue_running": 10,
-  "queue_limit": 10,
+  "queue_running": 18,
+  "queue_limit": 20,
+  "channel_running": 9,
+  "channel_limit": 10,
   "user_concurrency_limit": 2
 }
 ```
@@ -308,16 +310,22 @@ GET /v1/queue
   "object": "queue_status",
   "provider": "hmstudio",
   "strategy": "round_robin_by_user_fifo_within_user",
-  "running": 10,
+  "running": 18,
   "queued": 6,
-  "concurrency_limit": 10,
+  "concurrency_limit": 20,
+  "pool_count": 2,
+  "per_key_concurrency_limit": 10,
   "user_concurrency_limit": 2,
   "max_user_queue": 10,
-  "max_queue": 200
+  "max_queue": 200,
+  "pools": [
+    {"pool_id": "key-a1b2c3d4e5f6", "running": 9, "queued": 3, "concurrency_limit": 10},
+    {"pool_id": "key-1a2b3c4d5e6f", "running": 9, "queued": 3, "concurrency_limit": 10}
+  ]
 }
 ```
 
-调度规则：HM Studio 图片和视频共用全局名额；用户之间轮询调度，同一用户内部按提交顺序执行。默认全局同时运行 10 项、每个用户同时运行 2 项、每个用户最多排队 10 项、全局最多排队 200 项。队列满时返回 `429`。
+调度规则：每个不同的 HM Studio API Key 独立提供 10 个并发名额，两个 Key 即为 20；相同 Key 配置多次只计算一个池。系统优先选择负载较低且支持目标模型的 Key。用户之间轮询调度，同一用户内部按提交顺序执行；默认每个用户同时运行 2 项、最多排队 10 项，全局最多排队 200 项。队列满时返回 `429`。
 
 ## 7. 余额与用量
 

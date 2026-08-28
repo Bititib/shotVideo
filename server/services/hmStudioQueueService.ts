@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+
 export type HmStudioQueueSnapshot = {
   jobId: string;
   status: 'queued' | 'running';
@@ -7,11 +9,15 @@ export type HmStudioQueueSnapshot = {
   userRunning: number;
   userConcurrencyLimit: number;
   queued: number;
+  poolId: string;
+  poolRunning: number;
+  poolConcurrencyLimit: number;
 };
 
 type QueueJob<T = unknown> = {
   id: string;
   userKey: string;
+  poolKey: string;
   createdAt: number;
   task: () => Promise<T>;
   onUpdate?: (snapshot: HmStudioQueueSnapshot) => void;
@@ -35,23 +41,25 @@ function positiveInt(value: string | undefined, fallback: number): number {
 }
 
 /**
- * Process-wide fair queue for the single HM Studio account.
- * Jobs are FIFO per user and users are scheduled round-robin.
+ * Process-wide fair queue with one independent concurrency pool per unique
+ * HM Studio API key. Jobs are FIFO per user and users are round-robin.
  */
 export class HmStudioQueueService {
-  private readonly concurrencyLimit = positiveInt(process.env.HM_STUDIO_CONCURRENCY, 10);
+  private readonly poolConcurrencyLimit = positiveInt(process.env.HM_STUDIO_CONCURRENCY, 10);
   private readonly userConcurrencyLimit = positiveInt(process.env.HM_STUDIO_USER_CONCURRENCY, 2);
   private readonly maxUserQueue = positiveInt(process.env.HM_STUDIO_MAX_USER_QUEUE, 10);
   private readonly maxQueue = positiveInt(process.env.HM_STUDIO_MAX_QUEUE, 200);
   private readonly pendingByUser = new Map<string, QueueJob[]>();
   private readonly active = new Map<string, QueueJob>();
   private readonly jobs = new Map<string, QueueJob>();
+  private configuredPools = new Set<string>(['default']);
   private userOrder: string[] = [];
   private draining = false;
 
   enqueue<T>(options: {
     id: string;
     userKey: string | number;
+    poolKey?: string;
     task: () => Promise<T>;
     onUpdate?: (snapshot: HmStudioQueueSnapshot) => void;
   }): { snapshot: HmStudioQueueSnapshot; completion: Promise<T> } {
@@ -82,6 +90,7 @@ export class HmStudioQueueService {
     const job: QueueJob<T> = {
       id: options.id,
       userKey,
+      poolKey: options.poolKey || 'default',
       createdAt: Date.now(),
       task: options.task,
       onUpdate: options.onUpdate,
@@ -89,6 +98,7 @@ export class HmStudioQueueService {
       reject,
       completion,
     };
+    this.registerPool(job.poolKey);
     userQueue.push(job);
     this.pendingByUser.set(userKey, userQueue);
     if (!this.userOrder.includes(userKey)) this.userOrder.push(userKey);
@@ -114,6 +124,7 @@ export class HmStudioQueueService {
   adoptRunning<T>(options: {
     id: string;
     userKey: string | number;
+    poolKey?: string;
     task: () => Promise<T>;
     onUpdate?: (snapshot: HmStudioQueueSnapshot) => void;
   }): { snapshot: HmStudioQueueSnapshot; completion: Promise<T> } {
@@ -127,6 +138,7 @@ export class HmStudioQueueService {
     const job: QueueJob<T> = {
       id: options.id,
       userKey: String(options.userKey),
+      poolKey: options.poolKey || 'default',
       createdAt: Date.now(),
       task: options.task,
       onUpdate: options.onUpdate,
@@ -134,6 +146,7 @@ export class HmStudioQueueService {
       reject,
       completion,
     };
+    this.registerPool(job.poolKey);
     this.jobs.set(job.id, job);
     this.active.set(job.id, job);
     this.notifyAll();
@@ -153,16 +166,44 @@ export class HmStudioQueueService {
       status,
       position: status === 'running' ? 0 : Math.max(1, index + 1),
       running: this.active.size,
-      concurrencyLimit: this.concurrencyLimit,
+      concurrencyLimit: this.totalConcurrencyLimit(),
       userRunning: job ? this.userActiveCount(job.userKey) : 0,
       userConcurrencyLimit: this.userConcurrencyLimit,
       queued: orderedPending.length,
+      poolId: job?.poolKey || 'default',
+      poolRunning: job ? this.poolActiveCount(job.poolKey) : 0,
+      poolConcurrencyLimit: this.poolConcurrencyLimit,
     };
+  }
+
+  syncPools(poolKeys: string[]): void {
+    const configured = new Set(poolKeys.filter(Boolean));
+    for (const job of this.jobs.values()) configured.add(job.poolKey);
+    this.configuredPools = configured.size > 0 ? configured : new Set(['default']);
+    this.notifyAll();
+    this.drain();
+  }
+
+  getPoolLoad(poolKey: string): { running: number; queued: number; load: number; limit: number } {
+    const running = this.poolActiveCount(poolKey);
+    const queued = Array.from(this.pendingByUser.values()).flat().filter(job => job.poolKey === poolKey).length;
+    return { running, queued, load: running + queued, limit: this.poolConcurrencyLimit };
+  }
+
+  getPoolStats() {
+    return Array.from(this.configuredPools).map(poolId => ({
+      pool_id: poolId,
+      running: this.poolActiveCount(poolId),
+      queued: Array.from(this.pendingByUser.values()).flat().filter(job => job.poolKey === poolId).length,
+      concurrency_limit: this.poolConcurrencyLimit,
+    }));
   }
 
   getLimits() {
     return {
-      concurrencyLimit: this.concurrencyLimit,
+      concurrencyLimit: this.totalConcurrencyLimit(),
+      poolConcurrencyLimit: this.poolConcurrencyLimit,
+      poolCount: this.configuredPools.size,
       userConcurrencyLimit: this.userConcurrencyLimit,
       maxUserQueue: this.maxUserQueue,
       maxQueue: this.maxQueue,
@@ -177,6 +218,19 @@ export class HmStudioQueueService {
 
   private userActiveCount(userKey: string): number {
     return Array.from(this.active.values()).filter(job => job.userKey === userKey).length;
+  }
+
+  private poolActiveCount(poolKey: string): number {
+    return Array.from(this.active.values()).filter(job => job.poolKey === poolKey).length;
+  }
+
+  private totalConcurrencyLimit(): number {
+    return Math.max(1, this.configuredPools.size) * this.poolConcurrencyLimit;
+  }
+
+  private registerPool(poolKey: string): void {
+    if (poolKey !== 'default') this.configuredPools.delete('default');
+    this.configuredPools.add(poolKey);
   }
 
   private notifyAll(): void {
@@ -198,8 +252,9 @@ export class HmStudioQueueService {
 
       this.userOrder.push(userKey);
       if (this.userActiveCount(userKey) >= this.userConcurrencyLimit) continue;
-
-      const job = queue.shift()!;
+      const runnableIndex = queue.findIndex(job => this.poolActiveCount(job.poolKey) < this.poolConcurrencyLimit);
+      if (runnableIndex < 0) continue;
+      const [job] = queue.splice(runnableIndex, 1);
       if (queue.length === 0) {
         this.pendingByUser.delete(userKey);
         this.userOrder = this.userOrder.filter(value => value !== userKey);
@@ -213,7 +268,7 @@ export class HmStudioQueueService {
     if (this.draining) return;
     this.draining = true;
     try {
-      while (this.active.size < this.concurrencyLimit) {
+      while (this.active.size < this.totalConcurrencyLimit()) {
         const job = this.nextRunnable();
         if (!job) break;
         this.active.set(job.id, job);
@@ -240,3 +295,9 @@ export class HmStudioQueueService {
 }
 
 export const hmStudioQueue = new HmStudioQueueService();
+
+export function hmStudioPoolKey(channel: { id?: number; apiKey?: string | null }): string {
+  const apiKey = String(channel.apiKey || '').trim();
+  if (!apiKey) return `channel-${channel.id || 'unknown'}`;
+  return `key-${crypto.createHash('sha256').update(apiKey).digest('hex').slice(0, 12)}`;
+}

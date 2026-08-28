@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { adminApi } from '../../api/admin';
-import { Plus, Radio, Trash2, Pencil, Zap, Loader2, Power, PowerOff, RefreshCw } from 'lucide-react';
+import { Plus, Radio, Trash2, Pencil, Zap, Loader2, Power, PowerOff, RefreshCw, KeyRound } from 'lucide-react';
+
+const HM_STUDIO_BASE_URL = 'https://dnyovzpgyokm.sealosbja.site';
 
 export default function ChannelsPage() {
   const [channels, setChannels] = useState<any[]>([]);
@@ -22,6 +24,27 @@ export default function ChannelsPage() {
     modelsText: '',
   });
 
+  const openNewHmKey = () => {
+    const template = channels.find(channel => channel.type === 'hmstudio');
+    const hmCount = channels.filter(channel => channel.type === 'hmstudio').length;
+    setEdit({
+      name: `HM Studio 渠道 ${hmCount + 1}`,
+      type: 'hmstudio',
+      baseUrl: template?.baseUrl || HM_STUDIO_BASE_URL,
+      apiKey: '',
+      modelMapping: template?.modelMapping || {},
+      supportedModels: template?.supportedModels || [],
+      priority: template?.priority ?? 10,
+      weight: template?.weight ?? 1,
+      maxRetries: template?.maxRetries ?? 3,
+      timeout: template?.timeout ?? 120000,
+      status: 1,
+      isNew: true,
+      mappingText: Object.entries(template?.modelMapping || {}).map(([k, v]) => `${k}:${v}`).join('\n'),
+      modelsText: (template?.supportedModels || []).join('\n'),
+    });
+  };
+
   const openEdit = (ch: any) => setEdit({
     ...ch, apiKey: '', isNew: false,
     mappingText: Object.entries(ch.modelMapping || {}).map(([k, v]) => `${k}:${v}`).join('\n'),
@@ -31,6 +54,10 @@ export default function ChannelsPage() {
   const handleSave = async () => {
     if (!edit) return;
     try {
+      if (edit.isNew && edit.type === 'hmstudio' && !edit.apiKey.trim()) {
+        alert('添加 HM Studio 并发渠道必须填写一个新的 API Key');
+        return;
+      }
       // 解析 mapping 和 models
       const modelMapping: Record<string, string> = {};
       edit.mappingText.split('\n').filter(Boolean).forEach((line: string) => {
@@ -86,13 +113,34 @@ export default function ChannelsPage() {
 
   if (loading) return <div className="flex items-center justify-center h-full"><div className="w-8 h-8 border-2 border-white/10 border-t-white rounded-full animate-spin" /></div>;
 
+  const activeHmPools = new Set(channels
+    .filter(channel => channel.type === 'hmstudio' && channel.status && channel.apiKey)
+    .map(channel => channel.concurrencyPoolId));
+  const hmPerKeyLimit = channels.find(channel => channel.type === 'hmstudio')?.concurrencyLimit || 10;
+
   return (
-    <div className="p-8 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-4 md:p-8 max-w-4xl mx-auto">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <h1 className="text-2xl font-bold text-white">📡 渠道管理</h1>
-        <button onClick={openNew} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium transition-colors">
-          <Plus className="w-4 h-4" /> 添加渠道
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={openNewHmKey} className="h-11 flex items-center gap-2 px-4 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 rounded-xl text-sm font-medium text-amber-300 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/70">
+            <KeyRound className="w-4 h-4" /> 添加 HM Key
+          </button>
+          <button type="button" onClick={openNew} className="h-11 flex items-center gap-2 px-4 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
+            <Plus className="w-4 h-4" /> 添加渠道
+          </button>
+        </div>
+      </div>
+
+      <div className="mb-6 rounded-2xl border border-amber-500/20 bg-amber-500/[0.06] p-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-amber-200">HM Studio 并发池</p>
+          <p className="text-xs text-zinc-500 mt-1">每个不同 API Key 独立提供 {hmPerKeyLimit} 并发；重复 Key 不会增加容量。</p>
+        </div>
+        <div className="text-right">
+          <p className="text-2xl font-bold text-white tabular-nums">{activeHmPools.size * hmPerKeyLimit}</p>
+          <p className="text-[10px] text-zinc-500">{activeHmPools.size} 个有效 Key × {hmPerKeyLimit}</p>
+        </div>
       </div>
 
       <div className="space-y-4">
@@ -129,6 +177,7 @@ export default function ChannelsPage() {
               <span>优先级: <span className="text-zinc-300">{ch.priority}</span></span>
               <span>权重: <span className="text-zinc-300">{ch.weight}</span></span>
               <span>超时: <span className="text-zinc-300">{(ch.timeout / 1000).toFixed(0)}s</span></span>
+              {ch.type === 'hmstudio' && <span>并发池: <span className="text-amber-300">{ch.concurrencyLimit || 10}</span></span>}
               {ch.lastTestResult && <span>最后测试: <span className={ch.lastTestResult?.startsWith('success') ? 'text-green-400' : 'text-red-400'}>{ch.lastTestResult}</span></span>}
             </div>
           </div>
@@ -139,8 +188,8 @@ export default function ChannelsPage() {
       {/* Edit Modal */}
       {edit && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setEdit(null)}>
-          <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-white mb-5">{edit.isNew ? '添加渠道' : `编辑: ${edit.name}`}</h3>
+          <div role="dialog" aria-modal="true" aria-labelledby="channel-dialog-title" className="bg-[#1a1a1a] border border-white/10 rounded-2xl p-5 md:p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <h3 id="channel-dialog-title" className="text-lg font-semibold text-white mb-5">{edit.isNew ? '添加渠道' : `编辑: ${edit.name}`}</h3>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -150,7 +199,11 @@ export default function ChannelsPage() {
                 </div>
                 <div>
                   <label className="block text-xs text-zinc-400 mb-1.5">渠道类型</label>
-                  <select value={edit.type} onChange={e => setEdit({ ...edit, type: e.target.value })}
+                  <select value={edit.type} onChange={e => setEdit({
+                    ...edit,
+                    type: e.target.value,
+                    baseUrl: e.target.value === 'hmstudio' && !edit.baseUrl ? HM_STUDIO_BASE_URL : edit.baseUrl,
+                  })}
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
                     <option value="openai">OpenAI 兼容（Chat 代理）</option>
                     <option value="hmstudio">HM Studio（图片/视频异步任务）</option>
@@ -166,10 +219,15 @@ export default function ChannelsPage() {
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono" />
               </div>
               <div>
-                <label className="block text-xs text-zinc-400 mb-1.5">API Key（上游密钥）</label>
-                <input type="password" value={edit.apiKey} onChange={e => setEdit({ ...edit, apiKey: e.target.value })} placeholder={edit.isNew ? '可选' : '留空=不修改'}
+                <label htmlFor="channel-api-key" className="block text-xs text-zinc-400 mb-1.5">API Key（上游密钥）</label>
+                <input id="channel-api-key" type="password" required={edit.isNew && edit.type === 'hmstudio'} aria-describedby={edit.type === 'hmstudio' ? 'hm-key-description' : undefined} value={edit.apiKey} onChange={e => setEdit({ ...edit, apiKey: e.target.value })} placeholder={edit.isNew && edit.type === 'hmstudio' ? '请输入新的 HM Studio API Key' : edit.isNew ? '可选' : '留空=不修改'}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
               </div>
+              {edit.type === 'hmstudio' && (
+                <div id="hm-key-description" className="rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3 text-xs leading-relaxed text-amber-200/80">
+                  每个不同的 HM Studio API Key 对应一个独立的 10 并发池。通过“添加 HM Key”创建第二个渠道时，会自动复制第一个 HM 渠道的模型和映射；保存后两个 Key 总容量为 20。
+                </div>
+              )}
               <div>
                 <label className="block text-xs text-zinc-400 mb-1.5">支持的模型名（每行一个，对外暴露的名字）</label>
                 <textarea value={edit.modelsText} onChange={e => setEdit({ ...edit, modelsText: e.target.value })} rows={3}

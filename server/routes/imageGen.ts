@@ -12,7 +12,7 @@ import {
   isHmStudioChannel,
   waitForHmStudioTask,
 } from '../services/hmStudioAdapter.js';
-import { hmStudioQueue } from '../services/hmStudioQueueService.js';
+import { hmStudioPoolKey, hmStudioQueue } from '../services/hmStudioQueueService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models } from '../db/schema.js';
@@ -227,6 +227,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
           const queueJob = hmStudioQueue.enqueue({
             id: `image:web:${req.userId}:${Date.now()}:${index}:${Math.random().toString(36).slice(2, 8)}`,
             userKey: `user:${req.userId}`,
+            poolKey: hmStudioPoolKey(channel),
             onUpdate: snapshot => {
               sendEvent({ type: 'queue', index, ...snapshot });
               if (snapshot.status === 'queued') {

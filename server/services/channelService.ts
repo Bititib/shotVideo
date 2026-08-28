@@ -1,15 +1,20 @@
 import { db } from '../db/index.js';
 import { channels, models } from '../db/schema.js';
 import { eq, sql, desc } from 'drizzle-orm';
+import { hmStudioPoolKey, hmStudioQueue } from './hmStudioQueueService.js';
 
 export class ChannelService {
   /** 获取所有渠道 */
   static getChannels() {
-    return db.select().from(channels).orderBy(channels.priority, desc(channels.createdAt)).all()
+    const rows = db.select().from(channels).orderBy(channels.priority, desc(channels.createdAt)).all();
+    hmStudioQueue.syncPools(rows.filter(ch => ch.status === 1 && ch.type === 'hmstudio' && ch.apiKey).map(hmStudioPoolKey));
+    return rows
       .map(ch => ({
         ...ch,
         modelMapping: JSON.parse(ch.modelMapping),
         supportedModels: JSON.parse(ch.supportedModels),
+        concurrencyPoolId: ch.type === 'hmstudio' ? hmStudioPoolKey(ch) : null,
+        concurrencyLimit: ch.type === 'hmstudio' ? hmStudioQueue.getPoolLoad(hmStudioPoolKey(ch)).limit : null,
         apiKey: ch.apiKey ? '****' + ch.apiKey.slice(-4) : '',
       }));
   }
@@ -21,7 +26,7 @@ export class ChannelService {
 
   /** 获取所有启用的渠道（内部用，不脱敏） */
   static getActiveChannels() {
-    return db.select().from(channels)
+    const activeChannels = db.select().from(channels)
       .where(eq(channels.status, 1))
       .orderBy(channels.priority)
       .all()
@@ -30,6 +35,8 @@ export class ChannelService {
         modelMapping: JSON.parse(ch.modelMapping) as Record<string, string>,
         supportedModels: JSON.parse(ch.supportedModels) as string[],
       }));
+    hmStudioQueue.syncPools(activeChannels.filter(ch => ch.type === 'hmstudio' && ch.apiKey).map(hmStudioPoolKey));
+    return activeChannels;
   }
 
   /** 根据模型名查找可用渠道（按优先级+权重选择） */
@@ -44,6 +51,23 @@ export class ChannelService {
     // 按优先级分组，取最高优先级
     const topPriority = candidates[0].priority;
     const topCandidates = candidates.filter(ch => ch.priority === topPriority);
+
+    if (topCandidates.every(ch => ch.type === 'hmstudio')) {
+      const loads = topCandidates.map(channel => ({
+        channel,
+        poolKey: hmStudioPoolKey(channel),
+        load: hmStudioQueue.getPoolLoad(hmStudioPoolKey(channel)).load,
+      }));
+      const minimumLoad = Math.min(...loads.map(item => item.load));
+      const leastLoaded = loads.filter(item => item.load === minimumLoad).map(item => item.channel);
+      const totalWeight = leastLoaded.reduce((sum, ch) => sum + ch.weight, 0);
+      let random = Math.random() * totalWeight;
+      for (const channel of leastLoaded) {
+        random -= channel.weight;
+        if (random <= 0) return channel;
+      }
+      return leastLoaded[0];
+    }
 
     // 按权重随机选择
     const totalWeight = topCandidates.reduce((sum, ch) => sum + ch.weight, 0);
@@ -65,6 +89,10 @@ export class ChannelService {
   static createChannel(data: any) {
     const { name, type, baseUrl, apiKey, modelMapping, supportedModels, priority, weight, maxRetries, timeout } = data;
     if (!name || !baseUrl) throw { status: 400, message: '渠道名称和 Base URL 不能为空' };
+    if (type === 'hmstudio' && apiKey) {
+      const duplicate = db.select().from(channels).all().find(channel => channel.type === 'hmstudio' && channel.apiKey === apiKey);
+      if (duplicate) throw { status: 409, message: `该 HM Studio API Key 已用于渠道「${duplicate.name}」，重复添加不会增加并发` };
+    }
 
     const result = db.insert(channels).values({
       name,
@@ -86,6 +114,11 @@ export class ChannelService {
   static updateChannel(id: number, data: any) {
     const ch = db.select().from(channels).where(eq(channels.id, id)).get();
     if (!ch) throw { status: 404, message: '渠道不存在' };
+    const nextType = data.type ?? ch.type;
+    if (nextType === 'hmstudio' && data.apiKey) {
+      const duplicate = db.select().from(channels).all().find(channel => channel.id !== id && channel.type === 'hmstudio' && channel.apiKey === data.apiKey);
+      if (duplicate) throw { status: 409, message: `该 HM Studio API Key 已用于渠道「${duplicate.name}」，重复添加不会增加并发` };
+    }
 
     const updates: Record<string, any> = {};
     if (data.name !== undefined) updates.name = data.name;

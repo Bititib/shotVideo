@@ -71,4 +71,32 @@ describe('HM Studio fair queue', () => {
       .toThrow(HmStudioQueueFullError);
     blocker.resolve();
   });
+
+  it('provides an independent concurrency pool for each unique API key', async () => {
+    process.env.HM_STUDIO_CONCURRENCY = '2';
+    process.env.HM_STUDIO_USER_CONCURRENCY = '10';
+    const queue = new HmStudioQueueService();
+    queue.syncPools(['key-a', 'key-b', 'key-b']);
+    const blockers = Array.from({ length: 6 }, () => deferred());
+    const jobs = blockers.map((blocker, index) => queue.enqueue({
+      id: `multi-${index}`,
+      userKey: `user-${index}`,
+      poolKey: index < 3 ? 'key-a' : 'key-b',
+      task: () => blocker.promise,
+    }));
+
+    await flushQueue();
+    expect(queue.getLimits()).toEqual(expect.objectContaining({
+      poolCount: 2,
+      poolConcurrencyLimit: 2,
+      concurrencyLimit: 4,
+      running: 4,
+      queued: 2,
+    }));
+    expect(queue.getPoolLoad('key-a').running).toBe(2);
+    expect(queue.getPoolLoad('key-b').running).toBe(2);
+
+    blockers.forEach(blocker => blocker.resolve());
+    await Promise.all(jobs.map(job => job.completion));
+  });
 });

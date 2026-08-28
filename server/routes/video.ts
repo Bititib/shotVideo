@@ -6,7 +6,7 @@ import { ChannelService } from '../services/channelService.js';
 import { BalanceService } from '../services/balanceService.js';
 import { ContentService } from '../services/contentService.js';
 import { PricingService } from '../services/pricingService.js';
-import { hmStudioQueue, type HmStudioQueueSnapshot } from '../services/hmStudioQueueService.js';
+import { hmStudioPoolKey, hmStudioQueue, type HmStudioQueueSnapshot } from '../services/hmStudioQueueService.js';
 import { calculateSuccessRate, isWithinRecentDays } from '../services/successRateService.js';
 import {
   buildHmStudioVideoForm,
@@ -285,6 +285,7 @@ function findVideoChannel(modelId: string) {
     baseUrl: channel.baseUrl,
     apiKey: channel.apiKey,
     modelMapping: channel.modelMapping,
+    timeout: channel.timeout,
   };
   return null;
 }
@@ -752,7 +753,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   }
 
   // Get the mapped model name from the database channel configuration
-  const dbChannel = ChannelService.findChannelForModel(model);
+  const dbChannel = channel;
   let upstreamModel = model;
   if (dbChannel?.modelMapping) {
     try {
@@ -2065,6 +2066,9 @@ function persistHmQueueSnapshot(contentId: number, snapshot: HmStudioQueueSnapsh
   metadata.queueUserRunning = snapshot.userRunning;
   metadata.queueUserLimit = snapshot.userConcurrencyLimit;
   metadata.queueTotal = snapshot.queued;
+  metadata.queuePoolId = snapshot.poolId;
+  metadata.queuePoolRunning = snapshot.poolRunning;
+  metadata.queuePoolLimit = snapshot.poolConcurrencyLimit;
   if (snapshot.status === 'running' && !metadata.queueStartedAt) {
     metadata.queueStartedAt = new Date().toISOString();
   }
@@ -2118,6 +2122,7 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
   const queued = hmStudioQueue.enqueue({
     id: `video:${contentId}`,
     userKey: metadata.queueUserKey || `user:${record.userId}`,
+    poolKey: hmStudioPoolKey(channel),
     onUpdate: snapshot => persistHmQueueSnapshot(contentId, snapshot),
     task: async () => {
       try {
@@ -2181,6 +2186,7 @@ function adoptHmStudioProcessingContent(contentId: number, record: any): HmStudi
   const adopted = hmStudioQueue.adoptRunning({
     id: `video:${contentId}`,
     userKey: metadata.queueUserKey || `user:${record.userId}`,
+    poolKey: hmStudioPoolKey(metadata.channelId ? ChannelService.getChannelRaw(Number(metadata.channelId)) || {} : {}),
     onUpdate: snapshot => persistHmQueueSnapshot(contentId, snapshot),
     task: () => resumePollForTask(contentId, record),
   });
