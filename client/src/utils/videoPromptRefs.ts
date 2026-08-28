@@ -33,5 +33,5 @@ export function buildReplicatedVideoPrompt(rawPrompt: string, counts: VideoRefer
   }
 
   if (missing.length === 0) return restored;
-  return `${restored.trimEnd()}${restored.trim() ? '\n\n' : ''}${missing.join(' ')}`;
+  return `${missing.join(' ')}${restored.trim() ? '\n\n' : ''}${restored.trimStart()}`;
 }

@@ -36,7 +36,7 @@ describe('Prompt Reference @ Syntax Test Suite', () => {
       { images: 3, videos: 2, audios: 2 },
     );
     expect(restored).toBe(
-      '主角使用 @图1，参考 @视频2 的动作\n\n@图2 @图3 @视频1 @音频1 @音频2',
+      '@图2 @图3 @视频1 @音频1 @音频2\n\n主角使用 @图1，参考 @视频2 的动作',
     );
   });
 
