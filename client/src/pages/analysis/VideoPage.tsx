@@ -11,6 +11,7 @@ import { saveAsset, getAssets, deleteAsset, type Asset } from '../../utils/idb';
 import { useAuthStore } from '../../stores/authStore';
 import { feedbackApi } from '../../api/feedback';
 import { getBillingUnit } from '../../utils/billing';
+import { buildReplicatedVideoPrompt, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
 
 interface VideoTask {
   id: string;
@@ -291,17 +292,6 @@ const getRefFilename = (dataUrl: string, index: number) => {
   return `ref_${index}.${ext}`;
 };
 
-const restorePrompt = (targetPrompt: string) => {
-  if (!targetPrompt) return '';
-  return targetPrompt
-    .replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (match, idxStr) => {
-      const idx = parseInt(idxStr, 10);
-      return `@图${idx + 1}`;
-    })
-    .replace(/\[ref_video\]/g, '@视频')
-    .replace(/\[ref_audio\]/g, '@音频');
-};
-
 export default function VideoPage() {
   const navigate = useNavigate();
   const guard = useAuthGuard();
@@ -514,7 +504,7 @@ export default function VideoPage() {
           .filter((item: any) => item.status === 'processing')
           .map((item: any) => ({
             id: `db_${item.id}`,
-            prompt: item.inputText || item.title || '',
+            prompt: item.metadata?.prompt || item.inputText || item.title || '',
             status: 'generating',
             progress: 0,
             statusMessage: '正在后台恢复生成...',
@@ -551,12 +541,21 @@ export default function VideoPage() {
         setSelectedModel(meta.model || item.modelId);
       }
 
-      // 恢复提示词
-      if (item.inputText) {
-        setPrompt(item.inputText);
-      } else if (item.title) {
-        setPrompt(item.title);
-      }
+      const restoredImages = Array.isArray(meta.reference_images) ? meta.reference_images : [];
+      const restoredVideos = Array.isArray(meta.reference_videos)
+        ? meta.reference_videos
+        : (meta.reference_video ? [meta.reference_video] : []);
+      const restoredAudios = Array.isArray(meta.audio_urls)
+        ? meta.audio_urls
+        : (meta.audio_url ? [meta.audio_url] : []);
+
+      // 优先恢复 metadata 中的完整提示词，并自动补齐所有素材引用。
+      const rawPrompt = meta.prompt || item.inputText || item.title || '';
+      setPrompt(buildReplicatedVideoPrompt(rawPrompt, {
+        images: restoredImages.length,
+        videos: restoredVideos.length,
+        audios: restoredAudios.length,
+      }));
 
       // 恢复分辨率
       if (meta.resolution) {
@@ -574,20 +573,14 @@ export default function VideoPage() {
       }
 
       // 恢复参考图片
-      if (Array.isArray(meta.reference_images) && meta.reference_images.length > 0) {
-        setReferenceImages(meta.reference_images);
-      }
+      setReferenceImages(restoredImages);
 
       // 恢复参考视频
-      if (Array.isArray(meta.reference_videos) && meta.reference_videos.length > 0) {
-        setReferenceVideos(meta.reference_videos);
-      }
+      setReferenceVideos(restoredVideos);
 
       // 恢复参考音频
-      if (Array.isArray(meta.audio_urls) && meta.audio_urls.length > 0) {
-        setReferenceAudios(meta.audio_urls);
-        setReferenceAudioNames(meta.audio_urls.map((_: any, i: number) => `音频_${i + 1}`));
-      }
+      setReferenceAudios(restoredAudios);
+      setReferenceAudioNames(restoredAudios.map((_: any, i: number) => `音频_${i + 1}`));
 
       // 清除 URL 参数，避免刷新页面重复触发
       setSearchParams({}, { replace: true });
@@ -914,6 +907,7 @@ export default function VideoPage() {
     inputText?: string;
     title?: string;
     metadata?: {
+      prompt?: string;
       model?: string;
       resolution?: string;
       seconds?: number;
@@ -926,9 +920,6 @@ export default function VideoPage() {
       audio_names?: string[];
     };
   }) => {
-    const targetPrompt = item.inputText || item.title || item.prompt || '';
-    setPrompt(restorePrompt(targetPrompt));
-
     if (item.metadata) {
       const meta = item.metadata;
       if (meta.model) setSelectedModel(meta.model);
@@ -937,10 +928,22 @@ export default function VideoPage() {
       if (meta.aspect_ratio) setAspectRatio(meta.aspect_ratio);
 
       // 恢复参考图与参考视频及参考音频
-      setReferenceImages(meta.reference_images || []);
-      setReferenceVideos(meta.reference_videos || (meta.reference_video ? [meta.reference_video] : []));
-      setReferenceAudios(meta.audio_urls || (meta.audio_url ? [meta.audio_url] : []));
+      const restoredImages = meta.reference_images || [];
+      const restoredVideos = meta.reference_videos || (meta.reference_video ? [meta.reference_video] : []);
+      const restoredAudios = meta.audio_urls || (meta.audio_url ? [meta.audio_url] : []);
+      setReferenceImages(restoredImages);
+      setReferenceVideos(restoredVideos);
+      setReferenceAudios(restoredAudios);
       setReferenceAudioNames(meta.audio_names || []);
+
+      const targetPrompt = meta.prompt || item.inputText || item.title || item.prompt || '';
+      setPrompt(buildReplicatedVideoPrompt(targetPrompt, {
+        images: restoredImages.length,
+        videos: restoredVideos.length,
+        audios: restoredAudios.length,
+      }));
+    } else {
+      setPrompt(restorePrompt(item.inputText || item.title || item.prompt || ''));
     }
 
     setTimeout(() => {

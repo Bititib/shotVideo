@@ -1267,7 +1267,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       orgId: null,
       type: 'video',
       title: prompt.slice(0, 200),
-      inputText: prompt.slice(0, 500),
+      inputText: prompt.slice(0, 5000),
       modelId: model,
       cost: totalCost,
       status: 'processing',
@@ -1276,8 +1276,11 @@ async function handleVideoCreation(req: Request, res: Response) {
         seconds,
         aspect_ratio: ratio,
         model,
+        prompt: prompt.slice(0, 5000),
         image_urls,
+        reference_images: image_urls,
         video_urls,
+        reference_videos: video_urls,
         audio_urls,
         tokenId: token.id
       })

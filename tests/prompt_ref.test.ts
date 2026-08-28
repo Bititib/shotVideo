@@ -1,15 +1,5 @@
 import { describe, it, expect } from 'vitest';
-
-const restorePrompt = (targetPrompt: string) => {
-  if (!targetPrompt) return '';
-  return targetPrompt
-    .replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (match, idxStr) => {
-      const idx = parseInt(idxStr, 10);
-      return `@图${idx + 1}`;
-    })
-    .replace(/\[ref_video\]/g, '@视频')
-    .replace(/\[ref_audio\]/g, '@音频');
-};
+import { buildReplicatedVideoPrompt, restoreVideoPromptRefs } from '../client/src/utils/videoPromptRefs';
 
 const frontendTranslate = (prompt: string, imagesCount: number = 1) => {
   let finalPrompt = prompt.trim();
@@ -36,8 +26,23 @@ const backendTranslate = (prompt: string) => {
 describe('Prompt Reference @ Syntax Test Suite', () => {
   it('should correctly restore prompt tags from backend format to UI format', () => {
     const rawBackendPrompt = '主角 [ref_0.jpg] 看着 [ref_video] 中的画面，配音遵循 [ref_audio] 的语气';
-    const restored = restorePrompt(rawBackendPrompt);
-    expect(restored).toBe('主角 @图1 看着 @视频 中的画面，配音遵循 @音频 的语气');
+    const restored = restoreVideoPromptRefs(rawBackendPrompt);
+    expect(restored).toBe('主角 @图1 看着 @视频1 中的画面，配音遵循 @音频1 的语气');
+  });
+
+  it('should restore numbered video/audio tags and append missing material mentions', () => {
+    const restored = buildReplicatedVideoPrompt(
+      '主角使用 [ref_0.jpg]，参考 [ref_video_2] 的动作',
+      { images: 3, videos: 2, audios: 2 },
+    );
+    expect(restored).toBe(
+      '主角使用 @图1，参考 @视频2 的动作\n\n@图2 @图3 @视频1 @音频1 @音频2',
+    );
+  });
+
+  it('should not duplicate references that are already present', () => {
+    expect(buildReplicatedVideoPrompt('@图1 @视频1 @音频1', { images: 1, videos: 1, audios: 1 }))
+      .toBe('@图1 @视频1 @音频1');
   });
 
   it('should correctly translate UI @ tags to internal placeholders on frontend submit', () => {
