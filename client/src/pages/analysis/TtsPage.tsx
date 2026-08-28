@@ -71,6 +71,9 @@ export default function TtsPage() {
   const [currentAudio, setCurrentAudio] = useState<GeneratedVoice | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [history, setHistory] = useState<GeneratedVoice[]>([]);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
 
@@ -108,8 +111,9 @@ export default function TtsPage() {
     loadHistory();
   }, []);
 
-  const loadHistory = () => {
-    contentApi.getMyContents({ type: 'audio', pageSize: 30 })
+  const loadHistory = (page = 1, append = false) => {
+    setHistoryLoading(true);
+    contentApi.getMyContents({ type: 'audio', page, pageSize: 12 })
       .then((res: any) => {
         const items = res?.items || res?.data || [];
         const loadedHistory: GeneratedVoice[] = [];
@@ -130,9 +134,12 @@ export default function TtsPage() {
             // 忽略格式不正确的
           }
         }
-        setHistory(loadedHistory);
+        setHistory(prev => append ? [...prev, ...loadedHistory.filter(item => !prev.some(old => old.id === item.id))] : loadedHistory);
+        setHistoryPage(page);
+        setHistoryTotal(Number(res?.total) || 0);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setHistoryLoading(false));
   };
 
   // 2. 音频控制逻辑
@@ -459,7 +466,7 @@ export default function TtsPage() {
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-zinc-400">历史合成记录 ({history.length})</span>
-                <button onClick={loadHistory} className="text-zinc-500 hover:text-zinc-300 text-[10px] flex items-center gap-1 transition-colors">
+                <button onClick={() => loadHistory(1, false)} className="text-zinc-500 hover:text-zinc-300 text-[10px] flex items-center gap-1 transition-colors">
                   <RefreshCw className="w-3 h-3" /> 刷新
                 </button>
               </div>
@@ -516,6 +523,13 @@ export default function TtsPage() {
                   </div>
                 ))}
               </div>
+              {historyPage * 12 < historyTotal && (
+                <div className="flex justify-center pt-2">
+                  <button type="button" disabled={historyLoading} onClick={() => loadHistory(historyPage + 1, true)} className="rounded-xl border border-white/10 bg-white/5 px-5 py-2 text-xs text-zinc-300 transition-colors hover:bg-white/10 disabled:cursor-wait disabled:opacity-50">
+                    {historyLoading ? '加载中…' : '加载更多'}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>

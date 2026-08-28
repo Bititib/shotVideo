@@ -11,7 +11,7 @@ import { saveAsset, getAssets, deleteAsset, type Asset } from '../../utils/idb';
 import { useAuthStore } from '../../stores/authStore';
 import { feedbackApi } from '../../api/feedback';
 import { getBillingUnit } from '../../utils/billing';
-import { buildReplicatedVideoPrompt, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
+import { buildReplicatedVideoPrompt, getVideoReferenceAssets, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
 
 interface VideoTask {
   id: string;
@@ -359,6 +359,9 @@ export default function VideoPage() {
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const [feedbackSubmitted, setFeedbackSubmitted] = useState<Set<string>>(new Set());
   const [history, setHistory] = useState<any[]>([]);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<Map<string, AbortController>>(new Map());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -485,7 +488,7 @@ export default function VideoPage() {
     fetchVideoModels().then((m) => { setModels(m); if (m.length > 0 && !selectedModel) setSelectedModel(m[0].id); }).catch(() => { });
 
     // 加载历史与生产中生成记录
-    contentApi.getMyContents({ type: 'video', pageSize: 50 })
+    contentApi.getMyContents({ type: 'video', page: 1, pageSize: 12 })
       .then((res: any) => {
         const items = res?.items || res?.data || [];
         const parsed = items.map((item: any) => {
@@ -498,6 +501,7 @@ export default function VideoPage() {
 
         // 已完成或已失败的记录计入历史面板
         setHistory(parsed.filter((item: any) => item.status === 'completed' || item.status === 'success' || item.resultUrl));
+        setHistoryTotal(Number(res?.total) || 0);
 
         // 正在生产中的记录恢复到 tasks 队列中继续展示生成进度
         const processingTasks: VideoTask[] = parsed
@@ -521,6 +525,25 @@ export default function VideoPage() {
     getAssets().then(setMyAssets).catch(() => { });
   }, []);
 
+  const loadMoreHistory = async () => {
+    const nextPage = historyPage + 1;
+    setHistoryLoading(true);
+    try {
+      const res: any = await contentApi.getMyContents({ type: 'video', page: nextPage, pageSize: 12 });
+      const items = res?.items || res?.data || [];
+      const parsed = items.map((item: any) => {
+        let metadata = {};
+        try { metadata = item.metadata ? (typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata) : {}; } catch { }
+        return { ...item, metadata };
+      }).filter((item: any) => item.status === 'completed' || item.status === 'success' || item.resultUrl);
+      setHistory(prev => [...prev, ...parsed.filter((item: any) => !prev.some(old => old.id === item.id))]);
+      setHistoryPage(nextPage);
+      setHistoryTotal(Number(res?.total) || 0);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
   // ========== 一键复刻：从管理后台跳转过来时自动填充参数 ==========
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
@@ -541,13 +564,10 @@ export default function VideoPage() {
         setSelectedModel(meta.model || item.modelId);
       }
 
-      const restoredImages = Array.isArray(meta.reference_images) ? meta.reference_images : [];
-      const restoredVideos = Array.isArray(meta.reference_videos)
-        ? meta.reference_videos
-        : (meta.reference_video ? [meta.reference_video] : []);
-      const restoredAudios = Array.isArray(meta.audio_urls)
-        ? meta.audio_urls
-        : (meta.audio_url ? [meta.audio_url] : []);
+      const restoredAssets = getVideoReferenceAssets(meta);
+      const restoredImages = restoredAssets.images;
+      const restoredVideos = restoredAssets.videos;
+      const restoredAudios = restoredAssets.audios;
 
       // 优先恢复 metadata 中的完整提示词，并自动补齐所有素材引用。
       const rawPrompt = meta.prompt || item.inputText || item.title || '';
@@ -616,7 +636,7 @@ export default function VideoPage() {
               useAuthStore.getState().fetchProfile().catch(() => { });
               // 延迟后刷新历史记录
               setTimeout(() => {
-                contentApi.getMyContents({ type: 'video', pageSize: 50 })
+                contentApi.getMyContents({ type: 'video', page: 1, pageSize: 12 })
                   .then((r: any) => {
                     const items = r?.items || r?.data || [];
                     const parsed = items.map((item: any) => {
@@ -627,6 +647,8 @@ export default function VideoPage() {
                       return { ...item, metadata: meta };
                     });
                     setHistory(parsed.filter((x: any) => x.status === 'completed' || x.status === 'success' || x.resultUrl));
+                    setHistoryTotal(Number(r?.total) || 0);
+                    setHistoryPage(1);
                     // 历史已加载，从当前任务中移除
                     setTasks(prev => prev.filter(t => t.id !== task.id));
                   }).catch(() => { });
@@ -1234,7 +1256,7 @@ export default function VideoPage() {
                             <WoodenFishLoader progress={task.progress} statusMessage={task.statusMessage} />
                           ) : task.status === 'complete' && task.videoUrl ? (
                             <>
-                              <video src={getVideoPlayUrl(task.videoUrl)} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="metadata" playsInline muted loop
+                              <video src={getVideoPlayUrl(task.videoUrl)} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="none" playsInline muted loop
                                 onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
                                 onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
                               <div className="absolute inset-0 bg-black/20 flex items-center justify-center group-hover:bg-black/5 transition-colors cursor-pointer" onClick={() => setPlayingVideo({ url: task.videoUrl!, prompt: restorePrompt(task.prompt) })}>
@@ -1258,7 +1280,7 @@ export default function VideoPage() {
                               <div className="flex gap-1.5 mt-3 h-8 overflow-hidden">
                                 {task.metadata.reference_images.slice(0, 6).map((imgUrl, imgIdx) => (
                                   <div key={imgIdx} className="relative w-8 h-8 rounded-md border border-[#d8c0a3] overflow-hidden shrink-0" title={`ref_${imgIdx}`}>
-                                    <img src={imgUrl} className="w-full h-full object-cover" />
+                                    <img src={imgUrl} className="w-full h-full object-cover" loading="lazy" decoding="async" alt="" />
                                     <div className="absolute top-0 left-0 bg-black/70 text-[7px] text-zinc-400 font-mono px-0.5 rounded-br scale-90 origin-top-left">
                                       ref_{imgIdx}
                                     </div>
@@ -1326,7 +1348,7 @@ export default function VideoPage() {
                     {history.map((h) => (
                       <article key={h.id} onClick={() => setPlayingVideo({ url: h.resultUrl, prompt: restorePrompt(h.title || h.inputText || '') })} className="group relative h-full min-h-[330px] rounded-2xl overflow-hidden border border-[#d8c0a3] bg-[#fbf5eb] hover:-translate-y-0.5 hover:border-[#b66a45] transition-all duration-200 flex flex-col cursor-pointer shadow-[0_10px_30px_rgba(89,55,35,0.07)] hover:shadow-[0_16px_36px_rgba(89,55,35,0.12)]">
                         <div className="relative w-full aspect-video bg-[#211a16] flex items-center justify-center overflow-hidden border-b border-[#d8c0a3]">
-                          <video src={getVideoPlayUrl(h.resultUrl)} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="metadata" playsInline muted loop
+                          <video src={getVideoPlayUrl(h.resultUrl)} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="none" playsInline muted loop
                             onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
                             onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
                           <div className="absolute inset-0 bg-black/20 flex items-center justify-center group-hover:bg-black/5 transition-colors">
@@ -1342,7 +1364,7 @@ export default function VideoPage() {
                               <div className="flex gap-1.5 mt-3 h-8 overflow-hidden">
                                 {h.metadata.reference_images.slice(0, 6).map((imgUrl: string, imgIdx: number) => (
                                   <div key={imgIdx} className="relative w-8 h-8 rounded-md border border-[#d8c0a3] overflow-hidden shrink-0" title={`ref_${imgIdx}`}>
-                                    <img src={imgUrl} className="w-full h-full object-cover" />
+                                    <img src={imgUrl} className="w-full h-full object-cover" loading="lazy" decoding="async" alt="" />
                                     <div className="absolute top-0 left-0 bg-black/70 text-[7px] text-zinc-400 font-mono px-0.5 rounded-br scale-90 origin-top-left">
                                       ref_{imgIdx}
                                     </div>
@@ -1383,6 +1405,13 @@ export default function VideoPage() {
                       </article>
                     ))}
                   </div>
+                  {historyPage * 12 < historyTotal && (
+                    <div className="mt-5 flex justify-center">
+                      <button type="button" disabled={historyLoading} onClick={loadMoreHistory} className="rounded-xl border border-[#d8c0a3] bg-[#fbf5eb] px-5 py-2 text-xs font-medium text-[#8a6048] transition-colors hover:border-[#b66a45] disabled:cursor-wait disabled:opacity-50">
+                        {historyLoading ? '加载中…' : '加载更多'}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

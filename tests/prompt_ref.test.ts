@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildReplicatedVideoPrompt, restoreVideoPromptRefs } from '../client/src/utils/videoPromptRefs';
+import { buildReplicatedVideoPrompt, getVideoReferenceAssets, restoreVideoPromptRefs } from '../client/src/utils/videoPromptRefs';
 
 const frontendTranslate = (prompt: string, imagesCount: number = 1) => {
   let finalPrompt = prompt.trim();
@@ -43,6 +43,20 @@ describe('Prompt Reference @ Syntax Test Suite', () => {
   it('should not duplicate references that are already present', () => {
     expect(buildReplicatedVideoPrompt('@图1 @视频1 @音频1', { images: 1, videos: 1, audios: 1 }))
       .toBe('@图1 @视频1 @音频1');
+  });
+
+  it('should normalize API and legacy reference asset field names for replication', () => {
+    expect(getVideoReferenceAssets({
+      reference_images: [],
+      image_urls: ['image-a'],
+      reference_videos: [],
+      video_urls: ['video-a', 'video-b'],
+      audios: ['audio-a'],
+    })).toEqual({
+      images: ['image-a'],
+      videos: ['video-a', 'video-b'],
+      audios: ['audio-a'],
+    });
   });
 
   it('should correctly translate UI @ tags to internal placeholders on frontend submit', () => {

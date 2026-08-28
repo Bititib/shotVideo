@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Film, Copy, ChevronLeft, ChevronRight, Filter, Image, Video, Music, Eye, X, Play } from 'lucide-react';
 import { adminApi } from '../../api/admin';
+import { getVideoReferenceAssets } from '../../utils/videoPromptRefs';
 
 interface ContentItem {
   id: number;
@@ -66,36 +67,8 @@ export default function ContentsPage() {
   };
 
   const parseRefAssets = (metaStr: string) => {
-    try {
-      const meta = JSON.parse(metaStr || '{}');
-      const refImgs: string[] = Array.isArray(meta.reference_images) ? meta.reference_images : [];
-
-      let refVids: string[] = [];
-      if (Array.isArray(meta.reference_videos)) {
-        refVids = meta.reference_videos;
-      } else if (typeof meta.reference_video === 'string' && meta.reference_video) {
-        refVids = [meta.reference_video];
-      } else if (Array.isArray(meta.videos)) {
-        refVids = meta.videos;
-      } else if (Array.isArray(meta.video_refs)) {
-        refVids = meta.video_refs;
-      }
-
-      let refAuds: string[] = [];
-      if (Array.isArray(meta.audio_urls)) {
-        refAuds = meta.audio_urls;
-      } else if (typeof meta.audio_url === 'string' && meta.audio_url) {
-        refAuds = [meta.audio_url];
-      } else if (Array.isArray(meta.audios)) {
-        refAuds = meta.audios;
-      } else if (Array.isArray(meta.audio_refs)) {
-        refAuds = meta.audio_refs;
-      }
-
-      return { refImgs, refVids, refAuds };
-    } catch {
-      return { refImgs: [], refVids: [], refAuds: [] };
-    }
+    const assets = getVideoReferenceAssets(metaStr);
+    return { refImgs: assets.images, refVids: assets.videos, refAuds: assets.audios };
   };
 
   const getVideoPlayUrl = (url: string | null) => {
@@ -208,7 +181,7 @@ export default function ContentsPage() {
                       src={getVideoPlayUrl(item.resultUrl)}
                       className="w-full h-full object-cover"
                       muted
-                      preload="metadata"
+                      preload="none"
                       onMouseEnter={(e) => (e.target as HTMLVideoElement).play().catch(() => {})}
                       onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
                     />
@@ -275,7 +248,7 @@ export default function ContentsPage() {
                   {refImgs.length > 0 && (
                     <div className="flex gap-1 overflow-x-auto pb-1">
                       {refImgs.slice(0, 5).map((img, i) => (
-                        <img key={i} src={img} alt={`ref_${i}`} className="w-8 h-8 rounded object-cover shrink-0 border border-white/10" />
+                        <img key={i} src={img} alt={`ref_${i}`} className="w-8 h-8 rounded object-cover shrink-0 border border-white/10" loading="lazy" decoding="async" />
                       ))}
                       {refImgs.length > 5 && (
                         <div className="w-8 h-8 rounded bg-white/5 flex items-center justify-center text-[10px] text-zinc-500 shrink-0">

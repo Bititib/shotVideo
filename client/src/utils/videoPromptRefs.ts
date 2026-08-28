@@ -4,6 +4,40 @@ export interface VideoReferenceCounts {
   audios: number;
 }
 
+export interface VideoReferenceAssets {
+  images: string[];
+  videos: string[];
+  audios: string[];
+}
+
+function firstAssetList(meta: Record<string, unknown>, arrayKeys: string[], scalarKeys: string[]): string[] {
+  for (const key of arrayKeys) {
+    const value = meta[key];
+    if (Array.isArray(value)) {
+      const assets = value.filter((item): item is string => typeof item === 'string' && item.length > 0);
+      if (assets.length > 0) return assets;
+    }
+  }
+  for (const key of scalarKeys) {
+    const value = meta[key];
+    if (typeof value === 'string' && value.length > 0) return [value];
+  }
+  return [];
+}
+
+/** Normalize reference fields written by the web UI, API and older records. */
+export function getVideoReferenceAssets(metadata: unknown): VideoReferenceAssets {
+  let meta: Record<string, unknown> = {};
+  try {
+    meta = typeof metadata === 'string' ? JSON.parse(metadata || '{}') : ((metadata || {}) as Record<string, unknown>);
+  } catch { }
+  return {
+    images: firstAssetList(meta, ['reference_images', 'image_urls', 'images', 'image_refs', 'referenceImages'], ['reference_image', 'image_url']),
+    videos: firstAssetList(meta, ['reference_videos', 'video_urls', 'videos', 'video_refs', 'referenceVideos'], ['reference_video', 'video_url']),
+    audios: firstAssetList(meta, ['audio_urls', 'reference_audios', 'audios', 'audio_refs', 'referenceAudios'], ['audio_url', 'reference_audio']),
+  };
+}
+
 export function restoreVideoPromptRefs(targetPrompt: string): string {
   if (!targetPrompt) return '';
   return targetPrompt

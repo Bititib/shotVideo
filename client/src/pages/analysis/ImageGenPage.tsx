@@ -136,6 +136,9 @@ export default function ImageGenPage() {
   const [error, setError] = useState<string | null>(null);
   const [generatedImages, setGeneratedImages] = useState<string[]>([]);
   const [history, setHistory] = useState<GeneratedImage[]>([]);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -145,7 +148,7 @@ export default function ImageGenPage() {
   useEffect(() => {
     fetchImageModels().then((m) => { setModels(m); if (m.length > 0 && !selectedModel) setSelectedModel(m[0].id); }).catch(() => {});
     // 加载历史生成记录
-    contentApi.getMyContents({ type: 'image', pageSize: 50 })
+    contentApi.getMyContents({ type: 'image', page: 1, pageSize: 12 })
       .then((res: any) => {
         const items = res?.items || res?.data || [];
         const loadedHistory: GeneratedImage[] = [];
@@ -187,9 +190,36 @@ export default function ImageGenPage() {
         if (loadedHistory.length > 0) {
           setHistory(loadedHistory);
         }
+        setHistoryTotal(Number(res?.total) || 0);
       })
       .catch(() => {});
   }, []);
+
+  const loadMoreHistory = async () => {
+    const nextPage = historyPage + 1;
+    setHistoryLoading(true);
+    try {
+      const res: any = await contentApi.getMyContents({ type: 'image', page: nextPage, pageSize: 12 });
+      const items = res?.items || res?.data || [];
+      const loaded: GeneratedImage[] = [];
+      const urls = new Set(history.map(item => item.imageUrl));
+      for (const item of items) {
+        const metadata = typeof item.metadata === 'string' ? (() => { try { return JSON.parse(item.metadata); } catch { return {}; } })() : (item.metadata || {});
+        const add = (url: string, suffix: string) => {
+          if (!url || urls.has(url)) return;
+          urls.add(url);
+          loaded.push({ id: `${item.id}_${suffix}`, prompt: item.inputText || item.title || '', imageUrl: url, model: item.model || item.modelId || '', createdAt: new Date(item.createdAt), aspectRatio: metadata.aspectRatio || '' });
+        };
+        add(item.resultUrl, 'main');
+        if (Array.isArray(metadata.imageUrls)) metadata.imageUrls.forEach((url: string, index: number) => add(url, String(index)));
+      }
+      setHistory(prev => [...prev, ...loaded]);
+      setHistoryPage(nextPage);
+      setHistoryTotal(Number(res?.total) || 0);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
   const readFileAsDataURL = (file: File): Promise<string> => new Promise((resolve, reject) => {
     const reader = new FileReader(); reader.onload = () => resolve(reader.result as string); reader.onerror = reject; reader.readAsDataURL(file);
@@ -404,6 +434,13 @@ export default function ImageGenPage() {
                   </div>
                 ))}
               </div>
+              {historyPage * 12 < historyTotal && (
+                <div className="mt-5 flex justify-center">
+                  <button type="button" disabled={historyLoading} onClick={loadMoreHistory} className="rounded-xl border border-white/10 bg-white/5 px-5 py-2 text-xs text-zinc-300 transition-colors hover:bg-white/10 disabled:cursor-wait disabled:opacity-50">
+                    {historyLoading ? '加载中…' : '加载更多'}
+                  </button>
+                </div>
+              )}
             </>
           ) : (
             <div className="h-full flex items-center justify-center">

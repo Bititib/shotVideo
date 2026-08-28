@@ -1,36 +1,47 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { ProtectedRoute, AdminRoute, OrgAdminRoute } from './components/ProtectedRoute';
 import { useAuthStore } from './stores/authStore';
 import Layout from './components/Layout';
 import LoginModal from './components/LoginModal';
-import LandingPage from './pages/LandingPage';
-import GeneralPage from './pages/analysis/GeneralPage';
-import EcommercePage from './pages/analysis/EcommercePage';
-import ImagePage from './pages/analysis/ImagePage';
-import CopywritingPage from './pages/analysis/CopywritingPage';
-import AccountPage from './pages/analysis/AccountPage';
-import VideoPage from './pages/analysis/VideoPage';
-import VideoStudioPage from './pages/analysis/VideoStudioPage';
-import ImageGenPage from './pages/analysis/ImageGenPage';
-import TtsPage from './pages/analysis/TtsPage';
-import ProfilePage from './pages/analysis/ProfilePage';
-import DocsPage from './pages/DocsPage';
-import AdminLayout from './pages/admin/AdminLayout';
-import DashboardPage from './pages/admin/DashboardPage';
-import UsersPage from './pages/admin/UsersPage';
-import TiersPage from './pages/admin/TiersPage';
-import ModelsPage from './pages/admin/ModelsPage';
-import ChannelsPage from './pages/admin/ChannelsPage';
-import TokensPage from './pages/admin/TokensPage';
-import PricingPage from './pages/admin/PricingPage';
-import OrgsPage from './pages/admin/OrgsPage';
-import ContentsPage from './pages/admin/ContentsPage';
-import FeedbackPage from './pages/admin/FeedbackPage';
-import OrgLayout from './pages/org/OrgLayout';
-import OrgDashboard from './pages/org/OrgDashboard';
-import OrgMembersPage from './pages/org/OrgMembersPage';
-import OrgContentsPage from './pages/org/OrgContentsPage';
+
+// Keep the shell small: each page is downloaded only when its route is opened.
+const LandingPage = lazy(() => import('./pages/LandingPage'));
+const GeneralPage = lazy(() => import('./pages/analysis/GeneralPage'));
+const EcommercePage = lazy(() => import('./pages/analysis/EcommercePage'));
+const ImagePage = lazy(() => import('./pages/analysis/ImagePage'));
+const CopywritingPage = lazy(() => import('./pages/analysis/CopywritingPage'));
+const AccountPage = lazy(() => import('./pages/analysis/AccountPage'));
+const VideoPage = lazy(() => import('./pages/analysis/VideoPage'));
+const VideoStudioPage = lazy(() => import('./pages/analysis/VideoStudioPage'));
+const ImageGenPage = lazy(() => import('./pages/analysis/ImageGenPage'));
+const TtsPage = lazy(() => import('./pages/analysis/TtsPage'));
+const ProfilePage = lazy(() => import('./pages/analysis/ProfilePage'));
+const DocsPage = lazy(() => import('./pages/DocsPage'));
+const AdminLayout = lazy(() => import('./pages/admin/AdminLayout'));
+const DashboardPage = lazy(() => import('./pages/admin/DashboardPage'));
+const UsersPage = lazy(() => import('./pages/admin/UsersPage'));
+const TiersPage = lazy(() => import('./pages/admin/TiersPage'));
+const ModelsPage = lazy(() => import('./pages/admin/ModelsPage'));
+const ChannelsPage = lazy(() => import('./pages/admin/ChannelsPage'));
+const TokensPage = lazy(() => import('./pages/admin/TokensPage'));
+const PricingPage = lazy(() => import('./pages/admin/PricingPage'));
+const OrgsPage = lazy(() => import('./pages/admin/OrgsPage'));
+const ContentsPage = lazy(() => import('./pages/admin/ContentsPage'));
+const FeedbackPage = lazy(() => import('./pages/admin/FeedbackPage'));
+const OrgLayout = lazy(() => import('./pages/org/OrgLayout'));
+const OrgDashboard = lazy(() => import('./pages/org/OrgDashboard'));
+const OrgMembersPage = lazy(() => import('./pages/org/OrgMembersPage'));
+const OrgContentsPage = lazy(() => import('./pages/org/OrgContentsPage'));
+
+function PageLoading() {
+  return (
+    <div className="min-h-screen bg-zinc-950 flex items-center justify-center" role="status" aria-live="polite">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-700 border-t-indigo-500" />
+      <span className="sr-only">页面加载中</span>
+    </div>
+  );
+}
 
 /** /login 路由 → 已登录跳工作台，未登录弹登录框 */
 function LoginRedirect() {
@@ -60,6 +71,7 @@ export default function App() {
       {/* 全局登录弹窗 */}
       <LoginModal />
 
+      <Suspense fallback={<PageLoading />}>
       <Routes>
         {/* Public */}
         <Route path="/" element={<LandingPage />} />
@@ -102,6 +114,7 @@ export default function App() {
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </Suspense>
     </>
   );
 }
