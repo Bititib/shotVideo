@@ -38,10 +38,21 @@ interface VideoTask {
 }
 function getVideoPlayUrl(url: string | null) {
   if (!url) return '';
+  if (url.startsWith('/uploads/')) {
+    return `/api/video/play?url=${encodeURIComponent(url)}`;
+  }
   if (url.startsWith('/') || url.startsWith('http://localhost') || url.startsWith('http://127.0.0.1')) {
     return url;
   }
   return `/api/video/play?url=${encodeURIComponent(url)}`;
+}
+
+const VIDEO_PREVIEW_TIME = 0.15;
+
+function showVideoPreviewFrame(video: HTMLVideoElement) {
+  if (!Number.isFinite(video.duration) || video.duration <= 0) return;
+  const previewTime = Math.min(VIDEO_PREVIEW_TIME, Math.max(0, video.duration / 2));
+  if (Math.abs(video.currentTime - previewTime) > 0.01) video.currentTime = previewTime;
 }
 
 export const isComicDramaModel = (modelId: string) => {
@@ -1256,9 +1267,10 @@ export default function VideoPage() {
                             <WoodenFishLoader progress={task.progress} statusMessage={task.statusMessage} />
                           ) : task.status === 'complete' && task.videoUrl ? (
                             <>
-                              <video src={getVideoPlayUrl(task.videoUrl)} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="none" playsInline muted loop
+                              <video src={getVideoPlayUrl(task.videoUrl)} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="metadata" playsInline muted loop
+                                onLoadedMetadata={(e) => showVideoPreviewFrame(e.currentTarget)}
                                 onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
-                                onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
+                                onMouseLeave={(e) => { e.currentTarget.pause(); showVideoPreviewFrame(e.currentTarget); }} />
                               <div className="absolute inset-0 bg-black/20 flex items-center justify-center group-hover:bg-black/5 transition-colors cursor-pointer" onClick={() => setPlayingVideo({ url: task.videoUrl!, prompt: restorePrompt(task.prompt) })}>
                                 <span className="w-11 h-11 rounded-full border border-white/70 bg-black/20 backdrop-blur-sm flex items-center justify-center group-hover:scale-105 transition-transform"><Play className="w-5 h-5 text-white fill-white/10 translate-x-0.5" /></span>
                               </div>
@@ -1348,9 +1360,10 @@ export default function VideoPage() {
                     {history.map((h) => (
                       <article key={h.id} onClick={() => setPlayingVideo({ url: h.resultUrl, prompt: restorePrompt(h.title || h.inputText || '') })} className="group relative h-full min-h-[330px] rounded-2xl overflow-hidden border border-[#d8c0a3] bg-[#fbf5eb] hover:-translate-y-0.5 hover:border-[#b66a45] transition-all duration-200 flex flex-col cursor-pointer shadow-[0_10px_30px_rgba(89,55,35,0.07)] hover:shadow-[0_16px_36px_rgba(89,55,35,0.12)]">
                         <div className="relative w-full aspect-video bg-[#211a16] flex items-center justify-center overflow-hidden border-b border-[#d8c0a3]">
-                          <video src={getVideoPlayUrl(h.resultUrl)} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="none" playsInline muted loop
+                          <video src={getVideoPlayUrl(h.resultUrl)} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="metadata" playsInline muted loop
+                            onLoadedMetadata={(e) => showVideoPreviewFrame(e.currentTarget)}
                             onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
-                            onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }} />
+                            onMouseLeave={(e) => { e.currentTarget.pause(); showVideoPreviewFrame(e.currentTarget); }} />
                           <div className="absolute inset-0 bg-black/20 flex items-center justify-center group-hover:bg-black/5 transition-colors">
                             <span className="w-11 h-11 rounded-full border border-white/70 bg-black/20 backdrop-blur-sm flex items-center justify-center group-hover:scale-105 transition-transform"><Play className="w-5 h-5 text-white fill-white/10 translate-x-0.5" /></span>
                           </div>
@@ -1422,7 +1435,9 @@ export default function VideoPage() {
         {playingVideo && (
           <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-8" onClick={() => setPlayingVideo(null)}>
             <div className="relative w-full max-w-4xl" onClick={(e) => e.stopPropagation()}>
-              <video src={getVideoPlayUrl(playingVideo.url)} controls autoPlay className="w-full max-h-[75vh] rounded-2xl shadow-2xl bg-black" />
+              <video src={getVideoPlayUrl(playingVideo.url)} controls autoPlay preload="auto" onLoadedMetadata={(e) => {
+                if (e.currentTarget.paused && e.currentTarget.currentTime === 0) showVideoPreviewFrame(e.currentTarget);
+              }} className="w-full max-h-[75vh] rounded-2xl shadow-2xl bg-black" />
               <div className="flex items-center justify-between mt-4">
                 <p className="text-sm text-zinc-300 line-clamp-1 flex-1 mr-4">{restorePrompt(playingVideo.prompt)}</p>
                 <div className="flex items-center gap-3 shrink-0">

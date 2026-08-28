@@ -48,6 +48,20 @@ export function hmStudioTaskUrl(baseUrl: string, taskId: string): string {
   return `${baseUrl.replace(/\/+$/, '')}/v1/tasks/${encodeURIComponent(taskId)}`;
 }
 
+/**
+ * HM Studio API credentials belong to the API origin, not to result URLs
+ * returned by the service. Those results are commonly signed third-party CDN
+ * links (for example, dola.com) and some CDN edges reject an unrelated Bearer
+ * token with 401.
+ */
+export function shouldSendHmStudioAuthorization(targetUrl: string, baseUrl: string): boolean {
+  try {
+    return new URL(targetUrl, baseUrl).origin === new URL(baseUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
 function dataUrlToBlob(source: string): { blob: Blob; extension: string } | null {
   const match = source.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) return null;

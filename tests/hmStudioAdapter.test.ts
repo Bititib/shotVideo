@@ -5,6 +5,7 @@ import {
   hmStudioCreateUrl,
   hmStudioTaskUrl,
   normalizeHmStudioTask,
+  shouldSendHmStudioAuthorization,
 } from '../server/services/hmStudioAdapter.js';
 
 describe('HM Studio adapter', () => {
@@ -12,6 +13,15 @@ describe('HM Studio adapter', () => {
     expect(hmStudioCreateUrl('https://example.test/', 'video')).toBe('https://example.test/v1/videos/generations');
     expect(hmStudioCreateUrl('https://example.test', 'image')).toBe('https://example.test/v1/images/generations');
     expect(hmStudioTaskUrl('https://example.test/', 'task/id')).toBe('https://example.test/v1/tasks/task%2Fid');
+  });
+
+  it('only sends API authorization to the HM Studio API origin', () => {
+    const baseUrl = 'https://hm.example.test';
+
+    expect(shouldSendHmStudioAuthorization('/v1/files/video.mp4', baseUrl)).toBe(true);
+    expect(shouldSendHmStudioAuthorization('https://hm.example.test/files/video.mp4', baseUrl)).toBe(true);
+    expect(shouldSendHmStudioAuthorization('http://v19-dola.dola.com/signed/video.mp4', baseUrl)).toBe(false);
+    expect(shouldSendHmStudioAuthorization('not a valid absolute url', '')).toBe(false);
   });
 
   it('maps ordinary video fields and a single reference image', () => {

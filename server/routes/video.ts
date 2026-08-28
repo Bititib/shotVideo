@@ -13,6 +13,7 @@ import {
   hmStudioTaskUrl,
   isHmStudioChannel,
   normalizeHmStudioTask,
+  shouldSendHmStudioAuthorization,
 } from '../services/hmStudioAdapter.js';
 import {
   buildMjNewApiVideoPayload,
@@ -33,6 +34,33 @@ const execPromise = promisify(exec);
 const router = Router();
 
 export const activePolls = new Set<number>();
+
+function detectVideoCodec(filePath: string): string {
+  try {
+    return execSync(
+      `ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "${filePath}"`,
+      { encoding: 'utf8' },
+    ).trim().toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+async function ensureBrowserCompatibleVideo(filePath: string): Promise<void> {
+  if (detectVideoCodec(filePath) !== 'hevc') return;
+
+  const transcodedPath = `${filePath}.${crypto.randomUUID()}.h264.mp4`;
+  try {
+    console.log(`[video] HEVC detected; transcoding localized video to H.264: ${filePath}`);
+    await execPromise(
+      `ffmpeg -y -i "${filePath}" -c:v libx264 -tag:v avc1 -pix_fmt yuv420p -preset superfast -movflags +faststart -c:a copy "${transcodedPath}"`,
+    );
+    fs.renameSync(transcodedPath, filePath);
+    console.log(`[video] Browser-compatible H.264 video ready: ${filePath}`);
+  } finally {
+    if (fs.existsSync(transcodedPath)) fs.unlinkSync(transcodedPath);
+  }
+}
 
 const RATIO_TO_SIZE: Record<string, string> = {
   '16:9': '1280x720',
@@ -276,7 +304,11 @@ export async function downloadAndLocalizeVideo(
   const exactChannel = channelId ? ChannelService.getChannelRaw(channelId) : null;
   const channel = exactChannel || ChannelService.findChannelForModel(model);
   const headers: Record<string, string> = {};
-  if (channel?.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
+  const maySendAuthorization = !isHmStudioChannel(channel)
+    || shouldSendHmStudioAuthorization(url, channel.baseUrl);
+  if (channel?.apiKey && maySendAuthorization) {
+    headers.Authorization = `Bearer ${channel.apiKey}`;
+  }
 
   const uploadDir = path.join(process.cwd(), 'data', 'uploads', 'videos');
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -286,6 +318,7 @@ export async function downloadAndLocalizeVideo(
     const existingName = `video_${safeId}.${extension}`;
     const existingPath = path.join(uploadDir, existingName);
     if (fs.existsSync(existingPath) && fs.statSync(existingPath).size > 0) {
+      await ensureBrowserCompatibleVideo(existingPath);
       return `/uploads/videos/${existingName}`;
     }
   }
@@ -313,6 +346,7 @@ export async function downloadAndLocalizeVideo(
   try {
     fs.writeFileSync(tempPath, buffer);
     fs.renameSync(tempPath, finalPath);
+    await ensureBrowserCompatibleVideo(finalPath);
   } finally {
     if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
   }
@@ -1791,6 +1825,26 @@ router.get('/play', async (req: Request, res: Response) => {
   if (!url) return res.status(400).json({ error: 'Missing url parameter' });
 
   try {
+    let localSourcePath = '';
+    if (url.startsWith('/uploads/')) {
+      const uploadsRoot = path.resolve(process.cwd(), 'data', 'uploads');
+      const relativePath = url.slice('/uploads/'.length).replace(/^[/\\]+/, '');
+      const candidatePath = path.resolve(uploadsRoot, relativePath);
+      if (candidatePath !== uploadsRoot && !candidatePath.startsWith(`${uploadsRoot}${path.sep}`)) {
+        return res.status(400).send('Invalid local video path');
+      }
+      if (!fs.existsSync(candidatePath) || !fs.statSync(candidatePath).isFile()) {
+        return res.status(404).send('Local video file not found');
+      }
+      localSourcePath = candidatePath;
+
+      // Preserve native Range handling for already compatible local files.
+      // Existing HEVC files continue through the locked transcoding cache below.
+      if (detectVideoCodec(localSourcePath) !== 'hevc') {
+        return res.sendFile(localSourcePath);
+      }
+    }
+
     const hash = crypto.createHash('md5').update(url).digest('hex');
     const cachedFilePath = path.join(videoCacheDir, `${hash}.mp4`);
 
@@ -1818,19 +1872,19 @@ router.get('/play', async (req: Request, res: Response) => {
             if (channel?.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
           }
 
-          const fetchResp = await fetch(url, { headers });
+          if (localSourcePath) {
+            fs.copyFileSync(localSourcePath, tempOriginalPath);
+          } else {
+            const fetchResp = await fetch(url, { headers });
           if (!fetchResp.ok) throw new Error(`无法获取原始视频流: ${fetchResp.statusText}`);
-          const buffer = Buffer.from(await fetchResp.arrayBuffer());
-          fs.writeFileSync(tempOriginalPath, buffer);
+            const buffer = Buffer.from(await fetchResp.arrayBuffer());
+            fs.writeFileSync(tempOriginalPath, buffer);
+          }
 
           // ffprobe 检测编码
           let isHevc = false;
           try {
-            const ffprobeOut = execSync(
-              `ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1 "${tempOriginalPath}"`,
-              { encoding: 'utf8' }
-            );
-            isHevc = ffprobeOut.includes('hevc');
+            isHevc = detectVideoCodec(tempOriginalPath) === 'hevc';
           } catch {
             console.warn('[video/play] ffprobe 探测失败，默认尝试转码');
             isHevc = true;
@@ -1839,7 +1893,7 @@ router.get('/play', async (req: Request, res: Response) => {
           if (isHevc) {
             console.log(`[video/play] 检测到 H.265 (HEVC)，转码为 H.264...`);
             await execPromise(
-              `ffmpeg -y -i "${tempOriginalPath}" -c:v libx264 -pix_fmt yuv420p -preset superfast -movflags faststart -c:a copy "${tempTranscodedPath}"`
+              `ffmpeg -y -i "${tempOriginalPath}" -c:v libx264 -tag:v avc1 -pix_fmt yuv420p -preset superfast -movflags +faststart -c:a copy "${tempTranscodedPath}"`
             );
             // 原子 rename 交付缓存
             fs.renameSync(tempTranscodedPath, cachedFilePath);
