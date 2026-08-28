@@ -6,6 +6,7 @@ import { ChannelService } from '../services/channelService.js';
 import { BalanceService } from '../services/balanceService.js';
 import { ContentService } from '../services/contentService.js';
 import { PricingService } from '../services/pricingService.js';
+import { hmStudioQueue, type HmStudioQueueSnapshot } from '../services/hmStudioQueueService.js';
 import { calculateSuccessRate, isWithinRecentDays } from '../services/successRateService.js';
 import {
   buildHmStudioVideoForm,
@@ -34,6 +35,7 @@ const execPromise = promisify(exec);
 const router = Router();
 
 export const activePolls = new Set<number>();
+const activePollPromises = new Map<number, Promise<void>>();
 
 function detectVideoCodec(filePath: string): string {
   try {
@@ -902,9 +904,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         model,
         prompt: (prompt as string).slice(0, 5000),
         channelId: dbChannel?.id ?? null,
+        upstreamModel,
         reference_images,
         reference_videos: finalVideos,
-        audio_urls: finalAudios
+        audio_urls: finalAudios,
+        first_frame,
+        last_frame,
+        billingSource: 'user',
+        queueUserKey: `user:${req.userId}`,
+        queueEnqueuedAt: new Date().toISOString()
       }
     });
     if (contentId !== null) {
@@ -966,6 +974,70 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'vd-seedance-2.5-480p',
     'vd-seedance-2.5-720p'
   ].includes(model);
+
+  if (isHmStudio && contentId !== null) {
+    try {
+      db.update(contents).set({ status: 'queued' }).where(eq(contents.id, contentId)).run();
+      const snapshot = enqueueHmStudioVideoContent(contentId);
+      sendEvent({ type: 'queue', ...snapshot });
+
+      let lastQueuePosition = -1;
+      let lastProgress = -1;
+      while (true) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        const queuedRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
+        if (!queuedRecord) return res.end();
+        let queuedMeta: Record<string, any> = {};
+        try { queuedMeta = JSON.parse(queuedRecord.metadata || '{}'); } catch { }
+
+        if (queuedRecord.status === 'queued') {
+          const position = Number(queuedMeta.queuePosition || 1);
+          if (position !== lastQueuePosition) {
+            lastQueuePosition = position;
+            sendEvent({
+              type: 'queue',
+              status: 'queued',
+              position,
+              running: Number(queuedMeta.queueRunning || 0),
+              concurrencyLimit: Number(queuedMeta.queueLimit || 10),
+              queued: Number(queuedMeta.queueTotal || 0),
+              message: `HM Studio 排队中：前方 ${Math.max(0, position - 1)} 项，当前运行 ${queuedMeta.queueRunning || 0}/${queuedMeta.queueLimit || 10}`,
+            });
+          }
+        } else if (queuedRecord.status === 'processing') {
+          const progress = Number(queuedMeta.progress || 0);
+          if (progress !== lastProgress) {
+            lastProgress = progress;
+            sendEvent({ type: 'progress', progress });
+            sendEvent({ type: 'status', message: queuedMeta.progressText || (queuedMeta.videoId ? `视频生成中 ${progress}%` : '正在提交 HM Studio 任务') });
+          }
+        } else if (queuedRecord.status === 'completed') {
+          sendEvent({ type: 'complete', videoUrl: queuedRecord.resultUrl || '' });
+          if (!res.destroyed && !res.writableEnded) {
+            res.write('data: [DONE]\n\n');
+            res.end();
+          }
+          return;
+        } else if (queuedRecord.status === 'failed') {
+          sendEvent({ type: 'error', message: queuedMeta.error || 'HM Studio 视频生成失败' });
+          if (!res.destroyed && !res.writableEnded) {
+            res.write('data: [DONE]\n\n');
+            res.end();
+          }
+          return;
+        }
+
+        if (res.destroyed || res.writableEnded) return;
+      }
+    } catch (error: any) {
+      refundFailedTask(error.message || 'HM Studio 排队失败');
+      if (!res.destroyed && !res.writableEnded) {
+        res.write('data: [DONE]\n\n');
+        res.end();
+      }
+      return;
+    }
+  }
 
   try {
     let videoId = '';
@@ -1981,8 +2053,142 @@ router.post('/merge', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
-export function resumePollForTask(contentId: number, record: any) {
-  if (activePolls.has(contentId)) return;
+function persistHmQueueSnapshot(contentId: number, snapshot: HmStudioQueueSnapshot): void {
+  const record = db.select().from(contents).where(eq(contents.id, contentId)).get();
+  if (!record || record.status === 'completed' || record.status === 'failed') return;
+  let metadata: Record<string, any> = {};
+  try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
+  metadata.queueStatus = snapshot.status;
+  metadata.queuePosition = snapshot.position;
+  metadata.queueRunning = snapshot.running;
+  metadata.queueLimit = snapshot.concurrencyLimit;
+  metadata.queueUserRunning = snapshot.userRunning;
+  metadata.queueUserLimit = snapshot.userConcurrencyLimit;
+  metadata.queueTotal = snapshot.queued;
+  if (snapshot.status === 'running' && !metadata.queueStartedAt) {
+    metadata.queueStartedAt = new Date().toISOString();
+  }
+  db.update(contents).set({
+    status: snapshot.status === 'queued' ? 'queued' : 'processing',
+    metadata: JSON.stringify(metadata),
+  }).where(eq(contents.id, contentId)).run();
+}
+
+async function failHmQueuedVideo(contentId: number, error: unknown): Promise<void> {
+  const record = db.select().from(contents).where(eq(contents.id, contentId)).get();
+  if (!record || record.status === 'failed' || record.status === 'completed') return;
+  let metadata: Record<string, any> = {};
+  try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
+  const message = error instanceof Error ? error.message : String(error || 'HM Studio 任务失败');
+  const refundAmount = Number(record.cost) || 0;
+  if (refundAmount > 0 && !metadata.queueRefunded) {
+    if (metadata.billingSource === 'token' && metadata.tokenId) {
+      const { TokenService } = await import('../services/tokenService.js');
+      TokenService.deductBalance(Number(metadata.tokenId), -refundAmount);
+    } else {
+      BalanceService.refund(record.userId, refundAmount, 'generate_video_refund');
+    }
+    metadata.queueRefunded = true;
+  }
+  metadata.queueStatus = 'failed';
+  metadata.error = message;
+  db.update(contents).set({ status: 'failed', cost: 0, metadata: JSON.stringify(metadata) })
+    .where(eq(contents.id, contentId)).run();
+}
+
+/** 将已持久化的视频内容记录加入 HM Studio 公平队列。 */
+export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSnapshot {
+  const record = db.select().from(contents).where(eq(contents.id, contentId)).get();
+  if (!record) throw new Error(`Video content ${contentId} not found`);
+  let metadata: Record<string, any> = {};
+  try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
+
+  const channelRow = metadata.channelId ? ChannelService.getChannelRaw(Number(metadata.channelId)) : null;
+  const fallbackChannel = ChannelService.findChannelForModel(record.modelId || metadata.model || '');
+  const channel = channelRow || fallbackChannel;
+  if (!channel || !isHmStudioChannel(channel)) throw new Error('HM Studio channel is unavailable');
+
+  const model = record.modelId || metadata.model || '';
+  let mapping: Record<string, string> = {};
+  try {
+    mapping = typeof channel.modelMapping === 'string' ? JSON.parse(channel.modelMapping || '{}') : (channel.modelMapping || {});
+  } catch { }
+  const upstreamModel = metadata.upstreamModel || mapping[model] || model;
+
+  const queued = hmStudioQueue.enqueue({
+    id: `video:${contentId}`,
+    userKey: metadata.queueUserKey || `user:${record.userId}`,
+    onUpdate: snapshot => persistHmQueueSnapshot(contentId, snapshot),
+    task: async () => {
+      try {
+        const latest = db.select().from(contents).where(eq(contents.id, contentId)).get();
+        if (!latest || latest.status === 'failed' || latest.status === 'completed') return;
+        let latestMeta: Record<string, any> = {};
+        try { latestMeta = JSON.parse(latest.metadata || '{}'); } catch { }
+
+        const formData = buildHmStudioVideoForm({
+          model: upstreamModel,
+          prompt: String(latestMeta.prompt || latest.inputText || '').trim(),
+          duration: Number(latestMeta.seconds) || 6,
+          ratio: latestMeta.aspect_ratio || latestMeta.ratio || '16:9',
+          resolution: latestMeta.resolution || '720p',
+          imageSources: latestMeta.reference_images || latestMeta.image_urls || [],
+          videoSources: latestMeta.reference_videos || latestMeta.video_urls || [],
+          audioSources: latestMeta.audio_urls || [],
+          firstFrame: latestMeta.first_frame || latestMeta.firstFrame,
+          lastFrame: latestMeta.last_frame || latestMeta.lastFrame,
+          functionMode: latestMeta.function_mode,
+          upstreamChannel: latestMeta.upstream_channel,
+        });
+        const headers: Record<string, string> = {};
+        if (channel.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
+        const response = await fetch(hmStudioCreateUrl(channel.baseUrl, 'video'), {
+          method: 'POST',
+          headers,
+          body: formData,
+          signal: AbortSignal.timeout(channel.timeout || 120_000),
+        });
+        if (!response.ok) {
+          const detail = await response.text().catch(() => '');
+          throw new Error(`HM Studio 提交失败 (${response.status}): ${detail.slice(0, 300)}`);
+        }
+        const payload = await response.json() as any;
+        const videoId = payload.task_id || payload.id;
+        if (!videoId) throw new Error('HM Studio 未返回任务 ID');
+
+        latestMeta.videoId = videoId;
+        latestMeta.upstreamModel = upstreamModel;
+        latestMeta.upstreamStatus = 'submitted';
+        latestMeta.progress = 0;
+        latestMeta.queueStatus = 'running';
+        db.update(contents).set({ status: 'processing', metadata: JSON.stringify(latestMeta) })
+          .where(eq(contents.id, contentId)).run();
+
+        const updatedRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
+        if (updatedRecord) await resumePollForTask(contentId, updatedRecord);
+      } catch (error) {
+        await failHmQueuedVideo(contentId, error);
+        throw error;
+      }
+    },
+  });
+  return queued.snapshot;
+}
+
+function adoptHmStudioProcessingContent(contentId: number, record: any): HmStudioQueueSnapshot {
+  let metadata: Record<string, any> = {};
+  try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
+  const adopted = hmStudioQueue.adoptRunning({
+    id: `video:${contentId}`,
+    userKey: metadata.queueUserKey || `user:${record.userId}`,
+    onUpdate: snapshot => persistHmQueueSnapshot(contentId, snapshot),
+    task: () => resumePollForTask(contentId, record),
+  });
+  return adopted.snapshot;
+}
+
+export function resumePollForTask(contentId: number, record: any): Promise<void> {
+  if (activePolls.has(contentId)) return activePollPromises.get(contentId) || Promise.resolve();
   activePolls.add(contentId);
 
   let model = record.modelId || '';
@@ -2016,7 +2222,7 @@ export function resumePollForTask(contentId: number, record: any) {
     } catch (dbErr) {
       console.error(`[video-recover] Failed to set status to failed for task ${contentId}:`, dbErr);
     }
-    return;
+    return Promise.resolve();
   }
 
   if (!videoId) {
@@ -2027,7 +2233,7 @@ export function resumePollForTask(contentId: number, record: any) {
     } catch (dbErr) {
       console.error(`[video-recover] Failed to set status to failed for task ${contentId}:`, dbErr);
     }
-    return;
+    return Promise.resolve();
   }
 
   const resolution = metadata.resolution || '720p';
@@ -2135,7 +2341,7 @@ export function resumePollForTask(contentId: number, record: any) {
   const headers: Record<string, string> = {};
   if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
 
-  (async () => {
+  const pollingPromise = (async () => {
     console.log(`[video-recover] Starting polling for video task ${contentId} (videoId: ${videoId})`);
     const pollInterval = 5000;
     const startTime = Date.now();
@@ -2293,6 +2499,8 @@ export function resumePollForTask(contentId: number, record: any) {
           meta = {
             ...meta,
             progress: 100,
+            queueStatus: 'completed',
+            queuePosition: 0,
             localizedAt: new Date(completedTime).toISOString(),
             durationMs,
             completedAt: new Date(completedTime).toISOString()
@@ -2311,14 +2519,19 @@ export function resumePollForTask(contentId: number, record: any) {
           if (refundAmount > 0) {
             let meta: any = {};
             try { meta = JSON.parse(record.metadata || '{}'); } catch { }
-            if (meta.tokenId) {
+            if (meta.billingSource === 'token' && meta.tokenId) {
               const { TokenService } = await import('../services/tokenService.js');
               TokenService.deductBalance(meta.tokenId, -refundAmount);
             } else {
               BalanceService.refund(record.userId, refundAmount, 'generate_video_refund');
             }
           }
-          db.update(contents).set({ status: 'failed', cost: 0 }).where(eq(contents.id, contentId)).run();
+          let failedMeta: Record<string, any> = {};
+          try { failedMeta = JSON.parse(currentRecord.metadata || '{}'); } catch { }
+          failedMeta.queueStatus = 'failed';
+          failedMeta.queuePosition = 0;
+          failedMeta.error = errMsg;
+          db.update(contents).set({ status: 'failed', cost: 0, metadata: JSON.stringify(failedMeta) }).where(eq(contents.id, contentId)).run();
           break;
         }
       } catch (err: any) {
@@ -2327,24 +2540,38 @@ export function resumePollForTask(contentId: number, record: any) {
     }
 
     activePolls.delete(contentId);
+    activePollPromises.delete(contentId);
     console.log(`[video-recover] Task ${contentId} polling terminated.`);
   })();
+  activePollPromises.set(contentId, pollingPromise);
+  return pollingPromise;
 }
 
 export function resumeAllPendingVideoTasks() {
-  console.log('🔍 [video-recover] Scanning for stuck processing video tasks...');
+  console.log('🔍 [video-recover] Scanning for queued and processing video tasks...');
   try {
     // 自动修正历史错误数据：包含 status = 'failed' 却残留 cost > 0 的记录，将 cost 修正为 0
     db.update(contents).set({ cost: 0 }).where(eq(contents.status, 'failed')).run();
 
     const pendingTasks = db.select().from(contents)
-      .where(and(eq(contents.status, 'processing'), eq(contents.type, 'video')))
-      .all();
+      .where(eq(contents.type, 'video'))
+      .all()
+      .filter(record => record.status === 'queued' || record.status === 'processing');
     console.log(`🔍 [video-recover] Found ${pendingTasks.length} pending video tasks to recover`);
 
     pendingTasks.forEach((record: any) => {
       const contentId = record.id;
-      if (!activePolls.has(contentId)) {
+      let metadata: Record<string, any> = {};
+      try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
+      const originalChannel = metadata.channelId ? ChannelService.getChannelRaw(Number(metadata.channelId)) : null;
+      if (originalChannel && isHmStudioChannel(originalChannel)) {
+        try {
+          if (metadata.videoId) adoptHmStudioProcessingContent(contentId, record);
+          else enqueueHmStudioVideoContent(contentId);
+        } catch (error: any) {
+          console.error(`[video-recover] Failed to recover HM Studio task ${contentId}:`, error.message);
+        }
+      } else if (!activePolls.has(contentId)) {
         resumePollForTask(contentId, record);
       }
     });

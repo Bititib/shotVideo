@@ -36,12 +36,16 @@ export interface VideoGenerateParams {
 }
 
 export interface VideoSSEEvent {
-  type: 'status' | 'progress' | 'content' | 'complete' | 'error' | 'content_id' | 'close';
+  type: 'status' | 'queue' | 'progress' | 'content' | 'complete' | 'error' | 'content_id' | 'close';
   progress?: number;
   content?: string;
   videoUrl?: string;
   message?: string;
   contentId?: number;
+  position?: number;
+  running?: number;
+  concurrencyLimit?: number;
+  queued?: number;
 }
 
 /** 获取可用的视频模型列表 */

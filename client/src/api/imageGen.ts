@@ -15,7 +15,7 @@ export interface ImageGenerateParams {
 }
 
 export interface ImageSSEEvent {
-  type: 'status' | 'progress' | 'content' | 'image_ready' | 'image_error' | 'complete' | 'error';
+  type: 'status' | 'queue' | 'progress' | 'content' | 'image_ready' | 'image_error' | 'complete' | 'error';
   progress?: number;
   index?: number;               // 多图时的图片索引
   total?: number;               // 多图总数
@@ -23,6 +23,10 @@ export interface ImageSSEEvent {
   imageUrl?: string;            // 单张图片 URL（image_ready）
   imageUrls?: string[];         // 所有图片 URL（complete）
   message?: string;
+  position?: number;
+  running?: number;
+  concurrencyLimit?: number;
+  queued?: number;
 }
 
 /** 获取可用的图片模型列表 */

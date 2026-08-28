@@ -11,21 +11,21 @@ async function main() {
   // 创建 Express 应用
   const app = await createApp();
 
-  // 启动后恢复进行中的后台视频任务，并开启每 60 秒定期解耦巡检
-  try {
-    const { resumeAllPendingVideoTasks } = await import('./routes/video.js');
-    resumeAllPendingVideoTasks();
-    setInterval(() => {
-      resumeAllPendingVideoTasks();
-    }, 60_000);
-  } catch (e: any) {
-    console.error('⚠️ [video-recover] 恢复视频任务失败:', e.message);
-  }
-
   // 启动
-  app.listen(env.PORT, '0.0.0.0', () => {
+  app.listen(env.PORT, '0.0.0.0', async () => {
     console.log(`✅ 服务器运行于 http://localhost:${env.PORT}`);
     console.log(`📦 环境: ${env.NODE_ENV}`);
+
+    // 监听端口后再恢复队列，确保 HM 能访问本站托管的参考素材。
+    try {
+      const { resumeAllPendingVideoTasks } = await import('./routes/video.js');
+      resumeAllPendingVideoTasks();
+      setInterval(() => {
+        resumeAllPendingVideoTasks();
+      }, 60_000);
+    } catch (e: any) {
+      console.error('⚠️ [video-recover] 恢复视频任务失败:', e.message);
+    }
   });
 }
 

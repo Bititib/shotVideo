@@ -261,6 +261,9 @@ export default function ImageGenPage() {
       { prompt: prompt.trim(), model: selectedModel, aspect_ratio: aspectRatio, n: imageCount, reference_images: referenceImages.length > 0 ? referenceImages : undefined },
       (event: ImageSSEEvent) => {
         switch (event.type) {
+          case 'queue':
+            setStatusMessage(`HM Studio 排队中：前方 ${Math.max(0, (event.position || 1) - 1)} 项，当前运行 ${event.running || 0}/${event.concurrencyLimit || 10}`);
+            break;
           case 'status':
             setStatusMessage(event.message || '');
             break;

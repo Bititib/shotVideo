@@ -19,6 +19,7 @@ import {
   isHmStudioChannel,
   waitForHmStudioTask,
 } from '../services/hmStudioAdapter.js';
+import { hmStudioQueue } from '../services/hmStudioQueueService.js';
 import {
   buildMjNewApiVideoPayload,
   findInvalidMjNewApiMaterialUrls,
@@ -52,6 +53,57 @@ export function filterRoutableModels(
     activeChannels.flatMap(ch => ch.supportedModels.filter(modelId => modelId !== '*')),
   );
   return modelIds.filter(modelId => routableModels.has(modelId));
+}
+
+const DEFAULT_V1_VIDEO_MODELS = [
+  'sora-v4-fast',
+  'sora-v4-pro',
+  'lg-seedance-2.0-fast',
+  'sdas-d7-seedance-2.0-face-720p',
+  'sdas-mo-seedance-2.0-dj-fast',
+  'sdas-wf-sd2.0-fast-933-720p',
+  'sdas-wf-sd2.0-pro-933-480p',
+  'sdas-pg-s2.0-fast',
+];
+
+/** 返回当前 Token 能通过启用渠道实际调用的模型 ID。 */
+export function getAccessibleModelIds(token: { allowedModels: string[] }): string[] {
+  const allModels = new Set<string>();
+  const disabledModelIds = new Set<string>();
+
+  try {
+    const inactive = db.select().from(models).where(eq(models.isActive, 0)).all();
+    inactive.forEach(model => disabledModelIds.add(model.modelId));
+  } catch { /* 保留通过渠道发现模型的能力 */ }
+
+  DEFAULT_V1_VIDEO_MODELS.forEach(modelId => {
+    if (!disabledModelIds.has(modelId)) allModels.add(modelId);
+  });
+
+  try {
+    const dbModels = db.select().from(models).where(eq(models.isActive, 1)).all();
+    dbModels.forEach(model => allModels.add(model.modelId));
+  } catch (error) {
+    console.error('[v1/models] 数据库模型读取失败:', error);
+  }
+
+  let activeChannels: ReturnType<typeof ChannelService.getActiveChannels> = [];
+  try {
+    activeChannels = ChannelService.getActiveChannels();
+    for (const channel of activeChannels) {
+      for (const modelId of channel.supportedModels) {
+        if (modelId !== '*' && !disabledModelIds.has(modelId)) allModels.add(modelId);
+      }
+    }
+  } catch (error) {
+    console.error('[v1/models] 渠道自定义模型读取失败:', error);
+  }
+
+  let modelList = filterRoutableModels(Array.from(allModels), activeChannels);
+  if (token.allowedModels.length > 0) {
+    modelList = modelList.filter(modelId => token.allowedModels.includes(modelId));
+  }
+  return modelList;
 }
 
 /** 仅允许创建任务的 Token（或同一用户的旧任务）访问本地视频记录。 */
@@ -267,56 +319,7 @@ router.get('/models', (req: Request, res: Response) => {
   const { valid, error, token } = TokenService.validateToken(tokenKey);
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
-  const allModels = new Set<string>();
-
-  // 0. 获取所有在数据库中被禁用的模型 ID，用作过滤
-  const disabledModelIds = new Set<string>();
-  try {
-    const inactive = db.select().from(models).where(eq(models.isActive, 0)).all();
-    inactive.forEach(m => disabledModelIds.add(m.modelId));
-  } catch { }
-
-  // 1. 默认内置的所有视频模型（包括 sora-v4-fast，过滤已禁用的）
-  const defaultVideoModels = [
-    'sora-v4-fast',
-    'sora-v4-pro',
-    'lg-seedance-2.0-fast',
-    'sdas-d7-seedance-2.0-face-720p',
-    'sdas-mo-seedance-2.0-dj-fast',
-    'sdas-wf-sd2.0-fast-933-720p',
-    'sdas-wf-sd2.0-pro-933-480p',
-    'sdas-pg-s2.0-fast'
-  ];
-  defaultVideoModels.forEach(m => {
-    if (!disabledModelIds.has(m)) allModels.add(m);
-  });
-
-  // 2. 数据库注册的模型（仅包含启用的模型）
-  try {
-    const dbModels = db.select().from(models).where(eq(models.isActive, 1)).all();
-    dbModels.forEach(m => allModels.add(m.modelId));
-  } catch (e) {
-    console.error('[v1/models] 数据库模型读取失败:', e);
-  }
-
-  // 3. 启用渠道自定义支持的模型
-  try {
-    const activeChannels = ChannelService.getActiveChannels();
-    for (const ch of activeChannels) {
-      for (const m of ch.supportedModels) {
-        if (m !== '*') allModels.add(m);
-      }
-    }
-  } catch (e) {
-    console.error('[v1/models] 渠道自定义模型读取失败:', e);
-  }
-
-  // 仅返回至少有一个启用渠道能够实际路由的模型；通配符渠道除外。
-  const activeChannels = ChannelService.getActiveChannels();
-  let modelList = filterRoutableModels(Array.from(allModels), activeChannels);
-  if (token.allowedModels.length > 0) {
-    modelList = modelList.filter(m => token.allowedModels.includes(m));
-  }
+  const modelList = getAccessibleModelIds(token);
 
   res.json({
     object: 'list',
@@ -326,6 +329,69 @@ router.get('/models', (req: Request, res: Response) => {
       created: Math.floor(Date.now() / 1000),
       owned_by: 'system',
     })),
+  });
+});
+
+/** GET /v1/pricing — 返回当前 Token 可用模型的公开价格。 */
+router.get('/pricing', (req: Request, res: Response) => {
+  const tokenKey = extractToken(req);
+  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
+
+  const { valid, error, token } = TokenService.validateToken(tokenKey);
+  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
+
+  const modelList = getAccessibleModelIds(token);
+  res.json({
+    object: 'list',
+    currency: 'CNY',
+    data: PricingService.getPublicPricingForModels(modelList),
+  });
+});
+
+/** GET /v1/pricing/:model — 返回一个可用模型的公开价格。 */
+router.get('/pricing/:model', (req: Request, res: Response) => {
+  const tokenKey = extractToken(req);
+  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
+
+  const { valid, error, token } = TokenService.validateToken(tokenKey);
+  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
+
+  const modelId = req.params.model;
+  const accessibleModels = getAccessibleModelIds(token);
+  if (!accessibleModels.includes(modelId)) {
+    return res.status(404).json({
+      error: { message: `Model '${modelId}' is not available`, type: 'invalid_request_error' },
+    });
+  }
+
+  const pricing = PricingService.getPublicPricingForModels([modelId])[0];
+  if (!pricing) {
+    return res.status(404).json({
+      error: { message: `Model '${modelId}' has no pricing rule`, type: 'invalid_request_error' },
+    });
+  }
+
+  res.json(pricing);
+});
+
+/** GET /v1/queue — 返回 HM Studio 当前排队状态和限制策略。 */
+router.get('/queue', (req: Request, res: Response) => {
+  const tokenKey = extractToken(req);
+  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
+  const { valid, error } = TokenService.validateToken(tokenKey);
+  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
+
+  const limits = hmStudioQueue.getLimits();
+  res.json({
+    object: 'queue_status',
+    provider: 'hmstudio',
+    strategy: 'round_robin_by_user_fifo_within_user',
+    running: limits.running,
+    queued: limits.queued,
+    concurrency_limit: limits.concurrencyLimit,
+    user_concurrency_limit: limits.userConcurrencyLimit,
+    max_user_queue: limits.maxUserQueue,
+    max_queue: limits.maxQueue,
   });
 });
 
@@ -639,7 +705,9 @@ router.post('/images/generations', async (req: Request, res: Response) => {
 
   try {
     if (isHmStudioChannel(channel)) {
-      const submitOne = async () => {
+      const queueUserKey = token.userId ? `user:${token.userId}` : `token:${token.id}`;
+      hmStudioQueue.assertCanEnqueue(queueUserKey, count);
+      const executeOne = async () => {
         const formData = buildHmStudioImageForm({
           model: upstreamModel,
           prompt,
@@ -668,6 +736,11 @@ router.post('/images/generations', async (req: Request, res: Response) => {
         const task = await waitForHmStudioTask({ baseUrl, taskId, apiKey: channel.apiKey });
         return { url: task.resultUrl };
       };
+      const submitOne = async () => hmStudioQueue.enqueue({
+        id: `image:api:${token.id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+        userKey: queueUserKey,
+        task: executeOne,
+      }).completion;
 
       const data = await Promise.all(Array.from({ length: count }, () => submitOne()));
       const responseBody = { created: Math.floor(Date.now() / 1000), data };
@@ -766,7 +839,8 @@ router.post('/images/generations', async (req: Request, res: Response) => {
       tokenId: token.id, channelId: channel.id, model, upstreamModel,
       durationMs, status: 'error', errorMessage, clientIp,
     }).run();
-    res.status(502).json({ error: { message: `Upstream error: ${errorMessage}`, type: 'server_error' } });
+    const status = err.status || 502;
+    res.status(status).json({ error: { message: status === 429 ? errorMessage : `Upstream error: ${errorMessage}`, type: status === 429 ? 'queue_full_error' : 'server_error' } });
   }
 });
 
@@ -840,11 +914,13 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
 
   try {
     if (isHmStudioChannel(channel)) {
+      const queueUserKey = token.userId ? `user:${token.userId}` : `token:${token.id}`;
+      hmStudioQueue.assertCanEnqueue(queueUserKey, count);
       const imageSources = imageFiles.map(file => {
         const content = fs.readFileSync(file.path).toString('base64');
         return `data:${file.mimetype || 'image/png'};base64,${content}`;
       });
-      const submitOne = async () => {
+      const executeOne = async () => {
         const hmForm = buildHmStudioImageForm({
           model: upstreamModel,
           prompt,
@@ -872,6 +948,11 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
         const task = await waitForHmStudioTask({ baseUrl, taskId, apiKey: channel.apiKey });
         return { url: task.resultUrl };
       };
+      const submitOne = async () => hmStudioQueue.enqueue({
+        id: `image-edit:api:${token.id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+        userKey: queueUserKey,
+        task: executeOne,
+      }).completion;
 
       const data = await Promise.all(Array.from({ length: count }, () => submitOne()));
       cleanupFiles(req.files);
@@ -983,7 +1064,8 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
       tokenId: token.id, channelId: channel.id, model, upstreamModel,
       durationMs, status: 'error', errorMessage, clientIp,
     }).run();
-    res.status(502).json({ error: { message: `Upstream error: ${errorMessage}`, type: 'server_error' } });
+    const status = err.status || 502;
+    res.status(status).json({ error: { message: status === 429 ? errorMessage : `Upstream error: ${errorMessage}`, type: status === 429 ? 'queue_full_error' : 'server_error' } });
   }
 });
 
@@ -1277,12 +1359,21 @@ async function handleVideoCreation(req: Request, res: Response) {
         aspect_ratio: ratio,
         model,
         prompt: prompt.slice(0, 5000),
+        channelId,
+        upstreamModel,
         image_urls,
         reference_images: image_urls,
         video_urls,
         reference_videos: video_urls,
         audio_urls,
-        tokenId: token.id
+        first_frame: body.first_frame_url,
+        last_frame: body.end_frame_url || body.last_frame_url,
+        function_mode: body.function_mode,
+        upstream_channel: body.channel,
+        tokenId: token.id,
+        billingSource: token.balance === -1 && token.userId ? 'user' : 'token',
+        queueUserKey: token.userId ? `user:${token.userId}` : `token:${token.id}`,
+        queueEnqueuedAt: new Date().toISOString()
       })
     }).run();
     contentId = Number(insertResult.lastInsertRowid);
@@ -1304,6 +1395,44 @@ async function handleVideoCreation(req: Request, res: Response) {
   ].includes(model) || model.startsWith('omni-') || model.startsWith('veo-omni-');
   const isHmStudio = isHmStudioChannel(channel);
   const isMjNewApi = isMjNewApiChannel(channel);
+
+  if (isHmStudio) {
+    deductTokenOrUserBalance(token, totalCost, model);
+    db.update(contents).set({ status: 'queued' }).where(eq(contents.id, contentId)).run();
+    cleanupFiles(req.files);
+    try {
+      const { enqueueHmStudioVideoContent } = await import('./video.js');
+      const queue = enqueueHmStudioVideoContent(contentId);
+      return res.status(202).json({
+        id: `task_${contentId}`,
+        task_id: `task_${contentId}`,
+        object: 'video',
+        model,
+        status: queue.status,
+        progress: 0,
+        queue_position: queue.position,
+        queue_running: queue.running,
+        queue_limit: queue.concurrencyLimit,
+        user_concurrency_limit: queue.userConcurrencyLimit,
+      });
+    } catch (queueError: any) {
+      if (totalCost > 0) {
+        if (token.balance === -1 && token.userId) {
+          BalanceService.refund(token.userId, totalCost, 'generate_video_refund');
+        } else {
+          TokenService.deductBalance(token.id, -totalCost);
+        }
+      }
+      let failedMeta: Record<string, any> = {};
+      const failedRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
+      try { failedMeta = JSON.parse(failedRecord?.metadata || '{}'); } catch { }
+      failedMeta.error = queueError.message || 'HM Studio queue failed';
+      failedMeta.queueStatus = 'failed';
+      db.update(contents).set({ status: 'failed', cost: 0, metadata: JSON.stringify(failedMeta) })
+        .where(eq(contents.id, contentId)).run();
+      return res.status(queueError.status || 503).json({ error: queueError.message || 'HM Studio queue failed' });
+    }
+  }
 
   const upstreamUrl = isHmStudio
     ? hmStudioCreateUrl(baseUrl, 'video')
@@ -1594,6 +1723,7 @@ async function handleVideoQuery(req: Request, res: Response) {
     let mappedStatus = 'queued';
     if (status === 'completed') mappedStatus = 'completed';
     else if (status === 'failed') mappedStatus = 'failed';
+    else if (status === 'queued') mappedStatus = 'queued';
     else if (status === 'processing') {
       mappedStatus = metadata.upstreamStatus || (progress > 0 ? 'processing' : 'queued');
     }
@@ -1612,6 +1742,10 @@ async function handleVideoQuery(req: Request, res: Response) {
       progress_pct: progress,
       progress_text: metadata.progressText || undefined,
       upstream_task_id: metadata.videoId || undefined,
+      queue_position: mappedStatus === 'queued' ? Number(metadata.queuePosition || 1) : 0,
+      queue_running: Number(metadata.queueRunning || 0),
+      queue_limit: Number(metadata.queueLimit || 10),
+      user_concurrency_limit: Number(metadata.queueUserLimit || 2),
     };
 
     if (mappedStatus === 'completed') {

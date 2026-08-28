@@ -75,6 +75,44 @@ for model in models:
 }`
     },
     {
+      id: 'pricing',
+      title: '获取可用模型价格',
+      method: 'GET',
+      path: '/v1/pricing',
+      description: '获取当前 API Key 可调用且已配置计费规则的模型价格。列表与 /v1/models 使用相同的渠道状态和 Token 模型白名单过滤规则；也可以调用 /v1/pricing/{model_id} 查询单个模型。',
+      parameters: [],
+      curlExample: `curl -X GET "${getBaseUrl()}/pricing" \\
+  -H "Authorization: Bearer sk-你的令牌Key"`,
+      pythonExample: `import requests
+
+response = requests.get(
+    "${getBaseUrl()}/pricing",
+    headers={"Authorization": "Bearer sk-你的令牌Key"}
+)
+response.raise_for_status()
+for item in response.json()["data"]:
+    print(item["model"], item["unit_price"], item["unit"])`,
+      responseExample: `{
+  "object": "list",
+  "currency": "CNY",
+  "data": [
+    {
+      "model": "sd2.5",
+      "display_name": "Seedance 2.5 (sd2.5)",
+      "capabilities": ["video"],
+      "currency": "CNY",
+      "billing_type": "per_call",
+      "unit": "request",
+      "unit_price": 3.5,
+      "output_unit_price": 0,
+      "resolution_prices": {},
+      "matched_pattern": "sd2.5",
+      "inherited": false
+    }
+  ]
+}`
+    },
+    {
       id: 'chat',
       title: '智能对话补全 (Chat Completions)',
       method: 'POST',
@@ -220,7 +258,7 @@ print(resp.json()["data"][0]["url"])`,
       title: '统一视频任务创建 (Unified Video Entry)',
       method: 'POST',
       path: '/v1/videos',
-      description: '统一视频生成入口，自动完成参数归一和渠道分发。可用模型会随渠道配置变化，提交任务前必须先通过 GET /v1/models 获取当前模型 ID。',
+      description: '统一视频生成入口，自动完成参数归一和渠道分发。HM Studio 达到并发上限时会立即返回本地 task_id 和排队位置，任务按用户公平排队。',
       parameters: [
         { name: 'model', type: 'string', required: true, description: '从 GET /v1/models 获取的视频模型 ID；当前示例：sd2.5、wan3.0th、veo-3-1' },
         { name: 'prompt', type: 'string', required: true, description: '视频画面的文字描述词' },
@@ -267,7 +305,11 @@ print(resp.json())
   "object": "video",
   "model": "sd2.5",
   "status": "queued",
-  "progress": 0
+  "progress": 0,
+  "queue_position": 3,
+  "queue_running": 10,
+  "queue_limit": 10,
+  "user_concurrency_limit": 2
 }`
     },
     {
@@ -275,7 +317,7 @@ print(resp.json())
       title: '统一视频任务轮询与查询',
       method: 'GET',
       path: '/v1/videos/{task_id}',
-      description: '使用创建接口返回的 task_id（格式如 task_123）进行状态轮询。当 status 为 completed 时，直接使用返回的 content 直链下载视频。',
+      description: '使用创建接口返回的 task_id 轮询。排队时返回 queue_position、queue_running 和 queue_limit；完成后使用 content 直链下载视频。',
       parameters: [
         { name: 'task_id', type: 'path_param', required: true, description: '创建任务时返回的任务 ID（如 task_123）' }
       ],
@@ -296,7 +338,10 @@ task_id = "task_123"
 while True:
     res = requests.get(f"${getBaseUrl()}/videos/{task_id}", headers=headers).json()
     status = res.get("status")
-    print(f"进度: {res.get('progress', 0)}% | 状态: {status}")
+    if status == "queued":
+        print(f"排队位置: {res.get('queue_position')} | 运行: {res.get('queue_running')}/{res.get('queue_limit')}")
+    else:
+        print(f"进度: {res.get('progress', 0)}% | 状态: {status}")
     if status == "completed":
         print(f"✅ 生成成功! 下载地址: {res.get('url')}")
         break
@@ -313,6 +358,34 @@ while True:
   "progress": 100,
   "url": "${getBaseUrl()}/videos/task_123/content",
   "result_url": "${getBaseUrl()}/videos/task_123/content"
+}`
+    },
+    {
+      id: 'hm-queue',
+      title: '查询 HM Studio 队列策略',
+      method: 'GET',
+      path: '/v1/queue',
+      description: '查询 HM Studio 当前运行数、排队数和调度上限。图片与视频共用名额，用户之间轮询调度，同一用户内部 FIFO。',
+      parameters: [],
+      curlExample: `curl "${getBaseUrl()}/queue" \\
+  -H "Authorization: Bearer sk-你的令牌Key"`,
+      pythonExample: `import requests
+
+data = requests.get(
+    "${getBaseUrl()}/queue",
+    headers={"Authorization": "Bearer sk-你的令牌Key"}
+).json()
+print(f"运行 {data['running']}/{data['concurrency_limit']}，排队 {data['queued']}")`,
+      responseExample: `{
+  "object": "queue_status",
+  "provider": "hmstudio",
+  "strategy": "round_robin_by_user_fifo_within_user",
+  "running": 10,
+  "queued": 6,
+  "concurrency_limit": 10,
+  "user_concurrency_limit": 2,
+  "max_user_queue": 10,
+  "max_queue": 200
 }`
     },
     {

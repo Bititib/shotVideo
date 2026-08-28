@@ -478,6 +478,29 @@ describe('PricingService', () => {
       expect(quote.cost).toBe(0.35);
     });
 
+    it('returns a public price descriptor and omits unpriced non-text models', () => {
+      PricingService.createPricingRule({
+        modelPattern: TEST_PATTERN,
+        billingType: 'per_second',
+        inputPrice: 0.25,
+        outputPrice: 0,
+        extraParams: { category: 'video', '720p': 0.30 },
+      });
+
+      const result = PricingService.getPublicPricingForModels([TEST_PATTERN, 'unpriced-video-model']);
+      expect(result).toEqual([expect.objectContaining({
+        model: TEST_PATTERN,
+        capabilities: ['video'],
+        currency: 'CNY',
+        billing_type: 'per_second',
+        unit: 'second',
+        unit_price: 0.25,
+        resolution_prices: { '720p': 0.30 },
+        matched_pattern: TEST_PATTERN,
+        inherited: false,
+      })]);
+    });
+
     it('rejects duplicate model rules and negative prices', () => {
       PricingService.createPricingRule({ modelPattern: TEST_PATTERN, billingType: 'per_call', inputPrice: 1 });
       expect(() => PricingService.createPricingRule({ modelPattern: TEST_PATTERN, billingType: 'per_call', inputPrice: 2 })).toThrow();

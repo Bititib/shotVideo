@@ -15,6 +15,20 @@ export interface PricingUsage {
   resolution?: string;
 }
 
+export interface PublicModelPricing {
+  model: string;
+  display_name: string;
+  capabilities: string[];
+  currency: 'CNY';
+  billing_type: BillingType;
+  unit: 'request' | 'second' | 'million_tokens' | 'character';
+  unit_price: number;
+  output_unit_price: number;
+  resolution_prices: Record<string, number>;
+  matched_pattern: string;
+  inherited: boolean;
+}
+
 function parseExtraParams(value: string | null | undefined): Record<string, any> {
   try {
     const parsed = JSON.parse(value || '{}');
@@ -84,6 +98,65 @@ export class PricingService {
       ? data.extraParams
       : {};
     return { modelPattern, billingType, inputPrice, outputPrice, extraParams };
+  }
+
+  /** Build public pricing descriptors for externally visible model IDs. */
+  static getPublicPricingForModels(modelNames: string[]): PublicModelPricing[] {
+    const uniqueModelNames = Array.from(new Set(modelNames));
+    if (uniqueModelNames.length === 0) return [];
+
+    const pricingRows = db.select().from(modelPricing).all();
+    const exactRules = new Map(pricingRows.map(rule => [rule.modelPattern, rule]));
+    const wildcardRule = exactRules.get('*');
+    const modelRows = db.select().from(models).all();
+    const modelMap = new Map(modelRows.map(model => [model.modelId, model]));
+    const unitMap: Record<BillingType, PublicModelPricing['unit']> = {
+      per_call: 'request',
+      per_second: 'second',
+      per_token: 'million_tokens',
+      per_character: 'character',
+    };
+
+    return uniqueModelNames.flatMap(modelName => {
+      const exactRule = exactRules.get(modelName);
+      const exactExtra = parseExtraParams(exactRule?.extraParams);
+      const category = this.inferCategory(modelName, exactExtra);
+      // Video/image/TTS billing requires an exact rule; only text may inherit '*'.
+      const rule = exactRule || (category === 'text' ? wildcardRule : undefined);
+      if (!rule) return [];
+
+      const extra = parseExtraParams(rule.extraParams);
+      const model = modelMap.get(modelName);
+      let capabilities: string[] = [];
+      try {
+        const parsed = JSON.parse(model?.capabilities || '[]');
+        if (Array.isArray(parsed)) capabilities = parsed.filter(value => typeof value === 'string');
+      } catch { /* use inferred capability below */ }
+      if (capabilities.length === 0 && ['text', 'image', 'video', 'tts'].includes(category)) {
+        capabilities = [category];
+      }
+
+      const resolutionPrices = Object.fromEntries(
+        Object.entries(extra)
+          .filter(([key, value]) => key !== 'category' && Number.isFinite(Number(value)) && Number(value) >= 0)
+          .map(([key, value]) => [key, Number(value)]),
+      );
+      const billingType = rule.billingType as BillingType;
+
+      return [{
+        model: modelName,
+        display_name: model?.displayName || modelName,
+        capabilities,
+        currency: 'CNY' as const,
+        billing_type: billingType,
+        unit: unitMap[billingType],
+        unit_price: rule.inputPrice,
+        output_unit_price: rule.outputPrice,
+        resolution_prices: resolutionPrices,
+        matched_pattern: rule.modelPattern,
+        inherited: rule.modelPattern !== modelName,
+      }];
+    });
   }
 
   /** 获取规则，并补充模型名称与业务分类；可供管理页搜索及筛选。 */

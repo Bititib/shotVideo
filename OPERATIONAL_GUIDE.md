@@ -297,3 +297,24 @@ server {
 }
 ```
 
+---
+
+## HM Studio 并发与排队
+
+HM Studio 图片和视频共用同一个公平队列。默认全局最多同时运行 10 项，每个用户最多同时运行 2 项；用户之间轮询调度，同一用户内部按提交顺序执行。
+
+可通过 `.env` 调整：
+
+```env
+HM_STUDIO_CONCURRENCY=10
+HM_STUDIO_USER_CONCURRENCY=2
+HM_STUDIO_MAX_USER_QUEUE=10
+HM_STUDIO_MAX_QUEUE=200
+```
+
+- `HM_STUDIO_CONCURRENCY`：HM 账号全局运行上限。
+- `HM_STUDIO_USER_CONCURRENCY`：每个用户或 API Token 的同时运行上限。
+- `HM_STUDIO_MAX_USER_QUEUE`：单用户最多等待任务数，超过返回 `429`。
+- `HM_STUDIO_MAX_QUEUE`：全局最多等待任务数，超过返回 `429`。
+
+API 用户可调用 `GET /v1/queue` 查看当前运行数、排队数和限制。视频任务还会通过创建响应及任务查询接口返回 `queue_position`、`queue_running` 和 `queue_limit`。

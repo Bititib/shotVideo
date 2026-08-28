@@ -516,13 +516,15 @@ export default function VideoPage() {
 
         // 正在生产中的记录恢复到 tasks 队列中继续展示生成进度
         const processingTasks: VideoTask[] = parsed
-          .filter((item: any) => item.status === 'processing')
+          .filter((item: any) => item.status === 'processing' || item.status === 'queued')
           .map((item: any) => ({
             id: `db_${item.id}`,
             prompt: item.metadata?.prompt || item.inputText || item.title || '',
             status: 'generating',
             progress: 0,
-            statusMessage: '正在后台恢复生成...',
+            statusMessage: item.status === 'queued'
+              ? `HM Studio 排队中：前方 ${Math.max(0, Number(item.metadata?.queuePosition || 1) - 1)} 项`
+              : '正在后台恢复生成...',
             videoUrl: null,
             error: null,
             metadata: item.metadata as any,
@@ -673,14 +675,16 @@ export default function VideoPage() {
               } : t));
               useAuthStore.getState().fetchProfile().catch(() => { });
             } else {
-              // processing 状态：从 metadata.progress 读取实时进度
+              // queued / processing 状态：从 metadata 读取排队位置或实时进度
               let meta: any = {};
               try { meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : (item.metadata || {}); } catch { }
               const p = meta.progress || 0;
               setTasks(prev => prev.map(t => t.id === task.id ? {
                 ...t,
                 progress: p,
-                statusMessage: p > 0 ? `视频生成中 ${p}%` : '正在后台生成中...'
+                statusMessage: item.status === 'queued'
+                  ? `HM Studio 排队中：前方 ${Math.max(0, Number(meta.queuePosition || 1) - 1)} 项，当前运行 ${meta.queueRunning || 0}/${meta.queueLimit || 10}`
+                  : (p > 0 ? `视频生成中 ${p}%` : '正在后台生成中...')
               } : t));
             }
           })
@@ -1057,6 +1061,11 @@ export default function VideoPage() {
             updateTask({ dbId: event.contentId });
             break;
           case 'status': updateTask({ statusMessage: event.message || '' }); break;
+          case 'queue':
+            updateTask({
+              statusMessage: event.message || `HM Studio 排队中：前方 ${Math.max(0, (event.position || 1) - 1)} 项，当前运行 ${event.running || 0}/${event.concurrencyLimit || 10}`,
+            });
+            break;
           case 'progress': updateTask({ progress: event.progress || 0, statusMessage: `视频生成中 ${event.progress}%` }); break;
           case 'complete':
             updateTask({ status: 'complete', progress: 100, videoUrl: event.videoUrl || null, statusMessage: '' });

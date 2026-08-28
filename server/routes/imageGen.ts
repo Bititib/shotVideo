@@ -12,6 +12,7 @@ import {
   isHmStudioChannel,
   waitForHmStudioTask,
 } from '../services/hmStudioAdapter.js';
+import { hmStudioQueue } from '../services/hmStudioQueueService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models } from '../db/schema.js';
@@ -223,38 +224,55 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
 
       const runSingle = async (index: number) => {
         try {
-          const formData = buildHmStudioImageForm({
-            model: upstreamModel,
-            prompt: prompt.trim(),
-            ratio: aspect_ratio,
-            resolution: typeof quality === 'string' && /^(1k|2k|4k)$/i.test(quality) ? quality.toLowerCase() : '2k',
-            imageSources: reference_images,
-            sampleStrength: hasRef ? 0.5 : undefined,
-          });
-          const requestHeaders: Record<string, string> = {};
-          if (channel.apiKey) requestHeaders.Authorization = `Bearer ${channel.apiKey}`;
-          sendEvent({ type: 'progress', progress: 5, index });
+          const queueJob = hmStudioQueue.enqueue({
+            id: `image:web:${req.userId}:${Date.now()}:${index}:${Math.random().toString(36).slice(2, 8)}`,
+            userKey: `user:${req.userId}`,
+            onUpdate: snapshot => {
+              sendEvent({ type: 'queue', index, ...snapshot });
+              if (snapshot.status === 'queued') {
+                sendEvent({
+                  type: 'status',
+                  message: `HM Studio 排队中：前方 ${Math.max(0, snapshot.position - 1)} 项，当前运行 ${snapshot.running}/${snapshot.concurrencyLimit}`,
+                });
+              }
+            },
+            task: async () => {
+              const formData = buildHmStudioImageForm({
+                model: upstreamModel,
+                prompt: prompt.trim(),
+                ratio: aspect_ratio,
+                resolution: typeof quality === 'string' && /^(1k|2k|4k)$/i.test(quality) ? quality.toLowerCase() : '2k',
+                imageSources: reference_images,
+                sampleStrength: hasRef ? 0.5 : undefined,
+              });
+              const requestHeaders: Record<string, string> = {};
+              if (channel.apiKey) requestHeaders.Authorization = `Bearer ${channel.apiKey}`;
+              sendEvent({ type: 'status', message: `HM Studio 已开始生成图片 ${index + 1}/${count}` });
+              sendEvent({ type: 'progress', progress: 5, index });
 
-          const upstream = await fetch(hmStudioCreateUrl(baseUrl, 'image'), {
-            method: 'POST',
-            headers: requestHeaders,
-            body: formData,
-            signal: AbortSignal.timeout(channel.timeout || 120_000),
-          });
-          if (!upstream.ok) {
-            const detail = await upstream.text().catch(() => '');
-            throw new Error(`提交失败 (${upstream.status}): ${detail.slice(0, 300)}`);
-          }
-          const job = await upstream.json() as any;
-          const taskId = job.task_id || job.id;
-          if (!taskId) throw new Error('HM Studio 未返回任务 ID');
+              const upstream = await fetch(hmStudioCreateUrl(baseUrl, 'image'), {
+                method: 'POST',
+                headers: requestHeaders,
+                body: formData,
+                signal: AbortSignal.timeout(channel.timeout || 120_000),
+              });
+              if (!upstream.ok) {
+                const detail = await upstream.text().catch(() => '');
+                throw new Error(`提交失败 (${upstream.status}): ${detail.slice(0, 300)}`);
+              }
+              const job = await upstream.json() as any;
+              const taskId = job.task_id || job.id;
+              if (!taskId) throw new Error('HM Studio 未返回任务 ID');
 
-          const task = await waitForHmStudioTask({
-            baseUrl,
-            taskId,
-            apiKey: channel.apiKey,
-            onProgress: current => sendEvent({ type: 'progress', progress: current.progress, index }),
+              return waitForHmStudioTask({
+                baseUrl,
+                taskId,
+                apiKey: channel.apiKey,
+                onProgress: current => sendEvent({ type: 'progress', progress: current.progress, index }),
+              });
+            },
           });
+          const task = await queueJob.completion;
           completedImages[index] = task.resultUrl;
           sendEvent({ type: 'image_ready', imageUrl: task.resultUrl, index, total: count });
         } catch (error: any) {

@@ -5,7 +5,7 @@ import { ContentService } from '../services/contentService.js';
 import { db } from '../db/index.js';
 import { users } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
-import { activePolls, resumePollForTask } from './video.js';
+import { activePolls, enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
 
 const router = Router();
 
@@ -62,7 +62,9 @@ router.get('/:id', (req: AuthRequest, res: Response) => {
       if (!isOrgMgr) return res.status(403).json({ error: '无权查看此内容' });
     }
 
-    if (item.status === 'processing' && item.type === 'video' && !activePolls.has(contentId)) {
+    if (item.status === 'queued' && item.type === 'video') {
+      try { enqueueHmStudioVideoContent(contentId); } catch { /* periodic recovery will retry */ }
+    } else if (item.status === 'processing' && item.type === 'video' && !activePolls.has(contentId)) {
       resumePollForTask(contentId, item);
     }
 

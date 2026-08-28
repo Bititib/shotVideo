@@ -201,6 +201,7 @@ export default function VideoStudioPage() {
       { prompt: prompt.trim(), model: selectedModel, aspect_ratio: project?.aspectRatio || '16:9', video_length: duration, resolution: project?.resolution || '720p', reference_images: referenceImages.length > 0 ? referenceImages : undefined },
       (ev: VideoSSEEvent) => {
         switch (ev.type) {
+          case 'queue': setStatusMsg(ev.message || `HM Studio 排队中：前方 ${Math.max(0, (ev.position || 1) - 1)} 项`); break;
           case 'status': setStatusMsg(ev.message || ''); break;
           case 'progress': setProgress(ev.progress || 0); setStatusMsg(`生成中 ${ev.progress}%`); break;
           case 'complete':
