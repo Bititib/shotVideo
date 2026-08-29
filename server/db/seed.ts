@@ -148,6 +148,8 @@ export async function syncModelsFromAPI() {
     { provider: 'google', modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'julun', modelId: 'wan3.0th', displayName: 'Wan 3.0 视频大模型 (wan3.0th)', description: '按秒计费，¥0.14/秒；720p；支持4-30秒文生视频和多参考视频；最多10张图片、5个视频、5段音频公网URL，音频仅支持WAV；支持1:1、16:9、9:16、4:3、3:4', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'snumom', modelId: 'wan3.0-video', displayName: 'Wan 3.0 Video（标准版）', description: 'snumom 标准版；支持2-30秒、480P/720P/1080P；最多10图、5视频、5音频参考；支持文生、首帧及首尾帧视频', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'snumom', modelId: 'wan3.0-video-prime', displayName: 'Wan 3.0 Video Prime（高速版）', description: 'snumom 高速版；生成速度更快；支持2-30秒、480P/720P/1080P；最多10图、5视频、5音频参考', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-mj-minimax-h3-2k', displayName: 'Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },
@@ -744,6 +746,8 @@ export async function initDatabase() {
     { key: 'seedance_2_5_deal_rate', value: '1.80', label: 'seedance-2.5-deal 费率(¥/次)' },
     { key: 'seedance_2_5m_rate', value: '3.00', label: 'seedance-2.5m 费率(¥/次)' },
     { key: 'wan3_0th_rate', value: '0.14', label: 'wan3.0th 费率(¥/秒)' },
+    { key: 'snumom_wan3_video_rate', value: '0.14', label: 'snumom Wan 3.0 Video 默认费率(¥/秒)' },
+    { key: 'snumom_wan3_video_prime_rate', value: '0.18', label: 'snumom Wan 3.0 Video Prime 默认费率(¥/秒)' },
   ];
   // 物理清理旧 of rd_seedance 相关的设置项
   db.delete(settings).where(eq(settings.key, 'rd_seedance_2_5_480p_rate')).run();
@@ -948,6 +952,8 @@ export async function initDatabase() {
     { modelPattern: 'seedance-2.5-deal', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5_deal_rate', 1.80), category: 'video' },
     { modelPattern: 'seedance-2.5m', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5m_rate', 3.00), category: 'video' },
     { modelPattern: 'wan3.0th', billingType: 'per_second', inputPrice: legacyRate('wan3_0th_rate', 0.14), category: 'video' },
+    { modelPattern: 'wan3.0-video', billingType: 'per_second', inputPrice: legacyRate('snumom_wan3_video_rate', 0.14), category: 'video', extraParams: { '480p': 0.12, '720p': 0.14, '1080p': 0.16 } },
+    { modelPattern: 'wan3.0-video-prime', billingType: 'per_second', inputPrice: legacyRate('snumom_wan3_video_prime_rate', 0.18), category: 'video', extraParams: { '480p': 0.15, '720p': 0.18, '1080p': 0.20 } },
     { modelPattern: 'grok-video-1.5', billingType: 'per_second', inputPrice: legacyRate('grok_video_1_5_per_sec_rate', 0.09), category: 'video' },
     { modelPattern: 'grok-imagine-video-1.5', billingType: 'per_call', inputPrice: legacyRate('grok_imagine_video_1_5_per_req_rate', 0.60), category: 'video' },
     { modelPattern: 'grok-imagine-video-1.5-preview', billingType: 'per_call', inputPrice: legacyRate('grok_imagine_video_1_5_preview_rate', 0.70), category: 'video' },
@@ -965,7 +971,7 @@ export async function initDatabase() {
         billingType: pricing.billingType,
         inputPrice: pricing.inputPrice,
         outputPrice: 0,
-        extraParams: JSON.stringify({ category: pricing.category }),
+        extraParams: JSON.stringify({ category: pricing.category, ...('extraParams' in pricing ? pricing.extraParams : {}) }),
       }).run();
     } else if (
       (pricing.modelPattern === 'seedance-2.5-c1' && existing.billingType === 'per_token')
@@ -1262,7 +1268,46 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 julun.cc 渠道出错:', err.message);
   }
 
-  // 16) 保证 HM Studio 渠道存在。密钥仅从服务器环境变量读取，不写入代码仓库。
+  // 16) 保证 snumom 渠道只绑定两个 WAN3.0 视频模型；密钥仅从环境变量或后台配置读取。
+  try {
+    const snumomBaseUrl = env.SNUMOM_BASE_URL.replace(/\/+$/, '');
+    const snumomApiKey = env.SNUMOM_API_KEY.trim();
+    const snumomModels = ['wan3.0-video', 'wan3.0-video-prime'];
+    const snumomMapping = Object.fromEntries(snumomModels.map(modelId => [modelId, modelId]));
+    const existingSnumom = db.select().from(channels).all().find(channel =>
+      channel.type === 'snumom' || channel.baseUrl?.replace(/\/+$/, '') === snumomBaseUrl
+    );
+    if (!existingSnumom) {
+      db.insert(channels).values({
+        name: 'snumom WAN3.0 渠道',
+        type: 'snumom',
+        baseUrl: snumomBaseUrl,
+        apiKey: snumomApiKey,
+        supportedModels: JSON.stringify(snumomModels),
+        modelMapping: JSON.stringify(snumomMapping),
+        status: snumomApiKey ? 1 : 0,
+        priority: 0,
+        weight: 1,
+        maxRetries: 3,
+        timeout: 120000,
+      }).run();
+      console.log('📦 已创建 snumom WAN3.0 渠道配置');
+    } else {
+      db.update(channels).set({
+        type: 'snumom',
+        baseUrl: snumomBaseUrl,
+        ...(snumomApiKey ? { apiKey: snumomApiKey, status: 1 } : {}),
+        supportedModels: JSON.stringify(snumomModels),
+        modelMapping: JSON.stringify(snumomMapping),
+        updatedAt: new Date().toISOString(),
+      }).where(eq(channels.id, existingSnumom.id)).run();
+      console.log('🔄 已校准 snumom WAN3.0 渠道（仅标准版与高速版）');
+    }
+  } catch (err: any) {
+    console.error('⚠️ 初始化 snumom WAN3.0 渠道出错:', err.message);
+  }
+
+  // 17) 保证 HM Studio 渠道存在。密钥仅从服务器环境变量读取，不写入代码仓库。
   try {
     const hmStudioBaseUrl = 'https://dnyovzpgyokm.sealosbja.site';
     const hmStudioApiKey = env.HM_STUDIO_API_KEY.trim();

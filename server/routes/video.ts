@@ -22,6 +22,13 @@ import {
   isMjNewApiChannel,
 } from '../services/mjNewApiAdapter.js';
 import { buildNewTokenVideoPayload } from '../services/newTokenAdapter.js';
+import { extractVideoFailureMessage, withVideoFailureMetadata } from '../services/videoFailureService.js';
+import {
+  buildSnumomWanPayload,
+  isSnumomWanChannel,
+  normalizeSnumomWanTask,
+  snumomContentUrl,
+} from '../services/snumomWanAdapter.js';
 import {
   canUseMjOverflowModel,
   isHmStudioConcurrencyError,
@@ -261,6 +268,8 @@ const MODEL_META: Record<string, ModelMeta> = {
   'seedance-2.5-deal': { series: 'seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.5m': { series: 'seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25], requireRef: false },
   'wan3.0th': { series: 'wan3.0', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
+  'wan3.0-video': { series: 'snumom-wan3.0', allowedSeconds: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
+  'wan3.0-video-prime': { series: 'snumom-wan3.0', allowedSeconds: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
@@ -269,6 +278,8 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'vd-seedance-2.5-480p', name: 'Seedance 2.5 480p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.25/秒', maxSeconds: 30, icon: '🎬' },
   { id: 'vd-seedance-2.5-720p', name: 'Seedance 2.5 720p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.30/秒', maxSeconds: 30, icon: '🎬' },
   { id: 'wan3.0th', name: 'Wan 3.0 视频大模型 (wan3.0th)', description: '按秒计费，¥0.14/秒；720p；支持4-30秒文生视频和多参考视频；最多10张图片、5个视频、5段音频公网URL，音频仅支持WAV；支持1:1、16:9、9:16、4:3、3:4', maxSeconds: 30, icon: '🌟' },
+  { id: 'wan3.0-video', name: 'Wan 3.0 Video（标准版）', description: 'snumom 标准版；支持 2-30 秒、480P/720P/1080P；最多 10 图、5 视频、5 音频参考；支持文生、首帧及首尾帧视频', maxSeconds: 30, icon: '🌊' },
+  { id: 'wan3.0-video-prime', name: 'Wan 3.0 Video Prime（高速版）', description: 'snumom 高速版；生成速度更快；支持 2-30 秒、480P/720P/1080P；最多 10 图、5 视频、5 音频参考', maxSeconds: 30, icon: '⚡' },
   { id: 'ld-sdas-cvk-pro-933-720p', name: 'SudaShui CVK Pro 933 (720p)', description: 'CVK 满血版，支持真人、4-15秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.800/次', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-mj-minimax-h3-2k', name: 'Minimax H3 (2K)', description: '海螺h3，9图3视频3音频，4-15s，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🔥' },
   { id: 'sdas-bl-sd2.0-933-pro-720p', name: 'Seedance 2.0 Pro (933人脸版)', description: '9图3视频3音频，支持 4-15s，支持真人，固定按次计费 ¥4.50/次', maxSeconds: 15, icon: '🚀' },
@@ -641,6 +652,10 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
+    } else if (m.id === 'wan3.0-video') {
+      rates = { '480p': 0.12, '720p': 0.14, '1080p': 0.16 };
+    } else if (m.id === 'wan3.0-video-prime') {
+      rates = { '480p': 0.15, '720p': 0.18, '1080p': 0.20 };
     } else if (m.id === 'sd2-c6') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get()?.value || '2.50');
       rates = {
@@ -763,6 +778,17 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     if (finalVideos.length > 0 || finalAudios.length > 0) return res.status(400).json({ error: 'seedance_v2.5 不支持视频或音频参考' });
   }
 
+  if (model === 'wan3.0-video' || model === 'wan3.0-video-prime') {
+    const wanRatios = ['1:1', '16:9', '9:16', '4:3', '3:4'];
+    if (!wanRatios.includes(aspect_ratio)) return res.status(400).json({ error: `${model} 不支持比例 ${aspect_ratio}` });
+    if (!['480p', '720p', '1080p'].includes(String(resolution).toLowerCase())) {
+      return res.status(400).json({ error: `${model} 仅支持 480p、720p、1080p` });
+    }
+    if (reference_images.length > 10) return res.status(400).json({ error: `${model} 最多支持 10 张参考图片` });
+    if (finalVideos.length > 5) return res.status(400).json({ error: `${model} 最多支持 5 个参考视频` });
+    if (finalAudios.length > 5) return res.status(400).json({ error: `${model} 最多支持 5 段参考音频` });
+  }
+
   if (model === 'xd-seedance-2.5-720p') {
     if (resolution !== '720p') return res.status(400).json({ error: 'xd-seedance-2.5-720p 仅支持 720p' });
     if (reference_images.length > 9) return res.status(400).json({ error: 'xd-seedance-2.5-720p 最多支持 9 张参考图片' });
@@ -821,6 +847,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       const mapping = typeof dbChannel.modelMapping === 'string' ? JSON.parse(dbChannel.modelMapping) : dbChannel.modelMapping;
       upstreamModel = mapping[executionModel] || executionModel;
     } catch { /* skip */ }
+  }
+
+  if (isSnumomWanChannel(dbChannel) && (first_frame || last_frame)) {
+    if (reference_images.length > 0 || finalVideos.length > 0) {
+      return res.status(400).json({ error: 'snumom WAN3.0 首帧/尾帧不能与普通参考图或参考视频混用' });
+    }
+    if (last_frame && !first_frame) {
+      return res.status(400).json({ error: '使用尾帧时必须同时提供首帧' });
+    }
   }
 
 
@@ -1027,16 +1062,31 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   };
 
   /** 任务失败时自动退款 */
+  let failureHandled = false;
   const refundFailedTask = (errMsg: string) => {
-    console.error(`[video] ❌ 生成失败: ${errMsg}`);
-    sendEvent({ type: 'error', message: errMsg });
+    if (failureHandled) return;
+    failureHandled = true;
+    const readableError = extractVideoFailureMessage(errMsg) || '视频生成失败';
+    console.error(`[video] ❌ 生成失败: ${readableError}`);
+    sendEvent({ type: 'error', message: readableError });
     if (estimatedCost > 0) {
       BalanceService.refund(req.userId!, estimatedCost, 'generate_video_refund');
     }
     if (contentId !== null) {
       activePolls.delete(contentId);
       try {
-        db.update(contents).set({ status: 'failed', cost: 0 }).where(eq(contents.id, contentId)).run();
+        const current = db.select().from(contents).where(eq(contents.id, contentId)).get();
+        const failedMetadata = withVideoFailureMetadata(current?.metadata, readableError);
+        failedMetadata.billingStatus = estimatedCost > 0 ? 'refunded' : 'not_charged';
+        failedMetadata.queueRefunded = estimatedCost > 0;
+        failedMetadata.refundAmount = estimatedCost;
+        failedMetadata.refundTarget = estimatedCost > 0 ? 'user_balance' : 'not_charged';
+        if (estimatedCost > 0) failedMetadata.refundedAt = new Date().toISOString();
+        db.update(contents).set({
+          status: 'failed',
+          cost: 0,
+          metadata: JSON.stringify(failedMetadata),
+        }).where(eq(contents.id, contentId)).run();
       } catch (dbErr) { console.error('[video] 失败状态更新错误:', dbErr); }
     }
   };
@@ -1047,11 +1097,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
   const isSudaShui = meta?.series === 'sudashui';
   const isHmStudio = isHmStudioChannel(channel);
+  const isSnumomWan = isSnumomWanChannel(channel);
   const isMjNewApi = isMjNewApiChannel(channel);
   const isVeoOmni = model === 'veo-omni-flash';
   const isVeoOmniEdit = model === 'veo-omni-flash-video-edit';
   const isVeo31 = model === 'veo-3-1';
-  const isWan30 = model === 'wan3.0th';
+  const isWan30 = model === 'wan3.0th' || model === 'wan3.0-video' || model === 'wan3.0-video-prime';
   const isSeedanceJsonModel = [
     'sd2-c7',
     'sd2.5',
@@ -1279,7 +1330,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] SudaShui 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1346,7 +1397,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] SoraV4 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1388,7 +1439,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] Veo Omni Flash 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1420,7 +1471,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       });
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
-        sendEvent({ type: 'error', message: `创建视频编辑任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`创建视频编辑任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1469,7 +1520,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] Veo 3-1 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1519,13 +1570,63 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] Seedance 2.0 Fast 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
 
       const job = await createResp.json() as any;
       videoId = job.task_id || job.id;
+    } else if (isWan30 && isSnumomWan) {
+      sendEvent({ type: 'status', message: '正在整理并提交 snumom WAN3.0 任务...' });
+
+      const imageUrls = (reference_images || []).slice(0, 10)
+        .map((item: string) => convertBase64ToPublicUrl(item, 'snumom_wan3_img', req))
+        .filter(Boolean);
+      const videoUrls = finalVideos.slice(0, 5)
+        .map(item => convertBase64ToPublicUrl(item, 'snumom_wan3_video', req))
+        .filter(Boolean);
+      const audioUrls = finalAudios.slice(0, 5)
+        .map(item => convertBase64ToPublicUrl(item, 'snumom_wan3_audio', req))
+        .filter(Boolean);
+      const frameImages: Array<{ url: string; role: 'first_frame' | 'last_frame' }> = [];
+      if (first_frame) {
+        const url = convertBase64ToPublicUrl(first_frame, 'snumom_wan3_first', req);
+        if (url) frameImages.push({ url, role: 'first_frame' });
+      }
+      if (last_frame) {
+        const url = convertBase64ToPublicUrl(last_frame, 'snumom_wan3_last', req);
+        if (url) frameImages.push({ url, role: 'last_frame' });
+      }
+      const payload = buildSnumomWanPayload({
+        model: upstreamModel,
+        prompt,
+        seconds: Number(video_length),
+        resolution,
+        aspectRatio: aspect_ratio,
+        images: frameImages.length > 0
+          ? frameImages
+          : imageUrls.map(url => ({ url, role: 'reference_image' })),
+        videos: videoUrls.map(url => ({ url })),
+        audios: audioUrls.map(url => ({ url })),
+      });
+      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${channel.apiKey}`,
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(dbChannel?.timeout || 120_000),
+      });
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        refundFailedTask(`snumom WAN3.0 提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+      const job = await createResp.json() as any;
+      videoId = job.id || job.task_id;
     } else if (isWan30) {
       sendEvent({ type: 'status', message: '正在整理 WAN3.0 多模态参考素材...' });
 
@@ -1631,7 +1732,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] sd2 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1682,7 +1783,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        sendEvent({ type: 'error', message: `创建视频任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1712,7 +1813,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
     if (!videoId) {
       if (contentId !== null) activePolls.delete(contentId);
-      sendEvent({ type: 'error', message: '上游未返回任务 ID' });
+      refundFailedTask('上游未返回任务 ID');
       res.write('data: [DONE]\n\n');
       return res.end();
     }
@@ -1761,6 +1862,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           progress = normalized.progress;
           resultUrl = normalized.resultUrl;
           errMsg = normalized.error || 'HM Studio 视频生成失败';
+        } else if (isSnumomWan) {
+          const normalized = normalizeSnumomWanTask(status);
+          taskStatus = normalized.status;
+          progress = normalized.progress;
+          resultUrl = normalized.resultUrl;
+          errMsg = normalized.error || 'snumom WAN3.0 视频生成失败';
+          if ((taskStatus === 'completed' || taskStatus === 'success') && !resultUrl) {
+            resultUrl = snumomContentUrl(baseUrl, videoId);
+          }
         } else if (isSudaShui) {
           const dataBlock = status.data || {};
           taskStatus = (dataBlock.status || status.status || '').toLowerCase();
@@ -1897,7 +2007,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     const msg = err.name === 'AbortError'
       ? '请求超时'
       : (err.cause?.message || err.message || '请求失败');
-    sendEvent({ type: 'error', message: msg });
+    refundFailedTask(msg);
     res.write('data: [DONE]\n\n');
     res.end();
   }
@@ -2210,10 +2320,20 @@ async function failHmQueuedVideo(contentId: number, error: unknown): Promise<voi
     if (metadata.billingSource === 'token' && metadata.tokenId) {
       const { TokenService } = await import('../services/tokenService.js');
       TokenService.refundBalance(Number(metadata.tokenId), refundAmount);
+      metadata.refundTarget = 'api_token';
     } else {
       BalanceService.refund(record.userId, refundAmount, 'generate_video_refund');
+      // Linked unlimited API tokens also increment usedAmount during deduction.
+      if (metadata.tokenId) {
+        const { TokenService } = await import('../services/tokenService.js');
+        TokenService.refundBalance(Number(metadata.tokenId), refundAmount);
+      }
+      metadata.refundTarget = 'user_balance';
     }
     metadata.queueRefunded = true;
+    metadata.billingStatus = 'refunded';
+    metadata.refundAmount = refundAmount;
+    metadata.refundedAt = new Date().toISOString();
   }
   metadata.queueStatus = 'failed';
   metadata.queuePosition = 0;
@@ -2538,6 +2658,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
   const isSudaShui = meta?.series === 'sudashui';
   const isHmStudio = isHmStudioChannel(channel);
+  const isSnumomWan = isSnumomWanChannel(channel);
 
   const headers: Record<string, string> = {};
   if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
@@ -2597,6 +2718,15 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           progress = normalized.progress;
           resultUrl = normalized.resultUrl;
           errMsg = normalized.error || 'HM Studio 视频生成失败';
+        } else if (isSnumomWan) {
+          const normalized = normalizeSnumomWanTask(statusData);
+          taskStatus = normalized.status;
+          progress = normalized.progress;
+          resultUrl = normalized.resultUrl;
+          errMsg = normalized.error || 'snumom WAN3.0 视频生成失败';
+          if ((taskStatus === 'completed' || taskStatus === 'success') && !resultUrl) {
+            resultUrl = snumomContentUrl(baseUrl, videoId);
+          }
         } else if (isSudaShui) {
           const dataBlock = statusData.data || {};
           taskStatus = (dataBlock.status || statusData.status || '').toLowerCase();
@@ -2748,9 +2878,6 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
 export function resumeAllPendingVideoTasks() {
   console.log('🔍 [video-recover] Scanning for queued and processing video tasks...');
   try {
-    // 自动修正历史错误数据：包含 status = 'failed' 却残留 cost > 0 的记录，将 cost 修正为 0
-    db.update(contents).set({ cost: 0 }).where(eq(contents.status, 'failed')).run();
-
     const pendingTasks = db.select().from(contents)
       .where(eq(contents.type, 'video'))
       .all()

@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { canAccessVideoRecord, createVideoContentSignature, extractToken, filterRoutableModels, saveApiImageAssets, verifyVideoContentSignature, videoTaskFailureDetails } from '../server/routes/v1.js';
+import { canAccessVideoRecord, createVideoContentSignature, extractToken, filterRoutableModels, normalizeVideoApiStatus, saveApiImageAssets, verifyVideoContentSignature, videoTaskFailureDetails } from '../server/routes/v1.js';
 import { TokenService } from '../server/services/tokenService.js';
 import { sqlite } from '../server/db/index.js';
 
 describe('OpenAI-compatible API access', () => {
+  it('normalizes provider-specific in-progress states for third-party clients', () => {
+    expect(normalizeVideoApiStatus('processing', 'in_progress', 0)).toBe('processing');
+    expect(normalizeVideoApiStatus('processing', 'running', 50)).toBe('processing');
+    expect(normalizeVideoApiStatus('processing', 'pending', 0)).toBe('queued');
+    expect(normalizeVideoApiStatus('completed', 'success', 100)).toBe('completed');
+    expect(normalizeVideoApiStatus('failed', 'failure', 50)).toBe('failed');
+  });
+
   it('accepts Authorization Bearer tokens', () => {
     expect(extractToken({ headers: { authorization: 'Bearer sk-bearer-token' } } as any))
       .toBe('sk-bearer-token');
@@ -65,6 +73,27 @@ describe('OpenAI-compatible API access', () => {
       error: 'Upstream rejected the reference image',
       error_message: 'Upstream rejected the reference image',
       failed_at: '2026-08-29T10:20:00.000Z',
+    });
+  });
+
+  it('returns refund evidence with a failed asynchronous video task', () => {
+    expect(videoTaskFailureDetails({
+      error: '系统繁忙，请重试',
+      failedAt: '2026-08-29T08:13:04.234Z',
+      billingStatus: 'refunded',
+      queueRefunded: true,
+      refundAmount: 1.8,
+      refundTarget: 'api_token',
+      refundedAt: '2026-08-29T08:13:04.240Z',
+    })).toEqual({
+      error: '系统繁忙，请重试',
+      error_message: '系统繁忙，请重试',
+      failed_at: '2026-08-29T08:13:04.234Z',
+      billing_status: 'refunded',
+      refunded: true,
+      refund_amount: 1.8,
+      refund_target: 'api_token',
+      refunded_at: '2026-08-29T08:13:04.240Z',
     });
   });
 

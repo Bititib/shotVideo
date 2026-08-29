@@ -252,8 +252,12 @@ const isSoraV4Model = (modelId: string) => {
   return modelId === 'seedance-2.0-fast' || modelId === 'seedance-2.0' || modelId === 'sora-v4-fast' || modelId === 'sora-v4-pro';
 };
 
+const isWan30Model = (modelId: string) => {
+  return modelId === 'wan3.0th' || modelId === 'wan3.0-video' || modelId === 'wan3.0-video-prime';
+};
+
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
-  if (modelId === 'wan3.0th') return 10;
+  if (isWan30Model(modelId)) return 10;
   if (modelId === 'seedance_v2.5') return 10;
   if (modelId === 'xd-seedance-2.5-720p') return 9;
   if (modelId === 'seedance-2.5-c1') return 30;
@@ -372,7 +376,7 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
-    if (m === 'wan3.0th') return 5;
+    if (isWan30Model(m)) return 5;
     if (m === 'seedance-2.5-c1') return 10;
     if (m === 'ad-seedance-2.5-480p') return 10;
     if (m === 'vd-seedance-2.5-480p' || m === 'vd-seedance-2.5-720p') return 3;
@@ -381,7 +385,7 @@ export default function VideoPage() {
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
-    if (m === 'wan3.0th') return 5;
+    if (isWan30Model(m)) return 5;
     if (m === 'seedance-2.5-c1') return 10;
     if (m === 'ad-seedance-2.5-480p') return 10;
     if (m === 'vd-seedance-2.5-480p' || m === 'vd-seedance-2.5-720p') return 0;
@@ -767,7 +771,7 @@ export default function VideoPage() {
       ? [{ value: '720p', label: '720p' }, { value: '1080p', label: '1080p' }]
       : [{ value: '480p', label: '480p' }, { value: '720p', label: '720p' }];
 
-  const ASPECT_RATIOS = selectedModel === 'wan3.0th'
+  const ASPECT_RATIOS = isWan30Model(selectedModel)
     ? [
       { value: '1:1', label: '1:1', icon: Square },
       { value: '16:9', label: '16:9', icon: RectangleHorizontal },
@@ -797,14 +801,14 @@ export default function VideoPage() {
       }
     }
 
-    if (selectedModel === 'wan3.0th') {
+    if (isWan30Model(selectedModel)) {
       const wanRatios = ['1:1', '16:9', '9:16', '4:3', '3:4'];
       if (!wanRatios.includes(aspectRatio)) setAspectRatio('16:9');
     }
 
     const isSudashui = selectedModel.startsWith('sd-') || selectedModel.startsWith('seedance-') || selectedModel.includes('sdas-') || selectedModel.startsWith('lg-');
     const isSoraV3Pro = selectedModel === 'seedance-2.0-fast';
-    const isWan30 = selectedModel === 'wan3.0th';
+    const isWan30 = isWan30Model(selectedModel);
     if (selectedModel !== 'omni-flash-vref' && !isSudashui && !isSoraV3Pro && !isWan30) {
       setReferenceVideos([]);
     }
@@ -1024,7 +1028,7 @@ export default function VideoPage() {
       setError('视频编辑模型必须上传参考视频');
       return;
     }
-    if (selectedModel !== 'wan3.0th' && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
+    if (!isWan30Model(selectedModel) && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
       setError('参考视频或音频模式下必须上传至少一张参考图');
       return;
     }
@@ -1556,18 +1560,20 @@ export default function VideoPage() {
                   )}
                   {maxRefAudios > 0 && (
                     <>
-                      <button aria-label={`上传参考音频，最多 ${maxRefAudios} 段`} title={selectedModel === 'wan3.0th' ? '仅支持 WAV，上传后自动转换为本站公网 URL' : undefined} onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                      <button aria-label={`上传参考音频，最多 ${maxRefAudios} 段`} title={selectedModel === 'wan3.0th' ? '仅支持 WAV，上传后自动转换为本站公网 URL' : '支持 MP3/WAV，上传后自动转换为本站公网 URL'} onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 ({referenceAudios.length}/{maxRefAudios})
                       </button>
                       <input ref={audioFileInputRef} type="file" accept={selectedModel === 'wan3.0th' ? '.wav,audio/wav,audio/x-wav' : 'audio/*'} multiple className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
                     </>
                   )}
-                  {selectedModel === 'wan3.0th' && (
+                  {isWan30Model(selectedModel) && (
                     <span className="basis-full text-[10px] text-[#9a684b] pt-0.5">
-                      WAN3.0 支持 10 图 · 5 视频 · 5 段 WAV 音频，上传后自动转换为本站公网 URL
+                      {selectedModel === 'wan3.0th'
+                        ? 'WAN3.0 支持 10 图 · 5 视频 · 5 段 WAV 音频，上传后自动转换为本站公网 URL'
+                        : 'snumom WAN3.0 支持 10 图 · 5 视频 · 5 段 MP3/WAV 音频，支持首帧与首尾帧模式'}
                     </span>
                   )}
-                  {(isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1') && (
+                  {(isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1' || selectedModel === 'wan3.0-video' || selectedModel === 'wan3.0-video-prime') && (
                     <>
                       <button onClick={() => firstFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-emerald-400" /> 首帧 {firstFrame ? '(已上传)' : ''}

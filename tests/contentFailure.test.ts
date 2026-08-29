@@ -19,4 +19,23 @@ describe('admin content failure details', () => {
       hasRecordedReason: false,
     });
   });
+
+  it('shows where and when a failed task was refunded', () => {
+    expect(getContentFailureInfo({
+      error: '系统繁忙，请重试',
+      billingStatus: 'refunded',
+      queueRefunded: true,
+      refundAmount: 1.8,
+      refundTarget: 'user_balance',
+      refundedAt: '2026-08-29T08:13:04.240Z',
+    })).toEqual({
+      message: '系统繁忙，请重试',
+      hasRecordedReason: true,
+      billingStatus: 'refunded',
+      refunded: true,
+      refundAmount: 1.8,
+      refundTarget: 'user_balance',
+      refundedAt: '2026-08-29T08:13:04.240Z',
+    });
+  });
 });

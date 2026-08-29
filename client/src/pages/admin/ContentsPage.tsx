@@ -383,6 +383,28 @@ export default function ContentsPage() {
                             失败时间：{new Date(failure.failedAt).toLocaleString('zh-CN')}
                           </div>
                         )}
+                        {failure.billingStatus && (
+                          <div className="mt-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-300">
+                            <div>
+                              计费处理：{failure.billingStatus === 'refunded'
+                                ? '已退款'
+                                : failure.billingStatus === 'not_charged'
+                                  ? '未扣款'
+                                  : failure.billingStatus}
+                            </div>
+                            {failure.refunded && failure.refundAmount !== undefined && (
+                              <div className="mt-1 text-emerald-300">
+                                退款金额：¥{failure.refundAmount.toFixed(2)}
+                                {failure.refundTarget === 'api_token' ? '（退回 API Token）' : failure.refundTarget === 'user_balance' ? '（退回账户余额）' : ''}
+                              </div>
+                            )}
+                            {failure.refundedAt && (
+                              <div className="mt-1 text-[10px] text-zinc-500">
+                                退款时间：{new Date(failure.refundedAt).toLocaleString('zh-CN')}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })()}

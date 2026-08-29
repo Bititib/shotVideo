@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { initDatabase } from '../server/db/seed.js';
 import { db, sqlite } from '../server/db/index.js';
-import { users, tiers, models, tierModelAccess, usageLogs, channels } from '../server/db/schema.js';
+import { users, tiers, models, tierModelAccess, usageLogs, channels, modelPricing } from '../server/db/schema.js';
 import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -85,6 +85,23 @@ describe('种子数据完整性', () => {
     expect(channel).toBeDefined();
     expect(channel!.baseUrl).toBe('https://dnyovzpgyokm.sealosbja.site');
     expect(channel!.status).toBe(0);
+  });
+
+  it('snumom 渠道只绑定两个 WAN3.0 视频模型并配置分辨率计费', () => {
+    const channel = db.select().from(channels).where(eq(channels.type, 'snumom')).get();
+    expect(channel).toBeDefined();
+    expect(channel!.baseUrl).toBe('https://snumom.com');
+    expect(JSON.parse(channel!.supportedModels)).toEqual(['wan3.0-video', 'wan3.0-video-prime']);
+    expect(JSON.parse(channel!.modelMapping)).toEqual({
+      'wan3.0-video': 'wan3.0-video',
+      'wan3.0-video-prime': 'wan3.0-video-prime',
+    });
+
+    const standard = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, 'wan3.0-video')).get();
+    const prime = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, 'wan3.0-video-prime')).get();
+    expect(standard?.billingType).toBe('per_second');
+    expect(JSON.parse(standard!.extraParams)).toMatchObject({ '480p': 0.12, '720p': 0.14, '1080p': 0.16 });
+    expect(JSON.parse(prime!.extraParams)).toMatchObject({ '480p': 0.15, '720p': 0.18, '1080p': 0.20 });
   });
 
   it('内部备用模型不应暴露给 API 调用方', () => {

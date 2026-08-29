@@ -315,7 +315,7 @@ print(resp.json())
       title: '统一视频任务轮询与查询',
       method: 'GET',
       path: '/v1/videos/{task_id}',
-      description: '使用 status_url（或 task_id）轮询。完成后返回可直接打开的短期签名 content URL；签名过期时重新查询任务即可刷新。',
+      description: '使用 status_url（或 task_id）持续轮询。queued / processing 期间只返回状态查询地址，不会提前返回视频结果地址；completed 后才返回 url / result_url。failed 时会返回失败原因与 billing_status、refunded、refund_amount 等退款凭证。',
       parameters: [
         { name: 'task_id', type: 'path_param', required: true, description: '创建任务时返回的任务 ID（如 task_123）' }
       ],
@@ -344,6 +344,7 @@ while True:
         break
     elif status == "failed":
         print(f"❌ 失败: {res.get('error_message') or res.get('error') or '未返回失败原因'}")
+        print(f"退款状态: {res.get('billing_status', 'unknown')} | 金额: {res.get('refund_amount', 0)}")
         break
     time.sleep(5)`,
       responseExample: `{

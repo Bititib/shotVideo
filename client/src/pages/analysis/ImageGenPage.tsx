@@ -315,7 +315,7 @@ export default function ImageGenPage() {
       },
     );
     abortRef.current = ctrl;
-  }, [prompt, selectedModel, aspectRatio, imageCount, isGenerating, referenceImages]);
+  }, [prompt, selectedModel, aspectRatio, imageCount, isGenerating, referenceImages, generatedImages.length, guard]);
 
   const handleCancel = () => { abortRef.current?.abort(); setIsGenerating(false); setStatusMessage(''); };
   const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); } };

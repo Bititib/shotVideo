@@ -33,14 +33,33 @@ import {
   isNewTokenVideoModel,
   newTokenVideoCreateUrl,
 } from '../services/newTokenAdapter.js';
+import { buildSnumomWanPayload, isSnumomWanChannel } from '../services/snumomWanAdapter.js';
 import {
   MJ_OVERFLOW_VIDEO_MODEL,
   shouldOverflowHmStudio,
 } from '../services/videoFailoverService.js';
 import { enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
+import { withVideoFailureMetadata } from '../services/videoFailureService.js';
 
 const router = Router();
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
+
+function persistVideoContentFailure(
+  contentId: number,
+  error: unknown,
+  billingMetadata: Record<string, unknown> = {},
+): void {
+  const current = db.select().from(contents).where(eq(contents.id, contentId)).get();
+  const metadata = {
+    ...withVideoFailureMetadata(current?.metadata, error),
+    ...billingMetadata,
+  };
+  db.update(contents).set({
+    status: 'failed',
+    cost: 0,
+    metadata: JSON.stringify(metadata),
+  }).where(eq(contents.id, contentId)).run();
+}
 
 /** 从请求头中提取 Bearer Token */
 export function extractToken(req: Pick<Request, 'headers'>): string | null {
@@ -176,6 +195,11 @@ export function videoTaskFailureDetails(metadata: Record<string, any>): {
   error: string;
   error_message: string;
   failed_at?: string;
+  billing_status?: string;
+  refunded?: boolean;
+  refund_amount?: number;
+  refund_target?: string;
+  refunded_at?: string;
 } {
   const rawError = metadata?.error;
   const message = typeof rawError === 'object' && rawError
@@ -185,7 +209,28 @@ export function videoTaskFailureDetails(metadata: Record<string, any>): {
     error: message,
     error_message: message,
     ...(metadata?.failedAt ? { failed_at: String(metadata.failedAt) } : {}),
+    ...(metadata?.billingStatus ? { billing_status: String(metadata.billingStatus) } : {}),
+    ...(metadata?.queueRefunded !== undefined ? { refunded: Boolean(metadata.queueRefunded) } : {}),
+    ...(Number.isFinite(Number(metadata?.refundAmount)) ? { refund_amount: Number(metadata.refundAmount) } : {}),
+    ...(metadata?.refundTarget ? { refund_target: String(metadata.refundTarget) } : {}),
+    ...(metadata?.refundedAt ? { refunded_at: String(metadata.refundedAt) } : {}),
   };
+}
+
+/** Keep the public async-video status contract stable across upstream providers. */
+export function normalizeVideoApiStatus(
+  localStatus: unknown,
+  upstreamStatus: unknown,
+  progress: number,
+): 'queued' | 'processing' | 'completed' | 'failed' {
+  const local = String(localStatus || '').trim().toLowerCase();
+  const upstream = String(upstreamStatus || '').trim().toLowerCase();
+  if (['completed', 'success', 'succeeded'].includes(local)) return 'completed';
+  if (['failed', 'failure', 'error', 'cancelled', 'canceled'].includes(local)) return 'failed';
+  if (local === 'queued') return 'queued';
+  if (['in_progress', 'processing', 'running'].includes(upstream)) return 'processing';
+  if (['queued', 'pending', 'submitted'].includes(upstream)) return 'queued';
+  return progress > 0 ? 'processing' : 'queued';
 }
 
 /** 检查 Token 或关联用户的余额 */
@@ -212,6 +257,19 @@ function deductTokenOrUserBalance(token: any, cost: number, model: string) {
   } else {
     TokenService.deductBalance(token.id, cost);
   }
+}
+
+/** Return a failed async request's pre-deducted amount to the same billing source. */
+function refundTokenOrUserBalance(token: any, cost: number): 'user_balance' | 'api_token' | 'not_charged' {
+  if (cost <= 0) return 'not_charged';
+  if (token.balance === -1 && token.userId) {
+    BalanceService.refund(token.userId, cost, 'generate_video_refund');
+    // Unlimited linked tokens still track usedAmount, so reverse that counter too.
+    TokenService.refundBalance(token.id, cost);
+    return 'user_balance';
+  }
+  TokenService.refundBalance(token.id, cost);
+  return 'api_token';
 }
 
 /** 获取视频计费费率 */
@@ -1350,6 +1408,26 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
   }
 
+  if (model === 'wan3.0-video' || model === 'wan3.0-video-prime') {
+    const allowedRatios = ['1:1', '16:9', '9:16', '4:3', '3:4'];
+    if (!Number.isInteger(seconds) || seconds < 2 || seconds > 30) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `${model} seconds must be an integer from 2 to 30` });
+    }
+    if (!allowedRatios.includes(ratio)) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `${model} ratio must be one of ${allowedRatios.join(', ')}` });
+    }
+    if (!['480p', '720p', '1080p'].includes(String(resolution).toLowerCase())) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `${model} resolution must be 480p, 720p, or 1080p` });
+    }
+    if (image_urls.length > 10 || video_urls.length > 5 || audio_urls.length > 5) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `${model} supports at most 10 images, 5 videos, and 5 audio files` });
+    }
+  }
+
   if (model === 'xd-seedance-2.5-720p') {
     if (!Number.isInteger(seconds) || seconds < 4 || seconds > 30) {
       cleanupFiles(req.files);
@@ -1535,7 +1613,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         task_id: `task_${contentId}`,
         object: 'video',
         model,
-        status: queue.status,
+        status: queue.status === 'queued' ? 'queued' : 'processing',
         progress: 0,
         queue_position: queue.position,
         queue_running: queue.running,
@@ -1546,20 +1624,15 @@ async function handleVideoCreation(req: Request, res: Response) {
         retry_after: 5,
       });
     } catch (queueError: any) {
-      if (totalCost > 0) {
-        if (token.balance === -1 && token.userId) {
-          BalanceService.refund(token.userId, totalCost, 'generate_video_refund');
-        } else {
-          TokenService.refundBalance(token.id, totalCost);
-        }
-      }
-      let failedMeta: Record<string, any> = {};
-      const failedRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
-      try { failedMeta = JSON.parse(failedRecord?.metadata || '{}'); } catch { }
-      failedMeta.error = queueError.message || '视频任务排队失败';
-      failedMeta.queueStatus = 'failed';
-      db.update(contents).set({ status: 'failed', cost: 0, metadata: JSON.stringify(failedMeta) })
-        .where(eq(contents.id, contentId)).run();
+      const refundTarget = refundTokenOrUserBalance(token, totalCost);
+      const refundedAt = new Date().toISOString();
+      persistVideoContentFailure(contentId, queueError.message || '视频任务排队失败', {
+        billingStatus: totalCost > 0 ? 'refunded' : 'not_charged',
+        queueRefunded: totalCost > 0,
+        refundAmount: totalCost,
+        refundTarget,
+        ...(totalCost > 0 ? { refundedAt } : {}),
+      });
       return res.status(queueError.status || 503).json({ error: '视频任务暂时无法排队，请稍后重试' });
     }
   }
@@ -1572,6 +1645,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     ? `${baseUrl}/v1/video/generations`
     : `${baseUrl}/v1/videos`;
 
+  let balanceDeducted = false;
   try {
     let upstreamRes;
     const { ...otherParams } = body;
@@ -1618,8 +1692,9 @@ async function handleVideoCreation(req: Request, res: Response) {
       const invalidUrls = findInvalidMjNewApiMaterialUrls(image_urls, video_urls, audio_urls);
       if (invalidUrls.length > 0) {
         cleanupFiles(req.files);
-        db.update(contents).set({ status: 'failed', cost: 0 }).where(eq(contents.id, contentId)).run();
-        return res.status(400).json({ error: 'Reference materials must use publicly accessible HTTPS URLs. Check BACKEND_URL.' });
+        const error = 'Reference materials must use publicly accessible HTTPS URLs. Check BACKEND_URL.';
+        persistVideoContentFailure(contentId, error, { billingStatus: 'not_charged' });
+        return res.status(400).json({ error });
       }
 
       const payload = buildMjNewApiVideoPayload({
@@ -1666,7 +1741,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(channel.timeout || 120_000),
       });
-    } else if (Array.isArray(req.files) && req.files.length > 0) {
+    } else if (!isSnumomWanChannel(channel) && Array.isArray(req.files) && req.files.length > 0) {
       const formData = new FormData();
       formData.append('model', upstreamModel);
       formData.append('prompt', prompt);
@@ -1707,7 +1782,34 @@ async function handleVideoCreation(req: Request, res: Response) {
       });
     } else {
       let payload: Record<string, any>;
-      if (isSudaShuiModel) {
+      if (isSnumomWanChannel(channel)) {
+        const firstFrame = typeof body.first_frame_url === 'string' ? body.first_frame_url : '';
+        const lastFrameValue = body.end_frame_url || body.last_frame_url;
+        const lastFrame = typeof lastFrameValue === 'string' ? lastFrameValue : '';
+        if ((firstFrame || lastFrame) && (image_urls.length > 0 || video_urls.length > 0)) {
+          cleanupFiles(req.files);
+          return res.status(400).json({ error: 'snumom first/last frames cannot be mixed with reference images or videos' });
+        }
+        if (lastFrame && !firstFrame) {
+          cleanupFiles(req.files);
+          return res.status(400).json({ error: 'snumom last_frame_url requires first_frame_url' });
+        }
+        const frameImages: Array<{ url: string; role: 'first_frame' | 'last_frame' }> = [];
+        if (firstFrame) frameImages.push({ url: firstFrame, role: 'first_frame' });
+        if (lastFrame) frameImages.push({ url: lastFrame, role: 'last_frame' });
+        payload = buildSnumomWanPayload({
+          model: upstreamModel,
+          prompt,
+          seconds,
+          resolution,
+          aspectRatio: ratio,
+          images: frameImages.length > 0
+            ? frameImages
+            : image_urls.map(url => ({ url, role: 'reference_image' })),
+          videos: video_urls.map(url => ({ url })),
+          audios: audio_urls.map(url => ({ url })),
+        });
+      } else if (isSudaShuiModel) {
         payload = {
           model: upstreamModel,
           prompt,
@@ -1769,7 +1871,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errText.slice(0, 500)}`, clientIp,
       }).run();
 
-      db.update(contents).set({ status: 'failed', cost: 0 }).where(eq(contents.id, contentId)).run();
+      persistVideoContentFailure(contentId, `HTTP ${upstreamRes.status}: ${errText}`, { billingStatus: 'not_charged' });
       return res.status(upstreamRes.status).json({ error: errText });
     }
 
@@ -1777,6 +1879,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     const durationMs = Date.now() - startTime;
 
     deductTokenOrUserBalance(token, totalCost, model);
+    balanceDeducted = totalCost > 0;
 
     db.insert(apiLogs).values({
       tokenId: token.id, channelId, model, upstreamModel,
@@ -1785,7 +1888,15 @@ async function handleVideoCreation(req: Request, res: Response) {
 
     const upstreamTaskId = responseBody.task_id || responseBody.id;
     if (!upstreamTaskId) {
-      db.update(contents).set({ status: 'failed', cost: 0 }).where(eq(contents.id, contentId)).run();
+      const refundTarget = refundTokenOrUserBalance(token, totalCost);
+      balanceDeducted = false;
+      persistVideoContentFailure(contentId, 'Upstream did not return a task ID', {
+        billingStatus: totalCost > 0 ? 'refunded' : 'not_charged',
+        queueRefunded: totalCost > 0,
+        refundAmount: totalCost,
+        refundTarget,
+        ...(totalCost > 0 ? { refundedAt: new Date().toISOString() } : {}),
+      });
       return res.status(502).json({ error: 'Upstream did not return a task ID' });
     }
 
@@ -1847,7 +1958,18 @@ async function handleVideoCreation(req: Request, res: Response) {
     }).run();
 
     if (contentId !== null) {
-      db.update(contents).set({ status: 'failed', cost: 0 }).where(eq(contents.id, contentId)).run();
+      if (balanceDeducted) {
+        const refundTarget = refundTokenOrUserBalance(token, totalCost);
+        persistVideoContentFailure(contentId, errorMessage, {
+          billingStatus: 'refunded',
+          queueRefunded: true,
+          refundAmount: totalCost,
+          refundTarget,
+          refundedAt: new Date().toISOString(),
+        });
+      } else {
+        persistVideoContentFailure(contentId, errorMessage, { billingStatus: 'not_charged' });
+      }
     }
 
     res.status(502).json({ error: `Upstream error: ${errorMessage}` });
@@ -1888,13 +2010,7 @@ async function handleVideoQuery(req: Request, res: Response) {
       progress = status === 'completed' ? 100 : (metadata.progress || 0);
     } catch {}
 
-    let mappedStatus = 'queued';
-    if (status === 'completed') mappedStatus = 'completed';
-    else if (status === 'failed') mappedStatus = 'failed';
-    else if (status === 'queued') mappedStatus = 'queued';
-    else if (status === 'processing') {
-      mappedStatus = metadata.upstreamStatus || (progress > 0 ? 'processing' : 'queued');
-    }
+    const mappedStatus = normalizeVideoApiStatus(status, metadata.upstreamStatus, progress);
 
     const host = req.get('host');
     const protocol = req.protocol;
@@ -1912,11 +2028,14 @@ async function handleVideoQuery(req: Request, res: Response) {
       progress_pct: progress,
       progress_text: mappedStatus === 'completed' ? undefined : (metadata.progressText || undefined),
       upstream_task_id: metadata.videoId || undefined,
+      upstream_status: metadata.upstreamStatus || undefined,
       queue_position: mappedStatus === 'queued' ? Number(metadata.queuePosition || 1) : 0,
       queue_running: Number(metadata.queueRunning || 0),
       queue_limit: Number(metadata.queueLimit || 10),
       channel_running: Number(metadata.queuePoolRunning || 0),
       channel_limit: Number(metadata.queuePoolLimit || 10),
+      status_url: `${protocol}://${host}/v1/videos/task_${record.id}`,
+      ...(!['completed', 'failed'].includes(mappedStatus) ? { retry_after: 5 } : {}),
     };
 
     if (mappedStatus === 'completed') {

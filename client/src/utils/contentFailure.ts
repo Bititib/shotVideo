@@ -2,6 +2,11 @@ export type ContentFailureInfo = {
   message: string;
   failedAt?: string;
   hasRecordedReason: boolean;
+  billingStatus?: string;
+  refunded?: boolean;
+  refundAmount?: number;
+  refundTarget?: string;
+  refundedAt?: string;
 };
 
 function parseMetadata(metadata: unknown): Record<string, any> {
@@ -39,6 +44,11 @@ export function getContentFailureInfo(metadata: unknown, resultText?: unknown): 
   return {
     message: message || '未记录失败原因（历史任务或上游未返回错误详情）',
     ...(meta.failedAt ? { failedAt: String(meta.failedAt) } : {}),
+    ...(meta.billingStatus ? { billingStatus: String(meta.billingStatus) } : {}),
+    ...(meta.queueRefunded !== undefined ? { refunded: Boolean(meta.queueRefunded) } : {}),
+    ...(Number.isFinite(Number(meta.refundAmount)) ? { refundAmount: Number(meta.refundAmount) } : {}),
+    ...(meta.refundTarget ? { refundTarget: String(meta.refundTarget) } : {}),
+    ...(meta.refundedAt ? { refundedAt: String(meta.refundedAt) } : {}),
     hasRecordedReason: Boolean(message),
   };
 }
