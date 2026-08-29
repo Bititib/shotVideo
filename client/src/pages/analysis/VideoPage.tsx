@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw, Maximize2, Minimize2, Scissors, HelpCircle, Trash2, MessageSquareWarning, Send } from 'lucide-react';
+import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw, Maximize2, Minimize2, Scissors, HelpCircle, Trash2, MessageSquareWarning, Send, ChevronDown } from 'lucide-react';
 import { fetchVideoModels, generateVideo, type VideoModel, type VideoSSEEvent } from '../../api/video';
 import ImageSlicerModal from '../../components/ImageSlicerModal';
 import { contentApi } from '../../api/content';
@@ -75,14 +75,20 @@ const GROUP_ORDER = [
   'Veo (Google) 系列',
   'Seedance 系列',
   'Sora 系列',
+  'Grok 系列',
+  'Wan 系列',
+  'MiniMax 系列',
   '其他模型'
 ];
 
 const getModelGroup = (modelId: string) => {
   const id = modelId.toLowerCase();
-  if (id.includes('veo')) return 'Veo (Google) 系列';
+  if (id.includes('veo') || id.includes('omni-flash')) return 'Veo (Google) 系列';
+  if (id.includes('minimax')) return 'MiniMax 系列';
   if (id.includes('seedance') || id.includes('sd2') || id.includes('sdas') || id.includes('lg-')) return 'Seedance 系列';
   if (id.includes('sora')) return 'Sora 系列';
+  if (id.includes('grok')) return 'Grok 系列';
+  if (id.includes('wan')) return 'Wan 系列';
   return '其他模型';
 };
 interface WoodenFishLoaderProps {
@@ -319,12 +325,33 @@ export default function VideoPage() {
   }, [models]);
 
   const [selectedModel, setSelectedModel] = useState('');
+  const [expandedModelGroups, setExpandedModelGroups] = useState<Set<string>>(new Set());
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [duration, setDuration] = useState(6);
   const [resolution, setResolution] = useState('720p');
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const maxRefs = getMaxReferenceImages(selectedModel, models);
+
+  useEffect(() => {
+    if (!selectedModel) return;
+    const selectedGroup = getModelGroup(selectedModel);
+    setExpandedModelGroups(previous => {
+      if (previous.has(selectedGroup)) return previous;
+      const next = new Set(previous);
+      next.add(selectedGroup);
+      return next;
+    });
+  }, [selectedModel]);
+
+  const toggleModelGroup = (groupName: string) => {
+    setExpandedModelGroups(previous => {
+      const next = new Set(previous);
+      if (next.has(groupName)) next.delete(groupName);
+      else next.add(groupName);
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (referenceImages.length > maxRefs) {
@@ -1165,18 +1192,43 @@ export default function VideoPage() {
               {GROUP_ORDER.map(groupName => {
                 const groupModels = groupedModels[groupName];
                 if (!groupModels || groupModels.length === 0) return null;
+                const isExpanded = expandedModelGroups.has(groupName);
+                const panelId = `video-model-series-${GROUP_ORDER.indexOf(groupName)}`;
+                const selectedInGroup = groupModels.find(model => model.id === selectedModel);
                 return (
-                  <div key={groupName} className="space-y-2">
-                    <div className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider px-1 flex items-center gap-2">
-                      <span className="w-1 h-3 rounded-full bg-gradient-to-b from-indigo-500 to-indigo-600"></span>
-                      {groupName}
-                    </div>
-                    <div className="space-y-2">
+                  <div key={groupName} className="overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.015]">
+                    <button
+                      type="button"
+                      onClick={() => toggleModelGroup(groupName)}
+                      aria-expanded={isExpanded}
+                      aria-controls={panelId}
+                      className={`flex w-full items-center gap-2 px-3 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400 ${
+                        isExpanded ? 'bg-white/[0.045]' : 'hover:bg-white/[0.03]'
+                      }`}
+                    >
+                      <span className="h-4 w-1 shrink-0 rounded-full bg-gradient-to-b from-indigo-400 to-purple-500" />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-2">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-300">{groupName}</span>
+                          <span className="rounded-full bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-medium text-zinc-500">
+                            {groupModels.length}
+                          </span>
+                        </span>
+                        {!isExpanded && selectedInGroup && (
+                          <span className="mt-0.5 block truncate text-[10px] text-indigo-400/80">当前：{selectedInGroup.name}</span>
+                        )}
+                      </span>
+                      <ChevronDown
+                        aria-hidden="true"
+                        className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                      />
+                    </button>
+                    <div id={panelId} hidden={!isExpanded} className="space-y-2 border-t border-white/[0.05] p-2">
                       {groupModels.map((m) => {
                         const isComic = isComicDramaModel(m.id);
                         const isSelected = selectedModel === m.id;
                         return (
-                          <button key={m.id} onClick={() => setSelectedModel(m.id)}
+                          <button key={m.id} type="button" aria-pressed={isSelected} onClick={() => setSelectedModel(m.id)}
                             className={`earth-model-card w-full text-left px-4 py-3 rounded-xl border transition-all relative overflow-hidden ${isSelected
                               ? isComic
                                 ? 'border-purple-400 bg-gradient-to-r from-purple-500/20 via-indigo-500/15 to-purple-500/10 shadow-[0_0_16px_rgba(168,85,247,0.3)] ring-1 ring-purple-400/50'
