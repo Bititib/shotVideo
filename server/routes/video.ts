@@ -669,9 +669,15 @@ router.get('/models', (_req: Request, res: Response) => {
         '720p': rate,
       };
     } else if (m.id === 'wan3.0-video') {
-      rates = { '480p': 0.12, '720p': 0.14, '1080p': 0.16 };
+      rates = Object.fromEntries(['480p', '720p', '1080p'].map(resolution => [
+        resolution,
+        PricingService.quote(m.id, { resolution, seconds: 1 }, false).rate,
+      ]));
     } else if (m.id === 'wan3.0-video-prime') {
-      rates = { '480p': 0.15, '720p': 0.18, '1080p': 0.20 };
+      rates = Object.fromEntries(['480p', '720p', '1080p'].map(resolution => [
+        resolution,
+        PricingService.quote(m.id, { resolution, seconds: 1 }, false).rate,
+      ]));
     } else if (m.id === 'sd2-c6') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get()?.value || '2.50');
       rates = {

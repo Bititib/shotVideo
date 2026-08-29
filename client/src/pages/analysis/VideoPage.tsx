@@ -534,7 +534,25 @@ export default function VideoPage() {
   };
 
   useEffect(() => {
-    fetchVideoModels().then((m) => { setModels(m); if (m.length > 0 && !selectedModel) setSelectedModel(m[0].id); }).catch(() => { });
+    const refreshModelPricing = () => {
+      fetchVideoModels().then((nextModels) => {
+        setModels(nextModels);
+        if (nextModels.length > 0) setSelectedModel(current => current || nextModels[0].id);
+      }).catch(() => { });
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshModelPricing();
+    };
+    refreshModelPricing();
+    window.addEventListener('focus', refreshModelPricing);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', refreshModelPricing);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
+  useEffect(() => {
 
     // 加载历史与生产中生成记录
     contentApi.getMyContents({ type: 'video', page: 1, pageSize: 12 })
