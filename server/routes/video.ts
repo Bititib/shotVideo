@@ -2209,7 +2209,7 @@ async function failHmQueuedVideo(contentId: number, error: unknown): Promise<voi
   if (refundAmount > 0 && !metadata.queueRefunded) {
     if (metadata.billingSource === 'token' && metadata.tokenId) {
       const { TokenService } = await import('../services/tokenService.js');
-      TokenService.deductBalance(Number(metadata.tokenId), -refundAmount);
+      TokenService.refundBalance(Number(metadata.tokenId), refundAmount);
     } else {
       BalanceService.refund(record.userId, refundAmount, 'generate_video_refund');
     }

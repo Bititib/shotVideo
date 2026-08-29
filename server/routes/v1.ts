@@ -1550,7 +1550,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         if (token.balance === -1 && token.userId) {
           BalanceService.refund(token.userId, totalCost, 'generate_video_refund');
         } else {
-          TokenService.deductBalance(token.id, -totalCost);
+          TokenService.refundBalance(token.id, totalCost);
         }
       }
       let failedMeta: Record<string, any> = {};

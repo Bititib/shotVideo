@@ -142,6 +142,27 @@ export class TokenService {
     }
   }
 
+  /** 退回已扣除的 Token 额度，并同步冲减累计用量。 */
+  static refundBalance(tokenId: number, amount: number) {
+    if (amount <= 0) return;
+
+    const token = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get();
+    if (!token) return;
+
+    if (token.balance === -1) {
+      db.update(apiTokens).set({
+        usedAmount: sql`MAX(0, used_amount - ${amount})`,
+        lastUsedAt: new Date().toISOString(),
+      }).where(eq(apiTokens.id, tokenId)).run();
+    } else {
+      db.update(apiTokens).set({
+        balance: sql`balance + ${amount}`,
+        usedAmount: sql`MAX(0, used_amount - ${amount})`,
+        lastUsedAt: new Date().toISOString(),
+      }).where(eq(apiTokens.id, tokenId)).run();
+    }
+  }
+
   /** 检查 Token 是否有效 */
   static validateToken(tokenKey: string): { valid: boolean; error?: string; token?: any } {
     const token = this.findByKey(tokenKey);

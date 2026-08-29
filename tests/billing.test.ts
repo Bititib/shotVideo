@@ -309,6 +309,42 @@ describe('TokenService.deductBalance', () => {
   });
 });
 
+describe('TokenService.refundBalance', () => {
+  afterEach(() => {
+    sqlite.prepare(`DELETE FROM api_tokens WHERE name LIKE 'refund-test-token-%'`).run();
+  });
+
+  it('restores finite token balance and reduces used amount', () => {
+    const created = TokenService.createToken({
+      userId: testUserId,
+      name: 'refund-test-token-finite',
+      balance: 20,
+    });
+    TokenService.deductBalance(created.id, 6);
+
+    TokenService.refundBalance(created.id, 6);
+
+    const token = db.select().from(apiTokens).where(eq(apiTokens.id, created.id)).get();
+    expect(token?.balance).toBe(20);
+    expect(token?.usedAmount).toBe(0);
+  });
+
+  it('keeps unlimited balance and reduces used amount', () => {
+    const created = TokenService.createToken({
+      userId: testUserId,
+      name: 'refund-test-token-unlimited',
+      balance: -1,
+    });
+    TokenService.deductBalance(created.id, 6);
+
+    TokenService.refundBalance(created.id, 6);
+
+    const token = db.select().from(apiTokens).where(eq(apiTokens.id, created.id)).get();
+    expect(token?.balance).toBe(-1);
+    expect(token?.usedAmount).toBe(0);
+  });
+});
+
 // ============ TokenService.validateToken 测试 ============
 describe('TokenService.validateToken', () => {
   let tokenId: number;
