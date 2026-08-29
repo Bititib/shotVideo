@@ -25,6 +25,12 @@ import {
   findInvalidMjNewApiMaterialUrls,
   isMjNewApiChannel,
 } from '../services/mjNewApiAdapter.js';
+import {
+  buildNewTokenVideoPayload,
+  isNewTokenChannel,
+  isNewTokenVideoModel,
+  newTokenVideoCreateUrl,
+} from '../services/newTokenAdapter.js';
 
 const router = Router();
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
@@ -1405,7 +1411,9 @@ async function handleVideoCreation(req: Request, res: Response) {
     return res.status(500).json({ error: 'Database error' });
   }
 
-  const isSudaShuiModel = [
+  const isNewToken = isNewTokenChannel(channel);
+  const isNewTokenModel = isNewToken && isNewTokenVideoModel(model);
+  const isSudaShuiModel = !isNewToken && ([
     'ld-sdas-cvk-pro-933-720p',
     'sdas-mj-minimax-h3-2k',
     'sdas-bl-sd2.0-933-pro-720p',
@@ -1414,7 +1422,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     'veo-3-1',
     'omni-flash',
     'omni-flash-vref'
-  ].includes(model) || model.startsWith('omni-') || model.startsWith('veo-omni-');
+  ].includes(model) || model.startsWith('omni-') || model.startsWith('veo-omni-'));
   const isHmStudio = isHmStudioChannel(channel);
   const isMjNewApi = isMjNewApiChannel(channel);
 
@@ -1462,6 +1470,8 @@ async function handleVideoCreation(req: Request, res: Response) {
 
   const upstreamUrl = isHmStudio
     ? hmStudioCreateUrl(baseUrl, 'video')
+    : isNewTokenModel
+    ? newTokenVideoCreateUrl(baseUrl)
     : isSudaShuiModel
     ? `${baseUrl}/v1/video/generations`
     : `${baseUrl}/v1/videos`;
@@ -1529,6 +1539,29 @@ async function handleVideoCreation(req: Request, res: Response) {
 
       console.log(`[v1-video] MJNewAPI create: model=${model} upstreamModel=${upstreamModel} duration=${seconds} resolution=${resolution} images=${image_urls.length} videos=${video_urls.length} audios=${audio_urls.length}`);
 
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+      upstreamRes = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(channel.timeout || 120_000),
+      });
+    } else if (isNewTokenModel) {
+      const payload = buildNewTokenVideoPayload({
+        model,
+        upstreamModel,
+        prompt,
+        duration: seconds,
+        aspectRatio: ratio,
+        images: image_urls,
+        videos: video_urls,
+        audios: audio_urls,
+        firstFrame: body.first_frame_url,
+        lastFrame: body.end_frame_url || body.last_frame_url,
+        complianceEnabled: body.compliance_enabled,
+        complianceMode: body.compliance_mode,
+      });
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
       upstreamRes = await fetch(upstreamUrl, {
