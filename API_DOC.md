@@ -20,7 +20,7 @@ Authorization: Bearer sk-xxxxxxxxxxxxxxxx
 X-API-Key: sk-xxxxxxxxxxxxxxxx
 ```
 
-所有 `/v1` 接口（包括视频内容下载）都必须携带有效 API Key。
+所有 `/v1` 接口都必须携带有效 API Key。例外：任务查询返回的带签名视频内容 URL 可在有效期内直接访问，无需暴露 API Key。
 
 常见错误码：
 
@@ -290,8 +290,8 @@ GET /v1/videos/{task_id}
   "model": "sd2.5",
   "status": "completed",
   "progress": 100,
-  "url": "https://你的域名/v1/videos/task_123/content",
-  "result_url": "https://你的域名/v1/videos/task_123/content"
+  "url": "https://你的域名/v1/videos/task_123/content?expires=1788000000&signature=...",
+  "result_url": "https://你的域名/v1/videos/task_123/content?expires=1788000000&signature=..."
 }
 ```
 
@@ -316,11 +316,10 @@ GET /v1/videos/{task_id}
 ### 6.3 下载任务内容
 
 ```bash
-curl -o final.mp4 "https://你的域名/v1/videos/task_123/content" \
-  -H "Authorization: Bearer sk-你的APIKey"
+curl -o final.mp4 "任务查询返回的完整签名URL"
 ```
 
-`GET /v1/files/video?id={upstream_file_id}` 同样需要 API Key。业务系统应优先使用任务查询返回的 `/v1/videos/{task_id}/content` 地址。
+签名 URL 默认有效 24 小时，可通过 `VIDEO_CONTENT_URL_TTL_SECONDS` 调整；过期后重新查询任务即可获得新 URL。也可以不使用签名参数，继续通过 `Authorization: Bearer ...` 访问内容接口。`GET /v1/files/video?id={upstream_file_id}` 仍需要 API Key。
 
 ### 6.4 查询 HM Studio 队列策略
 

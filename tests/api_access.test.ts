@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canAccessVideoRecord, extractToken, filterRoutableModels, saveApiImageAssets, videoTaskFailureDetails } from '../server/routes/v1.js';
+import { canAccessVideoRecord, createVideoContentSignature, extractToken, filterRoutableModels, saveApiImageAssets, verifyVideoContentSignature, videoTaskFailureDetails } from '../server/routes/v1.js';
 import { TokenService } from '../server/services/tokenService.js';
 import { sqlite } from '../server/db/index.js';
 
@@ -21,6 +21,15 @@ describe('OpenAI-compatible API access', () => {
         'x-api-key': 'sk-header-token',
       },
     } as any)).toBe('sk-bearer-token');
+  });
+
+  it('accepts only valid unexpired signed video content URLs', () => {
+    const expiresAt = Math.floor(Date.now() / 1000) + 300;
+    const signature = createVideoContentSignature(1047, expiresAt);
+    expect(verifyVideoContentSignature(1047, expiresAt, signature)).toBe(true);
+    expect(verifyVideoContentSignature(1048, expiresAt, signature)).toBe(false);
+    expect(verifyVideoContentSignature(1047, expiresAt - 600, signature)).toBe(false);
+    expect(verifyVideoContentSignature(1047, expiresAt, `${signature}tampered`)).toBe(false);
   });
 
   it('only exposes models supported by active channels', () => {

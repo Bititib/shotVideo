@@ -1002,15 +1002,25 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   }
 
   /** 生成成功后更新内容（已在前置预扣费，无需重复扣费） */
-  const billUsage = (finalVideoUrl: string) => {
+  const billUsage = (finalVideoUrl: string, upstreamResultUrl?: string) => {
     const elapsed = Date.now() - startTime;
     logUsage(req.userId!, 'generate_video', undefined, elapsed);
     if (contentId !== null) {
       try {
+        const current = db.select().from(contents).where(eq(contents.id, contentId)).get();
+        let completedMetadata: Record<string, any> = {};
+        try { completedMetadata = JSON.parse(current?.metadata || '{}'); } catch { }
+        completedMetadata.progress = 100;
+        completedMetadata.queueStatus = 'completed';
+        completedMetadata.queuePosition = 0;
+        completedMetadata.completedAt = new Date().toISOString();
+        if (upstreamResultUrl) completedMetadata.upstreamResultUrl = upstreamResultUrl;
+        delete completedMetadata.progressText;
         db.update(contents).set({
           status: 'completed',
           resultUrl: finalVideoUrl || null,
-          cost: estimatedCost
+          cost: estimatedCost,
+          metadata: JSON.stringify(completedMetadata),
         }).where(eq(contents.id, contentId)).run();
       } catch (e) { console.error('[content] 视频记录更新失败:', e); }
     }
@@ -1861,7 +1871,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           }
 
           sendEvent({ type: 'complete', videoUrl: finalVideoUrl });
-          billUsage(finalVideoUrl);
+          billUsage(finalVideoUrl, resultUrl);
           if (contentId !== null) activePolls.delete(contentId);
           if (!res.destroyed && !res.writableEnded) {
             res.write('data: [DONE]\n\n');
@@ -2703,10 +2713,12 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
             progress: 100,
             queueStatus: 'completed',
             queuePosition: 0,
+            upstreamResultUrl: resultUrl || (meta as any).upstreamResultUrl,
             localizedAt: new Date(completedTime).toISOString(),
             durationMs,
             completedAt: new Date(completedTime).toISOString()
           };
+          delete (meta as Record<string, any>).progressText;
           db.update(contents).set({
             status: 'completed',
             resultUrl: finalVideoUrl,

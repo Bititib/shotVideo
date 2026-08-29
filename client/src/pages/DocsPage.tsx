@@ -315,7 +315,7 @@ print(resp.json())
       title: '统一视频任务轮询与查询',
       method: 'GET',
       path: '/v1/videos/{task_id}',
-      description: '使用创建接口返回的 status_url（或 task_id）轮询，建议间隔 retry_after 秒。内部容量调度对调用方透明；完成后使用 content 直链下载，失败时返回 error_message 和 failed_at。',
+      description: '使用 status_url（或 task_id）轮询。完成后返回可直接打开的短期签名 content URL；签名过期时重新查询任务即可刷新。',
       parameters: [
         { name: 'task_id', type: 'path_param', required: true, description: '创建任务时返回的任务 ID（如 task_123）' }
       ],
@@ -323,9 +323,8 @@ print(resp.json())
 curl "${getBaseUrl()}/videos/task_123" \\
   -H "Authorization: Bearer sk-你的令牌Key"
 
-# 2. 视频生成完成后，直接流式下载视频文件：
-curl -o final.mp4 "${getBaseUrl()}/videos/task_123/content" \\
-  -H "Authorization: Bearer sk-你的令牌Key"`,
+# 2. 使用状态响应中的完整签名 URL 直接下载，无需暴露 API Key：
+curl -o final.mp4 "状态响应返回的完整 url"`,
       pythonExample: `import time
 import requests
 
@@ -354,8 +353,8 @@ while True:
   "model": "seedance_v2.5",
   "status": "completed",
   "progress": 100,
-  "url": "${getBaseUrl()}/videos/task_123/content",
-  "result_url": "${getBaseUrl()}/videos/task_123/content"
+  "url": "${getBaseUrl()}/videos/task_123/content?expires=1788000000&signature=...",
+  "result_url": "${getBaseUrl()}/videos/task_123/content?expires=1788000000&signature=..."
 }`
     },
     {

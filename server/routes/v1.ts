@@ -16,7 +16,9 @@ import {
   buildHmStudioImageForm,
   buildHmStudioVideoForm,
   hmStudioCreateUrl,
+  hmStudioTaskUrl,
   isHmStudioChannel,
+  normalizeHmStudioTask,
   waitForHmStudioTask,
 } from '../services/hmStudioAdapter.js';
 import { hmStudioPoolKey, hmStudioQueue } from '../services/hmStudioQueueService.js';
@@ -148,6 +150,26 @@ export function verifyVideoContentSignature(contentId: number, expiresAtValue: u
   const providedBuffer = Buffer.from(signature);
   const expectedBuffer = Buffer.from(expected);
   return providedBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(providedBuffer, expectedBuffer);
+}
+
+async function recoverHmStudioVideoUrl(metadata: Record<string, any>): Promise<string> {
+  const upstreamTaskId = String(metadata.videoId || '').trim();
+  const channelId = Number(metadata.channelId);
+  if (!upstreamTaskId || !Number.isInteger(channelId)) return '';
+
+  const channel = ChannelService.getChannelRaw(channelId);
+  if (!channel || !isHmStudioChannel(channel)) return '';
+
+  const headers: Record<string, string> = {};
+  if (channel.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
+  const response = await fetch(hmStudioTaskUrl(channel.baseUrl, upstreamTaskId), {
+    headers,
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) return '';
+
+  const normalized = normalizeHmStudioTask(await response.json(), channel.baseUrl);
+  return ['success', 'completed'].includes(normalized.status) ? normalized.resultUrl : '';
 }
 
 export function videoTaskFailureDetails(metadata: Record<string, any>): {
@@ -2026,6 +2048,17 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
   try {
     let metadata: any = {};
     try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
+
+    if (isLocalFile && !fs.existsSync(localFilePath) && !metadata.upstreamResultUrl) {
+      try {
+        metadata.upstreamResultUrl = await recoverHmStudioVideoUrl(metadata);
+      } catch (error) {
+        console.warn(`[v1/videos/content] Failed to recover HM Studio task ${metadata.videoId || ''}:`, error);
+      }
+      if (!metadata.upstreamResultUrl) {
+        return res.status(410).json({ error: 'Local video file is missing and no upstream recovery URL is available' });
+      }
+    }
 
     const { downloadAndLocalizeVideo } = await import('./video.js');
     const sourceUrl = isLocalFile && !fs.existsSync(localFilePath) && metadata.upstreamResultUrl
