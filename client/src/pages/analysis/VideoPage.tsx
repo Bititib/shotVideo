@@ -36,6 +36,7 @@ interface VideoTask {
   createdAt: string;
   dbId?: number;
 }
+const JULUN_MINIMAX_H3_MODEL = 'Minimax-H3-768p-933-10s-15s';
 function getVideoPlayUrl(url: string | null) {
   if (!url) return '';
   if (url.startsWith('/uploads/')) {
@@ -62,6 +63,7 @@ export const isComicDramaModel = (modelId: string) => {
     'ld-sdas-cvk-pro-933-720p',
     'sdas-pd-sd2.0-pro-933-5-720p',
     'sdas-mj-minimax-h3-2k',
+    JULUN_MINIMAX_H3_MODEL,
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
     'cd-seedance-2.0-720p',
@@ -257,6 +259,7 @@ const isWan30Model = (modelId: string) => {
 };
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  if (modelId === JULUN_MINIMAX_H3_MODEL) return 9;
   if (isWan30Model(modelId)) return 10;
   if (modelId === 'seedance_v2.5') return 10;
   if (modelId === 'xd-seedance-2.5-720p') return 9;
@@ -376,6 +379,7 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
+    if (m === JULUN_MINIMAX_H3_MODEL) return 3;
     if (isWan30Model(m)) return 5;
     if (m === 'seedance-2.5-c1') return 10;
     if (m === 'ad-seedance-2.5-480p') return 10;
@@ -385,6 +389,7 @@ export default function VideoPage() {
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
+    if (m === JULUN_MINIMAX_H3_MODEL) return 3;
     if (isWan30Model(m)) return 5;
     if (m === 'seedance-2.5-c1') return 10;
     if (m === 'ad-seedance-2.5-480p') return 10;
@@ -554,10 +559,12 @@ export default function VideoPage() {
             id: `db_${item.id}`,
             prompt: item.metadata?.prompt || item.inputText || item.title || '',
             status: 'generating',
-            progress: 0,
+            progress: Number(item.metadata?.progress) || 0,
             statusMessage: item.status === 'queued'
               ? `HM Studio 排队中：前方 ${Math.max(0, Number(item.metadata?.queuePosition || 1) - 1)} 项`
-              : '正在后台恢复生成...',
+              : (Number(item.metadata?.progress) > 0
+                ? `视频生成中 ${Number(item.metadata.progress)}%`
+                : '正在后台恢复生成...'),
             videoUrl: null,
             error: null,
             metadata: item.metadata as any,

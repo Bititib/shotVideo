@@ -24,11 +24,21 @@ import {
 import { buildNewTokenVideoPayload } from '../services/newTokenAdapter.js';
 import { clarifyVideoCapacityFailure, extractVideoFailureMessage, withVideoFailureMetadata } from '../services/videoFailureService.js';
 import {
+  buildJulunMinimaxH3Payload,
+  isJulunMinimaxH3Model,
+  JULUN_MINIMAX_H3_MODEL,
+  JULUN_MINIMAX_H3_RESOLUTION,
+} from '../services/julunMinimaxAdapter.js';
+import {
   buildSnumomWanPayload,
   isSnumomWanChannel,
   normalizeSnumomWanTask,
   snumomContentUrl,
 } from '../services/snumomWanAdapter.js';
+import {
+  buildSudaShuiVideoPayload,
+  sudaShuiVideoCreateUrl,
+} from '../services/sudaShuiAdapter.js';
 import {
   canUseMjOverflowModel,
   isHmStudioConcurrencyError,
@@ -270,6 +280,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'wan3.0th': { series: 'wan3.0', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   'wan3.0-video': { series: 'snumom-wan3.0', allowedSeconds: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   'wan3.0-video-prime': { series: 'snumom-wan3.0', allowedSeconds: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
+  [JULUN_MINIMAX_H3_MODEL]: { series: 'julun-minimax-h3', allowedSeconds: [10, 15], requireRef: false },
 };
 
 const DEFAULT_VIDEO_MODELS = [
@@ -280,6 +291,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'wan3.0th', name: 'Wan 3.0 视频大模型 (wan3.0th)', description: '按秒计费，¥0.14/秒；720p；支持4-30秒文生视频和多参考视频；最多10张图片、5个视频、5段音频公网URL，音频仅支持WAV；支持1:1、16:9、9:16、4:3、3:4', maxSeconds: 30, icon: '🌟' },
   { id: 'wan3.0-video', name: 'Wan 3.0 Video（标准版）', description: 'snumom 标准版；支持 2-30 秒、480P/720P/1080P；最多 10 图、5 视频、5 音频参考；支持文生、首帧及首尾帧视频', maxSeconds: 30, icon: '🌊' },
   { id: 'wan3.0-video-prime', name: 'Wan 3.0 Video Prime（高速版）', description: 'snumom 高速版；生成速度更快；支持 2-30 秒、480P/720P/1080P；最多 10 图、5 视频、5 音频参考', maxSeconds: 30, icon: '⚡' },
+  { id: JULUN_MINIMAX_H3_MODEL, name: 'MiniMax H3 768p（933）', description: '巨轮 MiniMax H3；固定768p；仅支持10秒或15秒；最多9图、3视频、3音频参考；按秒计费 ¥0.18/秒', maxSeconds: 15, icon: '🔥' },
   { id: 'ld-sdas-cvk-pro-933-720p', name: 'SudaShui CVK Pro 933 (720p)', description: 'CVK 满血版，支持真人、4-15秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.800/次', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-mj-minimax-h3-2k', name: 'Minimax H3 (2K)', description: '海螺h3，9图3视频3音频，4-15s，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🔥' },
   { id: 'sdas-bl-sd2.0-933-pro-720p', name: 'Seedance 2.0 Pro (933人脸版)', description: '9图3视频3音频，支持 4-15s，支持真人，固定按次计费 ¥4.50/次', maxSeconds: 15, icon: '🚀' },
@@ -647,6 +659,10 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '2k': rate,
       };
+    } else if (m.id === JULUN_MINIMAX_H3_MODEL) {
+      rates = {
+        [JULUN_MINIMAX_H3_RESOLUTION]: PricingService.quote(m.id, { resolution: JULUN_MINIMAX_H3_RESOLUTION, seconds: 1 }, false).rate,
+      };
     } else if (m.id === 'wan3.0th') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'wan3_0th_rate')).get()?.value || '0.14');
       rates = {
@@ -712,7 +728,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     model = 'nd-seedance-2.0-720p',
     aspect_ratio = '16:9',
     video_length = 6,
-    resolution = '720p',
+    resolution: requestedResolution,
     reference_images = [],   // base64 dataURL 数组
     reference_videos = [],   // 新多视频数组字段
     reference_video = '',    // 旧单值兼容字段
@@ -723,6 +739,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     compliance_enabled,      // 是否开启合规素材/过人脸
     compliance_mode,         // 合规素材风格
   } = req.body;
+  const resolution = requestedResolution || (isJulunMinimaxH3Model(model) ? JULUN_MINIMAX_H3_RESOLUTION : '720p');
 
   // 向后兼容：合并旧单值字段到新数组
   const finalVideos: string[] = (Array.isArray(reference_videos) && reference_videos.length > 0)
@@ -776,6 +793,18 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     if (resolution !== '720p') return res.status(400).json({ error: 'seedance_v2.5 仅支持 720p' });
     if (reference_images.length > 10) return res.status(400).json({ error: 'seedance_v2.5 最多支持 10 张参考图片' });
     if (finalVideos.length > 0 || finalAudios.length > 0) return res.status(400).json({ error: 'seedance_v2.5 不支持视频或音频参考' });
+  }
+
+  if (isJulunMinimaxH3Model(model)) {
+    if (![10, 15].includes(Number(video_length))) {
+      return res.status(400).json({ error: `${JULUN_MINIMAX_H3_MODEL} 仅支持 10 秒或 15 秒` });
+    }
+    if (resolution !== JULUN_MINIMAX_H3_RESOLUTION) {
+      return res.status(400).json({ error: `${JULUN_MINIMAX_H3_MODEL} 仅支持 ${JULUN_MINIMAX_H3_RESOLUTION}` });
+    }
+    if (reference_images.length > 9 || finalVideos.length > 3 || finalAudios.length > 3) {
+      return res.status(400).json({ error: `${JULUN_MINIMAX_H3_MODEL} 最多支持 9 张图片、3 个视频和 3 段音频参考` });
+    }
   }
 
   if (model === 'wan3.0-video' || model === 'wan3.0-video-prime') {
@@ -916,6 +945,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'veo-3-1') {
     const row = db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get();
     rate = parseFloat(row?.value || '0.20');
+  } else if (model === JULUN_MINIMAX_H3_MODEL) {
+    rate = 0.18;
   } else if (model === 'sora-v4-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
     rate = parseFloat(row?.value || '0.189');
@@ -1286,41 +1317,19 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         audioUpUrls.push(await uploadToSudaShui(a, channel.apiKey));
       }
 
-      let finalPrompt = prompt.trim();
-      finalPrompt = finalPrompt.replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (match, idxStr) => {
-        const idx = parseInt(idxStr, 10);
-        return `@image${idx + 1}`;
-      });
-      for (let i = 0; i < videoUrls.length; i++) {
-        finalPrompt = finalPrompt.replace(new RegExp(`\\[ref_video_${i + 1}\\]`, 'g'), `@video${i + 1}`);
-      }
-      // 兼容旧的单值占位符
-      finalPrompt = finalPrompt.replace(/\[ref_video\]/g, '@video1');
-      for (let i = 0; i < audioUpUrls.length; i++) {
-        finalPrompt = finalPrompt.replace(new RegExp(`\\[ref_audio_${i + 1}\\]`, 'g'), `@audio${i + 1}`);
-      }
-      finalPrompt = finalPrompt.replace(/\[ref_audio\]/g, '@audio1');
-
-      const payloadMetadata = {
-        aspectRatio: aspect_ratio,
-        mode: 'references',
-        imageUrls: imageUrls.length > 0 ? imageUrls : undefined,
-        videoUrls: videoUrls.length > 0 ? videoUrls : undefined,
-        audioUrls: audioUpUrls.length > 0 ? audioUpUrls : undefined,
-      };
-
-      const payload: Record<string, any> = {
+      const payload = buildSudaShuiVideoPayload({
         model: upstreamModel,
-        prompt: finalPrompt,
+        prompt,
         duration: model === 'sdas-pd-sd2.0-pro-933-5-720p' ? 10 : (Number(video_length) || 6),
-        metadata: {
-          payload: JSON.stringify(payloadMetadata)
-        }
-      };
+        aspectRatio: aspect_ratio,
+        imageUrls,
+        videoUrls,
+        audioUrls: audioUpUrls,
+      });
 
       console.log(`[video] Step1 SudaShui 创建任务: model=${model} duration=${payload.duration} resolution=${resolution}`);
 
-      const createResp = await fetch(`${baseUrl}/v1/video/generations`, {
+      const createResp = await fetch(sudaShuiVideoCreateUrl(baseUrl), {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${channel.apiKey}`,
@@ -1580,6 +1589,43 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       const job = await createResp.json() as any;
       videoId = job.task_id || job.id;
+    } else if (isJulunMinimaxH3Model(model)) {
+      sendEvent({ type: 'status', message: '正在提交巨轮 MiniMax H3 768p 任务...' });
+      const imageUrls = reference_images.slice(0, 9)
+        .map((item: string) => convertBase64ToPublicUrl(item, 'julun_h3_img', req))
+        .filter(Boolean);
+      const videoUrls = finalVideos.slice(0, 3)
+        .map(item => convertBase64ToPublicUrl(item, 'julun_h3_video', req))
+        .filter(Boolean);
+      const audioUrls = finalAudios.slice(0, 3)
+        .map(item => convertBase64ToPublicUrl(item, 'julun_h3_audio', req))
+        .filter(Boolean);
+      const payload = buildJulunMinimaxH3Payload({
+        model: upstreamModel,
+        prompt: prompt.trim(),
+        seconds: Number(video_length),
+        ratio: aspect_ratio,
+        imageUrls,
+        videoUrls,
+        audioUrls,
+      });
+      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(channel.apiKey ? { Authorization: `Bearer ${channel.apiKey}` } : {}),
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(dbChannel?.timeout || 120_000),
+      });
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        refundFailedTask(`巨轮 MiniMax H3 提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+      const job = await createResp.json() as any;
+      videoId = job.id || job.task_id;
     } else if (isWan30 && isSnumomWan) {
       sendEvent({ type: 'status', message: '正在整理并提交 snumom WAN3.0 任务...' });
 

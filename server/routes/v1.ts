@@ -35,6 +35,16 @@ import {
 } from '../services/newTokenAdapter.js';
 import { buildSnumomWanPayload, isSnumomWanChannel } from '../services/snumomWanAdapter.js';
 import {
+  buildSudaShuiVideoPayload,
+  sudaShuiVideoCreateUrl,
+} from '../services/sudaShuiAdapter.js';
+import {
+  buildJulunMinimaxH3Payload,
+  isJulunMinimaxH3Model,
+  JULUN_MINIMAX_H3_MODEL,
+  JULUN_MINIMAX_H3_RESOLUTION,
+} from '../services/julunMinimaxAdapter.js';
+import {
   MJ_OVERFLOW_VIDEO_MODEL,
   shouldOverflowHmStudio,
 } from '../services/videoFailoverService.js';
@@ -96,6 +106,7 @@ const DEFAULT_V1_VIDEO_MODELS = [
   'sdas-wf-sd2.0-fast-933-720p',
   'sdas-wf-sd2.0-pro-933-480p',
   'sdas-pg-s2.0-fast',
+  JULUN_MINIMAX_H3_MODEL,
 ];
 
 /** 返回当前 Token 能通过启用渠道实际调用的模型 ID。 */
@@ -302,6 +313,8 @@ function getVideoRate(model: string, resolution: string): number {
     return 3.00;
   } else if (model === 'wan3.0th') {
     return 0.14;
+  } else if (model === JULUN_MINIMAX_H3_MODEL) {
+    return 0.18;
   } else if (model === 'ad-seedance-2.5-480p') {
     return 0.35;
   } else if (model === 'xd-seedance-2.5-720p') {
@@ -1249,7 +1262,8 @@ async function handleVideoCreation(req: Request, res: Response) {
   }
 
   const ratio = body.ratio || body.aspect_ratio || '16:9';
-  const resolution = body.resolution || body.resolution_name || '720p';
+  const resolution = body.resolution || body.resolution_name
+    || (isJulunMinimaxH3Model(model) ? JULUN_MINIMAX_H3_RESOLUTION : '720p');
 
   // 提取图片素材别名
   let image_urls: string[] = [];
@@ -1421,6 +1435,21 @@ async function handleVideoCreation(req: Request, res: Response) {
     if (image_urls.length > 10 || video_urls.length > 0 || audio_urls.length > 0) {
       cleanupFiles(req.files);
       return res.status(400).json({ error: 'seedance_v2.5 supports at most 10 images and does not support video/audio references' });
+    }
+  }
+
+  if (isJulunMinimaxH3Model(model)) {
+    if (![10, 15].includes(Number(seconds))) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `${JULUN_MINIMAX_H3_MODEL} seconds must be 10 or 15` });
+    }
+    if (resolution !== JULUN_MINIMAX_H3_RESOLUTION) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `${JULUN_MINIMAX_H3_MODEL} only supports ${JULUN_MINIMAX_H3_RESOLUTION}` });
+    }
+    if (image_urls.length > 9 || video_urls.length > 3 || audio_urls.length > 3) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `${JULUN_MINIMAX_H3_MODEL} supports at most 9 images, 3 videos, and 3 audio files` });
     }
   }
 
@@ -1658,7 +1687,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     : isNewTokenModel
     ? newTokenVideoCreateUrl(baseUrl)
     : isSudaShuiModel
-    ? `${baseUrl}/v1/video/generations`
+    ? sudaShuiVideoCreateUrl(baseUrl)
     : `${baseUrl}/v1/videos`;
 
   let balanceDeducted = false;
@@ -1757,7 +1786,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(channel.timeout || 120_000),
       });
-    } else if (!isSnumomWanChannel(channel) && Array.isArray(req.files) && req.files.length > 0) {
+    } else if (!isSnumomWanChannel(channel) && !isSudaShuiModel && Array.isArray(req.files) && req.files.length > 0) {
       const formData = new FormData();
       formData.append('model', upstreamModel);
       formData.append('prompt', prompt);
@@ -1798,7 +1827,17 @@ async function handleVideoCreation(req: Request, res: Response) {
       });
     } else {
       let payload: Record<string, any>;
-      if (isSnumomWanChannel(channel)) {
+      if (isJulunMinimaxH3Model(model)) {
+        payload = buildJulunMinimaxH3Payload({
+          model: upstreamModel,
+          prompt,
+          seconds,
+          ratio,
+          imageUrls: image_urls,
+          videoUrls: video_urls,
+          audioUrls: audio_urls,
+        });
+      } else if (isSnumomWanChannel(channel)) {
         const firstFrame = typeof body.first_frame_url === 'string' ? body.first_frame_url : '';
         const lastFrameValue = body.end_frame_url || body.last_frame_url;
         const lastFrame = typeof lastFrameValue === 'string' ? lastFrameValue : '';
@@ -1826,16 +1865,16 @@ async function handleVideoCreation(req: Request, res: Response) {
           audios: audio_urls.map(url => ({ url })),
         });
       } else if (isSudaShuiModel) {
-        payload = {
+        payload = buildSudaShuiVideoPayload({
           model: upstreamModel,
           prompt,
           duration: seconds,
-          aspect_ratio: ratio,
-          resolution,
-          images: image_urls,
-          video: video_urls[0] || undefined,
-          ...otherParams,
-        };
+          aspectRatio: ratio,
+          imageUrls: image_urls,
+          videoUrls: video_urls,
+          audioUrls: audio_urls,
+        });
+        console.log(`[v1-video] SudaShui create: model=${model} upstreamModel=${upstreamModel} duration=${seconds} images=${image_urls.length} videos=${video_urls.length} audios=${audio_urls.length}`);
       } else if (model.includes('grok-imagine-video') || model.includes('grok-video')) {
         const extra: Record<string, any> = {
           aspect_ratio: ratio,

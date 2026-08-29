@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { env, getApiKeys } from '../config/env.js';
 import { GoogleGenAI } from '@google/genai';
+import { JULUN_MINIMAX_H3_MODEL } from '../services/julunMinimaxAdapter.js';
 
 /** 生成 sk-xxxx 格式的 Token */
 function generateTokenKey(): string {
@@ -148,6 +149,7 @@ export async function syncModelsFromAPI() {
     { provider: 'google', modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'julun', modelId: 'wan3.0th', displayName: 'Wan 3.0 视频大模型 (wan3.0th)', description: '按秒计费，¥0.14/秒；720p；支持4-30秒文生视频和多参考视频；最多10张图片、5个视频、5段音频公网URL，音频仅支持WAV；支持1:1、16:9、9:16、4:3、3:4', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'julun', modelId: JULUN_MINIMAX_H3_MODEL, displayName: 'MiniMax H3 768p（933）', description: '巨轮 MiniMax H3；固定768p；仅支持10秒或15秒；最多9图、3视频、3音频参考；按秒计费 ¥0.18/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'snumom', modelId: 'wan3.0-video', displayName: 'Wan 3.0 Video（标准版）', description: 'snumom 标准版；支持2-30秒、480P/720P/1080P；最多10图、5视频、5音频参考；支持文生、首帧及首尾帧视频', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'snumom', modelId: 'wan3.0-video-prime', displayName: 'Wan 3.0 Video Prime（高速版）', description: 'snumom 高速版；生成速度更快；支持2-30秒、480P/720P/1080P；最多10图、5视频、5音频参考', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
@@ -746,6 +748,7 @@ export async function initDatabase() {
     { key: 'seedance_2_5_deal_rate', value: '1.80', label: 'seedance-2.5-deal 费率(¥/次)' },
     { key: 'seedance_2_5m_rate', value: '3.00', label: 'seedance-2.5m 费率(¥/次)' },
     { key: 'wan3_0th_rate', value: '0.14', label: 'wan3.0th 费率(¥/秒)' },
+    { key: 'julun_minimax_h3_768p_rate', value: '0.18', label: '巨轮 MiniMax H3 768p 费率(¥/秒)' },
     { key: 'snumom_wan3_video_rate', value: '0.14', label: 'snumom Wan 3.0 Video 默认费率(¥/秒)' },
     { key: 'snumom_wan3_video_prime_rate', value: '0.18', label: 'snumom Wan 3.0 Video Prime 默认费率(¥/秒)' },
   ];
@@ -952,6 +955,7 @@ export async function initDatabase() {
     { modelPattern: 'seedance-2.5-deal', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5_deal_rate', 1.80), category: 'video' },
     { modelPattern: 'seedance-2.5m', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5m_rate', 3.00), category: 'video' },
     { modelPattern: 'wan3.0th', billingType: 'per_second', inputPrice: legacyRate('wan3_0th_rate', 0.14), category: 'video' },
+    { modelPattern: JULUN_MINIMAX_H3_MODEL, billingType: 'per_second', inputPrice: legacyRate('julun_minimax_h3_768p_rate', 0.18), category: 'video', extraParams: { '768p': 0.18 } },
     { modelPattern: 'wan3.0-video', billingType: 'per_second', inputPrice: legacyRate('snumom_wan3_video_rate', 0.14), category: 'video', extraParams: { '480p': 0.12, '720p': 0.14, '1080p': 0.16 } },
     { modelPattern: 'wan3.0-video-prime', billingType: 'per_second', inputPrice: legacyRate('snumom_wan3_video_prime_rate', 0.18), category: 'video', extraParams: { '480p': 0.15, '720p': 0.18, '1080p': 0.20 } },
     { modelPattern: 'grok-video-1.5', billingType: 'per_second', inputPrice: legacyRate('grok_video_1_5_per_sec_rate', 0.09), category: 'video' },
@@ -1012,6 +1016,28 @@ export async function initDatabase() {
       label: 'WAN3.0 按秒计费迁移标记',
     }).run();
     console.log('🔄 已迁移：WAN3.0 按秒计费更新为 ¥0.14/秒');
+  }
+
+  const julunH3PricingMigrationKey = 'migration_julun_minimax_h3_768p_per_second_018_v1';
+  const julunH3PricingMigrated = db.select().from(settings).where(eq(settings.key, julunH3PricingMigrationKey)).get();
+  if (!julunH3PricingMigrated) {
+    const h3Rule = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, JULUN_MINIMAX_H3_MODEL)).get();
+    if (h3Rule) {
+      db.update(modelPricing).set({
+        billingType: 'per_second',
+        inputPrice: 0.18,
+        outputPrice: 0,
+        extraParams: JSON.stringify({ category: 'video', '768p': 0.18 }),
+      }).where(eq(modelPricing.id, h3Rule.id)).run();
+    }
+    db.update(settings).set({ value: '0.18', label: '巨轮 MiniMax H3 768p 费率(¥/秒)' })
+      .where(eq(settings.key, 'julun_minimax_h3_768p_rate')).run();
+    db.insert(settings).values({
+      key: julunH3PricingMigrationKey,
+      value: '1',
+      label: '巨轮 MiniMax H3 768p ¥0.18/秒迁移标记',
+    }).run();
+    console.log('🔄 已迁移：巨轮 MiniMax H3 768p 按 ¥0.18/秒计费');
   }
 
   // 9) 自动向已存在且包含 sudashuiapi.com 或 pidoi.com 的渠道添加支持的模型 ID，防止路由错误
@@ -1233,9 +1259,10 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 MJNewAPI 渠道出错:', err.message);
   }
 
-  // 15) 保证 julun.cc 渠道存在、填入 API Key 并绑定唯一的 wan3.0th 视频生成模型
+  // 15) 保证 julun.cc 渠道存在，并永久绑定 WAN3.0 与 MiniMax H3 768p。
   try {
-    const julunModels = ['wan3.0th'];
+    const julunModels = ['wan3.0th', JULUN_MINIMAX_H3_MODEL];
+    const julunMapping = Object.fromEntries(julunModels.map(modelId => [modelId, modelId]));
     const julunApiKey = 'sk-yYbcd3cH5lrl6Za89O8beER0iomYfHOyPWSqb9XMv0MLAgWS';
     const existingJulun = db.select().from(channels).where(like(channels.baseUrl, '%julun.cc%')).get();
     if (!existingJulun) {
@@ -1245,6 +1272,7 @@ export async function initDatabase() {
         baseUrl: 'https://julun.cc',
         apiKey: julunApiKey,
         supportedModels: JSON.stringify(julunModels),
+        modelMapping: JSON.stringify(julunMapping),
         status: 1,
         priority: 1,
         weight: 1,
@@ -1257,6 +1285,7 @@ export async function initDatabase() {
         .set({
           apiKey: julunApiKey,
           supportedModels: JSON.stringify(julunModels),
+          modelMapping: JSON.stringify(julunMapping),
           status: 1,
           updatedAt: new Date().toISOString()
         })

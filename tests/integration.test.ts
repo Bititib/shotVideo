@@ -11,6 +11,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { env } from '../server/config/env.js';
 import { getAccessibleModelIds } from '../server/routes/v1.js';
+import { JULUN_MINIMAX_H3_MODEL } from '../server/services/julunMinimaxAdapter.js';
 
 beforeAll(async () => {
   // 确保数据库已初始化
@@ -102,6 +103,25 @@ describe('种子数据完整性', () => {
     expect(standard?.billingType).toBe('per_second');
     expect(JSON.parse(standard!.extraParams)).toMatchObject({ '480p': 0.12, '720p': 0.14, '1080p': 0.16 });
     expect(JSON.parse(prime!.extraParams)).toMatchObject({ '480p': 0.15, '720p': 0.18, '1080p': 0.20 });
+  });
+
+  it('巨轮渠道永久绑定 MiniMax H3 768p 并按 ¥0.18/秒计费', () => {
+    const channel = db.select().from(channels).all().find(item => item.baseUrl.includes('julun.cc'));
+    expect(channel).toBeDefined();
+    expect(JSON.parse(channel!.supportedModels)).toEqual(['wan3.0th', JULUN_MINIMAX_H3_MODEL]);
+    expect(JSON.parse(channel!.modelMapping)).toMatchObject({
+      'wan3.0th': 'wan3.0th',
+      [JULUN_MINIMAX_H3_MODEL]: JULUN_MINIMAX_H3_MODEL,
+    });
+
+    const model = db.select().from(models).where(eq(models.modelId, JULUN_MINIMAX_H3_MODEL)).get();
+    expect(model?.isActive).toBe(1);
+    expect(model?.description).toContain('768p');
+
+    const pricing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, JULUN_MINIMAX_H3_MODEL)).get();
+    expect(pricing?.billingType).toBe('per_second');
+    expect(pricing?.inputPrice).toBeCloseTo(0.18, 6);
+    expect(JSON.parse(pricing!.extraParams)).toMatchObject({ category: 'video', '768p': 0.18 });
   });
 
   it('内部备用模型不应暴露给 API 调用方', () => {
