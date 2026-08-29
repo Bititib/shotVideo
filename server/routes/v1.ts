@@ -35,6 +35,7 @@ import {
   MJ_OVERFLOW_VIDEO_MODEL,
   shouldOverflowHmStudio,
 } from '../services/videoFailoverService.js';
+import { enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
 
 const router = Router();
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
@@ -1494,7 +1495,6 @@ async function handleVideoCreation(req: Request, res: Response) {
     db.update(contents).set({ status: 'queued' }).where(eq(contents.id, contentId)).run();
     cleanupFiles(req.files);
     try {
-      const { enqueueHmStudioVideoContent } = await import('./video.js');
       const queue = enqueueHmStudioVideoContent(contentId);
       return res.status(202).json({
         id: `task_${contentId}`,
@@ -1786,7 +1786,6 @@ async function handleVideoCreation(req: Request, res: Response) {
 
     // 开启后台轮询
     try {
-      const { resumePollForTask } = await import('./video.js');
       const updatedRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
       if (updatedRecord) {
         resumePollForTask(contentId, updatedRecord);
