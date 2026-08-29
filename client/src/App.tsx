@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
-import { ProtectedRoute, AdminRoute, OrgAdminRoute } from './components/ProtectedRoute';
+import { ProtectedRoute, ApiKeyRoute, AdminRoute, OrgAdminRoute } from './components/ProtectedRoute';
 import { useAuthStore } from './stores/authStore';
 import Layout from './components/Layout';
 import LoginModal from './components/LoginModal';
@@ -16,6 +16,7 @@ const VideoPage = lazy(() => import('./pages/analysis/VideoPage'));
 const VideoStudioPage = lazy(() => import('./pages/analysis/VideoStudioPage'));
 const ImageGenPage = lazy(() => import('./pages/analysis/ImageGenPage'));
 const TtsPage = lazy(() => import('./pages/analysis/TtsPage'));
+const HistoryPage = lazy(() => import('./pages/analysis/HistoryPage'));
 const ProfilePage = lazy(() => import('./pages/analysis/ProfilePage'));
 const DocsPage = lazy(() => import('./pages/DocsPage'));
 const AdminLayout = lazy(() => import('./pages/admin/AdminLayout'));
@@ -87,6 +88,7 @@ export default function App() {
         <Route path="/app/video/studio" element={<VideoStudioPage />} />
         <Route path="/app/image-gen" element={<Layout><ImageGenPage /></Layout>} />
         <Route path="/app/tts" element={<Layout><TtsPage /></Layout>} />
+        <Route path="/app/history" element={<ApiKeyRoute><Layout><HistoryPage /></Layout></ApiKeyRoute>} />
         <Route path="/app/docs" element={<Layout><DocsPage /></Layout>} />
         <Route path="/app/profile" element={<ProtectedRoute><Layout><ProfilePage /></Layout></ProtectedRoute>} />
 

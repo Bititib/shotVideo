@@ -8,6 +8,19 @@ function generateTokenKey(): string {
 }
 
 export class TokenService {
+  /** 用户是否拥有至少一个已启用且未过期的 API Key。 */
+  static hasActiveTokenForUser(userId: number): boolean {
+    const tokens = db.select({
+      expiresAt: apiTokens.expiresAt,
+    }).from(apiTokens).where(and(
+      eq(apiTokens.userId, userId),
+      eq(apiTokens.status, 1),
+    )).all();
+
+    const now = Date.now();
+    return tokens.some(token => !token.expiresAt || new Date(token.expiresAt).getTime() >= now);
+  }
+
   /** 获取 Token 列表 */
   static getTokens(options: { page?: number; pageSize?: number; search?: string; userId?: number } = {}) {
     const { page = 1, pageSize = 20, search, userId } = options;

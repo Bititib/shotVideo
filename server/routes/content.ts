@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { authMiddleware, AuthRequest } from '../middleware/auth.js';
+import { activeApiKeyMiddleware, authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { orgAdminMiddleware } from '../middleware/admin.js';
 import { ContentService } from '../services/contentService.js';
 import { db } from '../db/index.js';
@@ -12,19 +12,77 @@ const router = Router();
 // 所有路由都需要登录
 router.use(authMiddleware);
 
+function isApiGeneratedContent(item: { metadata?: string | null }): boolean {
+  try {
+    const metadata = JSON.parse(item.metadata || '{}');
+    return metadata.source === 'api' || metadata.tokenId !== undefined;
+  } catch { return false; }
+}
+
 /** GET /api/contents — 我的生成内容 */
 router.get('/', (req: AuthRequest, res: Response) => {
   try {
-    const { page = '1', pageSize = '20', type, search } = req.query;
+    const { page = '1', pageSize = '20', type, status, search, dateFrom, dateTo } = req.query;
     const result = ContentService.getMyContents(req.userId!, {
       page: parseInt(page as string),
       pageSize: parseInt(pageSize as string),
       type: type as string,
+      status: status as string,
       search: search as string,
+      dateFrom: dateFrom as string,
+      dateTo: dateTo as string,
     });
     res.json(result);
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '获取内容失败' });
+  }
+});
+
+/** GET /api/contents/api-history — 已开通 API Key 用户的调用生成记录 */
+router.get('/api-history', activeApiKeyMiddleware, (req: AuthRequest, res: Response) => {
+  try {
+    const { page = '1', pageSize = '20', type, status, search, dateFrom, dateTo } = req.query;
+    const result = ContentService.getMyContents(req.userId!, {
+      page: parseInt(page as string),
+      pageSize: parseInt(pageSize as string),
+      type: type as string,
+      status: status as string,
+      search: search as string,
+      dateFrom: dateFrom as string,
+      dateTo: dateTo as string,
+      source: 'api',
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '获取 API 调用记录失败' });
+  }
+});
+
+/** GET /api/contents/api-history/:id — API 调用记录详情 */
+router.get('/api-history/:id', activeApiKeyMiddleware, (req: AuthRequest, res: Response) => {
+  try {
+    const item = ContentService.getById(parseInt(req.params.id));
+    if (item.userId !== req.userId || !isApiGeneratedContent(item)) {
+      return res.status(404).json({ error: 'API 调用记录不存在' });
+    }
+    res.json(item);
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '获取 API 调用记录失败' });
+  }
+});
+
+/** DELETE /api/contents/api-history/:id — 删除本人的 API 调用记录 */
+router.delete('/api-history/:id', activeApiKeyMiddleware, (req: AuthRequest, res: Response) => {
+  try {
+    const contentId = parseInt(req.params.id);
+    const item = ContentService.getById(contentId);
+    if (item.userId !== req.userId || !isApiGeneratedContent(item)) {
+      return res.status(404).json({ error: 'API 调用记录不存在' });
+    }
+    ContentService.delete(contentId, req.userId!);
+    res.json({ message: '删除成功' });
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '删除 API 调用记录失败' });
   }
 });
 

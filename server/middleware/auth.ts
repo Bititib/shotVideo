@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
+import { TokenService } from '../services/tokenService.js';
 
 export interface AuthRequest extends Request {
   userId?: number;
@@ -30,6 +31,18 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
   }
 }
 
+/** 仅允许已开通并启用 API Key 的登录用户访问。 */
+export function activeApiKeyMiddleware(req: AuthRequest, res: Response, next: NextFunction) {
+  if (!req.userId) return res.status(401).json({ error: '请先登录' });
+  if (!TokenService.hasActiveTokenForUser(req.userId)) {
+    return res.status(403).json({
+      error: '该功能仅对已开通 API Key 的用户开放',
+      code: 'API_KEY_REQUIRED',
+    });
+  }
+  next();
+}
+
 /**
  * 可选认证中间件
  * 有 token 就解析用户身份，没有或无效也放行（userId 为 undefined）
@@ -50,4 +63,3 @@ export function optionalAuthMiddleware(req: AuthRequest, _res: Response, next: N
   }
   next();
 }
-

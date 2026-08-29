@@ -27,6 +27,25 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** 仅已开通并启用 API Key 的登录用户可访问。 */
+export function ApiKeyRoute({ children }: { children: React.ReactNode }) {
+  const { user, isAuthenticated, isLoading, checkAuth } = useAuthStore();
+
+  useEffect(() => { checkAuth(); }, []);
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (!user?.hasActiveApiKey) return <Navigate to="/app/profile" replace />;
+  return <>{children}</>;
+}
+
 /** 超级管理员路由守卫 */
 export function AdminRoute({ children }: { children: React.ReactNode }) {
   const { user, isAuthenticated, isLoading, checkAuth } = useAuthStore();
@@ -83,4 +102,3 @@ export function OrgAdminRoute({ children }: { children: React.ReactNode }) {
 
   return <>{children}</>;
 }
-

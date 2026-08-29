@@ -28,6 +28,7 @@ export interface UserProfile {
   tierExpiresAt: string | null;
   usedToday: number;
   remainingToday: number;
+  hasActiveApiKey: boolean;
   balance: number;
   isActive: number;
   createdAt: string;

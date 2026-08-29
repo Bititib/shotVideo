@@ -35,7 +35,7 @@ const roleLabels: Record<string, string> = {
 const featureList = ['通用与带货分析', '图片生成与逆向', '多模型视频生成', '创意分镜工作室'];
 
 export default function ProfilePage() {
-  const { user } = useAuthStore();
+  const { user, fetchProfile } = useAuthStore();
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -81,6 +81,7 @@ export default function ProfilePage() {
       setNewTokenKey(response.tokenKey);
       setNewTokenName('');
       await loadTokens();
+      await fetchProfile();
     } catch (error: any) {
       setTokenError(error.message || 'API Key 创建失败');
     }
@@ -91,6 +92,7 @@ export default function ProfilePage() {
     try {
       await tokensApi.deleteToken(id);
       await loadTokens();
+      await fetchProfile();
     } catch (error: any) {
       setTokenError(error.message || '删除失败');
     }
@@ -100,6 +102,7 @@ export default function ProfilePage() {
     try {
       await tokensApi.updateToken(token.id, { status: token.status ? 0 : 1 });
       await loadTokens();
+      await fetchProfile();
     } catch (error: any) {
       setTokenError(error.message || '状态更新失败');
     }

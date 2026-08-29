@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { canAccessVideoRecord, createVideoContentSignature, extractToken, filterRoutableModels, normalizeVideoApiStatus, saveApiImageAssets, verifyVideoContentSignature, videoTaskFailureDetails, videoTaskQueueDetails } from '../server/routes/v1.js';
 import { TokenService } from '../server/services/tokenService.js';
+import { ContentService } from '../server/services/contentService.js';
 import { sqlite } from '../server/db/index.js';
 
 describe('OpenAI-compatible API access', () => {
@@ -157,6 +158,40 @@ describe('OpenAI-compatible API access', () => {
       expect(() => TokenService.getTokenKeyForUser(created.id, 987655)).toThrow();
     } finally {
       sqlite.prepare('DELETE FROM api_tokens WHERE id = ?').run(created.id);
+    }
+  });
+
+  it('grants API history access only when the user has an enabled, unexpired key', () => {
+    const userId = 987656;
+    const active = TokenService.createToken({ userId, name: 'history-active-key', balance: 1 });
+    const expired = TokenService.createToken({ userId: userId + 1, name: 'history-expired-key', balance: 1, expiresAt: '2020-01-01T00:00:00Z' });
+    const disabled = TokenService.createToken({ userId: userId + 2, name: 'history-disabled-key', balance: 1 });
+    TokenService.updateToken(disabled.id, { status: 0 });
+
+    try {
+      expect(TokenService.hasActiveTokenForUser(userId)).toBe(true);
+      expect(TokenService.hasActiveTokenForUser(userId + 1)).toBe(false);
+      expect(TokenService.hasActiveTokenForUser(userId + 2)).toBe(false);
+      expect(TokenService.hasActiveTokenForUser(userId + 3)).toBe(false);
+    } finally {
+      for (const id of [active.id, expired.id, disabled.id]) {
+        sqlite.prepare('DELETE FROM api_tokens WHERE id = ?').run(id);
+      }
+    }
+  });
+
+  it('keeps API history separate from web workspace generations and supports legacy token metadata', () => {
+    const title = `api-history-source-${Date.now()}`;
+    const apiId = ContentService.save({ userId: 1, type: 'image', title, metadata: { source: 'api' } });
+    const legacyApiId = ContentService.save({ userId: 1, type: 'video', title, metadata: { tokenId: 42 } });
+    const webId = ContentService.save({ userId: 1, type: 'video', title, metadata: { source: 'web' } });
+
+    try {
+      const result = ContentService.getMyContents(1, { page: 1, pageSize: 10, search: title, source: 'api' });
+      expect(result.items.map(item => item.id).sort((a, b) => a - b)).toEqual([apiId, legacyApiId].sort((a, b) => a - b));
+      expect(result.items.some(item => item.id === webId)).toBe(false);
+    } finally {
+      for (const id of [apiId, legacyApiId, webId]) sqlite.prepare('DELETE FROM contents WHERE id = ?').run(id);
     }
   });
 });

@@ -2,9 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { getPublicSettings } from '../api/admin';
-import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Layers3, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2, X, Key, User, FileText } from 'lucide-react';
+import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Layers3, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2, X, Key, User, FileText, History } from 'lucide-react';
 
-const navItems = [
+const navItems: Array<{ to: string; icon: typeof PlaySquare; label: string; color: string; feature: string; requiresApiKey?: boolean }> = [
   { to: '/app', icon: PlaySquare, label: '通用分析', color: 'text-blue-400', feature: 'general' },
   { to: '/app/ecommerce', icon: ShoppingBag, label: '带货分析', color: 'text-purple-400', feature: 'ecommerce' },
   { to: '/app/image', icon: ImageIcon, label: '图片逆向', color: 'text-pink-400', feature: 'image' },
@@ -13,6 +13,7 @@ const navItems = [
   { to: '/app/video', icon: Video, label: '视频生成', color: 'text-indigo-400', feature: 'video' },
   { to: '/app/image-gen', icon: ImageIcon, label: '图片生成', color: 'text-pink-400', feature: 'image_gen' },
   { to: '/app/tts', icon: Volume2, label: '语音合成', color: 'text-yellow-400', feature: 'tts' },
+  { to: '/app/history', icon: History, label: '生成记录', color: 'text-amber-400', feature: 'history', requiresApiKey: true },
   { to: '/app/docs', icon: FileText, label: '接口文档', color: 'text-rose-400', feature: 'docs' },
 ];
 
@@ -100,7 +101,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </header>
 
           <nav className="flex flex-row md:flex-col gap-1.5 flex-shrink-0 md:flex-1 overflow-x-auto overflow-y-hidden md:overflow-y-auto pb-1 md:pb-0 [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
-            {navItems.map(item => {
+            {navItems.filter(item => !item.requiresApiKey || user?.hasActiveApiKey).map(item => {
               return (
                 <NavLink
                   key={item.to}

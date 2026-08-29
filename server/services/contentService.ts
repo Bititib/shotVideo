@@ -1,6 +1,6 @@
 import { db } from '../db/index.js';
 import { contents, users } from '../db/schema.js';
-import { eq, and, desc, sql, gte, like } from 'drizzle-orm';
+import { eq, and, desc, sql, gte, lte, like, or } from 'drizzle-orm';
 
 export interface SaveContentInput {
   userId: number;
@@ -20,9 +20,13 @@ interface GetContentsOptions {
   page: number;
   pageSize: number;
   type?: string;
-  userId?: number;   // 筛选指定用户
-  orgId?: number;    // 筛选指定组织
+  status?: string;
+  userId?: number;
+  orgId?: number;
   search?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  source?: 'api';
 }
 
 export class ContentService {
@@ -47,12 +51,26 @@ export class ContentService {
 
   /** 查询个人内容（分页） */
   static getMyContents(userId: number, options: GetContentsOptions) {
-    const { page, pageSize, type, search } = options;
+    const { page, pageSize, type, status, search, dateFrom, dateTo, source } = options;
     const offset = (page - 1) * pageSize;
 
     const conditions: any[] = [eq(contents.userId, userId)];
+    if (source === 'api') conditions.push(or(
+      sql`json_extract(${contents.metadata}, '$.source') = 'api'`,
+      sql`json_extract(${contents.metadata}, '$.tokenId') IS NOT NULL`,
+    )!);
     if (type) conditions.push(eq(contents.type, type));
-    if (search) conditions.push(like(contents.title, `%${search}%`));
+    if (status === 'completed') conditions.push(or(eq(contents.status, 'completed'), eq(contents.status, 'success'))!);
+    else if (status === 'processing') conditions.push(or(eq(contents.status, 'processing'), eq(contents.status, 'queued'))!);
+    else if (status === 'failed') conditions.push(or(eq(contents.status, 'failed'), eq(contents.status, 'error'))!);
+    else if (status) conditions.push(eq(contents.status, status));
+    if (search) conditions.push(or(
+      like(contents.title, `%${search}%`),
+      like(contents.inputText, `%${search}%`),
+      like(contents.modelId, `%${search}%`),
+    )!);
+    if (dateFrom) conditions.push(gte(contents.createdAt, `${dateFrom} 00:00:00`));
+    if (dateTo) conditions.push(lte(contents.createdAt, `${dateTo} 23:59:59`));
 
     const items = db.select().from(contents)
       .where(and(...conditions))

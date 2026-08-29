@@ -4,6 +4,7 @@ import { db } from '../db/index.js';
 import { users, tiers, usageLogs, organizations, orgMembers } from '../db/schema.js';
 import { eq, and, gte, sql } from 'drizzle-orm';
 import { env } from '../config/env.js';
+import { TokenService } from './tokenService.js';
 
 interface RegisterInput {
   email: string;
@@ -136,6 +137,7 @@ export class AuthService {
       tierExpiresAt: user.tierExpiresAt,
       usedToday,
       remainingToday: dailyQuota === -1 ? -1 : Math.max(0, dailyQuota - usedToday),
+      hasActiveApiKey: TokenService.hasActiveTokenForUser(userId),
       balance: user.balance,
       isActive: user.isActive,
       createdAt: user.createdAt,

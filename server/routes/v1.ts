@@ -1596,6 +1596,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       cost: totalCost,
       status: 'processing',
       metadata: JSON.stringify({
+        source: 'api',
         resolution,
         seconds,
         aspect_ratio: ratio,
