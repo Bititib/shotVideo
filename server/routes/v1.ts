@@ -31,6 +31,10 @@ import {
   isNewTokenVideoModel,
   newTokenVideoCreateUrl,
 } from '../services/newTokenAdapter.js';
+import {
+  MJ_OVERFLOW_VIDEO_MODEL,
+  shouldOverflowHmStudio,
+} from '../services/videoFailoverService.js';
 
 const router = Router();
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
@@ -184,6 +188,9 @@ function getVideoRate(model: string, resolution: string): number {
     return 0.14;
   } else if (model === 'ad-seedance-2.5-480p') {
     return 0.35;
+  } else if (model === 'xd-seedance-2.5-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'xd_seedance_2_5_720p_rate')).get();
+    return parseFloat(row?.value || '1.20');
   } else if (model === 'sdas-bl-sd2.0-933-pro-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_bl_sd20_933_pro_720p_rate')).get();
     return parseFloat(row?.value || '4.50');
@@ -1321,6 +1328,21 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
   }
 
+  if (model === 'xd-seedance-2.5-720p') {
+    if (!Number.isInteger(seconds) || seconds < 4 || seconds > 30) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'xd-seedance-2.5-720p seconds must be an integer from 4 to 30' });
+    }
+    if (resolution !== '720p') {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'xd-seedance-2.5-720p only supports 720p' });
+    }
+    if (image_urls.length > 9 || video_urls.length > 0 || audio_urls.length > 0) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'xd-seedance-2.5-720p supports at most 9 images and does not support video/audio references' });
+    }
+  }
+
   if (model === 'veo-omni-flash-video-edit') {
     if (seconds !== 10) {
       cleanupFiles(req.files);
@@ -1336,17 +1358,40 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
   }
 
-  const channel = ChannelService.findChannelForModel(model);
+  let channel = ChannelService.findChannelForModel(model);
+  let executionModel = model;
+  let failoverReason = '';
   let upstreamModel = model;
   let baseUrl = '';
   let apiKey = '';
   let channelId: number | null = null;
 
   if (channel) {
+    if (isHmStudioChannel(channel)) {
+      const fallbackChannel = ChannelService.findChannelForModel(MJ_OVERFLOW_VIDEO_MODEL);
+      const poolLoad = hmStudioQueue.getPoolLoad(hmStudioPoolKey(channel));
+      if (shouldOverflowHmStudio({
+        requestedModel: model,
+        resolution,
+        seconds,
+        imageCount: image_urls.length,
+        videoCount: video_urls.length,
+        audioCount: audio_urls.length,
+        poolLoad: poolLoad.load,
+        poolLimit: poolLoad.limit,
+        fallbackAvailable: Boolean(fallbackChannel && isMjNewApiChannel(fallbackChannel)),
+      }) && fallbackChannel) {
+        channel = fallbackChannel;
+        executionModel = MJ_OVERFLOW_VIDEO_MODEL;
+        failoverReason = 'hmstudio_capacity';
+      }
+    }
+
+    upstreamModel = executionModel;
     if (channel.modelMapping) {
       try {
         const mapping = typeof channel.modelMapping === 'string' ? JSON.parse(channel.modelMapping) : channel.modelMapping;
-        upstreamModel = mapping[model] || model;
+        upstreamModel = mapping[executionModel] || executionModel;
       } catch { /* skip */ }
     }
     baseUrl = channel.baseUrl.replace(/\/+$/, '');
@@ -1377,6 +1422,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     'cd-seedance-2.0-720p',
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
+    'xd-seedance-2.5-720p',
     'sd2-c6'
   ].includes(model);
   const pricingQuote = PricingService.quote(model, { resolution, seconds, count: 1 }, false);
@@ -1412,6 +1458,12 @@ async function handleVideoCreation(req: Request, res: Response) {
         prompt: prompt.slice(0, 5000),
         channelId,
         upstreamModel,
+        requestedModel: model,
+        actualModel: executionModel,
+        actualChannel: isMjNewApiChannel(channel) ? 'mjnewapi' : channel.type,
+        fallbackFrom: failoverReason ? 'hmstudio' : undefined,
+        fallbackReason: failoverReason || undefined,
+        fallbackAt: failoverReason ? new Date().toISOString() : undefined,
         image_urls,
         reference_images: image_urls,
         video_urls,
@@ -1424,7 +1476,8 @@ async function handleVideoCreation(req: Request, res: Response) {
         tokenId: token.id,
         billingSource: token.balance === -1 && token.userId ? 'user' : 'token',
         queueUserKey: token.userId ? `user:${token.userId}` : `token:${token.id}`,
-        queueEnqueuedAt: new Date().toISOString()
+        queueEnqueuedAt: new Date().toISOString(),
+        publicBaseUrl: process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`
       })
     }).run();
     contentId = Number(insertResult.lastInsertRowid);
@@ -1716,7 +1769,13 @@ async function handleVideoCreation(req: Request, res: Response) {
       return res.status(502).json({ error: 'Upstream did not return a task ID' });
     }
 
+    let persistedMeta: Record<string, any> = {};
+    try {
+      const savedRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
+      persistedMeta = JSON.parse(savedRecord?.metadata || '{}');
+    } catch { /* keep the submission metadata below */ }
     const localMeta = {
+      ...persistedMeta,
       model,
       prompt,
       seconds,
@@ -1727,6 +1786,12 @@ async function handleVideoCreation(req: Request, res: Response) {
       audio_urls,
       videoId: upstreamTaskId,
       channelId: channel.id,
+      upstreamModel,
+      requestedModel: model,
+      actualModel: executionModel,
+      actualChannel: isMjNewApiChannel(channel) ? 'mjnewapi' : channel.type,
+      fallbackFrom: failoverReason ? 'hmstudio' : undefined,
+      fallbackReason: failoverReason || undefined,
       progress: 0,
       tokenId: token.id
     };
@@ -1748,6 +1813,10 @@ async function handleVideoCreation(req: Request, res: Response) {
       task_id: `task_${contentId}`,
       object: 'video',
       model: model,
+      actual_model: executionModel,
+      actual_channel: isMjNewApiChannel(channel) ? 'mjnewapi' : channel.type,
+      fallback: Boolean(failoverReason),
+      fallback_reason: failoverReason || undefined,
       status: 'queued',
       progress: 0,
       status_url: `${req.protocol}://${req.get('host')}/v1/videos/task_${contentId}`,
@@ -1832,6 +1901,10 @@ async function handleVideoQuery(req: Request, res: Response) {
       channel_running: Number(metadata.queuePoolRunning || 0),
       channel_limit: Number(metadata.queuePoolLimit || 10),
       user_concurrency_limit: Number(metadata.queueUserLimit || 2),
+      actual_model: metadata.actualModel || record.modelId,
+      actual_channel: metadata.actualChannel || undefined,
+      fallback: Boolean(metadata.fallbackReason),
+      fallback_reason: metadata.fallbackReason || undefined,
     };
 
     if (mappedStatus === 'completed') {

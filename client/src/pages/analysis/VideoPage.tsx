@@ -254,6 +254,8 @@ const isSoraV4Model = (modelId: string) => {
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'wan3.0th') return 10;
+  if (modelId === 'seedance_v2.5') return 10;
+  if (modelId === 'xd-seedance-2.5-720p') return 9;
   if (modelId === 'seedance-2.5-c1') return 30;
   if (modelId === 'ad-seedance-2.5-480p') return 30;
   if (modelId === 'vd-seedance-2.5-480p' || modelId === 'vd-seedance-2.5-720p') return 9;

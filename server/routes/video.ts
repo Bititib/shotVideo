@@ -22,6 +22,12 @@ import {
   isMjNewApiChannel,
 } from '../services/mjNewApiAdapter.js';
 import { buildNewTokenVideoPayload } from '../services/newTokenAdapter.js';
+import {
+  canUseMjOverflowModel,
+  isHmStudioConcurrencyError,
+  MJ_OVERFLOW_VIDEO_MODEL,
+  shouldOverflowHmStudio,
+} from '../services/videoFailoverService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models, settings, contents } from '../db/schema.js';
@@ -79,7 +85,7 @@ const RATIO_TO_SIZE: Record<string, string> = {
 /**
  * 将 base64 数据转换并存储为本地静态文件，返回可外网访问的公网 URL
  */
-function convertBase64ToPublicUrl(dataUrl: string, prefix: string, req: Request): string {
+function convertBase64ToPublicUrl(dataUrl: string, prefix: string, requestOrBaseUrl: Request | string): string {
   if (!dataUrl) return '';
   if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
     return dataUrl;
@@ -106,7 +112,10 @@ function convertBase64ToPublicUrl(dataUrl: string, prefix: string, req: Request)
     fs.writeFileSync(destPath, buffer);
 
     // 优先使用环境变量配置的公网基准 URL
-    const baseUrl = process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+    const requestBaseUrl = typeof requestOrBaseUrl === 'string'
+      ? requestOrBaseUrl
+      : `${requestOrBaseUrl.headers['x-forwarded-proto'] || requestOrBaseUrl.protocol}://${requestOrBaseUrl.get('host')}`;
+    const baseUrl = process.env.BACKEND_URL || requestBaseUrl;
     return `${baseUrl.replace(/\/+$/, '')}/uploads/${filename}`;
   } catch (err: any) {
     console.error('[video] convertBase64ToPublicUrl 失败:', err.message);
@@ -233,6 +242,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'vd-seedance-2.5-480p': { series: 'seedance-2.5-480p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   'vd-seedance-2.5-720p': { series: 'seedance-2.5-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   'seedance_v2.5': { series: 'hmstudio-seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
+  'xd-seedance-2.5-720p': { series: 'mj-seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   'seedance-2.0-fast': { series: 'seedance-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'veo-omni-flash': { series: 'veo-omni-flash', allowedSeconds: [10], requireRef: false },
   'veo-omni-flash-video-edit': { series: 'veo-omni-flash-video-edit', allowedSeconds: [10], requireRef: false },
@@ -255,6 +265,7 @@ const MODEL_META: Record<string, ModelMeta> = {
 
 const DEFAULT_VIDEO_MODELS = [
   { id: 'seedance_v2.5', name: 'Seedance V2.5（HM Studio）', description: '720p；支持4-30秒；最多10张图片参考，不支持音频和视频参考', maxSeconds: 30, icon: '🎬' },
+  { id: 'xd-seedance-2.5-720p', name: 'Seedance 2.5 720p（XD）', description: '9图参考，不支持视频音频参考，卡人脸；4-30秒，固定按次计费 ¥1.20/次', maxSeconds: 30, icon: '🎬' },
   { id: 'ad-seedance-2.5-480p', name: 'Seedance 2.5 480p（AD）', description: '支持最多30张图片、10个视频、10段音频参考，不限制人脸，按秒计费 ¥0.35/秒', maxSeconds: 30, icon: '🎬' },
   { id: 'vd-seedance-2.5-480p', name: 'Seedance 2.5 480p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.25/秒', maxSeconds: 30, icon: '🎬' },
   { id: 'vd-seedance-2.5-720p', name: 'Seedance 2.5 720p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.30/秒', maxSeconds: 30, icon: '🎬' },
@@ -602,6 +613,10 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': PricingService.quote(m.id, { resolution: '720p' }, false).rate,
       };
+    } else if (m.id === 'xd-seedance-2.5-720p') {
+      rates = {
+        '720p': PricingService.quote(m.id, { resolution: '720p' }, false).rate,
+      };
     } else if (m.id === 'ad-seedance-2.5-480p') {
       rates = {
         '480p': 0.35,
@@ -744,6 +759,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     if (finalVideos.length > 0 || finalAudios.length > 0) return res.status(400).json({ error: 'seedance_v2.5 不支持视频或音频参考' });
   }
 
+  if (model === 'xd-seedance-2.5-720p') {
+    if (resolution !== '720p') return res.status(400).json({ error: 'xd-seedance-2.5-720p 仅支持 720p' });
+    if (reference_images.length > 9) return res.status(400).json({ error: 'xd-seedance-2.5-720p 最多支持 9 张参考图片' });
+    if (finalVideos.length > 0 || finalAudios.length > 0) return res.status(400).json({ error: 'xd-seedance-2.5-720p 不支持视频或音频参考' });
+  }
+
   if (model === 'veo-omni-flash-video-edit') {
     if (!['16:9', '9:16'].includes(aspect_ratio)) return res.status(400).json({ error: 'Veo Omni Flash 视频编辑仅支持 16:9 或 9:16' });
     if (finalVideos.length !== 1) return res.status(400).json({ error: 'Veo Omni Flash 视频编辑必须提供且只能提供 1 个参考视频' });
@@ -761,18 +782,40 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     return res.status(400).json({ error: `模型 ${model} 必须提供参考图` });
   }
 
-  const channel = findVideoChannel(model);
+  let channel = findVideoChannel(model);
   if (!channel) {
     return res.status(503).json({ error: '未配置视频生成渠道。请在管理后台添加渠道。' });
   }
 
+  let executionModel = model;
+  let failoverReason = '';
+  if (isHmStudioChannel(channel)) {
+    const fallbackChannel = findVideoChannel(MJ_OVERFLOW_VIDEO_MODEL);
+    const poolLoad = hmStudioQueue.getPoolLoad(hmStudioPoolKey(channel));
+    if (shouldOverflowHmStudio({
+      requestedModel: model,
+      resolution,
+      seconds: Number(video_length),
+      imageCount: reference_images.length,
+      videoCount: finalVideos.length,
+      audioCount: finalAudios.length,
+      poolLoad: poolLoad.load,
+      poolLimit: poolLoad.limit,
+      fallbackAvailable: Boolean(fallbackChannel && isMjNewApiChannel(fallbackChannel)),
+    }) && fallbackChannel) {
+      channel = fallbackChannel;
+      executionModel = MJ_OVERFLOW_VIDEO_MODEL;
+      failoverReason = 'hmstudio_capacity';
+    }
+  }
+
   // Get the mapped model name from the database channel configuration
   const dbChannel = channel;
-  let upstreamModel = model;
+  let upstreamModel = executionModel;
   if (dbChannel?.modelMapping) {
     try {
       const mapping = typeof dbChannel.modelMapping === 'string' ? JSON.parse(dbChannel.modelMapping) : dbChannel.modelMapping;
-      upstreamModel = mapping[model] || model;
+      upstreamModel = mapping[executionModel] || executionModel;
     } catch { /* skip */ }
   }
 
@@ -790,6 +833,17 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     }
   };
+
+  if (failoverReason) {
+    sendEvent({
+      type: 'status',
+      message: 'HM Studio 当前已满载，已自动切换至 MJ 备用模型生成',
+      fallback: true,
+      requestedModel: model,
+      actualModel: executionModel,
+      fallbackReason: failoverReason,
+    });
+  }
 
   const startTime = Date.now();
 
@@ -877,7 +931,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'cd-seedance-2.0-720p',
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
-    'ad-seedance-2.5-480p'
+    'ad-seedance-2.5-480p',
+    'xd-seedance-2.5-720p'
   ].includes(model);
   const estimatedSeconds = Number(video_length) || 6;
   const unifiedQuote = PricingService.quote(model, { resolution, seconds: estimatedSeconds, count: 1 }, false);
@@ -922,6 +977,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         prompt: (prompt as string).slice(0, 5000),
         channelId: dbChannel?.id ?? null,
         upstreamModel,
+        requestedModel: model,
+        actualModel: executionModel,
+        actualChannel: isMjNewApiChannel(dbChannel) ? 'mjnewapi' : dbChannel?.type,
+        fallbackFrom: failoverReason ? 'hmstudio' : undefined,
+        fallbackReason: failoverReason || undefined,
+        fallbackAt: failoverReason ? new Date().toISOString() : undefined,
         reference_images,
         reference_videos: finalVideos,
         audio_urls: finalAudios,
@@ -929,7 +990,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         last_frame,
         billingSource: 'user',
         queueUserKey: `user:${req.userId}`,
-        queueEnqueuedAt: new Date().toISOString()
+        queueEnqueuedAt: new Date().toISOString(),
+        publicBaseUrl: process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`
       }
     });
     if (contentId !== null) {
@@ -990,7 +1052,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
     'vd-seedance-2.5-480p',
-    'vd-seedance-2.5-720p'
+    'vd-seedance-2.5-720p',
+    'xd-seedance-2.5-720p'
   ].includes(model);
 
   if (isHmStudio && contentId !== null) {
@@ -2205,7 +2268,87 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
         });
         if (!response.ok) {
           const detail = await response.text().catch(() => '');
-          throw new Error(`HM Studio 提交失败 (${response.status}): ${detail.slice(0, 300)}`);
+          const referenceImages = latestMeta.reference_images || latestMeta.image_urls || [];
+          const referenceVideos = latestMeta.reference_videos || latestMeta.video_urls || [];
+          const referenceAudios = latestMeta.audio_urls || [];
+          const canFailover = isHmStudioConcurrencyError(response.status, detail)
+            && canUseMjOverflowModel({
+              requestedModel: model,
+              resolution: latestMeta.resolution || '720p',
+              seconds: Number(latestMeta.seconds) || 6,
+              imageCount: referenceImages.length,
+              videoCount: referenceVideos.length,
+              audioCount: referenceAudios.length,
+            });
+          const fallbackChannel = canFailover
+            ? ChannelService.findChannelForModel(MJ_OVERFLOW_VIDEO_MODEL)
+            : null;
+
+          if (!fallbackChannel || !isMjNewApiChannel(fallbackChannel)) {
+            throw new Error(`HM Studio 提交失败 (${response.status}): ${detail.slice(0, 300)}`);
+          }
+
+          let fallbackMapping: Record<string, string> = {};
+          try {
+            fallbackMapping = typeof fallbackChannel.modelMapping === 'string'
+              ? JSON.parse(fallbackChannel.modelMapping || '{}')
+              : (fallbackChannel.modelMapping || {});
+          } catch { /* use the public fallback model ID */ }
+          const fallbackUpstreamModel = fallbackMapping[MJ_OVERFLOW_VIDEO_MODEL] || MJ_OVERFLOW_VIDEO_MODEL;
+          const imageUrls = referenceImages
+            .map((item: string) => convertBase64ToPublicUrl(item, 'mj_overflow_img', latestMeta.publicBaseUrl || ''))
+            .filter(Boolean);
+          const invalidUrls = findInvalidMjNewApiMaterialUrls(imageUrls);
+          if (invalidUrls.length > 0) {
+            throw new Error('HM Studio 并发已满，但 MJ 备用渠道无法访问参考图片 URL，请检查 BACKEND_URL');
+          }
+
+          const fallbackPayload = buildMjNewApiVideoPayload({
+            model: fallbackUpstreamModel,
+            prompt: String(latestMeta.prompt || latest.inputText || '').trim(),
+            duration: Number(latestMeta.seconds) || 6,
+            aspectRatio: latestMeta.aspect_ratio || latestMeta.ratio || '16:9',
+            resolution: latestMeta.resolution || '720p',
+            images: imageUrls,
+            videos: [],
+            audios: [],
+          });
+          const fallbackResponse = await fetch(`${fallbackChannel.baseUrl.replace(/\/+$/, '')}/v1/videos`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${fallbackChannel.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(fallbackPayload),
+            signal: AbortSignal.timeout(fallbackChannel.timeout || 120_000),
+          });
+          if (!fallbackResponse.ok) {
+            const fallbackDetail = await fallbackResponse.text().catch(() => '');
+            throw new Error(`HM Studio 并发已满，MJ 备用提交也失败 (${fallbackResponse.status}): ${fallbackDetail.slice(0, 300)}`);
+          }
+          const fallbackResult = await fallbackResponse.json() as any;
+          const fallbackVideoId = fallbackResult.id || fallbackResult.task_id;
+          if (!fallbackVideoId) throw new Error('MJ 备用渠道未返回任务 ID');
+
+          latestMeta.videoId = fallbackVideoId;
+          latestMeta.channelId = fallbackChannel.id;
+          latestMeta.upstreamModel = fallbackUpstreamModel;
+          latestMeta.requestedModel = model;
+          latestMeta.actualModel = MJ_OVERFLOW_VIDEO_MODEL;
+          latestMeta.actualChannel = 'mjnewapi';
+          latestMeta.fallbackFrom = 'hmstudio';
+          latestMeta.fallbackReason = 'hmstudio_upstream_concurrency';
+          latestMeta.fallbackAt = new Date().toISOString();
+          latestMeta.upstreamStatus = 'submitted';
+          latestMeta.progressText = 'HM Studio 上游并发已满，已自动切换至 MJ 备用模型';
+          latestMeta.progress = 0;
+          latestMeta.queueStatus = 'running';
+          db.update(contents).set({ status: 'processing', metadata: JSON.stringify(latestMeta) })
+            .where(eq(contents.id, contentId)).run();
+
+          const fallbackRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
+          if (fallbackRecord) void resumePollForTask(contentId, fallbackRecord);
+          return;
         }
         const payload = await response.json() as any;
         const videoId = payload.task_id || payload.id;

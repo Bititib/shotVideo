@@ -258,9 +258,9 @@ print(resp.json()["data"][0]["url"])`,
       title: '统一视频任务创建 (Unified Video Entry)',
       method: 'POST',
       path: '/v1/videos',
-      description: '统一视频生成入口，自动完成参数归一和渠道分发。HM Studio 达到并发上限时会立即返回本地 task_id 和排队位置，任务按用户公平排队。',
+      description: '统一视频生成入口，自动完成参数归一和渠道分发。seedance_v2.5 在 HM Studio 满载时会优先切换到 MJ 的 xd-seedance-2.5-720p；不符合备用模型限制的请求继续进入 HM 公平队列。',
       parameters: [
-        { name: 'model', type: 'string', required: true, description: '从 GET /v1/models 获取的视频模型 ID；当前示例：sd2.5、wan3.0th、veo-3-1' },
+        { name: 'model', type: 'string', required: true, description: '从 GET /v1/models 获取的视频模型 ID；当前示例：seedance_v2.5、xd-seedance-2.5-720p、wan3.0th、veo-3-1' },
         { name: 'prompt', type: 'string', required: true, description: '视频画面的文字描述词' },
         { name: 'seconds', type: 'integer', required: false, defaultVal: '6', description: '视频时长（秒），支持别名 duration' },
         { name: 'ratio', type: 'string', required: false, defaultVal: '16:9', description: '画面比例：16:9 / 9:16 / 1:1 / 4:3 / 3:4，支持别名 aspect_ratio' },
@@ -273,11 +273,11 @@ print(resp.json()["data"][0]["url"])`,
   -H "Authorization: Bearer sk-你的令牌Key" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "sd2.5",
+    "model": "seedance_v2.5",
     "prompt": "电影感的雨夜街巷打斗，动作清楚连贯，镜头稳定",
     "seconds": 10,
     "ratio": "9:16",
-    "resolution": "480p",
+    "resolution": "720p",
     "image_urls": ["https://cdn.example.com/character.jpg"]
   }'`,
       pythonExample: `import requests
@@ -288,11 +288,11 @@ headers = {
     "Content-Type": "application/json"
 }
 payload = {
-    "model": "sd2.5",
+    "model": "seedance_v2.5",
     "prompt": "电影感的雨夜街巷打斗，动作清楚连贯，镜头稳定",
     "seconds": 10,
     "ratio": "9:16",
-    "resolution": "480p",
+    "resolution": "720p",
     "image_urls": ["https://cdn.example.com/character.jpg"]
 }
 
@@ -303,15 +303,13 @@ print(resp.json())
   "id": "task_123",
   "task_id": "task_123",
   "object": "video",
-  "model": "sd2.5",
+  "model": "seedance_v2.5",
+  "actual_model": "xd-seedance-2.5-720p",
+  "actual_channel": "mjnewapi",
+  "fallback": true,
+  "fallback_reason": "hmstudio_capacity",
   "status": "queued",
   "progress": 0,
-  "queue_position": 3,
-  "queue_running": 18,
-  "queue_limit": 20,
-  "channel_running": 9,
-  "channel_limit": 10,
-  "user_concurrency_limit": 2,
   "status_url": "${getBaseUrl()}/videos/task_123",
   "retry_after": 5
 }`
@@ -321,7 +319,7 @@ print(resp.json())
       title: '统一视频任务轮询与查询',
       method: 'GET',
       path: '/v1/videos/{task_id}',
-      description: '使用创建接口返回的 status_url（或 task_id）轮询，建议间隔 retry_after 秒。排队时返回队列数据；完成后使用 content 直链下载；失败时返回 error_message 和 failed_at。',
+      description: '使用创建接口返回的 status_url（或 task_id）轮询，建议间隔 retry_after 秒。actual_model、actual_channel、fallback 和 fallback_reason 可用于确认是否发生 HM→MJ 自动切换；完成后使用 content 直链下载，失败时返回 error_message 和 failed_at。',
       parameters: [
         { name: 'task_id', type: 'path_param', required: true, description: '创建任务时返回的任务 ID（如 task_123）' }
       ],
@@ -357,7 +355,11 @@ while True:
   "id": "task_123",
   "task_id": "task_123",
   "object": "video",
-  "model": "sd2.5",
+  "model": "seedance_v2.5",
+  "actual_model": "xd-seedance-2.5-720p",
+  "actual_channel": "mjnewapi",
+  "fallback": true,
+  "fallback_reason": "hmstudio_capacity",
   "status": "completed",
   "progress": 100,
   "url": "${getBaseUrl()}/videos/task_123/content",

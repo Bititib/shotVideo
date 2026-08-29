@@ -158,6 +158,7 @@ export async function syncModelsFromAPI() {
     { provider: 'diwdiw', modelId: 'ad-seedance-2.5-480p', displayName: 'Seedance 2.5 480p（AD）', description: '支持最多30张图片、10个视频、10段音频参考，不限制人脸，按秒计费 ¥0.35/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'diwdiw', modelId: 'vd-seedance-2.5-480p', displayName: 'Seedance 2.5 480p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.25/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'diwdiw', modelId: 'vd-seedance-2.5-720p', displayName: 'Seedance 2.5 720p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.30/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'diwdiw', modelId: 'xd-seedance-2.5-720p', displayName: 'Seedance 2.5 720p（XD）', description: '9图参考，不支持视频音频参考，卡人脸；4-30秒，固定按次计费 ¥1.20/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'newtoken', modelId: 'veo-omni-flash-video-edit', displayName: 'Veo Omni Flash 视频编辑', description: '【不卡人脸-定制版】无水印视频编辑；必须提供1个参考视频，可附加多张参考图；固定10秒，参考视频最长15秒', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
@@ -733,6 +734,7 @@ export async function initDatabase() {
     { key: 'sd2_c6_rate', value: '2.50', label: 'Seedance 2.0 c6 费率(¥/次)' },
     { key: 'seedance_720_rate', value: '3.00', label: 'Seedance 720 满血版 费率(¥/次)' },
     { key: 'seedance_2_5_c1_rate', value: '0.25', label: 'Seedance 2.5 (c1) 费率(¥/秒)' },
+    { key: 'xd_seedance_2_5_720p_rate', value: '1.20', label: 'Seedance 2.5 (720p/XD版) 费率(¥/次)' },
     { key: 'grok_video_1_5_per_sec_rate', value: '0.09', label: 'grok-video-1.5（按秒） 费率(¥/秒)' },
     { key: 'grok_imagine_video_1_5_per_req_rate', value: '0.60', label: 'grok-imagine-video-1.5（按次） 费率(¥/次)' },
     { key: 'grok_imagine_video_1_5_preview_rate', value: '0.70', label: 'grok-imagine-video-1.5-preview 费率(¥/次)' },
@@ -938,6 +940,7 @@ export async function initDatabase() {
     { modelPattern: 'ad-seedance-2.5-480p', billingType: 'per_second', inputPrice: 0.35, category: 'video' },
     { modelPattern: 'vd-seedance-2.5-480p', billingType: 'per_second', inputPrice: 0.25, category: 'video' },
     { modelPattern: 'vd-seedance-2.5-720p', billingType: 'per_second', inputPrice: 0.30, category: 'video' },
+    { modelPattern: 'xd-seedance-2.5-720p', billingType: 'per_call', inputPrice: legacyRate('xd_seedance_2_5_720p_rate', 1.20), category: 'video' },
     { modelPattern: 'seedance-2.5-c1', billingType: 'per_second', inputPrice: legacyRate('seedance_2_5_c1_rate', 0.25), category: 'video' },
     { modelPattern: 'seedance-2.5-deal', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5_deal_rate', 1.80), category: 'video' },
     { modelPattern: 'seedance-2.5m', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5m_rate', 3.00), category: 'video' },
@@ -1177,14 +1180,16 @@ export async function initDatabase() {
       'nd-seedance-2.0-480p',
       'ad-seedance-2.5-480p',
       'vd-seedance-2.5-480p',
-      'vd-seedance-2.5-720p'
+      'vd-seedance-2.5-720p',
+      'xd-seedance-2.5-720p'
     ];
     const mjMapping = {
       'cd-seedance-2.0-720p': 'cd-seedance 2.0 720p',
       'nd-seedance-2.0-480p': 'nd-seedance-2.0 480p',
       'ad-seedance-2.5-480p': 'ad-seedance-2.5-480p',
       'vd-seedance-2.5-480p': 'vd-seedance-2.5-480p',
-      'vd-seedance-2.5-720p': 'vd-seedance-2.5-720p'
+      'vd-seedance-2.5-720p': 'vd-seedance-2.5-720p',
+      'xd-seedance-2.5-720p': 'xd-seedance-2.5-720p'
     };
 
     if (!existingMj) {
