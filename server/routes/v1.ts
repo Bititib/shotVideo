@@ -1157,6 +1157,8 @@ async function handleVideoCreation(req: Request, res: Response) {
   let image_urls: string[] = [];
   if (Array.isArray(body.image_urls)) {
     image_urls = body.image_urls;
+  } else if (Array.isArray(body.Ingredients_images)) {
+    image_urls = body.Ingredients_images;
   } else if (Array.isArray(body.images)) {
     image_urls = body.images;
   } else if (Array.isArray(body.image_refs)) {
@@ -1165,6 +1167,8 @@ async function handleVideoCreation(req: Request, res: Response) {
     image_urls = [body.image_urls];
   } else if (typeof body.images === 'string') {
     image_urls = [body.images];
+  } else if (typeof body.Ingredients_images === 'string') {
+    image_urls = [body.Ingredients_images];
   }
 
   if (Array.isArray(req.files)) {
