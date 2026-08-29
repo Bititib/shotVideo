@@ -39,6 +39,12 @@ import {
 const router = Router();
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
 
+function publicFallbackReason(reason: string | undefined): string | undefined {
+  if (reason === 'hmstudio_user_capacity') return 'user_capacity';
+  if (reason === 'hmstudio_capacity' || reason === 'hmstudio_upstream_concurrency') return 'capacity';
+  return reason ? 'automatic_routing' : undefined;
+}
+
 /** 从请求头中提取 Bearer Token */
 export function extractToken(req: Pick<Request, 'headers'>): string | null {
   const auth = req.headers.authorization;
@@ -403,31 +409,6 @@ router.get('/pricing/:model', (req: Request, res: Response) => {
   }
 
   res.json(pricing);
-});
-
-/** GET /v1/queue — 返回 HM Studio 当前排队状态和限制策略。 */
-router.get('/queue', (req: Request, res: Response) => {
-  const tokenKey = extractToken(req);
-  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
-  const { valid, error } = TokenService.validateToken(tokenKey);
-  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
-
-  ChannelService.getActiveChannels();
-  const limits = hmStudioQueue.getLimits();
-  res.json({
-    object: 'queue_status',
-    provider: 'hmstudio',
-    strategy: 'round_robin_by_user_fifo_within_user',
-    running: limits.running,
-    queued: limits.queued,
-    concurrency_limit: limits.concurrencyLimit,
-    pool_count: limits.poolCount,
-    per_key_concurrency_limit: limits.poolConcurrencyLimit,
-    user_concurrency_limit: limits.userConcurrencyLimit,
-    max_user_queue: limits.maxUserQueue,
-    max_queue: limits.maxQueue,
-    pools: hmStudioQueue.getPoolStats(),
-  });
 });
 
 /** GET /v1/billing/balance — 余额查询 */
@@ -1820,9 +1801,8 @@ async function handleVideoCreation(req: Request, res: Response) {
       object: 'video',
       model: model,
       actual_model: executionModel,
-      actual_channel: isMjNewApiChannel(channel) ? 'mjnewapi' : channel.type,
       fallback: Boolean(failoverReason),
-      fallback_reason: failoverReason || undefined,
+      fallback_reason: publicFallbackReason(failoverReason || undefined),
       status: 'queued',
       progress: 0,
       status_url: `${req.protocol}://${req.get('host')}/v1/videos/task_${contentId}`,
@@ -1908,9 +1888,8 @@ async function handleVideoQuery(req: Request, res: Response) {
       channel_limit: Number(metadata.queuePoolLimit || 10),
       user_concurrency_limit: Number(metadata.queueUserLimit || 2),
       actual_model: metadata.actualModel || record.modelId,
-      actual_channel: metadata.actualChannel || undefined,
       fallback: Boolean(metadata.fallbackReason),
-      fallback_reason: metadata.fallbackReason || undefined,
+      fallback_reason: publicFallbackReason(metadata.fallbackReason),
     };
 
     if (mappedStatus === 'completed') {

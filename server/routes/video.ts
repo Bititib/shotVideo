@@ -844,12 +844,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     sendEvent({
       type: 'status',
       message: failoverReason === 'hmstudio_user_capacity'
-        ? '您的 HM Studio 并发已满，已自动切换至 MJ 备用模型生成'
-        : 'HM Studio 当前已满载，已自动切换至 MJ 备用模型生成',
+        ? '您的主线路并发已满，已自动切换至备用线路生成'
+        : '主线路当前已满载，已自动切换至备用线路生成',
       fallback: true,
       requestedModel: model,
       actualModel: executionModel,
-      fallbackReason: failoverReason,
+      fallbackReason: failoverReason === 'hmstudio_user_capacity' ? 'user_capacity' : 'capacity',
     });
   }
 
@@ -2348,7 +2348,7 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
           latestMeta.fallbackReason = 'hmstudio_upstream_concurrency';
           latestMeta.fallbackAt = new Date().toISOString();
           latestMeta.upstreamStatus = 'submitted';
-          latestMeta.progressText = 'HM Studio 上游并发已满，已自动切换至 MJ 备用模型';
+          latestMeta.progressText = '主线路上游并发已满，已自动切换至备用线路';
           latestMeta.progress = 0;
           latestMeta.queueStatus = 'running';
           db.update(contents).set({ status: 'processing', metadata: JSON.stringify(latestMeta) })

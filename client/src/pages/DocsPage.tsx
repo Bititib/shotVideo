@@ -258,7 +258,7 @@ print(resp.json()["data"][0]["url"])`,
       title: '统一视频任务创建 (Unified Video Entry)',
       method: 'POST',
       path: '/v1/videos',
-      description: '统一视频生成入口，自动完成参数归一和渠道分发。seedance_v2.5 在 HM Studio 总容量或当前用户并发达到上限时，会优先切换到 MJ 的 xd-seedance-2.5-720p；不符合备用模型限制的请求继续进入 HM 公平队列。',
+      description: '统一视频生成入口，自动完成参数归一、排队和可用容量调度。系统可能在容量繁忙时自动选择兼容的执行模型；请求模型、计费和任务 ID 保持不变。',
       parameters: [
         { name: 'model', type: 'string', required: true, description: '从 GET /v1/models 获取的视频模型 ID；当前示例：seedance_v2.5、xd-seedance-2.5-720p、wan3.0th、veo-3-1' },
         { name: 'prompt', type: 'string', required: true, description: '视频画面的文字描述词' },
@@ -305,9 +305,8 @@ print(resp.json())
   "object": "video",
   "model": "seedance_v2.5",
   "actual_model": "xd-seedance-2.5-720p",
-  "actual_channel": "mjnewapi",
   "fallback": true,
-  "fallback_reason": "hmstudio_capacity",
+  "fallback_reason": "capacity",
   "status": "queued",
   "progress": 0,
   "status_url": "${getBaseUrl()}/videos/task_123",
@@ -319,7 +318,7 @@ print(resp.json())
       title: '统一视频任务轮询与查询',
       method: 'GET',
       path: '/v1/videos/{task_id}',
-      description: '使用创建接口返回的 status_url（或 task_id）轮询，建议间隔 retry_after 秒。actual_model、actual_channel、fallback 和 fallback_reason 可用于确认是否发生 HM→MJ 自动切换；fallback_reason 为 hmstudio_capacity 表示 HM 总容量已满，为 hmstudio_user_capacity 表示当前用户并发已满。完成后使用 content 直链下载，失败时返回 error_message 和 failed_at。',
+      description: '使用创建接口返回的 status_url（或 task_id）轮询，建议间隔 retry_after 秒。actual_model、fallback 和 fallback_reason 可用于确认系统是否进行了容量调度；fallback_reason 为 capacity 表示系统容量繁忙，为 user_capacity 表示当前用户并发已满。完成后使用 content 直链下载，失败时返回 error_message 和 failed_at。',
       parameters: [
         { name: 'task_id', type: 'path_param', required: true, description: '创建任务时返回的任务 ID（如 task_123）' }
       ],
@@ -357,43 +356,12 @@ while True:
   "object": "video",
   "model": "seedance_v2.5",
   "actual_model": "xd-seedance-2.5-720p",
-  "actual_channel": "mjnewapi",
   "fallback": true,
-  "fallback_reason": "hmstudio_capacity",
+  "fallback_reason": "capacity",
   "status": "completed",
   "progress": 100,
   "url": "${getBaseUrl()}/videos/task_123/content",
   "result_url": "${getBaseUrl()}/videos/task_123/content"
-}`
-    },
-    {
-      id: 'hm-queue',
-      title: '查询 HM Studio 队列策略',
-      method: 'GET',
-      path: '/v1/queue',
-      description: '查询 HM Studio 当前运行数、排队数和调度上限。每个不同 API Key 独立提供 10 并发，两个 Key 总容量为 20；重复 Key 不会增加容量。',
-      parameters: [],
-      curlExample: `curl "${getBaseUrl()}/queue" \\
-  -H "Authorization: Bearer sk-你的令牌Key"`,
-      pythonExample: `import requests
-
-data = requests.get(
-    "${getBaseUrl()}/queue",
-    headers={"Authorization": "Bearer sk-你的令牌Key"}
-).json()
-print(f"运行 {data['running']}/{data['concurrency_limit']}，排队 {data['queued']}")`,
-      responseExample: `{
-  "object": "queue_status",
-  "provider": "hmstudio",
-  "strategy": "round_robin_by_user_fifo_within_user",
-  "running": 18,
-  "queued": 6,
-  "concurrency_limit": 20,
-  "pool_count": 2,
-  "per_key_concurrency_limit": 10,
-  "user_concurrency_limit": 2,
-  "max_user_queue": 10,
-  "max_queue": 200
 }`
     },
     {

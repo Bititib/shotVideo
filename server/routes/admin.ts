@@ -4,11 +4,33 @@ import { adminMiddleware } from '../middleware/admin.js';
 import { AdminService } from '../services/adminService.js';
 import { OrgService } from '../services/orgService.js';
 import { FeedbackService } from '../services/feedbackService.js';
+import { ChannelService } from '../services/channelService.js';
+import { hmStudioQueue } from '../services/hmStudioQueueService.js';
 
 const router = Router();
 
 // 所有管理路由都需要登录 + 管理员权限
 router.use(authMiddleware, adminMiddleware);
+
+// 内部队列诊断：仅管理员登录态可访问，不暴露在公开 /v1 API。
+router.get('/hm-queue', (_req: AuthRequest, res: Response) => {
+  ChannelService.getActiveChannels();
+  const limits = hmStudioQueue.getLimits();
+  res.json({
+    object: 'queue_status',
+    provider: 'hmstudio',
+    strategy: 'round_robin_by_user_fifo_within_user',
+    running: limits.running,
+    queued: limits.queued,
+    concurrency_limit: limits.concurrencyLimit,
+    pool_count: limits.poolCount,
+    per_key_concurrency_limit: limits.poolConcurrencyLimit,
+    user_concurrency_limit: limits.userConcurrencyLimit,
+    max_user_queue: limits.maxUserQueue,
+    max_queue: limits.maxQueue,
+    pools: hmStudioQueue.getPoolStats(),
+  });
+});
 
 // ============ 仪表盘 ============
 router.get('/dashboard', async (req: AuthRequest, res: Response) => {
