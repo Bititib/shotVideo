@@ -159,6 +159,7 @@ export async function syncModelsFromAPI() {
     { provider: 'diwdiw', modelId: 'vd-seedance-2.5-480p', displayName: 'Seedance 2.5 480p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.25/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'diwdiw', modelId: 'vd-seedance-2.5-720p', displayName: 'Seedance 2.5 720p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.30/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
+    { provider: 'newtoken', modelId: 'veo-omni-flash-video-edit', displayName: 'Veo Omni Flash 视频编辑', description: '【不卡人脸-定制版】无水印视频编辑；必须提供1个参考视频，可附加多张参考图；固定10秒，参考视频最长15秒', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'seedance', modelId: 'sd2.5', displayName: 'Seedance 2.5 (sd2.5)', description: '支持9图0视频0音频，卡人脸；适合制作带货视频，固定按次计费 ¥3.50/次', capabilities: JSON.stringify(['video']) },
@@ -185,6 +186,7 @@ export async function syncModelsFromAPI() {
   // Pidoi/diwdiw label while these IDs are routed through NewToken.
   const newTokenModelIds = new Set([
     'veo-omni-flash',
+    'veo-omni-flash-video-edit',
     'veo-3-1',
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
@@ -915,6 +917,7 @@ export async function initDatabase() {
   };
   const unifiedPricing = [
     { modelPattern: 'veo-omni-flash', billingType: 'per_second', inputPrice: legacyRate('veo_omni_flash_rate', 0.25), category: 'video' },
+    { modelPattern: 'veo-omni-flash-video-edit', billingType: 'per_second', inputPrice: 0.09, category: 'video' },
     { modelPattern: 'veo-3-1', billingType: 'per_second', inputPrice: legacyRate('veo_3_1_rate', 0.20), category: 'video' },
     { modelPattern: 'sd2-c7', billingType: 'per_call', inputPrice: legacyRate('sd2_c7_rate', 0.50), category: 'video' },
     { modelPattern: 'sd2.5', billingType: 'per_call', inputPrice: legacyRate('sd2_5_rate', 3.50), category: 'video' },
@@ -1066,7 +1069,7 @@ export async function initDatabase() {
         type: 'openai',
         baseUrl: newTokenBaseUrl,
         apiKey: newTokenApiKey,
-        supportedModels: JSON.stringify(['veo-omni-flash', 'veo-3-1', 'nd-seedance-2.0-480p', 'nd-seedance-2.0-720p']),
+        supportedModels: JSON.stringify(['veo-omni-flash', 'veo-omni-flash-video-edit', 'veo-3-1', 'nd-seedance-2.0-480p', 'nd-seedance-2.0-720p']),
         modelMapping: JSON.stringify({
           'nd-seedance-2.0-480p': 'nd-seedance-2.0 480p',
           'nd-seedance-2.0-720p': 'nd-seedance-2.0 720p'
@@ -1078,15 +1081,20 @@ export async function initDatabase() {
         timeout: 120000,
       }).run();
       console.log('📦 已自动迁移：成功创建 NewToken 渠道并绑定 veo-omni-flash, veo-3-1 与 nd-seedance 2.0 系列');
-    } else if (newTokenApiKey) {
-      db.update(channels)
-        .set({
-          apiKey: newTokenApiKey,
-          updatedAt: new Date().toISOString()
-        })
-        .where(eq(channels.id, existingNewToken.id))
-        .run();
-      console.log('🔄 已自动迁移：更新 NewToken 渠道支持 veo-omni-flash 与 veo-3-1');
+    } else {
+      let supportedModels: string[] = [];
+      try { supportedModels = JSON.parse(existingNewToken.supportedModels || '[]'); } catch { }
+      const updates: Record<string, any> = {};
+      if (!supportedModels.includes('veo-omni-flash-video-edit')) {
+        supportedModels.push('veo-omni-flash-video-edit');
+        updates.supportedModels = JSON.stringify(supportedModels);
+      }
+      if (newTokenApiKey) updates.apiKey = newTokenApiKey;
+      if (Object.keys(updates).length > 0) {
+        updates.updatedAt = new Date().toISOString();
+        db.update(channels).set(updates).where(eq(channels.id, existingNewToken.id)).run();
+        console.log('🔄 已自动迁移：更新 NewToken 渠道并添加 veo-omni-flash-video-edit');
+      }
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 NewToken 渠道出错:', err.message);

@@ -1,5 +1,6 @@
 export const NEWTOKEN_VIDEO_MODELS = [
   'veo-omni-flash',
+  'veo-omni-flash-video-edit',
   'veo-3-1',
   'nd-seedance-2.0-480p',
   'nd-seedance-2.0-720p',
@@ -63,6 +64,20 @@ export function buildNewTokenVideoPayload(input: {
       prompt: input.prompt.trim(),
       duration: 10,
       aspect_ratio: aspectRatio,
+      ...(images.length > 0 ? { Ingredients_images: images } : {}),
+    };
+  }
+
+  if (input.model === 'veo-omni-flash-video-edit') {
+    if (videos.length !== 1) {
+      throw new Error('veo-omni-flash-video-edit requires exactly one video_url');
+    }
+    return {
+      model,
+      prompt: input.prompt.trim(),
+      duration: 10,
+      aspect_ratio: aspectRatio,
+      video_url: videos[0],
       ...(images.length > 0 ? { Ingredients_images: images } : {}),
     };
   }

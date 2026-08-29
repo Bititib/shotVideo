@@ -266,7 +266,7 @@ print(resp.json()["data"][0]["url"])`,
         { name: 'ratio', type: 'string', required: false, defaultVal: '16:9', description: '画面比例：16:9 / 9:16 / 1:1 / 4:3 / 3:4，支持别名 aspect_ratio' },
         { name: 'resolution', type: 'string', required: false, defaultVal: '720p', description: '分辨率：480p / 720p / 1080p，支持别名 resolution_name' },
         { name: 'image_urls', type: 'array', required: false, description: '公网参考图 URL 数组，支持别名 images 或 image_refs' },
-        { name: 'video_urls', type: 'array', required: false, description: '公网参考视频 URL 数组，支持别名 videos' },
+        { name: 'video_urls', type: 'array', required: false, description: '公网参考视频 URL 数组，支持别名 videos；单视频编辑也支持 video_url' },
         { name: 'audio_urls', type: 'array', required: false, description: '公网参考音频 URL 数组，支持别名 audios' }
       ],
       curlExample: `curl -X POST "${getBaseUrl()}/videos" \\

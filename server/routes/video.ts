@@ -21,6 +21,7 @@ import {
   findInvalidMjNewApiMaterialUrls,
   isMjNewApiChannel,
 } from '../services/mjNewApiAdapter.js';
+import { buildNewTokenVideoPayload } from '../services/newTokenAdapter.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models, settings, contents } from '../db/schema.js';
@@ -234,6 +235,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'seedance_v2.5': { series: 'hmstudio-seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   'seedance-2.0-fast': { series: 'seedance-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'veo-omni-flash': { series: 'veo-omni-flash', allowedSeconds: [10], requireRef: false },
+  'veo-omni-flash-video-edit': { series: 'veo-omni-flash-video-edit', allowedSeconds: [10], requireRef: false },
   'veo-3-1': { series: 'veo-3-1', allowedSeconds: [8], requireRef: false },
   'sd2-c7': { series: 'sd2-c7', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sd2.5': { series: 'sd2.5', allowedSeconds: [30], requireRef: false },
@@ -265,6 +267,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'nd-seedance-2.0-480p', name: 'Seedance 2.0 (480p/不卡脸)', description: '9图3视频3音频，支持 4-15s，不卡人脸，固定按次计费 ¥3.75/次', maxSeconds: 15, icon: '⚡' },
   { id: 'nd-seedance-2.0-720p', name: 'Seedance 2.0 (720p/不卡脸)', description: '9图3视频3音频，支持 4-15s，不卡人脸，固定按次计费 ¥4.30/次', maxSeconds: 15, icon: '🚀' },
   { id: 'veo-omni-flash', name: 'Veo Omni Flash', description: '多参考图生成视频，参考图字段 Ingredients_images，固定10s', maxSeconds: 10, icon: '🚀' },
+  { id: 'veo-omni-flash-video-edit', name: 'Veo Omni Flash 视频编辑', description: '【不卡人脸-定制版】无水印视频编辑；必须提供1个参考视频，可附加多张参考图；固定10秒，参考视频最长15秒', maxSeconds: 10, icon: '✂️' },
   { id: 'veo-3-1', name: 'Veo 3-1', description: '【不卡人脸-定制版】无水印视频；只支持8秒；支持首尾帧、支持多图参考，最多9张图', maxSeconds: 8, icon: '🚀' },
   { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多10张图片参考（无视频/音频参考），5-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
   { id: 'sd2.5', name: 'Seedance 2.5 (sd2.5)', description: '支持9图0视频0音频，卡人脸；适合制作带货视频，固定按次计费 ¥3.50/次', maxSeconds: 30, icon: '🚀' },
@@ -524,6 +527,11 @@ router.get('/models', (_req: Request, res: Response) => {
         '720p': veoOmniFlashRate,
         '1080p': veoOmniFlashRate,
       };
+    } else if (m.id === 'veo-omni-flash-video-edit') {
+      rates = {
+        '720p': 0.09,
+        '1080p': 0.09,
+      };
     } else if (m.id === 'veo-3-1') {
       const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get()?.value || '0.20');
       rates = {
@@ -736,6 +744,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     if (finalVideos.length > 0 || finalAudios.length > 0) return res.status(400).json({ error: 'seedance_v2.5 不支持视频或音频参考' });
   }
 
+  if (model === 'veo-omni-flash-video-edit') {
+    if (!['16:9', '9:16'].includes(aspect_ratio)) return res.status(400).json({ error: 'Veo Omni Flash 视频编辑仅支持 16:9 或 9:16' });
+    if (finalVideos.length !== 1) return res.status(400).json({ error: 'Veo Omni Flash 视频编辑必须提供且只能提供 1 个参考视频' });
+    if (finalAudios.length > 0) return res.status(400).json({ error: 'Veo Omni Flash 视频编辑不支持参考音频' });
+  }
+
   // 模型时长限制校验
   if (meta?.allowedSeconds && !meta.allowedSeconds.includes(Number(video_length))) {
     return res.status(400).json({ error: `模型 ${model} 只支持 ${meta.allowedSeconds.join('/')} 秒` });
@@ -808,6 +822,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'veo-omni-flash') {
     const row = db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get();
     rate = parseFloat(row?.value || '0.25');
+  } else if (model === 'veo-omni-flash-video-edit') {
+    rate = 0.09;
   } else if (model === 'veo-3-1') {
     const row = db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get();
     rate = parseFloat(row?.value || '0.20');
@@ -961,6 +977,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isHmStudio = isHmStudioChannel(channel);
   const isMjNewApi = isMjNewApiChannel(channel);
   const isVeoOmni = model === 'veo-omni-flash';
+  const isVeoOmniEdit = model === 'veo-omni-flash-video-edit';
   const isVeo31 = model === 'veo-3-1';
   const isWan30 = model === 'wan3.0th';
   const isSeedanceJsonModel = [
@@ -1303,6 +1320,37 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         return res.end();
       }
 
+      const job = await createResp.json() as any;
+      videoId = job.task_id || job.id;
+    } else if (isVeoOmniEdit) {
+      sendEvent({ type: 'status', message: '正在处理素材并提交 Veo Omni Flash 视频编辑任务...' });
+      const imageUrls = (reference_images || [])
+        .map((item: string) => convertBase64ToPublicUrl(item, 'veo_edit_ref', req));
+      const videoUrl = convertBase64ToPublicUrl(finalVideos[0], 'veo_edit_video', req);
+      const payload = buildNewTokenVideoPayload({
+        model,
+        upstreamModel,
+        prompt,
+        duration: 10,
+        aspectRatio: aspect_ratio,
+        images: imageUrls,
+        videos: [videoUrl],
+      });
+      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${channel.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        sendEvent({ type: 'error', message: `创建视频编辑任务失败 (${createResp.status}): ${errText.slice(0, 200)}` });
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
       const job = await createResp.json() as any;
       videoId = job.task_id || job.id;
     } else if (isVeo31) {
@@ -2245,6 +2293,8 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   } else if (model === 'veo-omni-flash') {
     const row = db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get();
     rate = parseFloat(row?.value || '0.25');
+  } else if (model === 'veo-omni-flash-video-edit') {
+    rate = 0.09;
   } else if (model === 'veo-3-1') {
     const row = db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get();
     rate = parseFloat(row?.value || '0.20');

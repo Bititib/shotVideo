@@ -237,10 +237,12 @@ curl -X POST "https://你的域名/v1/videos" \
 | `ratio` / `aspect_ratio` | string | 否 | `16:9` | 画面比例 |
 | `resolution` / `resolution_name` | string | 否 | `720p` | 分辨率 |
 | `image_urls` | string[] | 否 | - | 图片 URL；支持别名 `images`、`image_refs` |
-| `video_urls` | string[] | 否 | - | 视频 URL；支持别名 `videos` |
+| `video_urls` | string[] | 否 | - | 视频 URL；支持别名 `videos`；单视频编辑也支持 `video_url` |
 | `audio_urls` | string[] | 否 | - | 音频 URL；支持别名 `audios` |
 
 文件上传字段支持 `image`、`images`、`input_reference[]`、`video`、`videos`、`reference_video`、`audio`、`audios` 和 `reference_audio`。
+
+`veo-omni-flash-video-edit` 为固定10秒的视频编辑模型：必须提供1个 `video_url`，可选 `Ingredients_images` 多张参考图，只支持 `16:9` 或 `9:16`，按 ¥0.09/秒计费。
 
 创建成功：
 

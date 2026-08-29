@@ -94,6 +94,7 @@ describe('种子数据完整性', () => {
     const supportedModels = JSON.parse(channel!.supportedModels) as string[];
     const expectedModels = [
       'veo-omni-flash',
+      'veo-omni-flash-video-edit',
       'veo-3-1',
       'nd-seedance-2.0-480p',
       'nd-seedance-2.0-720p',
@@ -104,6 +105,11 @@ describe('种子数据完整性', () => {
       const model = db.select().from(models).where(eq(models.modelId, modelId)).get();
       expect(model?.provider).toBe('newtoken');
     }
+
+    const editPricing = sqlite.prepare("SELECT billing_type, input_price FROM model_pricing WHERE model_pattern = ?")
+      .get('veo-omni-flash-video-edit') as any;
+    expect(editPricing?.billing_type).toBe('per_second');
+    expect(editPricing?.input_price).toBeCloseTo(0.09, 4);
   });
 
   it('应该有等级-模型关联数据', () => {

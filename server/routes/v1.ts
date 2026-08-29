@@ -223,6 +223,8 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'veo-omni-flash') {
     const row = db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get();
     return parseFloat(row?.value || '0.25');
+  } else if (model === 'veo-omni-flash-video-edit') {
+    return 0.09;
   } else if (model === 'veo-3-1') {
     const row = db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get();
     return parseFloat(row?.value || '0.20');
@@ -1185,6 +1187,8 @@ async function handleVideoCreation(req: Request, res: Response) {
   let video_urls: string[] = [];
   if (Array.isArray(body.video_urls)) {
     video_urls = body.video_urls;
+  } else if (typeof body.video_url === 'string') {
+    video_urls = [body.video_url];
   } else if (Array.isArray(body.videos)) {
     video_urls = body.videos;
   } else if (typeof body.video_urls === 'string') {
@@ -1310,6 +1314,21 @@ async function handleVideoCreation(req: Request, res: Response) {
     if (image_urls.length > 10 || video_urls.length > 0 || audio_urls.length > 0) {
       cleanupFiles(req.files);
       return res.status(400).json({ error: 'seedance_v2.5 supports at most 10 images and does not support video/audio references' });
+    }
+  }
+
+  if (model === 'veo-omni-flash-video-edit') {
+    if (seconds !== 10) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'veo-omni-flash-video-edit only supports 10 seconds' });
+    }
+    if (!['16:9', '9:16'].includes(ratio)) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'veo-omni-flash-video-edit ratio must be 16:9 or 9:16' });
+    }
+    if (video_urls.length !== 1 || audio_urls.length > 0) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'veo-omni-flash-video-edit requires exactly one video and does not support audio references' });
     }
   }
 

@@ -21,7 +21,7 @@
 | `ratio` | string | 否 | `"16:9"` | `aspect_ratio` | 画面比例，如 `"16:9"`, `"9:16"`, `"1:1"` |
 | `resolution` | string | 否 | `"720p"` | `resolution_name` | 输出清晰度，如 `"480p"`, `"720p"`, `"1080p"` |
 | `image_urls` | array[string] | 否 | `[]` | `images`, `image_refs` | 公网图片 URL 列表 |
-| `video_urls` | array[string] | 否 | `[]` | `videos` | 公网视频 URL 列表 |
+| `video_urls` | array[string] | 否 | `[]` | `videos`, `video_url` | 公网视频 URL 列表；`video_url` 为单视频别名 |
 | `audio_urls` | array[string] | 否 | `[]` | `audios` | 公网音频 URL 列表 |
 
 ### 响应示例 (HTTP 200/202)

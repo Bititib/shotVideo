@@ -11,6 +11,7 @@ describe('NewToken video adapter', () => {
     expect(isNewTokenChannel({ name: 'NewToken 渠道', baseUrl: 'https://newtoken.club/' })).toBe(true);
     expect(isNewTokenChannel({ name: 'SudaShui 星河渠道', baseUrl: 'https://api.sudashuiapi.com' })).toBe(false);
     expect(isNewTokenVideoModel('veo-omni-flash')).toBe(true);
+    expect(isNewTokenVideoModel('veo-omni-flash-video-edit')).toBe(true);
     expect(isNewTokenVideoModel('nd-seedance-2.0-720p')).toBe(true);
     expect(isNewTokenVideoModel('sdas-bl-sd2.0-933-pro-720p')).toBe(false);
     expect(newTokenVideoCreateUrl('https://newtoken.club/')).toBe('https://newtoken.club/v1/videos');
@@ -46,6 +47,24 @@ describe('NewToken video adapter', () => {
       reference_images: ['https://example.com/a.png'],
       first_frame_image: 'https://example.com/first.png',
       last_frame_image: 'https://example.com/last.png',
+    });
+  });
+
+  it('builds the Veo Omni video edit payload required by NewToken', () => {
+    expect(buildNewTokenVideoPayload({
+      model: 'veo-omni-flash-video-edit',
+      prompt: 'make it brighter',
+      duration: 10,
+      aspectRatio: '16:9',
+      videos: ['https://example.com/reference.mp4'],
+      images: ['https://example.com/product.png'],
+    })).toEqual({
+      model: 'veo-omni-flash-video-edit',
+      prompt: 'make it brighter',
+      duration: 10,
+      aspect_ratio: '16:9',
+      video_url: 'https://example.com/reference.mp4',
+      Ingredients_images: ['https://example.com/product.png'],
     });
   });
 
