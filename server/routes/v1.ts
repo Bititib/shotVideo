@@ -233,6 +233,22 @@ export function normalizeVideoApiStatus(
   return progress > 0 ? 'processing' : 'queued';
 }
 
+/** Queue/concurrency fields belong exclusively to locally queued HM Studio tasks. */
+export function videoTaskQueueDetails(
+  metadata: Record<string, any>,
+  channelType: unknown,
+  status: string,
+): Record<string, number> {
+  if (String(channelType || '').toLowerCase() !== 'hmstudio') return {};
+  return {
+    queue_position: status === 'queued' ? Number(metadata.queuePosition || 1) : 0,
+    queue_running: Number(metadata.queueRunning || 0),
+    queue_limit: Number(metadata.queueLimit || 10),
+    channel_running: Number(metadata.queuePoolRunning || 0),
+    channel_limit: Number(metadata.queuePoolLimit || 10),
+  };
+}
+
 /** 检查 Token 或关联用户的余额 */
 function checkTokenOrUserBalance(token: any, cost: number): { sufficient: boolean; balance: number } {
   if (cost <= 0) return { sufficient: true, balance: 0 };
@@ -2029,14 +2045,17 @@ async function handleVideoQuery(req: Request, res: Response) {
       progress_text: mappedStatus === 'completed' ? undefined : (metadata.progressText || undefined),
       upstream_task_id: metadata.videoId || undefined,
       upstream_status: metadata.upstreamStatus || undefined,
-      queue_position: mappedStatus === 'queued' ? Number(metadata.queuePosition || 1) : 0,
-      queue_running: Number(metadata.queueRunning || 0),
-      queue_limit: Number(metadata.queueLimit || 10),
-      channel_running: Number(metadata.queuePoolRunning || 0),
-      channel_limit: Number(metadata.queuePoolLimit || 10),
       status_url: `${protocol}://${host}/v1/videos/task_${record.id}`,
       ...(!['completed', 'failed'].includes(mappedStatus) ? { retry_after: 5 } : {}),
     };
+    const persistedChannel = metadata.channelId
+      ? ChannelService.getChannelRaw(Number(metadata.channelId))
+      : null;
+    Object.assign(responseJson, videoTaskQueueDetails(
+      metadata,
+      metadata.actualChannel || persistedChannel?.type,
+      mappedStatus,
+    ));
 
     if (mappedStatus === 'completed') {
       responseJson.url = contentUrl;

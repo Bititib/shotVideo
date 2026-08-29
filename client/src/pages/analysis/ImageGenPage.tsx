@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Image as ImageIcon, Play, Square, Download, RotateCcw, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Grid2x2, Maximize2, Trash2 } from 'lucide-react';
-import { fetchImageModels, generateImage, type ImageModel, type ImageSSEEvent } from '../../api/imageGen';
+import { downloadGeneratedImage, fetchImageModels, generateImage, type ImageModel, type ImageSSEEvent } from '../../api/imageGen';
 import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
@@ -30,6 +30,15 @@ const COUNT_OPTIONS = [
   { value: 2, label: '2张' },
   { value: 4, label: '4张' },
 ];
+
+async function downloadImageFile(event: React.MouseEvent, url: string, filename: string) {
+  event.stopPropagation();
+  try {
+    await downloadGeneratedImage(url, filename);
+  } catch (error: any) {
+    window.alert(error?.message || '图片下载失败，请稍后重试');
+  }
+}
 
 function CustomSelect({ value, options, onChange, icon: Icon, prefix }: any) {
   const [isOpen, setIsOpen] = useState(false);
@@ -69,7 +78,7 @@ function ImageCard({ url, index, onPreview }: { url: string; index: number; onPr
       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
         <div className="absolute bottom-2 right-2 flex gap-1.5">
           <button onClick={(e) => { e.stopPropagation(); onPreview(); }} className="p-1.5 bg-black/50 backdrop-blur rounded-lg text-white/80 hover:text-white"><Maximize2 className="w-3.5 h-3.5" /></button>
-          <a href={url} target="_blank" rel="noopener noreferrer" download onClick={(e) => e.stopPropagation()} className="p-1.5 bg-black/50 backdrop-blur rounded-lg text-white/80 hover:text-white"><Download className="w-3.5 h-3.5" /></a>
+          <button type="button" onClick={(e) => downloadImageFile(e, url, `generated-image-${index + 1}.png`)} className="p-1.5 bg-black/50 backdrop-blur rounded-lg text-white/80 hover:text-white"><Download className="w-3.5 h-3.5" /></button>
         </div>
       </div>
     </div>
@@ -115,10 +124,10 @@ function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
     <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-8" onClick={onClose}>
       <button onClick={onClose} className="absolute top-4 right-4 p-2 text-zinc-400 hover:text-white"><X className="w-6 h-6" /></button>
       <img src={url} alt="预览" className="max-w-full max-h-full object-contain rounded-2xl shadow-2xl" onClick={(e) => e.stopPropagation()} />
-      <a href={url} target="_blank" rel="noopener noreferrer" download onClick={(e) => e.stopPropagation()}
+      <button type="button" onClick={(e) => downloadImageFile(e, url, 'generated-image.png')}
         className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 px-5 py-2.5 bg-white/10 hover:bg-white/20 backdrop-blur rounded-xl text-sm text-white transition-colors">
         <Download className="w-4 h-4" /> 下载原图
-      </a>
+      </button>
     </div>
   );
 }
@@ -380,7 +389,7 @@ export default function ImageGenPage() {
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
                       <div className="absolute bottom-1.5 right-1.5 flex gap-1">
                         <button onClick={(e) => { e.stopPropagation(); setLightboxUrl(url); }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Maximize2 className="w-3 h-3" /></button>
-                        <a href={url} target="_blank" rel="noopener noreferrer" download onClick={(e) => e.stopPropagation()} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Download className="w-3 h-3" /></a>
+                        <button type="button" onClick={(e) => downloadImageFile(e, url, `generated-image-${i + 1}.png`)} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Download className="w-3 h-3" /></button>
                       </div>
                     </div>
                   </div>
@@ -431,7 +440,7 @@ export default function ImageGenPage() {
                         }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-red-400" title="删除记录">
                           <Trash2 className="w-3 h-3" />
                         </button>
-                        <a href={h.imageUrl} target="_blank" rel="noopener noreferrer" download onClick={(e) => e.stopPropagation()} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Download className="w-3 h-3" /></a>
+                        <button type="button" onClick={(e) => downloadImageFile(e, h.imageUrl, `generated-image-${h.id}.png`)} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Download className="w-3 h-3" /></button>
                       </div>
                     </div>
                   </div>

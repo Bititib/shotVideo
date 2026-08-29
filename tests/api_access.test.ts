@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canAccessVideoRecord, createVideoContentSignature, extractToken, filterRoutableModels, normalizeVideoApiStatus, saveApiImageAssets, verifyVideoContentSignature, videoTaskFailureDetails } from '../server/routes/v1.js';
+import { canAccessVideoRecord, createVideoContentSignature, extractToken, filterRoutableModels, normalizeVideoApiStatus, saveApiImageAssets, verifyVideoContentSignature, videoTaskFailureDetails, videoTaskQueueDetails } from '../server/routes/v1.js';
 import { TokenService } from '../server/services/tokenService.js';
 import { sqlite } from '../server/db/index.js';
 
@@ -10,6 +10,19 @@ describe('OpenAI-compatible API access', () => {
     expect(normalizeVideoApiStatus('processing', 'pending', 0)).toBe('queued');
     expect(normalizeVideoApiStatus('completed', 'success', 100)).toBe('completed');
     expect(normalizeVideoApiStatus('failed', 'failure', 50)).toBe('failed');
+  });
+
+  it('only exposes local queue concurrency for HM Studio tasks', () => {
+    const metadata = { queuePosition: 2, queueRunning: 3, queueLimit: 10, queuePoolRunning: 4, queuePoolLimit: 10 };
+    expect(videoTaskQueueDetails(metadata, 'openai', 'queued')).toEqual({});
+    expect(videoTaskQueueDetails(metadata, 'snumom', 'queued')).toEqual({});
+    expect(videoTaskQueueDetails(metadata, 'hmstudio', 'queued')).toEqual({
+      queue_position: 2,
+      queue_running: 3,
+      queue_limit: 10,
+      channel_running: 4,
+      channel_limit: 10,
+    });
   });
 
   it('accepts Authorization Bearer tokens', () => {

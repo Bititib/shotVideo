@@ -22,7 +22,7 @@ import {
   isMjNewApiChannel,
 } from '../services/mjNewApiAdapter.js';
 import { buildNewTokenVideoPayload } from '../services/newTokenAdapter.js';
-import { extractVideoFailureMessage, withVideoFailureMetadata } from '../services/videoFailureService.js';
+import { clarifyVideoCapacityFailure, extractVideoFailureMessage, withVideoFailureMetadata } from '../services/videoFailureService.js';
 import {
   buildSnumomWanPayload,
   isSnumomWanChannel,
@@ -1066,7 +1066,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const refundFailedTask = (errMsg: string) => {
     if (failureHandled) return;
     failureHandled = true;
-    const readableError = extractVideoFailureMessage(errMsg) || '视频生成失败';
+    const readableError = clarifyVideoCapacityFailure(
+      extractVideoFailureMessage(errMsg) || '视频生成失败',
+      isHmStudioChannel(channel),
+    );
     console.error(`[video] ❌ 生成失败: ${readableError}`);
     sendEvent({ type: 'error', message: readableError });
     if (estimatedCost > 0) {
@@ -2314,7 +2317,9 @@ async function failHmQueuedVideo(contentId: number, error: unknown): Promise<voi
   if (!record || record.status === 'failed' || record.status === 'completed') return;
   let metadata: Record<string, any> = {};
   try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
-  const message = error instanceof Error ? error.message : String(error || 'HM Studio 任务失败');
+  const rawMessage = error instanceof Error ? error.message : String(error || '视频任务失败');
+  const taskChannel = metadata.channelId ? ChannelService.getChannelRaw(Number(metadata.channelId)) : null;
+  const message = clarifyVideoCapacityFailure(rawMessage, isHmStudioChannel(taskChannel));
   const refundAmount = Number(record.cost) || 0;
   if (refundAmount > 0 && !metadata.queueRefunded) {
     if (metadata.billingSource === 'token' && metadata.tokenId) {

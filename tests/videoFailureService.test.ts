@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { extractVideoFailureMessage, withVideoFailureMetadata } from '../server/services/videoFailureService.js';
+import { clarifyVideoCapacityFailure, extractVideoFailureMessage, withVideoFailureMetadata } from '../server/services/videoFailureService.js';
 
 describe('video failure persistence', () => {
+  it('distinguishes an upstream capacity rejection from the local HM queue', () => {
+    expect(clarifyVideoCapacityFailure('任务并发数不足', false))
+      .toBe('上游渠道当前容量不足，请稍后重试（非本站并发限制）');
+    expect(clarifyVideoCapacityFailure('任务并发数不足', true)).toBe('任务并发数不足');
+  });
+
   it('extracts a readable reason from an escaped gateway error', () => {
     const body = JSON.stringify({
       code: 'fail_to_fetch_task',

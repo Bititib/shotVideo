@@ -39,6 +39,42 @@ export async function fetchImageModels(): Promise<ImageModel[]> {
   return res.json();
 }
 
+/** Download through the authenticated same-origin proxy to force a file save. */
+export async function downloadGeneratedImage(url: string, filename = 'generated-image.png'): Promise<void> {
+  if (url.startsWith('data:') || url.startsWith('blob:')) {
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    return;
+  }
+
+  const token = localStorage.getItem('token');
+  const response = await fetch(`/api/image-gen/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || `图片下载失败 (${response.status})`);
+  }
+
+  const blobUrl = URL.createObjectURL(await response.blob());
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = blobUrl;
+    anchor.download = filename;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1_000);
+  }
+}
+
 /** 发起图片生成（SSE 流式），返回 AbortController 可用于取消 */
 export function generateImage(
   params: ImageGenerateParams,

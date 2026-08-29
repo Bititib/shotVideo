@@ -37,6 +37,14 @@ export function extractVideoFailureMessage(value: unknown, depth = 0): string {
   try { return JSON.stringify(value); } catch { return ''; }
 }
 
+export function clarifyVideoCapacityFailure(message: string, hmStudioTask: boolean): string {
+  if (hmStudioTask) return message;
+  const capacityPattern = /(任务)?并发(数|量|额度|限制)?不足|concurrency.{0,30}(insufficient|limit|exceeded|full)/i;
+  return capacityPattern.test(message)
+    ? '上游渠道当前容量不足，请稍后重试（非本站并发限制）'
+    : message;
+}
+
 export function withVideoFailureMetadata(
   metadata: unknown,
   error: unknown,

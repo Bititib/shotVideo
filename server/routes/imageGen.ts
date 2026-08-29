@@ -15,7 +15,7 @@ import {
 import { hmStudioPoolKey, hmStudioQueue } from '../services/hmStudioQueueService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
-import { models } from '../db/schema.js';
+import { contents, models } from '../db/schema.js';
 import { eq, like, and } from 'drizzle-orm';
 import fs from 'fs';
 import path from 'path';
@@ -82,6 +82,156 @@ const DEFAULT_IMAGE_MODELS = [
   { id: 'gemini-3.1-flash-image-preview', name: '🍌 nabanana flash', description: '2k高清画质，极速生成', icon: '☄️' },
   { id: 'gemini-3-pro-image-preview', name: '🍌 nabanana pro', description: '2k高清画质，极致细节', icon: '🪐' },
 ];
+
+export function storedImageUrls(record: { resultUrl?: string | null; metadata?: unknown }): string[] {
+  const urls = new Set<string>();
+  if (record.resultUrl) urls.add(String(record.resultUrl));
+  let metadata: Record<string, any> = {};
+  try {
+    metadata = typeof record.metadata === 'string'
+      ? JSON.parse(record.metadata || '{}')
+      : ((record.metadata && typeof record.metadata === 'object') ? record.metadata as Record<string, any> : {});
+  } catch { /* ignore malformed legacy metadata */ }
+  if (Array.isArray(metadata.imageUrls)) {
+    metadata.imageUrls.filter((url: unknown) => typeof url === 'string' && url).forEach((url: string) => urls.add(url));
+  }
+  if (typeof metadata.imageUrl === 'string' && metadata.imageUrl) urls.add(metadata.imageUrl);
+  return [...urls];
+}
+
+function publicBaseUrl(req: Request): string {
+  return (process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`)
+    .replace(/\/+$/, '');
+}
+
+function imageExtension(contentType: string, sourceUrl: string): string {
+  const normalized = contentType.toLowerCase().split(';')[0].trim();
+  const byMime: Record<string, string> = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg',
+    'image/webp': 'webp',
+    'image/gif': 'gif',
+    'image/avif': 'avif',
+  };
+  if (byMime[normalized]) return byMime[normalized];
+  try {
+    const ext = path.extname(new URL(sourceUrl).pathname).slice(1).toLowerCase();
+    if (/^(png|jpe?g|webp|gif|avif)$/.test(ext)) return ext === 'jpeg' ? 'jpg' : ext;
+  } catch { /* data URLs and relative URLs may not parse */ }
+  return 'png';
+}
+
+export async function localizeGeneratedImage(
+  sourceUrl: string,
+  prefix: string,
+  req: Request,
+  channel?: { baseUrl?: string; apiKey?: string },
+): Promise<string> {
+  if (!sourceUrl) throw new Error('上游未返回图片 URL');
+  const siteBase = publicBaseUrl(req);
+  if (sourceUrl.startsWith('data:')) return convertBase64ToPublicUrl(sourceUrl, prefix, req);
+  if (sourceUrl.startsWith('/uploads/')) return `${siteBase}${sourceUrl}`;
+  try {
+    const existing = new URL(sourceUrl);
+    if (existing.pathname.startsWith('/uploads/') && existing.origin === new URL(siteBase).origin) {
+      return existing.toString();
+    }
+  } catch { /* resolve relative upstream URLs below */ }
+
+  const absoluteSource = new URL(sourceUrl, channel?.baseUrl || siteBase);
+  if (!['http:', 'https:'].includes(absoluteSource.protocol)) throw new Error('不支持的图片 URL 协议');
+  const headers: Record<string, string> = {};
+  if (channel?.apiKey && channel.baseUrl) {
+    try {
+      if (new URL(channel.baseUrl).origin === absoluteSource.origin) {
+        headers.Authorization = `Bearer ${channel.apiKey}`;
+      }
+    } catch { /* signed CDN URLs generally require no channel header */ }
+  }
+
+  const response = await fetch(absoluteSource, {
+    headers,
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!response.ok) throw new Error(`下载上游图片失败 (HTTP ${response.status})`);
+  const contentType = response.headers.get('content-type') || 'application/octet-stream';
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length === 0) throw new Error('上游图片内容为空');
+
+  const ext = imageExtension(contentType, absoluteSource.toString());
+  const safePrefix = prefix.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const filename = `${safePrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const uploadDir = path.join(process.cwd(), 'data/uploads');
+  if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+  await fs.promises.writeFile(path.join(uploadDir, filename), buffer);
+  return `${siteBase}/uploads/${filename}`;
+}
+
+/** Authenticated download proxy so cross-origin image URLs are saved instead of opened. */
+router.get('/download', authMiddleware, async (req: TierRequest, res: Response) => {
+  const rawUrl = typeof req.query.url === 'string' ? req.query.url.trim() : '';
+  if (!rawUrl) return res.status(400).json({ error: 'Missing url parameter' });
+
+  const ownedRecords = db.select({
+    resultUrl: contents.resultUrl,
+    metadata: contents.metadata,
+    modelId: contents.modelId,
+  }).from(contents).where(and(
+    eq(contents.userId, req.userId!),
+    eq(contents.type, 'image'),
+  )).all();
+  const ownedRecord = ownedRecords.find(record => storedImageUrls(record).includes(rawUrl));
+  if (!ownedRecord) return res.status(403).json({ error: 'Image does not belong to the current user' });
+
+  try {
+    const requestUrl = new URL(rawUrl, `${req.protocol}://${req.get('host')}`);
+    if (!['http:', 'https:'].includes(requestUrl.protocol)) {
+      return res.status(400).json({ error: 'Unsupported image URL protocol' });
+    }
+
+    const headers: Record<string, string> = {};
+    const channel = ownedRecord.modelId ? ChannelService.findChannelForModel(ownedRecord.modelId) : null;
+    if (channel?.apiKey) {
+      try {
+        if (new URL(channel.baseUrl).origin === requestUrl.origin) {
+          headers.Authorization = `Bearer ${channel.apiKey}`;
+        }
+      } catch { /* public signed URLs do not require the channel key */ }
+    }
+
+    const upstream = await fetch(requestUrl, {
+      headers,
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!upstream.ok) throw new Error(`Image source returned HTTP ${upstream.status}`);
+
+    const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+    const requestedName = typeof req.query.filename === 'string' ? req.query.filename : 'generated-image.png';
+    const filename = path.basename(requestedName).replace(/[^\w.\-\u4e00-\u9fff]/g, '_') || 'generated-image.png';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="generated-image"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+    const contentLength = upstream.headers.get('content-length');
+    if (contentLength) res.setHeader('Content-Length', contentLength);
+
+    const reader = upstream.body?.getReader();
+    if (!reader) throw new Error('Image source returned an empty body');
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return res.end();
+  } catch (error: any) {
+    console.error('[imageGen/download] failed:', error.message);
+    if (!res.headersSent) return res.status(502).json({ error: `Image download failed: ${error.message}` });
+    return res.end();
+  }
+});
 
 /** 查找支持指定图片模型的渠道 */
 function findImageChannel(modelId: string) {
@@ -274,8 +424,9 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
             },
           });
           const task = await queueJob.completion;
-          completedImages[index] = task.resultUrl;
-          sendEvent({ type: 'image_ready', imageUrl: task.resultUrl, index, total: count });
+          const localizedUrl = await localizeGeneratedImage(task.resultUrl, `hm_image_${index}`, req, channel);
+          completedImages[index] = localizedUrl;
+          sendEvent({ type: 'image_ready', imageUrl: localizedUrl, index, total: count });
         } catch (error: any) {
           sendEvent({ type: 'image_error', index, message: error.message || 'HM Studio 图片生成失败' });
         } finally {
@@ -383,10 +534,9 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
           sendEvent({ type: 'progress', progress: 100, index });
 
           if (imageUrl) {
-            // 如果是相对路径，补全为完整 URL
-            const fullUrl = imageUrl.startsWith('/') ? baseUrl + imageUrl : imageUrl;
-            completedImages[index] = fullUrl;
-            sendEvent({ type: 'image_ready', imageUrl: fullUrl, index, total: count });
+            const localizedUrl = await localizeGeneratedImage(imageUrl, `edited_image_${index}`, req, channel);
+            completedImages[index] = localizedUrl;
+            sendEvent({ type: 'image_ready', imageUrl: localizedUrl, index, total: count });
           } else {
             sendEvent({ type: 'image_error', index, message: `图片 #${index + 1} 未返回结果` });
           }
@@ -470,10 +620,9 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
             sendEvent({ type: 'progress', progress: 100, index });
 
              if (imageUrl) {
-               const savedUrl = convertBase64ToPublicUrl(imageUrl, 'gpt_img', req);
-               const fullUrl = savedUrl.startsWith('/') ? baseUrl + savedUrl : savedUrl;
-               completedImages[index] = fullUrl;
-               sendEvent({ type: 'image_ready', imageUrl: fullUrl, index, total: count });
+               const localizedUrl = await localizeGeneratedImage(imageUrl, `gpt_image_${index}`, req, channel);
+               completedImages[index] = localizedUrl;
+               sendEvent({ type: 'image_ready', imageUrl: localizedUrl, index, total: count });
             } else {
               sendEvent({ type: 'image_error', index, message: `图片 #${index + 1} 未返回结果` });
             }
@@ -551,12 +700,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
               buffer = lines.pop() || '';
 
               for (const line of lines) {
-                if (!line.startsWith('data: ') || line === 'data: [DONE]') {
-                  if (line === 'data: [DONE]' && imageUrl) {
-                    sendEvent({ type: 'image_ready', imageUrl, index, total: count });
-                  }
-                  continue;
-                }
+                if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
 
                 try {
                   const data = JSON.parse(line.slice(6));
@@ -597,11 +741,9 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
 
             // 流结束但未通过 [DONE] 发送的情况
             if (imageUrl) {
-              completedImages[index] = imageUrl;
-              if (!completedImages[index]) {
-                sendEvent({ type: 'image_ready', imageUrl, index, total: count });
-              }
-              completedImages[index] = imageUrl;
+              const localizedUrl = await localizeGeneratedImage(imageUrl, `stream_image_${index}`, req, channel);
+              completedImages[index] = localizedUrl;
+              sendEvent({ type: 'image_ready', imageUrl: localizedUrl, index, total: count });
             } else {
               sendEvent({ type: 'image_error', index, message: `图片 #${index + 1} 未返回结果` });
             }
