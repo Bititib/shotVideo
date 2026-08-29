@@ -23,15 +23,6 @@ import feedbackRoutes from './routes/feedback.js';
 
 import { AdminService } from './services/adminService.js';
 
-// 全局限流：每个 IP 每分钟最多 300 次请求
-const globalLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 300,
-  message: { error: '请求过于频繁，请稍后再试' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
 // 认证接口限流：提升限流门槛，防止代理 IP 共享导致误封锁
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -52,11 +43,6 @@ export async function createApp() {
   // CORS：生产环境限制为指定域名
   const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(s => s.trim()).filter(Boolean);
   app.use(cors(allowedOrigins?.length ? { origin: allowedOrigins, credentials: true } : undefined));
-  // 仅对 API 和 OpenAI 代理路由实施全局限流，避免干扰本地开发环境下 Vite 托管的大量静态资源与热更新请求
-  app.use('/api', globalLimiter);
-  app.use('/v1', globalLimiter);
-
-
   // Body parsing
   app.use(express.json({ limit: '150mb' }));
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { adminApi } from '../../api/admin';
+import { isResolutionPriceKey, pricingResolutionFields } from '../../utils/pricingResolution';
 import {
   Asterisk,
   AudioLines,
@@ -119,15 +120,21 @@ export default function PricingPage() {
     inputPrice: 0,
     outputPrice: 0,
     extraText: '',
+    resolutionKeys: [],
+    resolutionPrices: {},
     isNew: true,
   });
 
   const openEdit = (rule: PricingRule) => {
-    const extras = Object.entries(rule.extraParams || {})
-      .filter(([key]) => key !== 'category')
-      .map(([key, value]) => `${key}: ${value}`)
-      .join('\n');
-    setEdit({ ...rule, extraText: extras, isNew: !rule.configured, lockedModel: rule.modelActive === true });
+    const resolutionFields = pricingResolutionFields(rule.modelPattern, rule.extraParams || {});
+    setEdit({
+      ...rule,
+      extraText: resolutionFields.otherText,
+      resolutionKeys: resolutionFields.keys,
+      resolutionPrices: resolutionFields.values,
+      isNew: !rule.configured,
+      lockedModel: rule.modelActive === true,
+    });
   };
 
   const handleSave = async () => {
@@ -150,6 +157,13 @@ export default function PricingPage() {
       const key = line.slice(0, separator).trim();
       const value = Number(line.slice(separator + 1).trim());
       if (!key || !Number.isFinite(value) || value < 0) return setError(`附加价格格式错误：${line}`);
+      extraParams[key] = value;
+    }
+    for (const key of edit.resolutionKeys || []) {
+      const rawValue = edit.resolutionPrices?.[key];
+      if (String(rawValue ?? '').trim() === '') continue;
+      const value = Number(rawValue);
+      if (!Number.isFinite(value) || value < 0) return setError(`${key} 单价必须是大于或等于 0 的有效数字`);
       extraParams[key] = value;
     }
 
@@ -265,6 +279,7 @@ export default function PricingPage() {
           {filteredRules.map(rule => {
             const Icon = categoryIcons[rule.category] || Coins;
             const extraPrices = Object.entries(rule.extraParams || {}).filter(([key]) => key !== 'category');
+            const hasResolutionPrices = extraPrices.some(([key]) => isResolutionPriceKey(key));
             return (
               <article key={`${rule.modelPattern}-${rule.id ?? 'virtual'}`} className="pricing-rule-card rounded-2xl border p-5 flex flex-col min-h-56">
                 <div className="flex items-start justify-between gap-3">
@@ -293,7 +308,7 @@ export default function PricingPage() {
                     </div>
                   ) : (
                     <div>
-                      <p className="text-[10px] text-zinc-500">当前单价</p>
+                      <p className="text-[10px] text-zinc-500">{hasResolutionPrices ? '规格外兜底单价' : '当前单价'}</p>
                       <p className="text-2xl font-bold tabular-nums text-white mt-1">¥{formatPrice(rule.inputPrice)}<span className="text-xs font-medium text-zinc-500 ml-1">{unitLabels[rule.billingType]}</span></p>
                     </div>
                   )}
@@ -363,8 +378,9 @@ export default function PricingPage() {
 
               <div className={`grid grid-cols-1 ${edit.billingType === 'per_token' ? 'sm:grid-cols-2' : ''} gap-4`}>
                 <div>
-                  <label htmlFor="pricing-input" className="block text-xs font-semibold text-zinc-400 mb-1.5">{edit.billingType === 'per_token' ? '输入价格（¥/百万 Token）' : `单价（¥${unitLabels[edit.billingType] || ''}）`}</label>
+                  <label htmlFor="pricing-input" className="block text-xs font-semibold text-zinc-400 mb-1.5">{edit.billingType === 'per_token' ? '输入价格（¥/百万 Token）' : `${(edit.resolutionKeys || []).length > 0 ? '规格外兜底单价' : '单价'}（¥${unitLabels[edit.billingType] || ''}）`}</label>
                   <input id="pricing-input" type="number" min="0" step="0.001" value={edit.inputPrice} onChange={event => setEdit({ ...edit, inputPrice: event.target.value })} className="w-full h-11 rounded-xl border px-4 text-sm tabular-nums focus:outline-none" />
+                  {(edit.resolutionKeys || []).length > 0 && <p className="text-[10px] text-zinc-500 mt-1.5">仅在请求未匹配下方分辨率时使用。</p>}
                 </div>
                 {edit.billingType === 'per_token' && (
                   <div>
@@ -374,10 +390,41 @@ export default function PricingPage() {
                 )}
               </div>
 
+              {(edit.resolutionKeys || []).length > 0 && (
+                <fieldset className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                  <legend className="px-1 text-xs font-semibold text-zinc-300">分辨率单价</legend>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-1">
+                    {edit.resolutionKeys.map((resolutionKey: string) => (
+                      <div key={resolutionKey}>
+                        <label htmlFor={`pricing-resolution-${resolutionKey}`} className="block text-[11px] font-semibold text-zinc-400 mb-1.5">{resolutionKey}</label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-500">¥</span>
+                          <input
+                            id={`pricing-resolution-${resolutionKey}`}
+                            aria-label={`${resolutionKey} 单价`}
+                            type="number"
+                            min="0"
+                            step="0.001"
+                            value={edit.resolutionPrices?.[resolutionKey] ?? ''}
+                            onChange={event => setEdit({
+                              ...edit,
+                              resolutionPrices: { ...edit.resolutionPrices, [resolutionKey]: event.target.value },
+                            })}
+                            className="w-full h-10 rounded-lg border pl-7 pr-3 text-sm tabular-nums focus:outline-none"
+                            placeholder="未设置"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-zinc-500 mt-2.5">留空表示该分辨率使用上方兜底单价；保存后前台展示和实际扣费同时生效。</p>
+                </fieldset>
+              )}
+
               <div>
-                <label htmlFor="pricing-extra" className="block text-xs font-semibold text-zinc-400 mb-1.5">规格附加价格（可选）</label>
-                <textarea id="pricing-extra" value={edit.extraText} onChange={event => setEdit({ ...edit, extraText: event.target.value })} rows={3} placeholder={'720p: 0.25\n1080p: 0.40'} className="w-full rounded-xl border px-4 py-3 text-sm font-mono resize-y focus:outline-none" />
-                <p className="text-[10px] text-zinc-500 mt-1.5">每行填写“规格: 单价”。请求携带对应 resolution 时优先使用该单价。</p>
+                <label htmlFor="pricing-extra" className="block text-xs font-semibold text-zinc-400 mb-1.5">其他规格价格（可选）</label>
+                <textarea id="pricing-extra" value={edit.extraText} onChange={event => setEdit({ ...edit, extraText: event.target.value })} rows={3} placeholder={'premium: 0.25\nlong_duration: 0.40'} className="w-full rounded-xl border px-4 py-3 text-sm font-mono resize-y focus:outline-none" />
+                <p className="text-[10px] text-zinc-500 mt-1.5">用于时长、质量等非分辨率规格，每行填写“规格: 单价”。</p>
               </div>
             </div>
 
