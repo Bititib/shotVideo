@@ -3,7 +3,6 @@ import { HmStudioQueueFullError, HmStudioQueueService } from '../server/services
 
 const originalEnv = {
   concurrency: process.env.HM_STUDIO_CONCURRENCY,
-  userConcurrency: process.env.HM_STUDIO_USER_CONCURRENCY,
   maxUserQueue: process.env.HM_STUDIO_MAX_USER_QUEUE,
   maxQueue: process.env.HM_STUDIO_MAX_QUEUE,
 };
@@ -14,7 +13,6 @@ afterEach(() => {
     else process.env[key] = value;
   };
   restore('HM_STUDIO_CONCURRENCY', originalEnv.concurrency);
-  restore('HM_STUDIO_USER_CONCURRENCY', originalEnv.userConcurrency);
   restore('HM_STUDIO_MAX_USER_QUEUE', originalEnv.maxUserQueue);
   restore('HM_STUDIO_MAX_QUEUE', originalEnv.maxQueue);
 });
@@ -30,9 +28,24 @@ async function flushQueue() {
 }
 
 describe('HM Studio fair queue', () => {
-  it('enforces both global and per-user concurrency while rotating users', async () => {
+  it('allows one user to consume available HM pool capacity', async () => {
     process.env.HM_STUDIO_CONCURRENCY = '2';
-    process.env.HM_STUDIO_USER_CONCURRENCY = '1';
+    const queue = new HmStudioQueueService();
+    const firstBlocker = deferred();
+    const secondBlocker = deferred();
+    const first = queue.enqueue({ id: 'same-1', userKey: 'same-user', task: () => firstBlocker.promise });
+    const second = queue.enqueue({ id: 'same-2', userKey: 'same-user', task: () => secondBlocker.promise });
+
+    await flushQueue();
+    expect(queue.getUserLoad('same-user')).toEqual({ running: 2, queued: 0, load: 2, limit: -1 });
+
+    firstBlocker.resolve();
+    secondBlocker.resolve();
+    await Promise.all([first.completion, second.completion]);
+  });
+
+  it('enforces global concurrency while rotating users without a per-user running limit', async () => {
+    process.env.HM_STUDIO_CONCURRENCY = '2';
     const queue = new HmStudioQueueService();
     const a1 = deferred();
     const a2 = deferred();
@@ -47,7 +60,7 @@ describe('HM Studio fair queue', () => {
     expect(queue.snapshot('b1').status).toBe('running');
     expect(queue.snapshot('a2').status).toBe('queued');
     expect(queue.getLimits().running).toBe(2);
-    expect(queue.getUserLoad('a')).toEqual({ running: 1, queued: 1, load: 2, limit: 1 });
+    expect(queue.getUserLoad('a')).toEqual({ running: 1, queued: 1, load: 2, limit: -1 });
 
     a1.resolve();
     await first.completion;
@@ -62,7 +75,6 @@ describe('HM Studio fair queue', () => {
 
   it('rejects a user when their pending queue is full', () => {
     process.env.HM_STUDIO_CONCURRENCY = '1';
-    process.env.HM_STUDIO_USER_CONCURRENCY = '1';
     process.env.HM_STUDIO_MAX_USER_QUEUE = '1';
     const queue = new HmStudioQueueService();
     const blocker = deferred();
@@ -75,7 +87,6 @@ describe('HM Studio fair queue', () => {
 
   it('provides an independent concurrency pool for each unique API key', async () => {
     process.env.HM_STUDIO_CONCURRENCY = '2';
-    process.env.HM_STUDIO_USER_CONCURRENCY = '10';
     const queue = new HmStudioQueueService();
     queue.syncPools(['key-a', 'key-b', 'key-b']);
     const blockers = Array.from({ length: 6 }, () => deferred());

@@ -46,7 +46,9 @@ function positiveInt(value: string | undefined, fallback: number): number {
  */
 export class HmStudioQueueService {
   private readonly poolConcurrencyLimit = positiveInt(process.env.HM_STUDIO_CONCURRENCY, 10);
-  private readonly userConcurrencyLimit = positiveInt(process.env.HM_STUDIO_USER_CONCURRENCY, 2);
+  // User jobs are not concurrency-capped; upstream pool capacity is the only
+  // running limit. The per-user pending queue cap remains as overload safety.
+  private readonly userConcurrencyLimit = -1;
   private readonly maxUserQueue = positiveInt(process.env.HM_STUDIO_MAX_USER_QUEUE, 10);
   private readonly maxQueue = positiveInt(process.env.HM_STUDIO_MAX_QUEUE, 200);
   private readonly pendingByUser = new Map<string, QueueJob[]>();
@@ -258,7 +260,6 @@ export class HmStudioQueueService {
       }
 
       this.userOrder.push(userKey);
-      if (this.userActiveCount(userKey) >= this.userConcurrencyLimit) continue;
       const runnableIndex = queue.findIndex(job => this.poolActiveCount(job.poolKey) < this.poolConcurrencyLimit);
       if (runnableIndex < 0) continue;
       const [job] = queue.splice(runnableIndex, 1);

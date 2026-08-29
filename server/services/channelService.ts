@@ -8,15 +8,21 @@ export class ChannelService {
   static getChannels() {
     const rows = db.select().from(channels).orderBy(channels.priority, desc(channels.createdAt)).all();
     hmStudioQueue.syncPools(rows.filter(ch => ch.status === 1 && ch.type === 'hmstudio' && ch.apiKey).map(hmStudioPoolKey));
-    return rows
-      .map(ch => ({
+    return rows.map(ch => {
+      const poolId = ch.type === 'hmstudio' ? hmStudioPoolKey(ch) : null;
+      const pool = poolId ? hmStudioQueue.getPoolLoad(poolId) : null;
+      return {
         ...ch,
         modelMapping: JSON.parse(ch.modelMapping),
         supportedModels: JSON.parse(ch.supportedModels),
-        concurrencyPoolId: ch.type === 'hmstudio' ? hmStudioPoolKey(ch) : null,
-        concurrencyLimit: ch.type === 'hmstudio' ? hmStudioQueue.getPoolLoad(hmStudioPoolKey(ch)).limit : null,
+        concurrencyPoolId: poolId,
+        concurrencyLimit: pool?.limit ?? null,
+        concurrencyRunning: pool?.running ?? null,
+        concurrencyQueued: pool?.queued ?? null,
+        concurrencyLoad: pool?.load ?? null,
         apiKey: ch.apiKey ? '****' + ch.apiKey.slice(-4) : '',
-      }));
+      };
+    });
   }
 
   /** 获取渠道原始数据（内部用，不脱敏） */

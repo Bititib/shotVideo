@@ -20,8 +20,6 @@ describe('HM Studio to MJ video failover', () => {
       ...compatibleRequest,
       poolLoad: 10,
       poolLimit: 10,
-      userLoad: 0,
-      userLimit: 2,
       fallbackAvailable: true,
     })).toBe(true);
 
@@ -29,21 +27,17 @@ describe('HM Studio to MJ video failover', () => {
       ...compatibleRequest,
       poolLoad: 9,
       poolLimit: 10,
-      userLoad: 0,
-      userLimit: 2,
       fallbackAvailable: true,
     })).toBe(false);
   });
 
-  it('overflows batch requests when the current user reaches the HM limit', () => {
+  it('does not overflow before the HM pool itself reaches capacity', () => {
     expect(shouldOverflowHmStudio({
       ...compatibleRequest,
       poolLoad: 2,
       poolLimit: 10,
-      userLoad: 2,
-      userLimit: 2,
       fallbackAvailable: true,
-    })).toBe(true);
+    })).toBe(false);
   });
 
   it('never drops incompatible reference material to force failover', () => {

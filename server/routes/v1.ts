@@ -132,6 +132,24 @@ export function canAccessVideoRecord(record: any, token: any): boolean {
     && Number(record.userId) === Number(token.userId);
 }
 
+const VIDEO_CONTENT_URL_TTL_SECONDS = Math.max(300, Number.parseInt(process.env.VIDEO_CONTENT_URL_TTL_SECONDS || '86400', 10) || 86400);
+
+export function createVideoContentSignature(contentId: number, expiresAt: number): string {
+  return crypto.createHmac('sha256', env.JWT_SECRET)
+    .update(`${contentId}:${expiresAt}`)
+    .digest('base64url');
+}
+
+export function verifyVideoContentSignature(contentId: number, expiresAtValue: unknown, signatureValue: unknown): boolean {
+  const expiresAt = Number(expiresAtValue);
+  const signature = typeof signatureValue === 'string' ? signatureValue : '';
+  if (!Number.isInteger(expiresAt) || expiresAt <= Math.floor(Date.now() / 1000) || !signature) return false;
+  const expected = createVideoContentSignature(contentId, expiresAt);
+  const providedBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  return providedBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(providedBuffer, expectedBuffer);
+}
+
 export function videoTaskFailureDetails(metadata: Record<string, any>): {
   error: string;
   error_message: string;
@@ -1352,8 +1370,6 @@ async function handleVideoCreation(req: Request, res: Response) {
     if (isHmStudioChannel(channel)) {
       const fallbackChannel = ChannelService.findChannelForModel(MJ_OVERFLOW_VIDEO_MODEL);
       const poolLoad = hmStudioQueue.getPoolLoad(hmStudioPoolKey(channel));
-      const queueUserKey = token.userId ? `user:${token.userId}` : `token:${token.id}`;
-      const userLoad = hmStudioQueue.getUserLoad(queueUserKey);
       if (shouldOverflowHmStudio({
         requestedModel: model,
         resolution,
@@ -1363,15 +1379,11 @@ async function handleVideoCreation(req: Request, res: Response) {
         audioCount: audio_urls.length,
         poolLoad: poolLoad.load,
         poolLimit: poolLoad.limit,
-        userLoad: userLoad.load,
-        userLimit: userLoad.limit,
         fallbackAvailable: Boolean(fallbackChannel && isMjNewApiChannel(fallbackChannel)),
       }) && fallbackChannel) {
         channel = fallbackChannel;
         executionModel = MJ_OVERFLOW_VIDEO_MODEL;
-        failoverReason = poolLoad.load >= poolLoad.limit
-          ? 'hmstudio_capacity'
-          : 'hmstudio_user_capacity';
+        failoverReason = 'hmstudio_capacity';
       }
     }
 
@@ -1508,7 +1520,6 @@ async function handleVideoCreation(req: Request, res: Response) {
         queue_limit: queue.concurrencyLimit,
         channel_running: queue.poolRunning,
         channel_limit: queue.poolConcurrencyLimit,
-        user_concurrency_limit: queue.userConcurrencyLimit,
         status_url: `${req.protocol}://${req.get('host')}/v1/videos/task_${contentId}`,
         retry_after: 5,
       });
@@ -1865,7 +1876,9 @@ async function handleVideoQuery(req: Request, res: Response) {
 
     const host = req.get('host');
     const protocol = req.protocol;
-    const contentUrl = `${protocol}://${host}/v1/videos/task_${record.id}/content`;
+    const contentExpiresAt = Math.floor(Date.now() / 1000) + VIDEO_CONTENT_URL_TTL_SECONDS;
+    const contentSignature = createVideoContentSignature(record.id, contentExpiresAt);
+    const contentUrl = `${protocol}://${host}/v1/videos/task_${record.id}/content?expires=${contentExpiresAt}&signature=${encodeURIComponent(contentSignature)}`;
 
     const responseJson: Record<string, any> = {
       id: `task_${record.id}`,
@@ -1875,14 +1888,13 @@ async function handleVideoQuery(req: Request, res: Response) {
       status: mappedStatus,
       progress,
       progress_pct: progress,
-      progress_text: metadata.progressText || undefined,
+      progress_text: mappedStatus === 'completed' ? undefined : (metadata.progressText || undefined),
       upstream_task_id: metadata.videoId || undefined,
       queue_position: mappedStatus === 'queued' ? Number(metadata.queuePosition || 1) : 0,
       queue_running: Number(metadata.queueRunning || 0),
       queue_limit: Number(metadata.queueLimit || 10),
       channel_running: Number(metadata.queuePoolRunning || 0),
       channel_limit: Number(metadata.queuePoolLimit || 10),
-      user_concurrency_limit: Number(metadata.queueUserLimit || 2),
     };
 
     if (mappedStatus === 'completed') {
@@ -1944,18 +1956,22 @@ router.get('/video/generations/:id', handleVideoQuery);
 
 /** GET /v1/videos/:id/content — 统一视频内容直连下载/播放 */
 router.get('/videos/:id/content', async (req: Request, res: Response) => {
-  const tokenKey = extractToken(req);
-  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
-
-  const { valid, error, token } = TokenService.validateToken(tokenKey);
-  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
-
   const idParam = req.params.id;
   let contentId = NaN;
   if (idParam.startsWith('task_')) {
     contentId = parseInt(idParam.slice(5), 10);
   } else {
     contentId = parseInt(idParam, 10);
+  }
+
+  const tokenKey = extractToken(req);
+  let token: any = null;
+  if (tokenKey) {
+    const validation = TokenService.validateToken(tokenKey);
+    if (!validation.valid) return res.status(401).json({ error: { message: validation.error, type: 'invalid_request_error' } });
+    token = validation.token;
+  } else if (!verifyVideoContentSignature(contentId, req.query.expires, req.query.signature)) {
+    return res.status(401).json({ error: { message: 'Missing API key or valid signed URL', type: 'invalid_request_error' } });
   }
 
   let record = null;
@@ -1967,7 +1983,7 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
     return res.status(404).json({ error: 'Task not found' });
   }
 
-  if (!canAccessVideoRecord(record, token)) {
+  if (token && !canAccessVideoRecord(record, token)) {
     return res.status(404).json({ error: 'Task not found' });
   }
 
@@ -2012,8 +2028,11 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
     try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
 
     const { downloadAndLocalizeVideo } = await import('./video.js');
+    const sourceUrl = isLocalFile && !fs.existsSync(localFilePath) && metadata.upstreamResultUrl
+      ? metadata.upstreamResultUrl
+      : url;
     const localizedUrl = await downloadAndLocalizeVideo(
-      url,
+      sourceUrl,
       idParam,
       record.modelId || metadata.model || 'video',
       metadata.channelId,

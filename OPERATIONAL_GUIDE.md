@@ -301,22 +301,20 @@ server {
 
 ## HM Studio 并发与排队
 
-HM Studio 图片和视频共用公平调度器，每个不同的 API Key 独立拥有 10 个并发名额。两个有效 Key 总容量为 20；相同 Key 重复配置不会增加容量。每个用户默认最多同时运行 2 项，用户之间轮询调度，同一用户内部按提交顺序执行。
+HM Studio 图片和视频共用公平调度器，每个不同的 API Key 独立拥有 10 个并发名额。两个有效 Key 总容量为 20；相同 Key 重复配置不会增加容量。用户运行并发不单独限制，系统只受各 HM API Key 的实际并发池容量约束；等待任务仍按用户轮询、同一用户内部按提交顺序调度。
 
-在管理后台进入 **渠道管理**，点击 **添加 HM Key**。页面会自动复制现有 HM 渠道的 Base URL、支持模型和模型映射，只需填写新的 API Key 并保存。保存后页面顶部会显示 `2 个有效 Key × 10 = 20`。
+在管理后台进入 **渠道管理**，点击 **添加 HM Key**。页面会自动复制现有 HM 渠道的 Base URL、支持模型和模型映射，只需填写新的 API Key 并保存。页面顶部每 5 秒刷新当前运行数、总容量和排队数，各 HM 渠道卡片显示对应 Key 的运行／上限及排队数。
 
 可通过 `.env` 调整：
 
 ```env
 HM_STUDIO_CONCURRENCY=10
-HM_STUDIO_USER_CONCURRENCY=2
 HM_STUDIO_MAX_USER_QUEUE=10
 HM_STUDIO_MAX_QUEUE=200
 ```
 
 - `HM_STUDIO_CONCURRENCY`：每个不同 HM API Key 的运行上限。
-- `HM_STUDIO_USER_CONCURRENCY`：每个用户或 API Token 的同时运行上限。
 - `HM_STUDIO_MAX_USER_QUEUE`：单用户最多等待任务数，超过返回 `429`。
 - `HM_STUDIO_MAX_QUEUE`：全局最多等待任务数，超过返回 `429`。
 
-API 用户可调用 `GET /v1/queue` 查看当前运行数、排队数和限制。视频任务还会通过创建响应及任务查询接口返回 `queue_position`、`queue_running` 和 `queue_limit`。
+管理员可通过渠道管理页面查看实时并发，也可调用仅管理员登录态可访问的 `GET /api/admin/hm-queue` 进行内部诊断。公开 API 不暴露渠道池和调度细节。兼容的视频请求会在所有 HM 池满载后自动改走内部备用线路。

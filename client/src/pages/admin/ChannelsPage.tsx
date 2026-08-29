@@ -11,8 +11,16 @@ export default function ChannelsPage() {
   const [testing, setTesting] = useState<number | null>(null);
   const [syncing, setSyncing] = useState<number | null>(null);
 
-  const load = async () => { setLoading(true); setChannels(await adminApi.getChannels()); setLoading(false); };
-  useEffect(() => { load(); }, []);
+  const load = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
+    try { setChannels(await adminApi.getChannels()); }
+    finally { if (showLoading) setLoading(false); }
+  };
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => { void load(false); }, 5000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const openNew = () => setEdit({
     name: '', type: 'openai', baseUrl: '', apiKey: '',
@@ -113,10 +121,14 @@ export default function ChannelsPage() {
 
   if (loading) return <div className="flex items-center justify-center h-full"><div className="w-8 h-8 border-2 border-white/10 border-t-white rounded-full animate-spin" /></div>;
 
-  const activeHmPools = new Set(channels
-    .filter(channel => channel.type === 'hmstudio' && channel.status && channel.apiKey)
-    .map(channel => channel.concurrencyPoolId));
-  const hmPerKeyLimit = channels.find(channel => channel.type === 'hmstudio')?.concurrencyLimit || 10;
+  const activeHmPoolMap = new Map<string, any>();
+  channels
+    .filter(channel => channel.type === 'hmstudio' && channel.status && channel.apiKey && channel.concurrencyPoolId)
+    .forEach(channel => activeHmPoolMap.set(channel.concurrencyPoolId, channel));
+  const activeHmPools = Array.from(activeHmPoolMap.values());
+  const hmTotalCapacity = activeHmPools.reduce((sum, channel) => sum + Number(channel.concurrencyLimit || 0), 0);
+  const hmTotalRunning = activeHmPools.reduce((sum, channel) => sum + Number(channel.concurrencyRunning || 0), 0);
+  const hmTotalQueued = activeHmPools.reduce((sum, channel) => sum + Number(channel.concurrencyQueued || 0), 0);
 
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto">
@@ -132,14 +144,24 @@ export default function ChannelsPage() {
         </div>
       </div>
 
-      <div className="mb-6 rounded-2xl border border-amber-500/20 bg-amber-500/[0.06] p-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-6 rounded-2xl border border-amber-500/20 bg-amber-500/[0.06] p-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-semibold text-amber-200">HM Studio 并发池</p>
-          <p className="text-xs text-zinc-500 mt-1">每个不同 API Key 独立提供 {hmPerKeyLimit} 并发；重复 Key 不会增加容量。</p>
+          <p className="text-xs text-zinc-500 mt-1">本服务实例无用户并发限制；所有池满载后，兼容视频自动调度备用线路。每 5 秒刷新。</p>
         </div>
-        <div className="text-right">
-          <p className="text-2xl font-bold text-white tabular-nums">{activeHmPools.size * hmPerKeyLimit}</p>
-          <p className="text-[10px] text-zinc-500">{activeHmPools.size} 个有效 Key × {hmPerKeyLimit}</p>
+        <div className="grid w-full grid-cols-3 gap-2 sm:w-auto sm:min-w-[300px]" aria-label="HM Studio 当前并发统计">
+          <div className="rounded-xl border border-white/[0.06] bg-black/20 px-3 py-2 text-center">
+            <p className="text-xl font-bold text-emerald-300 tabular-nums">{hmTotalRunning}</p>
+            <p className="text-[10px] text-zinc-500">运行中</p>
+          </div>
+          <div className="rounded-xl border border-white/[0.06] bg-black/20 px-3 py-2 text-center">
+            <p className="text-xl font-bold text-white tabular-nums">{hmTotalCapacity}</p>
+            <p className="text-[10px] text-zinc-500">总容量</p>
+          </div>
+          <div className="rounded-xl border border-white/[0.06] bg-black/20 px-3 py-2 text-center">
+            <p className="text-xl font-bold text-amber-300 tabular-nums">{hmTotalQueued}</p>
+            <p className="text-[10px] text-zinc-500">排队</p>
+          </div>
         </div>
       </div>
 
@@ -177,7 +199,8 @@ export default function ChannelsPage() {
               <span>优先级: <span className="text-zinc-300">{ch.priority}</span></span>
               <span>权重: <span className="text-zinc-300">{ch.weight}</span></span>
               <span>超时: <span className="text-zinc-300">{(ch.timeout / 1000).toFixed(0)}s</span></span>
-              {ch.type === 'hmstudio' && <span>并发池: <span className="text-amber-300">{ch.concurrencyLimit || 10}</span></span>}
+              {ch.type === 'hmstudio' && <span>运行: <span className="text-emerald-300 tabular-nums">{ch.concurrencyRunning || 0}/{ch.concurrencyLimit || 10}</span></span>}
+              {ch.type === 'hmstudio' && <span>排队: <span className="text-amber-300 tabular-nums">{ch.concurrencyQueued || 0}</span></span>}
               {ch.lastTestResult && <span>最后测试: <span className={ch.lastTestResult?.startsWith('success') ? 'text-green-400' : 'text-red-400'}>{ch.lastTestResult}</span></span>}
             </div>
           </div>
