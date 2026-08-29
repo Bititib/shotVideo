@@ -120,6 +120,22 @@ export function canAccessVideoRecord(record: any, token: any): boolean {
     && Number(record.userId) === Number(token.userId);
 }
 
+export function videoTaskFailureDetails(metadata: Record<string, any>): {
+  error: string;
+  error_message: string;
+  failed_at?: string;
+} {
+  const rawError = metadata?.error;
+  const message = typeof rawError === 'object' && rawError
+    ? String(rawError.message || JSON.stringify(rawError))
+    : String(rawError || 'Video generation failed');
+  return {
+    error: message,
+    error_message: message,
+    ...(metadata?.failedAt ? { failed_at: String(metadata.failedAt) } : {}),
+  };
+}
+
 /** 检查 Token 或关联用户的余额 */
 function checkTokenOrUserBalance(token: any, cost: number): { sufficient: boolean; balance: number } {
   if (cost <= 0) return { sufficient: true, balance: 0 };
@@ -1422,6 +1438,8 @@ async function handleVideoCreation(req: Request, res: Response) {
         channel_running: queue.poolRunning,
         channel_limit: queue.poolConcurrencyLimit,
         user_concurrency_limit: queue.userConcurrencyLimit,
+        status_url: `${req.protocol}://${req.get('host')}/v1/videos/task_${contentId}`,
+        retry_after: 5,
       });
     } catch (queueError: any) {
       if (totalCost > 0) {
@@ -1675,7 +1693,9 @@ async function handleVideoCreation(req: Request, res: Response) {
       object: 'video',
       model: model,
       status: 'queued',
-      progress: 0
+      progress: 0,
+      status_url: `${req.protocol}://${req.get('host')}/v1/videos/task_${contentId}`,
+      retry_after: 5,
     });
   } catch (err: any) {
     cleanupFiles(req.files);
@@ -1761,6 +1781,8 @@ async function handleVideoQuery(req: Request, res: Response) {
     if (mappedStatus === 'completed') {
       responseJson.url = contentUrl;
       responseJson.result_url = contentUrl;
+    } else if (mappedStatus === 'failed') {
+      Object.assign(responseJson, videoTaskFailureDetails(metadata));
     }
 
     return res.json(responseJson);

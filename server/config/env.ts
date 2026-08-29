@@ -11,6 +11,9 @@ export const env = {
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
   GEMINI_API_BASE_URL: process.env.GEMINI_API_BASE_URL || 'http://172.245.16.80:7860',
   HM_STUDIO_API_KEY: process.env.HM_STUDIO_API_KEY || '',
+  NEWTOKEN_BASE_URL: process.env.NEWTOKEN_BASE_URL || 'https://newtoken.club',
+  NEWTOKEN_API_KEY: process.env.NEWTOKEN_API_KEY || '',
+  VIDEO_TASK_POLL_TIMEOUT_MS: parseInt(process.env.VIDEO_TASK_POLL_TIMEOUT_MS || '1800000', 10),
   ADMIN_EMAIL: process.env.ADMIN_EMAIL || 'admin@admin.com',
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'admin123',
 };

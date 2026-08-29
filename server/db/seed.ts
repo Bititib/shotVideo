@@ -180,14 +180,33 @@ export async function syncModelsFromAPI() {
   } catch { /* ignore malformed legacy value */ }
   allVerified = allVerified.filter(model => !deletedModelIds.has(model.modelId));
 
+  // Provider identifies the configured upstream, not the model family. Keep it
+  // aligned with channel routing so the admin model cards do not show a stale
+  // Pidoi/diwdiw label while these IDs are routed through NewToken.
+  const newTokenModelIds = new Set([
+    'veo-omni-flash',
+    'veo-3-1',
+    'nd-seedance-2.0-480p',
+    'nd-seedance-2.0-720p',
+  ]);
+  allVerified = allVerified.map(model => newTokenModelIds.has(model.modelId)
+    ? { ...model, provider: 'newtoken' }
+    : model);
+
   // 同步或插入模型
   for (const m of allVerified) {
     const existing = db.select().from(models).where(eq(models.modelId, m.modelId)).get();
     const targetIsActive = m.isActive !== undefined ? m.isActive : 1;
     if (existing) {
-      if (existing.displayName !== m.displayName || existing.capabilities !== m.capabilities || existing.description !== (m.description || null)) {
+      const providerNeedsUpdate = newTokenModelIds.has(m.modelId) && existing.provider !== m.provider;
+      if (providerNeedsUpdate || existing.displayName !== m.displayName || existing.capabilities !== m.capabilities || existing.description !== (m.description || null)) {
         db.update(models)
-          .set({ displayName: m.displayName, capabilities: m.capabilities, description: m.description || null })
+          .set({
+            ...(providerNeedsUpdate ? { provider: m.provider } : {}),
+            displayName: m.displayName,
+            capabilities: m.capabilities,
+            description: m.description || null,
+          })
           .where(eq(models.modelId, m.modelId))
           .run();
       }
@@ -1035,34 +1054,34 @@ export async function initDatabase() {
 
   // 10) 保证 NewToken 渠道存在并且包含 veo-omni-flash 支持
   try {
-    const existingNewToken = db.select().from(channels).where(eq(channels.baseUrl, 'https://newtoken.club')).get();
+    const newTokenBaseUrl = env.NEWTOKEN_BASE_URL.replace(/\/+$/, '');
+    const newTokenApiKey = env.NEWTOKEN_API_KEY.trim();
+    const existingNewToken = db.select().from(channels).all().find(channel =>
+      channel.name === 'NewToken 渠道'
+      || channel.baseUrl.replace(/\/+$/, '') === newTokenBaseUrl
+    );
     if (!existingNewToken) {
       db.insert(channels).values({
         name: 'NewToken 渠道',
         type: 'openai',
-        baseUrl: 'https://newtoken.club',
-        apiKey: 'sk-tO4xRDsMI4XmyVw5gcsWwdYbC9s14NJieyZDuPmIqNgpA3jW',
+        baseUrl: newTokenBaseUrl,
+        apiKey: newTokenApiKey,
         supportedModels: JSON.stringify(['veo-omni-flash', 'veo-3-1', 'nd-seedance-2.0-480p', 'nd-seedance-2.0-720p']),
         modelMapping: JSON.stringify({
           'nd-seedance-2.0-480p': 'nd-seedance-2.0 480p',
           'nd-seedance-2.0-720p': 'nd-seedance-2.0 720p'
         }),
-        status: 1,
+        status: newTokenApiKey ? 1 : 0,
         priority: 0,
         weight: 1,
         maxRetries: 3,
         timeout: 120000,
       }).run();
       console.log('📦 已自动迁移：成功创建 NewToken 渠道并绑定 veo-omni-flash, veo-3-1 与 nd-seedance 2.0 系列');
-    } else {
+    } else if (newTokenApiKey) {
       db.update(channels)
         .set({
-          apiKey: 'sk-tO4xRDsMI4XmyVw5gcsWwdYbC9s14NJieyZDuPmIqNgpA3jW',
-          supportedModels: JSON.stringify(['veo-omni-flash', 'veo-3-1', 'nd-seedance-2.0-480p', 'nd-seedance-2.0-720p']),
-          modelMapping: JSON.stringify({
-            'nd-seedance-2.0-480p': 'nd-seedance-2.0 480p',
-            'nd-seedance-2.0-720p': 'nd-seedance-2.0 720p'
-          }),
+          apiKey: newTokenApiKey,
           updatedAt: new Date().toISOString()
         })
         .where(eq(channels.id, existingNewToken.id))

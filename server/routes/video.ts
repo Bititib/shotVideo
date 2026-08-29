@@ -2095,7 +2095,9 @@ async function failHmQueuedVideo(contentId: number, error: unknown): Promise<voi
     metadata.queueRefunded = true;
   }
   metadata.queueStatus = 'failed';
+  metadata.queuePosition = 0;
   metadata.error = message;
+  metadata.failedAt = new Date().toISOString();
   db.update(contents).set({ status: 'failed', cost: 0, metadata: JSON.stringify(metadata) })
     .where(eq(contents.id, contentId)).run();
 }
@@ -2223,23 +2225,13 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   if (!channel) {
     console.error(`[video-recover] No channel found for model ${model} in task ${contentId}`);
     activePolls.delete(contentId);
-    try {
-      db.update(contents).set({ status: 'failed' }).where(eq(contents.id, contentId)).run();
-    } catch (dbErr) {
-      console.error(`[video-recover] Failed to set status to failed for task ${contentId}:`, dbErr);
-    }
-    return Promise.resolve();
+    return failHmQueuedVideo(contentId, new Error(`No channel found for model ${model}`));
   }
 
   if (!videoId) {
     console.error(`[video-recover] No videoId found in metadata for task ${contentId}`);
     activePolls.delete(contentId);
-    try {
-      db.update(contents).set({ status: 'failed' }).where(eq(contents.id, contentId)).run();
-    } catch (dbErr) {
-      console.error(`[video-recover] Failed to set status to failed for task ${contentId}:`, dbErr);
-    }
-    return Promise.resolve();
+    return failHmQueuedVideo(contentId, new Error('Upstream task ID is missing'));
   }
 
   const resolution = metadata.resolution || '720p';
@@ -2351,11 +2343,22 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
     console.log(`[video-recover] Starting polling for video task ${contentId} (videoId: ${videoId})`);
     const pollInterval = 5000;
     const startTime = Date.now();
+    const createdAt = new Date(record.createdAt).getTime();
+    const timeoutStartedAt = Number.isFinite(createdAt) ? createdAt : startTime;
+    const pollTimeoutMs = Number.isFinite(env.VIDEO_TASK_POLL_TIMEOUT_MS) && env.VIDEO_TASK_POLL_TIMEOUT_MS > 0
+      ? env.VIDEO_TASK_POLL_TIMEOUT_MS
+      : 1_800_000;
 
     while (true) {
       const currentRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
       if (!currentRecord || currentRecord.status !== 'processing') {
         console.log(`[video-recover] Task ${contentId} is no longer in processing status (or was deleted)`);
+        break;
+      }
+
+      if (Date.now() - timeoutStartedAt >= pollTimeoutMs) {
+        const timeoutMinutes = Math.max(1, Math.round(pollTimeoutMs / 60_000));
+        await failHmQueuedVideo(contentId, new Error(`Video generation timed out after ${timeoutMinutes} minutes`));
         break;
       }
 
@@ -2521,23 +2524,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
         } else if (taskStatus === 'failed' || taskStatus === 'failure') {
           console.error(`[video-recover] ❌ Generating failed: ${errMsg}`);
           // 任务失败，为预扣费退款并将 cost 清零
-          const refundAmount = Number(record.cost) || 0;
-          if (refundAmount > 0) {
-            let meta: any = {};
-            try { meta = JSON.parse(record.metadata || '{}'); } catch { }
-            if (meta.billingSource === 'token' && meta.tokenId) {
-              const { TokenService } = await import('../services/tokenService.js');
-              TokenService.deductBalance(meta.tokenId, -refundAmount);
-            } else {
-              BalanceService.refund(record.userId, refundAmount, 'generate_video_refund');
-            }
-          }
-          let failedMeta: Record<string, any> = {};
-          try { failedMeta = JSON.parse(currentRecord.metadata || '{}'); } catch { }
-          failedMeta.queueStatus = 'failed';
-          failedMeta.queuePosition = 0;
-          failedMeta.error = errMsg;
-          db.update(contents).set({ status: 'failed', cost: 0, metadata: JSON.stringify(failedMeta) }).where(eq(contents.id, contentId)).run();
+          await failHmQueuedVideo(contentId, new Error(errMsg));
           break;
         }
       } catch (err: any) {

@@ -28,7 +28,8 @@ async function testGrokVideo() {
 
 async function testVeoOmniFlash() {
   const baseUrl = 'https://newtoken.club';
-  const apiKey = 'sk-tO4xRDsMI4XmyVw5gcsWwdYbC9s14NJieyZDuPmIqNgpA3jW';
+  const apiKey = process.env.NEWTOKEN_API_KEY;
+  if (!apiKey) throw new Error('NEWTOKEN_API_KEY is required');
   const payload = {
     model: 'veo-omni-flash',
     prompt: 'a dog running on grass',

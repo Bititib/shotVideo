@@ -1,6 +1,7 @@
 async function listModels() {
   const baseUrl = 'https://newtoken.club';
-  const apiKey = 'sk-tO4xRDsMI4XmyVw5gcsWwdYbC9s14NJieyZDuPmIqNgpA3jW';
+  const apiKey = process.env.NEWTOKEN_API_KEY;
+  if (!apiKey) throw new Error('NEWTOKEN_API_KEY is required');
 
   console.log('Listing models on newtoken.club...');
   try {

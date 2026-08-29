@@ -86,6 +86,26 @@ describe('种子数据完整性', () => {
     expect(channel!.status).toBe(0);
   });
 
+  it('NewToken 模型来源应该与实际路由渠道一致', () => {
+    const channel = db.select().from(channels).all()
+      .find(item => item.name === 'NewToken 渠道' || item.baseUrl.includes('newtoken.club'));
+    expect(channel).toBeDefined();
+
+    const supportedModels = JSON.parse(channel!.supportedModels) as string[];
+    const expectedModels = [
+      'veo-omni-flash',
+      'veo-3-1',
+      'nd-seedance-2.0-480p',
+      'nd-seedance-2.0-720p',
+    ];
+    expect(supportedModels).toEqual(expect.arrayContaining(expectedModels));
+
+    for (const modelId of expectedModels) {
+      const model = db.select().from(models).where(eq(models.modelId, modelId)).get();
+      expect(model?.provider).toBe('newtoken');
+    }
+  });
+
   it('应该有等级-模型关联数据', () => {
     const access = db.select().from(tierModelAccess).all();
     expect(access.length).toBeGreaterThan(0);

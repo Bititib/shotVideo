@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Film, Copy, ChevronLeft, ChevronRight, Filter, Image, Video, Music, Eye, X, Play } from 'lucide-react';
+import { Search, Film, Copy, ChevronLeft, ChevronRight, Filter, Image, Video, Music, Eye, X, Play, CircleAlert } from 'lucide-react';
 import { adminApi } from '../../api/admin';
 import { getVideoReferenceAssets } from '../../utils/videoPromptRefs';
+import { getContentFailureInfo } from '../../utils/contentFailure';
 
 interface ContentItem {
   id: number;
@@ -11,6 +12,7 @@ interface ContentItem {
   title: string;
   inputText: string | null;
   resultUrl: string | null;
+  resultText: string | null;
   modelId: string | null;
   cost: number;
   metadata: string;
@@ -364,6 +366,26 @@ export default function ContentsPage() {
                       ? <img src={previewItem.resultUrl} alt={previewItem.title || '生成图片'} className="w-full max-h-[65vh] object-contain rounded-xl bg-black" />
                       : <video src={getVideoPlayUrl(previewItem.resultUrl)} controls className="w-full rounded-xl bg-black" />
                   )}
+
+                  {(previewItem.status === 'failed' || previewItem.status === 'error') && (() => {
+                    const failure = getContentFailureInfo(previewItem.metadata, previewItem.resultText);
+                    return (
+                      <div className={`rounded-xl border p-4 ${failure.hasRecordedReason ? 'border-red-500/25 bg-red-500/10' : 'border-amber-500/25 bg-amber-500/10'}`}>
+                        <div className={`mb-2 flex items-center gap-2 text-xs font-semibold ${failure.hasRecordedReason ? 'text-red-300' : 'text-amber-300'}`}>
+                          <CircleAlert className="h-4 w-4" />
+                          失败原因
+                        </div>
+                        <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-200">
+                          {failure.message}
+                        </pre>
+                        {failure.failedAt && (
+                          <div className="mt-2 text-[10px] text-zinc-500">
+                            失败时间：{new Date(failure.failedAt).toLocaleString('zh-CN')}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Info grid */}
                   <div className="grid grid-cols-2 gap-3 text-xs">

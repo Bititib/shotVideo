@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canAccessVideoRecord, extractToken, filterRoutableModels, saveApiImageAssets } from '../server/routes/v1.js';
+import { canAccessVideoRecord, extractToken, filterRoutableModels, saveApiImageAssets, videoTaskFailureDetails } from '../server/routes/v1.js';
 import { TokenService } from '../server/services/tokenService.js';
 import { sqlite } from '../server/db/index.js';
 
@@ -46,6 +46,17 @@ describe('OpenAI-compatible API access', () => {
     const record = { userId: 7, metadata: '{}' };
     expect(canAccessVideoRecord(record, { id: 12, userId: 7 })).toBe(true);
     expect(canAccessVideoRecord(record, { id: 12, userId: 8 })).toBe(false);
+  });
+
+  it('returns the persisted reason when an asynchronous video task fails', () => {
+    expect(videoTaskFailureDetails({
+      error: 'Upstream rejected the reference image',
+      failedAt: '2026-08-29T10:20:00.000Z',
+    })).toEqual({
+      error: 'Upstream rejected the reference image',
+      error_message: 'Upstream rejected the reference image',
+      failed_at: '2026-08-29T10:20:00.000Z',
+    });
   });
 
   it('stores each API image as a separate content asset and preserves total cost', () => {

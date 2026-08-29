@@ -1,6 +1,7 @@
 async function checkNewToken() {
   const baseUrl = 'https://newtoken.club';
-  const apiKey = 'sk-22Vcwozkj2VvDsiTqr988NElCXPoTLFXg4tWWrGdYAWxac5o';
+  const apiKey = process.env.NEWTOKEN_API_KEY;
+  if (!apiKey) throw new Error('NEWTOKEN_API_KEY is required');
 
   console.log('Checking subscription/balance on newtoken.club...');
   try {
