@@ -311,7 +311,9 @@ print(resp.json())
   "queue_limit": 20,
   "channel_running": 9,
   "channel_limit": 10,
-  "user_concurrency_limit": 2
+  "user_concurrency_limit": 2,
+  "status_url": "${getBaseUrl()}/videos/task_123",
+  "retry_after": 5
 }`
     },
     {
@@ -319,7 +321,7 @@ print(resp.json())
       title: '统一视频任务轮询与查询',
       method: 'GET',
       path: '/v1/videos/{task_id}',
-      description: '使用创建接口返回的 task_id 轮询。排队时返回 queue_position、queue_running 和 queue_limit；完成后使用 content 直链下载视频。',
+      description: '使用创建接口返回的 status_url（或 task_id）轮询，建议间隔 retry_after 秒。排队时返回队列数据；完成后使用 content 直链下载；失败时返回 error_message 和 failed_at。',
       parameters: [
         { name: 'task_id', type: 'path_param', required: true, description: '创建任务时返回的任务 ID（如 task_123）' }
       ],
@@ -348,7 +350,7 @@ while True:
         print(f"✅ 生成成功! 下载地址: {res.get('url')}")
         break
     elif status == "failed":
-        print("❌ 失败")
+        print(f"❌ 失败: {res.get('error_message') or res.get('error') or '未返回失败原因'}")
         break
     time.sleep(5)`,
       responseExample: `{

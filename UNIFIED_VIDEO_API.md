@@ -24,7 +24,7 @@
 | `video_urls` | array[string] | 否 | `[]` | `videos` | 公网视频 URL 列表 |
 | `audio_urls` | array[string] | 否 | `[]` | `audios` | 公网音频 URL 列表 |
 
-### 响应示例 (HTTP 200 OK)
+### 响应示例 (HTTP 200/202)
 
 ```json
 {
@@ -33,9 +33,13 @@
   "object": "video",
   "model": "seedance-2.5m",
   "status": "queued",
-  "progress": 0
+  "progress": 0,
+  "status_url": "https://your-domain.com/v1/videos/task_53",
+  "retry_after": 5
 }
 ```
+
+创建响应只表示任务已进入异步队列。调用方必须继续请求 `status_url`，并按 `retry_after` 秒轮询。
 
 ---
 
@@ -65,6 +69,24 @@
   "result_url": "https://your-domain.com/v1/videos/task_53/content"
 }
 ```
+
+### 响应示例 (失败状态)
+
+```json
+{
+  "id": "task_53",
+  "task_id": "task_53",
+  "object": "video",
+  "model": "seedance-2.5m",
+  "status": "failed",
+  "progress": 0,
+  "error": "Upstream rejected the reference image",
+  "error_message": "Upstream rejected the reference image",
+  "failed_at": "2026-08-29T10:20:00.000Z"
+}
+```
+
+收到 `failed` 后必须停止轮询并展示 `error_message`。任务默认最多轮询 30 分钟，超时后自动失败并执行退款逻辑。
 
 ---
 
@@ -144,7 +166,7 @@ while True:
         print("🎉 视频已成功保存为 output.mp4")
         break
     elif status == "failed":
-        print("❌ 生成失败")
+        print(f"❌ 生成失败: {status_resp.get('error_message') or status_resp.get('error') or '未返回失败原因'}")
         break
 
     time.sleep(5)

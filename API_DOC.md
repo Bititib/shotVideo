@@ -257,11 +257,14 @@ curl -X POST "https://你的域名/v1/videos" \
   "queue_limit": 20,
   "channel_running": 9,
   "channel_limit": 10,
-  "user_concurrency_limit": 2
+  "user_concurrency_limit": 2,
+  "status_url": "https://你的域名/v1/videos/task_123",
+  "retry_after": 5
 }
 ```
 
 HM Studio 视频任务始终立即返回本地任务 ID。达到并发上限时任务进入公平队列，不会继续向上游提交。
+`status_url` 是后续状态查询地址；调用方应按 `retry_after` 秒轮询，不能把创建接口返回的 `202 queued` 当作生成完成。
 
 ### 6.2 查询任务
 
@@ -289,6 +292,24 @@ GET /v1/videos/{task_id}
   "result_url": "https://你的域名/v1/videos/task_123/content"
 }
 ```
+
+失败时返回：
+
+```json
+{
+  "id": "task_123",
+  "task_id": "task_123",
+  "object": "video",
+  "model": "sd2.5",
+  "status": "failed",
+  "progress": 0,
+  "error": "Upstream rejected the reference image",
+  "error_message": "Upstream rejected the reference image",
+  "failed_at": "2026-08-29T10:20:00.000Z"
+}
+```
+
+调用方收到 `failed` 后必须停止轮询，并向用户展示 `error_message`。上游持续无响应时，系统默认最多轮询 30 分钟，随后自动失败并执行退款逻辑；可通过 `VIDEO_TASK_POLL_TIMEOUT_MS` 调整。
 
 ### 6.3 下载任务内容
 
