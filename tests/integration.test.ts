@@ -10,6 +10,7 @@ import { eq } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { env } from '../server/config/env.js';
+import { getAccessibleModelIds } from '../server/routes/v1.js';
 
 beforeAll(async () => {
   // 确保数据库已初始化
@@ -84,6 +85,12 @@ describe('种子数据完整性', () => {
     expect(channel).toBeDefined();
     expect(channel!.baseUrl).toBe('https://dnyovzpgyokm.sealosbja.site');
     expect(channel!.status).toBe(0);
+  });
+
+  it('内部备用模型不应暴露给 API 调用方', () => {
+    const internalModel = db.select().from(models).where(eq(models.modelId, 'xd-seedance-2.5-720p')).get();
+    expect(internalModel?.isActive).toBe(0);
+    expect(getAccessibleModelIds({ allowedModels: [] })).not.toContain('xd-seedance-2.5-720p');
   });
 
   it('NewToken 模型来源应该与实际路由渠道一致', () => {

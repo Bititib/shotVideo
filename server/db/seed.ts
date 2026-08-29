@@ -158,7 +158,7 @@ export async function syncModelsFromAPI() {
     { provider: 'diwdiw', modelId: 'ad-seedance-2.5-480p', displayName: 'Seedance 2.5 480p（AD）', description: '支持最多30张图片、10个视频、10段音频参考，不限制人脸，按秒计费 ¥0.35/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'diwdiw', modelId: 'vd-seedance-2.5-480p', displayName: 'Seedance 2.5 480p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.25/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'diwdiw', modelId: 'vd-seedance-2.5-720p', displayName: 'Seedance 2.5 720p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.30/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
-    { provider: 'diwdiw', modelId: 'xd-seedance-2.5-720p', displayName: 'Seedance 2.5 720p（XD）', description: '9图参考，不支持视频音频参考，卡人脸；4-30秒，固定按次计费 ¥1.20/次', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'diwdiw', modelId: 'xd-seedance-2.5-720p', displayName: '内部视频备用线路', description: '仅供系统容量调度，不对用户直接开放', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'newtoken', modelId: 'veo-omni-flash-video-edit', displayName: 'Veo Omni Flash 视频编辑', description: '【不卡人脸-定制版】无水印视频编辑；必须提供1个参考视频，可附加多张参考图；固定10秒，参考视频最长15秒', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
@@ -224,6 +224,9 @@ export async function syncModelsFromAPI() {
       }).run();
     }
   }
+
+  // 备用执行模型只参与内部路由；即使旧版本曾将其启用，也要在升级时重新隐藏。
+  db.update(models).set({ isActive: 0 }).where(eq(models.modelId, 'xd-seedance-2.5-720p')).run();
 
   // 强制删除已废弃或不能使用的旧视频模型
   try {

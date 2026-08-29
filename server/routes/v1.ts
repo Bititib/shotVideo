@@ -39,12 +39,6 @@ import {
 const router = Router();
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
 
-function publicFallbackReason(reason: string | undefined): string | undefined {
-  if (reason === 'hmstudio_user_capacity') return 'user_capacity';
-  if (reason === 'hmstudio_capacity' || reason === 'hmstudio_upstream_concurrency') return 'capacity';
-  return reason ? 'automatic_routing' : undefined;
-}
-
 /** 从请求头中提取 Bearer Token */
 export function extractToken(req: Pick<Request, 'headers'>): string | null {
   const auth = req.headers.authorization;
@@ -115,7 +109,8 @@ export function getAccessibleModelIds(token: { allowedModels: string[] }): strin
     console.error('[v1/models] 渠道自定义模型读取失败:', error);
   }
 
-  let modelList = filterRoutableModels(Array.from(allModels), activeChannels);
+  let modelList = filterRoutableModels(Array.from(allModels), activeChannels)
+    .filter(modelId => modelId !== MJ_OVERFLOW_VIDEO_MODEL);
   if (token.allowedModels.length > 0) {
     modelList = modelList.filter(modelId => token.allowedModels.includes(modelId));
   }
@@ -1159,6 +1154,11 @@ async function handleVideoCreation(req: Request, res: Response) {
     image_urls = [body.Ingredients_images];
   }
 
+  if (model === MJ_OVERFLOW_VIDEO_MODEL) {
+    cleanupFiles(req.files);
+    return res.status(404).json({ error: `Model ${model} is not available` });
+  }
+
   if (Array.isArray(req.files)) {
     const uploadedImages = req.files
       .filter((f: any) => f.fieldname === 'input_reference[]' || f.fieldname === 'image' || f.fieldname === 'images')
@@ -1523,11 +1523,11 @@ async function handleVideoCreation(req: Request, res: Response) {
       let failedMeta: Record<string, any> = {};
       const failedRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
       try { failedMeta = JSON.parse(failedRecord?.metadata || '{}'); } catch { }
-      failedMeta.error = queueError.message || 'HM Studio queue failed';
+      failedMeta.error = queueError.message || '视频任务排队失败';
       failedMeta.queueStatus = 'failed';
       db.update(contents).set({ status: 'failed', cost: 0, metadata: JSON.stringify(failedMeta) })
         .where(eq(contents.id, contentId)).run();
-      return res.status(queueError.status || 503).json({ error: queueError.message || 'HM Studio queue failed' });
+      return res.status(queueError.status || 503).json({ error: '视频任务暂时无法排队，请稍后重试' });
     }
   }
 
@@ -1586,7 +1586,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       if (invalidUrls.length > 0) {
         cleanupFiles(req.files);
         db.update(contents).set({ status: 'failed', cost: 0 }).where(eq(contents.id, contentId)).run();
-        return res.status(400).json({ error: 'MJNewAPI reference materials must use publicly accessible HTTPS URLs. Check BACKEND_URL.' });
+        return res.status(400).json({ error: 'Reference materials must use publicly accessible HTTPS URLs. Check BACKEND_URL.' });
       }
 
       const payload = buildMjNewApiVideoPayload({
@@ -1800,9 +1800,6 @@ async function handleVideoCreation(req: Request, res: Response) {
       task_id: `task_${contentId}`,
       object: 'video',
       model: model,
-      actual_model: executionModel,
-      fallback: Boolean(failoverReason),
-      fallback_reason: publicFallbackReason(failoverReason || undefined),
       status: 'queued',
       progress: 0,
       status_url: `${req.protocol}://${req.get('host')}/v1/videos/task_${contentId}`,
@@ -1887,9 +1884,6 @@ async function handleVideoQuery(req: Request, res: Response) {
       channel_running: Number(metadata.queuePoolRunning || 0),
       channel_limit: Number(metadata.queuePoolLimit || 10),
       user_concurrency_limit: Number(metadata.queueUserLimit || 2),
-      actual_model: metadata.actualModel || record.modelId,
-      fallback: Boolean(metadata.fallbackReason),
-      fallback_reason: publicFallbackReason(metadata.fallbackReason),
     };
 
     if (mappedStatus === 'completed') {

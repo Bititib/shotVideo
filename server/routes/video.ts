@@ -265,7 +265,6 @@ const MODEL_META: Record<string, ModelMeta> = {
 
 const DEFAULT_VIDEO_MODELS = [
   { id: 'seedance_v2.5', name: 'Seedance V2.5（HM Studio）', description: '720p；支持4-30秒；最多10张图片参考，不支持音频和视频参考', maxSeconds: 30, icon: '🎬' },
-  { id: 'xd-seedance-2.5-720p', name: 'Seedance 2.5 720p（XD）', description: '9图参考，不支持视频音频参考，卡人脸；4-30秒，固定按次计费 ¥1.20/次', maxSeconds: 30, icon: '🎬' },
   { id: 'ad-seedance-2.5-480p', name: 'Seedance 2.5 480p（AD）', description: '支持最多30张图片、10个视频、10段音频参考，不限制人脸，按秒计费 ¥0.35/秒', maxSeconds: 30, icon: '🎬' },
   { id: 'vd-seedance-2.5-480p', name: 'Seedance 2.5 480p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.25/秒', maxSeconds: 30, icon: '🎬' },
   { id: 'vd-seedance-2.5-720p', name: 'Seedance 2.5 720p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.30/秒', maxSeconds: 30, icon: '🎬' },
@@ -509,6 +508,7 @@ router.get('/models', (_req: Request, res: Response) => {
   const sourceModels = dbModels.length > 0
     ? dbModels.map(m => ({ id: m.modelId, name: m.displayName, description: m.description }))
     : DEFAULT_VIDEO_MODELS.filter(m => !disabledModelIds.has(m.id));
+  const publicSourceModels = sourceModels.filter(m => m.id !== MJ_OVERFLOW_VIDEO_MODEL);
 
   const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
   const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
@@ -519,7 +519,7 @@ router.get('/models', (_req: Request, res: Response) => {
   const soraV4ProRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_pro_rate')).get()?.value || '0.25');
   const veoOmniFlashRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get()?.value || '0.25');
 
-  const result = sourceModels.map(m => {
+  const result = publicSourceModels.map(m => {
     const preset = DEFAULT_VIDEO_MODELS.find(d => d.id === m.id);
     const meta = MODEL_META[m.id];
     const multiplier = meta?.series === '1.5' ? 1.2 : 1.0;
@@ -725,6 +725,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     return res.status(400).json({ error: '提示词字数不能超过 5000 字' });
   }
 
+  if (model === MJ_OVERFLOW_VIDEO_MODEL) {
+    return res.status(404).json({ error: '该模型不可直接调用' });
+  }
+
   const meta = MODEL_META[model];
 
   if (model === 'wan3.0th') {
@@ -846,10 +850,6 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       message: failoverReason === 'hmstudio_user_capacity'
         ? '您的主线路并发已满，已自动切换至备用线路生成'
         : '主线路当前已满载，已自动切换至备用线路生成',
-      fallback: true,
-      requestedModel: model,
-      actualModel: executionModel,
-      fallbackReason: failoverReason === 'hmstudio_user_capacity' ? 'user_capacity' : 'capacity',
     });
   }
 
@@ -1119,7 +1119,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         if (res.destroyed || res.writableEnded) return;
       }
     } catch (error: any) {
-      refundFailedTask(error.message || 'HM Studio 排队失败');
+      refundFailedTask(error.message || '视频任务排队失败');
       if (!res.destroyed && !res.writableEnded) {
         res.write('data: [DONE]\n\n');
         res.end();
@@ -1163,7 +1163,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       const job = await createResp.json() as any;
       videoId = job.task_id || job.id;
     } else if (isMjNewApi) {
-      sendEvent({ type: 'status', message: '正在处理素材并提交 MJNewAPI 任务...' });
+      sendEvent({ type: 'status', message: '正在处理素材并提交视频任务...' });
 
       const imageUrls = (reference_images || [])
         .map((item: string) => convertBase64ToPublicUrl(item, 'mj_img', req))
@@ -1177,7 +1177,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       const invalidUrls = findInvalidMjNewApiMaterialUrls(imageUrls, videoUrls, audioUrls);
 
       if (invalidUrls.length > 0) {
-        refundFailedTask('MJNewAPI 参考素材必须是外网可访问的 HTTPS URL，请检查 BACKEND_URL 配置');
+        refundFailedTask('参考素材必须是外网可访问的 HTTPS URL，请检查 BACKEND_URL 配置');
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1207,7 +1207,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
-        refundFailedTask(`MJNewAPI 提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        refundFailedTask(`视频任务提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -2308,7 +2308,7 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
             .filter(Boolean);
           const invalidUrls = findInvalidMjNewApiMaterialUrls(imageUrls);
           if (invalidUrls.length > 0) {
-            throw new Error('HM Studio 并发已满，但 MJ 备用渠道无法访问参考图片 URL，请检查 BACKEND_URL');
+            throw new Error('主线路并发已满，但备用线路无法访问参考图片 URL，请检查 BACKEND_URL');
           }
 
           const fallbackPayload = buildMjNewApiVideoPayload({
@@ -2332,11 +2332,11 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
           });
           if (!fallbackResponse.ok) {
             const fallbackDetail = await fallbackResponse.text().catch(() => '');
-            throw new Error(`HM Studio 并发已满，MJ 备用提交也失败 (${fallbackResponse.status}): ${fallbackDetail.slice(0, 300)}`);
+            throw new Error(`主线路并发已满，备用线路提交也失败 (${fallbackResponse.status}): ${fallbackDetail.slice(0, 300)}`);
           }
           const fallbackResult = await fallbackResponse.json() as any;
           const fallbackVideoId = fallbackResult.id || fallbackResult.task_id;
-          if (!fallbackVideoId) throw new Error('MJ 备用渠道未返回任务 ID');
+          if (!fallbackVideoId) throw new Error('备用线路未返回任务 ID');
 
           latestMeta.videoId = fallbackVideoId;
           latestMeta.channelId = fallbackChannel.id;
