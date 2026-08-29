@@ -13,6 +13,10 @@ export const tokensApi = {
     return api.post<any>('/tokens', data);
   },
 
+  getTokenKey(id: number) {
+    return api.get<{ id: number; tokenKey: string }>(`/tokens/${id}/key`);
+  },
+
   updateToken(id: number, data: { name?: string; status?: number; expiresAt?: string | null }) {
     return api.put<any>(`/tokens/${id}`, data);
   },

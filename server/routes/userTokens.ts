@@ -24,6 +24,23 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   }
 });
 
+// 按需返回当前用户拥有的单个完整 Key，列表接口仍保持脱敏
+router.get('/:id/key', async (req: AuthRequest, res: Response) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: '无效的 API Key ID' });
+    }
+
+    const token = TokenService.getTokenKeyForUser(id, req.userId!);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+    res.json(token);
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
 // 用户自行创建 Token (默认使用用户账号的可用余额，限额 -1)
 router.post('/', async (req: AuthRequest, res: Response) => {
   try {

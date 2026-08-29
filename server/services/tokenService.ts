@@ -65,6 +65,20 @@ export class TokenService {
     };
   }
 
+  /** 获取当前用户拥有的完整 Token Key（仅用于用户主动复制单个密钥） */
+  static getTokenKeyForUser(id: number, userId: number) {
+    const token = db.select({
+      id: apiTokens.id,
+      tokenKey: apiTokens.tokenKey,
+    }).from(apiTokens).where(and(
+      eq(apiTokens.id, id),
+      eq(apiTokens.userId, userId),
+    )).get();
+
+    if (!token) throw { status: 404, message: 'API Key 不存在' };
+    return token;
+  }
+
   /** 创建新 Token */
   static createToken(data: { userId?: number; name?: string; allowedModels?: string[]; balance?: number; rateLimit?: number; expiresAt?: string }) {
     const tokenKey = generateTokenKey();

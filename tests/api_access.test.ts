@@ -104,4 +104,17 @@ describe('OpenAI-compatible API access', () => {
       sqlite.prepare('DELETE FROM api_tokens WHERE id = ?').run(created.id);
     }
   });
+
+  it('returns a full token key only to its owning user on explicit request', () => {
+    const created = TokenService.createToken({ userId: 987654, name: 'owned-copy-key', balance: 1 });
+    try {
+      expect(TokenService.getTokenKeyForUser(created.id, 987654)).toEqual({
+        id: created.id,
+        tokenKey: created.tokenKey,
+      });
+      expect(() => TokenService.getTokenKeyForUser(created.id, 987655)).toThrow();
+    } finally {
+      sqlite.prepare('DELETE FROM api_tokens WHERE id = ?').run(created.id);
+    }
+  });
 });

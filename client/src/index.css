@@ -817,6 +817,7 @@ button.bg-gradient-to-r:disabled, a.bg-gradient-to-r[aria-disabled="true"] {
 .profile-token-actions { display: flex; gap: 7px; flex: 0 0 auto; }
 .profile-token-actions button { min-height: 38px; display: inline-flex; align-items: center; gap: 5px; padding: 7px 10px; border: 1px solid #d8bea1; border-radius: 10px; color: #6b584b; background: #fff9f0; font-size: 10px; font-weight: 700; }
 .profile-token-actions button:hover { color: var(--earth-primary); background: #f3e2d0; }
+.profile-token-actions button:disabled { cursor: wait; opacity: .65; }
 .profile-token-actions button.is-danger { color: #914438; background: #faebe5; border-color: #e3b8ad; }
 .profile-list-state { min-height: 72px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--earth-muted); border: 1px dashed #ddc7ad; border-radius: 13px; font-size: 11px; }
 .profile-quota-value { display: flex; align-items: baseline; gap: 6px; padding: 15px 0 17px; border-top: 1px solid var(--earth-line); }

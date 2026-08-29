@@ -4,6 +4,8 @@ import {
   CalendarDays,
   CheckCircle2,
   Copy,
+  Eye,
+  EyeOff,
   Gauge,
   KeyRound,
   Mail,
@@ -47,6 +49,10 @@ export default function ProfilePage() {
   const [newTokenName, setNewTokenName] = useState('');
   const [newTokenKey, setNewTokenKey] = useState<string | null>(null);
   const [tokenError, setTokenError] = useState('');
+  const [copyingTokenId, setCopyingTokenId] = useState<number | null>(null);
+  const [copiedTokenId, setCopiedTokenId] = useState<number | null>(null);
+  const [revealingTokenId, setRevealingTokenId] = useState<number | null>(null);
+  const [visibleTokenKeys, setVisibleTokenKeys] = useState<Record<number, string>>({});
 
   const loadTokens = async () => {
     setTokensLoading(true);
@@ -125,6 +131,46 @@ export default function ProfilePage() {
     await navigator.clipboard.writeText(text);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleCopyToken = async (token: any) => {
+    setTokenError('');
+    setCopyingTokenId(token.id);
+    try {
+      const tokenKey = visibleTokenKeys[token.id]
+        || (await tokensApi.getTokenKey(token.id)).tokenKey;
+      await navigator.clipboard.writeText(tokenKey);
+      setCopiedTokenId(token.id);
+      window.setTimeout(() => {
+        setCopiedTokenId(currentId => currentId === token.id ? null : currentId);
+      }, 2000);
+    } catch (error: any) {
+      setTokenError(error.message || 'API Key 复制失败');
+    } finally {
+      setCopyingTokenId(null);
+    }
+  };
+
+  const handleToggleTokenVisibility = async (token: any) => {
+    if (visibleTokenKeys[token.id]) {
+      setVisibleTokenKeys(current => {
+        const next = { ...current };
+        delete next[token.id];
+        return next;
+      });
+      return;
+    }
+
+    setTokenError('');
+    setRevealingTokenId(token.id);
+    try {
+      const response = await tokensApi.getTokenKey(token.id);
+      setVisibleTokenKeys(current => ({ ...current, [token.id]: response.tokenKey }));
+    } catch (error: any) {
+      setTokenError(error.message || 'API Key 查看失败');
+    } finally {
+      setRevealingTokenId(null);
+    }
   };
 
   if (!user) {
@@ -219,7 +265,7 @@ export default function ProfilePage() {
 
             {newTokenKey && (
               <div className="profile-token-created" role="status">
-                <div className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 mt-0.5" /><p><strong>API Key 创建成功</strong><br />请立即复制保存，此密钥只展示一次。</p></div>
+                <div className="flex items-start gap-2"><CheckCircle2 className="w-4 h-4 mt-0.5" /><p><strong>API Key 创建成功</strong><br />你可以立即复制，也可以稍后从密钥列表再次复制。</p></div>
                 <div className="profile-secret-row">
                   <code>{newTokenKey}</code>
                   <button onClick={() => handleCopyText(newTokenKey)}><Copy className="w-4 h-4" />复制</button>
@@ -246,9 +292,34 @@ export default function ProfilePage() {
                       <strong>{token.name || '未命名 Key'}</strong>
                       <span className={`profile-token-status ${token.status ? 'is-active' : ''}`}>{token.status ? '已启用' : '已停用'}</span>
                     </div>
-                    <code>{token.tokenKeyMasked}</code>
+                    <code>{visibleTokenKeys[token.id] || token.tokenKeyMasked}</code>
                   </div>
                   <div className="profile-token-actions">
+                    <button
+                      onClick={() => handleToggleTokenVisibility(token)}
+                      disabled={revealingTokenId === token.id}
+                      aria-label={`${visibleTokenKeys[token.id] ? '隐藏' : '查看'} ${token.name || 'API Key'}`}
+                      aria-pressed={Boolean(visibleTokenKeys[token.id])}
+                    >
+                      {revealingTokenId === token.id
+                        ? <RefreshCw className="w-4 h-4 animate-spin" />
+                        : visibleTokenKeys[token.id]
+                          ? <EyeOff className="w-4 h-4" />
+                          : <Eye className="w-4 h-4" />}
+                      {revealingTokenId === token.id ? '读取中' : visibleTokenKeys[token.id] ? '隐藏' : '查看'}
+                    </button>
+                    <button
+                      onClick={() => handleCopyToken(token)}
+                      disabled={copyingTokenId === token.id}
+                      aria-label={`复制 ${token.name || 'API Key'}`}
+                    >
+                      {copyingTokenId === token.id
+                        ? <RefreshCw className="w-4 h-4 animate-spin" />
+                        : copiedTokenId === token.id
+                          ? <CheckCircle2 className="w-4 h-4" />
+                          : <Copy className="w-4 h-4" />}
+                      {copyingTokenId === token.id ? '复制中' : copiedTokenId === token.id ? '已复制' : '复制'}
+                    </button>
                     <button onClick={() => handleToggleTokenStatus(token)} aria-label={`${token.status ? '停用' : '启用'} ${token.name || 'API Key'}`}>
                       {token.status ? <PowerOff className="w-4 h-4" /> : <Power className="w-4 h-4" />}{token.status ? '停用' : '启用'}
                     </button>
