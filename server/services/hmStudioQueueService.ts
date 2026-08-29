@@ -190,6 +190,13 @@ export class HmStudioQueueService {
     return { running, queued, load: running + queued, limit: this.poolConcurrencyLimit };
   }
 
+  getUserLoad(userKeyValue: string | number): { running: number; queued: number; load: number; limit: number } {
+    const userKey = String(userKeyValue);
+    const running = this.userActiveCount(userKey);
+    const queued = this.pendingByUser.get(userKey)?.length || 0;
+    return { running, queued, load: running + queued, limit: this.userConcurrencyLimit };
+  }
+
   getPoolStats() {
     return Array.from(this.configuredPools).map(poolId => ({
       pool_id: poolId,

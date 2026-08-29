@@ -47,6 +47,7 @@ describe('HM Studio fair queue', () => {
     expect(queue.snapshot('b1').status).toBe('running');
     expect(queue.snapshot('a2').status).toBe('queued');
     expect(queue.getLimits().running).toBe(2);
+    expect(queue.getUserLoad('a')).toEqual({ running: 1, queued: 1, load: 2, limit: 1 });
 
     a1.resolve();
     await first.completion;

@@ -792,6 +792,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   if (isHmStudioChannel(channel)) {
     const fallbackChannel = findVideoChannel(MJ_OVERFLOW_VIDEO_MODEL);
     const poolLoad = hmStudioQueue.getPoolLoad(hmStudioPoolKey(channel));
+    const queueUserKey = `user:${req.userId}`;
+    const userLoad = hmStudioQueue.getUserLoad(queueUserKey);
     if (shouldOverflowHmStudio({
       requestedModel: model,
       resolution,
@@ -801,11 +803,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       audioCount: finalAudios.length,
       poolLoad: poolLoad.load,
       poolLimit: poolLoad.limit,
+      userLoad: userLoad.load,
+      userLimit: userLoad.limit,
       fallbackAvailable: Boolean(fallbackChannel && isMjNewApiChannel(fallbackChannel)),
     }) && fallbackChannel) {
       channel = fallbackChannel;
       executionModel = MJ_OVERFLOW_VIDEO_MODEL;
-      failoverReason = 'hmstudio_capacity';
+      failoverReason = poolLoad.load >= poolLoad.limit
+        ? 'hmstudio_capacity'
+        : 'hmstudio_user_capacity';
     }
   }
 
@@ -837,7 +843,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   if (failoverReason) {
     sendEvent({
       type: 'status',
-      message: 'HM Studio 当前已满载，已自动切换至 MJ 备用模型生成',
+      message: failoverReason === 'hmstudio_user_capacity'
+        ? '您的 HM Studio 并发已满，已自动切换至 MJ 备用模型生成'
+        : 'HM Studio 当前已满载，已自动切换至 MJ 备用模型生成',
       fallback: true,
       requestedModel: model,
       actualModel: executionModel,

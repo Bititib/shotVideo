@@ -29,11 +29,13 @@ export function canUseMjOverflowModel(input: HmStudioOverflowInput): boolean {
 export function shouldOverflowHmStudio(input: HmStudioOverflowInput & {
   poolLoad: number;
   poolLimit: number;
+  userLoad: number;
+  userLimit: number;
   fallbackAvailable: boolean;
 }): boolean {
   return input.fallbackAvailable
-    && input.poolLimit > 0
-    && input.poolLoad >= input.poolLimit
+    && ((input.poolLimit > 0 && input.poolLoad >= input.poolLimit)
+      || (input.userLimit > 0 && input.userLoad >= input.userLimit))
     && canUseMjOverflowModel(input);
 }
 

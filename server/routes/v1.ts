@@ -1370,6 +1370,8 @@ async function handleVideoCreation(req: Request, res: Response) {
     if (isHmStudioChannel(channel)) {
       const fallbackChannel = ChannelService.findChannelForModel(MJ_OVERFLOW_VIDEO_MODEL);
       const poolLoad = hmStudioQueue.getPoolLoad(hmStudioPoolKey(channel));
+      const queueUserKey = token.userId ? `user:${token.userId}` : `token:${token.id}`;
+      const userLoad = hmStudioQueue.getUserLoad(queueUserKey);
       if (shouldOverflowHmStudio({
         requestedModel: model,
         resolution,
@@ -1379,11 +1381,15 @@ async function handleVideoCreation(req: Request, res: Response) {
         audioCount: audio_urls.length,
         poolLoad: poolLoad.load,
         poolLimit: poolLoad.limit,
+        userLoad: userLoad.load,
+        userLimit: userLoad.limit,
         fallbackAvailable: Boolean(fallbackChannel && isMjNewApiChannel(fallbackChannel)),
       }) && fallbackChannel) {
         channel = fallbackChannel;
         executionModel = MJ_OVERFLOW_VIDEO_MODEL;
-        failoverReason = 'hmstudio_capacity';
+        failoverReason = poolLoad.load >= poolLoad.limit
+          ? 'hmstudio_capacity'
+          : 'hmstudio_user_capacity';
       }
     }
 
