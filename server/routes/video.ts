@@ -40,11 +40,18 @@ import {
   sudaShuiVideoCreateUrl,
 } from '../services/sudaShuiAdapter.js';
 import {
-  canUseMjOverflowModel,
   isHmStudioConcurrencyError,
   MJ_OVERFLOW_VIDEO_MODEL,
-  shouldOverflowHmStudio,
 } from '../services/videoFailoverService.js';
+import { findHmStudioOverflowPlan } from '../services/hmStudioOverflowChannelService.js';
+import {
+  buildWxHaidiYueVideoPayload,
+  isWxHaidiYueChannel,
+  normalizeWxHaidiYueTask,
+  shouldSendWxHaidiYueAuthorization,
+  wxHaidiYueCreateUrl,
+  wxHaidiYueTaskUrl,
+} from '../services/wxHaidiYueAdapter.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models, settings, contents } from '../db/schema.js';
@@ -345,8 +352,11 @@ export async function downloadAndLocalizeVideo(
   const exactChannel = channelId ? ChannelService.getChannelRaw(channelId, channelApiKeyId) : null;
   const channel = exactChannel || ChannelService.findChannelForModel(model);
   const headers: Record<string, string> = {};
-  const maySendAuthorization = !isHmStudioChannel(channel)
-    || shouldSendHmStudioAuthorization(url, channel.baseUrl);
+  const maySendAuthorization = isHmStudioChannel(channel)
+    ? shouldSendHmStudioAuthorization(url, channel.baseUrl)
+    : isWxHaidiYueChannel(channel)
+      ? shouldSendWxHaidiYueAuthorization(url, channel.baseUrl)
+      : true;
   if (channel?.apiKey && maySendAuthorization) {
     headers.Authorization = `Bearer ${channel.apiKey}`;
   }
@@ -857,21 +867,20 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   let executionModel = model;
   let failoverReason = '';
   if (isHmStudioChannel(channel)) {
-    const fallbackChannel = findVideoChannel(MJ_OVERFLOW_VIDEO_MODEL);
     const poolLoad = hmStudioQueue.getPoolLoad(hmStudioPoolKey(channel));
-    if (shouldOverflowHmStudio({
-      requestedModel: model,
-      resolution,
-      seconds: Number(video_length),
-      imageCount: reference_images.length,
-      videoCount: finalVideos.length,
-      audioCount: finalAudios.length,
-      poolLoad: poolLoad.load,
-      poolLimit: poolLoad.limit,
-      fallbackAvailable: Boolean(fallbackChannel && isMjNewApiChannel(fallbackChannel)),
-    }) && fallbackChannel) {
-      channel = fallbackChannel;
-      executionModel = MJ_OVERFLOW_VIDEO_MODEL;
+    const overflowPlan = poolLoad.limit > 0 && poolLoad.load >= poolLoad.limit
+      ? findHmStudioOverflowPlan({
+          requestedModel: model,
+          resolution,
+          seconds: Number(video_length),
+          imageCount: reference_images.length,
+          videoCount: finalVideos.length,
+          audioCount: finalAudios.length,
+        })
+      : null;
+    if (overflowPlan) {
+      channel = overflowPlan.channel;
+      executionModel = overflowPlan.executionModel;
       failoverReason = 'hmstudio_capacity';
     }
   }
@@ -1140,6 +1149,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
   const isSudaShui = meta?.series === 'sudashui';
   const isHmStudio = isHmStudioChannel(channel);
+  const isWxHaidiYue = isWxHaidiYueChannel(channel);
   const isSnumomWan = isSnumomWanChannel(channel);
   const isMjNewApi = isMjNewApiChannel(channel);
   const isVeoOmni = model === 'veo-omni-flash';
@@ -1258,6 +1268,31 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       }
       const job = await createResp.json() as any;
       videoId = job.task_id || job.id;
+    } else if (isWxHaidiYue) {
+      sendEvent({ type: 'status', message: '正在提交视频任务...' });
+      const payload = buildWxHaidiYueVideoPayload({
+        prompt: prompt.trim(),
+        duration: Number(video_length) || 5,
+        aspectRatio: aspect_ratio,
+        images: reference_images,
+      });
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (channel.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
+      const createResp = await fetch(wxHaidiYueCreateUrl(baseUrl), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(dbChannel?.timeout || 120_000),
+      });
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        console.error(`[video] wx-海底月提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        refundFailedTask('视频任务提交失败，请稍后重试');
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+      const job = await createResp.json() as any;
+      videoId = job.request_id || job.task_id || job.id;
     } else if (isMjNewApi) {
       sendEvent({ type: 'status', message: '正在处理素材并提交视频任务...' });
 
@@ -1894,6 +1929,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         let pollUrl = `${baseUrl}/v1/videos/${videoId}`;
         if (isHmStudio) {
           pollUrl = hmStudioTaskUrl(baseUrl, videoId);
+        } else if (isWxHaidiYue) {
+          pollUrl = wxHaidiYueTaskUrl(baseUrl, videoId);
         } else if (isSudaShui) {
           pollUrl = `${baseUrl}/v1/video/generations/${videoId}`;
         }
@@ -1920,6 +1957,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           progress = normalized.progress;
           resultUrl = normalized.resultUrl;
           errMsg = normalized.error || 'HM Studio 视频生成失败';
+        } else if (isWxHaidiYue) {
+          const normalized = normalizeWxHaidiYueTask(status, baseUrl);
+          taskStatus = normalized.status;
+          progress = normalized.progress;
+          resultUrl = normalized.resultUrl;
+          errMsg = normalized.error || normalized.errorCode || '视频生成失败';
         } else if (isSnumomWan) {
           const normalized = normalizeSnumomWanTask(status);
           taskStatus = normalized.status;
@@ -2465,63 +2508,83 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
           const referenceImages = latestMeta.reference_images || latestMeta.image_urls || [];
           const referenceVideos = latestMeta.reference_videos || latestMeta.video_urls || [];
           const referenceAudios = latestMeta.audio_urls || [];
-          const canFailover = isHmStudioConcurrencyError(response.status, detail)
-            && canUseMjOverflowModel({
+          const overflowPlan = isHmStudioConcurrencyError(response.status, detail)
+            ? findHmStudioOverflowPlan({
               requestedModel: model,
               resolution: latestMeta.resolution || '720p',
               seconds: Number(latestMeta.seconds) || 6,
               imageCount: referenceImages.length,
               videoCount: referenceVideos.length,
               audioCount: referenceAudios.length,
-            });
-          const fallbackChannel = canFailover
-            ? ChannelService.findChannelForModel(MJ_OVERFLOW_VIDEO_MODEL)
+            })
             : null;
 
-          if (!fallbackChannel || !isMjNewApiChannel(fallbackChannel)) {
+          if (!overflowPlan) {
             throw new Error(`HM Studio 提交失败 (${response.status}): ${detail.slice(0, 300)}`);
           }
 
+          const fallbackChannel = overflowPlan.channel;
           let fallbackMapping: Record<string, string> = {};
           try {
             fallbackMapping = typeof fallbackChannel.modelMapping === 'string'
               ? JSON.parse(fallbackChannel.modelMapping || '{}')
               : (fallbackChannel.modelMapping || {});
-          } catch { /* use the public fallback model ID */ }
-          const fallbackUpstreamModel = fallbackMapping[MJ_OVERFLOW_VIDEO_MODEL] || MJ_OVERFLOW_VIDEO_MODEL;
-          const imageUrls = referenceImages
-            .map((item: string) => convertBase64ToPublicUrl(item, 'mj_overflow_img', latestMeta.publicBaseUrl || ''))
-            .filter(Boolean);
-          const invalidUrls = findInvalidMjNewApiMaterialUrls(imageUrls);
-          if (invalidUrls.length > 0) {
-            throw new Error('主线路并发已满，但备用线路无法访问参考图片 URL，请检查 BACKEND_URL');
-          }
+          } catch { /* use the selected overflow model ID */ }
+          const fallbackUpstreamModel = fallbackMapping[overflowPlan.executionModel] || overflowPlan.executionModel;
 
-          const fallbackPayload = buildMjNewApiVideoPayload({
-            model: fallbackUpstreamModel,
-            prompt: String(latestMeta.prompt || latest.inputText || '').trim(),
-            duration: Number(latestMeta.seconds) || 6,
-            aspectRatio: latestMeta.aspect_ratio || latestMeta.ratio || '16:9',
-            resolution: latestMeta.resolution || '720p',
-            images: imageUrls,
-            videos: [],
-            audios: [],
-          });
-          const fallbackResponse = await fetch(`${fallbackChannel.baseUrl.replace(/\/+$/, '')}/v1/videos`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${fallbackChannel.apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(fallbackPayload),
-            signal: AbortSignal.timeout(fallbackChannel.timeout || 120_000),
-          });
+          let fallbackResponse: Awaited<ReturnType<typeof fetch>>;
+          if (overflowPlan.kind === 'wx-haidiyue') {
+            const fallbackPayload = buildWxHaidiYueVideoPayload({
+              prompt: String(latestMeta.prompt || latest.inputText || '').trim(),
+              duration: Number(latestMeta.seconds) || 6,
+              aspectRatio: latestMeta.aspect_ratio || latestMeta.ratio || '16:9',
+              images: referenceImages,
+            });
+            fallbackResponse = await fetch(wxHaidiYueCreateUrl(fallbackChannel.baseUrl), {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${fallbackChannel.apiKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(fallbackPayload),
+              signal: AbortSignal.timeout(fallbackChannel.timeout || 120_000),
+            });
+          } else {
+            const imageUrls = referenceImages
+              .map((item: string) => convertBase64ToPublicUrl(item, 'mj_overflow_img', latestMeta.publicBaseUrl || ''))
+              .filter(Boolean);
+            const invalidUrls = findInvalidMjNewApiMaterialUrls(imageUrls);
+            if (invalidUrls.length > 0) {
+              console.error('[video] HM 满载分流失败：MJNewAPI 无法访问参考图片 URL，请检查 BACKEND_URL');
+              throw new Error('视频任务暂时无法提交，请稍后重试');
+            }
+            const fallbackPayload = buildMjNewApiVideoPayload({
+              model: fallbackUpstreamModel,
+              prompt: String(latestMeta.prompt || latest.inputText || '').trim(),
+              duration: Number(latestMeta.seconds) || 6,
+              aspectRatio: latestMeta.aspect_ratio || latestMeta.ratio || '16:9',
+              resolution: latestMeta.resolution || '720p',
+              images: imageUrls,
+              videos: [],
+              audios: [],
+            });
+            fallbackResponse = await fetch(`${fallbackChannel.baseUrl.replace(/\/+$/, '')}/v1/videos`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${fallbackChannel.apiKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(fallbackPayload),
+              signal: AbortSignal.timeout(fallbackChannel.timeout || 120_000),
+            });
+          }
           if (!fallbackResponse.ok) {
             const fallbackDetail = await fallbackResponse.text().catch(() => '');
-            throw new Error(`主线路并发已满，备用线路提交也失败 (${fallbackResponse.status}): ${fallbackDetail.slice(0, 300)}`);
+            console.error(`[video] HM 满载分流提交失败 (${fallbackResponse.status}): ${fallbackDetail.slice(0, 300)}`);
+            throw new Error('视频任务暂时无法提交，请稍后重试');
           }
           const fallbackResult = await fallbackResponse.json() as any;
-          const fallbackVideoId = fallbackResult.id || fallbackResult.task_id;
+          const fallbackVideoId = fallbackResult.request_id || fallbackResult.id || fallbackResult.task_id;
           if (!fallbackVideoId) throw new Error('备用线路未返回任务 ID');
 
           latestMeta.videoId = fallbackVideoId;
@@ -2529,13 +2592,13 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
           latestMeta.channelApiKeyId = fallbackChannel.apiKeyId;
           latestMeta.upstreamModel = fallbackUpstreamModel;
           latestMeta.requestedModel = model;
-          latestMeta.actualModel = MJ_OVERFLOW_VIDEO_MODEL;
-          latestMeta.actualChannel = 'mjnewapi';
+          latestMeta.actualModel = overflowPlan.executionModel;
+          latestMeta.actualChannel = overflowPlan.kind;
           latestMeta.fallbackFrom = 'hmstudio';
           latestMeta.fallbackReason = 'hmstudio_upstream_concurrency';
           latestMeta.fallbackAt = new Date().toISOString();
           latestMeta.upstreamStatus = 'submitted';
-          latestMeta.progressText = '主线路上游并发已满，已自动切换至备用线路';
+          latestMeta.progressText = '视频生成中';
           latestMeta.progress = 0;
           latestMeta.queueStatus = 'running';
           db.update(contents).set({ status: 'processing', metadata: JSON.stringify(latestMeta) })
@@ -2727,6 +2790,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
   const isSudaShui = meta?.series === 'sudashui';
   const isHmStudio = isHmStudioChannel(channel);
+  const isWxHaidiYue = isWxHaidiYueChannel(channel);
   const isSnumomWan = isSnumomWanChannel(channel);
 
   const headers: Record<string, string> = {};
@@ -2761,6 +2825,8 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
         let pollUrl = `${baseUrl}/v1/videos/${videoId}`;
         if (isHmStudio) {
           pollUrl = hmStudioTaskUrl(baseUrl, videoId);
+        } else if (isWxHaidiYue) {
+          pollUrl = wxHaidiYueTaskUrl(baseUrl, videoId);
         } else if (isSudaShui) {
           pollUrl = `${baseUrl}/v1/video/generations/${videoId}`;
         }
@@ -2787,6 +2853,12 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           progress = normalized.progress;
           resultUrl = normalized.resultUrl;
           errMsg = normalized.error || 'HM Studio 视频生成失败';
+        } else if (isWxHaidiYue) {
+          const normalized = normalizeWxHaidiYueTask(statusData, baseUrl);
+          taskStatus = normalized.status;
+          progress = normalized.progress;
+          resultUrl = normalized.resultUrl;
+          errMsg = normalized.error || normalized.errorCode || '视频生成失败';
         } else if (isSnumomWan) {
           const normalized = normalizeSnumomWanTask(statusData);
           taskStatus = normalized.status;

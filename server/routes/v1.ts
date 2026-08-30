@@ -46,8 +46,13 @@ import {
 } from '../services/julunMinimaxAdapter.js';
 import {
   MJ_OVERFLOW_VIDEO_MODEL,
-  shouldOverflowHmStudio,
 } from '../services/videoFailoverService.js';
+import { findHmStudioOverflowPlan } from '../services/hmStudioOverflowChannelService.js';
+import {
+  buildWxHaidiYueVideoPayload,
+  isWxHaidiYueChannel,
+  wxHaidiYueCreateUrl,
+} from '../services/wxHaidiYueAdapter.js';
 import { enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
 import { withVideoFailureMetadata } from '../services/videoFailureService.js';
 
@@ -1513,21 +1518,20 @@ async function handleVideoCreation(req: Request, res: Response) {
 
   if (channel) {
     if (isHmStudioChannel(channel)) {
-      const fallbackChannel = ChannelService.findChannelForModel(MJ_OVERFLOW_VIDEO_MODEL);
       const poolLoad = hmStudioQueue.getPoolLoad(hmStudioPoolKey(channel));
-      if (shouldOverflowHmStudio({
-        requestedModel: model,
-        resolution,
-        seconds,
-        imageCount: image_urls.length,
-        videoCount: video_urls.length,
-        audioCount: audio_urls.length,
-        poolLoad: poolLoad.load,
-        poolLimit: poolLoad.limit,
-        fallbackAvailable: Boolean(fallbackChannel && isMjNewApiChannel(fallbackChannel)),
-      }) && fallbackChannel) {
-        channel = fallbackChannel;
-        executionModel = MJ_OVERFLOW_VIDEO_MODEL;
+      const overflowPlan = poolLoad.limit > 0 && poolLoad.load >= poolLoad.limit
+        ? findHmStudioOverflowPlan({
+            requestedModel: model,
+            resolution,
+            seconds,
+            imageCount: image_urls.length,
+            videoCount: video_urls.length,
+            audioCount: audio_urls.length,
+          })
+        : null;
+      if (overflowPlan) {
+        channel = overflowPlan.channel;
+        executionModel = overflowPlan.executionModel;
         failoverReason = 'hmstudio_capacity';
       }
     }
@@ -1647,6 +1651,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     'omni-flash-vref'
   ].includes(model) || model.startsWith('omni-') || model.startsWith('veo-omni-'));
   const isHmStudio = isHmStudioChannel(channel);
+  const isWxHaidiYue = isWxHaidiYueChannel(channel);
   const isMjNewApi = isMjNewApiChannel(channel);
 
   if (isHmStudio) {
@@ -1686,6 +1691,8 @@ async function handleVideoCreation(req: Request, res: Response) {
 
   const upstreamUrl = isHmStudio
     ? hmStudioCreateUrl(baseUrl, 'video')
+    : isWxHaidiYue
+    ? wxHaidiYueCreateUrl(baseUrl)
     : isNewTokenModel
     ? newTokenVideoCreateUrl(baseUrl)
     : isSudaShuiModel
@@ -1733,6 +1740,21 @@ async function handleVideoCreation(req: Request, res: Response) {
         method: 'POST',
         headers,
         body: formData,
+        signal: AbortSignal.timeout(channel.timeout || 120_000),
+      });
+    } else if (isWxHaidiYue) {
+      const payload = buildWxHaidiYueVideoPayload({
+        prompt,
+        duration: seconds,
+        aspectRatio: ratio,
+        images: image_urls,
+      });
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+      upstreamRes = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(channel.timeout || 120_000),
       });
     } else if (isMjNewApi) {
@@ -1943,7 +1965,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       cost: totalCost, durationMs, status: 'success', clientIp,
     }).run();
 
-    const upstreamTaskId = responseBody.task_id || responseBody.id;
+    const upstreamTaskId = responseBody.request_id || responseBody.task_id || responseBody.id;
     if (!upstreamTaskId) {
       const refundTarget = refundTokenOrUserBalance(token, totalCost);
       balanceDeducted = false;
@@ -2069,6 +2091,11 @@ async function handleVideoQuery(req: Request, res: Response) {
     } catch {}
 
     const mappedStatus = normalizeVideoApiStatus(status, metadata.upstreamStatus, progress);
+    const wasInternallyRouted = Boolean(
+      metadata.fallbackFrom
+      || metadata.fallbackReason
+      || metadata.actualChannel === 'wx-haidiyue'
+    );
 
     const host = req.get('host');
     const protocol = req.protocol;
@@ -2084,7 +2111,9 @@ async function handleVideoQuery(req: Request, res: Response) {
       status: mappedStatus,
       progress,
       progress_pct: progress,
-      progress_text: mappedStatus === 'completed' ? undefined : (metadata.progressText || undefined),
+      progress_text: mappedStatus === 'completed'
+        ? undefined
+        : (wasInternallyRouted ? '视频生成中' : (metadata.progressText || undefined)),
       upstream_task_id: metadata.videoId || undefined,
       upstream_status: metadata.upstreamStatus || undefined,
       status_url: `${protocol}://${host}/v1/videos/task_${record.id}`,

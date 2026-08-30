@@ -263,6 +263,7 @@ export default function ChannelsPage() {
                       className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
                       <option value="openai">OpenAI 兼容（Chat 代理）</option>
                       <option value="hmstudio">HM Studio（图片/视频异步任务）</option>
+                      <option value="wx-haidiyue">wx-海底月（仅 sd2.5 分流）</option>
                       <option value="snumom">snumom（WAN3.0 视频异步任务）</option>
                       <option value="gemini">Gemini（分析服务）</option>
                       <option value="grok2api">Grok2API（视频/图片生成）</option>

@@ -26,6 +26,18 @@ export function canUseMjOverflowModel(input: HmStudioOverflowInput): boolean {
     && input.audioCount === 0;
 }
 
+/** wx-海底月的 sd2.5 比 HM Studio 少支持 1 张参考图，且不接受视频或音频参考。 */
+export function canUseWxHaidiYueOverflow(input: HmStudioOverflowInput): boolean {
+  return input.requestedModel === HM_STUDIO_PRIMARY_VIDEO_MODEL
+    && input.resolution === '720p'
+    && Number.isInteger(input.seconds)
+    && input.seconds >= 4
+    && input.seconds <= 30
+    && input.imageCount <= 9
+    && input.videoCount === 0
+    && input.audioCount === 0;
+}
+
 export function shouldOverflowHmStudio(input: HmStudioOverflowInput & {
   poolLoad: number;
   poolLimit: number;

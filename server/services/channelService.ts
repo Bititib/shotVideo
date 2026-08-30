@@ -2,6 +2,12 @@ import { db } from '../db/index.js';
 import { channelApiKeys, channels, models } from '../db/schema.js';
 import { desc, eq } from 'drizzle-orm';
 import { hmStudioPoolConfig, hmStudioPoolKey, hmStudioQueue } from './hmStudioQueueService.js';
+import {
+  isWxHaidiYueChannel,
+  WX_HAIDIYUE_CHANNEL_NAME,
+  WX_HAIDIYUE_CHANNEL_TYPE,
+  WX_HAIDIYUE_UPSTREAM_MODEL,
+} from './wxHaidiYueAdapter.js';
 
 const DEFAULT_HM_CONCURRENCY = (() => {
   const parsed = Number.parseInt(process.env.HM_STUDIO_CONCURRENCY || '10', 10);
@@ -271,13 +277,16 @@ export class ChannelService {
     const { name, type, baseUrl, apiKey, modelMapping, supportedModels, priority, weight, maxRetries, timeout } = data;
     if (!name || !baseUrl) throw { status: 400, message: '渠道名称和 Base URL 不能为空' };
 
+    const isWxHaidiYue = type === WX_HAIDIYUE_CHANNEL_TYPE;
     const result = db.insert(channels).values({
-      name,
+      name: isWxHaidiYue ? WX_HAIDIYUE_CHANNEL_NAME : name,
       type: type || 'openai',
       baseUrl,
       apiKey: type === 'hmstudio' ? '' : (apiKey || ''),
-      modelMapping: JSON.stringify(modelMapping || {}),
-      supportedModels: JSON.stringify(supportedModels || []),
+      modelMapping: JSON.stringify(isWxHaidiYue
+        ? { [WX_HAIDIYUE_UPSTREAM_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL }
+        : (modelMapping || {})),
+      supportedModels: JSON.stringify(isWxHaidiYue ? [WX_HAIDIYUE_UPSTREAM_MODEL] : (supportedModels || [])),
       priority: priority ?? 0,
       weight: weight ?? 1,
       concurrencyLimit: DEFAULT_HM_CONCURRENCY,
@@ -318,6 +327,11 @@ export class ChannelService {
     if (data.maxRetries !== undefined) updates.maxRetries = data.maxRetries;
     if (data.timeout !== undefined) updates.timeout = data.timeout;
     if (data.status !== undefined) updates.status = data.status;
+    if (nextType === WX_HAIDIYUE_CHANNEL_TYPE) {
+      updates.name = WX_HAIDIYUE_CHANNEL_NAME;
+      updates.supportedModels = JSON.stringify([WX_HAIDIYUE_UPSTREAM_MODEL]);
+      updates.modelMapping = JSON.stringify({ [WX_HAIDIYUE_UPSTREAM_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL });
+    }
     updates.updatedAt = new Date().toISOString();
 
     if (nextType === 'hmstudio') {
@@ -344,7 +358,10 @@ export class ChannelService {
 
     const start = Date.now();
     try {
-      const url = channel.baseUrl.replace(/\/+$/, '') + '/v1/models';
+      const baseUrl = channel.baseUrl.replace(/\/+$/, '');
+      const url = isWxHaidiYueChannel(channel) && /\/v1$/i.test(baseUrl)
+        ? `${baseUrl}/models`
+        : `${baseUrl}/v1/models`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), channel.timeout || 15000);
       const response = await fetch(url, {
@@ -377,6 +394,16 @@ export class ChannelService {
     const channel = this.getChannelRaw(id);
     if (!channel) throw { status: 404, message: '渠道不存在' };
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
+
+    // 该渠道是专用分流线路，不允许“同步模型”将其他上游模型加入白名单。
+    if (isWxHaidiYueChannel(channel)) {
+      db.update(channels).set({
+        supportedModels: JSON.stringify([WX_HAIDIYUE_UPSTREAM_MODEL]),
+        modelMapping: JSON.stringify({ [WX_HAIDIYUE_UPSTREAM_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL }),
+        updatedAt: new Date().toISOString(),
+      }).where(eq(channels.id, id)).run();
+      return { count: 1, added: 0, models: [WX_HAIDIYUE_UPSTREAM_MODEL] };
+    }
 
     const url = channel.baseUrl.replace(/\/+$/, '') + '/v1/models';
     const response = await fetch(url, {

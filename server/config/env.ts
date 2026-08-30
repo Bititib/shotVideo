@@ -11,6 +11,7 @@ export const env = {
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
   GEMINI_API_BASE_URL: process.env.GEMINI_API_BASE_URL || 'http://172.245.16.80:7860',
   HM_STUDIO_API_KEY: process.env.HM_STUDIO_API_KEY || '',
+  WX_HAIDIYUE_API_KEY: process.env.WX_HAIDIYUE_API_KEY || '',
   NEWTOKEN_BASE_URL: process.env.NEWTOKEN_BASE_URL || 'https://newtoken.club',
   NEWTOKEN_API_KEY: process.env.NEWTOKEN_API_KEY || '',
   SNUMOM_BASE_URL: process.env.SNUMOM_BASE_URL || 'https://snumom.com',

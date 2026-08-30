@@ -22,6 +22,51 @@ interface ContentItem {
   userName: string | null;
 }
 
+type AdminRoutingInfo = {
+  routed: boolean;
+  requestedModel: string;
+  actualModel: string;
+  actualChannel: string;
+  reason: string;
+  fallbackAt: string;
+};
+
+const channelDisplayName = (channel: string) => {
+  if (channel === 'wx-haidiyue') return 'wx-海底月';
+  if (channel === 'hmstudio') return 'HM Studio';
+  if (channel === 'mjnewapi') return 'MJNewAPI';
+  return channel || '未知';
+};
+
+const routingReasonDisplayName = (reason: string) => {
+  if (reason === 'hmstudio_capacity') return 'HM 并发池满载';
+  if (reason === 'hmstudio_upstream_concurrency') return 'HM 上游返回并发错误';
+  return reason || '—';
+};
+
+const getAdminRoutingInfo = (item: ContentItem, metadata: Record<string, any>): AdminRoutingInfo | null => {
+  const requestedModel = String(metadata.requestedModel || metadata.model || item.modelId || '');
+  const routed = Boolean(
+    metadata.fallbackFrom
+    || metadata.fallbackReason
+    || metadata.actualChannel === 'wx-haidiyue'
+    || (metadata.actualModel && metadata.actualModel !== requestedModel)
+  );
+  const isHmStudioTask = requestedModel === 'seedance_v2.5'
+    || metadata.actualChannel === 'hmstudio'
+    || metadata.fallbackFrom === 'hmstudio';
+  if (!routed && !isHmStudioTask) return null;
+
+  return {
+    routed,
+    requestedModel: requestedModel || '未知',
+    actualModel: String(metadata.actualModel || requestedModel || '未知'),
+    actualChannel: channelDisplayName(String(metadata.actualChannel || (routed ? '' : 'hmstudio'))),
+    reason: routingReasonDisplayName(String(metadata.fallbackReason || '')),
+    fallbackAt: String(metadata.fallbackAt || ''),
+  };
+};
+
 export default function ContentsPage() {
   const navigate = useNavigate();
   const [items, setItems] = useState<ContentItem[]>([]);
@@ -160,6 +205,7 @@ export default function ContentsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {items.map(item => {
             const meta = parseMeta(item.metadata);
+            const routingInfo = getAdminRoutingInfo(item, meta);
             const { refImgs, refVids, refAuds } = parseRefAssets(item.metadata);
             const isImage = item.type === 'image';
             const hasResult = Boolean(item.resultUrl && item.resultUrl.trim() !== '');
@@ -201,6 +247,13 @@ export default function ContentsPage() {
                   <div className="absolute top-2 right-2">
                     {getStatusBadge(item.status)}
                   </div>
+                  {routingInfo && (
+                    <div className={`absolute top-2 left-2 rounded-full border px-2 py-0.5 text-[10px] font-medium backdrop-blur-sm ${routingInfo.routed
+                      ? 'border-cyan-400/30 bg-cyan-500/20 text-cyan-200'
+                      : 'border-emerald-400/25 bg-emerald-500/15 text-emerald-200'}`}>
+                      {routingInfo.routed ? `已分流 · ${routingInfo.actualChannel}` : '未分流 · HM Studio'}
+                    </div>
+                  )}
                   {/* Duration & resolution */}
                   {!isImage && meta.seconds && (
                     <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
@@ -429,6 +482,7 @@ export default function ContentsPage() {
                     </div>
                     {(() => {
                       const m = parseMeta(previewItem.metadata);
+                      const routingInfo = getAdminRoutingInfo(previewItem, m);
                       return (
                         <>
                           {m.resolution && (
@@ -448,6 +502,39 @@ export default function ContentsPage() {
                               <div className="text-zinc-500 mb-1">宽高比</div>
                               <div className="text-white">{m.aspect_ratio}</div>
                             </div>
+                          )}
+                          {routingInfo && (
+                            <>
+                              <div className="bg-white/[0.03] rounded-lg p-3">
+                                <div className="text-zinc-500 mb-1">分流状态</div>
+                                <div className={routingInfo.routed ? 'text-cyan-300' : 'text-emerald-300'}>
+                                  {routingInfo.routed ? '已分流' : '未分流'}
+                                </div>
+                              </div>
+                              <div className="bg-white/[0.03] rounded-lg p-3">
+                                <div className="text-zinc-500 mb-1">实际渠道</div>
+                                <div className="text-white">{routingInfo.actualChannel}</div>
+                              </div>
+                              <div className="bg-white/[0.03] rounded-lg p-3">
+                                <div className="text-zinc-500 mb-1">请求模型</div>
+                                <div className="text-white break-all">{routingInfo.requestedModel}</div>
+                              </div>
+                              <div className="bg-white/[0.03] rounded-lg p-3">
+                                <div className="text-zinc-500 mb-1">实际模型</div>
+                                <div className="text-white break-all">{routingInfo.actualModel}</div>
+                              </div>
+                              {routingInfo.routed && (
+                                <div className="col-span-2 bg-cyan-500/[0.06] border border-cyan-400/15 rounded-lg p-3">
+                                  <div className="text-cyan-300/70 mb-1">分流原因</div>
+                                  <div className="text-cyan-100">{routingInfo.reason}</div>
+                                  {routingInfo.fallbackAt && (
+                                    <div className="mt-1 text-[10px] text-zinc-500">
+                                      分流时间：{new Date(routingInfo.fallbackAt).toLocaleString('zh-CN')}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </>
                           )}
                         </>
                       );

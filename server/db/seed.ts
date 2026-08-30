@@ -6,6 +6,11 @@ import crypto from 'crypto';
 import { env, getApiKeys } from '../config/env.js';
 import { GoogleGenAI } from '@google/genai';
 import { JULUN_MINIMAX_H3_MODEL } from '../services/julunMinimaxAdapter.js';
+import {
+  WX_HAIDIYUE_CHANNEL_NAME,
+  WX_HAIDIYUE_CHANNEL_TYPE,
+  WX_HAIDIYUE_UPSTREAM_MODEL,
+} from '../services/wxHaidiYueAdapter.js';
 
 /** 生成 sk-xxxx 格式的 Token */
 function generateTokenKey(): string {
@@ -1412,6 +1417,51 @@ export async function initDatabase() {
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 HM Studio 渠道出错:', err.message);
+  }
+
+  // 18) wx-海底月仅作为 HM Studio 满载时的 sd2.5 分流渠道。
+  try {
+    const wxHaidiYueBaseUrl = 'https://ap.968968968.xyz/v1';
+    const wxHaidiYueApiKey = env.WX_HAIDIYUE_API_KEY.trim();
+    const existingWxHaidiYue = db.select().from(channels).all().find(channel =>
+      channel.type === WX_HAIDIYUE_CHANNEL_TYPE
+      || channel.baseUrl?.replace(/\/+$/, '') === wxHaidiYueBaseUrl
+      || channel.name?.includes('wx-海底月')
+    );
+
+    const fixedConfig = {
+      name: WX_HAIDIYUE_CHANNEL_NAME,
+      type: WX_HAIDIYUE_CHANNEL_TYPE,
+      baseUrl: wxHaidiYueBaseUrl,
+      supportedModels: JSON.stringify([WX_HAIDIYUE_UPSTREAM_MODEL]),
+      modelMapping: JSON.stringify({ [WX_HAIDIYUE_UPSTREAM_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL }),
+      priority: 100,
+      weight: 1,
+      maxRetries: 0,
+      timeout: 120000,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (!existingWxHaidiYue) {
+      db.insert(channels).values({
+        ...fixedConfig,
+        apiKey: wxHaidiYueApiKey,
+        status: wxHaidiYueApiKey ? 1 : 0,
+      }).run();
+      console.log(`📦 已自动创建 ${WX_HAIDIYUE_CHANNEL_NAME}（${wxHaidiYueApiKey ? '已启用' : '等待配置 API Key'}）`);
+    } else {
+      const updates: Record<string, any> = { ...fixedConfig };
+      if (wxHaidiYueApiKey) {
+        updates.apiKey = wxHaidiYueApiKey;
+        updates.status = 1;
+      } else if (!existingWxHaidiYue.apiKey) {
+        updates.status = 0;
+      }
+      db.update(channels).set(updates).where(eq(channels.id, existingWxHaidiYue.id)).run();
+      console.log(`🔄 已校准 ${WX_HAIDIYUE_CHANNEL_NAME}（仅 ${WX_HAIDIYUE_UPSTREAM_MODEL}）`);
+    }
+  } catch (err: any) {
+    console.error('⚠️ 初始化 wx-海底月 sd2.5 分流渠道出错:', err.message);
   }
 
   // 清除所有历史拆分的 MJNewAPI 渠道以保持干净

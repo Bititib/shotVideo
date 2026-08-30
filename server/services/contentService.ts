@@ -29,6 +29,40 @@ interface GetContentsOptions {
   source?: 'api';
 }
 
+const INTERNAL_VIDEO_ROUTING_FIELDS = [
+  'actualModel',
+  'actualChannel',
+  'fallbackFrom',
+  'fallbackReason',
+  'fallbackAt',
+  'channelId',
+  'channelApiKeyId',
+  'upstreamModel',
+];
+
+/** Remove administrator-only channel and failover details from ordinary content responses. */
+export function sanitizeContentRoutingForClient<T extends { metadata?: string | Record<string, any> | null }>(item: T): T {
+  let metadata: Record<string, any> = {};
+  try {
+    metadata = typeof item.metadata === 'string'
+      ? JSON.parse(item.metadata || '{}')
+      : { ...(item.metadata || {}) };
+  } catch {
+    return item;
+  }
+
+  const wasRouted = Boolean(metadata.fallbackFrom || metadata.fallbackReason || metadata.actualChannel === 'wx-haidiyue');
+  for (const field of INTERNAL_VIDEO_ROUTING_FIELDS) delete metadata[field];
+  if (wasRouted && typeof metadata.progressText === 'string') {
+    metadata.progressText = '视频生成中';
+  }
+
+  return {
+    ...item,
+    metadata: typeof item.metadata === 'string' ? JSON.stringify(metadata) : metadata,
+  };
+}
+
 export class ContentService {
   /** 保存生成内容 */
   static save(input: SaveContentInput): number {
@@ -84,7 +118,7 @@ export class ContentService {
       .where(and(...conditions))
       .get()?.count || 0;
 
-    return { items, total, page, pageSize };
+    return { items: items.map(sanitizeContentRoutingForClient), total, page, pageSize };
   }
 
   /** 查询组织内容（组织管理员可查看所有成员的内容） */

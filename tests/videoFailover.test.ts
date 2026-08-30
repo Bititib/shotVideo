@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canUseMjOverflowModel,
+  canUseWxHaidiYueOverflow,
   isHmStudioConcurrencyError,
   shouldOverflowHmStudio,
 } from '../server/services/videoFailoverService.js';
@@ -45,6 +46,14 @@ describe('HM Studio to MJ video failover', () => {
     expect(canUseMjOverflowModel({ ...compatibleRequest, videoCount: 1 })).toBe(false);
     expect(canUseMjOverflowModel({ ...compatibleRequest, audioCount: 1 })).toBe(false);
     expect(canUseMjOverflowModel({ ...compatibleRequest, resolution: '480p' })).toBe(false);
+  });
+
+  it('uses wx-海底月 sd2.5 only for its narrower compatible request shape', () => {
+    expect(canUseWxHaidiYueOverflow(compatibleRequest)).toBe(true);
+    expect(canUseWxHaidiYueOverflow({ ...compatibleRequest, imageCount: 10 })).toBe(false);
+    expect(canUseWxHaidiYueOverflow({ ...compatibleRequest, videoCount: 1 })).toBe(false);
+    expect(canUseWxHaidiYueOverflow({ ...compatibleRequest, audioCount: 1 })).toBe(false);
+    expect(canUseWxHaidiYueOverflow({ ...compatibleRequest, resolution: '480p' })).toBe(false);
   });
 
   it('recognizes explicit upstream concurrency errors but not ordinary failures', () => {

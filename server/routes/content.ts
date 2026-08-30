@@ -1,7 +1,7 @@
 import { Router, Response } from 'express';
 import { activeApiKeyMiddleware, authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { orgAdminMiddleware } from '../middleware/admin.js';
-import { ContentService } from '../services/contentService.js';
+import { ContentService, sanitizeContentRoutingForClient } from '../services/contentService.js';
 import { db } from '../db/index.js';
 import { users } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
@@ -65,7 +65,7 @@ router.get('/api-history/:id', activeApiKeyMiddleware, (req: AuthRequest, res: R
     if (item.userId !== req.userId || !isApiGeneratedContent(item)) {
       return res.status(404).json({ error: 'API 调用记录不存在' });
     }
-    res.json(item);
+    res.json(sanitizeContentRoutingForClient(item));
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '获取 API 调用记录失败' });
   }
@@ -126,7 +126,7 @@ router.get('/:id', (req: AuthRequest, res: Response) => {
       resumePollForTask(contentId, item);
     }
 
-    res.json(item);
+    res.json(sanitizeContentRoutingForClient(item));
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '获取内容失败' });
   }
