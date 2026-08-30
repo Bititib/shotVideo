@@ -1,72 +1,251 @@
 import { db } from '../db/index.js';
-import { channels, models } from '../db/schema.js';
-import { eq, sql, desc } from 'drizzle-orm';
-import { hmStudioPoolKey, hmStudioQueue } from './hmStudioQueueService.js';
+import { channelApiKeys, channels, models } from '../db/schema.js';
+import { desc, eq } from 'drizzle-orm';
+import { hmStudioPoolConfig, hmStudioPoolKey, hmStudioQueue } from './hmStudioQueueService.js';
+
+const DEFAULT_HM_CONCURRENCY = (() => {
+  const parsed = Number.parseInt(process.env.HM_STUDIO_CONCURRENCY || '10', 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 10;
+})();
+
+function parseConcurrencyLimit(value: unknown, fallback = DEFAULT_HM_CONCURRENCY): number {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 1000) {
+    throw { status: 400, message: 'HM Studio 并发数必须是 1 到 1000 之间的整数' };
+  }
+  return parsed;
+}
+
+function parseJsonObject(value: string): Record<string, string> {
+  try { return JSON.parse(value || '{}'); } catch { return {}; }
+}
+
+function parseJsonArray(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch { return []; }
+}
+
+function maskApiKey(apiKey: string): string {
+  return apiKey ? `****${apiKey.slice(-4)}` : '';
+}
+
+function allHmKeys() {
+  return db.select().from(channelApiKeys).all();
+}
+
+function syncHmStudioPools(channelRows = db.select().from(channels).all()): void {
+  const activeChannelIds = new Set(
+    channelRows
+      .filter(channel => channel.type === 'hmstudio' && channel.status === 1)
+      .map(channel => channel.id),
+  );
+  hmStudioQueue.syncPools(
+    allHmKeys()
+      .filter(key => key.status === 1 && activeChannelIds.has(key.channelId))
+      .map(hmStudioPoolConfig),
+  );
+}
+
+function findDuplicateHmKey(apiKey: string, excludedId?: number) {
+  return allHmKeys().find(key => key.apiKey === apiKey && key.id !== excludedId);
+}
+
+function saveHmStudioKeys(channelId: number, entries: any[], replaceExisting: boolean): void {
+  const existing = db.select().from(channelApiKeys).where(eq(channelApiKeys.channelId, channelId)).all();
+  const retainedIds = new Set<number>();
+
+  const requestedIds = new Set(
+    entries.map(entry => Number(entry?.id)).filter(id => Number.isInteger(id) && id > 0),
+  );
+  const requestedNewKeys = entries
+    .filter(entry => !Number.isInteger(Number(entry?.id)) || Number(entry?.id) <= 0)
+    .map(entry => String(entry?.apiKey || '').trim())
+    .filter(Boolean);
+  if (new Set(requestedNewKeys).size !== requestedNewKeys.length) {
+    throw { status: 409, message: '本次提交中包含重复的 HM Studio API Key' };
+  }
+  for (const apiKey of requestedNewKeys) {
+    const duplicate = findDuplicateHmKey(apiKey);
+    if (duplicate) {
+      const duplicateChannel = db.select().from(channels).where(eq(channels.id, duplicate.channelId)).get();
+      throw {
+        status: 409,
+        message: `该 HM Studio API Key 已存在于渠道「${duplicateChannel?.name || duplicate.channelId}」，重复添加不会增加并发`,
+      };
+    }
+  }
+  for (const id of requestedIds) {
+    if (!existing.some(key => key.id === id)) {
+      throw { status: 400, message: 'API Key 不属于当前渠道' };
+    }
+  }
+  if (replaceExisting) {
+    for (const key of existing.filter(item => !requestedIds.has(item.id))) {
+      const load = hmStudioQueue.getPoolLoad(hmStudioPoolKey(key));
+      if (load.load > 0) {
+        throw { status: 409, message: `${maskApiKey(key.apiKey)} 仍有 ${load.load} 个运行或排队任务，暂时不能删除` };
+      }
+    }
+  }
+
+  for (const entry of entries) {
+    const id = Number(entry?.id);
+    const concurrencyLimit = parseConcurrencyLimit(entry?.concurrencyLimit);
+    const status = entry?.status === 0 ? 0 : 1;
+
+    if (Number.isInteger(id) && id > 0) {
+      const current = existing.find(key => key.id === id);
+      if (!current) continue;
+      db.update(channelApiKeys).set({
+        concurrencyLimit,
+        status,
+        updatedAt: new Date().toISOString(),
+      }).where(eq(channelApiKeys.id, id)).run();
+      retainedIds.add(id);
+      continue;
+    }
+
+    const apiKey = String(entry?.apiKey || '').trim();
+    if (!apiKey) continue;
+    const result = db.insert(channelApiKeys).values({
+      channelId,
+      apiKey,
+      concurrencyLimit,
+      status,
+    }).run();
+    retainedIds.add(Number(result.lastInsertRowid));
+  }
+
+  if (replaceExisting) {
+    for (const key of existing) {
+      if (!retainedIds.has(key.id)) {
+        db.delete(channelApiKeys).where(eq(channelApiKeys.id, key.id)).run();
+      }
+    }
+  }
+}
 
 export class ChannelService {
-  /** 获取所有渠道 */
+  /** 获取所有渠道；HM Studio 的 Key 作为渠道下的子项返回。 */
   static getChannels() {
     const rows = db.select().from(channels).orderBy(channels.priority, desc(channels.createdAt)).all();
-    hmStudioQueue.syncPools(rows.filter(ch => ch.status === 1 && ch.type === 'hmstudio' && ch.apiKey).map(hmStudioPoolKey));
-    return rows.map(ch => {
-      const poolId = ch.type === 'hmstudio' ? hmStudioPoolKey(ch) : null;
-      const pool = poolId ? hmStudioQueue.getPoolLoad(poolId) : null;
+    const hmKeys = allHmKeys();
+    syncHmStudioPools(rows);
+
+    return rows.map(channel => {
+      const keys = channel.type === 'hmstudio'
+        ? hmKeys.filter(key => key.channelId === channel.id)
+        : [];
+      const apiKeys = keys.map(key => {
+        const poolId = hmStudioPoolKey(key);
+        const pool = hmStudioQueue.getPoolLoad(poolId);
+        return {
+          id: key.id,
+          maskedKey: maskApiKey(key.apiKey),
+          concurrencyLimit: key.concurrencyLimit,
+          status: key.status,
+          concurrencyPoolId: poolId,
+          concurrencyRunning: pool.running,
+          concurrencyQueued: pool.queued,
+          concurrencyLoad: pool.load,
+        };
+      });
+      const activeKeys = apiKeys.filter(key => key.status === 1 && channel.status === 1);
+
       return {
-        ...ch,
-        modelMapping: JSON.parse(ch.modelMapping),
-        supportedModels: JSON.parse(ch.supportedModels),
-        concurrencyPoolId: poolId,
-        concurrencyLimit: pool?.limit ?? null,
-        concurrencyRunning: pool?.running ?? null,
-        concurrencyQueued: pool?.queued ?? null,
-        concurrencyLoad: pool?.load ?? null,
-        apiKey: ch.apiKey ? '****' + ch.apiKey.slice(-4) : '',
+        ...channel,
+        modelMapping: parseJsonObject(channel.modelMapping),
+        supportedModels: parseJsonArray(channel.supportedModels),
+        apiKey: channel.type === 'hmstudio'
+          ? (apiKeys.length > 0 ? `${apiKeys.length} 个 Key` : '')
+          : maskApiKey(channel.apiKey),
+        apiKeys,
+        apiKeyCount: apiKeys.length,
+        configuredConcurrencyLimit: activeKeys.reduce((sum, key) => sum + key.concurrencyLimit, 0),
+        concurrencyLimit: activeKeys.reduce((sum, key) => sum + key.concurrencyLimit, 0),
+        concurrencyRunning: activeKeys.reduce((sum, key) => sum + key.concurrencyRunning, 0),
+        concurrencyQueued: activeKeys.reduce((sum, key) => sum + key.concurrencyQueued, 0),
+        concurrencyLoad: activeKeys.reduce((sum, key) => sum + key.concurrencyLoad, 0),
       };
     });
   }
 
-  /** 获取渠道原始数据（内部用，不脱敏） */
-  static getChannelRaw(id: number) {
-    return db.select().from(channels).where(eq(channels.id, id)).get();
+  /** 获取渠道执行配置；HM Studio 可锁定到任务创建时选中的 Key。 */
+  static getChannelRaw(id: number, apiKeyId?: number | null) {
+    const channel = db.select().from(channels).where(eq(channels.id, id)).get();
+    if (!channel) return channel;
+    if (channel.type !== 'hmstudio') return { ...channel, apiKeyId: null };
+
+    const keys = db.select().from(channelApiKeys)
+      .where(eq(channelApiKeys.channelId, channel.id))
+      .all();
+    syncHmStudioPools();
+    const selected = apiKeyId
+      ? keys.find(key => key.id === apiKeyId)
+      : keys.filter(key => key.status === 1).sort((a, b) => {
+          const loadA = hmStudioQueue.getPoolLoad(hmStudioPoolKey(a)).load;
+          const loadB = hmStudioQueue.getPoolLoad(hmStudioPoolKey(b)).load;
+          return loadA - loadB || a.id - b.id;
+        })[0];
+
+    return {
+      ...channel,
+      apiKey: selected?.apiKey || '',
+      apiKeyId: selected?.id || null,
+      concurrencyLimit: selected?.concurrencyLimit || 0,
+    };
   }
 
-  /** 获取所有启用的渠道（内部用，不脱敏） */
+  /** 获取所有启用渠道。HM Studio 渠道会按启用 Key 展开为多个执行候选。 */
   static getActiveChannels() {
-    const activeChannels = db.select().from(channels)
+    const channelRows = db.select().from(channels)
       .where(eq(channels.status, 1))
       .orderBy(channels.priority)
-      .all()
-      .map(ch => ({
-        ...ch,
-        modelMapping: JSON.parse(ch.modelMapping) as Record<string, string>,
-        supportedModels: JSON.parse(ch.supportedModels) as string[],
-      }));
-    hmStudioQueue.syncPools(activeChannels.filter(ch => ch.type === 'hmstudio' && ch.apiKey).map(hmStudioPoolKey));
-    return activeChannels;
+      .all();
+    const hmKeys = allHmKeys().filter(key => key.status === 1);
+    syncHmStudioPools(channelRows);
+
+    return channelRows.flatMap(channel => {
+      const base = {
+        ...channel,
+        apiKeyId: null as number | null,
+        modelMapping: parseJsonObject(channel.modelMapping),
+        supportedModels: parseJsonArray(channel.supportedModels),
+      };
+      if (channel.type !== 'hmstudio') return [base];
+      return hmKeys
+        .filter(key => key.channelId === channel.id)
+        .map(key => ({
+          ...base,
+          apiKey: key.apiKey,
+          apiKeyId: key.id,
+          concurrencyLimit: key.concurrencyLimit,
+        }));
+    });
   }
 
-  /** 根据模型名查找可用渠道（按优先级+权重选择） */
+  /** 根据模型名查找可用渠道（按优先级、Key 池负载和权重选择）。 */
   static findChannelForModel(modelName: string) {
     const activeChannels = this.getActiveChannels();
-    // 筛选支持该模型的渠道
-    const candidates = activeChannels.filter(ch =>
-      ch.supportedModels.includes(modelName) || ch.supportedModels.includes('*')
+    const candidates = activeChannels.filter(channel =>
+      channel.supportedModels.includes(modelName) || channel.supportedModels.includes('*')
     );
     if (candidates.length === 0) return null;
 
-    // 按优先级分组，取最高优先级
     const topPriority = candidates[0].priority;
-    const topCandidates = candidates.filter(ch => ch.priority === topPriority);
+    const topCandidates = candidates.filter(channel => channel.priority === topPriority);
 
-    if (topCandidates.every(ch => ch.type === 'hmstudio')) {
+    if (topCandidates.every(channel => channel.type === 'hmstudio')) {
       const loads = topCandidates.map(channel => ({
         channel,
-        poolKey: hmStudioPoolKey(channel),
         load: hmStudioQueue.getPoolLoad(hmStudioPoolKey(channel)).load,
       }));
       const minimumLoad = Math.min(...loads.map(item => item.load));
       const leastLoaded = loads.filter(item => item.load === minimumLoad).map(item => item.channel);
-      const totalWeight = leastLoaded.reduce((sum, ch) => sum + ch.weight, 0);
+      const totalWeight = leastLoaded.reduce((sum, channel) => sum + channel.weight, 0);
       let random = Math.random() * totalWeight;
       for (const channel of leastLoaded) {
         random -= channel.weight;
@@ -75,62 +254,63 @@ export class ChannelService {
       return leastLoaded[0];
     }
 
-    // 按权重随机选择
-    const totalWeight = topCandidates.reduce((sum, ch) => sum + ch.weight, 0);
+    const totalWeight = topCandidates.reduce((sum, channel) => sum + channel.weight, 0);
     let random = Math.random() * totalWeight;
-    for (const ch of topCandidates) {
-      random -= ch.weight;
-      if (random <= 0) return ch;
+    for (const channel of topCandidates) {
+      random -= channel.weight;
+      if (random <= 0) return channel;
     }
     return topCandidates[0];
   }
 
-  /** 根据渠道类型查找首个可用渠道（按优先级排序） */
   static findChannelByType(type: string) {
-    const activeChannels = this.getActiveChannels();
-    return activeChannels.find(ch => ch.type === type) || null;
+    return this.getActiveChannels().find(channel => channel.type === type) || null;
   }
 
-  /** 新增渠道 */
   static createChannel(data: any) {
     const { name, type, baseUrl, apiKey, modelMapping, supportedModels, priority, weight, maxRetries, timeout } = data;
     if (!name || !baseUrl) throw { status: 400, message: '渠道名称和 Base URL 不能为空' };
-    if (type === 'hmstudio' && apiKey) {
-      const duplicate = db.select().from(channels).all().find(channel => channel.type === 'hmstudio' && channel.apiKey === apiKey);
-      if (duplicate) throw { status: 409, message: `该 HM Studio API Key 已用于渠道「${duplicate.name}」，重复添加不会增加并发` };
-    }
 
     const result = db.insert(channels).values({
       name,
       type: type || 'openai',
       baseUrl,
-      apiKey: apiKey || '',
+      apiKey: type === 'hmstudio' ? '' : (apiKey || ''),
       modelMapping: JSON.stringify(modelMapping || {}),
       supportedModels: JSON.stringify(supportedModels || []),
       priority: priority ?? 0,
       weight: weight ?? 1,
+      concurrencyLimit: DEFAULT_HM_CONCURRENCY,
       maxRetries: maxRetries ?? 3,
       timeout: timeout ?? 120000,
     }).run();
+    const channelId = Number(result.lastInsertRowid);
 
-    return Number(result.lastInsertRowid);
+    if (type === 'hmstudio') {
+      const entries = Array.isArray(data.apiKeys) ? data.apiKeys : (apiKey ? [{ apiKey, concurrencyLimit: data.concurrencyLimit }] : []);
+      try {
+        saveHmStudioKeys(channelId, entries, false);
+      } catch (error) {
+        db.delete(channels).where(eq(channels.id, channelId)).run();
+        throw error;
+      }
+    }
+
+    syncHmStudioPools();
+    return channelId;
   }
 
-  /** 编辑渠道 */
   static updateChannel(id: number, data: any) {
-    const ch = db.select().from(channels).where(eq(channels.id, id)).get();
-    if (!ch) throw { status: 404, message: '渠道不存在' };
-    const nextType = data.type ?? ch.type;
-    if (nextType === 'hmstudio' && data.apiKey) {
-      const duplicate = db.select().from(channels).all().find(channel => channel.id !== id && channel.type === 'hmstudio' && channel.apiKey === data.apiKey);
-      if (duplicate) throw { status: 409, message: `该 HM Studio API Key 已用于渠道「${duplicate.name}」，重复添加不会增加并发` };
-    }
+    const channel = db.select().from(channels).where(eq(channels.id, id)).get();
+    if (!channel) throw { status: 404, message: '渠道不存在' };
+    const nextType = data.type ?? channel.type;
 
     const updates: Record<string, any> = {};
     if (data.name !== undefined) updates.name = data.name;
     if (data.type !== undefined) updates.type = data.type;
     if (data.baseUrl !== undefined) updates.baseUrl = data.baseUrl;
-    if (data.apiKey !== undefined) updates.apiKey = data.apiKey;
+    if (data.apiKey !== undefined && nextType !== 'hmstudio') updates.apiKey = data.apiKey;
+    if (nextType === 'hmstudio') updates.apiKey = '';
     if (data.modelMapping !== undefined) updates.modelMapping = JSON.stringify(data.modelMapping);
     if (data.supportedModels !== undefined) updates.supportedModels = JSON.stringify(data.supportedModels);
     if (data.priority !== undefined) updates.priority = data.priority;
@@ -140,63 +320,63 @@ export class ChannelService {
     if (data.status !== undefined) updates.status = data.status;
     updates.updatedAt = new Date().toISOString();
 
-    if (Object.keys(updates).length > 0) {
-      db.update(channels).set(updates).where(eq(channels.id, id)).run();
+    if (nextType === 'hmstudio') {
+      if (Array.isArray(data.apiKeys)) {
+        saveHmStudioKeys(id, data.apiKeys, true);
+      } else if (data.apiKey) {
+        saveHmStudioKeys(id, [{ apiKey: data.apiKey, concurrencyLimit: data.concurrencyLimit }], false);
+      }
     }
+    db.update(channels).set(updates).where(eq(channels.id, id)).run();
+    syncHmStudioPools();
   }
 
-  /** 删除渠道 */
   static deleteChannel(id: number) {
+    db.delete(channelApiKeys).where(eq(channelApiKeys.channelId, id)).run();
     db.delete(channels).where(eq(channels.id, id)).run();
+    syncHmStudioPools();
   }
 
-  /** 测试渠道连通性 */
   static async testChannel(id: number): Promise<{ success: boolean; message: string; durationMs: number }> {
-    const ch = db.select().from(channels).where(eq(channels.id, id)).get();
-    if (!ch) throw { status: 404, message: '渠道不存在' };
+    const channel = this.getChannelRaw(id);
+    if (!channel) throw { status: 404, message: '渠道不存在' };
+    if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
 
     const start = Date.now();
     try {
-      const url = ch.baseUrl.replace(/\/+$/, '') + '/v1/models';
+      const url = channel.baseUrl.replace(/\/+$/, '') + '/v1/models';
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), ch.timeout || 15000);
-
-      const res = await fetch(url, {
-        headers: { 'Authorization': `Bearer ${ch.apiKey}` },
+      const timer = setTimeout(() => controller.abort(), channel.timeout || 15000);
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${channel.apiKey}` },
         signal: controller.signal,
       });
       clearTimeout(timer);
 
       const durationMs = Date.now() - start;
-      const result = res.ok
+      const result = response.ok
         ? { success: true, message: `success:${durationMs}ms`, durationMs }
-        : { success: false, message: `fail:HTTP ${res.status}`, durationMs };
-
-      // 更新测试结果
+        : { success: false, message: `fail:HTTP ${response.status}`, durationMs };
       db.update(channels).set({
         lastTestAt: new Date().toISOString(),
         lastTestResult: result.message,
       }).where(eq(channels.id, id)).run();
-
       return result;
-    } catch (err: any) {
+    } catch (error: any) {
       const durationMs = Date.now() - start;
-      const message = err.name === 'AbortError' ? 'fail:timeout' : `fail:${err.message}`;
-
+      const message = error.name === 'AbortError' ? 'fail:timeout' : `fail:${error.message}`;
       db.update(channels).set({
         lastTestAt: new Date().toISOString(),
         lastTestResult: message,
       }).where(eq(channels.id, id)).run();
-
       return { success: false, message, durationMs };
     }
   }
 
-  /** Pull the currently enabled upstream models into channel routing and model management. */
   static async syncModels(id: number): Promise<{ count: number; added: number; models: string[] }> {
-    const channel = db.select().from(channels).where(eq(channels.id, id)).get();
+    const channel = this.getChannelRaw(id);
     if (!channel) throw { status: 404, message: '渠道不存在' };
-    if (!channel.apiKey) throw { status: 400, message: '请先配置渠道 API Key' };
+    if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
 
     const url = channel.baseUrl.replace(/\/+$/, '') + '/v1/models';
     const response = await fetch(url, {
@@ -220,10 +400,10 @@ export class ChannelService {
       const capability = explicitType.includes('lip') || /lip-sync/i.test(modelId)
         ? 'lip_sync'
         : explicitType.includes('video') || /video|seedance/i.test(modelId)
-        ? 'video'
-        : explicitType.includes('image') || /image|jimeng|banana/i.test(modelId)
-          ? 'image'
-          : 'text';
+          ? 'video'
+          : explicitType.includes('image') || /image|jimeng|banana/i.test(modelId)
+            ? 'image'
+            : 'text';
       return { modelId, displayName: displayName || modelId, capability };
     }).filter((item: any) => item.modelId);
 
@@ -253,7 +433,6 @@ export class ChannelService {
       modelMapping: JSON.stringify(mapping),
       updatedAt: new Date().toISOString(),
     }).where(eq(channels.id, id)).run();
-
     return { count: modelIds.length, added, models: modelIds };
   }
 }

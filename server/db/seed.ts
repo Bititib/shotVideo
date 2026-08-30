@@ -1,5 +1,5 @@
 import { db, sqlite } from './index.js';
-import { tiers, users, models, tierModelAccess, settings, channels, apiTokens, modelPricing, organizations, orgMembers, contents } from './schema.js';
+import { tiers, users, models, tierModelAccess, settings, channels, channelApiKeys, apiTokens, modelPricing, organizations, orgMembers, contents } from './schema.js';
 import { eq, like } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
@@ -387,6 +387,7 @@ export async function initDatabase() {
       supported_models TEXT NOT NULL DEFAULT '[]',
       priority INTEGER NOT NULL DEFAULT 0,
       weight INTEGER NOT NULL DEFAULT 1,
+      concurrency_limit INTEGER NOT NULL DEFAULT 10,
       max_retries INTEGER NOT NULL DEFAULT 3,
       timeout INTEGER NOT NULL DEFAULT 120000,
       status INTEGER NOT NULL DEFAULT 1,
@@ -395,6 +396,18 @@ export async function initDatabase() {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- HM Studio 渠道可绑定多个独立并发 API Key
+    CREATE TABLE IF NOT EXISTS channel_api_keys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel_id INTEGER NOT NULL,
+      api_key TEXT NOT NULL UNIQUE,
+      concurrency_limit INTEGER NOT NULL DEFAULT 10,
+      status INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_channel_api_keys_channel_id ON channel_api_keys(channel_id);
 
     -- ============ 新增：API Token 表 ============
     CREATE TABLE IF NOT EXISTS api_tokens (
@@ -1346,20 +1359,23 @@ export async function initDatabase() {
       || channel.name === 'HM Studio 渠道'
     );
 
-    if (!existingHmStudio) {
-      db.insert(channels).values({
+    let hmStudioChannel = existingHmStudio;
+    if (!hmStudioChannel) {
+      const result = db.insert(channels).values({
         name: 'HM Studio 渠道',
         type: 'hmstudio',
         baseUrl: hmStudioBaseUrl,
-        apiKey: hmStudioApiKey,
+        apiKey: '',
         supportedModels: '[]',
         modelMapping: '{}',
         status: hmStudioApiKey ? 1 : 0,
         priority: 10,
         weight: 1,
+        concurrencyLimit: Number.parseInt(process.env.HM_STUDIO_CONCURRENCY || '10', 10) || 10,
         maxRetries: 3,
         timeout: 120000,
       }).run();
+      hmStudioChannel = db.select().from(channels).where(eq(channels.id, Number(result.lastInsertRowid))).get();
       console.log(`📦 已自动创建 HM Studio 渠道（${hmStudioApiKey ? '已启用' : '等待配置 API Key'}）`);
     } else {
       const updates: Record<string, any> = {
@@ -1369,13 +1385,30 @@ export async function initDatabase() {
         updatedAt: new Date().toISOString(),
       };
       if (hmStudioApiKey) {
-        updates.apiKey = hmStudioApiKey;
         updates.status = 1;
-      } else if (!existingHmStudio.apiKey) {
+      } else if (!db.select().from(channelApiKeys).where(eq(channelApiKeys.channelId, hmStudioChannel.id)).get() && !hmStudioChannel.apiKey) {
         updates.status = 0;
       }
-      db.update(channels).set(updates).where(eq(channels.id, existingHmStudio.id)).run();
-      console.log(`🔄 已校准 HM Studio 渠道（${hmStudioApiKey || existingHmStudio.apiKey ? '密钥已配置' : '等待配置 API Key'}）`);
+      db.update(channels).set(updates).where(eq(channels.id, hmStudioChannel.id)).run();
+    }
+
+    if (hmStudioChannel) {
+      const legacyKey = hmStudioChannel.apiKey?.trim();
+      const candidateKeys = [legacyKey, hmStudioApiKey].filter((key): key is string => Boolean(key));
+      const defaultConcurrency = Number.parseInt(process.env.HM_STUDIO_CONCURRENCY || '10', 10) || 10;
+      for (const key of new Set(candidateKeys)) {
+        const existingKey = db.select().from(channelApiKeys).where(eq(channelApiKeys.apiKey, key)).get();
+        if (!existingKey) {
+          db.insert(channelApiKeys).values({
+            channelId: hmStudioChannel.id,
+            apiKey: key,
+            concurrencyLimit: hmStudioChannel.concurrencyLimit || defaultConcurrency,
+            status: 1,
+          }).run();
+        }
+      }
+      const keyCount = db.select().from(channelApiKeys).where(eq(channelApiKeys.channelId, hmStudioChannel.id)).all().length;
+      console.log(`🔄 已校准 HM Studio 渠道（${keyCount > 0 ? `${keyCount} 个密钥` : '等待配置 API Key'}）`);
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 HM Studio 渠道出错:', err.message);

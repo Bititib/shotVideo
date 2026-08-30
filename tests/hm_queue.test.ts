@@ -111,4 +111,32 @@ describe('HM Studio fair queue', () => {
     blockers.forEach(blocker => blocker.resolve());
     await Promise.all(jobs.map(job => job.completion));
   });
+
+  it('supports a different live concurrency limit for each API key pool', async () => {
+    const queue = new HmStudioQueueService();
+    queue.syncPools([
+      { poolKey: 'key-a', concurrencyLimit: 1 },
+      { poolKey: 'key-b', concurrencyLimit: 3 },
+    ]);
+    const blockers = Array.from({ length: 6 }, () => deferred());
+    const jobs = blockers.map((blocker, index) => queue.enqueue({
+      id: `variable-${index}`,
+      userKey: `user-${index}`,
+      poolKey: index < 2 ? 'key-a' : 'key-b',
+      task: () => blocker.promise,
+    }));
+
+    await flushQueue();
+    expect(queue.getLimits()).toEqual(expect.objectContaining({
+      concurrencyLimit: 4,
+      poolConcurrencyLimit: null,
+      running: 4,
+      queued: 2,
+    }));
+    expect(queue.getPoolLoad('key-a')).toEqual({ running: 1, queued: 1, load: 2, limit: 1 });
+    expect(queue.getPoolLoad('key-b')).toEqual({ running: 3, queued: 1, load: 4, limit: 3 });
+
+    blockers.forEach(blocker => blocker.resolve());
+    await Promise.all(jobs.map(job => job.completion));
+  });
 });

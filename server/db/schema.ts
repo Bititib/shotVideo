@@ -107,11 +107,24 @@ export const channels = sqliteTable('channels', {
   supportedModels: text('supported_models').notNull().default('[]'), // JSON: ["grok-4","grok-video"]
   priority: integer('priority').notNull().default(0),    // 优先级（越小越优先）
   weight: integer('weight').notNull().default(1),        // 权重（同优先级负载均衡）
+  concurrencyLimit: integer('concurrency_limit').notNull().default(10),
   maxRetries: integer('max_retries').notNull().default(3),
   timeout: integer('timeout').notNull().default(120000), // 超时 ms
   status: integer('status').notNull().default(1),        // 0=禁用 1=启用
   lastTestAt: text('last_test_at'),
   lastTestResult: text('last_test_result'),              // success:1200ms / fail:timeout
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+});
+
+// ============ 渠道 API Key 表 ============
+// HM Studio 一个渠道可配置多个 Key；每个 Key 拥有独立的并发池。
+export const channelApiKeys = sqliteTable('channel_api_keys', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  channelId: integer('channel_id').notNull(),
+  apiKey: text('api_key').notNull().unique(),
+  concurrencyLimit: integer('concurrency_limit').notNull().default(10),
+  status: integer('status').notNull().default(1),
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
 });

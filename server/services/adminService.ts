@@ -1,5 +1,5 @@
 import { db } from '../db/index.js';
-import { users, tiers, models, tierModelAccess, usageLogs, settings, contents, apiLogs, modelPricing, channels } from '../db/schema.js';
+import { users, tiers, models, tierModelAccess, usageLogs, settings, contents, apiLogs, modelPricing, channels, channelApiKeys } from '../db/schema.js';
 import { eq, like, and, gte, sql, desc, count } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 
@@ -21,8 +21,10 @@ function linkHmStudioModel(modelId: string, apiKey?: string | null) {
   if (!channel) {
     const result = db.insert(channels).values({
       name: 'HM Studio 渠道', type: 'hmstudio', baseUrl: HM_STUDIO_BASE_URL,
-      apiKey: apiKey || '', supportedModels: '[]', modelMapping: '{}',
-      status: apiKey ? 1 : 0, priority: 10, weight: 1, maxRetries: 3, timeout: 120000,
+      apiKey: '', supportedModels: '[]', modelMapping: '{}',
+      status: apiKey ? 1 : 0, priority: 10, weight: 1,
+      concurrencyLimit: Number.parseInt(process.env.HM_STUDIO_CONCURRENCY || '10', 10) || 10,
+      maxRetries: 3, timeout: 120000,
     }).run();
     channel = db.select().from(channels).where(eq(channels.id, Number(result.lastInsertRowid))).get();
   }
@@ -43,8 +45,16 @@ function linkHmStudioModel(modelId: string, apiKey?: string | null) {
     updatedAt: new Date().toISOString(),
   };
   if (apiKey) {
-    updates.apiKey = apiKey;
     updates.status = 1;
+    const existingKey = db.select().from(channelApiKeys).where(eq(channelApiKeys.apiKey, apiKey)).get();
+    if (!existingKey) {
+      db.insert(channelApiKeys).values({
+        channelId: channel.id,
+        apiKey,
+        concurrencyLimit: Number.parseInt(process.env.HM_STUDIO_CONCURRENCY || '10', 10) || 10,
+        status: 1,
+      }).run();
+    }
   }
   db.update(channels).set(updates).where(eq(channels.id, channel.id)).run();
 }

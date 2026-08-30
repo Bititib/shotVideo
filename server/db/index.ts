@@ -35,5 +35,44 @@ try {
   }
 } catch (e) {}
 
+try {
+  const channelCols = sqlite.pragma('table_info(channels)') as any[];
+  if (Array.isArray(channelCols) && channelCols.length > 0) {
+    if (!channelCols.some((c: any) => c.name === 'concurrency_limit')) {
+      const fallback = Number.parseInt(process.env.HM_STUDIO_CONCURRENCY || '10', 10);
+      const defaultLimit = Number.isInteger(fallback) && fallback > 0 ? fallback : 10;
+      sqlite.exec(`ALTER TABLE channels ADD COLUMN concurrency_limit INTEGER NOT NULL DEFAULT ${defaultLimit}`);
+    }
+  }
+} catch (e) {}
+
+// HM Studio 密钥从渠道主表拆分为一对多子表。保留 channels.api_key 仅用于
+// 兼容旧数据，启动时会把旧密钥无损迁移到新表。
+try {
+  const fallback = Number.parseInt(process.env.HM_STUDIO_CONCURRENCY || '10', 10);
+  const defaultLimit = Number.isInteger(fallback) && fallback > 0 ? fallback : 10;
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS channel_api_keys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel_id INTEGER NOT NULL,
+      api_key TEXT NOT NULL UNIQUE,
+      concurrency_limit INTEGER NOT NULL DEFAULT ${defaultLimit},
+      status INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_channel_api_keys_channel_id ON channel_api_keys(channel_id);
+  `);
+  const channelCols = sqlite.pragma('table_info(channels)') as any[];
+  if (Array.isArray(channelCols) && channelCols.some((column: any) => column.name === 'api_key')) {
+    sqlite.exec(`
+      INSERT OR IGNORE INTO channel_api_keys (channel_id, api_key, concurrency_limit, status)
+      SELECT id, api_key, COALESCE(concurrency_limit, ${defaultLimit}), status
+      FROM channels
+      WHERE type = 'hmstudio' AND TRIM(api_key) <> '';
+    `);
+  }
+} catch (e) {}
+
 export const db = drizzle(sqlite, { schema });
 export { sqlite };

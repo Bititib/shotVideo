@@ -320,6 +320,7 @@ function findVideoChannel(modelId: string) {
     type: channel.type,
     baseUrl: channel.baseUrl,
     apiKey: channel.apiKey,
+    apiKeyId: channel.apiKeyId,
     modelMapping: channel.modelMapping,
     timeout: channel.timeout,
   };
@@ -336,11 +337,12 @@ export async function downloadAndLocalizeVideo(
   videoId: string,
   model: string,
   channelId?: number | null,
+  channelApiKeyId?: number | null,
 ): Promise<string> {
   if (!url) throw new Error('Upstream completed without a video URL');
   if (url.startsWith('/uploads/')) return url;
 
-  const exactChannel = channelId ? ChannelService.getChannelRaw(channelId) : null;
+  const exactChannel = channelId ? ChannelService.getChannelRaw(channelId, channelApiKeyId) : null;
   const channel = exactChannel || ChannelService.findChannelForModel(model);
   const headers: Record<string, string> = {};
   const maySendAuthorization = !isHmStudioChannel(channel)
@@ -1048,6 +1050,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         model,
         prompt: (prompt as string).slice(0, 5000),
         channelId: dbChannel?.id ?? null,
+        channelApiKeyId: dbChannel?.apiKeyId ?? null,
         upstreamModel,
         requestedModel: model,
         actualModel: executionModel,
@@ -2027,7 +2030,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
             if (resultUrl && resultUrl.includes('llm.chre3.com')) {
               finalVideoUrl = await localizeChre3Video(resultUrl, videoId, model);
             } else {
-              finalVideoUrl = await downloadAndLocalizeVideo(resultUrl, videoId, model, dbChannel?.id);
+              finalVideoUrl = await downloadAndLocalizeVideo(resultUrl, videoId, model, dbChannel?.id, dbChannel?.apiKeyId);
             }
           } catch (localErr: any) {
             console.error(`[video] VPS localization failed; task remains processing: ${localErr.message}`);
@@ -2370,7 +2373,9 @@ async function failHmQueuedVideo(contentId: number, error: unknown): Promise<voi
   let metadata: Record<string, any> = {};
   try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
   const rawMessage = error instanceof Error ? error.message : String(error || '视频任务失败');
-  const taskChannel = metadata.channelId ? ChannelService.getChannelRaw(Number(metadata.channelId)) : null;
+  const taskChannel = metadata.channelId
+    ? ChannelService.getChannelRaw(Number(metadata.channelId), Number(metadata.channelApiKeyId) || null)
+    : null;
   const message = clarifyVideoCapacityFailure(rawMessage, isHmStudioChannel(taskChannel));
   const refundAmount = Number(record.cost) || 0;
   if (refundAmount > 0 && !metadata.queueRefunded) {
@@ -2407,7 +2412,9 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
   let metadata: Record<string, any> = {};
   try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
 
-  const channelRow = metadata.channelId ? ChannelService.getChannelRaw(Number(metadata.channelId)) : null;
+  const channelRow = metadata.channelId
+    ? ChannelService.getChannelRaw(Number(metadata.channelId), Number(metadata.channelApiKeyId) || null)
+    : null;
   const fallbackChannel = ChannelService.findChannelForModel(record.modelId || metadata.model || '');
   const channel = channelRow || fallbackChannel;
   if (!channel || !isHmStudioChannel(channel)) throw new Error('HM Studio channel is unavailable');
@@ -2519,6 +2526,7 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
 
           latestMeta.videoId = fallbackVideoId;
           latestMeta.channelId = fallbackChannel.id;
+          latestMeta.channelApiKeyId = fallbackChannel.apiKeyId;
           latestMeta.upstreamModel = fallbackUpstreamModel;
           latestMeta.requestedModel = model;
           latestMeta.actualModel = MJ_OVERFLOW_VIDEO_MODEL;
@@ -2566,7 +2574,9 @@ function adoptHmStudioProcessingContent(contentId: number, record: any): HmStudi
   const adopted = hmStudioQueue.adoptRunning({
     id: `video:${contentId}`,
     userKey: metadata.queueUserKey || `user:${record.userId}`,
-    poolKey: hmStudioPoolKey(metadata.channelId ? ChannelService.getChannelRaw(Number(metadata.channelId)) || {} : {}),
+    poolKey: hmStudioPoolKey(metadata.channelId
+      ? ChannelService.getChannelRaw(Number(metadata.channelId), Number(metadata.channelApiKeyId) || null) || {}
+      : {}),
     onUpdate: snapshot => persistHmQueueSnapshot(contentId, snapshot),
     task: () => resumePollForTask(contentId, record),
   });
@@ -2591,7 +2601,9 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
     console.error(`[video-recover] Parse metadata failed for task ${contentId}:`, e);
   }
 
-  const originalChannel = metadata.channelId ? ChannelService.getChannelRaw(Number(metadata.channelId)) : null;
+  const originalChannel = metadata.channelId
+    ? ChannelService.getChannelRaw(Number(metadata.channelId), Number(metadata.channelApiKeyId) || null)
+    : null;
   const fallbackChannel = findVideoChannel(model);
   const channel = originalChannel ? {
     id: originalChannel.id,
@@ -2872,7 +2884,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
             if (resultUrl && resultUrl.includes('llm.chre3.com')) {
               finalVideoUrl = await localizeChre3Video(resultUrl, videoId, model);
             } else {
-              finalVideoUrl = await downloadAndLocalizeVideo(resultUrl, videoId, model, metadata.channelId);
+              finalVideoUrl = await downloadAndLocalizeVideo(resultUrl, videoId, model, metadata.channelId, metadata.channelApiKeyId);
             }
           } catch (localErr: any) {
             console.error(`[video-recover] VPS localization failed; will retry: ${localErr.message}`);
@@ -2945,7 +2957,9 @@ export function resumeAllPendingVideoTasks() {
       const contentId = record.id;
       let metadata: Record<string, any> = {};
       try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
-      const originalChannel = metadata.channelId ? ChannelService.getChannelRaw(Number(metadata.channelId)) : null;
+      const originalChannel = metadata.channelId
+        ? ChannelService.getChannelRaw(Number(metadata.channelId), Number(metadata.channelApiKeyId) || null)
+        : null;
       if (originalChannel && isHmStudioChannel(originalChannel)) {
         try {
           if (metadata.videoId) adoptHmStudioProcessingContent(contentId, record);

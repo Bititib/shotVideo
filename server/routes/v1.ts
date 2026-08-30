@@ -187,7 +187,7 @@ async function recoverHmStudioVideoUrl(metadata: Record<string, any>): Promise<s
   const channelId = Number(metadata.channelId);
   if (!upstreamTaskId || !Number.isInteger(channelId)) return '';
 
-  const channel = ChannelService.getChannelRaw(channelId);
+  const channel = ChannelService.getChannelRaw(channelId, Number(metadata.channelApiKeyId) || null);
   if (!channel || !isHmStudioChannel(channel)) return '';
 
   const headers: Record<string, string> = {};
@@ -1603,6 +1603,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         model,
         prompt: prompt.slice(0, 5000),
         channelId,
+        channelApiKeyId: channel.apiKeyId,
         upstreamModel,
         requestedModel: model,
         actualModel: executionModel,
@@ -1973,6 +1974,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       audio_urls,
       videoId: upstreamTaskId,
       channelId: channel.id,
+      channelApiKeyId: channel.apiKeyId,
       upstreamModel,
       requestedModel: model,
       actualModel: executionModel,
@@ -2089,7 +2091,7 @@ async function handleVideoQuery(req: Request, res: Response) {
       ...(!['completed', 'failed'].includes(mappedStatus) ? { retry_after: 5 } : {}),
     };
     const persistedChannel = metadata.channelId
-      ? ChannelService.getChannelRaw(Number(metadata.channelId))
+      ? ChannelService.getChannelRaw(Number(metadata.channelId), Number(metadata.channelApiKeyId) || null)
       : null;
     Object.assign(responseJson, videoTaskQueueDetails(
       metadata,
@@ -2247,6 +2249,7 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
       idParam,
       record.modelId || metadata.model || 'video',
       metadata.channelId,
+      metadata.channelApiKeyId,
     );
     const cleanPath = localizedUrl.replace(/^.*\/uploads\//, '');
     const localizedPath = path.join(process.cwd(), 'data', 'uploads', cleanPath);
