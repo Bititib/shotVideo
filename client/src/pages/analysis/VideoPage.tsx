@@ -12,6 +12,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { feedbackApi } from '../../api/feedback';
 import { getBillingUnit } from '../../utils/billing';
 import { buildReplicatedVideoPrompt, getVideoReferenceAssets, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
+import { isOmniVideoEditModel } from '../../utils/videoModelCapabilities';
 
 interface VideoTask {
   id: string;
@@ -379,6 +380,7 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
+    if (isOmniVideoEditModel(m)) return 1;
     if (m === JULUN_MINIMAX_H3_MODEL) return 3;
     if (isWan30Model(m)) return 5;
     if (m === 'seedance-2.5-c1') return 10;
@@ -787,7 +789,7 @@ export default function VideoPage() {
     ? ALL_DURATIONS.filter(d => currentModel.allowedSeconds!.includes(d.value))
     : ALL_DURATIONS;
 
-  const isOmniModel = selectedModel.startsWith('omni-flash') || selectedModel === 'veo-omni-flash';
+  const isOmniModel = selectedModel.startsWith('omni-flash') || selectedModel.startsWith('veo-omni-flash');
   const RESOLUTIONS = currentModel?.rates
     ? Object.keys(currentModel.rates)
       .sort((a, b) => parseInt(a) - parseInt(b))
@@ -834,7 +836,7 @@ export default function VideoPage() {
     const isSudashui = selectedModel.startsWith('sd-') || selectedModel.startsWith('seedance-') || selectedModel.includes('sdas-') || selectedModel.startsWith('lg-');
     const isSoraV3Pro = selectedModel === 'seedance-2.0-fast';
     const isWan30 = isWan30Model(selectedModel);
-    if (selectedModel !== 'omni-flash-vref' && !isSudashui && !isSoraV3Pro && !isWan30) {
+    if (!isOmniVideoEditModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30) {
       setReferenceVideos([]);
     }
     if (!isSudashui && !isSoraV3Pro && !isWan30) {
@@ -1049,11 +1051,11 @@ export default function VideoPage() {
   const handleGenerate = useCallback(() => {
     if (!prompt.trim()) return;
     if (!guard()) return;
-    if (selectedModel === 'omni-flash-vref' && referenceVideos.length === 0) {
+    if (isOmniVideoEditModel(selectedModel) && referenceVideos.length === 0) {
       setError('视频编辑模型必须上传参考视频');
       return;
     }
-    if (!isWan30Model(selectedModel) && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
+    if (!isOmniVideoEditModel(selectedModel) && !isWan30Model(selectedModel) && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
       setError('参考视频或音频模式下必须上传至少一张参考图');
       return;
     }
