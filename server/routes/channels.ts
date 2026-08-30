@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
 import { ChannelService } from '../services/channelService.js';
+import { VideoRoutingStatsService, type VideoRoutingStatsPeriod } from '../services/videoRoutingStatsService.js';
 
 const router = Router();
 router.use(authMiddleware, adminMiddleware);
@@ -11,6 +12,19 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   try {
     res.json(ChannelService.getChannels());
   } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// 仅管理员可见的视频分流渠道统计。
+router.get('/routing-stats', (req: AuthRequest, res: Response) => {
+  try {
+    const requestedPeriod = String(req.query.period || 'all');
+    const period: VideoRoutingStatsPeriod = ['all', '24h', '7d', '30d'].includes(requestedPeriod)
+      ? requestedPeriod as VideoRoutingStatsPeriod
+      : 'all';
+    res.json(VideoRoutingStatsService.getStats(period));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || '获取分流渠道统计失败' });
+  }
 });
 
 // 新增渠道

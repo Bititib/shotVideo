@@ -28,6 +28,9 @@ export const adminApi = {
 
   // 渠道管理
   getChannels() { return api.get<any[]>('/admin/channels'); },
+  getVideoRoutingStats(period: 'all' | '24h' | '7d' | '30d' = 'all') {
+    return api.get<any>(`/admin/channels/routing-stats?period=${period}`);
+  },
   createChannel(data: any) { return api.post<any>('/admin/channels', data); },
   updateChannel(id: number, data: any) { return api.put<any>(`/admin/channels/${id}`, data); },
   deleteChannel(id: number) { return api.delete<any>(`/admin/channels/${id}`); },

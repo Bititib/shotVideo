@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { adminApi } from '../../api/admin';
-import { Plus, Radio, Trash2, Pencil, Zap, Loader2, Power, PowerOff, RefreshCw, KeyRound } from 'lucide-react';
+import { Plus, Radio, Trash2, Pencil, Zap, Loader2, Power, PowerOff, RefreshCw, KeyRound, Activity, CircleCheck, CircleX, Timer } from 'lucide-react';
 
 const HM_STUDIO_BASE_URL = 'https://dnyovzpgyokm.sealosbja.site';
 
@@ -10,6 +10,8 @@ export default function ChannelsPage() {
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState<number | null>(null);
   const [syncing, setSyncing] = useState<number | null>(null);
+  const [routingPeriod, setRoutingPeriod] = useState<'all' | '24h' | '7d' | '30d'>('all');
+  const [routingStats, setRoutingStats] = useState<any[]>([]);
 
   const newHmKey = () => ({
     clientId: `new-key-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -20,14 +22,24 @@ export default function ChannelsPage() {
 
   const load = async (showLoading = true) => {
     if (showLoading) setLoading(true);
-    try { setChannels(await adminApi.getChannels()); }
+    try {
+      const [channelRows, stats] = await Promise.all([
+        adminApi.getChannels(),
+        adminApi.getVideoRoutingStats(routingPeriod).catch(error => {
+          console.warn('加载分流渠道统计失败:', error);
+          return null;
+        }),
+      ]);
+      setChannels(channelRows);
+      if (stats) setRoutingStats(stats.channels || []);
+    }
     finally { if (showLoading) setLoading(false); }
   };
   useEffect(() => {
     void load();
     const timer = window.setInterval(() => { void load(false); }, 5000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [routingPeriod]);
 
   const openNew = () => setEdit({
     name: '', type: 'openai', baseUrl: '', apiKey: '',
@@ -150,6 +162,12 @@ export default function ChannelsPage() {
   const hmTotalCapacity = hmChannels.reduce((sum, channel) => sum + Number(channel.concurrencyLimit || 0), 0);
   const hmTotalRunning = hmChannels.reduce((sum, channel) => sum + Number(channel.concurrencyRunning || 0), 0);
   const hmTotalQueued = hmChannels.reduce((sum, channel) => sum + Number(channel.concurrencyQueued || 0), 0);
+  const formatDuration = (durationMs: number) => {
+    if (!durationMs) return '—';
+    const totalSeconds = Math.round(durationMs / 1000);
+    if (totalSeconds < 60) return `${totalSeconds}秒`;
+    return `${Math.floor(totalSeconds / 60)}分${totalSeconds % 60}秒`;
+  };
 
   return (
     <div className="p-4 md:p-8 max-w-4xl mx-auto">
@@ -182,6 +200,83 @@ export default function ChannelsPage() {
           </div>
         </div>
       </div>
+
+      <section className="mb-6 rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.04] p-4" aria-labelledby="routing-stats-title">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 id="routing-stats-title" className="text-sm font-semibold text-cyan-100">视频分流渠道统计</h2>
+            <p className="mt-1 text-xs text-zinc-500">仅管理员可见；运行数每 5 秒刷新，成功率不包含运行中任务。</p>
+          </div>
+          <select
+            value={routingPeriod}
+            onChange={event => setRoutingPeriod(event.target.value as typeof routingPeriod)}
+            className="rounded-lg border border-white/10 bg-[#151515] px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-cyan-400/40"
+            aria-label="分流统计时间范围"
+          >
+            <option value="all">全部</option>
+            <option value="24h">近24小时</option>
+            <option value="7d">近7天</option>
+            <option value="30d">近30天</option>
+          </select>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          {routingStats.map(stat => (
+            <article key={stat.channelType} className="rounded-xl border border-white/[0.07] bg-black/20 p-4">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-white">{stat.channelName}</h3>
+                  <code className="mt-1 block text-[10px] text-cyan-300/70">{stat.modelId}</code>
+                </div>
+                <div className={`rounded-full border px-2 py-1 text-[10px] ${Number(stat.running) > 0
+                  ? 'border-amber-400/25 bg-amber-500/10 text-amber-300'
+                  : 'border-white/10 bg-white/5 text-zinc-500'}`}>
+                  {Number(stat.running) > 0 ? '正在承载任务' : '当前空闲'}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                <div className="rounded-lg bg-white/[0.03] px-2 py-2 text-center">
+                  <Activity className="mx-auto mb-1 h-3.5 w-3.5 text-amber-300" />
+                  <div className="text-lg font-bold tabular-nums text-amber-200">{stat.running}</div>
+                  <div className="text-[9px] text-zinc-500">运行中</div>
+                </div>
+                <div className="rounded-lg bg-white/[0.03] px-2 py-2 text-center">
+                  <CircleCheck className="mx-auto mb-1 h-3.5 w-3.5 text-emerald-400" />
+                  <div className="text-lg font-bold tabular-nums text-emerald-300">{stat.succeeded}</div>
+                  <div className="text-[9px] text-zinc-500">成功</div>
+                </div>
+                <div className="rounded-lg bg-white/[0.03] px-2 py-2 text-center">
+                  <CircleX className="mx-auto mb-1 h-3.5 w-3.5 text-red-400" />
+                  <div className="text-lg font-bold tabular-nums text-red-300">{stat.failed}</div>
+                  <div className="text-[9px] text-zinc-500">失败</div>
+                </div>
+                <div className="rounded-lg bg-white/[0.03] px-2 py-2 text-center">
+                  <div className="mb-1 text-[11px] font-semibold text-cyan-300">%</div>
+                  <div className="text-lg font-bold tabular-nums text-cyan-200">{Number(stat.successRate).toFixed(1)}</div>
+                  <div className="text-[9px] text-zinc-500">成功率</div>
+                </div>
+                <div className="rounded-lg bg-white/[0.03] px-2 py-2 text-center">
+                  <Timer className="mx-auto mb-1 h-3.5 w-3.5 text-violet-300" />
+                  <div className="truncate text-sm font-bold tabular-nums text-violet-200">{formatDuration(stat.averageDurationMs)}</div>
+                  <div className="text-[9px] text-zinc-500">平均耗时</div>
+                </div>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-white/[0.06] pt-3 text-[10px] text-zinc-500">
+                <span>任务总数 <b className="font-medium text-zinc-300">{stat.total}</b></span>
+                <span>HM 池满分流 <b className="font-medium text-cyan-300">{stat.capacityOverflowCount}</b></span>
+                <span>HM 上游并发错误 <b className="font-medium text-cyan-300">{stat.upstreamConcurrencyCount}</b></span>
+              </div>
+            </article>
+          ))}
+          {routingStats.length === 0 && (
+            <div className="col-span-full rounded-xl border border-dashed border-white/10 px-4 py-8 text-center text-xs text-zinc-500" role="status">
+              暂无分流渠道统计数据
+            </div>
+          )}
+        </div>
+      </section>
 
       <div className="space-y-4">
         {channels.map(ch => (
