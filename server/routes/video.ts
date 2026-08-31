@@ -25,6 +25,7 @@ import { buildNewTokenVideoPayload } from '../services/newTokenAdapter.js';
 import { clarifyVideoCapacityFailure, extractVideoFailureMessage, withVideoFailureMetadata } from '../services/videoFailureService.js';
 import {
   buildJulunMinimaxH3Payload,
+  isJulunChannel,
   isJulunMinimaxH3Model,
   JULUN_MINIMAX_H3_MODEL,
   JULUN_MINIMAX_H3_RESOLUTION,
@@ -40,10 +41,21 @@ import {
   sudaShuiVideoCreateUrl,
 } from '../services/sudaShuiAdapter.js';
 import {
+  HM_STUDIO_PRIMARY_VIDEO_MODEL,
   isHmStudioConcurrencyError,
   MJ_OVERFLOW_VIDEO_MODEL,
+  SI_YUE_TIAN_PRIMARY_VIDEO_MODEL,
 } from '../services/videoFailoverService.js';
-import { findHmStudioOverflowPlan } from '../services/hmStudioOverflowChannelService.js';
+import {
+  findHmStudioOverflowPlan,
+  hasHmStudioOverflowChannel,
+} from '../services/hmStudioOverflowChannelService.js';
+import {
+  findSiYueTianOverflowPlan,
+  isSiYueTianChannel,
+  selectSiYueTianRoute,
+  submitSiYueTianOverflowPlan,
+} from '../services/siYueTianChannelService.js';
 import {
   buildWxHaidiYueVideoPayload,
   isWxHaidiYueChannel,
@@ -723,7 +735,8 @@ router.get('/models', (_req: Request, res: Response) => {
       id: m.id,
       name: m.name || preset?.name || m.id,
       description: m.description || preset?.description || 'AI 视频生成服务',
-      available: findVideoChannel(m.id) !== null,
+      available: findVideoChannel(m.id) !== null
+        || (m.id === HM_STUDIO_PRIMARY_VIDEO_MODEL && hasHmStudioOverflowChannel()),
       maxSeconds: preset?.maxSeconds,
       allowedSeconds: meta?.allowedSeconds || null,
       requireRef: meta?.requireRef || false,
@@ -813,6 +826,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     if (finalVideos.length > 0 || finalAudios.length > 0) return res.status(400).json({ error: 'seedance_v2.5 不支持视频或音频参考' });
   }
 
+  if (model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL) {
+    if (Number(video_length) !== 30) return res.status(400).json({ error: 'sd2.5 固定支持 30 秒' });
+    if (resolution !== '720p') return res.status(400).json({ error: 'sd2.5 仅支持 720p' });
+    if (reference_images.length > 9) return res.status(400).json({ error: 'sd2.5 最多支持 9 张参考图片' });
+    if (finalVideos.length > 0 || finalAudios.length > 0) {
+      return res.status(400).json({ error: 'sd2.5 不支持视频或音频参考' });
+    }
+  }
+
   if (isJulunMinimaxH3Model(model)) {
     if (![10, 15].includes(Number(video_length))) {
       return res.status(400).json({ error: `${JULUN_MINIMAX_H3_MODEL} 仅支持 10 秒或 15 秒` });
@@ -859,13 +881,6 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     return res.status(400).json({ error: `模型 ${model} 必须提供参考图` });
   }
 
-  let channel = findVideoChannel(model);
-  if (!channel) {
-    return res.status(503).json({ error: '未配置视频生成渠道。请在管理后台添加渠道。' });
-  }
-
-  let executionModel = model;
-  let failoverReason = '';
   const overflowInput = {
     requestedModel: model,
     resolution,
@@ -874,6 +889,27 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     videoCount: finalVideos.length,
     audioCount: finalAudios.length,
   };
+  const siYueTianSelection = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL
+    ? selectSiYueTianRoute(overflowInput)
+    : null;
+  let channel = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL
+    ? siYueTianSelection?.channel || null
+    : findVideoChannel(model);
+  let executionModel = siYueTianSelection?.executionModel || model;
+  let failoverReason = siYueTianSelection?.reason || '';
+  let failoverFrom = siYueTianSelection?.kind === 'julun' ? 'siyuetian' : '';
+  if (!channel && model === HM_STUDIO_PRIMARY_VIDEO_MODEL) {
+    const overflowPlan = findHmStudioOverflowPlan(overflowInput);
+    if (overflowPlan) {
+      channel = overflowPlan.channel;
+      executionModel = overflowPlan.executionModel;
+      failoverFrom = 'hmstudio';
+      failoverReason = 'hmstudio_disabled';
+    }
+  }
+  if (!channel) {
+    return res.status(503).json({ error: '未配置可用的视频生成渠道，或当前请求不符合备用线路的素材限制。' });
+  }
   if (isHmStudioChannel(channel)) {
     const poolLoad = hmStudioQueue.getPoolLoad(hmStudioPoolKey(channel));
     const overflowPlan = poolLoad.limit > 0 && poolLoad.load >= poolLoad.limit
@@ -882,6 +918,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     if (overflowPlan) {
       channel = overflowPlan.channel;
       executionModel = overflowPlan.executionModel;
+      failoverFrom = 'hmstudio';
       failoverReason = 'hmstudio_capacity';
     }
   }
@@ -1064,8 +1101,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         upstreamModel,
         requestedModel: model,
         actualModel: executionModel,
-        actualChannel: isMjNewApiChannel(dbChannel) ? 'mjnewapi' : dbChannel?.type,
-        fallbackFrom: failoverReason ? 'hmstudio' : undefined,
+        actualChannel: failoverFrom === 'siyuetian' ? 'julun'
+          : isMjNewApiChannel(dbChannel) ? 'mjnewapi' : dbChannel?.type,
+        fallbackFrom: failoverReason ? failoverFrom : undefined,
         fallbackReason: failoverReason || undefined,
         fallbackAt: failoverReason ? new Date().toISOString() : undefined,
         reference_images,
@@ -1151,6 +1189,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isSudaShui = meta?.series === 'sudashui';
   let isHmStudio = isHmStudioChannel(channel);
   let isWxHaidiYue = isWxHaidiYueChannel(channel);
+  let isJulunSd25 = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL && isJulunChannel(channel);
   const isSnumomWan = isSnumomWanChannel(channel);
   let isMjNewApi = isMjNewApiChannel(channel);
   const isVeoOmni = model === 'veo-omni-flash';
@@ -1866,6 +1905,33 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       }
       const job = await createResp.json() as any;
       videoId = job.task_id || job.id;
+    } else if (isJulunSd25) {
+      sendEvent({ type: 'status', message: '正在通过 Julun sd2.5 备用线路提交视频任务...' });
+      const imageUrls = reference_images.slice(0, 9)
+        .map((item: string) => convertBase64ToPublicUrl(item, 'julun_sd25_img', req))
+        .filter(Boolean);
+      const overflowPlan = findSiYueTianOverflowPlan(overflowInput);
+      if (!overflowPlan) {
+        refundFailedTask('Julun sd2.5 备用线路当前不可用');
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+      const createResp = await submitSiYueTianOverflowPlan(overflowPlan, {
+        prompt: prompt.trim(),
+        ratio: aspect_ratio,
+        imageUrls,
+      });
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        if (isHmStudioConcurrencyError(createResp.status, errText)) {
+          ChannelService.disableExecutionTarget(channel, errText);
+        }
+        refundFailedTask(`Julun sd2.5 提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+      const job = await createResp.json() as any;
+      videoId = job.request_id || job.task_id || job.id;
     } else if (isSeedanceJsonModel) {
       sendEvent({ type: 'status', message: '正在处理素材并提交 Seedance 2.0 任务...' });
 
@@ -1933,14 +1999,74 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
-        console.error(`[video] sd2 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
-        res.write('data: [DONE]\n\n');
-        return res.end();
-      }
+        const canOverflowSiYueTian = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL
+          && isSiYueTianChannel(channel)
+          && isHmStudioConcurrencyError(createResp.status, errText);
+        if (!canOverflowSiYueTian) {
+          console.error(`[video] sd2 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
+          refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
+          res.write('data: [DONE]\n\n');
+          return res.end();
+        }
 
-      const job = await createResp.json() as any;
-      videoId = job.task_id || job.id;
+        ChannelService.disableExecutionTarget(channel, errText);
+        failoverFrom = 'siyuetian';
+        failoverReason = 'siyuetian_upstream_concurrency';
+        sendEvent({ type: 'status', message: '四月天上游已饱和并自动停止，正在尝试备用线路...' });
+
+        const overflowPlan = findSiYueTianOverflowPlan(overflowInput);
+        if (overflowPlan) {
+          const fallbackResponse = await submitSiYueTianOverflowPlan(overflowPlan, {
+            prompt: prompt.trim(),
+            ratio: aspect_ratio,
+            imageUrls,
+          });
+          if (fallbackResponse.ok) {
+            const job = await fallbackResponse.json() as any;
+            videoId = job.request_id || job.task_id || job.id;
+            channel = overflowPlan.channel;
+            dbChannel = channel;
+            executionModel = overflowPlan.executionModel;
+            upstreamModel = overflowPlan.executionModel;
+            baseUrl = channel.baseUrl.replace(/\/+$/, '');
+            isHmStudio = false;
+            isWxHaidiYue = false;
+            isMjNewApi = false;
+            isJulunSd25 = true;
+            if (contentId !== null) {
+              const current = db.select().from(contents).where(eq(contents.id, contentId)).get();
+              let metadata: Record<string, any> = {};
+              try { metadata = JSON.parse(current?.metadata || '{}'); } catch { }
+              metadata.channelId = channel.id;
+              metadata.channelApiKeyId = channel.apiKeyId;
+              metadata.actualChannel = 'julun';
+              metadata.actualModel = executionModel;
+              metadata.upstreamModel = upstreamModel;
+              metadata.fallbackFrom = failoverFrom;
+              metadata.fallbackReason = failoverReason;
+              metadata.fallbackAt = new Date().toISOString();
+              db.update(contents).set({ metadata: JSON.stringify(metadata) }).where(eq(contents.id, contentId)).run();
+            }
+          } else {
+            const fallbackDetail = await fallbackResponse.text().catch(() => '');
+            if (isHmStudioConcurrencyError(fallbackResponse.status, fallbackDetail)) {
+              ChannelService.disableExecutionTarget(overflowPlan.channel, fallbackDetail);
+            }
+            refundFailedTask(`Julun sd2.5 提交失败 (${fallbackResponse.status}): ${fallbackDetail.slice(0, 300)}`);
+            res.write('data: [DONE]\n\n');
+            return res.end();
+          }
+        }
+
+        if (!videoId) {
+          refundFailedTask('四月天及所有兼容备用线路当前均不可用');
+          res.write('data: [DONE]\n\n');
+          return res.end();
+        }
+      } else {
+        const job = await createResp.json() as any;
+        videoId = job.task_id || job.id;
+      }
     } else {
       // ━━━ Step 1: 创建视频任务（multipart/form-data） ━━━
       sendEvent({ type: 'status', message: hasRef ? '正在上传参考图并提交任务...' : '正在提交视频生成任务...' });

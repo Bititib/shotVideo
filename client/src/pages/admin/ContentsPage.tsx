@@ -35,10 +35,15 @@ const channelDisplayName = (channel: string) => {
   if (channel === 'wx-haidiyue') return 'wx-海底月';
   if (channel === 'hmstudio') return 'HM Studio';
   if (channel === 'mjnewapi') return 'MJNewAPI';
+  if (channel === 'julun') return 'Julun';
   return channel || '未知';
 };
 
 const routingReasonDisplayName = (reason: string) => {
+  if (reason === 'siyuetian_disabled') return '四月天后台已停用';
+  if (reason === 'siyuetian_round_robin') return '四月天 / Julun 请求平分';
+  if (reason === 'siyuetian_upstream_concurrency') return '四月天上游返回并发错误';
+  if (reason === 'hmstudio_disabled') return 'HM 后台已停用';
   if (reason === 'hmstudio_capacity') return 'HM 并发池满载';
   if (reason === 'hmstudio_upstream_concurrency') return 'HM 上游返回并发错误';
   return reason || '—';

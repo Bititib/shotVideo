@@ -3,6 +3,7 @@ import { isMjNewApiChannel } from './mjNewApiAdapter.js';
 import {
   canUseMjOverflowModel,
   canUseWxHaidiYueOverflow,
+  HM_STUDIO_PRIMARY_VIDEO_MODEL,
   type HmStudioOverflowInput,
   MJ_OVERFLOW_VIDEO_MODEL,
 } from './videoFailoverService.js';
@@ -49,4 +50,16 @@ export function findHmStudioOverflowPlan(
   }
 
   return null;
+}
+
+/** Keep seedance_v2.5 visible while HM Studio is manually stopped if a fallback route is enabled. */
+export function hasHmStudioOverflowChannel(): boolean {
+  return findHmStudioOverflowPlan({
+    requestedModel: HM_STUDIO_PRIMARY_VIDEO_MODEL,
+    resolution: '720p',
+    seconds: 30,
+    imageCount: 0,
+    videoCount: 0,
+    audioCount: 0,
+  }) !== null;
 }

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildJulunMinimaxH3Payload,
+  buildJulunSd25Payload,
+  isJulunChannel,
   isJulunMinimaxH3Model,
   JULUN_MINIMAX_H3_MODEL,
 } from '../server/services/julunMinimaxAdapter.js';
@@ -9,6 +11,22 @@ describe('Julun MiniMax H3 768p adapter', () => {
   it('recognizes only the exact upstream model ID', () => {
     expect(isJulunMinimaxH3Model(JULUN_MINIMAX_H3_MODEL)).toBe(true);
     expect(isJulunMinimaxH3Model(JULUN_MINIMAX_H3_MODEL.toLowerCase())).toBe(false);
+  });
+
+  it('builds the Julun sd2.5 fallback payload', () => {
+    expect(isJulunChannel({ baseUrl: 'https://julun.cc' })).toBe(true);
+    expect(buildJulunSd25Payload({
+      prompt: 'test',
+      ratio: '16:9',
+      imageUrls: ['https://assets.example/1.jpg'],
+    })).toEqual({
+      model: 'sd2.5',
+      prompt: 'test',
+      seconds: 30,
+      ratio: '16:9',
+      resolution: '720p',
+      image_urls: ['https://assets.example/1.jpg'],
+    });
   });
 
   it('builds a fixed 768p payload and preserves 933 reference limits', () => {

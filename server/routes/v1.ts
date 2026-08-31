@@ -40,14 +40,27 @@ import {
 } from '../services/sudaShuiAdapter.js';
 import {
   buildJulunMinimaxH3Payload,
+  isJulunChannel,
   isJulunMinimaxH3Model,
   JULUN_MINIMAX_H3_MODEL,
   JULUN_MINIMAX_H3_RESOLUTION,
 } from '../services/julunMinimaxAdapter.js';
 import {
+  HM_STUDIO_PRIMARY_VIDEO_MODEL,
+  isHmStudioConcurrencyError,
   MJ_OVERFLOW_VIDEO_MODEL,
+  SI_YUE_TIAN_PRIMARY_VIDEO_MODEL,
 } from '../services/videoFailoverService.js';
-import { findHmStudioOverflowPlan } from '../services/hmStudioOverflowChannelService.js';
+import {
+  findHmStudioOverflowPlan,
+  hasHmStudioOverflowChannel,
+} from '../services/hmStudioOverflowChannelService.js';
+import {
+  findSiYueTianOverflowPlan,
+  isSiYueTianChannel,
+  selectSiYueTianRoute,
+  submitSiYueTianOverflowPlan,
+} from '../services/siYueTianChannelService.js';
 import {
   buildWxHaidiYueVideoPayload,
   isWxHaidiYueChannel,
@@ -145,6 +158,11 @@ export function getAccessibleModelIds(token: { allowedModels: string[] }): strin
     }
   } catch (error) {
     console.error('[v1/models] 渠道自定义模型读取失败:', error);
+  }
+
+  if (!disabledModelIds.has(HM_STUDIO_PRIMARY_VIDEO_MODEL) && hasHmStudioOverflowChannel()) {
+    allModels.add(HM_STUDIO_PRIMARY_VIDEO_MODEL);
+    activeChannels.push({ supportedModels: [HM_STUDIO_PRIMARY_VIDEO_MODEL] } as any);
   }
 
   let modelList = filterRoutableModels(Array.from(allModels), activeChannels)
@@ -1508,14 +1526,59 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
   }
 
-  let channel = ChannelService.findChannelForModel(model);
-  let executionModel = model;
-  let failoverReason = '';
+  if (model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL) {
+    if (seconds !== 30) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'sd2.5 only supports exactly 30 seconds' });
+    }
+    if (resolution !== '720p') {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'sd2.5 only supports 720p' });
+    }
+    if (image_urls.length > 9 || video_urls.length > 0 || audio_urls.length > 0) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'sd2.5 supports at most 9 images and does not support video/audio references' });
+    }
+  }
+
+  const siYueTianInput = {
+    requestedModel: model,
+    resolution,
+    seconds,
+    imageCount: image_urls.length,
+    videoCount: video_urls.length,
+    audioCount: audio_urls.length,
+  };
+  const siYueTianSelection = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL
+    ? selectSiYueTianRoute(siYueTianInput)
+    : null;
+  let channel = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL
+    ? siYueTianSelection?.channel || null
+    : ChannelService.findChannelForModel(model);
+  let executionModel = siYueTianSelection?.executionModel || model;
+  let failoverReason = siYueTianSelection?.reason || '';
+  let failoverFrom = siYueTianSelection?.kind === 'julun' ? 'siyuetian' : '';
   let upstreamModel = model;
   let baseUrl = '';
   let apiKey = '';
   let channelId: number | null = null;
 
+  if (!channel && model === HM_STUDIO_PRIMARY_VIDEO_MODEL) {
+    const overflowPlan = findHmStudioOverflowPlan({
+      requestedModel: model,
+      resolution,
+      seconds,
+      imageCount: image_urls.length,
+      videoCount: video_urls.length,
+      audioCount: audio_urls.length,
+    });
+    if (overflowPlan) {
+      channel = overflowPlan.channel;
+      executionModel = overflowPlan.executionModel;
+      failoverFrom = 'hmstudio';
+      failoverReason = 'hmstudio_disabled';
+    }
+  }
   if (channel) {
     if (isHmStudioChannel(channel)) {
       const poolLoad = hmStudioQueue.getPoolLoad(hmStudioPoolKey(channel));
@@ -1532,6 +1595,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       if (overflowPlan) {
         channel = overflowPlan.channel;
         executionModel = overflowPlan.executionModel;
+        failoverFrom = 'hmstudio';
         failoverReason = 'hmstudio_capacity';
       }
     }
@@ -1611,8 +1675,9 @@ async function handleVideoCreation(req: Request, res: Response) {
         upstreamModel,
         requestedModel: model,
         actualModel: executionModel,
-        actualChannel: isMjNewApiChannel(channel) ? 'mjnewapi' : channel.type,
-        fallbackFrom: failoverReason ? 'hmstudio' : undefined,
+        actualChannel: failoverFrom === 'siyuetian' ? 'julun'
+          : isMjNewApiChannel(channel) ? 'mjnewapi' : channel.type,
+        fallbackFrom: failoverReason ? failoverFrom : undefined,
         fallbackReason: failoverReason || undefined,
         fallbackAt: failoverReason ? new Date().toISOString() : undefined,
         image_urls,
@@ -1653,6 +1718,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   const isHmStudio = isHmStudioChannel(channel);
   const isWxHaidiYue = isWxHaidiYueChannel(channel);
   const isMjNewApi = isMjNewApiChannel(channel);
+  const isJulunSd25 = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL && isJulunChannel(channel);
 
   if (isHmStudio) {
     deductTokenOrUserBalance(token, totalCost, model);
@@ -1756,6 +1822,16 @@ async function handleVideoCreation(req: Request, res: Response) {
         headers,
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(channel.timeout || 120_000),
+      });
+    } else if (isJulunSd25) {
+      upstreamRes = await submitSiYueTianOverflowPlan({
+        channel,
+        executionModel: 'sd2.5',
+        kind: 'julun',
+      }, {
+        prompt,
+        ratio,
+        imageUrls: image_urls,
       });
     } else if (isMjNewApi) {
       const invalidUrls = findInvalidMjNewApiMaterialUrls(image_urls, video_urls, audio_urls);
@@ -1943,15 +2019,58 @@ async function handleVideoCreation(req: Request, res: Response) {
     cleanupFiles(req.files);
 
     if (!upstreamRes.ok) {
-      const errText = await upstreamRes.text();
-      const durationMs = Date.now() - startTime;
-      db.insert(apiLogs).values({
-        tokenId: token.id, channelId, model, upstreamModel,
-        durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errText.slice(0, 500)}`, clientIp,
-      }).run();
+      let errText = await upstreamRes.text();
+      const canRetrySiYueTian = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL
+        && (isSiYueTianChannel(channel) || failoverFrom === 'siyuetian')
+        && isHmStudioConcurrencyError(upstreamRes.status, errText);
 
-      persistVideoContentFailure(contentId, `HTTP ${upstreamRes.status}: ${errText}`, { billingStatus: 'not_charged' });
-      return res.status(upstreamRes.status).json({ error: errText });
+      if (canRetrySiYueTian) {
+        ChannelService.disableExecutionTarget(channel, errText);
+        failoverFrom = 'siyuetian';
+        failoverReason = 'siyuetian_upstream_concurrency';
+        const overflowPlan = findSiYueTianOverflowPlan({
+          requestedModel: model,
+          resolution,
+          seconds,
+          imageCount: image_urls.length,
+          videoCount: video_urls.length,
+          audioCount: audio_urls.length,
+        });
+
+        if (overflowPlan) {
+          const fallbackResponse = await submitSiYueTianOverflowPlan(overflowPlan, {
+            prompt,
+            ratio,
+            imageUrls: image_urls,
+          });
+          if (fallbackResponse.ok) {
+            upstreamRes = fallbackResponse;
+            channel = overflowPlan.channel;
+            executionModel = overflowPlan.executionModel;
+            upstreamModel = overflowPlan.executionModel;
+            baseUrl = channel.baseUrl.replace(/\/+$/, '');
+            apiKey = channel.apiKey;
+            channelId = channel.id;
+          } else {
+            upstreamRes = fallbackResponse;
+            errText = await fallbackResponse.text().catch(() => '');
+            if (isHmStudioConcurrencyError(fallbackResponse.status, errText)) {
+              ChannelService.disableExecutionTarget(overflowPlan.channel, errText);
+            }
+          }
+        }
+      }
+
+      if (!upstreamRes.ok) {
+        const durationMs = Date.now() - startTime;
+        db.insert(apiLogs).values({
+          tokenId: token.id, channelId, model, upstreamModel,
+          durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errText.slice(0, 500)}`, clientIp,
+        }).run();
+
+        persistVideoContentFailure(contentId, `HTTP ${upstreamRes.status}: ${errText}`, { billingStatus: 'not_charged' });
+        return res.status(upstreamRes.status).json({ error: errText });
+      }
     }
 
     const responseBody = await upstreamRes.json() as any;
@@ -2000,8 +2119,9 @@ async function handleVideoCreation(req: Request, res: Response) {
       upstreamModel,
       requestedModel: model,
       actualModel: executionModel,
-      actualChannel: isMjNewApiChannel(channel) ? 'mjnewapi' : channel.type,
-      fallbackFrom: failoverReason ? 'hmstudio' : undefined,
+      actualChannel: failoverFrom === 'siyuetian' ? 'julun'
+        : isMjNewApiChannel(channel) ? 'mjnewapi' : channel.type,
+      fallbackFrom: failoverReason ? failoverFrom : undefined,
       fallbackReason: failoverReason || undefined,
       progress: 0,
       tokenId: token.id

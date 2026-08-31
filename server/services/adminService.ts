@@ -541,7 +541,10 @@ export class AdminService {
   // ============ 系统设置 ============
   static getSettings() {
     // Prices are managed exclusively through model_pricing (/admin/pricing).
-    return db.select().from(settings).all().filter(item => !item.key.includes('_rate') && item.key !== 'image_rate' && item.key !== DELETED_MODELS_SETTING);
+    return db.select().from(settings).all().filter(item => !item.key.includes('_rate')
+      && item.key !== 'image_rate'
+      && item.key !== DELETED_MODELS_SETTING
+      && !item.key.startsWith('internal_'));
   }
 
   static updateSettings(items: { key: string; value: string }[]) {
@@ -549,10 +552,19 @@ export class AdminService {
       if (item.key.includes('_rate') || item.key === 'image_rate' || item.key === DELETED_MODELS_SETTING) {
         throw { status: 400, message: '模型价格请在「计费设置」中修改' };
       }
+      if (item.key === 'siyuetian_sd25_routing_strategy' && !['failover', 'round_robin'].includes(item.value)) {
+        throw { status: 400, message: '四月天路由策略仅支持 failover 或 round_robin' };
+      }
       db.update(settings)
         .set({ value: item.value, updatedAt: new Date().toISOString() })
         .where(eq(settings.key, item.key))
         .run();
+      if (item.key === 'siyuetian_sd25_routing_strategy' && item.value === 'round_robin') {
+        db.update(settings)
+          .set({ value: 'siyuetian', updatedAt: new Date().toISOString() })
+          .where(eq(settings.key, 'internal_siyuetian_sd25_round_robin_next'))
+          .run();
+      }
     }
   }
 

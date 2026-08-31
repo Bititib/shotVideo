@@ -1,4 +1,5 @@
 export const HM_STUDIO_PRIMARY_VIDEO_MODEL = 'seedance_v2.5';
+export const SI_YUE_TIAN_PRIMARY_VIDEO_MODEL = 'sd2.5';
 export const MJ_OVERFLOW_VIDEO_MODEL = 'xd-seedance-2.5-720p';
 
 export type HmStudioOverflowInput = {
@@ -33,6 +34,16 @@ export function canUseWxHaidiYueOverflow(input: HmStudioOverflowInput): boolean 
     && Number.isInteger(input.seconds)
     && input.seconds >= 4
     && input.seconds <= 30
+    && input.imageCount <= 9
+    && input.videoCount === 0
+    && input.audioCount === 0;
+}
+
+/** 四月天 sd2.5 仅在与 Julun 固定 30 秒模型完全兼容时分流。 */
+export function canUseSiYueTianJulunOverflow(input: HmStudioOverflowInput): boolean {
+  return input.requestedModel === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL
+    && input.resolution === '720p'
+    && input.seconds === 30
     && input.imageCount <= 9
     && input.videoCount === 0
     && input.audioCount === 0;

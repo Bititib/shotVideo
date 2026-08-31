@@ -108,10 +108,11 @@ describe('种子数据完整性', () => {
   it('巨轮渠道永久绑定 MiniMax H3 768p 并按 ¥0.18/秒计费', () => {
     const channel = db.select().from(channels).all().find(item => item.baseUrl.includes('julun.cc'));
     expect(channel).toBeDefined();
-    expect(JSON.parse(channel!.supportedModels)).toEqual(['wan3.0th', JULUN_MINIMAX_H3_MODEL]);
+    expect(JSON.parse(channel!.supportedModels)).toEqual(['wan3.0th', JULUN_MINIMAX_H3_MODEL, 'sd2.5']);
     expect(JSON.parse(channel!.modelMapping)).toMatchObject({
       'wan3.0th': 'wan3.0th',
       [JULUN_MINIMAX_H3_MODEL]: JULUN_MINIMAX_H3_MODEL,
+      'sd2.5': 'sd2.5',
     });
 
     const model = db.select().from(models).where(eq(models.modelId, JULUN_MINIMAX_H3_MODEL)).get();

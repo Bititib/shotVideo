@@ -13,6 +13,8 @@ export default function ChannelsPage() {
   const [routingPeriod, setRoutingPeriod] = useState<'all' | '24h' | '7d' | '30d'>('all');
   const [routingStats, setRoutingStats] = useState<any[]>([]);
   const [routingStatsLoading, setRoutingStatsLoading] = useState(false);
+  const [siYueTianStrategy, setSiYueTianStrategy] = useState<'failover' | 'round_robin'>('failover');
+  const [strategySaving, setStrategySaving] = useState(false);
 
   const newHmKey = () => ({
     clientId: `new-key-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -42,8 +44,25 @@ export default function ChannelsPage() {
     }
   };
 
+  const loadSiYueTianStrategy = async () => {
+    const rows = await adminApi.getSettings();
+    const value = rows.find((item: any) => item.key === 'siyuetian_sd25_routing_strategy')?.value;
+    setSiYueTianStrategy(value === 'round_robin' ? 'round_robin' : 'failover');
+  };
+
+  const saveSiYueTianStrategy = async (value: 'failover' | 'round_robin') => {
+    setStrategySaving(true);
+    try {
+      await adminApi.updateSettings([{ key: 'siyuetian_sd25_routing_strategy', value }]);
+      setSiYueTianStrategy(value);
+    } finally {
+      setStrategySaving(false);
+    }
+  };
+
   useEffect(() => {
     void loadChannels();
+    void loadSiYueTianStrategy();
   }, []);
 
   useEffect(() => {
@@ -246,6 +265,33 @@ export default function ChannelsPage() {
           </div>
         </div>
       </div>
+
+      <section className="mb-6 rounded-2xl border border-violet-500/20 bg-violet-500/[0.05] p-4" aria-labelledby="siyuetian-routing-title">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 id="siyuetian-routing-title" className="text-sm font-semibold text-violet-100">四月天 / Julun sd2.5 路由策略</h2>
+            <p className="mt-1 text-xs text-zinc-500">
+              {siYueTianStrategy === 'round_robin'
+                ? '当前严格按请求交替：四月天 1 条、Julun 1 条；单边停用时全部走另一边。'
+                : '当前优先四月天，仅在停用或上游饱和时分流到 Julun。'}
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 rounded-xl border border-white/[0.07] bg-black/20 p-1" role="group" aria-label="四月天 sd2.5 路由策略">
+            <button type="button" disabled={strategySaving} onClick={() => { void saveSiYueTianStrategy('failover'); }}
+              className={`rounded-lg px-4 py-2 text-xs font-medium transition-colors disabled:opacity-50 ${siYueTianStrategy === 'failover'
+                ? 'bg-violet-500/25 text-violet-100 ring-1 ring-violet-400/30'
+                : 'text-zinc-400 hover:bg-white/5 hover:text-zinc-200'}`}>
+              故障分流
+            </button>
+            <button type="button" disabled={strategySaving} onClick={() => { void saveSiYueTianStrategy('round_robin'); }}
+              className={`rounded-lg px-4 py-2 text-xs font-medium transition-colors disabled:opacity-50 ${siYueTianStrategy === 'round_robin'
+                ? 'bg-violet-500/25 text-violet-100 ring-1 ring-violet-400/30'
+                : 'text-zinc-400 hover:bg-white/5 hover:text-zinc-200'}`}>
+              请求平分
+            </button>
+          </div>
+        </div>
+      </section>
 
       <section className="mb-6 rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.04] p-4" aria-labelledby="routing-stats-title">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

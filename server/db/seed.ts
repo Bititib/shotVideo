@@ -700,6 +700,16 @@ export async function initDatabase() {
     ]).run();
   }
 
+  const routingSettings = [
+    { key: 'siyuetian_sd25_routing_strategy', value: 'failover', label: '四月天 / Julun sd2.5 路由策略' },
+    { key: 'internal_siyuetian_sd25_round_robin_next', value: 'siyuetian', label: '四月天 / Julun sd2.5 轮询游标' },
+  ];
+  for (const item of routingSettings) {
+    if (!db.select().from(settings).where(eq(settings.key, item.key)).get()) {
+      db.insert(settings).values(item).run();
+    }
+  }
+
   // 强制清理与修正数据库中废弃的多余 Sora 4 / Seedance 费率设置项
   const keysToDelete = [
     'sdas_fast_rate',
@@ -1178,7 +1188,6 @@ export async function initDatabase() {
       db.update(channels)
         .set({
           name: '4月天 渠道',
-          status: 1,
           supportedModels: JSON.stringify(chre3Models),
           updatedAt: new Date().toISOString()
         })
@@ -1279,7 +1288,7 @@ export async function initDatabase() {
 
   // 15) 保证 julun.cc 渠道存在，并永久绑定 WAN3.0 与 MiniMax H3 768p。
   try {
-    const julunModels = ['wan3.0th', JULUN_MINIMAX_H3_MODEL];
+    const julunModels = ['wan3.0th', JULUN_MINIMAX_H3_MODEL, 'sd2.5'];
     const julunMapping = Object.fromEntries(julunModels.map(modelId => [modelId, modelId]));
     const julunApiKey = 'sk-yYbcd3cH5lrl6Za89O8beER0iomYfHOyPWSqb9XMv0MLAgWS';
     const existingJulun = db.select().from(channels).where(like(channels.baseUrl, '%julun.cc%')).get();
@@ -1304,7 +1313,6 @@ export async function initDatabase() {
           apiKey: julunApiKey,
           supportedModels: JSON.stringify(julunModels),
           modelMapping: JSON.stringify(julunMapping),
-          status: 1,
           updatedAt: new Date().toISOString()
         })
         .where(eq(channels.id, existingJulun.id))
@@ -1389,9 +1397,13 @@ export async function initDatabase() {
         baseUrl: hmStudioBaseUrl,
         updatedAt: new Date().toISOString(),
       };
-      if (hmStudioApiKey) {
+      const hasStoredHmKey = Boolean(
+        db.select().from(channelApiKeys).where(eq(channelApiKeys.channelId, hmStudioChannel.id)).get()
+        || hmStudioChannel.apiKey,
+      );
+      if (hmStudioApiKey && !hasStoredHmKey) {
         updates.status = 1;
-      } else if (!db.select().from(channelApiKeys).where(eq(channelApiKeys.channelId, hmStudioChannel.id)).get() && !hmStudioChannel.apiKey) {
+      } else if (!hasStoredHmKey && !hmStudioApiKey) {
         updates.status = 0;
       }
       db.update(channels).set(updates).where(eq(channels.id, hmStudioChannel.id)).run();
@@ -1453,7 +1465,7 @@ export async function initDatabase() {
       const updates: Record<string, any> = { ...fixedConfig };
       if (wxHaidiYueApiKey) {
         updates.apiKey = wxHaidiYueApiKey;
-        updates.status = 1;
+        if (!existingWxHaidiYue.apiKey) updates.status = 1;
       } else if (!existingWxHaidiYue.apiKey) {
         updates.status = 0;
       }

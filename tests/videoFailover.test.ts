@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canUseMjOverflowModel,
+  canUseSiYueTianJulunOverflow,
   canUseWxHaidiYueOverflow,
   isHmStudioConcurrencyError,
   shouldOverflowHmStudio,
@@ -49,11 +50,25 @@ describe('HM Studio to MJ video failover', () => {
   });
 
   it('uses wx-海底月 sd2.5 only for its narrower compatible request shape', () => {
+    expect(canUseWxHaidiYueOverflow({ ...compatibleRequest, seconds: 30 })).toBe(true);
+    expect(canUseWxHaidiYueOverflow({ ...compatibleRequest, seconds: 30, imageCount: 10 })).toBe(false);
     expect(canUseWxHaidiYueOverflow(compatibleRequest)).toBe(true);
-    expect(canUseWxHaidiYueOverflow({ ...compatibleRequest, imageCount: 10 })).toBe(false);
     expect(canUseWxHaidiYueOverflow({ ...compatibleRequest, videoCount: 1 })).toBe(false);
     expect(canUseWxHaidiYueOverflow({ ...compatibleRequest, audioCount: 1 })).toBe(false);
     expect(canUseWxHaidiYueOverflow({ ...compatibleRequest, resolution: '480p' })).toBe(false);
+  });
+
+  it('routes fixed-30-second 四月天 sd2.5 only to Julun', () => {
+    const siYueTianRequest = {
+      ...compatibleRequest,
+      requestedModel: 'sd2.5',
+      seconds: 30,
+    };
+    expect(canUseSiYueTianJulunOverflow(siYueTianRequest)).toBe(true);
+    expect(canUseWxHaidiYueOverflow(siYueTianRequest)).toBe(false);
+    expect(canUseMjOverflowModel(siYueTianRequest)).toBe(false);
+    expect(canUseSiYueTianJulunOverflow({ ...siYueTianRequest, seconds: 29 })).toBe(false);
+    expect(canUseSiYueTianJulunOverflow({ ...siYueTianRequest, imageCount: 10 })).toBe(false);
   });
 
   it('recognizes explicit upstream concurrency errors but not ordinary failures', () => {
