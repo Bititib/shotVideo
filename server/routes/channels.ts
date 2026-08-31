@@ -14,6 +14,15 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+// 高频刷新只读取并发运行态，不重复传输完整渠道配置。
+router.get('/runtime-status', (req: AuthRequest, res: Response) => {
+  try {
+    res.json(ChannelService.getRuntimeStatus());
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || '获取渠道运行状态失败' });
+  }
+});
+
 // 仅管理员可见的视频分流渠道统计。
 router.get('/routing-stats', (req: AuthRequest, res: Response) => {
   try {

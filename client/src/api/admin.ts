@@ -28,6 +28,7 @@ export const adminApi = {
 
   // 渠道管理
   getChannels() { return api.get<any[]>('/admin/channels'); },
+  getChannelRuntimeStatus() { return api.get<any[]>('/admin/channels/runtime-status'); },
   getVideoRoutingStats(period: 'all' | '24h' | '7d' | '30d' = 'all') {
     return api.get<any>(`/admin/channels/routing-stats?period=${period}`);
   },

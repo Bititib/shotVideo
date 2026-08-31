@@ -42,14 +42,17 @@ function allHmKeys() {
   return db.select().from(channelApiKeys).all();
 }
 
-function syncHmStudioPools(channelRows = db.select().from(channels).all()): void {
+function syncHmStudioPools(
+  channelRows: Array<{ id: number; type: string; status: number }> = db.select().from(channels).all(),
+  hmKeys = allHmKeys(),
+): void {
   const activeChannelIds = new Set(
     channelRows
       .filter(channel => channel.type === 'hmstudio' && channel.status === 1)
       .map(channel => channel.id),
   );
   hmStudioQueue.syncPools(
-    allHmKeys()
+    hmKeys
       .filter(key => key.status === 1 && activeChannelIds.has(key.channelId))
       .map(hmStudioPoolConfig),
   );
@@ -135,6 +138,31 @@ function saveHmStudioKeys(channelId: number, entries: any[], replaceExisting: bo
 }
 
 export class ChannelService {
+  /** 仅返回会频繁变化的运行态，供管理页轻量轮询。 */
+  static getRuntimeStatus() {
+    const channelRows = db.select({
+      id: channels.id,
+      type: channels.type,
+      status: channels.status,
+    }).from(channels).all();
+    const hmKeys = allHmKeys();
+    syncHmStudioPools(channelRows, hmKeys);
+
+    return channelRows.map(channel => {
+      const activeKeys = channel.type === 'hmstudio' && channel.status === 1
+        ? hmKeys.filter(key => key.channelId === channel.id && key.status === 1)
+        : [];
+      const loads = activeKeys.map(key => hmStudioQueue.getPoolLoad(hmStudioPoolKey(key)));
+      return {
+        id: channel.id,
+        concurrencyLimit: activeKeys.reduce((sum, key) => sum + key.concurrencyLimit, 0),
+        concurrencyRunning: loads.reduce((sum, load) => sum + load.running, 0),
+        concurrencyQueued: loads.reduce((sum, load) => sum + load.queued, 0),
+        concurrencyLoad: loads.reduce((sum, load) => sum + load.load, 0),
+      };
+    });
+  }
+
   /** 获取所有渠道；HM Studio 的 Key 作为渠道下的子项返回。 */
   static getChannels() {
     const rows = db.select().from(channels).orderBy(channels.priority, desc(channels.createdAt)).all();
