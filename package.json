@@ -7,6 +7,7 @@
     "dev": "tsx server/index.ts",
     "build": "cd client && npx vite build",
     "start": "NODE_ENV=production tsx server/index.ts",
+    "recover:hm-timeouts": "tsx server/scripts/recoverHmTimedOutVideos.ts",
     "preview": "cd client && npx vite preview",
     "lint": "tsc --noEmit",
     "test": "vitest run"
