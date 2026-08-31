@@ -87,4 +87,20 @@ describe('HM Studio channel API keys', () => {
       ],
     })).toThrow();
   });
+
+  it('auto-disables only the failed HM key and allows an admin to start it again', () => {
+    const target = ChannelService.getActiveChannels().find(channel => channel.id === channelId)!;
+    expect(target.apiKeyId).toBeTruthy();
+
+    ChannelService.disableExecutionTarget(target, '当前分组上游负载已饱和，请稍后再试');
+    const stopped = db.select().from(channelApiKeys).where(eq(channelApiKeys.id, target.apiKeyId!)).get();
+    const parent = db.select().from(channels).where(eq(channels.id, channelId)).get();
+    expect(stopped?.status).toBe(0);
+    expect(parent?.status).toBe(1);
+    expect(parent?.lastTestResult).toContain('auto_disabled:');
+
+    ChannelService.setHmStudioKeyStatus(channelId, target.apiKeyId!, 1);
+    const restarted = db.select().from(channelApiKeys).where(eq(channelApiKeys.id, target.apiKeyId!)).get();
+    expect(restarted?.status).toBe(1);
+  });
 });

@@ -118,6 +118,19 @@ export default function ChannelsPage() {
     }));
   };
 
+  const toggleHmKeyStatus = async (index: number, key: any) => {
+    const nextStatus = key.status === 0 ? 1 : 0;
+    if (!key.id) {
+      updateHmKey(index, { status: nextStatus });
+      return;
+    }
+    try {
+      await adminApi.setChannelApiKeyStatus(edit.id, key.id, nextStatus);
+      updateHmKey(index, { status: nextStatus });
+      await loadChannels();
+    } catch (e: any) { alert(e.message); }
+  };
+
   const handleSave = async () => {
     if (!edit) return;
     try {
@@ -341,13 +354,23 @@ export default function ChannelsPage() {
                   {testing === ch.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />} 测试
                 </button>
                 {ch.type === 'hmstudio' && (
-                  <button onClick={() => openAddHmKey(ch)}
-                    className="flex items-center gap-1 text-[10px] px-3 py-1 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg text-amber-300">
-                    <KeyRound className="w-3 h-3" /> 添加 Key
-                  </button>
+                  <>
+                    {(ch.apiKeys || []).some((key: any) => key.status === 0) && (
+                      <button onClick={() => openEdit(ch)}
+                        className="flex items-center gap-1 text-[10px] px-3 py-1 bg-red-500/10 hover:bg-red-500/20 rounded-lg text-red-400">
+                        <Power className="w-3 h-3" /> 启动 Key ({(ch.apiKeys || []).filter((key: any) => key.status === 0).length})
+                      </button>
+                    )}
+                    <button onClick={() => openAddHmKey(ch)}
+                      className="flex items-center gap-1 text-[10px] px-3 py-1 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg text-amber-300">
+                      <KeyRound className="w-3 h-3" /> 添加 Key
+                    </button>
+                  </>
                 )}
-                <button onClick={() => toggleStatus(ch)} className={`p-1.5 rounded-lg transition-colors ${ch.status ? 'bg-green-500/10 text-green-400 hover:bg-green-500/20' : 'bg-red-500/10 text-red-400 hover:bg-red-500/20'}`}>
-                  {ch.status ? <Power className="w-4 h-4" /> : <PowerOff className="w-4 h-4" />}
+                <button onClick={() => toggleStatus(ch)} aria-label={ch.status ? `停止 ${ch.name}` : `启动 ${ch.name}`}
+                  className={`flex items-center gap-1 rounded-lg px-3 py-1 text-[10px] font-medium transition-colors ${ch.status ? 'bg-green-500/10 text-green-400 hover:bg-green-500/20' : 'bg-red-500/10 text-red-400 hover:bg-red-500/20'}`}>
+                  {ch.status ? <PowerOff className="w-3 h-3" /> : <Power className="w-3 h-3" />}
+                  {ch.status ? '停止' : '启动'}
                 </button>
                 <button onClick={() => openEdit(ch)} className="text-[10px] px-3 py-1 bg-white/5 hover:bg-white/10 rounded-lg text-zinc-300"><Pencil className="w-3 h-3 inline mr-1" />编辑</button>
                 <button onClick={() => handleDelete(ch.id)} className="text-[10px] px-3 py-1 bg-red-500/10 hover:bg-red-500/20 rounded-lg text-red-400"><Trash2 className="w-3 h-3 inline mr-1" />删除</button>
@@ -361,7 +384,7 @@ export default function ChannelsPage() {
               {ch.type === 'hmstudio' && <span>Keys: <span className="text-amber-200 tabular-nums">{ch.apiKeyCount || 0}</span></span>}
               {ch.type === 'hmstudio' && <span>运行: <span className="text-emerald-300 tabular-nums">{ch.concurrencyRunning || 0}/{ch.concurrencyLimit ?? 0}</span></span>}
               {ch.type === 'hmstudio' && <span>排队: <span className="text-amber-300 tabular-nums">{ch.concurrencyQueued || 0}</span></span>}
-              {ch.lastTestResult && <span>最后测试: <span className={ch.lastTestResult?.startsWith('success') ? 'text-green-400' : 'text-red-400'}>{ch.lastTestResult}</span></span>}
+              {ch.lastTestResult && <span>{ch.lastTestResult.startsWith('auto_disabled:') ? '自动停止' : '最后测试'}: <span className={ch.lastTestResult?.startsWith('success') ? 'text-green-400' : 'text-red-400'}>{ch.lastTestResult.replace(/^auto_disabled:/, '')}</span></span>}
             </div>
           </div>
         ))}
@@ -454,10 +477,10 @@ export default function ChannelsPage() {
                               onChange={event => updateHmKey(index, { concurrencyLimit: Math.max(1, parseInt(event.target.value, 10) || 1) })}
                               className="w-full rounded-lg border border-amber-500/20 bg-white/5 px-3 py-2 text-sm text-white focus:outline-none focus:border-amber-400" />
                           </div>
-                          <button type="button" onClick={() => updateHmKey(index, { status: key.status === 0 ? 1 : 0 })}
+                          <button type="button" onClick={() => void toggleHmKeyStatus(index, key)}
                             aria-label={`${key.status === 0 ? '启用' : '停用'} API Key ${index + 1}`}
                             className={`h-9 rounded-lg px-3 text-xs font-medium transition-colors ${key.status === 0 ? 'bg-white/5 text-zinc-400 hover:bg-white/10' : 'bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'}`}>
-                            {key.status === 0 ? '已停用' : '已启用'}
+                            {key.status === 0 ? '启动' : '停止'}
                           </button>
                           <button type="button" onClick={() => removeHmKey(index)} aria-label={`移除 API Key ${index + 1}`}
                             className="h-9 w-full rounded-lg bg-red-500/10 px-3 text-red-400 hover:bg-red-500/20 sm:w-9 sm:px-0">

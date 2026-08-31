@@ -59,6 +59,7 @@ describe('HM Studio to MJ video failover', () => {
   it('recognizes explicit upstream concurrency errors but not ordinary failures', () => {
     expect(isHmStudioConcurrencyError(429, 'upstream concurrency limit reached')).toBe(true);
     expect(isHmStudioConcurrencyError(503, '当前并发已满，请稍后')).toBe(true);
+    expect(isHmStudioConcurrencyError(503, '当前分组上游负载已饱和，请稍后再试')).toBe(true);
     expect(isHmStudioConcurrencyError(400, 'invalid aspect ratio')).toBe(false);
     expect(isHmStudioConcurrencyError(200, 'concurrency limit')).toBe(false);
   });

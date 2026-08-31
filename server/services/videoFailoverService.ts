@@ -52,5 +52,5 @@ export function shouldOverflowHmStudio(input: HmStudioOverflowInput & {
 /** Only submission-stage capacity errors are safe to retry on another channel. */
 export function isHmStudioConcurrencyError(status: number, detail: string): boolean {
   if (status < 400 || status > 599) return false;
-  return /并发|限流|频繁|排队已满|concurren|rate\s*limit|too\s*many|capacity|busy/i.test(detail);
+  return /并发|限流|频繁|排队已满|负载|饱和|concurren|rate\s*limit|too\s*many|capacity|busy|overload|saturat/i.test(detail);
 }

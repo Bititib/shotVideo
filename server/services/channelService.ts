@@ -1,6 +1,6 @@
 import { db } from '../db/index.js';
 import { channelApiKeys, channels, models } from '../db/schema.js';
-import { desc, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { hmStudioPoolConfig, hmStudioPoolKey, hmStudioQueue } from './hmStudioQueueService.js';
 import {
   isWxHaidiYueChannel,
@@ -36,6 +36,12 @@ function parseJsonArray(value: string): string[] {
 
 function maskApiKey(apiKey: string): string {
   return apiKey ? `****${apiKey.slice(-4)}` : '';
+}
+
+function hmPoolScore(channel: any): [number, number, number] {
+  const pool = hmStudioQueue.getPoolLoad(hmStudioPoolKey(channel));
+  const limit = Math.max(1, pool.limit);
+  return [pool.running < limit ? 0 : 1, pool.load / limit, pool.queued];
 }
 
 function allHmKeys() {
@@ -220,9 +226,12 @@ export class ChannelService {
     const selected = apiKeyId
       ? keys.find(key => key.id === apiKeyId)
       : keys.filter(key => key.status === 1).sort((a, b) => {
-          const loadA = hmStudioQueue.getPoolLoad(hmStudioPoolKey(a)).load;
-          const loadB = hmStudioQueue.getPoolLoad(hmStudioPoolKey(b)).load;
-          return loadA - loadB || a.id - b.id;
+          const scoreA = hmPoolScore(a);
+          const scoreB = hmPoolScore(b);
+          return scoreA[0] - scoreB[0]
+            || scoreA[1] - scoreB[1]
+            || scoreA[2] - scoreB[2]
+            || a.id - b.id;
         })[0];
 
     return {
@@ -263,10 +272,7 @@ export class ChannelService {
 
   /** 根据模型名查找可用渠道（按优先级、Key 池负载和权重选择）。 */
   static findChannelForModel(modelName: string) {
-    const activeChannels = this.getActiveChannels();
-    const candidates = activeChannels.filter(channel =>
-      channel.supportedModels.includes(modelName) || channel.supportedModels.includes('*')
-    );
+    const candidates = this.findChannelsForModel(modelName);
     if (candidates.length === 0) return null;
 
     const topPriority = candidates[0].priority;
@@ -275,10 +281,15 @@ export class ChannelService {
     if (topCandidates.every(channel => channel.type === 'hmstudio')) {
       const loads = topCandidates.map(channel => ({
         channel,
-        load: hmStudioQueue.getPoolLoad(hmStudioPoolKey(channel)).load,
+        score: hmPoolScore(channel),
       }));
-      const minimumLoad = Math.min(...loads.map(item => item.load));
-      const leastLoaded = loads.filter(item => item.load === minimumLoad).map(item => item.channel);
+      loads.sort((a, b) => a.score[0] - b.score[0]
+        || a.score[1] - b.score[1]
+        || a.score[2] - b.score[2]);
+      const bestScore = loads[0].score;
+      const leastLoaded = loads
+        .filter(item => item.score[0] === bestScore[0] && item.score[1] === bestScore[1] && item.score[2] === bestScore[2])
+        .map(item => item.channel);
       const totalWeight = leastLoaded.reduce((sum, channel) => sum + channel.weight, 0);
       let random = Math.random() * totalWeight;
       for (const channel of leastLoaded) {
@@ -297,8 +308,64 @@ export class ChannelService {
     return topCandidates[0];
   }
 
+  static findChannelsForModel(modelName: string) {
+    return this.getActiveChannels()
+      .filter(channel => channel.supportedModels.includes(modelName) || channel.supportedModels.includes('*'))
+      .sort((a, b) => {
+        if (a.priority !== b.priority) return a.priority - b.priority;
+        if (a.type === 'hmstudio' && b.type === 'hmstudio') {
+          const scoreA = hmPoolScore(a);
+          const scoreB = hmPoolScore(b);
+          return scoreA[0] - scoreB[0] || scoreA[1] - scoreB[1] || scoreA[2] - scoreB[2];
+        }
+        return a.id - b.id;
+      });
+  }
+
+  static findChannelsByType(type: string) {
+    return this.getActiveChannels().filter(channel => channel.type === type);
+  }
+
   static findChannelByType(type: string) {
-    return this.getActiveChannels().find(channel => channel.type === type) || null;
+    return this.findChannelsByType(type)[0] || null;
+  }
+
+  /** Submission-stage capacity failures are disabled until an admin starts the route again. */
+  static disableExecutionTarget(target: any, reason: string) {
+    const detail = String(reason || '上游提交失败').replace(/\s+/g, ' ').slice(0, 240);
+    const now = new Date().toISOString();
+    if (target?.type === 'hmstudio' && Number(target.apiKeyId) > 0) {
+      db.update(channelApiKeys).set({ status: 0, updatedAt: now })
+        .where(and(eq(channelApiKeys.id, Number(target.apiKeyId)), eq(channelApiKeys.channelId, Number(target.id))))
+        .run();
+      db.update(channels).set({
+        lastTestAt: now,
+        lastTestResult: `auto_disabled:${maskApiKey(String(target.apiKey || ''))}:${detail}`,
+        updatedAt: now,
+      }).where(eq(channels.id, Number(target.id))).run();
+    } else if (Number(target?.id) > 0) {
+      db.update(channels).set({
+        status: 0,
+        lastTestAt: now,
+        lastTestResult: `auto_disabled:${detail}`,
+        updatedAt: now,
+      }).where(eq(channels.id, Number(target.id))).run();
+    }
+    syncHmStudioPools();
+  }
+
+  static setHmStudioKeyStatus(channelId: number, keyId: number, status: number) {
+    const channel = db.select().from(channels).where(eq(channels.id, channelId)).get();
+    if (!channel || channel.type !== 'hmstudio') throw { status: 404, message: 'HM Studio 渠道不存在' };
+    const key = db.select().from(channelApiKeys)
+      .where(and(eq(channelApiKeys.id, keyId), eq(channelApiKeys.channelId, channelId)))
+      .get();
+    if (!key) throw { status: 404, message: 'API Key 不存在' };
+    db.update(channelApiKeys).set({
+      status: status === 1 ? 1 : 0,
+      updatedAt: new Date().toISOString(),
+    }).where(eq(channelApiKeys.id, keyId)).run();
+    syncHmStudioPools();
   }
 
   static createChannel(data: any) {

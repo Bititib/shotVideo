@@ -52,6 +52,18 @@ router.put('/:id', async (req: AuthRequest, res: Response) => {
   } catch (err: any) { res.status(err.status || 500).json({ error: err.message }); }
 });
 
+// 手动启动或停止 HM Studio 渠道下的单个 API Key
+router.put('/:id/api-keys/:keyId/status', async (req: AuthRequest, res: Response) => {
+  try {
+    ChannelService.setHmStudioKeyStatus(
+      parseInt(req.params.id),
+      parseInt(req.params.keyId),
+      Number(req.body?.status) === 1 ? 1 : 0,
+    );
+    res.json({ message: Number(req.body?.status) === 1 ? 'API Key 已启动' : 'API Key 已停止' });
+  } catch (err: any) { res.status(err.status || 500).json({ error: err.message }); }
+});
+
 // 删除渠道
 router.delete('/:id', async (req: AuthRequest, res: Response) => {
   try {

@@ -34,6 +34,7 @@ export const adminApi = {
   },
   createChannel(data: any) { return api.post<any>('/admin/channels', data); },
   updateChannel(id: number, data: any) { return api.put<any>(`/admin/channels/${id}`, data); },
+  setChannelApiKeyStatus(channelId: number, keyId: number, status: number) { return api.put<any>(`/admin/channels/${channelId}/api-keys/${keyId}/status`, { status }); },
   deleteChannel(id: number) { return api.delete<any>(`/admin/channels/${id}`); },
   testChannel(id: number) { return api.post<any>(`/admin/channels/${id}/test`); },
   syncChannelModels(id: number) { return api.post<any>(`/admin/channels/${id}/sync-models`); },

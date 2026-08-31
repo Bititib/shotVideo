@@ -866,17 +866,18 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
   let executionModel = model;
   let failoverReason = '';
+  const overflowInput = {
+    requestedModel: model,
+    resolution,
+    seconds: Number(video_length),
+    imageCount: reference_images.length,
+    videoCount: finalVideos.length,
+    audioCount: finalAudios.length,
+  };
   if (isHmStudioChannel(channel)) {
     const poolLoad = hmStudioQueue.getPoolLoad(hmStudioPoolKey(channel));
     const overflowPlan = poolLoad.limit > 0 && poolLoad.load >= poolLoad.limit
-      ? findHmStudioOverflowPlan({
-          requestedModel: model,
-          resolution,
-          seconds: Number(video_length),
-          imageCount: reference_images.length,
-          videoCount: finalVideos.length,
-          audioCount: finalAudios.length,
-        })
+      ? findHmStudioOverflowPlan(overflowInput)
       : null;
     if (overflowPlan) {
       channel = overflowPlan.channel;
@@ -886,7 +887,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   }
 
   // Get the mapped model name from the database channel configuration
-  const dbChannel = channel;
+  let dbChannel = channel;
   let upstreamModel = executionModel;
   if (dbChannel?.modelMapping) {
     try {
@@ -1143,15 +1144,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     }
   };
 
-  const baseUrl = channel.baseUrl.replace(/\/+$/, '');
+  let baseUrl = channel.baseUrl.replace(/\/+$/, '');
   const size = RATIO_TO_SIZE[aspect_ratio] || '1280x720';
   const isSeedanceFast = model === 'seedance-2.0-fast';
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
   const isSudaShui = meta?.series === 'sudashui';
-  const isHmStudio = isHmStudioChannel(channel);
-  const isWxHaidiYue = isWxHaidiYueChannel(channel);
+  let isHmStudio = isHmStudioChannel(channel);
+  let isWxHaidiYue = isWxHaidiYueChannel(channel);
   const isSnumomWan = isSnumomWanChannel(channel);
-  const isMjNewApi = isMjNewApiChannel(channel);
+  let isMjNewApi = isMjNewApiChannel(channel);
   const isVeoOmni = model === 'veo-omni-flash';
   const isVeoOmniEdit = model === 'veo-omni-flash-video-edit';
   const isVeo31 = model === 'veo-3-1';
@@ -1237,7 +1238,115 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   try {
     let videoId = '';
 
-    if (isHmStudio) {
+    if (failoverReason && (isWxHaidiYue || isMjNewApi)) {
+      const attemptedFallbackIds = new Set<number>();
+      let overflowPlan: NonNullable<ReturnType<typeof findHmStudioOverflowPlan>> | null = {
+        channel,
+        executionModel,
+        kind: isWxHaidiYue ? 'wx-haidiyue' : 'mjnewapi',
+      };
+
+      while (overflowPlan) {
+        attemptedFallbackIds.add(overflowPlan.channel.id);
+        let fallbackMapping: Record<string, string> = {};
+        try {
+          fallbackMapping = typeof overflowPlan.channel.modelMapping === 'string'
+            ? JSON.parse(overflowPlan.channel.modelMapping || '{}')
+            : (overflowPlan.channel.modelMapping || {});
+        } catch { /* use selected overflow model */ }
+        const selectedUpstreamModel = fallbackMapping[overflowPlan.executionModel] || overflowPlan.executionModel;
+        let createResp: Awaited<ReturnType<typeof fetch>>;
+
+        if (overflowPlan.kind === 'wx-haidiyue') {
+          sendEvent({ type: 'status', message: '正在通过 wx-海底月备用线路提交视频任务...' });
+          const payload = buildWxHaidiYueVideoPayload({
+            prompt: prompt.trim(),
+            duration: Number(video_length) || 6,
+            aspectRatio: aspect_ratio,
+            images: reference_images,
+          });
+          createResp = await fetch(wxHaidiYueCreateUrl(overflowPlan.channel.baseUrl), {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${overflowPlan.channel.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(overflowPlan.channel.timeout || 120_000),
+          });
+        } else {
+          sendEvent({ type: 'status', message: '正在通过 MJNewAPI 备用线路提交视频任务...' });
+          const imageUrls = (reference_images || [])
+            .map((item: string) => convertBase64ToPublicUrl(item, 'mj_img', req))
+            .filter(Boolean);
+          if (findInvalidMjNewApiMaterialUrls(imageUrls).length > 0) {
+            refundFailedTask('参考素材必须是外网可访问的 HTTPS URL，请检查 BACKEND_URL 配置');
+            res.write('data: [DONE]\n\n');
+            return res.end();
+          }
+          const payload = buildMjNewApiVideoPayload({
+            model: selectedUpstreamModel,
+            prompt,
+            duration: Number(video_length) || 6,
+            aspectRatio: aspect_ratio,
+            resolution,
+            images: imageUrls,
+            videos: [],
+            audios: [],
+          });
+          createResp = await fetch(`${overflowPlan.channel.baseUrl.replace(/\/+$/, '')}/v1/videos`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${overflowPlan.channel.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(overflowPlan.channel.timeout || 120_000),
+          });
+        }
+
+        if (createResp.ok) {
+          const job = await createResp.json() as any;
+          videoId = job.request_id || job.id || job.task_id;
+          channel = overflowPlan.channel;
+          executionModel = overflowPlan.executionModel;
+          upstreamModel = selectedUpstreamModel;
+          dbChannel = channel;
+          baseUrl = channel.baseUrl.replace(/\/+$/, '');
+          isHmStudio = false;
+          isWxHaidiYue = overflowPlan.kind === 'wx-haidiyue';
+          isMjNewApi = overflowPlan.kind === 'mjnewapi';
+          if (contentId !== null) {
+            const current = db.select().from(contents).where(eq(contents.id, contentId)).get();
+            let metadata: Record<string, any> = {};
+            try { metadata = JSON.parse(current?.metadata || '{}'); } catch { }
+            metadata.channelId = channel.id;
+            metadata.channelApiKeyId = channel.apiKeyId;
+            metadata.actualChannel = overflowPlan.kind;
+            metadata.actualModel = executionModel;
+            metadata.upstreamModel = upstreamModel;
+            db.update(contents).set({ metadata: JSON.stringify(metadata) }).where(eq(contents.id, contentId)).run();
+          }
+          break;
+        }
+
+        const detail = await createResp.text().catch(() => '');
+        if (!isHmStudioConcurrencyError(createResp.status, detail)) {
+          refundFailedTask(`备用线路提交失败 (${createResp.status}): ${detail.slice(0, 300)}`);
+          res.write('data: [DONE]\n\n');
+          return res.end();
+        }
+        ChannelService.disableExecutionTarget(overflowPlan.channel, detail);
+        sendEvent({ type: 'status', message: '当前备用线路已饱和并自动停止，正在尝试下一条线路...' });
+        overflowPlan = findHmStudioOverflowPlan(overflowInput, attemptedFallbackIds);
+      }
+
+      if (!videoId) {
+        refundFailedTask('所有兼容视频线路当前均不可用，请在后台启动线路后重试');
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+    } else if (isHmStudio) {
       sendEvent({ type: 'status', message: '正在整理素材并提交 HM Studio 任务...' });
       const formData = buildHmStudioVideoForm({
         model: upstreamModel,
@@ -2481,139 +2590,165 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
         let latestMeta: Record<string, any> = {};
         try { latestMeta = JSON.parse(latest.metadata || '{}'); } catch { }
 
-        const formData = buildHmStudioVideoForm({
-          model: upstreamModel,
-          prompt: String(latestMeta.prompt || latest.inputText || '').trim(),
-          duration: Number(latestMeta.seconds) || 6,
-          ratio: latestMeta.aspect_ratio || latestMeta.ratio || '16:9',
+        const referenceImages = latestMeta.reference_images || latestMeta.image_urls || [];
+        const referenceVideos = latestMeta.reference_videos || latestMeta.video_urls || [];
+        const referenceAudios = latestMeta.audio_urls || [];
+        const overflowRequest = {
+          requestedModel: model,
           resolution: latestMeta.resolution || '720p',
-          imageSources: latestMeta.reference_images || latestMeta.image_urls || [],
-          videoSources: latestMeta.reference_videos || latestMeta.video_urls || [],
-          audioSources: latestMeta.audio_urls || [],
-          firstFrame: latestMeta.first_frame || latestMeta.firstFrame,
-          lastFrame: latestMeta.last_frame || latestMeta.lastFrame,
-          functionMode: latestMeta.function_mode,
-          upstreamChannel: latestMeta.upstream_channel,
-        });
-        const headers: Record<string, string> = {};
-        if (channel.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
-        const response = await fetch(hmStudioCreateUrl(channel.baseUrl, 'video'), {
-          method: 'POST',
-          headers,
-          body: formData,
-          signal: AbortSignal.timeout(channel.timeout || 120_000),
-        });
-        if (!response.ok) {
-          const detail = await response.text().catch(() => '');
-          const referenceImages = latestMeta.reference_images || latestMeta.image_urls || [];
-          const referenceVideos = latestMeta.reference_videos || latestMeta.video_urls || [];
-          const referenceAudios = latestMeta.audio_urls || [];
-          const overflowPlan = isHmStudioConcurrencyError(response.status, detail)
-            ? findHmStudioOverflowPlan({
-              requestedModel: model,
-              resolution: latestMeta.resolution || '720p',
-              seconds: Number(latestMeta.seconds) || 6,
-              imageCount: referenceImages.length,
-              videoCount: referenceVideos.length,
-              audioCount: referenceAudios.length,
-            })
-            : null;
+          seconds: Number(latestMeta.seconds) || 6,
+          imageCount: referenceImages.length,
+          videoCount: referenceVideos.length,
+          audioCount: referenceAudios.length,
+        };
+        const attemptedHmPools = new Set<string>();
+        let selectedHmChannel: any = channel;
+        let selectedHmUpstreamModel = upstreamModel;
+        let response: Awaited<ReturnType<typeof fetch>>;
 
-          if (!overflowPlan) {
+        while (true) {
+          attemptedHmPools.add(hmStudioPoolKey(selectedHmChannel));
+          let selectedMapping: Record<string, string> = {};
+          try {
+            selectedMapping = typeof selectedHmChannel.modelMapping === 'string'
+              ? JSON.parse(selectedHmChannel.modelMapping || '{}')
+              : (selectedHmChannel.modelMapping || {});
+          } catch { }
+          selectedHmUpstreamModel = selectedMapping[model] || model;
+          const formData = buildHmStudioVideoForm({
+            model: selectedHmUpstreamModel,
+            prompt: String(latestMeta.prompt || latest.inputText || '').trim(),
+            duration: Number(latestMeta.seconds) || 6,
+            ratio: latestMeta.aspect_ratio || latestMeta.ratio || '16:9',
+            resolution: latestMeta.resolution || '720p',
+            imageSources: referenceImages,
+            videoSources: referenceVideos,
+            audioSources: referenceAudios,
+            firstFrame: latestMeta.first_frame || latestMeta.firstFrame,
+            lastFrame: latestMeta.last_frame || latestMeta.lastFrame,
+            functionMode: latestMeta.function_mode,
+            upstreamChannel: latestMeta.upstream_channel,
+          });
+          const headers: Record<string, string> = {};
+          if (selectedHmChannel.apiKey) headers.Authorization = `Bearer ${selectedHmChannel.apiKey}`;
+          response = await fetch(hmStudioCreateUrl(selectedHmChannel.baseUrl, 'video'), {
+            method: 'POST',
+            headers,
+            body: formData,
+            signal: AbortSignal.timeout(selectedHmChannel.timeout || 120_000),
+          });
+          if (response.ok) break;
+
+          const detail = await response.text().catch(() => '');
+          if (!isHmStudioConcurrencyError(response.status, detail)) {
             throw new Error(`HM Studio 提交失败 (${response.status}): ${detail.slice(0, 300)}`);
           }
+          ChannelService.disableExecutionTarget(selectedHmChannel, detail);
+          const nextHmChannel = ChannelService.findChannelForModel(model);
+          if (nextHmChannel && isHmStudioChannel(nextHmChannel) && !attemptedHmPools.has(hmStudioPoolKey(nextHmChannel))) {
+            selectedHmChannel = nextHmChannel;
+            latestMeta.channelId = nextHmChannel.id;
+            latestMeta.channelApiKeyId = nextHmChannel.apiKeyId;
+            latestMeta.progressText = '当前 HM Key 已自动停止，正在尝试下一个 Key';
+            db.update(contents).set({ metadata: JSON.stringify(latestMeta) }).where(eq(contents.id, contentId)).run();
+            continue;
+          }
 
-          const fallbackChannel = overflowPlan.channel;
-          let fallbackMapping: Record<string, string> = {};
-          try {
-            fallbackMapping = typeof fallbackChannel.modelMapping === 'string'
-              ? JSON.parse(fallbackChannel.modelMapping || '{}')
-              : (fallbackChannel.modelMapping || {});
-          } catch { /* use the selected overflow model ID */ }
-          const fallbackUpstreamModel = fallbackMapping[overflowPlan.executionModel] || overflowPlan.executionModel;
-
-          let fallbackResponse: Awaited<ReturnType<typeof fetch>>;
-          if (overflowPlan.kind === 'wx-haidiyue') {
-            const fallbackPayload = buildWxHaidiYueVideoPayload({
-              prompt: String(latestMeta.prompt || latest.inputText || '').trim(),
-              duration: Number(latestMeta.seconds) || 6,
-              aspectRatio: latestMeta.aspect_ratio || latestMeta.ratio || '16:9',
-              images: referenceImages,
-            });
-            fallbackResponse = await fetch(wxHaidiYueCreateUrl(fallbackChannel.baseUrl), {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${fallbackChannel.apiKey}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(fallbackPayload),
-              signal: AbortSignal.timeout(fallbackChannel.timeout || 120_000),
-            });
-          } else {
-            const imageUrls = referenceImages
-              .map((item: string) => convertBase64ToPublicUrl(item, 'mj_overflow_img', latestMeta.publicBaseUrl || ''))
-              .filter(Boolean);
-            const invalidUrls = findInvalidMjNewApiMaterialUrls(imageUrls);
-            if (invalidUrls.length > 0) {
-              console.error('[video] HM 满载分流失败：MJNewAPI 无法访问参考图片 URL，请检查 BACKEND_URL');
-              throw new Error('视频任务暂时无法提交，请稍后重试');
+          const attemptedFallbackIds = new Set<number>();
+          let overflowPlan = findHmStudioOverflowPlan(overflowRequest, attemptedFallbackIds);
+          while (overflowPlan) {
+            attemptedFallbackIds.add(overflowPlan.channel.id);
+            const fallbackChannel = overflowPlan.channel;
+            let fallbackMapping: Record<string, string> = {};
+            try {
+              fallbackMapping = typeof fallbackChannel.modelMapping === 'string'
+                ? JSON.parse(fallbackChannel.modelMapping || '{}')
+                : (fallbackChannel.modelMapping || {});
+            } catch { }
+            const fallbackUpstreamModel = fallbackMapping[overflowPlan.executionModel] || overflowPlan.executionModel;
+            let fallbackResponse: Awaited<ReturnType<typeof fetch>>;
+            if (overflowPlan.kind === 'wx-haidiyue') {
+              const fallbackPayload = buildWxHaidiYueVideoPayload({
+                prompt: String(latestMeta.prompt || latest.inputText || '').trim(),
+                duration: Number(latestMeta.seconds) || 6,
+                aspectRatio: latestMeta.aspect_ratio || latestMeta.ratio || '16:9',
+                images: referenceImages,
+              });
+              fallbackResponse = await fetch(wxHaidiYueCreateUrl(fallbackChannel.baseUrl), {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${fallbackChannel.apiKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(fallbackPayload),
+                signal: AbortSignal.timeout(fallbackChannel.timeout || 120_000),
+              });
+            } else {
+              const imageUrls = referenceImages
+                .map((item: string) => convertBase64ToPublicUrl(item, 'mj_overflow_img', latestMeta.publicBaseUrl || ''))
+                .filter(Boolean);
+              if (findInvalidMjNewApiMaterialUrls(imageUrls).length > 0) {
+                throw new Error('视频任务暂时无法提交，请检查 BACKEND_URL');
+              }
+              const fallbackPayload = buildMjNewApiVideoPayload({
+                model: fallbackUpstreamModel,
+                prompt: String(latestMeta.prompt || latest.inputText || '').trim(),
+                duration: Number(latestMeta.seconds) || 6,
+                aspectRatio: latestMeta.aspect_ratio || latestMeta.ratio || '16:9',
+                resolution: latestMeta.resolution || '720p',
+                images: imageUrls,
+                videos: [],
+                audios: [],
+              });
+              fallbackResponse = await fetch(`${fallbackChannel.baseUrl.replace(/\/+$/, '')}/v1/videos`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${fallbackChannel.apiKey}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify(fallbackPayload),
+                signal: AbortSignal.timeout(fallbackChannel.timeout || 120_000),
+              });
             }
-            const fallbackPayload = buildMjNewApiVideoPayload({
-              model: fallbackUpstreamModel,
-              prompt: String(latestMeta.prompt || latest.inputText || '').trim(),
-              duration: Number(latestMeta.seconds) || 6,
-              aspectRatio: latestMeta.aspect_ratio || latestMeta.ratio || '16:9',
-              resolution: latestMeta.resolution || '720p',
-              images: imageUrls,
-              videos: [],
-              audios: [],
-            });
-            fallbackResponse = await fetch(`${fallbackChannel.baseUrl.replace(/\/+$/, '')}/v1/videos`, {
-              method: 'POST',
-              headers: {
-                Authorization: `Bearer ${fallbackChannel.apiKey}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify(fallbackPayload),
-              signal: AbortSignal.timeout(fallbackChannel.timeout || 120_000),
-            });
-          }
-          if (!fallbackResponse.ok) {
-            const fallbackDetail = await fallbackResponse.text().catch(() => '');
-            console.error(`[video] HM 满载分流提交失败 (${fallbackResponse.status}): ${fallbackDetail.slice(0, 300)}`);
-            throw new Error('视频任务暂时无法提交，请稍后重试');
-          }
-          const fallbackResult = await fallbackResponse.json() as any;
-          const fallbackVideoId = fallbackResult.request_id || fallbackResult.id || fallbackResult.task_id;
-          if (!fallbackVideoId) throw new Error('备用线路未返回任务 ID');
 
-          latestMeta.videoId = fallbackVideoId;
-          latestMeta.channelId = fallbackChannel.id;
-          latestMeta.channelApiKeyId = fallbackChannel.apiKeyId;
-          latestMeta.upstreamModel = fallbackUpstreamModel;
-          latestMeta.requestedModel = model;
-          latestMeta.actualModel = overflowPlan.executionModel;
-          latestMeta.actualChannel = overflowPlan.kind;
-          latestMeta.fallbackFrom = 'hmstudio';
-          latestMeta.fallbackReason = 'hmstudio_upstream_concurrency';
-          latestMeta.fallbackAt = new Date().toISOString();
-          latestMeta.upstreamStatus = 'submitted';
-          latestMeta.progressText = '视频生成中';
-          latestMeta.progress = 0;
-          latestMeta.queueStatus = 'running';
-          db.update(contents).set({ status: 'processing', metadata: JSON.stringify(latestMeta) })
-            .where(eq(contents.id, contentId)).run();
+            if (!fallbackResponse.ok) {
+              const fallbackDetail = await fallbackResponse.text().catch(() => '');
+              if (isHmStudioConcurrencyError(fallbackResponse.status, fallbackDetail)) {
+                ChannelService.disableExecutionTarget(fallbackChannel, fallbackDetail);
+                overflowPlan = findHmStudioOverflowPlan(overflowRequest, attemptedFallbackIds);
+                continue;
+              }
+              throw new Error(`备用线路提交失败 (${fallbackResponse.status}): ${fallbackDetail.slice(0, 300)}`);
+            }
 
-          const fallbackRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
-          if (fallbackRecord) void resumePollForTask(contentId, fallbackRecord);
-          return;
+            const fallbackResult = await fallbackResponse.json() as any;
+            const fallbackVideoId = fallbackResult.request_id || fallbackResult.id || fallbackResult.task_id;
+            if (!fallbackVideoId) throw new Error('备用线路未返回任务 ID');
+            latestMeta.videoId = fallbackVideoId;
+            latestMeta.channelId = fallbackChannel.id;
+            latestMeta.channelApiKeyId = fallbackChannel.apiKeyId;
+            latestMeta.upstreamModel = fallbackUpstreamModel;
+            latestMeta.requestedModel = model;
+            latestMeta.actualModel = overflowPlan.executionModel;
+            latestMeta.actualChannel = overflowPlan.kind;
+            latestMeta.fallbackFrom = 'hmstudio';
+            latestMeta.fallbackReason = 'hmstudio_upstream_concurrency';
+            latestMeta.fallbackAt = new Date().toISOString();
+            latestMeta.upstreamStatus = 'submitted';
+            latestMeta.progressText = '视频生成中';
+            latestMeta.progress = 0;
+            latestMeta.queueStatus = 'running';
+            db.update(contents).set({ status: 'processing', metadata: JSON.stringify(latestMeta) })
+              .where(eq(contents.id, contentId)).run();
+            const fallbackRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
+            if (fallbackRecord) void resumePollForTask(contentId, fallbackRecord);
+            return;
+          }
+          throw new Error('所有兼容视频线路当前均不可用，请在后台启动线路后重试');
         }
+
         const payload = await response.json() as any;
         const videoId = payload.task_id || payload.id;
         if (!videoId) throw new Error('HM Studio 未返回任务 ID');
 
         latestMeta.videoId = videoId;
-        latestMeta.upstreamModel = upstreamModel;
+        latestMeta.channelId = selectedHmChannel.id;
+        latestMeta.channelApiKeyId = selectedHmChannel.apiKeyId;
+        latestMeta.upstreamModel = selectedHmUpstreamModel;
         latestMeta.upstreamStatus = 'submitted';
         latestMeta.progress = 0;
         latestMeta.queueStatus = 'running';
@@ -2785,7 +2920,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
     'sd2-c6'
   ].includes(model);
 
-  const baseUrl = channel.baseUrl.replace(/\/+$/, '');
+  let baseUrl = channel.baseUrl.replace(/\/+$/, '');
   const isSeedanceFast = model === 'seedance-2.0-fast';
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
   const isSudaShui = meta?.series === 'sudashui';
