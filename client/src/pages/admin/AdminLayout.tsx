@@ -16,6 +16,19 @@ const adminNavItems = [
   { to: '/admin/feedback', icon: MessageSquareWarning, label: '故障反馈' },
 ];
 
+const adminPagePreloads: Record<string, () => Promise<unknown>> = {
+  '/admin': () => import('./DashboardPage'),
+  '/admin/channels': () => import('./ChannelsPage'),
+  '/admin/tokens': () => import('./TokensPage'),
+  '/admin/pricing': () => import('./PricingPage'),
+  '/admin/users': () => import('./UsersPage'),
+  '/admin/tiers': () => import('./TiersPage'),
+  '/admin/models': () => import('./ModelsPage'),
+  '/admin/orgs': () => import('./OrgsPage'),
+  '/admin/contents': () => import('./ContentsPage'),
+  '/admin/feedback': () => import('./FeedbackPage'),
+};
+
 export default function AdminLayout() {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
@@ -38,6 +51,8 @@ export default function AdminLayout() {
           <nav className="admin-nav flex md:block gap-1.5 md:space-y-1 overflow-x-auto md:overflow-y-auto pb-1 md:pb-0" aria-label="管理员导航">
             {adminNavItems.map(item => (
               <NavLink key={item.to} to={item.to} end={item.end}
+                onMouseEnter={() => { void adminPagePreloads[item.to]?.(); }}
+                onFocus={() => { void adminPagePreloads[item.to]?.(); }}
                 className={({ isActive }) => `admin-nav-link flex items-center gap-2.5 md:gap-3 px-3 py-2.5 rounded-xl text-xs md:text-sm font-medium whitespace-nowrap shrink-0 ${isActive ? 'is-active' : ''}`}>
                 <item.icon className="w-4 h-4" />
                 {item.label}

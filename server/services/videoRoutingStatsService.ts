@@ -1,6 +1,6 @@
 import { db } from '../db/index.js';
 import { contents } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { and, eq, like, or } from 'drizzle-orm';
 
 export type VideoRoutingStatsPeriod = 'all' | '24h' | '7d' | '30d';
 
@@ -24,6 +24,12 @@ export type VideoRoutingChannelStats = {
   capacityOverflowCount: number;
   upstreamConcurrencyCount: number;
 };
+
+const STATS_CACHE_TTL_MS = 30_000;
+const statsCache = new Map<VideoRoutingStatsPeriod, {
+  expiresAt: number;
+  value: { period: VideoRoutingStatsPeriod; generatedAt: string; channels: VideoRoutingChannelStats[] };
+}>();
 
 const ROUTING_CHANNELS: Array<Pick<VideoRoutingChannelStats, 'channelType' | 'channelName' | 'modelId'>> = [
   { channelType: 'wx-haidiyue', channelName: 'wx-海底月', modelId: 'sd2.5' },
@@ -112,17 +118,29 @@ export function aggregateVideoRoutingStats(
 
 export class VideoRoutingStatsService {
   static getStats(period: VideoRoutingStatsPeriod = 'all') {
+    const now = Date.now();
+    const cached = statsCache.get(period);
+    if (cached && cached.expiresAt > now) return cached.value;
+
     const records = db.select({
       status: contents.status,
       modelId: contents.modelId,
       metadata: contents.metadata,
       createdAt: contents.createdAt,
-    }).from(contents).where(eq(contents.type, 'video')).all();
+    }).from(contents).where(and(
+      eq(contents.type, 'video'),
+      or(
+        like(contents.metadata, '%"actualChannel":"wx-haidiyue"%'),
+        like(contents.metadata, '%"actualChannel":"mjnewapi"%'),
+      ),
+    )).all();
 
-    return {
+    const value = {
       period,
       generatedAt: new Date().toISOString(),
       channels: aggregateVideoRoutingStats(records, period),
     };
+    statsCache.set(period, { expiresAt: now + STATS_CACHE_TTL_MS, value });
+    return value;
   }
 }

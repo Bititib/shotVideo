@@ -20,24 +20,33 @@ export default function ChannelsPage() {
     status: 1,
   });
 
-  const load = async (showLoading = true) => {
+  const loadChannels = async (showLoading = true) => {
     if (showLoading) setLoading(true);
     try {
-      const [channelRows, stats] = await Promise.all([
-        adminApi.getChannels(),
-        adminApi.getVideoRoutingStats(routingPeriod).catch(error => {
-          console.warn('加载分流渠道统计失败:', error);
-          return null;
-        }),
-      ]);
+      const channelRows = await adminApi.getChannels();
       setChannels(channelRows);
-      if (stats) setRoutingStats(stats.channels || []);
     }
     finally { if (showLoading) setLoading(false); }
   };
+
+  const loadRoutingStats = async () => {
+    try {
+      const stats = await adminApi.getVideoRoutingStats(routingPeriod);
+      setRoutingStats(stats.channels || []);
+    } catch (error) {
+      console.warn('加载分流渠道统计失败:', error);
+    }
+  };
+
   useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => { void load(false); }, 5000);
+    void loadChannels();
+    const timer = window.setInterval(() => { void loadChannels(false); }, 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    void loadRoutingStats();
+    const timer = window.setInterval(() => { void loadRoutingStats(); }, 60000);
     return () => window.clearInterval(timer);
   }, [routingPeriod]);
 
@@ -122,13 +131,13 @@ export default function ChannelsPage() {
 
       if (edit.isNew) await adminApi.createChannel(data);
       else await adminApi.updateChannel(edit.id, data);
-      setEdit(null); load();
+      setEdit(null); loadChannels();
     } catch (e: any) { alert(e.message); }
   };
 
   const handleDelete = async (id: number) => {
     if (!confirm('确定删除此渠道？')) return;
-    try { await adminApi.deleteChannel(id); load(); } catch (e: any) { alert(e.message); }
+    try { await adminApi.deleteChannel(id); loadChannels(); } catch (e: any) { alert(e.message); }
   };
 
   const handleTest = async (id: number) => {
@@ -136,13 +145,13 @@ export default function ChannelsPage() {
     try {
       const result = await adminApi.testChannel(id);
       alert(result.success ? `✅ 测试成功，耗时 ${result.durationMs}ms` : `❌ 测试失败：${result.message}`);
-      load();
+      loadChannels();
     } catch (e: any) { alert('测试出错: ' + e.message); }
     finally { setTesting(null); }
   };
 
   const toggleStatus = async (ch: any) => {
-    try { await adminApi.updateChannel(ch.id, { status: ch.status ? 0 : 1 }); load(); }
+    try { await adminApi.updateChannel(ch.id, { status: ch.status ? 0 : 1 }); loadChannels(); }
     catch (e: any) { alert(e.message); }
   };
 
@@ -151,7 +160,7 @@ export default function ChannelsPage() {
     try {
       const result = await adminApi.syncChannelModels(ch.id);
       alert(`同步完成：上游 ${result.count} 个模型，新增 ${result.added} 个模型配置`);
-      load();
+      loadChannels();
     } catch (e: any) { alert('同步失败: ' + e.message); }
     finally { setSyncing(null); }
   };
