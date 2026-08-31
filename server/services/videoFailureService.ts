@@ -37,6 +37,59 @@ export function extractVideoFailureMessage(value: unknown, depth = 0): string {
   try { return JSON.stringify(value); } catch { return ''; }
 }
 
+const VIDEO_FAILURE_STATUSES = new Set([
+  'failed',
+  'failure',
+  'error',
+  'errored',
+  'rejected',
+  'cancelled',
+  'canceled',
+  'expired',
+  'terminated',
+]);
+
+/** Return true for every known terminal failure state used by video providers. */
+export function isVideoFailureStatus(value: unknown): boolean {
+  return VIDEO_FAILURE_STATUSES.has(String(value ?? '').trim().toLowerCase());
+}
+
+/**
+ * Detect terminal failures wrapped in an otherwise successful HTTP response.
+ * Providers variously use status/state/task_status, an embedded HTTP status,
+ * or success=false, so checking only the top-level `status` leaves tasks stuck.
+ */
+export function isVideoFailurePayload(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, any>;
+  const nested = record.data && typeof record.data === 'object' ? record.data : {};
+  const statuses = [
+    record.status,
+    record.state,
+    record.task_status,
+    record.taskStatus,
+    nested.status,
+    nested.state,
+    nested.task_status,
+    nested.taskStatus,
+  ];
+  if (statuses.some(isVideoFailureStatus)) return true;
+
+  const embeddedStatus = Number(
+    record.status_code ?? record.statusCode ?? record.http_status ?? record.httpStatus
+      ?? nested.status_code ?? nested.statusCode ?? nested.http_status ?? nested.httpStatus,
+  );
+  if (Number.isFinite(embeddedStatus) && embeddedStatus >= 400) return true;
+  return record.success === false || nested.success === false;
+}
+
+export function formatVideoPollHttpFailure(status: number, body: unknown): string {
+  const detail = extractVideoFailureMessage(body);
+  return detail
+    ? `上游任务查询失败 (${status}): ${detail}`
+    : `上游任务查询失败 (${status})`;
+}
+
 export function clarifyVideoCapacityFailure(message: string, hmStudioTask: boolean): string {
   if (hmStudioTask) return message;
   const capacityPattern = /(任务)?并发(数|量|额度|限制)?不足|concurrency.{0,30}(insufficient|limit|exceeded|full)/i;

@@ -22,7 +22,14 @@ import {
   isMjNewApiChannel,
 } from '../services/mjNewApiAdapter.js';
 import { buildNewTokenVideoPayload } from '../services/newTokenAdapter.js';
-import { clarifyVideoCapacityFailure, extractVideoFailureMessage, withVideoFailureMetadata } from '../services/videoFailureService.js';
+import {
+  clarifyVideoCapacityFailure,
+  extractVideoFailureMessage,
+  formatVideoPollHttpFailure,
+  isVideoFailurePayload,
+  isVideoFailureStatus,
+  withVideoFailureMetadata,
+} from '../services/videoFailureService.js';
 import {
   buildJulunMinimaxH3Payload,
   isJulunChannel,
@@ -2176,8 +2183,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         });
 
         if (!pollResp.ok) {
-          console.warn(`[video] 轮询返回 ${pollResp.status}`);
-          continue;
+          const detail = await pollResp.text().catch(() => '');
+          const failureMessage = formatVideoPollHttpFailure(pollResp.status, detail);
+          console.error(`[video] ${failureMessage}`);
+          refundFailedTask(failureMessage);
+          if (!res.destroyed && !res.writableEnded) {
+            res.write('data: [DONE]\n\n');
+            res.end();
+          }
+          return;
         }
 
         const status = await pollResp.json() as any;
@@ -2279,6 +2293,11 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           }
         }
 
+        if (isVideoFailurePayload(status)) {
+          taskStatus = 'failed';
+          errMsg = extractVideoFailureMessage(status) || errMsg || '视频生成失败';
+        }
+
         console.log(`[video] 轮询 (${isSudaShui ? 'SudaShui' : isSoraV4 ? 'SoraV4' : isSeedanceFast ? 'SeedanceFast' : 'Default'}): status=${taskStatus} progress=${progress}%`);
 
         if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'generating' || taskStatus === 'post_processing' || taskStatus === 'finalizing' || taskStatus === 'in_progress') {
@@ -2324,7 +2343,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
             res.end();
           }
           return;
-        } else if (taskStatus === 'failed' || taskStatus === 'failure') {
+        } else if (isVideoFailureStatus(taskStatus)) {
           refundFailedTask(errMsg);
           if (!res.destroyed && !res.writableEnded) {
             res.write('data: [DONE]\n\n');
@@ -3098,8 +3117,11 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
         });
 
         if (!pollResp.ok) {
-          console.warn(`[video-recover] Poll returned ${pollResp.status}`);
-          continue;
+          const detail = await pollResp.text().catch(() => '');
+          const failureMessage = formatVideoPollHttpFailure(pollResp.status, detail);
+          console.error(`[video-recover] ${failureMessage}`);
+          await failHmQueuedVideo(contentId, new Error(failureMessage));
+          break;
         }
 
         const statusData = await pollResp.json() as any;
@@ -3197,6 +3219,11 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           }
         }
 
+        if (isVideoFailurePayload(statusData)) {
+          taskStatus = 'failed';
+          errMsg = extractVideoFailureMessage(statusData) || errMsg || '视频生成失败';
+        }
+
         console.log(`[video-recover] Polling task ${contentId}: status=${taskStatus} progress=${progress}%`);
 
         if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'generating' || taskStatus === 'post_processing' || taskStatus === 'finalizing' || taskStatus === 'in_progress') {
@@ -3258,7 +3285,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
             metadata: JSON.stringify(meta)
           }).where(eq(contents.id, contentId)).run();
           break;
-        } else if (taskStatus === 'failed' || taskStatus === 'failure') {
+        } else if (isVideoFailureStatus(taskStatus)) {
           console.error(`[video-recover] ❌ Generating failed: ${errMsg}`);
           // 任务失败，为预扣费退款并将 cost 清零
           await failHmQueuedVideo(contentId, new Error(errMsg));

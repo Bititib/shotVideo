@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { clarifyVideoCapacityFailure, extractVideoFailureMessage, withVideoFailureMetadata } from '../server/services/videoFailureService.js';
+import {
+  clarifyVideoCapacityFailure,
+  extractVideoFailureMessage,
+  formatVideoPollHttpFailure,
+  isVideoFailurePayload,
+  isVideoFailureStatus,
+  withVideoFailureMetadata,
+} from '../server/services/videoFailureService.js';
 
 describe('video failure persistence', () => {
   it('distinguishes an upstream capacity rejection from the local HM queue', () => {
@@ -30,5 +37,26 @@ describe('video failure persistence', () => {
       failedAt: '2026-08-29T10:00:00.000Z',
       queueStatus: 'failed',
     });
+  });
+
+  it('recognizes terminal failure statuses from different providers', () => {
+    for (const status of ['failed', 'failure', 'error', 'rejected', 'cancelled', 'canceled', 'expired']) {
+      expect(isVideoFailureStatus(status)).toBe(true);
+    }
+    expect(isVideoFailureStatus('processing')).toBe(false);
+  });
+
+  it('recognizes failures wrapped in a 200 response payload', () => {
+    expect(isVideoFailurePayload({ state: 'failed', error: { message: 'generation failed' } })).toBe(true);
+    expect(isVideoFailurePayload({ data: { task_status: 'rejected' } })).toBe(true);
+    expect(isVideoFailurePayload({ status_code: 429, error: { message: '视频生成失败' } })).toBe(true);
+    expect(isVideoFailurePayload({ success: false, message: 'upstream rejected task' })).toBe(true);
+    expect(isVideoFailurePayload({ status: 'processing', progress: 70 })).toBe(false);
+  });
+
+  it('formats a non-2xx polling response with its nested failure reason', () => {
+    const body = JSON.stringify({ error: { message: '视频生成失败，请稍后重试' } });
+    expect(formatVideoPollHttpFailure(429, body))
+      .toBe('上游任务查询失败 (429): 视频生成失败，请稍后重试');
   });
 });
