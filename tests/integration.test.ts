@@ -12,6 +12,7 @@ import jwt from 'jsonwebtoken';
 import { env } from '../server/config/env.js';
 import { getAccessibleModelIds } from '../server/routes/v1.js';
 import { JULUN_MINIMAX_H3_MODEL } from '../server/services/julunMinimaxAdapter.js';
+import { SNUMOM_GROK_IMAGINE_VIDEO_MODEL } from '../server/services/snumomWanAdapter.js';
 
 beforeAll(async () => {
   // 确保数据库已初始化
@@ -88,21 +89,34 @@ describe('种子数据完整性', () => {
     expect(channel!.status).toBe(0);
   });
 
-  it('snumom 渠道只绑定两个 WAN3.0 视频模型并配置分辨率计费', () => {
+  it('snumom 渠道绑定 WAN3.0 与 Grok 1.5，并配置对应计费', () => {
     const channel = db.select().from(channels).where(eq(channels.type, 'snumom')).get();
     expect(channel).toBeDefined();
     expect(channel!.baseUrl).toBe('https://snumom.com');
-    expect(JSON.parse(channel!.supportedModels)).toEqual(['wan3.0-video', 'wan3.0-video-prime']);
+    expect(JSON.parse(channel!.supportedModels)).toEqual([
+      'wan3.0-video',
+      'wan3.0-video-prime',
+      SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
+    ]);
     expect(JSON.parse(channel!.modelMapping)).toEqual({
       'wan3.0-video': 'wan3.0-video',
       'wan3.0-video-prime': 'wan3.0-video-prime',
+      [SNUMOM_GROK_IMAGINE_VIDEO_MODEL]: SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
     });
 
     const standard = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, 'wan3.0-video')).get();
     const prime = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, 'wan3.0-video-prime')).get();
+    const grok = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, SNUMOM_GROK_IMAGINE_VIDEO_MODEL)).get();
     expect(standard?.billingType).toBe('per_second');
     expect(JSON.parse(standard!.extraParams)).toMatchObject({ '480p': 0.12, '720p': 0.14, '1080p': 0.16 });
     expect(JSON.parse(prime!.extraParams)).toMatchObject({ '480p': 0.15, '720p': 0.18, '1080p': 0.20 });
+    expect(grok?.billingType).toBe('per_call');
+    expect(grok?.inputPrice).toBeCloseTo(0.60, 6);
+
+    const grokModel = db.select().from(models).where(eq(models.modelId, SNUMOM_GROK_IMAGINE_VIDEO_MODEL)).get();
+    expect(grokModel).toMatchObject({ provider: 'snumom', isActive: 1 });
+    expect(grokModel?.description).toContain('3-15秒');
+    expect(grokModel?.description).toContain('最多7张参考图');
   });
 
   it('巨轮渠道永久绑定 MiniMax H3 768p 并按 ¥0.18/秒计费', () => {

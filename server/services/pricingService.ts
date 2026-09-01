@@ -49,6 +49,54 @@ export class PricingService {
     return db.select().from(modelPricing).where(eq(modelPricing.modelPattern, '*')).get();
   }
 
+  private static quoteRule(
+    rule: typeof modelPricing.$inferSelect | undefined,
+    usage: PricingUsage = {},
+  ) {
+    if (!rule) return { rate: 0, cost: 0, billingType: null as BillingType | null, matchedPattern: null };
+
+    const extra = parseExtraParams(rule.extraParams);
+    const resolutionRate = usage.resolution !== undefined ? Number(extra[usage.resolution]) : NaN;
+    const rate = Number.isFinite(resolutionRate) && resolutionRate >= 0 ? resolutionRate : rule.inputPrice;
+    let cost = 0;
+
+    switch (rule.billingType as BillingType) {
+      case 'per_token':
+        cost = ((usage.promptTokens || 0) / 1_000_000) * rate
+          + ((usage.completionTokens || 0) / 1_000_000) * rule.outputPrice;
+        break;
+      case 'per_second':
+        cost = rate * Math.max(0, Number(usage.seconds || 0));
+        break;
+      case 'per_character':
+        cost = rate * Math.max(0, Number(usage.characters || 0));
+        break;
+      case 'per_call':
+      default:
+        cost = rate * Math.max(0, Number(usage.count ?? 1));
+        break;
+    }
+
+    return {
+      rate,
+      cost: roundCost(cost),
+      billingType: rule.billingType as BillingType,
+      matchedPattern: rule.modelPattern,
+    };
+  }
+
+  /** Load the pricing table once and reuse it for a batch of quotes. */
+  static createQuoteResolver(allowWildcard = true) {
+    const rules = db.select().from(modelPricing).all();
+    const ruleByPattern = new Map(rules.map(rule => [rule.modelPattern, rule]));
+    const wildcardRule = allowWildcard ? ruleByPattern.get('*') : undefined;
+
+    return (modelName: string, usage: PricingUsage = {}) => {
+      const rule = ruleByPattern.get(modelName) || wildcardRule;
+      return this.quoteRule(rule, usage);
+    };
+  }
+
   private static inferCategory(modelPattern: string, extraParams: Record<string, any>): PricingCategory {
     const explicit = String(extraParams.category || '').toLowerCase();
     if (['text', 'image', 'video', 'tts', 'default', 'other'].includes(explicit)) {
@@ -258,36 +306,7 @@ export class PricingService {
   /** 返回单价及最终费用。视频等非文本业务默认不使用全局 Token 兜底。 */
   static quote(modelName: string, usage: PricingUsage = {}, allowWildcard = true) {
     const rule = this.getRule(modelName, allowWildcard);
-    if (!rule) return { rate: 0, cost: 0, billingType: null as BillingType | null, matchedPattern: null };
-
-    const extra = parseExtraParams(rule.extraParams);
-    const resolutionRate = usage.resolution !== undefined ? Number(extra[usage.resolution]) : NaN;
-    const rate = Number.isFinite(resolutionRate) && resolutionRate >= 0 ? resolutionRate : rule.inputPrice;
-    let cost = 0;
-
-    switch (rule.billingType as BillingType) {
-      case 'per_token':
-        cost = ((usage.promptTokens || 0) / 1_000_000) * rate
-          + ((usage.completionTokens || 0) / 1_000_000) * rule.outputPrice;
-        break;
-      case 'per_second':
-        cost = rate * Math.max(0, Number(usage.seconds || 0));
-        break;
-      case 'per_character':
-        cost = rate * Math.max(0, Number(usage.characters || 0));
-        break;
-      case 'per_call':
-      default:
-        cost = rate * Math.max(0, Number(usage.count ?? 1));
-        break;
-    }
-
-    return {
-      rate,
-      cost: roundCost(cost),
-      billingType: rule.billingType as BillingType,
-      matchedPattern: rule.modelPattern,
-    };
+    return this.quoteRule(rule, usage);
   }
 
   /** 兼容现有文本/图片调用。 */

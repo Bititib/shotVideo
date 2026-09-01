@@ -12,7 +12,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { feedbackApi } from '../../api/feedback';
 import { getBillingUnit } from '../../utils/billing';
 import { buildReplicatedVideoPrompt, getVideoReferenceAssets, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
-import { isOmniVideoEditModel } from '../../utils/videoModelCapabilities';
+import { isOmniVideoEditModel, isSnumomGrokImagineVideoModel } from '../../utils/videoModelCapabilities';
 import { getContentFailureInfo } from '../../utils/contentFailure';
 
 interface VideoTask {
@@ -276,6 +276,7 @@ const isWan30Model = (modelId: string) => {
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === JULUN_MINIMAX_H3_MODEL) return 9;
   if (isWan30Model(modelId)) return 10;
+  if (isSnumomGrokImagineVideoModel(modelId)) return 7;
   if (modelId === 'seedance_v2.5') return 10;
   if (modelId === 'xd-seedance-2.5-720p') return 9;
   if (modelId === 'seedance-2.5-c1') return 30;
@@ -428,9 +429,13 @@ export default function VideoPage() {
   const [historyTotal, setHistoryTotal] = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [applyFeedback, setApplyFeedback] = useState<{ itemId: string; message: string; nonce: number } | null>(null);
+  const [composerHeight, setComposerHeight] = useState(256);
   const abortRef = useRef<Map<string, AbortController>>(new Map());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const composerShellRef = useRef<HTMLDivElement>(null);
   const isGenerating = tasks.some(t => t.status === 'generating');
   const [playingVideo, setPlayingVideo] = useState<{ url: string; prompt: string } | null>(null);
 
@@ -440,6 +445,27 @@ export default function VideoPage() {
   const [assetsLoaded, setAssetsLoaded] = useState(false);
   const [cursorPos, setCursorPos] = useState<number | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
+
+  useEffect(() => {
+    if (!applyFeedback) return;
+    const timeoutId = window.setTimeout(() => setApplyFeedback(null), 2600);
+    return () => window.clearTimeout(timeoutId);
+  }, [applyFeedback]);
+
+  useEffect(() => {
+    const shell = composerShellRef.current;
+    if (!shell) return;
+
+    const updateComposerHeight = () => {
+      const nextHeight = Math.ceil(shell.getBoundingClientRect().height);
+      if (nextHeight > 0) setComposerHeight(nextHeight);
+    };
+    updateComposerHeight();
+
+    const resizeObserver = new ResizeObserver(updateComposerHeight);
+    resizeObserver.observe(shell);
+    return () => resizeObserver.disconnect();
+  }, []);
 
   const renderHighlightedText = (text: string) => {
     if (!text) return null;
@@ -1029,10 +1055,11 @@ export default function VideoPage() {
 
   const handleApplyHistory = async (item: {
     id?: number | string;
+    modelId?: string;
     prompt?: string;
     inputText?: string;
     title?: string;
-    metadata?: {
+    metadata?: string | {
       prompt?: string;
       model?: string;
       resolution?: string;
@@ -1044,11 +1071,19 @@ export default function VideoPage() {
       audio_url?: string | null;
       audio_urls?: string[];
       audio_names?: string[];
+      first_frame?: string | null;
+      first_frame_url?: string | null;
+      last_frame?: string | null;
+      last_frame_url?: string | null;
+      end_frame_url?: string | null;
+      ratio?: string;
       listAssetsCompacted?: boolean;
     };
   }) => {
     let sourceItem = item;
-    let sourceMetadata = item.metadata;
+    let sourceMetadata = typeof item.metadata === 'string'
+      ? (() => { try { return JSON.parse(item.metadata || '{}'); } catch { return undefined; } })()
+      : item.metadata;
 
     if (sourceMetadata?.listAssetsCompacted && typeof item.id === 'number') {
       try {
@@ -1066,10 +1101,10 @@ export default function VideoPage() {
 
     if (sourceMetadata) {
       const meta = sourceMetadata;
-      if (meta.model) setSelectedModel(meta.model);
+      if (meta.model || sourceItem.modelId) setSelectedModel(meta.model || sourceItem.modelId || '');
       if (meta.resolution) setResolution(meta.resolution);
       if (meta.seconds) setDuration(meta.seconds);
-      if (meta.aspect_ratio) setAspectRatio(meta.aspect_ratio);
+      if (meta.aspect_ratio || meta.ratio) setAspectRatio(meta.aspect_ratio || meta.ratio || '16:9');
 
       // 使用统一解析器兼容网页、API 和旧记录的素材字段别名。
       const restoredAssets = getVideoReferenceAssets(meta);
@@ -1079,7 +1114,9 @@ export default function VideoPage() {
       setReferenceImages(restoredImages);
       setReferenceVideos(restoredVideos);
       setReferenceAudios(restoredAudios);
-      setReferenceAudioNames(meta.audio_names || []);
+      setReferenceAudioNames(meta.audio_names || restoredAudios.map((_: string, index: number) => `音频_${index + 1}`));
+      setFirstFrame(meta.first_frame || meta.first_frame_url || null);
+      setLastFrame(meta.last_frame || meta.last_frame_url || meta.end_frame_url || null);
 
       const targetPrompt = meta.prompt || sourceItem.inputText || sourceItem.title || sourceItem.prompt || '';
       setPrompt(buildReplicatedVideoPrompt(targetPrompt, {
@@ -1088,12 +1125,32 @@ export default function VideoPage() {
         audios: restoredAudios.length,
       }));
     } else {
+      if (sourceItem.modelId) setSelectedModel(sourceItem.modelId);
       setPrompt(restorePrompt(sourceItem.inputText || sourceItem.title || sourceItem.prompt || ''));
+      setReferenceImages([]);
+      setReferenceVideos([]);
+      setReferenceAudios([]);
+      setReferenceAudioNames([]);
+      setFirstFrame(null);
+      setLastFrame(null);
     }
 
-    setTimeout(() => {
-      textareaRef.current?.focus();
-    }, 50);
+    setError(null);
+    setShowAssetPicker(false);
+    const restoredAssets = sourceMetadata ? getVideoReferenceAssets(sourceMetadata) : { images: [], videos: [], audios: [] };
+    const assetCount = restoredAssets.images.length + restoredAssets.videos.length + restoredAssets.audios.length;
+    setApplyFeedback({
+      itemId: String(item.id ?? ''),
+      message: assetCount > 0
+        ? `已套用历史配置，并恢复 ${assetCount} 个参考素材`
+        : '已套用历史配置，模型与提示词已恢复',
+      nonce: Date.now(),
+    });
+
+    window.requestAnimationFrame(() => {
+      composerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      window.setTimeout(() => textareaRef.current?.focus({ preventScroll: true }), 180);
+    });
   };
 
   const handleGenerate = useCallback(() => {
@@ -1380,7 +1437,8 @@ export default function VideoPage() {
 
       {/* 右栏 */}
       <div className="flex-1 flex flex-col min-w-0 relative h-full">
-        <div className={`flex-1 overflow-y-auto p-6 ${isMaximized ? 'pb-[440px]' : 'pb-64'} [&::-webkit-scrollbar]:hidden`} style={{ scrollbarWidth: 'none' }}>
+        <div className="flex-1 overflow-y-auto p-6 [&::-webkit-scrollbar]:hidden"
+          style={{ scrollbarWidth: 'none', paddingBottom: `${Math.max(256, composerHeight + 24)}px` }}>
           {tasks.length === 0 && history.length === 0 ? (
             <div className="h-full flex items-center justify-center">
               <div className="text-center">
@@ -1409,7 +1467,7 @@ export default function VideoPage() {
                             <WoodenFishLoader progress={task.progress} statusMessage={task.statusMessage} />
                           ) : task.status === 'complete' && task.videoUrl ? (
                             <>
-                              <video src={getVideoPlayUrl(task.videoUrl)} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="metadata" playsInline muted loop
+                              <video src={getVideoPlayUrl(task.videoUrl)} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="none" playsInline muted loop
                                 onLoadedMetadata={(e) => showVideoPreviewFrame(e.currentTarget)}
                                 onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
                                 onMouseLeave={(e) => { e.currentTarget.pause(); showVideoPreviewFrame(e.currentTarget); }} />
@@ -1453,9 +1511,10 @@ export default function VideoPage() {
                               </button>
                             ) : task.status === 'complete' && task.videoUrl ? (
                               <div className="flex items-center gap-2">
-                                <button onClick={() => handleApplyHistory(task)}
-                                  className="text-[10px] text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-0.5" title="套用历史配置（包含提示词与参考图片）">
-                                  <RotateCcw className="w-3 h-3" />套用
+                                <button type="button" onClick={() => handleApplyHistory(task)}
+                                  aria-label="套用当前任务配置"
+                                  className={`text-[10px] transition-colors flex items-center gap-0.5 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${applyFeedback?.itemId === String(task.id) ? 'text-emerald-600' : 'text-zinc-500 hover:text-indigo-400'}`} title="套用历史配置（包含提示词与参考图片）">
+                                  {applyFeedback?.itemId === String(task.id) ? <><Check className="w-3 h-3" />已套用</> : <><RotateCcw className="w-3 h-3" />套用</>}
                                 </button>
                                 <a href={`/api/video/download?url=${encodeURIComponent(task.videoUrl)}&filename=video_${task.id}.mp4`} download className="text-[10px] text-zinc-500 hover:text-indigo-400 transition-colors">
                                   <Download className="w-3 h-3" />
@@ -1465,9 +1524,10 @@ export default function VideoPage() {
                               </div>
                             ) : task.status === 'error' ? (
                               <div className="flex items-center gap-2">
-                                <button onClick={() => handleApplyHistory(task)}
-                                  className="text-[10px] text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-0.5" title="套用历史配置（包含提示词与参考图片）">
-                                  <RotateCcw className="w-3 h-3" />套用
+                                <button type="button" onClick={() => handleApplyHistory(task)}
+                                  aria-label="套用失败任务配置"
+                                  className={`text-[10px] transition-colors flex items-center gap-0.5 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${applyFeedback?.itemId === String(task.id) ? 'text-emerald-600' : 'text-zinc-500 hover:text-indigo-400'}`} title="套用历史配置（包含提示词与参考图片）">
+                                  {applyFeedback?.itemId === String(task.id) ? <><Check className="w-3 h-3" />已套用</> : <><RotateCcw className="w-3 h-3" />套用</>}
                                 </button>
                                 <button
                                   onClick={() => { setFeedbackTask(task); setFeedbackDescription(''); }}
@@ -1519,7 +1579,7 @@ export default function VideoPage() {
                             </div>
                           ) : (
                             <>
-                              <video src={getVideoPlayUrl(h.resultUrl)} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="metadata" playsInline muted loop
+                              <video src={getVideoPlayUrl(h.resultUrl)} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="none" playsInline muted loop
                                 onLoadedMetadata={(e) => showVideoPreviewFrame(e.currentTarget)}
                                 onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
                                 onMouseLeave={(e) => { e.currentTarget.pause(); showVideoPreviewFrame(e.currentTarget); }} />
@@ -1554,9 +1614,10 @@ export default function VideoPage() {
                             <span className="font-medium">{h.metadata?.resolution || '720p'} · {h.metadata?.seconds || 6}秒 · {h.metadata?.aspect_ratio || '16:9'}</span>
                             <div className="flex items-center gap-2">
                               <span>{new Date(h.createdAt).toLocaleDateString()}</span>
-                              <button onClick={(e) => { e.stopPropagation(); handleApplyHistory(h); }}
-                                className="text-zinc-500 hover:text-indigo-400 transition-colors flex items-center gap-0.5" title="套用历史配置（包含提示词与参考图片）">
-                                <RotateCcw className="w-3 h-3" />套用
+                              <button type="button" onClick={(e) => { e.stopPropagation(); void handleApplyHistory(h); }}
+                                aria-label="套用这条历史生成配置"
+                                className={`transition-colors flex items-center gap-0.5 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${applyFeedback?.itemId === String(h.id) ? 'text-emerald-600' : 'text-zinc-500 hover:text-indigo-400'}`} title="套用历史配置（包含提示词与参考图片）">
+                                {applyFeedback?.itemId === String(h.id) ? <><Check className="w-3 h-3" />已套用</> : <><RotateCcw className="w-3 h-3" />套用</>}
                               </button>
                               <button onClick={async (e) => {
                                 e.stopPropagation();
@@ -1617,16 +1678,27 @@ export default function VideoPage() {
 
         {/* 输入区（悬浮于底部，背景透明，支持穿透点击） */}
         <div className="absolute bottom-0 left-0 right-0 z-10 bg-transparent pointer-events-none">
-          {error && (
-            <div className="absolute bottom-full left-6 right-6 mb-3 z-20 px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 flex items-center gap-2 backdrop-blur-md shadow-2xl pointer-events-auto">
-              <AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{error}</span>
-              <button onClick={() => setError(null)} className="text-red-500/60 hover:text-red-400 text-xs">✕</button>
+          {(applyFeedback || error) && (
+            <div className="absolute bottom-full left-6 right-6 mb-3 z-20 space-y-2 pointer-events-none">
+              {applyFeedback && (
+                <div key={applyFeedback.nonce} role="status" aria-live="polite" aria-atomic="true"
+                  className="mx-auto flex w-fit max-w-full items-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-950/90 px-4 py-2.5 text-sm text-emerald-100 shadow-2xl backdrop-blur-md pointer-events-auto motion-reduce:transition-none">
+                  <Check className="h-4 w-4 shrink-0 text-emerald-300" />
+                  <span>{applyFeedback.message}</span>
+                </div>
+              )}
+              {error && (
+                <div role="alert" className="px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 flex items-center gap-2 backdrop-blur-md shadow-2xl pointer-events-auto">
+                  <AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{error}</span>
+                  <button type="button" aria-label="关闭错误提示" onClick={() => setError(null)} className="rounded-sm text-red-500/60 hover:text-red-400 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400">✕</button>
+                </div>
+              )}
             </div>
           )}
 
-          <div className="px-6 py-4 pointer-events-auto">
+          <div ref={composerShellRef} className="px-6 py-4 pointer-events-auto">
             <div className="max-w-3xl mx-auto">
-              <div className="relative bg-[#0c0c0c] border border-white/[0.08] focus-within:border-indigo-500/30 rounded-2xl transition-all shadow-2xl shadow-black/30 flex flex-col">
+              <div ref={composerRef} className={`relative bg-[#0c0c0c] border rounded-2xl transition-all motion-reduce:transition-none shadow-2xl shadow-black/30 flex flex-col ${applyFeedback ? 'border-emerald-400/60 ring-2 ring-emerald-400/20' : 'border-white/[0.08] focus-within:border-indigo-500/30'}`}>
 
                 {/* 参数工具栏 — 卡片顶部 */}
                 <div className="flex items-center gap-2 px-4 py-2 border-b border-white/[0.04] flex-wrap rounded-t-2xl">

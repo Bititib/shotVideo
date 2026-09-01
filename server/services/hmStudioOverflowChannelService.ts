@@ -23,10 +23,11 @@ export type HmStudioOverflowPlan = {
 export function findHmStudioOverflowPlan(
   input: HmStudioOverflowInput,
   excludedChannelIds: Iterable<number> = [],
+  activeChannels?: any[],
 ): HmStudioOverflowPlan | null {
   const excluded = new Set(Array.from(excludedChannelIds, Number));
   if (canUseWxHaidiYueOverflow(input)) {
-    const wxChannel = ChannelService.findChannelsByType(WX_HAIDIYUE_CHANNEL_TYPE)
+    const wxChannel = ChannelService.findChannelsByType(WX_HAIDIYUE_CHANNEL_TYPE, activeChannels)
       .find(channel => !excluded.has(channel.id));
     if (wxChannel && isWxHaidiYueChannel(wxChannel)) {
       return {
@@ -38,7 +39,7 @@ export function findHmStudioOverflowPlan(
   }
 
   if (canUseMjOverflowModel(input)) {
-    const mjChannel = ChannelService.findChannelsForModel(MJ_OVERFLOW_VIDEO_MODEL)
+    const mjChannel = ChannelService.findChannelsForModel(MJ_OVERFLOW_VIDEO_MODEL, activeChannels)
       .find(channel => !excluded.has(channel.id));
     if (mjChannel && isMjNewApiChannel(mjChannel)) {
       return {
@@ -53,7 +54,7 @@ export function findHmStudioOverflowPlan(
 }
 
 /** Keep seedance_v2.5 visible while HM Studio is manually stopped if a fallback route is enabled. */
-export function hasHmStudioOverflowChannel(): boolean {
+export function hasHmStudioOverflowChannel(activeChannels?: any[]): boolean {
   return findHmStudioOverflowPlan({
     requestedModel: HM_STUDIO_PRIMARY_VIDEO_MODEL,
     resolution: '720p',
@@ -61,5 +62,5 @@ export function hasHmStudioOverflowChannel(): boolean {
     imageCount: 0,
     videoCount: 0,
     audioCount: 0,
-  }) !== null;
+  }, [], activeChannels) !== null;
 }

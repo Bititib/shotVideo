@@ -1,13 +1,9 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading, checkAuth } = useAuthStore();
-
-  useEffect(() => {
-    checkAuth();
-  }, []);
+  const { isAuthenticated, isLoading } = useAuthStore();
 
   if (isLoading) {
     return (
@@ -29,9 +25,7 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 /** 仅已开通并启用 API Key 的登录用户可访问。 */
 export function ApiKeyRoute({ children }: { children: React.ReactNode }) {
-  const { user, isAuthenticated, isLoading, checkAuth } = useAuthStore();
-
-  useEffect(() => { checkAuth(); }, []);
+  const { user, isAuthenticated, isLoading } = useAuthStore();
 
   if (isLoading) {
     return (
@@ -48,11 +42,7 @@ export function ApiKeyRoute({ children }: { children: React.ReactNode }) {
 
 /** 超级管理员路由守卫 */
 export function AdminRoute({ children }: { children: React.ReactNode }) {
-  const { user, isAuthenticated, isLoading, checkAuth } = useAuthStore();
-
-  useEffect(() => {
-    checkAuth();
-  }, []);
+  const { user, isAuthenticated, isLoading } = useAuthStore();
 
   if (isLoading) {
     return (
@@ -76,11 +66,7 @@ export function AdminRoute({ children }: { children: React.ReactNode }) {
 
 /** 组织管理员路由守卫（org_owner / org_admin / super_admin） */
 export function OrgAdminRoute({ children }: { children: React.ReactNode }) {
-  const { user, isAuthenticated, isLoading, checkAuth } = useAuthStore();
-
-  useEffect(() => {
-    checkAuth();
-  }, []);
+  const { user, isAuthenticated, isLoading } = useAuthStore();
 
   if (isLoading) {
     return (

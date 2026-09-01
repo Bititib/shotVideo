@@ -271,8 +271,8 @@ export class ChannelService {
   }
 
   /** 根据模型名查找可用渠道（按优先级、Key 池负载和权重选择）。 */
-  static findChannelForModel(modelName: string) {
-    const candidates = this.findChannelsForModel(modelName);
+  static findChannelForModel(modelName: string, activeChannels?: any[]) {
+    const candidates = this.findChannelsForModel(modelName, activeChannels);
     if (candidates.length === 0) return null;
 
     const topPriority = candidates[0].priority;
@@ -308,8 +308,8 @@ export class ChannelService {
     return topCandidates[0];
   }
 
-  static findChannelsForModel(modelName: string) {
-    return this.getActiveChannels()
+  static findChannelsForModel(modelName: string, activeChannels?: any[]) {
+    return (activeChannels || this.getActiveChannels())
       .filter(channel => channel.supportedModels.includes(modelName) || channel.supportedModels.includes('*'))
       .sort((a, b) => {
         if (a.priority !== b.priority) return a.priority - b.priority;
@@ -322,8 +322,8 @@ export class ChannelService {
       });
   }
 
-  static findChannelsByType(type: string) {
-    return this.getActiveChannels().filter(channel => channel.type === type);
+  static findChannelsByType(type: string, activeChannels?: any[]) {
+    return (activeChannels || this.getActiveChannels()).filter(channel => channel.type === type);
   }
 
   static findChannelByType(type: string) {

@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import helmet from 'helmet';
 import cors from 'cors';
+import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import { createServer as createViteServer } from 'vite';
 import { errorHandler } from './middleware/errorHandler.js';
@@ -43,6 +44,9 @@ export async function createApp() {
   // CORS：生产环境限制为指定域名
   const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(s => s.trim()).filter(Boolean);
   app.use(cors(allowedOrigins?.length ? { origin: allowedOrigins, credentials: true } : undefined));
+  // Compress API responses and static assets. The reverse proxy currently
+  // forwards them uncompressed, so doing this here avoids full-size transfers.
+  app.use(compression());
   // Body parsing
   app.use(express.json({ limit: '150mb' }));
 
@@ -88,12 +92,20 @@ export async function createApp() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(process.cwd(), 'client', 'dist');
-    app.use(express.static(distPath));
+    // Vite asset filenames contain a content hash and can be cached forever.
+    app.use('/assets', express.static(path.join(distPath, 'assets'), {
+      immutable: true,
+      maxAge: '1y',
+    }));
+    // Keep index.html and other unhashed files revalidatable so deployments
+    // are picked up without leaving users on an old application shell.
+    app.use(express.static(distPath, { maxAge: 0 }));
     // SPA fallback：仅非 API 路径返回 index.html
     app.get('*', (req, res, next) => {
       if (req.path.startsWith('/api') || req.path.startsWith('/v1')) {
         return res.status(404).json({ error: 'Not found' });
       }
+      res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

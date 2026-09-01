@@ -40,6 +40,9 @@ import {
   buildSnumomWanPayload,
   isSnumomWanChannel,
   normalizeSnumomWanTask,
+  SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES,
+  SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
+  SNUMOM_GROK_IMAGINE_VIDEO_SECONDS,
   snumomContentUrl,
 } from '../services/snumomWanAdapter.js';
 import {
@@ -74,7 +77,7 @@ export { downloadAndLocalizeVideo } from '../services/videoLocalizationService.j
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models, settings, contents } from '../db/schema.js';
-import { eq, like, and, inArray } from 'drizzle-orm';
+import { eq, like, and, inArray, gte } from 'drizzle-orm';
 import fs from 'fs';
 import path from 'path';
 import { exec, execSync } from 'child_process';
@@ -272,7 +275,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'seedance2.0-933': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance2.0 933': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'grok-video-1.5（按秒）': { series: 'grok-1.5', allowedSeconds: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
-  'grok-imagine-video-1.5（按次）': { series: 'grok-1.5', allowedSeconds: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
+  [SNUMOM_GROK_IMAGINE_VIDEO_MODEL]: { series: 'snumom-grok-1.5', allowedSeconds: SNUMOM_GROK_IMAGINE_VIDEO_SECONDS, requireRef: false },
   'grok-imagine-video-1.5-preview': { series: 'grok-1.5', allowedSeconds: [10, 15], requireRef: false },
   'seedance-2.5-deal': { series: 'seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.5m': { series: 'seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25], requireRef: false },
@@ -290,6 +293,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'wan3.0th', name: 'Wan 3.0 视频大模型 (wan3.0th)', description: '按秒计费，¥0.14/秒；720p；支持4-30秒文生视频和多参考视频；最多10张图片、5个视频、5段音频公网URL，音频仅支持WAV；支持1:1、16:9、9:16、4:3、3:4', maxSeconds: 30, icon: '🌟' },
   { id: 'wan3.0-video', name: 'Wan 3.0 Video（标准版）', description: 'snumom 标准版；支持 2-30 秒、480P/720P/1080P；最多 10 图、5 视频、5 音频参考；支持文生、首帧及首尾帧视频', maxSeconds: 30, icon: '🌊' },
   { id: 'wan3.0-video-prime', name: 'Wan 3.0 Video Prime（高速版）', description: 'snumom 高速版；生成速度更快；支持 2-30 秒、480P/720P/1080P；最多 10 图、5 视频、5 音频参考', maxSeconds: 30, icon: '⚡' },
+  { id: SNUMOM_GROK_IMAGINE_VIDEO_MODEL, name: 'Grok Imagine Video 1.5（按次）', description: 'snumom Grok Imagine Video 1.5；支持 3-15 秒；最多 7 张参考图；按次计费 ¥0.60/次', maxSeconds: 15, icon: '✕' },
   { id: JULUN_MINIMAX_H3_MODEL, name: 'MiniMax H3 768p（933）', description: '巨轮 MiniMax H3；固定768p；仅支持10秒或15秒；最多9图、3视频、3音频参考；按秒计费 ¥0.18/秒', maxSeconds: 15, icon: '🔥' },
   { id: 'ld-sdas-cvk-pro-933-720p', name: 'SudaShui CVK Pro 933 (720p)', description: 'CVK 满血版，支持真人、4-15秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.800/次', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-mj-minimax-h3-2k', name: 'Minimax H3 (2K)', description: '海螺h3，9图3视频3音频，4-15s，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🔥' },
@@ -312,8 +316,8 @@ const DEFAULT_VIDEO_MODELS = [
 ];
 
 /** 查找支持指定视频模型的渠道 */
-function findVideoChannel(modelId: string) {
-  const channel = ChannelService.findChannelForModel(modelId);
+function findVideoChannel(modelId: string, activeChannels?: any[]) {
+  const channel = ChannelService.findChannelForModel(modelId, activeChannels);
   if (channel) return {
     id: channel.id,
     type: channel.type,
@@ -465,14 +469,56 @@ router.get('/models', (_req: Request, res: Response) => {
     : DEFAULT_VIDEO_MODELS.filter(m => !disabledModelIds.has(m.id));
   const publicSourceModels = sourceModels.filter(m => m.id !== MJ_OVERFLOW_VIDEO_MODEL);
 
-  const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
-  const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
-  const base480 = parseFloat(rate480?.value || '0.03');
-  const base720 = parseFloat(rate720?.value || '0.05');
+  // Read settings, pricing, channels, and recent statistics once per request.
+  // Previously these tables were queried again for every model, making this
+  // small public response the slowest request on the page.
+  const settingValues = new Map(
+    db.select({ key: settings.key, value: settings.value }).from(settings).all()
+      .map(row => [row.key, row.value]),
+  );
+  const settingNumber = (key: string, fallback: string) => parseFloat(settingValues.get(key) || fallback);
+  const base480 = settingNumber('video_rate_480p', '0.03');
+  const base720 = settingNumber('video_rate_720p', '0.05');
 
-  const soraV4FastRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get()?.value || '0.189');
-  const soraV4ProRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sora_v4_pro_rate')).get()?.value || '0.25');
-  const veoOmniFlashRate = parseFloat(db.select().from(settings).where(eq(settings.key, 'veo_omni_flash_rate')).get()?.value || '0.25');
+  const soraV4FastRate = settingNumber('sora_v4_fast_rate', '0.189');
+  const soraV4ProRate = settingNumber('sora_v4_pro_rate', '0.25');
+  const veoOmniFlashRate = settingNumber('veo_omni_flash_rate', '0.25');
+  const quotePrice = PricingService.createQuoteResolver(false);
+  const activeVideoChannels = ChannelService.getActiveChannels();
+  const hmStudioOverflowAvailable = hasHmStudioOverflowChannel(activeVideoChannels);
+
+  const statsTargetIds = (modelId: string) => Array.from(new Set([
+    modelId,
+    ...(modelId.includes('seedance2.0') || modelId === 'sd2-mini'
+      ? ['seedance2.0-933', 'seedance2.0 933', 'sd2-mini']
+      : []),
+  ]));
+  const allStatsModelIds = Array.from(new Set(publicSourceModels.flatMap(model => statsTargetIds(model.id))));
+  const recentCutoffDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const recentTerminalRows = allStatsModelIds.length === 0
+    ? []
+    : db.select({
+        modelId: contents.modelId,
+        status: contents.status,
+        resultUrl: contents.resultUrl,
+        createdAt: contents.createdAt,
+      }).from(contents).where(and(
+        inArray(contents.modelId, allStatsModelIds),
+        gte(contents.createdAt, recentCutoffDate),
+      )).all().filter(row =>
+        isWithinRecentDays(row.createdAt)
+        && (row.status === 'failed'
+          || row.status === 'completed'
+          || row.status === 'success'
+          || Boolean(row.resultUrl?.trim())),
+      );
+  const recentRowsByModel = new Map<string, typeof recentTerminalRows>();
+  for (const row of recentTerminalRows) {
+    if (!row.modelId) continue;
+    const rows = recentRowsByModel.get(row.modelId) || [];
+    rows.push(row);
+    recentRowsByModel.set(row.modelId, rows);
+  }
 
   const result = publicSourceModels.map(m => {
     const preset = DEFAULT_VIDEO_MODELS.find(d => d.id === m.id);
@@ -499,78 +545,78 @@ router.get('/models', (_req: Request, res: Response) => {
         '1080p': 0.09,
       };
     } else if (m.id === 'veo-3-1') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'veo_3_1_rate')).get()?.value || '0.20');
+      const rate = settingNumber('veo_3_1_rate', '0.20');
       rates = {
         '720p': rate,
         '1080p': rate,
       };
     } else if (m.id === 'sd2-c7') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_c7_rate')).get()?.value || '0.50');
+      const rate = settingNumber('sd2_c7_rate', '0.50');
       rates = {
         '720p': rate,
       };
     } else if (m.id === 'sd2.5') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get()?.value || '3.50');
+      const rate = settingNumber('sd2_5_rate', '3.50');
       rates = {
         '720p': rate,
       };
     } else if (m.id === 'sd2-mini') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_mini_rate')).get()?.value || '2.00');
+      const rate = settingNumber('sd2_mini_rate', '2.00');
       rates = {
         '720p': rate,
       };
     } else if (m.id === 'seedance2.0-933' || m.id === 'seedance2.0 933') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'seedance2_0_933_rate')).get()?.value || '3.00');
+      const rate = settingNumber('seedance2_0_933_rate', '3.00');
       rates = {
         '720p': rate,
       };
     } else if (m.id === 'seedance-2.0-720p') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'seedance_2_0_720p_rate')).get()?.value || '3.00');
+      const rate = settingNumber('seedance_2_0_720p_rate', '3.00');
       rates = {
         '720p': rate,
       };
     } else if (m.id === 'seedance-2.0-fast-720p') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'seedance_2_0_fast_720p_rate')).get()?.value || '1.50');
+      const rate = settingNumber('seedance_2_0_fast_720p_rate', '1.50');
       rates = {
         '720p': rate,
       };
     } else if (m.id === 'seedance-720') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'seedance_720_rate')).get()?.value || '3.00');
+      const rate = settingNumber('seedance_720_rate', '3.00');
       rates = {
         '720p': rate,
       };
     } else if (m.id === 'sdas-bl-sd2.0-933-pro-720p') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_bl_sd20_933_pro_720p_rate')).get()?.value || '4.50');
+      const rate = settingNumber('sdas_bl_sd20_933_pro_720p_rate', '4.50');
       rates = {
         '720p': rate,
       };
     } else if (m.id === 'sdas-bl-sd2.0-933-pro-noface-720p') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_bl_sd20_933_pro_noface_720p_rate')).get()?.value || '4.00');
+      const rate = settingNumber('sdas_bl_sd20_933_pro_noface_720p_rate', '4.00');
       rates = {
         '720p': rate,
       };
     } else if (m.id === 'cd-seedance-2.0-720p') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'cd_seedance_2_0_720p_rate')).get()?.value || '3.00');
+      const rate = settingNumber('cd_seedance_2_0_720p_rate', '3.00');
       rates = {
         '720p': rate,
       };
     } else if (m.id === 'nd-seedance-2.0-480p') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_480p_rate')).get()?.value || '3.75');
+      const rate = settingNumber('nd_seedance_2_0_480p_rate', '3.75');
       rates = {
         '480p': rate,
       };
     } else if (m.id === 'nd-seedance-2.0-720p') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'nd_seedance_2_0_720p_rate')).get()?.value || '4.30');
+      const rate = settingNumber('nd_seedance_2_0_720p_rate', '4.30');
       rates = {
         '720p': rate,
       };
     } else if (m.id === 'seedance_v2.5') {
       rates = {
-        '720p': PricingService.quote(m.id, { resolution: '720p' }, false).rate,
+        '720p': quotePrice(m.id, { resolution: '720p' }).rate,
       };
     } else if (m.id === 'xd-seedance-2.5-720p') {
       rates = {
-        '720p': PricingService.quote(m.id, { resolution: '720p' }, false).rate,
+        '720p': quotePrice(m.id, { resolution: '720p' }).rate,
       };
     } else if (m.id === 'ad-seedance-2.5-480p') {
       rates = {
@@ -579,39 +625,39 @@ router.get('/models', (_req: Request, res: Response) => {
     } else if (m.id === 'vd-seedance-2.5-480p' || m.id === 'vd-seedance-2.5-720p') {
       const modelResolution = m.id.endsWith('480p') ? '480p' : '720p';
       rates = {
-        [modelResolution]: PricingService.quote(m.id, { resolution: modelResolution }, false).rate,
+        [modelResolution]: quotePrice(m.id, { resolution: modelResolution }).rate,
       };
     } else if (m.id === 'ld-sdas-cvk-pro-933-720p') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'ld_sdas_cvk_pro_933_720p_rate')).get()?.value || '3.80');
+      const rate = settingNumber('ld_sdas_cvk_pro_933_720p_rate', '3.80');
       rates = {
         '720p': rate,
       };
     } else if (m.id === 'sdas-mj-minimax-h3-2k') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sdas_mj_minimax_h3_2k_rate')).get()?.value || '3.00');
+      const rate = settingNumber('sdas_mj_minimax_h3_2k_rate', '3.00');
       rates = {
         '2k': rate,
       };
     } else if (m.id === JULUN_MINIMAX_H3_MODEL) {
       rates = {
-        [JULUN_MINIMAX_H3_RESOLUTION]: PricingService.quote(m.id, { resolution: JULUN_MINIMAX_H3_RESOLUTION, seconds: 1 }, false).rate,
+        [JULUN_MINIMAX_H3_RESOLUTION]: quotePrice(m.id, { resolution: JULUN_MINIMAX_H3_RESOLUTION, seconds: 1 }).rate,
       };
     } else if (m.id === 'wan3.0th') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'wan3_0th_rate')).get()?.value || '0.14');
+      const rate = settingNumber('wan3_0th_rate', '0.14');
       rates = {
         '720p': rate,
       };
     } else if (m.id === 'wan3.0-video') {
       rates = Object.fromEntries(['480p', '720p', '1080p'].map(resolution => [
         resolution,
-        PricingService.quote(m.id, { resolution, seconds: 1 }, false).rate,
+        quotePrice(m.id, { resolution, seconds: 1 }).rate,
       ]));
     } else if (m.id === 'wan3.0-video-prime') {
       rates = Object.fromEntries(['480p', '720p', '1080p'].map(resolution => [
         resolution,
-        PricingService.quote(m.id, { resolution, seconds: 1 }, false).rate,
+        quotePrice(m.id, { resolution, seconds: 1 }).rate,
       ]));
     } else if (m.id === 'sd2-c6') {
-      const rate = parseFloat(db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get()?.value || '2.50');
+      const rate = settingNumber('sd2_c6_rate', '2.50');
       rates = {
         '720p': rate,
       };
@@ -624,27 +670,25 @@ router.get('/models', (_req: Request, res: Response) => {
 
     // The pricing table is authoritative; legacy setting reads above are retained
     // only so old databases can be migrated without losing their former values.
-    const billingType = PricingService.quote(m.id, {}, false).billingType;
+    const billingType = quotePrice(m.id).billingType;
     const configuredResolutions = Object.keys(rates).length > 0 ? Object.keys(rates) : ['720p'];
     rates = Object.fromEntries(configuredResolutions.map(resolution => [
       resolution,
-      PricingService.quote(m.id, { resolution }, false).rate,
+      quotePrice(m.id, { resolution }).rate,
     ]));
 
-    const targetIds = Array.from(new Set([m.id, ...(m.id.includes('seedance2.0') || m.id === 'sd2-mini' ? ['seedance2.0-933', 'seedance2.0 933', 'sd2-mini'] : [])]));
-    const recentTerminalRows = db.select().from(contents).where(inArray(contents.modelId, targetIds)).all()
-      .filter(row => isWithinRecentDays(row.createdAt))
-      .filter(row => row.status === 'failed' || row.status === 'completed' || row.status === 'success' || Boolean(row.resultUrl?.trim()));
-    const successCalls = recentTerminalRows.filter(r => r.status === 'completed' || r.status === 'success' || Boolean(r.resultUrl?.trim())).length;
-    const failureCalls = recentTerminalRows.filter(r => r.status === 'failed').length;
+    const targetIds = statsTargetIds(m.id);
+    const modelRecentRows = targetIds.flatMap(targetId => recentRowsByModel.get(targetId) || []);
+    const successCalls = modelRecentRows.filter(r => r.status === 'completed' || r.status === 'success' || Boolean(r.resultUrl?.trim())).length;
+    const failureCalls = modelRecentRows.filter(r => r.status === 'failed').length;
     const successStats = calculateSuccessRate(successCalls, failureCalls);
 
     return {
       id: m.id,
       name: m.name || preset?.name || m.id,
       description: m.description || preset?.description || 'AI 视频生成服务',
-      available: findVideoChannel(m.id) !== null
-        || (m.id === HM_STUDIO_PRIMARY_VIDEO_MODEL && hasHmStudioOverflowChannel()),
+      available: findVideoChannel(m.id, activeVideoChannels) !== null
+        || (m.id === HM_STUDIO_PRIMARY_VIDEO_MODEL && hmStudioOverflowAvailable),
       maxSeconds: preset?.maxSeconds,
       allowedSeconds: meta?.allowedSeconds || null,
       requireRef: meta?.requireRef || false,
@@ -766,6 +810,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     if (finalAudios.length > 5) return res.status(400).json({ error: `${model} 最多支持 5 段参考音频` });
   }
 
+  if (model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL && reference_images.length > SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES) {
+    return res.status(400).json({ error: `${model} 最多支持 ${SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES} 张参考图片` });
+  }
+
   if (model === 'xd-seedance-2.5-720p') {
     if (resolution !== '720p') return res.status(400).json({ error: 'xd-seedance-2.5-720p 仅支持 720p' });
     if (reference_images.length > 9) return res.status(400).json({ error: 'xd-seedance-2.5-720p 最多支持 9 张参考图片' });
@@ -843,7 +891,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
   if (isSnumomWanChannel(dbChannel) && (first_frame || last_frame)) {
     if (reference_images.length > 0 || finalVideos.length > 0) {
-      return res.status(400).json({ error: 'snumom WAN3.0 首帧/尾帧不能与普通参考图或参考视频混用' });
+      return res.status(400).json({ error: 'snumom 首帧/尾帧不能与普通参考图或参考视频混用' });
     }
     if (last_frame && !first_frame) {
       return res.status(400).json({ error: '使用尾帧时必须同时提供首帧' });
@@ -2118,7 +2166,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           taskStatus = normalized.status;
           progress = normalized.progress;
           resultUrl = normalized.resultUrl;
-          errMsg = normalized.error || 'snumom WAN3.0 视频生成失败';
+          errMsg = normalized.error || 'snumom 视频生成失败';
           if ((taskStatus === 'completed' || taskStatus === 'success') && !resultUrl) {
             resultUrl = snumomContentUrl(baseUrl, videoId);
           }
@@ -3048,7 +3096,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           taskStatus = normalized.status;
           progress = normalized.progress;
           resultUrl = normalized.resultUrl;
-          errMsg = normalized.error || 'snumom WAN3.0 视频生成失败';
+          errMsg = normalized.error || 'snumom 视频生成失败';
           if ((taskStatus === 'completed' || taskStatus === 'success') && !resultUrl) {
             resultUrl = snumomContentUrl(baseUrl, videoId);
           }

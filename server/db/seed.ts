@@ -11,6 +11,10 @@ import {
   WX_HAIDIYUE_CHANNEL_TYPE,
   WX_HAIDIYUE_UPSTREAM_MODEL,
 } from '../services/wxHaidiYueAdapter.js';
+import {
+  SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
+  SNUMOM_VIDEO_MODELS,
+} from '../services/snumomWanAdapter.js';
 
 /** 生成 sk-xxxx 格式的 Token */
 function generateTokenKey(): string {
@@ -157,6 +161,7 @@ export async function syncModelsFromAPI() {
     { provider: 'julun', modelId: JULUN_MINIMAX_H3_MODEL, displayName: 'MiniMax H3 768p（933）', description: '巨轮 MiniMax H3；固定768p；仅支持10秒或15秒；最多9图、3视频、3音频参考；按秒计费 ¥0.18/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'snumom', modelId: 'wan3.0-video', displayName: 'Wan 3.0 Video（标准版）', description: 'snumom 标准版；支持2-30秒、480P/720P/1080P；最多10图、5视频、5音频参考；支持文生、首帧及首尾帧视频', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'snumom', modelId: 'wan3.0-video-prime', displayName: 'Wan 3.0 Video Prime（高速版）', description: 'snumom 高速版；生成速度更快；支持2-30秒、480P/720P/1080P；最多10图、5视频、5音频参考', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'snumom', modelId: SNUMOM_GROK_IMAGINE_VIDEO_MODEL, displayName: 'Grok Imagine Video 1.5（按次）', description: 'snumom Grok Imagine Video 1.5；支持3-15秒；最多7张参考图；按次计费 ¥0.60/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-mj-minimax-h3-2k', displayName: 'Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },
@@ -527,6 +532,7 @@ export async function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_contents_user_type_created ON contents(user_id, type, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_contents_org ON contents(org_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_contents_type_status_created ON contents(type, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_contents_model_created ON contents(model_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_contents_created ON contents(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_model_feedbacks_user ON model_feedbacks(user_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_model_feedbacks_status ON model_feedbacks(status, created_at);
@@ -937,6 +943,7 @@ export async function initDatabase() {
   db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'rd-seedance-2.5-480p')).run();
   db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'rd-seedance-2.5-720p')).run();
   db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'grok-imagine-1.0-video')).run();
+  db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'grok-imagine-video-1.5')).run();
   db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'grok-imagine-video-1.5-preview')).run();
   db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'grok-imagine-video-1.5-fast')).run();
 
@@ -990,7 +997,7 @@ export async function initDatabase() {
     { modelPattern: 'wan3.0-video', billingType: 'per_second', inputPrice: legacyRate('snumom_wan3_video_rate', 0.14), category: 'video', extraParams: { '480p': 0.12, '720p': 0.14, '1080p': 0.16 } },
     { modelPattern: 'wan3.0-video-prime', billingType: 'per_second', inputPrice: legacyRate('snumom_wan3_video_prime_rate', 0.18), category: 'video', extraParams: { '480p': 0.15, '720p': 0.18, '1080p': 0.20 } },
     { modelPattern: 'grok-video-1.5', billingType: 'per_second', inputPrice: legacyRate('grok_video_1_5_per_sec_rate', 0.09), category: 'video' },
-    { modelPattern: 'grok-imagine-video-1.5', billingType: 'per_call', inputPrice: legacyRate('grok_imagine_video_1_5_per_req_rate', 0.60), category: 'video' },
+    { modelPattern: SNUMOM_GROK_IMAGINE_VIDEO_MODEL, billingType: 'per_call', inputPrice: legacyRate('grok_imagine_video_1_5_per_req_rate', 0.60), category: 'video' },
     { modelPattern: 'grok-imagine-video-1.5-preview', billingType: 'per_call', inputPrice: legacyRate('grok_imagine_video_1_5_preview_rate', 0.70), category: 'video' },
     { modelPattern: 'gemini-2.5-flash-preview-tts', billingType: 'per_character', inputPrice: legacyRate('tts_rate', 0.01), category: 'tts' },
     { modelPattern: 'gemini-2.5-pro-preview-tts', billingType: 'per_character', inputPrice: legacyRate('tts_rate', 0.01) * 2, category: 'tts' },
@@ -1326,18 +1333,18 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 julun.cc 渠道出错:', err.message);
   }
 
-  // 16) 保证 snumom 渠道只绑定两个 WAN3.0 视频模型；密钥仅从环境变量或后台配置读取。
+  // 16) 保证 snumom 渠道绑定已验证的视频模型；密钥仅从环境变量或后台配置读取。
   try {
     const snumomBaseUrl = env.SNUMOM_BASE_URL.replace(/\/+$/, '');
     const snumomApiKey = env.SNUMOM_API_KEY.trim();
-    const snumomModels = ['wan3.0-video', 'wan3.0-video-prime'];
+    const snumomModels = [...SNUMOM_VIDEO_MODELS];
     const snumomMapping = Object.fromEntries(snumomModels.map(modelId => [modelId, modelId]));
     const existingSnumom = db.select().from(channels).all().find(channel =>
       channel.type === 'snumom' || channel.baseUrl?.replace(/\/+$/, '') === snumomBaseUrl
     );
     if (!existingSnumom) {
       db.insert(channels).values({
-        name: 'snumom WAN3.0 渠道',
+        name: 'snumom 视频渠道',
         type: 'snumom',
         baseUrl: snumomBaseUrl,
         apiKey: snumomApiKey,
@@ -1349,7 +1356,7 @@ export async function initDatabase() {
         maxRetries: 3,
         timeout: 120000,
       }).run();
-      console.log('📦 已创建 snumom WAN3.0 渠道配置');
+      console.log('📦 已创建 snumom 视频渠道配置');
     } else {
       db.update(channels).set({
         type: 'snumom',
@@ -1359,10 +1366,10 @@ export async function initDatabase() {
         modelMapping: JSON.stringify(snumomMapping),
         updatedAt: new Date().toISOString(),
       }).where(eq(channels.id, existingSnumom.id)).run();
-      console.log('🔄 已校准 snumom WAN3.0 渠道（仅标准版与高速版）');
+      console.log('🔄 已校准 snumom 视频渠道模型');
     }
   } catch (err: any) {
-    console.error('⚠️ 初始化 snumom WAN3.0 渠道出错:', err.message);
+    console.error('⚠️ 初始化 snumom 视频渠道出错:', err.message);
   }
 
   // 17) 保证 HM Studio 渠道存在。密钥仅从服务器环境变量读取，不写入代码仓库。

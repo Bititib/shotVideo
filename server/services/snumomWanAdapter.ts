@@ -1,5 +1,13 @@
 export const SNUMOM_BASE_URL = 'https://snumom.com';
 export const SNUMOM_CHANNEL_TYPE = 'snumom';
+export const SNUMOM_GROK_IMAGINE_VIDEO_MODEL = 'grok-imagine-video-1.5（按次）';
+export const SNUMOM_GROK_IMAGINE_VIDEO_SECONDS = Array.from({ length: 13 }, (_, index) => index + 3);
+export const SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES = 7;
+export const SNUMOM_VIDEO_MODELS = [
+  'wan3.0-video',
+  'wan3.0-video-prime',
+  SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
+] as const;
 
 export interface SnumomChannelLike {
   type?: string | null;

@@ -514,6 +514,29 @@ describe('PricingService', () => {
       expect(quote.cost).toBe(0.35);
     });
 
+    it('reuses a pricing snapshot for a batch of model quotes', () => {
+      PricingService.createPricingRule({
+        modelPattern: TEST_PATTERN,
+        billingType: 'per_second',
+        inputPrice: 0.25,
+        extraParams: { category: 'video', '720p': 0.30 },
+      });
+
+      const quoteFromSnapshot = PricingService.createQuoteResolver(false);
+      expect(quoteFromSnapshot(TEST_PATTERN, { resolution: '720p', seconds: 10 })).toEqual({
+        rate: 0.30,
+        cost: 3,
+        billingType: 'per_second',
+        matchedPattern: TEST_PATTERN,
+      });
+      expect(quoteFromSnapshot('missing-model')).toEqual({
+        rate: 0,
+        cost: 0,
+        billingType: null,
+        matchedPattern: null,
+      });
+    });
+
     it('returns a public price descriptor and omits unpriced non-text models', () => {
       PricingService.createPricingRule({
         modelPattern: TEST_PATTERN,

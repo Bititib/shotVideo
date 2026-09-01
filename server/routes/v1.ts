@@ -33,7 +33,13 @@ import {
   isNewTokenVideoModel,
   newTokenVideoCreateUrl,
 } from '../services/newTokenAdapter.js';
-import { buildSnumomWanPayload, isSnumomWanChannel } from '../services/snumomWanAdapter.js';
+import {
+  buildSnumomWanPayload,
+  isSnumomWanChannel,
+  SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES,
+  SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
+  SNUMOM_GROK_IMAGINE_VIDEO_SECONDS,
+} from '../services/snumomWanAdapter.js';
 import {
   buildSudaShuiVideoPayload,
   sudaShuiVideoCreateUrl,
@@ -326,7 +332,7 @@ function refundTokenOrUserBalance(token: any, cost: number): 'user_balance' | 'a
 function getVideoRate(model: string, resolution: string): number {
   if (model === 'grok-video-1.5（按秒）') {
     return 0.09;
-  } else if (model === 'grok-imagine-video-1.5（按次）') {
+  } else if (model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL) {
     return 0.60;
   } else if (model === 'grok-imagine-video-1.5-preview') {
     return 0.70;
@@ -1541,6 +1547,17 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
   }
 
+  if (model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL) {
+    if (!SNUMOM_GROK_IMAGINE_VIDEO_SECONDS.includes(Number(seconds))) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `${model} seconds must be an integer from 3 to 15` });
+    }
+    if (image_urls.length > SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `${model} supports at most ${SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES} images` });
+    }
+  }
+
   const siYueTianInput = {
     requestedModel: model,
     resolution,
@@ -1618,7 +1635,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   // 计费计算与校验
   const rate = getVideoRate(model, resolution);
   const isFlatRate = [
-    'grok-imagine-video-1.5（按次）',
+    SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
     'grok-imagine-video-1.5-preview',
     'seedance-2.5-deal',
     'seedance-2.5m',

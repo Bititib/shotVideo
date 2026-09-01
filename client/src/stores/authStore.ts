@@ -18,6 +18,8 @@ interface AuthState {
   requireAuth: () => boolean;
 }
 
+let authCheckRequest: Promise<boolean> | null = null;
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   isLoading: true,
@@ -55,19 +57,31 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   checkAuth: async () => {
+    if (authCheckRequest) return authCheckRequest;
+
     const token = localStorage.getItem('token');
     if (!token) {
       set({ isLoading: false, isAuthenticated: false });
       return false;
     }
+
+    const request = (async () => {
+      try {
+        const profile = await authApi.getProfile();
+        set({ user: profile, isAuthenticated: true, isLoading: false });
+        return true;
+      } catch {
+        localStorage.removeItem('token');
+        set({ user: null, isAuthenticated: false, isLoading: false });
+        return false;
+      }
+    })();
+    authCheckRequest = request;
+
     try {
-      const profile = await authApi.getProfile();
-      set({ user: profile, isAuthenticated: true, isLoading: false });
-      return true;
-    } catch {
-      localStorage.removeItem('token');
-      set({ user: null, isAuthenticated: false, isLoading: false });
-      return false;
+      return await request;
+    } finally {
+      if (authCheckRequest === request) authCheckRequest = null;
     }
   },
 
