@@ -49,8 +49,31 @@ export interface VideoSSEEvent {
 }
 
 const MODEL_CACHE_TTL_MS = 30_000;
+const PERSISTED_MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const PERSISTED_MODEL_CACHE_KEY = 'video-models-cache-v1';
 let videoModelCache: { token: string; expiresAt: number; data: VideoModel[] } | null = null;
 let videoModelRequest: { token: string; promise: Promise<VideoModel[]> } | null = null;
+
+/** Return the last successful public model list immediately while prices refresh in the background. */
+export function getCachedVideoModels(): VideoModel[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const cached = JSON.parse(localStorage.getItem(PERSISTED_MODEL_CACHE_KEY) || 'null');
+    if (!cached || !Array.isArray(cached.data) || Date.now() - Number(cached.savedAt || 0) > PERSISTED_MODEL_CACHE_TTL_MS) {
+      return [];
+    }
+    return cached.data.filter((model: any) => model && typeof model.id === 'string' && typeof model.name === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function persistVideoModels(data: VideoModel[]) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(PERSISTED_MODEL_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), data }));
+  } catch { /* storage may be disabled or full */ }
+}
 
 /** 获取可用的视频模型列表；短时缓存并合并并发请求，避免页面切换/聚焦时重复下载。 */
 export async function fetchVideoModels(): Promise<VideoModel[]> {
@@ -69,6 +92,7 @@ export async function fetchVideoModels(): Promise<VideoModel[]> {
       if (!res.ok) throw new Error('获取模型列表失败');
       const data = await res.json() as VideoModel[];
       videoModelCache = { token: cacheKey, expiresAt: Date.now() + MODEL_CACHE_TTL_MS, data };
+      persistVideoModels(data);
       return data;
     })
     .finally(() => {

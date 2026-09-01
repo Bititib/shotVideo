@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Film, Play, Square, Download, Loader2, AlertCircle, ArrowLeft, Plus, Trash2, FastForward, Upload, X, Pause, SkipForward, PackageOpen, Scissors, HelpCircle } from 'lucide-react';
-import { fetchVideoModels, generateVideo, type VideoModel, type VideoSSEEvent } from '../../api/video';
+import { fetchVideoModels, generateVideo, getCachedVideoModels, type VideoModel, type VideoSSEEvent } from '../../api/video';
 import ImageSlicerModal from '../../components/ImageSlicerModal';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
@@ -82,8 +82,8 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
 export default function VideoStudioPage() {
   const navigate = useNavigate();
   const guard = useAuthGuard();
-  const [models, setModels] = useState<VideoModel[]>([]);
-  const [selectedModel, setSelectedModel] = useState('');
+  const [models, setModels] = useState<VideoModel[]>(getCachedVideoModels);
+  const [selectedModel, setSelectedModel] = useState(() => models[0]?.id || '');
   const [projects, setProjects] = useState<Project[]>(loadProjects);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
@@ -129,7 +129,12 @@ export default function VideoStudioPage() {
   const segments = project?.segments || [];
   const totalDur = segments.reduce((s, seg) => s + seg.duration, 0);
 
-  useEffect(() => { fetchVideoModels().then(m => { setModels(m); if (m.length > 0) setSelectedModel(m[0].id); }).catch(() => {}); }, []);
+  useEffect(() => {
+    fetchVideoModels().then(nextModels => {
+      setModels(nextModels);
+      setSelectedModel(current => nextModels.some(model => model.id === current) ? current : (nextModels[0]?.id || ''));
+    }).catch(() => {});
+  }, []);
 
   // Dynamic duration filtering based on model's allowedSeconds
   const currentModel = models.find(m => m.id === selectedModel);

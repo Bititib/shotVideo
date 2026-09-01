@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Volume2, Play, Pause, Download, Loader2, Sparkles, AlertCircle, RefreshCw, FileText, Check, Music, Trash2 } from 'lucide-react';
-import { analysisApi } from '../../api/analysis';
+import { analysisApi, getCachedTtsModels } from '../../api/analysis';
 import { contentApi } from '../../api/content';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 
@@ -62,8 +62,8 @@ function base64ToBlobUrl(base64: string, mimeType: string): string {
 
 export default function TtsPage() {
   const guard = useAuthGuard();
-  const [models, setModels] = useState<{ modelId: string; displayName: string }[]>([]);
-  const [selectedModel, setSelectedModel] = useState('');
+  const [models, setModels] = useState(getCachedTtsModels);
+  const [selectedModel, setSelectedModel] = useState(() => models[0]?.modelId || '');
   const [selectedVoice, setSelectedVoice] = useState('Zephyr');
   const [text, setText] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -88,7 +88,7 @@ export default function TtsPage() {
         const list = res?.data || res || [];
         if (list.length > 0) {
           setModels(list);
-          setSelectedModel(list[0].modelId);
+          setSelectedModel(current => list.some((model: any) => model.modelId === current) ? current : list[0].modelId);
         } else {
           // 兜底配置
           const defaultTts = [

@@ -30,8 +30,31 @@ export interface ImageSSEEvent {
 }
 
 const MODEL_CACHE_TTL_MS = 30_000;
+const PERSISTED_MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const PERSISTED_MODEL_CACHE_KEY = 'image-models-cache-v1';
 let imageModelCache: { token: string; expiresAt: number; data: ImageModel[] } | null = null;
 let imageModelRequest: { token: string; promise: Promise<ImageModel[]> } | null = null;
+
+/** Return the last successful model list immediately while the latest config loads. */
+export function getCachedImageModels(): ImageModel[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const cached = JSON.parse(localStorage.getItem(PERSISTED_MODEL_CACHE_KEY) || 'null');
+    if (!cached || !Array.isArray(cached.data) || Date.now() - Number(cached.savedAt || 0) > PERSISTED_MODEL_CACHE_TTL_MS) {
+      return [];
+    }
+    return cached.data.filter((model: any) => model && typeof model.id === 'string' && typeof model.name === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function persistImageModels(data: ImageModel[]) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(PERSISTED_MODEL_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), data }));
+  } catch { /* storage may be disabled or full */ }
+}
 
 /** 获取可用的图片模型列表；短时缓存并合并并发请求。 */
 export async function fetchImageModels(): Promise<ImageModel[]> {
@@ -50,6 +73,7 @@ export async function fetchImageModels(): Promise<ImageModel[]> {
       if (!res.ok) throw new Error('获取模型列表失败');
       const data = await res.json() as ImageModel[];
       imageModelCache = { token: cacheKey, expiresAt: Date.now() + MODEL_CACHE_TTL_MS, data };
+      persistImageModels(data);
       return data;
     })
     .finally(() => {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Image as ImageIcon, Play, Square, Download, RotateCcw, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Grid2x2, Maximize2, Trash2 } from 'lucide-react';
-import { downloadGeneratedImage, fetchImageModels, generateImage, type ImageModel, type ImageSSEEvent } from '../../api/imageGen';
+import { downloadGeneratedImage, fetchImageModels, generateImage, getCachedImageModels, type ImageModel, type ImageSSEEvent } from '../../api/imageGen';
 import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
@@ -134,8 +134,8 @@ function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
 
 export default function ImageGenPage() {
   const guard = useAuthGuard();
-  const [models, setModels] = useState<ImageModel[]>([]);
-  const [selectedModel, setSelectedModel] = useState('');
+  const [models, setModels] = useState<ImageModel[]>(getCachedImageModels);
+  const [selectedModel, setSelectedModel] = useState(() => models[0]?.id || '');
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState('1:1');
   const [imageCount, setImageCount] = useState(1);
@@ -155,7 +155,10 @@ export default function ImageGenPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    fetchImageModels().then((m) => { setModels(m); if (m.length > 0 && !selectedModel) setSelectedModel(m[0].id); }).catch(() => {});
+    fetchImageModels().then((nextModels) => {
+      setModels(nextModels);
+      setSelectedModel(current => nextModels.some(model => model.id === current) ? current : (nextModels[0]?.id || ''));
+    }).catch(() => {});
     // 加载历史生成记录
     contentApi.getMyContents({ type: 'image', page: 1, pageSize: 12 })
       .then((res: any) => {

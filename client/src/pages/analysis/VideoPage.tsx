@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw, Maximize2, Minimize2, Scissors, HelpCircle, Trash2, MessageSquareWarning, Send, ChevronDown } from 'lucide-react';
-import { fetchVideoModels, generateVideo, type VideoModel, type VideoSSEEvent } from '../../api/video';
+import { fetchVideoModels, generateVideo, getCachedVideoModels, type VideoModel, type VideoSSEEvent } from '../../api/video';
 import ImageSlicerModal from '../../components/ImageSlicerModal';
 import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
@@ -337,7 +337,7 @@ const getRefFilename = (dataUrl: string, index: number) => {
 export default function VideoPage() {
   const navigate = useNavigate();
   const guard = useAuthGuard();
-  const [models, setModels] = useState<VideoModel[]>([]);
+  const [models, setModels] = useState<VideoModel[]>(getCachedVideoModels);
 
   const groupedModels = React.useMemo(() => {
     const groups: Record<string, VideoModel[]> = {};
@@ -349,7 +349,7 @@ export default function VideoPage() {
     return groups;
   }, [models]);
 
-  const [selectedModel, setSelectedModel] = useState('');
+  const [selectedModel, setSelectedModel] = useState(() => models[0]?.id || '');
   const [expandedModelGroups, setExpandedModelGroups] = useState<Set<string>>(new Set());
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState('16:9');
@@ -580,7 +580,9 @@ export default function VideoPage() {
     const refreshModelPricing = () => {
       fetchVideoModels().then((nextModels) => {
         setModels(nextModels);
-        if (nextModels.length > 0) setSelectedModel(current => current || nextModels[0].id);
+        if (nextModels.length > 0) {
+          setSelectedModel(current => nextModels.some(model => model.id === current) ? current : nextModels[0].id);
+        }
       }).catch(() => { });
     };
     const handleVisibilityChange = () => {
@@ -1327,6 +1329,13 @@ export default function VideoPage() {
           <div className="mb-6">
             <label className="block text-xs font-semibold text-zinc-400 mb-3 uppercase tracking-wider">生成模型</label>
             <div className="space-y-4">
+              {models.length === 0 && (
+                <div className="space-y-2 rounded-xl border border-white/[0.06] bg-white/[0.015] p-3" role="status" aria-live="polite">
+                  <div className="h-4 w-28 animate-pulse rounded bg-white/[0.07]" />
+                  <div className="h-16 animate-pulse rounded-lg bg-white/[0.04]" />
+                  <p className="text-[10px] text-zinc-600">正在加载可用模型…</p>
+                </div>
+              )}
               {GROUP_ORDER.map(groupName => {
                 const groupModels = groupedModels[groupName];
                 if (!groupModels || groupModels.length === 0) return null;
@@ -1422,9 +1431,11 @@ export default function VideoPage() {
                   </div>
                 );
               })}
-              <div className="p-4 rounded-xl border border-dashed border-white/5 opacity-40 mt-4">
-                <p className="text-sm text-zinc-600 mb-1">更多模型</p><p className="text-xs text-zinc-700">即将支持...</p>
-              </div>
+              {models.length > 0 && (
+                <div className="p-4 rounded-xl border border-dashed border-white/5 opacity-40 mt-4">
+                  <p className="text-sm text-zinc-600 mb-1">更多模型</p><p className="text-xs text-zinc-700">即将支持...</p>
+                </div>
+              )}
             </div>
           </div>
           {/* 工作室入口 */}

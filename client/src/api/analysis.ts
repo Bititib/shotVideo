@@ -1,13 +1,69 @@
 import { api } from './client';
 
-type TtsModel = { modelId: string; displayName: string; rate?: number };
+export type AnalysisModel = { modelId: string; displayName: string };
+export type TtsModel = { modelId: string; displayName: string; rate?: number };
+const MODEL_CACHE_TTL_MS = 30_000;
+const PERSISTED_MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const ANALYSIS_MODEL_CACHE_KEY = 'analysis-models-cache-v1';
+const TTS_MODEL_CACHE_KEY = 'tts-models-cache-v1';
+let analysisModelCache: { token: string; expiresAt: number; data: AnalysisModel[] } | null = null;
+let analysisModelRequest: { token: string; promise: Promise<AnalysisModel[]> } | null = null;
 let ttsModelCache: { token: string; expiresAt: number; data: TtsModel[] } | null = null;
 let ttsModelRequest: { token: string; promise: Promise<TtsModel[]> } | null = null;
+
+function readPersistedModels<T>(key: string, isValid: (model: any) => boolean): T[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const token = localStorage.getItem('token') || '';
+    const cached = JSON.parse(localStorage.getItem(key) || 'null');
+    if (!cached || cached.token !== token || !Array.isArray(cached.data)
+      || Date.now() - Number(cached.savedAt || 0) > PERSISTED_MODEL_CACHE_TTL_MS) return [];
+    return cached.data.filter(isValid);
+  } catch {
+    return [];
+  }
+}
+
+function persistModels<T>(key: string, token: string, data: T[]) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(key, JSON.stringify({ token, savedAt: Date.now(), data }));
+  } catch { /* storage may be disabled or full */ }
+}
+
+export function getCachedAnalysisModels(): AnalysisModel[] {
+  return readPersistedModels<AnalysisModel>(
+    ANALYSIS_MODEL_CACHE_KEY,
+    model => model && typeof model.modelId === 'string' && typeof model.displayName === 'string',
+  );
+}
+
+export function getCachedTtsModels(): TtsModel[] {
+  return readPersistedModels<TtsModel>(
+    TTS_MODEL_CACHE_KEY,
+    model => model && typeof model.modelId === 'string' && typeof model.displayName === 'string',
+  );
+}
 
 export const analysisApi = {
   /** 获取当前用户可用的模型列表 */
   getAvailableModels() {
-    return api.get<{ modelId: string; displayName: string }[]>('/analysis/models');
+    const token = localStorage.getItem('token') || '';
+    if (analysisModelCache?.token === token && analysisModelCache.expiresAt > Date.now()) {
+      return Promise.resolve(analysisModelCache.data);
+    }
+    if (analysisModelRequest?.token === token) return analysisModelRequest.promise;
+    const promise = api.get<AnalysisModel[]>('/analysis/models')
+      .then((data) => {
+        analysisModelCache = { token, expiresAt: Date.now() + MODEL_CACHE_TTL_MS, data };
+        persistModels(ANALYSIS_MODEL_CACHE_KEY, token, data);
+        return data;
+      })
+      .finally(() => {
+        if (analysisModelRequest?.promise === promise) analysisModelRequest = null;
+      });
+    analysisModelRequest = { token, promise };
+    return promise;
   },
 
   /** 获取语音合成模型及费率 */
@@ -19,7 +75,8 @@ export const analysisApi = {
     if (ttsModelRequest?.token === token) return ttsModelRequest.promise;
     const promise = api.get<TtsModel[]>('/analysis/tts-models')
       .then((data) => {
-        ttsModelCache = { token, expiresAt: Date.now() + 30_000, data };
+        ttsModelCache = { token, expiresAt: Date.now() + MODEL_CACHE_TTL_MS, data };
+        persistModels(TTS_MODEL_CACHE_KEY, token, data);
         return data;
       })
       .finally(() => {

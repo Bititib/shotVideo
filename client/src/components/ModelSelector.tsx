@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { analysisApi } from '../api/analysis';
+import { analysisApi, getCachedAnalysisModels } from '../api/analysis';
 import { Cpu } from 'lucide-react';
 
 interface ModelSelectorProps {
@@ -9,8 +9,8 @@ interface ModelSelectorProps {
 
 /** 模型选择器 - 在各分析页面中复用 */
 export default function ModelSelector({ value, onChange }: ModelSelectorProps) {
-  const [models, setModels] = useState<{ modelId: string; displayName: string }[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [models, setModels] = useState(getCachedAnalysisModels);
+  const [loading, setLoading] = useState(() => models.length === 0);
 
   useEffect(() => {
     analysisApi.getAvailableModels()
