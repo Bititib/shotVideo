@@ -20,12 +20,31 @@ function parseMetadata(metadata: unknown): Record<string, any> {
   }
 }
 
-function errorText(value: unknown): string {
-  if (typeof value === 'string') return value.trim();
+function parseJsonString(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try { return JSON.parse(trimmed); } catch { return value; }
+  }
+  const jsonStart = trimmed.indexOf('{');
+  if (jsonStart >= 0) {
+    try { return JSON.parse(trimmed.slice(jsonStart)); } catch { /* retain original text */ }
+  }
+  return value;
+}
+
+function errorText(value: unknown, depth = 0): string {
+  if (depth > 8 || value === null || value === undefined) return '';
+  if (typeof value === 'string') {
+    const parsed = parseJsonString(value);
+    return parsed === value ? value.trim() : errorText(parsed, depth + 1);
+  }
   if (value && typeof value === 'object') {
     const record = value as Record<string, unknown>;
-    const nested = record.message || record.detail || record.error;
-    if (typeof nested === 'string') return nested.trim();
+    for (const nested of [record.error, record.err_code, record.failure_reason, record.fail_reason, record.message, record.detail]) {
+      const message = errorText(nested, depth + 1);
+      if (message) return message;
+    }
     try { return JSON.stringify(value); } catch { return ''; }
   }
   return '';

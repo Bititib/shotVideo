@@ -13,6 +13,7 @@ import { feedbackApi } from '../../api/feedback';
 import { getBillingUnit } from '../../utils/billing';
 import { buildReplicatedVideoPrompt, getVideoReferenceAssets, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
 import { isOmniVideoEditModel } from '../../utils/videoModelCapabilities';
+import { getContentFailureInfo } from '../../utils/contentFailure';
 
 interface VideoTask {
   id: string;
@@ -36,6 +37,18 @@ interface VideoTask {
   };
   createdAt: string;
   dbId?: number;
+}
+
+function isVideoHistoryRecord(item: any): boolean {
+  return item?.status === 'completed'
+    || item?.status === 'success'
+    || item?.status === 'failed'
+    || item?.status === 'error'
+    || Boolean(item?.resultUrl);
+}
+
+function isFailedVideoHistoryRecord(item: any): boolean {
+  return item?.status === 'failed' || item?.status === 'error';
 }
 const JULUN_MINIMAX_H3_MODEL = 'Minimax-H3-768p-933-10s-15s';
 function getVideoPlayUrl(url: string | null) {
@@ -568,8 +581,8 @@ export default function VideoPage() {
           return { ...item, metadata: meta };
         });
 
-        // 已完成或已失败的记录计入历史面板
-        setHistory(parsed.filter((item: any) => item.status === 'completed' || item.status === 'success' || item.resultUrl));
+        // 所有终态记录都保留；失败记录仅在用户主动删除后消失。
+        setHistory(parsed.filter(isVideoHistoryRecord));
         setHistoryTotal(Number(res?.total) || 0);
 
         // 正在生产中的记录恢复到 tasks 队列中继续展示生成进度
@@ -608,7 +621,7 @@ export default function VideoPage() {
         let metadata = {};
         try { metadata = item.metadata ? (typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata) : {}; } catch { }
         return { ...item, metadata };
-      }).filter((item: any) => item.status === 'completed' || item.status === 'success' || item.resultUrl);
+      }).filter(isVideoHistoryRecord);
       setHistory(prev => [...prev, ...parsed.filter((item: any) => !prev.some(old => old.id === item.id))]);
       setHistoryPage(nextPage);
       setHistoryTotal(Number(res?.total) || 0);
@@ -719,7 +732,7 @@ export default function VideoPage() {
                       } catch { }
                       return { ...item, metadata: meta };
                     });
-                    setHistory(parsed.filter((x: any) => x.status === 'completed' || x.status === 'success' || x.resultUrl));
+                    setHistory(parsed.filter(isVideoHistoryRecord));
                     setHistoryTotal(Number(r?.total) || 0);
                     setHistoryPage(1);
                     // 历史已加载，从当前任务中移除
@@ -1024,10 +1037,11 @@ export default function VideoPage() {
       if (meta.seconds) setDuration(meta.seconds);
       if (meta.aspect_ratio) setAspectRatio(meta.aspect_ratio);
 
-      // 恢复参考图与参考视频及参考音频
-      const restoredImages = meta.reference_images || [];
-      const restoredVideos = meta.reference_videos || (meta.reference_video ? [meta.reference_video] : []);
-      const restoredAudios = meta.audio_urls || (meta.audio_url ? [meta.audio_url] : []);
+      // 使用统一解析器兼容网页、API 和旧记录的素材字段别名。
+      const restoredAssets = getVideoReferenceAssets(meta);
+      const restoredImages = restoredAssets.images;
+      const restoredVideos = restoredAssets.videos;
+      const restoredAudios = restoredAssets.audios;
       setReferenceImages(restoredImages);
       setReferenceVideos(restoredVideos);
       setReferenceAudios(restoredAudios);
@@ -1451,20 +1465,40 @@ export default function VideoPage() {
                     <span className="rounded-full border border-[#d8c0a3] bg-[#f5eadb] px-2.5 py-1 text-[10px] font-semibold text-[#8a6048]">{history.length}</span>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-5 auto-rows-fr">
-                    {history.map((h) => (
-                      <article key={h.id} onClick={() => setPlayingVideo({ url: h.resultUrl, prompt: restorePrompt(h.title || h.inputText || '') })} className="group relative h-full min-h-[330px] rounded-2xl overflow-hidden border border-[#d8c0a3] bg-[#fbf5eb] hover:-translate-y-0.5 hover:border-[#b66a45] transition-all duration-200 flex flex-col cursor-pointer shadow-[0_10px_30px_rgba(89,55,35,0.07)] hover:shadow-[0_16px_36px_rgba(89,55,35,0.12)]">
+                    {history.map((h) => {
+                      const isFailed = isFailedVideoHistoryRecord(h);
+                      const failure = isFailed ? getContentFailureInfo(h.metadata, h.resultText) : null;
+                      return (
+                      <article
+                        key={h.id}
+                        onClick={() => { if (!isFailed && h.resultUrl) setPlayingVideo({ url: h.resultUrl, prompt: restorePrompt(h.title || h.inputText || '') }); }}
+                        className={`group relative h-full min-h-[330px] rounded-2xl overflow-hidden border bg-[#fbf5eb] transition-all duration-200 flex flex-col shadow-[0_10px_30px_rgba(89,55,35,0.07)] ${isFailed
+                          ? 'border-red-300/80'
+                          : 'border-[#d8c0a3] cursor-pointer hover:-translate-y-0.5 hover:border-[#b66a45] hover:shadow-[0_16px_36px_rgba(89,55,35,0.12)]'}`}
+                      >
                         <div className="relative w-full aspect-video bg-[#211a16] flex items-center justify-center overflow-hidden border-b border-[#d8c0a3]">
-                          <video src={getVideoPlayUrl(h.resultUrl)} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="metadata" playsInline muted loop
-                            onLoadedMetadata={(e) => showVideoPreviewFrame(e.currentTarget)}
-                            onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
-                            onMouseLeave={(e) => { e.currentTarget.pause(); showVideoPreviewFrame(e.currentTarget); }} />
-                          <div className="absolute inset-0 bg-black/20 flex items-center justify-center group-hover:bg-black/5 transition-colors">
-                            <span className="w-11 h-11 rounded-full border border-white/70 bg-black/20 backdrop-blur-sm flex items-center justify-center group-hover:scale-105 transition-transform"><Play className="w-5 h-5 text-white fill-white/10 translate-x-0.5" /></span>
-                          </div>
+                          {isFailed ? (
+                            <div className="flex max-w-[85%] flex-col items-center gap-2 text-center">
+                              <AlertCircle className="h-9 w-9 text-red-300/80" />
+                              <span className="text-sm font-semibold text-red-200">生成失败</span>
+                              <p className="line-clamp-2 text-[11px] leading-relaxed text-red-200/70">{failure?.message || '未记录失败原因'}</p>
+                            </div>
+                          ) : (
+                            <>
+                              <video src={getVideoPlayUrl(h.resultUrl)} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="metadata" playsInline muted loop
+                                onLoadedMetadata={(e) => showVideoPreviewFrame(e.currentTarget)}
+                                onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
+                                onMouseLeave={(e) => { e.currentTarget.pause(); showVideoPreviewFrame(e.currentTarget); }} />
+                              <div className="absolute inset-0 bg-black/20 flex items-center justify-center group-hover:bg-black/5 transition-colors">
+                                <span className="w-11 h-11 rounded-full border border-white/70 bg-black/20 backdrop-blur-sm flex items-center justify-center group-hover:scale-105 transition-transform"><Play className="w-5 h-5 text-white fill-white/10 translate-x-0.5" /></span>
+                              </div>
+                            </>
+                          )}
                         </div>
                         <div className="p-4 flex-1 min-h-[140px] flex flex-col justify-between gap-3 bg-[#fbf5eb]">
                           <div>
                             <p className="min-h-10 text-[13px] text-[#4a3529] line-clamp-2 leading-relaxed">{restorePrompt(h.title || h.inputText || '无描述')}</p>
+                            {isFailed && <p className="mt-2 line-clamp-2 text-[11px] leading-relaxed text-red-600/80">失败原因：{failure?.message || '未记录失败原因'}</p>}
 
                             {/* 参考图微缩图预览 */}
                             {h.metadata?.reference_images && h.metadata.reference_images.length > 0 && (
@@ -1505,12 +1539,12 @@ export default function VideoPage() {
                                 className="text-zinc-500 hover:text-red-400 transition-colors flex items-center gap-0.5" title="删除记录">
                                 <Trash2 className="w-3 h-3" />删除
                               </button>
-                              <a href={`/api/video/download?url=${encodeURIComponent(h.resultUrl)}&filename=video_${h.id}.mp4`} download onClick={(e) => e.stopPropagation()} className="text-zinc-500 hover:text-indigo-400 transition-colors"><Download className="w-3 h-3" /></a>
+                              {!isFailed && h.resultUrl && <a href={`/api/video/download?url=${encodeURIComponent(h.resultUrl)}&filename=video_${h.id}.mp4`} download onClick={(e) => e.stopPropagation()} className="text-zinc-500 hover:text-indigo-400 transition-colors"><Download className="w-3 h-3" /></a>}
                             </div>
                           </div>
                         </div>
                       </article>
-                    ))}
+                    );})}
                   </div>
                   {historyPage * 12 < historyTotal && (
                     <div className="mt-5 flex justify-center">

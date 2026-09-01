@@ -38,4 +38,16 @@ describe('admin content failure details', () => {
       refundedAt: '2026-08-29T08:13:04.240Z',
     });
   });
+
+  it('extracts a concise reason from an escaped upstream gateway failure', () => {
+    const nested = JSON.stringify({
+      code: 'fail_to_fetch_task',
+      message: JSON.stringify({
+        state: 'failed',
+        err_code: JSON.stringify({ error: { code: 'SERVICE_UNAVAILABLE', message: '生成服务暂时不可用，请稍后重试' } }),
+      }),
+    });
+    expect(getContentFailureInfo({ error: `创建视频任务失败 (400): ${nested}` }).message)
+      .toBe('生成服务暂时不可用，请稍后重试');
+  });
 });
