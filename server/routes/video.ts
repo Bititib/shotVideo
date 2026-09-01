@@ -86,6 +86,8 @@ import crypto from 'crypto';
 
 const execPromise = promisify(exec);
 const router = Router();
+const VIDEO_MODELS_CACHE_TTL_MS = 15_000;
+let videoModelsResponseCache: { expiresAt: number; data: any[] } | null = null;
 
 export const activePolls = new Set<number>();
 const activePollPromises = new Map<number, Promise<void>>();
@@ -451,6 +453,11 @@ export async function localizeChre3Video(url: string, videoId: string, model: st
 }
 /** GET /api/video/models — 可用的视频模型列表（公开，不需要登录） */
 router.get('/models', (_req: Request, res: Response) => {
+  if (env.NODE_ENV === 'production' && videoModelsResponseCache?.expiresAt > Date.now()) {
+    res.setHeader('Cache-Control', 'public, max-age=10, stale-while-revalidate=30');
+    return res.json(videoModelsResponseCache.data);
+  }
+
   // 从数据库动态拉取所有启用且具备 'video' 能力的模型
   const dbModels = db.select().from(models)
     .where(and(eq(models.isActive, 1), like(models.capabilities, '%"video"%')))
@@ -701,7 +708,15 @@ router.get('/models', (_req: Request, res: Response) => {
     };
   });
 
-  res.json(result.filter(m => m.available));
+  const availableModels = result.filter(m => m.available);
+  if (env.NODE_ENV === 'production') {
+    videoModelsResponseCache = {
+      expiresAt: Date.now() + VIDEO_MODELS_CACHE_TTL_MS,
+      data: availableModels,
+    };
+    res.setHeader('Cache-Control', 'public, max-age=10, stale-while-revalidate=30');
+  }
+  res.json(availableModels);
 });
 
 /** POST /api/video/generate — SSE 流式视频生成（异步轮询模式） */

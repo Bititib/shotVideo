@@ -390,7 +390,10 @@ export class ContentService {
 
     return {
       items: items.map(item => {
-        if (item.type === 'video') return compactContentForList(item);
+        if (item.type === 'video') {
+          const materialized = this.materializeAssetsForContent(item.id, item);
+          return compactContentForList(materialized);
+        }
         if (item.type === 'audio') return compactAudioContentForList(item);
         return sanitizeContentRoutingForClient(item);
       }),
@@ -524,6 +527,13 @@ export class ContentService {
       .where(whereClause)
       .get()?.count || 0;
 
-    return { items: items.map(compactAdminContentForList), total, page, pageSize };
+    return {
+      items: items.map(item => compactAdminContentForList(
+        item.type === 'video' ? this.materializeAssetsForContent(item.id, item) : item,
+      )),
+      total,
+      page,
+      pageSize,
+    };
   }
 }

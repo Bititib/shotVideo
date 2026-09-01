@@ -1592,7 +1592,6 @@ export default function VideoPage() {
                         <div className="p-4 flex-1 min-h-[140px] flex flex-col justify-between gap-3 bg-[#fbf5eb]">
                           <div>
                             <p className="min-h-10 text-[13px] text-[#4a3529] line-clamp-2 leading-relaxed">{restorePrompt(h.title || h.inputText || '无描述')}</p>
-                            {isFailed && <p className="mt-2 line-clamp-2 text-[11px] leading-relaxed text-red-600/80">失败原因：{failure?.message || '未记录失败原因'}</p>}
 
                             {/* 参考图微缩图预览 */}
                             {h.metadata?.reference_images && h.metadata.reference_images.length > 0 && (
