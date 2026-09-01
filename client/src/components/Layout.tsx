@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { getPublicSettings } from '../api/admin';
 import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Layers3, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2, X, Key, User, FileText, History } from 'lucide-react';
@@ -24,7 +24,7 @@ const tierColors: Record<string, string> = {
   enterprise: 'text-purple-400',
 };
 
-export default function Layout({ children }: { children: React.ReactNode }) {
+export default function Layout({ children }: { children?: React.ReactNode }) {
   const { user, isAuthenticated, logout, openLoginModal } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
@@ -206,7 +206,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       {/* Main Content */}
       <main className="earth-workspace flex-1 flex flex-col min-h-screen md:h-screen md:overflow-hidden bg-[#0c0c0c] relative" id="main-content">
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-white/[0.01] via-transparent to-transparent pointer-events-none" />
-        <div className="relative z-10 flex-1 md:overflow-y-auto">{children}</div>
+        <div className="relative z-10 flex-1 md:overflow-y-auto">{children ?? <Outlet />}</div>
       </main>
 
       {/* 悬浮客服面板 */}

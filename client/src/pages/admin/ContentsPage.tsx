@@ -77,13 +77,14 @@ export default function ContentsPage() {
   const [items, setItems] = useState<ContentItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(12);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [loading, setLoading] = useState(false);
   const [previewItem, setPreviewItem] = useState<ContentItem | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [previewTab, setPreviewTab] = useState<'video' | 'refs'>('video');
+  const pageSize = typeFilter === 'video' ? 6 : 12;
 
   const fetchContents = useCallback(async () => {
     setLoading(true);
@@ -108,10 +109,30 @@ export default function ContentsPage() {
 
   const totalPages = Math.ceil(total / pageSize);
 
-  const handleReplicate = (item: ContentItem) => {
+  const loadFullContent = async (item: ContentItem): Promise<ContentItem> => {
+    const metadata = parseMeta(item.metadata);
+    if (!metadata.listAssetsCompacted && !metadata.listResultCompacted) return item;
+    return adminApi.getContent(item.id);
+  };
+
+  const openPreview = async (item: ContentItem) => {
+    setPreviewItem(item);
+    setPreviewTab('video');
+    setPreviewLoading(true);
+    try {
+      setPreviewItem(await loadFullContent(item));
+    } catch (error) {
+      console.error('Failed to load content detail:', error);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleReplicate = async (item: ContentItem) => {
+    const fullItem = await loadFullContent(item);
     // Store the content data in sessionStorage for VideoPage to pick up
-    sessionStorage.setItem('replicate_content', JSON.stringify(item));
-    navigate('/app/video?replicate=' + item.id);
+    sessionStorage.setItem('replicate_content', JSON.stringify(fullItem));
+    navigate('/app/video?replicate=' + fullItem.id);
   };
 
   const parseMeta = (metaStr: string) => {
@@ -212,6 +233,10 @@ export default function ContentsPage() {
             const meta = parseMeta(item.metadata);
             const routingInfo = getAdminRoutingInfo(item, meta);
             const { refImgs, refVids, refAuds } = parseRefAssets(item.metadata);
+            const referenceCounts = meta.referenceAssetCounts || {};
+            const refImageCount = Math.max(refImgs.length, Number(referenceCounts.images) || 0);
+            const refVideoCount = Math.max(refVids.length, Number(referenceCounts.videos) || 0);
+            const refAudioCount = Math.max(refAuds.length, Number(referenceCounts.audios) || 0);
             const isImage = item.type === 'image';
             const hasResult = Boolean(item.resultUrl && item.resultUrl.trim() !== '');
 
@@ -220,7 +245,7 @@ export default function ContentsPage() {
                 {/* Asset Preview / Thumbnail */}
                 <div
                   className="relative aspect-video bg-black/50 cursor-pointer"
-                  onClick={() => { setPreviewItem(item); setPreviewTab('video'); }}
+                  onClick={() => { void openPreview(item); }}
                 >
                   {hasResult && isImage ? (
                     <img
@@ -286,19 +311,19 @@ export default function ContentsPage() {
 
                   {/* Reference assets summary */}
                   <div className="flex items-center gap-2 text-[10px] text-zinc-500">
-                    {refImgs.length > 0 && (
+                    {refImageCount > 0 && (
                       <span className="flex items-center gap-0.5">
-                        <Image className="w-3 h-3" />{refImgs.length}图
+                        <Image className="w-3 h-3" />{refImageCount}图
                       </span>
                     )}
-                    {refVids.length > 0 && (
+                    {refVideoCount > 0 && (
                       <span className="flex items-center gap-0.5">
-                        <Video className="w-3 h-3" />{refVids.length}视频
+                        <Video className="w-3 h-3" />{refVideoCount}视频
                       </span>
                     )}
-                    {refAuds.length > 0 && (
+                    {refAudioCount > 0 && (
                       <span className="flex items-center gap-0.5">
-                        <Music className="w-3 h-3" />{refAuds.length}音频
+                        <Music className="w-3 h-3" />{refAudioCount}音频
                       </span>
                     )}
                     <span className="ml-auto text-amber-400/80">¥{item.cost.toFixed(2)}</span>
@@ -321,14 +346,14 @@ export default function ContentsPage() {
                   {/* Actions */}
                   <div className="flex items-center gap-2 pt-1">
                     <button
-                      onClick={() => { setPreviewItem(item); setPreviewTab('video'); }}
+                      onClick={() => { void openPreview(item); }}
                       className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-zinc-400 hover:text-white transition-colors"
                     >
                       <Eye className="w-3 h-3" /> 查看
                     </button>
                     {!isImage && (
                       <button
-                        onClick={() => handleReplicate(item)}
+                        onClick={() => { void handleReplicate(item); }}
                         className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-xs text-indigo-400 hover:text-indigo-300 transition-colors border border-indigo-500/20"
                       >
                         <Copy className="w-3 h-3" /> 复刻
@@ -379,11 +404,12 @@ export default function ContentsPage() {
               <div className="flex items-center gap-3">
                 <h3 className="text-sm font-medium text-white">内容详情 #{previewItem.id}</h3>
                 {getStatusBadge(previewItem.status)}
+                {previewLoading && <span className="text-[10px] text-zinc-500">正在按需加载完整素材…</span>}
               </div>
               <div className="flex items-center gap-2">
                 {previewItem.type !== 'image' && (
                   <button
-                    onClick={() => handleReplicate(previewItem)}
+                    onClick={() => { void handleReplicate(previewItem); }}
                     className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-xs text-indigo-400 border border-indigo-500/20 transition-colors"
                   >
                     <Copy className="w-3 h-3" /> 一键复刻

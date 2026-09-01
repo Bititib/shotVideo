@@ -48,14 +48,34 @@ export interface VideoSSEEvent {
   queued?: number;
 }
 
-/** 获取可用的视频模型列表 */
+const MODEL_CACHE_TTL_MS = 30_000;
+let videoModelCache: { token: string; expiresAt: number; data: VideoModel[] } | null = null;
+let videoModelRequest: { token: string; promise: Promise<VideoModel[]> } | null = null;
+
+/** 获取可用的视频模型列表；短时缓存并合并并发请求，避免页面切换/聚焦时重复下载。 */
 export async function fetchVideoModels(): Promise<VideoModel[]> {
   const token = localStorage.getItem('token');
+  const cacheKey = token || '';
+  const now = Date.now();
+  if (videoModelCache?.token === cacheKey && videoModelCache.expiresAt > now) {
+    return videoModelCache.data;
+  }
+  if (videoModelRequest?.token === cacheKey) return videoModelRequest.promise;
+
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch('/api/video/models', { headers });
-  if (!res.ok) throw new Error('获取模型列表失败');
-  return res.json();
+  const promise = fetch('/api/video/models', { headers })
+    .then(async (res) => {
+      if (!res.ok) throw new Error('获取模型列表失败');
+      const data = await res.json() as VideoModel[];
+      videoModelCache = { token: cacheKey, expiresAt: Date.now() + MODEL_CACHE_TTL_MS, data };
+      return data;
+    })
+    .finally(() => {
+      if (videoModelRequest?.promise === promise) videoModelRequest = null;
+    });
+  videoModelRequest = { token: cacheKey, promise };
+  return promise;
 }
 
 /** 发起视频生成（SSE 流式），返回 AbortController 可用于取消 */

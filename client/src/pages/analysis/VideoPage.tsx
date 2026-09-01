@@ -51,6 +51,7 @@ function isFailedVideoHistoryRecord(item: any): boolean {
   return item?.status === 'failed' || item?.status === 'error';
 }
 const JULUN_MINIMAX_H3_MODEL = 'Minimax-H3-768p-933-10s-15s';
+const VIDEO_HISTORY_PAGE_SIZE = 6;
 function getVideoPlayUrl(url: string | null) {
   if (!url) return '';
   if (url.startsWith('/uploads/')) {
@@ -436,6 +437,7 @@ export default function VideoPage() {
   // 资产库状态
   const [showAssetPicker, setShowAssetPicker] = useState(false);
   const [myAssets, setMyAssets] = useState<Asset[]>([]);
+  const [assetsLoaded, setAssetsLoaded] = useState(false);
   const [cursorPos, setCursorPos] = useState<number | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
 
@@ -570,7 +572,7 @@ export default function VideoPage() {
   useEffect(() => {
 
     // 加载历史与生产中生成记录
-    contentApi.getMyContents({ type: 'video', page: 1, pageSize: 12 })
+    contentApi.getMyContents({ type: 'video', page: 1, pageSize: VIDEO_HISTORY_PAGE_SIZE })
       .then((res: any) => {
         const items = res?.items || res?.data || [];
         const parsed = items.map((item: any) => {
@@ -605,17 +607,27 @@ export default function VideoPage() {
           }));
         setTasks(processingTasks);
       })
-      .catch(() => { });
+      .catch((loadError) => {
+        console.error('Failed to load video history:', loadError);
+        setError('历史视频加载失败，请刷新页面重试');
+      });
 
-    // 加载本地资产库
-    getAssets().then(setMyAssets).catch(() => { });
   }, []);
+
+  // 素材库可能很大，仅在用户首次打开 @ 素材选择器时读取。
+  useEffect(() => {
+    if (!showAssetPicker || assetsLoaded) return;
+    getAssets()
+      .then(setMyAssets)
+      .catch(() => { })
+      .finally(() => setAssetsLoaded(true));
+  }, [showAssetPicker, assetsLoaded]);
 
   const loadMoreHistory = async () => {
     const nextPage = historyPage + 1;
     setHistoryLoading(true);
     try {
-      const res: any = await contentApi.getMyContents({ type: 'video', page: nextPage, pageSize: 12 });
+      const res: any = await contentApi.getMyContents({ type: 'video', page: nextPage, pageSize: VIDEO_HISTORY_PAGE_SIZE });
       const items = res?.items || res?.data || [];
       const parsed = items.map((item: any) => {
         let metadata = {};
@@ -625,6 +637,9 @@ export default function VideoPage() {
       setHistory(prev => [...prev, ...parsed.filter((item: any) => !prev.some(old => old.id === item.id))]);
       setHistoryPage(nextPage);
       setHistoryTotal(Number(res?.total) || 0);
+    } catch (loadError) {
+      console.error('Failed to load more video history:', loadError);
+      setError('加载更多历史视频失败，请稍后重试');
     } finally {
       setHistoryLoading(false);
     }
@@ -722,7 +737,7 @@ export default function VideoPage() {
               useAuthStore.getState().fetchProfile().catch(() => { });
               // 延迟后刷新历史记录
               setTimeout(() => {
-                contentApi.getMyContents({ type: 'video', page: 1, pageSize: 12 })
+                contentApi.getMyContents({ type: 'video', page: 1, pageSize: VIDEO_HISTORY_PAGE_SIZE })
                   .then((r: any) => {
                     const items = r?.items || r?.data || [];
                     const parsed = items.map((item: any) => {
@@ -1012,7 +1027,8 @@ export default function VideoPage() {
   // 全局拖拽 + Ctrl+V 粘贴上传媒体
   const { isDragging } = useImageDropPaste(handleMediaDrop);
 
-  const handleApplyHistory = (item: {
+  const handleApplyHistory = async (item: {
+    id?: number | string;
     prompt?: string;
     inputText?: string;
     title?: string;
@@ -1028,10 +1044,28 @@ export default function VideoPage() {
       audio_url?: string | null;
       audio_urls?: string[];
       audio_names?: string[];
+      listAssetsCompacted?: boolean;
     };
   }) => {
-    if (item.metadata) {
-      const meta = item.metadata;
+    let sourceItem = item;
+    let sourceMetadata = item.metadata;
+
+    if (sourceMetadata?.listAssetsCompacted && typeof item.id === 'number') {
+      try {
+        const detail: any = await contentApi.getById(item.id);
+        sourceMetadata = detail?.metadata
+          ? (typeof detail.metadata === 'string' ? JSON.parse(detail.metadata) : detail.metadata)
+          : undefined;
+        sourceItem = { ...item, ...detail, metadata: sourceMetadata };
+      } catch (detailError) {
+        console.error('Failed to load full history item:', detailError);
+        setError('历史素材加载失败，请稍后重试');
+        return;
+      }
+    }
+
+    if (sourceMetadata) {
+      const meta = sourceMetadata;
       if (meta.model) setSelectedModel(meta.model);
       if (meta.resolution) setResolution(meta.resolution);
       if (meta.seconds) setDuration(meta.seconds);
@@ -1047,14 +1081,14 @@ export default function VideoPage() {
       setReferenceAudios(restoredAudios);
       setReferenceAudioNames(meta.audio_names || []);
 
-      const targetPrompt = meta.prompt || item.inputText || item.title || item.prompt || '';
+      const targetPrompt = meta.prompt || sourceItem.inputText || sourceItem.title || sourceItem.prompt || '';
       setPrompt(buildReplicatedVideoPrompt(targetPrompt, {
         images: restoredImages.length,
         videos: restoredVideos.length,
         audios: restoredAudios.length,
       }));
     } else {
-      setPrompt(restorePrompt(item.inputText || item.title || item.prompt || ''));
+      setPrompt(restorePrompt(sourceItem.inputText || sourceItem.title || sourceItem.prompt || ''));
     }
 
     setTimeout(() => {
@@ -1546,7 +1580,7 @@ export default function VideoPage() {
                       </article>
                     );})}
                   </div>
-                  {historyPage * 12 < historyTotal && (
+                  {historyPage * VIDEO_HISTORY_PAGE_SIZE < historyTotal && (
                     <div className="mt-5 flex justify-center">
                       <button type="button" disabled={historyLoading} onClick={loadMoreHistory} className="rounded-xl border border-[#d8c0a3] bg-[#fbf5eb] px-5 py-2 text-xs font-medium text-[#8a6048] transition-colors hover:border-[#b66a45] disabled:cursor-wait disabled:opacity-50">
                         {historyLoading ? '加载中…' : '加载更多'}

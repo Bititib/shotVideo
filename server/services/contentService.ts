@@ -63,6 +63,160 @@ export function sanitizeContentRoutingForClient<T extends { metadata?: string | 
   };
 }
 
+const OMITTED_LIST_VALUE = Symbol('omitted-list-value');
+const DATA_URL_PREFIX = /^data:/i;
+const IMAGE_DATA_URL_PREFIX = /^data:image\//i;
+const BLOB_URL_PREFIX = /^blob:/i;
+const MEDIA_FIELD_NAME = /(?:image|video|audio|frame|file|material|media|asset|reference|source|data)/i;
+const MAX_LIST_MEDIA_STRING_LENGTH = 128 * 1024;
+
+function compactMetadataValue(value: any, fieldName = ''): { value: any; omitted: number } {
+  if (typeof value === 'string') {
+    const isInlineMedia = BLOB_URL_PREFIX.test(value)
+      || (DATA_URL_PREFIX.test(value)
+        && (!IMAGE_DATA_URL_PREFIX.test(value) || value.length > MAX_LIST_MEDIA_STRING_LENGTH))
+      || (value.length > MAX_LIST_MEDIA_STRING_LENGTH && MEDIA_FIELD_NAME.test(fieldName));
+    return isInlineMedia
+      ? { value: OMITTED_LIST_VALUE, omitted: 1 }
+      : { value, omitted: 0 };
+  }
+
+  if (Array.isArray(value)) {
+    let omitted = 0;
+    const compacted: any[] = [];
+    for (const entry of value) {
+      const result = compactMetadataValue(entry, fieldName);
+      omitted += result.omitted;
+      if (result.value !== OMITTED_LIST_VALUE) compacted.push(result.value);
+    }
+    return { value: compacted, omitted };
+  }
+
+  if (value && typeof value === 'object') {
+    let omitted = 0;
+    const compacted: Record<string, any> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      const result = compactMetadataValue(entry, key);
+      omitted += result.omitted;
+      if (result.value !== OMITTED_LIST_VALUE) compacted[key] = result.value;
+    }
+    return { value: compacted, omitted };
+  }
+
+  return { value, omitted: 0 };
+}
+
+const REFERENCE_ASSET_FIELDS = {
+  images: ['reference_images', 'image_urls', 'images', 'image_refs', 'referenceImages', 'reference_image', 'image_url', 'first_frame', 'last_frame'],
+  videos: ['reference_videos', 'video_urls', 'videos', 'video_refs', 'referenceVideos', 'reference_video', 'video_url'],
+  audios: ['audio_urls', 'reference_audios', 'audios', 'audio_refs', 'referenceAudios', 'audio_url', 'reference_audio'],
+} as const;
+
+function countReferenceAssets(metadata: Record<string, any>) {
+  const countFields = (fields: readonly string[]) => {
+    const values = new Set<string>();
+    for (const field of fields) {
+      const candidate = metadata[field];
+      const entries = Array.isArray(candidate) ? candidate : [candidate];
+      for (const entry of entries) {
+        if (typeof entry === 'string' && entry.trim()) values.add(entry);
+      }
+    }
+    return values.size;
+  };
+  return {
+    images: countFields(REFERENCE_ASSET_FIELDS.images),
+    videos: countFields(REFERENCE_ASSET_FIELDS.videos),
+    audios: countFields(REFERENCE_ASSET_FIELDS.audios),
+  };
+}
+
+/**
+ * Keep paginated video history responses small. Full inline reference media remains
+ * available from GET /api/contents/:id when the user applies a history item.
+ */
+export function compactContentForList<T extends { metadata?: string | Record<string, any> | null }>(item: T): T {
+  const sanitized = sanitizeContentRoutingForClient(item);
+  let metadata: Record<string, any>;
+  try {
+    metadata = typeof sanitized.metadata === 'string'
+      ? JSON.parse(sanitized.metadata || '{}')
+      : { ...(sanitized.metadata || {}) };
+  } catch {
+    return sanitized;
+  }
+
+  const result = compactMetadataValue(metadata);
+  if (result.omitted > 0) {
+    result.value.listAssetsCompacted = true;
+    result.value.omittedInlineAssetCount = result.omitted;
+    result.value.referenceAssetCounts = countReferenceAssets(metadata);
+  }
+
+  return {
+    ...sanitized,
+    metadata: typeof sanitized.metadata === 'string' ? JSON.stringify(result.value) : result.value,
+  };
+}
+
+/** Admin lists keep routing fields but defer large media to the existing detail endpoint. */
+export function compactAdminContentForList<T extends {
+  metadata?: string | Record<string, any> | null;
+  resultText?: string | null;
+}>(item: T): T {
+  let metadata: Record<string, any>;
+  try {
+    metadata = typeof item.metadata === 'string'
+      ? JSON.parse(item.metadata || '{}')
+      : { ...(item.metadata || {}) };
+  } catch {
+    return item;
+  }
+
+  const result = compactMetadataValue(metadata);
+  const compactResultText = typeof item.resultText === 'string'
+    && item.resultText.length > MAX_LIST_MEDIA_STRING_LENGTH;
+  if (result.omitted > 0) {
+    result.value.listAssetsCompacted = true;
+    result.value.omittedInlineAssetCount = result.omitted;
+    result.value.referenceAssetCounts = countReferenceAssets(metadata);
+  }
+  if (compactResultText) result.value.listResultCompacted = true;
+
+  return {
+    ...item,
+    resultText: compactResultText ? null : item.resultText,
+    metadata: typeof item.metadata === 'string' ? JSON.stringify(result.value) : result.value,
+  };
+}
+
+/** Audio payloads are stored as Base64 in resultText; lists only need the record summary. */
+export function compactAudioContentForList<T extends {
+  metadata?: string | Record<string, any> | null;
+  resultText?: string | null;
+}>(item: T): T {
+  const compacted = compactContentForList(item);
+  if (typeof compacted.resultText !== 'string'
+    || (!/"audioBase64"\s*:/.test(compacted.resultText)
+      && compacted.resultText.length <= MAX_LIST_MEDIA_STRING_LENGTH)) {
+    return compacted;
+  }
+
+  let metadata: Record<string, any> = {};
+  try {
+    metadata = typeof compacted.metadata === 'string'
+      ? JSON.parse(compacted.metadata || '{}')
+      : { ...(compacted.metadata || {}) };
+  } catch { /* keep an empty marker object */ }
+  metadata.listResultCompacted = true;
+
+  return {
+    ...compacted,
+    resultText: null,
+    metadata: typeof compacted.metadata === 'string' ? JSON.stringify(metadata) : metadata,
+  };
+}
+
 export class ContentService {
   /** 保存生成内容 */
   static save(input: SaveContentInput): number {
@@ -118,7 +272,16 @@ export class ContentService {
       .where(and(...conditions))
       .get()?.count || 0;
 
-    return { items: items.map(sanitizeContentRoutingForClient), total, page, pageSize };
+    return {
+      items: items.map(item => {
+        if (item.type === 'video') return compactContentForList(item);
+        if (item.type === 'audio') return compactAudioContentForList(item);
+        return sanitizeContentRoutingForClient(item);
+      }),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   /** 查询组织内容（组织管理员可查看所有成员的内容） */
@@ -229,6 +392,6 @@ export class ContentService {
       .where(whereClause)
       .get()?.count || 0;
 
-    return { items, total, page, pageSize };
+    return { items: items.map(compactAdminContentForList), total, page, pageSize };
   }
 }

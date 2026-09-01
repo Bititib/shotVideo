@@ -524,7 +524,10 @@ export async function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_org_members_org ON org_members(org_id);
     CREATE INDEX IF NOT EXISTS idx_org_members_user ON org_members(user_id);
     CREATE INDEX IF NOT EXISTS idx_contents_user ON contents(user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_contents_user_type_created ON contents(user_id, type, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_contents_org ON contents(org_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_contents_type_status_created ON contents(type, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_contents_created ON contents(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_model_feedbacks_user ON model_feedbacks(user_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_model_feedbacks_status ON model_feedbacks(status, created_at);
     CREATE INDEX IF NOT EXISTS idx_model_feedbacks_model ON model_feedbacks(model_id, created_at);

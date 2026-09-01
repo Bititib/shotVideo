@@ -78,19 +78,21 @@ export default function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginRedirect />} />
 
-        {/* 工作台 — 可自由浏览，操作时弹窗登录 */}
-        <Route path="/app" element={<Layout><GeneralPage /></Layout>} />
-        <Route path="/app/ecommerce" element={<Layout><EcommercePage /></Layout>} />
-        <Route path="/app/image" element={<Layout><ImagePage /></Layout>} />
-        <Route path="/app/copywriting" element={<Layout><CopywritingPage /></Layout>} />
-        <Route path="/app/account" element={<Layout><AccountPage /></Layout>} />
-        <Route path="/app/video" element={<Layout><VideoPage /></Layout>} />
+        {/* 工作台 — 共享同一个持久化布局，切换子页面时不重复挂载侧栏和公共请求 */}
+        <Route path="/app" element={<Layout />}>
+          <Route index element={<GeneralPage />} />
+          <Route path="ecommerce" element={<EcommercePage />} />
+          <Route path="image" element={<ImagePage />} />
+          <Route path="copywriting" element={<CopywritingPage />} />
+          <Route path="account" element={<AccountPage />} />
+          <Route path="video" element={<VideoPage />} />
+          <Route path="image-gen" element={<ImageGenPage />} />
+          <Route path="tts" element={<TtsPage />} />
+          <Route path="history" element={<ApiKeyRoute><HistoryPage /></ApiKeyRoute>} />
+          <Route path="docs" element={<DocsPage />} />
+          <Route path="profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+        </Route>
         <Route path="/app/video/studio" element={<VideoStudioPage />} />
-        <Route path="/app/image-gen" element={<Layout><ImageGenPage /></Layout>} />
-        <Route path="/app/tts" element={<Layout><TtsPage /></Layout>} />
-        <Route path="/app/history" element={<ApiKeyRoute><Layout><HistoryPage /></Layout></ApiKeyRoute>} />
-        <Route path="/app/docs" element={<Layout><DocsPage /></Layout>} />
-        <Route path="/app/profile" element={<ProtectedRoute><Layout><ProfilePage /></Layout></ProtectedRoute>} />
 
         {/* Admin — 仍需登录+超级管理员权限 */}
         <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>

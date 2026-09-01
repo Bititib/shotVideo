@@ -1,5 +1,9 @@
 import { api } from './client';
 
+type TtsModel = { modelId: string; displayName: string; rate?: number };
+let ttsModelCache: { token: string; expiresAt: number; data: TtsModel[] } | null = null;
+let ttsModelRequest: { token: string; promise: Promise<TtsModel[]> } | null = null;
+
 export const analysisApi = {
   /** 获取当前用户可用的模型列表 */
   getAvailableModels() {
@@ -8,7 +12,21 @@ export const analysisApi = {
 
   /** 获取语音合成模型及费率 */
   getTtsModels() {
-    return api.get<{ modelId: string; displayName: string; rate?: number }[]>('/analysis/tts-models');
+    const token = localStorage.getItem('token') || '';
+    if (ttsModelCache?.token === token && ttsModelCache.expiresAt > Date.now()) {
+      return Promise.resolve(ttsModelCache.data);
+    }
+    if (ttsModelRequest?.token === token) return ttsModelRequest.promise;
+    const promise = api.get<TtsModel[]>('/analysis/tts-models')
+      .then((data) => {
+        ttsModelCache = { token, expiresAt: Date.now() + 30_000, data };
+        return data;
+      })
+      .finally(() => {
+        if (ttsModelRequest?.promise === promise) ttsModelRequest = null;
+      });
+    ttsModelRequest = { token, promise };
+    return promise;
   },
 
   analyzeGeneral(file: File, videoTitle?: string, modelId?: string) {

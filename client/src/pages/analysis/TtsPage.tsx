@@ -74,6 +74,7 @@ export default function TtsPage() {
   const [historyPage, setHistoryPage] = useState(1);
   const [historyTotal, setHistoryTotal] = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyAudioLoadingId, setHistoryAudioLoadingId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
 
@@ -118,20 +119,23 @@ export default function TtsPage() {
         const items = res?.items || res?.data || [];
         const loadedHistory: GeneratedVoice[] = [];
         for (const item of items) {
+          let audioUrl = '';
           try {
-            const data = JSON.parse(item.resultText);
+            const data = JSON.parse(item.resultText || '{}');
             if (data.audioBase64) {
-              const audioUrl = base64ToBlobUrl(data.audioBase64, data.mimeType || 'audio/mp3');
-              loadedHistory.push({
-                id: item.id.toString(),
-                text: item.inputText || '',
-                voice: item.title?.replace('语音合成 - ', '') || '未知',
-                audioUrl,
-                createdAt: new Date(item.createdAt),
-              });
+              audioUrl = base64ToBlobUrl(data.audioBase64, data.mimeType || 'audio/mp3');
             }
           } catch (e) {
             // 忽略格式不正确的
+          }
+          if (item.status === 'completed' || item.status === 'success' || audioUrl) {
+            loadedHistory.push({
+              id: item.id.toString(),
+              text: item.inputText || '',
+              voice: item.title?.replace('语音合成 - ', '') || '未知',
+              audioUrl,
+              createdAt: new Date(item.createdAt),
+            });
           }
         }
         setHistory(prev => append ? [...prev, ...loadedHistory.filter(item => !prev.some(old => old.id === item.id))] : loadedHistory);
@@ -140,6 +144,33 @@ export default function TtsPage() {
       })
       .catch(() => {})
       .finally(() => setHistoryLoading(false));
+  };
+
+  const selectHistoryAudio = async (historyItem: GeneratedVoice) => {
+    if (historyItem.audioUrl) {
+      setCurrentAudio(historyItem);
+      setIsPlaying(true);
+      return;
+    }
+
+    setHistoryAudioLoadingId(historyItem.id);
+    setError(null);
+    try {
+      const detail: any = await contentApi.getById(Number(historyItem.id));
+      const data = JSON.parse(detail?.resultText || '{}');
+      if (!data.audioBase64) throw new Error('该历史记录没有可播放的音频数据');
+      const loadedItem = {
+        ...historyItem,
+        audioUrl: base64ToBlobUrl(data.audioBase64, data.mimeType || 'audio/mp3'),
+      };
+      setHistory(prev => prev.map(item => item.id === loadedItem.id ? loadedItem : item));
+      setCurrentAudio(loadedItem);
+      setIsPlaying(true);
+    } catch (historyError: any) {
+      setError(historyError?.message || '历史音频加载失败，请稍后重试');
+    } finally {
+      setHistoryAudioLoadingId(null);
+    }
   };
 
   // 2. 音频控制逻辑
@@ -475,10 +506,7 @@ export default function TtsPage() {
                 {history.map((h) => (
                   <div
                     key={h.id}
-                    onClick={() => {
-                      setCurrentAudio(h);
-                      setIsPlaying(true);
-                    }}
+                    onClick={() => { void selectHistoryAudio(h); }}
                     className={`p-4 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-4 ${
                       currentAudio?.id === h.id
                         ? 'border-yellow-500/30 bg-yellow-500/5'
@@ -513,7 +541,9 @@ export default function TtsPage() {
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                       <button className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 text-zinc-300 transition-colors">
-                        {currentAudio?.id === h.id && isPlaying ? (
+                        {historyAudioLoadingId === h.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : currentAudio?.id === h.id && isPlaying ? (
                           <Pause className="w-3.5 h-3.5 fill-current" />
                         ) : (
                           <Play className="w-3.5 h-3.5 fill-current ml-0.5" />

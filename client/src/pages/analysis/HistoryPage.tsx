@@ -40,7 +40,8 @@ interface ContentItem {
   createdAt: string;
 }
 
-const PAGE_SIZE = 15;
+const DEFAULT_PAGE_SIZE = 15;
+const VIDEO_PAGE_SIZE = 6;
 
 const typeOptions = [
   { value: '', label: '全部记录' },
@@ -124,6 +125,7 @@ export default function HistoryPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
+  const pageSize = type === 'video' ? VIDEO_PAGE_SIZE : DEFAULT_PAGE_SIZE;
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -145,7 +147,7 @@ export default function HistoryPage() {
     try {
       const data = await contentApi.getMyApiHistory({
         page,
-        pageSize: PAGE_SIZE,
+        pageSize,
         type: type || undefined,
         status: status || undefined,
         search: debouncedSearch || undefined,
@@ -159,7 +161,7 @@ export default function HistoryPage() {
     } finally {
       if (!quiet) setLoading(false);
     }
-  }, [page, type, status, debouncedSearch, dateFrom, dateTo]);
+  }, [page, pageSize, type, status, debouncedSearch, dateFrom, dateTo]);
 
   useEffect(() => { loadContents(); }, [loadContents]);
 
@@ -177,7 +179,7 @@ export default function HistoryPage() {
     return () => window.removeEventListener('keydown', handleEscape);
   }, [selected]);
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const pendingCount = useMemo(() => items.filter(item => normalizeStatus(item.status) === 'processing').length, [items]);
 
   const openDetail = async (item: ContentItem) => {

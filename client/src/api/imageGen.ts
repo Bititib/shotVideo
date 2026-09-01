@@ -29,14 +29,34 @@ export interface ImageSSEEvent {
   queued?: number;
 }
 
-/** 获取可用的图片模型列表 */
+const MODEL_CACHE_TTL_MS = 30_000;
+let imageModelCache: { token: string; expiresAt: number; data: ImageModel[] } | null = null;
+let imageModelRequest: { token: string; promise: Promise<ImageModel[]> } | null = null;
+
+/** 获取可用的图片模型列表；短时缓存并合并并发请求。 */
 export async function fetchImageModels(): Promise<ImageModel[]> {
   const token = localStorage.getItem('token');
+  const cacheKey = token || '';
+  const now = Date.now();
+  if (imageModelCache?.token === cacheKey && imageModelCache.expiresAt > now) {
+    return imageModelCache.data;
+  }
+  if (imageModelRequest?.token === cacheKey) return imageModelRequest.promise;
+
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch('/api/image-gen/models', { headers });
-  if (!res.ok) throw new Error('获取模型列表失败');
-  return res.json();
+  const promise = fetch('/api/image-gen/models', { headers })
+    .then(async (res) => {
+      if (!res.ok) throw new Error('获取模型列表失败');
+      const data = await res.json() as ImageModel[];
+      imageModelCache = { token: cacheKey, expiresAt: Date.now() + MODEL_CACHE_TTL_MS, data };
+      return data;
+    })
+    .finally(() => {
+      if (imageModelRequest?.promise === promise) imageModelRequest = null;
+    });
+  imageModelRequest = { token: cacheKey, promise };
+  return promise;
 }
 
 /** Download through the authenticated same-origin proxy to force a file save. */
