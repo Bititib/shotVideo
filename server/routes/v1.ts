@@ -74,6 +74,7 @@ import {
 } from '../services/wxHaidiYueAdapter.js';
 import { enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
 import { withVideoFailureMetadata } from '../services/videoFailureService.js';
+import { ContentService } from '../services/contentService.js';
 
 const router = Router();
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
@@ -1671,7 +1672,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   // 先在本地 contents 数据库创建初始任务记录 (status = 'processing')
   let contentId: number | null = null;
   try {
-    const insertResult = db.insert(contents).values({
+    contentId = ContentService.save({
       userId: token.userId || 1,
       orgId: null,
       type: 'video',
@@ -1680,7 +1681,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       modelId: model,
       cost: totalCost,
       status: 'processing',
-      metadata: JSON.stringify({
+      metadata: {
         source: 'api',
         resolution,
         seconds,
@@ -1711,9 +1712,8 @@ async function handleVideoCreation(req: Request, res: Response) {
         queueUserKey: token.userId ? `user:${token.userId}` : `token:${token.id}`,
         queueEnqueuedAt: new Date().toISOString(),
         publicBaseUrl: process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`
-      })
-    }).run();
-    contentId = Number(insertResult.lastInsertRowid);
+      }
+    });
   } catch (e) {
     console.error('[v1-video] Failed to save content record:', e);
     cleanupFiles(req.files);
@@ -2127,9 +2127,9 @@ async function handleVideoCreation(req: Request, res: Response) {
       seconds,
       ratio,
       resolution,
-      image_urls,
-      video_urls,
-      audio_urls,
+      image_urls: persistedMeta.image_urls || image_urls,
+      video_urls: persistedMeta.video_urls || video_urls,
+      audio_urls: persistedMeta.audio_urls || audio_urls,
       videoId: upstreamTaskId,
       channelId: channel.id,
       channelApiKeyId: channel.apiKeyId,

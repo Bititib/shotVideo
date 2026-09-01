@@ -61,10 +61,12 @@ router.get('/api-history', activeApiKeyMiddleware, (req: AuthRequest, res: Respo
 /** GET /api/contents/api-history/:id — API 调用记录详情 */
 router.get('/api-history/:id', activeApiKeyMiddleware, (req: AuthRequest, res: Response) => {
   try {
-    const item = ContentService.getById(parseInt(req.params.id));
+    const contentId = parseInt(req.params.id);
+    let item = ContentService.getById(contentId);
     if (item.userId !== req.userId || !isApiGeneratedContent(item)) {
       return res.status(404).json({ error: 'API 调用记录不存在' });
     }
+    item = ContentService.materializeAssetsForContent(contentId, item);
     res.json(sanitizeContentRoutingForClient(item));
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '获取 API 调用记录失败' });
@@ -110,7 +112,7 @@ router.get('/org', orgAdminMiddleware, (req: AuthRequest, res: Response) => {
 router.get('/:id', (req: AuthRequest, res: Response) => {
   try {
     const contentId = parseInt(req.params.id);
-    const item = ContentService.getById(contentId);
+    let item = ContentService.getById(contentId);
 
     // 权限检查：仅本人或同组织管理员可查看
     if (item.userId !== req.userId) {
@@ -119,6 +121,8 @@ router.get('/:id', (req: AuthRequest, res: Response) => {
         (user.role === 'org_owner' || user.role === 'org_admin' || user.role === 'super_admin');
       if (!isOrgMgr) return res.status(403).json({ error: '无权查看此内容' });
     }
+
+    item = ContentService.materializeAssetsForContent(contentId, item);
 
     if (item.status === 'queued' && item.type === 'video') {
       try { enqueueHmStudioVideoContent(contentId); } catch { /* periodic recovery will retry */ }

@@ -55,6 +55,10 @@ export async function createApp() {
   if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
   }
+  app.use('/uploads/history-assets', express.static(path.join(uploadDir, 'history-assets'), {
+    immutable: true,
+    maxAge: '1y',
+  }));
   app.use('/uploads', express.static(uploadDir));
 
   // OpenAI 兼容代理层（不走 /api 前缀）

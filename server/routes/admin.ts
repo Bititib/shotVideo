@@ -279,7 +279,7 @@ router.get('/contents/:id', async (req: AuthRequest, res: Response) => {
   try {
     const contentId = parseInt(req.params.id);
     const { ContentService } = await import('../services/contentService.js');
-    const item = ContentService.getById(contentId);
+    const item = ContentService.materializeAssetsForContent(contentId);
     res.json(item);
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '获取内容失败' });

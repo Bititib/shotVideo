@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import {
   compactAdminContentForList,
   compactAudioContentForList,
   compactContentForList,
+  materializeContentMetadataAssets,
   sanitizeContentRoutingForClient,
 } from '../server/services/contentService.js';
 
@@ -122,5 +126,33 @@ describe('content routing privacy', () => {
       referenceAssetCounts: { images: 0, videos: 1, audios: 0 },
     });
     expect(metadata.reference_videos).toEqual([]);
+  });
+
+  it('materializes inline history assets as deduplicated file URLs', () => {
+    const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'history-assets-'));
+    try {
+      const inlineVideo = `data:video/mp4;base64,${Buffer.from('test-video').toString('base64')}`;
+      const result = materializeContentMetadataAssets({
+        publicBaseUrl: 'https://video.example.com/',
+        reference_videos: [inlineVideo],
+        video_urls: [inlineVideo],
+        listAssetsCompacted: true,
+        omittedInlineAssetCount: 2,
+      }, { uploadDir });
+
+      expect(result.changed).toBe(true);
+      expect(result.filesWritten).toBe(1);
+      expect(result.bytesWritten).toBe(Buffer.byteLength('test-video'));
+      expect(result.metadata.reference_videos).toEqual([
+        expect.stringMatching(/^https:\/\/video\.example\.com\/uploads\/history-assets\/[a-f0-9]{64}\.mp4$/),
+      ]);
+      expect(result.metadata.video_urls).toEqual(result.metadata.reference_videos);
+      expect(result.metadata).not.toHaveProperty('listAssetsCompacted');
+      expect(result.metadata).not.toHaveProperty('omittedInlineAssetCount');
+      expect(fs.readdirSync(uploadDir)).toHaveLength(1);
+      expect(fs.readFileSync(path.join(uploadDir, fs.readdirSync(uploadDir)[0]), 'utf8')).toBe('test-video');
+    } finally {
+      fs.rmSync(uploadDir, { recursive: true, force: true });
+    }
   });
 });

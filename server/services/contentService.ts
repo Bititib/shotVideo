@@ -1,6 +1,9 @@
 import { db } from '../db/index.js';
 import { contents, users } from '../db/schema.js';
 import { eq, and, desc, sql, gte, lte, like, or } from 'drizzle-orm';
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 export interface SaveContentInput {
   userId: number;
@@ -69,6 +72,116 @@ const IMAGE_DATA_URL_PREFIX = /^data:image\//i;
 const BLOB_URL_PREFIX = /^blob:/i;
 const MEDIA_FIELD_NAME = /(?:image|video|audio|frame|file|material|media|asset|reference|source|data)/i;
 const MAX_LIST_MEDIA_STRING_LENGTH = 128 * 1024;
+const MAX_INLINE_ASSET_BYTES = 150 * 1024 * 1024;
+const HISTORY_ASSET_FIELDS = new Set([
+  'reference_images', 'image_urls', 'images', 'image_refs', 'referenceImages', 'reference_image', 'image_url',
+  'reference_videos', 'video_urls', 'videos', 'video_refs', 'referenceVideos', 'reference_video', 'video_url',
+  'audio_urls', 'reference_audios', 'audios', 'audio_refs', 'referenceAudios', 'audio_url', 'reference_audio',
+  'first_frame', 'first_frame_url', 'last_frame', 'last_frame_url', 'end_frame_url',
+]);
+const MIME_EXTENSIONS: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
+  'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/mp4': 'm4a',
+  'audio/aac': 'aac',
+  'audio/ogg': 'ogg',
+};
+
+export type MaterializedContentAssets = {
+  metadata: Record<string, any>;
+  changed: boolean;
+  filesWritten: number;
+  bytesWritten: number;
+};
+
+/**
+ * Persist inline history media as content-addressed files and replace Base64
+ * values with lightweight URLs. This keeps content detail responses small and
+ * deduplicates aliases that point at the same reference asset.
+ */
+export function materializeContentMetadataAssets(
+  rawMetadata: string | Record<string, any> | null | undefined,
+  options: { uploadDir?: string; publicBaseUrl?: string } = {},
+): MaterializedContentAssets {
+  let metadata: Record<string, any>;
+  try {
+    metadata = typeof rawMetadata === 'string'
+      ? JSON.parse(rawMetadata || '{}')
+      : { ...(rawMetadata || {}) };
+  } catch {
+    return { metadata: {}, changed: false, filesWritten: 0, bytesWritten: 0 };
+  }
+
+  const uploadDir = options.uploadDir || path.resolve(process.cwd(), 'data/uploads/history-assets');
+  const configuredBaseUrl = String(options.publicBaseUrl || metadata.publicBaseUrl || '').trim().replace(/\/+$/, '');
+  const publicBaseUrl = /^https?:\/\//i.test(configuredBaseUrl) ? configuredBaseUrl : '';
+  const converted = new Map<string, string>();
+  let changed = false;
+  let filesWritten = 0;
+  let bytesWritten = 0;
+
+  const materializeValue = (value: unknown): unknown => {
+    if (typeof value !== 'string' || !/^data:/i.test(value)) return value;
+    const cached = converted.get(value);
+    if (cached) return cached;
+
+    const match = value.match(/^data:([^;,]+)(?:;[^,]*)?;base64,([\s\S]+)$/i);
+    if (!match) return value;
+
+    try {
+      const mimeType = match[1].toLowerCase();
+      const buffer = Buffer.from(match[2], 'base64');
+      if (buffer.length === 0 || buffer.length > MAX_INLINE_ASSET_BYTES) return value;
+
+      const extension = MIME_EXTENSIONS[mimeType]
+        || (mimeType.startsWith('image/') ? 'img' : mimeType.startsWith('video/') ? 'mp4' : mimeType.startsWith('audio/') ? 'bin' : 'bin');
+      const filename = `${crypto.createHash('sha256').update(buffer).digest('hex')}.${extension}`;
+      const filePath = path.join(uploadDir, filename);
+      fs.mkdirSync(uploadDir, { recursive: true });
+      if (!fs.existsSync(filePath)) {
+        try {
+          fs.writeFileSync(filePath, buffer, { flag: 'wx' });
+          filesWritten += 1;
+          bytesWritten += buffer.length;
+        } catch (error: any) {
+          if (error?.code !== 'EEXIST') throw error;
+        }
+      }
+
+      const relativeUrl = `/uploads/history-assets/${filename}`;
+      const url = publicBaseUrl ? `${publicBaseUrl}${relativeUrl}` : relativeUrl;
+      converted.set(value, url);
+      changed = true;
+      return url;
+    } catch (error) {
+      console.error('[content-assets] Failed to materialize inline history asset:', error);
+      return value;
+    }
+  };
+
+  for (const [field, value] of Object.entries(metadata)) {
+    if (!HISTORY_ASSET_FIELDS.has(field)) continue;
+    metadata[field] = Array.isArray(value)
+      ? value.map(materializeValue)
+      : materializeValue(value);
+  }
+
+  if (changed) {
+    delete metadata.listAssetsCompacted;
+    delete metadata.omittedInlineAssetCount;
+  }
+  return { metadata, changed, filesWritten, bytesWritten };
+}
 
 function compactMetadataValue(value: any, fieldName = ''): { value: any; omitted: number } {
   if (typeof value === 'string') {
@@ -218,8 +331,11 @@ export function compactAudioContentForList<T extends {
 }
 
 export class ContentService {
-  /** 保存生成内容 */
+  /** Save generated content, materializing inline video references first. */
   static save(input: SaveContentInput): number {
+    const persistedMetadata = input.type === 'video'
+      ? materializeContentMetadataAssets(input.metadata).metadata
+      : (input.metadata || {});
     const result = db.insert(contents).values({
       userId: input.userId,
       orgId: input.orgId || null,
@@ -230,7 +346,7 @@ export class ContentService {
       resultText: input.resultText || null,
       modelId: input.modelId || null,
       cost: input.cost || 0,
-      metadata: JSON.stringify(input.metadata || {}),
+      metadata: JSON.stringify(persistedMetadata),
       status: input.status || 'completed',
     }).run();
 
@@ -329,6 +445,22 @@ export class ContentService {
     const item = db.select().from(contents).where(eq(contents.id, contentId)).get();
     if (!item) throw { status: 404, message: '内容不存在' };
     return item;
+  }
+
+  /** Materialize legacy inline video assets before returning a detail payload. */
+  static materializeAssetsForContent<T extends ReturnType<typeof ContentService.getById>>(
+    contentId: number,
+    existingItem?: T,
+  ): T {
+    const item = (existingItem || this.getById(contentId)) as T;
+    if (item.type !== 'video') return item;
+
+    const materialized = materializeContentMetadataAssets(item.metadata);
+    if (!materialized.changed) return item;
+
+    const metadata = JSON.stringify(materialized.metadata);
+    db.update(contents).set({ metadata }).where(eq(contents.id, contentId)).run();
+    return { ...item, metadata } as T;
   }
 
   /** 删除内容（仅限本人） */
