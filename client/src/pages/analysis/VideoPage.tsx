@@ -12,7 +12,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { feedbackApi } from '../../api/feedback';
 import { getBillingUnit } from '../../utils/billing';
 import { buildReplicatedVideoPrompt, getVideoReferenceAssets, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
-import { isOmniVideoEditModel, isSnumomGrokImagineVideoModel } from '../../utils/videoModelCapabilities';
+import { isOmniVideoEditModel, isSnumomGrokImagineVideoModel, SNUMOM_SD_MINI_MODEL, snumomSdMiniSecondsForResolution } from '../../utils/videoModelCapabilities';
 import { getContentFailureInfo } from '../../utils/contentFailure';
 
 interface VideoTask {
@@ -278,6 +278,7 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === JULUN_MINIMAX_H3_MODEL) return 9;
   if (isWan30Model(modelId)) return 10;
   if (isSnumomGrokImagineVideoModel(modelId)) return 7;
+  if (modelId === SNUMOM_SD_MINI_MODEL) return 9;
   if (modelId === 'seedance_v2.5') return 10;
   if (modelId === 'xd-seedance-2.5-720p') return 9;
   if (modelId === 'seedance-2.5-c1') return 30;
@@ -397,6 +398,7 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
+    if (m === SNUMOM_SD_MINI_MODEL) return 3;
     if (isOmniVideoEditModel(m)) return 1;
     if (m === JULUN_MINIMAX_H3_MODEL) return 3;
     if (isWan30Model(m)) return 5;
@@ -409,6 +411,7 @@ export default function VideoPage() {
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
+    if (m === SNUMOM_SD_MINI_MODEL) return 3;
     if (m === JULUN_MINIMAX_H3_MODEL) return 3;
     if (isWan30Model(m)) return 5;
     if (m === 'seedance-2.5-c1') return 10;
@@ -845,7 +848,10 @@ export default function VideoPage() {
 
   // 当选中模型变化时，动态调整可选时长与分辨率
   const currentModel = models.find(m => m.id === selectedModel);
-  const DURATIONS = currentModel?.allowedSeconds
+  const sdMiniRequiredSeconds = snumomSdMiniSecondsForResolution(resolution);
+  const DURATIONS = selectedModel === SNUMOM_SD_MINI_MODEL
+    ? ALL_DURATIONS.filter(d => d.value === sdMiniRequiredSeconds)
+    : currentModel?.allowedSeconds
     ? ALL_DURATIONS.filter(d => currentModel.allowedSeconds!.includes(d.value))
     : ALL_DURATIONS;
 
@@ -874,7 +880,9 @@ export default function VideoPage() {
     : ALL_ASPECT_RATIOS;
 
   useEffect(() => {
-    if (currentModel?.allowedSeconds && !currentModel.allowedSeconds.includes(duration)) {
+    if (selectedModel === SNUMOM_SD_MINI_MODEL && duration !== sdMiniRequiredSeconds) {
+      setDuration(sdMiniRequiredSeconds);
+    } else if (currentModel?.allowedSeconds && !currentModel.allowedSeconds.includes(duration)) {
       setDuration(currentModel.allowedSeconds[0]);
     }
     // 自动修正分辨率：如果当前分辨率不在该模型支持的选项中，回退到第一个可用选项
@@ -908,7 +916,7 @@ export default function VideoPage() {
       setFirstFrame(null);
       setLastFrame(null);
     }
-  }, [selectedModel]);
+  }, [selectedModel, resolution]);
 
   /** 压缩参考图：缩放到 maxSize 并转为 JPEG base64，避免请求体过大 */
   const compressImage = (file: File, maxSize = 768, quality = 0.7): Promise<string> =>
@@ -1166,7 +1174,7 @@ export default function VideoPage() {
       setError('视频编辑模型必须上传参考视频');
       return;
     }
-    if (!isOmniVideoEditModel(selectedModel) && !isWan30Model(selectedModel) && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
+    if (!isOmniVideoEditModel(selectedModel) && !isWan30Model(selectedModel) && selectedModel !== SNUMOM_SD_MINI_MODEL && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
       setError('参考视频或音频模式下必须上传至少一张参考图');
       return;
     }

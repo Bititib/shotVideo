@@ -5,6 +5,7 @@ import { fetchVideoModels, generateVideo, getCachedVideoModels, type VideoModel,
 import ImageSlicerModal from '../../components/ImageSlicerModal';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { SNUMOM_SD_MINI_MODEL } from '../../utils/videoModelCapabilities';
 
 interface Segment { id: string; prompt: string; videoUrl: string; duration: number; model: string; lastFrame?: string; }
 interface Project { id: string; name: string; segments: Segment[]; aspectRatio: string; resolution: string; createdAt: number; }
@@ -71,6 +72,7 @@ const ALL_DURATIONS = [
 ];
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  if (modelId === SNUMOM_SD_MINI_MODEL) return 9;
   if (modelId === 'sd2.5') return 9;
   if (modelId.startsWith('sd-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (modelId === 'seedance-2.0-fast' || modelId === 'seedance-2.0' || modelId === 'sora-v4-fast' || modelId === 'sora-v4-pro') return 4;
@@ -138,13 +140,17 @@ export default function VideoStudioPage() {
 
   // Dynamic duration filtering based on model's allowedSeconds
   const currentModel = models.find(m => m.id === selectedModel);
-  const DURATIONS = currentModel?.allowedSeconds
+  const DURATIONS = selectedModel === SNUMOM_SD_MINI_MODEL
+    ? ALL_DURATIONS.filter(d => d.value === 10)
+    : currentModel?.allowedSeconds
     ? ALL_DURATIONS.filter(d => currentModel.allowedSeconds!.includes(d.value))
     : ALL_DURATIONS;
 
   // Auto-correct duration when model changes
   useEffect(() => {
-    if (currentModel?.allowedSeconds && !currentModel.allowedSeconds.includes(duration)) {
+    if (selectedModel === SNUMOM_SD_MINI_MODEL && duration !== 10) {
+      setDuration(10);
+    } else if (currentModel?.allowedSeconds && !currentModel.allowedSeconds.includes(duration)) {
       setDuration(currentModel.allowedSeconds[0]);
     }
   }, [selectedModel]);

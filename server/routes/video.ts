@@ -43,6 +43,12 @@ import {
   SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES,
   SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
   SNUMOM_GROK_IMAGINE_VIDEO_SECONDS,
+  SNUMOM_SD_MINI_MAX_IMAGES,
+  SNUMOM_SD_MINI_MAX_VIDEOS,
+  SNUMOM_SD_MINI_MAX_AUDIOS,
+  SNUMOM_SD_MINI_MODEL,
+  SNUMOM_SD_MINI_SECONDS,
+  snumomSdMiniSecondsForResolution,
   snumomContentUrl,
 } from '../services/snumomWanAdapter.js';
 import {
@@ -279,6 +285,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'seedance2.0 933': { series: 'seedance-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'grok-video-1.5（按秒）': { series: 'grok-1.5', allowedSeconds: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   [SNUMOM_GROK_IMAGINE_VIDEO_MODEL]: { series: 'snumom-grok-1.5', allowedSeconds: SNUMOM_GROK_IMAGINE_VIDEO_SECONDS, requireRef: false },
+  [SNUMOM_SD_MINI_MODEL]: { series: 'snumom-sd-mini', allowedSeconds: [...SNUMOM_SD_MINI_SECONDS], requireRef: false },
   'grok-imagine-video-1.5-preview': { series: 'grok-1.5', allowedSeconds: [10, 15], requireRef: false },
   'seedance-2.5-deal': { series: 'seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.5m': { series: 'seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25], requireRef: false },
@@ -298,6 +305,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'wan3.0-video', name: 'Wan 3.0 Video（标准版）', description: 'snumom 标准版；支持 2-30 秒、480P/720P/1080P；最多 10 图、5 视频、5 音频参考；支持文生、首帧及首尾帧视频', maxSeconds: 30, icon: '🌊' },
   { id: 'wan3.0-video-prime', name: 'Wan 3.0 Video Prime（高速版）', description: 'snumom 高速版；生成速度更快；支持 2-30 秒、480P/720P/1080P；最多 10 图、5 视频、5 音频参考', maxSeconds: 30, icon: '⚡' },
   { id: SNUMOM_GROK_IMAGINE_VIDEO_MODEL, name: 'Grok Imagine Video 1.5（按次）', description: 'snumom Grok Imagine Video 1.5；支持 3-15 秒；最多 7 张参考图；按次计费 ¥0.60/次', maxSeconds: 15, icon: '✕' },
+  { id: SNUMOM_SD_MINI_MODEL, name: 'SD Mini（按次）', description: 'snumom SD Mini；支持 9 图、3 视频、3 音频参考，不卡脸；480p 支持 15 秒，720p 仅支持 10 秒；按次计费 ¥0.60/次', maxSeconds: 15, icon: 'SD' },
   { id: JULUN_MINIMAX_H3_MODEL, name: 'MiniMax H3 768p（933）', description: '巨轮 MiniMax H3；固定768p；仅支持10秒或15秒；最多9图、3视频、3音频参考；按秒计费 ¥0.18/秒', maxSeconds: 15, icon: '🔥' },
   { id: 'ld-sdas-cvk-pro-933-720p', name: 'SudaShui CVK Pro 933 (720p)', description: 'CVK 满血版，支持真人、4-15秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.800/次', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-mj-minimax-h3-2k', name: 'Minimax H3 (2K)', description: '海螺h3，9图3视频3音频，4-15s，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🔥' },
@@ -665,6 +673,9 @@ router.get('/models', (_req: Request, res: Response) => {
         resolution,
         quotePrice(m.id, { resolution, seconds: 1 }).rate,
       ]));
+    } else if (m.id === SNUMOM_SD_MINI_MODEL) {
+      const rate = quotePrice(m.id, { resolution: '720p', seconds: 10 }).rate;
+      rates = { '480p': rate, '720p': rate };
     } else if (m.id === 'sd2-c6') {
       const rate = settingNumber('sd2_c6_rate', '2.50');
       rates = {
@@ -836,6 +847,22 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
   if (model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL && reference_images.length > SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES) {
     return res.status(400).json({ error: `${model} 最多支持 ${SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES} 张参考图片` });
+  }
+
+  if (model === SNUMOM_SD_MINI_MODEL) {
+    const requiredSeconds = snumomSdMiniSecondsForResolution(resolution);
+    if (requiredSeconds === null) {
+      return res.status(400).json({ error: `${model} 仅支持 480p 或 720p` });
+    }
+    if (Number(video_length) !== requiredSeconds) {
+      return res.status(400).json({ error: `${model} 使用 ${String(resolution).toLowerCase()} 时仅支持 ${requiredSeconds} 秒` });
+    }
+    if (reference_images.length > SNUMOM_SD_MINI_MAX_IMAGES) {
+      return res.status(400).json({ error: `${model} 最多支持 ${SNUMOM_SD_MINI_MAX_IMAGES} 张参考图片` });
+    }
+    if (finalVideos.length > SNUMOM_SD_MINI_MAX_VIDEOS) return res.status(400).json({ error: `${model} 最多支持 ${SNUMOM_SD_MINI_MAX_VIDEOS} 个参考视频` });
+    if (finalAudios.length > SNUMOM_SD_MINI_MAX_AUDIOS) return res.status(400).json({ error: `${model} 最多支持 ${SNUMOM_SD_MINI_MAX_AUDIOS} 段参考音频` });
+    if (first_frame || last_frame) return res.status(400).json({ error: `${model} 不支持首尾帧参考` });
   }
 
   if (model === 'xd-seedance-2.5-720p') {
@@ -1799,16 +1826,19 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       }
       const job = await createResp.json() as any;
       videoId = job.id || job.task_id;
-    } else if (isWan30 && isSnumomWan) {
-      sendEvent({ type: 'status', message: '正在整理并提交 snumom WAN3.0 任务...' });
+    } else if (isSnumomWan && (isWan30 || model === SNUMOM_SD_MINI_MODEL)) {
+      sendEvent({ type: 'status', message: `正在整理并提交 snumom ${model === SNUMOM_SD_MINI_MODEL ? 'SD Mini' : 'WAN3.0'} 任务...` });
 
-      const imageUrls = (reference_images || []).slice(0, 10)
+      const maxImages = model === SNUMOM_SD_MINI_MODEL ? SNUMOM_SD_MINI_MAX_IMAGES : 10;
+      const maxVideos = model === SNUMOM_SD_MINI_MODEL ? SNUMOM_SD_MINI_MAX_VIDEOS : 5;
+      const maxAudios = model === SNUMOM_SD_MINI_MODEL ? SNUMOM_SD_MINI_MAX_AUDIOS : 5;
+      const imageUrls = (reference_images || []).slice(0, maxImages)
         .map((item: string) => convertBase64ToPublicUrl(item, 'snumom_wan3_img', req))
         .filter(Boolean);
-      const videoUrls = finalVideos.slice(0, 5)
+      const videoUrls = finalVideos.slice(0, maxVideos)
         .map(item => convertBase64ToPublicUrl(item, 'snumom_wan3_video', req))
         .filter(Boolean);
-      const audioUrls = finalAudios.slice(0, 5)
+      const audioUrls = finalAudios.slice(0, maxAudios)
         .map(item => convertBase64ToPublicUrl(item, 'snumom_wan3_audio', req))
         .filter(Boolean);
       const frameImages: Array<{ url: string; role: 'first_frame' | 'last_frame' }> = [];
@@ -1843,7 +1873,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       });
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
-        refundFailedTask(`snumom WAN3.0 提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        refundFailedTask(`snumom ${model === SNUMOM_SD_MINI_MODEL ? 'SD Mini' : 'WAN3.0'} 提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -2061,7 +2091,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       // 参考图：将 base64 dataURL 转为 Blob 文件上传
       // 1.0-video 和 1.5-fast 支持最多 7 张参考图，其余 1.5-preview/1.5-1080p 仅允许 1 张，其它默认最多 5 张
-      const maxRefs = meta?.requireRef ? 1 : 5;
+      const maxRefs = model === SNUMOM_SD_MINI_MODEL
+        ? SNUMOM_SD_MINI_MAX_IMAGES
+        : meta?.requireRef ? 1 : 5;
       if (hasRef) {
         for (let i = 0; i < Math.min(reference_images.length, maxRefs); i++) {
           const dataUrl: string = reference_images[i];

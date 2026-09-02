@@ -6,7 +6,12 @@ import {
   SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES,
   SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
   SNUMOM_GROK_IMAGINE_VIDEO_SECONDS,
+  SNUMOM_SD_MINI_MAX_IMAGES,
+  SNUMOM_SD_MINI_MAX_VIDEOS,
+  SNUMOM_SD_MINI_MAX_AUDIOS,
+  SNUMOM_SD_MINI_MODEL,
   SNUMOM_VIDEO_MODELS,
+  snumomSdMiniSecondsForResolution,
   snumomContentUrl,
 } from '../server/services/snumomWanAdapter.js';
 
@@ -17,9 +22,40 @@ describe('snumom Wan 3.0 adapter', () => {
       'wan3.0-video',
       'wan3.0-video-prime',
       SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
+      SNUMOM_SD_MINI_MODEL,
     ]);
     expect(SNUMOM_GROK_IMAGINE_VIDEO_SECONDS).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
     expect(SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES).toBe(7);
+  });
+
+  it('declares sd-mini and its exact resolution-duration pairs', () => {
+    expect(SNUMOM_SD_MINI_MODEL).toBe('sd-mini');
+    expect(SNUMOM_SD_MINI_MAX_IMAGES).toBe(9);
+    expect(SNUMOM_SD_MINI_MAX_VIDEOS).toBe(3);
+    expect(SNUMOM_SD_MINI_MAX_AUDIOS).toBe(3);
+    expect(snumomSdMiniSecondsForResolution('480p')).toBe(15);
+    expect(snumomSdMiniSecondsForResolution('720P')).toBe(10);
+    expect(snumomSdMiniSecondsForResolution('1080p')).toBeNull();
+  });
+
+  it('passes sd-mini image, video and audio references through the snumom payload', () => {
+    expect(buildSnumomWanPayload({
+      model: SNUMOM_SD_MINI_MODEL,
+      prompt: '人物自然走动',
+      seconds: 10,
+      resolution: '720p',
+      aspectRatio: '9:16',
+      images: [{ url: 'https://cdn.example.com/ref.jpg', role: 'reference_image' }],
+      videos: [{ url: 'https://cdn.example.com/ref.mp4' }],
+      audios: [{ url: 'https://cdn.example.com/ref.mp3' }],
+    })).toMatchObject({
+      model: 'sd-mini',
+      seconds: 10,
+      size: '720P',
+      reference_images: [{ url: 'https://cdn.example.com/ref.jpg', role: 'reference_image' }],
+      reference_videos: [{ url: 'https://cdn.example.com/ref.mp4' }],
+      reference_audios: [{ url: 'https://cdn.example.com/ref.mp3' }],
+    });
   });
 
   it('detects the dedicated channel type or documented host', () => {

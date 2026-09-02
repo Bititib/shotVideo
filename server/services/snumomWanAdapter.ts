@@ -3,11 +3,24 @@ export const SNUMOM_CHANNEL_TYPE = 'snumom';
 export const SNUMOM_GROK_IMAGINE_VIDEO_MODEL = 'grok-imagine-video-1.5（按次）';
 export const SNUMOM_GROK_IMAGINE_VIDEO_SECONDS = Array.from({ length: 13 }, (_, index) => index + 3);
 export const SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES = 7;
+export const SNUMOM_SD_MINI_MODEL = 'sd-mini';
+export const SNUMOM_SD_MINI_SECONDS = [10, 15] as const;
+export const SNUMOM_SD_MINI_MAX_IMAGES = 9;
+export const SNUMOM_SD_MINI_MAX_VIDEOS = 3;
+export const SNUMOM_SD_MINI_MAX_AUDIOS = 3;
 export const SNUMOM_VIDEO_MODELS = [
   'wan3.0-video',
   'wan3.0-video-prime',
   SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
+  SNUMOM_SD_MINI_MODEL,
 ] as const;
+
+export function snumomSdMiniSecondsForResolution(resolution: string): 10 | 15 | null {
+  const normalized = String(resolution || '').toLowerCase();
+  if (normalized === '480p') return 15;
+  if (normalized === '720p') return 10;
+  return null;
+}
 
 export interface SnumomChannelLike {
   type?: string | null;
