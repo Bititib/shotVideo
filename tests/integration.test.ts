@@ -145,6 +145,28 @@ describe('种子数据完整性', () => {
     expect(getAccessibleModelIds({ allowedModels: [] })).not.toContain('xd-seedance-2.5-720p');
   });
 
+  it('MJNewAPI 应公开 TD Seedance 2.5，并按 ¥7/次计费', () => {
+    const channel = db.select().from(channels).all()
+      .find(item => item.baseUrl.includes('mjnewapi.diwdiw.cn'));
+    expect(channel).toBeDefined();
+    expect(JSON.parse(channel!.supportedModels)).toContain('td-seedance-2.5-720p');
+    expect(JSON.parse(channel!.modelMapping)).toMatchObject({
+      'td-seedance-2.5-720p': 'td-seedance-2.5-720p',
+    });
+
+    const model = db.select().from(models).where(eq(models.modelId, 'td-seedance-2.5-720p')).get();
+    expect(model).toMatchObject({ provider: 'diwdiw', isActive: 1 });
+    expect(model?.description).toContain('4-30秒');
+    expect(model?.description).toContain('30图10视频10音频');
+    expect(model?.description).toContain('售价以后台统一计费设置为准');
+    expect(model?.description).not.toContain('¥7.00');
+
+    const pricing = db.select().from(modelPricing)
+      .where(eq(modelPricing.modelPattern, 'td-seedance-2.5-720p')).get();
+    expect(pricing?.billingType).toBe('per_call');
+    expect(pricing?.inputPrice).toBeCloseTo(7.00, 6);
+  });
+
   it('NewToken 模型来源应该与实际路由渠道一致', () => {
     const channel = db.select().from(channels).all()
       .find(item => item.name === 'NewToken 渠道' || item.baseUrl.includes('newtoken.club'));

@@ -1548,6 +1548,21 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
   }
 
+  if (model === 'td-seedance-2.5-720p') {
+    if (!Number.isInteger(seconds) || seconds < 4 || seconds > 30) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'td-seedance-2.5-720p seconds must be an integer from 4 to 30' });
+    }
+    if (resolution !== '720p') {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'td-seedance-2.5-720p only supports 720p' });
+    }
+    if (image_urls.length > 30 || video_urls.length > 10 || audio_urls.length > 10) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'td-seedance-2.5-720p supports at most 30 images, 10 videos, and 10 audio files' });
+    }
+  }
+
   if (model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL) {
     if (!SNUMOM_GROK_IMAGINE_VIDEO_SECONDS.includes(Number(seconds))) {
       cleanupFiles(req.files);
