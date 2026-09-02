@@ -125,6 +125,8 @@ describe('种子数据完整性', () => {
 
     const sdMiniModel = db.select().from(models).where(eq(models.modelId, SNUMOM_SD_MINI_MODEL)).get();
     expect(sdMiniModel).toMatchObject({ provider: 'snumom', isActive: 1 });
+    expect(sdMiniModel?.displayName).toBe('Seedance 2.0 Mini');
+    expect(sdMiniModel?.description).not.toContain('snumom');
     expect(sdMiniModel?.description).toContain('9图、3视频、3音频');
     expect(sdMiniModel?.description).toContain('不卡脸');
     expect(sdMiniModel?.description).toContain('480p支持15秒');

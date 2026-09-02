@@ -305,7 +305,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'wan3.0-video', name: 'Wan 3.0 Video（标准版）', description: 'snumom 标准版；支持 2-30 秒、480P/720P/1080P；最多 10 图、5 视频、5 音频参考；支持文生、首帧及首尾帧视频', maxSeconds: 30, icon: '🌊' },
   { id: 'wan3.0-video-prime', name: 'Wan 3.0 Video Prime（高速版）', description: 'snumom 高速版；生成速度更快；支持 2-30 秒、480P/720P/1080P；最多 10 图、5 视频、5 音频参考', maxSeconds: 30, icon: '⚡' },
   { id: SNUMOM_GROK_IMAGINE_VIDEO_MODEL, name: 'Grok Imagine Video 1.5（按次）', description: 'snumom Grok Imagine Video 1.5；支持 3-15 秒；最多 7 张参考图；按次计费 ¥0.60/次', maxSeconds: 15, icon: '✕' },
-  { id: SNUMOM_SD_MINI_MODEL, name: 'SD Mini（按次）', description: 'snumom SD Mini；支持 9 图、3 视频、3 音频参考，不卡脸；480p 支持 15 秒，720p 仅支持 10 秒；按次计费 ¥0.60/次', maxSeconds: 15, icon: 'SD' },
+  { id: SNUMOM_SD_MINI_MODEL, name: 'Seedance 2.0 Mini', description: '支持 9 图、3 视频、3 音频参考，不卡脸；480p 支持 15 秒，720p 仅支持 10 秒；按次计费 ¥0.60/次', maxSeconds: 15, icon: 'SD' },
   { id: JULUN_MINIMAX_H3_MODEL, name: 'MiniMax H3 768p（933）', description: '巨轮 MiniMax H3；固定768p；仅支持10秒或15秒；最多9图、3视频、3音频参考；按秒计费 ¥0.18/秒', maxSeconds: 15, icon: '🔥' },
   { id: 'ld-sdas-cvk-pro-933-720p', name: 'SudaShui CVK Pro 933 (720p)', description: 'CVK 满血版，支持真人、4-15秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.800/次', maxSeconds: 15, icon: '🚀' },
   { id: 'sdas-mj-minimax-h3-2k', name: 'Minimax H3 (2K)', description: '海螺h3，9图3视频3音频，4-15s，固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🔥' },

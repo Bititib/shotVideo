@@ -163,7 +163,7 @@ export async function syncModelsFromAPI() {
     { provider: 'snumom', modelId: 'wan3.0-video', displayName: 'Wan 3.0 Video（标准版）', description: 'snumom 标准版；支持2-30秒、480P/720P/1080P；最多10图、5视频、5音频参考；支持文生、首帧及首尾帧视频', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'snumom', modelId: 'wan3.0-video-prime', displayName: 'Wan 3.0 Video Prime（高速版）', description: 'snumom 高速版；生成速度更快；支持2-30秒、480P/720P/1080P；最多10图、5视频、5音频参考', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'snumom', modelId: SNUMOM_GROK_IMAGINE_VIDEO_MODEL, displayName: 'Grok Imagine Video 1.5（按次）', description: 'snumom Grok Imagine Video 1.5；支持3-15秒；最多7张参考图；按次计费 ¥0.60/次', capabilities: JSON.stringify(['video']), isActive: 1 },
-    { provider: 'snumom', modelId: SNUMOM_SD_MINI_MODEL, displayName: 'SD Mini（按次）', description: 'snumom SD Mini；支持9图、3视频、3音频参考，不卡脸；480p支持15秒，720p仅支持10秒；按次计费 ¥0.60/次', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'snumom', modelId: SNUMOM_SD_MINI_MODEL, displayName: 'Seedance 2.0 Mini', description: '支持9图、3视频、3音频参考，不卡脸；480p支持15秒，720p仅支持10秒；按次计费 ¥0.60/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-mj-minimax-h3-2k', displayName: 'Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-bl-sd2.0-933-pro-720p', displayName: 'Seedance 2.0 Pro (933人脸版)', capabilities: JSON.stringify(['video']) },

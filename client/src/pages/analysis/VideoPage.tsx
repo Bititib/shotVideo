@@ -103,6 +103,7 @@ const getModelGroup = (modelId: string) => {
   const id = modelId.toLowerCase();
   if (id.includes('veo') || id.includes('omni-flash')) return 'Veo (Google) 系列';
   if (id.includes('minimax')) return 'MiniMax 系列';
+  if (id === SNUMOM_SD_MINI_MODEL) return 'Seedance 系列';
   if (id.includes('seedance') || id.includes('sd2') || id.includes('sdas') || id.includes('lg-')) return 'Seedance 系列';
   if (id.includes('sora')) return 'Sora 系列';
   if (id.includes('grok')) return 'Grok 系列';
