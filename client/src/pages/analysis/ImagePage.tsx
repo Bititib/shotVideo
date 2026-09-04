@@ -4,6 +4,7 @@ import { analysisApi } from '../../api/analysis';
 import { PromptDisplay, ResultSection, TagList, LoadingOverlay } from '../../components/UIComponents';
 import ModelSelector from '../../components/ModelSelector';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
 
 export default function ImagePage() {
   const guard = useAuthGuard();
@@ -20,9 +21,23 @@ export default function ImagePage() {
   const [selectedModel, setSelectedModel] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = (f: File) => {
-    if (f.size > 10 * 1024 * 1024) { setError('图片过大，请上传小于10MB的图片。'); return; }
-    setFile(f); setPreviewUrl(URL.createObjectURL(f)); setError(null); setAudioUrl(''); setAudioTitle('');
+  const handleFile = async (f: File) => {
+    try {
+      const normalized = await normalizeImageFile(f, {
+        maxDimension: 2048,
+        quality: 0.9,
+        outputType: 'image/jpeg',
+        maxInputBytes: 10 * 1024 * 1024,
+      });
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setFile(normalized.file);
+      setPreviewUrl(URL.createObjectURL(normalized.blob));
+      setError(null);
+      setAudioUrl('');
+      setAudioTitle('');
+    } catch (error: any) {
+      setError(error?.message || '图片读取失败');
+    }
   };
 
   const handleUrlImport = async () => {
@@ -38,7 +53,7 @@ export default function ImagePage() {
       if (aTitle) setAudioTitle(decodeURIComponent(aTitle));
       const blob = await res.blob();
       const f = new File([blob], 'imported_image.jpg', { type: blob.type || 'image/jpeg' });
-      handleFile(f);
+      await handleFile(f);
       if (audio) setAudioUrl(decodeURIComponent(audio));
     } catch (e: any) { setError(e.message); } finally { setIsFetchingUrl(false); }
   };
@@ -50,7 +65,7 @@ export default function ImagePage() {
     try { setResult(await analysisApi.analyzeImage(file, requiresText, selectedModel || undefined)); } catch (e: any) { setError(e.message); } finally { setIsAnalyzing(false); }
   };
 
-  const reset = () => { setFile(null); setPreviewUrl(null); setResult(null); setError(null); setAudioUrl(''); setAudioTitle(''); };
+  const reset = () => { if (previewUrl) URL.revokeObjectURL(previewUrl); setFile(null); setPreviewUrl(null); setResult(null); setError(null); setAudioUrl(''); setAudioTitle(''); };
 
   return (
     <div className="flex flex-col lg:flex-row h-full">
@@ -70,9 +85,9 @@ export default function ImagePage() {
             </div>
           </div>
 
-          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+          <input ref={fileRef} type="file" accept={MOBILE_IMAGE_ACCEPT} className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = ''; }} />
           <div className="mb-4 border border-dashed border-white/10 rounded-2xl overflow-hidden h-[220px] hover:border-pink-500/30 cursor-pointer flex items-center justify-center"
-            onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f?.type.startsWith('image/')) handleFile(f); }}
+            onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f && isSupportedImageFile(f)) void handleFile(f); }}
             onClick={() => !previewUrl && fileRef.current?.click()}>
             {previewUrl ? (
               <div className="relative w-full h-full">
@@ -80,7 +95,7 @@ export default function ImagePage() {
                 <button onClick={e => { e.stopPropagation(); reset(); }} className="absolute top-2 right-2 bg-red-500/80 p-1.5 rounded-full"><X className="w-3 h-3" /></button>
               </div>
             ) : (
-              <div className="text-center"><UploadCloud className="w-8 h-8 text-zinc-600 mx-auto mb-2" /><p className="text-xs text-zinc-500">拖拽或点击上传图片</p><p className="text-[10px] text-zinc-600 mt-1">支持 JPG/PNG/WebP，最大10MB</p></div>
+              <div className="text-center"><UploadCloud className="w-8 h-8 text-zinc-600 mx-auto mb-2" /><p className="text-xs text-zinc-500">拖拽或点击上传图片</p><p className="text-[10px] text-zinc-600 mt-1">支持 JPG/PNG/WebP/HEIC/HEIF，最大10MB</p></div>
             )}
           </div>
 

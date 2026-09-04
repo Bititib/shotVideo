@@ -9,6 +9,9 @@ import { JULUN_MINIMAX_H3_MODEL } from '../services/julunMinimaxAdapter.js';
 import {
   WX_HAIDIYUE_CHANNEL_NAME,
   WX_HAIDIYUE_CHANNEL_TYPE,
+  WX_HAIDIYUE_FACE_SPLIT_MODEL,
+  WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME,
+  WX_HAIDIYUE_FACE_SPLIT_PRICE,
   WX_HAIDIYUE_UPSTREAM_MODEL,
 } from '../services/wxHaidiYueAdapter.js';
 import {
@@ -181,6 +184,7 @@ export async function syncModelsFromAPI() {
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'seedance', modelId: 'sd2.5', displayName: 'Seedance 2.5 (sd2.5)', description: '支持9图0视频0音频，卡人脸；适合制作带货视频，固定按次计费 ¥3.50/次', capabilities: JSON.stringify(['video']) },
+    { provider: 'wx-haidiyue', modelId: WX_HAIDIYUE_FACE_SPLIT_MODEL, displayName: WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME, description: '支持真人；固定30秒；最多9张参考图；固定按次计费 ¥2.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance-2.5-c1', displayName: 'Seedance 2.5 (c1/888API)', description: '支持最多30张图片、10个视频、10个音频参考，4-30秒，按秒计费 ¥0.25/秒', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-mini', displayName: 'Seedance Mini (sd2-mini)', description: 'Seedance Mini 720p (933)，支持9图、3音频参考（无视频参考），固定按次计费 ¥2.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance2.0-933', displayName: 'seedance2.0 933', description: 'seedance2.0 933 模型，支持9图、3音频参考（无视频参考），固定按次计费 ¥3.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
@@ -403,6 +407,7 @@ export async function initDatabase() {
       concurrency_limit INTEGER NOT NULL DEFAULT 10,
       max_retries INTEGER NOT NULL DEFAULT 3,
       timeout INTEGER NOT NULL DEFAULT 120000,
+      face_split_enabled INTEGER NOT NULL DEFAULT 0,
       status INTEGER NOT NULL DEFAULT 1,
       last_test_at TEXT,
       last_test_result TEXT,
@@ -975,6 +980,7 @@ export async function initDatabase() {
     { modelPattern: 'veo-3-1', billingType: 'per_second', inputPrice: legacyRate('veo_3_1_rate', 0.20), category: 'video' },
     { modelPattern: 'sd2-c7', billingType: 'per_call', inputPrice: legacyRate('sd2_c7_rate', 0.50), category: 'video' },
     { modelPattern: 'sd2.5', billingType: 'per_call', inputPrice: legacyRate('sd2_5_rate', 3.50), category: 'video' },
+    { modelPattern: WX_HAIDIYUE_FACE_SPLIT_MODEL, billingType: 'per_call', inputPrice: WX_HAIDIYUE_FACE_SPLIT_PRICE, category: 'video' },
     { modelPattern: 'sd2-c6', billingType: 'per_call', inputPrice: legacyRate('sd2_c6_rate', 2.50), category: 'video' },
     { modelPattern: 'sd2-mini', billingType: 'per_call', inputPrice: legacyRate('sd2_mini_rate', 2.00), category: 'video' },
     { modelPattern: 'seedance2.0-933', billingType: 'per_call', inputPrice: legacyRate('seedance2_0_933_rate', 3.00), category: 'video' },
@@ -1449,7 +1455,7 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 HM Studio 渠道出错:', err.message);
   }
 
-  // 18) wx-海底月仅作为 HM Studio 满载时的 sd2.5 分流渠道。
+  // 18) wx-海底月承载独立的 sd2.5 人脸拆分选项，也可作为 HM Studio 满载时的备用渠道。
   try {
     const wxHaidiYueBaseUrl = 'https://ap.968968968.xyz/v1';
     const wxHaidiYueApiKey = env.WX_HAIDIYUE_API_KEY.trim();
@@ -1463,8 +1469,8 @@ export async function initDatabase() {
       name: WX_HAIDIYUE_CHANNEL_NAME,
       type: WX_HAIDIYUE_CHANNEL_TYPE,
       baseUrl: wxHaidiYueBaseUrl,
-      supportedModels: JSON.stringify([WX_HAIDIYUE_UPSTREAM_MODEL]),
-      modelMapping: JSON.stringify({ [WX_HAIDIYUE_UPSTREAM_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL }),
+      supportedModels: JSON.stringify([WX_HAIDIYUE_FACE_SPLIT_MODEL]),
+      modelMapping: JSON.stringify({ [WX_HAIDIYUE_FACE_SPLIT_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL }),
       priority: 100,
       weight: 1,
       maxRetries: 0,
@@ -1476,6 +1482,7 @@ export async function initDatabase() {
       db.insert(channels).values({
         ...fixedConfig,
         apiKey: wxHaidiYueApiKey,
+        faceSplitEnabled: 1,
         status: wxHaidiYueApiKey ? 1 : 0,
       }).run();
       console.log(`📦 已自动创建 ${WX_HAIDIYUE_CHANNEL_NAME}（${wxHaidiYueApiKey ? '已启用' : '等待配置 API Key'}）`);
@@ -1488,7 +1495,7 @@ export async function initDatabase() {
         updates.status = 0;
       }
       db.update(channels).set(updates).where(eq(channels.id, existingWxHaidiYue.id)).run();
-      console.log(`🔄 已校准 ${WX_HAIDIYUE_CHANNEL_NAME}（仅 ${WX_HAIDIYUE_UPSTREAM_MODEL}）`);
+      console.log(`🔄 已校准 ${WX_HAIDIYUE_CHANNEL_NAME}（${WX_HAIDIYUE_FACE_SPLIT_MODEL} -> ${WX_HAIDIYUE_UPSTREAM_MODEL}）`);
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 wx-海底月 sd2.5 分流渠道出错:', err.message);

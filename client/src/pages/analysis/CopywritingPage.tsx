@@ -4,6 +4,7 @@ import { analysisApi } from '../../api/analysis';
 import { ResultSection, CopyButton, LoadingOverlay } from '../../components/UIComponents';
 import ModelSelector from '../../components/ModelSelector';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
 
 export default function CopywritingPage() {
   const guard = useAuthGuard();
@@ -17,12 +18,25 @@ export default function CopywritingPage() {
   const [selectedModel, setSelectedModel] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const addFiles = (newFiles: File[]) => {
+  const addFiles = async (newFiles: File[]) => {
     const valid = newFiles.filter(f => f.size <= 150 * 1024 * 1024);
     if (valid.length < newFiles.length) setError('部分文件过大，已忽略');
-    if (valid.length > 0) {
-      setFiles(p => [...p, ...valid]);
-      setPreviewUrls(p => [...p, ...valid.map(f => URL.createObjectURL(f))]);
+    if (valid.length === 0) return;
+    try {
+      const prepared = await Promise.all(valid.map(async file => {
+        if (!isSupportedImageFile(file)) return file;
+        return (await normalizeImageFile(file, {
+          maxDimension: 2048,
+          quality: 0.9,
+          outputType: 'image/jpeg',
+          maxInputBytes: 20 * 1024 * 1024,
+        })).file;
+      }));
+      setFiles(p => [...p, ...prepared]);
+      setPreviewUrls(p => [...p, ...prepared.map(file => URL.createObjectURL(file))]);
+      setError(null);
+    } catch (error: any) {
+      setError(error?.message || '图片读取失败');
     }
   };
 
@@ -47,7 +61,7 @@ export default function CopywritingPage() {
     } catch (e: any) { setError(e.message); } finally { setGenBgLoading(p => ({ ...p, [index]: false })); }
   };
 
-  const reset = () => { setFiles([]); setPreviewUrls([]); setResult(null); setError(null); setGenBg({}); };
+  const reset = () => { previewUrls.forEach(url => URL.revokeObjectURL(url)); setFiles([]); setPreviewUrls([]); setResult(null); setError(null); setGenBg({}); };
 
   return (
     <div className="flex flex-col lg:flex-row h-full">
@@ -57,10 +71,10 @@ export default function CopywritingPage() {
             <Megaphone className="w-6 h-6 text-zinc-300" /> 开始生成爆款文案
           </h2>
 
-          <input ref={fileRef} type="file" accept="image/*,video/*" multiple className="hidden" onChange={e => { if (e.target.files) addFiles(Array.from(e.target.files)); }} />
+          <input ref={fileRef} type="file" accept={`${MOBILE_IMAGE_ACCEPT},video/*`} multiple className="hidden" onChange={e => { if (e.target.files) void addFiles(Array.from(e.target.files)); e.target.value = ''; }} />
 
           <div className="mb-4 border border-dashed border-white/10 rounded-2xl p-4 min-h-[200px] hover:border-orange-500/30 cursor-pointer transition-colors"
-            onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); addFiles(Array.from(e.dataTransfer.files)); }}
+            onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void addFiles(Array.from(e.dataTransfer.files)); }}
             onClick={() => files.length === 0 && fileRef.current?.click()}>
             {previewUrls.length > 0 ? (
               <div className="space-y-2">

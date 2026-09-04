@@ -4,6 +4,7 @@ import { analysisApi } from '../../api/analysis';
 import { PromptDisplay, ResultSection, CopyButton, TagList, LoadingOverlay } from '../../components/UIComponents';
 import ModelSelector from '../../components/ModelSelector';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
 
 export default function EcommercePage() {
   const guard = useAuthGuard();
@@ -29,6 +30,23 @@ export default function EcommercePage() {
   const handleFile = (f: File) => {
     if (f.size > 150 * 1024 * 1024) { setError('视频过大'); return; }
     setFile(f); setPreviewUrl(URL.createObjectURL(f)); setError(null);
+  };
+
+  const handleReplacementFile = async (file: File) => {
+    try {
+      const normalized = await normalizeImageFile(file, {
+        maxDimension: 2048,
+        quality: 0.9,
+        outputType: 'image/jpeg',
+        maxInputBytes: 20 * 1024 * 1024,
+      });
+      if (replacementPreview) URL.revokeObjectURL(replacementPreview);
+      setReplacementFile(normalized.file);
+      setReplacementPreview(URL.createObjectURL(normalized.blob));
+      setModifyError(null);
+    } catch (error: any) {
+      setModifyError(error?.message || '图片读取失败');
+    }
   };
 
   const handleUrlImport = async () => {
@@ -96,7 +114,7 @@ export default function EcommercePage() {
     } catch (e: any) { setModifyError(e.message); } finally { setIsModifying(false); }
   };
 
-  const reset = () => { setFile(null); setPreviewUrl(null); setTitle(''); setResult(null); setError(null); setReplacementFile(null); setReplacementPreview(null); setProductFrame(null); };
+  const reset = () => { if (previewUrl) URL.revokeObjectURL(previewUrl); if (replacementPreview) URL.revokeObjectURL(replacementPreview); setFile(null); setPreviewUrl(null); setTitle(''); setResult(null); setError(null); setReplacementFile(null); setReplacementPreview(null); setProductFrame(null); };
 
   return (
     <div className="flex flex-col lg:flex-row h-full">
@@ -220,7 +238,7 @@ export default function EcommercePage() {
             <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-5">
               <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2"><RefreshCw className="w-4 h-4 text-green-400" /> 一键换品</h3>
               <p className="text-xs text-zinc-500 mb-3">上传新产品图片，AI 保留视频风格和镜头语言，只替换商品。</p>
-              <input ref={replRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) { setReplacementFile(f); setReplacementPreview(URL.createObjectURL(f)); } }} />
+              <input ref={replRef} type="file" accept={MOBILE_IMAGE_ACCEPT} className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) void handleReplacementFile(f); e.target.value = ''; }} />
               <div className="flex gap-3 items-center">
                 <div className="w-20 h-20 rounded-xl border border-dashed border-white/10 cursor-pointer flex items-center justify-center overflow-hidden hover:border-green-500/30 transition-colors"
                   onClick={() => replRef.current?.click()}>

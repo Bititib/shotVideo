@@ -4,6 +4,7 @@ import { downloadGeneratedImage, fetchImageModels, generateImage, getCachedImage
 import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
 
 interface GeneratedImage {
   id: string;
@@ -233,20 +234,26 @@ export default function ImageGenPage() {
     }
   };
 
-  const readFileAsDataURL = (file: File): Promise<string> => new Promise((resolve, reject) => {
-    const reader = new FileReader(); reader.onload = () => resolve(reader.result as string); reader.onerror = reject; reader.readAsDataURL(file);
-  });
+  const readFileAsDataURL = async (file: File): Promise<string> => {
+    const normalized = await normalizeImageFile(file, {
+      maxDimension: 2048,
+      quality: 0.88,
+      outputType: 'image/jpeg',
+      maxInputBytes: 20 * 1024 * 1024,
+    });
+    return normalized.dataUrl;
+  };
 
   const handleFileSelect = async (files: FileList | null) => {
     if (!files) return;
     const remaining = 10 - referenceImages.length;
     if (remaining <= 0) { setError('最多上传 10 张参考图'); return; }
-    const validFiles = Array.from(files).filter(f => f.type.startsWith('image/')).slice(0, remaining);
+    const validFiles = Array.from(files).filter(isSupportedImageFile).slice(0, remaining);
     if (validFiles.length === 0) return;
     const oversized = validFiles.find(f => f.size > 20 * 1024 * 1024);
     if (oversized) { setError(`参考图 "${oversized.name}" 超过 20MB 上限`); return; }
     try { const urls = await Promise.all(validFiles.map(readFileAsDataURL)); setReferenceImages(prev => [...prev, ...urls]); }
-    catch { setError('图片读取失败'); }
+    catch (error: any) { setError(error?.message || '图片读取失败'); }
   };
 
   const removeRefImage = (index: number) => setReferenceImages(prev => prev.filter((_, i) => i !== index));
@@ -501,7 +508,7 @@ export default function ImageGenPage() {
                 <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                   <Upload className="w-3 h-3 text-pink-400" /> 参考图 ({referenceImages.length}/10)
                 </button>
-                <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
+                <input ref={fileInputRef} type="file" accept={MOBILE_IMAGE_ACCEPT} multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
               </div>
               {/* 输入容器 */}
               <div className="relative bg-white/[0.04] border border-white/[0.08] focus-within:border-pink-500/30 rounded-2xl transition-all shadow-2xl shadow-black/30">

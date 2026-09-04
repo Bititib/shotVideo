@@ -110,6 +110,7 @@ export const channels = sqliteTable('channels', {
   concurrencyLimit: integer('concurrency_limit').notNull().default(10),
   maxRetries: integer('max_retries').notNull().default(3),
   timeout: integer('timeout').notNull().default(120000), // 超时 ms
+  faceSplitEnabled: integer('face_split_enabled').notNull().default(0), // 仅 wx-海底月：默认是否处理参考图人脸
   status: integer('status').notNull().default(1),        // 0=禁用 1=启用
   lastTestAt: text('last_test_at'),
   lastTestResult: text('last_test_result'),              // success:1200ms / fail:timeout

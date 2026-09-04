@@ -12,8 +12,9 @@ import { useAuthStore } from '../../stores/authStore';
 import { feedbackApi } from '../../api/feedback';
 import { getBillingUnit } from '../../utils/billing';
 import { buildReplicatedVideoPrompt, getVideoReferenceAssets, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
-import { isOmniVideoEditModel, isSnumomGrokImagineVideoModel, SNUMOM_SD_MINI_MODEL, snumomSdMiniSecondsForResolution } from '../../utils/videoModelCapabilities';
+import { isOmniVideoEditModel, isSnumomGrokImagineVideoModel, SNUMOM_SD_MINI_MODEL, snumomSdMiniSecondsForResolution, WX_HAIDIYUE_FACE_SPLIT_MODEL } from '../../utils/videoModelCapabilities';
 import { getContentFailureInfo } from '../../utils/contentFailure';
+import { isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
 
 interface VideoTask {
   id: string;
@@ -286,6 +287,7 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'ad-seedance-2.5-480p') return 30;
   if (modelId === 'td-seedance-2.5-720p') return 30;
   if (modelId === 'vd-seedance-2.5-480p' || modelId === 'vd-seedance-2.5-720p') return 9;
+  if (modelId === WX_HAIDIYUE_FACE_SPLIT_MODEL) return 9;
   if (modelId === 'sd2.5') return 9;
   if (modelId === 'sd2-c7') return 10;
   if (modelId === 'sd2-c6') return 9;
@@ -407,7 +409,7 @@ export default function VideoPage() {
     if (m === 'ad-seedance-2.5-480p') return 10;
     if (m === 'td-seedance-2.5-720p') return 10;
     if (m === 'vd-seedance-2.5-480p' || m === 'vd-seedance-2.5-720p') return 3;
-    if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
+    if (m === WX_HAIDIYUE_FACE_SPLIT_MODEL || m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     return 0;
   };
@@ -419,7 +421,7 @@ export default function VideoPage() {
     if (m === 'ad-seedance-2.5-480p') return 10;
     if (m === 'td-seedance-2.5-720p') return 10;
     if (m === 'vd-seedance-2.5-480p' || m === 'vd-seedance-2.5-720p') return 0;
-    if (m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
+    if (m === WX_HAIDIYUE_FACE_SPLIT_MODEL || m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     return 0;
   };
@@ -865,7 +867,9 @@ export default function VideoPage() {
       ? [{ value: '720p', label: '720p' }, { value: '1080p', label: '1080p' }]
       : [{ value: '480p', label: '480p' }, { value: '720p', label: '720p' }];
 
-  const ASPECT_RATIOS = isWan30Model(selectedModel)
+  const ASPECT_RATIOS = selectedModel === WX_HAIDIYUE_FACE_SPLIT_MODEL
+    ? ALL_ASPECT_RATIOS.filter(ratio => ratio.value !== '3:2' && ratio.value !== '2:3')
+    : isWan30Model(selectedModel)
     ? [
       { value: '1:1', label: '1:1', icon: Square },
       { value: '16:9', label: '16:9', icon: RectangleHorizontal },
@@ -902,6 +906,11 @@ export default function VideoPage() {
       if (!wanRatios.includes(aspectRatio)) setAspectRatio('16:9');
     }
 
+    if (selectedModel === WX_HAIDIYUE_FACE_SPLIT_MODEL) {
+      const haidiYueRatios = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
+      if (!haidiYueRatios.includes(aspectRatio)) setAspectRatio('16:9');
+    }
+
     const isSudashui = selectedModel.startsWith('sd-') || selectedModel.startsWith('seedance-') || selectedModel.includes('sdas-') || selectedModel.startsWith('lg-');
     const isSoraV3Pro = selectedModel === 'seedance-2.0-fast';
     const isWan30 = isWan30Model(selectedModel);
@@ -919,34 +928,22 @@ export default function VideoPage() {
     }
   }, [selectedModel, resolution]);
 
-  /** 压缩参考图：缩放到 maxSize 并转为 JPEG base64，避免请求体过大 */
-  const compressImage = (file: File, maxSize = 768, quality = 0.7): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        let { width, height } = img;
-        if (width > maxSize || height > maxSize) {
-          const scale = maxSize / Math.max(width, height);
-          width = Math.round(width * scale);
-          height = Math.round(height * scale);
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d')!;
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', quality));
-        URL.revokeObjectURL(img.src);
-      };
-      img.onerror = () => { URL.revokeObjectURL(img.src); reject(new Error('图片加载失败')); };
-      img.src = URL.createObjectURL(file);
+  /** 标准化手机参考图：HEIC/HEIF 按需解码，其余格式统一缩放为 JPEG。 */
+  const compressImage = async (file: File, maxSize = 768, quality = 0.7): Promise<string> => {
+    const normalized = await normalizeImageFile(file, {
+      maxDimension: maxSize,
+      quality,
+      outputType: 'image/jpeg',
+      maxInputBytes: 20 * 1024 * 1024,
     });
+    return normalized.dataUrl;
+  };
 
   const handleFileSelect = async (files: FileList | null) => {
     if (!files) return;
     const remaining = maxRefs - referenceImages.length;
     if (remaining <= 0) { setError(`当前模型最多支持 ${maxRefs} 张参考图`); return; }
-    const valid = Array.from(files).filter(f => f.type.startsWith('image/')).slice(0, remaining);
+    const valid = Array.from(files).filter(isSupportedImageFile).slice(0, remaining);
     if (valid.length === 0) return;
     if (valid.find(f => f.size > 20 * 1024 * 1024)) { setError('参考图超过 20MB'); return; }
     try {
@@ -968,8 +965,8 @@ export default function VideoPage() {
         };
         saveAsset(newAsset).then(() => setMyAssets(prev => [newAsset, ...prev])).catch(() => { });
       });
-    } catch {
-      setError('图片读取失败');
+    } catch (error: any) {
+      setError(error?.message || '图片读取失败');
     }
   };
 
@@ -1738,7 +1735,7 @@ export default function VideoPage() {
                       视频模型推荐使用连贯的单镜头画面。使用九宫格等拼图会导致生成失败或变形。如果上传了拼图，可使用参考图上的 <Scissors className="w-3 h-3 inline text-indigo-400" /> 按钮智能切分。
                     </div>
                   </div>
-                  <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
+                  <input ref={fileInputRef} type="file" accept={MOBILE_IMAGE_ACCEPT} multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
 
                   {maxRefVideos > 0 && (
                     <>
@@ -1768,11 +1765,11 @@ export default function VideoPage() {
                       <button onClick={() => firstFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-emerald-400" /> 首帧 {firstFrame ? '(已上传)' : ''}
                       </button>
-                      <input ref={firstFrameInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { if (e.target.files?.[0]) { const url = await compressImage(e.target.files[0]); setFirstFrame(url); } e.target.value = ''; }} />
+                      <input ref={firstFrameInputRef} type="file" accept={MOBILE_IMAGE_ACCEPT} className="hidden" onChange={async (e) => { try { if (e.target.files?.[0]) { const url = await compressImage(e.target.files[0]); setFirstFrame(url); } } catch (error: any) { setError(error?.message || '首帧图片读取失败'); } e.target.value = ''; }} />
                       <button onClick={() => lastFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-amber-400" /> 尾帧 {lastFrame ? '(已上传)' : ''}
                       </button>
-                      <input ref={lastFrameInputRef} type="file" accept="image/*" className="hidden" onChange={async (e) => { if (e.target.files?.[0]) { const url = await compressImage(e.target.files[0]); setLastFrame(url); } e.target.value = ''; }} />
+                      <input ref={lastFrameInputRef} type="file" accept={MOBILE_IMAGE_ACCEPT} className="hidden" onChange={async (e) => { try { if (e.target.files?.[0]) { const url = await compressImage(e.target.files[0]); setLastFrame(url); } } catch (error: any) { setError(error?.message || '尾帧图片读取失败'); } e.target.value = ''; }} />
                     </>
                   )}
                   {['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(selectedModel) && (

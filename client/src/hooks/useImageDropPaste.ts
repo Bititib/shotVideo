@@ -1,4 +1,5 @@
 import { useEffect, useCallback, useState, useRef, type RefObject } from 'react';
+import { isSupportedImageFile } from '../utils/imageNormalization';
 
 /**
  * 处理图片的拖拽上传和 Ctrl+V 粘贴上传
@@ -22,10 +23,8 @@ export function useImageDropPaste(
     if (!items) return;
     const mediaFiles: File[] = [];
     for (let i = 0; i < items.length; i++) {
-      if (items[i].type.startsWith('image/') || items[i].type.startsWith('video/')) {
-        const file = items[i].getAsFile();
-        if (file) mediaFiles.push(file);
-      }
+      const file = items[i].getAsFile();
+      if (file && (isSupportedImageFile(file) || file.type.startsWith('video/'))) mediaFiles.push(file);
     }
     if (mediaFiles.length > 0) {
       e.preventDefault();
@@ -62,7 +61,7 @@ export function useImageDropPaste(
       // 保留图片和视频文件
       const dt = new DataTransfer();
       for (let i = 0; i < files.length; i++) {
-        if (files[i].type.startsWith('image/') || files[i].type.startsWith('video/')) {
+        if (isSupportedImageFile(files[i]) || files[i].type.startsWith('video/')) {
           dt.items.add(files[i]);
         }
       }

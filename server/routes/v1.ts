@@ -70,8 +70,11 @@ import {
 import {
   buildWxHaidiYueVideoPayload,
   isWxHaidiYueChannel,
+  resolveWxHaidiYueFaceSplit,
   wxHaidiYueCreateUrl,
+  WX_HAIDIYUE_FACE_SPLIT_MODEL,
 } from '../services/wxHaidiYueAdapter.js';
+import { prepareWxHaidiYueImageUrls } from '../services/wxHaidiYueImageService.js';
 import { enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
 import { withVideoFailureMetadata } from '../services/videoFailureService.js';
 import { ContentService } from '../services/contentService.js';
@@ -1548,6 +1551,26 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
   }
 
+  if (model === WX_HAIDIYUE_FACE_SPLIT_MODEL) {
+    const allowedRatios = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
+    if (seconds !== 30) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'sd2.5 only supports exactly 30 seconds' });
+    }
+    if (resolution !== '720p') {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'sd2.5 only provides the 720p option' });
+    }
+    if (!allowedRatios.includes(ratio)) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `sd2.5 ratio must be one of ${allowedRatios.join(', ')}` });
+    }
+    if (image_urls.length > 9 || video_urls.length > 0 || audio_urls.length > 0 || body.first_frame_url || body.end_frame_url || body.last_frame_url) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'sd2.5 supports at most 9 images and does not support video, audio, or first/last-frame references' });
+    }
+  }
+
   if (model === 'td-seedance-2.5-720p') {
     if (!Number.isInteger(seconds) || seconds < 4 || seconds > 30) {
       cleanupFiles(req.files);
@@ -1720,6 +1743,9 @@ async function handleVideoCreation(req: Request, res: Response) {
         audio_urls,
         first_frame: body.first_frame_url,
         last_frame: body.end_frame_url || body.last_frame_url,
+        face_split: isWxHaidiYueChannel(channel)
+          ? (model === WX_HAIDIYUE_FACE_SPLIT_MODEL ? true : resolveWxHaidiYueFaceSplit(channel, body.face_split))
+          : undefined,
         function_mode: body.function_mode,
         upstream_channel: body.channel,
         tokenId: token.id,
@@ -1841,11 +1867,20 @@ async function handleVideoCreation(req: Request, res: Response) {
         signal: AbortSignal.timeout(channel.timeout || 120_000),
       });
     } else if (isWxHaidiYue) {
+      const requestPublicBaseUrl = process.env.BACKEND_URL
+        || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+      const preparedImages = await prepareWxHaidiYueImageUrls(image_urls, {
+        publicBaseUrl: requestPublicBaseUrl,
+        mediaBaseUrl: env.WX_HAIDIYUE_IMAGE_BASE_URL || requestPublicBaseUrl,
+      });
       const payload = buildWxHaidiYueVideoPayload({
         prompt,
         duration: seconds,
         aspectRatio: ratio,
-        images: image_urls,
+        images: preparedImages,
+        faceSplit: model === WX_HAIDIYUE_FACE_SPLIT_MODEL
+          ? true
+          : resolveWxHaidiYueFaceSplit(channel, body.face_split),
       });
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;

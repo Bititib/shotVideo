@@ -6,6 +6,7 @@ import {
   isWxHaidiYueChannel,
   WX_HAIDIYUE_CHANNEL_NAME,
   WX_HAIDIYUE_CHANNEL_TYPE,
+  WX_HAIDIYUE_FACE_SPLIT_MODEL,
   WX_HAIDIYUE_UPSTREAM_MODEL,
 } from './wxHaidiYueAdapter.js';
 
@@ -379,14 +380,17 @@ export class ChannelService {
       baseUrl,
       apiKey: type === 'hmstudio' ? '' : (apiKey || ''),
       modelMapping: JSON.stringify(isWxHaidiYue
-        ? { [WX_HAIDIYUE_UPSTREAM_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL }
+        ? { [WX_HAIDIYUE_FACE_SPLIT_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL }
         : (modelMapping || {})),
-      supportedModels: JSON.stringify(isWxHaidiYue ? [WX_HAIDIYUE_UPSTREAM_MODEL] : (supportedModels || [])),
+      supportedModels: JSON.stringify(isWxHaidiYue ? [WX_HAIDIYUE_FACE_SPLIT_MODEL] : (supportedModels || [])),
       priority: priority ?? 0,
       weight: weight ?? 1,
       concurrencyLimit: DEFAULT_HM_CONCURRENCY,
       maxRetries: maxRetries ?? 3,
       timeout: timeout ?? 120000,
+      faceSplitEnabled: isWxHaidiYue
+        ? (data.faceSplitEnabled === 0 || data.faceSplitEnabled === false ? 0 : 1)
+        : 0,
     }).run();
     const channelId = Number(result.lastInsertRowid);
 
@@ -424,8 +428,13 @@ export class ChannelService {
     if (data.status !== undefined) updates.status = data.status;
     if (nextType === WX_HAIDIYUE_CHANNEL_TYPE) {
       updates.name = WX_HAIDIYUE_CHANNEL_NAME;
-      updates.supportedModels = JSON.stringify([WX_HAIDIYUE_UPSTREAM_MODEL]);
-      updates.modelMapping = JSON.stringify({ [WX_HAIDIYUE_UPSTREAM_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL });
+      updates.supportedModels = JSON.stringify([WX_HAIDIYUE_FACE_SPLIT_MODEL]);
+      updates.modelMapping = JSON.stringify({ [WX_HAIDIYUE_FACE_SPLIT_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL });
+      updates.faceSplitEnabled = data.faceSplitEnabled !== undefined
+        ? (data.faceSplitEnabled === 0 || data.faceSplitEnabled === false ? 0 : 1)
+        : (channel.type === WX_HAIDIYUE_CHANNEL_TYPE ? channel.faceSplitEnabled : 1);
+    } else if (channel.type === WX_HAIDIYUE_CHANNEL_TYPE) {
+      updates.faceSplitEnabled = 0;
     }
     updates.updatedAt = new Date().toISOString();
 
@@ -490,14 +499,14 @@ export class ChannelService {
     if (!channel) throw { status: 404, message: '渠道不存在' };
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
 
-    // 该渠道是专用分流线路，不允许“同步模型”将其他上游模型加入白名单。
+    // 该渠道只暴露本站独立的海底月模型，不允许“同步模型”加入其他上游模型。
     if (isWxHaidiYueChannel(channel)) {
       db.update(channels).set({
-        supportedModels: JSON.stringify([WX_HAIDIYUE_UPSTREAM_MODEL]),
-        modelMapping: JSON.stringify({ [WX_HAIDIYUE_UPSTREAM_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL }),
+        supportedModels: JSON.stringify([WX_HAIDIYUE_FACE_SPLIT_MODEL]),
+        modelMapping: JSON.stringify({ [WX_HAIDIYUE_FACE_SPLIT_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL }),
         updatedAt: new Date().toISOString(),
       }).where(eq(channels.id, id)).run();
-      return { count: 1, added: 0, models: [WX_HAIDIYUE_UPSTREAM_MODEL] };
+      return { count: 1, added: 0, models: [WX_HAIDIYUE_FACE_SPLIT_MODEL] };
     }
 
     const url = channel.baseUrl.replace(/\/+$/, '') + '/v1/models';

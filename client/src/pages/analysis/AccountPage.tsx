@@ -4,6 +4,7 @@ import { analysisApi } from '../../api/analysis';
 import { ResultSection, CopyButton, LoadingOverlay } from '../../components/UIComponents';
 import ModelSelector from '../../components/ModelSelector';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
 
 export default function AccountPage() {
   const guard = useAuthGuard();
@@ -21,11 +22,21 @@ export default function AccountPage() {
   const [selectedModel, setSelectedModel] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const addFiles = (newFiles: File[]) => {
-    const valid = newFiles.filter(f => f.size <= 10 * 1024 * 1024).slice(0, 5 - files.length);
-    if (valid.length > 0) {
-      setFiles(p => [...p, ...valid].slice(0, 5));
-      setPreviewUrls(p => [...p, ...valid.map(f => URL.createObjectURL(f))].slice(0, 5));
+  const addFiles = async (newFiles: File[]) => {
+    const valid = newFiles.filter(isSupportedImageFile).filter(f => f.size <= 10 * 1024 * 1024).slice(0, 5 - files.length);
+    if (valid.length === 0) return;
+    try {
+      const normalized = await Promise.all(valid.map(file => normalizeImageFile(file, {
+        maxDimension: 2048,
+        quality: 0.9,
+        outputType: 'image/jpeg',
+        maxInputBytes: 10 * 1024 * 1024,
+      })));
+      setFiles(p => [...p, ...normalized.map(item => item.file)].slice(0, 5));
+      setPreviewUrls(p => [...p, ...normalized.map(item => URL.createObjectURL(item.blob))].slice(0, 5));
+      setError(null);
+    } catch (error: any) {
+      setError(error?.message || '图片读取失败');
     }
   };
 
@@ -54,7 +65,7 @@ export default function AccountPage() {
     } catch (e: any) { setError(e.message); } finally { loadSetter(false); }
   };
 
-  const reset = () => { setHandle(''); setDescription(''); setFiles([]); setPreviewUrls([]); setResult(null); setError(null); setGenAvatar(null); setGenCover(null); };
+  const reset = () => { previewUrls.forEach(url => URL.revokeObjectURL(url)); setHandle(''); setDescription(''); setFiles([]); setPreviewUrls([]); setResult(null); setError(null); setGenAvatar(null); setGenCover(null); };
 
   const sections = result ? [
     { icon: <Search className="w-5 h-5 text-blue-400" />, title: '内容分析', content: result.contentAnalysis },
@@ -84,11 +95,11 @@ export default function AccountPage() {
             </div>
           </div>
 
-          <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={e => { if (e.target.files) addFiles(Array.from(e.target.files)); }} />
+          <input ref={fileRef} type="file" accept={MOBILE_IMAGE_ACCEPT} multiple className="hidden" onChange={e => { if (e.target.files) void addFiles(Array.from(e.target.files)); e.target.value = ''; }} />
           <div className="mb-4">
             <label className="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider">主页截图 (最多5张)</label>
             <div className="border border-dashed border-white/10 rounded-2xl p-3 min-h-[120px] hover:border-emerald-500/30 cursor-pointer transition-colors"
-              onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); addFiles(Array.from(e.dataTransfer.files)); }}
+              onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void addFiles(Array.from(e.dataTransfer.files)); }}
               onClick={() => files.length === 0 && fileRef.current?.click()}>
               {previewUrls.length > 0 ? (
                 <div className="space-y-2">

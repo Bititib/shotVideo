@@ -75,9 +75,13 @@ import {
   buildWxHaidiYueVideoPayload,
   isWxHaidiYueChannel,
   normalizeWxHaidiYueTask,
+  resolveWxHaidiYueFaceSplit,
   wxHaidiYueCreateUrl,
   wxHaidiYueTaskUrl,
+  WX_HAIDIYUE_FACE_SPLIT_MODEL,
+  WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME,
 } from '../services/wxHaidiYueAdapter.js';
+import { prepareWxHaidiYueImageUrls } from '../services/wxHaidiYueImageService.js';
 import { detectVideoCodec, downloadAndLocalizeVideo } from '../services/videoLocalizationService.js';
 export { downloadAndLocalizeVideo } from '../services/videoLocalizationService.js';
 import { env } from '../config/env.js';
@@ -277,6 +281,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'veo-3-1': { series: 'veo-3-1', allowedSeconds: [8], requireRef: false },
   'sd2-c7': { series: 'sd2-c7', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sd2.5': { series: 'sd2.5', allowedSeconds: [30], requireRef: false },
+  [WX_HAIDIYUE_FACE_SPLIT_MODEL]: { series: 'wx-haidiyue-sd2.5', allowedSeconds: [30], requireRef: false },
   'seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-fast-720p': { series: 'seedance-fast-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-720': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
@@ -319,6 +324,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'veo-3-1', name: 'Veo 3-1', description: '【不卡人脸-定制版】无水印视频；只支持8秒；支持首尾帧、支持多图参考，最多9张图', maxSeconds: 8, icon: '🚀' },
   { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多10张图片参考（无视频/音频参考），5-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
   { id: 'sd2.5', name: 'Seedance 2.5 (sd2.5)', description: '支持9图0视频0音频，卡人脸；适合制作带货视频，固定按次计费 ¥3.50/次', maxSeconds: 30, icon: '🚀' },
+  { id: WX_HAIDIYUE_FACE_SPLIT_MODEL, name: WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME, description: '支持真人；固定30秒；最多9张参考图；固定按次计费 ¥2.00/次', maxSeconds: 30, icon: '👤' },
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 720p', description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '⚡' },
   { id: 'seedance-720', name: 'Seedance 720 满血版', description: '满血模型，支持933，过人脸，720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🔥' },
@@ -338,6 +344,7 @@ function findVideoChannel(modelId: string, activeChannels?: any[]) {
     apiKeyId: channel.apiKeyId,
     modelMapping: channel.modelMapping,
     timeout: channel.timeout,
+    faceSplitEnabled: channel.faceSplitEnabled,
   };
   return null;
 }
@@ -577,6 +584,10 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
+    } else if (m.id === WX_HAIDIYUE_FACE_SPLIT_MODEL) {
+      rates = {
+        '720p': quotePrice(m.id, { resolution: '720p' }).rate,
+      };
     } else if (m.id === 'sd2-mini') {
       const rate = settingNumber('sd2_mini_rate', '2.00');
       rates = {
@@ -747,6 +758,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     audio_url = '',          // 旧单值兼容字段
     first_frame = '',        // Base64 首帧图片
     last_frame = '',         // Base64 尾帧图片
+    face_split,              // 海底月参考图人脸拆分（仅实际路由到海底月时发送）
     compliance_enabled,      // 是否开启合规素材/过人脸
     compliance_mode,         // 合规素材风格
   } = req.body;
@@ -819,6 +831,17 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     if (reference_images.length > 9) return res.status(400).json({ error: 'sd2.5 最多支持 9 张参考图片' });
     if (finalVideos.length > 0 || finalAudios.length > 0) {
       return res.status(400).json({ error: 'sd2.5 不支持视频或音频参考' });
+    }
+  }
+
+  if (model === WX_HAIDIYUE_FACE_SPLIT_MODEL) {
+    const allowedRatios = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
+    if (Number(video_length) !== 30) return res.status(400).json({ error: 'sd2.5 固定支持 30 秒' });
+    if (resolution !== '720p') return res.status(400).json({ error: 'sd2.5 仅提供 720p 选项' });
+    if (!allowedRatios.includes(aspect_ratio)) return res.status(400).json({ error: `sd2.5 不支持比例 ${aspect_ratio}` });
+    if (reference_images.length > 9) return res.status(400).json({ error: 'sd2.5 最多支持 9 张参考图片' });
+    if (finalVideos.length > 0 || finalAudios.length > 0 || first_frame || last_frame) {
+      return res.status(400).json({ error: 'sd2.5 不支持视频、音频或首尾帧参考' });
     }
   }
 
@@ -1118,6 +1141,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         audio_urls: finalAudios,
         first_frame,
         last_frame,
+        face_split: isWxHaidiYueChannel(dbChannel)
+          ? (model === WX_HAIDIYUE_FACE_SPLIT_MODEL ? true : resolveWxHaidiYueFaceSplit(dbChannel, face_split))
+          : undefined,
         billingSource: 'user',
         queueUserKey: `user:${req.userId}`,
         queueEnqueuedAt: new Date().toISOString(),
@@ -1190,6 +1216,16 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   };
 
   let baseUrl = channel.baseUrl.replace(/\/+$/, '');
+  const requestPublicBaseUrl = process.env.BACKEND_URL
+    || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+  let preparedWxImagesPromise: Promise<string[]> | null = null;
+  const getPreparedWxImages = () => {
+    preparedWxImagesPromise ??= prepareWxHaidiYueImageUrls(reference_images, {
+      publicBaseUrl: requestPublicBaseUrl,
+      mediaBaseUrl: env.WX_HAIDIYUE_IMAGE_BASE_URL || requestPublicBaseUrl,
+    });
+    return preparedWxImagesPromise;
+  };
   const size = RATIO_TO_SIZE[aspect_ratio] || '1280x720';
   const isSeedanceFast = model === 'seedance-2.0-fast';
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
@@ -1310,7 +1346,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
             prompt: prompt.trim(),
             duration: Number(video_length) || 6,
             aspectRatio: aspect_ratio,
-            images: reference_images,
+            images: await getPreparedWxImages(),
+            faceSplit: model === WX_HAIDIYUE_FACE_SPLIT_MODEL
+              ? true
+              : resolveWxHaidiYueFaceSplit(overflowPlan.channel, face_split),
           });
           createResp = await fetch(wxHaidiYueCreateUrl(overflowPlan.channel.baseUrl), {
             method: 'POST',
@@ -1430,7 +1469,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         prompt: prompt.trim(),
         duration: Number(video_length) || 5,
         aspectRatio: aspect_ratio,
-        images: reference_images,
+        images: await getPreparedWxImages(),
+        faceSplit: model === WX_HAIDIYUE_FACE_SPLIT_MODEL
+          ? true
+          : resolveWxHaidiYueFaceSplit(channel, face_split),
       });
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (channel.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
@@ -2823,7 +2865,15 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
                 prompt: String(latestMeta.prompt || latest.inputText || '').trim(),
                 duration: Number(latestMeta.seconds) || 6,
                 aspectRatio: latestMeta.aspect_ratio || latestMeta.ratio || '16:9',
-                images: referenceImages,
+                images: await prepareWxHaidiYueImageUrls(referenceImages, {
+                  publicBaseUrl: latestMeta.publicBaseUrl || process.env.BACKEND_URL,
+                  mediaBaseUrl: env.WX_HAIDIYUE_IMAGE_BASE_URL
+                    || latestMeta.publicBaseUrl
+                    || process.env.BACKEND_URL,
+                }),
+                faceSplit: model === WX_HAIDIYUE_FACE_SPLIT_MODEL
+                  ? true
+                  : resolveWxHaidiYueFaceSplit(fallbackChannel, latestMeta.face_split),
               });
               fallbackResponse = await fetch(wxHaidiYueCreateUrl(fallbackChannel.baseUrl), {
                 method: 'POST',

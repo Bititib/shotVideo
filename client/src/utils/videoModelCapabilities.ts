@@ -5,6 +5,7 @@ const OMNI_VIDEO_EDIT_MODELS = new Set([
 
 export const SNUMOM_GROK_IMAGINE_VIDEO_MODEL = 'grok-imagine-video-1.5（按次）';
 export const SNUMOM_SD_MINI_MODEL = 'sd-mini';
+export const WX_HAIDIYUE_FACE_SPLIT_MODEL = 'sd2.5-haidiyue-face';
 
 export function isOmniVideoEditModel(modelId: string): boolean {
   return OMNI_VIDEO_EDIT_MODELS.has(modelId);

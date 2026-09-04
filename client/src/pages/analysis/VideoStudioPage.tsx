@@ -6,6 +6,7 @@ import ImageSlicerModal from '../../components/ImageSlicerModal';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { SNUMOM_SD_MINI_MODEL } from '../../utils/videoModelCapabilities';
+import { isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
 
 interface Segment { id: string; prompt: string; videoUrl: string; duration: number; model: string; lastFrame?: string; }
 interface Project { id: string; name: string; segments: Segment[]; aspectRatio: string; resolution: string; createdAt: number; }
@@ -155,18 +156,25 @@ export default function VideoStudioPage() {
     }
   }, [selectedModel]);
 
-  const readFileAsDataURL = (file: File): Promise<string> =>
-    new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result as string); r.onerror = reject; r.readAsDataURL(file); });
+  const readFileAsDataURL = async (file: File): Promise<string> => {
+    const normalized = await normalizeImageFile(file, {
+      maxDimension: 1536,
+      quality: 0.84,
+      outputType: 'image/jpeg',
+      maxInputBytes: 20 * 1024 * 1024,
+    });
+    return normalized.dataUrl;
+  };
 
   const handleFileSelect = async (files: FileList | null) => {
     if (!files) return;
     const remaining = maxRefs - referenceImages.length;
     if (remaining <= 0) { setError(`当前模型最多支持 ${maxRefs} 张参考图`); return; }
-    const valid = Array.from(files).filter(f => f.type.startsWith('image/')).slice(0, remaining);
+    const valid = Array.from(files).filter(isSupportedImageFile).slice(0, remaining);
     if (valid.length === 0) return;
     if (valid.find(f => f.size > 20 * 1024 * 1024)) { setError('参考图超过 20MB'); return; }
     try { const urls = await Promise.all(valid.map(readFileAsDataURL)); setReferenceImages(prev => [...prev, ...urls]); }
-    catch { setError('图片读取失败'); }
+    catch (error: any) { setError(error?.message || '图片读取失败'); }
   };
 
   // 全局拖拽 + Ctrl+V 粘贴上传参考图
@@ -433,7 +441,7 @@ export default function VideoStudioPage() {
                   为了保证视频连贯性，请勿直接使用九宫格或多格拼图。点击参考图上的 <Scissors className="w-3 h-3 inline text-indigo-400" /> 剪刀按钮即可将其切分为单张画面。
                 </div>
               </div>
-              <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
+              <input ref={fileRef} type="file" accept={MOBILE_IMAGE_ACCEPT} multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
             </div>
             {referenceImages.length > 0 && (
               <div className="flex items-center gap-1.5 mb-2 flex-wrap">

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { adminApi } from '../../api/admin';
-import { Plus, Radio, Trash2, Pencil, Zap, Loader2, Power, PowerOff, RefreshCw, KeyRound, Activity, CircleCheck, CircleX, Timer } from 'lucide-react';
+import { Plus, Radio, Trash2, Pencil, Zap, Loader2, Power, PowerOff, RefreshCw, KeyRound, Activity, CircleCheck, CircleX, Timer, ScanFace } from 'lucide-react';
 
 const HM_STUDIO_BASE_URL = 'https://dnyovzpgyokm.sealosbja.site';
 
@@ -98,6 +98,7 @@ export default function ChannelsPage() {
     apiKeys: [],
     modelMapping: {}, supportedModels: [],
     priority: 0, weight: 1, maxRetries: 3, timeout: 120000,
+    faceSplitEnabled: 1,
     isNew: true,
     // 临时 UI 字段
     mappingText: '',
@@ -182,6 +183,9 @@ export default function ChannelsPage() {
         }));
       } else if (edit.apiKey) {
         data.apiKey = edit.apiKey;
+      }
+      if (edit.type === 'wx-haidiyue') {
+        data.faceSplitEnabled = edit.faceSplitEnabled === 0 ? 0 : 1;
       }
       if (edit.status !== undefined) data.status = edit.status;
 
@@ -430,6 +434,7 @@ export default function ChannelsPage() {
               {ch.type === 'hmstudio' && <span>Keys: <span className="text-amber-200 tabular-nums">{ch.apiKeyCount || 0}</span></span>}
               {ch.type === 'hmstudio' && <span>运行: <span className="text-emerald-300 tabular-nums">{ch.concurrencyRunning || 0}/{ch.concurrencyLimit ?? 0}</span></span>}
               {ch.type === 'hmstudio' && <span>排队: <span className="text-amber-300 tabular-nums">{ch.concurrencyQueued || 0}</span></span>}
+              {ch.type === 'wx-haidiyue' && <span>人脸拆分: <span className={ch.faceSplitEnabled === 0 ? 'text-zinc-400' : 'text-emerald-300'}>{ch.faceSplitEnabled === 0 ? '关闭' : '开启'}</span></span>}
               {ch.lastTestResult && <span>{ch.lastTestResult.startsWith('auto_disabled:') ? '自动停止' : '最后测试'}: <span className={ch.lastTestResult?.startsWith('success') ? 'text-green-400' : 'text-red-400'}>{ch.lastTestResult.replace(/^auto_disabled:/, '')}</span></span>}
             </div>
           </div>
@@ -455,6 +460,9 @@ export default function ChannelsPage() {
                     <select value={edit.type} onChange={e => setEdit({
                       ...edit,
                       type: e.target.value,
+                      faceSplitEnabled: e.target.value === 'wx-haidiyue' && edit.type !== 'wx-haidiyue'
+                        ? 1
+                        : edit.faceSplitEnabled,
                       apiKeys: e.target.value === 'hmstudio' && (!edit.apiKeys || edit.apiKeys.length === 0)
                         ? [newHmKey()]
                         : edit.apiKeys,
@@ -467,7 +475,7 @@ export default function ChannelsPage() {
                       className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
                       <option value="openai">OpenAI 兼容（Chat 代理）</option>
                       <option value="hmstudio">HM Studio（图片/视频异步任务）</option>
-                      <option value="wx-haidiyue">wx-海底月（仅 sd2.5 分流）</option>
+                      <option value="wx-haidiyue">wx-海底月（sd2.5 人脸拆分）</option>
                       <option value="snumom">snumom（视频异步任务）</option>
                       <option value="gemini">Gemini（分析服务）</option>
                       <option value="grok2api">Grok2API（视频/图片生成）</option>
@@ -486,6 +494,31 @@ export default function ChannelsPage() {
                   <input id="channel-api-key" type="password" value={edit.apiKey} onChange={e => setEdit({ ...edit, apiKey: e.target.value })} placeholder={edit.isNew ? '可选' : '留空=不修改'}
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
                 </div>
+              )}
+              {edit.type === 'wx-haidiyue' && (
+                <section aria-labelledby="haidi-face-split-title" className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3.5 sm:p-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <h4 id="haidi-face-split-title" className="flex items-center gap-2 text-sm font-semibold text-emerald-100">
+                        <ScanFace className="h-4 w-4 text-emerald-300" /> 默认人脸拆分
+                      </h4>
+                      <p id="haidi-face-split-description" className="mt-1 text-[11px] leading-5 text-zinc-500">
+                        控制备用分流的默认值；用户端 sd2.5 人脸拆分选项始终开启，不会影响 HM Studio。
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={edit.faceSplitEnabled !== 0}
+                      aria-describedby="haidi-face-split-description"
+                      onClick={() => setEdit({ ...edit, faceSplitEnabled: edit.faceSplitEnabled === 0 ? 1 : 0 })}
+                      className={`relative h-7 w-12 shrink-0 rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 ${edit.faceSplitEnabled === 0 ? 'border-white/10 bg-zinc-700' : 'border-emerald-400/30 bg-emerald-500'}`}
+                    >
+                      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${edit.faceSplitEnabled === 0 ? 'translate-x-0.5' : 'translate-x-6'}`} />
+                      <span className="sr-only">{edit.faceSplitEnabled === 0 ? '开启默认人脸拆分' : '关闭默认人脸拆分'}</span>
+                    </button>
+                  </div>
+                </section>
               )}
               {edit.type === 'hmstudio' && (
                 <section aria-labelledby="hm-api-keys-title" className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.04] p-3.5 sm:p-4">

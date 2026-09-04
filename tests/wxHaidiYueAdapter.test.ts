@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildWxHaidiYueVideoPayload,
+  normalizeWxHaidiYueFaceSplit,
   normalizeWxHaidiYueTask,
+  resolveWxHaidiYueFaceSplit,
   shouldSendWxHaidiYueAuthorization,
   wxHaidiYueCreateUrl,
   wxHaidiYueTaskUrl,
@@ -22,7 +24,31 @@ describe('wx-海底月 sd2.5 adapter', () => {
       duration: 8,
       aspect_ratio: '16:9',
       images: ['https://cdn.test/a.jpg', 'data:image/png;base64,AAAA'],
+      face_split: true,
     });
+  });
+
+  it('normalizes the documented face_split values without treating "false" as truthy', () => {
+    for (const enabled of [true, 1, 'true', '1']) {
+      expect(normalizeWxHaidiYueFaceSplit(enabled)).toBe(true);
+    }
+    for (const disabled of [undefined, false, 0, 'false', '0', 'yes', null]) {
+      expect(normalizeWxHaidiYueFaceSplit(disabled)).toBe(false);
+    }
+    expect(buildWxHaidiYueVideoPayload({
+      prompt: 'test',
+      duration: 5,
+      aspectRatio: '16:9',
+      faceSplit: 'false',
+    })).toMatchObject({ face_split: false });
+  });
+
+  it('uses the channel switch as the default and lets an explicit request value override it', () => {
+    expect(resolveWxHaidiYueFaceSplit({ faceSplitEnabled: 1 })).toBe(true);
+    expect(resolveWxHaidiYueFaceSplit({ faceSplitEnabled: 0 })).toBe(false);
+    expect(resolveWxHaidiYueFaceSplit(undefined)).toBe(true);
+    expect(resolveWxHaidiYueFaceSplit({ faceSplitEnabled: 0 }, true)).toBe(true);
+    expect(resolveWxHaidiYueFaceSplit({ faceSplitEnabled: 1 }, 'false')).toBe(false);
   });
 
   it('normalizes pending, done, and failed tasks', () => {

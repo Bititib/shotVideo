@@ -59,6 +59,10 @@ export async function createApp() {
     immutable: true,
     maxAge: '1y',
   }));
+  app.use('/uploads/wx-haidiyue', express.static(path.join(uploadDir, 'wx-haidiyue'), {
+    immutable: true,
+    maxAge: '30d',
+  }));
   app.use('/uploads', express.static(uploadDir));
 
   // OpenAI 兼容代理层（不走 /api 前缀）

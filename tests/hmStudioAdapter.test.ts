@@ -39,6 +39,7 @@ describe('HM Studio adapter', () => {
     expect(form.get('video_resolution')).toBe('1080p');
     expect(form.get('function_mode')).toBe('first_last_frames');
     expect(form.get('first_frame_url')).toBe('https://cdn.example.test/start.jpg');
+    expect(form.has('face_split')).toBe(false);
   });
 
   it('maps multimodal SD2 references to omni materials', () => {

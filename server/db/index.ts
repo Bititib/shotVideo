@@ -43,6 +43,10 @@ try {
       const defaultLimit = Number.isInteger(fallback) && fallback > 0 ? fallback : 10;
       sqlite.exec(`ALTER TABLE channels ADD COLUMN concurrency_limit INTEGER NOT NULL DEFAULT ${defaultLimit}`);
     }
+    if (!channelCols.some((c: any) => c.name === 'face_split_enabled')) {
+      sqlite.exec("ALTER TABLE channels ADD COLUMN face_split_enabled INTEGER NOT NULL DEFAULT 0");
+      sqlite.exec("UPDATE channels SET face_split_enabled = 1 WHERE type = 'wx-haidiyue'");
+    }
   }
 } catch (e) {}
 
