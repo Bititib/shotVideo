@@ -23,6 +23,7 @@ import {
   HM_STUDIO_ADDITIONAL_VIDEO_MODELS,
   HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS,
 } from '../services/hmStudioVideoModels.js';
+import { HM_STUDIO_PRIMARY_VIDEO_MODEL } from '../services/videoFailoverService.js';
 
 /** 生成 sk-xxxx 格式的 Token */
 function generateTokenKey(): string {
@@ -165,6 +166,7 @@ export async function syncModelsFromAPI() {
     { provider: 'google', modelId: 'gemini-3-pro-image-preview', displayName: '🍌 nabanana pro', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) },
+    { provider: 'hmstudio', modelId: HM_STUDIO_PRIMARY_VIDEO_MODEL, displayName: 'HM-Seedance V2.5', description: '720p；支持4-30秒；最多10张图片参考，不支持音频和视频参考', capabilities: JSON.stringify(['video']), isActive: 1 },
     ...HM_STUDIO_ADDITIONAL_VIDEO_MODELS.map(model => ({
       provider: 'hmstudio',
       modelId: model.id,
@@ -225,7 +227,7 @@ export async function syncModelsFromAPI() {
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
   ]);
-  const hmStudioModelIds = new Set(HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS);
+  const hmStudioModelIds = new Set([HM_STUDIO_PRIMARY_VIDEO_MODEL, ...HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS]);
   allVerified = allVerified.map(model => {
     if (newTokenModelIds.has(model.modelId)) return { ...model, provider: 'newtoken' };
     if (hmStudioModelIds.has(model.modelId)) return { ...model, provider: 'hmstudio' };
@@ -1411,7 +1413,7 @@ export async function initDatabase() {
   // 17) 保证 HM Studio 渠道存在。密钥仅从服务器环境变量读取，不写入代码仓库。
   try {
     const hmStudioBaseUrl = 'https://dnyovzpgyokm.sealosbja.site';
-    const requiredHmStudioModels = ['seedance_v2.5', ...HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS];
+    const requiredHmStudioModels = [HM_STUDIO_PRIMARY_VIDEO_MODEL, ...HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS];
     const hmStudioApiKey = env.HM_STUDIO_API_KEY.trim();
     const existingHmStudio = db.select().from(channels).all().find(channel =>
       channel.type === 'hmstudio'

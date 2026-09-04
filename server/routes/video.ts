@@ -311,7 +311,7 @@ const MODEL_META: Record<string, ModelMeta> = {
 };
 
 const DEFAULT_VIDEO_MODELS = [
-  { id: 'seedance_v2.5', name: 'Seedance V2.5（HM Studio）', description: '720p；支持4-30秒；最多10张图片参考，不支持音频和视频参考', maxSeconds: 30, icon: '🎬' },
+  { id: 'seedance_v2.5', name: 'HM-Seedance V2.5', description: '720p；支持4-30秒；最多10张图片参考，不支持音频和视频参考', maxSeconds: 30, icon: '🎬' },
   ...HM_STUDIO_ADDITIONAL_VIDEO_MODELS.map(model => ({
     id: model.id,
     name: model.displayName,

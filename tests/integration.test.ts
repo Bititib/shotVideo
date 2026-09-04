@@ -108,9 +108,13 @@ describe('种子数据完整性', () => {
 
     const v20 = db.select().from(models).where(eq(models.modelId, HM_STUDIO_SEEDANCE_V20_933_MODEL)).get();
     const v25 = db.select().from(models).where(eq(models.modelId, HM_STUDIO_SEEDANCE_V25_101010_MODEL)).get();
+    const primary = db.select().from(models).where(eq(models.modelId, 'seedance_v2.5')).get();
+    expect(primary).toMatchObject({ provider: 'hmstudio', displayName: 'HM-Seedance V2.5' });
     expect(v20).toMatchObject({ provider: 'hmstudio', isActive: 1 });
+    expect(v20?.displayName).toBe('HM-Seedance V2.0 933');
     expect(v20?.description).toContain('卡脸');
     expect(v25).toMatchObject({ provider: 'hmstudio', isActive: 1 });
+    expect(v25?.displayName).toBe('HM-Seedance V2.5 101010');
     expect(v25?.description).toContain('10张图片、10个视频、10段音频');
 
     const v20Pricing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, HM_STUDIO_SEEDANCE_V20_933_MODEL)).get();

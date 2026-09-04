@@ -18,7 +18,7 @@ export type HmStudioVideoModelSpec = {
 export const HM_STUDIO_ADDITIONAL_VIDEO_MODELS: readonly HmStudioVideoModelSpec[] = [
   {
     id: HM_STUDIO_SEEDANCE_V20_933_MODEL,
-    displayName: 'Seedance V2.0 933（HM Studio）',
+    displayName: 'HM-Seedance V2.0 933',
     description: '卡脸；720p；支持4-15秒；最多9张图片、3个视频、3段音频参考；固定按次计费',
     minSeconds: 4,
     maxSeconds: 15,
@@ -31,7 +31,7 @@ export const HM_STUDIO_ADDITIONAL_VIDEO_MODELS: readonly HmStudioVideoModelSpec[
   },
   {
     id: HM_STUDIO_SEEDANCE_V25_101010_MODEL,
-    displayName: 'Seedance V2.5 101010（HM Studio）',
+    displayName: 'HM-Seedance V2.5 101010',
     description: '卡脸；720p；支持4-30秒；最多10张图片、10个视频、10段音频参考；固定按次计费',
     minSeconds: 4,
     maxSeconds: 30,
