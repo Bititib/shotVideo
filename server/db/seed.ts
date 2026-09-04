@@ -19,6 +19,10 @@ import {
   SNUMOM_SD_MINI_MODEL,
   SNUMOM_VIDEO_MODELS,
 } from '../services/snumomWanAdapter.js';
+import {
+  HM_STUDIO_ADDITIONAL_VIDEO_MODELS,
+  HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS,
+} from '../services/hmStudioVideoModels.js';
 
 /** 生成 sk-xxxx 格式的 Token */
 function generateTokenKey(): string {
@@ -161,6 +165,14 @@ export async function syncModelsFromAPI() {
     { provider: 'google', modelId: 'gemini-3-pro-image-preview', displayName: '🍌 nabanana pro', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) },
+    ...HM_STUDIO_ADDITIONAL_VIDEO_MODELS.map(model => ({
+      provider: 'hmstudio',
+      modelId: model.id,
+      displayName: model.displayName,
+      description: model.description,
+      capabilities: JSON.stringify(['video']),
+      isActive: 1,
+    })),
     { provider: 'julun', modelId: 'wan3.0th', displayName: 'Wan 3.0 视频大模型 (wan3.0th)', description: '按秒计费，¥0.14/秒；720p；支持4-30秒文生视频和多参考视频；最多10张图片、5个视频、5段音频公网URL，音频仅支持WAV；支持1:1、16:9、9:16、4:3、3:4', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'julun', modelId: JULUN_MINIMAX_H3_MODEL, displayName: 'MiniMax H3 768p（933）', description: '巨轮 MiniMax H3；固定768p；仅支持10秒或15秒；最多9图、3视频、3音频参考；按秒计费 ¥0.18/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'snumom', modelId: 'wan3.0-video', displayName: 'Wan 3.0 Video（标准版）', description: 'snumom 标准版；支持2-30秒、480P/720P/1080P；最多10图、5视频、5音频参考；支持文生、首帧及首尾帧视频', capabilities: JSON.stringify(['video']), isActive: 1 },
@@ -213,16 +225,20 @@ export async function syncModelsFromAPI() {
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
   ]);
-  allVerified = allVerified.map(model => newTokenModelIds.has(model.modelId)
-    ? { ...model, provider: 'newtoken' }
-    : model);
+  const hmStudioModelIds = new Set(HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS);
+  allVerified = allVerified.map(model => {
+    if (newTokenModelIds.has(model.modelId)) return { ...model, provider: 'newtoken' };
+    if (hmStudioModelIds.has(model.modelId)) return { ...model, provider: 'hmstudio' };
+    return model;
+  });
 
   // 同步或插入模型
   for (const m of allVerified) {
     const existing = db.select().from(models).where(eq(models.modelId, m.modelId)).get();
     const targetIsActive = m.isActive !== undefined ? m.isActive : 1;
     if (existing) {
-      const providerNeedsUpdate = newTokenModelIds.has(m.modelId) && existing.provider !== m.provider;
+      const providerNeedsUpdate = (newTokenModelIds.has(m.modelId) || hmStudioModelIds.has(m.modelId))
+        && existing.provider !== m.provider;
       if (providerNeedsUpdate || existing.displayName !== m.displayName || existing.capabilities !== m.capabilities || existing.description !== (m.description || null)) {
         db.update(models)
           .set({
@@ -980,6 +996,12 @@ export async function initDatabase() {
     { modelPattern: 'veo-3-1', billingType: 'per_second', inputPrice: legacyRate('veo_3_1_rate', 0.20), category: 'video' },
     { modelPattern: 'sd2-c7', billingType: 'per_call', inputPrice: legacyRate('sd2_c7_rate', 0.50), category: 'video' },
     { modelPattern: 'sd2.5', billingType: 'per_call', inputPrice: legacyRate('sd2_5_rate', 3.50), category: 'video' },
+    ...HM_STUDIO_ADDITIONAL_VIDEO_MODELS.map(model => ({
+      modelPattern: model.id,
+      billingType: 'per_call',
+      inputPrice: model.defaultPrice,
+      category: 'video',
+    })),
     { modelPattern: WX_HAIDIYUE_FACE_SPLIT_MODEL, billingType: 'per_call', inputPrice: WX_HAIDIYUE_FACE_SPLIT_PRICE, category: 'video' },
     { modelPattern: 'sd2-c6', billingType: 'per_call', inputPrice: legacyRate('sd2_c6_rate', 2.50), category: 'video' },
     { modelPattern: 'sd2-mini', billingType: 'per_call', inputPrice: legacyRate('sd2_mini_rate', 2.00), category: 'video' },
@@ -1389,6 +1411,7 @@ export async function initDatabase() {
   // 17) 保证 HM Studio 渠道存在。密钥仅从服务器环境变量读取，不写入代码仓库。
   try {
     const hmStudioBaseUrl = 'https://dnyovzpgyokm.sealosbja.site';
+    const requiredHmStudioModels = ['seedance_v2.5', ...HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS];
     const hmStudioApiKey = env.HM_STUDIO_API_KEY.trim();
     const existingHmStudio = db.select().from(channels).all().find(channel =>
       channel.type === 'hmstudio'
@@ -1403,8 +1426,8 @@ export async function initDatabase() {
         type: 'hmstudio',
         baseUrl: hmStudioBaseUrl,
         apiKey: '',
-        supportedModels: '[]',
-        modelMapping: '{}',
+        supportedModels: JSON.stringify(requiredHmStudioModels),
+        modelMapping: JSON.stringify(Object.fromEntries(requiredHmStudioModels.map(modelId => [modelId, modelId]))),
         status: hmStudioApiKey ? 1 : 0,
         priority: 10,
         weight: 1,
@@ -1434,6 +1457,21 @@ export async function initDatabase() {
     }
 
     if (hmStudioChannel) {
+      let supportedModels: string[] = [];
+      let modelMapping: Record<string, string> = {};
+      try { supportedModels = JSON.parse(hmStudioChannel.supportedModels || '[]'); } catch { }
+      try { modelMapping = JSON.parse(hmStudioChannel.modelMapping || '{}'); } catch { }
+      if (!Array.isArray(supportedModels)) supportedModels = [];
+      for (const modelId of requiredHmStudioModels) {
+        if (!supportedModels.includes(modelId)) supportedModels.push(modelId);
+        modelMapping[modelId] = modelId;
+      }
+      db.update(channels).set({
+        supportedModels: JSON.stringify(supportedModels),
+        modelMapping: JSON.stringify(modelMapping),
+        updatedAt: new Date().toISOString(),
+      }).where(eq(channels.id, hmStudioChannel.id)).run();
+
       const legacyKey = hmStudioChannel.apiKey?.trim();
       const candidateKeys = [legacyKey, hmStudioApiKey].filter((key): key is string => Boolean(key));
       const defaultConcurrency = Number.parseInt(process.env.HM_STUDIO_CONCURRENCY || '10', 10) || 10;

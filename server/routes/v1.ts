@@ -57,6 +57,7 @@ import {
   MJ_OVERFLOW_VIDEO_MODEL,
   SI_YUE_TIAN_PRIMARY_VIDEO_MODEL,
 } from '../services/videoFailoverService.js';
+import { validateHmStudioAdditionalVideoInput } from '../services/hmStudioVideoModels.js';
 import {
   findHmStudioOverflowPlan,
   hasHmStudioOverflowChannel,
@@ -1549,6 +1550,20 @@ async function handleVideoCreation(req: Request, res: Response) {
       cleanupFiles(req.files);
       return res.status(400).json({ error: 'sd2.5 supports at most 9 images and does not support video/audio references' });
     }
+  }
+
+  const hmStudioAdditionalValidationError = validateHmStudioAdditionalVideoInput(model, {
+    seconds,
+    resolution,
+    imageCount: image_urls.length,
+    videoCount: video_urls.length,
+    audioCount: audio_urls.length,
+    hasFirstFrame: Boolean(body.first_frame_url),
+    hasLastFrame: Boolean(body.end_frame_url || body.last_frame_url),
+  });
+  if (hmStudioAdditionalValidationError) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: hmStudioAdditionalValidationError });
   }
 
   if (model === WX_HAIDIYUE_FACE_SPLIT_MODEL) {

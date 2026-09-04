@@ -52,6 +52,8 @@ function isFailedVideoHistoryRecord(item: any): boolean {
   return item?.status === 'failed' || item?.status === 'error';
 }
 const JULUN_MINIMAX_H3_MODEL = 'Minimax-H3-768p-933-10s-15s';
+const HM_STUDIO_SEEDANCE_V20_933_MODEL = 'seedance_v2.0-933';
+const HM_STUDIO_SEEDANCE_V25_101010_MODEL = 'seedance_v2.5-101010';
 const VIDEO_HISTORY_PAGE_SIZE = 6;
 function getVideoPlayUrl(url: string | null) {
   if (!url) return '';
@@ -282,6 +284,8 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (isSnumomGrokImagineVideoModel(modelId)) return 7;
   if (modelId === SNUMOM_SD_MINI_MODEL) return 9;
   if (modelId === 'seedance_v2.5') return 10;
+  if (modelId === HM_STUDIO_SEEDANCE_V20_933_MODEL) return 9;
+  if (modelId === HM_STUDIO_SEEDANCE_V25_101010_MODEL) return 10;
   if (modelId === 'xd-seedance-2.5-720p') return 9;
   if (modelId === 'seedance-2.5-c1') return 30;
   if (modelId === 'ad-seedance-2.5-480p') return 30;
@@ -405,6 +409,8 @@ export default function VideoPage() {
     if (isOmniVideoEditModel(m)) return 1;
     if (m === JULUN_MINIMAX_H3_MODEL) return 3;
     if (isWan30Model(m)) return 5;
+    if (m === HM_STUDIO_SEEDANCE_V20_933_MODEL) return 3;
+    if (m === HM_STUDIO_SEEDANCE_V25_101010_MODEL) return 10;
     if (m === 'seedance-2.5-c1') return 10;
     if (m === 'ad-seedance-2.5-480p') return 10;
     if (m === 'td-seedance-2.5-720p') return 10;
@@ -417,6 +423,8 @@ export default function VideoPage() {
     if (m === SNUMOM_SD_MINI_MODEL) return 3;
     if (m === JULUN_MINIMAX_H3_MODEL) return 3;
     if (isWan30Model(m)) return 5;
+    if (m === HM_STUDIO_SEEDANCE_V20_933_MODEL) return 3;
+    if (m === HM_STUDIO_SEEDANCE_V25_101010_MODEL) return 10;
     if (m === 'seedance-2.5-c1') return 10;
     if (m === 'ad-seedance-2.5-480p') return 10;
     if (m === 'td-seedance-2.5-720p') return 10;
@@ -911,7 +919,12 @@ export default function VideoPage() {
       if (!haidiYueRatios.includes(aspectRatio)) setAspectRatio('16:9');
     }
 
-    const isSudashui = selectedModel.startsWith('sd-') || selectedModel.startsWith('seedance-') || selectedModel.includes('sdas-') || selectedModel.startsWith('lg-');
+    const isSudashui = selectedModel.startsWith('sd-')
+      || selectedModel.startsWith('seedance-')
+      || selectedModel === HM_STUDIO_SEEDANCE_V20_933_MODEL
+      || selectedModel === HM_STUDIO_SEEDANCE_V25_101010_MODEL
+      || selectedModel.includes('sdas-')
+      || selectedModel.startsWith('lg-');
     const isSoraV3Pro = selectedModel === 'seedance-2.0-fast';
     const isWan30 = isWan30Model(selectedModel);
     if (!isOmniVideoEditModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30) {

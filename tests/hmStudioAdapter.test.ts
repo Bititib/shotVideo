@@ -61,6 +61,18 @@ describe('HM Studio adapter', () => {
     ]);
   });
 
+  it.each(['seedance_v2.0-933', 'seedance_v2.5-101010'])('passes the new upstream model id through unchanged: %s', (model) => {
+    const form = buildHmStudioVideoForm({
+      model,
+      prompt: 'test',
+      duration: 10,
+      ratio: '16:9',
+      resolution: '720p',
+    });
+
+    expect(form.get('model')).toBe(model);
+  });
+
   it('builds the documented multipart image request', () => {
     const form = buildHmStudioImageForm({
       model: 'HM-Image-5.0Lite',

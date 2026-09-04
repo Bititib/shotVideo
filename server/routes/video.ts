@@ -62,6 +62,11 @@ import {
   SI_YUE_TIAN_PRIMARY_VIDEO_MODEL,
 } from '../services/videoFailoverService.js';
 import {
+  getHmStudioAdditionalVideoModel,
+  HM_STUDIO_ADDITIONAL_VIDEO_MODELS,
+  validateHmStudioAdditionalVideoInput,
+} from '../services/hmStudioVideoModels.js';
+import {
   findHmStudioOverflowPlan,
   hasHmStudioOverflowChannel,
 } from '../services/hmStudioOverflowChannelService.js';
@@ -274,6 +279,11 @@ const MODEL_META: Record<string, ModelMeta> = {
   'vd-seedance-2.5-720p': { series: 'seedance-2.5-720p', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   'td-seedance-2.5-720p': { series: 'mj-seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   'seedance_v2.5': { series: 'hmstudio-seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
+  ...Object.fromEntries(HM_STUDIO_ADDITIONAL_VIDEO_MODELS.map(model => [model.id, {
+    series: 'hmstudio-seedance',
+    allowedSeconds: Array.from({ length: model.maxSeconds - model.minSeconds + 1 }, (_, index) => model.minSeconds + index),
+    requireRef: false,
+  }])),
   'xd-seedance-2.5-720p': { series: 'mj-seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   'seedance-2.0-fast': { series: 'seedance-fast', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'veo-omni-flash': { series: 'veo-omni-flash', allowedSeconds: [10], requireRef: false },
@@ -302,6 +312,13 @@ const MODEL_META: Record<string, ModelMeta> = {
 
 const DEFAULT_VIDEO_MODELS = [
   { id: 'seedance_v2.5', name: 'Seedance V2.5（HM Studio）', description: '720p；支持4-30秒；最多10张图片参考，不支持音频和视频参考', maxSeconds: 30, icon: '🎬' },
+  ...HM_STUDIO_ADDITIONAL_VIDEO_MODELS.map(model => ({
+    id: model.id,
+    name: model.displayName,
+    description: model.description,
+    maxSeconds: model.maxSeconds,
+    icon: '🎬',
+  })),
   { id: 'ad-seedance-2.5-480p', name: 'Seedance 2.5 480p（AD）', description: '支持最多30张图片、10个视频、10段音频参考，不限制人脸，按秒计费 ¥0.35/秒', maxSeconds: 30, icon: '🎬' },
   { id: 'vd-seedance-2.5-480p', name: 'Seedance 2.5 480p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.25/秒', maxSeconds: 30, icon: '🎬' },
   { id: 'vd-seedance-2.5-720p', name: 'Seedance 2.5 720p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.30/秒', maxSeconds: 30, icon: '🎬' },
@@ -638,7 +655,7 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
-    } else if (m.id === 'seedance_v2.5') {
+    } else if (m.id === 'seedance_v2.5' || getHmStudioAdditionalVideoModel(m.id)) {
       rates = {
         '720p': quotePrice(m.id, { resolution: '720p' }).rate,
       };
@@ -816,6 +833,19 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     if (resolution !== '720p') return res.status(400).json({ error: 'seedance_v2.5 仅支持 720p' });
     if (reference_images.length > 10) return res.status(400).json({ error: 'seedance_v2.5 最多支持 10 张参考图片' });
     if (finalVideos.length > 0 || finalAudios.length > 0) return res.status(400).json({ error: 'seedance_v2.5 不支持视频或音频参考' });
+  }
+
+  const hmStudioAdditionalValidationError = validateHmStudioAdditionalVideoInput(model, {
+    seconds: Number(video_length),
+    resolution,
+    imageCount: reference_images.length,
+    videoCount: finalVideos.length,
+    audioCount: finalAudios.length,
+    hasFirstFrame: Boolean(first_frame),
+    hasLastFrame: Boolean(last_frame),
+  });
+  if (hmStudioAdditionalValidationError) {
+    return res.status(400).json({ error: hmStudioAdditionalValidationError });
   }
 
   if (model === 'td-seedance-2.5-720p') {

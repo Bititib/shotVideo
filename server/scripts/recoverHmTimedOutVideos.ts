@@ -54,7 +54,7 @@ function chargeRecoveredTask(record: any, metadata: Record<string, any>, amount:
 
 async function run(): Promise<void> {
   const records = db.select().from(contents)
-    .where(and(eq(contents.type, 'video'), eq(contents.modelId, 'seedance_v2.5'), eq(contents.status, 'failed')))
+    .where(and(eq(contents.type, 'video'), eq(contents.status, 'failed')))
     .orderBy(desc(contents.id))
     .all()
     .filter(isHmTimedOutFailure)

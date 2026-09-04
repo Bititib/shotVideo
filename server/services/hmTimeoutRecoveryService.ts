@@ -1,6 +1,9 @@
+import { HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS } from './hmStudioVideoModels.js';
+
 export type HmTimeoutRecoveryMetadata = Record<string, any>;
 
 const HM_TASK_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const HM_STUDIO_RECOVERABLE_VIDEO_MODELS = new Set(['seedance_v2.5', ...HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS]);
 
 export function parseHmTimeoutRecoveryMetadata(value: unknown): HmTimeoutRecoveryMetadata {
   if (value && typeof value === 'object') return { ...(value as Record<string, any>) };
@@ -16,7 +19,7 @@ export function parseHmTimeoutRecoveryMetadata(value: unknown): HmTimeoutRecover
 export function isHmTimedOutFailure(record: { status?: string; modelId?: string | null; metadata?: unknown }): boolean {
   const metadata = parseHmTimeoutRecoveryMetadata(record.metadata);
   return record.status === 'failed'
-    && record.modelId === 'seedance_v2.5'
+    && HM_STUDIO_RECOVERABLE_VIDEO_MODELS.has(String(record.modelId || ''))
     && HM_TASK_ID_PATTERN.test(String(metadata.videoId || ''))
     && /video generation timed out/i.test(String(metadata.error || ''))
     && !metadata.recoveryChargedAt;

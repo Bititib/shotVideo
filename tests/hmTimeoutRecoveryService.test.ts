@@ -16,6 +16,8 @@ describe('HM timeout recovery', () => {
 
   it('only selects failed HM timeout records with UUID task ids', () => {
     expect(isHmTimedOutFailure({ status: 'failed', modelId: 'seedance_v2.5', metadata })).toBe(true);
+    expect(isHmTimedOutFailure({ status: 'failed', modelId: 'seedance_v2.0-933', metadata })).toBe(true);
+    expect(isHmTimedOutFailure({ status: 'failed', modelId: 'seedance_v2.5-101010', metadata })).toBe(true);
     expect(isHmTimedOutFailure({ status: 'completed', modelId: 'seedance_v2.5', metadata })).toBe(false);
     expect(isHmTimedOutFailure({
       status: 'failed',

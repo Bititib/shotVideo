@@ -72,9 +72,14 @@ const ALL_DURATIONS = [
   { value: 28, label: '28s' }, { value: 29, label: '29s' }, { value: 30, label: '30s' },
 ];
 
+const HM_STUDIO_SEEDANCE_V20_933_MODEL = 'seedance_v2.0-933';
+const HM_STUDIO_SEEDANCE_V25_101010_MODEL = 'seedance_v2.5-101010';
+
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === SNUMOM_SD_MINI_MODEL) return 9;
   if (modelId === 'sd2.5') return 9;
+  if (modelId === HM_STUDIO_SEEDANCE_V20_933_MODEL) return 9;
+  if (modelId === HM_STUDIO_SEEDANCE_V25_101010_MODEL) return 10;
   if (modelId.startsWith('sd-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (modelId === 'seedance-2.0-fast' || modelId === 'seedance-2.0' || modelId === 'sora-v4-fast' || modelId === 'sora-v4-pro') return 4;
   const model = models.find(m => m.id === modelId);
