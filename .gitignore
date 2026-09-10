@@ -6,3 +6,6 @@ data/
 *.db
 *.mp4
 *.webm
+.npm-cache/
+.node-gyp/
+.runtime/

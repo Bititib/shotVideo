@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Film, Copy, ChevronLeft, ChevronRight, Filter, Image, Video, Music, Eye, X, Play, CircleAlert } from 'lucide-react';
+import { Search, Film, Copy, ChevronLeft, ChevronRight, Image, Video, Music, Eye, X, CircleAlert } from 'lucide-react';
 import { adminApi } from '../../api/admin';
 import { getVideoReferenceAssets } from '../../utils/videoPromptRefs';
 import { getContentFailureInfo } from '../../utils/contentFailure';
@@ -84,7 +84,7 @@ export default function ContentsPage() {
   const [previewItem, setPreviewItem] = useState<ContentItem | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewTab, setPreviewTab] = useState<'video' | 'refs'>('video');
-  const pageSize = typeFilter === 'video' ? 6 : 12;
+  const pageSize = 20;
 
   const fetchContents = useCallback(async () => {
     setLoading(true);
@@ -106,6 +106,15 @@ export default function ContentsPage() {
   }, [page, pageSize, search, statusFilter, typeFilter]);
 
   useEffect(() => { fetchContents(); }, [fetchContents]);
+
+  useEffect(() => {
+    if (!previewItem) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPreviewItem(null);
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [previewItem]);
 
   const totalPages = Math.ceil(total / pageSize);
 
@@ -155,15 +164,52 @@ export default function ContentsPage() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'completed': case 'success':
-        return <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">成功</span>;
-      case 'processing':
-        return <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse">生成中</span>;
+        return <span className="inline-flex min-w-12 justify-center rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-400">成功</span>;
+      case 'processing': case 'queued':
+        return <span className="inline-flex min-w-12 justify-center rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-400">生成中</span>;
       case 'failed': case 'error':
-        return <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-500/10 text-red-400 border border-red-500/20">失败</span>;
+        return <span className="inline-flex min-w-12 justify-center rounded-full border border-red-500/20 bg-red-500/10 px-2 py-1 text-xs font-medium text-red-400">失败</span>;
       default:
-        return <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-zinc-500/10 text-zinc-400 border border-zinc-500/20">{status}</span>;
+        return <span className="inline-flex min-w-12 justify-center rounded-full border border-zinc-500/20 bg-zinc-500/10 px-2 py-1 text-xs font-medium text-zinc-400">{status || '未知'}</span>;
     }
   };
+
+  const getTypeLabel = (type: string) => {
+    if (type === 'video') return '视频';
+    if (type === 'image') return '图片';
+    if (type === 'analysis') return '分析';
+    if (type === 'audio') return '音频';
+    return type || '未知';
+  };
+
+  const getRowChannel = (item: ContentItem, meta: Record<string, any>, routingInfo: AdminRoutingInfo | null) => {
+    if (routingInfo) return routingInfo.actualChannel;
+    const model = String(item.modelId || meta.model || '');
+    const actualChannel = String(meta.actualChannel || '');
+    if (actualChannel && actualChannel !== 'openai') return channelDisplayName(actualChannel);
+    if (model === 'wan3.0th' || model.startsWith('Minimax-H3-768p')) return 'Julun';
+    if (model === 'sd2.5-haidiyue-face') return 'wx-海底月';
+    if (model === 'sd2.5') return '四月天';
+    if (model.startsWith('seedance_v2.')) return 'HM Studio';
+    return channelDisplayName(String(meta.upstream_channel || actualChannel || ''));
+  };
+
+  const getUpstreamTaskId = (meta: Record<string, any>) => {
+    const value = meta.videoId
+      || meta.requestId
+      || meta.request_id
+      || meta.taskId
+      || meta.task_id;
+
+    if (typeof value !== 'string' && typeof value !== 'number') return '';
+    return String(value).trim();
+  };
+
+  const getSpecification = (meta: Record<string, any>) => [
+    meta.seconds ? `${meta.seconds}秒` : '',
+    meta.resolution || '',
+    meta.aspect_ratio || meta.ratio || '',
+  ].filter(Boolean).join(' · ') || '—';
 
   return (
     <div className="p-6 space-y-6">
@@ -174,7 +220,7 @@ export default function ContentsPage() {
             <Film className="w-5 h-5 text-indigo-400" />
             内容管理
           </h1>
-          <p className="text-xs text-zinc-500 mt-1">查看所有用户生成的内容，支持一键复刻</p>
+          <p className="text-sm text-zinc-500 mt-1">以任务列表查看所有用户内容，点击任务可查看视频详情</p>
         </div>
         <div className="text-xs text-zinc-500">共 {total} 条记录</div>
       </div>
@@ -217,7 +263,7 @@ export default function ContentsPage() {
         </select>
       </div>
 
-      {/* Content Grid */}
+      {/* Content Table */}
       {loading ? (
         <div className="flex items-center justify-center h-64 text-zinc-500">
           <div className="animate-spin w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full" />
@@ -228,147 +274,109 @@ export default function ContentsPage() {
           <p className="text-sm">暂无内容</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {items.map(item => {
-            const meta = parseMeta(item.metadata);
-            const routingInfo = getAdminRoutingInfo(item, meta);
-            const { refImgs, refVids, refAuds } = parseRefAssets(item.metadata);
-            const referenceCounts = meta.referenceAssetCounts || {};
-            const refImageCount = Math.max(refImgs.length, Number(referenceCounts.images) || 0);
-            const refVideoCount = Math.max(refVids.length, Number(referenceCounts.videos) || 0);
-            const refAudioCount = Math.max(refAuds.length, Number(referenceCounts.audios) || 0);
-            const isImage = item.type === 'image';
-            const hasResult = Boolean(item.resultUrl && item.resultUrl.trim() !== '');
+        <div className="overflow-hidden rounded-xl border border-white/10 bg-white/[0.02] shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1360px] border-collapse text-left">
+              <thead className="bg-black/20 text-xs text-zinc-500">
+                <tr className="border-b border-white/10">
+                  <th className="px-4 py-3 font-medium">时间</th>
+                  <th className="px-3 py-3 font-medium">状态</th>
+                  <th className="px-3 py-3 font-medium">渠道</th>
+                  <th className="px-3 py-3 font-medium">模型</th>
+                  <th className="px-3 py-3 font-medium">任务</th>
+                  <th className="px-3 py-3 font-medium">金额</th>
+                  <th className="px-3 py-3 font-medium">用户</th>
+                  <th className="px-3 py-3 font-medium">规格</th>
+                  <th className="px-3 py-3 font-medium">上游任务 ID</th>
+                  <th className="px-3 py-3 font-medium">本地记录 ID</th>
+                  <th className="px-4 py-3 text-right font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/[0.07]">
+                {items.map(item => {
+                  const meta = parseMeta(item.metadata);
+                  const routingInfo = getAdminRoutingInfo(item, meta);
+                  const upstreamTaskId = getUpstreamTaskId(meta);
+                  const title = item.title || item.inputText || '(无提示词)';
+                  const isVideo = item.type === 'video';
 
-            return (
-              <div key={item.id} className="group bg-white/[0.03] border border-white/5 rounded-xl overflow-hidden hover:border-white/10 transition-all">
-                {/* Asset Preview / Thumbnail */}
-                <div
-                  className="relative aspect-video bg-black/50 cursor-pointer"
-                  onClick={() => { void openPreview(item); }}
-                >
-                  {hasResult && isImage ? (
-                    <img
-                      src={item.resultUrl!}
-                      alt={item.title || '生成图片'}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                    />
-                  ) : hasResult ? (
-                    <video
-                      src={getVideoPlayUrl(item.resultUrl)}
-                      className="w-full h-full object-cover"
-                      muted
-                      preload="none"
-                      onMouseEnter={(e) => (e.target as HTMLVideoElement).play().catch(() => {})}
-                      onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-zinc-600">
-                      {isImage ? <Image className="w-8 h-8" /> : <Film className="w-8 h-8" />}
-                    </div>
-                  )}
-                  {hasResult && (
-                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/30">
-                      {isImage ? <Eye className="w-8 h-8 text-white/80" /> : <Play className="w-8 h-8 text-white/80" />}
-                    </div>
-                  )}
-                  {/* Status badge */}
-                  <div className="absolute top-2 right-2">
-                    {getStatusBadge(item.status)}
-                  </div>
-                  {routingInfo && (
-                    <div className={`absolute top-2 left-2 rounded-full border px-2 py-0.5 text-[10px] font-medium backdrop-blur-sm ${routingInfo.routed
-                      ? 'border-cyan-400/30 bg-cyan-500/20 text-cyan-200'
-                      : 'border-emerald-400/25 bg-emerald-500/15 text-emerald-200'}`}>
-                      {routingInfo.routed ? `已分流 · ${routingInfo.actualChannel}` : '未分流 · HM Studio'}
-                    </div>
-                  )}
-                  {/* Duration & resolution */}
-                  {!isImage && meta.seconds && (
-                    <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
-                      <span className="px-1.5 py-0.5 rounded bg-black/60 text-[10px] text-white/80">{meta.seconds}秒</span>
-                      {meta.resolution && <span className="px-1.5 py-0.5 rounded bg-black/60 text-[10px] text-white/80">{meta.resolution}</span>}
-                    </div>
-                  )}
-                </div>
-
-                {/* Info */}
-                <div className="p-3 space-y-2">
-                  {/* User & Model */}
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-indigo-400 truncate max-w-[120px]">
-                      {item.userName || item.userEmail || `用户#${item.userId}`}
-                      {meta.source === 'api' ? ' · API' : ''}
-                    </span>
-                    <span className="text-zinc-500 truncate max-w-[120px]">{item.modelId || '未知模型'}</span>
-                  </div>
-
-                  {/* Prompt */}
-                  <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed" title={item.title || item.inputText || ''}>
-                    {item.title || item.inputText || '(无提示词)'}
-                  </p>
-
-                  {/* Reference assets summary */}
-                  <div className="flex items-center gap-2 text-[10px] text-zinc-500">
-                    {refImageCount > 0 && (
-                      <span className="flex items-center gap-0.5">
-                        <Image className="w-3 h-3" />{refImageCount}图
-                      </span>
-                    )}
-                    {refVideoCount > 0 && (
-                      <span className="flex items-center gap-0.5">
-                        <Video className="w-3 h-3" />{refVideoCount}视频
-                      </span>
-                    )}
-                    {refAudioCount > 0 && (
-                      <span className="flex items-center gap-0.5">
-                        <Music className="w-3 h-3" />{refAudioCount}音频
-                      </span>
-                    )}
-                    <span className="ml-auto text-amber-400/80">¥{item.cost.toFixed(2)}</span>
-                  </div>
-
-                  {/* Reference image thumbnails */}
-                  {refImgs.length > 0 && (
-                    <div className="flex gap-1 overflow-x-auto pb-1">
-                      {refImgs.slice(0, 5).map((img, i) => (
-                        <img key={i} src={img} alt={`ref_${i}`} className="w-8 h-8 rounded object-cover shrink-0 border border-white/10" loading="lazy" decoding="async" />
-                      ))}
-                      {refImgs.length > 5 && (
-                        <div className="w-8 h-8 rounded bg-white/5 flex items-center justify-center text-[10px] text-zinc-500 shrink-0">
-                          +{refImgs.length - 5}
+                  return (
+                    <tr key={item.id} className="group transition-colors hover:bg-white/[0.04]">
+                      <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-400">
+                        {new Date(item.createdAt).toLocaleString('zh-CN', {
+                          month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+                        })}
+                      </td>
+                      <td className="px-3 py-3">{getStatusBadge(item.status)}</td>
+                      <td className="px-3 py-3">
+                        <div className="text-sm font-medium text-zinc-200">{getRowChannel(item, meta, routingInfo)}</div>
+                        {routingInfo?.routed && <div className="mt-0.5 text-xs text-cyan-400">已分流</div>}
+                      </td>
+                      <td className="max-w-52 px-3 py-3 text-sm text-zinc-200">
+                        <span className="block truncate" title={item.modelId || '未知模型'}>{item.modelId || '未知模型'}</span>
+                      </td>
+                      <td className="max-w-72 px-3 py-3">
+                        <div className="text-sm font-medium text-zinc-200">{getTypeLabel(item.type)}{meta.source === 'api' ? ' · API' : ''}</div>
+                        <div className="mt-0.5 truncate text-xs text-zinc-500" title={title}>{title}</div>
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3 text-sm font-semibold text-amber-400">¥{item.cost.toFixed(2)}</td>
+                      <td className="max-w-44 px-3 py-3 text-sm text-zinc-400">
+                        <span className="block truncate" title={item.userName || item.userEmail || `用户#${item.userId}`}>
+                          {item.userName || item.userEmail || `用户#${item.userId}`}
+                        </span>
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3 text-sm text-zinc-400">{getSpecification(meta)}</td>
+                      <td className="max-w-40 px-3 py-3">
+                        {upstreamTaskId ? (
+                          <button
+                            type="button"
+                            onClick={() => { void openPreview(item); }}
+                            className="block max-w-36 truncate font-mono text-xs text-violet-400 transition-colors hover:text-violet-300 hover:underline"
+                            title={upstreamTaskId}
+                            aria-label={`查看上游任务 ${upstreamTaskId} 详情`}
+                          >
+                            {upstreamTaskId}
+                          </button>
+                        ) : (
+                          <span className="text-xs text-zinc-500">未返回</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3">
+                        <button
+                          type="button"
+                          onClick={() => { void openPreview(item); }}
+                          className="font-mono text-xs text-zinc-400 transition-colors hover:text-violet-300 hover:underline"
+                          aria-label={`查看本地记录 ${item.id} 详情`}
+                        >
+                          #{item.id}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => { void openPreview(item); }}
+                            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-indigo-500/20 bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-400 transition-colors hover:bg-indigo-500/20 hover:text-indigo-300"
+                          >
+                            <Eye className="h-3.5 w-3.5" /> {isVideo ? '视频详情' : '查看详情'}
+                          </button>
+                          {isVideo && (
+                            <button
+                              type="button"
+                              onClick={() => { void handleReplicate(item); }}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-zinc-400 transition-colors hover:bg-white/10 hover:text-white"
+                            >
+                              <Copy className="h-3.5 w-3.5" /> 复刻
+                            </button>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-2 pt-1">
-                    <button
-                      onClick={() => { void openPreview(item); }}
-                      className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs text-zinc-400 hover:text-white transition-colors"
-                    >
-                      <Eye className="w-3 h-3" /> 查看
-                    </button>
-                    {!isImage && (
-                      <button
-                        onClick={() => { void handleReplicate(item); }}
-                        className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-xs text-indigo-400 hover:text-indigo-300 transition-colors border border-indigo-500/20"
-                      >
-                        <Copy className="w-3 h-3" /> 复刻
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Time */}
-                  <div className="text-[10px] text-zinc-600 text-right">
-                    {new Date(item.createdAt).toLocaleString('zh-CN')}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -398,11 +406,11 @@ export default function ContentsPage() {
       {/* Preview Modal */}
       {previewItem && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6" onClick={() => setPreviewItem(null)}>
-          <div className="bg-[#111] border border-white/10 rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+          <div role="dialog" aria-modal="true" aria-labelledby="content-detail-title" className="bg-[#111] border border-white/10 rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             {/* Modal header */}
             <div className="flex items-center justify-between p-4 border-b border-white/5">
               <div className="flex items-center gap-3">
-                <h3 className="text-sm font-medium text-white">内容详情 #{previewItem.id}</h3>
+                <h3 id="content-detail-title" className="text-sm font-medium text-white">{previewItem.type === 'video' ? '视频详情' : '内容详情'} #{previewItem.id}</h3>
                 {getStatusBadge(previewItem.status)}
                 {previewLoading && <span className="text-[10px] text-zinc-500">正在按需加载完整素材…</span>}
               </div>
@@ -510,6 +518,14 @@ export default function ContentsPage() {
                     <div className="bg-white/[0.03] rounded-lg p-3">
                       <div className="text-zinc-500 mb-1">时间</div>
                       <div className="text-white">{new Date(previewItem.createdAt).toLocaleString('zh-CN')}</div>
+                    </div>
+                    <div className="bg-white/[0.03] rounded-lg p-3">
+                      <div className="text-zinc-500 mb-1">上游任务 ID</div>
+                      <div className="break-all font-mono text-white">{getUpstreamTaskId(parseMeta(previewItem.metadata)) || '未返回'}</div>
+                    </div>
+                    <div className="bg-white/[0.03] rounded-lg p-3">
+                      <div className="text-zinc-500 mb-1">本地记录 ID</div>
+                      <div className="break-all font-mono text-white">#{previewItem.id}</div>
                     </div>
                     {(() => {
                       const m = parseMeta(previewItem.metadata);
