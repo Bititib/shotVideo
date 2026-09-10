@@ -494,7 +494,26 @@ export class ContentService {
     if (userId) conditions.push(eq(contents.userId, userId));
     if (modelId) conditions.push(eq(contents.modelId, modelId));
     if (status) conditions.push(eq(contents.status, status));
-    if (search) conditions.push(like(contents.title, `%${search}%`));
+    const normalizedSearch = search?.trim();
+    if (normalizedSearch) {
+      const pattern = `%${normalizedSearch}%`;
+      const searchConditions: any[] = [
+        like(contents.title, pattern),
+        like(contents.inputText, pattern),
+        like(contents.modelId, pattern),
+        // Upstream task IDs are persisted in metadata under videoId/requestId/taskId variants.
+        // Matching serialized metadata also covers historical channel-specific field names.
+        like(contents.metadata, pattern),
+      ];
+      const localIdMatch = normalizedSearch.match(/^#?(\d+)$/);
+      if (localIdMatch) {
+        const localId = Number(localIdMatch[1]);
+        if (Number.isSafeInteger(localId) && localId > 0) {
+          searchConditions.push(eq(contents.id, localId));
+        }
+      }
+      conditions.push(or(...searchConditions)!);
+    }
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
