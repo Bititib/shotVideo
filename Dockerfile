@@ -3,6 +3,9 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
+# better-sqlite3 在 Alpine 中可能需要从源码编译，构建阶段同样需要 node-gyp 工具链
+RUN apk add --no-cache python3 make g++
+
 # 先复制依赖文件，利用 Docker 缓存层
 COPY package.json package-lock.json ./
 RUN npm ci
