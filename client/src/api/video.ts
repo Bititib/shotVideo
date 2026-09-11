@@ -31,6 +31,7 @@ export interface VideoGenerateParams {
   audio_urls?: string[];        // 多音频数组
   first_frame?: string;         // base64 首帧图片
   last_frame?: string;          // base64 尾帧图片
+  face?: boolean;               // HM Studio 人脸处理（默认 false）
   compliance_enabled?: boolean; // 是否开启合规素材/过人脸
   compliance_mode?: string;    // 合规素材风格 (colored-pencil | watercolor | fishnet | grid)
 }

@@ -1,5 +1,6 @@
 export const HM_STUDIO_SEEDANCE_V20_933_MODEL = 'seedance_v2.0-933';
 export const HM_STUDIO_SEEDANCE_V25_101010_MODEL = 'seedance_v2.5-101010';
+export const HM_STUDIO_SEEDANCE_V25_301010_MODEL = 'seedance_v2.5-301010';
 
 export type HmStudioVideoModelSpec = {
   id: string;
@@ -13,6 +14,7 @@ export type HmStudioVideoModelSpec = {
   maxAudios: number;
   defaultPrice: number;
   faceRestricted: true;
+  supportsDedicatedFrames: boolean;
 };
 
 export const HM_STUDIO_ADDITIONAL_VIDEO_MODELS: readonly HmStudioVideoModelSpec[] = [
@@ -28,6 +30,7 @@ export const HM_STUDIO_ADDITIONAL_VIDEO_MODELS: readonly HmStudioVideoModelSpec[
     maxAudios: 3,
     defaultPrice: 0.50,
     faceRestricted: true,
+    supportsDedicatedFrames: true,
   },
   {
     id: HM_STUDIO_SEEDANCE_V25_101010_MODEL,
@@ -41,6 +44,21 @@ export const HM_STUDIO_ADDITIONAL_VIDEO_MODELS: readonly HmStudioVideoModelSpec[
     maxAudios: 10,
     defaultPrice: 0.70,
     faceRestricted: true,
+    supportsDedicatedFrames: true,
+  },
+  {
+    id: HM_STUDIO_SEEDANCE_V25_301010_MODEL,
+    displayName: 'HM-Seedance V2.5 301010',
+    description: '卡脸；720p；支持4-30秒；最多30张图片、10个视频、10段音频参考；固定按次计费',
+    minSeconds: 4,
+    maxSeconds: 30,
+    resolution: '720p',
+    maxImages: 30,
+    maxVideos: 10,
+    maxAudios: 10,
+    defaultPrice: 5.50,
+    faceRestricted: true,
+    supportsDedicatedFrames: true,
   },
 ] as const;
 
@@ -70,7 +88,7 @@ export function validateHmStudioAdditionalVideoInput(modelId: string, input: {
   if (input.imageCount > spec.maxImages || input.videoCount > spec.maxVideos || input.audioCount > spec.maxAudios) {
     return `${modelId} 最多支持 ${spec.maxImages} 张图片、${spec.maxVideos} 个视频和 ${spec.maxAudios} 段音频参考`;
   }
-  if (input.hasFirstFrame || input.hasLastFrame) {
+  if (!spec.supportsDedicatedFrames && (input.hasFirstFrame || input.hasLastFrame)) {
     return `${modelId} 不支持首尾帧专用参数，请使用普通参考图片`;
   }
   return null;

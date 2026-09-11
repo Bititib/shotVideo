@@ -54,6 +54,14 @@ function isFailedVideoHistoryRecord(item: any): boolean {
 const JULUN_MINIMAX_H3_MODEL = 'Minimax-H3-768p-933-10s-15s';
 const HM_STUDIO_SEEDANCE_V20_933_MODEL = 'seedance_v2.0-933';
 const HM_STUDIO_SEEDANCE_V25_101010_MODEL = 'seedance_v2.5-101010';
+const HM_STUDIO_SEEDANCE_V25_301010_MODEL = 'seedance_v2.5-301010';
+const HM_STUDIO_VIDEO_MODEL_IDS = new Set([
+  'seedance_v2.5',
+  HM_STUDIO_SEEDANCE_V20_933_MODEL,
+  HM_STUDIO_SEEDANCE_V25_101010_MODEL,
+  HM_STUDIO_SEEDANCE_V25_301010_MODEL,
+]);
+const isHmStudioVideoModel = (modelId: string) => HM_STUDIO_VIDEO_MODEL_IDS.has(modelId);
 const VIDEO_HISTORY_PAGE_SIZE = 6;
 function getVideoPlayUrl(url: string | null) {
   if (!url) return '';
@@ -93,6 +101,7 @@ export const isComicDramaModel = (modelId: string) => {
 };
 
 const GROUP_ORDER = [
+  'HM 系列',
   'Veo (Google) 系列',
   'Seedance 系列',
   'Sora 系列',
@@ -104,6 +113,7 @@ const GROUP_ORDER = [
 
 const getModelGroup = (modelId: string) => {
   const id = modelId.toLowerCase();
+  if (isHmStudioVideoModel(modelId)) return 'HM 系列';
   if (id.includes('veo') || id.includes('omni-flash')) return 'Veo (Google) 系列';
   if (id.includes('minimax')) return 'MiniMax 系列';
   if (id === SNUMOM_SD_MINI_MODEL) return 'Seedance 系列';
@@ -286,6 +296,7 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'seedance_v2.5') return 10;
   if (modelId === HM_STUDIO_SEEDANCE_V20_933_MODEL) return 9;
   if (modelId === HM_STUDIO_SEEDANCE_V25_101010_MODEL) return 10;
+  if (modelId === HM_STUDIO_SEEDANCE_V25_301010_MODEL) return 30;
   if (modelId === 'xd-seedance-2.5-720p') return 9;
   if (modelId === 'seedance-2.5-c1') return 30;
   if (modelId === 'ad-seedance-2.5-480p') return 30;
@@ -411,6 +422,7 @@ export default function VideoPage() {
     if (isWan30Model(m)) return 5;
     if (m === HM_STUDIO_SEEDANCE_V20_933_MODEL) return 3;
     if (m === HM_STUDIO_SEEDANCE_V25_101010_MODEL) return 10;
+    if (m === HM_STUDIO_SEEDANCE_V25_301010_MODEL) return 10;
     if (m === 'seedance-2.5-c1') return 10;
     if (m === 'ad-seedance-2.5-480p') return 10;
     if (m === 'td-seedance-2.5-720p') return 10;
@@ -425,6 +437,7 @@ export default function VideoPage() {
     if (isWan30Model(m)) return 5;
     if (m === HM_STUDIO_SEEDANCE_V20_933_MODEL) return 3;
     if (m === HM_STUDIO_SEEDANCE_V25_101010_MODEL) return 10;
+    if (m === HM_STUDIO_SEEDANCE_V25_301010_MODEL) return 10;
     if (m === 'seedance-2.5-c1') return 10;
     if (m === 'ad-seedance-2.5-480p') return 10;
     if (m === 'td-seedance-2.5-720p') return 10;
@@ -581,6 +594,7 @@ export default function VideoPage() {
   // 人脸合规参数状态 (针对四月天/Seedance系列模型)
   const [complianceEnabled, setComplianceEnabled] = useState(false);
   const [complianceMode, setComplianceMode] = useState<string>('colored-pencil');
+  const [hmFaceEnabled, setHmFaceEnabled] = useState(false);
 
   const handleConfirmSlice = (sliced: string[]) => {
     if (slicingImageIndex !== null) {
@@ -923,6 +937,7 @@ export default function VideoPage() {
       || selectedModel.startsWith('seedance-')
       || selectedModel === HM_STUDIO_SEEDANCE_V20_933_MODEL
       || selectedModel === HM_STUDIO_SEEDANCE_V25_101010_MODEL
+      || selectedModel === HM_STUDIO_SEEDANCE_V25_301010_MODEL
       || selectedModel.includes('sdas-')
       || selectedModel.startsWith('lg-');
     const isSoraV3Pro = selectedModel === 'seedance-2.0-fast';
@@ -1239,6 +1254,7 @@ export default function VideoPage() {
         audio_urls: referenceAudios.length > 0 ? referenceAudios : undefined,
         first_frame: firstFrame || undefined,
         last_frame: lastFrame || undefined,
+        face: isHmStudioVideoModel(selectedModel) ? hmFaceEnabled : undefined,
         compliance_enabled: ['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(selectedModel) ? complianceEnabled : undefined,
         compliance_mode: (['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(selectedModel) && complianceEnabled) ? complianceMode : undefined,
       },
@@ -1815,6 +1831,23 @@ export default function VideoPage() {
                         </div>
                       )}
                     </div>
+                  )}
+                  {isHmStudioVideoModel(selectedModel) && (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={hmFaceEnabled}
+                      onClick={() => setHmFaceEnabled(current => !current)}
+                      className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.06] rounded-lg px-2.5 py-1 text-[11px] text-zinc-300 border border-white/5 transition-all"
+                      title="关闭时向 HM Studio 发送 face=false；开启时发送 face=true"
+                    >
+                      <span className={`relative w-7 h-4 rounded-full transition-colors ${hmFaceEnabled ? 'bg-indigo-600' : 'bg-zinc-700'}`}>
+                        <span className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${hmFaceEnabled ? 'translate-x-3' : 'translate-x-0'}`} />
+                      </span>
+                      <span className={hmFaceEnabled ? 'text-indigo-300 font-medium' : 'text-zinc-400'}>
+                        人脸处理：{hmFaceEnabled ? '开启' : '关闭'}
+                      </span>
+                    </button>
                   )}
                 </div>
 

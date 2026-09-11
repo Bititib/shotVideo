@@ -13,6 +13,7 @@ export type HmStudioVideoOptions = {
   lastFrame?: string;
   functionMode?: string;
   upstreamChannel?: string;
+  face?: unknown;
 };
 
 export type NormalizedHmStudioTask = {
@@ -33,7 +34,19 @@ export type HmStudioImageOptions = {
   sampleStrength?: number;
   intelligentRatio?: boolean;
   upstreamChannel?: string;
+  face?: unknown;
 };
+
+export function normalizeHmStudioFace(value: unknown, fallback = false): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  }
+  return fallback;
+}
 
 export function isHmStudioChannel(channel: { type?: string } | null | undefined): boolean {
   return channel?.type === HM_STUDIO_CHANNEL_TYPE;
@@ -101,6 +114,11 @@ function replaceReferenceMarkers(prompt: string): string {
     .replace(/\[ref_audio\]/g, '@Audio1');
 }
 
+function supportsHmStudioOmniReference(model: string): boolean {
+  return /SD2\.0(?:Fast)?/i.test(model)
+    || /^seedance_v2\.(?:0|5)(?:[-\u2014]\d+)?$/i.test(model);
+}
+
 function appendOmniReferences(
   form: FormData,
   images: string[],
@@ -136,7 +154,7 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
   let functionMode = options.functionMode || '';
   if (!functionMode) {
     if (videos.length > 0 || audios.length > 0 || images.length > 2) {
-      functionMode = /SD2\.0(?:Fast)?/i.test(options.model) ? 'omni_reference' : 'multi_frame';
+      functionMode = supportsHmStudioOmniReference(options.model) ? 'omni_reference' : 'multi_frame';
     } else if (explicitFrames.length > 0 || images.length > 0) {
       functionMode = 'first_last_frames';
     }
@@ -148,6 +166,9 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
   form.append('duration', String(options.duration));
   form.append('ratio', options.ratio);
   form.append('video_resolution', options.resolution);
+  // Keep the historical behavior when omitted, while allowing callers to
+  // explicitly enable HM Studio's face processing.
+  form.append('face', String(normalizeHmStudioFace(options.face)));
   if (functionMode) form.append('function_mode', functionMode);
   if (options.upstreamChannel) form.append('channel', options.upstreamChannel);
 
@@ -179,6 +200,7 @@ export function buildHmStudioImageForm(options: HmStudioImageOptions): FormData 
   form.append('prompt', options.prompt);
   form.append('ratio', options.ratio);
   form.append('resolution', options.resolution || '2k');
+  form.append('face', String(normalizeHmStudioFace(options.face)));
   if (options.negativePrompt) form.append('negative_prompt', options.negativePrompt);
   if (options.sampleStrength !== undefined) form.append('sample_strength', String(options.sampleStrength));
   if (options.intelligentRatio !== undefined) form.append('intelligent_ratio', String(options.intelligentRatio));

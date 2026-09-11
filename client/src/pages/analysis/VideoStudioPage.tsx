@@ -74,12 +74,21 @@ const ALL_DURATIONS = [
 
 const HM_STUDIO_SEEDANCE_V20_933_MODEL = 'seedance_v2.0-933';
 const HM_STUDIO_SEEDANCE_V25_101010_MODEL = 'seedance_v2.5-101010';
+const HM_STUDIO_SEEDANCE_V25_301010_MODEL = 'seedance_v2.5-301010';
+const HM_STUDIO_VIDEO_MODEL_IDS = new Set([
+  'seedance_v2.5',
+  HM_STUDIO_SEEDANCE_V20_933_MODEL,
+  HM_STUDIO_SEEDANCE_V25_101010_MODEL,
+  HM_STUDIO_SEEDANCE_V25_301010_MODEL,
+]);
+const isHmStudioVideoModel = (modelId: string) => HM_STUDIO_VIDEO_MODEL_IDS.has(modelId);
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === SNUMOM_SD_MINI_MODEL) return 9;
   if (modelId === 'sd2.5') return 9;
   if (modelId === HM_STUDIO_SEEDANCE_V20_933_MODEL) return 9;
   if (modelId === HM_STUDIO_SEEDANCE_V25_101010_MODEL) return 10;
+  if (modelId === HM_STUDIO_SEEDANCE_V25_301010_MODEL) return 30;
   if (modelId.startsWith('sd-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (modelId === 'seedance-2.0-fast' || modelId === 'seedance-2.0' || modelId === 'sora-v4-fast' || modelId === 'sora-v4-pro') return 4;
   const model = models.find(m => m.id === modelId);
@@ -97,6 +106,7 @@ export default function VideoStudioPage() {
   const [prompt, setPrompt] = useState('');
   const [duration, setDuration] = useState(6);
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
+  const [hmFaceEnabled, setHmFaceEnabled] = useState(false);
   const maxRefs = getMaxReferenceImages(selectedModel, models);
 
   useEffect(() => {
@@ -222,7 +232,7 @@ export default function VideoStudioPage() {
     if (!activeProjectId) { createProject(); return; }
     setIsGenerating(true); setProgress(0); setError(null); setStatusMsg(isExtendMode ? '续写生成中...' : '生成中...');
     const ctrl = generateVideo(
-      { prompt: prompt.trim(), model: selectedModel, aspect_ratio: project?.aspectRatio || '16:9', video_length: duration, resolution: project?.resolution || '720p', reference_images: referenceImages.length > 0 ? referenceImages : undefined },
+      { prompt: prompt.trim(), model: selectedModel, aspect_ratio: project?.aspectRatio || '16:9', video_length: duration, resolution: project?.resolution || '720p', reference_images: referenceImages.length > 0 ? referenceImages : undefined, face: isHmStudioVideoModel(selectedModel) ? hmFaceEnabled : undefined },
       (ev: VideoSSEEvent) => {
         switch (ev.type) {
           case 'queue': setStatusMsg(ev.message || `HM Studio 排队中：前方 ${Math.max(0, (ev.position || 1) - 1)} 项`); break;
@@ -242,7 +252,7 @@ export default function VideoStudioPage() {
       },
     );
     abortRef.current = ctrl;
-  }, [prompt, selectedModel, duration, isGenerating, referenceImages, activeProjectId, project, isExtendMode, segments.length]);
+  }, [prompt, selectedModel, duration, isGenerating, referenceImages, activeProjectId, project, isExtendMode, segments.length, hmFaceEnabled]);
 
   const startExtend = useCallback(async () => {
     const last = segments[segments.length - 1];
@@ -439,6 +449,19 @@ export default function VideoStudioPage() {
               <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1 bg-white/[0.03] hover:bg-white/[0.05] rounded-lg px-2 py-1.5 text-[11px] text-zinc-300 border border-transparent hover:border-white/10">
                 <Upload className="w-3 h-3 text-indigo-400" /> 参考图 ({referenceImages.length}/{maxRefs})
               </button>
+              {isHmStudioVideoModel(selectedModel) && (
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={hmFaceEnabled}
+                  onClick={() => setHmFaceEnabled(current => !current)}
+                  className="flex items-center gap-1.5 bg-white/[0.03] hover:bg-white/[0.05] rounded-lg px-2 py-1.5 text-[11px] text-zinc-300 border border-transparent hover:border-white/10"
+                  title="关闭时发送 face=false；开启时发送 face=true"
+                >
+                  <span className={`w-2 h-2 rounded-full ${hmFaceEnabled ? 'bg-indigo-400' : 'bg-zinc-600'}`} />
+                  人脸处理：{hmFaceEnabled ? '开启' : '关闭'}
+                </button>
+              )}
               <div className="group relative flex items-center">
                 <HelpCircle className="w-3.5 h-3.5 text-zinc-500 hover:text-zinc-300 transition-colors cursor-help" />
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-zinc-950 border border-white/10 rounded-xl shadow-2xl text-[10px] text-zinc-400 leading-normal pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-50">

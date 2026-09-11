@@ -20,14 +20,30 @@ export function detectVideoCodec(filePath: string): string {
   }
 }
 
+export function originalVideoPathFor(filePath: string): string {
+  const extension = path.extname(filePath);
+  return extension
+    ? `${filePath.slice(0, -extension.length)}.original${extension}`
+    : `${filePath}.original`;
+}
+
+export function preferredVideoDownloadPath(filePath: string): string {
+  const originalPath = originalVideoPathFor(filePath);
+  return fs.existsSync(originalPath) && fs.statSync(originalPath).isFile()
+    ? originalPath
+    : filePath;
+}
+
 async function ensureBrowserCompatibleVideo(filePath: string): Promise<void> {
   if (detectVideoCodec(filePath) !== 'hevc') return;
 
+  const originalPath = originalVideoPathFor(filePath);
+  if (!fs.existsSync(originalPath)) fs.copyFileSync(filePath, originalPath);
   const transcodedPath = `${filePath}.${crypto.randomUUID()}.h264.mp4`;
   try {
     console.log(`[video] HEVC detected; transcoding localized video to H.264: ${filePath}`);
     await execPromise(
-      `ffmpeg -y -i "${filePath}" -c:v libx264 -tag:v avc1 -pix_fmt yuv420p -preset superfast -movflags +faststart -c:a copy "${transcodedPath}"`,
+      `ffmpeg -y -i "${originalPath}" -c:v libx264 -tag:v avc1 -pix_fmt yuv420p -preset superfast -movflags +faststart -c:a copy "${transcodedPath}"`,
     );
     fs.renameSync(transcodedPath, filePath);
     console.log(`[video] Browser-compatible H.264 video ready: ${filePath}`);

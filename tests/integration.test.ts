@@ -16,6 +16,7 @@ import { SNUMOM_GROK_IMAGINE_VIDEO_MODEL, SNUMOM_SD_MINI_MODEL } from '../server
 import {
   HM_STUDIO_SEEDANCE_V20_933_MODEL,
   HM_STUDIO_SEEDANCE_V25_101010_MODEL,
+  HM_STUDIO_SEEDANCE_V25_301010_MODEL,
 } from '../server/services/hmStudioVideoModels.js';
 
 beforeAll(async () => {
@@ -93,21 +94,24 @@ describe('种子数据完整性', () => {
     expect(channel!.status).toBe(0);
   });
 
-  it('HM Studio 渠道应绑定两个卡脸模型并创建独立按次计费', () => {
+  it('HM Studio 渠道应绑定扩展模型并创建独立按次计费', () => {
     const channel = db.select().from(channels).where(eq(channels.type, 'hmstudio')).get();
     const supportedModels = JSON.parse(channel!.supportedModels);
     const mapping = JSON.parse(channel!.modelMapping);
     expect(supportedModels).toEqual(expect.arrayContaining([
       HM_STUDIO_SEEDANCE_V20_933_MODEL,
       HM_STUDIO_SEEDANCE_V25_101010_MODEL,
+      HM_STUDIO_SEEDANCE_V25_301010_MODEL,
     ]));
     expect(mapping).toMatchObject({
       [HM_STUDIO_SEEDANCE_V20_933_MODEL]: HM_STUDIO_SEEDANCE_V20_933_MODEL,
       [HM_STUDIO_SEEDANCE_V25_101010_MODEL]: HM_STUDIO_SEEDANCE_V25_101010_MODEL,
+      [HM_STUDIO_SEEDANCE_V25_301010_MODEL]: HM_STUDIO_SEEDANCE_V25_301010_MODEL,
     });
 
     const v20 = db.select().from(models).where(eq(models.modelId, HM_STUDIO_SEEDANCE_V20_933_MODEL)).get();
     const v25 = db.select().from(models).where(eq(models.modelId, HM_STUDIO_SEEDANCE_V25_101010_MODEL)).get();
+    const v25Large = db.select().from(models).where(eq(models.modelId, HM_STUDIO_SEEDANCE_V25_301010_MODEL)).get();
     const primary = db.select().from(models).where(eq(models.modelId, 'seedance_v2.5')).get();
     expect(primary).toMatchObject({ provider: 'hmstudio', displayName: 'HM-Seedance V2.5' });
     expect(v20).toMatchObject({ provider: 'hmstudio', isActive: 1 });
@@ -116,11 +120,16 @@ describe('种子数据完整性', () => {
     expect(v25).toMatchObject({ provider: 'hmstudio', isActive: 1 });
     expect(v25?.displayName).toBe('HM-Seedance V2.5 101010');
     expect(v25?.description).toContain('10张图片、10个视频、10段音频');
+    expect(v25Large).toMatchObject({ provider: 'hmstudio', isActive: 1 });
+    expect(v25Large?.displayName).toBe('HM-Seedance V2.5 301010');
+    expect(v25Large?.description).toContain('30张图片、10个视频、10段音频');
 
     const v20Pricing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, HM_STUDIO_SEEDANCE_V20_933_MODEL)).get();
     const v25Pricing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, HM_STUDIO_SEEDANCE_V25_101010_MODEL)).get();
+    const v25LargePricing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, HM_STUDIO_SEEDANCE_V25_301010_MODEL)).get();
     expect(v20Pricing).toMatchObject({ billingType: 'per_call', inputPrice: 0.5 });
     expect(v25Pricing).toMatchObject({ billingType: 'per_call', inputPrice: 0.7 });
+    expect(v25LargePricing).toMatchObject({ billingType: 'per_call', inputPrice: 5.5 });
   });
 
   it('snumom 渠道绑定 WAN3.0 与 Grok 1.5，并配置对应计费', () => {

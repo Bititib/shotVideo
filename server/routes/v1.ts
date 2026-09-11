@@ -18,6 +18,7 @@ import {
   hmStudioCreateUrl,
   hmStudioTaskUrl,
   isHmStudioChannel,
+  normalizeHmStudioFace,
   normalizeHmStudioTask,
   waitForHmStudioTask,
 } from '../services/hmStudioAdapter.js';
@@ -890,6 +891,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
           sampleStrength: otherParams.sample_strength !== undefined ? Number(otherParams.sample_strength) : undefined,
           intelligentRatio: otherParams.intelligent_ratio,
           upstreamChannel: otherParams.channel,
+          face: otherParams.face,
         });
         const requestHeaders: Record<string, string> = {};
         if (channel.apiKey) requestHeaders.Authorization = `Bearer ${channel.apiKey}`;
@@ -1105,6 +1107,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
           sampleStrength: otherParams.sample_strength !== undefined ? Number(otherParams.sample_strength) : 0.5,
           intelligentRatio: otherParams.intelligent_ratio,
           upstreamChannel: otherParams.channel,
+          face: otherParams.face,
         });
         const hmHeaders: Record<string, string> = {};
         if (channel.apiKey) hmHeaders.Authorization = `Bearer ${channel.apiKey}`;
@@ -1761,6 +1764,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         face_split: isWxHaidiYueChannel(channel)
           ? (model === WX_HAIDIYUE_FACE_SPLIT_MODEL ? true : resolveWxHaidiYueFaceSplit(channel, body.face_split))
           : undefined,
+        face: isHmStudioChannel(channel) ? normalizeHmStudioFace(body.face) : undefined,
         function_mode: body.function_mode,
         upstream_channel: body.channel,
         tokenId: token.id,
@@ -1872,6 +1876,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         lastFrame: body.end_frame_url || body.last_frame_url,
         functionMode: body.function_mode,
         upstreamChannel: body.channel,
+        face: body.face,
       });
       const headers: Record<string, string> = {};
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;

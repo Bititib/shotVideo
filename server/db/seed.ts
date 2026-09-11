@@ -22,6 +22,7 @@ import {
 import {
   HM_STUDIO_ADDITIONAL_VIDEO_MODELS,
   HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS,
+  HM_STUDIO_SEEDANCE_V25_301010_MODEL,
 } from '../services/hmStudioVideoModels.js';
 import { HM_STUDIO_PRIMARY_VIDEO_MODEL } from '../services/videoFailoverService.js';
 
@@ -1090,6 +1091,32 @@ export async function initDatabase() {
       label: 'WAN3.0 按秒计费迁移标记',
     }).run();
     console.log('🔄 已迁移：WAN3.0 按秒计费更新为 ¥0.14/秒');
+  }
+
+  // One-time migration for the confirmed HM 301010 selling price. The marker
+  // keeps later administrator edits authoritative across future restarts.
+  const hm301010PricingMigrationKey = 'migration_hm_seedance_v25_301010_per_call_550_v1';
+  const hm301010PricingMigrated = db.select().from(settings).where(eq(settings.key, hm301010PricingMigrationKey)).get();
+  if (!hm301010PricingMigrated) {
+    const pricingRule = db.select().from(modelPricing)
+      .where(eq(modelPricing.modelPattern, HM_STUDIO_SEEDANCE_V25_301010_MODEL))
+      .get();
+    if (pricingRule) {
+      let extraParams: Record<string, any> = {};
+      try { extraParams = JSON.parse(pricingRule.extraParams || '{}'); } catch { /* ignore invalid legacy JSON */ }
+      db.update(modelPricing).set({
+        billingType: 'per_call',
+        inputPrice: 5.50,
+        outputPrice: 0,
+        extraParams: JSON.stringify({ ...extraParams, category: 'video' }),
+      }).where(eq(modelPricing.id, pricingRule.id)).run();
+    }
+    db.insert(settings).values({
+      key: hm301010PricingMigrationKey,
+      value: '1',
+      label: 'HM Seedance V2.5 301010 ¥5.50/条迁移标记',
+    }).run();
+    console.log('🔄 已迁移：HM-Seedance V2.5 301010 更新为 ¥5.50/条');
   }
 
   const julunH3PricingMigrationKey = 'migration_julun_minimax_h3_768p_per_second_018_v1';

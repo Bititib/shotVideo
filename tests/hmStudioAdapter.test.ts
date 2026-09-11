@@ -4,6 +4,7 @@ import {
   buildHmStudioVideoForm,
   hmStudioCreateUrl,
   hmStudioTaskUrl,
+  normalizeHmStudioFace,
   normalizeHmStudioTask,
   shouldSendHmStudioAuthorization,
 } from '../server/services/hmStudioAdapter.js';
@@ -37,9 +38,35 @@ describe('HM Studio adapter', () => {
     expect(form.get('duration')).toBe('8');
     expect(form.get('ratio')).toBe('16:9');
     expect(form.get('video_resolution')).toBe('1080p');
+    expect(form.get('face')).toBe('false');
     expect(form.get('function_mode')).toBe('first_last_frames');
     expect(form.get('first_frame_url')).toBe('https://cdn.example.test/start.jpg');
     expect(form.has('face_split')).toBe(false);
+  });
+
+  it('keeps face processing off by default and accepts an explicit opt-in', () => {
+    expect(normalizeHmStudioFace(undefined)).toBe(false);
+    expect(normalizeHmStudioFace('false')).toBe(false);
+    expect(normalizeHmStudioFace(true)).toBe(true);
+    expect(normalizeHmStudioFace('true')).toBe(true);
+
+    const videoForm = buildHmStudioVideoForm({
+      model: 'seedance_v2.5-301010',
+      prompt: 'test',
+      duration: 10,
+      ratio: '16:9',
+      resolution: '720p',
+      face: true,
+    });
+    const imageForm = buildHmStudioImageForm({
+      model: 'jimen-5.0',
+      prompt: 'test',
+      ratio: '1:1',
+      face: 'true',
+    });
+
+    expect(videoForm.get('face')).toBe('true');
+    expect(imageForm.get('face')).toBe('true');
   });
 
   it('maps multimodal SD2 references to omni materials', () => {
@@ -61,7 +88,7 @@ describe('HM Studio adapter', () => {
     ]);
   });
 
-  it.each(['seedance_v2.0-933', 'seedance_v2.5-101010'])('passes the new upstream model id through unchanged: %s', (model) => {
+  it.each(['seedance_v2.0-933', 'seedance_v2.5-101010', 'seedance_v2.5-301010'])('passes the new upstream model id through unchanged: %s', (model) => {
     const form = buildHmStudioVideoForm({
       model,
       prompt: 'test',
@@ -71,6 +98,28 @@ describe('HM Studio adapter', () => {
     });
 
     expect(form.get('model')).toBe(model);
+  });
+
+  it('uses omni reference fields for the 301010 mixed-material model', () => {
+    const form = buildHmStudioVideoForm({
+      model: 'seedance_v2.5-301010',
+      prompt: '[ref_1] watches [ref_video_1] while [ref_audio_1] plays',
+      duration: 30,
+      ratio: '16:9',
+      resolution: '720p',
+      imageSources: ['https://cdn.example.test/person.jpg'],
+      videoSources: ['https://cdn.example.test/reference.mp4'],
+      audioSources: ['https://cdn.example.test/reference.mp3'],
+    });
+
+    expect(form.get('function_mode')).toBe('omni_reference');
+    expect(form.get('prompt')).toBe('@Image1 watches @Video1 while @Audio1 plays');
+    expect(JSON.parse(String(form.get('materials')))).toEqual([
+      { type: 'image', name: 'Image1', url: 'https://cdn.example.test/person.jpg' },
+      { type: 'video', name: 'Video1', url: 'https://cdn.example.test/reference.mp4' },
+      { type: 'audio', name: 'Audio1', url: 'https://cdn.example.test/reference.mp3' },
+    ]);
+    expect(form.get('face')).toBe('false');
   });
 
   it('builds the documented multipart image request', () => {
@@ -86,6 +135,7 @@ describe('HM Studio adapter', () => {
     expect(form.get('ratio')).toBe('4:3');
     expect(form.get('resolution')).toBe('2k');
     expect(form.get('sample_strength')).toBe('0.6');
+    expect(form.get('face')).toBe('false');
     expect(form.get('image_url')).toBe('https://cdn.example.test/reference.jpg');
   });
 

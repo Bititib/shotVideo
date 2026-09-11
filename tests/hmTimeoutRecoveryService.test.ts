@@ -18,6 +18,7 @@ describe('HM timeout recovery', () => {
     expect(isHmTimedOutFailure({ status: 'failed', modelId: 'seedance_v2.5', metadata })).toBe(true);
     expect(isHmTimedOutFailure({ status: 'failed', modelId: 'seedance_v2.0-933', metadata })).toBe(true);
     expect(isHmTimedOutFailure({ status: 'failed', modelId: 'seedance_v2.5-101010', metadata })).toBe(true);
+    expect(isHmTimedOutFailure({ status: 'failed', modelId: 'seedance_v2.5-301010', metadata })).toBe(true);
     expect(isHmTimedOutFailure({ status: 'completed', modelId: 'seedance_v2.5', metadata })).toBe(false);
     expect(isHmTimedOutFailure({
       status: 'failed',

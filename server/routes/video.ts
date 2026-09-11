@@ -13,6 +13,7 @@ import {
   hmStudioCreateUrl,
   hmStudioTaskUrl,
   isHmStudioChannel,
+  normalizeHmStudioFace,
   normalizeHmStudioTask,
 } from '../services/hmStudioAdapter.js';
 import {
@@ -87,7 +88,7 @@ import {
   WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME,
 } from '../services/wxHaidiYueAdapter.js';
 import { prepareWxHaidiYueImageUrls } from '../services/wxHaidiYueImageService.js';
-import { detectVideoCodec, downloadAndLocalizeVideo } from '../services/videoLocalizationService.js';
+import { detectVideoCodec, downloadAndLocalizeVideo, originalVideoPathFor, preferredVideoDownloadPath } from '../services/videoLocalizationService.js';
 export { downloadAndLocalizeVideo } from '../services/videoLocalizationService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
@@ -103,6 +104,13 @@ const execPromise = promisify(exec);
 const router = Router();
 const VIDEO_MODELS_CACHE_TTL_MS = 15_000;
 let videoModelsResponseCache: { expiresAt: number; data: any[] } | null = null;
+const HM_STUDIO_VIDEO_MODEL_ORDER = [
+  HM_STUDIO_PRIMARY_VIDEO_MODEL,
+  ...HM_STUDIO_ADDITIONAL_VIDEO_MODELS.map(model => model.id),
+];
+const HM_STUDIO_VIDEO_MODEL_RANK = new Map(
+  HM_STUDIO_VIDEO_MODEL_ORDER.map((modelId, index) => [modelId, index]),
+);
 
 export const activePolls = new Set<number>();
 const activePollPromises = new Map<number, Promise<void>>();
@@ -421,6 +429,7 @@ export async function localizeChre3Video(url: string, videoId: string, model: st
   const safeId = videoId.replace(/[^a-zA-Z0-9_-]/g, '_');
   const finalFilename = `video_${safeId}.mp4`;
   const finalPath = path.join(uploadDir, finalFilename);
+  const originalPath = originalVideoPathFor(finalPath);
 
   // 如果此视频已经本地化过，直接返回
   if (fs.existsSync(finalPath)) {
@@ -462,8 +471,10 @@ export async function localizeChre3Video(url: string, videoId: string, model: st
 
     if (isHevc) {
       console.log('[video/transcode] 检测到 HEVC (H.265)，启动 FFmpeg 转码为 H.264...');
+      if (fs.existsSync(originalPath)) fs.unlinkSync(originalPath);
+      fs.renameSync(tempDownload, originalPath);
       await execPromise(
-        `ffmpeg -y -i "${tempDownload}" -c:v libx264 -pix_fmt yuv420p -preset superfast -movflags faststart -c:a copy "${tempTranscoded}"`
+        `ffmpeg -y -i "${originalPath}" -c:v libx264 -pix_fmt yuv420p -preset superfast -movflags faststart -c:a copy "${tempTranscoded}"`
       );
       // 原子 rename 到最终路径
       fs.renameSync(tempTranscoded, finalPath);
@@ -749,7 +760,14 @@ router.get('/models', (_req: Request, res: Response) => {
     };
   });
 
-  const availableModels = result.filter(m => m.available);
+  const availableModels = result.filter(m => m.available).sort((left, right) => {
+    const leftRank = HM_STUDIO_VIDEO_MODEL_RANK.get(left.id);
+    const rightRank = HM_STUDIO_VIDEO_MODEL_RANK.get(right.id);
+    if (leftRank !== undefined && rightRank !== undefined) return leftRank - rightRank;
+    if (leftRank !== undefined) return -1;
+    if (rightRank !== undefined) return 1;
+    return 0;
+  });
   if (env.NODE_ENV === 'production') {
     videoModelsResponseCache = {
       expiresAt: Date.now() + VIDEO_MODELS_CACHE_TTL_MS,
@@ -775,6 +793,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     audio_url = '',          // 旧单值兼容字段
     first_frame = '',        // Base64 首帧图片
     last_frame = '',         // Base64 尾帧图片
+    face = false,            // HM Studio 人脸处理；默认关闭，可由用户开启
     face_split,              // 海底月参考图人脸拆分（仅实际路由到海底月时发送）
     compliance_enabled,      // 是否开启合规素材/过人脸
     compliance_mode,         // 合规素材风格
@@ -1171,6 +1190,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         audio_urls: finalAudios,
         first_frame,
         last_frame,
+        face: isHmStudioChannel(dbChannel) ? normalizeHmStudioFace(face) : undefined,
         face_split: isWxHaidiYueChannel(dbChannel)
           ? (model === WX_HAIDIYUE_FACE_SPLIT_MODEL ? true : resolveWxHaidiYueFaceSplit(dbChannel, face_split))
           : undefined,
@@ -1475,6 +1495,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         audioSources: finalAudios,
         firstFrame: first_frame,
         lastFrame: last_frame,
+        face,
       });
       const headers: Record<string, string> = {};
       if (channel.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
@@ -2473,7 +2494,7 @@ router.get('/download', async (req: Request, res: Response) => {
 
     if (isLocalFile) {
       if (fs.existsSync(localFilePath)) {
-        return res.download(localFilePath, filename);
+        return res.download(preferredVideoDownloadPath(localFilePath), filename);
       } else {
         return res.status(404).send('Local video file not found');
       }
@@ -2851,6 +2872,7 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
             lastFrame: latestMeta.last_frame || latestMeta.lastFrame,
             functionMode: latestMeta.function_mode,
             upstreamChannel: latestMeta.upstream_channel,
+            face: latestMeta.face,
           });
           const headers: Record<string, string> = {};
           if (selectedHmChannel.apiKey) headers.Authorization = `Bearer ${selectedHmChannel.apiKey}`;
