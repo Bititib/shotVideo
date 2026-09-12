@@ -275,6 +275,24 @@ router.get('/contents', async (req: AuthRequest, res: Response) => {
   }
 });
 
+router.get('/contents/recovery/preview', async (req: AuthRequest, res: Response) => {
+  try {
+    const { VideoRecoveryService } = await import('../services/videoRecoveryService.js');
+    res.json(VideoRecoveryService.previewRecentFailed(req.query.days || 3));
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '统计近期失败任务失败' });
+  }
+});
+
+router.post('/contents/recovery/run', async (req: AuthRequest, res: Response) => {
+  try {
+    const { VideoRecoveryService } = await import('../services/videoRecoveryService.js');
+    res.json(await VideoRecoveryService.recoverRecentFailed(req.body?.days || 3));
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '批量恢复近期失败任务失败' });
+  }
+});
+
 router.get('/contents/:id', async (req: AuthRequest, res: Response) => {
   try {
     const contentId = parseInt(req.params.id);
@@ -283,6 +301,24 @@ router.get('/contents/:id', async (req: AuthRequest, res: Response) => {
     res.json(item);
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '获取内容失败' });
+  }
+});
+
+router.post('/contents/:id/recheck-upstream', async (req: AuthRequest, res: Response) => {
+  try {
+    const { VideoRecoveryService } = await import('../services/videoRecoveryService.js');
+    res.json(await VideoRecoveryService.inspect(parseInt(req.params.id)));
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '重新查询上游任务失败' });
+  }
+});
+
+router.post('/contents/:id/recover-upstream', async (req: AuthRequest, res: Response) => {
+  try {
+    const { VideoRecoveryService } = await import('../services/videoRecoveryService.js');
+    res.json(await VideoRecoveryService.recover(parseInt(req.params.id)));
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '恢复上游任务失败' });
   }
 });
 

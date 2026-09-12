@@ -116,7 +116,8 @@ function replaceReferenceMarkers(prompt: string): string {
 
 function supportsHmStudioOmniReference(model: string): boolean {
   return /SD2\.0(?:Fast)?/i.test(model)
-    || /^seedance_v2\.(?:0|5)(?:[-\u2014]\d+)?$/i.test(model);
+    || /^seedance_v2\.(?:0|5)(?:[-\u2014]\d+)?$/i.test(model)
+    || /^MINIMAX-H3-(?:BF16|INF8)(?:-\d+)?$/i.test(model);
 }
 
 function appendOmniReferences(

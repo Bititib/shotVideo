@@ -2,6 +2,17 @@ export const HM_STUDIO_SEEDANCE_V20_933_MODEL = 'seedance_v2.0-933';
 export const HM_STUDIO_SEEDANCE_V25_101010_MODEL = 'seedance_v2.5-101010';
 export const HM_STUDIO_SEEDANCE_V25_301010_MODEL = 'seedance_v2.5-301010';
 
+export const HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP: Readonly<Record<string, string>> = {
+  'seedance_v2.5': 'MINIMAX-H3-BF16',
+  [HM_STUDIO_SEEDANCE_V20_933_MODEL]: 'MINIMAX-H3-INF8-933',
+  [HM_STUDIO_SEEDANCE_V25_101010_MODEL]: 'MINIMAX-H3-BF16-101010',
+  [HM_STUDIO_SEEDANCE_V25_301010_MODEL]: 'MINIMAX-H3-BF16-301010',
+};
+
+export function getHmStudioUpstreamVideoModel(modelId: string): string {
+  return HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP[modelId] || modelId;
+}
+
 export type HmStudioVideoModelSpec = {
   id: string;
   displayName: string;

@@ -4,10 +4,18 @@ import {
   HM_STUDIO_SEEDANCE_V20_933_MODEL,
   HM_STUDIO_SEEDANCE_V25_101010_MODEL,
   HM_STUDIO_SEEDANCE_V25_301010_MODEL,
+  getHmStudioUpstreamVideoModel,
   validateHmStudioAdditionalVideoInput,
 } from '../server/services/hmStudioVideoModels.js';
 
 describe('HM Studio additional video models', () => {
+  it('maps public model ids to the current HM upstream model names', () => {
+    expect(getHmStudioUpstreamVideoModel('seedance_v2.5')).toBe('MINIMAX-H3-BF16');
+    expect(getHmStudioUpstreamVideoModel(HM_STUDIO_SEEDANCE_V20_933_MODEL)).toBe('MINIMAX-H3-INF8-933');
+    expect(getHmStudioUpstreamVideoModel(HM_STUDIO_SEEDANCE_V25_101010_MODEL)).toBe('MINIMAX-H3-BF16-101010');
+    expect(getHmStudioUpstreamVideoModel(HM_STUDIO_SEEDANCE_V25_301010_MODEL)).toBe('MINIMAX-H3-BF16-301010');
+  });
+
   it('defines the HM mixed-material models with their documented limits', () => {
     expect(getHmStudioAdditionalVideoModel(HM_STUDIO_SEEDANCE_V20_933_MODEL)).toMatchObject({
       faceRestricted: true,

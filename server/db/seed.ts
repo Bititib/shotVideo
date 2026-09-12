@@ -23,6 +23,7 @@ import {
   HM_STUDIO_ADDITIONAL_VIDEO_MODELS,
   HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS,
   HM_STUDIO_SEEDANCE_V25_301010_MODEL,
+  getHmStudioUpstreamVideoModel,
 } from '../services/hmStudioVideoModels.js';
 import { HM_STUDIO_PRIMARY_VIDEO_MODEL } from '../services/videoFailoverService.js';
 
@@ -1456,7 +1457,7 @@ export async function initDatabase() {
         baseUrl: hmStudioBaseUrl,
         apiKey: '',
         supportedModels: JSON.stringify(requiredHmStudioModels),
-        modelMapping: JSON.stringify(Object.fromEntries(requiredHmStudioModels.map(modelId => [modelId, modelId]))),
+        modelMapping: JSON.stringify(Object.fromEntries(requiredHmStudioModels.map(modelId => [modelId, getHmStudioUpstreamVideoModel(modelId)]))),
         status: hmStudioApiKey ? 1 : 0,
         priority: 10,
         weight: 1,
@@ -1493,7 +1494,7 @@ export async function initDatabase() {
       if (!Array.isArray(supportedModels)) supportedModels = [];
       for (const modelId of requiredHmStudioModels) {
         if (!supportedModels.includes(modelId)) supportedModels.push(modelId);
-        modelMapping[modelId] = modelId;
+        modelMapping[modelId] = getHmStudioUpstreamVideoModel(modelId);
       }
       db.update(channels).set({
         supportedModels: JSON.stringify(supportedModels),

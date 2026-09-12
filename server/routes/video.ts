@@ -28,6 +28,7 @@ import {
   formatVideoPollHttpFailure,
   isVideoFailurePayload,
   isVideoFailureStatus,
+  isTransientVideoPollHttpStatus,
   withVideoFailureMetadata,
 } from '../services/videoFailureService.js';
 import {
@@ -2254,6 +2255,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
     // ━━━ Step 2: 轮询任务状态（无超时，直到上游返回完成或失败） ━━━
     const pollInterval = 5000; // 5 秒轮询
+    const maxTransientPollFailures = 6;
+    let consecutiveTransientPollFailures = 0;
 
     const headers: Record<string, string> = {};
     if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
@@ -2284,6 +2287,17 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         if (!pollResp.ok) {
           const detail = await pollResp.text().catch(() => '');
           const failureMessage = formatVideoPollHttpFailure(pollResp.status, detail);
+          if (isWxHaidiYue && isTransientVideoPollHttpStatus(pollResp.status)) {
+            consecutiveTransientPollFailures++;
+            if (consecutiveTransientPollFailures < maxTransientPollFailures) {
+              console.warn(`[video] ${failureMessage}; retrying (${consecutiveTransientPollFailures}/${maxTransientPollFailures})`);
+              sendEvent({
+                type: 'status',
+                message: `海底月状态查询暂时不可用，正在自动重试（${consecutiveTransientPollFailures}/${maxTransientPollFailures}）...`,
+              });
+              continue;
+            }
+          }
           console.error(`[video] ${failureMessage}`);
           refundFailedTask(failureMessage);
           if (!res.destroyed && !res.writableEnded) {
@@ -2293,6 +2307,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           return;
         }
 
+        consecutiveTransientPollFailures = 0;
         const status = await pollResp.json() as any;
         let taskStatus = status.status;
         let progress = status.progress || 0;
@@ -3194,6 +3209,8 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
       ? env.VIDEO_TASK_POLL_TIMEOUT_MS
       : 1_800_000;
 
+    let consecutiveTransientPollFailures = 0;
+    const maxTransientPollFailures = 6;
     while (true) {
       const currentRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
       if (!currentRecord || currentRecord.status !== 'processing') {
@@ -3227,11 +3244,19 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
         if (!pollResp.ok) {
           const detail = await pollResp.text().catch(() => '');
           const failureMessage = formatVideoPollHttpFailure(pollResp.status, detail);
+          if (isWxHaidiYue && isTransientVideoPollHttpStatus(pollResp.status)) {
+            consecutiveTransientPollFailures++;
+            if (consecutiveTransientPollFailures < maxTransientPollFailures) {
+              console.warn(`[video-recover] ${failureMessage}; retrying (${consecutiveTransientPollFailures}/${maxTransientPollFailures})`);
+              continue;
+            }
+          }
           console.error(`[video-recover] ${failureMessage}`);
           await failHmQueuedVideo(contentId, new Error(failureMessage));
           break;
         }
 
+        consecutiveTransientPollFailures = 0;
         const statusData = await pollResp.json() as any;
         let taskStatus = statusData.status;
         let progress = statusData.progress || 0;

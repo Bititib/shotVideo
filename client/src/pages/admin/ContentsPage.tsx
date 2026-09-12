@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Film, Copy, ChevronLeft, ChevronRight, Image, Video, Music, Eye, X, CircleAlert } from 'lucide-react';
+import { Search, Film, Copy, ChevronLeft, ChevronRight, Image, Video, Music, Eye, X, CircleAlert, Loader2, RefreshCw } from 'lucide-react';
 import { adminApi } from '../../api/admin';
 import { getVideoReferenceAssets } from '../../utils/videoPromptRefs';
 import { getContentFailureInfo } from '../../utils/contentFailure';
@@ -83,6 +83,9 @@ export default function ContentsPage() {
   const [loading, setLoading] = useState(false);
   const [previewItem, setPreviewItem] = useState<ContentItem | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [recoveringId, setRecoveringId] = useState<number | null>(null);
+  const [bulkPreviewing, setBulkPreviewing] = useState(false);
+  const [bulkRecovering, setBulkRecovering] = useState(false);
   const [previewTab, setPreviewTab] = useState<'video' | 'refs'>('video');
   const pageSize = 20;
 
@@ -142,6 +145,78 @@ export default function ContentsPage() {
     // Store the content data in sessionStorage for VideoPage to pick up
     sessionStorage.setItem('replicate_content', JSON.stringify(fullItem));
     navigate('/app/video?replicate=' + fullItem.id);
+  };
+
+  const handleRecoverUpstream = async (item: ContentItem) => {
+    if (!window.confirm('将重新查询原上游任务；若上游已经成功，会自动恢复视频并按原退款金额补扣用户费用。是否继续？')) return;
+    setRecoveringId(item.id);
+    try {
+      const result = await adminApi.recoverContentUpstream(item.id);
+      if (result.status === 'processing') {
+        window.alert(`上游任务仍在生成中${result.progress ? `（${result.progress}%）` : ''}，本次未扣费。`);
+        return;
+      }
+      if (result.status === 'failed') {
+        window.alert(`上游任务确认失败：${result.message}`);
+        return;
+      }
+      window.alert(result.message || '任务已恢复');
+      const refreshed = await adminApi.getContent(item.id);
+      setPreviewItem(current => current?.id === item.id ? { ...current, ...refreshed } : current);
+      await fetchContents();
+    } catch (error: any) {
+      window.alert(error.message || '重新获取上游结果失败');
+    } finally {
+      setRecoveringId(null);
+    }
+  };
+
+  const handleRecoverRecentFailed = async () => {
+    let preview: any;
+    setBulkPreviewing(true);
+    try {
+      preview = await adminApi.previewRecentFailedVideoRecovery(3);
+    } catch (error: any) {
+      window.alert(error.message || '统计近三天失败视频失败');
+      return;
+    } finally {
+      setBulkPreviewing(false);
+    }
+
+    if (!preview.eligibleCount) {
+      window.alert(
+        `近三天共有 ${preview.failedCount || 0} 条失败视频，没有可重新获取的记录。\n`
+        + `缺少上游任务 ID：${preview.missingTaskIdCount || 0} 条。`,
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `近三天共有 ${preview.failedCount} 条失败视频，其中 ${preview.eligibleCount} 条可以查询原上游。\n\n`
+      + '上游确认成功后将恢复视频，并按原退款金额补扣用户费用；处理中、仍失败或余额不足的记录不会扣费。\n\n'
+      + '是否开始批量恢复？',
+    );
+    if (!confirmed) return;
+
+    setBulkRecovering(true);
+    try {
+      const result = await adminApi.recoverRecentFailedVideos(3);
+      window.alert([
+        '近三天失败视频处理完成：',
+        `检查：${result.checkedCount || 0} 条`,
+        `成功恢复：${result.recoveredCount || 0} 条（补扣 ¥${Number(result.chargedAmount || 0).toFixed(2)}）`,
+        `仍在生成：${result.processingCount || 0} 条`,
+        `上游失败：${result.upstreamFailedCount || 0} 条`,
+        `余额不足：${result.insufficientBalanceCount || 0} 条`,
+        `重复跳过：${result.skippedCount || 0} 条`,
+        `查询异常：${result.errorCount || 0} 条`,
+      ].join('\n'));
+      await fetchContents();
+    } catch (error: any) {
+      window.alert(error.message || '批量恢复近三天失败视频失败');
+    } finally {
+      setBulkRecovering(false);
+    }
   };
 
   const parseMeta = (metaStr: string) => {
@@ -222,7 +297,20 @@ export default function ContentsPage() {
           </h1>
           <p className="text-sm text-zinc-500 mt-1">以任务列表查看所有用户内容，点击任务可查看视频详情</p>
         </div>
-        <div className="text-xs text-zinc-500">共 {total} 条记录</div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            disabled={bulkPreviewing || bulkRecovering}
+            onClick={() => { void handleRecoverRecentFailed(); }}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-3 py-2 text-xs font-medium text-cyan-200 transition-colors hover:bg-cyan-500/20 disabled:cursor-wait disabled:opacity-60"
+          >
+            {bulkPreviewing || bulkRecovering
+              ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              : <RefreshCw className="h-3.5 w-3.5" />}
+            {bulkPreviewing ? '正在统计…' : bulkRecovering ? '正在批量恢复…' : '一键恢复近三天失败视频'}
+          </button>
+          <div className="text-xs text-zinc-500">共 {total} 条记录</div>
+        </div>
       </div>
 
       {/* Filters */}
@@ -497,6 +585,20 @@ export default function ContentsPage() {
                             )}
                           </div>
                         )}
+                        {previewItem.type === 'video'
+                          && getUpstreamTaskId(parseMeta(previewItem.metadata)) && (
+                            <button
+                              type="button"
+                              disabled={recoveringId === previewItem.id}
+                              onClick={() => { void handleRecoverUpstream(previewItem); }}
+                              className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-3 py-2 text-xs font-medium text-cyan-200 transition-colors hover:bg-cyan-500/20 disabled:cursor-wait disabled:opacity-60"
+                            >
+                              {recoveringId === previewItem.id
+                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                : <RefreshCw className="h-3.5 w-3.5" />}
+                              {recoveringId === previewItem.id ? '正在重新获取…' : '重新获取上游结果'}
+                            </button>
+                          )}
                       </div>
                     );
                   })()}

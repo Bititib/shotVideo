@@ -2,6 +2,7 @@ import { db } from '../db/index.js';
 import { users, tiers, models, tierModelAccess, usageLogs, settings, contents, apiLogs, modelPricing, channels, channelApiKeys } from '../db/schema.js';
 import { eq, like, and, gte, sql, desc, count } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
+import { getHmStudioUpstreamVideoModel } from './hmStudioVideoModels.js';
 
 interface GetUsersOptions {
   page: number;
@@ -36,7 +37,7 @@ function linkHmStudioModel(modelId: string, apiKey?: string | null) {
   try { modelMapping = JSON.parse(channel.modelMapping || '{}'); } catch { }
   if (!Array.isArray(supportedModels)) supportedModels = [];
   if (!supportedModels.includes(modelId)) supportedModels.push(modelId);
-  modelMapping[modelId] = modelId;
+  modelMapping[modelId] = getHmStudioUpstreamVideoModel(modelId);
 
   const updates: Record<string, any> = {
     name: 'HM Studio 渠道', type: 'hmstudio', baseUrl: HM_STUDIO_BASE_URL,

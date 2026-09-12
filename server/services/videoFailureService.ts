@@ -90,6 +90,17 @@ export function formatVideoPollHttpFailure(status: number, body: unknown): strin
     : `上游任务查询失败 (${status})`;
 }
 
+/** HTTP responses that can be caused by a temporary polling gateway outage. */
+export function isTransientVideoPollHttpStatus(status: number): boolean {
+  return status === 408
+    || status === 425
+    || status === 429
+    || status === 500
+    || status === 502
+    || status === 503
+    || status === 504;
+}
+
 export function clarifyVideoCapacityFailure(message: string, hmStudioTask: boolean): string {
   if (hmStudioTask) return message;
   const capacityPattern = /(任务)?并发(数|量|额度|限制)?不足|concurrency.{0,30}(insufficient|limit|exceeded|full)/i;

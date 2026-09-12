@@ -5,6 +5,7 @@ import {
   formatVideoPollHttpFailure,
   isVideoFailurePayload,
   isVideoFailureStatus,
+  isTransientVideoPollHttpStatus,
   withVideoFailureMetadata,
 } from '../server/services/videoFailureService.js';
 
@@ -58,5 +59,14 @@ describe('video failure persistence', () => {
     const body = JSON.stringify({ error: { message: '视频生成失败，请稍后重试' } });
     expect(formatVideoPollHttpFailure(429, body))
       .toBe('上游任务查询失败 (429): 视频生成失败，请稍后重试');
+  });
+
+  it('classifies temporary polling gateway failures as retryable', () => {
+    for (const status of [408, 425, 429, 500, 502, 503, 504]) {
+      expect(isTransientVideoPollHttpStatus(status)).toBe(true);
+    }
+    for (const status of [400, 401, 403, 404, 422]) {
+      expect(isTransientVideoPollHttpStatus(status)).toBe(false);
+    }
   });
 });

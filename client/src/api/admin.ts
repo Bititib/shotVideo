@@ -87,6 +87,10 @@ export const adminApi = {
     return api.get<any>(`/admin/contents?${qs.toString()}`);
   },
   getContent(id: number) { return api.get<any>(`/admin/contents/${id}`); },
+  previewRecentFailedVideoRecovery(days = 3) { return api.get<any>(`/admin/contents/recovery/preview?days=${days}`); },
+  recoverRecentFailedVideos(days = 3) { return api.post<any>('/admin/contents/recovery/run', { days }); },
+  recheckContentUpstream(id: number) { return api.post<any>(`/admin/contents/${id}/recheck-upstream`); },
+  recoverContentUpstream(id: number) { return api.post<any>(`/admin/contents/${id}/recover-upstream`); },
 
   // 模型故障反馈
   getFeedback(params: { page?: number; pageSize?: number; status?: string; modelId?: string; search?: string } = {}) {
