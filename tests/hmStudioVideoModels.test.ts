@@ -10,10 +10,10 @@ import {
 
 describe('HM Studio additional video models', () => {
   it('maps public model ids to the current HM upstream model names', () => {
-    expect(getHmStudioUpstreamVideoModel('seedance_v2.5')).toBe('MINIMAX-H3-BF16');
-    expect(getHmStudioUpstreamVideoModel(HM_STUDIO_SEEDANCE_V20_933_MODEL)).toBe('MINIMAX-H3-INF8-933');
-    expect(getHmStudioUpstreamVideoModel(HM_STUDIO_SEEDANCE_V25_101010_MODEL)).toBe('MINIMAX-H3-BF16-101010');
-    expect(getHmStudioUpstreamVideoModel(HM_STUDIO_SEEDANCE_V25_301010_MODEL)).toBe('MINIMAX-H3-BF16-301010');
+    expect(getHmStudioUpstreamVideoModel('seedance_v2.5')).toBe('MINIMAX-H3-2.5采样');
+    expect(getHmStudioUpstreamVideoModel(HM_STUDIO_SEEDANCE_V20_933_MODEL)).toBe('MINIMAX-H3-2.0采样-933');
+    expect(getHmStudioUpstreamVideoModel(HM_STUDIO_SEEDANCE_V25_101010_MODEL)).toBe('MINIMAX-H3-2.5采样-101010');
+    expect(getHmStudioUpstreamVideoModel(HM_STUDIO_SEEDANCE_V25_301010_MODEL)).toBe('MINIMAX-H3-2.5采样-301010');
   });
 
   it('defines the HM mixed-material models with their documented limits', () => {

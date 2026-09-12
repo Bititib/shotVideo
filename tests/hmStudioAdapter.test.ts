@@ -89,10 +89,10 @@ describe('HM Studio adapter', () => {
   });
 
   it.each([
-    'MINIMAX-H3-BF16',
-    'MINIMAX-H3-INF8-933',
-    'MINIMAX-H3-BF16-101010',
-    'MINIMAX-H3-BF16-301010',
+    'MINIMAX-H3-2.5采样',
+    'MINIMAX-H3-2.0采样-933',
+    'MINIMAX-H3-2.5采样-101010',
+    'MINIMAX-H3-2.5采样-301010',
   ])('passes the configured upstream model id through unchanged: %s', (model) => {
     const form = buildHmStudioVideoForm({
       model,
@@ -107,7 +107,7 @@ describe('HM Studio adapter', () => {
 
   it('uses omni reference fields for the 301010 mixed-material model', () => {
     const form = buildHmStudioVideoForm({
-      model: 'MINIMAX-H3-BF16-301010',
+      model: 'MINIMAX-H3-2.5采样-301010',
       prompt: '[ref_1] watches [ref_video_1] while [ref_audio_1] plays',
       duration: 30,
       ratio: '16:9',
@@ -118,7 +118,7 @@ describe('HM Studio adapter', () => {
     });
 
     expect(form.get('function_mode')).toBe('omni_reference');
-    expect(form.get('model')).toBe('MINIMAX-H3-BF16-301010');
+    expect(form.get('model')).toBe('MINIMAX-H3-2.5采样-301010');
     expect(form.get('prompt')).toBe('@Image1 watches @Video1 while @Audio1 plays');
     expect(JSON.parse(String(form.get('materials')))).toEqual([
       { type: 'image', name: 'Image1', url: 'https://cdn.example.test/person.jpg' },
