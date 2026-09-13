@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Film, Play, Square, Download, Loader2, AlertCircle, ArrowLeft, Plus, Trash2, FastForward, Upload, X, Pause, SkipForward, PackageOpen, Scissors, HelpCircle } from 'lucide-react';
+import { Film, Play, Square, Download, Loader2, AlertCircle, ArrowLeft, Plus, Trash2, FastForward, Upload, X, Pause, SkipForward, PackageOpen, Scissors, ScanFace, HelpCircle } from 'lucide-react';
 import { fetchVideoModels, generateVideo, getCachedVideoModels, type VideoModel, type VideoSSEEvent } from '../../api/video';
 import ImageSlicerModal from '../../components/ImageSlicerModal';
+import FaceProcessingModal from '../../components/FaceProcessingModal';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
-import { SNUMOM_SD_MINI_MODEL } from '../../utils/videoModelCapabilities';
+import { SNUMOM_SD_MINI_MODEL, WX_HAIDIYUE_FACE_SPLIT_MODEL } from '../../utils/videoModelCapabilities';
 import { isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
 
 interface Segment { id: string; prompt: string; videoUrl: string; duration: number; model: string; lastFrame?: string; }
@@ -106,6 +107,7 @@ export default function VideoStudioPage() {
   const [prompt, setPrompt] = useState('');
   const [duration, setDuration] = useState(6);
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
+  const [locallyProcessedImages, setLocallyProcessedImages] = useState<Set<string>>(() => new Set());
   const [hmFaceEnabled, setHmFaceEnabled] = useState(false);
   const maxRefs = getMaxReferenceImages(selectedModel, models);
 
@@ -118,13 +120,22 @@ export default function VideoStudioPage() {
   // 切分分镜拼图相关状态
   const [slicingImageUrl, setSlicingImageUrl] = useState<string | null>(null);
   const [slicingImageIndex, setSlicingImageIndex] = useState<number | null>(null);
+  const [faceProcessingImageUrl, setFaceProcessingImageUrl] = useState<string | null>(null);
+  const [faceProcessingImageIndex, setFaceProcessingImageIndex] = useState<number | null>(null);
 
   const handleConfirmSlice = (sliced: string[]) => {
     if (slicingImageIndex !== null) {
+      const sourceWasProcessed = Boolean(slicingImageUrl && locallyProcessedImages.has(slicingImageUrl));
       setReferenceImages(prev => {
         const next = [...prev];
         next.splice(slicingImageIndex, 1, ...sliced);
         return next.slice(0, maxRefs);
+      });
+      if (sourceWasProcessed) setLocallyProcessedImages(prev => {
+        const next = new Set(prev);
+        if (slicingImageUrl) next.delete(slicingImageUrl);
+        sliced.forEach(image => next.add(image));
+        return next;
       });
     }
     setSlicingImageUrl(null);
@@ -181,6 +192,21 @@ export default function VideoStudioPage() {
     return normalized.dataUrl;
   };
 
+  const handleConfirmFaceProcessing = (processedUrl: string) => {
+    if (faceProcessingImageIndex !== null) {
+      const sourceUrl = referenceImages[faceProcessingImageIndex];
+      setReferenceImages(prev => prev.map((image, index) => index === faceProcessingImageIndex ? processedUrl : image));
+      setLocallyProcessedImages(prev => {
+        const next = new Set(prev);
+        if (sourceUrl) next.delete(sourceUrl);
+        next.add(processedUrl);
+        return next;
+      });
+    }
+    setFaceProcessingImageUrl(null);
+    setFaceProcessingImageIndex(null);
+  };
+
   const handleFileSelect = async (files: FileList | null) => {
     if (!files) return;
     const remaining = maxRefs - referenceImages.length;
@@ -229,10 +255,16 @@ export default function VideoStudioPage() {
   const handleGenerate = useCallback(() => {
     if (!prompt.trim() || isGenerating) return;
     if (!guard()) return;
+    const hasLocallyProcessedImages = referenceImages.some(image => locallyProcessedImages.has(image));
+    const allImagesLocallyProcessed = referenceImages.length > 0 && referenceImages.every(image => locallyProcessedImages.has(image));
+    if (selectedModel === WX_HAIDIYUE_FACE_SPLIT_MODEL && hasLocallyProcessedImages && !allImagesLocallyProcessed) {
+      setError('WX-Seedance V2.5 使用本地人脸拆分时，需要将全部参考图处理后再提交');
+      return;
+    }
     if (!activeProjectId) { createProject(); return; }
     setIsGenerating(true); setProgress(0); setError(null); setStatusMsg(isExtendMode ? '续写生成中...' : '生成中...');
     const ctrl = generateVideo(
-      { prompt: prompt.trim(), model: selectedModel, aspect_ratio: project?.aspectRatio || '16:9', video_length: duration, resolution: project?.resolution || '720p', reference_images: referenceImages.length > 0 ? referenceImages : undefined, face: isHmStudioVideoModel(selectedModel) ? hmFaceEnabled : undefined },
+      { prompt: prompt.trim(), model: selectedModel, aspect_ratio: project?.aspectRatio || '16:9', video_length: duration, resolution: project?.resolution || '720p', reference_images: referenceImages.length > 0 ? referenceImages : undefined, face: isHmStudioVideoModel(selectedModel) ? hmFaceEnabled : undefined, local_face_processed: allImagesLocallyProcessed },
       (ev: VideoSSEEvent) => {
         switch (ev.type) {
           case 'queue': setStatusMsg(ev.message || `HM Studio 排队中：前方 ${Math.max(0, (ev.position || 1) - 1)} 项`); break;
@@ -244,7 +276,7 @@ export default function VideoStudioPage() {
               const seg: Segment = { id: Date.now().toString(), prompt: prompt.trim(), videoUrl: ev.videoUrl, duration, model: selectedModel };
               updateProject(p => ({ ...p, segments: [...p.segments, seg] }));
               setPlayingIdx(segments.length);
-              setPrompt(''); setReferenceImages([]); setIsExtendMode(false);
+              setPrompt(''); setReferenceImages([]); setLocallyProcessedImages(new Set()); setIsExtendMode(false);
             }
             break;
           case 'error': setError(ev.message || '失败'); setIsGenerating(false); setStatusMsg(''); break;
@@ -252,7 +284,7 @@ export default function VideoStudioPage() {
       },
     );
     abortRef.current = ctrl;
-  }, [prompt, selectedModel, duration, isGenerating, referenceImages, activeProjectId, project, isExtendMode, segments.length, hmFaceEnabled]);
+  }, [prompt, selectedModel, duration, isGenerating, referenceImages, activeProjectId, project, isExtendMode, segments.length, hmFaceEnabled, locallyProcessedImages]);
 
   const startExtend = useCallback(async () => {
     const last = segments[segments.length - 1];
@@ -476,8 +508,22 @@ export default function VideoStudioPage() {
                 {referenceImages.map((img, i) => (
                   <div key={i} className="relative w-10 h-10 rounded overflow-hidden border border-white/10 group">
                     <img src={img} className="w-full h-full object-cover" />
+                    {locallyProcessedImages.has(img) && <div className="absolute right-0 top-0 rounded-bl bg-emerald-600/95 px-0.5 py-0.5 text-[7px] font-medium leading-none text-white">脸</div>}
                     {isExtendMode && i === 0 && <div className="absolute top-0 left-0 bg-indigo-500 text-[7px] text-white px-0.5 rounded-br z-10">帧</div>}
                     <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-0.5">
+                      <button
+                        type="button"
+                        disabled={locallyProcessedImages.has(img)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFaceProcessingImageUrl(img);
+                          setFaceProcessingImageIndex(i);
+                        }}
+                        className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 p-0.5 rounded transition-colors"
+                        title={locallyProcessedImages.has(img) ? '该图片已完成人脸拆分' : '本地人脸拆分'}
+                      >
+                        <ScanFace className="w-2.5 h-2.5 text-white" />
+                      </button>
                       <button
                         type="button"
                         onClick={(e) => {
@@ -495,6 +541,11 @@ export default function VideoStudioPage() {
                         onClick={(e) => {
                           e.stopPropagation();
                           setReferenceImages(prev => prev.filter((_, idx) => idx !== i));
+                          setLocallyProcessedImages(prev => {
+                            const next = new Set(prev);
+                            next.delete(img);
+                            return next;
+                          });
                         }}
                         className="bg-red-500/80 hover:bg-red-500 p-0.5 rounded transition-colors"
                         title="删除"
@@ -560,6 +611,13 @@ export default function VideoStudioPage() {
           imageUrl={slicingImageUrl}
           onClose={() => { setSlicingImageUrl(null); setSlicingImageIndex(null); }}
           onConfirm={handleConfirmSlice}
+        />
+      )}
+      {faceProcessingImageUrl && (
+        <FaceProcessingModal
+          imageUrl={faceProcessingImageUrl}
+          onClose={() => { setFaceProcessingImageUrl(null); setFaceProcessingImageIndex(null); }}
+          onConfirm={handleConfirmFaceProcessing}
         />
       )}
     </div>

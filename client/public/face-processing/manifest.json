@@ -1,0 +1,15 @@
+{
+  "id": "face-processing",
+  "name": "人脸处理",
+  "description": "在浏览器本地用 YuNet 检测人脸；有脸时把眼睛、嘴巴切到左边白条，原图对应位置留白。眼睛按左右拆成两块、不旋转、上下叠放。无可调参数，默认 JPEG 92。开启后可在素材预览里对比处理前后。",
+  "icon": "ScanFace",
+  "version": "2.5.2",
+  "kind": "extension",
+  "permissions": [],
+  "entry": "face-processing.js",
+  "assets": {
+    "models/face_detection_yunet_2023mar.onnx": "assets/models/face_detection_yunet_2023mar.onnx",
+    "ort/ort-wasm-simd.wasm": "assets/ort/ort-wasm-simd.wasm",
+    "ort/ort-wasm.wasm": "assets/ort/ort-wasm.wasm"
+  }
+}

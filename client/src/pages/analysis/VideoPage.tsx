@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw, Maximize2, Minimize2, Scissors, HelpCircle, Trash2, MessageSquareWarning, Send, ChevronDown } from 'lucide-react';
+import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw, Maximize2, Minimize2, Scissors, ScanFace, HelpCircle, Trash2, MessageSquareWarning, Send, ChevronDown } from 'lucide-react';
 import { fetchVideoModels, generateVideo, getCachedVideoModels, type VideoModel, type VideoSSEEvent } from '../../api/video';
 import ImageSlicerModal from '../../components/ImageSlicerModal';
+import FaceProcessingModal from '../../components/FaceProcessingModal';
 import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
@@ -590,6 +591,9 @@ export default function VideoPage() {
   // 切分分镜拼图相关状态
   const [slicingImageUrl, setSlicingImageUrl] = useState<string | null>(null);
   const [slicingImageIndex, setSlicingImageIndex] = useState<number | null>(null);
+  const [faceProcessingImageUrl, setFaceProcessingImageUrl] = useState<string | null>(null);
+  const [faceProcessingImageIndex, setFaceProcessingImageIndex] = useState<number | null>(null);
+  const [locallyProcessedImages, setLocallyProcessedImages] = useState<Set<string>>(() => new Set());
 
   // 人脸合规参数状态 (针对四月天/Seedance系列模型)
   const [complianceEnabled, setComplianceEnabled] = useState(false);
@@ -598,14 +602,38 @@ export default function VideoPage() {
 
   const handleConfirmSlice = (sliced: string[]) => {
     if (slicingImageIndex !== null) {
+      const sourceWasProcessed = Boolean(slicingImageUrl && locallyProcessedImages.has(slicingImageUrl));
       setReferenceImages(prev => {
         const next = [...prev];
         next.splice(slicingImageIndex, 1, ...sliced);
         return next.slice(0, maxRefs);
       });
+      if (sourceWasProcessed) {
+        setLocallyProcessedImages(prev => {
+          const next = new Set(prev);
+          if (slicingImageUrl) next.delete(slicingImageUrl);
+          sliced.forEach(image => next.add(image));
+          return next;
+        });
+      }
     }
     setSlicingImageUrl(null);
     setSlicingImageIndex(null);
+  };
+
+  const handleConfirmFaceProcessing = (processedUrl: string) => {
+    if (faceProcessingImageIndex !== null) {
+      const sourceUrl = referenceImages[faceProcessingImageIndex];
+      setReferenceImages(prev => prev.map((image, index) => index === faceProcessingImageIndex ? processedUrl : image));
+      setLocallyProcessedImages(prev => {
+        const next = new Set(prev);
+        if (sourceUrl) next.delete(sourceUrl);
+        next.add(processedUrl);
+        return next;
+      });
+    }
+    setFaceProcessingImageUrl(null);
+    setFaceProcessingImageIndex(null);
   };
 
   useEffect(() => {
@@ -1196,6 +1224,12 @@ export default function VideoPage() {
   const handleGenerate = useCallback(() => {
     if (!prompt.trim()) return;
     if (!guard()) return;
+    const hasLocallyProcessedImages = referenceImages.some(image => locallyProcessedImages.has(image));
+    const allImagesLocallyProcessed = referenceImages.length > 0 && referenceImages.every(image => locallyProcessedImages.has(image));
+    if (selectedModel === WX_HAIDIYUE_FACE_SPLIT_MODEL && hasLocallyProcessedImages && !allImagesLocallyProcessed) {
+      setError('WX-Seedance V2.5 使用本地人脸拆分时，需要将全部参考图处理后再提交，避免上游重复处理');
+      return;
+    }
     if (isOmniVideoEditModel(selectedModel) && referenceVideos.length === 0) {
       setError('视频编辑模型必须上传参考视频');
       return;
@@ -1255,6 +1289,7 @@ export default function VideoPage() {
         first_frame: firstFrame || undefined,
         last_frame: lastFrame || undefined,
         face: isHmStudioVideoModel(selectedModel) ? hmFaceEnabled : undefined,
+        local_face_processed: allImagesLocallyProcessed,
         compliance_enabled: ['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(selectedModel) ? complianceEnabled : undefined,
         compliance_mode: (['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(selectedModel) && complianceEnabled) ? complianceMode : undefined,
       },
@@ -1303,12 +1338,13 @@ export default function VideoPage() {
     abortRef.current.set(taskId, ctrl);
     setPrompt('');
     setReferenceImages([]);
+    setLocallyProcessedImages(new Set());
     setReferenceVideos([]);
     setReferenceAudios([]);
     setReferenceAudioNames([]);
     setFirstFrame(null);
     setLastFrame(null);
-  }, [prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideos, referenceAudios, firstFrame, lastFrame]);
+  }, [prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideos, referenceAudios, firstFrame, lastFrame, locallyProcessedImages, hmFaceEnabled, complianceEnabled, complianceMode]);
 
   const handleRemove = (taskId: string) => {
     if (taskId.startsWith('db_')) {
@@ -2029,11 +2065,25 @@ export default function VideoPage() {
                     {referenceImages.map((img, idx) => (
                       <div key={idx} className="relative w-12 h-12 rounded-lg overflow-hidden border border-white/10 group cursor-pointer shrink-0 hover:border-indigo-500/30 transition-colors">
                         <img src={img} alt="" className="w-full h-full object-cover" />
+                        {locallyProcessedImages.has(img) && <div className="absolute right-0 top-0 rounded-bl bg-emerald-600/95 px-1 py-0.5 text-[8px] font-medium leading-none text-white">已拆脸</div>}
                         {/* 索引代号角标 */}
                         <div className="absolute top-0 left-0 bg-indigo-600/90 text-white text-[9px] px-1 py-0.5 rounded-br font-mono leading-none pointer-events-none group-hover:opacity-0 transition-opacity">
                           ref_{idx}
                         </div>
                         <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            disabled={locallyProcessedImages.has(img)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setFaceProcessingImageUrl(img);
+                              setFaceProcessingImageIndex(idx);
+                            }}
+                            className="bg-emerald-600 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40 p-0.5 rounded transition-colors"
+                            title={locallyProcessedImages.has(img) ? '该图片已完成人脸拆分' : '本地人脸拆分'}
+                          >
+                            <ScanFace className="w-3 h-3 text-white" />
+                          </button>
                           <button
                             type="button"
                             onClick={(e) => {
@@ -2051,6 +2101,11 @@ export default function VideoPage() {
                             onClick={(e) => {
                               e.stopPropagation();
                               setReferenceImages(prev => prev.filter((_, i) => i !== idx));
+                              setLocallyProcessedImages(prev => {
+                                const next = new Set(prev);
+                                next.delete(img);
+                                return next;
+                              });
                             }}
                             className="bg-red-500/80 hover:bg-red-500 p-0.5 rounded transition-colors"
                             title="删除"
@@ -2192,6 +2247,13 @@ export default function VideoPage() {
           imageUrl={slicingImageUrl}
           onClose={() => { setSlicingImageUrl(null); setSlicingImageIndex(null); }}
           onConfirm={handleConfirmSlice}
+        />
+      )}
+      {faceProcessingImageUrl && (
+        <FaceProcessingModal
+          imageUrl={faceProcessingImageUrl}
+          onClose={() => { setFaceProcessingImageUrl(null); setFaceProcessingImageIndex(null); }}
+          onConfirm={handleConfirmFaceProcessing}
         />
       )}
     </div>

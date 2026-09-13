@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 import {
   buildHmStudioImageForm,
   buildHmStudioVideoForm,
@@ -42,6 +44,30 @@ describe('HM Studio adapter', () => {
     expect(form.get('function_mode')).toBe('first_last_frames');
     expect(form.get('first_frame_url')).toBe('https://cdn.example.test/start.jpg');
     expect(form.has('face_split')).toBe(false);
+  });
+
+  it('uploads a processed local image as multipart bytes', async () => {
+    const uploadDir = path.join(process.cwd(), 'data', 'uploads');
+    const filename = 'hm_face_adapter_test.jpg';
+    const filePath = path.join(uploadDir, filename);
+    fs.mkdirSync(uploadDir, { recursive: true });
+    fs.writeFileSync(filePath, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+    try {
+      const form = buildHmStudioVideoForm({
+        model: 'HM-Video-SD1.5Pro',
+        prompt: 'test',
+        duration: 5,
+        ratio: '16:9',
+        resolution: '720p',
+        imageSources: [`/uploads/${filename}`],
+      });
+      const uploaded = form.get('first_frame');
+      expect(uploaded).toBeInstanceOf(Blob);
+      expect(await (uploaded as Blob).arrayBuffer()).toEqual(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]).buffer);
+      expect(form.has('first_frame_url')).toBe(false);
+    } finally {
+      fs.rmSync(filePath, { force: true });
+    }
   });
 
   it('keeps face processing off by default and accepts an explicit opt-in', () => {

@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+
 export const HM_STUDIO_CHANNEL_TYPE = 'hmstudio';
 
 export type HmStudioVideoOptions = {
@@ -77,7 +80,23 @@ export function shouldSendHmStudioAuthorization(targetUrl: string, baseUrl: stri
 
 function dataUrlToBlob(source: string): { blob: Blob; extension: string } | null {
   const match = source.match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) return null;
+  if (!match) {
+    if (!source.startsWith('/uploads/')) return null;
+    const filename = path.basename(source.split('?')[0]);
+    const localPath = path.join(process.cwd(), 'data', 'uploads', filename);
+    if (!fs.existsSync(localPath)) throw new Error(`本地参考图片不存在: ${filename}`);
+    const extension = path.extname(filename).slice(1).toLowerCase() || 'jpg';
+    const mimeType = extension === 'png' ? 'image/png'
+      : extension === 'webp' ? 'image/webp'
+      : extension === 'gif' ? 'image/gif'
+      : extension === 'mp4' ? 'video/mp4'
+      : extension === 'webm' ? 'video/webm'
+      : extension === 'wav' ? 'audio/wav'
+      : extension === 'mp3' ? 'audio/mpeg'
+      : extension === 'm4a' ? 'audio/mp4'
+      : 'image/jpeg';
+    return { blob: new Blob([fs.readFileSync(localPath)], { type: mimeType }), extension };
+  }
 
   const mimeType = match[1];
   const buffer = Buffer.from(match[2], 'base64');

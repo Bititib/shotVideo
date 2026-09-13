@@ -7,6 +7,7 @@ import { BalanceService } from '../services/balanceService.js';
 import { ContentService } from '../services/contentService.js';
 import { PricingService } from '../services/pricingService.js';
 import { hmStudioPoolKey, hmStudioQueue, type HmStudioQueueSnapshot } from '../services/hmStudioQueueService.js';
+import { processHmFaceImages } from '../services/hmFaceProcessingService.js';
 import { calculateSuccessRate, isWithinRecentDays } from '../services/successRateService.js';
 import {
   buildHmStudioVideoForm,
@@ -136,6 +137,14 @@ function convertBase64ToPublicUrl(dataUrl: string, prefix: string, requestOrBase
     return dataUrl;
   }
 
+  const requestBaseUrl = typeof requestOrBaseUrl === 'string'
+    ? requestOrBaseUrl
+    : `${requestOrBaseUrl.headers['x-forwarded-proto'] || requestOrBaseUrl.protocol}://${requestOrBaseUrl.get('host')}`;
+  const baseUrl = process.env.BACKEND_URL || requestBaseUrl;
+  if (dataUrl.startsWith('/uploads/')) {
+    return baseUrl ? `${baseUrl.replace(/\/+$/, '')}${dataUrl}` : dataUrl;
+  }
+
   try {
     const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
     if (!matches) return dataUrl;
@@ -157,10 +166,6 @@ function convertBase64ToPublicUrl(dataUrl: string, prefix: string, requestOrBase
     fs.writeFileSync(destPath, buffer);
 
     // 优先使用环境变量配置的公网基准 URL
-    const requestBaseUrl = typeof requestOrBaseUrl === 'string'
-      ? requestOrBaseUrl
-      : `${requestOrBaseUrl.headers['x-forwarded-proto'] || requestOrBaseUrl.protocol}://${requestOrBaseUrl.get('host')}`;
-    const baseUrl = process.env.BACKEND_URL || requestBaseUrl;
     return `${baseUrl.replace(/\/+$/, '')}/uploads/${filename}`;
   } catch (err: any) {
     console.error('[video] convertBase64ToPublicUrl 失败:', err.message);
@@ -796,6 +801,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     last_frame = '',         // Base64 尾帧图片
     face = false,            // HM Studio 人脸处理；默认关闭，可由用户开启
     face_split,              // 海底月参考图人脸拆分（仅实际路由到海底月时发送）
+    local_face_processed = false, // 已由浏览器完成眼嘴拆分，避免上游再次处理
     compliance_enabled,      // 是否开启合规素材/过人脸
     compliance_mode,         // 合规素材风格
   } = req.body;
@@ -1192,8 +1198,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         first_frame,
         last_frame,
         face: isHmStudioChannel(dbChannel) ? normalizeHmStudioFace(face) : undefined,
+        local_face_processed: Boolean(local_face_processed),
         face_split: isWxHaidiYueChannel(dbChannel)
-          ? (model === WX_HAIDIYUE_FACE_SPLIT_MODEL ? true : resolveWxHaidiYueFaceSplit(dbChannel, face_split))
+          ? (local_face_processed ? false : (model === WX_HAIDIYUE_FACE_SPLIT_MODEL ? true : resolveWxHaidiYueFaceSplit(dbChannel, face_split)))
           : undefined,
         billingSource: 'user',
         queueUserKey: `user:${req.userId}`,
@@ -1398,7 +1405,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
             duration: Number(video_length) || 6,
             aspectRatio: aspect_ratio,
             images: await getPreparedWxImages(),
-            faceSplit: model === WX_HAIDIYUE_FACE_SPLIT_MODEL
+            faceSplit: local_face_processed
+              ? false
+              : model === WX_HAIDIYUE_FACE_SPLIT_MODEL
               ? true
               : resolveWxHaidiYueFaceSplit(overflowPlan.channel, face_split),
           });
@@ -1522,7 +1531,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         duration: Number(video_length) || 5,
         aspectRatio: aspect_ratio,
         images: await getPreparedWxImages(),
-        faceSplit: model === WX_HAIDIYUE_FACE_SPLIT_MODEL
+        faceSplit: local_face_processed
+          ? false
+          : model === WX_HAIDIYUE_FACE_SPLIT_MODEL
           ? true
           : resolveWxHaidiYueFaceSplit(channel, face_split),
       });
@@ -2849,9 +2860,46 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
         let latestMeta: Record<string, any> = {};
         try { latestMeta = JSON.parse(latest.metadata || '{}'); } catch { }
 
-        const referenceImages = latestMeta.reference_images || latestMeta.image_urls || [];
+        let referenceImages: string[] = latestMeta.reference_images || latestMeta.image_urls || [];
         const referenceVideos = latestMeta.reference_videos || latestMeta.video_urls || [];
         const referenceAudios = latestMeta.audio_urls || [];
+        let firstFrame = latestMeta.first_frame || latestMeta.firstFrame;
+        let lastFrame = latestMeta.last_frame || latestMeta.lastFrame;
+
+        // API and website HM requests share this queue. Process person images once
+        // before the first upstream submission, then persist the generated URLs so
+        // key failover and process restarts never split the same image twice.
+        if (!latestMeta.local_face_processed && !latestMeta.hm_face_processed) {
+          const frameSources = [firstFrame, lastFrame].filter(Boolean) as string[];
+          const sourceImages = [...frameSources, ...referenceImages];
+          if (sourceImages.length > 0) {
+            latestMeta.progressText = '正在处理人物参考图';
+            db.update(contents).set({ metadata: JSON.stringify(latestMeta) }).where(eq(contents.id, contentId)).run();
+            const processed = await processHmFaceImages(sourceImages, {
+              publicBaseUrl: latestMeta.publicBaseUrl || process.env.BACKEND_URL,
+              outputPrefix: `content_${contentId}`,
+            });
+            const processedFrames = processed.sources.slice(0, frameSources.length);
+            referenceImages = processed.sources.slice(frameSources.length);
+            if (firstFrame) firstFrame = processedFrames.shift();
+            if (lastFrame) lastFrame = processedFrames.shift();
+            latestMeta.hm_face_original_images = referenceImages.length > 0
+              ? (latestMeta.reference_images || latestMeta.image_urls || [])
+              : undefined;
+            latestMeta.reference_images = referenceImages;
+            latestMeta.image_urls = referenceImages;
+            if (firstFrame) latestMeta.first_frame = firstFrame;
+            if (lastFrame) latestMeta.last_frame = lastFrame;
+            latestMeta.hm_face_processed = true;
+            latestMeta.hm_face_processing_details = processed.details;
+            latestMeta.hm_face_processed_at = new Date().toISOString();
+            latestMeta.face = false;
+            latestMeta.progressText = '人物参考图处理完成，正在提交 HM Studio';
+            db.update(contents).set({ metadata: JSON.stringify(latestMeta) }).where(eq(contents.id, contentId)).run();
+          } else {
+            latestMeta.hm_face_processed = true;
+          }
+        }
         const overflowRequest = {
           requestedModel: model,
           resolution: latestMeta.resolution || '720p',
@@ -2883,11 +2931,11 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
             imageSources: referenceImages,
             videoSources: referenceVideos,
             audioSources: referenceAudios,
-            firstFrame: latestMeta.first_frame || latestMeta.firstFrame,
-            lastFrame: latestMeta.last_frame || latestMeta.lastFrame,
+            firstFrame,
+            lastFrame,
             functionMode: latestMeta.function_mode,
             upstreamChannel: latestMeta.upstream_channel,
-            face: latestMeta.face,
+            face: latestMeta.local_face_processed || latestMeta.hm_face_processed ? false : latestMeta.face,
           });
           const headers: Record<string, string> = {};
           if (selectedHmChannel.apiKey) headers.Authorization = `Bearer ${selectedHmChannel.apiKey}`;
@@ -2938,7 +2986,9 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
                     || latestMeta.publicBaseUrl
                     || process.env.BACKEND_URL,
                 }),
-                faceSplit: model === WX_HAIDIYUE_FACE_SPLIT_MODEL
+                faceSplit: latestMeta.local_face_processed
+                  ? false
+                  : model === WX_HAIDIYUE_FACE_SPLIT_MODEL
                   ? true
                   : resolveWxHaidiYueFaceSplit(fallbackChannel, latestMeta.face_split),
               });
