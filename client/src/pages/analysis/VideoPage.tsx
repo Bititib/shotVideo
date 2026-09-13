@@ -1288,7 +1288,7 @@ export default function VideoPage() {
         audio_urls: referenceAudios.length > 0 ? referenceAudios : undefined,
         first_frame: firstFrame || undefined,
         last_frame: lastFrame || undefined,
-        face: isHmStudioVideoModel(selectedModel) ? hmFaceEnabled : undefined,
+        face_processing: isHmStudioVideoModel(selectedModel) ? hmFaceEnabled : undefined,
         local_face_processed: allImagesLocallyProcessed,
         compliance_enabled: ['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(selectedModel) ? complianceEnabled : undefined,
         compliance_mode: (['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(selectedModel) && complianceEnabled) ? complianceMode : undefined,
@@ -1881,7 +1881,7 @@ export default function VideoPage() {
                         <span className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${hmFaceEnabled ? 'translate-x-3' : 'translate-x-0'}`} />
                       </span>
                       <span className={hmFaceEnabled ? 'text-indigo-300 font-medium' : 'text-zinc-400'}>
-                        人脸处理：{hmFaceEnabled ? '开启' : '关闭'}
+                        真人素材处理：{hmFaceEnabled ? '开启' : '关闭'}
                       </span>
                     </button>
                   )}

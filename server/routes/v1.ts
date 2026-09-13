@@ -1764,7 +1764,10 @@ async function handleVideoCreation(req: Request, res: Response) {
         face_split: isWxHaidiYueChannel(channel)
           ? (model === WX_HAIDIYUE_FACE_SPLIT_MODEL ? true : resolveWxHaidiYueFaceSplit(channel, body.face_split))
           : undefined,
-        face: isHmStudioChannel(channel) ? normalizeHmStudioFace(body.face) : undefined,
+        face: isHmStudioChannel(channel) ? false : undefined,
+        face_processing: isHmStudioChannel(channel)
+          ? normalizeHmStudioFace(body.face_processing ?? body.face, false)
+          : undefined,
         function_mode: body.function_mode,
         upstream_channel: body.channel,
         tokenId: token.id,
@@ -1861,6 +1864,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     delete otherParams.videos;
     delete otherParams.audio_urls;
     delete otherParams.audios;
+    delete otherParams.face_processing;
 
     if (isHmStudio) {
       const formData = buildHmStudioVideoForm({
@@ -1876,7 +1880,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         lastFrame: body.end_frame_url || body.last_frame_url,
         functionMode: body.function_mode,
         upstreamChannel: body.channel,
-        face: body.face,
+        face: false,
       });
       const headers: Record<string, string> = {};
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;

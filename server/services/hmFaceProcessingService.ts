@@ -28,6 +28,16 @@ export type HmFaceProcessingResult = {
   details: HmFaceProcessingDetails;
 };
 
+export function shouldRunHmFaceProcessing(requestValue: unknown, globalValue: unknown = process.env.HM_FACE_PROCESSING_ENABLED): boolean {
+  const globallyDisabled = typeof globalValue === 'string'
+    && ['false', '0', 'off', 'no'].includes(globalValue.trim().toLowerCase());
+  if (globallyDisabled) return false;
+  if (typeof requestValue === 'boolean') return requestValue;
+  if (typeof requestValue === 'number') return requestValue === 1;
+  return typeof requestValue === 'string'
+    && ['true', '1', 'on', 'yes'].includes(requestValue.trim().toLowerCase());
+}
+
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 let inferenceChain = Promise.resolve();
 

@@ -31,7 +31,8 @@ export interface VideoGenerateParams {
   audio_urls?: string[];        // 多音频数组
   first_frame?: string;         // base64 首帧图片
   last_frame?: string;          // base64 尾帧图片
-  face?: boolean;               // HM Studio 人脸处理（默认 false）
+  face?: boolean;               // 旧版兼容字段；新调用使用 face_processing
+  face_processing?: boolean;    // 真人素材才开启：由服务器进行眼嘴拆分后提交 HM
   local_face_processed?: boolean; // 参考图是否已在浏览器完成眼嘴拆分
   compliance_enabled?: boolean; // 是否开启合规素材/过人脸
   compliance_mode?: string;    // 合规素材风格 (colored-pencil | watercolor | fishnet | grid)

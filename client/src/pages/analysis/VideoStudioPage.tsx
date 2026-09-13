@@ -264,7 +264,7 @@ export default function VideoStudioPage() {
     if (!activeProjectId) { createProject(); return; }
     setIsGenerating(true); setProgress(0); setError(null); setStatusMsg(isExtendMode ? '续写生成中...' : '生成中...');
     const ctrl = generateVideo(
-      { prompt: prompt.trim(), model: selectedModel, aspect_ratio: project?.aspectRatio || '16:9', video_length: duration, resolution: project?.resolution || '720p', reference_images: referenceImages.length > 0 ? referenceImages : undefined, face: isHmStudioVideoModel(selectedModel) ? hmFaceEnabled : undefined, local_face_processed: allImagesLocallyProcessed },
+      { prompt: prompt.trim(), model: selectedModel, aspect_ratio: project?.aspectRatio || '16:9', video_length: duration, resolution: project?.resolution || '720p', reference_images: referenceImages.length > 0 ? referenceImages : undefined, face_processing: isHmStudioVideoModel(selectedModel) ? hmFaceEnabled : undefined, local_face_processed: allImagesLocallyProcessed },
       (ev: VideoSSEEvent) => {
         switch (ev.type) {
           case 'queue': setStatusMsg(ev.message || `HM Studio 排队中：前方 ${Math.max(0, (ev.position || 1) - 1)} 项`); break;
@@ -491,7 +491,7 @@ export default function VideoStudioPage() {
                   title="关闭时发送 face=false；开启时发送 face=true"
                 >
                   <span className={`w-2 h-2 rounded-full ${hmFaceEnabled ? 'bg-indigo-400' : 'bg-zinc-600'}`} />
-                  人脸处理：{hmFaceEnabled ? '开启' : '关闭'}
+                  真人素材处理：{hmFaceEnabled ? '开启' : '关闭'}
                 </button>
               )}
               <div className="group relative flex items-center">

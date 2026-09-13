@@ -7,7 +7,7 @@ import { BalanceService } from '../services/balanceService.js';
 import { ContentService } from '../services/contentService.js';
 import { PricingService } from '../services/pricingService.js';
 import { hmStudioPoolKey, hmStudioQueue, type HmStudioQueueSnapshot } from '../services/hmStudioQueueService.js';
-import { processHmFaceImages } from '../services/hmFaceProcessingService.js';
+import { processHmFaceImages, shouldRunHmFaceProcessing } from '../services/hmFaceProcessingService.js';
 import { calculateSuccessRate, isWithinRecentDays } from '../services/successRateService.js';
 import {
   buildHmStudioVideoForm,
@@ -800,6 +800,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     first_frame = '',        // Base64 首帧图片
     last_frame = '',         // Base64 尾帧图片
     face = false,            // HM Studio 人脸处理；默认关闭，可由用户开启
+    face_processing = false, // 仅真人素材开启：由本站服务端完成眼嘴拆分
     face_split,              // 海底月参考图人脸拆分（仅实际路由到海底月时发送）
     local_face_processed = false, // 已由浏览器完成眼嘴拆分，避免上游再次处理
     compliance_enabled,      // 是否开启合规素材/过人脸
@@ -1197,7 +1198,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         audio_urls: finalAudios,
         first_frame,
         last_frame,
-        face: isHmStudioChannel(dbChannel) ? normalizeHmStudioFace(face) : undefined,
+        face: isHmStudioChannel(dbChannel) ? false : undefined,
+        face_processing: isHmStudioChannel(dbChannel)
+          ? normalizeHmStudioFace(face_processing ?? face, false)
+          : undefined,
         local_face_processed: Boolean(local_face_processed),
         face_split: isWxHaidiYueChannel(dbChannel)
           ? (local_face_processed ? false : (model === WX_HAIDIYUE_FACE_SPLIT_MODEL ? true : resolveWxHaidiYueFaceSplit(dbChannel, face_split)))
@@ -1505,7 +1509,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         audioSources: finalAudios,
         firstFrame: first_frame,
         lastFrame: last_frame,
-        face,
+        face: false,
       });
       const headers: Record<string, string> = {};
       if (channel.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
@@ -2869,7 +2873,8 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
         // API and website HM requests share this queue. Process person images once
         // before the first upstream submission, then persist the generated URLs so
         // key failover and process restarts never split the same image twice.
-        if (!latestMeta.local_face_processed && !latestMeta.hm_face_processed) {
+        const shouldProcessHmFace = shouldRunHmFaceProcessing(latestMeta.face_processing);
+        if (shouldProcessHmFace && !latestMeta.local_face_processed && !latestMeta.hm_face_processed) {
           const frameSources = [firstFrame, lastFrame].filter(Boolean) as string[];
           const sourceImages = [...frameSources, ...referenceImages];
           if (sourceImages.length > 0) {
@@ -2935,7 +2940,7 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
             lastFrame,
             functionMode: latestMeta.function_mode,
             upstreamChannel: latestMeta.upstream_channel,
-            face: latestMeta.local_face_processed || latestMeta.hm_face_processed ? false : latestMeta.face,
+            face: false,
           });
           const headers: Record<string, string> = {};
           if (selectedHmChannel.apiKey) headers.Authorization = `Bearer ${selectedHmChannel.apiKey}`;
