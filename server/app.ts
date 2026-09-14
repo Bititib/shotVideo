@@ -58,12 +58,17 @@ export async function createApp() {
   app.use('/uploads/history-assets', express.static(path.join(uploadDir, 'history-assets'), {
     immutable: true,
     maxAge: '1y',
+    fallthrough: false,
   }));
   app.use('/uploads/wx-haidiyue', express.static(path.join(uploadDir, 'wx-haidiyue'), {
     immutable: true,
     maxAge: '30d',
+    fallthrough: false,
   }));
-  app.use('/uploads', express.static(uploadDir));
+  // A missing media file must stay a 404. If it falls through to the SPA route,
+  // index.html is returned with HTTP 200 and downstream image decoders report
+  // the misleading error "unsupported image format".
+  app.use('/uploads', express.static(uploadDir, { fallthrough: false }));
 
   // OpenAI 兼容代理层（不走 /api 前缀）
   app.use('/v1', v1Routes);

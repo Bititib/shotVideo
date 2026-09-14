@@ -31,6 +31,29 @@ type AdminRoutingInfo = {
   fallbackAt: string;
 };
 
+function ReferenceImagePreview({ src, index }: { src: string; index: number; key?: React.Key }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+
+  if (failed) {
+    return (
+      <div className="flex aspect-square w-full flex-col items-center justify-center rounded-lg border border-red-400/25 bg-red-500/10 px-1 text-center text-[10px] text-red-300" title={src}>
+        <CircleAlert className="mb-1 h-4 w-4" />
+        参考图 {index + 1} 已失效
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={`ref_${index}`}
+      onError={() => setFailed(true)}
+      className="w-full aspect-square rounded-lg object-cover border border-white/10 hover:border-indigo-500/50 transition-colors cursor-pointer"
+    />
+  );
+}
+
 const channelDisplayName = (channel: string) => {
   if (channel === 'wx-haidiyue') return 'wx-海底月';
   if (channel === 'hmstudio') return 'HM Studio';
@@ -712,7 +735,7 @@ export default function ContentsPage() {
                           </h4>
                           <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
                             {refImgs.map((img, i) => (
-                              <img key={i} src={img} alt={`ref_${i}`} className="w-full aspect-square rounded-lg object-cover border border-white/10 hover:border-indigo-500/50 transition-colors cursor-pointer" />
+                              <ReferenceImagePreview key={`${i}:${img}`} src={img} index={i} />
                             ))}
                           </div>
                         </div>

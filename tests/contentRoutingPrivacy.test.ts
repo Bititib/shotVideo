@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'fs';
+import crypto from 'crypto';
 import os from 'os';
 import path from 'path';
 import {
@@ -151,6 +152,28 @@ describe('content routing privacy', () => {
       expect(result.metadata).not.toHaveProperty('omittedInlineAssetCount');
       expect(fs.readdirSync(uploadDir)).toHaveLength(1);
       expect(fs.readFileSync(path.join(uploadDir, fs.readdirSync(uploadDir)[0]), 'utf8')).toBe('test-video');
+    } finally {
+      fs.rmSync(uploadDir, { recursive: true, force: true });
+    }
+  });
+
+  it('repairs an existing truncated history asset before returning its URL', () => {
+    const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'history-assets-repair-'));
+    try {
+      const bytes = Buffer.from('complete-image-bytes');
+      const inlineImage = `data:image/jpeg;base64,${bytes.toString('base64')}`;
+      const hash = crypto.createHash('sha256').update(bytes).digest('hex');
+      const filePath = path.join(uploadDir, `${hash}.jpg`);
+      fs.writeFileSync(filePath, bytes.subarray(0, 4));
+
+      const result = materializeContentMetadataAssets({
+        reference_images: [inlineImage],
+      }, { uploadDir });
+
+      expect(result.changed).toBe(true);
+      expect(result.filesWritten).toBe(1);
+      expect(fs.readFileSync(filePath)).toEqual(bytes);
+      expect(fs.readdirSync(uploadDir)).toEqual([`${hash}.jpg`]);
     } finally {
       fs.rmSync(uploadDir, { recursive: true, force: true });
     }

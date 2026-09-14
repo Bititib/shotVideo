@@ -30,6 +30,60 @@ export interface NormalizedImage {
   wasHeic: boolean;
 }
 
+/**
+ * Quickly reject malformed inline images before they reach the video API.
+ * File extensions and MIME strings alone are not enough: Buffer.from(base64)
+ * accepts truncated/garbage input, which later surfaces as an upstream
+ * "unsupported image format" error.
+ */
+export function hasSupportedImageDataUrlSignature(source: string): boolean {
+  if (!source.startsWith('data:')) return true;
+  const match = source.match(/^data:image\/[^;,]+(?:;[^,]*)?;base64,([a-zA-Z0-9+/=\s]+)$/);
+  if (!match) return false;
+
+  try {
+    const binary = atob(match[1].replace(/\s/g, ''));
+    if (binary.length < 12) return false;
+    const byte = (index: number) => binary.charCodeAt(index);
+    const ascii = (start: number, end: number) => binary.slice(start, end);
+    return (
+      (byte(0) === 0xff && byte(1) === 0xd8 && byte(2) === 0xff)
+      || (byte(0) === 0x89 && ascii(1, 4) === 'PNG' && byte(4) === 0x0d && byte(5) === 0x0a)
+      || ascii(0, 6) === 'GIF87a'
+      || ascii(0, 6) === 'GIF89a'
+      || (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function canDecodeImageSource(source: string, timeoutMs = 12_000): Promise<boolean> {
+  if (!source || !hasSupportedImageDataUrlSignature(source)) return Promise.resolve(false);
+  return new Promise(resolve => {
+    const image = new Image();
+    let settled = false;
+    const finish = (valid: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      image.onload = null;
+      image.onerror = null;
+      resolve(valid);
+    };
+    const timer = window.setTimeout(() => finish(false), timeoutMs);
+    image.onload = () => finish((image.naturalWidth || image.width) > 0 && (image.naturalHeight || image.height) > 0);
+    image.onerror = () => finish(false);
+    image.src = source;
+  });
+}
+
+/** Return zero-based indexes of references the browser cannot actually decode. */
+export async function findUnreadableImageIndexes(sources: string[]): Promise<number[]> {
+  const results = await Promise.all(sources.map(canDecodeImageSource));
+  return results.flatMap((valid, index) => valid ? [] : [index]);
+}
+
 const KNOWN_IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp|heic|heif)$/i;
 const HEIC_EXTENSIONS = /\.(?:heic|heif)$/i;
 const HEIC_MIME_TYPES = new Set([

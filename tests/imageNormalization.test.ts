@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isHeicFile, isSupportedImageFile, MOBILE_IMAGE_ACCEPT } from '../client/src/utils/imageNormalization.js';
+import { hasSupportedImageDataUrlSignature, isHeicFile, isSupportedImageFile, MOBILE_IMAGE_ACCEPT } from '../client/src/utils/imageNormalization.js';
 
 function testFile(bytes: number[], name: string, type = ''): File {
   return Object.assign(new Blob([new Uint8Array(bytes)], { type }), { name, lastModified: 0 }) as File;
@@ -31,5 +31,13 @@ describe('mobile image normalization detection', () => {
   it('does not misclassify ordinary JPEG data as HEIC', async () => {
     const jpeg = testFile([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0], 'photo.jpg', 'image/jpeg');
     await expect(isHeicFile(jpeg)).resolves.toBe(false);
+  });
+
+  it('rejects malformed inline image data before submission', () => {
+    const jpegHeader = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]).toString('base64');
+    expect(hasSupportedImageDataUrlSignature(`data:image/jpeg;base64,${jpegHeader}`)).toBe(true);
+    expect(hasSupportedImageDataUrlSignature('data:image/jpeg;base64,not-valid-base64%%%')).toBe(false);
+    expect(hasSupportedImageDataUrlSignature(`data:image/jpeg;base64,${Buffer.from('<html>404</html>').toString('base64')}`)).toBe(false);
+    expect(hasSupportedImageDataUrlSignature('/uploads/history-assets/reference.jpg')).toBe(true);
   });
 });

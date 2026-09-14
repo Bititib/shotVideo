@@ -15,7 +15,7 @@ import { getBillingUnit } from '../../utils/billing';
 import { buildReplicatedVideoPrompt, getVideoReferenceAssets, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
 import { isOmniVideoEditModel, isSnumomGrokImagineVideoModel, SNUMOM_SD_MINI_MODEL, snumomSdMiniSecondsForResolution, WX_HAIDIYUE_FACE_SPLIT_MODEL } from '../../utils/videoModelCapabilities';
 import { getContentFailureInfo } from '../../utils/contentFailure';
-import { isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
+import { findUnreadableImageIndexes, isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
 
 interface VideoTask {
   id: string;
@@ -1221,9 +1221,14 @@ export default function VideoPage() {
     });
   };
 
-  const handleGenerate = useCallback(() => {
+  const handleGenerate = useCallback(async () => {
     if (!prompt.trim()) return;
     if (!guard()) return;
+    const unreadableImageIndexes = await findUnreadableImageIndexes(referenceImages);
+    if (unreadableImageIndexes.length > 0) {
+      setError(`参考图 ${unreadableImageIndexes.map(index => index + 1).join('、')} 已失效或格式损坏，请删除后重新上传`);
+      return;
+    }
     const hasLocallyProcessedImages = referenceImages.some(image => locallyProcessedImages.has(image));
     const allImagesLocallyProcessed = referenceImages.length > 0 && referenceImages.every(image => locallyProcessedImages.has(image));
     if (selectedModel === WX_HAIDIYUE_FACE_SPLIT_MODEL && hasLocallyProcessedImages && !allImagesLocallyProcessed) {

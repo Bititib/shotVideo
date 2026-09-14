@@ -104,6 +104,53 @@ export type MaterializedContentAssets = {
   bytesWritten: number;
 };
 
+function fileMatchesBuffer(filePath: string, buffer: Buffer, expectedHash: string): boolean {
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile() || stat.size !== buffer.length) return false;
+    return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex') === expectedHash;
+  } catch {
+    return false;
+  }
+}
+
+/** Write to a sibling temporary file, verify it, then expose the final URL. */
+function persistAssetAtomically(filePath: string, buffer: Buffer, expectedHash: string): boolean {
+  if (fileMatchesBuffer(filePath, buffer, expectedHash)) return false;
+
+  const tempPath = `${filePath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+  try {
+    const descriptor = fs.openSync(tempPath, 'wx');
+    try {
+      fs.writeFileSync(descriptor, buffer);
+      fs.fsyncSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    if (!fileMatchesBuffer(tempPath, buffer, expectedHash)) throw new Error('写入后的文件校验失败');
+
+    try {
+      fs.renameSync(tempPath, filePath);
+    } catch (error: any) {
+      // Windows cannot atomically replace an existing destination. Only remove
+      // it after confirming that it is not the requested content.
+      if (!['EEXIST', 'EPERM'].includes(error?.code) || fileMatchesBuffer(filePath, buffer, expectedHash)) {
+        if (fileMatchesBuffer(filePath, buffer, expectedHash)) return false;
+        throw error;
+      }
+      fs.unlinkSync(filePath);
+      fs.renameSync(tempPath, filePath);
+    }
+
+    if (!fileMatchesBuffer(filePath, buffer, expectedHash)) throw new Error('最终文件校验失败');
+    return true;
+  } finally {
+    try {
+      if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+    } catch { /* best-effort cleanup */ }
+  }
+}
+
 /**
  * Persist inline history media as content-addressed files and replace Base64
  * values with lightweight URLs. This keeps content detail responses small and
@@ -145,17 +192,13 @@ export function materializeContentMetadataAssets(
 
       const extension = MIME_EXTENSIONS[mimeType]
         || (mimeType.startsWith('image/') ? 'img' : mimeType.startsWith('video/') ? 'mp4' : mimeType.startsWith('audio/') ? 'bin' : 'bin');
-      const filename = `${crypto.createHash('sha256').update(buffer).digest('hex')}.${extension}`;
+      const contentHash = crypto.createHash('sha256').update(buffer).digest('hex');
+      const filename = `${contentHash}.${extension}`;
       const filePath = path.join(uploadDir, filename);
       fs.mkdirSync(uploadDir, { recursive: true });
-      if (!fs.existsSync(filePath)) {
-        try {
-          fs.writeFileSync(filePath, buffer, { flag: 'wx' });
-          filesWritten += 1;
-          bytesWritten += buffer.length;
-        } catch (error: any) {
-          if (error?.code !== 'EEXIST') throw error;
-        }
+      if (persistAssetAtomically(filePath, buffer, contentHash)) {
+        filesWritten += 1;
+        bytesWritten += buffer.length;
       }
 
       const relativeUrl = `/uploads/history-assets/${filename}`;

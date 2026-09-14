@@ -7,7 +7,7 @@ import FaceProcessingModal from '../../components/FaceProcessingModal';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { SNUMOM_SD_MINI_MODEL, WX_HAIDIYUE_FACE_SPLIT_MODEL } from '../../utils/videoModelCapabilities';
-import { isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
+import { findUnreadableImageIndexes, isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
 
 interface Segment { id: string; prompt: string; videoUrl: string; duration: number; model: string; lastFrame?: string; }
 interface Project { id: string; name: string; segments: Segment[]; aspectRatio: string; resolution: string; createdAt: number; }
@@ -252,9 +252,14 @@ export default function VideoStudioPage() {
     if (activeProjectId === id) setActiveProjectId(null);
   };
 
-  const handleGenerate = useCallback(() => {
+  const handleGenerate = useCallback(async () => {
     if (!prompt.trim() || isGenerating) return;
     if (!guard()) return;
+    const unreadableImageIndexes = await findUnreadableImageIndexes(referenceImages);
+    if (unreadableImageIndexes.length > 0) {
+      setError(`参考图 ${unreadableImageIndexes.map(index => index + 1).join('、')} 已失效或格式损坏，请删除后重新上传`);
+      return;
+    }
     const hasLocallyProcessedImages = referenceImages.some(image => locallyProcessedImages.has(image));
     const allImagesLocallyProcessed = referenceImages.length > 0 && referenceImages.every(image => locallyProcessedImages.has(image));
     if (selectedModel === WX_HAIDIYUE_FACE_SPLIT_MODEL && hasLocallyProcessedImages && !allImagesLocallyProcessed) {

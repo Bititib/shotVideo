@@ -91,6 +91,7 @@ import {
 } from '../services/wxHaidiYueAdapter.js';
 import { prepareWxHaidiYueImageUrls } from '../services/wxHaidiYueImageService.js';
 import { detectVideoCodec, downloadAndLocalizeVideo, originalVideoPathFor, preferredVideoDownloadPath } from '../services/videoLocalizationService.js';
+import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
 export { downloadAndLocalizeVideo } from '../services/videoLocalizationService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
@@ -792,7 +793,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     aspect_ratio = '16:9',
     video_length = 6,
     resolution: requestedResolution,
-    reference_images = [],   // base64 dataURL 数组
+    reference_images: rawReferenceImages = [],   // base64 dataURL 数组
     reference_videos = [],   // 新多视频数组字段
     reference_video = '',    // 旧单值兼容字段
     audio_urls = [],         // 新多音频数组字段
@@ -806,6 +807,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     compliance_enabled,      // 是否开启合规素材/过人脸
     compliance_mode,         // 合规素材风格
   } = req.body;
+  let reference_images: string[] = Array.isArray(rawReferenceImages) ? rawReferenceImages : [];
   const resolution = requestedResolution || (isJulunMinimaxH3Model(model) ? JULUN_MINIMAX_H3_RESOLUTION : '720p');
 
   // 向后兼容：合并旧单值字段到新数组
@@ -963,6 +965,18 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   }
 
   // 强制参考图校验
+  try {
+    const requestOrigin = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+    reference_images = await validateAndNormalizeImageReferences(reference_images, {
+      trustedOrigins: [requestOrigin, process.env.BACKEND_URL || ''],
+    });
+  } catch (error: any) {
+    const message = error instanceof InvalidImageReferenceError
+      ? error.message
+      : `参考图校验失败：${error?.message || '未知错误'}`;
+    return res.status(400).json({ error: message });
+  }
+
   const hasRef = Array.isArray(reference_images) && reference_images.length > 0;
   if (meta?.requireRef && !hasRef) {
     return res.status(400).json({ error: `模型 ${model} 必须提供参考图` });
