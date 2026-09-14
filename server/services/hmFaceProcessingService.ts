@@ -32,6 +32,7 @@ export function shouldRunHmFaceProcessing(requestValue: unknown, globalValue: un
   const globallyDisabled = typeof globalValue === 'string'
     && ['false', '0', 'off', 'no'].includes(globalValue.trim().toLowerCase());
   if (globallyDisabled) return false;
+  if (requestValue === undefined || requestValue === null || requestValue === '') return true;
   if (typeof requestValue === 'boolean') return requestValue;
   if (typeof requestValue === 'number') return requestValue === 1;
   return typeof requestValue === 'string'

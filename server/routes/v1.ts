@@ -1766,7 +1766,7 @@ async function handleVideoCreation(req: Request, res: Response) {
           : undefined,
         face: isHmStudioChannel(channel) ? false : undefined,
         face_processing: isHmStudioChannel(channel)
-          ? normalizeHmStudioFace(body.face_processing ?? body.face, false)
+          ? normalizeHmStudioFace(body.face_processing ?? body.face, true)
           : undefined,
         function_mode: body.function_mode,
         upstream_channel: body.channel,

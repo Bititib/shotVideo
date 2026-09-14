@@ -23,7 +23,7 @@
 | `image_urls` | array[string] | 否 | `[]` | `images`, `image_refs` | 公网图片 URL 列表 |
 | `video_urls` | array[string] | 否 | `[]` | `videos`, `video_url` | 公网视频 URL 列表；`video_url` 为单视频别名 |
 | `audio_urls` | array[string] | 否 | `[]` | `audios` | 公网音频 URL 列表 |
-| `face_processing` | boolean | 否 | `false` | `face`（兼容旧调用） | 仅 HM 视频渠道有效；真人参考图设为 `true`，由服务器处理后再提交 HM；非真人素材保持 `false` |
+| `face_processing` | boolean | 否 | `true` | `face`（兼容旧调用） | 仅 HM 视频渠道有效；不传时由服务器处理参考图后再提交 HM；显式设为 `false` 可跳过处理 |
 
 ### 响应示例 (HTTP 200/202)
 

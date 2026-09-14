@@ -799,8 +799,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     audio_url = '',          // 旧单值兼容字段
     first_frame = '',        // Base64 首帧图片
     last_frame = '',         // Base64 尾帧图片
-    face = false,            // HM Studio 人脸处理；默认关闭，可由用户开启
-    face_processing = false, // 仅真人素材开启：由本站服务端完成眼嘴拆分
+    face,                    // HM Studio 旧版兼容字段
+    face_processing,         // HM 默认开启；显式传 false 可关闭本站眼嘴拆分
     face_split,              // 海底月参考图人脸拆分（仅实际路由到海底月时发送）
     local_face_processed = false, // 已由浏览器完成眼嘴拆分，避免上游再次处理
     compliance_enabled,      // 是否开启合规素材/过人脸
@@ -1200,7 +1200,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         last_frame,
         face: isHmStudioChannel(dbChannel) ? false : undefined,
         face_processing: isHmStudioChannel(dbChannel)
-          ? normalizeHmStudioFace(face_processing ?? face, false)
+          ? normalizeHmStudioFace(face_processing ?? face, true)
           : undefined,
         local_face_processed: Boolean(local_face_processed),
         face_split: isWxHaidiYueChannel(dbChannel)
