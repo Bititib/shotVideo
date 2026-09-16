@@ -1217,7 +1217,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           : undefined,
         local_face_processed: Boolean(local_face_processed),
         face_split: isWxHaidiYueChannel(dbChannel)
-          ? (model === WX_HAIDIYUE_FACE_SPLIT_MODEL ? true : (local_face_processed ? false : resolveWxHaidiYueFaceSplit(dbChannel, face_split)))
+          ? (local_face_processed ? false : (model === WX_HAIDIYUE_FACE_SPLIT_MODEL ? true : resolveWxHaidiYueFaceSplit(dbChannel, face_split)))
           : undefined,
         billingSource: 'user',
         queueUserKey: `user:${req.userId}`,
@@ -1422,10 +1422,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
             duration: Number(video_length) || 6,
             aspectRatio: aspect_ratio,
             images: await getPreparedWxImages(),
-            faceSplit: model === WX_HAIDIYUE_FACE_SPLIT_MODEL
-              ? true
-              : local_face_processed
+            faceSplit: local_face_processed
               ? false
+              : model === WX_HAIDIYUE_FACE_SPLIT_MODEL
+              ? true
               : resolveWxHaidiYueFaceSplit(overflowPlan.channel, face_split),
           });
           createResp = await fetch(wxHaidiYueCreateUrl(overflowPlan.channel.baseUrl), {
@@ -1548,10 +1548,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         duration: Number(video_length) || 5,
         aspectRatio: aspect_ratio,
         images: await getPreparedWxImages(),
-        faceSplit: model === WX_HAIDIYUE_FACE_SPLIT_MODEL
-          ? true
-          : local_face_processed
+        faceSplit: local_face_processed
           ? false
+          : model === WX_HAIDIYUE_FACE_SPLIT_MODEL
+          ? true
           : resolveWxHaidiYueFaceSplit(channel, face_split),
       });
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -3004,10 +3004,10 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
                     || latestMeta.publicBaseUrl
                     || process.env.BACKEND_URL,
                 }),
-                faceSplit: model === WX_HAIDIYUE_FACE_SPLIT_MODEL
-                  ? true
-                  : latestMeta.local_face_processed
+                faceSplit: latestMeta.local_face_processed
                   ? false
+                  : model === WX_HAIDIYUE_FACE_SPLIT_MODEL
+                  ? true
                   : resolveWxHaidiYueFaceSplit(fallbackChannel, latestMeta.face_split),
               });
               fallbackResponse = await fetch(wxHaidiYueCreateUrl(fallbackChannel.baseUrl), {
