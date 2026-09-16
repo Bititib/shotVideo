@@ -24,6 +24,7 @@ afterAll(() => {
 
 describe('wx-海底月 face_split channel setting', () => {
   it('seeds a dedicated selectable model with independent per-call pricing', () => {
+    expect(WX_HAIDIYUE_FACE_SPLIT_MODEL).toBe('sd2.5');
     expect(db.select().from(models).where(eq(models.modelId, WX_HAIDIYUE_FACE_SPLIT_MODEL)).get()).toMatchObject({
       displayName: WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME,
       description: '支持真人；固定30秒；最多9张参考图；固定按次计费 ¥2.00/次',
@@ -39,6 +40,12 @@ describe('wx-海底月 face_split channel setting', () => {
       rate: 2,
       cost: 2,
     });
+    const publicSd25Channels = db.select().from(channels).all().filter(channel => {
+      try { return JSON.parse(channel.supportedModels || '[]').includes('sd2.5'); } catch { return false; }
+    });
+    expect(publicSd25Channels.length).toBeGreaterThan(0);
+    expect(publicSd25Channels.every(channel => channel.type === 'wx-haidiyue')).toBe(true);
+    expect(db.select().from(models).where(eq(models.modelId, 'sd2.5-haidiyue-face')).get()).toBeUndefined();
   });
 
   it('defaults to enabled and persists administrator changes', () => {

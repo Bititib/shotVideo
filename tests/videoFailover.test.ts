@@ -4,6 +4,7 @@ import {
   canUseSiYueTianJulunOverflow,
   canUseWxHaidiYueOverflow,
   isHmStudioConcurrencyError,
+  SI_YUE_TIAN_PRIMARY_VIDEO_MODEL,
   shouldOverflowHmStudio,
 } from '../server/services/videoFailoverService.js';
 
@@ -58,13 +59,14 @@ describe('HM Studio to MJ video failover', () => {
     expect(canUseWxHaidiYueOverflow({ ...compatibleRequest, resolution: '480p' })).toBe(false);
   });
 
-  it('routes fixed-30-second 四月天 sd2.5 only to Julun', () => {
+  it('keeps the retired 四月天 route on an internal-only model id', () => {
     const siYueTianRequest = {
       ...compatibleRequest,
-      requestedModel: 'sd2.5',
+      requestedModel: SI_YUE_TIAN_PRIMARY_VIDEO_MODEL,
       seconds: 30,
     };
     expect(canUseSiYueTianJulunOverflow(siYueTianRequest)).toBe(true);
+    expect(canUseSiYueTianJulunOverflow({ ...siYueTianRequest, requestedModel: 'sd2.5' })).toBe(false);
     expect(canUseWxHaidiYueOverflow(siYueTianRequest)).toBe(false);
     expect(canUseMjOverflowModel(siYueTianRequest)).toBe(false);
     expect(canUseSiYueTianJulunOverflow({ ...siYueTianRequest, seconds: 29 })).toBe(false);

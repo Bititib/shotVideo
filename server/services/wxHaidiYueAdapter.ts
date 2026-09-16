@@ -1,7 +1,7 @@
 export const WX_HAIDIYUE_CHANNEL_TYPE = 'wx-haidiyue';
 export const WX_HAIDIYUE_CHANNEL_NAME = 'wx-海底月 sd2.5 渠道';
 export const WX_HAIDIYUE_UPSTREAM_MODEL = 'sd2.5';
-export const WX_HAIDIYUE_FACE_SPLIT_MODEL = 'sd2.5-haidiyue-face';
+export const WX_HAIDIYUE_FACE_SPLIT_MODEL = 'sd2.5';
 export const WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME = WX_HAIDIYUE_FACE_SPLIT_MODEL;
 export const WX_HAIDIYUE_FACE_SPLIT_PRICE = 2;
 

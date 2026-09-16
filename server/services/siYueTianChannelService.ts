@@ -12,7 +12,7 @@ import {
   type HmStudioOverflowInput,
 } from './videoFailoverService.js';
 
-export const SI_YUE_TIAN_VIDEO_MODEL = 'sd2.5';
+export const SI_YUE_TIAN_VIDEO_MODEL = 'sd2.5-siyuetian-legacy';
 export const SI_YUE_TIAN_HOSTNAME = 'llm.chre3.com';
 export const SI_YUE_TIAN_ROUTING_STRATEGY_KEY = 'siyuetian_sd25_routing_strategy';
 export const SI_YUE_TIAN_ROUND_ROBIN_NEXT_KEY = 'internal_siyuetian_sd25_round_robin_next';

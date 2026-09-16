@@ -7,6 +7,7 @@ import {
   findSiYueTianOverflowPlan,
   isSiYueTianChannel,
   selectSiYueTianRoute,
+  SI_YUE_TIAN_VIDEO_MODEL,
   SI_YUE_TIAN_ROUND_ROBIN_NEXT_KEY,
   SI_YUE_TIAN_ROUTING_STRATEGY_KEY,
   submitSiYueTianOverflowPlan,
@@ -32,7 +33,7 @@ describe('四月天 channel detection', () => {
     ] as any);
 
     expect(findSiYueTianOverflowPlan({
-      requestedModel: 'sd2.5',
+      requestedModel: SI_YUE_TIAN_VIDEO_MODEL,
       resolution: '720p',
       seconds: 30,
       imageCount: 9,
@@ -40,7 +41,7 @@ describe('四月天 channel detection', () => {
       audioCount: 0,
     })).toMatchObject({
       channel: { id: 21 },
-      executionModel: 'sd2.5',
+      executionModel: SI_YUE_TIAN_VIDEO_MODEL,
       kind: 'julun',
     });
   });
@@ -59,7 +60,7 @@ describe('四月天 channel detection', () => {
         apiKey: 'julun-key',
         timeout: 120000,
       },
-      executionModel: 'sd2.5',
+      executionModel: SI_YUE_TIAN_VIDEO_MODEL,
       kind: 'julun',
     }, {
       prompt: 'test prompt',
@@ -94,7 +95,7 @@ describe('四月天 channel detection', () => {
       { id: 21, baseUrl: 'https://julun.cc', type: 'openai' },
     ] as any);
     const input = {
-      requestedModel: 'sd2.5', resolution: '720p', seconds: 30,
+      requestedModel: SI_YUE_TIAN_VIDEO_MODEL, resolution: '720p', seconds: 30,
       imageCount: 0, videoCount: 0, audioCount: 0,
     };
 

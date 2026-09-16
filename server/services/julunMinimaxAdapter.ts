@@ -1,7 +1,8 @@
 export const JULUN_MINIMAX_H3_MODEL = 'Minimax-H3-768p-933-10s-15s';
 export const JULUN_MINIMAX_H3_RESOLUTION = '768p';
 export const JULUN_MINIMAX_H3_SECONDS = [10, 15] as const;
-export const JULUN_SD25_MODEL = 'sd2.5';
+export const JULUN_SD25_MODEL = 'sd2.5-siyuetian-legacy';
+export const JULUN_SD25_UPSTREAM_MODEL = 'sd2.5';
 export const JULUN_HOSTNAME = 'julun.cc';
 
 export function isJulunChannel(channel: { baseUrl?: string | null } | null | undefined): boolean {
@@ -44,7 +45,7 @@ export function buildJulunSd25Payload(input: {
   imageUrls?: string[];
 }): Record<string, unknown> {
   return {
-    model: JULUN_SD25_MODEL,
+    model: JULUN_SD25_UPSTREAM_MODEL,
     prompt: input.prompt,
     seconds: 30,
     ratio: input.ratio,

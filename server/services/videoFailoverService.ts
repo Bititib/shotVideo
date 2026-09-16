@@ -1,5 +1,5 @@
 export const HM_STUDIO_PRIMARY_VIDEO_MODEL = 'seedance_v2.5';
-export const SI_YUE_TIAN_PRIMARY_VIDEO_MODEL = 'sd2.5';
+export const SI_YUE_TIAN_PRIMARY_VIDEO_MODEL = 'sd2.5-siyuetian-legacy';
 export const MJ_OVERFLOW_VIDEO_MODEL = 'xd-seedance-2.5-720p';
 
 export type HmStudioOverflowInput = {

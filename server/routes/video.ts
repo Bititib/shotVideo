@@ -305,7 +305,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'veo-omni-flash-video-edit': { series: 'veo-omni-flash-video-edit', allowedSeconds: [10], requireRef: false },
   'veo-3-1': { series: 'veo-3-1', allowedSeconds: [8], requireRef: false },
   'sd2-c7': { series: 'sd2-c7', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
-  'sd2.5': { series: 'sd2.5', allowedSeconds: [30], requireRef: false },
+  [SI_YUE_TIAN_PRIMARY_VIDEO_MODEL]: { series: 'sd2.5-legacy', allowedSeconds: [30], requireRef: false },
   [WX_HAIDIYUE_FACE_SPLIT_MODEL]: { series: 'wx-haidiyue-sd2.5', allowedSeconds: [30], requireRef: false },
   'seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-fast-720p': { series: 'seedance-fast-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
@@ -355,7 +355,6 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'veo-omni-flash-video-edit', name: 'Veo Omni Flash 视频编辑', description: '【不卡人脸-定制版】无水印视频编辑；必须提供1个参考视频，可附加多张参考图；固定10秒，参考视频最长15秒', maxSeconds: 10, icon: '✂️' },
   { id: 'veo-3-1', name: 'Veo 3-1', description: '【不卡人脸-定制版】无水印视频；只支持8秒；支持首尾帧、支持多图参考，最多9张图', maxSeconds: 8, icon: '🚀' },
   { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多10张图片参考（无视频/音频参考），5-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
-  { id: 'sd2.5', name: 'Seedance 2.5 (sd2.5)', description: '支持9图0视频0音频，卡人脸；适合制作带货视频，固定按次计费 ¥3.50/次', maxSeconds: 30, icon: '🚀' },
   { id: WX_HAIDIYUE_FACE_SPLIT_MODEL, name: WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME, description: '支持真人；固定30秒；最多9张参考图；固定按次计费 ¥2.00/次', maxSeconds: 30, icon: '👤' },
   { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 720p', description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '⚡' },
@@ -614,7 +613,7 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
-    } else if (m.id === 'sd2.5') {
+    } else if (m.id === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL) {
       const rate = settingNumber('sd2_5_rate', '3.50');
       rates = {
         '720p': rate,
@@ -1112,7 +1111,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'sd2-c7') {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_c7_rate')).get();
     rate = parseFloat(row?.value || '0.50');
-  } else if (model === 'sd2.5') {
+  } else if (model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL) {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get();
     rate = parseFloat(row?.value || '4.50');
   } else if (model === 'sd2-c6') {
@@ -3184,7 +3183,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   } else if (model === 'sd2-c7') {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_c7_rate')).get();
     rate = parseFloat(row?.value || '0.50');
-  } else if (model === 'sd2.5') {
+  } else if (model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL) {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get();
     rate = parseFloat(row?.value || '3.50');
   } else if (model === 'seedance-2.0-720p') {

@@ -199,7 +199,6 @@ export async function syncModelsFromAPI() {
     { provider: 'newtoken', modelId: 'veo-omni-flash-video-edit', displayName: 'Veo Omni Flash 视频编辑', description: '【不卡人脸-定制版】无水印视频编辑；必须提供1个参考视频，可附加多张参考图；固定10秒，参考视频最长15秒', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']), isActive: 0 },
-    { provider: 'seedance', modelId: 'sd2.5', displayName: 'Seedance 2.5 (sd2.5)', description: '支持9图0视频0音频，卡人脸；适合制作带货视频，固定按次计费 ¥3.50/次', capabilities: JSON.stringify(['video']) },
     { provider: 'wx-haidiyue', modelId: WX_HAIDIYUE_FACE_SPLIT_MODEL, displayName: WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME, description: '支持真人；固定30秒；最多9张参考图；固定按次计费 ¥2.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance-2.5-c1', displayName: 'Seedance 2.5 (c1/888API)', description: '支持最多30张图片、10个视频、10个音频参考，4-30秒，按秒计费 ¥0.25/秒', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-mini', displayName: 'Seedance Mini (sd2-mini)', description: 'Seedance Mini 720p (933)，支持9图、3音频参考（无视频参考），固定按次计费 ¥2.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
@@ -241,7 +240,9 @@ export async function syncModelsFromAPI() {
     const existing = db.select().from(models).where(eq(models.modelId, m.modelId)).get();
     const targetIsActive = m.isActive !== undefined ? m.isActive : 1;
     if (existing) {
-      const providerNeedsUpdate = (newTokenModelIds.has(m.modelId) || hmStudioModelIds.has(m.modelId))
+      const providerNeedsUpdate = (newTokenModelIds.has(m.modelId)
+        || hmStudioModelIds.has(m.modelId)
+        || m.modelId === WX_HAIDIYUE_FACE_SPLIT_MODEL)
         && existing.provider !== m.provider;
       if (providerNeedsUpdate || existing.displayName !== m.displayName || existing.capabilities !== m.capabilities || existing.description !== (m.description || null)) {
         db.update(models)
@@ -999,7 +1000,6 @@ export async function initDatabase() {
     { modelPattern: 'veo-omni-flash-video-edit', billingType: 'per_second', inputPrice: 0.09, category: 'video' },
     { modelPattern: 'veo-3-1', billingType: 'per_second', inputPrice: legacyRate('veo_3_1_rate', 0.20), category: 'video' },
     { modelPattern: 'sd2-c7', billingType: 'per_call', inputPrice: legacyRate('sd2_c7_rate', 0.50), category: 'video' },
-    { modelPattern: 'sd2.5', billingType: 'per_call', inputPrice: legacyRate('sd2_5_rate', 3.50), category: 'video' },
     ...HM_STUDIO_ADDITIONAL_VIDEO_MODELS.map(model => ({
       modelPattern: model.id,
       billingType: 'per_call',
@@ -1092,6 +1092,36 @@ export async function initDatabase() {
       label: 'WAN3.0 按秒计费迁移标记',
     }).run();
     console.log('🔄 已迁移：WAN3.0 按秒计费更新为 ¥0.14/秒');
+  }
+
+  // Public sd2.5 now exclusively means wx-海底月. Migrate the existing
+  // 四月天/Julun price and remove the retired explicit Haidiyue alias.
+  const sd25HaidiyueMigrationKey = 'migration_sd25_public_to_wx_haidiyue_v1';
+  const sd25HaidiyueMigrated = db.select().from(settings).where(eq(settings.key, sd25HaidiyueMigrationKey)).get();
+  if (!sd25HaidiyueMigrated) {
+    const sd25Rule = db.select().from(modelPricing)
+      .where(eq(modelPricing.modelPattern, WX_HAIDIYUE_FACE_SPLIT_MODEL))
+      .get();
+    if (sd25Rule) {
+      db.update(modelPricing).set({
+        billingType: 'per_call',
+        inputPrice: WX_HAIDIYUE_FACE_SPLIT_PRICE,
+        outputPrice: 0,
+        extraParams: JSON.stringify({ category: 'video' }),
+      }).where(eq(modelPricing.id, sd25Rule.id)).run();
+    }
+    db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'sd2.5-haidiyue-face')).run();
+    const retiredAlias = db.select().from(models).where(eq(models.modelId, 'sd2.5-haidiyue-face')).get();
+    if (retiredAlias) {
+      db.delete(tierModelAccess).where(eq(tierModelAccess.modelId, retiredAlias.id)).run();
+      db.delete(models).where(eq(models.id, retiredAlias.id)).run();
+    }
+    db.insert(settings).values({
+      key: sd25HaidiyueMigrationKey,
+      value: '1',
+      label: 'sd2.5 公开调用名切换到 wx-海底月',
+    }).run();
+    console.log('🔄 已迁移：sd2.5 公开调用名切换到 wx-海底月（¥2.00/次）');
   }
 
   // One-time migration for the confirmed HM 301010 selling price. The marker
@@ -1240,10 +1270,10 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 NewToken 渠道出错:', err.message);
   }
 
-  // 11) 保证 llm.chre3.com 渠道存在并且包含 sd2.5, sd2-c7, seedance-2.0-720p, seedance-2.0-fast-720p 支持
+  // 11) 四月天退出公开 sd2.5，仅保留其他专属模型。
   try {
     const existingChre3 = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get();
-    const chre3Models = ['sd2.5', 'sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p', 'seedance-720', 'sd2-mini'];
+    const chre3Models = ['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p', 'seedance-720', 'sd2-mini'];
     if (!existingChre3) {
       db.insert(channels).values({
         name: '4月天 渠道',
@@ -1364,7 +1394,7 @@ export async function initDatabase() {
 
   // 15) 保证 julun.cc 渠道存在，并永久绑定 WAN3.0 与 MiniMax H3 768p。
   try {
-    const julunModels = ['wan3.0th', JULUN_MINIMAX_H3_MODEL, 'sd2.5'];
+    const julunModels = ['wan3.0th', JULUN_MINIMAX_H3_MODEL];
     const julunMapping = Object.fromEntries(julunModels.map(modelId => [modelId, modelId]));
     const julunApiKey = 'sk-yYbcd3cH5lrl6Za89O8beER0iomYfHOyPWSqb9XMv0MLAgWS';
     const existingJulun = db.select().from(channels).where(like(channels.baseUrl, '%julun.cc%')).get();
@@ -1567,6 +1597,31 @@ export async function initDatabase() {
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 wx-海底月 sd2.5 分流渠道出错:', err.message);
+  }
+
+  // The public model id is exclusive to wx-海底月. Remove stale bindings from
+  // every other channel, including administrator-created legacy channels.
+  try {
+    const publicModelId = WX_HAIDIYUE_FACE_SPLIT_MODEL;
+    for (const channel of db.select().from(channels).all()) {
+      if (channel.type === WX_HAIDIYUE_CHANNEL_TYPE) continue;
+      let supportedModels: string[] = [];
+      let modelMapping: Record<string, string> = {};
+      try { supportedModels = JSON.parse(channel.supportedModels || '[]'); } catch { }
+      try { modelMapping = JSON.parse(channel.modelMapping || '{}'); } catch { }
+      if (!Array.isArray(supportedModels)) supportedModels = [];
+      const filteredModels = supportedModels.filter(modelId => modelId !== publicModelId);
+      const hadMapping = Object.prototype.hasOwnProperty.call(modelMapping, publicModelId);
+      if (filteredModels.length === supportedModels.length && !hadMapping) continue;
+      delete modelMapping[publicModelId];
+      db.update(channels).set({
+        supportedModels: JSON.stringify(filteredModels),
+        modelMapping: JSON.stringify(modelMapping),
+        updatedAt: new Date().toISOString(),
+      }).where(eq(channels.id, channel.id)).run();
+    }
+  } catch (err: any) {
+    console.error('⚠️ 清理非海底月渠道的 sd2.5 绑定出错:', err.message);
   }
 
   // 清除所有历史拆分的 MJNewAPI 渠道以保持干净

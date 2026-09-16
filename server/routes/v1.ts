@@ -376,7 +376,7 @@ function getVideoRate(model: string, resolution: string): number {
   } else if (model === 'sdas-mj-minimax-h3-2k') {
     const row = db.select().from(settings).where(eq(settings.key, 'sdas_mj_minimax_h3_2k_rate')).get();
     return parseFloat(row?.value || '3.00');
-  } else if (model === 'sd2.5') {
+  } else if (model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL) {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get();
     return parseFloat(row?.value || '3.50');
   } else if (model === 'sd2-c6') {
@@ -1917,7 +1917,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     } else if (isJulunSd25) {
       upstreamRes = await submitSiYueTianOverflowPlan({
         channel,
-        executionModel: 'sd2.5',
+        executionModel: SI_YUE_TIAN_PRIMARY_VIDEO_MODEL,
         kind: 'julun',
       }, {
         prompt,
