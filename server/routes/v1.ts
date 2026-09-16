@@ -80,6 +80,7 @@ import { prepareWxHaidiYueImageUrls } from '../services/wxHaidiYueImageService.j
 import { enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
 import { withVideoFailureMetadata } from '../services/videoFailureService.js';
 import { ContentService } from '../services/contentService.js';
+import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
 
 const router = Router();
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
@@ -1613,6 +1614,26 @@ async function handleVideoCreation(req: Request, res: Response) {
       cleanupFiles(req.files);
       return res.status(400).json({ error: `${model} supports at most ${SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES} images` });
     }
+  }
+
+  // API clients commonly upload to a temporary file host and submit the
+  // resulting URLs. Copy trusted temporary images after request-size checks
+  // but before billing and queueing, so an HM task never depends on an
+  // expiring upload URL.
+  try {
+    const requestOrigin = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+    image_urls = await validateAndNormalizeImageReferences(image_urls, {
+      trustedOrigins: [requestOrigin, process.env.BACKEND_URL || ''],
+      trustedRemoteOrigins: (process.env.REFERENCE_IMAGE_REMOTE_ORIGINS || 'https://filer2.fdai.xyz')
+        .split(/[\s,]+/)
+        .filter(Boolean),
+    });
+  } catch (error: any) {
+    cleanupFiles(req.files);
+    const message = error instanceof InvalidImageReferenceError
+      ? error.message
+      : `Reference image validation failed: ${error?.message || 'unknown error'}`;
+    return res.status(400).json({ error: message });
   }
 
   const siYueTianInput = {

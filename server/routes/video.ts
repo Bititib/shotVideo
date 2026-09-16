@@ -800,7 +800,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     first_frame = '',        // Base64 首帧图片
     last_frame = '',         // Base64 尾帧图片
     face,                    // HM Studio 旧版兼容字段
-    face_processing,         // HM 默认开启；显式传 false 可关闭本站眼嘴拆分
+    face_processing,         // 本站人物处理默认开启；HM 上游 face 始终关闭
     face_split,              // 海底月参考图人脸拆分（仅实际路由到海底月时发送）
     local_face_processed = false, // 已由浏览器完成眼嘴拆分，避免上游再次处理
     compliance_enabled,      // 是否开启合规素材/过人脸
@@ -968,6 +968,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     const requestOrigin = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
     reference_images = await validateAndNormalizeImageReferences(reference_images, {
       trustedOrigins: [requestOrigin, process.env.BACKEND_URL || ''],
+      trustedRemoteOrigins: (process.env.REFERENCE_IMAGE_REMOTE_ORIGINS || 'https://filer2.fdai.xyz')
+        .split(/[\s,]+/)
+        .filter(Boolean),
     });
   } catch (error: any) {
     const message = error instanceof InvalidImageReferenceError

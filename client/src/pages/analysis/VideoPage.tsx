@@ -598,7 +598,7 @@ export default function VideoPage() {
   // 人脸合规参数状态 (针对四月天/Seedance系列模型)
   const [complianceEnabled, setComplianceEnabled] = useState(false);
   const [complianceMode, setComplianceMode] = useState<string>('colored-pencil');
-  const [hmFaceEnabled, setHmFaceEnabled] = useState(false);
+  const [hmFaceEnabled, setHmFaceEnabled] = useState(true);
 
   const handleConfirmSlice = (sliced: string[]) => {
     if (slicingImageIndex !== null) {

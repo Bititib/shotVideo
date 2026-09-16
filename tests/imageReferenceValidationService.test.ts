@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import sharp from 'sharp';
 import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from '../server/services/imageReferenceValidationService.js';
 
 describe('image reference validation service', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it('decodes and normalizes a valid inline image to JPEG', async () => {
     const png = await sharp({
       create: { width: 4, height: 3, channels: 4, background: { r: 20, g: 40, b: 60, alpha: 1 } },
@@ -34,5 +36,29 @@ describe('image reference validation service', () => {
     await expect(validateAndNormalizeImageReferences([
       '/uploads/history-assets/missing.jpg',
     ])).rejects.toThrow('服务器中的图片文件不存在');
+  });
+
+  it('copies a trusted temporary remote image before its URL can expire', async () => {
+    const png = await sharp({
+      create: { width: 3, height: 2, channels: 3, background: { r: 80, g: 60, b: 40 } },
+    }).png().toBuffer();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(png, {
+      status: 200,
+      headers: { 'content-type': 'image/png', 'content-length': String(png.length) },
+    })));
+
+    const result = await validateAndNormalizeImageReferences([
+      'https://filer2.fdai.xyz/temp_1_del/person.png',
+    ], { trustedRemoteOrigins: ['https://filer2.fdai.xyz'] });
+
+    expect(result[0]).toMatch(/^data:image\/jpeg;base64,/);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it('reports an expired trusted temporary image before billing and queueing', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('missing', { status: 404 })));
+    await expect(validateAndNormalizeImageReferences([
+      'https://filer2.fdai.xyz/temp_1_del/missing.png',
+    ], { trustedRemoteOrigins: ['https://filer2.fdai.xyz'] })).rejects.toThrow('文件可能已过期，请重新上传');
   });
 });

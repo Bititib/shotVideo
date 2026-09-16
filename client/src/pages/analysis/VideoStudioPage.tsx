@@ -108,7 +108,7 @@ export default function VideoStudioPage() {
   const [duration, setDuration] = useState(6);
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const [locallyProcessedImages, setLocallyProcessedImages] = useState<Set<string>>(() => new Set());
-  const [hmFaceEnabled, setHmFaceEnabled] = useState(false);
+  const [hmFaceEnabled, setHmFaceEnabled] = useState(true);
   const maxRefs = getMaxReferenceImages(selectedModel, models);
 
   useEffect(() => {

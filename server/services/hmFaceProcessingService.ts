@@ -42,6 +42,33 @@ export function shouldRunHmFaceProcessing(requestValue: unknown, globalValue: un
 let sessionPromise: Promise<ort.InferenceSession> | null = null;
 let inferenceChain = Promise.resolve();
 
+function uploadPathFromPathname(pathname: string): string | null {
+  if (!pathname.startsWith('/uploads/')) return null;
+  const uploadsRoot = path.resolve(process.cwd(), 'data', 'uploads');
+  const relativePath = decodeURIComponent(pathname.slice('/uploads/'.length)).replace(/^[/\\]+/, '');
+  const candidatePath = path.resolve(uploadsRoot, relativePath);
+  if (candidatePath === uploadsRoot || !candidatePath.startsWith(`${uploadsRoot}${path.sep}`)) {
+    throw new Error('人物图片路径不安全');
+  }
+  return candidatePath;
+}
+
+/** Resolve references served by this application without dropping upload subdirectories. */
+export function resolveHmLocalUploadPath(source: string, publicBaseUrl?: string): string | null {
+  if (source.startsWith('/uploads/')) {
+    return uploadPathFromPathname(source.split('?')[0]);
+  }
+  if (!publicBaseUrl) return null;
+  let parsed: URL;
+  let publicOrigin: string;
+  try {
+    parsed = new URL(source);
+    publicOrigin = new URL(publicBaseUrl).origin;
+  } catch { return null; }
+  if (parsed.origin !== publicOrigin) return null;
+  return uploadPathFromPathname(parsed.pathname);
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -255,21 +282,14 @@ async function loadSource(source: string, publicBaseUrl?: string): Promise<Buffe
     if (buffer.length > MAX_SOURCE_BYTES) throw new Error('人物图片超过 25MB 限制');
     return buffer;
   }
-  if (source.startsWith('/uploads/')) {
-    const filename = path.basename(source.split('?')[0]);
-    return fs.readFileSync(path.join(process.cwd(), 'data', 'uploads', filename));
+  const localUploadPath = resolveHmLocalUploadPath(source, publicBaseUrl);
+  if (localUploadPath) {
+    if (!fs.existsSync(localUploadPath)) throw new Error('人物图片在服务器中不存在，请重新上传');
+    return fs.readFileSync(localUploadPath);
   }
   let parsed: URL;
   try { parsed = new URL(source); } catch { throw new Error('人物图片地址无效'); }
   if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('人物图片仅支持 HTTP(S) 或 data URL');
-  if (publicBaseUrl) {
-    try {
-      const publicOrigin = new URL(publicBaseUrl).origin;
-      if (parsed.origin === publicOrigin && parsed.pathname.startsWith('/uploads/')) {
-        return fs.readFileSync(path.join(process.cwd(), 'data', 'uploads', path.basename(parsed.pathname)));
-      }
-    } catch { /* fetch the URL normally */ }
-  }
   const response = await fetch(parsed, { signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`人物图片下载失败（HTTP ${response.status}）`);
   const contentLength = Number(response.headers.get('content-length') || 0);

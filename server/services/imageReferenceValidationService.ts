@@ -57,12 +57,62 @@ async function normalizeBuffer(buffer: Buffer): Promise<string> {
   return `data:image/jpeg;base64,${normalized.toString('base64')}`;
 }
 
+async function readLimitedResponse(response: Response): Promise<Buffer> {
+  const declaredLength = Number(response.headers.get('content-length') || 0);
+  if (declaredLength > MAX_IMAGE_BYTES) throw new Error('图片超过 20MB 上限');
+  if (!response.body) throw new Error('远程图片内容为空');
+
+  const chunks: Buffer[] = [];
+  let total = 0;
+  const reader = response.body.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_IMAGE_BYTES) {
+      await reader.cancel();
+      throw new Error('图片超过 20MB 上限');
+    }
+    chunks.push(Buffer.from(value));
+  }
+  if (total === 0) throw new Error('远程图片内容为空');
+  return Buffer.concat(chunks, total);
+}
+
+async function downloadTrustedRemoteImage(source: string, allowedOrigins: Set<string>): Promise<Buffer> {
+  let current = new URL(source);
+  for (let redirects = 0; redirects <= 3; redirects++) {
+    if (!allowedOrigins.has(current.origin)) throw new Error('远程图片跳转到了未授权地址');
+    const response = await fetch(current, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(30_000),
+      headers: { Accept: 'image/*' },
+    });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      if (!location) throw new Error(`临时图片下载失败（HTTP ${response.status}）`);
+      current = new URL(location, current);
+      continue;
+    }
+    if (!response.ok) {
+      throw new Error(`临时图片下载失败（HTTP ${response.status}），文件可能已过期，请重新上传`);
+    }
+    return readLimitedResponse(response);
+  }
+  throw new Error('远程图片跳转次数过多');
+}
+
 export async function validateAndNormalizeImageReferences(
   sources: unknown[],
-  options: { trustedOrigins?: string[] } = {},
+  options: { trustedOrigins?: string[]; trustedRemoteOrigins?: string[] } = {},
 ): Promise<string[]> {
   const trustedOrigins = new Set(
     (options.trustedOrigins || []).flatMap(value => {
+      try { return [new URL(value).origin]; } catch { return []; }
+    }),
+  );
+  const trustedRemoteOrigins = new Set(
+    (options.trustedRemoteOrigins || []).flatMap(value => {
       try { return [new URL(value).origin]; } catch { return []; }
     }),
   );
@@ -91,9 +141,17 @@ export async function validateAndNormalizeImageReferences(
         continue;
       }
 
-      // External URLs remain supported. The browser validates them before the
-      // web request; fetching arbitrary URLs here would introduce SSRF risk.
       if (/^https?:\/\//i.test(source)) {
+        const remoteOrigin = new URL(source).origin;
+        if (trustedRemoteOrigins.has(remoteOrigin)) {
+          // Trusted temporary upload hosts are copied immediately. Video queues
+          // may outlive their URLs, so deferring this download causes batches of
+          // otherwise valid HM tasks to fail with HTTP 404.
+          normalized.push(await normalizeBuffer(await downloadTrustedRemoteImage(source, trustedRemoteOrigins)));
+          continue;
+        }
+        // Unknown external hosts remain URLs to avoid turning this endpoint
+        // into a server-side request forgery primitive.
         normalized.push(source);
         continue;
       }
