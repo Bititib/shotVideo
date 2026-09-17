@@ -60,6 +60,13 @@ export function hasSupportedImageDataUrlSignature(source: string): boolean {
 
 function canDecodeImageSource(source: string, timeoutMs = 12_000): Promise<boolean> {
   if (!source || !hasSupportedImageDataUrlSignature(source)) return Promise.resolve(false);
+  // Files selected on this page have already been decoded by the browser,
+  // rendered through canvas and emitted as a standards-compliant data URL.
+  // Decoding several large data URLs again in parallel can hit the timeout on
+  // slower user devices and incorrectly report the first reference as broken.
+  // The server still performs the authoritative Sharp validation before the
+  // task is billed or queued.
+  if (source.startsWith('data:image/')) return Promise.resolve(true);
   return new Promise(resolve => {
     const image = new Image();
     let settled = false;

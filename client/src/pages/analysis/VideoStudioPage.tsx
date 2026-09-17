@@ -214,7 +214,11 @@ export default function VideoStudioPage() {
     const valid = Array.from(files).filter(isSupportedImageFile).slice(0, remaining);
     if (valid.length === 0) return;
     if (valid.find(f => f.size > 20 * 1024 * 1024)) { setError('参考图超过 20MB'); return; }
-    try { const urls = await Promise.all(valid.map(readFileAsDataURL)); setReferenceImages(prev => [...prev, ...urls]); }
+    try {
+      const urls = await Promise.all(valid.map(readFileAsDataURL));
+      setReferenceImages(prev => [...prev, ...urls]);
+      setError(null);
+    }
     catch (error: any) { setError(error?.message || '图片读取失败'); }
   };
 
@@ -546,6 +550,7 @@ export default function VideoStudioPage() {
                         onClick={(e) => {
                           e.stopPropagation();
                           setReferenceImages(prev => prev.filter((_, idx) => idx !== i));
+                          setError(null);
                           setLocallyProcessedImages(prev => {
                             const next = new Set(prev);
                             next.delete(img);

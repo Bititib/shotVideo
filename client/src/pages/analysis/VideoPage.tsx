@@ -1009,6 +1009,7 @@ export default function VideoPage() {
       })));
       const urls = compressed.map(c => c.url);
       setReferenceImages(prev => [...prev, ...urls]);
+      setError(null);
 
       // 保存到本地持久化资产库
       compressed.forEach(c => {
@@ -2106,6 +2107,7 @@ export default function VideoPage() {
                             onClick={(e) => {
                               e.stopPropagation();
                               setReferenceImages(prev => prev.filter((_, i) => i !== idx));
+                              setError(null);
                               setLocallyProcessedImages(prev => {
                                 const next = new Set(prev);
                                 next.delete(img);
