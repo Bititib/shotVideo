@@ -198,14 +198,11 @@ export async function syncModelsFromAPI() {
     { provider: 'pidoi', modelId: 'veo-omni-flash', displayName: 'Veo Omni Flash', capabilities: JSON.stringify(['video']) },
     { provider: 'newtoken', modelId: 'veo-omni-flash-video-edit', displayName: 'Veo Omni Flash 视频编辑', description: '【不卡人脸-定制版】无水印视频编辑；必须提供1个参考视频，可附加多张参考图；固定10秒，参考视频最长15秒', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
-    { provider: 'seedance', modelId: 'sd2-c7', displayName: 'Seedance 2.0 c7', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'wx-haidiyue', modelId: WX_HAIDIYUE_FACE_SPLIT_MODEL, displayName: WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME, description: '支持真人；固定30秒；最多9张参考图；固定按次计费 ¥2.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'seedance', modelId: 'seedance-2.0', displayName: 'Seedance 2.0', description: 'Seedance 2.0 文生/图生视频 (异步，¥1.5/次)', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance-2.5-c1', displayName: 'Seedance 2.5 (c1/888API)', description: '支持最多30张图片、10个视频、10个音频参考，4-30秒，按秒计费 ¥0.25/秒', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-mini', displayName: 'Seedance Mini (sd2-mini)', description: 'Seedance Mini 720p (933)，支持9图、3音频参考（无视频参考），固定按次计费 ¥2.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
-    { provider: 'seedance', modelId: 'seedance2.0-933', displayName: 'seedance2.0 933', description: 'seedance2.0 933 模型，支持9图、3音频参考（无视频参考），固定按次计费 ¥3.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
-    { provider: 'seedance', modelId: 'seedance-2.0-720p', displayName: 'Seedance 2.0 720p', capabilities: JSON.stringify(['video']), isActive: 0 },
-    { provider: 'seedance', modelId: 'seedance-2.0-fast-720p', displayName: 'Seedance 2.0 Fast 720p', capabilities: JSON.stringify(['video']), isActive: 0 },
-    { provider: 'seedance', modelId: 'seedance-720', displayName: 'Seedance 720 满血版', capabilities: JSON.stringify(['video']), isActive: 0 }
+    { provider: 'seedance', modelId: 'seedance2.0-933', displayName: 'seedance2.0 933', description: 'seedance2.0 933 模型，支持9图、3音频参考（无视频参考），固定按次计费 ¥3.00/次', capabilities: JSON.stringify(['video']), isActive: 1 }
   );
 
   // Models explicitly deleted by an administrator must not be resurrected by
@@ -282,7 +279,10 @@ export async function syncModelsFromAPI() {
       'gpt-image-2-max',
       'xh-sdas-fast-933-720p',
       'xh-sdas-pro-933-720p',
-      'seedance-2.0',
+      'sd2-c7',
+      'seedance-2.0-720p',
+      'seedance-2.0-fast-720p',
+      'seedance-720',
       'lg-seedance-2.0-fast',
       'sdas-d7-seedance-2.0-face-720p',
       'sdas-mo-seedance-2.0-dj-fast',
@@ -294,7 +294,6 @@ export async function syncModelsFromAPI() {
       'sdas-hn-sd2.0-720p',
       'sdas-hn-sd2.0-fast-720p',
       'jimeng-video-seedance-2.0-fast',
-      'jimeng-video-seedance-2.0-vip',
       'sora2-8s-16x9',
       'sora2-8s-9x16',
       'seedance2.0-full-9img',
@@ -748,6 +747,7 @@ export async function initDatabase() {
     }
   }
 
+
   // 强制清理与修正数据库中废弃的多余 Sora 4 / Seedance 费率设置项
   const keysToDelete = [
     'sdas_fast_rate',
@@ -791,12 +791,10 @@ export async function initDatabase() {
   const omniSettings = [
     { key: 'veo_omni_flash_rate', value: '0.25', label: 'Veo Omni Flash 费率(¥/秒)' },
     { key: 'veo_3_1_rate', value: '0.20', label: 'Veo 3-1 费率(¥/秒)' },
-    { key: 'sd2_c7_rate', value: '0.50', label: 'Seedance 2.0 c7 费率(¥/次)' },
     { key: 'sd2_5_rate', value: '3.50', label: 'Seedance 2.5 (sd2.5) 费率(¥/次)' },
     { key: 'sd2_mini_rate', value: '2.00', label: 'Seedance Mini (sd2-mini) 费率(¥/次)' },
+    { key: 'seedance_2_0_rate', value: '1.50', label: 'Seedance 2.0 费率(¥/次)' },
     { key: 'seedance2_0_933_rate', value: '3.00', label: 'seedance2.0 933 费率(¥/次)' },
-    { key: 'seedance_2_0_720p_rate', value: '3.00', label: 'Seedance 2.0 720p 费率(¥/次)' },
-    { key: 'seedance_2_0_fast_720p_rate', value: '1.50', label: 'Seedance 2.0 Fast 720p 费率(¥/次)' },
     { key: 'ld_sdas_cvk_pro_933_720p_rate', value: '3.80', label: 'SudaShui CVK Pro 933 (720p) 费率(¥/次)' },
     { key: 'sdas_mj_minimax_h3_2k_rate', value: '3.00', label: 'Minimax H3 (2K) 费率(¥/次)' },
     { key: 'sdas_bl_sd20_933_pro_720p_rate', value: '4.50', label: 'Seedance 2.0 Pro (933人脸版) 费率(¥/次)' },
@@ -999,7 +997,7 @@ export async function initDatabase() {
     { modelPattern: 'veo-omni-flash', billingType: 'per_second', inputPrice: legacyRate('veo_omni_flash_rate', 0.25), category: 'video' },
     { modelPattern: 'veo-omni-flash-video-edit', billingType: 'per_second', inputPrice: 0.09, category: 'video' },
     { modelPattern: 'veo-3-1', billingType: 'per_second', inputPrice: legacyRate('veo_3_1_rate', 0.20), category: 'video' },
-    { modelPattern: 'sd2-c7', billingType: 'per_call', inputPrice: legacyRate('sd2_c7_rate', 0.50), category: 'video' },
+    { modelPattern: 'seedance-2.0', billingType: 'per_call', inputPrice: legacyRate('seedance_2_0_rate', 1.50), category: 'video' },
     ...HM_STUDIO_ADDITIONAL_VIDEO_MODELS.map(model => ({
       modelPattern: model.id,
       billingType: 'per_call',
@@ -1011,9 +1009,6 @@ export async function initDatabase() {
     { modelPattern: 'sd2-mini', billingType: 'per_call', inputPrice: legacyRate('sd2_mini_rate', 2.00), category: 'video' },
     { modelPattern: 'seedance2.0-933', billingType: 'per_call', inputPrice: legacyRate('seedance2_0_933_rate', 3.00), category: 'video' },
     { modelPattern: 'seedance2.0 933', billingType: 'per_call', inputPrice: legacyRate('seedance2_0_933_rate', 3.00), category: 'video' },
-    { modelPattern: 'seedance-2.0-720p', billingType: 'per_call', inputPrice: legacyRate('seedance_2_0_720p_rate', 3.00), category: 'video' },
-    { modelPattern: 'seedance-2.0-fast-720p', billingType: 'per_call', inputPrice: legacyRate('seedance_2_0_fast_720p_rate', 1.50), category: 'video' },
-    { modelPattern: 'seedance-720', billingType: 'per_call', inputPrice: legacyRate('seedance_720_rate', 3.00), category: 'video' },
     { modelPattern: 'ld-sdas-cvk-pro-933-720p', billingType: 'per_call', inputPrice: legacyRate('ld_sdas_cvk_pro_933_720p_rate', 3.80), category: 'video' },
     { modelPattern: 'sdas-mj-minimax-h3-2k', billingType: 'per_call', inputPrice: legacyRate('sdas_mj_minimax_h3_2k_rate', 3.00), category: 'video' },
     { modelPattern: 'sdas-bl-sd2.0-933-pro-720p', billingType: 'per_call', inputPrice: legacyRate('sdas_bl_sd20_933_pro_720p_rate', 4.50), category: 'video' },
@@ -1172,6 +1167,83 @@ export async function initDatabase() {
     console.log('🔄 已迁移：巨轮 MiniMax H3 768p 按 ¥0.18/秒计费');
   }
 
+  // 迁移：接入标准的 seedance-2.0 并清理四月天渠道中废弃的 2.0 变体
+  const seedance20MigrationKey = 'migration_siyuetian_seedance_20_standardize_v1';
+  const seedance20Migrated = db.select().from(settings).where(eq(settings.key, seedance20MigrationKey)).get();
+  if (!seedance20Migrated) {
+    const existingModel = db.select().from(models).where(eq(models.modelId, 'seedance-2.0')).get();
+    if (!existingModel) {
+      db.insert(models).values({
+        modelId: 'seedance-2.0',
+        displayName: 'Seedance 2.0',
+        description: 'Seedance 2.0 文生/图生视频 (异步，¥1.5/次)',
+        capabilities: JSON.stringify(['video']),
+        provider: 'seedance',
+        isActive: 1,
+      }).run();
+    } else {
+      db.update(models).set({
+        displayName: 'Seedance 2.0',
+        description: 'Seedance 2.0 文生/图生视频 (异步，¥1.5/次)',
+        capabilities: JSON.stringify(['video']),
+        isActive: 1,
+      }).where(eq(models.id, existingModel.id)).run();
+    }
+
+    const obsoleteModels = ['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p', 'seedance-720'];
+    for (const mId of obsoleteModels) {
+      db.delete(modelPricing).where(eq(modelPricing.modelPattern, mId)).run();
+      db.delete(models).where(eq(models.modelId, mId)).run();
+    }
+
+    const existingPricing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, 'seedance-2.0')).get();
+    if (!existingPricing) {
+      db.insert(modelPricing).values({
+        modelPattern: 'seedance-2.0',
+        billingType: 'per_call',
+        inputPrice: 1.50,
+        outputPrice: 0,
+        extraParams: JSON.stringify({ category: 'video' }),
+      }).run();
+    } else {
+      db.update(modelPricing).set({
+        billingType: 'per_call',
+        inputPrice: 1.50,
+        outputPrice: 0,
+        extraParams: JSON.stringify({ category: 'video' }),
+      }).where(eq(modelPricing.id, existingPricing.id)).run();
+    }
+
+    const siYueTian = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get();
+    if (siYueTian) {
+      db.update(channels).set({
+        supportedModels: JSON.stringify(['seedance-2.0', 'sd2-mini']),
+        updatedAt: new Date().toISOString(),
+      }).where(eq(channels.id, siYueTian.id)).run();
+    }
+
+    const existingRate = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_rate')).get();
+    if (!existingRate) {
+      db.insert(settings).values({
+        key: 'seedance_2_0_rate',
+        value: '1.50',
+        label: 'Seedance 2.0 费率(¥/次)',
+      }).run();
+    } else {
+      db.update(settings).set({
+        value: '1.50',
+        label: 'Seedance 2.0 费率(¥/次)',
+      }).where(eq(settings.id, existingRate.id)).run();
+    }
+
+    db.insert(settings).values({
+      key: seedance20MigrationKey,
+      value: '1',
+      label: '四月天渠道 seedance-2.0 规范化与旧模型清理标记',
+    }).run();
+    console.log('🔄 已迁移：四月天渠道更新为标准 seedance-2.0 (¥1.50/次) 并清理旧废弃模型');
+  }
+
   // 9) 自动向已存在且包含 sudashuiapi.com 或 pidoi.com 的渠道添加支持的模型 ID，防止路由错误
   try {
     const sdaModels = [
@@ -1273,7 +1345,7 @@ export async function initDatabase() {
   // 11) 四月天退出公开 sd2.5，仅保留其他专属模型。
   try {
     const existingChre3 = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get();
-    const chre3Models = ['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p', 'seedance-720', 'sd2-mini'];
+    const chre3Models = ['seedance-2.0', 'sd2-mini'];
     if (!existingChre3) {
       db.insert(channels).values({
         name: '4月天 渠道',

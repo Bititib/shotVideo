@@ -7,14 +7,12 @@ import { BalanceService } from '../services/balanceService.js';
 import { ContentService } from '../services/contentService.js';
 import { PricingService } from '../services/pricingService.js';
 import { hmStudioPoolKey, hmStudioQueue, type HmStudioQueueSnapshot } from '../services/hmStudioQueueService.js';
-import { processHmFaceImages, shouldRunHmFaceProcessing } from '../services/hmFaceProcessingService.js';
 import { calculateSuccessRate, isWithinRecentDays } from '../services/successRateService.js';
 import {
   buildHmStudioVideoForm,
   hmStudioCreateUrl,
   hmStudioTaskUrl,
   isHmStudioChannel,
-  normalizeHmStudioFace,
   normalizeHmStudioTask,
 } from '../services/hmStudioAdapter.js';
 import {
@@ -304,6 +302,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'veo-omni-flash': { series: 'veo-omni-flash', allowedSeconds: [10], requireRef: false },
   'veo-omni-flash-video-edit': { series: 'veo-omni-flash-video-edit', allowedSeconds: [10], requireRef: false },
   'veo-3-1': { series: 'veo-3-1', allowedSeconds: [8], requireRef: false },
+  'seedance-2.0': { series: 'seedance-2.0', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'sd2-c7': { series: 'sd2-c7', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   [SI_YUE_TIAN_PRIMARY_VIDEO_MODEL]: { series: 'sd2.5-legacy', allowedSeconds: [30], requireRef: false },
   [WX_HAIDIYUE_FACE_SPLIT_MODEL]: { series: 'wx-haidiyue-sd2.5', allowedSeconds: [30], requireRef: false },
@@ -354,11 +353,8 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'veo-omni-flash', name: 'Veo Omni Flash', description: '多参考图生成视频，参考图字段 Ingredients_images，固定10s', maxSeconds: 10, icon: '🚀' },
   { id: 'veo-omni-flash-video-edit', name: 'Veo Omni Flash 视频编辑', description: '【不卡人脸-定制版】无水印视频编辑；必须提供1个参考视频，可附加多张参考图；固定10秒，参考视频最长15秒', maxSeconds: 10, icon: '✂️' },
   { id: 'veo-3-1', name: 'Veo 3-1', description: '【不卡人脸-定制版】无水印视频；只支持8秒；支持首尾帧、支持多图参考，最多9张图', maxSeconds: 8, icon: '🚀' },
-  { id: 'sd2-c7', name: 'Seedance 2.0 c7', description: 'OpenAI 兼容，支持720p固定分辨率，支持最多10张图片参考（无视频/音频参考），5-15秒，固定按次计费', maxSeconds: 15, icon: '🚀' },
+  { id: 'seedance-2.0', name: 'Seedance 2.0', description: 'Seedance 2.0 文生/图生视频，支持720p，支持图片参考，4-15秒，固定按次计费 ¥1.50/次', maxSeconds: 15, icon: '🎬' },
   { id: WX_HAIDIYUE_FACE_SPLIT_MODEL, name: WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME, description: '支持真人；固定30秒；最多9张参考图；固定按次计费 ¥2.00/次', maxSeconds: 30, icon: '👤' },
-  { id: 'seedance-2.0-720p', name: 'Seedance 2.0 720p', description: 'Seedance 2.0 标准版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🚀' },
-  { id: 'seedance-2.0-fast-720p', name: 'Seedance 2.0 Fast 720p', description: 'Seedance 2.0 极速版，支持720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '⚡' },
-  { id: 'seedance-720', name: 'Seedance 720 满血版', description: '满血模型，支持933，过人脸，720p固定分辨率，支持最多9张图片、3个视频、3个音频参考，5-15秒', maxSeconds: 15, icon: '🔥' },
   { id: 'sd2-mini', name: 'Seedance Mini (sd2-mini)', description: 'Seedance Mini 720p (933)，支持9图、3音频参考（无视频参考），固定按次计费 ¥2.00/次', maxSeconds: 15, icon: '⚡' },
   { id: 'seedance2.0-933', name: 'seedance2.0 933', description: 'seedance2.0 933 模型，支持9图、3音频参考（无视频参考），固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance2.0 933', name: 'seedance2.0 933', description: 'seedance2.0 933 模型，支持9图、3音频参考（无视频参考），固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🚀' },
@@ -627,6 +623,11 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
+    } else if (m.id === 'seedance-2.0') {
+      const rate = settingNumber('seedance_2_0_rate', '1.50');
+      rates = {
+        '720p': rate,
+      };
     } else if (m.id === 'seedance2.0-933' || m.id === 'seedance2.0 933') {
       const rate = settingNumber('seedance2_0_933_rate', '3.00');
       rates = {
@@ -800,7 +801,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     first_frame = '',        // Base64 首帧图片
     last_frame = '',         // Base64 尾帧图片
     face,                    // HM Studio 旧版兼容字段
-    face_processing,         // 本站人物处理默认开启；HM 上游 face 始终关闭
+    face_processing,         // 旧版兼容字段；HM 本站处理全局关闭，上游 face 始终开启
     face_split,              // 海底月参考图人脸拆分（仅实际路由到海底月时发送）
     local_face_processed = false, // 已由浏览器完成眼嘴拆分，避免上游再次处理
     compliance_enabled,      // 是否开启合规素材/过人脸
@@ -1108,7 +1109,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'sora-v4-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
     rate = parseFloat(row?.value || '0.189');
-  } else if (model === 'sora-v4-pro' || model === 'seedance-2.0') {
+  } else if (model === 'seedance-2.0') {
+    const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_rate')).get();
+    rate = parseFloat(row?.value || '1.50');
+  } else if (model === 'sora-v4-pro') {
     const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_pro_rate')).get();
     rate = parseFloat(row?.value || '0.25');
   } else if (model === 'sd2-c7') {
@@ -1116,10 +1120,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     rate = parseFloat(row?.value || '0.50');
   } else if (model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL) {
     const row = db.select().from(settings).where(eq(settings.key, 'sd2_5_rate')).get();
-    rate = parseFloat(row?.value || '4.50');
-  } else if (model === 'sd2-c6') {
-    const row = db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get();
-    rate = parseFloat(row?.value || '2.50');
+    rate = parseFloat(row?.value || '3.50');
   } else if (model === 'seedance-2.0-720p') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_720p_rate')).get();
     rate = parseFloat(row?.value || '3.00');
@@ -1129,6 +1130,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   } else if (model === 'seedance-720') {
     const row = db.select().from(settings).where(eq(settings.key, 'seedance_720_rate')).get();
     rate = parseFloat(row?.value || '3.00');
+  } else if (model === 'sdas-pd-sd2.0-pro-933-5-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_pd_sd20_pro_933_5_720p_rate')).get();
+    rate = parseFloat(row?.value || '4.50');
+  } else if (model === 'sdas-hn-sd2.0-fast-720p') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sdas_hn_sd20_fast_720p_rate')).get();
+    rate = parseFloat(row?.value || '2.80');
+  } else if (model === 'sd2-c6') {
+    const row = db.select().from(settings).where(eq(settings.key, 'sd2_c6_rate')).get();
+    rate = parseFloat(row?.value || '2.50');
   } else {
     const rate480 = db.select().from(settings).where(eq(settings.key, 'video_rate_480p')).get();
     const rate720 = db.select().from(settings).where(eq(settings.key, 'video_rate_720p')).get();
@@ -1141,13 +1151,16 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   }
 
   const isFlatRate = [
+    'seedance-2.0',
+    'sdas-hn-sd2.0-720p',
+    'sdas-hn-sd2.0-fast-720p',
     'seedance-2.0-fast',
     'sd2-c7',
     'sd2.5',
-    'sd2-c6',
     'seedance-2.0-720p',
     'seedance-2.0-fast-720p',
     'seedance-720',
+    'sdas-pd-sd2.0-pro-933-5-720p',
     'ld-sdas-cvk-pro-933-720p',
     'sdas-mj-minimax-h3-2k',
     'sdas-bl-sd2.0-933-pro-720p',
@@ -1156,7 +1169,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
     'ad-seedance-2.5-480p',
-    'xd-seedance-2.5-720p'
+    'xd-seedance-2.5-720p',
   ].includes(model);
   const estimatedSeconds = Number(video_length) || 6;
   const unifiedQuote = PricingService.quote(model, { resolution, seconds: estimatedSeconds, count: 1 }, false);
@@ -1214,10 +1227,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         audio_urls: finalAudios,
         first_frame,
         last_frame,
-        face: isHmStudioChannel(dbChannel) ? false : undefined,
-        face_processing: isHmStudioChannel(dbChannel)
-          ? normalizeHmStudioFace(face_processing ?? face, true)
-          : undefined,
+        face: isHmStudioChannel(dbChannel) ? true : undefined,
+        face_processing: isHmStudioChannel(dbChannel) ? false : undefined,
         local_face_processed: Boolean(local_face_processed),
         face_split: isWxHaidiYueChannel(dbChannel)
           ? (local_face_processed ? false : (model === WX_HAIDIYUE_FACE_SPLIT_MODEL ? true : resolveWxHaidiYueFaceSplit(dbChannel, face_split)))
@@ -1306,7 +1317,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   };
   const size = RATIO_TO_SIZE[aspect_ratio] || '1280x720';
   const isSeedanceFast = model === 'seedance-2.0-fast';
-  const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
+  const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro';
   const isSudaShui = meta?.series === 'sudashui';
   let isHmStudio = isHmStudioChannel(channel);
   let isWxHaidiYue = isWxHaidiYueChannel(channel);
@@ -1318,6 +1329,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isVeo31 = model === 'veo-3-1';
   const isWan30 = model === 'wan3.0th' || model === 'wan3.0-video' || model === 'wan3.0-video-prime';
   const isSeedanceJsonModel = [
+    'seedance-2.0',
     'sd2-c7',
     'sd2.5',
     'seedance-2.0-720p',
@@ -1525,7 +1537,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         audioSources: finalAudios,
         firstFrame: first_frame,
         lastFrame: last_frame,
-        face: false,
+        face: true,
       });
       const headers: Record<string, string> = {};
       if (channel.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
@@ -2886,41 +2898,10 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
         let firstFrame = latestMeta.first_frame || latestMeta.firstFrame;
         let lastFrame = latestMeta.last_frame || latestMeta.lastFrame;
 
-        // API and website HM requests share this queue. Process person images once
-        // before the first upstream submission, then persist the generated URLs so
-        // key failover and process restarts never split the same image twice.
-        const shouldProcessHmFace = shouldRunHmFaceProcessing(latestMeta.face_processing);
-        if (shouldProcessHmFace && !latestMeta.local_face_processed && !latestMeta.hm_face_processed) {
-          const frameSources = [firstFrame, lastFrame].filter(Boolean) as string[];
-          const sourceImages = [...frameSources, ...referenceImages];
-          if (sourceImages.length > 0) {
-            latestMeta.progressText = '正在处理人物参考图';
-            db.update(contents).set({ metadata: JSON.stringify(latestMeta) }).where(eq(contents.id, contentId)).run();
-            const processed = await processHmFaceImages(sourceImages, {
-              publicBaseUrl: latestMeta.publicBaseUrl || process.env.BACKEND_URL,
-              outputPrefix: `content_${contentId}`,
-            });
-            const processedFrames = processed.sources.slice(0, frameSources.length);
-            referenceImages = processed.sources.slice(frameSources.length);
-            if (firstFrame) firstFrame = processedFrames.shift();
-            if (lastFrame) lastFrame = processedFrames.shift();
-            latestMeta.hm_face_original_images = referenceImages.length > 0
-              ? (latestMeta.reference_images || latestMeta.image_urls || [])
-              : undefined;
-            latestMeta.reference_images = referenceImages;
-            latestMeta.image_urls = referenceImages;
-            if (firstFrame) latestMeta.first_frame = firstFrame;
-            if (lastFrame) latestMeta.last_frame = lastFrame;
-            latestMeta.hm_face_processed = true;
-            latestMeta.hm_face_processing_details = processed.details;
-            latestMeta.hm_face_processed_at = new Date().toISOString();
-            latestMeta.face = false;
-            latestMeta.progressText = '人物参考图处理完成，正在提交 HM Studio';
-            db.update(contents).set({ metadata: JSON.stringify(latestMeta) }).where(eq(contents.id, contentId)).run();
-          } else {
-            latestMeta.hm_face_processed = true;
-          }
-        }
+        // HM owns face processing for every HM channel task, including legacy
+        // queued tasks resumed after a restart. Never run the local processor.
+        latestMeta.face_processing = false;
+        latestMeta.face = true;
         const overflowRequest = {
           requestedModel: model,
           resolution: latestMeta.resolution || '720p',
@@ -2956,7 +2937,7 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
             lastFrame,
             functionMode: latestMeta.function_mode,
             upstreamChannel: latestMeta.upstream_channel,
-            face: false,
+            face: true,
           });
           const headers: Record<string, string> = {};
           if (selectedHmChannel.apiKey) headers.Authorization = `Bearer ${selectedHmChannel.apiKey}`;
@@ -3180,7 +3161,10 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   } else if (model === 'sora-v4-fast') {
     const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_fast_rate')).get();
     rate = parseFloat(row?.value || '0.189');
-  } else if (model === 'sora-v4-pro' || model === 'seedance-2.0') {
+  } else if (model === 'seedance-2.0') {
+    const row = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_rate')).get();
+    rate = parseFloat(row?.value || '1.50');
+  } else if (model === 'sora-v4-pro') {
     const row = db.select().from(settings).where(eq(settings.key, 'sora_v4_pro_rate')).get();
     rate = parseFloat(row?.value || '0.25');
   } else if (model === 'sd2-c7') {
@@ -3240,6 +3224,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   }
 
   const isFlatRate = [
+    'seedance-2.0',
     'sdas-hn-sd2.0-720p',
     'sdas-hn-sd2.0-fast-720p',
     'seedance-2.0-fast',
@@ -3261,7 +3246,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
 
   let baseUrl = channel.baseUrl.replace(/\/+$/, '');
   const isSeedanceFast = model === 'seedance-2.0-fast';
-  const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro' || model === 'seedance-2.0';
+  const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro';
   const isSudaShui = meta?.series === 'sudashui';
   const isHmStudio = isHmStudioChannel(channel);
   const isWxHaidiYue = isWxHaidiYueChannel(channel);
