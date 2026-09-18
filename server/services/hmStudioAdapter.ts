@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 export const HM_STUDIO_CHANNEL_TYPE = 'hmstudio';
+export const HM_STUDIO_UPSTREAM_FACE_ENABLED = true;
 
 export type HmStudioVideoOptions = {
   model: string;
@@ -187,9 +188,9 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
   form.append('duration', String(options.duration));
   form.append('ratio', options.ratio);
   form.append('video_resolution', options.resolution);
-  // Keep the historical behavior when omitted, while allowing callers to
-  // explicitly enable HM Studio's face processing.
-  form.append('face', String(normalizeHmStudioFace(options.face)));
+  // HM channels use the upstream face pipeline exclusively. Keep this forced
+  // at the adapter boundary so web, API, retry and recovery paths cannot drift.
+  form.append('face', String(HM_STUDIO_UPSTREAM_FACE_ENABLED));
   if (functionMode) form.append('function_mode', functionMode);
   if (options.upstreamChannel) form.append('channel', options.upstreamChannel);
 
@@ -221,7 +222,7 @@ export function buildHmStudioImageForm(options: HmStudioImageOptions): FormData 
   form.append('prompt', options.prompt);
   form.append('ratio', options.ratio);
   form.append('resolution', options.resolution || '2k');
-  form.append('face', String(normalizeHmStudioFace(options.face)));
+  form.append('face', String(HM_STUDIO_UPSTREAM_FACE_ENABLED));
   if (options.negativePrompt) form.append('negative_prompt', options.negativePrompt);
   if (options.sampleStrength !== undefined) form.append('sample_strength', String(options.sampleStrength));
   if (options.intelligentRatio !== undefined) form.append('intelligent_ratio', String(options.intelligentRatio));

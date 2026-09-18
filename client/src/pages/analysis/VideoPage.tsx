@@ -598,7 +598,6 @@ export default function VideoPage() {
   // 人脸合规参数状态 (针对四月天/Seedance系列模型)
   const [complianceEnabled, setComplianceEnabled] = useState(false);
   const [complianceMode, setComplianceMode] = useState<string>('colored-pencil');
-  const [hmFaceEnabled, setHmFaceEnabled] = useState(true);
 
   const handleConfirmSlice = (sliced: string[]) => {
     if (slicingImageIndex !== null) {
@@ -1294,8 +1293,8 @@ export default function VideoPage() {
         audio_urls: referenceAudios.length > 0 ? referenceAudios : undefined,
         first_frame: firstFrame || undefined,
         last_frame: lastFrame || undefined,
-        face_processing: isHmStudioVideoModel(selectedModel) ? hmFaceEnabled : undefined,
-        local_face_processed: allImagesLocallyProcessed,
+        face_processing: isHmStudioVideoModel(selectedModel) ? false : undefined,
+        local_face_processed: isHmStudioVideoModel(selectedModel) ? false : allImagesLocallyProcessed,
         compliance_enabled: ['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(selectedModel) ? complianceEnabled : undefined,
         compliance_mode: (['sd2-c7', 'seedance-2.0-720p', 'seedance-2.0-fast-720p'].includes(selectedModel) && complianceEnabled) ? complianceMode : undefined,
       },
@@ -1350,7 +1349,7 @@ export default function VideoPage() {
     setReferenceAudioNames([]);
     setFirstFrame(null);
     setLastFrame(null);
-  }, [prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideos, referenceAudios, firstFrame, lastFrame, locallyProcessedImages, hmFaceEnabled, complianceEnabled, complianceMode]);
+  }, [prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideos, referenceAudios, firstFrame, lastFrame, locallyProcessedImages, complianceEnabled, complianceMode]);
 
   const handleRemove = (taskId: string) => {
     if (taskId.startsWith('db_')) {
@@ -1875,21 +1874,13 @@ export default function VideoPage() {
                     </div>
                   )}
                   {isHmStudioVideoModel(selectedModel) && (
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={hmFaceEnabled}
-                      onClick={() => setHmFaceEnabled(current => !current)}
-                      className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.06] rounded-lg px-2.5 py-1 text-[11px] text-zinc-300 border border-white/5 transition-all"
-                      title="关闭时向 HM Studio 发送 face=false；开启时发送 face=true"
+                    <div
+                      className="flex items-center gap-1.5 bg-white/[0.04] rounded-lg px-2.5 py-1 text-[11px] text-indigo-300 border border-white/5"
+                      title="本站处理已禁用；HM Studio 上游人脸处理固定开启"
                     >
-                      <span className={`relative w-7 h-4 rounded-full transition-colors ${hmFaceEnabled ? 'bg-indigo-600' : 'bg-zinc-700'}`}>
-                        <span className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${hmFaceEnabled ? 'translate-x-3' : 'translate-x-0'}`} />
-                      </span>
-                      <span className={hmFaceEnabled ? 'text-indigo-300 font-medium' : 'text-zinc-400'}>
-                        真人素材处理：{hmFaceEnabled ? '开启' : '关闭'}
-                      </span>
-                    </button>
+                      <span className="w-2 h-2 rounded-full bg-indigo-400" />
+                      上游真人素材处理：开启
+                    </div>
                   )}
                 </div>
 
@@ -2071,25 +2062,27 @@ export default function VideoPage() {
                     {referenceImages.map((img, idx) => (
                       <div key={idx} className="relative w-12 h-12 rounded-lg overflow-hidden border border-white/10 group cursor-pointer shrink-0 hover:border-indigo-500/30 transition-colors">
                         <img src={img} alt="" className="w-full h-full object-cover" />
-                        {locallyProcessedImages.has(img) && <div className="absolute right-0 top-0 rounded-bl bg-emerald-600/95 px-1 py-0.5 text-[8px] font-medium leading-none text-white">已拆脸</div>}
+                        {!isHmStudioVideoModel(selectedModel) && locallyProcessedImages.has(img) && <div className="absolute right-0 top-0 rounded-bl bg-emerald-600/95 px-1 py-0.5 text-[8px] font-medium leading-none text-white">已拆脸</div>}
                         {/* 索引代号角标 */}
                         <div className="absolute top-0 left-0 bg-indigo-600/90 text-white text-[9px] px-1 py-0.5 rounded-br font-mono leading-none pointer-events-none group-hover:opacity-0 transition-opacity">
                           ref_{idx}
                         </div>
                         <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
-                          <button
-                            type="button"
-                            disabled={locallyProcessedImages.has(img)}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setFaceProcessingImageUrl(img);
-                              setFaceProcessingImageIndex(idx);
-                            }}
-                            className="bg-emerald-600 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40 p-0.5 rounded transition-colors"
-                            title={locallyProcessedImages.has(img) ? '该图片已完成人脸拆分' : '本地人脸拆分'}
-                          >
-                            <ScanFace className="w-3 h-3 text-white" />
-                          </button>
+                          {!isHmStudioVideoModel(selectedModel) && (
+                            <button
+                              type="button"
+                              disabled={locallyProcessedImages.has(img)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setFaceProcessingImageUrl(img);
+                                setFaceProcessingImageIndex(idx);
+                              }}
+                              className="bg-emerald-600 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40 p-0.5 rounded transition-colors"
+                              title={locallyProcessedImages.has(img) ? '该图片已完成人脸拆分' : '本地人脸拆分'}
+                            >
+                              <ScanFace className="w-3 h-3 text-white" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={(e) => {

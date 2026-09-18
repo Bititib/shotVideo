@@ -29,14 +29,12 @@ export type HmFaceProcessingResult = {
 };
 
 export function shouldRunHmFaceProcessing(requestValue: unknown, globalValue: unknown = process.env.HM_FACE_PROCESSING_ENABLED): boolean {
-  const globallyDisabled = typeof globalValue === 'string'
-    && ['false', '0', 'off', 'no'].includes(globalValue.trim().toLowerCase());
-  if (globallyDisabled) return false;
-  if (requestValue === undefined || requestValue === null || requestValue === '') return true;
-  if (typeof requestValue === 'boolean') return requestValue;
-  if (typeof requestValue === 'number') return requestValue === 1;
-  return typeof requestValue === 'string'
-    && ['true', '1', 'on', 'yes'].includes(requestValue.trim().toLowerCase());
+  // HM face processing is owned by the upstream service. Keep the local
+  // processor globally disabled even when legacy clients or environment
+  // variables explicitly request it.
+  void requestValue;
+  void globalValue;
+  return false;
 }
 
 let sessionPromise: Promise<ort.InferenceSession> | null = null;

@@ -40,7 +40,7 @@ describe('HM Studio adapter', () => {
     expect(form.get('duration')).toBe('8');
     expect(form.get('ratio')).toBe('16:9');
     expect(form.get('video_resolution')).toBe('1080p');
-    expect(form.get('face')).toBe('false');
+    expect(form.get('face')).toBe('true');
     expect(form.get('function_mode')).toBe('first_last_frames');
     expect(form.get('first_frame_url')).toBe('https://cdn.example.test/start.jpg');
     expect(form.has('face_split')).toBe(false);
@@ -70,7 +70,7 @@ describe('HM Studio adapter', () => {
     }
   });
 
-  it('keeps face processing off by default and accepts an explicit opt-in', () => {
+  it('forces upstream face processing on for every HM request', () => {
     expect(normalizeHmStudioFace(undefined)).toBe(false);
     expect(normalizeHmStudioFace('false')).toBe(false);
     expect(normalizeHmStudioFace(true)).toBe(true);
@@ -90,9 +90,18 @@ describe('HM Studio adapter', () => {
       ratio: '1:1',
       face: 'true',
     });
+    const explicitFalseForm = buildHmStudioVideoForm({
+      model: 'seedance_v2.5-301010',
+      prompt: 'test',
+      duration: 10,
+      ratio: '16:9',
+      resolution: '720p',
+      face: false,
+    });
 
     expect(videoForm.get('face')).toBe('true');
     expect(imageForm.get('face')).toBe('true');
+    expect(explicitFalseForm.get('face')).toBe('true');
   });
 
   it('maps multimodal SD2 references to omni materials', () => {
@@ -151,7 +160,7 @@ describe('HM Studio adapter', () => {
       { type: 'video', name: 'Video1', url: 'https://cdn.example.test/reference.mp4' },
       { type: 'audio', name: 'Audio1', url: 'https://cdn.example.test/reference.mp3' },
     ]);
-    expect(form.get('face')).toBe('false');
+    expect(form.get('face')).toBe('true');
   });
 
   it('builds the documented multipart image request', () => {
@@ -167,7 +176,7 @@ describe('HM Studio adapter', () => {
     expect(form.get('ratio')).toBe('4:3');
     expect(form.get('resolution')).toBe('2k');
     expect(form.get('sample_strength')).toBe('0.6');
-    expect(form.get('face')).toBe('false');
+    expect(form.get('face')).toBe('true');
     expect(form.get('image_url')).toBe('https://cdn.example.test/reference.jpg');
   });
 

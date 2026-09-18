@@ -67,6 +67,13 @@ function canDecodeImageSource(source: string, timeoutMs = 12_000): Promise<boole
   // The server still performs the authoritative Sharp validation before the
   // task is billed or queued.
   if (source.startsWith('data:image/')) return Promise.resolve(true);
+  // Replicated tasks contain persisted or historical URLs. A thumbnail can be
+  // visible from the browser cache while a second Image instance revalidates
+  // the URL, times out or is blocked by the remote host. Client-side decoding
+  // is therefore not authoritative for URL references. The video endpoint
+  // validates local uploads from disk and downloads allow-listed temporary
+  // hosts before billing, returning the real HTTP/format error when necessary.
+  if (/^(?:https?:\/\/|\/uploads\/)/i.test(source)) return Promise.resolve(true);
   return new Promise(resolve => {
     const image = new Image();
     let settled = false;

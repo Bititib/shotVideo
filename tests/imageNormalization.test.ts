@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasSupportedImageDataUrlSignature, isHeicFile, isSupportedImageFile, MOBILE_IMAGE_ACCEPT } from '../client/src/utils/imageNormalization.js';
+import { findUnreadableImageIndexes, hasSupportedImageDataUrlSignature, isHeicFile, isSupportedImageFile, MOBILE_IMAGE_ACCEPT } from '../client/src/utils/imageNormalization.js';
 
 function testFile(bytes: number[], name: string, type = ''): File {
   return Object.assign(new Blob([new Uint8Array(bytes)], { type }), { name, lastModified: 0 }) as File;
@@ -39,5 +39,12 @@ describe('mobile image normalization detection', () => {
     expect(hasSupportedImageDataUrlSignature('data:image/jpeg;base64,not-valid-base64%%%')).toBe(false);
     expect(hasSupportedImageDataUrlSignature(`data:image/jpeg;base64,${Buffer.from('<html>404</html>').toString('base64')}`)).toBe(false);
     expect(hasSupportedImageDataUrlSignature('/uploads/history-assets/reference.jpg')).toBe(true);
+  });
+
+  it('defers replicated URL validation to the server instead of browser cache revalidation', async () => {
+    await expect(findUnreadableImageIndexes([
+      '/uploads/history-assets/reference.jpg',
+      'https://filer2.fdai.xyz/temp_1_del/reference.jpg',
+    ])).resolves.toEqual([]);
   });
 });
