@@ -6,13 +6,6 @@ import { PricingService } from '../services/pricingService.js';
 import { ChannelService } from '../services/channelService.js';
 import { BalanceService } from '../services/balanceService.js';
 import { ContentService } from '../services/contentService.js';
-import {
-  buildHmStudioImageForm,
-  hmStudioCreateUrl,
-  isHmStudioChannel,
-  waitForHmStudioTask,
-} from '../services/hmStudioAdapter.js';
-import { hmStudioPoolKey, hmStudioQueue } from '../services/hmStudioQueueService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { contents, models } from '../db/schema.js';
@@ -235,7 +228,11 @@ router.get('/download', authMiddleware, async (req: TierRequest, res: Response) 
 
 /** 查找支持指定图片模型的渠道 */
 function findImageChannel(modelId: string) {
-  const channel = ChannelService.findChannelForModel(modelId);
+  // HM Studio currently exposes video generation only. Never select an HM
+  // channel for an image model even if an administrator accidentally adds an
+  // overlapping model id to its supported-model list.
+  const channel = ChannelService.findChannelsForModel(modelId)
+    .find(candidate => candidate.type !== 'hmstudio');
   if (channel) return {
     id: channel.id,
     type: channel.type,
@@ -366,85 +363,6 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
   };
 
   try {
-    if (isHmStudioChannel(channel)) {
-      sendEvent({ type: 'status', message: `正在通过 HM Studio 生成 ${count} 张图片...`, total: count });
-      const upstreamModel = channel.modelMapping?.[model] || model;
-      const completedImages: string[] = new Array(count).fill('');
-      let completedCount = 0;
-
-      const runSingle = async (index: number) => {
-        try {
-          const queueJob = hmStudioQueue.enqueue({
-            id: `image:web:${req.userId}:${Date.now()}:${index}:${Math.random().toString(36).slice(2, 8)}`,
-            userKey: `user:${req.userId}`,
-            poolKey: hmStudioPoolKey(channel),
-            onUpdate: snapshot => {
-              sendEvent({ type: 'queue', index, ...snapshot });
-              if (snapshot.status === 'queued') {
-                sendEvent({
-                  type: 'status',
-                  message: `HM Studio 排队中：前方 ${Math.max(0, snapshot.position - 1)} 项，当前运行 ${snapshot.running}/${snapshot.concurrencyLimit}`,
-                });
-              }
-            },
-            task: async () => {
-              const formData = buildHmStudioImageForm({
-                model: upstreamModel,
-                prompt: prompt.trim(),
-                ratio: aspect_ratio,
-                resolution: typeof quality === 'string' && /^(1k|2k|4k)$/i.test(quality) ? quality.toLowerCase() : '2k',
-                imageSources: reference_images,
-                sampleStrength: hasRef ? 0.5 : undefined,
-              });
-              const requestHeaders: Record<string, string> = {};
-              if (channel.apiKey) requestHeaders.Authorization = `Bearer ${channel.apiKey}`;
-              sendEvent({ type: 'status', message: `HM Studio 已开始生成图片 ${index + 1}/${count}` });
-              sendEvent({ type: 'progress', progress: 5, index });
-
-              const upstream = await fetch(hmStudioCreateUrl(baseUrl, 'image'), {
-                method: 'POST',
-                headers: requestHeaders,
-                body: formData,
-                signal: AbortSignal.timeout(channel.timeout || 120_000),
-              });
-              if (!upstream.ok) {
-                const detail = await upstream.text().catch(() => '');
-                throw new Error(`提交失败 (${upstream.status}): ${detail.slice(0, 300)}`);
-              }
-              const job = await upstream.json() as any;
-              const taskId = job.task_id || job.id;
-              if (!taskId) throw new Error('HM Studio 未返回任务 ID');
-
-              return waitForHmStudioTask({
-                baseUrl,
-                taskId,
-                apiKey: channel.apiKey,
-                onProgress: current => sendEvent({ type: 'progress', progress: current.progress, index }),
-              });
-            },
-          });
-          const task = await queueJob.completion;
-          const localizedUrl = await localizeGeneratedImage(task.resultUrl, `hm_image_${index}`, req, channel);
-          completedImages[index] = localizedUrl;
-          sendEvent({ type: 'image_ready', imageUrl: localizedUrl, index, total: count });
-        } catch (error: any) {
-          sendEvent({ type: 'image_error', index, message: error.message || 'HM Studio 图片生成失败' });
-        } finally {
-          completedCount++;
-          if (completedCount === count) {
-            const allUrls = completedImages.filter(Boolean);
-            sendEvent({ type: 'complete', imageUrls: allUrls, total: allUrls.length });
-            billUsage(allUrls.length, allUrls);
-            res.write('data: [DONE]\n\n');
-            res.end();
-          }
-        }
-      };
-
-      for (let i = 0; i < count; i++) runSingle(i);
-      return;
-    }
-
     const isEditModel = model === 'gpt-image-2';
     let editModel = model;
     if (hasRef && !isEditModel) {

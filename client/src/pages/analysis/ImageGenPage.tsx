@@ -41,6 +41,20 @@ async function downloadImageFile(event: React.MouseEvent, url: string, filename:
   }
 }
 
+interface ActiveImageBatch {
+  id: string;
+  prompt: string;
+  model: string;
+  aspectRatio: string;
+  count: number;
+  images: string[];
+  progresses: number[];
+  failedIndexes: number[];
+  statusMessage: string;
+}
+
+const MAX_CONCURRENT_BATCHES = 4;
+
 function CustomSelect({ value, options, onChange, icon: Icon, prefix }: any) {
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -72,7 +86,7 @@ function CustomSelect({ value, options, onChange, icon: Icon, prefix }: any) {
 }
 
 /** 瀑布流图片卡片 */
-function ImageCard({ url, index, onPreview }: { url: string; index: number; onPreview: () => void }) {
+function ImageCard({ url, index, onPreview }: { url: string; index: number; onPreview: () => void; key?: any }) {
   return (
     <div className="group relative rounded-xl overflow-hidden border border-white/5 hover:border-pink-500/30 transition-all cursor-pointer bg-black/20" onClick={onPreview}>
       <img src={url} alt={`生成图片 ${index + 1}`} className="w-full block max-h-[60vh] object-contain" loading="lazy" />
@@ -140,9 +154,7 @@ export default function ImageGenPage() {
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState('1:1');
   const [imageCount, setImageCount] = useState(1);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [progresses, setProgresses] = useState<number[]>([]);
-  const [statusMessage, setStatusMessage] = useState('');
+  const [activeBatches, setActiveBatches] = useState<ActiveImageBatch[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [generatedImages, setGeneratedImages] = useState<string[]>([]);
   const [history, setHistory] = useState<GeneratedImage[]>([]);
@@ -151,7 +163,7 @@ export default function ImageGenPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const batchControllersRef = useRef<Map<string, AbortController>>(new Map());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -261,89 +273,127 @@ export default function ImageGenPage() {
   // 全局拖拽 + Ctrl+V 粘贴上传参考图
   useImageDropPaste(handleFileSelect);
 
-  // 记录本轮生成前已有的图片数量，用于追加偏移
-  const baseIndexRef = useRef(0);
-
   const handleGenerate = useCallback(() => {
-    if (!prompt.trim() || isGenerating) return;
+    if (!prompt.trim()) return;
+    if (activeBatches.length >= MAX_CONCURRENT_BATCHES) {
+      setError(`最多同时生成 ${MAX_CONCURRENT_BATCHES} 批图片，请等待任一批完成`);
+      return;
+    }
     if (!guard()) return;
-    const base = generatedImages.length;
-    baseIndexRef.current = base;
-    // 预分配 imageCount 个空槽位，确保 image_ready 可以按 index 精确填入
-    setGeneratedImages(prev => [...prev, ...new Array(imageCount).fill('')]);
-    setIsGenerating(true);
-    setProgresses(new Array(imageCount).fill(0));
+
+    const batchId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `image-batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const batchPrompt = prompt.trim();
+    const batchModel = selectedModel;
+    const batchAspectRatio = aspectRatio;
+    const batchCount = imageCount;
+    const batchReferences = [...referenceImages];
+
+    setActiveBatches(previous => [...previous, {
+      id: batchId,
+      prompt: batchPrompt,
+      model: batchModel,
+      aspectRatio: batchAspectRatio,
+      count: batchCount,
+      images: new Array(batchCount).fill(''),
+      progresses: new Array(batchCount).fill(0),
+      failedIndexes: [],
+      statusMessage: `正在生成 ${batchCount} 张图片...`,
+    }]);
     setError(null);
-    setStatusMessage(`正在生成 ${imageCount} 张图片...`);
+
+    const updateBatch = (updater: (batch: ActiveImageBatch) => ActiveImageBatch) => {
+      setActiveBatches(previous => previous.map(batch => batch.id === batchId ? updater(batch) : batch));
+    };
 
     const ctrl = generateImage(
-      { prompt: prompt.trim(), model: selectedModel, aspect_ratio: aspectRatio, n: imageCount, reference_images: referenceImages.length > 0 ? referenceImages : undefined },
+      { prompt: batchPrompt, model: batchModel, aspect_ratio: batchAspectRatio, n: batchCount, reference_images: batchReferences.length > 0 ? batchReferences : undefined },
       (event: ImageSSEEvent) => {
         switch (event.type) {
           case 'queue':
-            setStatusMessage(`HM Studio 排队中：前方 ${Math.max(0, (event.position || 1) - 1)} 项，当前运行 ${event.running || 0}/${event.concurrencyLimit || 10}`);
+            updateBatch(batch => ({ ...batch, statusMessage: event.message || '图片任务排队中...' }));
             break;
           case 'status':
-            setStatusMessage(event.message || '');
+            updateBatch(batch => ({ ...batch, statusMessage: event.message || '' }));
             break;
           case 'progress': {
             const idx = event.index ?? -1;
             if (idx >= 0) {
-              setProgresses(prev => { const next = [...prev]; next[idx] = event.progress || 0; return next; });
+              updateBatch(batch => {
+                const progresses = [...batch.progresses];
+                progresses[idx] = event.progress || 0;
+                return { ...batch, progresses };
+              });
             }
             break;
           }
           case 'image_ready':
             if (event.imageUrl) {
-              const slotIdx = baseIndexRef.current + (event.index ?? 0);
-              setGeneratedImages(prev => {
-                const next = [...prev];
-                next[slotIdx] = event.imageUrl!;
-                return next;
+              const idx = event.index ?? 0;
+              updateBatch(batch => {
+                const images = [...batch.images];
+                const progresses = [...batch.progresses];
+                images[idx] = event.imageUrl!;
+                progresses[idx] = 100;
+                return { ...batch, images, progresses };
               });
-              setProgresses(prev => { const next = [...prev]; if (event.index !== undefined) next[event.index] = 100; return next; });
             }
             break;
           case 'image_error':
             setError(event.message || `图片 #${(event.index ?? 0) + 1} 生成失败`);
-            // 移除失败的空槽位
             if (event.index !== undefined) {
-              const failIdx = baseIndexRef.current + event.index;
-              setGeneratedImages(prev => prev.filter((_, i) => i !== failIdx));
+              updateBatch(batch => ({
+                ...batch,
+                failedIndexes: batch.failedIndexes.includes(event.index!)
+                  ? batch.failedIndexes
+                  : [...batch.failedIndexes, event.index!],
+              }));
             }
             break;
-          case 'complete':
-            setIsGenerating(false);
-            setStatusMessage('');
-            // 清理剩余空槽位，追加历史
-            setGeneratedImages(prev => prev.filter(Boolean));
-            if (event.imageUrls && event.imageUrls.length > 0) {
-              event.imageUrls.forEach(url => {
-                setHistory(prev => [{ id: Date.now().toString() + Math.random(), prompt: prompt.trim(), imageUrl: url, model: selectedModel, createdAt: new Date(), aspectRatio }, ...prev]);
-              });
+          case 'complete': {
+            const completedUrls = (event.imageUrls || []).filter(Boolean);
+            if (completedUrls.length > 0) {
+              setGeneratedImages(previous => [...previous, ...completedUrls]);
+              setHistory(previous => [
+                ...completedUrls.map(url => ({
+                  id: `${Date.now()}-${Math.random()}`,
+                  prompt: batchPrompt,
+                  imageUrl: url,
+                  model: batchModel,
+                  createdAt: new Date(),
+                  aspectRatio: batchAspectRatio,
+                })),
+                ...previous,
+              ]);
             }
+            batchControllersRef.current.delete(batchId);
+            setActiveBatches(previous => previous.filter(batch => batch.id !== batchId));
             break;
+          }
           case 'error':
             setError(event.message || '生成失败');
-            setIsGenerating(false);
-            setStatusMessage('');
-            // 清理空槽位
-            setGeneratedImages(prev => prev.filter(Boolean));
+            batchControllersRef.current.delete(batchId);
+            setActiveBatches(previous => previous.filter(batch => batch.id !== batchId));
             break;
         }
       },
     );
-    abortRef.current = ctrl;
-  }, [prompt, selectedModel, aspectRatio, imageCount, isGenerating, referenceImages, generatedImages.length, guard]);
+    batchControllersRef.current.set(batchId, ctrl);
+  }, [prompt, selectedModel, aspectRatio, imageCount, activeBatches.length, referenceImages, guard]);
 
-  const handleCancel = () => { abortRef.current?.abort(); setIsGenerating(false); setStatusMessage(''); };
+  const handleCancelBatch = useCallback((batchId: string) => {
+    batchControllersRef.current.get(batchId)?.abort();
+    batchControllersRef.current.delete(batchId);
+    setActiveBatches(previous => previous.filter(batch => batch.id !== batchId));
+  }, []);
+
+  useEffect(() => () => {
+    batchControllersRef.current.forEach(controller => controller.abort());
+    batchControllersRef.current.clear();
+  }, []);
+
   const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); } };
-
-  // 当前本轮有多少空槽位（即尚未拿到图片的占位）
-  // generatedImages 中从 baseIndexRef 开始的空字符串就是待填充的占位
-  const currentBatchEmpty = isGenerating
-    ? generatedImages.slice(baseIndexRef.current).filter(v => !v).length
-    : 0;
 
   return (
     <div className="imagegen-page flex flex-col lg:flex-row min-h-full lg:h-full">
@@ -389,33 +439,53 @@ export default function ImageGenPage() {
       <div className="flex-1 flex flex-col min-w-0 relative">
         {/* 图片预览区 - 保持原始比例 */}
         <div className="flex-1 overflow-y-auto p-6 pb-40 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
-          {(generatedImages.length > 0 || isGenerating) ? (
+          {(generatedImages.length > 0 || activeBatches.length > 0) ? (
             <>
-              {/* 当前生成的图片 */}
+              {/* 已完成的图片 */}
               <div className="flex flex-wrap gap-3 items-start">
-                {generatedImages.map((url, i) => url ? (
-                  <div key={i} className="group relative rounded-xl overflow-hidden border border-white/5 hover:border-pink-500/40 transition-all cursor-pointer bg-black/30" onClick={() => setLightboxUrl(url)}>
-                    <img src={url} alt={`生成图片 ${i + 1}`} className="block h-[180px] w-auto object-contain" loading="lazy" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                      <div className="absolute bottom-1.5 right-1.5 flex gap-1">
-                        <button onClick={(e) => { e.stopPropagation(); setLightboxUrl(url); }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Maximize2 className="w-3 h-3" /></button>
-                        <button type="button" onClick={(e) => downloadImageFile(e, url, `generated-image-${i + 1}.png`)} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Download className="w-3 h-3" /></button>
-                      </div>
-                    </div>
-                  </div>
-                ) : null)}
-                {/* 占位卡片 - 按后端 index 映射独立进度 */}
-                {isGenerating && generatedImages.slice(baseIndexRef.current).map((url, i) => {
-                  if (url) return null; // 已有图片，不显示占位
-                  const backendIdx = i; // 和后端 event.index 一致
-                  return <PlaceholderCard key={`p-${backendIdx}`} index={backendIdx} progress={progresses[backendIdx] || 0} />;
-                })}
+                {generatedImages.map((url, i) => (
+                  <ImageCard key={`completed-${i}-${url}`} url={url} index={i} onPreview={() => setLightboxUrl(url)} />
+                ))}
               </div>
+
+              {/* 每一批任务独立维护进度和取消操作 */}
+              <div className="mt-4 space-y-4">
+                {activeBatches.map((batch, batchIndex) => (
+                  <section key={batch.id} className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-3">
+                    <div className="mb-3 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-medium text-zinc-300">批次 {batchIndex + 1} · {batch.prompt}</p>
+                        <p className="mt-1 text-[11px] text-zinc-500">
+                          {batch.statusMessage || `已完成 ${batch.images.filter(Boolean).length} / ${batch.count} 张`}
+                        </p>
+                      </div>
+                      <button type="button" onClick={() => handleCancelBatch(batch.id)} className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400">
+                        <Square className="h-3 w-3" /> 取消本批
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-start gap-3">
+                      {batch.images.map((url, index) => {
+                        if (url) return <ImageCard key={`${batch.id}-${index}`} url={url} index={index} onPreview={() => setLightboxUrl(url)} />;
+                        if (batch.failedIndexes.includes(index)) {
+                          return (
+                            <div key={`${batch.id}-failed-${index}`} className="flex h-[180px] w-[160px] flex-col items-center justify-center gap-2 rounded-xl border border-red-500/20 bg-red-500/5 text-red-400">
+                              <AlertCircle className="h-5 w-5" />
+                              <span className="text-[10px]">#{index + 1} 生成失败</span>
+                            </div>
+                          );
+                        }
+                        return <PlaceholderCard key={`${batch.id}-pending-${index}`} index={index} progress={batch.progresses[index] || 0} />;
+                      })}
+                    </div>
+                  </section>
+                ))}
+              </div>
+
               {/* 操作栏 */}
-              {!isGenerating && generatedImages.length > 0 && (
+              {generatedImages.length > 0 && (
                 <div className="flex items-center justify-center gap-3 mt-4">
-                  <button onClick={() => { setGeneratedImages([]); setPrompt(''); }} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
-                    <RotateCcw className="w-3.5 h-3.5" /> 新建生成
+                  <button onClick={() => setGeneratedImages([])} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
+                    <RotateCcw className="w-3.5 h-3.5" /> 清空本页结果
                   </button>
                   <span className="text-[11px] text-zinc-600">共 {generatedImages.length} 张 · 点击放大</span>
                 </div>
@@ -476,17 +546,6 @@ export default function ImageGenPage() {
             </div>
           )}
 
-          {/* 生成中状态 */}
-          {isGenerating && (
-            <div className="text-center mt-4">
-              <p className="text-sm text-zinc-400 mb-2">
-                {statusMessage || `已完成 ${generatedImages.slice(baseIndexRef.current).filter(Boolean).length} / ${imageCount} 张`}
-              </p>
-              <button onClick={handleCancel} className="text-xs text-zinc-500 hover:text-red-400 transition-colors flex items-center gap-1.5 mx-auto">
-                <Square className="w-3 h-3" /> 取消生成
-              </button>
-            </div>
-          )}
         </div>
 
         {/* 错误提示 */}
@@ -543,10 +602,12 @@ export default function ImageGenPage() {
                     : '描述你想生成的图片内容，例如：一只在太空漂浮的猫...'}
                   rows={3}
                   className="w-full bg-transparent px-4 py-3 pr-16 text-sm text-white focus:outline-none placeholder:text-zinc-600 resize-none [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' } as React.CSSProperties} />
-                {/* 圆形发送按钮 */}
-                <button onClick={isGenerating ? handleCancel : handleGenerate} disabled={!prompt.trim() && !isGenerating}
-                  className={`absolute right-3 bottom-3 w-11 h-11 rounded-full flex items-center justify-center transition-all ${isGenerating ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/20' : 'bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white shadow-lg shadow-pink-500/20 disabled:opacity-30 disabled:cursor-not-allowed'}`} aria-label={isGenerating ? '停止生成图片' : '开始生成图片'}>
-                  {isGenerating ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                {/* 圆形发送按钮：已有任务运行时仍可继续提交新批次 */}
+                <button onClick={handleGenerate} disabled={!prompt.trim() || activeBatches.length >= MAX_CONCURRENT_BATCHES}
+                  className="absolute right-3 bottom-3 w-11 h-11 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white shadow-lg shadow-pink-500/20 disabled:opacity-30 disabled:cursor-not-allowed"
+                  aria-label={activeBatches.length >= MAX_CONCURRENT_BATCHES ? '已达到并发批次上限' : '开始生成图片'}
+                  title={activeBatches.length > 0 ? `正在运行 ${activeBatches.length}/${MAX_CONCURRENT_BATCHES} 批，点击继续提交` : '开始生成图片'}>
+                  <Play className="w-4 h-4 ml-0.5" />
                 </button>
               </div>
             </div>
