@@ -395,6 +395,10 @@ export default function ImageGenPage() {
 
   const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); } };
 
+  const generatedImageUrls = new Set(generatedImages);
+  const visibleHistory = history.filter(item => !generatedImageUrls.has(item.imageUrl));
+  const hasCurrentWork = generatedImages.length > 0 || activeBatches.length > 0;
+
   return (
     <div className="imagegen-page flex flex-col lg:flex-row min-h-full lg:h-full">
       {/* ===== 左栏 ===== */}
@@ -439,7 +443,7 @@ export default function ImageGenPage() {
       <div className="flex-1 flex flex-col min-w-0 relative">
         {/* 图片预览区 - 保持原始比例 */}
         <div className="flex-1 overflow-y-auto p-6 pb-40 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
-          {(generatedImages.length > 0 || activeBatches.length > 0) ? (
+          {hasCurrentWork && (
             <>
               {/* 已完成的图片 */}
               <div className="flex flex-wrap gap-3 items-start">
@@ -491,11 +495,13 @@ export default function ImageGenPage() {
                 </div>
               )}
             </>
-          ) : history.length > 0 ? (
-            <>
-              <p className="text-xs text-zinc-500 mb-3">历史生成记录 ({history.length})</p>
+          )}
+
+          {visibleHistory.length > 0 && (
+            <section className={hasCurrentWork ? 'mt-8 border-t border-white/5 pt-6' : ''}>
+              <p className="text-xs text-zinc-500 mb-3">历史生成记录 ({visibleHistory.length})</p>
               <div className="flex flex-wrap gap-3 items-start">
-                {history.map((h) => (
+                {visibleHistory.map((h) => (
                   <div key={h.id} className="group relative rounded-xl overflow-hidden border border-white/5 hover:border-pink-500/40 transition-all cursor-pointer bg-black/30" onClick={() => setLightboxUrl(h.imageUrl)}>
                     <img src={h.imageUrl} alt="历史图片" className="block h-[180px] w-auto object-contain" loading="lazy" />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
@@ -533,8 +539,10 @@ export default function ImageGenPage() {
                   </button>
                 </div>
               )}
-            </>
-          ) : (
+            </section>
+          )}
+
+          {!hasCurrentWork && visibleHistory.length === 0 && (
             <div className="h-full flex items-center justify-center">
               <div className="text-center">
                 <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-pink-500/10 to-rose-500/10 border border-white/5 flex items-center justify-center">
