@@ -3185,7 +3185,14 @@ function adoptHmStudioProcessingContent(contentId: number, record: any): HmStudi
 }
 
 export function resumePollForTask(contentId: number, record: any): Promise<void> {
-  if (activePolls.has(contentId)) return activePollPromises.get(contentId) || Promise.resolve();
+  if (activePolls.has(contentId)) {
+    const existingPromise = activePollPromises.get(contentId);
+    if (existingPromise) return existingPromise;
+    // A poller that terminated unexpectedly in an older process path could leave
+    // only the Set marker behind. Clear it so the periodic recovery scan can
+    // actually adopt the task again.
+    activePolls.delete(contentId);
+  }
   activePolls.add(contentId);
 
   let model = record.modelId || '';
@@ -3340,18 +3347,19 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
 
   const pollingPromise = (async () => {
-    console.log(`[video-recover] Starting polling for video task ${contentId} (videoId: ${videoId})`);
-    const pollInterval = 5000;
-    const startTime = Date.now();
-    const createdAt = new Date(record.createdAt).getTime();
-    const timeoutStartedAt = Number.isFinite(createdAt) ? createdAt : startTime;
-    const pollTimeoutMs = Number.isFinite(env.VIDEO_TASK_POLL_TIMEOUT_MS) && env.VIDEO_TASK_POLL_TIMEOUT_MS > 0
-      ? env.VIDEO_TASK_POLL_TIMEOUT_MS
-      : 1_800_000;
+    try {
+      console.log(`[video-recover] Starting polling for video task ${contentId} (videoId: ${videoId})`);
+      const pollInterval = 5000;
+      const startTime = Date.now();
+      const createdAt = new Date(record.createdAt).getTime();
+      const timeoutStartedAt = Number.isFinite(createdAt) ? createdAt : startTime;
+      const pollTimeoutMs = Number.isFinite(env.VIDEO_TASK_POLL_TIMEOUT_MS) && env.VIDEO_TASK_POLL_TIMEOUT_MS > 0
+        ? env.VIDEO_TASK_POLL_TIMEOUT_MS
+        : 1_800_000;
 
-    let consecutiveTransientPollFailures = 0;
-    const maxTransientPollFailures = 6;
-    while (true) {
+      let consecutiveTransientPollFailures = 0;
+      const maxTransientPollFailures = 6;
+      while (true) {
       const currentRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
       if (!currentRecord || currentRecord.status !== 'processing') {
         console.log(`[video-recover] Task ${contentId} is no longer in processing status (or was deleted)`);
@@ -3575,11 +3583,16 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
       } catch (err: any) {
         console.warn(`[video-recover] Polling exception: ${err.message}`);
       }
+      }
+    } catch (err: any) {
+      // Keep the DB task recoverable. The periodic scan (and API status reads)
+      // can start a fresh poller after this marker is released.
+      console.error(`[video-recover] Poller terminated unexpectedly for task ${contentId}: ${err?.message || err}`);
+    } finally {
+      activePolls.delete(contentId);
+      activePollPromises.delete(contentId);
+      console.log(`[video-recover] Task ${contentId} polling terminated.`);
     }
-
-    activePolls.delete(contentId);
-    activePollPromises.delete(contentId);
-    console.log(`[video-recover] Task ${contentId} polling terminated.`);
   })();
   activePollPromises.set(contentId, pollingPromise);
   return pollingPromise;

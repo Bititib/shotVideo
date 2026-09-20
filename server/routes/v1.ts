@@ -2375,6 +2375,15 @@ async function handleVideoQuery(req: Request, res: Response) {
       return res.status(404).json({ error: 'Task not found' });
     }
 
+    // Status polling is also a self-healing entry point. If a worker restarted
+    // or a previous in-memory poller exited, reattach it while returning the
+    // current persisted status immediately.
+    if (record.type === 'video' && record.status === 'processing') {
+      void resumePollForTask(record.id, record).catch((error: any) => {
+        console.warn(`[v1-video] Failed to resume poller for task ${record.id}: ${error?.message || error}`);
+      });
+    }
+
     const status = record.status;
     let progress = 0;
     let metadata: Record<string, any> = {};

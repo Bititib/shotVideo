@@ -105,6 +105,33 @@ describe('VideoRecoveryService', () => {
     });
   });
 
+  it('uses Miaowu task and content endpoints when the completed payload omits a URL', async () => {
+    sqlite.prepare("UPDATE channels SET type = 'miaowu', base_url = 'https://api.miaowuai.store/v1' WHERE id = ?").run(channelId);
+    sqlite.prepare("UPDATE contents SET model_id = 'seedance-2.5-pro', metadata = ? WHERE id = ?").run(JSON.stringify({
+      videoId: 'upstream-task-1',
+      channelId,
+      actualChannel: 'miaowu',
+    }), contentId);
+
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      id: 'upstream-task-1',
+      status: 'completed',
+      progress: 100,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const inspection = await VideoRecoveryService.inspect(contentId);
+
+    expect(inspection).toMatchObject({
+      status: 'completed',
+      upstreamResultUrl: 'https://api.miaowuai.store/v1/videos/upstream-task-1/content',
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.miaowuai.store/v1/videos/upstream-task-1',
+      expect.objectContaining({ headers: { Authorization: 'Bearer test-key' } }),
+    );
+  });
+
   it('previews and bulk-recovers eligible failed videos from the last three days', async () => {
     const oldContentId = Number(sqlite.prepare(`
       INSERT INTO contents (user_id, type, title, model_id, cost, status, metadata, created_at)
