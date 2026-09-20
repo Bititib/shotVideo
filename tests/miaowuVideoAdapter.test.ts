@@ -6,6 +6,7 @@ import {
   miaowuVideoCreateUrl,
   miaowuVideoModelListUrl,
   normalizeMiaowuVideoTask,
+  shouldSendMiaowuAuthorization,
   validateMiaowuSeedance25DealInput,
   validateMiaowuSeedance25ProInput,
 } from '../server/services/miaowuVideoAdapter.js';
@@ -30,6 +31,16 @@ describe('Miaowu video adapter', () => {
   it('normalizes Base URLs that already end in /v1', () => {
     expect(miaowuVideoCreateUrl('https://api.miaowuai.store/v1/')).toBe('https://api.miaowuai.store/v1/videos');
     expect(miaowuVideoModelListUrl('https://api.miaowuai.store/v1')).toBe('https://api.miaowuai.store/v1/dream/model_list?type=video');
+  });
+
+  it('does not leak the Miaowu API key to an external media host', () => {
+    const baseUrl = 'https://api.miaowuai.store/v1';
+    expect(shouldSendMiaowuAuthorization('/v1/videos/task_123/content', baseUrl)).toBe(true);
+    expect(shouldSendMiaowuAuthorization('https://api.miaowuai.store/v1/videos/task_123/content', baseUrl)).toBe(true);
+    expect(shouldSendMiaowuAuthorization(
+      'https://dream-media.tos-cn-beijing.volces.com/videos/result/0.mp4',
+      baseUrl,
+    )).toBe(false);
   });
 
   it('uses the authenticated content endpoint when a completed task has no URL', () => {

@@ -95,6 +95,15 @@ export function isMiaowuChannel(channel: MiaowuChannelLike | null | undefined): 
   }
 }
 
+/** Only send the Miaowu API credential to the Miaowu API origin, never to its media CDN. */
+export function shouldSendMiaowuAuthorization(targetUrl: string, baseUrl: string): boolean {
+  try {
+    return new URL(targetUrl, `${miaowuApiBaseUrl(baseUrl)}/`).origin === new URL(miaowuApiBaseUrl(baseUrl)).origin;
+  } catch {
+    return false;
+  }
+}
+
 /** Accept both https://host and https://host/v1 as the administrator-facing Base URL. */
 export function miaowuApiBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, '');
