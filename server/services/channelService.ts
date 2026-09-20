@@ -9,6 +9,7 @@ import {
   WX_HAIDIYUE_FACE_SPLIT_MODEL,
   WX_HAIDIYUE_UPSTREAM_MODEL,
 } from './wxHaidiYueAdapter.js';
+import { isMiaowuChannel, MIAOWU_DEFAULT_VIDEO_MODELS, miaowuVideoModelListUrl } from './miaowuVideoAdapter.js';
 
 const DEFAULT_HM_CONCURRENCY = (() => {
   const parsed = Number.parseInt(process.env.HM_STUDIO_CONCURRENCY || '10', 10);
@@ -374,6 +375,13 @@ export class ChannelService {
     if (!name || !baseUrl) throw { status: 400, message: '渠道名称和 Base URL 不能为空' };
 
     const isWxHaidiYue = type === WX_HAIDIYUE_CHANNEL_TYPE;
+    const isMiaowu = isMiaowuChannel({ type, baseUrl });
+    const miaowuMapping = modelMapping && Object.keys(modelMapping).length > 0
+      ? modelMapping
+      : Object.fromEntries(MIAOWU_DEFAULT_VIDEO_MODELS.map(modelId => [modelId, modelId]));
+    const miaowuModels = Array.isArray(supportedModels) && supportedModels.length > 0
+      ? supportedModels
+      : [...MIAOWU_DEFAULT_VIDEO_MODELS];
     const result = db.insert(channels).values({
       name: isWxHaidiYue ? WX_HAIDIYUE_CHANNEL_NAME : name,
       type: type || 'openai',
@@ -381,8 +389,10 @@ export class ChannelService {
       apiKey: type === 'hmstudio' ? '' : (apiKey || ''),
       modelMapping: JSON.stringify(isWxHaidiYue
         ? { [WX_HAIDIYUE_FACE_SPLIT_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL }
-        : (modelMapping || {})),
-      supportedModels: JSON.stringify(isWxHaidiYue ? [WX_HAIDIYUE_FACE_SPLIT_MODEL] : (supportedModels || [])),
+        : isMiaowu ? miaowuMapping : (modelMapping || {})),
+      supportedModels: JSON.stringify(isWxHaidiYue
+        ? [WX_HAIDIYUE_FACE_SPLIT_MODEL]
+        : isMiaowu ? miaowuModels : (supportedModels || [])),
       priority: priority ?? 0,
       weight: weight ?? 1,
       concurrencyLimit: DEFAULT_HM_CONCURRENCY,
@@ -436,6 +446,16 @@ export class ChannelService {
     } else if (channel.type === WX_HAIDIYUE_CHANNEL_TYPE) {
       updates.faceSplitEnabled = 0;
     }
+    if (isMiaowuChannel({ type: nextType, baseUrl: data.baseUrl ?? channel.baseUrl })) {
+      const nextMapping = data.modelMapping;
+      const nextModels = data.supportedModels;
+      if (!nextMapping || Object.keys(nextMapping).length === 0) {
+        updates.modelMapping = JSON.stringify(Object.fromEntries(MIAOWU_DEFAULT_VIDEO_MODELS.map(modelId => [modelId, modelId])));
+      }
+      if (!Array.isArray(nextModels) || nextModels.length === 0) {
+        updates.supportedModels = JSON.stringify(MIAOWU_DEFAULT_VIDEO_MODELS);
+      }
+    }
     updates.updatedAt = new Date().toISOString();
 
     if (nextType === 'hmstudio') {
@@ -463,9 +483,11 @@ export class ChannelService {
     const start = Date.now();
     try {
       const baseUrl = channel.baseUrl.replace(/\/+$/, '');
-      const url = isWxHaidiYueChannel(channel) && /\/v1$/i.test(baseUrl)
-        ? `${baseUrl}/models`
-        : `${baseUrl}/v1/models`;
+      const url = isMiaowuChannel(channel)
+        ? miaowuVideoModelListUrl(baseUrl)
+        : isWxHaidiYueChannel(channel) && /\/v1$/i.test(baseUrl)
+          ? `${baseUrl}/models`
+          : `${baseUrl}/v1/models`;
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), channel.timeout || 15000);
       const response = await fetch(url, {
@@ -509,7 +531,9 @@ export class ChannelService {
       return { count: 1, added: 0, models: [WX_HAIDIYUE_FACE_SPLIT_MODEL] };
     }
 
-    const url = channel.baseUrl.replace(/\/+$/, '') + '/v1/models';
+    const url = isMiaowuChannel(channel)
+      ? miaowuVideoModelListUrl(channel.baseUrl)
+      : channel.baseUrl.replace(/\/+$/, '') + '/v1/models';
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${channel.apiKey}` },
       signal: AbortSignal.timeout(channel.timeout || 30_000),

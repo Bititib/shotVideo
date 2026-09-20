@@ -3,6 +3,7 @@ import { adminApi } from '../../api/admin';
 import { Plus, Radio, Trash2, Pencil, Zap, Loader2, Power, PowerOff, RefreshCw, KeyRound, Activity, CircleCheck, CircleX, Timer, ScanFace } from 'lucide-react';
 
 const HM_STUDIO_BASE_URL = 'https://dnyovzpgyokm.sealosbja.site';
+const MIAOWU_BASE_URL = 'https://api.miaowuai.store';
 
 export default function ChannelsPage() {
   const [channels, setChannels] = useState<any[]>([]);
@@ -391,7 +392,7 @@ export default function ChannelsPage() {
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-white">{ch.name}</h3>
-                  <p className="text-[10px] text-zinc-500 font-mono"><span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold mr-1.5 ${ch.type === 'gemini' ? 'bg-emerald-500/15 text-emerald-400' : ch.type === 'grok2api' ? 'bg-orange-500/15 text-orange-400' : ch.type === 'hmstudio' ? 'bg-amber-500/15 text-amber-300' : 'bg-blue-500/15 text-blue-400'}`}>{ch.type === 'openai' ? 'OpenAI' : ch.type === 'gemini' ? 'Gemini' : ch.type === 'grok2api' ? 'Grok2API' : ch.type === 'hmstudio' ? 'HM Studio' : ch.type}</span>{ch.baseUrl}</p>
+                  <p className="text-[10px] text-zinc-500 font-mono"><span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold mr-1.5 ${ch.type === 'gemini' ? 'bg-emerald-500/15 text-emerald-400' : ch.type === 'grok2api' ? 'bg-orange-500/15 text-orange-400' : ch.type === 'hmstudio' ? 'bg-amber-500/15 text-amber-300' : 'bg-blue-500/15 text-blue-400'}`}>{ch.type === 'openai' ? 'OpenAI' : ch.type === 'gemini' ? 'Gemini' : ch.type === 'grok2api' ? 'Grok2API' : ch.type === 'hmstudio' ? 'HM Studio' : ch.type === 'miaowu' ? '喵呜 API' : ch.type}</span>{ch.baseUrl}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -470,6 +471,8 @@ export default function ChannelsPage() {
                         ? HM_STUDIO_BASE_URL
                         : e.target.value === 'snumom' && !edit.baseUrl
                           ? 'https://snumom.com'
+                          : e.target.value === 'miaowu' && !edit.baseUrl
+                            ? MIAOWU_BASE_URL
                           : edit.baseUrl,
                     })}
                       className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
@@ -477,6 +480,7 @@ export default function ChannelsPage() {
                       <option value="hmstudio">HM Studio（图片/视频异步任务）</option>
                       <option value="wx-haidiyue">wx-海底月（sd2.5 人脸拆分）</option>
                       <option value="snumom">snumom（视频异步任务）</option>
+                      <option value="miaowu">喵呜 API（视频异步任务）</option>
                       <option value="gemini">Gemini（分析服务）</option>
                       <option value="grok2api">Grok2API（视频/图片生成）</option>
                       <option value="custom">自定义</option>

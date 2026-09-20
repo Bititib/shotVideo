@@ -77,6 +77,15 @@ import {
   WX_HAIDIYUE_FACE_SPLIT_MODEL,
 } from '../services/wxHaidiYueAdapter.js';
 import { prepareWxHaidiYueImageUrls } from '../services/wxHaidiYueImageService.js';
+import {
+  buildMiaowuVideoPayload,
+  isMiaowuChannel,
+  MIAOWU_SEEDANCE_25_DEAL_MODEL,
+  MIAOWU_SEEDANCE_25_PRO_MODEL,
+  miaowuVideoCreateUrl,
+  validateMiaowuSeedance25DealInput,
+  validateMiaowuSeedance25ProInput,
+} from '../services/miaowuVideoAdapter.js';
 import { enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
 import { withVideoFailureMetadata } from '../services/videoFailureService.js';
 import { ContentService } from '../services/contentService.js';
@@ -345,6 +354,8 @@ function getVideoRate(model: string, resolution: string): number {
     return 0.70;
   } else if (model === 'seedance-2.5-deal') {
     return 1.80;
+  } else if (model === MIAOWU_SEEDANCE_25_PRO_MODEL) {
+    return 0.20;
   } else if (model === 'seedance-2.5m') {
     return 3.00;
   } else if (model === 'wan3.0th') {
@@ -1556,6 +1567,34 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
   }
 
+  if (model === MIAOWU_SEEDANCE_25_DEAL_MODEL) {
+    const validationError = validateMiaowuSeedance25DealInput({
+      seconds,
+      resolution,
+      imageCount: image_urls.length,
+      videoCount: video_urls.length,
+      audioCount: audio_urls.length,
+    });
+    if (validationError) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: validationError });
+    }
+  }
+
+  if (model === MIAOWU_SEEDANCE_25_PRO_MODEL) {
+    const validationError = validateMiaowuSeedance25ProInput({
+      seconds,
+      resolution,
+      imageCount: image_urls.length,
+      videoCount: video_urls.length,
+      audioCount: audio_urls.length,
+    });
+    if (validationError) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: validationError });
+    }
+  }
+
   const hmStudioAdditionalValidationError = validateHmStudioAdditionalVideoInput(model, {
     seconds,
     resolution,
@@ -1819,6 +1858,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   const isHmStudio = isHmStudioChannel(channel);
   const isWxHaidiYue = isWxHaidiYueChannel(channel);
   const isMjNewApi = isMjNewApiChannel(channel);
+  const isMiaowu = isMiaowuChannel(channel);
   const isJulunSd25 = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL && isJulunChannel(channel);
 
   if (isHmStudio) {
@@ -1862,6 +1902,8 @@ async function handleVideoCreation(req: Request, res: Response) {
     ? wxHaidiYueCreateUrl(baseUrl)
     : isNewTokenModel
     ? newTokenVideoCreateUrl(baseUrl)
+    : isMiaowu
+    ? miaowuVideoCreateUrl(baseUrl)
     : isSudaShuiModel
     ? sudaShuiVideoCreateUrl(baseUrl)
     : `${baseUrl}/v1/videos`;
@@ -1967,6 +2009,25 @@ async function handleVideoCreation(req: Request, res: Response) {
 
       console.log(`[v1-video] MJNewAPI create: model=${model} upstreamModel=${upstreamModel} duration=${seconds} resolution=${resolution} images=${image_urls.length} videos=${video_urls.length} audios=${audio_urls.length}`);
 
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+      upstreamRes = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(channel.timeout || 120_000),
+      });
+    } else if (isMiaowu) {
+      const payload = buildMiaowuVideoPayload({
+        model: upstreamModel,
+        prompt,
+        seconds,
+        ratio,
+        resolution,
+        imageUrls: image_urls,
+        videoUrls: video_urls,
+        audioUrls: audio_urls,
+      });
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
       upstreamRes = await fetch(upstreamUrl, {

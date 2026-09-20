@@ -90,6 +90,8 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === HM_STUDIO_SEEDANCE_V20_933_MODEL) return 9;
   if (modelId === HM_STUDIO_SEEDANCE_V25_101010_MODEL) return 10;
   if (modelId === HM_STUDIO_SEEDANCE_V25_301010_MODEL) return 30;
+  if (modelId === 'seedance-2.5-deal') return 30;
+  if (modelId === 'seedance-2.5-pro') return 30;
   if (modelId.startsWith('sd-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
   if (modelId === 'seedance-2.0-fast' || modelId === 'seedance-2.0' || modelId === 'sora-v4-fast' || modelId === 'sora-v4-pro') return 4;
   const model = models.find(m => m.id === modelId);

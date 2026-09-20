@@ -300,6 +300,8 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === HM_STUDIO_SEEDANCE_V25_301010_MODEL) return 30;
   if (modelId === 'xd-seedance-2.5-720p') return 9;
   if (modelId === 'seedance-2.5-c1') return 30;
+  if (modelId === 'seedance-2.5-deal') return 30;
+  if (modelId === 'seedance-2.5-pro') return 30;
   if (modelId === 'ad-seedance-2.5-480p') return 30;
   if (modelId === 'td-seedance-2.5-720p') return 30;
   if (modelId === 'vd-seedance-2.5-480p' || modelId === 'vd-seedance-2.5-720p') return 9;
@@ -425,6 +427,8 @@ export default function VideoPage() {
     if (m === HM_STUDIO_SEEDANCE_V25_101010_MODEL) return 10;
     if (m === HM_STUDIO_SEEDANCE_V25_301010_MODEL) return 10;
     if (m === 'seedance-2.5-c1') return 10;
+    if (m === 'seedance-2.5-deal') return 0;
+    if (m === 'seedance-2.5-pro') return 10;
     if (m === 'ad-seedance-2.5-480p') return 10;
     if (m === 'td-seedance-2.5-720p') return 10;
     if (m === 'vd-seedance-2.5-480p' || m === 'vd-seedance-2.5-720p') return 3;
@@ -440,6 +444,8 @@ export default function VideoPage() {
     if (m === HM_STUDIO_SEEDANCE_V25_101010_MODEL) return 10;
     if (m === HM_STUDIO_SEEDANCE_V25_301010_MODEL) return 10;
     if (m === 'seedance-2.5-c1') return 10;
+    if (m === 'seedance-2.5-deal') return 10;
+    if (m === 'seedance-2.5-pro') return 10;
     if (m === 'ad-seedance-2.5-480p') return 10;
     if (m === 'td-seedance-2.5-720p') return 10;
     if (m === 'vd-seedance-2.5-480p' || m === 'vd-seedance-2.5-720p') return 0;
@@ -449,6 +455,11 @@ export default function VideoPage() {
   };
   const maxRefVideos = getMaxRefVideos(selectedModel);
   const maxRefAudios = getMaxRefAudios(selectedModel);
+  useEffect(() => {
+    setReferenceVideos(previous => previous.length > maxRefVideos ? previous.slice(0, maxRefVideos) : previous);
+    setReferenceAudios(previous => previous.length > maxRefAudios ? previous.slice(0, maxRefAudios) : previous);
+    setReferenceAudioNames(previous => previous.length > maxRefAudios ? previous.slice(0, maxRefAudios) : previous);
+  }, [selectedModel, maxRefVideos, maxRefAudios]);
   const firstFrameInputRef = useRef<HTMLInputElement>(null);
   const lastFrameInputRef = useRef<HTMLInputElement>(null);
   const [tasks, setTasks] = useState<VideoTask[]>([]);
@@ -1065,6 +1076,27 @@ export default function VideoPage() {
     }
     for (const f of filesToRead) {
       if (f.size > 100 * 1024 * 1024) { setError('参考视频不能超过 100MB'); continue; }
+      if (selectedModel === 'seedance-2.5-pro') {
+        const objectUrl = URL.createObjectURL(f);
+        try {
+          const videoDuration = await new Promise<number>((resolve, reject) => {
+            const media = document.createElement('video');
+            media.preload = 'metadata';
+            media.onloadedmetadata = () => resolve(media.duration);
+            media.onerror = () => reject(new Error('无法读取参考视频时长'));
+            media.src = objectUrl;
+          });
+          if (!Number.isFinite(videoDuration) || videoDuration > duration + 0.05) {
+            setError(`seedance-2.5-pro 的参考视频不能超过输出时长 ${duration} 秒`);
+            continue;
+          }
+        } catch (error: any) {
+          setError(error?.message || '无法读取参考视频时长');
+          continue;
+        } finally {
+          URL.revokeObjectURL(objectUrl);
+        }
+      }
       readFile(f);
     }
   };
@@ -1239,7 +1271,7 @@ export default function VideoPage() {
       setError('视频编辑模型必须上传参考视频');
       return;
     }
-    if (!isOmniVideoEditModel(selectedModel) && !isWan30Model(selectedModel) && selectedModel !== SNUMOM_SD_MINI_MODEL && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
+    if (!isOmniVideoEditModel(selectedModel) && !isWan30Model(selectedModel) && selectedModel !== SNUMOM_SD_MINI_MODEL && selectedModel !== 'seedance-2.5-deal' && selectedModel !== 'seedance-2.5-pro' && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
       setError('参考视频或音频模式下必须上传至少一张参考图');
       return;
     }

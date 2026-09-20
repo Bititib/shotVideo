@@ -26,6 +26,12 @@ import {
   getHmStudioUpstreamVideoModel,
 } from '../services/hmStudioVideoModels.js';
 import { HM_STUDIO_PRIMARY_VIDEO_MODEL } from '../services/videoFailoverService.js';
+import {
+  isMiaowuChannel,
+  MIAOWU_DEFAULT_VIDEO_MODELS,
+  MIAOWU_SEEDANCE_25_DEAL_MODEL,
+  MIAOWU_SEEDANCE_25_PRO_MODEL,
+} from '../services/miaowuVideoAdapter.js';
 
 /** 生成 sk-xxxx 格式的 Token */
 function generateTokenKey(): string {
@@ -200,6 +206,8 @@ export async function syncModelsFromAPI() {
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
     { provider: 'wx-haidiyue', modelId: WX_HAIDIYUE_FACE_SPLIT_MODEL, displayName: WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME, description: '支持真人；固定30秒；最多9张参考图；固定按次计费 ¥2.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance-2.0', displayName: 'Seedance 2.0', description: 'Seedance 2.0 文生/图生视频 (异步，¥1.5/次)', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'miaowu', modelId: MIAOWU_SEEDANCE_25_DEAL_MODEL, displayName: 'Seedance 2.5 Deal', description: '喵呜 API；支持5-30秒、480p/720p；最多30张图片和10段音频参考，不支持视频参考；按次计费', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'miaowu', modelId: MIAOWU_SEEDANCE_25_PRO_MODEL, displayName: 'Seedance 2.5 Pro', description: '喵呜 API；支持4-30秒、480p/720p；最多30张图片、10个视频和10段音频参考；参考视频时长不得超过输出时长；按秒计费', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance-2.5-c1', displayName: 'Seedance 2.5 (c1/888API)', description: '支持最多30张图片、10个视频、10个音频参考，4-30秒，按秒计费 ¥0.25/秒', capabilities: JSON.stringify(['video']) },
     { provider: 'seedance', modelId: 'sd2-mini', displayName: 'Seedance Mini (sd2-mini)', description: 'Seedance Mini 720p (933)，支持9图、3音频参考（无视频参考），固定按次计费 ¥2.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance2.0-933', displayName: 'seedance2.0 933', description: 'seedance2.0 933 模型，支持9图、3音频参考（无视频参考），固定按次计费 ¥3.00/次', capabilities: JSON.stringify(['video']), isActive: 1 }
@@ -811,6 +819,7 @@ export async function initDatabase() {
     { key: 'snumom_sd_mini_per_req_rate', value: '0.60', label: 'snumom sd-mini 费率(¥/次)' },
     { key: 'grok_imagine_video_1_5_preview_rate', value: '0.70', label: 'grok-imagine-video-1.5-preview 费率(¥/次)' },
     { key: 'seedance_2_5_deal_rate', value: '1.80', label: 'seedance-2.5-deal 费率(¥/次)' },
+    { key: 'seedance_2_5_pro_rate', value: '0.20', label: 'seedance-2.5-pro 费率(¥/秒)' },
     { key: 'seedance_2_5m_rate', value: '3.00', label: 'seedance-2.5m 费率(¥/次)' },
     { key: 'wan3_0th_rate', value: '0.14', label: 'wan3.0th 费率(¥/秒)' },
     { key: 'julun_minimax_h3_768p_rate', value: '0.18', label: '巨轮 MiniMax H3 768p 费率(¥/秒)' },
@@ -1023,6 +1032,7 @@ export async function initDatabase() {
     { modelPattern: 'xd-seedance-2.5-720p', billingType: 'per_call', inputPrice: legacyRate('xd_seedance_2_5_720p_rate', 1.20), category: 'video' },
     { modelPattern: 'seedance-2.5-c1', billingType: 'per_second', inputPrice: legacyRate('seedance_2_5_c1_rate', 0.25), category: 'video' },
     { modelPattern: 'seedance-2.5-deal', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5_deal_rate', 1.80), category: 'video' },
+    { modelPattern: 'seedance-2.5-pro', billingType: 'per_second', inputPrice: legacyRate('seedance_2_5_pro_rate', 0.20), category: 'video' },
     { modelPattern: 'seedance-2.5m', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5m_rate', 3.00), category: 'video' },
     { modelPattern: 'wan3.0th', billingType: 'per_second', inputPrice: legacyRate('wan3_0th_rate', 0.14), category: 'video' },
     { modelPattern: JULUN_MINIMAX_H3_MODEL, billingType: 'per_second', inputPrice: legacyRate('julun_minimax_h3_768p_rate', 0.18), category: 'video', extraParams: { '768p': 0.18 } },
@@ -1694,6 +1704,31 @@ export async function initDatabase() {
     }
   } catch (err: any) {
     console.error('⚠️ 清理非海底月渠道的 sd2.5 绑定出错:', err.message);
+  }
+
+  // 19) 为已存在的喵呜渠道补齐 Seedance 2.5 Deal 绑定；不自动创建无密钥渠道。
+  try {
+    const miaowuChannels = db.select().from(channels).all().filter(channel => isMiaowuChannel(channel));
+    for (const channel of miaowuChannels) {
+      let supportedModels: string[] = [];
+      let modelMapping: Record<string, string> = {};
+      try { supportedModels = JSON.parse(channel.supportedModels || '[]'); } catch { }
+      try { modelMapping = JSON.parse(channel.modelMapping || '{}'); } catch { }
+      if (!Array.isArray(supportedModels)) supportedModels = [];
+      for (const modelId of MIAOWU_DEFAULT_VIDEO_MODELS) {
+        if (!supportedModels.includes(modelId)) supportedModels.push(modelId);
+        modelMapping[modelId] = modelId;
+      }
+      db.update(channels).set({
+        type: 'miaowu',
+        supportedModels: JSON.stringify(supportedModels),
+        modelMapping: JSON.stringify(modelMapping),
+        updatedAt: new Date().toISOString(),
+      }).where(eq(channels.id, channel.id)).run();
+    }
+    if (miaowuChannels.length > 0) console.log('🔄 已校准喵呜渠道并绑定 Seedance 2.5 模型');
+  } catch (err: any) {
+    console.error('⚠️ 校准喵呜渠道模型绑定出错:', err.message);
   }
 
   // 清除所有历史拆分的 MJNewAPI 渠道以保持干净

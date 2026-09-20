@@ -88,6 +88,17 @@ import {
   WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME,
 } from '../services/wxHaidiYueAdapter.js';
 import { prepareWxHaidiYueImageUrls } from '../services/wxHaidiYueImageService.js';
+import {
+  buildMiaowuVideoPayload,
+  isMiaowuChannel,
+  MIAOWU_SEEDANCE_25_DEAL_MODEL,
+  MIAOWU_SEEDANCE_25_PRO_MODEL,
+  miaowuVideoCreateUrl,
+  miaowuVideoTaskUrl,
+  normalizeMiaowuVideoTask,
+  validateMiaowuSeedance25DealInput,
+  validateMiaowuSeedance25ProInput,
+} from '../services/miaowuVideoAdapter.js';
 import { detectVideoCodec, downloadAndLocalizeVideo, originalVideoPathFor, preferredVideoDownloadPath } from '../services/videoLocalizationService.js';
 import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
 export { downloadAndLocalizeVideo } from '../services/videoLocalizationService.js';
@@ -316,7 +327,8 @@ const MODEL_META: Record<string, ModelMeta> = {
   [SNUMOM_GROK_IMAGINE_VIDEO_MODEL]: { series: 'snumom-grok-1.5', allowedSeconds: SNUMOM_GROK_IMAGINE_VIDEO_SECONDS, requireRef: false },
   [SNUMOM_SD_MINI_MODEL]: { series: 'snumom-sd-mini', allowedSeconds: [...SNUMOM_SD_MINI_SECONDS], requireRef: false },
   'grok-imagine-video-1.5-preview': { series: 'grok-1.5', allowedSeconds: [10, 15], requireRef: false },
-  'seedance-2.5-deal': { series: 'seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
+  [MIAOWU_SEEDANCE_25_DEAL_MODEL]: { series: 'miaowu-seedance-2.5', allowedSeconds: Array.from({ length: 26 }, (_, index) => index + 5), requireRef: false },
+  [MIAOWU_SEEDANCE_25_PRO_MODEL]: { series: 'miaowu-seedance-2.5', allowedSeconds: Array.from({ length: 27 }, (_, index) => index + 4), requireRef: false },
   'seedance-2.5m': { series: 'seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25], requireRef: false },
   'wan3.0th': { series: 'wan3.0', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
   'wan3.0-video': { series: 'snumom-wan3.0', allowedSeconds: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
@@ -354,6 +366,8 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'veo-omni-flash-video-edit', name: 'Veo Omni Flash 视频编辑', description: '【不卡人脸-定制版】无水印视频编辑；必须提供1个参考视频，可附加多张参考图；固定10秒，参考视频最长15秒', maxSeconds: 10, icon: '✂️' },
   { id: 'veo-3-1', name: 'Veo 3-1', description: '【不卡人脸-定制版】无水印视频；只支持8秒；支持首尾帧、支持多图参考，最多9张图', maxSeconds: 8, icon: '🚀' },
   { id: 'seedance-2.0', name: 'Seedance 2.0', description: 'Seedance 2.0 文生/图生视频，支持720p，支持图片参考，4-15秒，固定按次计费 ¥1.50/次', maxSeconds: 15, icon: '🎬' },
+  { id: MIAOWU_SEEDANCE_25_DEAL_MODEL, name: 'Seedance 2.5 Deal', description: '喵呜 API；支持5-30秒、480p/720p；最多30张图片和10段音频参考，不支持视频参考；按次计费', maxSeconds: 30, icon: '🎬' },
+  { id: MIAOWU_SEEDANCE_25_PRO_MODEL, name: 'Seedance 2.5 Pro', description: '喵呜 API；支持4-30秒、480p/720p；最多30张图片、10个视频和10段音频参考；参考视频时长不得超过输出时长；按秒计费', maxSeconds: 30, icon: '🎬' },
   { id: WX_HAIDIYUE_FACE_SPLIT_MODEL, name: WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME, description: '支持真人；固定30秒；最多9张参考图；固定按次计费 ¥2.00/次', maxSeconds: 30, icon: '👤' },
   { id: 'sd2-mini', name: 'Seedance Mini (sd2-mini)', description: 'Seedance Mini 720p (933)，支持9图、3音频参考（无视频参考），固定按次计费 ¥2.00/次', maxSeconds: 15, icon: '⚡' },
   { id: 'seedance2.0-933', name: 'seedance2.0 933', description: 'seedance2.0 933 模型，支持9图、3音频参考（无视频参考），固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🚀' },
@@ -864,6 +878,28 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     if (finalVideos.length > 0 || finalAudios.length > 0) return res.status(400).json({ error: 'seedance_v2.5 不支持视频或音频参考' });
   }
 
+  if (model === MIAOWU_SEEDANCE_25_DEAL_MODEL) {
+    const validationError = validateMiaowuSeedance25DealInput({
+      seconds: Number(video_length),
+      resolution,
+      imageCount: reference_images.length,
+      videoCount: finalVideos.length,
+      audioCount: finalAudios.length,
+    });
+    if (validationError) return res.status(400).json({ error: validationError });
+  }
+
+  if (model === MIAOWU_SEEDANCE_25_PRO_MODEL) {
+    const validationError = validateMiaowuSeedance25ProInput({
+      seconds: Number(video_length),
+      resolution,
+      imageCount: reference_images.length,
+      videoCount: finalVideos.length,
+      audioCount: finalAudios.length,
+    });
+    if (validationError) return res.status(400).json({ error: validationError });
+  }
+
   const hmStudioAdditionalValidationError = validateHmStudioAdditionalVideoInput(model, {
     seconds: Number(video_length),
     resolution,
@@ -1324,6 +1360,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   let isJulunSd25 = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL && isJulunChannel(channel);
   const isSnumomWan = isSnumomWanChannel(channel);
   let isMjNewApi = isMjNewApiChannel(channel);
+  const isMiaowu = isMiaowuChannel(channel);
   const isVeoOmni = model === 'veo-omni-flash';
   const isVeoOmniEdit = model === 'veo-omni-flash-video-edit';
   const isVeo31 = model === 'veo-3-1';
@@ -1636,6 +1673,44 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         return res.end();
       }
 
+      const job = await createResp.json() as any;
+      videoId = job.id || job.task_id;
+    } else if (isMiaowu) {
+      sendEvent({ type: 'status', message: '正在整理素材并提交喵呜 API 视频任务...' });
+      const imageUrls = reference_images
+        .map((item: string) => convertBase64ToPublicUrl(item, 'miaowu_img', req))
+        .filter(Boolean);
+      const videoUrls = finalVideos
+        .map(item => convertBase64ToPublicUrl(item, 'miaowu_video', req))
+        .filter(Boolean);
+      const audioUrls = finalAudios
+        .map(item => convertBase64ToPublicUrl(item, 'miaowu_audio', req))
+        .filter(Boolean);
+      const payload = buildMiaowuVideoPayload({
+        model: upstreamModel,
+        prompt,
+        seconds: Number(video_length) || 5,
+        ratio: aspect_ratio,
+        resolution,
+        imageUrls,
+        videoUrls,
+        audioUrls,
+      });
+      const createResp = await fetch(miaowuVideoCreateUrl(baseUrl), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${channel.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(dbChannel?.timeout || 120_000),
+      });
+      if (!createResp.ok) {
+        const errText = await createResp.text().catch(() => '');
+        refundFailedTask(`喵呜 API 视频任务提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
       const job = await createResp.json() as any;
       videoId = job.id || job.task_id;
     } else if (isSudaShui) {
@@ -2318,6 +2393,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           pollUrl = hmStudioTaskUrl(baseUrl, videoId);
         } else if (isWxHaidiYue) {
           pollUrl = wxHaidiYueTaskUrl(baseUrl, videoId);
+        } else if (isMiaowu) {
+          pollUrl = miaowuVideoTaskUrl(baseUrl, videoId);
         } else if (isSudaShui) {
           pollUrl = `${baseUrl}/v1/video/generations/${videoId}`;
         }
@@ -2369,6 +2446,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           progress = normalized.progress;
           resultUrl = normalized.resultUrl;
           errMsg = normalized.error || normalized.errorCode || '视频生成失败';
+        } else if (isMiaowu) {
+          const normalized = normalizeMiaowuVideoTask(status, baseUrl, videoId);
+          taskStatus = normalized.status;
+          progress = normalized.progress;
+          resultUrl = normalized.resultUrl;
+          errMsg = normalized.error || '喵呜 API 视频生成失败';
         } else if (isSnumomWan) {
           const normalized = normalizeSnumomWanTask(status);
           taskStatus = normalized.status;
@@ -3251,6 +3334,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   const isHmStudio = isHmStudioChannel(channel);
   const isWxHaidiYue = isWxHaidiYueChannel(channel);
   const isSnumomWan = isSnumomWanChannel(channel);
+  const isMiaowu = isMiaowuChannel(channel);
 
   const headers: Record<string, string> = {};
   if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
@@ -3288,6 +3372,8 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           pollUrl = hmStudioTaskUrl(baseUrl, videoId);
         } else if (isWxHaidiYue) {
           pollUrl = wxHaidiYueTaskUrl(baseUrl, videoId);
+        } else if (isMiaowu) {
+          pollUrl = miaowuVideoTaskUrl(baseUrl, videoId);
         } else if (isSudaShui) {
           pollUrl = `${baseUrl}/v1/video/generations/${videoId}`;
         }
@@ -3331,6 +3417,12 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           progress = normalized.progress;
           resultUrl = normalized.resultUrl;
           errMsg = normalized.error || normalized.errorCode || '视频生成失败';
+        } else if (isMiaowu) {
+          const normalized = normalizeMiaowuVideoTask(statusData, baseUrl, videoId);
+          taskStatus = normalized.status;
+          progress = normalized.progress;
+          resultUrl = normalized.resultUrl;
+          errMsg = normalized.error || '喵呜 API 视频生成失败';
         } else if (isSnumomWan) {
           const normalized = normalizeSnumomWanTask(statusData);
           taskStatus = normalized.status;
