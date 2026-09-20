@@ -3359,6 +3359,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
 
       let consecutiveTransientPollFailures = 0;
       const maxTransientPollFailures = 6;
+      let hasPolledUpstream = false;
       while (true) {
       const currentRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
       if (!currentRecord || currentRecord.status !== 'processing') {
@@ -3366,7 +3367,10 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
         break;
       }
 
-      if (Date.now() - timeoutStartedAt >= pollTimeoutMs) {
+      // A recovered task may already be older than the normal polling window
+      // while the upstream result is available. Always perform one upstream
+      // check before declaring such a task timed out.
+      if (hasPolledUpstream && Date.now() - timeoutStartedAt >= pollTimeoutMs) {
         const timeoutMinutes = Math.max(1, Math.round(pollTimeoutMs / 60_000));
         await failHmQueuedVideo(contentId, new Error(`Video generation timed out after ${timeoutMinutes} minutes`));
         break;
@@ -3375,6 +3379,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
       await new Promise(r => setTimeout(r, pollInterval));
 
       try {
+        hasPolledUpstream = true;
         let pollUrl = `${baseUrl}/v1/videos/${videoId}`;
         if (isHmStudio) {
           pollUrl = hmStudioTaskUrl(baseUrl, videoId);
