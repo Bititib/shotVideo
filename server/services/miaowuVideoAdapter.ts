@@ -141,6 +141,14 @@ function errorMessage(value: unknown): string {
   return '';
 }
 
+function normalizeResultUrl(value: unknown): string {
+  const raw = String(value || '').trim();
+  // Some Miaowu responses wrap the media URL as a Markdown link. Passing the
+  // whole `[url](url)` value to fetch produces a 400 from the object store.
+  const markdownLink = raw.match(/^\[[^\]]*\]\((https?:\/\/[^\s)]+)\)$/i);
+  return markdownLink?.[1] || raw;
+}
+
 export function normalizeMiaowuVideoTask(
   payload: Record<string, any>,
   baseUrl: string,
@@ -152,8 +160,8 @@ export function normalizeMiaowuVideoTask(
     ? (status === 'completed' ? 100 : 0)
     : (typeof rawProgress === 'number' ? rawProgress : Number.parseInt(String(rawProgress), 10) || 0);
   const resultUrl = status === 'completed'
-    ? String(payload.url || miaowuVideoContentUrl(baseUrl, taskId))
-    : String(payload.url || '');
+    ? normalizeResultUrl(payload.url || miaowuVideoContentUrl(baseUrl, taskId))
+    : normalizeResultUrl(payload.url);
   return {
     status,
     progress,

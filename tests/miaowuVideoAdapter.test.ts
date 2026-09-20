@@ -41,6 +41,15 @@ describe('Miaowu video adapter', () => {
     });
   });
 
+  it('unwraps a Markdown-formatted completed video URL', () => {
+    const url = 'https://dream-media.example.com/videos/result/0.mp4';
+    expect(normalizeMiaowuVideoTask(
+      { status: 'completed', progress: 100, url: `[${url}](${url})` },
+      'https://api.miaowuai.store',
+      'task_123',
+    )).toMatchObject({ status: 'completed', progress: 100, resultUrl: url });
+  });
+
   it('extracts nested failure messages', () => {
     expect(normalizeMiaowuVideoTask(
       { status: 'failed', progress: '100%', error: { code: 'task_failed', message: 'generation failed' } },
