@@ -61,7 +61,7 @@ export function buildSnumomWanPayload(input: SnumomWanPayloadInput): Record<stri
   return {
     model: input.model,
     prompt: input.prompt.trim(),
-    seconds: input.seconds,
+    seconds: String(input.seconds),
     size: normalizeSnumomResolution(input.resolution),
     aspect_ratio: input.aspectRatio,
     ...(images.length ? { reference_images: images } : {}),

@@ -50,7 +50,7 @@ describe('snumom Wan 3.0 adapter', () => {
       audios: [{ url: 'https://cdn.example.com/ref.mp3' }],
     })).toMatchObject({
       model: 'sd-mini',
-      seconds: 10,
+      seconds: '10',
       size: '720P',
       reference_images: [{ url: 'https://cdn.example.com/ref.jpg', role: 'reference_image' }],
       reference_videos: [{ url: 'https://cdn.example.com/ref.mp4' }],
@@ -72,7 +72,7 @@ describe('snumom Wan 3.0 adapter', () => {
       videos: [{ url: 'https://cdn.example.com/a.mp4', duration: 5 }],
       audios: [{ url: 'https://cdn.example.com/a.mp3' }],
     })).toEqual({
-      model: 'wan3.0-video', prompt: '图1人物自然走动', seconds: 10,
+      model: 'wan3.0-video', prompt: '图1人物自然走动', seconds: '10',
       size: '720P', aspect_ratio: '9:16',
       reference_images: [{ url: 'https://cdn.example.com/a.jpg', role: 'reference_image' }],
       reference_videos: [{ url: 'https://cdn.example.com/a.mp4', duration: 5 }],
@@ -97,7 +97,7 @@ describe('snumom Wan 3.0 adapter', () => {
       images: [{ url: 'https://cdn.example.com/reference.jpg', role: 'reference_image' }],
     })).toMatchObject({
       model: 'grok-imagine-video-1.5（按次）',
-      seconds: 15,
+      seconds: '15',
       size: '720P',
       reference_images: [{ url: 'https://cdn.example.com/reference.jpg', role: 'reference_image' }],
     });
