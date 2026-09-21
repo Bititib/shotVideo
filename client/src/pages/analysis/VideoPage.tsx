@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw, Maximize2, Minimize2, Scissors, ScanFace, HelpCircle, Trash2, MessageSquareWarning, Send, ChevronDown } from 'lucide-react';
+import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Film, RotateCcw, Maximize2, Minimize2, Scissors, ScanFace, HelpCircle, Trash2, MessageSquareWarning, Send, ChevronDown, Music2, ImageIcon } from 'lucide-react';
 import { fetchVideoModels, generateVideo, getCachedVideoModels, type VideoModel, type VideoSSEEvent } from '../../api/video';
 import ImageSlicerModal from '../../components/ImageSlicerModal';
 import FaceProcessingModal from '../../components/FaceProcessingModal';
@@ -12,7 +12,7 @@ import { saveAsset, getAssets, deleteAsset, type Asset } from '../../utils/idb';
 import { useAuthStore } from '../../stores/authStore';
 import { feedbackApi } from '../../api/feedback';
 import { getBillingUnit } from '../../utils/billing';
-import { buildReplicatedVideoPrompt, getVideoReferenceAssets, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
+import { buildReplicatedVideoPrompt, getVideoReferenceAssets, getVideoReferenceCounts, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
 import { isOmniVideoEditModel, isSnumomGrokImagineVideoModel, SNUMOM_SD_MINI_MODEL, snumomSdMiniSecondsForResolution, WX_HAIDIYUE_FACE_SPLIT_MODEL } from '../../utils/videoModelCapabilities';
 import { getContentFailureInfo } from '../../utils/contentFailure';
 import { findUnreadableImageIndexes, isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
@@ -81,6 +81,57 @@ function showVideoPreviewFrame(video: HTMLVideoElement) {
   if (!Number.isFinite(video.duration) || video.duration <= 0) return;
   const previewTime = Math.min(VIDEO_PREVIEW_TIME, Math.max(0, video.duration / 2));
   if (Math.abs(video.currentTime - previewTime) > 0.01) video.currentTime = previewTime;
+}
+
+function VideoReferenceStrip({ metadata }: { metadata: unknown }) {
+  const assets = getVideoReferenceAssets(metadata);
+  const counts = getVideoReferenceCounts(metadata);
+  const total = counts.images + counts.videos + counts.audios;
+  if (total === 0) return null;
+
+  const slots: Array<{ kind: 'image' | 'video' | 'audio'; index: number; url?: string }> = [];
+  const append = (kind: 'image' | 'video' | 'audio', count: number, urls: string[]) => {
+    for (let index = 0; index < count && slots.length < 6; index++) {
+      slots.push({ kind, index, url: urls[index] });
+    }
+  };
+  append('image', counts.images, assets.images);
+  append('video', counts.videos, assets.videos);
+  append('audio', counts.audios, assets.audios);
+
+  const label = (kind: 'image' | 'video' | 'audio', index: number) => {
+    if (kind === 'image') return `图${index + 1}`;
+    if (kind === 'video') return `视${index + 1}`;
+    return `音${index + 1}`;
+  };
+
+  return (
+    <div className="mt-3 flex h-9 gap-1.5 overflow-hidden" aria-label={`参考素材：图片 ${counts.images}，视频 ${counts.videos}，音频 ${counts.audios}`}>
+      {slots.map(slot => (
+        <div
+          key={`${slot.kind}-${slot.index}`}
+          className={`relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border ${slot.kind === 'image' ? 'border-[#d8c0a3] bg-[#f2e4d2]' : slot.kind === 'video' ? 'border-sky-300/60 bg-sky-50 text-sky-600' : 'border-violet-300/60 bg-violet-50 text-violet-600'}`}
+          title={`参考${slot.kind === 'image' ? '图片' : slot.kind === 'video' ? '视频' : '音频'} ${slot.index + 1}${slot.url ? `：${slot.url}` : '（详情中可查看）'}`}
+        >
+          {slot.kind === 'image' && slot.url
+            ? <img src={slot.url} className="h-full w-full object-cover" loading="lazy" decoding="async" alt={`参考图片 ${slot.index + 1}`} />
+            : slot.kind === 'image'
+              ? <ImageIcon className="h-4 w-4 text-[#9a7259]" />
+              : slot.kind === 'video'
+                ? <Video className="h-4 w-4" />
+                : <Music2 className="h-4 w-4" />}
+          <span className="absolute bottom-0 right-0 rounded-tl bg-black/70 px-1 py-0.5 text-[7px] font-medium leading-none text-white">
+            {label(slot.kind, slot.index)}
+          </span>
+        </div>
+      ))}
+      {total > slots.length && (
+        <span className="flex h-9 items-center rounded-md border border-[#d8c0a3] bg-[#f2e4d2] px-2 text-[10px] text-[#8a6048]">
+          +{total - slots.length}
+        </span>
+      )}
+    </div>
+  );
 }
 
 export const isComicDramaModel = (modelId: string) => {
@@ -1610,20 +1661,7 @@ export default function VideoPage() {
                           <div>
                             <p className="min-h-10 text-[13px] text-[#4a3529] line-clamp-2 leading-relaxed">{restorePrompt(task.prompt)}</p>
 
-                            {/* 参考图微缩图预览 */}
-                            {task.metadata?.reference_images && task.metadata.reference_images.length > 0 && (
-                              <div className="flex gap-1.5 mt-3 h-8 overflow-hidden">
-                                {task.metadata.reference_images.slice(0, 6).map((imgUrl, imgIdx) => (
-                                  <div key={imgIdx} className="relative w-8 h-8 rounded-md border border-[#d8c0a3] overflow-hidden shrink-0" title={`ref_${imgIdx}`}>
-                                    <img src={imgUrl} className="w-full h-full object-cover" loading="lazy" decoding="async" alt="" />
-                                    <div className="absolute top-0 left-0 bg-black/70 text-[7px] text-zinc-400 font-mono px-0.5 rounded-br scale-90 origin-top-left">
-                                      ref_{imgIdx}
-                                    </div>
-                                  </div>
-                                ))}
-                                {task.metadata.reference_images.length > 6 && <span className="h-8 px-2 rounded-md border border-[#d8c0a3] bg-[#f2e4d2] text-[10px] text-[#8a6048] flex items-center">+{task.metadata.reference_images.length - 6}</span>}
-                              </div>
-                            )}
+                            <VideoReferenceStrip metadata={task.metadata} />
                           </div>
 
                           <div className="flex items-center justify-between pt-3 border-t border-[#e4d2bd]">
@@ -1716,20 +1754,7 @@ export default function VideoPage() {
                           <div>
                             <p className="min-h-10 text-[13px] text-[#4a3529] line-clamp-2 leading-relaxed">{restorePrompt(h.title || h.inputText || '无描述')}</p>
 
-                            {/* 参考图微缩图预览 */}
-                            {h.metadata?.reference_images && h.metadata.reference_images.length > 0 && (
-                              <div className="flex gap-1.5 mt-3 h-8 overflow-hidden">
-                                {h.metadata.reference_images.slice(0, 6).map((imgUrl: string, imgIdx: number) => (
-                                  <div key={imgIdx} className="relative w-8 h-8 rounded-md border border-[#d8c0a3] overflow-hidden shrink-0" title={`ref_${imgIdx}`}>
-                                    <img src={imgUrl} className="w-full h-full object-cover" loading="lazy" decoding="async" alt="" />
-                                    <div className="absolute top-0 left-0 bg-black/70 text-[7px] text-zinc-400 font-mono px-0.5 rounded-br scale-90 origin-top-left">
-                                      ref_{imgIdx}
-                                    </div>
-                                  </div>
-                                ))}
-                                {h.metadata.reference_images.length > 6 && <span className="h-8 px-2 rounded-md border border-[#d8c0a3] bg-[#f2e4d2] text-[10px] text-[#8a6048] flex items-center">+{h.metadata.reference_images.length - 6}</span>}
-                              </div>
-                            )}
+                            <VideoReferenceStrip metadata={h.metadata} />
                           </div>
 
                           <div className="flex items-center justify-between pt-3 border-t border-[#e4d2bd] text-[10px] text-[#9a7259]">

@@ -114,13 +114,18 @@ describe('OpenAI-compatible API access', () => {
   it('stores each API image as a separate content asset and preserves total cost', () => {
     const ids = saveApiImageAssets({
       token: { id: 77, userId: 1, name: 'asset-test-token' },
-      responseBody: { data: [{ url: 'https://example.com/a.png' }, { url: 'https://example.com/b.png' }] },
+      responseBody: { data: [
+        { url: 'https://example.com/a.png', task_id: 'task_image_a' },
+        { url: 'https://example.com/b.png', task_id: 'task_image_b' },
+      ] },
       model: 'gpt-image-2',
       prompt: 'asset persistence test',
       size: '1024x1024',
       responseFormat: 'url',
       operation: 'generation',
       totalCost: 0.13,
+      channel: { id: 52, name: '4月天 渠道', type: 'siyuetian' },
+      upstreamModel: 'gpt-image-2',
     });
 
     try {
@@ -130,7 +135,16 @@ describe('OpenAI-compatible API access', () => {
       expect(rows).toHaveLength(2);
       expect(rows.every(row => row.type === 'image' && row.status === 'completed')).toBe(true);
       expect(rows.reduce((sum, row) => sum + row.cost, 0)).toBeCloseTo(0.13, 2);
-      expect(JSON.parse(rows[0].metadata).source).toBe('api');
+      expect(JSON.parse(rows[0].metadata)).toMatchObject({
+        source: 'api',
+        channelId: 52,
+        channelName: '4月天 渠道',
+        actualChannel: 'siyuetian',
+        upstreamModel: 'gpt-image-2',
+        upstreamTaskId: 'task_image_a',
+        taskId: 'task_image_a',
+      });
+      expect(JSON.parse(rows[1].metadata).upstreamTaskId).toBe('task_image_b');
     } finally {
       for (const id of ids) sqlite.prepare('DELETE FROM contents WHERE id = ?').run(id);
     }

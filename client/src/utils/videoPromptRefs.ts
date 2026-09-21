@@ -38,6 +38,27 @@ export function getVideoReferenceAssets(metadata: unknown): VideoReferenceAssets
   };
 }
 
+/** Include counts retained by compact list responses when inline media is omitted. */
+export function getVideoReferenceCounts(metadata: unknown): VideoReferenceCounts {
+  let meta: Record<string, any> = {};
+  try {
+    meta = typeof metadata === 'string' ? JSON.parse(metadata || '{}') : ((metadata || {}) as Record<string, any>);
+  } catch { }
+  const assets = getVideoReferenceAssets(meta);
+  const compacted = meta.referenceAssetCounts && typeof meta.referenceAssetCounts === 'object'
+    ? meta.referenceAssetCounts
+    : {};
+  const count = (key: keyof VideoReferenceCounts, fallback: number) => {
+    const value = Number(compacted[key]);
+    return Math.max(fallback, Number.isFinite(value) && value > 0 ? Math.floor(value) : 0);
+  };
+  return {
+    images: count('images', assets.images.length),
+    videos: count('videos', assets.videos.length),
+    audios: count('audios', assets.audios.length),
+  };
+}
+
 export function restoreVideoPromptRefs(targetPrompt: string): string {
   if (!targetPrompt) return '';
   return targetPrompt

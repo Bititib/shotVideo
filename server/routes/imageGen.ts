@@ -12,6 +12,11 @@ import { contents, models } from '../db/schema.js';
 import { eq, like, and } from 'drizzle-orm';
 import fs from 'fs';
 import path from 'path';
+import {
+  generateSiYueTianImage,
+  isSiYueTianImageChannel,
+  isSiYueTianImageModel,
+} from '../services/siYueTianImageAdapter.js';
 
 const router = Router();
 
@@ -71,7 +76,12 @@ const RATIO_TO_SIZE: Record<string, string> = {
 };
 
 const DEFAULT_IMAGE_MODELS = [
-  { id: 'gpt-image-2', name: 'gpt-image-2', description: '4K分辨率', icon: '🤖' },
+  { id: 'gpt-image-2', name: 'gpt-image-2', description: 'OpenAI GPT Image 2 文生图/图生图（异步）', icon: '🤖' },
+  { id: 'gpt-image-2.5-flare', name: 'gpt-image-2.5-flare', description: 'OpenAI GPT Image 2.5 Flare 快速通用图像（异步）', icon: '🤖' },
+  { id: 'gpt-image-2.5-sunburst', name: 'gpt-image-2.5-sunburst', description: 'OpenAI GPT Image 2.5 Sunburst 高质量图像（异步）', icon: '🤖' },
+  { id: 'nano-banana-2', name: 'nano-banana-2', description: 'Google Gemini 3.1 Flash 图像（异步）', icon: '🍌' },
+  { id: 'nano-banana-2-lite', name: 'nano-banana-2-lite', description: 'Google Gemini 3.1 Flash Lite 轻量图像（异步）', icon: '🍌' },
+  { id: 'nano-banana-pro', name: 'nano-banana-pro', description: 'Google Gemini 3 Pro 高级图像（异步）', icon: '🍌' },
   { id: 'gemini-3.1-flash-image-preview', name: '🍌 nabanana flash', description: '2k高清画质，极速生成', icon: '☄️' },
   { id: 'gemini-3-pro-image-preview', name: '🍌 nabanana pro', description: '2k高清画质，极致细节', icon: '🪐' },
 ];
@@ -231,10 +241,14 @@ function findImageChannel(modelId: string) {
   // HM Studio currently exposes video generation only. Never select an HM
   // channel for an image model even if an administrator accidentally adds an
   // overlapping model id to its supported-model list.
-  const channel = ChannelService.findChannelsForModel(modelId)
-    .find(candidate => candidate.type !== 'hmstudio');
+  const candidates = ChannelService.findChannelsForModel(modelId)
+    .filter(candidate => candidate.type !== 'hmstudio');
+  const channel = (isSiYueTianImageModel(modelId)
+    ? candidates.find(candidate => isSiYueTianImageChannel(candidate, modelId))
+    : null) || candidates[0];
   if (channel) return {
     id: channel.id,
+    name: channel.name,
     type: channel.type,
     baseUrl: channel.baseUrl,
     apiKey: channel.apiKey,
@@ -284,6 +298,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
     prompt,
     model = 'gpt-image-2',
     aspect_ratio = '1:1',
+    resolution = '2K',
     n = 1,                       // 生成数量 1~4
     reference_images = [],       // base64 数据 URL 数组
     quality,
@@ -335,7 +350,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
   }
 
   /** 生成完成后统一计费 + 保存内容 */
-  const billUsage = (actualCount: number, imageUrls?: string[]) => {
+  const billUsage = (actualCount: number, imageUrls?: string[], extraMetadata: Record<string, any> = {}) => {
     const duration = Date.now() - startTime;
     for (let i = 0; i < actualCount; i++) {
       logUsage(req.userId!, 'generate_image', undefined, duration);
@@ -357,12 +372,71 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
         resultUrl: imageUrls?.[0] || undefined,
         modelId: model,
         cost: totalCost,
-        metadata: { aspect_ratio, count: actualCount, imageUrls: imageUrls || [] },
+        metadata: {
+          aspect_ratio,
+          resolution,
+          count: actualCount,
+          imageUrls: imageUrls || [],
+          channelId: channel.id,
+          channelName: channel.name,
+          actualChannel: isSiYueTianImageChannel(channel, model) ? 'siyuetian' : channel.type,
+          upstreamModel: channel.modelMapping?.[model] || model,
+          ...extraMetadata,
+        },
       });
     } catch (e) { console.error('[content] 图片保存失败:', e); }
   };
 
   try {
+    if (isSiYueTianImageChannel(channel, model)) {
+      const referenceUrls = hasRef
+        ? reference_images.slice(0, 9).map((image: string, index: number) => convertBase64ToPublicUrl(image, `image_ref_${index}`, req))
+        : [];
+      const completedImages: string[] = new Array(count).fill('');
+      const upstreamTaskIds: string[] = new Array(count).fill('');
+      sendEvent({
+        type: 'status',
+        message: hasRef ? '正在提交参考图并等待四月天生成...' : `正在提交 ${count} 个四月天图片任务...`,
+        total: count,
+      });
+
+      await Promise.all(Array.from({ length: count }, async (_, index) => {
+        try {
+          const result = await generateSiYueTianImage({
+            baseUrl,
+            apiKey: channel.apiKey,
+            model,
+            prompt: prompt.trim(),
+            aspectRatio: aspect_ratio,
+            resolution,
+            referenceImages: referenceUrls,
+            quality,
+            maxAttempts: 2,
+            onProgress: (progress, status) => sendEvent({ type: 'progress', progress, status, index, total: count }),
+          });
+          const localizedUrl = await localizeGeneratedImage(result.imageUrl, `siyuetian_image_${index}`, req, channel);
+          completedImages[index] = localizedUrl;
+          upstreamTaskIds[index] = result.taskId;
+          sendEvent({ type: 'image_ready', imageUrl: localizedUrl, index, total: count });
+        } catch (error: any) {
+          const message = error?.name === 'AbortError' ? '生成超时或已取消' : (error?.message || '生成失败');
+          console.error(`[imageGen/siyuetian] #${index} 失败:`, message);
+          sendEvent({ type: 'image_error', index, message: `图片 #${index + 1}: ${message}` });
+        }
+      }));
+
+      const imageUrls = completedImages.filter(Boolean);
+      const taskIds = upstreamTaskIds.filter(Boolean);
+      sendEvent({ type: 'complete', imageUrls, total: count });
+      billUsage(imageUrls.length, imageUrls, {
+        upstreamTaskId: taskIds[0] || '',
+        taskId: taskIds[0] || '',
+        upstreamTaskIds: taskIds,
+      });
+      res.write('data: [DONE]\n\n');
+      return res.end();
+    }
+
     const isEditModel = model === 'gpt-image-2';
     let editModel = model;
     if (hasRef && !isEditModel) {

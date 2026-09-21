@@ -10,6 +10,7 @@ export interface ImageGenerateParams {
   prompt: string;
   model?: string;
   aspect_ratio?: string;
+  resolution?: '1K' | '2K' | '4K';
   n?: number;                    // 生成数量 1~4
   reference_images?: string[];   // base64 数据 URL
 }

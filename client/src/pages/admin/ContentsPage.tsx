@@ -55,6 +55,7 @@ function ReferenceImagePreview({ src, index }: { src: string; index: number; key
 }
 
 const channelDisplayName = (channel: string) => {
+  if (channel === 'siyuetian') return '四月天';
   if (channel === 'wx-haidiyue') return 'wx-海底月';
   if (channel === 'hmstudio') return 'HM Studio';
   if (channel === 'mjnewapi') return 'MJNewAPI';
@@ -283,8 +284,10 @@ export default function ContentsPage() {
   const getRowChannel = (item: ContentItem, meta: Record<string, any>, routingInfo: AdminRoutingInfo | null) => {
     if (routingInfo) return routingInfo.actualChannel;
     const model = String(item.modelId || meta.model || '');
+    const channelName = String(meta.channelName || '').trim();
     const actualChannel = String(meta.actualChannel || '');
     if (actualChannel && actualChannel !== 'openai') return channelDisplayName(actualChannel);
+    if (channelName) return channelName;
     if (model === 'wan3.0th' || model.startsWith('Minimax-H3-768p')) return 'Julun';
     if (model === 'sd2.5-haidiyue-face') return 'wx-海底月';
     if (model === 'sd2.5') return '四月天';
@@ -293,7 +296,9 @@ export default function ContentsPage() {
   };
 
   const getUpstreamTaskId = (meta: Record<string, any>) => {
-    const value = meta.videoId
+    const value = meta.upstreamTaskId
+      || meta.upstream_task_id
+      || meta.videoId
       || meta.requestId
       || meta.request_id
       || meta.taskId
@@ -635,6 +640,15 @@ export default function ContentsPage() {
                     <div className="bg-white/[0.03] rounded-lg p-3">
                       <div className="text-zinc-500 mb-1">模型</div>
                       <div className="text-white truncate">{previewItem.modelId || '未知'}</div>
+                    </div>
+                    <div className="bg-white/[0.03] rounded-lg p-3">
+                      <div className="text-zinc-500 mb-1">渠道</div>
+                      <div className="text-white">
+                        {(() => {
+                          const metadata = parseMeta(previewItem.metadata);
+                          return getRowChannel(previewItem, metadata, getAdminRoutingInfo(previewItem, metadata));
+                        })()}
+                      </div>
                     </div>
                     <div className="bg-white/[0.03] rounded-lg p-3">
                       <div className="text-zinc-500 mb-1">费用</div>

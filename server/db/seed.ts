@@ -32,6 +32,10 @@ import {
   MIAOWU_SEEDANCE_25_DEAL_MODEL,
   MIAOWU_SEEDANCE_25_PRO_MODEL,
 } from '../services/miaowuVideoAdapter.js';
+import {
+  SI_YUE_TIAN_IMAGE_MODELS,
+  SI_YUE_TIAN_IMAGE_PRICE,
+} from '../services/siYueTianImageAdapter.js';
 
 /** 生成 sk-xxxx 格式的 Token */
 function generateTokenKey(): string {
@@ -169,7 +173,12 @@ export async function syncModelsFromAPI() {
 
   // 强制追加静态模型 (图片/音频/视频 等)
   allVerified.push(
-    { provider: 'openai', modelId: 'gpt-image-2', displayName: 'gpt-image-2', capabilities: JSON.stringify(['image']) },
+    { provider: 'siyuetian', modelId: 'gpt-image-2', displayName: 'gpt-image-2', description: 'OpenAI GPT Image 2 文生图/图生图（异步）', capabilities: JSON.stringify(['image']) },
+    { provider: 'siyuetian', modelId: 'gpt-image-2.5-flare', displayName: 'gpt-image-2.5-flare', description: 'OpenAI GPT Image 2.5 Flare 快速通用图像（异步）', capabilities: JSON.stringify(['image']) },
+    { provider: 'siyuetian', modelId: 'gpt-image-2.5-sunburst', displayName: 'gpt-image-2.5-sunburst', description: 'OpenAI GPT Image 2.5 Sunburst 高质量图像（异步）', capabilities: JSON.stringify(['image']) },
+    { provider: 'siyuetian', modelId: 'nano-banana-2', displayName: 'nano-banana-2', description: 'Google Gemini 3.1 Flash 图像（异步）', capabilities: JSON.stringify(['image']) },
+    { provider: 'siyuetian', modelId: 'nano-banana-2-lite', displayName: 'nano-banana-2-lite', description: 'Google Gemini 3.1 Flash Lite 轻量图像（异步）', capabilities: JSON.stringify(['image']) },
+    { provider: 'siyuetian', modelId: 'nano-banana-pro', displayName: 'nano-banana-pro', description: 'Google Gemini 3 Pro 高级图像（异步）', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-3.1-flash-image-preview', displayName: '🍌 nabanana flash', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-3-pro-image-preview', displayName: '🍌 nabanana pro', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', capabilities: JSON.stringify(['tts']) },
@@ -234,9 +243,11 @@ export async function syncModelsFromAPI() {
     'nd-seedance-2.0-720p',
   ]);
   const hmStudioModelIds = new Set([HM_STUDIO_PRIMARY_VIDEO_MODEL, ...HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS]);
+  const siYueTianImageModelIds = new Set<string>(SI_YUE_TIAN_IMAGE_MODELS);
   allVerified = allVerified.map(model => {
     if (newTokenModelIds.has(model.modelId)) return { ...model, provider: 'newtoken' };
     if (hmStudioModelIds.has(model.modelId)) return { ...model, provider: 'hmstudio' };
+    if (siYueTianImageModelIds.has(model.modelId)) return { ...model, provider: 'siyuetian' };
     return model;
   });
 
@@ -247,6 +258,7 @@ export async function syncModelsFromAPI() {
     if (existing) {
       const providerNeedsUpdate = (newTokenModelIds.has(m.modelId)
         || hmStudioModelIds.has(m.modelId)
+        || siYueTianImageModelIds.has(m.modelId)
         || m.modelId === WX_HAIDIYUE_FACE_SPLIT_MODEL)
         && existing.provider !== m.provider;
       if (providerNeedsUpdate || existing.displayName !== m.displayName || existing.capabilities !== m.capabilities || existing.description !== (m.description || null)) {
@@ -904,9 +916,15 @@ export async function initDatabase() {
     {
       modelPattern: 'gpt-image-2',
       billingType: 'per_call',
-      inputPrice: 0.04 * IMAGE_MULTIPLIER,   // 3x multiplier (0.12)
+      inputPrice: SI_YUE_TIAN_IMAGE_PRICE,
       outputPrice: 0,
     },
+    ...SI_YUE_TIAN_IMAGE_MODELS.filter(modelId => modelId !== 'gpt-image-2').map(modelPattern => ({
+      modelPattern,
+      billingType: 'per_call',
+      inputPrice: SI_YUE_TIAN_IMAGE_PRICE,
+      outputPrice: 0,
+    })),
 
     {
       modelPattern: 'gemini-3.1-flash-image-preview',
@@ -1355,7 +1373,7 @@ export async function initDatabase() {
   // 11) 四月天退出公开 sd2.5，仅保留其他专属模型。
   try {
     const existingChre3 = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get();
-    const chre3Models = ['seedance-2.0', 'sd2-mini'];
+    const chre3Models = ['seedance-2.0', 'sd2-mini', ...SI_YUE_TIAN_IMAGE_MODELS];
     if (!existingChre3) {
       db.insert(channels).values({
         name: '4月天 渠道',
@@ -1383,6 +1401,28 @@ export async function initDatabase() {
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 4月天 渠道出错:', err.message);
+  }
+
+  // 首次接入四月天图片模型时统一应用已确认的 ¥0.05/次；之后保留后台人工调价。
+  const siYueTianImageMigrationKey = 'migration_siyuetian_image_models_v1';
+  if (!db.select().from(settings).where(eq(settings.key, siYueTianImageMigrationKey)).get()) {
+    for (const modelPattern of SI_YUE_TIAN_IMAGE_MODELS) {
+      const existing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, modelPattern)).get();
+      const values = {
+        billingType: 'per_call',
+        inputPrice: SI_YUE_TIAN_IMAGE_PRICE,
+        outputPrice: 0,
+        extraParams: JSON.stringify({ category: 'image' }),
+      };
+      if (existing) db.update(modelPricing).set(values).where(eq(modelPricing.id, existing.id)).run();
+      else db.insert(modelPricing).values({ modelPattern, ...values }).run();
+    }
+    db.insert(settings).values({
+      key: siYueTianImageMigrationKey,
+      value: '1',
+      label: '四月天六个异步图片模型接入与定价迁移标记',
+    }).run();
+    console.log('🔄 已接入四月天六个异步图片模型（¥0.05/次）');
   }
 
   // 13) 保证 Pidoi 图片渠道存在（独立 API Key，与视频渠道分离）

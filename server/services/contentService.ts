@@ -39,6 +39,7 @@ const INTERNAL_VIDEO_ROUTING_FIELDS = [
   'fallbackReason',
   'fallbackAt',
   'channelId',
+  'channelName',
   'channelApiKeyId',
   'upstreamModel',
 ];

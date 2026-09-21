@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildReplicatedVideoPrompt, getVideoReferenceAssets, restoreVideoPromptRefs } from '../client/src/utils/videoPromptRefs';
+import { buildReplicatedVideoPrompt, getVideoReferenceAssets, getVideoReferenceCounts, restoreVideoPromptRefs } from '../client/src/utils/videoPromptRefs';
 
 const frontendTranslate = (prompt: string, imagesCount: number = 1) => {
   let finalPrompt = prompt.trim();
@@ -57,6 +57,15 @@ describe('Prompt Reference @ Syntax Test Suite', () => {
       videos: ['video-a', 'video-b'],
       audios: ['audio-a'],
     });
+  });
+
+  it('preserves reference counts when compact history lists omit inline video and audio', () => {
+    expect(getVideoReferenceCounts({
+      reference_images: ['image-a'],
+      reference_videos: [],
+      audio_urls: [],
+      referenceAssetCounts: { images: 1, videos: 2, audios: 3 },
+    })).toEqual({ images: 1, videos: 2, audios: 3 });
   });
 
   it('should correctly translate UI @ tags to internal placeholders on frontend submit', () => {

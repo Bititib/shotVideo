@@ -23,6 +23,7 @@ describe('content routing privacy', () => {
         fallbackReason: 'hmstudio_capacity',
         fallbackAt: '2026-08-30T00:00:00.000Z',
         channelId: 12,
+        channelName: 'private-channel-name',
         channelApiKeyId: 8,
         upstreamModel: 'sd2.5',
         progressText: '主线路已切换至备用线路',
@@ -42,6 +43,7 @@ describe('content routing privacy', () => {
     expect(metadata).not.toHaveProperty('fallbackReason');
     expect(metadata).not.toHaveProperty('fallbackAt');
     expect(metadata).not.toHaveProperty('channelId');
+    expect(metadata).not.toHaveProperty('channelName');
     expect(metadata).not.toHaveProperty('channelApiKeyId');
     expect(metadata).not.toHaveProperty('upstreamModel');
   });

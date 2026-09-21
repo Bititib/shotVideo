@@ -70,6 +70,12 @@ import {
   submitSiYueTianOverflowPlan,
 } from '../services/siYueTianChannelService.js';
 import {
+  generateSiYueTianImage,
+  isSiYueTianImageChannel,
+  isSiYueTianImageModel,
+  siYueTianAspectRatioFromSize,
+} from '../services/siYueTianImageAdapter.js';
+import {
   buildWxHaidiYueVideoPayload,
   isWxHaidiYueChannel,
   resolveWxHaidiYueFaceSplit,
@@ -458,6 +464,8 @@ export function saveApiImageAssets(options: {
   operation: 'generation' | 'edit';
   totalCost: number;
   referenceFileNames?: string[];
+  channel?: { id?: number; name?: string; type?: string };
+  upstreamModel?: string;
 }): number[] {
   const items = Array.isArray(options.responseBody?.data) ? options.responseBody.data : [];
   const validItems = items.filter((item: any) => item?.url || item?.b64_json);
@@ -482,6 +490,16 @@ export function saveApiImageAssets(options: {
     }
 
     const assetCost = (baseCents + (index < remainder ? 1 : 0)) / 100;
+    const upstreamTaskId = String(
+      item.upstream_task_id
+      || item.task_id
+      || item.taskId
+      || item.id
+      || options.responseBody?.upstream_task_id
+      || options.responseBody?.task_id
+      || options.responseBody?.taskId
+      || '',
+    ).trim();
     const inserted = db.insert(contents).values({
       userId: options.token.userId || 1,
       orgId: null,
@@ -502,6 +520,12 @@ export function saveApiImageAssets(options: {
         output_format: normalizeImageExtension(options.outputFormat),
         response_index: index,
         reference_file_names: options.referenceFileNames || [],
+        channelId: options.channel?.id,
+        channelName: options.channel?.name || '',
+        actualChannel: options.channel?.type || '',
+        upstreamModel: options.upstreamModel || options.model,
+        upstreamTaskId,
+        taskId: upstreamTaskId,
       }),
     }).run();
     assetIds.push(Number(inserted.lastInsertRowid));
@@ -872,7 +896,9 @@ router.post('/images/generations', async (req: Request, res: Response) => {
     return res.status(403).json({ error: { message: `Token has no access to model ${model}`, type: 'permission_error' } });
   }
 
-  const channel = ChannelService.findChannelForModel(model);
+  const channel = (isSiYueTianImageModel(model)
+    ? ChannelService.findChannelsForModel(model).find(candidate => isSiYueTianImageChannel(candidate, model))
+    : null) || ChannelService.findChannelForModel(model);
   if (!channel) {
     return res.status(404).json({ error: { message: `No available channel for model ${model}`, type: 'not_found_error' } });
   }
@@ -921,7 +947,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
         const taskId = job.task_id || job.id;
         if (!taskId) throw new Error('HM Studio did not return a task ID');
         const task = await waitForHmStudioTask({ baseUrl, taskId, apiKey: channel.apiKey });
-        return { url: task.resultUrl };
+        return { url: task.resultUrl, task_id: taskId };
       };
       const submitOne = async () => hmStudioQueue.enqueue({
         id: `image:api:${token.id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
@@ -949,9 +975,70 @@ router.post('/images/generations', async (req: Request, res: Response) => {
           outputFormat: otherParams.output_format,
           operation: 'generation',
           totalCost,
+          channel,
+          upstreamModel,
         });
       } catch (assetError) {
         console.error('[v1/images/generations] HM Studio asset save failed:', assetError);
+      }
+      return res.json(responseBody);
+    }
+
+    if (isSiYueTianImageChannel(channel, model)) {
+      if (!isSiYueTianImageModel(upstreamModel)) {
+        throw new Error(`四月天图片模型映射无效: ${upstreamModel}`);
+      }
+      const referenceImages = Array.isArray(otherParams.reference_images)
+        ? otherParams.reference_images.filter((value: unknown) => typeof value === 'string' && value)
+        : [];
+      const aspectRatio = otherParams.aspect_ratio || siYueTianAspectRatioFromSize(size);
+      const settled = await Promise.allSettled(Array.from({ length: count }, () => generateSiYueTianImage({
+        baseUrl,
+        apiKey: channel.apiKey,
+        model: upstreamModel,
+        prompt,
+        aspectRatio,
+        resolution: otherParams.resolution,
+        referenceImages,
+        quality: otherParams.quality,
+        watermark: typeof otherParams.watermark === 'boolean' ? otherParams.watermark : undefined,
+        maxAttempts: 2,
+      })));
+      const completed = settled
+        .filter((item): item is PromiseFulfilledResult<Awaited<ReturnType<typeof generateSiYueTianImage>>> => item.status === 'fulfilled')
+        .map(item => ({
+          url: new URL(item.value.imageUrl, `${baseUrl}/`).toString(),
+          task_id: item.value.taskId,
+        }));
+      if (completed.length === 0) {
+        const failed = settled.find((item): item is PromiseRejectedResult => item.status === 'rejected');
+        throw failed?.reason || new Error('四月天图片生成失败');
+      }
+
+      const actualCost = Math.round(unitCost * completed.length * 100) / 100;
+      const responseBody = { created: Math.floor(Date.now() / 1000), data: completed };
+      const durationMs = Date.now() - startTime;
+      deductTokenOrUserBalance(token, actualCost, model);
+      db.insert(apiLogs).values({
+        tokenId: token.id, channelId: channel.id, model, upstreamModel,
+        cost: actualCost, durationMs, status: 'success', clientIp,
+      }).run();
+      try {
+        saveApiImageAssets({
+          token,
+          responseBody,
+          model,
+          prompt,
+          size,
+          responseFormat: response_format,
+          outputFormat: otherParams.output_format,
+          operation: 'generation',
+          totalCost: actualCost,
+          channel: { ...channel, type: 'siyuetian' },
+          upstreamModel,
+        });
+      } catch (assetError) {
+        console.error('[v1/images/generations] 四月天图片资产保存失败:', assetError);
       }
       return res.json(responseBody);
     }
@@ -1014,6 +1101,8 @@ router.post('/images/generations', async (req: Request, res: Response) => {
         outputFormat: otherParams.output_format,
         operation: 'generation',
         totalCost,
+        channel,
+        upstreamModel,
       });
     } catch (assetError) {
       console.error('[v1/images/generations] 保存图片资产失败:', assetError);
@@ -1135,7 +1224,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
         const taskId = job.task_id || job.id;
         if (!taskId) throw new Error('HM Studio did not return a task ID');
         const task = await waitForHmStudioTask({ baseUrl, taskId, apiKey: channel.apiKey });
-        return { url: task.resultUrl };
+        return { url: task.resultUrl, task_id: taskId };
       };
       const submitOne = async () => hmStudioQueue.enqueue({
         id: `image-edit:api:${token.id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
@@ -1160,6 +1249,8 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
           outputFormat: otherParams.output_format,
           operation: 'edit', totalCost,
           referenceFileNames: imageFiles.map(file => file.originalname),
+          channel,
+          upstreamModel,
         });
       } catch (assetError) {
         console.error('[v1/images/edits] HM Studio asset save failed:', assetError);
@@ -1240,6 +1331,8 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
         operation: 'edit',
         totalCost,
         referenceFileNames: imageFiles.map(file => file.originalname),
+        channel,
+        upstreamModel,
       });
     } catch (assetError) {
       console.error('[v1/images/edits] 保存图片资产失败:', assetError);
