@@ -453,7 +453,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
             resolution,
             referenceImages: referenceUrls,
             quality,
-            maxAttempts: 2,
+            maxAttempts: 3,
             onSubmitted: (taskId) => {
               upstreamTaskIds[index] = taskId;
               persistJob({
@@ -468,6 +468,13 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
               progresses[index] = progress;
               persistJob({ progresses, progressText: `图片生成中 ${Math.max(...progresses)}%` });
               sendEvent({ type: 'progress', progress, status, index, total: count, contentId });
+            },
+            onRetry: (attempt, maxAttempts, delayMs, message) => {
+              const retryMessage = maxAttempts > 0
+                ? `上游繁忙，${Math.ceil(delayMs / 1000)} 秒后自动重试（${attempt}/${maxAttempts}）`
+                : `上游查询暂时繁忙，${Math.ceil(delayMs / 1000)} 秒后继续查询`;
+              persistJob({ progressText: retryMessage, lastRetryReason: message });
+              sendEvent({ type: 'status', message: retryMessage, index, total: count, contentId });
             },
           });
           const localizedUrl = await localizeGeneratedImage(result.imageUrl, `siyuetian_image_${index}`, req, channel, { relative: true });

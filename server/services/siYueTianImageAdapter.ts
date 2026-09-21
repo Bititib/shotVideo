@@ -21,7 +21,11 @@ export const SI_YUE_TIAN_IMAGE_TO_IMAGE_MODELS = new Set<SiYueTianImageModel>([
 export const SI_YUE_TIAN_IMAGE_PRICE = 0.05;
 
 const IMAGE_MODEL_SET = new Set<string>(SI_YUE_TIAN_IMAGE_MODELS);
-const RETRYABLE_FAILURE = /未返回图片地址|temporarily unavailable|temporary unavailable/i;
+const RETRYABLE_FAILURE = /未返回图片地址|temporar(?:ily|y) unavailable|system cpu overloaded|cpu overloaded|system overloaded|system busy|server busy|service unavailable|too many requests|rate[ -]?limit|HTTP\s*(?:429|502|503|504)/i;
+
+export function isRetryableSiYueTianImageFailure(error: unknown): boolean {
+  return RETRYABLE_FAILURE.test(String((error as any)?.message || error || ''));
+}
 
 export function isSiYueTianImageModel(model: unknown): model is SiYueTianImageModel {
   return typeof model === 'string' && IMAGE_MODEL_SET.has(model);
@@ -72,10 +76,12 @@ export type SiYueTianImageInput = {
   pollIntervalMs?: number;
   timeoutMs?: number;
   maxAttempts?: number;
+  retryBaseDelayMs?: number;
   fetchImpl?: FetchLike;
   sleep?: (ms: number) => Promise<void>;
   onSubmitted?: (taskId: string) => void;
   onProgress?: (progress: number, status: string) => void;
+  onRetry?: (attempt: number, maxAttempts: number, delayMs: number, message: string) => void;
 };
 
 export type SiYueTianImageResult = {
@@ -151,7 +157,13 @@ async function runOnce(input: SiYueTianImageInput): Promise<SiYueTianImageResult
     const response = await fetchImpl(taskUrl, { headers: { Authorization: `Bearer ${input.apiKey}` }, signal: input.signal });
     const task = await readJson(response);
     if (!response.ok || task?.error && !task?.status) {
-      throw upstreamError(task, `四月天图片任务查询失败 (HTTP ${response.status})`);
+      const error = upstreamError(task, `四月天图片任务查询失败 (HTTP ${response.status})`);
+      if (isRetryableSiYueTianImageFailure(error)) {
+        input.onRetry?.(0, 0, pollIntervalMs, error.message);
+        await sleep(pollIntervalMs);
+        continue;
+      }
+      throw error;
     }
 
     const status = String(task.status || '').toLowerCase();
@@ -169,14 +181,19 @@ async function runOnce(input: SiYueTianImageInput): Promise<SiYueTianImageResult
 }
 
 export async function generateSiYueTianImage(input: SiYueTianImageInput): Promise<SiYueTianImageResult> {
-  const attempts = Math.max(1, Math.min(3, input.maxAttempts ?? 2));
+  const attempts = Math.max(1, Math.min(4, input.maxAttempts ?? 3));
+  const sleep = input.sleep || ((ms: number) => new Promise(resolve => setTimeout(resolve, ms)));
+  const retryBaseDelayMs = Math.max(1, input.retryBaseDelayMs ?? 10_000);
   let lastError: unknown;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       return await runOnce(input);
     } catch (error: any) {
       lastError = error;
-      if (error?.name === 'AbortError' || attempt >= attempts || !RETRYABLE_FAILURE.test(String(error?.message || ''))) throw error;
+      if (error?.name === 'AbortError' || attempt >= attempts || !isRetryableSiYueTianImageFailure(error)) throw error;
+      const delayMs = Math.min(60_000, retryBaseDelayMs * Math.pow(3, attempt - 1));
+      input.onRetry?.(attempt + 1, attempts, delayMs, String(error?.message || '上游暂时繁忙'));
+      await sleep(delayMs);
     }
   }
   throw lastError;

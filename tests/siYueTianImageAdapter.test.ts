@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   generateSiYueTianImage,
   isSiYueTianImageChannel,
+  isRetryableSiYueTianImageFailure,
   normalizeSiYueTianResolution,
   SI_YUE_TIAN_IMAGE_MODELS,
   SI_YUE_TIAN_IMAGE_TO_IMAGE_MODELS,
@@ -80,6 +81,34 @@ describe('四月天异步图片适配器', () => {
       fetchImpl: vi.fn() as unknown as typeof fetch,
       maxAttempts: 1,
     })).rejects.toThrow('不支持参考图');
+  });
+
+  it('上游 CPU 过载时递增等待并自动重新提交', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(json({ error: { message: 'system cpu overloaded (current: 98.9%, threshold: 90%)' } }, 503))
+      .mockResolvedValueOnce(json({ task_id: 'task_retry', status: 'queued' }, 202))
+      .mockResolvedValueOnce(json({ task_id: 'task_retry', status: 'succeeded', result: { image_url: '/outputs/retry.png' } }));
+    const sleep = vi.fn(async () => {});
+    const retries: Array<[number, number, number, string]> = [];
+
+    const result = await generateSiYueTianImage({
+      baseUrl: 'https://llm.chre3.com',
+      apiKey: 'test-key',
+      model: 'gpt-image-2',
+      prompt: '重试测试',
+      maxAttempts: 3,
+      retryBaseDelayMs: 10_000,
+      fetchImpl: fetchImpl as typeof fetch,
+      sleep,
+      onRetry: (...args) => retries.push(args),
+    });
+
+    expect(result).toMatchObject({ taskId: 'task_retry', imageUrl: '/outputs/retry.png' });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledWith(10_000);
+    expect(retries).toEqual([[2, 3, 10_000, 'system cpu overloaded (current: 98.9%, threshold: 90%)']]);
+    expect(isRetryableSiYueTianImageFailure(new Error('HTTP 429'))).toBe(true);
+    expect(isRetryableSiYueTianImageFailure(new Error('Invalid token'))).toBe(false);
   });
 
   it('规范化兼容尺寸和分辨率', () => {

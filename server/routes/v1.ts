@@ -1003,7 +1003,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
         referenceImages,
         quality: otherParams.quality,
         watermark: typeof otherParams.watermark === 'boolean' ? otherParams.watermark : undefined,
-        maxAttempts: 2,
+        maxAttempts: 3,
       })));
       const generated = settled
         .filter((item): item is PromiseFulfilledResult<Awaited<ReturnType<typeof generateSiYueTianImage>>> => item.status === 'fulfilled');
