@@ -40,6 +40,23 @@ describe('image download ownership metadata', () => {
     }
   });
 
+  it('can return a same-site relative URL for browser history records', async () => {
+    const url = await localizeGeneratedImage(
+      'data:image/png;base64,aGVsbG8=',
+      'relative_history_test',
+      { protocol: 'https', headers: {}, get: () => 'wrong-public-host.example' } as any,
+      undefined,
+      { relative: true },
+    );
+    const filePath = path.join(process.cwd(), 'data', url.replace(/^\//, ''));
+    try {
+      expect(url).toMatch(/^\/uploads\/relative_history_test_/);
+      expect(fs.readFileSync(filePath).toString()).toBe('hello');
+    } finally {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+  });
+
   it('downloads a protected upstream image with the matching channel token', async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer channel-secret' });

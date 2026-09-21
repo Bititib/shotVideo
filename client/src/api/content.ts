@@ -45,6 +45,9 @@ export const contentApi = {
   /** 获取内容详情 */
   getById(id: number) { return api.get<any>(`/contents/${id}`); },
 
+  /** 图片地址失效时，根据上游任务 ID 重新获取并保存到本站。 */
+  recoverImage(id: number) { return api.post<any>(`/contents/${id}/recover-image`); },
+
   /** 删除内容 */
   delete(id: number) { return api.delete<any>(`/contents/${id}`); },
 };

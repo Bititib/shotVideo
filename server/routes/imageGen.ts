@@ -130,15 +130,19 @@ export async function localizeGeneratedImage(
   prefix: string,
   req: Request,
   channel?: { baseUrl?: string; apiKey?: string },
+  options?: { relative?: boolean },
 ): Promise<string> {
   if (!sourceUrl) throw new Error('上游未返回图片 URL');
   const siteBase = publicBaseUrl(req);
-  if (sourceUrl.startsWith('data:')) return convertBase64ToPublicUrl(sourceUrl, prefix, req);
-  if (sourceUrl.startsWith('/uploads/')) return `${siteBase}${sourceUrl}`;
+  if (sourceUrl.startsWith('data:')) {
+    const publicUrl = convertBase64ToPublicUrl(sourceUrl, prefix, req);
+    return options?.relative ? new URL(publicUrl).pathname : publicUrl;
+  }
+  if (sourceUrl.startsWith('/uploads/')) return options?.relative ? sourceUrl : `${siteBase}${sourceUrl}`;
   try {
     const existing = new URL(sourceUrl);
     if (existing.pathname.startsWith('/uploads/') && existing.origin === new URL(siteBase).origin) {
-      return existing.toString();
+      return options?.relative ? existing.pathname : existing.toString();
     }
   } catch { /* resolve relative upstream URLs below */ }
 
@@ -168,7 +172,8 @@ export async function localizeGeneratedImage(
   const uploadDir = path.join(process.cwd(), 'data/uploads');
   if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
   await fs.promises.writeFile(path.join(uploadDir, filename), buffer);
-  return `${siteBase}/uploads/${filename}`;
+  const localUrl = `/uploads/${filename}`;
+  return options?.relative ? localUrl : `${siteBase}${localUrl}`;
 }
 
 /** Authenticated download proxy so cross-origin image URLs are saved instead of opened. */
@@ -465,7 +470,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
               sendEvent({ type: 'progress', progress, status, index, total: count, contentId });
             },
           });
-          const localizedUrl = await localizeGeneratedImage(result.imageUrl, `siyuetian_image_${index}`, req, channel);
+          const localizedUrl = await localizeGeneratedImage(result.imageUrl, `siyuetian_image_${index}`, req, channel, { relative: true });
           completedImages[index] = localizedUrl;
           upstreamTaskIds[index] = result.taskId;
           const progresses = [...persistedMetadata.progresses];
@@ -592,7 +597,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
           sendEvent({ type: 'progress', progress: 100, index });
 
           if (imageUrl) {
-            const localizedUrl = await localizeGeneratedImage(imageUrl, `edited_image_${index}`, req, channel);
+            const localizedUrl = await localizeGeneratedImage(imageUrl, `edited_image_${index}`, req, channel, { relative: true });
             completedImages[index] = localizedUrl;
             sendEvent({ type: 'image_ready', imageUrl: localizedUrl, index, total: count });
           } else {
@@ -677,7 +682,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
             sendEvent({ type: 'progress', progress: 100, index });
 
              if (imageUrl) {
-               const localizedUrl = await localizeGeneratedImage(imageUrl, `gpt_image_${index}`, req, channel);
+               const localizedUrl = await localizeGeneratedImage(imageUrl, `gpt_image_${index}`, req, channel, { relative: true });
                completedImages[index] = localizedUrl;
                sendEvent({ type: 'image_ready', imageUrl: localizedUrl, index, total: count });
             } else {
@@ -797,7 +802,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
 
             // 流结束但未通过 [DONE] 发送的情况
             if (imageUrl) {
-              const localizedUrl = await localizeGeneratedImage(imageUrl, `stream_image_${index}`, req, channel);
+              const localizedUrl = await localizeGeneratedImage(imageUrl, `stream_image_${index}`, req, channel, { relative: true });
               completedImages[index] = localizedUrl;
               sendEvent({ type: 'image_ready', imageUrl: localizedUrl, index, total: count });
             } else {

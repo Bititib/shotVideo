@@ -3,9 +3,11 @@ import { activeApiKeyMiddleware, authMiddleware, AuthRequest } from '../middlewa
 import { orgAdminMiddleware } from '../middleware/admin.js';
 import { ContentService, sanitizeContentRoutingForClient } from '../services/contentService.js';
 import { db } from '../db/index.js';
-import { users } from '../db/schema.js';
+import { contents, users } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { activePolls, enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
+import { ChannelService } from '../services/channelService.js';
+import { localizeGeneratedImage } from './imageGen.js';
 
 const router = Router();
 
@@ -133,6 +135,86 @@ router.get('/:id', (req: AuthRequest, res: Response) => {
     res.json(sanitizeContentRoutingForClient(item));
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '获取内容失败' });
+  }
+});
+
+/** POST /api/contents/:id/recover-image — 图片地址失效时从上游任务重新取回并本地化。 */
+router.post('/:id/recover-image', async (req: AuthRequest, res: Response) => {
+  try {
+    const contentId = parseInt(req.params.id);
+    const item = ContentService.getById(contentId);
+    if (item.userId !== req.userId) return res.status(403).json({ error: '无权恢复此图片' });
+    if (item.type !== 'image') return res.status(400).json({ error: '该记录不是图片任务' });
+
+    let metadata: Record<string, any> = {};
+    try { metadata = JSON.parse(item.metadata || '{}'); } catch { /* use empty metadata */ }
+    const channelId = Number(metadata.channelId || 0);
+    const channel = channelId > 0 ? ChannelService.getChannelRaw(channelId) : null;
+    if (!channel?.baseUrl || !channel.apiKey) {
+      return res.status(409).json({ error: '原渠道配置不存在或密钥不可用，无法重新获取图片' });
+    }
+
+    const taskIds = [...new Set([
+      ...(Array.isArray(metadata.upstreamTaskIds) ? metadata.upstreamTaskIds : []),
+      metadata.upstreamTaskId,
+      metadata.taskId,
+    ].map(value => String(value || '').trim()).filter(Boolean))];
+    const recoveredUrls: string[] = [];
+    let lastError = '';
+
+    for (let index = 0; index < taskIds.length; index++) {
+      const taskId = taskIds[index];
+      try {
+        const taskUrl = `${channel.baseUrl.replace(/\/+$/, '')}/v1/images/generations/${encodeURIComponent(taskId)}`;
+        const upstream = await fetch(taskUrl, {
+          headers: { Authorization: `Bearer ${channel.apiKey}` },
+          signal: AbortSignal.timeout(60_000),
+        });
+        const body = await upstream.json().catch(() => ({})) as any;
+        if (!upstream.ok) throw new Error(body?.error?.message || body?.message || `上游查询失败 (${upstream.status})`);
+        const status = String(body?.status || '').toLowerCase();
+        if (status && status !== 'succeeded' && status !== 'completed' && status !== 'success') {
+          throw new Error(status === 'failed' ? '上游任务已失败' : `上游任务仍在生成（${status}）`);
+        }
+        const sourceUrl = String(body?.result?.image_url || body?.result?.url || body?.data?.[0]?.url || '');
+        if (!sourceUrl) throw new Error('上游任务没有返回图片地址');
+        recoveredUrls.push(await localizeGeneratedImage(sourceUrl, `recovered_image_${contentId}_${index}`, req, channel, { relative: true }));
+      } catch (error: any) {
+        lastError = error?.message || '重新获取图片失败';
+      }
+    }
+
+    // 兼容没有任务 ID 的旧记录：直接重新下载当时保存的上游地址。
+    if (recoveredUrls.length === 0) {
+      const legacyUrls = [...new Set([
+        item.resultUrl,
+        ...(Array.isArray(metadata.imageUrls) ? metadata.imageUrls : []),
+      ].map(value => String(value || '').trim()).filter(url => /^https?:\/\//i.test(url)))];
+      for (let index = 0; index < legacyUrls.length; index++) {
+        try {
+          recoveredUrls.push(await localizeGeneratedImage(legacyUrls[index], `recovered_image_${contentId}_${index}`, req, channel, { relative: true }));
+        } catch (error: any) {
+          lastError = error?.message || '重新下载图片失败';
+        }
+      }
+    }
+
+    if (recoveredUrls.length === 0) {
+      return res.status(502).json({ error: lastError || '没有可恢复的上游图片' });
+    }
+
+    metadata.imageUrls = recoveredUrls;
+    metadata.recoveredAt = new Date().toISOString();
+    metadata.progressText = '图片已从上游重新获取';
+    db.update(contents).set({
+      resultUrl: recoveredUrls[0],
+      metadata: JSON.stringify(metadata),
+      status: 'completed',
+    }).where(eq(contents.id, contentId)).run();
+
+    res.json({ id: contentId, resultUrl: recoveredUrls[0], imageUrls: recoveredUrls, recovered: true });
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '重新获取图片失败' });
   }
 });
 

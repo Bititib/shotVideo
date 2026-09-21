@@ -166,6 +166,7 @@ export default function ImageGenPage() {
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const batchControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const recoveringHistoryIdsRef = useRef<Set<number>>(new Set());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -433,6 +434,27 @@ export default function ImageGenPage() {
     setActiveBatches(previous => previous.filter(batch => batch.id !== batchId));
   }, []);
 
+  const recoverHistoryImage = useCallback(async (historyItem: GeneratedImage) => {
+    const contentId = Number.parseInt(String(historyItem.id).split('_')[0], 10);
+    if (!Number.isSafeInteger(contentId) || contentId <= 0 || recoveringHistoryIdsRef.current.has(contentId)) return;
+    recoveringHistoryIdsRef.current.add(contentId);
+    try {
+      const recovered: any = await contentApi.recoverImage(contentId);
+      const imageUrls = Array.isArray(recovered?.imageUrls) ? recovered.imageUrls.filter(Boolean) : [];
+      const primaryUrl = recovered?.resultUrl || imageUrls[0] || '';
+      if (!primaryUrl) throw new Error('上游未返回可用图片');
+      setHistory(previous => previous.flatMap(item => {
+        const [rawId, suffix = 'main'] = String(item.id).split('_');
+        if (Number.parseInt(rawId, 10) !== contentId) return [item];
+        const replacement = suffix === 'main' ? primaryUrl : imageUrls[Number.parseInt(suffix, 10)];
+        return replacement ? [{ ...item, imageUrl: replacement }] : [];
+      }));
+      setError(null);
+    } catch (recoveryError: any) {
+      setError(recoveryError?.message || '历史图片已失效，重新获取失败');
+    }
+  }, []);
+
   useEffect(() => () => {
     batchControllersRef.current.forEach(controller => controller.abort());
     batchControllersRef.current.clear();
@@ -554,7 +576,7 @@ export default function ImageGenPage() {
               <div className="flex flex-wrap gap-3 items-start">
                 {visibleHistory.map((h) => (
                   <div key={h.id} className="group relative rounded-xl overflow-hidden border border-white/5 hover:border-pink-500/40 transition-all cursor-pointer bg-black/30" onClick={() => setLightboxUrl(h.imageUrl)}>
-                    <img src={h.imageUrl} alt="历史图片" className="block h-[180px] w-auto object-contain" loading="lazy" />
+                    <img src={h.imageUrl} alt="历史图片" className="block h-[180px] w-auto object-contain" loading="lazy" onError={() => void recoverHistoryImage(h)} />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
                       <div className="absolute bottom-1.5 right-1.5 flex gap-1">
                         {h.prompt && (
