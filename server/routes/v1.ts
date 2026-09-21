@@ -92,6 +92,7 @@ import {
   validateMiaowuSeedance25DealInput,
   validateMiaowuSeedance25ProInput,
 } from '../services/miaowuVideoAdapter.js';
+import { prepareMiaowuPublicMediaUrls } from '../services/miaowuMediaService.js';
 import { enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
 import { localizeGeneratedImage } from './imageGen.js';
 import { withVideoFailureMetadata } from '../services/videoFailureService.js';
@@ -2129,15 +2130,20 @@ async function handleVideoCreation(req: Request, res: Response) {
         signal: AbortSignal.timeout(channel.timeout || 120_000),
       });
     } else if (isMiaowu) {
+      const miaowuPublicBaseUrl = process.env.BACKEND_URL
+        || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+      const publicImageUrls = prepareMiaowuPublicMediaUrls(image_urls, 'image', { publicBaseUrl: miaowuPublicBaseUrl });
+      const publicVideoUrls = prepareMiaowuPublicMediaUrls(video_urls, 'video', { publicBaseUrl: miaowuPublicBaseUrl });
+      const publicAudioUrls = prepareMiaowuPublicMediaUrls(audio_urls, 'audio', { publicBaseUrl: miaowuPublicBaseUrl });
       const payload = buildMiaowuVideoPayload({
         model: upstreamModel,
         prompt,
         seconds,
         ratio,
         resolution,
-        imageUrls: image_urls,
-        videoUrls: video_urls,
-        audioUrls: audio_urls,
+        imageUrls: publicImageUrls,
+        videoUrls: publicVideoUrls,
+        audioUrls: publicAudioUrls,
       });
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;

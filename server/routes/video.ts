@@ -99,6 +99,7 @@ import {
   validateMiaowuSeedance25DealInput,
   validateMiaowuSeedance25ProInput,
 } from '../services/miaowuVideoAdapter.js';
+import { prepareMiaowuPublicMediaUrls } from '../services/miaowuMediaService.js';
 import { detectVideoCodec, downloadAndLocalizeVideo, originalVideoPathFor, preferredVideoDownloadPath } from '../services/videoLocalizationService.js';
 import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
 export { downloadAndLocalizeVideo } from '../services/videoLocalizationService.js';
@@ -1677,15 +1678,11 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       videoId = job.id || job.task_id;
     } else if (isMiaowu) {
       sendEvent({ type: 'status', message: '正在整理素材并提交喵呜 API 视频任务...' });
-      const imageUrls = reference_images
-        .map((item: string) => convertBase64ToPublicUrl(item, 'miaowu_img', req))
-        .filter(Boolean);
-      const videoUrls = finalVideos
-        .map(item => convertBase64ToPublicUrl(item, 'miaowu_video', req))
-        .filter(Boolean);
-      const audioUrls = finalAudios
-        .map(item => convertBase64ToPublicUrl(item, 'miaowu_audio', req))
-        .filter(Boolean);
+      const miaowuPublicBaseUrl = process.env.BACKEND_URL
+        || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+      const imageUrls = prepareMiaowuPublicMediaUrls(reference_images, 'image', { publicBaseUrl: miaowuPublicBaseUrl });
+      const videoUrls = prepareMiaowuPublicMediaUrls(finalVideos, 'video', { publicBaseUrl: miaowuPublicBaseUrl });
+      const audioUrls = prepareMiaowuPublicMediaUrls(finalAudios, 'audio', { publicBaseUrl: miaowuPublicBaseUrl });
       const payload = buildMiaowuVideoPayload({
         model: upstreamModel,
         prompt,
