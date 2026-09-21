@@ -149,9 +149,19 @@ router.post('/:id/recover-image', async (req: AuthRequest, res: Response) => {
     let metadata: Record<string, any> = {};
     try { metadata = JSON.parse(item.metadata || '{}'); } catch { /* use empty metadata */ }
     const channelId = Number(metadata.channelId || 0);
-    const channel = channelId > 0 ? ChannelService.getChannelRaw(channelId) : null;
+    let channel = channelId > 0 ? ChannelService.getChannelRaw(channelId) : null;
     if (!channel?.baseUrl || !channel.apiKey) {
-      return res.status(409).json({ error: '原渠道配置不存在或密钥不可用，无法重新获取图片' });
+      const activeChannels = ChannelService.getActiveChannels().filter(candidate => candidate.baseUrl && candidate.apiKey);
+      const channelName = String(metadata.channelName || '').trim();
+      const modelId = String(item.modelId || metadata.upstreamModel || '').trim();
+      channel = (channelName
+        ? activeChannels.find(candidate => candidate.name === channelName)
+        : null)
+        || (modelId ? ChannelService.findChannelsForModel(modelId, activeChannels)[0] : null)
+        || null;
+    }
+    if (!channel?.baseUrl || !channel.apiKey) {
+      return res.status(409).json({ error: '原渠道已失效，且找不到支持该图片模型的当前渠道，请检查后台渠道模型绑定和密钥' });
     }
 
     const taskIds = [...new Set([
@@ -204,6 +214,8 @@ router.post('/:id/recover-image', async (req: AuthRequest, res: Response) => {
     }
 
     metadata.imageUrls = recoveredUrls;
+    metadata.channelId = channel.id;
+    metadata.channelName = channel.name;
     metadata.recoveredAt = new Date().toISOString();
     metadata.progressText = '图片已从上游重新获取';
     db.update(contents).set({
