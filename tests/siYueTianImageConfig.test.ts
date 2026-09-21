@@ -21,6 +21,25 @@ describe('四月天图片模型配置', () => {
     }
   });
 
+  it('将 Pidoi 原生 4K 与四月天 GPT Image 2 拆成独立模型', () => {
+    const pidoiModel = db.select().from(models).where(eq(models.modelId, 'gpt-image-2')).get();
+    const siyueModel = db.select().from(models).where(eq(models.modelId, 'gpt-image-2-siyuetian')).get();
+    expect(pidoiModel).toMatchObject({ provider: 'pidoi', isActive: 1 });
+    expect(siyueModel).toMatchObject({ provider: 'siyuetian', isActive: 1 });
+
+    const pidoiChannel = db.select().from(channels).all().find(channel => channel.baseUrl.includes('pidoi.com') && channel.name.includes('图片'));
+    const siyueChannel = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get();
+    expect(JSON.parse(pidoiChannel!.supportedModels)).toContain('gpt-image-2');
+    expect(JSON.parse(pidoiChannel!.supportedModels)).not.toContain('gpt-image-2-siyuetian');
+    expect(JSON.parse(siyueChannel!.supportedModels)).toContain('gpt-image-2-siyuetian');
+    expect(JSON.parse(siyueChannel!.supportedModels)).not.toContain('gpt-image-2');
+    expect(JSON.parse(siyueChannel!.modelMapping)['gpt-image-2-siyuetian']).toBe('gpt-image-2');
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, 'gpt-image-2')).get())
+      .toMatchObject({ billingType: 'per_call', inputPrice: 0.12 });
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, 'gpt-image-2-siyuetian')).get())
+      .toMatchObject({ billingType: 'per_call', inputPrice: SI_YUE_TIAN_IMAGE_PRICE });
+  });
+
   it('绑定到四月天渠道并统一按次计费', () => {
     const channel = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get();
     expect(channel).toBeTruthy();

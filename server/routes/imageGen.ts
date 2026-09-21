@@ -77,7 +77,8 @@ const RATIO_TO_SIZE: Record<string, string> = {
 };
 
 const DEFAULT_IMAGE_MODELS = [
-  { id: 'gpt-image-2', name: 'gpt-image-2', description: 'OpenAI GPT Image 2 文生图/图生图（异步）', icon: '🤖' },
+  { id: 'gpt-image-2', name: 'gpt-image-2 · Pidoi 原生 4K', description: 'Pidoi 原生 4K 文生图/图生图', icon: '🤖' },
+  { id: 'gpt-image-2-siyuetian', name: 'gpt-image-2 · 四月天', description: '四月天 GPT Image 2 异步文生图/图生图', icon: '🤖' },
   { id: 'gpt-image-2.5-flare', name: 'gpt-image-2.5-flare', description: 'OpenAI GPT Image 2.5 Flare 快速通用图像（异步）', icon: '🤖' },
   { id: 'gpt-image-2.5-sunburst', name: 'gpt-image-2.5-sunburst', description: 'OpenAI GPT Image 2.5 Sunburst 高质量图像（异步）', icon: '🤖' },
   { id: 'nano-banana-2', name: 'nano-banana-2', description: 'Google Gemini 3.1 Flash 图像（异步）', icon: '🍌' },

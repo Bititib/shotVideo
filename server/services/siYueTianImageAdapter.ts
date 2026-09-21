@@ -1,7 +1,7 @@
 import { isSiYueTianChannel } from './siYueTianChannelService.js';
 
 export const SI_YUE_TIAN_IMAGE_MODELS = [
-  'gpt-image-2',
+  'gpt-image-2-siyuetian',
   'gpt-image-2.5-flare',
   'gpt-image-2.5-sunburst',
   'nano-banana-2',
@@ -11,8 +11,19 @@ export const SI_YUE_TIAN_IMAGE_MODELS = [
 
 export type SiYueTianImageModel = typeof SI_YUE_TIAN_IMAGE_MODELS[number];
 
-export const SI_YUE_TIAN_IMAGE_TO_IMAGE_MODELS = new Set<SiYueTianImageModel>([
+export const SI_YUE_TIAN_UPSTREAM_IMAGE_MODELS = [
   'gpt-image-2',
+  'gpt-image-2.5-flare',
+  'gpt-image-2.5-sunburst',
+  'nano-banana-2',
+  'nano-banana-2-lite',
+  'nano-banana-pro',
+] as const;
+
+export type SiYueTianUpstreamImageModel = typeof SI_YUE_TIAN_UPSTREAM_IMAGE_MODELS[number];
+
+export const SI_YUE_TIAN_IMAGE_TO_IMAGE_MODELS = new Set<SiYueTianImageModel>([
+  'gpt-image-2-siyuetian',
   'gpt-image-2.5-sunburst',
   'nano-banana-2',
   'nano-banana-pro',
@@ -22,6 +33,7 @@ export const SI_YUE_TIAN_IMAGE_PRICE = 0.05;
 export const SI_YUE_TIAN_IMAGE_CONTENT_BASE_URL = 'https://llm.domie.studio';
 
 const IMAGE_MODEL_SET = new Set<string>(SI_YUE_TIAN_IMAGE_MODELS);
+const UPSTREAM_IMAGE_MODEL_SET = new Set<string>(SI_YUE_TIAN_UPSTREAM_IMAGE_MODELS);
 const RETRYABLE_FAILURE = /未返回图片地址|temporar(?:ily|y) unavailable|system cpu overloaded|cpu overloaded|system overloaded|system busy|server busy|service unavailable|too many requests|rate[ -]?limit|HTTP\s*(?:429|502|503|504)/i;
 
 export function isRetryableSiYueTianImageFailure(error: unknown): boolean {
@@ -32,11 +44,20 @@ export function isSiYueTianImageModel(model: unknown): model is SiYueTianImageMo
   return typeof model === 'string' && IMAGE_MODEL_SET.has(model);
 }
 
+export function isSiYueTianUpstreamImageModel(model: unknown): model is SiYueTianUpstreamImageModel {
+  return typeof model === 'string' && UPSTREAM_IMAGE_MODEL_SET.has(model);
+}
+
+export function siYueTianUpstreamImageModel(model: SiYueTianImageModel | SiYueTianUpstreamImageModel): SiYueTianUpstreamImageModel {
+  return model === 'gpt-image-2-siyuetian' ? 'gpt-image-2' : model;
+}
+
 export function isSiYueTianImageChannel(
   channel: { baseUrl?: string | null } | null | undefined,
   model?: unknown,
 ): boolean {
-  return isSiYueTianChannel(channel) && (model === undefined || isSiYueTianImageModel(model));
+  return isSiYueTianChannel(channel)
+    && (model === undefined || isSiYueTianImageModel(model) || model === 'gpt-image-2');
 }
 
 export function siYueTianAspectRatioFromSize(size: unknown, fallback = '1:1'): string {
@@ -65,7 +86,7 @@ type FetchLike = typeof fetch;
 export type SiYueTianImageInput = {
   baseUrl: string;
   apiKey: string;
-  model: SiYueTianImageModel;
+  model: SiYueTianImageModel | SiYueTianUpstreamImageModel;
   prompt: string;
   aspectRatio?: string;
   resolution?: unknown;
@@ -127,12 +148,17 @@ async function runOnce(input: SiYueTianImageInput): Promise<SiYueTianImageResult
   const sleep = input.sleep || ((ms: number) => new Promise(resolve => setTimeout(resolve, ms)));
   const baseUrl = input.baseUrl.replace(/\/+$/, '');
   const referenceImages = (input.referenceImages || []).filter(Boolean);
-  if (referenceImages.length > 0 && !SI_YUE_TIAN_IMAGE_TO_IMAGE_MODELS.has(input.model)) {
+  const upstreamModel = siYueTianUpstreamImageModel(input.model);
+  const supportsImageToImage = upstreamModel === 'gpt-image-2'
+    || upstreamModel === 'gpt-image-2.5-sunburst'
+    || upstreamModel === 'nano-banana-2'
+    || upstreamModel === 'nano-banana-pro';
+  if (referenceImages.length > 0 && !supportsImageToImage) {
     throw new Error(`${input.model} 不支持参考图，请改用支持图生图的模型`);
   }
 
   const payload: Record<string, any> = {
-    model: input.model,
+    model: upstreamModel,
     prompt: input.prompt,
     aspect_ratio: input.aspectRatio || '1:1',
     resolution: normalizeSiYueTianResolution(input.resolution),

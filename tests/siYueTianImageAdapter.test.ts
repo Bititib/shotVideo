@@ -6,6 +6,7 @@ import {
   normalizeSiYueTianResolution,
   SI_YUE_TIAN_IMAGE_MODELS,
   SI_YUE_TIAN_IMAGE_TO_IMAGE_MODELS,
+  siYueTianUpstreamImageModel,
   siYueTianImageContentUrl,
   siYueTianAspectRatioFromSize,
 } from '../server/services/siYueTianImageAdapter.js';
@@ -17,7 +18,7 @@ function json(body: unknown, status = 200): Response {
 describe('四月天异步图片适配器', () => {
   it('包含全部六个图片模型并标明图生图能力', () => {
     expect(SI_YUE_TIAN_IMAGE_MODELS).toEqual([
-      'gpt-image-2',
+      'gpt-image-2-siyuetian',
       'gpt-image-2.5-flare',
       'gpt-image-2.5-sunburst',
       'nano-banana-2',
@@ -25,12 +26,33 @@ describe('四月天异步图片适配器', () => {
       'nano-banana-pro',
     ]);
     expect([...SI_YUE_TIAN_IMAGE_TO_IMAGE_MODELS]).toEqual([
-      'gpt-image-2',
+      'gpt-image-2-siyuetian',
       'gpt-image-2.5-sunburst',
       'nano-banana-2',
       'nano-banana-pro',
     ]);
     expect(isSiYueTianImageChannel({ baseUrl: 'https://llm.chre3.com' }, 'nano-banana-pro')).toBe(true);
+    expect(siYueTianUpstreamImageModel('gpt-image-2-siyuetian')).toBe('gpt-image-2');
+  });
+
+  it('四月天 GPT Image 2 使用独立公开 ID 并映射到上游原始模型', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(json({ task_id: 'task_alias', status: 'queued' }, 202))
+      .mockResolvedValueOnce(json({ task_id: 'task_alias', status: 'succeeded', result: {} }));
+
+    await generateSiYueTianImage({
+      baseUrl: 'https://llm.chre3.com',
+      apiKey: 'test-key',
+      model: 'gpt-image-2-siyuetian',
+      prompt: '别名测试',
+      maxAttempts: 1,
+      fetchImpl: fetchImpl as typeof fetch,
+      sleep: async () => {},
+    });
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(1, 'https://llm.chre3.com/v1/images/generations', expect.objectContaining({
+      body: expect.stringContaining('"model":"gpt-image-2"'),
+    }));
   });
 
   it('提交 JSON 任务、轮询并返回相对图片地址', async () => {

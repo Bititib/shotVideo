@@ -73,6 +73,7 @@ import {
   generateSiYueTianImage,
   isSiYueTianImageChannel,
   isSiYueTianImageModel,
+  isSiYueTianUpstreamImageModel,
   siYueTianAspectRatioFromSize,
 } from '../services/siYueTianImageAdapter.js';
 import {
@@ -987,7 +988,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
     }
 
     if (isSiYueTianImageChannel(channel, model)) {
-      if (!isSiYueTianImageModel(upstreamModel)) {
+      if (!isSiYueTianUpstreamImageModel(upstreamModel)) {
         throw new Error(`四月天图片模型映射无效: ${upstreamModel}`);
       }
       const referenceImages = Array.isArray(otherParams.reference_images)

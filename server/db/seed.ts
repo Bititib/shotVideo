@@ -173,7 +173,8 @@ export async function syncModelsFromAPI() {
 
   // 强制追加静态模型 (图片/音频/视频 等)
   allVerified.push(
-    { provider: 'siyuetian', modelId: 'gpt-image-2', displayName: 'gpt-image-2', description: 'OpenAI GPT Image 2 文生图/图生图（异步）', capabilities: JSON.stringify(['image']) },
+    { provider: 'pidoi', modelId: 'gpt-image-2', displayName: 'gpt-image-2 · Pidoi 原生 4K', description: 'Pidoi 原生 4K 文生图/图生图', capabilities: JSON.stringify(['image']) },
+    { provider: 'siyuetian', modelId: 'gpt-image-2-siyuetian', displayName: 'gpt-image-2 · 四月天', description: '四月天 GPT Image 2 异步文生图/图生图', capabilities: JSON.stringify(['image']) },
     { provider: 'siyuetian', modelId: 'gpt-image-2.5-flare', displayName: 'gpt-image-2.5-flare', description: 'OpenAI GPT Image 2.5 Flare 快速通用图像（异步）', capabilities: JSON.stringify(['image']) },
     { provider: 'siyuetian', modelId: 'gpt-image-2.5-sunburst', displayName: 'gpt-image-2.5-sunburst', description: 'OpenAI GPT Image 2.5 Sunburst 高质量图像（异步）', capabilities: JSON.stringify(['image']) },
     { provider: 'siyuetian', modelId: 'nano-banana-2', displayName: 'nano-banana-2', description: 'Google Gemini 3.1 Flash 图像（异步）', capabilities: JSON.stringify(['image']) },
@@ -244,9 +245,11 @@ export async function syncModelsFromAPI() {
   ]);
   const hmStudioModelIds = new Set([HM_STUDIO_PRIMARY_VIDEO_MODEL, ...HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS]);
   const siYueTianImageModelIds = new Set<string>(SI_YUE_TIAN_IMAGE_MODELS);
+  const pidoiImageModelIds = new Set(['gpt-image-2']);
   allVerified = allVerified.map(model => {
     if (newTokenModelIds.has(model.modelId)) return { ...model, provider: 'newtoken' };
     if (hmStudioModelIds.has(model.modelId)) return { ...model, provider: 'hmstudio' };
+    if (pidoiImageModelIds.has(model.modelId)) return { ...model, provider: 'pidoi' };
     if (siYueTianImageModelIds.has(model.modelId)) return { ...model, provider: 'siyuetian' };
     return model;
   });
@@ -258,6 +261,7 @@ export async function syncModelsFromAPI() {
     if (existing) {
       const providerNeedsUpdate = (newTokenModelIds.has(m.modelId)
         || hmStudioModelIds.has(m.modelId)
+        || pidoiImageModelIds.has(m.modelId)
         || siYueTianImageModelIds.has(m.modelId)
         || m.modelId === WX_HAIDIYUE_FACE_SPLIT_MODEL)
         && existing.provider !== m.provider;
@@ -916,10 +920,10 @@ export async function initDatabase() {
     {
       modelPattern: 'gpt-image-2',
       billingType: 'per_call',
-      inputPrice: SI_YUE_TIAN_IMAGE_PRICE,
+      inputPrice: 0.04 * IMAGE_MULTIPLIER,
       outputPrice: 0,
     },
-    ...SI_YUE_TIAN_IMAGE_MODELS.filter(modelId => modelId !== 'gpt-image-2').map(modelPattern => ({
+    ...SI_YUE_TIAN_IMAGE_MODELS.map(modelPattern => ({
       modelPattern,
       billingType: 'per_call',
       inputPrice: SI_YUE_TIAN_IMAGE_PRICE,
@@ -1381,6 +1385,7 @@ export async function initDatabase() {
         baseUrl: 'https://llm.chre3.com',
         apiKey: 'sk-jONZxfxNTSIMij2f7CgUIIdZjQkCmadK8nG51dHa3WcZMvgG',
         supportedModels: JSON.stringify(chre3Models),
+        modelMapping: JSON.stringify({ 'gpt-image-2-siyuetian': 'gpt-image-2' }),
         status: 1,
         priority: 0,
         weight: 1,
@@ -1393,6 +1398,10 @@ export async function initDatabase() {
         .set({
           name: '4月天 渠道',
           supportedModels: JSON.stringify(chre3Models),
+          modelMapping: JSON.stringify({
+            ...(() => { try { return JSON.parse(existingChre3.modelMapping || '{}'); } catch { return {}; } })(),
+            'gpt-image-2-siyuetian': 'gpt-image-2',
+          }),
           updatedAt: new Date().toISOString()
         })
         .where(eq(channels.id, existingChre3.id))
@@ -1423,6 +1432,32 @@ export async function initDatabase() {
       label: '四月天六个异步图片模型接入与定价迁移标记',
     }).run();
     console.log('🔄 已接入四月天六个异步图片模型（¥0.05/次）');
+  }
+
+  // v2 separates Pidoi native 4K gpt-image-2 from the Siyuetian async route.
+  const siYueTianImageAliasMigrationKey = 'migration_siyuetian_image_alias_v2';
+  if (!db.select().from(settings).where(eq(settings.key, siYueTianImageAliasMigrationKey)).get()) {
+    const pricingUpdates = [
+      { modelPattern: 'gpt-image-2', inputPrice: 0.12 },
+      { modelPattern: 'gpt-image-2-siyuetian', inputPrice: SI_YUE_TIAN_IMAGE_PRICE },
+    ];
+    for (const pricing of pricingUpdates) {
+      const existing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, pricing.modelPattern)).get();
+      const values = {
+        billingType: 'per_call',
+        inputPrice: pricing.inputPrice,
+        outputPrice: 0,
+        extraParams: JSON.stringify({ category: 'image' }),
+      };
+      if (existing) db.update(modelPricing).set(values).where(eq(modelPricing.id, existing.id)).run();
+      else db.insert(modelPricing).values({ modelPattern: pricing.modelPattern, ...values }).run();
+    }
+    db.insert(settings).values({
+      key: siYueTianImageAliasMigrationKey,
+      value: '1',
+      label: 'Pidoi 4K 与四月天 GPT Image 2 独立模型迁移标记',
+    }).run();
+    console.log('🔄 已拆分 Pidoi 原生 4K 与四月天 GPT Image 2 模型');
   }
 
   // 13) 保证 Pidoi 图片渠道存在（独立 API Key，与视频渠道分离）
