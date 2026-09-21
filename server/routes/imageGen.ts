@@ -276,9 +276,15 @@ function findImageChannel(modelId: string) {
   // overlapping model id to its supported-model list.
   const candidates = ChannelService.findChannelsForModel(modelId)
     .filter(candidate => candidate.type !== 'hmstudio');
+  const pidoiImageChannel = modelId === 'gpt-image-2'
+    ? candidates.find(candidate => (
+      /pidoi/i.test(candidate.name || '')
+      || /pidoi\.com/i.test(candidate.baseUrl || '')
+    ))
+    : null;
   const channel = (isSiYueTianImageModel(modelId)
     ? candidates.find(candidate => isSiYueTianImageChannel(candidate, modelId))
-    : null) || candidates[0];
+    : pidoiImageChannel) || candidates[0];
   if (channel) return {
     id: channel.id,
     name: channel.name,
@@ -371,6 +377,12 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
   const baseUrl = channel.baseUrl.replace(/\/+$/, '');
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
+  // Pidoi gpt-image-2 uses quality to select its output tier: low=1K,
+  // high=native 4K. Default to the advertised native 4K tier when an older
+  // client does not send the field. Siyuetian has a separate public model ID.
+  const effectiveQuality = model === 'gpt-image-2'
+    ? (quality === 'low' ? 'low' : 'high')
+    : quality;
 
   // 判断是否有参考图
   const hasRef = Array.isArray(reference_images) && reference_images.length > 0;
@@ -599,7 +611,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
           formData.append('n', '1');
           formData.append('size', size);
           formData.append('response_format', 'url');
-          if (quality) formData.append('quality', quality);
+          if (effectiveQuality) formData.append('quality', effectiveQuality);
           if (output_format) formData.append('output_format', output_format);
           // 添加所有参考图
           for (let ri = 0; ri < refBlobs.length; ri++) {
@@ -677,7 +689,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
             size,
             response_format: 'url',
           };
-          if (quality) requestBody.quality = quality;
+          if (effectiveQuality) requestBody.quality = effectiveQuality;
           if (output_format) requestBody.output_format = output_format;
           if (background) requestBody.background = background;
           if (typeof output_compression === 'number') {
@@ -700,7 +712,18 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
             if (!upstream.ok) {
               const errText = await upstream.text().catch(() => '');
               console.error(`[imageGen/gpt] #${index} 上游返回 ${upstream.status}: ${errText.slice(0, 200)}`);
-              sendEvent({ type: 'image_error', index, message: `请求 #${index + 1} 失败 (${upstream.status})` });
+              let upstreamMessage = '';
+              try {
+                const parsed = JSON.parse(errText);
+                upstreamMessage = String(parsed?.error?.message || parsed?.message || '').trim();
+              } catch { /* upstream may return plain text */ }
+              if (!upstreamMessage && errText && !/<html[\s>]/i.test(errText)) upstreamMessage = errText.trim();
+              const safeMessage = upstreamMessage.replace(/sk-[A-Za-z0-9_-]+/g, '[REDACTED]').slice(0, 160);
+              sendEvent({
+                type: 'image_error',
+                index,
+                message: `请求 #${index + 1} 失败 (${upstream.status})${safeMessage ? `：${safeMessage}` : ''}`,
+              });
               return;
             }
 

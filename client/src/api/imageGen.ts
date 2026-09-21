@@ -11,6 +11,7 @@ export interface ImageGenerateParams {
   model?: string;
   aspect_ratio?: string;
   resolution?: '1K' | '2K' | '4K';
+  quality?: 'low' | 'high';
   n?: number;                    // 生成数量 1~4
   reference_images?: string[];   // base64 数据 URL
 }

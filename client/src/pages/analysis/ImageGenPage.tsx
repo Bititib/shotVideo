@@ -32,6 +32,11 @@ const COUNT_OPTIONS = [
   { value: 4, label: '4张' },
 ];
 
+const PIDOI_QUALITY_OPTIONS = [
+  { value: 'high', label: '原生 4K' },
+  { value: 'low', label: '快速 1K' },
+];
+
 async function downloadImageFile(event: React.MouseEvent, url: string, filename: string) {
   event.stopPropagation();
   try {
@@ -155,6 +160,7 @@ export default function ImageGenPage() {
   const [selectedModel, setSelectedModel] = useState(() => models[0]?.id || '');
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState('1:1');
+  const [pidoiQuality, setPidoiQuality] = useState<'low' | 'high'>('high');
   const [imageCount, setImageCount] = useState(1);
   const [activeBatches, setActiveBatches] = useState<ActiveImageBatch[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -335,6 +341,7 @@ export default function ImageGenPage() {
     const batchAspectRatio = aspectRatio;
     const batchCount = imageCount;
     const batchReferences = [...referenceImages];
+    const batchQuality = batchModel === 'gpt-image-2' ? pidoiQuality : undefined;
 
     setActiveBatches(previous => [...previous, {
       id: batchId,
@@ -354,7 +361,15 @@ export default function ImageGenPage() {
     };
 
     const ctrl = generateImage(
-      { prompt: batchPrompt, model: batchModel, aspect_ratio: batchAspectRatio, n: batchCount, reference_images: batchReferences.length > 0 ? batchReferences : undefined },
+      {
+        prompt: batchPrompt,
+        model: batchModel,
+        aspect_ratio: batchAspectRatio,
+        resolution: batchQuality === 'high' ? '4K' : (batchQuality === 'low' ? '1K' : undefined),
+        quality: batchQuality,
+        n: batchCount,
+        reference_images: batchReferences.length > 0 ? batchReferences : undefined,
+      },
       (event: ImageSSEEvent) => {
         switch (event.type) {
           case 'queue':
@@ -426,7 +441,7 @@ export default function ImageGenPage() {
       },
     );
     batchControllersRef.current.set(batchId, ctrl);
-  }, [prompt, selectedModel, aspectRatio, imageCount, activeBatches.length, referenceImages, guard]);
+  }, [prompt, selectedModel, aspectRatio, pidoiQuality, imageCount, activeBatches.length, referenceImages, guard]);
 
   const handleCancelBatch = useCallback((batchId: string) => {
     batchControllersRef.current.get(batchId)?.abort();
@@ -644,6 +659,9 @@ export default function ImageGenPage() {
               {/* 工具栏 */}
               <div className="flex items-center gap-2 mb-3 flex-wrap">
                 <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={ASPECT_RATIOS} prefix="比例: " />
+                {selectedModel === 'gpt-image-2' && (
+                  <CustomSelect value={pidoiQuality} onChange={setPidoiQuality} options={PIDOI_QUALITY_OPTIONS} prefix="画质: " />
+                )}
                 <CustomSelect value={imageCount} onChange={setImageCount} options={COUNT_OPTIONS} icon={Grid2x2} prefix="数量: " />
                 <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                   <Upload className="w-3 h-3 text-pink-400" /> 参考图 ({referenceImages.length}/10)

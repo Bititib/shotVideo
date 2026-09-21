@@ -1438,7 +1438,7 @@ export async function initDatabase() {
   const siYueTianImageAliasMigrationKey = 'migration_siyuetian_image_alias_v2';
   if (!db.select().from(settings).where(eq(settings.key, siYueTianImageAliasMigrationKey)).get()) {
     const pricingUpdates = [
-      { modelPattern: 'gpt-image-2', inputPrice: 0.12 },
+      { modelPattern: 'gpt-image-2', inputPrice: 0.10 },
       { modelPattern: 'gpt-image-2-siyuetian', inputPrice: SI_YUE_TIAN_IMAGE_PRICE },
     ];
     for (const pricing of pricingUpdates) {
@@ -1458,6 +1458,26 @@ export async function initDatabase() {
       label: 'Pidoi 4K 与四月天 GPT Image 2 独立模型迁移标记',
     }).run();
     console.log('🔄 已拆分 Pidoi 原生 4K 与四月天 GPT Image 2 模型');
+  }
+
+  // v3 aligns Pidoi gpt-image-2 with the current upstream price card.
+  const pidoiImagePriceMigrationKey = 'migration_pidoi_gpt_image_2_price_v3';
+  if (!db.select().from(settings).where(eq(settings.key, pidoiImagePriceMigrationKey)).get()) {
+    const existing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, 'gpt-image-2')).get();
+    const values = {
+      billingType: 'per_call',
+      inputPrice: 0.10,
+      outputPrice: 0,
+      extraParams: JSON.stringify({ category: 'image' }),
+    };
+    if (existing) db.update(modelPricing).set(values).where(eq(modelPricing.id, existing.id)).run();
+    else db.insert(modelPricing).values({ modelPattern: 'gpt-image-2', ...values }).run();
+    db.insert(settings).values({
+      key: pidoiImagePriceMigrationKey,
+      value: '1',
+      label: 'Pidoi GPT Image 2 当前价格迁移标记',
+    }).run();
+    console.log('🔄 已将 Pidoi GPT Image 2 调整为 ¥0.10/次');
   }
 
   // 13) 保证 Pidoi 图片渠道存在（独立 API Key，与视频渠道分离）

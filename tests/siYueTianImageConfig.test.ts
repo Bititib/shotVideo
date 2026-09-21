@@ -35,7 +35,7 @@ describe('四月天图片模型配置', () => {
     expect(JSON.parse(siyueChannel!.supportedModels)).not.toContain('gpt-image-2');
     expect(JSON.parse(siyueChannel!.modelMapping)['gpt-image-2-siyuetian']).toBe('gpt-image-2');
     expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, 'gpt-image-2')).get())
-      .toMatchObject({ billingType: 'per_call', inputPrice: 0.12 });
+      .toMatchObject({ billingType: 'per_call', inputPrice: 0.10 });
     expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, 'gpt-image-2-siyuetian')).get())
       .toMatchObject({ billingType: 'per_call', inputPrice: SI_YUE_TIAN_IMAGE_PRICE });
   });
