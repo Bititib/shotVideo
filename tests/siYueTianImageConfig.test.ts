@@ -40,6 +40,17 @@ describe('四月天图片模型配置', () => {
       .toMatchObject({ billingType: 'per_call', inputPrice: SI_YUE_TIAN_IMAGE_PRICE });
   });
 
+  it('服务重启初始化时不会覆盖管理员保存的 Pidoi Key', async () => {
+    const pidoiChannel = db.select().from(channels).all().find(channel => channel.baseUrl.includes('pidoi.com') && channel.name.includes('图片'))!;
+    const adminKey = 'sk-admin-configured-pidoi-key';
+    db.update(channels).set({ apiKey: adminKey, status: 1 }).where(eq(channels.id, pidoiChannel.id)).run();
+
+    await initDatabase();
+
+    expect(db.select().from(channels).where(eq(channels.id, pidoiChannel.id)).get())
+      .toMatchObject({ apiKey: adminKey, status: 1 });
+  });
+
   it('绑定到四月天渠道并统一按次计费', () => {
     const channel = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get();
     expect(channel).toBeTruthy();

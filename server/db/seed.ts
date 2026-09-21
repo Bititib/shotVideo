@@ -1462,6 +1462,7 @@ export async function initDatabase() {
 
   // 13) 保证 Pidoi 图片渠道存在（独立 API Key，与视频渠道分离）
   try {
+    const configuredPidoiImageApiKey = String(process.env.PIDOI_IMAGE_API_KEY || '').trim();
     // 查找已有的 Pidoi 图片渠道
     const existingPidoiImg = db.select().from(channels).all()
       .find(c => c.name === 'Pidoi 图片渠道' || (c.baseUrl?.includes('pidoi.com') && c.name?.includes('图片')));
@@ -1471,9 +1472,9 @@ export async function initDatabase() {
         name: 'Pidoi 图片渠道',
         type: 'openai',
         baseUrl: 'https://pidoi.com',
-        apiKey: 'sk-EWZUHbYAtE0T9aCqb2HeMbq8JBJk7ycaw731mFBWPe0CBLJ0',
+        apiKey: configuredPidoiImageApiKey,
         supportedModels: JSON.stringify(pidoiImgModels),
-        status: 1,
+        status: configuredPidoiImageApiKey ? 1 : 0,
         priority: 0,
         weight: 1,
         maxRetries: 3,
@@ -1484,7 +1485,11 @@ export async function initDatabase() {
       db.update(channels)
         .set({
           supportedModels: JSON.stringify(pidoiImgModels),
-          apiKey: 'sk-EWZUHbYAtE0T9aCqb2HeMbq8JBJk7ycaw731mFBWPe0CBLJ0',
+          // Never replace a key saved by an administrator during startup.
+          // An environment key is only used to initialize an empty channel.
+          ...(!existingPidoiImg.apiKey && configuredPidoiImageApiKey
+            ? { apiKey: configuredPidoiImageApiKey, status: 1 }
+            : {}),
           updatedAt: new Date().toISOString()
         })
         .where(eq(channels.id, existingPidoiImg.id))
