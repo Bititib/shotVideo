@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildReplicatedVideoPrompt, getVideoReferenceAssets, getVideoReferenceCounts, restoreVideoPromptRefs } from '../client/src/utils/videoPromptRefs';
+import { buildReplicatedVideoPrompt, getVideoReferenceAssets, getVideoReferenceCounts, removeVideoPromptReference, restoreVideoPromptRefs } from '../client/src/utils/videoPromptRefs';
 
 const frontendTranslate = (prompt: string, imagesCount: number = 1) => {
   let finalPrompt = prompt.trim();
@@ -24,6 +24,18 @@ const backendTranslate = (prompt: string) => {
 };
 
 describe('Prompt Reference @ Syntax Test Suite', () => {
+  it('removes a deleted image mention and renumbers later image mentions', () => {
+    expect(removeVideoPromptReference('@图1 @图2 @图3 保持动作', '图', 2))
+      .toBe('@图1 @图2 保持动作');
+  });
+
+  it('removes and renumbers video and audio mentions', () => {
+    expect(removeVideoPromptReference('@视频1 对照 @视频2', '视频', 1))
+      .toBe('对照 @视频1');
+    expect(removeVideoPromptReference('参考＠音频2和@音频3', '音频', 2))
+      .toBe('参考和@音频2');
+  });
+
   it('should correctly restore prompt tags from backend format to UI format', () => {
     const rawBackendPrompt = '主角 [ref_0.jpg] 看着 [ref_video] 中的画面，配音遵循 [ref_audio] 的语气';
     const restored = restoreVideoPromptRefs(rawBackendPrompt);

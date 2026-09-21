@@ -12,7 +12,7 @@ import { saveAsset, getAssets, deleteAsset, type Asset } from '../../utils/idb';
 import { useAuthStore } from '../../stores/authStore';
 import { feedbackApi } from '../../api/feedback';
 import { getBillingUnit } from '../../utils/billing';
-import { buildReplicatedVideoPrompt, getVideoReferenceAssets, getVideoReferenceCounts, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
+import { buildReplicatedVideoPrompt, getVideoReferenceAssets, getVideoReferenceCounts, removeVideoPromptReference, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
 import { isOmniVideoEditModel, isSnumomGrokImagineVideoModel, SNUMOM_SD_MINI_MODEL, snumomSdMiniSecondsForResolution, WX_HAIDIYUE_FACE_SPLIT_MODEL } from '../../utils/videoModelCapabilities';
 import { getContentFailureInfo } from '../../utils/contentFailure';
 import { findUnreadableImageIndexes, isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
@@ -695,6 +695,41 @@ export default function VideoPage() {
     }
     setFaceProcessingImageUrl(null);
     setFaceProcessingImageIndex(null);
+  };
+
+  const removeReferenceImage = (index: number) => {
+    const image = referenceImages[index];
+    setReferenceImages(previous => previous.filter((_, itemIndex) => itemIndex !== index));
+    setPrompt(previous => removeVideoPromptReference(previous, '图', index + 1));
+    setError(null);
+    if (image) {
+      setLocallyProcessedImages(previous => {
+        const next = new Set(previous);
+        next.delete(image);
+        return next;
+      });
+    }
+    if (slicingImageIndex === index) {
+      setSlicingImageUrl(null);
+      setSlicingImageIndex(null);
+    }
+    if (faceProcessingImageIndex === index) {
+      setFaceProcessingImageUrl(null);
+      setFaceProcessingImageIndex(null);
+    }
+  };
+
+  const removeReferenceVideo = (index: number) => {
+    setReferenceVideos(previous => previous.filter((_, itemIndex) => itemIndex !== index));
+    setPrompt(previous => removeVideoPromptReference(previous, '视频', index + 1));
+    setError(null);
+  };
+
+  const removeReferenceAudio = (index: number) => {
+    setReferenceAudios(previous => previous.filter((_, itemIndex) => itemIndex !== index));
+    setReferenceAudioNames(previous => previous.filter((_, itemIndex) => itemIndex !== index));
+    setPrompt(previous => removeVideoPromptReference(previous, '音频', index + 1));
+    setError(null);
   };
 
   useEffect(() => {
@@ -2102,29 +2137,41 @@ export default function VideoPage() {
                 {(referenceImages.length > 0 || referenceVideos.length > 0 || referenceAudios.length > 0) && (
                   <div className="flex items-center gap-2 px-4 pt-3 pb-1 flex-wrap">
                     {referenceVideos.map((v, idx) => (
-                      <div key={`pv_${idx}`} className="relative w-12 h-12 rounded-lg overflow-hidden border border-indigo-500/40 group cursor-pointer shrink-0 hover:border-red-500/30 transition-colors">
+                      <div key={`pv_${idx}`} className="relative w-12 h-12 rounded-lg overflow-hidden border border-indigo-500/40 group shrink-0 hover:border-red-500/50 transition-colors">
                         <video src={v} className="w-full h-full object-cover" />
-                        <div className="absolute top-0 left-0 bg-purple-600/90 text-white text-[9px] px-1 py-0.5 rounded-br font-mono leading-none pointer-events-none group-hover:opacity-0 transition-opacity">V{idx + 1}</div>
-                        <button onClick={() => setReferenceVideos(prev => prev.filter((_, i) => i !== idx))}
-                          className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><X className="w-3.5 h-3.5 text-white" /></button>
+                        <div className="absolute top-0 left-0 bg-purple-600/90 text-white text-[9px] px-1 py-0.5 rounded-br font-mono leading-none pointer-events-none">V{idx + 1}</div>
+                        <button type="button" aria-label={`删除参考视频 ${idx + 1}`} title={`删除参考视频 ${idx + 1}`} onClick={() => removeReferenceVideo(idx)}
+                          className="absolute top-0.5 right-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full border border-white/30 bg-red-600/95 shadow-md transition-colors hover:bg-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300"><X className="w-3 h-3 text-white" /></button>
                       </div>
                     ))}
                     {referenceAudios.map((a, idx) => (
-                      <div key={`pa_${idx}`} className="relative h-12 px-3 flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/5 group cursor-pointer shrink-0 hover:border-red-500/30 transition-colors">
+                      <div key={`pa_${idx}`} className="relative h-12 pl-3 pr-7 flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/5 group shrink-0 hover:border-red-500/50 transition-colors">
                         <span className="text-[10px] text-indigo-300 max-w-[100px] truncate" title={referenceAudioNames[idx] || `音频${idx + 1}`}>🔊 {referenceAudioNames[idx] || `音频${idx + 1}`}</span>
-                        <button onClick={() => { setReferenceAudios(prev => prev.filter((_, i) => i !== idx)); setReferenceAudioNames(prev => prev.filter((_, i) => i !== idx)); }}
-                          className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><X className="w-3.5 h-3.5 text-white" /></button>
+                        <button type="button" aria-label={`删除参考音频 ${idx + 1}`} title={`删除参考音频 ${idx + 1}`} onClick={() => removeReferenceAudio(idx)}
+                          className="absolute top-0.5 right-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full border border-white/30 bg-red-600/95 shadow-md transition-colors hover:bg-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300"><X className="w-3 h-3 text-white" /></button>
                       </div>
                     ))}
                     {referenceImages.map((img, idx) => (
-                      <div key={idx} className="relative w-12 h-12 rounded-lg overflow-hidden border border-white/10 group cursor-pointer shrink-0 hover:border-indigo-500/30 transition-colors">
+                      <div key={idx} className="relative w-12 h-12 rounded-lg overflow-hidden border border-white/10 group shrink-0 hover:border-red-500/50 transition-colors">
                         <img src={img} alt="" className="w-full h-full object-cover" />
-                        {!isHmStudioVideoModel(selectedModel) && locallyProcessedImages.has(img) && <div className="absolute right-0 top-0 rounded-bl bg-emerald-600/95 px-1 py-0.5 text-[8px] font-medium leading-none text-white">已拆脸</div>}
+                        {!isHmStudioVideoModel(selectedModel) && locallyProcessedImages.has(img) && <div className="absolute bottom-0 right-0 rounded-tl bg-emerald-600/95 px-1 py-0.5 text-[8px] font-medium leading-none text-white">已拆脸</div>}
                         {/* 索引代号角标 */}
-                        <div className="absolute top-0 left-0 bg-indigo-600/90 text-white text-[9px] px-1 py-0.5 rounded-br font-mono leading-none pointer-events-none group-hover:opacity-0 transition-opacity">
+                        <div className="absolute top-0 left-0 bg-indigo-600/90 text-white text-[9px] px-1 py-0.5 rounded-br font-mono leading-none pointer-events-none">
                           ref_{idx}
                         </div>
-                        <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1">
+                        <button
+                          type="button"
+                          aria-label={`删除参考图片 ${idx + 1}`}
+                          title={`删除参考图片 ${idx + 1}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            removeReferenceImage(idx);
+                          }}
+                          className="absolute top-0.5 right-0.5 z-20 flex h-5 w-5 items-center justify-center rounded-full border border-white/30 bg-red-600/95 shadow-md transition-colors hover:bg-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
+                        >
+                          <X className="w-3 h-3 text-white" />
+                        </button>
+                        <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 pr-4">
                           {!isHmStudioVideoModel(selectedModel) && (
                             <button
                               type="button"
@@ -2151,23 +2198,6 @@ export default function VideoPage() {
                             title="智能切分拼图"
                           >
                             <Scissors className="w-3 h-3 text-white" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setReferenceImages(prev => prev.filter((_, i) => i !== idx));
-                              setError(null);
-                              setLocallyProcessedImages(prev => {
-                                const next = new Set(prev);
-                                next.delete(img);
-                                return next;
-                              });
-                            }}
-                            className="bg-red-500/80 hover:bg-red-500 p-0.5 rounded transition-colors"
-                            title="删除"
-                          >
-                            <X className="w-3 h-3 text-white" />
                           </button>
                         </div>
                       </div>

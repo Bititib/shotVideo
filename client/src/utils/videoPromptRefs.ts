@@ -69,6 +69,29 @@ export function restoreVideoPromptRefs(targetPrompt: string): string {
     .replace(/\[ref_audio\]/g, '@音频1');
 }
 
+export type VideoPromptReferenceLabel = '图' | '视频' | '音频';
+
+/** Remove one visible reference mention and keep later numbered mentions aligned with the asset list. */
+export function removeVideoPromptReference(
+  prompt: string,
+  label: VideoPromptReferenceLabel,
+  removedIndex: number,
+): string {
+  if (!prompt || removedIndex < 1) return prompt;
+
+  const pattern = label === '图'
+    ? /([@＠])图(\d+)([ \t]?)/g
+    : new RegExp(`([@＠])${label}(\\d*)([ \\t]?)`, 'g');
+
+  return prompt.replace(pattern, (match, atSign: string, rawIndex: string, trailingSpace: string) => {
+    const index = rawIndex ? Number(rawIndex) : 1;
+    if (!Number.isFinite(index)) return match;
+    if (index === removedIndex) return '';
+    if (index > removedIndex) return `${atSign}${label}${index - 1}${trailingSpace}`;
+    return match;
+  });
+}
+
 function hasNumberedMention(prompt: string, label: '图' | '视频' | '音频', index: number): boolean {
   return new RegExp(`[@＠]${label}${index}(?!\\d)`).test(prompt);
 }
