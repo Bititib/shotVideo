@@ -24,6 +24,7 @@ export interface ImageSSEEvent {
   imageUrl?: string;            // 单张图片 URL（image_ready）
   imageUrls?: string[];         // 所有图片 URL（complete）
   message?: string;
+  contentId?: number;           // 已持久化的内容记录 ID，刷新页面后可继续恢复
   position?: number;
   running?: number;
   concurrencyLimit?: number;

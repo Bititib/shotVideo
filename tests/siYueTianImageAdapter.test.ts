@@ -37,6 +37,7 @@ describe('四月天异步图片适配器', () => {
       .mockResolvedValueOnce(json({ task_id: 'task_1', status: 'running', progress: '30%' }))
       .mockResolvedValueOnce(json({ task_id: 'task_1', status: 'succeeded', progress: '100%', result: { image_url: '/outputs/image.png' } }));
     const progress: number[] = [];
+    const submitted: string[] = [];
 
     const result = await generateSiYueTianImage({
       baseUrl: 'https://llm.chre3.com',
@@ -49,10 +50,12 @@ describe('四月天异步图片适配器', () => {
       fetchImpl: fetchImpl as typeof fetch,
       sleep: async () => {},
       maxAttempts: 1,
+      onSubmitted: taskId => submitted.push(taskId),
       onProgress: value => progress.push(value),
     });
 
     expect(result).toMatchObject({ taskId: 'task_1', imageUrl: '/outputs/image.png' });
+    expect(submitted).toEqual(['task_1']);
     expect(progress).toEqual([30, 100]);
     expect(fetchImpl).toHaveBeenNthCalledWith(1, 'https://llm.chre3.com/v1/images/generations', expect.objectContaining({
       method: 'POST',

@@ -43,6 +43,8 @@ async function downloadImageFile(event: React.MouseEvent, url: string, filename:
 
 interface ActiveImageBatch {
   id: string;
+  contentId?: number;
+  persisted?: boolean;
   prompt: string;
   model: string;
   aspectRatio: string;
@@ -172,52 +174,95 @@ export default function ImageGenPage() {
       setModels(nextModels);
       setSelectedModel(current => nextModels.some(model => model.id === current) ? current : (nextModels[0]?.id || ''));
     }).catch(() => {});
-    // 加载历史生成记录
-    contentApi.getMyContents({ type: 'image', page: 1, pageSize: 12 })
-      .then((res: any) => {
+    let cancelled = false;
+
+    const refreshPersistedJobs = async () => {
+      try {
+        const res: any = await contentApi.getMyContents({ type: 'image', page: 1, pageSize: 20 });
+        if (cancelled) return;
         const items = res?.items || res?.data || [];
         const loadedHistory: GeneratedImage[] = [];
+        const recoveredBatches: ActiveImageBatch[] = [];
         const existingUrls = new Set<string>();
-        
+
         for (const item of items) {
+          let metadata: Record<string, any> = {};
+          try {
+            metadata = typeof item.metadata === 'string' ? JSON.parse(item.metadata || '{}') : (item.metadata || {});
+          } catch { /* ignore malformed legacy metadata */ }
           const promptText = item.inputText || item.title || '';
-          const model = item.model || '';
+          const model = item.model || item.modelId || '';
           const createdAt = new Date(item.createdAt);
-          const aspectRatio = item.metadata?.aspectRatio || '';
-          
-          if (item.resultUrl && !existingUrls.has(item.resultUrl)) {
-            existingUrls.add(item.resultUrl);
-            loadedHistory.push({
-              id: item.id + '_main',
+          const itemAspectRatio = metadata.aspectRatio || metadata.aspect_ratio || '';
+          const storedImageUrls = Array.isArray(metadata.imageUrls) ? metadata.imageUrls : [];
+          const imageUrls = storedImageUrls.filter(Boolean);
+          const isProcessing = item.status === 'processing' || item.status === 'queued';
+
+          if (isProcessing) {
+            const count = Math.max(1, Math.min(4, Number(metadata.count) || 1));
+            const images = new Array(count).fill('');
+            storedImageUrls.slice(0, count).forEach((url: string, index: number) => { images[index] = url || ''; });
+            const progresses = new Array(count).fill(0);
+            if (Array.isArray(metadata.progresses)) {
+              metadata.progresses.slice(0, count).forEach((value: unknown, index: number) => {
+                progresses[index] = Math.max(0, Math.min(100, Number(value) || 0));
+              });
+            }
+            recoveredBatches.push({
+              id: `persisted-image-${item.id}`,
+              contentId: Number(item.id),
+              persisted: true,
               prompt: promptText,
-              imageUrl: item.resultUrl,
+              model,
+              aspectRatio: itemAspectRatio,
+              count,
+              images,
+              progresses,
+              failedIndexes: Array.isArray(metadata.failedIndexes)
+                ? metadata.failedIndexes.filter((value: unknown) => Number.isInteger(value))
+                : [],
+              statusMessage: metadata.progressText || '图片正在后台生成，刷新页面不会丢失',
+            });
+            continue;
+          }
+
+          const addHistory = (url: string, suffix: string) => {
+            if (!url || existingUrls.has(url)) return;
+            existingUrls.add(url);
+            loadedHistory.push({
+              id: `${item.id}_${suffix}`,
+              prompt: promptText,
+              imageUrl: url,
               model,
               createdAt,
-              aspectRatio,
+              aspectRatio: itemAspectRatio,
             });
-          }
-          if (item.metadata?.imageUrls) {
-            item.metadata.imageUrls.forEach((url: string, idx: number) => {
-              if (url && !existingUrls.has(url)) {
-                existingUrls.add(url);
-                loadedHistory.push({
-                  id: `${item.id}_${idx}`,
-                  prompt: promptText,
-                  imageUrl: url,
-                  model,
-                  createdAt,
-                  aspectRatio,
-                });
-              }
-            });
-          }
+          };
+          addHistory(item.resultUrl, 'main');
+          imageUrls.forEach((url: string, index: number) => addHistory(url, String(index)));
         }
-        if (loadedHistory.length > 0) {
-          setHistory(loadedHistory);
-        }
+
+        setHistory(previous => {
+          const next = [...loadedHistory];
+          const urls = new Set(next.map(item => item.imageUrl));
+          previous.forEach(item => { if (!urls.has(item.imageUrl)) next.push(item); });
+          return next;
+        });
+        setActiveBatches(previous => {
+          const live = previous.filter(batch => !batch.persisted);
+          const liveContentIds = new Set(live.map(batch => batch.contentId).filter(Boolean));
+          return [...live, ...recoveredBatches.filter(batch => !liveContentIds.has(batch.contentId))];
+        });
         setHistoryTotal(Number(res?.total) || 0);
-      })
-      .catch(() => {});
+      } catch { /* keep the current page state and retry */ }
+    };
+
+    void refreshPersistedJobs();
+    const timer = window.setInterval(refreshPersistedJobs, 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, []);
 
   const loadMoreHistory = async () => {
@@ -315,7 +360,7 @@ export default function ImageGenPage() {
             updateBatch(batch => ({ ...batch, statusMessage: event.message || '图片任务排队中...' }));
             break;
           case 'status':
-            updateBatch(batch => ({ ...batch, statusMessage: event.message || '' }));
+            updateBatch(batch => ({ ...batch, contentId: event.contentId || batch.contentId, statusMessage: event.message || '' }));
             break;
           case 'progress': {
             const idx = event.index ?? -1;
@@ -463,9 +508,15 @@ export default function ImageGenPage() {
                           {batch.statusMessage || `已完成 ${batch.images.filter(Boolean).length} / ${batch.count} 张`}
                         </p>
                       </div>
-                      <button type="button" onClick={() => handleCancelBatch(batch.id)} className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400">
-                        <Square className="h-3 w-3" /> 取消本批
-                      </button>
+                      {batch.persisted || batch.contentId ? (
+                        <span className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-amber-400/80">
+                          <Loader2 className="h-3 w-3 animate-spin" /> 后台处理中
+                        </span>
+                      ) : (
+                        <button type="button" onClick={() => handleCancelBatch(batch.id)} className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400">
+                          <Square className="h-3 w-3" /> 取消本批
+                        </button>
+                      )}
                     </div>
                     <div className="flex flex-wrap items-start gap-3">
                       {batch.images.map((url, index) => {

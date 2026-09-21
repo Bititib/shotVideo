@@ -74,6 +74,7 @@ export type SiYueTianImageInput = {
   maxAttempts?: number;
   fetchImpl?: FetchLike;
   sleep?: (ms: number) => Promise<void>;
+  onSubmitted?: (taskId: string) => void;
   onProgress?: (progress: number, status: string) => void;
 };
 
@@ -138,6 +139,7 @@ async function runOnce(input: SiYueTianImageInput): Promise<SiYueTianImageResult
   const taskId = String(submitBody.task_id || submitBody.taskId || submitBody.id || '');
   const taskPath = String(submitBody.task_url || (taskId ? `/v1/images/generations/${encodeURIComponent(taskId)}` : ''));
   if (!taskId || !taskPath) throw new Error('四月天图片接口未返回任务 ID');
+  input.onSubmitted?.(taskId);
 
   const taskUrl = new URL(taskPath, `${baseUrl}/`).toString();
   const pollIntervalMs = Math.max(1, input.pollIntervalMs ?? 12_000);

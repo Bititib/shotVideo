@@ -93,6 +93,7 @@ import {
   validateMiaowuSeedance25ProInput,
 } from '../services/miaowuVideoAdapter.js';
 import { enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
+import { localizeGeneratedImage } from './imageGen.js';
 import { withVideoFailureMetadata } from '../services/videoFailureService.js';
 import { ContentService } from '../services/contentService.js';
 import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
@@ -1004,15 +1005,32 @@ router.post('/images/generations', async (req: Request, res: Response) => {
         watermark: typeof otherParams.watermark === 'boolean' ? otherParams.watermark : undefined,
         maxAttempts: 2,
       })));
-      const completed = settled
-        .filter((item): item is PromiseFulfilledResult<Awaited<ReturnType<typeof generateSiYueTianImage>>> => item.status === 'fulfilled')
-        .map(item => ({
-          url: new URL(item.value.imageUrl, `${baseUrl}/`).toString(),
-          task_id: item.value.taskId,
-        }));
+      const generated = settled
+        .filter((item): item is PromiseFulfilledResult<Awaited<ReturnType<typeof generateSiYueTianImage>>> => item.status === 'fulfilled');
+      const localized = await Promise.allSettled(generated.map(async item => ({
+        url: await localizeGeneratedImage(
+          item.value.imageUrl,
+          `api_siyuetian_${item.value.taskId}`,
+          req,
+          channel,
+        ),
+        task_id: item.value.taskId,
+      })));
+      localized.forEach((item, index) => {
+        if (item.status === 'rejected') {
+          console.error(
+            `[v1/images/generations] 四月天图片本地化失败 (${generated[index]?.value.taskId || 'unknown'}):`,
+            item.reason,
+          );
+        }
+      });
+      const completed = localized
+        .filter((item): item is PromiseFulfilledResult<{ url: string; task_id: string }> => item.status === 'fulfilled')
+        .map(item => item.value);
       if (completed.length === 0) {
-        const failed = settled.find((item): item is PromiseRejectedResult => item.status === 'rejected');
-        throw failed?.reason || new Error('四月天图片生成失败');
+        const localizationFailure = localized.find((item): item is PromiseRejectedResult => item.status === 'rejected');
+        const generationFailure = settled.find((item): item is PromiseRejectedResult => item.status === 'rejected');
+        throw localizationFailure?.reason || generationFailure?.reason || new Error('四月天图片生成失败');
       }
 
       const actualCost = Math.round(unitCost * completed.length * 100) / 100;

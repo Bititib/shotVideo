@@ -326,7 +326,12 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
   res.flushHeaders();
 
   const sendEvent = (data: Record<string, any>) => {
-    res.write(`data: ${JSON.stringify(data)}\n\n`);
+    if (!res.writableEnded && !res.destroyed) res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+  const finishStream = () => {
+    if (res.writableEnded || res.destroyed) return;
+    res.write('data: [DONE]\n\n');
+    res.end();
   };
 
   const size = RATIO_TO_SIZE[aspect_ratio] || '1024x1024';
@@ -345,9 +350,50 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
   const { sufficient, balance: currentBalance } = BalanceService.checkBalance(req.userId!, estimatedCost);
   if (!sufficient) {
     sendEvent({ type: 'error', message: `余额不足，预估费用 ¥${estimatedCost.toFixed(2)}，当前余额 ¥${currentBalance.toFixed(2)}` });
-    res.write('data: [DONE]\n\n');
-    return res.end();
+    finishStream();
+    return;
   }
+
+  const persistedMetadata: Record<string, any> = {
+    aspect_ratio,
+    aspectRatio: aspect_ratio,
+    resolution,
+    count,
+    imageUrls: [],
+    progresses: new Array(count).fill(0),
+    channelId: channel.id,
+    channelName: channel.name,
+    actualChannel: isSiYueTianImageChannel(channel, model) ? 'siyuetian' : channel.type,
+    upstreamModel: channel.modelMapping?.[model] || model,
+    upstreamTaskId: '',
+    taskId: '',
+    upstreamTaskIds: [],
+    progressText: '图片任务已提交，正在生成',
+  };
+  const contentId = ContentService.save({
+    userId: req.userId!,
+    orgId: req.orgId || null,
+    type: 'image',
+    title: (prompt as string).slice(0, 200),
+    inputText: (prompt as string).slice(0, 500),
+    modelId: model,
+    metadata: persistedMetadata,
+    status: 'processing',
+  });
+  sendEvent({ type: 'status', message: '图片任务已提交，正在后台生成...', contentId, total: count });
+
+  const persistJob = (patch: Record<string, any>, status = 'processing') => {
+    Object.assign(persistedMetadata, patch);
+    db.update(contents).set({
+      status,
+      metadata: JSON.stringify(persistedMetadata),
+    }).where(eq(contents.id, contentId)).run();
+  };
+  const persistFailure = (message: string) => persistJob({
+    progressText: message,
+    failureReason: message,
+    failedAt: new Date().toISOString(),
+  }, 'failed');
 
   /** 生成完成后统一计费 + 保存内容 */
   const billUsage = (actualCount: number, imageUrls?: string[], extraMetadata: Record<string, any> = {}) => {
@@ -361,29 +407,20 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
       const remaining = BalanceService.deduct(req.userId!, totalCost, 'generate_image');
       sendEvent({ type: 'billing', cost: totalCost, count: actualCount, unitCost, remainingBalance: remaining ?? 0 });
     }
-    // 保存到内容库
+    // 完成持久化任务；即使浏览器刷新，结果也会保留在内容库。
     try {
-      ContentService.save({
-        userId: req.userId!,
-        orgId: req.orgId || null,
-        type: 'image',
-        title: (prompt as string).slice(0, 200),
-        inputText: (prompt as string).slice(0, 500),
-        resultUrl: imageUrls?.[0] || undefined,
-        modelId: model,
-        cost: totalCost,
-        metadata: {
-          aspect_ratio,
-          resolution,
-          count: actualCount,
-          imageUrls: imageUrls || [],
-          channelId: channel.id,
-          channelName: channel.name,
-          actualChannel: isSiYueTianImageChannel(channel, model) ? 'siyuetian' : channel.type,
-          upstreamModel: channel.modelMapping?.[model] || model,
-          ...extraMetadata,
-        },
+      Object.assign(persistedMetadata, {
+        imageUrls: imageUrls || [],
+        progresses: new Array(count).fill(actualCount > 0 ? 100 : 0),
+        progressText: actualCount > 0 ? '图片生成完成' : '图片生成失败',
+        ...extraMetadata,
       });
+      db.update(contents).set({
+        resultUrl: imageUrls?.[0] || undefined,
+        cost: totalCost,
+        metadata: JSON.stringify(persistedMetadata),
+        status: actualCount > 0 ? 'completed' : 'failed',
+      }).where(eq(contents.id, contentId)).run();
     } catch (e) { console.error('[content] 图片保存失败:', e); }
   };
 
@@ -412,15 +449,43 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
             referenceImages: referenceUrls,
             quality,
             maxAttempts: 2,
-            onProgress: (progress, status) => sendEvent({ type: 'progress', progress, status, index, total: count }),
+            onSubmitted: (taskId) => {
+              upstreamTaskIds[index] = taskId;
+              persistJob({
+                upstreamTaskId: upstreamTaskIds.find(Boolean) || '',
+                taskId: upstreamTaskIds.find(Boolean) || '',
+                upstreamTaskIds: upstreamTaskIds.filter(Boolean),
+                progressText: '四月天图片任务生成中',
+              });
+            },
+            onProgress: (progress, status) => {
+              const progresses = [...persistedMetadata.progresses];
+              progresses[index] = progress;
+              persistJob({ progresses, progressText: `图片生成中 ${Math.max(...progresses)}%` });
+              sendEvent({ type: 'progress', progress, status, index, total: count, contentId });
+            },
           });
           const localizedUrl = await localizeGeneratedImage(result.imageUrl, `siyuetian_image_${index}`, req, channel);
           completedImages[index] = localizedUrl;
           upstreamTaskIds[index] = result.taskId;
+          const progresses = [...persistedMetadata.progresses];
+          progresses[index] = 100;
+          persistJob({
+            imageUrls: [...completedImages],
+            progresses,
+            upstreamTaskId: upstreamTaskIds.find(Boolean) || '',
+            taskId: upstreamTaskIds.find(Boolean) || '',
+            upstreamTaskIds: upstreamTaskIds.filter(Boolean),
+          });
           sendEvent({ type: 'image_ready', imageUrl: localizedUrl, index, total: count });
         } catch (error: any) {
           const message = error?.name === 'AbortError' ? '生成超时或已取消' : (error?.message || '生成失败');
           console.error(`[imageGen/siyuetian] #${index} 失败:`, message);
+          const failedIndexes = Array.isArray(persistedMetadata.failedIndexes)
+            ? [...persistedMetadata.failedIndexes]
+            : [];
+          if (!failedIndexes.includes(index)) failedIndexes.push(index);
+          persistJob({ failedIndexes, progressText: message });
           sendEvent({ type: 'image_error', index, message: `图片 #${index + 1}: ${message}` });
         }
       }));
@@ -433,8 +498,8 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
         taskId: taskIds[0] || '',
         upstreamTaskIds: taskIds,
       });
-      res.write('data: [DONE]\n\n');
-      return res.end();
+      finishStream();
+      return;
     }
 
     const isEditModel = model === 'gpt-image-2';
@@ -473,8 +538,9 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
 
       if (refBlobs.length === 0) {
         sendEvent({ type: 'error', message: '参考图解析失败，请重新上传' });
-        res.write('data: [DONE]\n\n');
-        return res.end();
+        persistFailure('参考图解析失败，请重新上传');
+        finishStream();
+        return;
       }
 
       console.log(`[imageGen/edit] 参考图 ${refBlobs.length} 张, 并发 ${count} 个请求, model=${editModel}`);
@@ -543,8 +609,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
             const allUrls = completedImages.filter(Boolean);
             sendEvent({ type: 'complete', imageUrls: allUrls, total: count });
             billUsage(allUrls.length, allUrls);
-            res.write('data: [DONE]\n\n');
-            res.end();
+            finishStream();
           }
         }
       };
@@ -629,8 +694,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
               const allUrls = completedImages.filter(Boolean);
               sendEvent({ type: 'complete', imageUrls: allUrls, total: count });
               billUsage(allUrls.length, allUrls);
-              res.write('data: [DONE]\n\n');
-              res.end();
+              finishStream();
             }
           }
         };
@@ -750,8 +814,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
               const allUrls = completedImages.filter(Boolean);
               sendEvent({ type: 'complete', imageUrls: allUrls, total: count });
               billUsage(allUrls.length, allUrls);
-              res.write('data: [DONE]\n\n');
-              res.end();
+              finishStream();
             }
           }
         };
@@ -764,9 +827,9 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
     }
   } catch (err: any) {
     const msg = err.name === 'AbortError' ? '图片生成超时' : (err.message || '请求失败');
+    persistFailure(msg);
     sendEvent({ type: 'error', message: msg });
-    res.write('data: [DONE]\n\n');
-    res.end();
+    finishStream();
   }
 });
 
