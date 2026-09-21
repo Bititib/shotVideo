@@ -2135,28 +2135,28 @@ export default function VideoPage() {
                 )}
 
                 {(referenceImages.length > 0 || referenceVideos.length > 0 || referenceAudios.length > 0) && (
-                  <div className="flex items-center gap-2 px-4 pt-3 pb-1 flex-wrap">
+                  <div className="flex items-center gap-2.5 px-4 pt-3 pb-2 flex-wrap">
                     {referenceVideos.map((v, idx) => (
-                      <div key={`pv_${idx}`} className="relative w-12 h-12 rounded-lg overflow-hidden border border-indigo-500/40 group shrink-0 hover:border-red-500/50 transition-colors">
+                      <div key={`pv_${idx}`} className="relative w-14 h-14 rounded-xl overflow-hidden border border-[#d1b796] bg-[#eadbc9] group shrink-0 shadow-sm hover:border-[#b77b58] transition-colors">
                         <video src={v} className="w-full h-full object-cover" />
-                        <div className="absolute top-0 left-0 bg-purple-600/90 text-white text-[9px] px-1 py-0.5 rounded-br font-mono leading-none pointer-events-none">V{idx + 1}</div>
+                        <div className="absolute top-0 left-0 bg-[#8f4a31]/90 text-white text-[9px] px-1.5 py-1 rounded-br-lg font-mono leading-none pointer-events-none">V{idx + 1}</div>
                         <button type="button" aria-label={`删除参考视频 ${idx + 1}`} title={`删除参考视频 ${idx + 1}`} onClick={() => removeReferenceVideo(idx)}
-                          className="absolute top-0.5 right-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full border border-white/30 bg-red-600/95 shadow-md transition-colors hover:bg-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300"><X className="w-3 h-3 text-white" /></button>
+                          className="absolute top-1 right-1 z-10 flex !h-5 !w-5 !min-h-5 !min-w-5 items-center justify-center rounded-md border border-white/30 bg-[#3f2d26]/80 p-0 shadow-sm backdrop-blur-sm transition-colors hover:bg-[#a33d34] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c98576]"><X className="w-2.5 h-2.5 text-white" /></button>
                       </div>
                     ))}
                     {referenceAudios.map((a, idx) => (
-                      <div key={`pa_${idx}`} className="relative h-12 pl-3 pr-7 flex items-center gap-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/5 group shrink-0 hover:border-red-500/50 transition-colors">
-                        <span className="text-[10px] text-indigo-300 max-w-[100px] truncate" title={referenceAudioNames[idx] || `音频${idx + 1}`}>🔊 {referenceAudioNames[idx] || `音频${idx + 1}`}</span>
+                      <div key={`pa_${idx}`} className="relative h-14 pl-3 pr-8 flex items-center gap-1.5 rounded-xl border border-[#d1b796] bg-[#f2e7d9] group shrink-0 shadow-sm hover:border-[#b77b58] transition-colors">
+                        <span className="text-[10px] text-[#745b49] max-w-[110px] truncate" title={referenceAudioNames[idx] || `音频${idx + 1}`}>🔊 {referenceAudioNames[idx] || `音频${idx + 1}`}</span>
                         <button type="button" aria-label={`删除参考音频 ${idx + 1}`} title={`删除参考音频 ${idx + 1}`} onClick={() => removeReferenceAudio(idx)}
-                          className="absolute top-0.5 right-0.5 z-10 flex h-5 w-5 items-center justify-center rounded-full border border-white/30 bg-red-600/95 shadow-md transition-colors hover:bg-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300"><X className="w-3 h-3 text-white" /></button>
+                          className="absolute top-1 right-1 z-10 flex !h-5 !w-5 !min-h-5 !min-w-5 items-center justify-center rounded-md border border-white/30 bg-[#3f2d26]/80 p-0 shadow-sm transition-colors hover:bg-[#a33d34] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c98576]"><X className="w-2.5 h-2.5 text-white" /></button>
                       </div>
                     ))}
                     {referenceImages.map((img, idx) => (
-                      <div key={idx} className="relative w-12 h-12 rounded-lg overflow-hidden border border-white/10 group shrink-0 hover:border-red-500/50 transition-colors">
+                      <div key={idx} className="relative w-14 h-14 rounded-xl overflow-hidden border border-[#d1b796] bg-[#eadbc9] group shrink-0 shadow-sm hover:border-[#b77b58] transition-colors">
                         <img src={img} alt="" className="w-full h-full object-cover" />
                         {!isHmStudioVideoModel(selectedModel) && locallyProcessedImages.has(img) && <div className="absolute bottom-0 right-0 rounded-tl bg-emerald-600/95 px-1 py-0.5 text-[8px] font-medium leading-none text-white">已拆脸</div>}
                         {/* 索引代号角标 */}
-                        <div className="absolute top-0 left-0 bg-indigo-600/90 text-white text-[9px] px-1 py-0.5 rounded-br font-mono leading-none pointer-events-none">
+                        <div className="absolute top-0 left-0 bg-[#8f4a31]/90 text-white text-[9px] px-1.5 py-1 rounded-br-lg font-mono leading-none pointer-events-none">
                           ref_{idx}
                         </div>
                         <button
@@ -2167,11 +2167,11 @@ export default function VideoPage() {
                             event.stopPropagation();
                             removeReferenceImage(idx);
                           }}
-                          className="absolute top-0.5 right-0.5 z-20 flex h-5 w-5 items-center justify-center rounded-full border border-white/30 bg-red-600/95 shadow-md transition-colors hover:bg-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
+                          className="absolute top-1 right-1 z-20 flex !h-5 !w-5 !min-h-5 !min-w-5 items-center justify-center rounded-md border border-white/30 bg-[#3f2d26]/80 p-0 shadow-sm backdrop-blur-sm transition-colors hover:bg-[#a33d34] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c98576]"
                         >
-                          <X className="w-3 h-3 text-white" />
+                          <X className="w-2.5 h-2.5 text-white" />
                         </button>
-                        <div className="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 pr-4">
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-center gap-1 pb-1">
                           {!isHmStudioVideoModel(selectedModel) && (
                             <button
                               type="button"
@@ -2181,10 +2181,10 @@ export default function VideoPage() {
                                 setFaceProcessingImageUrl(img);
                                 setFaceProcessingImageIndex(idx);
                               }}
-                              className="bg-emerald-600 hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-40 p-0.5 rounded transition-colors"
+                              className="flex !h-5 !w-5 !min-h-5 !min-w-5 items-center justify-center rounded-md border border-white/25 bg-[#536644]/90 p-0 shadow-sm transition-colors hover:bg-[#657a52] disabled:cursor-not-allowed disabled:opacity-40"
                               title={locallyProcessedImages.has(img) ? '该图片已完成人脸拆分' : '本地人脸拆分'}
                             >
-                              <ScanFace className="w-3 h-3 text-white" />
+                              <ScanFace className="w-2.5 h-2.5 text-white" />
                             </button>
                           )}
                           <button
@@ -2194,10 +2194,10 @@ export default function VideoPage() {
                               setSlicingImageUrl(img);
                               setSlicingImageIndex(idx);
                             }}
-                            className="bg-indigo-600 hover:bg-indigo-500 p-0.5 rounded transition-colors"
+                            className="flex !h-5 !w-5 !min-h-5 !min-w-5 items-center justify-center rounded-md border border-white/25 bg-[#8f4a31]/90 p-0 shadow-sm transition-colors hover:bg-[#a85c3d]"
                             title="智能切分拼图"
                           >
-                            <Scissors className="w-3 h-3 text-white" />
+                            <Scissors className="w-2.5 h-2.5 text-white" />
                           </button>
                         </div>
                       </div>
