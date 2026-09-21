@@ -19,6 +19,7 @@ export const SI_YUE_TIAN_IMAGE_TO_IMAGE_MODELS = new Set<SiYueTianImageModel>([
 ]);
 
 export const SI_YUE_TIAN_IMAGE_PRICE = 0.05;
+export const SI_YUE_TIAN_IMAGE_CONTENT_BASE_URL = 'https://llm.domie.studio';
 
 const IMAGE_MODEL_SET = new Set<string>(SI_YUE_TIAN_IMAGE_MODELS);
 const RETRYABLE_FAILURE = /未返回图片地址|temporar(?:ily|y) unavailable|system cpu overloaded|cpu overloaded|system overloaded|system busy|server busy|service unavailable|too many requests|rate[ -]?limit|HTTP\s*(?:429|502|503|504)/i;
@@ -86,9 +87,23 @@ export type SiYueTianImageInput = {
 
 export type SiYueTianImageResult = {
   imageUrl: string;
+  reportedImageUrl: string;
   taskId: string;
   raw: any;
 };
+
+/**
+ * The image task API and the binary content API use different hosts. The
+ * /outputs URL reported by the task API is masked in production and resolves
+ * to the gateway HTML shell, while this authenticated endpoint returns the
+ * actual image bytes.
+ */
+export function siYueTianImageContentUrl(
+  taskId: string,
+  contentBaseUrl = SI_YUE_TIAN_IMAGE_CONTENT_BASE_URL,
+): string {
+  return `${contentBaseUrl.replace(/\/+$/, '')}/v1/videos/${encodeURIComponent(taskId)}/content`;
+}
 
 function abortError(message: string): Error {
   const error = new Error(message);
@@ -170,9 +185,13 @@ async function runOnce(input: SiYueTianImageInput): Promise<SiYueTianImageResult
     const progress = Math.max(0, Math.min(100, Number.parseInt(String(task.progress || '0'), 10) || 0));
     input.onProgress?.(progress, status);
     if (status === 'succeeded') {
-      const imageUrl = String(task?.result?.image_url || task?.result?.url || '');
-      if (!imageUrl) throw new Error('四月天图片任务成功但未返回图片地址');
-      return { imageUrl, taskId, raw: task };
+      const reportedImageUrl = String(task?.result?.image_url || task?.result?.url || '');
+      return {
+        imageUrl: siYueTianImageContentUrl(taskId),
+        reportedImageUrl,
+        taskId,
+        raw: task,
+      };
     }
     if (status === 'failed') throw upstreamError(task, '四月天图片生成失败');
     await sleep(pollIntervalMs);

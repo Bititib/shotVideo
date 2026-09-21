@@ -8,6 +8,10 @@ import { eq } from 'drizzle-orm';
 import { activePolls, enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
 import { ChannelService } from '../services/channelService.js';
 import { localizeGeneratedImage } from './imageGen.js';
+import {
+  isSiYueTianImageChannel,
+  siYueTianImageContentUrl,
+} from '../services/siYueTianImageAdapter.js';
 
 const router = Router();
 
@@ -186,7 +190,9 @@ router.post('/:id/recover-image', async (req: AuthRequest, res: Response) => {
         if (status && status !== 'succeeded' && status !== 'completed' && status !== 'success') {
           throw new Error(status === 'failed' ? '上游任务已失败' : `上游任务仍在生成（${status}）`);
         }
-        const sourceUrl = String(body?.result?.image_url || body?.result?.url || body?.data?.[0]?.url || '');
+        const sourceUrl = isSiYueTianImageChannel(channel, item.modelId)
+          ? siYueTianImageContentUrl(taskId)
+          : String(body?.result?.image_url || body?.result?.url || body?.data?.[0]?.url || '');
         if (!sourceUrl) throw new Error('上游任务没有返回图片地址');
         recoveredUrls.push(await localizeGeneratedImage(sourceUrl, `recovered_image_${contentId}_${index}`, req, channel, { relative: true }));
       } catch (error: any) {

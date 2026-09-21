@@ -48,9 +48,9 @@ describe('image download ownership metadata', () => {
       undefined,
       { relative: true },
     );
-    const filePath = path.join(process.cwd(), 'data', url.replace(/^\//, ''));
+    const filePath = path.join(process.cwd(), 'data', url.replace(/^\/api\//, ''));
     try {
-      expect(url).toMatch(/^\/uploads\/relative_history_test_/);
+      expect(url).toMatch(/^\/api\/uploads\/relative_history_test_/);
       expect(fs.readFileSync(filePath).toString()).toBe('hello');
     } finally {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
@@ -60,7 +60,7 @@ describe('image download ownership metadata', () => {
   it('downloads a protected upstream image with the matching channel token', async () => {
     const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       expect(init?.headers).toMatchObject({ Authorization: 'Bearer channel-secret' });
-      return new Response(new Uint8Array([137, 80, 78, 71]), {
+      return new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), {
         status: 200,
         headers: { 'content-type': 'image/png' },
       });
@@ -83,10 +83,56 @@ describe('image download ownership metadata', () => {
         expect.objectContaining({ headers: { Authorization: 'Bearer channel-secret' } }),
       );
       expect(url).toMatch(/^https:\/\/app\.example\.com\/uploads\/api_siyuetian_task-123_/);
-      expect(fs.readFileSync(filePath)).toEqual(Buffer.from([137, 80, 78, 71]));
+      expect(fs.readFileSync(filePath)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
     } finally {
       vi.unstubAllGlobals();
       if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+  });
+
+  it('sends the channel token to the verified Siyuetian content host', async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer channel-secret' });
+      return new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    let filePath = '';
+    try {
+      const url = await localizeGeneratedImage(
+        'https://llm.domie.studio/v1/videos/task_1/content',
+        'siyuetian_content_test',
+        { protocol: 'https', headers: {}, get: () => 'app.example.com' } as any,
+        { baseUrl: 'https://llm.chre3.com', apiKey: 'channel-secret' },
+      );
+      filePath = path.join(process.cwd(), 'data/uploads', path.basename(new URL(url).pathname));
+      expect(fetchMock).toHaveBeenCalledWith(
+        new URL('https://llm.domie.studio/v1/videos/task_1/content'),
+        expect.objectContaining({ headers: { Authorization: 'Bearer channel-secret' } }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+  });
+
+  it('rejects an HTML gateway page instead of saving it as an image', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<!doctype html><html></html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html; charset=utf-8' },
+    })));
+
+    try {
+      await expect(localizeGeneratedImage(
+        'https://images.example.com/outputs/missing.png',
+        'invalid_image_test',
+        { protocol: 'https', headers: {}, get: () => 'app.example.com' } as any,
+      )).rejects.toThrow('不是有效图片');
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 });

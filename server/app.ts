@@ -69,6 +69,9 @@ export async function createApp() {
   // index.html is returned with HTTP 200 and downstream image decoders report
   // the misleading error "unsupported image format".
   app.use('/uploads', express.static(uploadDir, { fallthrough: false }));
+  // Some production reverse proxies forward only /api and not /uploads.
+  // Keep an equivalent public alias under /api so generated images are always reachable.
+  app.use('/api/uploads', express.static(uploadDir, { fallthrough: false }));
 
   // OpenAI 兼容代理层（不走 /api 前缀）
   app.use('/v1', v1Routes);

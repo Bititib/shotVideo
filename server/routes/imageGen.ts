@@ -16,6 +16,7 @@ import {
   generateSiYueTianImage,
   isSiYueTianImageChannel,
   isSiYueTianImageModel,
+  SI_YUE_TIAN_IMAGE_CONTENT_BASE_URL,
 } from '../services/siYueTianImageAdapter.js';
 
 const router = Router();
@@ -125,6 +126,15 @@ function imageExtension(contentType: string, sourceUrl: string): string {
   return 'png';
 }
 
+function detectedImageExtension(buffer: Buffer): string | null {
+  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'png';
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'jpg';
+  if (buffer.length >= 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return 'webp';
+  if (buffer.length >= 6 && ['GIF87a', 'GIF89a'].includes(buffer.subarray(0, 6).toString('ascii'))) return 'gif';
+  if (buffer.length >= 12 && ['avif', 'avis'].includes(buffer.subarray(8, 12).toString('ascii'))) return 'avif';
+  return null;
+}
+
 export async function localizeGeneratedImage(
   sourceUrl: string,
   prefix: string,
@@ -136,13 +146,20 @@ export async function localizeGeneratedImage(
   const siteBase = publicBaseUrl(req);
   if (sourceUrl.startsWith('data:')) {
     const publicUrl = convertBase64ToPublicUrl(sourceUrl, prefix, req);
-    return options?.relative ? new URL(publicUrl).pathname : publicUrl;
+    return options?.relative ? new URL(publicUrl).pathname.replace(/^\/uploads\//, '/api/uploads/') : publicUrl;
   }
-  if (sourceUrl.startsWith('/uploads/')) return options?.relative ? sourceUrl : `${siteBase}${sourceUrl}`;
+  if (sourceUrl.startsWith('/api/uploads/')) {
+    return options?.relative ? sourceUrl : `${siteBase}${sourceUrl.replace(/^\/api/, '')}`;
+  }
+  if (sourceUrl.startsWith('/uploads/')) {
+    return options?.relative ? sourceUrl.replace(/^\/uploads\//, '/api/uploads/') : `${siteBase}${sourceUrl}`;
+  }
   try {
     const existing = new URL(sourceUrl);
-    if (existing.pathname.startsWith('/uploads/') && existing.origin === new URL(siteBase).origin) {
-      return options?.relative ? existing.pathname : existing.toString();
+    if ((existing.pathname.startsWith('/uploads/') || existing.pathname.startsWith('/api/uploads/'))
+      && existing.origin === new URL(siteBase).origin) {
+      const pathname = existing.pathname.replace(/^\/api\/uploads\//, '/uploads/');
+      return options?.relative ? pathname.replace(/^\/uploads\//, '/api/uploads/') : `${siteBase}${pathname}`;
     }
   } catch { /* resolve relative upstream URLs below */ }
 
@@ -151,7 +168,12 @@ export async function localizeGeneratedImage(
   const headers: Record<string, string> = {};
   if (channel?.apiKey && channel.baseUrl) {
     try {
-      if (new URL(channel.baseUrl).origin === absoluteSource.origin) {
+      const channelOrigin = new URL(channel.baseUrl).origin;
+      const authorizedOrigins = new Set([channelOrigin]);
+      if (isSiYueTianImageChannel(channel)) {
+        authorizedOrigins.add(new URL(SI_YUE_TIAN_IMAGE_CONTENT_BASE_URL).origin);
+      }
+      if (authorizedOrigins.has(absoluteSource.origin)) {
         headers.Authorization = `Bearer ${channel.apiKey}`;
       }
     } catch { /* signed CDN URLs generally require no channel header */ }
@@ -165,15 +187,20 @@ export async function localizeGeneratedImage(
   const contentType = response.headers.get('content-type') || 'application/octet-stream';
   const buffer = Buffer.from(await response.arrayBuffer());
   if (buffer.length === 0) throw new Error('上游图片内容为空');
+  const detectedExtension = detectedImageExtension(buffer);
+  if (!detectedExtension) {
+    const preview = buffer.subarray(0, 80).toString('utf8').replace(/\s+/g, ' ').trim();
+    throw new Error(`上游返回的不是有效图片 (Content-Type: ${contentType}${preview ? `, 内容: ${preview.slice(0, 60)}` : ''})`);
+  }
 
-  const ext = imageExtension(contentType, absoluteSource.toString());
+  const ext = detectedExtension || imageExtension(contentType, absoluteSource.toString());
   const safePrefix = prefix.replace(/[^a-zA-Z0-9_-]/g, '_');
   const filename = `${safePrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const uploadDir = path.join(process.cwd(), 'data/uploads');
   if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
   await fs.promises.writeFile(path.join(uploadDir, filename), buffer);
   const localUrl = `/uploads/${filename}`;
-  return options?.relative ? localUrl : `${siteBase}${localUrl}`;
+  return options?.relative ? localUrl.replace(/^\/uploads\//, '/api/uploads/') : `${siteBase}${localUrl}`;
 }
 
 /** Authenticated download proxy so cross-origin image URLs are saved instead of opened. */

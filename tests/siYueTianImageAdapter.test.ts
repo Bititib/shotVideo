@@ -6,6 +6,7 @@ import {
   normalizeSiYueTianResolution,
   SI_YUE_TIAN_IMAGE_MODELS,
   SI_YUE_TIAN_IMAGE_TO_IMAGE_MODELS,
+  siYueTianImageContentUrl,
   siYueTianAspectRatioFromSize,
 } from '../server/services/siYueTianImageAdapter.js';
 
@@ -55,7 +56,11 @@ describe('四月天异步图片适配器', () => {
       onProgress: value => progress.push(value),
     });
 
-    expect(result).toMatchObject({ taskId: 'task_1', imageUrl: '/outputs/image.png' });
+    expect(result).toMatchObject({
+      taskId: 'task_1',
+      imageUrl: 'https://llm.domie.studio/v1/videos/task_1/content',
+      reportedImageUrl: '/outputs/image.png',
+    });
     expect(submitted).toEqual(['task_1']);
     expect(progress).toEqual([30, 100]);
     expect(fetchImpl).toHaveBeenNthCalledWith(1, 'https://llm.chre3.com/v1/images/generations', expect.objectContaining({
@@ -103,7 +108,11 @@ describe('四月天异步图片适配器', () => {
       onRetry: (...args) => retries.push(args),
     });
 
-    expect(result).toMatchObject({ taskId: 'task_retry', imageUrl: '/outputs/retry.png' });
+    expect(result).toMatchObject({
+      taskId: 'task_retry',
+      imageUrl: 'https://llm.domie.studio/v1/videos/task_retry/content',
+      reportedImageUrl: '/outputs/retry.png',
+    });
     expect(fetchImpl).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledWith(10_000);
     expect(retries).toEqual([[2, 3, 10_000, 'system cpu overloaded (current: 98.9%, threshold: 90%)']]);
@@ -112,6 +121,7 @@ describe('四月天异步图片适配器', () => {
   });
 
   it('规范化兼容尺寸和分辨率', () => {
+    expect(siYueTianImageContentUrl('task_a/b')).toBe('https://llm.domie.studio/v1/videos/task_a%2Fb/content');
     expect(siYueTianAspectRatioFromSize('1280x720')).toBe('16:9');
     expect(siYueTianAspectRatioFromSize('1024x1024')).toBe('1:1');
     expect(normalizeSiYueTianResolution('8K')).toBe('2K');
