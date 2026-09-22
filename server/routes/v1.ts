@@ -18,7 +18,6 @@ import {
   hmStudioCreateUrl,
   hmStudioTaskUrl,
   isHmStudioChannel,
-  normalizeHmStudioFace,
   normalizeHmStudioTask,
   waitForHmStudioTask,
 } from '../services/hmStudioAdapter.js';
@@ -77,6 +76,12 @@ import {
   siYueTianAspectRatioFromSize,
 } from '../services/siYueTianImageAdapter.js';
 import {
+  generateMingFeiImage,
+  isMingFeiImageChannel,
+  isMingFeiImageModel,
+  normalizeMingFeiResolution,
+} from '../services/mingFeiImageAdapter.js';
+import {
   buildWxHaidiYueVideoPayload,
   isWxHaidiYueChannel,
   resolveWxHaidiYueFaceSplit,
@@ -98,6 +103,7 @@ import { enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
 import { localizeGeneratedImage } from './imageGen.js';
 import { withVideoFailureMetadata } from '../services/videoFailureService.js';
 import { ContentService } from '../services/contentService.js';
+import { preferredVideoDownloadPath } from '../services/videoLocalizationService.js';
 import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
 
 const router = Router();
@@ -503,6 +509,7 @@ export function saveApiImageAssets(options: {
       || options.responseBody?.taskId
       || '',
     ).trim();
+    const upstreamImageUrl = String(item.upstream_url || item.upstreamUrl || item.url || '').trim();
     const inserted = db.insert(contents).values({
       userId: options.token.userId || 1,
       orgId: null,
@@ -527,6 +534,8 @@ export function saveApiImageAssets(options: {
         channelName: options.channel?.name || '',
         actualChannel: options.channel?.type || '',
         upstreamModel: options.upstreamModel || options.model,
+        upstreamImageUrl,
+        upstreamImageUrls: upstreamImageUrl ? [upstreamImageUrl] : [],
         upstreamTaskId,
         taskId: upstreamTaskId,
       }),
@@ -899,15 +908,20 @@ router.post('/images/generations', async (req: Request, res: Response) => {
     return res.status(403).json({ error: { message: `Token has no access to model ${model}`, type: 'permission_error' } });
   }
 
-  const channel = (isSiYueTianImageModel(model)
+  const channel = (isMingFeiImageModel(model)
+    ? ChannelService.findChannelsForModel(model).find(candidate => isMingFeiImageChannel(candidate))
+    : isSiYueTianImageModel(model)
     ? ChannelService.findChannelsForModel(model).find(candidate => isSiYueTianImageChannel(candidate, model))
     : null) || ChannelService.findChannelForModel(model);
   if (!channel) {
     return res.status(404).json({ error: { message: `No available channel for model ${model}`, type: 'not_found_error' } });
   }
 
-  const unitCost = PricingService.calculateCost(model, 0, 0);
-  const totalCost = Math.round(unitCost * count * 100) / 100;
+  const billingResolution = isMingFeiImageModel(model)
+    ? normalizeMingFeiResolution(otherParams.output_resolution || otherParams.resolution)
+    : String(otherParams.resolution || '');
+  const unitCost = PricingService.quote(model, { resolution: billingResolution, count: 1 }, false).cost;
+  const totalCost = Math.round(PricingService.quote(model, { resolution: billingResolution, count }, false).cost * 100) / 100;
 
   const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, totalCost);
   if (!sufficient) {
@@ -919,6 +933,66 @@ router.post('/images/generations', async (req: Request, res: Response) => {
   const upstreamUrl = `${baseUrl}/v1/images/generations`;
 
   try {
+    if (isMingFeiImageChannel(channel) && isMingFeiImageModel(model)) {
+      const referenceImages = Array.isArray(otherParams.reference_images)
+        ? otherParams.reference_images.filter((value: unknown) => typeof value === 'string' && value)
+        : [];
+      const settled = await Promise.allSettled(Array.from({ length: count }, () => generateMingFeiImage({
+        baseUrl,
+        apiKey: channel.apiKey,
+        prompt,
+        aspectRatio: otherParams.aspect_ratio || siYueTianAspectRatioFromSize(size),
+        resolution: otherParams.output_resolution || otherParams.resolution,
+        referenceImages,
+        quality: otherParams.quality,
+      })));
+      const generated = settled
+        .filter((item): item is PromiseFulfilledResult<Awaited<ReturnType<typeof generateMingFeiImage>>> => item.status === 'fulfilled');
+      const localized = await Promise.allSettled(generated.map(async item => ({
+        url: await localizeGeneratedImage(item.value.imageUrl, `api_mingfei_${item.value.taskId}`, req, channel),
+        task_id: item.value.taskId,
+        upstream_url: item.value.reportedImageUrl || item.value.imageUrl,
+      })));
+      const completed = localized
+        .filter((item): item is PromiseFulfilledResult<{ url: string; task_id: string; upstream_url: string }> => item.status === 'fulfilled')
+        .map(item => item.value);
+      if (completed.length === 0) {
+        const localizationFailure = localized.find((item): item is PromiseRejectedResult => item.status === 'rejected');
+        const generationFailure = settled.find((item): item is PromiseRejectedResult => item.status === 'rejected');
+        throw localizationFailure?.reason || generationFailure?.reason || new Error('MingFei 图片生成失败');
+      }
+
+      const actualCost = Math.round(unitCost * completed.length * 100) / 100;
+      const responseBody = {
+        created: Math.floor(Date.now() / 1000),
+        data: completed.map(({ upstream_url: _upstreamUrl, ...item }) => item),
+      };
+      const durationMs = Date.now() - startTime;
+      deductTokenOrUserBalance(token, actualCost, model);
+      db.insert(apiLogs).values({
+        tokenId: token.id, channelId: channel.id, model, upstreamModel,
+        cost: actualCost, durationMs, status: 'success', clientIp,
+      }).run();
+      try {
+        saveApiImageAssets({
+          token,
+          responseBody: { ...responseBody, data: completed },
+          model,
+          prompt,
+          size,
+          responseFormat: response_format,
+          outputFormat: otherParams.output_format,
+          operation: 'generation',
+          totalCost: actualCost,
+          channel: { ...channel, type: 'mingfei' },
+          upstreamModel,
+        });
+      } catch (assetError) {
+        console.error('[v1/images/generations] MingFei 图片资产保存失败:', assetError);
+      }
+      return res.json(responseBody);
+    }
+
     if (isHmStudioChannel(channel)) {
       const queueUserKey = token.userId ? `user:${token.userId}` : `token:${token.id}`;
       hmStudioQueue.assertCanEnqueue(queueUserKey, count);
@@ -1017,6 +1091,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
           channel,
         ),
         task_id: item.value.taskId,
+        upstream_url: item.value.reportedImageUrl || item.value.imageUrl,
       })));
       localized.forEach((item, index) => {
         if (item.status === 'rejected') {
@@ -1027,7 +1102,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
         }
       });
       const completed = localized
-        .filter((item): item is PromiseFulfilledResult<{ url: string; task_id: string }> => item.status === 'fulfilled')
+        .filter((item): item is PromiseFulfilledResult<{ url: string; task_id: string; upstream_url: string }> => item.status === 'fulfilled')
         .map(item => item.value);
       if (completed.length === 0) {
         const localizationFailure = localized.find((item): item is PromiseRejectedResult => item.status === 'rejected');
@@ -1036,7 +1111,10 @@ router.post('/images/generations', async (req: Request, res: Response) => {
       }
 
       const actualCost = Math.round(unitCost * completed.length * 100) / 100;
-      const responseBody = { created: Math.floor(Date.now() / 1000), data: completed };
+      const responseBody = {
+        created: Math.floor(Date.now() / 1000),
+        data: completed.map(({ upstream_url: _upstreamUrl, ...item }) => item),
+      };
       const durationMs = Date.now() - startTime;
       deductTokenOrUserBalance(token, actualCost, model);
       db.insert(apiLogs).values({
@@ -1046,7 +1124,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
       try {
         saveApiImageAssets({
           token,
-          responseBody,
+          responseBody: { ...responseBody, data: completed },
           model,
           prompt,
           size,
@@ -1937,10 +2015,8 @@ async function handleVideoCreation(req: Request, res: Response) {
         face_split: isWxHaidiYueChannel(channel)
           ? (model === WX_HAIDIYUE_FACE_SPLIT_MODEL ? true : resolveWxHaidiYueFaceSplit(channel, body.face_split))
           : undefined,
-        face: isHmStudioChannel(channel) ? false : undefined,
-        face_processing: isHmStudioChannel(channel)
-          ? normalizeHmStudioFace(body.face_processing ?? body.face, true)
-          : undefined,
+        face: isHmStudioChannel(channel) ? true : undefined,
+        face_processing: isHmStudioChannel(channel) ? false : undefined,
         function_mode: body.function_mode,
         upstream_channel: body.channel,
         tokenId: token.id,
@@ -2056,7 +2132,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         lastFrame: body.end_frame_url || body.last_frame_url,
         functionMode: body.function_mode,
         upstreamChannel: body.channel,
-        face: false,
+        face: true,
       });
       const headers: Record<string, string> = {};
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
@@ -2669,8 +2745,9 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
 
   if (isLocalFile) {
     if (fs.existsSync(localFilePath)) {
-      res.setHeader('Content-Type', path.extname(localFilePath).toLowerCase() === '.webm' ? 'video/webm' : 'video/mp4');
-      return res.sendFile(localFilePath);
+      const downloadPath = preferredVideoDownloadPath(localFilePath);
+      res.setHeader('Content-Type', path.extname(downloadPath).toLowerCase() === '.webm' ? 'video/webm' : 'video/mp4');
+      return res.sendFile(downloadPath);
     }
   }
 
@@ -2710,8 +2787,9 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
       metadata: JSON.stringify(metadata),
     }).where(eq(contents.id, contentId)).run();
 
-    res.setHeader('Content-Type', path.extname(localizedPath).toLowerCase() === '.webm' ? 'video/webm' : 'video/mp4');
-    return res.sendFile(localizedPath);
+    const downloadPath = preferredVideoDownloadPath(localizedPath);
+    res.setHeader('Content-Type', path.extname(downloadPath).toLowerCase() === '.webm' ? 'video/webm' : 'video/mp4');
+    return res.sendFile(downloadPath);
   } catch (err: any) {
     res.status(502).send(`Video localization failed: ${err.message}`);
   }

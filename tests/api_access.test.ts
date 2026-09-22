@@ -141,6 +141,8 @@ describe('OpenAI-compatible API access', () => {
         channelName: '4月天 渠道',
         actualChannel: 'siyuetian',
         upstreamModel: 'gpt-image-2',
+        upstreamImageUrl: 'https://example.com/a.png',
+        upstreamImageUrls: ['https://example.com/a.png'],
         upstreamTaskId: 'task_image_a',
         taskId: 'task_image_a',
       });

@@ -1,4 +1,5 @@
 const WAN_RESOLUTIONS = ['480p', '720p', '1080p'];
+const MINGFEI_RESOLUTIONS = ['1K', '2K', '4K'];
 
 export function isResolutionPriceKey(key: string): boolean {
   return /^(?:\d{3,4}p|\d+k)$/i.test(String(key || '').trim());
@@ -20,6 +21,7 @@ export function pricingResolutionFields(
   const existingKeys = Object.keys(extraParams).filter(isResolutionPriceKey);
   const keys = sortResolutionKeys(Array.from(new Set([
     ...(modelPattern === 'wan3.0-video' || modelPattern === 'wan3.0-video-prime' ? WAN_RESOLUTIONS : []),
+    ...(modelPattern === 'gpt-image-2-mingfei' ? MINGFEI_RESOLUTIONS : []),
     ...existingKeys,
   ])));
   const values: Record<string, string | number> = Object.fromEntries(keys.map(key => {

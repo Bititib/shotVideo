@@ -473,6 +473,8 @@ export default function ChannelsPage() {
                           ? 'https://snumom.com'
                           : e.target.value === 'miaowu' && !edit.baseUrl
                             ? MIAOWU_BASE_URL
+                          : e.target.value === 'mingfei' && !edit.baseUrl
+                            ? 'https://mingfeikeji.qzz.io'
                           : edit.baseUrl,
                     })}
                       className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
@@ -481,6 +483,7 @@ export default function ChannelsPage() {
                       <option value="wx-haidiyue">wx-海底月（sd2.5 人脸拆分）</option>
                       <option value="snumom">snumom（视频异步任务）</option>
                       <option value="miaowu">喵呜 API（视频异步任务）</option>
+                      <option value="mingfei">MingFei（GPT Image 2 异步任务）</option>
                       <option value="gemini">Gemini（分析服务）</option>
                       <option value="grok2api">Grok2API（视频/图片生成）</option>
                       <option value="custom">自定义</option>

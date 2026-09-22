@@ -22,6 +22,14 @@ describe('pricing resolution fields', () => {
     });
   });
 
+  it('always exposes MingFei 1K, 2K and 4K prices independently', () => {
+    expect(pricingResolutionFields('gpt-image-2-mingfei', { category: 'image' })).toEqual({
+      keys: ['1K', '2K', '4K'],
+      values: { '1K': '', '2K': '', '4K': '' },
+      otherText: '',
+    });
+  });
+
   it('keeps non-resolution extras in the advanced field', () => {
     expect(pricingResolutionFields('custom-video', {
       category: 'video',

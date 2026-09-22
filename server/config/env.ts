@@ -15,6 +15,7 @@ export const env = {
   WX_HAIDIYUE_IMAGE_BASE_URL: process.env.WX_HAIDIYUE_IMAGE_BASE_URL || '',
   NEWTOKEN_BASE_URL: process.env.NEWTOKEN_BASE_URL || 'https://newtoken.club',
   NEWTOKEN_API_KEY: process.env.NEWTOKEN_API_KEY || '',
+  MINGFEI_API_KEY: process.env.MINGFEI_API_KEY || '',
   SNUMOM_BASE_URL: process.env.SNUMOM_BASE_URL || 'https://snumom.com',
   SNUMOM_API_KEY: process.env.SNUMOM_API_KEY || '',
   VIDEO_TASK_POLL_TIMEOUT_MS: parseInt(process.env.VIDEO_TASK_POLL_TIMEOUT_MS || '1800000', 10),

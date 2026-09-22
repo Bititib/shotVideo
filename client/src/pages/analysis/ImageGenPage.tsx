@@ -13,6 +13,7 @@ interface GeneratedImage {
   model: string;
   createdAt: Date;
   aspectRatio: string;
+  missing?: boolean;
 }
 
 const ASPECT_RATIOS = [
@@ -35,6 +36,18 @@ const COUNT_OPTIONS = [
 const PIDOI_QUALITY_OPTIONS = [
   { value: 'high', label: '原生 4K' },
   { value: 'low', label: '快速 1K' },
+];
+
+const MINGFEI_QUALITY_OPTIONS = [
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+];
+
+const MINGFEI_RESOLUTION_OPTIONS = [
+  { value: '1K', label: '1K' },
+  { value: '2K', label: '2K' },
+  { value: '4K', label: '4K' },
 ];
 
 async function downloadImageFile(event: React.MouseEvent, url: string, filename: string) {
@@ -161,6 +174,8 @@ export default function ImageGenPage() {
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState('1:1');
   const [pidoiQuality, setPidoiQuality] = useState<'low' | 'high'>('high');
+  const [mingFeiQuality, setMingFeiQuality] = useState<'low' | 'medium' | 'high'>('medium');
+  const [mingFeiResolution, setMingFeiResolution] = useState<'1K' | '2K' | '4K'>('2K');
   const [imageCount, setImageCount] = useState(1);
   const [activeBatches, setActiveBatches] = useState<ActiveImageBatch[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -173,6 +188,7 @@ export default function ImageGenPage() {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const batchControllersRef = useRef<Map<string, AbortController>>(new Map());
   const recoveringHistoryIdsRef = useRef<Set<number>>(new Set());
+  const [recoveringHistoryIds, setRecoveringHistoryIds] = useState<Set<number>>(() => new Set());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -341,7 +357,10 @@ export default function ImageGenPage() {
     const batchAspectRatio = aspectRatio;
     const batchCount = imageCount;
     const batchReferences = [...referenceImages];
-    const batchQuality = batchModel === 'gpt-image-2' ? pidoiQuality : undefined;
+    const batchQuality = batchModel === 'gpt-image-2'
+      ? pidoiQuality
+      : batchModel === 'gpt-image-2-mingfei' ? mingFeiQuality : undefined;
+    const batchResolution = batchModel === 'gpt-image-2-mingfei' ? mingFeiResolution : undefined;
 
     setActiveBatches(previous => [...previous, {
       id: batchId,
@@ -365,7 +384,9 @@ export default function ImageGenPage() {
         prompt: batchPrompt,
         model: batchModel,
         aspect_ratio: batchAspectRatio,
-        resolution: batchQuality === 'high' ? '4K' : (batchQuality === 'low' ? '1K' : undefined),
+        resolution: batchModel === 'gpt-image-2'
+          ? (batchQuality === 'high' ? '4K' : '1K')
+          : batchResolution,
         quality: batchQuality,
         n: batchCount,
         reference_images: batchReferences.length > 0 ? batchReferences : undefined,
@@ -441,7 +462,7 @@ export default function ImageGenPage() {
       },
     );
     batchControllersRef.current.set(batchId, ctrl);
-  }, [prompt, selectedModel, aspectRatio, pidoiQuality, imageCount, activeBatches.length, referenceImages, guard]);
+  }, [prompt, selectedModel, aspectRatio, pidoiQuality, mingFeiQuality, mingFeiResolution, imageCount, activeBatches.length, referenceImages, guard]);
 
   const handleCancelBatch = useCallback((batchId: string) => {
     batchControllersRef.current.get(batchId)?.abort();
@@ -453,6 +474,7 @@ export default function ImageGenPage() {
     const contentId = Number.parseInt(String(historyItem.id).split('_')[0], 10);
     if (!Number.isSafeInteger(contentId) || contentId <= 0 || recoveringHistoryIdsRef.current.has(contentId)) return;
     recoveringHistoryIdsRef.current.add(contentId);
+    setRecoveringHistoryIds(previous => new Set(previous).add(contentId));
     try {
       const recovered: any = await contentApi.recoverImage(contentId);
       const imageUrls = Array.isArray(recovered?.imageUrls) ? recovered.imageUrls.filter(Boolean) : [];
@@ -462,11 +484,34 @@ export default function ImageGenPage() {
         const [rawId, suffix = 'main'] = String(item.id).split('_');
         if (Number.parseInt(rawId, 10) !== contentId) return [item];
         const replacement = suffix === 'main' ? primaryUrl : imageUrls[Number.parseInt(suffix, 10)];
-        return replacement ? [{ ...item, imageUrl: replacement }] : [];
+        return replacement ? [{ ...item, imageUrl: replacement, missing: false }] : [];
       }));
       setError(null);
     } catch (recoveryError: any) {
       setError(recoveryError?.message || '历史图片已失效，重新获取失败');
+    } finally {
+      recoveringHistoryIdsRef.current.delete(contentId);
+      setRecoveringHistoryIds(previous => {
+        const next = new Set(previous);
+        next.delete(contentId);
+        return next;
+      });
+    }
+  }, []);
+
+  const markHistoryImageMissing = useCallback((historyId: string) => {
+    setHistory(previous => previous.map(item => item.id === historyId ? { ...item, missing: true } : item));
+  }, []);
+
+  const deleteHistoryRecord = useCallback(async (historyItem: GeneratedImage) => {
+    const contentId = Number.parseInt(String(historyItem.id).split('_')[0], 10);
+    if (!Number.isSafeInteger(contentId) || contentId <= 0) return;
+    if (!window.confirm('确定要删除这条图片生成记录吗？')) return;
+    try {
+      await contentApi.delete(contentId);
+      setHistory(previous => previous.filter(item => Number.parseInt(String(item.id).split('_')[0], 10) !== contentId));
+    } catch {
+      setError('删除失败');
     }
   }, []);
 
@@ -480,6 +525,7 @@ export default function ImageGenPage() {
   const generatedImageUrls = new Set(generatedImages);
   const visibleHistory = history.filter(item => !generatedImageUrls.has(item.imageUrl));
   const hasCurrentWork = generatedImages.length > 0 || activeBatches.length > 0;
+  const selectedMingFeiRate = models.find(model => model.id === 'gpt-image-2-mingfei')?.resolutionPrices?.[mingFeiResolution];
 
   return (
     <div className="imagegen-page flex flex-col lg:flex-row min-h-full lg:h-full">
@@ -591,8 +637,24 @@ export default function ImageGenPage() {
               <div className="flex flex-wrap gap-3 items-start">
                 {visibleHistory.map((h) => (
                   <div key={h.id} className="group relative rounded-xl overflow-hidden border border-white/5 hover:border-pink-500/40 transition-all cursor-pointer bg-black/30" onClick={() => setLightboxUrl(h.imageUrl)}>
-                    <img src={h.imageUrl} alt="历史图片" className="block h-[180px] w-auto object-contain" loading="lazy" onError={() => void recoverHistoryImage(h)} />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                    {h.missing ? (
+                      <div className="flex h-[180px] w-[180px] flex-col items-center justify-center gap-3 bg-red-500/5 px-4 text-center" onClick={event => event.stopPropagation()}>
+                        <AlertCircle className="h-6 w-6 text-red-400" />
+                        <p className="text-xs font-medium text-red-300">文件已丢失</p>
+                        <div className="flex gap-2">
+                          <button type="button" disabled={recoveringHistoryIds.has(Number.parseInt(String(h.id).split('_')[0], 10))}
+                            onClick={() => void recoverHistoryImage(h)}
+                            className="rounded-lg bg-pink-500/15 px-2.5 py-1.5 text-[11px] text-pink-300 hover:bg-pink-500/25 disabled:opacity-50">
+                            {recoveringHistoryIds.has(Number.parseInt(String(h.id).split('_')[0], 10)) ? '获取中…' : '重新获取'}
+                          </button>
+                          <button type="button" onClick={() => void deleteHistoryRecord(h)}
+                            className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-[11px] text-red-300 hover:bg-red-500/20">删除</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <img src={h.imageUrl} alt="历史图片" className="block h-[180px] w-auto object-contain" loading="lazy" onError={() => markHistoryImageMissing(h.id)} />
+                    )}
+                    {!h.missing && <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
                       <div className="absolute bottom-1.5 right-1.5 flex gap-1">
                         {h.prompt && (
                           <button onClick={(e) => { e.stopPropagation(); setPrompt(h.prompt); textareaRef.current?.focus(); }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white" title={`套用提示词: ${h.prompt}`}>
@@ -600,23 +662,12 @@ export default function ImageGenPage() {
                           </button>
                         )}
                         <button onClick={(e) => { e.stopPropagation(); setLightboxUrl(h.imageUrl); }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Maximize2 className="w-3 h-3" /></button>
-                        <button onClick={async (e) => {
-                          e.stopPropagation();
-                          if (window.confirm('确定要删除这条图片生成记录吗？')) {
-                            try {
-                              await contentApi.delete(h.id);
-                              setHistory(prev => prev.filter(item => item.id !== h.id));
-                            } catch (err) {
-                              console.error('Failed to delete image history:', err);
-                              alert('删除失败');
-                            }
-                          }
-                        }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-red-400" title="删除记录">
+                        <button onClick={(e) => { e.stopPropagation(); void deleteHistoryRecord(h); }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-red-400" title="删除记录">
                           <Trash2 className="w-3 h-3" />
                         </button>
                         <button type="button" onClick={(e) => downloadImageFile(e, h.imageUrl, `generated-image-${h.id}.png`)} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Download className="w-3 h-3" /></button>
                       </div>
-                    </div>
+                    </div>}
                   </div>
                 ))}
               </div>
@@ -661,6 +712,17 @@ export default function ImageGenPage() {
                 <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={ASPECT_RATIOS} prefix="比例: " />
                 {selectedModel === 'gpt-image-2' && (
                   <CustomSelect value={pidoiQuality} onChange={setPidoiQuality} options={PIDOI_QUALITY_OPTIONS} prefix="画质: " />
+                )}
+                {selectedModel === 'gpt-image-2-mingfei' && (
+                  <>
+                    <CustomSelect value={mingFeiQuality} onChange={setMingFeiQuality} options={MINGFEI_QUALITY_OPTIONS} prefix="质量: " />
+                    <CustomSelect value={mingFeiResolution} onChange={setMingFeiResolution} options={MINGFEI_RESOLUTION_OPTIONS} prefix="分辨率: " />
+                    {Number.isFinite(selectedMingFeiRate) && (
+                      <span className="rounded-lg border border-pink-500/15 bg-pink-500/10 px-2.5 py-1.5 text-[11px] text-pink-300">
+                        当前 ¥{Number(selectedMingFeiRate).toFixed(2)}/张
+                      </span>
+                    )}
+                  </>
                 )}
                 <CustomSelect value={imageCount} onChange={setImageCount} options={COUNT_OPTIONS} icon={Grid2x2} prefix="数量: " />
                 <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">

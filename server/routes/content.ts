@@ -12,6 +12,10 @@ import {
   isSiYueTianImageChannel,
   siYueTianImageContentUrl,
 } from '../services/siYueTianImageAdapter.js';
+import {
+  isMingFeiImageChannel,
+  mingFeiImageContentUrl,
+} from '../services/mingFeiImageAdapter.js';
 
 const router = Router();
 
@@ -179,7 +183,9 @@ router.post('/:id/recover-image', async (req: AuthRequest, res: Response) => {
     for (let index = 0; index < taskIds.length; index++) {
       const taskId = taskIds[index];
       try {
-        const taskUrl = `${channel.baseUrl.replace(/\/+$/, '')}/v1/images/generations/${encodeURIComponent(taskId)}`;
+        const taskUrl = isMingFeiImageChannel(channel)
+          ? `${channel.baseUrl.replace(/\/+$/, '')}/v1/videos/${encodeURIComponent(taskId)}`
+          : `${channel.baseUrl.replace(/\/+$/, '')}/v1/images/generations/${encodeURIComponent(taskId)}`;
         const upstream = await fetch(taskUrl, {
           headers: { Authorization: `Bearer ${channel.apiKey}` },
           signal: AbortSignal.timeout(60_000),
@@ -190,9 +196,11 @@ router.post('/:id/recover-image', async (req: AuthRequest, res: Response) => {
         if (status && status !== 'succeeded' && status !== 'completed' && status !== 'success') {
           throw new Error(status === 'failed' ? '上游任务已失败' : `上游任务仍在生成（${status}）`);
         }
-        const sourceUrl = isSiYueTianImageChannel(channel, item.modelId)
-          ? siYueTianImageContentUrl(taskId)
-          : String(body?.result?.image_url || body?.result?.url || body?.data?.[0]?.url || '');
+        const sourceUrl = isMingFeiImageChannel(channel)
+          ? mingFeiImageContentUrl(channel.baseUrl, taskId)
+          : isSiYueTianImageChannel(channel, item.modelId)
+            ? siYueTianImageContentUrl(taskId)
+            : String(body?.result?.image_url || body?.result?.url || body?.data?.[0]?.url || '');
         if (!sourceUrl) throw new Error('上游任务没有返回图片地址');
         recoveredUrls.push(await localizeGeneratedImage(sourceUrl, `recovered_image_${contentId}_${index}`, req, channel, { relative: true }));
       } catch (error: any) {
@@ -203,6 +211,8 @@ router.post('/:id/recover-image', async (req: AuthRequest, res: Response) => {
     // 兼容没有任务 ID 的旧记录：直接重新下载当时保存的上游地址。
     if (recoveredUrls.length === 0) {
       const legacyUrls = [...new Set([
+        ...(Array.isArray(metadata.upstreamImageUrls) ? metadata.upstreamImageUrls : []),
+        metadata.upstreamImageUrl,
         item.resultUrl,
         ...(Array.isArray(metadata.imageUrls) ? metadata.imageUrls : []),
       ].map(value => String(value || '').trim()).filter(url => /^https?:\/\//i.test(url)))];

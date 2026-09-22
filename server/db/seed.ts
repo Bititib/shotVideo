@@ -36,6 +36,13 @@ import {
   SI_YUE_TIAN_IMAGE_MODELS,
   SI_YUE_TIAN_IMAGE_PRICE,
 } from '../services/siYueTianImageAdapter.js';
+import {
+  MINGFEI_CHANNEL_TYPE,
+  MINGFEI_DEFAULT_BASE_URL,
+  MINGFEI_IMAGE_MODEL,
+  MINGFEI_IMAGE_PRICE,
+  MINGFEI_UPSTREAM_IMAGE_MODEL,
+} from '../services/mingFeiImageAdapter.js';
 
 /** 生成 sk-xxxx 格式的 Token */
 function generateTokenKey(): string {
@@ -175,6 +182,7 @@ export async function syncModelsFromAPI() {
   allVerified.push(
     { provider: 'pidoi', modelId: 'gpt-image-2', displayName: 'gpt-image-2 · Pidoi 原生 4K', description: 'Pidoi 原生 4K 文生图/图生图', capabilities: JSON.stringify(['image']) },
     { provider: 'siyuetian', modelId: 'gpt-image-2-siyuetian', displayName: 'gpt-image-2 · 四月天', description: '四月天 GPT Image 2 异步文生图/图生图', capabilities: JSON.stringify(['image']) },
+    { provider: 'mingfei', modelId: MINGFEI_IMAGE_MODEL, displayName: 'gpt-image-2 · MingFei', description: 'MingFei GPT Image 2 异步文生图/图生图', capabilities: JSON.stringify(['image']) },
     { provider: 'siyuetian', modelId: 'gpt-image-2.5-flare', displayName: 'gpt-image-2.5-flare', description: 'OpenAI GPT Image 2.5 Flare 快速通用图像（异步）', capabilities: JSON.stringify(['image']) },
     { provider: 'siyuetian', modelId: 'gpt-image-2.5-sunburst', displayName: 'gpt-image-2.5-sunburst', description: 'OpenAI GPT Image 2.5 Sunburst 高质量图像（异步）', capabilities: JSON.stringify(['image']) },
     { provider: 'siyuetian', modelId: 'nano-banana-2', displayName: 'nano-banana-2', description: 'Google Gemini 3.1 Flash 图像（异步）', capabilities: JSON.stringify(['image']) },
@@ -245,12 +253,14 @@ export async function syncModelsFromAPI() {
   ]);
   const hmStudioModelIds = new Set([HM_STUDIO_PRIMARY_VIDEO_MODEL, ...HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS]);
   const siYueTianImageModelIds = new Set<string>(SI_YUE_TIAN_IMAGE_MODELS);
+  const mingFeiImageModelIds = new Set([MINGFEI_IMAGE_MODEL]);
   const pidoiImageModelIds = new Set(['gpt-image-2']);
   allVerified = allVerified.map(model => {
     if (newTokenModelIds.has(model.modelId)) return { ...model, provider: 'newtoken' };
     if (hmStudioModelIds.has(model.modelId)) return { ...model, provider: 'hmstudio' };
     if (pidoiImageModelIds.has(model.modelId)) return { ...model, provider: 'pidoi' };
     if (siYueTianImageModelIds.has(model.modelId)) return { ...model, provider: 'siyuetian' };
+    if (mingFeiImageModelIds.has(model.modelId)) return { ...model, provider: 'mingfei' };
     return model;
   });
 
@@ -263,6 +273,7 @@ export async function syncModelsFromAPI() {
         || hmStudioModelIds.has(m.modelId)
         || pidoiImageModelIds.has(m.modelId)
         || siYueTianImageModelIds.has(m.modelId)
+        || mingFeiImageModelIds.has(m.modelId)
         || m.modelId === WX_HAIDIYUE_FACE_SPLIT_MODEL)
         && existing.provider !== m.provider;
       if (providerNeedsUpdate || existing.displayName !== m.displayName || existing.capabilities !== m.capabilities || existing.description !== (m.description || null)) {
@@ -920,7 +931,7 @@ export async function initDatabase() {
     {
       modelPattern: 'gpt-image-2',
       billingType: 'per_call',
-      inputPrice: 0.04 * IMAGE_MULTIPLIER,
+      inputPrice: 0.10,
       outputPrice: 0,
     },
     ...SI_YUE_TIAN_IMAGE_MODELS.map(modelPattern => ({
@@ -929,6 +940,13 @@ export async function initDatabase() {
       inputPrice: SI_YUE_TIAN_IMAGE_PRICE,
       outputPrice: 0,
     })),
+    {
+      modelPattern: MINGFEI_IMAGE_MODEL,
+      billingType: 'per_call',
+      inputPrice: MINGFEI_IMAGE_PRICE,
+      outputPrice: 0,
+      extraParams: JSON.stringify({ category: 'image', '1K': MINGFEI_IMAGE_PRICE, '2K': MINGFEI_IMAGE_PRICE, '4K': MINGFEI_IMAGE_PRICE }),
+    },
 
     {
       modelPattern: 'gemini-3.1-flash-image-preview',
@@ -1104,7 +1122,6 @@ export async function initDatabase() {
       try { extraParams = JSON.parse(wanRule.extraParams || '{}'); } catch { /* ignore invalid legacy JSON */ }
       db.update(modelPricing).set({
         billingType: 'per_second',
-        inputPrice: 0.14,
         extraParams: JSON.stringify({ ...extraParams, category: 'video' }),
       }).where(eq(modelPricing.id, wanRule.id)).run();
     }
@@ -1132,7 +1149,6 @@ export async function initDatabase() {
     if (sd25Rule) {
       db.update(modelPricing).set({
         billingType: 'per_call',
-        inputPrice: WX_HAIDIYUE_FACE_SPLIT_PRICE,
         outputPrice: 0,
         extraParams: JSON.stringify({ category: 'video' }),
       }).where(eq(modelPricing.id, sd25Rule.id)).run();
@@ -1164,7 +1180,6 @@ export async function initDatabase() {
       try { extraParams = JSON.parse(pricingRule.extraParams || '{}'); } catch { /* ignore invalid legacy JSON */ }
       db.update(modelPricing).set({
         billingType: 'per_call',
-        inputPrice: 5.50,
         outputPrice: 0,
         extraParams: JSON.stringify({ ...extraParams, category: 'video' }),
       }).where(eq(modelPricing.id, pricingRule.id)).run();
@@ -1184,7 +1199,6 @@ export async function initDatabase() {
     if (h3Rule) {
       db.update(modelPricing).set({
         billingType: 'per_second',
-        inputPrice: 0.18,
         outputPrice: 0,
         extraParams: JSON.stringify({ category: 'video', '768p': 0.18 }),
       }).where(eq(modelPricing.id, h3Rule.id)).run();
@@ -1238,11 +1252,12 @@ export async function initDatabase() {
         extraParams: JSON.stringify({ category: 'video' }),
       }).run();
     } else {
+      let extraParams: Record<string, any> = {};
+      try { extraParams = JSON.parse(existingPricing.extraParams || '{}'); } catch { /* ignore malformed legacy JSON */ }
       db.update(modelPricing).set({
         billingType: 'per_call',
-        inputPrice: 1.50,
         outputPrice: 0,
-        extraParams: JSON.stringify({ category: 'video' }),
+        extraParams: JSON.stringify({ ...extraParams, category: 'video' }),
       }).where(eq(modelPricing.id, existingPricing.id)).run();
     }
 
@@ -1423,8 +1438,7 @@ export async function initDatabase() {
         outputPrice: 0,
         extraParams: JSON.stringify({ category: 'image' }),
       };
-      if (existing) db.update(modelPricing).set(values).where(eq(modelPricing.id, existing.id)).run();
-      else db.insert(modelPricing).values({ modelPattern, ...values }).run();
+      if (!existing) db.insert(modelPricing).values({ modelPattern, ...values }).run();
     }
     db.insert(settings).values({
       key: siYueTianImageMigrationKey,
@@ -1449,8 +1463,7 @@ export async function initDatabase() {
         outputPrice: 0,
         extraParams: JSON.stringify({ category: 'image' }),
       };
-      if (existing) db.update(modelPricing).set(values).where(eq(modelPricing.id, existing.id)).run();
-      else db.insert(modelPricing).values({ modelPattern: pricing.modelPattern, ...values }).run();
+      if (!existing) db.insert(modelPricing).values({ modelPattern: pricing.modelPattern, ...values }).run();
     }
     db.insert(settings).values({
       key: siYueTianImageAliasMigrationKey,
@@ -1470,8 +1483,7 @@ export async function initDatabase() {
       outputPrice: 0,
       extraParams: JSON.stringify({ category: 'image' }),
     };
-    if (existing) db.update(modelPricing).set(values).where(eq(modelPricing.id, existing.id)).run();
-    else db.insert(modelPricing).values({ modelPattern: 'gpt-image-2', ...values }).run();
+    if (!existing) db.insert(modelPricing).values({ modelPattern: 'gpt-image-2', ...values }).run();
     db.insert(settings).values({
       key: pidoiImagePriceMigrationKey,
       value: '1',
@@ -1520,7 +1532,85 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 Pidoi 图片渠道出错:', err.message);
   }
 
-  // 14) MJNewAPI 渠道 - 整合所有 Seedance 系列模型
+  // 14) MingFei GPT Image 2：独立公开模型，避免与现有 Pidoi/四月天线路串线。
+  try {
+    const configuredApiKey = env.MINGFEI_API_KEY.trim();
+    const existingChannel = db.select().from(channels).all().find(channel =>
+      channel.type === MINGFEI_CHANNEL_TYPE
+      || channel.baseUrl.replace(/\/+$/, '') === MINGFEI_DEFAULT_BASE_URL
+    );
+    if (!existingChannel) {
+      db.insert(channels).values({
+        name: 'MingFei 图片渠道',
+        type: MINGFEI_CHANNEL_TYPE,
+        baseUrl: MINGFEI_DEFAULT_BASE_URL,
+        apiKey: configuredApiKey,
+        supportedModels: JSON.stringify([MINGFEI_IMAGE_MODEL]),
+        modelMapping: JSON.stringify({ [MINGFEI_IMAGE_MODEL]: MINGFEI_UPSTREAM_IMAGE_MODEL }),
+        status: configuredApiKey ? 1 : 0,
+        priority: 0,
+        weight: 1,
+        maxRetries: 3,
+        timeout: 900000,
+      }).run();
+      console.log('📦 已创建 MingFei 图片渠道并绑定 gpt-image-2-mingfei');
+    } else {
+      db.update(channels).set({
+        type: MINGFEI_CHANNEL_TYPE,
+        supportedModels: JSON.stringify([MINGFEI_IMAGE_MODEL]),
+        modelMapping: JSON.stringify({ [MINGFEI_IMAGE_MODEL]: MINGFEI_UPSTREAM_IMAGE_MODEL }),
+        ...(!existingChannel.apiKey && configuredApiKey ? { apiKey: configuredApiKey, status: 1 } : {}),
+        updatedAt: new Date().toISOString(),
+      }).where(eq(channels.id, existingChannel.id)).run();
+    }
+  } catch (err: any) {
+    console.error('⚠️ 初始化 MingFei 图片渠道出错:', err.message);
+  }
+
+  const mingFeiImagePricingMigrationKey = 'migration_mingfei_gpt_image_2_price_v1';
+  if (!db.select().from(settings).where(eq(settings.key, mingFeiImagePricingMigrationKey)).get()) {
+    const existing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, MINGFEI_IMAGE_MODEL)).get();
+    const values = {
+      billingType: 'per_call',
+      inputPrice: MINGFEI_IMAGE_PRICE,
+      outputPrice: 0,
+      extraParams: JSON.stringify({ category: 'image' }),
+    };
+    // A rule already present may have been edited by an administrator. Migrations
+    // only initialize missing pricing and never overwrite the saved value.
+    if (!existing) db.insert(modelPricing).values({ modelPattern: MINGFEI_IMAGE_MODEL, ...values }).run();
+    db.insert(settings).values({
+      key: mingFeiImagePricingMigrationKey,
+      value: '1',
+      label: 'MingFei GPT Image 2 ¥0.05/次定价迁移标记',
+    }).run();
+  }
+
+  const mingFeiResolutionPricingMigrationKey = 'migration_mingfei_resolution_prices_v2';
+  if (!db.select().from(settings).where(eq(settings.key, mingFeiResolutionPricingMigrationKey)).get()) {
+    const existing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, MINGFEI_IMAGE_MODEL)).get();
+    if (existing) {
+      let extraParams: Record<string, any> = {};
+      try { extraParams = JSON.parse(existing.extraParams || '{}'); } catch { /* ignore malformed legacy JSON */ }
+      const fallbackPrice = Number(existing.inputPrice);
+      db.update(modelPricing).set({
+        extraParams: JSON.stringify({
+          category: 'image',
+          ...extraParams,
+          '1K': extraParams['1K'] ?? fallbackPrice,
+          '2K': extraParams['2K'] ?? fallbackPrice,
+          '4K': extraParams['4K'] ?? fallbackPrice,
+        }),
+      }).where(eq(modelPricing.id, existing.id)).run();
+    }
+    db.insert(settings).values({
+      key: mingFeiResolutionPricingMigrationKey,
+      value: '1',
+      label: 'MingFei GPT Image 2 分辨率独立定价迁移标记',
+    }).run();
+  }
+
+  // 15) MJNewAPI 渠道 - 整合所有 Seedance 系列模型
   try {
     const existingMj = db.select().from(channels).where(eq(channels.name, 'MJNewAPI 渠道')).get();
     const mjModels = [
