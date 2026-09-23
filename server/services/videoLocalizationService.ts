@@ -5,6 +5,7 @@ import path from 'path';
 import { promisify } from 'util';
 import { ChannelService } from './channelService.js';
 import { isHmStudioChannel, shouldSendHmStudioAuthorization } from './hmStudioAdapter.js';
+import { isLongxiaChannel } from './longxiaVideoAdapter.js';
 import { isMiaowuChannel, shouldSendMiaowuAuthorization } from './miaowuVideoAdapter.js';
 import { isWxHaidiYueChannel, shouldSendWxHaidiYueAuthorization } from './wxHaidiYueAdapter.js';
 
@@ -71,7 +72,7 @@ export async function downloadAndLocalizeVideo(
     ? shouldSendHmStudioAuthorization(url, channel.baseUrl)
     : isWxHaidiYueChannel(channel)
       ? shouldSendWxHaidiYueAuthorization(url, channel.baseUrl)
-      : isMiaowuChannel(channel)
+      : (isMiaowuChannel(channel) || isLongxiaChannel(channel))
         ? shouldSendMiaowuAuthorization(url, channel.baseUrl)
         : true;
   if (channel?.apiKey && maySendAuthorization) headers.Authorization = `Bearer ${channel.apiKey}`;

@@ -12,6 +12,7 @@ import {
   miaowuVideoTaskUrl,
   normalizeMiaowuVideoTask,
 } from './miaowuVideoAdapter.js';
+import { isLongxiaChannel, longxiaVideoTaskUrl, normalizeLongxiaVideoTask } from './longxiaVideoAdapter.js';
 import { isSnumomWanChannel, normalizeSnumomWanTask, snumomContentUrl } from './snumomWanAdapter.js';
 import {
   isWxHaidiYueChannel,
@@ -190,12 +191,15 @@ export class VideoRecoveryService {
     const isHmStudio = isHmStudioChannel(channel);
     const isHaidiYue = isWxHaidiYueChannel(channel);
     const isSnumom = isSnumomWanChannel(channel);
+    const isLongxia = isLongxiaChannel(channel);
     const isMiaowu = isMiaowuChannel(channel);
     const isSudaShui = /sudashuiapi\.com/i.test(baseUrl) || metadata.actualChannel === 'sudashui';
     const pollUrl = isHmStudio
       ? hmStudioTaskUrl(baseUrl, videoId)
       : isHaidiYue
         ? wxHaidiYueTaskUrl(baseUrl, videoId)
+        : isLongxia
+          ? longxiaVideoTaskUrl(baseUrl, videoId)
         : isMiaowu
           ? miaowuVideoTaskUrl(baseUrl, videoId)
         : isSudaShui
@@ -229,6 +233,12 @@ export class VideoRecoveryService {
       progress = task.progress;
       resultUrl = task.resultUrl;
       error = task.error || task.errorCode;
+    } else if (isLongxia) {
+      const task = normalizeLongxiaVideoTask(payload);
+      normalizedStatus = task.status;
+      progress = task.progress;
+      resultUrl = task.resultUrl;
+      error = task.error;
     } else if (isMiaowu) {
       const task = normalizeMiaowuVideoTask(payload, baseUrl, videoId);
       normalizedStatus = task.status;
@@ -270,7 +280,7 @@ export class VideoRecoveryService {
     };
 
     if (normalizedStatus === 'completed' || normalizedStatus === 'success') {
-      if (!resultUrl && !isHmStudio && !isHaidiYue && !isMiaowu && !isSudaShui) {
+      if (!resultUrl && !isHmStudio && !isHaidiYue && !isMiaowu && !isLongxia && !isSudaShui) {
         resultUrl = `${baseUrl}/v1/files/video?id=${encodeURIComponent(videoId)}`;
       }
       if (!resultUrl) throw { status: 502, message: '上游任务已成功，但未返回视频地址' };

@@ -13,6 +13,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { feedbackApi } from '../../api/feedback';
 import { getBillingUnit } from '../../utils/billing';
 import { buildReplicatedVideoPrompt, getVideoReferenceAssets, getVideoReferenceCounts, removeVideoPromptReference, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
+import { isLongxiaModel, LONGXIA_RATIOS } from '../../../../shared/longxiaVideo';
 import { isOmniVideoEditModel, isSnumomGrokImagineVideoModel, SNUMOM_SD_MINI_MODEL, snumomSdMiniSecondsForResolution, WX_HAIDIYUE_FACE_SPLIT_MODEL } from '../../utils/videoModelCapabilities';
 import { getContentFailureInfo } from '../../utils/contentFailure';
 import { findUnreadableImageIndexes, isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
@@ -341,6 +342,7 @@ const isWan30Model = (modelId: string) => {
 };
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  if (isLongxiaModel(modelId)) return 30;
   if (modelId === JULUN_MINIMAX_H3_MODEL) return 9;
   if (isWan30Model(modelId)) return 10;
   if (isSnumomGrokImagineVideoModel(modelId)) return 7;
@@ -470,6 +472,7 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
+    if (isLongxiaModel(m)) return 10;
     if (m === SNUMOM_SD_MINI_MODEL) return 3;
     if (isOmniVideoEditModel(m)) return 1;
     if (m === JULUN_MINIMAX_H3_MODEL) return 3;
@@ -488,6 +491,7 @@ export default function VideoPage() {
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
+    if (isLongxiaModel(m)) return 10;
     if (m === SNUMOM_SD_MINI_MODEL) return 3;
     if (m === JULUN_MINIMAX_H3_MODEL) return 3;
     if (isWan30Model(m)) return 5;
@@ -1013,7 +1017,9 @@ export default function VideoPage() {
       ? [{ value: '720p', label: '720p' }, { value: '1080p', label: '1080p' }]
       : [{ value: '480p', label: '480p' }, { value: '720p', label: '720p' }];
 
-  const ASPECT_RATIOS = selectedModel === WX_HAIDIYUE_FACE_SPLIT_MODEL
+  const ASPECT_RATIOS = isLongxiaModel(selectedModel)
+    ? ALL_ASPECT_RATIOS.filter(ratio => LONGXIA_RATIOS.includes(ratio.value))
+    : selectedModel === WX_HAIDIYUE_FACE_SPLIT_MODEL
     ? ALL_ASPECT_RATIOS.filter(ratio => ratio.value !== '3:2' && ratio.value !== '2:3')
     : isWan30Model(selectedModel)
     ? [
@@ -1047,6 +1053,7 @@ export default function VideoPage() {
       }
     }
 
+    if (isLongxiaModel(selectedModel) && !LONGXIA_RATIOS.includes(aspectRatio)) setAspectRatio('16:9');
     if (isWan30Model(selectedModel)) {
       const wanRatios = ['1:1', '16:9', '9:16', '4:3', '3:4'];
       if (!wanRatios.includes(aspectRatio)) setAspectRatio('16:9');
@@ -1066,10 +1073,10 @@ export default function VideoPage() {
       || selectedModel.startsWith('lg-');
     const isSoraV3Pro = selectedModel === 'seedance-2.0-fast';
     const isWan30 = isWan30Model(selectedModel);
-    if (!isOmniVideoEditModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30) {
+    if (!isLongxiaModel(selectedModel) && !isOmniVideoEditModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30) {
       setReferenceVideos([]);
     }
-    if (!isSudashui && !isSoraV3Pro && !isWan30) {
+    if (!isLongxiaModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30) {
       setReferenceAudios([]);
       setReferenceAudioNames([]);
     }
@@ -1161,6 +1168,7 @@ export default function VideoPage() {
       return;
     }
     for (const f of filesToRead) {
+      if (isLongxiaModel(selectedModel) && f.type !== 'video/mp4') { setError('LongXia 参考视频仅支持 MP4'); continue; }
       if (f.size > 100 * 1024 * 1024) { setError('参考视频不能超过 100MB'); continue; }
       if (selectedModel === 'seedance-2.5-pro') {
         const objectUrl = URL.createObjectURL(f);
@@ -1191,6 +1199,10 @@ export default function VideoPage() {
     if (!files || files.length === 0) return;
     const remaining = maxRefAudios - referenceAudios.length;
     const selectedFiles = Array.from(files);
+    if (isLongxiaModel(selectedModel) && selectedFiles.some(file => !['audio/mpeg', 'audio/mp3'].includes(file.type) || file.size > 15 * 1024 * 1024)) {
+      setError('LongXia 参考音频仅支持 MP3，单段不超过 15 MiB');
+      return;
+    }
     const invalidWanAudio = selectedModel === 'wan3.0th'
       && selectedFiles.some(file => file.type !== 'audio/wav' && file.type !== 'audio/x-wav' && !file.name.toLowerCase().endsWith('.wav'));
     if (invalidWanAudio) {
@@ -1357,7 +1369,7 @@ export default function VideoPage() {
       setError('视频编辑模型必须上传参考视频');
       return;
     }
-    if (!isOmniVideoEditModel(selectedModel) && !isWan30Model(selectedModel) && selectedModel !== SNUMOM_SD_MINI_MODEL && selectedModel !== 'seedance-2.5-deal' && selectedModel !== 'seedance-2.5-pro' && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
+    if (!isLongxiaModel(selectedModel) && !isOmniVideoEditModel(selectedModel) && !isWan30Model(selectedModel) && selectedModel !== SNUMOM_SD_MINI_MODEL && selectedModel !== 'seedance-2.5-deal' && selectedModel !== 'seedance-2.5-pro' && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
       setError('参考视频或音频模式下必须上传至少一张参考图');
       return;
     }
@@ -1365,6 +1377,9 @@ export default function VideoPage() {
 
     // 将 prompt 中的 @图1, @图2, @视频, @音频 翻译回后端 API 支持的 [ref_0.jpg], [ref_video], [ref_audio] 格式
     let finalPrompt = prompt.trim();
+    if (isLongxiaModel(selectedModel)) {
+      finalPrompt = finalPrompt.replace(/[@＠]图(\d+)/g, '@image$1');
+    }
     referenceImages.forEach((img, idx) => {
       const refName = getRefFilename(img, idx);
       const userRefLabelPattern = new RegExp(`[@＠]图${idx + 1}\\b|[@＠]图${idx + 1}`, 'g');
@@ -1904,15 +1919,15 @@ export default function VideoPage() {
                       <button aria-label={`上传参考视频，最多 ${maxRefVideos} 个`} onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 ({referenceVideos.length}/{maxRefVideos})
                       </button>
-                      <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" multiple className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
+                      <input ref={videoFileInputRef} type="file" accept={isLongxiaModel(selectedModel) ? ".mp4,video/mp4" : "video/mp4,video/*"} multiple className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
                     </>
                   )}
                   {maxRefAudios > 0 && (
                     <>
-                      <button aria-label={`上传参考音频，最多 ${maxRefAudios} 段`} title={selectedModel === 'wan3.0th' ? '仅支持 WAV，上传后自动转换为本站公网 URL' : '支持 MP3/WAV，上传后自动转换为本站公网 URL'} onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
+                      <button aria-label={`上传参考音频，最多 ${maxRefAudios} 段`} title={isLongxiaModel(selectedModel) ? '仅支持 MP3，单段不超过 15 MiB' : selectedModel === 'wan3.0th' ? '仅支持 WAV，上传后自动转换为本站公网 URL' : '支持 MP3/WAV，上传后自动转换为本站公网 URL'} onClick={() => audioFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考音频 ({referenceAudios.length}/{maxRefAudios})
                       </button>
-                      <input ref={audioFileInputRef} type="file" accept={selectedModel === 'wan3.0th' ? '.wav,audio/wav,audio/x-wav' : 'audio/*'} multiple className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
+                      <input ref={audioFileInputRef} type="file" accept={isLongxiaModel(selectedModel) ? '.mp3,audio/mpeg,audio/mp3' : selectedModel === 'wan3.0th' ? '.wav,audio/wav,audio/x-wav' : 'audio/*'} multiple className="hidden" onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ''; }} />
                     </>
                   )}
                   {isWan30Model(selectedModel) && (

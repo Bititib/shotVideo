@@ -31,6 +31,7 @@ COPY --from=builder /app/client/dist ./client/dist
 
 # 复制后端代码
 COPY server/ ./server/
+COPY shared/ ./shared/
 COPY tsconfig.json ./
 
 # 创建数据目录

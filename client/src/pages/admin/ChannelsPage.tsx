@@ -469,6 +469,8 @@ export default function ChannelsPage() {
                         : edit.apiKeys,
                       baseUrl: e.target.value === 'hmstudio' && !edit.baseUrl
                         ? HM_STUDIO_BASE_URL
+                        : e.target.value === 'longxia' && !edit.baseUrl
+                          ? 'https://api8.longxiaai.store'
                         : e.target.value === 'snumom' && !edit.baseUrl
                           ? 'https://snumom.com'
                           : e.target.value === 'miaowu' && !edit.baseUrl
@@ -482,6 +484,7 @@ export default function ChannelsPage() {
                       <option value="hmstudio">HM Studio（图片/视频异步任务）</option>
                       <option value="wx-haidiyue">wx-海底月（sd2.5 人脸拆分）</option>
                       <option value="snumom">snumom（视频异步任务）</option>
+                      <option value="longxia">LongXia（视频按秒计费）</option>
                       <option value="miaowu">喵呜 API（视频异步任务）</option>
                       <option value="mingfei">MingFei（GPT Image 2 异步任务）</option>
                       <option value="gemini">Gemini（分析服务）</option>

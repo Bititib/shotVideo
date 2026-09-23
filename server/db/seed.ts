@@ -1,3 +1,4 @@
+import { LONGXIA_MODELS, LONGXIA_BASE_URL, isLongxiaChannel, longxiaRate, longxiaResolution } from '../services/longxiaVideoAdapter.js';
 import { db, sqlite } from './index.js';
 import { tiers, users, models, tierModelAccess, settings, channels, channelApiKeys, apiTokens, modelPricing, organizations, orgMembers, contents } from './schema.js';
 import { eq, like } from 'drizzle-orm';
@@ -224,6 +225,10 @@ export async function syncModelsFromAPI() {
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
     { provider: 'wx-haidiyue', modelId: WX_HAIDIYUE_FACE_SPLIT_MODEL, displayName: WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME, description: '支持真人；固定30秒；最多9张参考图；固定按次计费 ¥2.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance-2.0', displayName: 'Seedance 2.0', description: 'Seedance 2.0 文生/图生视频 (异步，¥1.5/次)', capabilities: JSON.stringify(['video']), isActive: 1 },
+    ...LONGXIA_MODELS.map(modelId => ({ provider: 'longxia', modelId,
+      displayName: 'LongXia Seedance 2.5 ' + longxiaResolution(modelId) + '（按秒）',
+      description: '支持4～25秒、30张图片、10个视频和10段音频参考；¥' + longxiaRate(modelId) + '/秒',
+      capabilities: JSON.stringify(['video']), isActive: 1 })),
     { provider: 'miaowu', modelId: MIAOWU_SEEDANCE_25_DEAL_MODEL, displayName: 'Seedance 2.5 Deal', description: '喵呜 API；支持5-30秒、480p/720p；最多30张图片和10段音频参考，不支持视频参考；按次计费', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'miaowu', modelId: MIAOWU_SEEDANCE_25_PRO_MODEL, displayName: 'Seedance 2.5 Pro', description: '喵呜 API；支持4-30秒、480p/720p；最多30张图片、10个视频和10段音频参考；参考视频时长不得超过输出时长；按秒计费', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance-2.5-c1', displayName: 'Seedance 2.5 (c1/888API)', description: '支持最多30张图片、10个视频、10个音频参考，4-30秒，按秒计费 ¥0.25/秒', capabilities: JSON.stringify(['video']) },
@@ -1086,6 +1091,10 @@ export async function initDatabase() {
     { modelPattern: 'gemini-2.5-pro-preview-tts', billingType: 'per_character', inputPrice: legacyRate('tts_rate', 0.01) * 2, category: 'tts' },
   ];
 
+  for (const model of LONGXIA_MODELS) {
+    unifiedPricing.push({ modelPattern: model, billingType: 'per_second', inputPrice: longxiaRate(model), category: 'video' });
+  }
+
   for (const pricing of unifiedPricing) {
     const modelExists = Boolean(db.select().from(models).where(eq(models.modelId, pricing.modelPattern)).get());
     if (!modelExists) continue;
@@ -1919,6 +1928,30 @@ export async function initDatabase() {
     if (miaowuChannels.length > 0) console.log('🔄 已校准喵呜渠道并绑定 Seedance 2.5 模型');
   } catch (err: any) {
     console.error('⚠️ 校准喵呜渠道模型绑定出错:', err.message);
+  }
+
+  // Register the channel without enabling paid requests until a key is configured.
+  const longxiaChannels = db.select().from(channels).all().filter(isLongxiaChannel);
+  if (longxiaChannels.length === 0) {
+    db.insert(channels).values({
+      name: 'LongXia 视频渠道', type: 'longxia', baseUrl: LONGXIA_BASE_URL, apiKey: '', status: 0,
+      supportedModels: JSON.stringify(LONGXIA_MODELS),
+      modelMapping: JSON.stringify(Object.fromEntries(LONGXIA_MODELS.map(id => [id, id]))),
+    }).run();
+  }
+  for (const channel of longxiaChannels) {
+    let supportedModels: string[] = [];
+    let modelMapping: Record<string, string> = {};
+    try { supportedModels = JSON.parse(channel.supportedModels || '[]'); } catch { }
+    try { modelMapping = JSON.parse(channel.modelMapping || '{}'); } catch { }
+    if (!Array.isArray(supportedModels)) supportedModels = [];
+    if (!modelMapping || typeof modelMapping !== 'object' || Array.isArray(modelMapping)) modelMapping = {};
+    for (const id of LONGXIA_MODELS) {
+      if (!supportedModels.includes(id)) supportedModels.push(id);
+      modelMapping[id] ||= id;
+    }
+    db.update(channels).set({ supportedModels: JSON.stringify(supportedModels), modelMapping: JSON.stringify(modelMapping) })
+      .where(eq(channels.id, channel.id)).run();
   }
 
   // 清除所有历史拆分的 MJNewAPI 渠道以保持干净

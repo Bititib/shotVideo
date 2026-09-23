@@ -9,6 +9,7 @@ import {
   WX_HAIDIYUE_FACE_SPLIT_MODEL,
   WX_HAIDIYUE_UPSTREAM_MODEL,
 } from './wxHaidiYueAdapter.js';
+import { isLongxiaChannel, LONGXIA_MODELS, longxiaApiBaseUrl } from './longxiaVideoAdapter.js';
 import { isMiaowuChannel, MIAOWU_DEFAULT_VIDEO_MODELS, miaowuVideoModelListUrl } from './miaowuVideoAdapter.js';
 
 const DEFAULT_HM_CONCURRENCY = (() => {
@@ -375,6 +376,7 @@ export class ChannelService {
     if (!name || !baseUrl) throw { status: 400, message: '渠道名称和 Base URL 不能为空' };
 
     const isWxHaidiYue = type === WX_HAIDIYUE_CHANNEL_TYPE;
+    const isLongxia = isLongxiaChannel({ type, baseUrl });
     const isMiaowu = isMiaowuChannel({ type, baseUrl });
     const miaowuMapping = modelMapping && Object.keys(modelMapping).length > 0
       ? modelMapping
@@ -389,9 +391,11 @@ export class ChannelService {
       apiKey: type === 'hmstudio' ? '' : (apiKey || ''),
       modelMapping: JSON.stringify(isWxHaidiYue
         ? { [WX_HAIDIYUE_FACE_SPLIT_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL }
+        : isLongxia ? (modelMapping && Object.keys(modelMapping).length ? modelMapping : Object.fromEntries(LONGXIA_MODELS.map(id => [id, id])))
         : isMiaowu ? miaowuMapping : (modelMapping || {})),
       supportedModels: JSON.stringify(isWxHaidiYue
         ? [WX_HAIDIYUE_FACE_SPLIT_MODEL]
+        : isLongxia ? (supportedModels?.length ? supportedModels : [...LONGXIA_MODELS])
         : isMiaowu ? miaowuModels : (supportedModels || [])),
       priority: priority ?? 0,
       weight: weight ?? 1,
@@ -446,6 +450,14 @@ export class ChannelService {
     } else if (channel.type === WX_HAIDIYUE_CHANNEL_TYPE) {
       updates.faceSplitEnabled = 0;
     }
+    if (isLongxiaChannel({ type: nextType, baseUrl: data.baseUrl ?? channel.baseUrl })) {
+      const mapping = data.modelMapping ?? JSON.parse(channel.modelMapping || '{}');
+      const modelIds = data.supportedModels ?? JSON.parse(channel.supportedModels || '[]');
+      if (!mapping || Object.keys(mapping).length === 0) {
+        updates.modelMapping = JSON.stringify(Object.fromEntries(LONGXIA_MODELS.map(id => [id, id])));
+      }
+      if (!Array.isArray(modelIds) || modelIds.length === 0) updates.supportedModels = JSON.stringify(LONGXIA_MODELS);
+    }
     if (isMiaowuChannel({ type: nextType, baseUrl: data.baseUrl ?? channel.baseUrl })) {
       const nextMapping = data.modelMapping;
       const nextModels = data.supportedModels;
@@ -483,7 +495,9 @@ export class ChannelService {
     const start = Date.now();
     try {
       const baseUrl = channel.baseUrl.replace(/\/+$/, '');
-      const url = isMiaowuChannel(channel)
+      const url = isLongxiaChannel(channel)
+        ? longxiaApiBaseUrl(channel.baseUrl) + '/v1/models'
+        : isMiaowuChannel(channel)
         ? miaowuVideoModelListUrl(baseUrl)
         : isWxHaidiYueChannel(channel) && /\/v1$/i.test(baseUrl)
           ? `${baseUrl}/models`
@@ -531,7 +545,9 @@ export class ChannelService {
       return { count: 1, added: 0, models: [WX_HAIDIYUE_FACE_SPLIT_MODEL] };
     }
 
-    const url = isMiaowuChannel(channel)
+    const url = isLongxiaChannel(channel)
+        ? longxiaApiBaseUrl(channel.baseUrl) + '/v1/models'
+        : isMiaowuChannel(channel)
       ? miaowuVideoModelListUrl(channel.baseUrl)
       : channel.baseUrl.replace(/\/+$/, '') + '/v1/models';
     const response = await fetch(url, {

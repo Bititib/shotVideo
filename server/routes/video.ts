@@ -99,6 +99,7 @@ import {
   validateMiaowuSeedance25DealInput,
   validateMiaowuSeedance25ProInput,
 } from '../services/miaowuVideoAdapter.js';
+import { buildLongxiaVideoPayload, isLongxiaChannel, isLongxiaModel, longxiaResolution, LONGXIA_MODELS, LONGXIA_SECONDS, longxiaVideoCreateUrl, longxiaVideoTaskUrl, normalizeLongxiaVideoTask } from '../services/longxiaVideoAdapter.js';
 import { prepareMiaowuPublicMediaUrls } from '../services/miaowuMediaService.js';
 import { detectVideoCodec, downloadAndLocalizeVideo, originalVideoPathFor, preferredVideoDownloadPath } from '../services/videoLocalizationService.js';
 import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
@@ -329,6 +330,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   [SNUMOM_SD_MINI_MODEL]: { series: 'snumom-sd-mini', allowedSeconds: [...SNUMOM_SD_MINI_SECONDS], requireRef: false },
   'grok-imagine-video-1.5-preview': { series: 'grok-1.5', allowedSeconds: [10, 15], requireRef: false },
   [MIAOWU_SEEDANCE_25_DEAL_MODEL]: { series: 'miaowu-seedance-2.5', allowedSeconds: Array.from({ length: 26 }, (_, index) => index + 5), requireRef: false },
+  ...Object.fromEntries(LONGXIA_MODELS.map(model => [model, { series: 'longxia-seedance-2.5', allowedSeconds: LONGXIA_SECONDS, requireRef: false }])),
   [MIAOWU_SEEDANCE_25_PRO_MODEL]: { series: 'miaowu-seedance-2.5', allowedSeconds: Array.from({ length: 27 }, (_, index) => index + 4), requireRef: false },
   'seedance-2.5m': { series: 'seedance-2.5', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25], requireRef: false },
   'wan3.0th': { series: 'wan3.0', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30], requireRef: false },
@@ -595,7 +597,10 @@ router.get('/models', (_req: Request, res: Response) => {
     const multiplier = meta?.series === '1.5' ? 1.2 : 1.0;
 
     let rates: Record<string, number>;
-    if (m.id === 'sora-v4-fast') {
+    if (isLongxiaModel(m.id)) {
+      const resolution = longxiaResolution(m.id);
+      rates = { [resolution]: quotePrice(m.id, { resolution, seconds: 1 }).rate };
+    } else if (m.id === 'sora-v4-fast') {
       rates = {
         '720p': soraV4FastRate,
       };
@@ -823,7 +828,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     compliance_mode,         // 合规素材风格
   } = req.body;
   let reference_images: string[] = Array.isArray(rawReferenceImages) ? rawReferenceImages : [];
-  const resolution = requestedResolution || (isJulunMinimaxH3Model(model) ? JULUN_MINIMAX_H3_RESOLUTION : '720p');
+  const resolution = requestedResolution || (isLongxiaModel(model) ? longxiaResolution(model) : undefined) || (isJulunMinimaxH3Model(model) ? JULUN_MINIMAX_H3_RESOLUTION : '720p');
 
   // 向后兼容：合并旧单值字段到新数组
   const finalVideos: string[] = (Array.isArray(reference_videos) && reference_videos.length > 0)
@@ -877,6 +882,13 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     if (resolution !== '720p') return res.status(400).json({ error: 'seedance_v2.5 仅支持 720p' });
     if (reference_images.length > 10) return res.status(400).json({ error: 'seedance_v2.5 最多支持 10 张参考图片' });
     if (finalVideos.length > 0 || finalAudios.length > 0) return res.status(400).json({ error: 'seedance_v2.5 不支持视频或音频参考' });
+  }
+
+  if (isLongxiaModel(model)) {
+    try {
+      buildLongxiaVideoPayload({ model, prompt, seconds: Number(video_length), ratio: aspect_ratio, resolution,
+        imageUrls: reference_images, videoUrls: finalVideos, audioUrls: finalAudios, firstFrame: first_frame, lastFrame: last_frame });
+    } catch (error: any) { return res.status(400).json({ error: error.message }); }
   }
 
   if (model === MIAOWU_SEEDANCE_25_DEAL_MODEL) {
@@ -1361,6 +1373,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   let isJulunSd25 = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL && isJulunChannel(channel);
   const isSnumomWan = isSnumomWanChannel(channel);
   let isMjNewApi = isMjNewApiChannel(channel);
+  const isLongxia = isLongxiaChannel(channel);
   const isMiaowu = isMiaowuChannel(channel);
   const isVeoOmni = model === 'veo-omni-flash';
   const isVeoOmniEdit = model === 'veo-omni-flash-video-edit';
@@ -1676,6 +1689,22 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       const job = await createResp.json() as any;
       videoId = job.id || job.task_id;
+    } else if (isLongxia) {
+      sendEvent({ type: 'status', message: '正在提交 LongXia 视频任务...' });
+      const payload = buildLongxiaVideoPayload({ model: upstreamModel, prompt, seconds: Number(video_length), ratio: aspect_ratio,
+        resolution, imageUrls: reference_images, videoUrls: finalVideos, audioUrls: finalAudios });
+      const createResp = await fetch(longxiaVideoCreateUrl(baseUrl), {
+        method: 'POST', headers: { Authorization: 'Bearer ' + channel.apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload), signal: AbortSignal.timeout(dbChannel?.timeout || 120_000),
+      });
+      if (!createResp.ok) {
+        const detail = await createResp.text().catch(() => '');
+        refundFailedTask('LongXia 提交失败 (' + createResp.status + '): ' + detail.slice(0, 300));
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
+      const job = await createResp.json() as any;
+      videoId = job.task_id || job.id;
     } else if (isMiaowu) {
       sendEvent({ type: 'status', message: '正在整理素材并提交喵呜 API 视频任务...' });
       const miaowuPublicBaseUrl = process.env.BACKEND_URL
@@ -2369,7 +2398,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     }
 
     // ━━━ Step 2: 轮询任务状态（无超时，直到上游返回完成或失败） ━━━
-    const pollInterval = 5000; // 5 秒轮询
+    const pollInterval = isLongxia ? 30_000 : 5000;
     const maxTransientPollFailures = 6;
     let consecutiveTransientPollFailures = 0;
 
@@ -2390,6 +2419,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           pollUrl = hmStudioTaskUrl(baseUrl, videoId);
         } else if (isWxHaidiYue) {
           pollUrl = wxHaidiYueTaskUrl(baseUrl, videoId);
+        } else if (isLongxia) {
+          pollUrl = longxiaVideoTaskUrl(baseUrl, videoId);
         } else if (isMiaowu) {
           pollUrl = miaowuVideoTaskUrl(baseUrl, videoId);
         } else if (isSudaShui) {
@@ -2443,6 +2474,12 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           progress = normalized.progress;
           resultUrl = normalized.resultUrl;
           errMsg = normalized.error || normalized.errorCode || '视频生成失败';
+        } else if (isLongxia) {
+          const normalized = normalizeLongxiaVideoTask(status);
+          taskStatus = normalized.status;
+          progress = normalized.progress;
+          resultUrl = normalized.resultUrl;
+          errMsg = normalized.error || 'LongXia 视频生成失败';
         } else if (isMiaowu) {
           const normalized = normalizeMiaowuVideoTask(status, baseUrl, videoId);
           taskStatus = normalized.status;
@@ -3338,6 +3375,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   const isHmStudio = isHmStudioChannel(channel);
   const isWxHaidiYue = isWxHaidiYueChannel(channel);
   const isSnumomWan = isSnumomWanChannel(channel);
+  const isLongxia = isLongxiaChannel(channel);
   const isMiaowu = isMiaowuChannel(channel);
 
   const headers: Record<string, string> = {};
@@ -3346,7 +3384,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   const pollingPromise = (async () => {
     try {
       console.log(`[video-recover] Starting polling for video task ${contentId} (videoId: ${videoId})`);
-      const pollInterval = 5000;
+      const pollInterval = isLongxia ? 30_000 : 5000;
       const startTime = Date.now();
       const createdAt = new Date(record.createdAt).getTime();
       const timeoutStartedAt = Number.isFinite(createdAt) ? createdAt : startTime;
@@ -3382,6 +3420,8 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           pollUrl = hmStudioTaskUrl(baseUrl, videoId);
         } else if (isWxHaidiYue) {
           pollUrl = wxHaidiYueTaskUrl(baseUrl, videoId);
+        } else if (isLongxia) {
+          pollUrl = longxiaVideoTaskUrl(baseUrl, videoId);
         } else if (isMiaowu) {
           pollUrl = miaowuVideoTaskUrl(baseUrl, videoId);
         } else if (isSudaShui) {
@@ -3427,6 +3467,12 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           progress = normalized.progress;
           resultUrl = normalized.resultUrl;
           errMsg = normalized.error || normalized.errorCode || '视频生成失败';
+        } else if (isLongxia) {
+          const normalized = normalizeLongxiaVideoTask(statusData);
+          taskStatus = normalized.status;
+          progress = normalized.progress;
+          resultUrl = normalized.resultUrl;
+          errMsg = normalized.error || 'LongXia 视频生成失败';
         } else if (isMiaowu) {
           const normalized = normalizeMiaowuVideoTask(statusData, baseUrl, videoId);
           taskStatus = normalized.status;

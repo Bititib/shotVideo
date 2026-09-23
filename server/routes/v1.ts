@@ -98,6 +98,7 @@ import {
   validateMiaowuSeedance25DealInput,
   validateMiaowuSeedance25ProInput,
 } from '../services/miaowuVideoAdapter.js';
+import { buildLongxiaVideoPayload, isLongxiaChannel, isLongxiaModel, longxiaResolution, longxiaVideoCreateUrl } from '../services/longxiaVideoAdapter.js';
 import { prepareMiaowuPublicMediaUrls } from '../services/miaowuMediaService.js';
 import { enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
 import { localizeGeneratedImage } from './imageGen.js';
@@ -1503,6 +1504,7 @@ async function handleVideoCreation(req: Request, res: Response) {
 
   const ratio = body.ratio || body.aspect_ratio || '16:9';
   const resolution = body.resolution || body.resolution_name
+    || (isLongxiaModel(model) ? longxiaResolution(model) : undefined)
     || (isJulunMinimaxH3Model(model) ? JULUN_MINIMAX_H3_RESOLUTION : '720p');
 
   // 提取图片素材别名
@@ -1756,6 +1758,13 @@ async function handleVideoCreation(req: Request, res: Response) {
       cleanupFiles(req.files);
       return res.status(400).json({ error: 'sd2.5 supports at most 9 images and does not support video/audio references' });
     }
+  }
+
+  if (isLongxiaModel(model)) {
+    try {
+      buildLongxiaVideoPayload({ model, prompt, seconds, ratio, resolution, imageUrls: image_urls, videoUrls: video_urls,
+        audioUrls: audio_urls, firstFrame: body.first_frame_url, lastFrame: body.end_frame_url || body.last_frame_url });
+    } catch (error: any) { cleanupFiles(req.files); return res.status(400).json({ error: error.message }); }
   }
 
   if (model === MIAOWU_SEEDANCE_25_DEAL_MODEL) {
@@ -2047,6 +2056,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   const isHmStudio = isHmStudioChannel(channel);
   const isWxHaidiYue = isWxHaidiYueChannel(channel);
   const isMjNewApi = isMjNewApiChannel(channel);
+  const isLongxia = isLongxiaChannel(channel);
   const isMiaowu = isMiaowuChannel(channel);
   const isJulunSd25 = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL && isJulunChannel(channel);
 
@@ -2091,6 +2101,8 @@ async function handleVideoCreation(req: Request, res: Response) {
     ? wxHaidiYueCreateUrl(baseUrl)
     : isNewTokenModel
     ? newTokenVideoCreateUrl(baseUrl)
+    : isLongxia
+    ? longxiaVideoCreateUrl(baseUrl)
     : isMiaowu
     ? miaowuVideoCreateUrl(baseUrl)
     : isSudaShuiModel
@@ -2205,6 +2217,13 @@ async function handleVideoCreation(req: Request, res: Response) {
         headers,
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(channel.timeout || 120_000),
+      });
+    } else if (isLongxia) {
+      const payload = buildLongxiaVideoPayload({ model: upstreamModel, prompt, seconds, ratio, resolution,
+        imageUrls: image_urls, videoUrls: video_urls, audioUrls: audio_urls });
+      upstreamRes = await fetch(upstreamUrl, {
+        method: 'POST', headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload), signal: AbortSignal.timeout(channel.timeout || 120_000),
       });
     } else if (isMiaowu) {
       const miaowuPublicBaseUrl = process.env.BACKEND_URL
