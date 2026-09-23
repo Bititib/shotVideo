@@ -29,13 +29,13 @@ export interface LongxiaVideoInput {
   lastFrame?: string;
 }
 
-function asset(category: string, source: string): Record<string, string> {
+function asset(category: 'image' | 'audio', source: string): Record<string, string> {
   if (typeof source !== 'string' || !source.trim()) throw new Error('参考素材必须为 HTTPS URL 或 Base64 data URL');
   if (source.startsWith('data:')) {
     const match = source.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/);
     const allowed = category === 'image' ? ['image/png', 'image/jpeg', 'image/webp']
-      : category === 'audio' ? ['audio/mpeg', 'audio/mp3'] : ['video/mp4'];
-    if (!match || !allowed.includes(match[1].toLowerCase())) throw new Error('LongXia 图片支持 PNG/JPEG/WebP，音频支持 MP3，视频支持 MP4');
+      : ['audio/mpeg', 'audio/mp3'];
+    if (!match || !allowed.includes(match[1].toLowerCase())) throw new Error('LongXia 图片支持 PNG/JPEG/WebP，音频支持 MP3');
     const bytes = Buffer.from(match[2], 'base64').length;
     if ((category === 'image' && bytes > 25 * 1024 ** 2) || (category === 'audio' && bytes > 15 * 1024 ** 2)) {
       throw new Error('LongXia 单张图片不得超过 25 MiB，单段音频不得超过 15 MiB');
@@ -81,8 +81,9 @@ export function buildLongxiaVideoPayload(input: LongxiaVideoInput) {
   if (typeof input.prompt !== 'string' || !input.prompt.trim()) throw new Error('请输入视频描述');
   if (input.firstFrame || input.lastFrame) throw new Error('LongXia 请使用参考图片，不支持独立首尾帧参数');
   const images = input.imageUrls || [], videos = input.videoUrls || [], audios = input.audioUrls || [];
-  if (images.length > 30 || videos.length > 10 || audios.length > 10) throw new Error('LongXia 最多支持 30 张图片、10 个视频和 10 段音频参考');
-  const assets = [...images.map(s => asset('image', s)), ...videos.map(s => asset('video', s)), ...audios.map(s => asset('audio', s))];
+  if (videos.length > 0) throw new Error('LongXia 不支持视频参考，请移除参考视频');
+  if (images.length > 30 || audios.length > 10) throw new Error('LongXia 最多支持 30 张图片和 10 段音频参考');
+  const assets = [...images.map(s => asset('image', s)), ...audios.map(s => asset('audio', s))];
   const base64Size = assets.reduce((total, item) => total + (item.data_base64?.length || 0), 0);
   if (base64Size > 40 * 1024 ** 2) throw new Error('LongXia Base64 素材合计不得超过 40 MiB，请改用 HTTPS URL');
   const prompt = referencePrompt(input.prompt.trim(), { image: images.length, video: videos.length, audio: audios.length });

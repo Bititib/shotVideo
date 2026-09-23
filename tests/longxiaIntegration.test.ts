@@ -56,6 +56,35 @@ afterEach(() => vi.unstubAllGlobals());
 afterAll(async () => { if (server) await new Promise<void>(resolve => server.close(() => resolve())); sqlite.close(); });
 
 describe('LongXia application integration', () => {
+  it.each(LONGXIA_MODELS)('rejects videos before upstream submission or billing for %s on both routes', async model => {
+    const upstream = vi.fn(); vi.stubGlobal('fetch', upstream);
+    const user = db.select().from(users).where(eq(users.email, 'longxia@test.local')).get()!;
+    const tokenBalance = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance;
+    const userBalance = user.balance;
+    const contentCount = db.select().from(contents).all().length;
+    for (const field of ['video_urls', 'video_url', 'videos']) {
+      const response = await realFetch(origin + '/v1/videos', {
+        method: 'POST', headers: { Authorization: 'Bearer ' + tokenKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, prompt: '日出', seconds: 4,
+          [field]: field === 'video_url' ? 'https://example.com/ref.mp4' : ['https://example.com/ref.mp4'] }),
+      });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain('不支持视频参考');
+    }
+    for (const field of ['reference_videos', 'reference_video']) {
+      const response = await realFetch(origin + '/api/video/generate', {
+        method: 'POST', headers: { Authorization: 'Bearer ' + jwt.sign({ userId: user.id, role: user.role }, 'longxia-test'), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, prompt: '日出', video_length: 4,
+          [field]: field === 'reference_video' ? 'https://example.com/ref.mp4' : ['https://example.com/ref.mp4'] }),
+      });
+      expect(response.status).toBe(400);
+      expect(await response.text()).toContain('不支持视频参考');
+    }
+    expect(upstream).not.toHaveBeenCalled();
+    expect(db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance).toBe(tokenBalance);
+    expect(db.select().from(users).where(eq(users.id, user.id)).get()!.balance).toBe(userBalance);
+    expect(db.select().from(contents).all().length).toBe(contentCount);
+  });
   it('registers both models, binds the channel and exposes fixed-resolution prices and durations', async () => {
     const response = await realFetch(origin + '/api/video/models');
     expect(response.status).toBe(200);
@@ -76,7 +105,7 @@ describe('LongXia application integration', () => {
     const before = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance;
     const response = await realFetch(origin + '/v1/videos', {
       method: 'POST', headers: { Authorization: 'Bearer ' + tokenKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, prompt: '日出', seconds: 25, ratio: '16:9', video_urls: ['https://example.com/ref.mp4'], audio_urls: ['https://example.com/ref.mp3'] }),
+      body: JSON.stringify({ model, prompt: '日出', seconds: 25, ratio: '16:9', audio_urls: ['https://example.com/ref.mp3'] }),
     });
     const result = await response.json() as any;
     expect(response.status, JSON.stringify(result)).toBe(200);
@@ -84,8 +113,8 @@ describe('LongXia application integration', () => {
     expect(upstream).toHaveBeenCalledOnce();
     const [url, options] = upstream.mock.calls[0] as any;
     expect(url).toBe('https://api8.longxiaai.store/v1/videos');
-    expect(JSON.parse(options.body)).toEqual({ model, prompt: '日出\n参考素材：@video1 @audio1', duration: 25, size: '16:9', assets: [
-      { category: 'video', url: 'https://example.com/ref.mp4' }, { category: 'audio', url: 'https://example.com/ref.mp3' },
+    expect(JSON.parse(options.body)).toEqual({ model, prompt: '日出\n参考素材：@audio1', duration: 25, size: '16:9', assets: [
+      { category: 'audio', url: 'https://example.com/ref.mp3' },
     ] });
     const expectedCost = model === LONGXIA_MODELS[0] ? 10 : 14.5;
     const after = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance;
@@ -113,14 +142,14 @@ describe('LongXia application integration', () => {
     vi.stubGlobal('fetch', upstream);
     const response = await realFetch(origin + '/api/video/generate', {
       method: 'POST', headers: { Authorization: 'Bearer ' + jwt.sign({ userId: user.id, role: user.role }, 'longxia-test'), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: LONGXIA_MODELS[1], prompt: '日出', video_length: 25, reference_videos: ['https://example.com/ref.mp4'] }),
+      body: JSON.stringify({ model: LONGXIA_MODELS[1], prompt: '日出', video_length: 25, audio_urls: ['https://example.com/ref.mp3'] }),
     });
     const events = await response.text();
     expect(response.status, events).toBe(200);
     expect(events).toContain('"cost":14.5');
     expect(events).toContain('LongXia 提交失败 (503)');
     expect(upstream).toHaveBeenCalledOnce();
-    expect(JSON.parse((upstream.mock.calls[0] as any)[1].body)).toMatchObject({ duration: 25, size: '16:9', assets: [{ category: 'video', url: 'https://example.com/ref.mp4' }] });
+    expect(JSON.parse((upstream.mock.calls[0] as any)[1].body)).toMatchObject({ duration: 25, size: '16:9', assets: [{ category: 'audio', url: 'https://example.com/ref.mp3' }] });
     expect(db.select().from(users).where(eq(users.id, user.id)).get()!.balance).toBe(100);
   });
 });

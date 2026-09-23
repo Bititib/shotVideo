@@ -472,7 +472,7 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
-    if (isLongxiaModel(m)) return 10;
+    if (isLongxiaModel(m)) return 0;
     if (m === SNUMOM_SD_MINI_MODEL) return 3;
     if (isOmniVideoEditModel(m)) return 1;
     if (m === JULUN_MINIMAX_H3_MODEL) return 3;
@@ -1073,7 +1073,7 @@ export default function VideoPage() {
       || selectedModel.startsWith('lg-');
     const isSoraV3Pro = selectedModel === 'seedance-2.0-fast';
     const isWan30 = isWan30Model(selectedModel);
-    if (!isLongxiaModel(selectedModel) && !isOmniVideoEditModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30) {
+    if (!isOmniVideoEditModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30) {
       setReferenceVideos([]);
     }
     if (!isLongxiaModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30) {
@@ -1168,7 +1168,6 @@ export default function VideoPage() {
       return;
     }
     for (const f of filesToRead) {
-      if (isLongxiaModel(selectedModel) && f.type !== 'video/mp4') { setError('LongXia 参考视频仅支持 MP4'); continue; }
       if (f.size > 100 * 1024 * 1024) { setError('参考视频不能超过 100MB'); continue; }
       if (selectedModel === 'seedance-2.5-pro') {
         const objectUrl = URL.createObjectURL(f);
@@ -1919,7 +1918,7 @@ export default function VideoPage() {
                       <button aria-label={`上传参考视频，最多 ${maxRefVideos} 个`} onClick={() => videoFileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-indigo-400" /> 参考视频 ({referenceVideos.length}/{maxRefVideos})
                       </button>
-                      <input ref={videoFileInputRef} type="file" accept={isLongxiaModel(selectedModel) ? ".mp4,video/mp4" : "video/mp4,video/*"} multiple className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
+                      <input ref={videoFileInputRef} type="file" accept="video/mp4,video/*" multiple className="hidden" onChange={(e) => { handleVideoSelect(e.target.files); e.target.value = ''; }} />
                     </>
                   )}
                   {maxRefAudios > 0 && (

@@ -1,6 +1,6 @@
 # LongXia Seedance 2.5 接入
 
-本站支持以下两个独立的按秒计费模型，采用用户确认的 30 图、10 视频、10 音频规格：
+本站支持以下两个独立的按秒计费模型，支持最多 30 张图片和 10 段音频参考，不支持视频参考：
 
 | 完整模型 ID | 固定分辨率 | 时长 | 默认单价 |
 |---|---|---|---|
@@ -18,26 +18,26 @@
 
 ## 本站统一 API
 
-`POST /v1/videos` 使用本站原有参数：`model`、`prompt`、`seconds`（或 `duration`）、`ratio`（或 `aspect_ratio`）、`image_urls`、`video_urls`、`audio_urls`。
+`POST /v1/videos` 使用本站原有参数：`model`、`prompt`、`seconds`（或 `duration`）、`ratio`（或 `aspect_ratio`）、`image_urls`、`audio_urls`。
 分辨率可省略，自动按模型确定；传入与模型不符的分辨率会被拒绝。
 
 ```json
 {
   "model": "LongXia-video-seedance2_5-standard-480p-express-PerSecond",
-  "prompt": "让 @image1 中的人物按照 @video1 的动作起舞",
+  "prompt": "让 @image1 中的人物跟随 @audio1 的节奏起舞",
   "seconds": 8,
   "ratio": "16:9",
   "image_urls": ["https://your-public-host/reference.jpg"],
-  "video_urls": ["https://your-public-host/reference.mp4"]
+  "audio_urls": ["https://your-public-host/reference.mp3"]
 }
 ```
 
 这是本站接口参数；适配器会转换为 LongXia 的 `duration`、`size`、`assets`，不会发送上游禁止的 `seconds`、`resolution` 等字段。
 素材支持公开 HTTPS URL 或包含 MIME 类型的 Base64 data URL；后者会转换为上游要求的不带前缀的 `data_base64`。
-支持 `@imageN`、`@videoN`、`@audioN`，兼容网页中文及历史素材标签；缺少的引用会自动补齐，越界引用会报错。
+支持 `@imageN`、`@audioN`，兼容网页中文及历史素材标签；缺少的引用会自动补齐，越界引用会报错。
 
-按文档保留 PNG/JPEG/WebP、MP3、MP4 格式规则和 9500 字符提示词上限。不支持单独首尾帧字段。
-文档中的音视频时长限制、URL 可下载性和深层媒体校验由上游执行；数量上限不代表素材时长、总大小无限制。
+按文档保留 PNG/JPEG/WebP、MP3 格式规则和 9500 字符提示词上限。不支持视频参考及单独首尾帧字段。携带参考视频的请求会在提交上游及扣费前返回 HTTP 400。
+文档中的音频时长限制、URL 可下载性和深层媒体校验由上游执行；数量上限不代表素材时长、总大小无限制。
 Base64 合计按编码后字符串大小保守限制为 40 MiB，大素材建议使用公开 HTTPS URL。
 
 提交后返回本站 `task_id`，继续通过 `GET /v1/videos/{task_id}` 查询。

@@ -227,7 +227,7 @@ export async function syncModelsFromAPI() {
     { provider: 'seedance', modelId: 'seedance-2.0', displayName: 'Seedance 2.0', description: 'Seedance 2.0 文生/图生视频 (异步，¥1.5/次)', capabilities: JSON.stringify(['video']), isActive: 1 },
     ...LONGXIA_MODELS.map(modelId => ({ provider: 'longxia', modelId,
       displayName: 'LongXia Seedance 2.5 ' + longxiaResolution(modelId) + '（按秒）',
-      description: '支持4～25秒、30张图片、10个视频和10段音频参考；¥' + longxiaRate(modelId) + '/秒',
+      description: '支持4～25秒、30张图片和10段音频参考，不支持视频参考；¥' + longxiaRate(modelId) + '/秒',
       capabilities: JSON.stringify(['video']), isActive: 1 })),
     { provider: 'miaowu', modelId: MIAOWU_SEEDANCE_25_DEAL_MODEL, displayName: 'Seedance 2.5 Deal', description: '喵呜 API；支持5-30秒、480p/720p；最多30张图片和10段音频参考，不支持视频参考；按次计费', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'miaowu', modelId: MIAOWU_SEEDANCE_25_PRO_MODEL, displayName: 'Seedance 2.5 Pro', description: '喵呜 API；支持4-30秒、480p/720p；最多30张图片、10个视频和10段音频参考；参考视频时长不得超过输出时长；按秒计费', capabilities: JSON.stringify(['video']), isActive: 1 },
