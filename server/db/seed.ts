@@ -38,6 +38,10 @@ import {
   SI_YUE_TIAN_IMAGE_PRICE,
 } from '../services/siYueTianImageAdapter.js';
 import {
+  SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS,
+  SI_YUE_TIAN_SEEDANCE_25_VIDEO_SPECS,
+} from '../services/siYueTianVideoModels.js';
+import {
   MINGFEI_CHANNEL_TYPE,
   MINGFEI_DEFAULT_BASE_URL,
   MINGFEI_IMAGE_MODEL,
@@ -189,6 +193,14 @@ export async function syncModelsFromAPI() {
     { provider: 'siyuetian', modelId: 'nano-banana-2', displayName: 'nano-banana-2', description: 'Google Gemini 3.1 Flash 图像（异步）', capabilities: JSON.stringify(['image']) },
     { provider: 'siyuetian', modelId: 'nano-banana-2-lite', displayName: 'nano-banana-2-lite', description: 'Google Gemini 3.1 Flash Lite 轻量图像（异步）', capabilities: JSON.stringify(['image']) },
     { provider: 'siyuetian', modelId: 'nano-banana-pro', displayName: 'nano-banana-pro', description: 'Google Gemini 3 Pro 高级图像（异步）', capabilities: JSON.stringify(['image']) },
+    ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_SPECS.map(spec => ({
+      provider: 'siyuetian',
+      modelId: spec.id,
+      displayName: `Seedance 2.5 ${spec.resolution} · 四月天`,
+      description: `四月天 Seedance 2.5 文生/图生视频；固定${spec.resolution}；支持4-30秒、30张图片、0个视频、10段音频参考；¥${spec.price}/次`,
+      capabilities: JSON.stringify(['video']),
+      isActive: 1,
+    })),
     { provider: 'google', modelId: 'gemini-3.1-flash-image-preview', displayName: '🍌 nabanana flash', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-3-pro-image-preview', displayName: '🍌 nabanana pro', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', capabilities: JSON.stringify(['tts']) },
@@ -258,6 +270,7 @@ export async function syncModelsFromAPI() {
   ]);
   const hmStudioModelIds = new Set([HM_STUDIO_PRIMARY_VIDEO_MODEL, ...HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS]);
   const siYueTianImageModelIds = new Set<string>(SI_YUE_TIAN_IMAGE_MODELS);
+  const siYueTianVideoModelIds = new Set<string>(SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS);
   const mingFeiImageModelIds = new Set([MINGFEI_IMAGE_MODEL]);
   const pidoiImageModelIds = new Set(['gpt-image-2']);
   allVerified = allVerified.map(model => {
@@ -265,6 +278,7 @@ export async function syncModelsFromAPI() {
     if (hmStudioModelIds.has(model.modelId)) return { ...model, provider: 'hmstudio' };
     if (pidoiImageModelIds.has(model.modelId)) return { ...model, provider: 'pidoi' };
     if (siYueTianImageModelIds.has(model.modelId)) return { ...model, provider: 'siyuetian' };
+    if (siYueTianVideoModelIds.has(model.modelId)) return { ...model, provider: 'siyuetian' };
     if (mingFeiImageModelIds.has(model.modelId)) return { ...model, provider: 'mingfei' };
     return model;
   });
@@ -278,6 +292,7 @@ export async function syncModelsFromAPI() {
         || hmStudioModelIds.has(m.modelId)
         || pidoiImageModelIds.has(m.modelId)
         || siYueTianImageModelIds.has(m.modelId)
+        || siYueTianVideoModelIds.has(m.modelId)
         || mingFeiImageModelIds.has(m.modelId)
         || m.modelId === WX_HAIDIYUE_FACE_SPLIT_MODEL)
         && existing.provider !== m.provider;
@@ -1052,6 +1067,13 @@ export async function initDatabase() {
     { modelPattern: 'veo-omni-flash-video-edit', billingType: 'per_second', inputPrice: 0.09, category: 'video' },
     { modelPattern: 'veo-3-1', billingType: 'per_second', inputPrice: legacyRate('veo_3_1_rate', 0.20), category: 'video' },
     { modelPattern: 'seedance-2.0', billingType: 'per_call', inputPrice: legacyRate('seedance_2_0_rate', 1.50), category: 'video' },
+    ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_SPECS.map(spec => ({
+      modelPattern: spec.id,
+      billingType: 'per_call',
+      inputPrice: spec.price,
+      category: 'video',
+      extraParams: { [spec.resolution]: spec.price },
+    })),
     ...HM_STUDIO_ADDITIONAL_VIDEO_MODELS.map(model => ({
       modelPattern: model.id,
       billingType: 'per_call',
@@ -1401,7 +1423,7 @@ export async function initDatabase() {
   // 11) 四月天退出公开 sd2.5，仅保留其他专属模型。
   try {
     const existingChre3 = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get();
-    const chre3Models = ['seedance-2.0', 'sd2-mini', ...SI_YUE_TIAN_IMAGE_MODELS];
+    const chre3Models = ['seedance-2.0', 'sd2-mini', ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS, ...SI_YUE_TIAN_IMAGE_MODELS];
     if (!existingChre3) {
       db.insert(channels).values({
         name: '4月天 渠道',

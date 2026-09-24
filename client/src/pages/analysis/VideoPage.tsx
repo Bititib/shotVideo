@@ -63,6 +63,11 @@ const HM_STUDIO_VIDEO_MODEL_IDS = new Set([
   HM_STUDIO_SEEDANCE_V25_101010_MODEL,
   HM_STUDIO_SEEDANCE_V25_301010_MODEL,
 ]);
+const SI_YUE_TIAN_SEEDANCE_25_MODELS = new Set([
+  'seedance-2.5-480p',
+  'seedance-2.5-720p',
+  'seedance-2.5-1080p',
+]);
 const isHmStudioVideoModel = (modelId: string) => HM_STUDIO_VIDEO_MODEL_IDS.has(modelId);
 const VIDEO_HISTORY_PAGE_SIZE = 6;
 function getVideoPlayUrl(url: string | null) {
@@ -342,6 +347,7 @@ const isWan30Model = (modelId: string) => {
 };
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  if (SI_YUE_TIAN_SEEDANCE_25_MODELS.has(modelId)) return 30;
   if (isLongxiaModel(modelId)) return 30;
   if (modelId === JULUN_MINIMAX_H3_MODEL) return 9;
   if (isWan30Model(modelId)) return 10;
@@ -472,6 +478,7 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
+    if (SI_YUE_TIAN_SEEDANCE_25_MODELS.has(m)) return 0;
     if (isLongxiaModel(m)) return 0;
     if (m === SNUMOM_SD_MINI_MODEL) return 3;
     if (isOmniVideoEditModel(m)) return 1;
@@ -491,6 +498,7 @@ export default function VideoPage() {
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
+    if (SI_YUE_TIAN_SEEDANCE_25_MODELS.has(m)) return 10;
     if (isLongxiaModel(m)) return 10;
     if (m === SNUMOM_SD_MINI_MODEL) return 3;
     if (m === JULUN_MINIMAX_H3_MODEL) return 3;

@@ -69,6 +69,12 @@ import {
   submitSiYueTianOverflowPlan,
 } from '../services/siYueTianChannelService.js';
 import {
+  buildSiYueTianSeedance25VideoPayload,
+  getSiYueTianSeedance25VideoSpec,
+  SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS,
+  validateSiYueTianSeedance25VideoInput,
+} from '../services/siYueTianVideoModels.js';
+import {
   generateSiYueTianImage,
   isSiYueTianImageChannel,
   isSiYueTianImageModel,
@@ -1503,7 +1509,9 @@ async function handleVideoCreation(req: Request, res: Response) {
   }
 
   const ratio = body.ratio || body.aspect_ratio || '16:9';
+  const siYueTianSeedance25Spec = getSiYueTianSeedance25VideoSpec(model);
   const resolution = body.resolution || body.resolution_name
+    || siYueTianSeedance25Spec?.resolution
     || (isLongxiaModel(model) ? longxiaResolution(model) : undefined)
     || (isJulunMinimaxH3Model(model) ? JULUN_MINIMAX_H3_RESOLUTION : '720p');
 
@@ -1632,6 +1640,18 @@ async function handleVideoCreation(req: Request, res: Response) {
       cleanupFiles(req.files);
       return res.status(400).json({ error: 'wan3.0th audio references must be WAV files' });
     }
+  }
+
+  const siYueTianSeedance25ValidationError = validateSiYueTianSeedance25VideoInput(model, {
+    seconds,
+    resolution,
+    imageCount: image_urls.length,
+    videoCount: video_urls.length,
+    audioCount: audio_urls.length,
+  });
+  if (siYueTianSeedance25ValidationError) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: siYueTianSeedance25ValidationError });
   }
 
   if (model === 'ad-seedance-2.5-480p') {
@@ -1970,6 +1990,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     'nd-seedance-2.0-480p',
     'nd-seedance-2.0-720p',
     'xd-seedance-2.5-720p',
+    ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS,
     'sd2-c6'
   ].includes(model);
   const pricingQuote = PricingService.quote(model, { resolution, seconds, count: 1 }, false);
@@ -2263,6 +2284,23 @@ async function handleVideoCreation(req: Request, res: Response) {
         lastFrame: body.end_frame_url || body.last_frame_url,
         complianceEnabled: body.compliance_enabled,
         complianceMode: body.compliance_mode,
+      });
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+      upstreamRes = await fetch(upstreamUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(channel.timeout || 120_000),
+      });
+    } else if (siYueTianSeedance25Spec) {
+      const payload = buildSiYueTianSeedance25VideoPayload({
+        model: upstreamModel,
+        prompt,
+        seconds,
+        aspectRatio: ratio,
+        imageUrls: image_urls,
+        audioUrls: audio_urls,
       });
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;

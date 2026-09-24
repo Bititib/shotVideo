@@ -78,6 +78,14 @@ import {
   submitSiYueTianOverflowPlan,
 } from '../services/siYueTianChannelService.js';
 import {
+  getSiYueTianSeedance25VideoSpec,
+  SI_YUE_TIAN_SEEDANCE_25_MAX_AUDIOS,
+  SI_YUE_TIAN_SEEDANCE_25_MAX_IMAGES,
+  SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS,
+  SI_YUE_TIAN_SEEDANCE_25_VIDEO_SPECS,
+  validateSiYueTianSeedance25VideoInput,
+} from '../services/siYueTianVideoModels.js';
+import {
   buildWxHaidiYueVideoPayload,
   isWxHaidiYueChannel,
   normalizeWxHaidiYueTask,
@@ -291,6 +299,11 @@ interface ModelMeta {
   requireRef: boolean;               // 是否必须传参考图
 }
 const MODEL_META: Record<string, ModelMeta> = {
+  ...Object.fromEntries(SI_YUE_TIAN_SEEDANCE_25_VIDEO_SPECS.map(spec => [spec.id, {
+    series: `siyuetian-seedance-2.5-${spec.resolution}`,
+    allowedSeconds: Array.from({ length: 27 }, (_, index) => index + 4),
+    requireRef: false,
+  }])),
   'sora-v4-fast': { series: 'sora-v4', allowedSeconds: [10, 15], requireRef: false },
   'sora-v4-pro': { series: 'sora-v4', allowedSeconds: [10, 15], requireRef: false },
   'ld-sdas-cvk-pro-933-720p': { series: 'sudashui', allowedSeconds: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
@@ -340,6 +353,13 @@ const MODEL_META: Record<string, ModelMeta> = {
 };
 
 const DEFAULT_VIDEO_MODELS = [
+  ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_SPECS.map(spec => ({
+    id: spec.id,
+    name: `Seedance 2.5 ${spec.resolution} · 四月天`,
+    description: `四月天线路；4-30秒；最多30图、0视频、10音频；¥${spec.price}/次`,
+    maxSeconds: 30,
+    icon: '🎬',
+  })),
   { id: 'seedance_v2.5', name: 'HM-Seedance V2.5', description: '720p；支持4-30秒；最多10张图片参考，不支持音频和视频参考', maxSeconds: 30, icon: '🎬' },
   ...HM_STUDIO_ADDITIONAL_VIDEO_MODELS.map(model => ({
     id: model.id,
@@ -597,7 +617,12 @@ router.get('/models', (_req: Request, res: Response) => {
     const multiplier = meta?.series === '1.5' ? 1.2 : 1.0;
 
     let rates: Record<string, number>;
-    if (isLongxiaModel(m.id)) {
+    const siYueTianSeedance25Spec = getSiYueTianSeedance25VideoSpec(m.id);
+    if (siYueTianSeedance25Spec) {
+      rates = {
+        [siYueTianSeedance25Spec.resolution]: quotePrice(m.id, { resolution: siYueTianSeedance25Spec.resolution }).rate,
+      };
+    } else if (isLongxiaModel(m.id)) {
       const resolution = longxiaResolution(m.id);
       rates = { [resolution]: quotePrice(m.id, { resolution, seconds: 1 }).rate };
     } else if (m.id === 'sora-v4-fast') {
@@ -851,6 +876,17 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   }
 
   const meta = MODEL_META[model];
+
+  const siYueTianSeedance25ValidationError = validateSiYueTianSeedance25VideoInput(model, {
+    seconds: Number(video_length),
+    resolution,
+    imageCount: reference_images.length,
+    videoCount: finalVideos.length,
+    audioCount: finalAudios.length,
+  });
+  if (siYueTianSeedance25ValidationError) {
+    return res.status(400).json({ error: siYueTianSeedance25ValidationError });
+  }
 
   if (model === 'wan3.0th') {
     const wanRatios = ['1:1', '16:9', '9:16', '4:3', '3:4'];
@@ -1219,6 +1255,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     'nd-seedance-2.0-720p',
     'ad-seedance-2.5-480p',
     'xd-seedance-2.5-720p',
+    ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS,
   ].includes(model);
   const estimatedSeconds = Number(video_length) || 6;
   const unifiedQuote = PricingService.quote(model, { resolution, seconds: estimatedSeconds, count: 1 }, false);
@@ -1380,6 +1417,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   const isVeo31 = model === 'veo-3-1';
   const isWan30 = model === 'wan3.0th' || model === 'wan3.0-video' || model === 'wan3.0-video-prime';
   const isSeedanceJsonModel = [
+    ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS,
     'seedance-2.0',
     'sd2-c7',
     'sd2.5',
@@ -2186,22 +2224,27 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
       // 将 base64 素材保存到本地并生成自托管公网 URL
       const imageUrls: string[] = [];
+      const siYueTianSeedance25Spec = getSiYueTianSeedance25VideoSpec(model);
       const isVd25 = model === 'vd-seedance-2.5-480p' || model === 'vd-seedance-2.5-720p';
       const isAd25 = model === 'ad-seedance-2.5-480p';
-      const maxImgCount = (isAd25 || model === 'sd2.5') ? 30 : 9;
+      const maxImgCount = siYueTianSeedance25Spec
+        ? SI_YUE_TIAN_SEEDANCE_25_MAX_IMAGES
+        : ((isAd25 || model === 'sd2.5') ? 30 : 9);
       for (const img of (reference_images || []).slice(0, maxImgCount)) {
         const url = convertBase64ToPublicUrl(img, 'sd2_ref', req);
         if (url) imageUrls.push(url);
       }
       const videoRefUrls: string[] = [];
-      const isNoVideoModel = model === 'sd2.5' || model === 'sd2-mini' || model === 'seedance2.0-933' || model === 'seedance2.0 933' || model.includes('noface');
+      const isNoVideoModel = Boolean(siYueTianSeedance25Spec) || model === 'sd2.5' || model === 'sd2-mini' || model === 'seedance2.0-933' || model === 'seedance2.0 933' || model.includes('noface');
       const maxVidCount = isAd25 ? 10 : (isNoVideoModel ? 0 : 3);
       for (const v of finalVideos.slice(0, maxVidCount)) {
         const url = convertBase64ToPublicUrl(v, 'sd2_vid', req);
         if (url) videoRefUrls.push(url);
       }
       const audioRefUrls: string[] = [];
-      const maxAudCount = isAd25 ? 10 : (isVd25 ? 0 : (model === 'sd2.5' ? 0 : 3));
+      const maxAudCount = siYueTianSeedance25Spec
+        ? SI_YUE_TIAN_SEEDANCE_25_MAX_AUDIOS
+        : (isAd25 ? 10 : (isVd25 ? 0 : (model === 'sd2.5' ? 0 : 3)));
       for (const a of finalAudios.slice(0, maxAudCount)) {
         const url = convertBase64ToPublicUrl(a, 'sd2_aud', req);
         if (url) audioRefUrls.push(url);
