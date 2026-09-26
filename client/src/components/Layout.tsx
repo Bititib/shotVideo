@@ -11,6 +11,7 @@ const navItems: Array<{ to: string; icon: typeof PlaySquare; label: string; colo
   { to: '/app/copywriting', icon: Megaphone, label: '电商文案', color: 'text-orange-400', feature: 'copywriting' },
   { to: '/app/account', icon: Users, label: '账号分析', color: 'text-emerald-400', feature: 'account' },
   { to: '/app/video', icon: Video, label: '视频生成', color: 'text-indigo-400', feature: 'video' },
+  { to: '/app/video-batch', icon: Layers3, label: '批量视频', color: 'text-amber-400', feature: 'video' },
   { to: '/app/image-gen', icon: ImageIcon, label: '图片生成', color: 'text-pink-400', feature: 'image_gen' },
   { to: '/app/tts', icon: Volume2, label: '语音合成', color: 'text-yellow-400', feature: 'tts' },
   { to: '/app/history', icon: History, label: '生成记录', color: 'text-amber-400', feature: 'history', requiresApiKey: true },

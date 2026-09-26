@@ -16,6 +16,7 @@ import tokenRoutes from './routes/tokens.js';
 import pricingRoutes from './routes/pricing.js';
 import v1Routes from './routes/v1.js';
 import videoRoutes from './routes/video.js';
+import videoBatchRoutes from './routes/videoBatches.js';
 import imageGenRoutes from './routes/imageGen.js';
 import orgRoutes from './routes/org.js';
 import contentRoutes from './routes/content.js';
@@ -85,6 +86,7 @@ export async function createApp() {
   app.use('/api/admin/tokens', tokenRoutes);
   app.use('/api/admin/pricing', pricingRoutes);
   app.use('/api/video', videoRoutes);
+  app.use('/api/video-batches', videoBatchRoutes);
   app.use('/api/image-gen', imageGenRoutes);
   app.use('/api/tokens', userTokenRoutes);
   app.use('/api/org', orgRoutes);

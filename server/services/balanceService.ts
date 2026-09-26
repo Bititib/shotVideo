@@ -2,6 +2,13 @@ import { db } from '../db/index.js';
 import { users, organizations } from '../db/schema.js';
 import { eq, sql, and } from 'drizzle-orm';
 
+export type BalanceSource = 'org' | 'user';
+export type BalanceDeduction = {
+  balance: number;
+  source: BalanceSource;
+  orgId?: number;
+};
+
 export class BalanceService {
   /** 查询用户当前余额 */
   static getBalance(userId: number): number {
@@ -41,7 +48,12 @@ export class BalanceService {
    * @returns 扣减后的剩余余额，如果余额不足则返回 null
    */
   static deduct(userId: number, amount: number, type: string, meta?: Record<string, any>): number | null {
-    if (amount <= 0) return this.getBalance(userId);
+    return this.deductWithSource(userId, amount, type, meta)?.balance ?? null;
+  }
+
+  /** 原子扣款，并返回本次实际使用的余额来源，供失败退款原路退回。 */
+  static deductWithSource(userId: number, amount: number, _type: string, _meta?: Record<string, any>): BalanceDeduction | null {
+    if (amount <= 0) return { balance: this.getBalance(userId), source: 'user' };
 
     const user = db.select({ orgId: users.orgId }).from(users).where(eq(users.id, userId)).get();
 
@@ -53,7 +65,7 @@ export class BalanceService {
         .run();
 
       if (orgResult.changes > 0) {
-        return this.getOrgBalance(user.orgId);
+        return { balance: this.getOrgBalance(user.orgId), source: 'org', orgId: user.orgId };
       }
     }
 
@@ -65,7 +77,7 @@ export class BalanceService {
 
     if (result.changes === 0) return null; // 余额不足
 
-    return this.getBalance(userId);
+    return { balance: this.getBalance(userId), source: 'user' };
   }
 
   /** 充值个人余额 */
@@ -85,16 +97,31 @@ export class BalanceService {
 
     const user = db.select({ orgId: users.orgId }).from(users).where(eq(users.id, userId)).get();
 
-    // 优先加回组织余额
-    if (user?.orgId) {
-      db.update(organizations)
-        .set({ balance: sql`balance + ${amount}`, updatedAt: new Date().toISOString() })
-        .where(eq(organizations.id, user.orgId))
-        .run();
-      return this.getOrgBalance(user.orgId);
+    return this.refundToSource(userId, amount, user?.orgId ? 'org' : 'user', user?.orgId || undefined, type, meta);
+  }
+
+  /** 将退款退回指定的原始扣款来源，避免个人扣款误退到组织余额。 */
+  static refundToSource(
+    userId: number,
+    amount: number,
+    source: BalanceSource,
+    orgId?: number,
+    _type: string = 'refund',
+    _meta?: Record<string, any>,
+  ): number {
+    if (amount <= 0) {
+      return source === 'org' && orgId ? this.getOrgBalance(orgId) : this.getBalance(userId);
     }
 
-    // 加回个人余额
+    if (source === 'org' && orgId) {
+      const result = db.update(organizations)
+        .set({ balance: sql`balance + ${amount}`, updatedAt: new Date().toISOString() })
+        .where(eq(organizations.id, orgId))
+        .run();
+      if (result.changes > 0) return this.getOrgBalance(orgId);
+    }
+
+    // 组织已不存在时也不能吞掉退款，安全回退到用户个人余额。
     db.update(users)
       .set({ balance: sql`balance + ${amount}`, updatedAt: new Date().toISOString() })
       .where(eq(users.id, userId))
@@ -102,4 +129,3 @@ export class BalanceService {
     return this.getBalance(userId);
   }
 }
-

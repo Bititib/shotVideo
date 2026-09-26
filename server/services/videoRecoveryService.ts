@@ -2,6 +2,7 @@ import { and, desc, eq, gte, inArray } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { apiTokens, contents } from '../db/schema.js';
 import { BalanceService } from './balanceService.js';
+import { isBatchQueryUncertain } from './videoBatchStore.js';
 import { ChannelService } from './channelService.js';
 import { PricingService } from './pricingService.js';
 import { TokenService } from './tokenService.js';
@@ -91,7 +92,7 @@ export class VideoRecoveryService {
       eq(contents.type, 'video'),
       inArray(contents.status, ['failed', 'error']),
       gte(contents.createdAt, since),
-    )).orderBy(desc(contents.createdAt)).all();
+    )).orderBy(desc(contents.createdAt)).all().filter(record => !parseMetadata(record.metadata).batchItemId);
 
     const candidateIds: number[] = [];
     let missingTaskIdCount = 0;
@@ -272,7 +273,12 @@ export class VideoRecoveryService {
       );
       error = extractVideoFailureMessage(data?.error || payload?.error || data?.failure_reason || payload?.failure_reason);
     }
-    if (isVideoFailurePayload(payload)) normalizedStatus = 'failed';
+    if (isVideoFailurePayload(payload)) {
+      if (metadata.batchItemId && isBatchQueryUncertain(payload, normalizedStatus)) {
+        throw { status: 502, message: '上游查询返回异常，无法确认原任务失败；保留预扣，不会重复生成' };
+      }
+      normalizedStatus = 'failed';
+    }
     const base = {
       videoId,
       channelId: Number(channel.id),
@@ -303,6 +309,23 @@ export class VideoRecoveryService {
 
   static async recover(contentId: number) {
     const inspection = await this.inspect(contentId);
+    const batchRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
+    const batchMetadata = parseMetadata(batchRecord?.metadata);
+    if (batchRecord && batchMetadata.batchItemId && inspection.status !== 'completed') {
+      const { batchStore, recordBatchFailure, tickVideoBatches } = await import('./videoBatchService.js');
+      const item = batchStore.item(Number(batchMetadata.batchItemId));
+      if (!item || item.content_id !== contentId || item.billing_state !== 'reserved' || !['running', 'review'].includes(item.status)) {
+        throw { status: 409, message: '此批量尝试已结束或已替换，请查看当前批次任务' };
+      }
+      if (inspection.status === 'failed') {
+        recordBatchFailure(contentId, inspection.message || '上游确认失败', true);
+        tickVideoBatches();
+      } else if (inspection.status === 'processing') {
+        db.update(contents).set({ status: 'processing' }).where(eq(contents.id, contentId)).run();
+        const { resumePollForTask } = await import('../routes/video.js');
+        void resumePollForTask(contentId, { ...batchRecord, status: 'processing' });
+      }
+    }
     if (inspection.status !== 'completed' || !inspection.upstreamResultUrl) return inspection;
 
     const beforeDownload = db.select().from(contents).where(eq(contents.id, contentId)).get();
@@ -320,6 +343,12 @@ export class VideoRecoveryService {
       inspection.channelApiKeyId,
     );
     if (!localizedUrl) throw { status: 502, message: '上游视频下载失败，尚未扣费' };
+
+    if (beforeMetadata.batchItemId) {
+      const { settleRecoveredBatch } = await import('./videoBatchService.js');
+      settleRecoveredBatch(contentId, localizedUrl);
+      return { status: 'completed', message: '批量任务已恢复，使用原预扣费用结算，未重复扣费', chargedAmount: 0 };
+    }
 
     return db.transaction(() => {
       const record = db.select().from(contents).where(eq(contents.id, contentId)).get();

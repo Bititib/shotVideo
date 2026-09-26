@@ -16,6 +16,9 @@ async function main() {
     console.log(`✅ 服务器运行于 http://localhost:${env.PORT}`);
     console.log(`📦 环境: ${env.NODE_ENV}`);
 
+    const { startVideoBatchWorker } = await import('./services/videoBatchService.js');
+    startVideoBatchWorker();
+
     // 监听端口后再恢复队列，确保 HM 能访问本站托管的参考素材。
     try {
       const { resumeAllPendingVideoTasks } = await import('./routes/video.js');

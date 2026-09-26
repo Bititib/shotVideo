@@ -1,6 +1,7 @@
 import { db } from '../db/index.js';
 import { contents, users } from '../db/schema.js';
-import { eq, and, desc, sql, gte, lte, like, or } from 'drizzle-orm';
+import { eq, and, desc, sql, like, or } from 'drizzle-orm';
+import { beijingDayBounds } from '../../shared/time.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -417,8 +418,10 @@ export class ContentService {
       like(contents.inputText, `%${search}%`),
       like(contents.modelId, `%${search}%`),
     )!);
-    if (dateFrom) conditions.push(gte(contents.createdAt, `${dateFrom} 00:00:00`));
-    if (dateTo) conditions.push(lte(contents.createdAt, `${dateTo} 23:59:59`));
+    const fromBounds = dateFrom ? beijingDayBounds(dateFrom) : null;
+    const toBounds = dateTo ? beijingDayBounds(dateTo) : null;
+    if (fromBounds) conditions.push(sql`julianday(${contents.createdAt}) >= julianday(${fromBounds.start})`);
+    if (toBounds) conditions.push(sql`julianday(${contents.createdAt}) < julianday(${toBounds.end})`);
 
     const items = db.select().from(contents)
       .where(and(...conditions))

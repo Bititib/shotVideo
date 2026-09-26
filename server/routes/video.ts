@@ -3,8 +3,10 @@ import { authMiddleware } from '../middleware/auth.js';
 import { tierMiddleware, TierRequest } from '../middleware/tier.js';
 import { quotaMiddleware, logUsage } from '../middleware/quota.js';
 import { ChannelService } from '../services/channelService.js';
-import { BalanceService } from '../services/balanceService.js';
+import { BalanceService, type BalanceDeduction } from '../services/balanceService.js';
 import { ContentService } from '../services/contentService.js';
+import { batchContextForRequest, batchStore, recordBatchFailure, markBatchSubmitting, noteBatchQueryProblem, isBatchChannelAtCapacity } from '../services/videoBatchService.js';
+import { guardBatchSubmissionResponse, isBatchQueryUncertain } from '../services/videoBatchStore.js';
 import { PricingService } from '../services/pricingService.js';
 import { hmStudioPoolKey, hmStudioQueue, type HmStudioQueueSnapshot } from '../services/hmStudioQueueService.js';
 import { calculateSuccessRate, isWithinRecentDays } from '../services/successRateService.js';
@@ -111,11 +113,13 @@ import { buildLongxiaVideoPayload, isLongxiaChannel, isLongxiaModel, longxiaReso
 import { prepareMiaowuPublicMediaUrls } from '../services/miaowuMediaService.js';
 import { detectVideoCodec, downloadAndLocalizeVideo, originalVideoPathFor, preferredVideoDownloadPath } from '../services/videoLocalizationService.js';
 import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
+import { validateVideoPrompt } from '../services/videoPromptValidation.js';
+import { parseUtcTimestamp } from '../../shared/time.js';
 export { downloadAndLocalizeVideo } from '../services/videoLocalizationService.js';
 import { env } from '../config/env.js';
 import { db } from '../db/index.js';
 import { models, settings, contents } from '../db/schema.js';
-import { eq, like, and, inArray, gte } from 'drizzle-orm';
+import { eq, like, and, inArray, gte, sql } from 'drizzle-orm';
 import fs from 'fs';
 import path from 'path';
 import { exec, execSync } from 'child_process';
@@ -831,7 +835,12 @@ router.get('/models', (_req: Request, res: Response) => {
 });
 
 /** POST /api/video/generate — SSE 流式视频生成（异步轮询模式） */
-router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddleware, async (req: TierRequest, res: Response) => {
+router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'), quotaMiddleware, async (req: TierRequest, res: Response) => {
+  let batchContext: ReturnType<typeof batchContextForRequest> = null;
+  try {
+    batchContext = batchContextForRequest(req);
+    if (batchContext) req.body = batchContext.body;
+  } catch (error: any) { return res.status(409).json({ error: error.message }); }
   const {
     prompt,
     model = 'nd-seedance-2.0-720p',
@@ -863,12 +872,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     ? audio_urls
     : (audio_url ? [audio_url] : []);
 
-  if (!prompt?.trim()) {
-    return res.status(400).json({ error: '请输入视频描述' });
-  }
-
-  if (prompt.trim().length > 5000) {
-    return res.status(400).json({ error: '提示词字数不能超过 5000 字' });
+  const promptValidationError = validateVideoPrompt(prompt);
+  if (promptValidationError) {
+    return res.status(400).json({ error: promptValidationError });
   }
 
   if (model === MJ_OVERFLOW_VIDEO_MODEL) {
@@ -1133,6 +1139,16 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
 
 
+  // Reuse exactly the same model/material checks before a batch is charged.
+  if (req.path === '/validate') {
+    const quote = PricingService.quote(model, { resolution, seconds: Number(video_length), count: 1 }, false);
+    if (!quote.billingType || !Number.isFinite(quote.cost) || quote.cost < 0) return res.status(400).json({ error: '该模型未配置有效价格' });
+    return res.json({ unitCost: quote.cost, resolution, reference_images });
+  }
+  if (batchContext && isBatchChannelAtCapacity(channel)) {
+    return res.status(429).json({ code: 'BATCH_CAPACITY', error: '渠道正在忙，任务保持排队，不重新扣费' });
+  }
+
   // SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -1265,13 +1281,15 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     return res.end();
   }
   const estimatedRate = unifiedQuote.rate;
-  const estimatedCost = unifiedQuote.cost;
+  const estimatedCost = batchContext ? 0 : unifiedQuote.cost;
 
   // 1. 提交任务时优先原子预扣费
   let predeductedBalance: number | null = null;
+  let balanceDeduction: BalanceDeduction | null = null;
   if (estimatedCost > 0) {
-    predeductedBalance = BalanceService.deduct(req.userId!, estimatedCost, 'generate_video_prededuct');
-    if (predeductedBalance === null) {
+    balanceDeduction = BalanceService.deductWithSource(req.userId!, estimatedCost, 'generate_video_prededuct');
+    predeductedBalance = balanceDeduction?.balance ?? null;
+    if (!balanceDeduction) {
       const { balance: currentBalance } = BalanceService.checkBalance(req.userId!, estimatedCost);
       sendEvent({ type: 'error', message: `余额不足，预估费用 ¥${estimatedCost.toFixed(2)}，当前余额 ¥${currentBalance.toFixed(2)}` });
       res.write('data: [DONE]\n\n');
@@ -1283,7 +1301,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
   // 插入初始的 'processing' 内容记录，确保刷新页面时正在生成中的记录不会丢失
   let contentId: number | null = null;
   try {
-    contentId = ContentService.save({
+    const saveContent = () => ContentService.save({
       userId: req.userId!,
       orgId: req.orgId || null,
       type: 'video',
@@ -1293,6 +1311,8 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
       cost: estimatedCost,
       status: 'processing',
       metadata: {
+        ...(batchContext ? { batchId: batchContext.batch.id, batchItemId: batchContext.item.id,
+          batchAttempt: batchContext.item.attempts, batchReservedAmount: batchContext.item.unit_cost, billingStatus: 'batch_reserved' } : {}),
         resolution,
         seconds: estimatedSeconds,
         aspect_ratio,
@@ -1320,16 +1340,25 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           ? (local_face_processed ? false : (model === WX_HAIDIYUE_FACE_SPLIT_MODEL ? true : resolveWxHaidiYueFaceSplit(dbChannel, face_split)))
           : undefined,
         billingSource: 'user',
+        billingBalanceSource: batchContext ? JSON.parse(batchContext.item.receipt).source : balanceDeduction?.source,
+        billingOrgId: batchContext ? JSON.parse(batchContext.item.receipt).orgId : balanceDeduction?.orgId,
         queueUserKey: `user:${req.userId}`,
         queueEnqueuedAt: new Date().toISOString(),
         publicBaseUrl: process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`
       }
     });
+    contentId = batchContext
+      ? batchStore.attach(batchContext.item.id, batchContext.item.attempts, req.userId!, saveContent)
+      : saveContent();
     if (contentId !== null) {
       sendEvent({ type: 'content_id', contentId });
     }
   } catch (e) {
     console.error('[content] 初始视频记录保存失败:', e);
+    if (batchContext) {
+      sendEvent({ type: 'error', message: '批量任务记录保存失败，未提交上游' });
+      return res.end();
+    }
   }
 
   /** 生成成功后更新内容（已在前置预扣费，无需重复扣费） */
@@ -1345,12 +1374,16 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         completedMetadata.queueStatus = 'completed';
         completedMetadata.queuePosition = 0;
         completedMetadata.completedAt = new Date().toISOString();
+        const submittedAt = parseUtcTimestamp(current?.createdAt);
+        completedMetadata.durationMs = Number.isFinite(submittedAt)
+          ? Math.max(0, Date.parse(completedMetadata.completedAt) - submittedAt)
+          : elapsed;
         if (upstreamResultUrl) completedMetadata.upstreamResultUrl = upstreamResultUrl;
         delete completedMetadata.progressText;
         db.update(contents).set({
           status: 'completed',
           resultUrl: finalVideoUrl || null,
-          cost: estimatedCost,
+          cost: batchContext ? sql`cost` : estimatedCost,
           metadata: JSON.stringify(completedMetadata),
         }).where(eq(contents.id, contentId)).run();
       } catch (e) { console.error('[content] 视频记录更新失败:', e); }
@@ -1359,7 +1392,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
   /** 任务失败时自动退款 */
   let failureHandled = false;
-  const refundFailedTask = (errMsg: string) => {
+  const refundFailedTask = (errMsg: string, confirmedUpstreamFailure = false) => {
     if (failureHandled) return;
     failureHandled = true;
     const readableError = clarifyVideoCapacityFailure(
@@ -1368,8 +1401,18 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
     );
     console.error(`[video] ❌ 生成失败: ${readableError}`);
     sendEvent({ type: 'error', message: readableError });
+    if (contentId !== null && recordBatchFailure(contentId, readableError, confirmedUpstreamFailure)) {
+      activePolls.delete(contentId);
+      return;
+    }
     if (estimatedCost > 0) {
-      BalanceService.refund(req.userId!, estimatedCost, 'generate_video_refund');
+      BalanceService.refundToSource(
+        req.userId!,
+        estimatedCost,
+        balanceDeduction?.source || 'user',
+        balanceDeduction?.orgId,
+        'generate_video_refund',
+      );
     }
     if (contentId !== null) {
       activePolls.delete(contentId);
@@ -1379,7 +1422,9 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         failedMetadata.billingStatus = estimatedCost > 0 ? 'refunded' : 'not_charged';
         failedMetadata.queueRefunded = estimatedCost > 0;
         failedMetadata.refundAmount = estimatedCost;
-        failedMetadata.refundTarget = estimatedCost > 0 ? 'user_balance' : 'not_charged';
+        failedMetadata.refundTarget = estimatedCost > 0
+          ? (balanceDeduction?.source === 'org' ? 'organization_balance' : 'user_balance')
+          : 'not_charged';
         if (estimatedCost > 0) failedMetadata.refundedAt = new Date().toISOString();
         db.update(contents).set({
           status: 'failed',
@@ -1499,6 +1544,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
 
   try {
     let videoId = '';
+    if (!markBatchSubmitting(contentId)) return res.end();
 
     if (failoverReason && (isWxHaidiYue || isMjNewApi)) {
       const attemptedFallbackIds = new Set<number>();
@@ -1572,6 +1618,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           });
         }
 
+        guardBatchSubmissionResponse(Boolean(batchContext), createResp);
         if (createResp.ok) {
           const job = await createResp.json() as any;
           videoId = job.request_id || job.id || job.task_id;
@@ -2294,6 +2341,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         const canOverflowSiYueTian = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL
           && isSiYueTianChannel(channel)
           && isHmStudioConcurrencyError(createResp.status, errText);
+        guardBatchSubmissionResponse(Boolean(batchContext), createResp);
         if (!canOverflowSiYueTian) {
           console.error(`[video] sd2 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
           refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
@@ -2313,6 +2361,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
             ratio: aspect_ratio,
             imageUrls,
           });
+          guardBatchSubmissionResponse(Boolean(batchContext), fallbackResponse);
           if (fallbackResponse.ok) {
             const job = await fallbackResponse.json() as any;
             videoId = job.request_id || job.task_id || job.id;
@@ -2478,6 +2527,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         if (!pollResp.ok) {
           const detail = await pollResp.text().catch(() => '');
           const failureMessage = formatVideoPollHttpFailure(pollResp.status, detail);
+          if (batchContext && contentId) {
+            noteBatchQueryProblem(contentId, '上游状态查询暂时不可用，正在查询原任务，不会重复生成');
+            continue;
+          }
           if (isWxHaidiYue && isTransientVideoPollHttpStatus(pollResp.status)) {
             consecutiveTransientPollFailures++;
             if (consecutiveTransientPollFailures < maxTransientPollFailures) {
@@ -2611,6 +2664,10 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
         }
 
         if (isVideoFailurePayload(status)) {
+          if (batchContext && isBatchQueryUncertain(status, taskStatus)) {
+            if (contentId) noteBatchQueryProblem(contentId, '上游查询返回异常，继续核实原任务');
+            continue;
+          }
           taskStatus = 'failed';
           errMsg = extractVideoFailureMessage(status) || errMsg || '视频生成失败';
         }
@@ -2635,6 +2692,18 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
             } catch { }
           }
         } else if (taskStatus === 'completed' || taskStatus === 'success') {
+          if (!resultUrl) {
+            if (batchContext && contentId) {
+              noteBatchQueryProblem(contentId, '上游已完成，等待视频链接，不会重复生成');
+              continue;
+            }
+            refundFailedTask('上游任务已完成，但没有返回视频链接');
+            if (!res.destroyed && !res.writableEnded) {
+              res.write('data: [DONE]\n\n');
+              res.end();
+            }
+            return;
+          }
           console.log(`[video] ✅ 生成完成: ${resultUrl}`);
           sendEvent({ type: 'progress', progress: 100 });
 
@@ -2661,7 +2730,7 @@ router.post('/generate', authMiddleware, tierMiddleware('video'), quotaMiddlewar
           }
           return;
         } else if (isVideoFailureStatus(taskStatus)) {
-          refundFailedTask(errMsg);
+          refundFailedTask(errMsg, true);
           if (!res.destroyed && !res.writableEnded) {
             res.write('data: [DONE]\n\n');
             res.end();
@@ -2959,7 +3028,7 @@ router.post('/merge', authMiddleware, async (req: Request, res: Response) => {
 
 function persistHmQueueSnapshot(contentId: number, snapshot: HmStudioQueueSnapshot): void {
   const record = db.select().from(contents).where(eq(contents.id, contentId)).get();
-  if (!record || record.status === 'completed' || record.status === 'failed') return;
+  if (!record || record.status === 'completed' || record.status === 'failed' || record.status === 'review') return;
   let metadata: Record<string, any> = {};
   try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
   metadata.queueStatus = snapshot.status;
@@ -2981,12 +3050,13 @@ function persistHmQueueSnapshot(contentId: number, snapshot: HmStudioQueueSnapsh
   }).where(eq(contents.id, contentId)).run();
 }
 
-async function failHmQueuedVideo(contentId: number, error: unknown): Promise<void> {
+async function failHmQueuedVideo(contentId: number, error: unknown, confirmedUpstreamFailure = false): Promise<void> {
   const record = db.select().from(contents).where(eq(contents.id, contentId)).get();
   if (!record || record.status === 'failed' || record.status === 'completed') return;
   let metadata: Record<string, any> = {};
   try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
   const rawMessage = error instanceof Error ? error.message : String(error || '视频任务失败');
+  if (recordBatchFailure(contentId, rawMessage, confirmedUpstreamFailure)) return;
   const taskChannel = metadata.channelId
     ? ChannelService.getChannelRaw(Number(metadata.channelId), Number(metadata.channelApiKeyId) || null)
     : null;
@@ -2998,13 +3068,23 @@ async function failHmQueuedVideo(contentId: number, error: unknown): Promise<voi
       TokenService.refundBalance(Number(metadata.tokenId), refundAmount);
       metadata.refundTarget = 'api_token';
     } else {
-      BalanceService.refund(record.userId, refundAmount, 'generate_video_refund');
+      const balanceSource = metadata.billingBalanceSource === 'org'
+        ? 'org'
+        : (metadata.billingBalanceSource === 'user' ? 'user' : (record.orgId ? 'org' : 'user'));
+      const billingOrgId = Number(metadata.billingOrgId || record.orgId) || undefined;
+      BalanceService.refundToSource(
+        record.userId,
+        refundAmount,
+        balanceSource,
+        billingOrgId,
+        'generate_video_refund',
+      );
       // Linked unlimited API tokens also increment usedAmount during deduction.
       if (metadata.tokenId) {
         const { TokenService } = await import('../services/tokenService.js');
         TokenService.refundBalance(Number(metadata.tokenId), refundAmount);
       }
-      metadata.refundTarget = 'user_balance';
+      metadata.refundTarget = balanceSource === 'org' ? 'organization_balance' : 'user_balance';
     }
     metadata.queueRefunded = true;
     metadata.billingStatus = 'refunded';
@@ -3075,6 +3155,9 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
         let selectedHmUpstreamModel = upstreamModel;
         let response: Awaited<ReturnType<typeof fetch>>;
 
+        if (!markBatchSubmitting(contentId)) return;
+        if (latestMeta.batchItemId) latestMeta.batchSubmissionStarted = new Date().toISOString();
+
         while (true) {
           attemptedHmPools.add(hmStudioPoolKey(selectedHmChannel));
           let selectedMapping: Record<string, string> = {};
@@ -3107,6 +3190,7 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
             body: formData,
             signal: AbortSignal.timeout(selectedHmChannel.timeout || 120_000),
           });
+          guardBatchSubmissionResponse(Boolean(latestMeta.batchItemId), response);
           if (response.ok) break;
 
           const detail = await response.text().catch(() => '');
@@ -3185,6 +3269,7 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
               });
             }
 
+            guardBatchSubmissionResponse(Boolean(latestMeta.batchItemId), fallbackResponse);
             if (!fallbackResponse.ok) {
               const fallbackDetail = await fallbackResponse.text().catch(() => '');
               if (isHmStudioConcurrencyError(fallbackResponse.status, fallbackDetail)) {
@@ -3429,7 +3514,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
       console.log(`[video-recover] Starting polling for video task ${contentId} (videoId: ${videoId})`);
       const pollInterval = isLongxia ? 30_000 : 5000;
       const startTime = Date.now();
-      const createdAt = new Date(record.createdAt).getTime();
+      const createdAt = parseUtcTimestamp(record.createdAt);
       const timeoutStartedAt = Number.isFinite(createdAt) ? createdAt : startTime;
       const pollTimeoutMs = Number.isFinite(env.VIDEO_TASK_POLL_TIMEOUT_MS) && env.VIDEO_TASK_POLL_TIMEOUT_MS > 0
         ? env.VIDEO_TASK_POLL_TIMEOUT_MS
@@ -3448,7 +3533,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
       // A recovered task may already be older than the normal polling window
       // while the upstream result is available. Always perform one upstream
       // check before declaring such a task timed out.
-      if (hasPolledUpstream && Date.now() - timeoutStartedAt >= pollTimeoutMs) {
+      if (!metadata.batchItemId && hasPolledUpstream && Date.now() - timeoutStartedAt >= pollTimeoutMs) {
         const timeoutMinutes = Math.max(1, Math.round(pollTimeoutMs / 60_000));
         await failHmQueuedVideo(contentId, new Error(`Video generation timed out after ${timeoutMinutes} minutes`));
         break;
@@ -3479,6 +3564,10 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
         if (!pollResp.ok) {
           const detail = await pollResp.text().catch(() => '');
           const failureMessage = formatVideoPollHttpFailure(pollResp.status, detail);
+          if (metadata.batchItemId) {
+            noteBatchQueryProblem(contentId, '上游状态查询暂时不可用，正在查询原任务，不会重复生成');
+            continue;
+          }
           if (isWxHaidiYue && isTransientVideoPollHttpStatus(pollResp.status)) {
             consecutiveTransientPollFailures++;
             if (consecutiveTransientPollFailures < maxTransientPollFailures) {
@@ -3600,6 +3689,10 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
         }
 
         if (isVideoFailurePayload(statusData)) {
+          if (metadata.batchItemId && isBatchQueryUncertain(statusData, taskStatus)) {
+            noteBatchQueryProblem(contentId, '上游查询返回异常，继续核实原任务');
+            continue;
+          }
           taskStatus = 'failed';
           errMsg = extractVideoFailureMessage(statusData) || errMsg || '视频生成失败';
         }
@@ -3618,6 +3711,14 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
             db.update(contents).set({ metadata: JSON.stringify(meta) }).where(eq(contents.id, contentId)).run();
           } catch { }
         } else if (taskStatus === 'completed' || taskStatus === 'success') {
+          if (!resultUrl) {
+            if (metadata.batchItemId) {
+              noteBatchQueryProblem(contentId, '上游已完成，等待视频链接，不会重复生成');
+              continue;
+            }
+            await failHmQueuedVideo(contentId, new Error('上游任务已完成，但没有返回视频链接'));
+            break;
+          }
           console.log(`[video-recover] ✅ Generating completed: ${resultUrl}`);
           let finalVideoUrl = '';
           try {
@@ -3632,17 +3733,17 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           }
 
           const completedTime = Date.now();
-          const createdTime = new Date(currentRecord.createdAt).getTime();
+          const createdTime = parseUtcTimestamp(currentRecord.createdAt);
           const durationMs = (!isNaN(createdTime) && createdTime > 0 && completedTime >= createdTime)
             ? (completedTime - createdTime)
             : (Date.now() - startTime);
 
           logUsage(record.userId, 'generate_video', undefined, durationMs);
-          const cost = Number(record.cost) || PricingService.calculateUsageCost(model, {
+          const cost = metadata.batchItemId ? 0 : (Number(record.cost) || PricingService.calculateUsageCost(model, {
             resolution,
             seconds: Number(video_length) || 0,
             count: 1,
-          });
+          }));
           let meta = {};
           try {
             meta = JSON.parse(currentRecord.metadata || '{}');
@@ -3661,14 +3762,14 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           db.update(contents).set({
             status: 'completed',
             resultUrl: finalVideoUrl,
-            cost: cost,
+            cost: metadata.batchItemId ? sql`cost` : cost,
             metadata: JSON.stringify(meta)
           }).where(eq(contents.id, contentId)).run();
           break;
         } else if (isVideoFailureStatus(taskStatus)) {
           console.error(`[video-recover] ❌ Generating failed: ${errMsg}`);
           // 任务失败，为预扣费退款并将 cost 清零
-          await failHmQueuedVideo(contentId, new Error(errMsg));
+          await failHmQueuedVideo(contentId, new Error(errMsg), true);
           break;
         }
       } catch (err: any) {
@@ -3702,6 +3803,9 @@ export function resumeAllPendingVideoTasks() {
       const contentId = record.id;
       let metadata: Record<string, any> = {};
       try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
+      // A server interruption after POST but before saving its task ID is not a
+      // confirmed failure. Never re-submit that batch attempt automatically.
+      if (metadata.batchItemId && metadata.batchSubmissionStarted && !metadata.videoId) return;
       const originalChannel = metadata.channelId
         ? ChannelService.getChannelRaw(Number(metadata.channelId), Number(metadata.channelApiKeyId) || null)
         : null;

@@ -4,6 +4,8 @@ import { Search, Film, Copy, ChevronLeft, ChevronRight, Image, Video, Music, Eye
 import { adminApi } from '../../api/admin';
 import { getVideoReferenceAssets } from '../../utils/videoPromptRefs';
 import { getContentFailureInfo } from '../../utils/contentFailure';
+import { formatBeijingTime } from '../../../../shared/time';
+import { formatVideoGenerationTime } from '../../utils/videoTiming';
 
 interface ContentItem {
   id: number;
@@ -136,11 +138,16 @@ export default function ContentsPage() {
 
   useEffect(() => {
     if (!previewItem) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setPreviewItem(null);
     };
     document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleEscape);
+    };
   }, [previewItem]);
 
   const totalPages = Math.ceil(total / pageSize);
@@ -172,7 +179,10 @@ export default function ContentsPage() {
   };
 
   const handleRecoverUpstream = async (item: ContentItem) => {
-    if (!window.confirm('将重新查询原上游任务；若上游已经成功，会自动恢复视频并按原退款金额补扣用户费用。是否继续？')) return;
+    const isBatch = Boolean(parseMeta(item.metadata).batchItemId);
+    if (!window.confirm(isBatch
+      ? '将查询批量任务的原上游结果；成功使用原预扣费用结算，不重复扣费；确认失败按批次设置重试或退款。是否继续？'
+      : '将重新查询原上游任务；若上游已经成功，会自动恢复视频并按原退款金额补扣用户费用。是否继续？')) return;
     setRecoveringId(item.id);
     try {
       const result = await adminApi.recoverContentUpstream(item.id);
@@ -268,6 +278,8 @@ export default function ContentsPage() {
         return <span className="inline-flex min-w-12 justify-center rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-400">生成中</span>;
       case 'failed': case 'error':
         return <span className="inline-flex min-w-12 justify-center rounded-full border border-red-500/20 bg-red-500/10 px-2 py-1 text-xs font-medium text-red-400">失败</span>;
+      case 'review':
+        return <span className="inline-flex min-w-12 justify-center rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-400">待核实</span>;
       default:
         return <span className="inline-flex min-w-12 justify-center rounded-full border border-zinc-500/20 bg-zinc-500/10 px-2 py-1 text-xs font-medium text-zinc-400">{status || '未知'}</span>;
     }
@@ -376,6 +388,7 @@ export default function ContentsPage() {
           <option value="completed" className="bg-[#1a1a1a] text-white">成功</option>
           <option value="processing" className="bg-[#1a1a1a] text-white">生成中</option>
           <option value="failed" className="bg-[#1a1a1a] text-white">失败</option>
+          <option value="review" className="bg-[#1a1a1a] text-white">待核实</option>
         </select>
       </div>
 
@@ -395,7 +408,8 @@ export default function ContentsPage() {
             <table className="w-full min-w-[1360px] border-collapse text-left">
               <thead className="bg-black/20 text-xs text-zinc-500">
                 <tr className="border-b border-white/10">
-                  <th className="px-4 py-3 font-medium">时间</th>
+                  <th className="px-4 py-3 font-medium">提交时间（北京时间）</th>
+                  <th className="px-3 py-3 font-medium" title="从提交到完成，包含排队和保存时间">生成耗时</th>
                   <th className="px-3 py-3 font-medium">状态</th>
                   <th className="px-3 py-3 font-medium">渠道</th>
                   <th className="px-3 py-3 font-medium">模型</th>
@@ -419,10 +433,11 @@ export default function ContentsPage() {
                   return (
                     <tr key={item.id} className="group transition-colors hover:bg-white/[0.04]">
                       <td className="whitespace-nowrap px-4 py-3 text-sm text-zinc-400">
-                        {new Date(item.createdAt).toLocaleString('zh-CN', {
+                        {formatBeijingTime(item.createdAt, {
                           month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
                         })}
                       </td>
+                      <td className="whitespace-nowrap px-3 py-3 text-sm text-zinc-400">{isVideo ? formatVideoGenerationTime(item) : '—'}</td>
                       <td className="px-3 py-3">{getStatusBadge(item.status)}</td>
                       <td className="px-3 py-3">
                         <div className="text-sm font-medium text-zinc-200">{getRowChannel(item, meta, routingInfo)}</div>
@@ -521,16 +536,16 @@ export default function ContentsPage() {
 
       {/* Preview Modal */}
       {previewItem && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6" onClick={() => setPreviewItem(null)}>
-          <div role="dialog" aria-modal="true" aria-labelledby="content-detail-title" className="bg-[#111] border border-white/10 rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="content-detail-backdrop fixed inset-0 z-50" onClick={() => setPreviewItem(null)}>
+          <div role="dialog" aria-modal="true" aria-labelledby="content-detail-title" className="content-detail-dialog" onClick={(e) => e.stopPropagation()}>
             {/* Modal header */}
-            <div className="flex items-center justify-between p-4 border-b border-white/5">
-              <div className="flex items-center gap-3">
+            <div className="content-detail-header">
+              <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
                 <h3 id="content-detail-title" className="text-sm font-medium text-white">{previewItem.type === 'video' ? '视频详情' : '内容详情'} #{previewItem.id}</h3>
                 {getStatusBadge(previewItem.status)}
                 {previewLoading && <span className="text-[10px] text-zinc-500">正在按需加载完整素材…</span>}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2">
                 {previewItem.type !== 'image' && (
                   <button
                     onClick={() => { void handleReplicate(previewItem); }}
@@ -539,19 +554,19 @@ export default function ContentsPage() {
                     <Copy className="w-3 h-3" /> 一键复刻
                   </button>
                 )}
-                <button onClick={() => setPreviewItem(null)} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors">
+                <button onClick={() => setPreviewItem(null)} aria-label="关闭详情" className="p-1.5 rounded-lg hover:bg-white/10 transition-colors">
                   <X className="w-4 h-4 text-zinc-400" />
                 </button>
               </div>
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-1 p-2 border-b border-white/5">
+            <div className="content-detail-tabs flex gap-1 p-2 border-b border-white/5">
               <button
                 onClick={() => setPreviewTab('video')}
                 className={`px-3 py-1.5 rounded-lg text-xs transition-colors ${previewTab === 'video' ? 'bg-white/10 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
               >
-                {previewItem.type === 'image' ? '图片 & 信息' : '视频 & 信息'}
+                {previewItem.type === 'image' ? '图片与详情' : '视频与详情'}
               </button>
               <button
                 onClick={() => setPreviewTab('refs')}
@@ -565,30 +580,36 @@ export default function ContentsPage() {
             </div>
 
             {/* Content */}
-            <div className="p-4 space-y-4">
+            <div className="content-detail-body">
               {previewTab === 'video' ? (
-                <>
+                <div className="content-detail-layout">
+                  <section className="content-detail-preview" aria-label="生成结果预览">
+                  <div className="content-detail-section-heading"><span>生成结果</span><span>#{previewItem.id}</span></div>
                   {/* Generated asset */}
                   {previewItem.resultUrl && previewItem.resultUrl.trim() !== '' && (
                     previewItem.type === 'image'
-                      ? <img src={previewItem.resultUrl} alt={previewItem.title || '生成图片'} className="w-full max-h-[65vh] object-contain rounded-xl bg-black" />
-                      : <video src={getVideoPlayUrl(previewItem.resultUrl)} controls className="w-full rounded-xl bg-black" />
+                      ? <img src={previewItem.resultUrl} alt={previewItem.title || '生成图片'} className="content-detail-media" />
+                      : <video src={getVideoPlayUrl(previewItem.resultUrl)} controls playsInline preload="metadata" className="content-detail-media" />
                   )}
+                  {!previewItem.resultUrl?.trim() && <div className="content-detail-empty">
+                    <Film className="h-8 w-8" />
+                    <span>{['failed', 'error'].includes(previewItem.status) ? '本次生成未获得结果' : '生成结果暂未就绪'}</span>
+                  </div>}
 
-                  {(previewItem.status === 'failed' || previewItem.status === 'error') && (() => {
+                  {(['failed', 'error', 'review'].includes(previewItem.status)) && (() => {
                     const failure = getContentFailureInfo(previewItem.metadata, previewItem.resultText);
                     return (
                       <div className={`rounded-xl border p-4 ${failure.hasRecordedReason ? 'border-red-500/25 bg-red-500/10' : 'border-amber-500/25 bg-amber-500/10'}`}>
                         <div className={`mb-2 flex items-center gap-2 text-xs font-semibold ${failure.hasRecordedReason ? 'text-red-300' : 'text-amber-300'}`}>
                           <CircleAlert className="h-4 w-4" />
-                          失败原因
+                          {previewItem.status === 'review' ? '结果待核实' : '失败原因'}
                         </div>
                         <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-200">
                           {failure.message}
                         </pre>
                         {failure.failedAt && (
                           <div className="mt-2 text-[10px] text-zinc-500">
-                            失败时间：{new Date(failure.failedAt).toLocaleString('zh-CN')}
+                            失败时间（北京时间）：{formatBeijingTime(failure.failedAt)}
                           </div>
                         )}
                         {failure.billingStatus && (
@@ -598,17 +619,25 @@ export default function ContentsPage() {
                                 ? '已退款'
                                 : failure.billingStatus === 'not_charged'
                                   ? '未扣款'
+                                  : failure.billingStatus === 'batch_reserved'
+                                    ? '批次预扣保留，重试不重复扣费'
                                   : failure.billingStatus}
                             </div>
                             {failure.refunded && failure.refundAmount !== undefined && (
                               <div className="mt-1 text-emerald-300">
                                 退款金额：¥{failure.refundAmount.toFixed(2)}
-                                {failure.refundTarget === 'api_token' ? '（退回 API Token）' : failure.refundTarget === 'user_balance' ? '（退回账户余额）' : ''}
+                                {failure.refundTarget === 'api_token'
+                                  ? '（退回 API Token）'
+                                  : failure.refundTarget === 'organization_balance'
+                                    ? '（退回组织余额）'
+                                    : failure.refundTarget === 'user_balance'
+                                      ? '（退回个人余额）'
+                                      : ''}
                               </div>
                             )}
                             {failure.refundedAt && (
                               <div className="mt-1 text-[10px] text-zinc-500">
-                                退款时间：{new Date(failure.refundedAt).toLocaleString('zh-CN')}
+                                退款时间（北京时间）：{formatBeijingTime(failure.refundedAt)}
                               </div>
                             )}
                           </div>
@@ -630,16 +659,19 @@ export default function ContentsPage() {
                       </div>
                     );
                   })()}
+                  </section>
 
+                  <section className="content-detail-information" aria-label="任务信息与提示词">
+                  <div className="content-detail-section-heading"><span>任务信息</span><span>北京时间</span></div>
                   {/* Info grid */}
-                  <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div className="content-detail-fields grid grid-cols-2 gap-2 text-xs">
                     <div className="bg-white/[0.03] rounded-lg p-3">
                       <div className="text-zinc-500 mb-1">用户</div>
                       <div className="text-white">{previewItem.userName || previewItem.userEmail || `#${previewItem.userId}`}</div>
                     </div>
                     <div className="bg-white/[0.03] rounded-lg p-3">
                       <div className="text-zinc-500 mb-1">模型</div>
-                      <div className="text-white truncate">{previewItem.modelId || '未知'}</div>
+                      <div className="text-white break-all">{previewItem.modelId || '未知'}</div>
                     </div>
                     <div className="bg-white/[0.03] rounded-lg p-3">
                       <div className="text-zinc-500 mb-1">渠道</div>
@@ -655,10 +687,15 @@ export default function ContentsPage() {
                       <div className="text-amber-400">¥{previewItem.cost.toFixed(2)}</div>
                     </div>
                     <div className="bg-white/[0.03] rounded-lg p-3">
-                      <div className="text-zinc-500 mb-1">时间</div>
-                      <div className="text-white">{new Date(previewItem.createdAt).toLocaleString('zh-CN')}</div>
+                      <div className="text-zinc-500 mb-1">提交时间（北京时间）</div>
+                      <div className="text-white">{formatBeijingTime(previewItem.createdAt)}</div>
                     </div>
-                    <div className="bg-white/[0.03] rounded-lg p-3">
+                    {previewItem.type === 'video' && <div className="bg-white/[0.03] rounded-lg p-3">
+                      <div className="text-zinc-500 mb-1">生成耗时</div>
+                      <div className="text-white">{formatVideoGenerationTime(previewItem)}</div>
+                      <div className="mt-1 text-xs text-zinc-500">从提交到完成，包含排队和保存时间</div>
+                    </div>}
+                    <div className="col-span-2 bg-white/[0.03] rounded-lg p-3">
                       <div className="text-zinc-500 mb-1">上游任务 ID</div>
                       <div className="break-all font-mono text-white">{getUpstreamTaskId(parseMeta(previewItem.metadata)) || '未返回'}</div>
                     </div>
@@ -679,7 +716,7 @@ export default function ContentsPage() {
                           )}
                           {m.seconds && (
                             <div className="bg-white/[0.03] rounded-lg p-3">
-                              <div className="text-zinc-500 mb-1">时长</div>
+                              <div className="text-zinc-500 mb-1">视频时长</div>
                               <div className="text-white">{m.seconds}秒</div>
                             </div>
                           )}
@@ -690,7 +727,9 @@ export default function ContentsPage() {
                             </div>
                           )}
                           {routingInfo && (
-                            <>
+                            <details className="content-detail-routing col-span-2">
+                              <summary>渠道与分流详情<span>{routingInfo.routed ? '已分流' : '未分流'}</span></summary>
+                              <div className="grid grid-cols-2 gap-2 pt-2">
                               <div className="bg-white/[0.03] rounded-lg p-3">
                                 <div className="text-zinc-500 mb-1">分流状态</div>
                                 <div className={routingInfo.routed ? 'text-cyan-300' : 'text-emerald-300'}>
@@ -715,12 +754,13 @@ export default function ContentsPage() {
                                   <div className="text-cyan-100">{routingInfo.reason}</div>
                                   {routingInfo.fallbackAt && (
                                     <div className="mt-1 text-[10px] text-zinc-500">
-                                      分流时间：{new Date(routingInfo.fallbackAt).toLocaleString('zh-CN')}
+                                      分流时间（北京时间）：{formatBeijingTime(routingInfo.fallbackAt)}
                                     </div>
                                   )}
                                 </div>
                               )}
-                            </>
+                              </div>
+                            </details>
                           )}
                         </>
                       );
@@ -728,19 +768,20 @@ export default function ContentsPage() {
                   </div>
 
                   {/* Prompt */}
-                  <div className="bg-white/[0.03] rounded-lg p-3">
+                  <div className="content-detail-prompt bg-white/[0.03] rounded-lg p-3">
                     <div className="text-zinc-500 text-xs mb-2">提示词</div>
-                    <pre className="text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
+                    <pre className="text-xs text-zinc-300 whitespace-pre-wrap break-words leading-relaxed">
                       {previewItem.inputText || previewItem.title || '(无)'}
                     </pre>
                   </div>
-                </>
+                  </section>
+                </div>
               ) : (
                 /* Reference Assets Tab */
                 (() => {
                   const { refImgs, refVids, refAuds } = parseRefAssets(previewItem.metadata);
                   return (
-                    <div className="space-y-4">
+                    <div className="content-detail-references space-y-4">
                       {/* Reference Images */}
                       {refImgs.length > 0 && (
                         <div>
