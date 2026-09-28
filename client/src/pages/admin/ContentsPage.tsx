@@ -106,7 +106,8 @@ export default function ContentsPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [previewItem, setPreviewItem] = useState<ContentItem | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [recoveringId, setRecoveringId] = useState<number | null>(null);
@@ -117,6 +118,7 @@ export default function ContentsPage() {
 
   const fetchContents = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await adminApi.getContents({
         page,
@@ -129,6 +131,7 @@ export default function ContentsPage() {
       setTotal(data.total || 0);
     } catch (e) {
       console.error(e);
+      setLoadError(e instanceof Error ? e.message : '无法获取内容列表，请稍后重试');
     } finally {
       setLoading(false);
     }
@@ -349,7 +352,9 @@ export default function ContentsPage() {
               : <RefreshCw className="h-3.5 w-3.5" />}
             {bulkPreviewing ? '正在统计…' : bulkRecovering ? '正在批量恢复…' : '一键恢复近三天失败视频'}
           </button>
-          <div className="text-xs text-zinc-500">共 {total} 条记录</div>
+          <div className="text-xs text-zinc-500">
+            {loading ? '正在加载…' : loadError ? '记录数暂不可用' : `共 ${total} 条记录`}
+          </div>
         </div>
       </div>
 
@@ -396,6 +401,18 @@ export default function ContentsPage() {
       {loading ? (
         <div className="flex items-center justify-center h-64 text-zinc-500">
           <div className="animate-spin w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full" />
+        </div>
+      ) : loadError ? (
+        <div role="alert" className="flex flex-col items-center justify-center h-64 gap-3 text-center">
+          <CircleAlert className="w-10 h-10 text-red-400" />
+          <p className="text-sm text-red-400">内容加载失败：{loadError}</p>
+          <button
+            type="button"
+            onClick={() => { void fetchContents(); }}
+            className="rounded-lg border border-current px-4 py-2 text-sm text-indigo-400"
+          >
+            重新加载
+          </button>
         </div>
       ) : items.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-64 text-zinc-500">

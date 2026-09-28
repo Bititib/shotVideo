@@ -1,4 +1,5 @@
 import { api } from './client';
+import { api as contentApiClient } from './client';
 
 export const adminApi = {
   getDashboard() { return api.get<any>('/admin/dashboard'); },
@@ -84,7 +85,9 @@ export const adminApi = {
     if (params.type) qs.set('type', params.type);
     if (params.status) qs.set('status', params.status);
     if (params.search) qs.set('search', params.search);
-    return api.get<any>(`/admin/contents?${qs.toString()}`);
+    // Avoid reusing a cached redirect for the previous list URL.
+    qs.set('_check', Date.now().toString());
+    return contentApiClient.get<any>(`/admin/contents?${qs.toString()}`, { cache: 'no-store' });
   },
   getContent(id: number) { return api.get<any>(`/admin/contents/${id}`); },
   previewRecentFailedVideoRecovery(days = 3) { return api.get<any>(`/admin/contents/recovery/preview?days=${days}`); },
