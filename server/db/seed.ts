@@ -296,13 +296,12 @@ export async function syncModelsFromAPI() {
         || mingFeiImageModelIds.has(m.modelId)
         || m.modelId === WX_HAIDIYUE_FACE_SPLIT_MODEL)
         && existing.provider !== m.provider;
-      if (providerNeedsUpdate || existing.displayName !== m.displayName || existing.capabilities !== m.capabilities || existing.description !== (m.description || null)) {
+      // Existing presentation fields belong to the administrator, not startup defaults.
+      if (providerNeedsUpdate || existing.capabilities !== m.capabilities) {
         db.update(models)
           .set({
             ...(providerNeedsUpdate ? { provider: m.provider } : {}),
-            displayName: m.displayName,
             capabilities: m.capabilities,
-            description: m.description || null,
           })
           .where(eq(models.modelId, m.modelId))
           .run();
@@ -1260,10 +1259,7 @@ export async function initDatabase() {
       }).run();
     } else {
       db.update(models).set({
-        displayName: 'Seedance 2.0',
-        description: 'Seedance 2.0 文生/图生视频 (异步，¥1.5/次)',
         capabilities: JSON.stringify(['video']),
-        isActive: 1,
       }).where(eq(models.id, existingModel.id)).run();
     }
 

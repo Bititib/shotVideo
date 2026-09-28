@@ -1,3 +1,4 @@
+import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth.js';
 import { tierMiddleware, TierRequest } from '../middleware/tier.js';
@@ -546,23 +547,8 @@ router.get('/models', (_req: Request, res: Response) => {
     return res.json(videoModelsResponseCache.data);
   }
 
-  // 从数据库动态拉取所有启用且具备 'video' 能力的模型
-  const dbModels = db.select().from(models)
-    .where(and(eq(models.isActive, 1), like(models.capabilities, '%"video"%')))
-    .all();
-
-  // 获取所有在数据库中被禁用的模型 ID，用作后备过滤
-  const disabledModelIds = new Set<string>();
-  try {
-    const inactive = db.select().from(models).where(eq(models.isActive, 0)).all();
-    inactive.forEach(m => disabledModelIds.add(m.modelId));
-  } catch { }
-
-  // 如果数据库里还没配置视频模型，提供一个过滤了禁用模型的默认后备
-  const sourceModels = dbModels.length > 0
-    ? dbModels.map(m => ({ id: m.modelId, name: m.displayName, description: m.description }))
-    : DEFAULT_VIDEO_MODELS.filter(m => !disabledModelIds.has(m.id));
-  const publicSourceModels = sourceModels.filter(m => m.id !== MJ_OVERFLOW_VIDEO_MODEL);
+  const publicSourceModels = getEnabledPublicModels('video')
+    .map(m => ({ id: m.modelId, name: m.displayName, description: m.description }));
 
   // Read settings, pricing, channels, and recent statistics once per request.
   // Previously these tables were queried again for every model, making this

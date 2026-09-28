@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { TokenService } from '../services/tokenService.js';
 import { ChannelService } from '../services/channelService.js';
+import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { PricingService } from '../services/pricingService.js';
 import { BalanceService } from '../services/balanceService.js';
 import { db } from '../db/index.js';
@@ -159,62 +160,21 @@ export function filterRoutableModels(
   return modelIds.filter(modelId => routableModels.has(modelId));
 }
 
-const DEFAULT_V1_VIDEO_MODELS = [
-  'sora-v4-fast',
-  'sora-v4-pro',
-  'lg-seedance-2.0-fast',
-  'sdas-d7-seedance-2.0-face-720p',
-  'sdas-mo-seedance-2.0-dj-fast',
-  'sdas-wf-sd2.0-fast-933-720p',
-  'sdas-wf-sd2.0-pro-933-480p',
-  'sdas-pg-s2.0-fast',
-  JULUN_MINIMAX_H3_MODEL,
-];
+/** Public discovery uses registered, enabled models; execution keeps its existing routing. */
+export function getAccessibleModels(token: { allowedModels: string[] }) {
+  const registeredModels = getEnabledPublicModels();
+  const activeChannels = ChannelService.getActiveChannels();
+  const routingChannels: Array<{ supportedModels: string[] }> = [...activeChannels];
+  if (hasHmStudioOverflowChannel(activeChannels)) {
+    routingChannels.push({ supportedModels: [HM_STUDIO_PRIMARY_VIDEO_MODEL] });
+  }
+  const routable = new Set(filterRoutableModels(registeredModels.map(model => model.modelId), routingChannels));
+  return registeredModels.filter(model => routable.has(model.modelId)
+    && (token.allowedModels.length === 0 || token.allowedModels.includes(model.modelId)));
+}
 
-/** 返回当前 Token 能通过启用渠道实际调用的模型 ID。 */
 export function getAccessibleModelIds(token: { allowedModels: string[] }): string[] {
-  const allModels = new Set<string>();
-  const disabledModelIds = new Set<string>();
-
-  try {
-    const inactive = db.select().from(models).where(eq(models.isActive, 0)).all();
-    inactive.forEach(model => disabledModelIds.add(model.modelId));
-  } catch { /* 保留通过渠道发现模型的能力 */ }
-
-  DEFAULT_V1_VIDEO_MODELS.forEach(modelId => {
-    if (!disabledModelIds.has(modelId)) allModels.add(modelId);
-  });
-
-  try {
-    const dbModels = db.select().from(models).where(eq(models.isActive, 1)).all();
-    dbModels.forEach(model => allModels.add(model.modelId));
-  } catch (error) {
-    console.error('[v1/models] 数据库模型读取失败:', error);
-  }
-
-  let activeChannels: ReturnType<typeof ChannelService.getActiveChannels> = [];
-  try {
-    activeChannels = ChannelService.getActiveChannels();
-    for (const channel of activeChannels) {
-      for (const modelId of channel.supportedModels) {
-        if (modelId !== '*' && !disabledModelIds.has(modelId)) allModels.add(modelId);
-      }
-    }
-  } catch (error) {
-    console.error('[v1/models] 渠道自定义模型读取失败:', error);
-  }
-
-  if (!disabledModelIds.has(HM_STUDIO_PRIMARY_VIDEO_MODEL) && hasHmStudioOverflowChannel()) {
-    allModels.add(HM_STUDIO_PRIMARY_VIDEO_MODEL);
-    activeChannels.push({ supportedModels: [HM_STUDIO_PRIMARY_VIDEO_MODEL] } as any);
-  }
-
-  let modelList = filterRoutableModels(Array.from(allModels), activeChannels)
-    .filter(modelId => modelId !== MJ_OVERFLOW_VIDEO_MODEL);
-  if (token.allowedModels.length > 0) {
-    modelList = modelList.filter(modelId => token.allowedModels.includes(modelId));
-  }
-  return modelList;
+  return getAccessibleModels(token).map(model => model.modelId);
 }
 
 /** 仅允许创建任务的 Token（或同一用户的旧任务）访问本地视频记录。 */
@@ -569,12 +529,14 @@ router.get('/models', (req: Request, res: Response) => {
   const { valid, error, token } = TokenService.validateToken(tokenKey);
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
-  const modelList = getAccessibleModelIds(token);
+  const modelList = getAccessibleModels(token);
 
+  res.setHeader('Cache-Control', 'no-store');
   res.json({
     object: 'list',
-    data: modelList.map(id => ({
-      id,
+    data: modelList.map(model => ({
+      id: model.modelId,
+      name: model.displayName || model.modelId,
       object: 'model',
       created: Math.floor(Date.now() / 1000),
       owned_by: 'system',
