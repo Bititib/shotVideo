@@ -1,4 +1,8 @@
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
+import { HAYA_SECONDS, HAYA_VIDEO_MODELS, getHayaVideoSpec, validateHayaVideoInput } from '../../shared/hayaVideo.js';
+import { isHayaChannel, hayaTaskUrl, normalizeHayaTask, hayaPollDelay, submitHayaVideo, HayaSubmissionError } from '../services/hayaVideoAdapter.js';
+import { prepareHayaMedia, validateHayaMedia } from '../services/hayaMediaService.js';
+import { patchHayaTask, reviewHayaTask } from '../services/hayaTaskService.js';
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth.js';
 import { tierMiddleware, TierRequest } from '../middleware/tier.js';
@@ -140,6 +144,7 @@ const HM_STUDIO_VIDEO_MODEL_RANK = new Map(
 );
 
 export const activePolls = new Set<number>();
+const hayaLiveRequests = new Set<number>();
 const activePollPromises = new Map<number, Promise<void>>();
 
 const RATIO_TO_SIZE: Record<string, string> = {
@@ -304,6 +309,7 @@ interface ModelMeta {
   requireRef: boolean;               // 是否必须传参考图
 }
 const MODEL_META: Record<string, ModelMeta> = {
+  ...Object.fromEntries(HAYA_VIDEO_MODELS.map(spec => [spec.id, { series: 'haya', allowedSeconds: HAYA_SECONDS, requireRef: false }])),
   ...Object.fromEntries(SI_YUE_TIAN_SEEDANCE_25_VIDEO_SPECS.map(spec => [spec.id, {
     series: `siyuetian-seedance-2.5-${spec.resolution}`,
     allowedSeconds: Array.from({ length: 27 }, (_, index) => index + 4),
@@ -772,7 +778,7 @@ router.get('/models', (_req: Request, res: Response) => {
     // The pricing table is authoritative; legacy setting reads above are retained
     // only so old databases can be migrated without losing their former values.
     const billingType = quotePrice(m.id).billingType;
-    const configuredResolutions = Object.keys(rates).length > 0 ? Object.keys(rates) : ['720p'];
+    const configuredResolutions = getHayaVideoSpec(m.id) ? [getHayaVideoSpec(m.id)!.resolution] : Object.keys(rates).length > 0 ? Object.keys(rates) : ['720p'];
     rates = Object.fromEntries(configuredResolutions.map(resolution => [
       resolution,
       quotePrice(m.id, { resolution }).rate,
@@ -848,7 +854,7 @@ router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'),
     compliance_mode,         // 合规素材风格
   } = req.body;
   let reference_images: string[] = Array.isArray(rawReferenceImages) ? rawReferenceImages : [];
-  const resolution = requestedResolution || (isLongxiaModel(model) ? longxiaResolution(model) : undefined) || (isJulunMinimaxH3Model(model) ? JULUN_MINIMAX_H3_RESOLUTION : '720p');
+  const resolution = requestedResolution || getHayaVideoSpec(model)?.resolution || (isLongxiaModel(model) ? longxiaResolution(model) : undefined) || (isJulunMinimaxH3Model(model) ? JULUN_MINIMAX_H3_RESOLUTION : '720p');
 
   // 向后兼容：合并旧单值字段到新数组
   const finalVideos: string[] = (Array.isArray(reference_videos) && reference_videos.length > 0)
@@ -1124,6 +1130,19 @@ router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'),
   }
 
 
+
+  if (isHayaChannel(channel)) {
+    const error = validateHayaVideoInput(upstreamModel, { seconds: Number(video_length), resolution, ratio: aspect_ratio,
+      imageCount: reference_images.length, videoCount: finalVideos.length, audioCount: finalAudios.length, firstFrame: first_frame, lastFrame: last_frame });
+    if (error) return res.status(400).json({ error });
+    try {
+      const options = { baseUrl: channel.baseUrl, apiKey: channel.apiKey,
+        publicBaseUrl: process.env.BACKEND_URL || req.protocol + '://' + req.get('host') };
+      await validateHayaMedia(reference_images, 'image', options);
+      await validateHayaMedia(finalVideos, 'video', options);
+      await validateHayaMedia(finalAudios, 'audio', options);
+    } catch (error: any) { return res.status(400).json({ error: error.message }); }
+  }
 
   // Reuse exactly the same model/material checks before a batch is charged.
   if (req.path === '/validate') {
@@ -1443,6 +1462,7 @@ router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'),
   let isMjNewApi = isMjNewApiChannel(channel);
   const isLongxia = isLongxiaChannel(channel);
   const isMiaowu = isMiaowuChannel(channel);
+  const isHaya = isHayaChannel(channel);
   const isVeoOmni = model === 'veo-omni-flash';
   const isVeoOmniEdit = model === 'veo-omni-flash-video-edit';
   const isVeo31 = model === 'veo-3-1';
@@ -1532,7 +1552,30 @@ router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'),
     let videoId = '';
     if (!markBatchSubmitting(contentId)) return res.end();
 
-    if (failoverReason && (isWxHaidiYue || isMjNewApi)) {
+    if (isHaya) {
+      if (contentId === null) throw new Error('本地任务保存失败，未提交 Haya');
+      holdHayaSubmission(contentId);
+      try {
+        sendEvent({ type: 'status', message: '正在上传 Haya 参考素材...' });
+        const options = { baseUrl, apiKey: channel.apiKey, publicBaseUrl: requestPublicBaseUrl };
+        const images = await prepareHayaMedia(reference_images, 'image', options);
+        const videos = await prepareHayaMedia(finalVideos, 'video', options);
+        const audios = await prepareHayaMedia(finalAudios, 'audio', options);
+        const job = await submitHayaVideo(baseUrl, channel.apiKey, { model: upstreamModel, prompt, seconds: Number(video_length), ratio: aspect_ratio, resolution, images, videos, audios },
+          () => patchHayaTask(contentId!, { hayaSubmissionStarted: new Date().toISOString(), hayaMedia: { images, videos, audios } }),
+          requestId => patchHayaTask(contentId!, { requestId }));
+        videoId = job.taskId;
+        patchHayaTask(contentId, { videoId, requestId: job.requestId });
+      } catch (error: any) {
+        if ((error instanceof HayaSubmissionError && error.uncertain) || videoId) {
+          reviewHayaTask(contentId, error.message);
+          activePolls.delete(contentId);
+          sendEvent({ type: 'error', message: 'Haya 提交结果待核实，费用保留，请勿重复提交；请在历史记录中核实原任务' });
+        } else refundFailedTask(error.message, true);
+        if (!res.destroyed && !res.writableEnded) res.end('data: [DONE]\n\n');
+        return;
+      }
+    } else if (failoverReason && (isWxHaidiYue || isMjNewApi)) {
       const attemptedFallbackIds = new Set<number>();
       let overflowPlan: NonNullable<ReturnType<typeof findHmStudioOverflowPlan>> | null = {
         channel,
@@ -2460,6 +2503,7 @@ router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'),
           if (row) {
             const meta = JSON.parse(row.metadata || '{}');
             meta.videoId = videoId;
+            if (isHaya) meta.hayaNeedsReview = false;
             db.update(contents).set({ metadata: JSON.stringify(meta) }).where(eq(contents.id, contentId)).run();
           }
         } catch (dbErr) {
@@ -2484,7 +2528,7 @@ router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'),
     if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
 
     while (true) {
-      await new Promise(r => setTimeout(r, pollInterval));
+      await new Promise(r => setTimeout(r, isHaya ? hayaPollDelay(consecutiveTransientPollFailures) : pollInterval));
 
       // 检查客户端是否断开仅进行日志记录，不终止后台轮询以完成计费和数据库更新
       if (res.writableEnded || res.destroyed) {
@@ -2493,7 +2537,9 @@ router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'),
 
       try {
         let pollUrl = `${baseUrl}/v1/videos/${videoId}`;
-        if (isHmStudio) {
+        if (isHaya) {
+          pollUrl = hayaTaskUrl(baseUrl, videoId);
+        } else if (isHmStudio) {
           pollUrl = hmStudioTaskUrl(baseUrl, videoId);
         } else if (isWxHaidiYue) {
           pollUrl = wxHaidiYueTaskUrl(baseUrl, videoId);
@@ -2513,6 +2559,11 @@ router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'),
         if (!pollResp.ok) {
           const detail = await pollResp.text().catch(() => '');
           const failureMessage = formatVideoPollHttpFailure(pollResp.status, detail);
+          if (isHaya) {
+            consecutiveTransientPollFailures++;
+            if (contentId !== null) patchHayaTask(contentId, { progressText: 'Haya 查询暂时不可用，继续查询原任务，不会重复生成' });
+            continue;
+          }
           if (batchContext && contentId) {
             noteBatchQueryProblem(contentId, '上游状态查询暂时不可用，正在查询原任务，不会重复生成');
             continue;
@@ -2537,14 +2588,18 @@ router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'),
           return;
         }
 
-        consecutiveTransientPollFailures = 0;
+        if (!isHaya) consecutiveTransientPollFailures = 0;
         const status = await pollResp.json() as any;
         let taskStatus = status.status;
         let progress = status.progress || 0;
         let resultUrl = '';
         let errMsg = '';
 
-        if (isHmStudio) {
+        if (isHaya) {
+          const normalized = normalizeHayaTask(status, baseUrl, videoId);
+          consecutiveTransientPollFailures = 0;
+          taskStatus = normalized.status; progress = normalized.progress; resultUrl = normalized.resultUrl; errMsg = normalized.error;
+        } else if (isHmStudio) {
           const normalized = normalizeHmStudioTask(status, baseUrl);
           taskStatus = normalized.status;
           progress = normalized.progress;
@@ -2649,7 +2704,7 @@ router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'),
           }
         }
 
-        if (isVideoFailurePayload(status)) {
+        if (!isHaya && isVideoFailurePayload(status)) {
           if (batchContext && isBatchQueryUncertain(status, taskStatus)) {
             if (contentId) noteBatchQueryProblem(contentId, '上游查询返回异常，继续核实原任务');
             continue;
@@ -2724,6 +2779,7 @@ router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'),
           return;
         }
       } catch (pollErr: any) {
+        if (isHaya) consecutiveTransientPollFailures++;
         console.warn(`[video] 轮询异常: ${pollErr.message}`);
         // 轮询失败不立即退出，继续重试
       }
@@ -2737,6 +2793,8 @@ router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'),
     refundFailedTask(msg);
     res.write('data: [DONE]\n\n');
     res.end();
+  } finally {
+    if (isHaya && contentId !== null) releaseHayaSubmission(contentId);
   }
 });
 
@@ -3036,7 +3094,7 @@ function persistHmQueueSnapshot(contentId: number, snapshot: HmStudioQueueSnapsh
   }).where(eq(contents.id, contentId)).run();
 }
 
-async function failHmQueuedVideo(contentId: number, error: unknown, confirmedUpstreamFailure = false): Promise<void> {
+export async function failHmQueuedVideo(contentId: number, error: unknown, confirmedUpstreamFailure = false): Promise<void> {
   const record = db.select().from(contents).where(eq(contents.id, contentId)).get();
   if (!record || record.status === 'failed' || record.status === 'completed') return;
   let metadata: Record<string, any> = {};
@@ -3333,6 +3391,7 @@ function adoptHmStudioProcessingContent(contentId: number, record: any): HmStudi
 }
 
 export function resumePollForTask(contentId: number, record: any): Promise<void> {
+  if (hayaLiveRequests.has(contentId)) return Promise.resolve();
   if (activePolls.has(contentId)) {
     const existingPromise = activePollPromises.get(contentId);
     if (existingPromise) return existingPromise;
@@ -3374,6 +3433,11 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
     return failHmQueuedVideo(contentId, new Error(`No channel found for model ${model}`));
   }
 
+  if (!videoId && isHayaChannel(channel) && metadata.hayaSubmissionStarted) {
+    reviewHayaTask(contentId, 'Haya 提交被中断，未保存任务 ID，请联系管理员核实，禁止重复提交');
+    activePolls.delete(contentId);
+    return;
+  }
   if (!videoId) {
     console.error(`[video-recover] No videoId found in metadata for task ${contentId}`);
     activePolls.delete(contentId);
@@ -3491,6 +3555,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   const isSnumomWan = isSnumomWanChannel(channel);
   const isLongxia = isLongxiaChannel(channel);
   const isMiaowu = isMiaowuChannel(channel);
+  const isHaya = isHayaChannel(channel);
 
   const headers: Record<string, string> = {};
   if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
@@ -3519,18 +3584,20 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
       // A recovered task may already be older than the normal polling window
       // while the upstream result is available. Always perform one upstream
       // check before declaring such a task timed out.
-      if (!metadata.batchItemId && hasPolledUpstream && Date.now() - timeoutStartedAt >= pollTimeoutMs) {
+      if (!isHaya && !metadata.batchItemId && hasPolledUpstream && Date.now() - timeoutStartedAt >= pollTimeoutMs) {
         const timeoutMinutes = Math.max(1, Math.round(pollTimeoutMs / 60_000));
         await failHmQueuedVideo(contentId, new Error(`Video generation timed out after ${timeoutMinutes} minutes`));
         break;
       }
 
-      await new Promise(r => setTimeout(r, pollInterval));
+      await new Promise(r => setTimeout(r, isHaya ? hayaPollDelay(consecutiveTransientPollFailures) : pollInterval));
 
       try {
         hasPolledUpstream = true;
         let pollUrl = `${baseUrl}/v1/videos/${videoId}`;
-        if (isHmStudio) {
+        if (isHaya) {
+          pollUrl = hayaTaskUrl(baseUrl, videoId);
+        } else if (isHmStudio) {
           pollUrl = hmStudioTaskUrl(baseUrl, videoId);
         } else if (isWxHaidiYue) {
           pollUrl = wxHaidiYueTaskUrl(baseUrl, videoId);
@@ -3550,6 +3617,11 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
         if (!pollResp.ok) {
           const detail = await pollResp.text().catch(() => '');
           const failureMessage = formatVideoPollHttpFailure(pollResp.status, detail);
+          if (isHaya) {
+            consecutiveTransientPollFailures++;
+            if (contentId !== null) patchHayaTask(contentId, { progressText: 'Haya 查询暂时不可用，继续查询原任务，不会重复生成' });
+            continue;
+          }
           if (metadata.batchItemId) {
             noteBatchQueryProblem(contentId, '上游状态查询暂时不可用，正在查询原任务，不会重复生成');
             continue;
@@ -3566,14 +3638,18 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           break;
         }
 
-        consecutiveTransientPollFailures = 0;
+        if (!isHaya) consecutiveTransientPollFailures = 0;
         const statusData = await pollResp.json() as any;
         let taskStatus = statusData.status;
         let progress = statusData.progress || 0;
         let resultUrl = '';
         let errMsg = '';
 
-        if (isHmStudio) {
+        if (isHaya) {
+          const normalized = normalizeHayaTask(statusData, baseUrl, videoId);
+          consecutiveTransientPollFailures = 0;
+          taskStatus = normalized.status; progress = normalized.progress; resultUrl = normalized.resultUrl; errMsg = normalized.error;
+        } else if (isHmStudio) {
           const normalized = normalizeHmStudioTask(statusData, baseUrl);
           taskStatus = normalized.status;
           progress = normalized.progress;
@@ -3674,7 +3750,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           }
         }
 
-        if (isVideoFailurePayload(statusData)) {
+        if (!isHaya && isVideoFailurePayload(statusData)) {
           if (metadata.batchItemId && isBatchQueryUncertain(statusData, taskStatus)) {
             noteBatchQueryProblem(contentId, '上游查询返回异常，继续核实原任务');
             continue;
@@ -3745,6 +3821,10 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
             completedAt: new Date(completedTime).toISOString()
           };
           delete (meta as Record<string, any>).progressText;
+          if (isHaya) {
+            delete (meta as Record<string, any>).hayaNeedsReview;
+            delete (meta as Record<string, any>).error;
+          }
           db.update(contents).set({
             status: 'completed',
             resultUrl: finalVideoUrl,
@@ -3759,6 +3839,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           break;
         }
       } catch (err: any) {
+        if (isHaya) consecutiveTransientPollFailures++;
         console.warn(`[video-recover] Polling exception: ${err.message}`);
       }
       }
@@ -3776,6 +3857,9 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   return pollingPromise;
 }
 
+export function holdHayaSubmission(contentId: number) { hayaLiveRequests.add(contentId); activePolls.add(contentId); }
+export function releaseHayaSubmission(contentId: number) { hayaLiveRequests.delete(contentId); activePolls.delete(contentId); }
+
 export function resumeAllPendingVideoTasks() {
   console.log('🔍 [video-recover] Scanning for queued and processing video tasks...');
   try {
@@ -3787,10 +3871,15 @@ export function resumeAllPendingVideoTasks() {
 
     pendingTasks.forEach((record: any) => {
       const contentId = record.id;
+      if (hayaLiveRequests.has(contentId)) return;
       let metadata: Record<string, any> = {};
       try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
       // A server interruption after POST but before saving its task ID is not a
       // confirmed failure. Never re-submit that batch attempt automatically.
+      if (metadata.hayaSubmissionStarted && !metadata.videoId) {
+        reviewHayaTask(contentId, 'Haya 提交被中断，未保存任务 ID，请核实原任务');
+        return;
+      }
       if (metadata.batchItemId && metadata.batchSubmissionStarted && !metadata.videoId) return;
       const originalChannel = metadata.channelId
         ? ChannelService.getChannelRaw(Number(metadata.channelId), Number(metadata.channelApiKeyId) || null)

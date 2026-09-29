@@ -1,3 +1,5 @@
+import { HAYA_MODEL_IDS } from '../../shared/hayaVideo.js';
+import { isHayaChannel, hayaApiBaseUrl } from './hayaVideoAdapter.js';
 import { db } from '../db/index.js';
 import { channelApiKeys, channels, models } from '../db/schema.js';
 import { and, desc, eq } from 'drizzle-orm';
@@ -313,7 +315,8 @@ export class ChannelService {
 
   static findChannelsForModel(modelName: string, activeChannels?: any[]) {
     return (activeChannels || this.getActiveChannels())
-      .filter(channel => channel.supportedModels.includes(modelName) || channel.supportedModels.includes('*'))
+      .filter(channel => !HAYA_MODEL_IDS.includes(modelName) || (isHayaChannel(channel) && Boolean(channel.apiKey)))
+      .filter(channel => channel.supportedModels.includes(modelName) || (!isHayaChannel(channel) && channel.supportedModels.includes('*')))
       .sort((a, b) => {
         if (a.priority !== b.priority) return a.priority - b.priority;
         if (a.type === 'hmstudio' && b.type === 'hmstudio') {
@@ -378,6 +381,7 @@ export class ChannelService {
     const isWxHaidiYue = type === WX_HAIDIYUE_CHANNEL_TYPE;
     const isLongxia = isLongxiaChannel({ type, baseUrl });
     const isMiaowu = isMiaowuChannel({ type, baseUrl });
+    const isHaya = isHayaChannel({ type, baseUrl });
     const miaowuMapping = modelMapping && Object.keys(modelMapping).length > 0
       ? modelMapping
       : Object.fromEntries(MIAOWU_DEFAULT_VIDEO_MODELS.map(modelId => [modelId, modelId]));
@@ -386,21 +390,21 @@ export class ChannelService {
       : [...MIAOWU_DEFAULT_VIDEO_MODELS];
     const result = db.insert(channels).values({
       name: isWxHaidiYue ? WX_HAIDIYUE_CHANNEL_NAME : name,
-      type: type || 'openai',
+      type: isHaya ? 'haya' : type || 'openai',
       baseUrl,
       apiKey: type === 'hmstudio' ? '' : (apiKey || ''),
-      modelMapping: JSON.stringify(isWxHaidiYue
+      modelMapping: JSON.stringify(isHaya ? (modelMapping && Object.keys(modelMapping).length ? modelMapping : Object.fromEntries(HAYA_MODEL_IDS.map(id => [id, id]))) : isWxHaidiYue
         ? { [WX_HAIDIYUE_FACE_SPLIT_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL }
         : isLongxia ? (modelMapping && Object.keys(modelMapping).length ? modelMapping : Object.fromEntries(LONGXIA_MODELS.map(id => [id, id])))
         : isMiaowu ? miaowuMapping : (modelMapping || {})),
-      supportedModels: JSON.stringify(isWxHaidiYue
+      supportedModels: JSON.stringify(isHaya ? (supportedModels?.length ? supportedModels : HAYA_MODEL_IDS) : isWxHaidiYue
         ? [WX_HAIDIYUE_FACE_SPLIT_MODEL]
         : isLongxia ? (supportedModels?.length ? supportedModels : [...LONGXIA_MODELS])
         : isMiaowu ? miaowuModels : (supportedModels || [])),
       priority: priority ?? 0,
       weight: weight ?? 1,
       concurrencyLimit: DEFAULT_HM_CONCURRENCY,
-      maxRetries: maxRetries ?? 3,
+      maxRetries: isHaya ? 0 : maxRetries ?? 3,
       timeout: timeout ?? 120000,
       faceSplitEnabled: isWxHaidiYue
         ? (data.faceSplitEnabled === 0 || data.faceSplitEnabled === false ? 0 : 1)
@@ -468,6 +472,14 @@ export class ChannelService {
         updates.supportedModels = JSON.stringify(MIAOWU_DEFAULT_VIDEO_MODELS);
       }
     }
+    if (isHayaChannel({ type: nextType, baseUrl: data.baseUrl ?? channel.baseUrl })) {
+      updates.type = 'haya'; updates.maxRetries = 0;
+      // Empty supportedModels is intentional after discovery returns no available models.
+      if (data.supportedModels === undefined && channel.type !== 'haya' && parseJsonArray(channel.supportedModels).length === 0) {
+        updates.supportedModels = JSON.stringify(HAYA_MODEL_IDS);
+        updates.modelMapping = JSON.stringify(Object.fromEntries(HAYA_MODEL_IDS.map(id => [id, id])));
+      }
+    }
     updates.updatedAt = new Date().toISOString();
 
     if (nextType === 'hmstudio') {
@@ -495,7 +507,7 @@ export class ChannelService {
     const start = Date.now();
     try {
       const baseUrl = channel.baseUrl.replace(/\/+$/, '');
-      const url = isLongxiaChannel(channel)
+      const url = isHayaChannel(channel) ? hayaApiBaseUrl(channel.baseUrl) + '/v1/models' : isLongxiaChannel(channel)
         ? longxiaApiBaseUrl(channel.baseUrl) + '/v1/models'
         : isMiaowuChannel(channel)
         ? miaowuVideoModelListUrl(baseUrl)
@@ -545,7 +557,7 @@ export class ChannelService {
       return { count: 1, added: 0, models: [WX_HAIDIYUE_FACE_SPLIT_MODEL] };
     }
 
-    const url = isLongxiaChannel(channel)
+    const url = isHayaChannel(channel) ? hayaApiBaseUrl(channel.baseUrl) + '/v1/models' : isLongxiaChannel(channel)
         ? longxiaApiBaseUrl(channel.baseUrl) + '/v1/models'
         : isMiaowuChannel(channel)
       ? miaowuVideoModelListUrl(channel.baseUrl)
@@ -576,7 +588,7 @@ export class ChannelService {
             ? 'image'
             : 'text';
       return { modelId, displayName: displayName || modelId, capability };
-    }).filter((item: any) => item.modelId);
+    }).filter((item: any) => item.modelId && (!isHayaChannel(channel) || HAYA_MODEL_IDS.includes(item.modelId)));
 
     const unique = [...new Map(normalized.map((item: any) => [item.modelId, item])).values()] as Array<{
       modelId: string; displayName: string; capability: string;

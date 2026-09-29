@@ -1,9 +1,13 @@
+import { getHayaVideoSpec, validateHayaVideoInput } from '../../shared/hayaVideo.js';
+import { isHayaChannel, submitHayaVideo, HayaSubmissionError } from '../services/hayaVideoAdapter.js';
+import { prepareHayaMedia, validateHayaMedia } from '../services/hayaMediaService.js';
+import { patchHayaTask, reviewHayaTask } from '../services/hayaTaskService.js';
 import { Router, Request, Response } from 'express';
 import { TokenService } from '../services/tokenService.js';
 import { ChannelService } from '../services/channelService.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { PricingService } from '../services/pricingService.js';
-import { BalanceService } from '../services/balanceService.js';
+import { BalanceService, type BalanceDeduction } from '../services/balanceService.js';
 import { db } from '../db/index.js';
 import { apiLogs, settings, models, contents, apiTokens } from '../db/schema.js';
 import { and, desc, eq, sql } from 'drizzle-orm';
@@ -107,7 +111,7 @@ import {
 } from '../services/miaowuVideoAdapter.js';
 import { buildLongxiaVideoPayload, isLongxiaChannel, isLongxiaModel, longxiaResolution, longxiaVideoCreateUrl } from '../services/longxiaVideoAdapter.js';
 import { prepareMiaowuPublicMediaUrls } from '../services/miaowuMediaService.js';
-import { enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
+import { enqueueHmStudioVideoContent, resumePollForTask, holdHayaSubmission, releaseHayaSubmission } from './video.js';
 import { localizeGeneratedImage } from './imageGen.js';
 import { withVideoFailureMetadata } from '../services/videoFailureService.js';
 import { ContentService } from '../services/contentService.js';
@@ -300,27 +304,50 @@ function checkTokenOrUserBalance(token: any, cost: number): { sufficient: boolea
   return { sufficient: token.balance >= cost, balance: token.balance };
 }
 
-/** 扣除 Token 或关联用户的余额 */
-function deductTokenOrUserBalance(token: any, cost: number, model: string) {
-  if (cost <= 0) return;
+type TokenBillingDeduction = {
+  target: 'organization_balance' | 'user_balance' | 'api_token' | 'not_charged';
+  balanceDeduction?: BalanceDeduction;
+};
+
+/** 扣除 Token 或关联用户的余额，并保留真实扣款来源供失败时原路退回。 */
+function deductTokenOrUserBalance(token: any, cost: number, model: string): TokenBillingDeduction {
+  if (cost <= 0) return { target: 'not_charged' };
   if (token.balance === -1) {
     if (token.userId) {
-      BalanceService.deduct(token.userId, cost, 'api_call', { tokenKey: token.tokenKey, model });
+      const balanceDeduction = BalanceService.deductWithSource(token.userId, cost, 'api_call', { tokenKey: token.tokenKey, model });
+      if (!balanceDeduction) throw new Error('Insufficient linked user balance');
+      TokenService.deductBalance(token.id, cost);
+      return {
+        target: balanceDeduction.source === 'org' ? 'organization_balance' : 'user_balance',
+        balanceDeduction,
+      };
     }
     TokenService.deductBalance(token.id, cost);
-  } else {
-    TokenService.deductBalance(token.id, cost);
+    return { target: 'api_token' };
   }
+  TokenService.deductBalance(token.id, cost);
+  return { target: 'api_token' };
 }
 
 /** Return a failed async request's pre-deducted amount to the same billing source. */
-function refundTokenOrUserBalance(token: any, cost: number): 'user_balance' | 'api_token' | 'not_charged' {
+function refundTokenOrUserBalance(
+  token: any,
+  cost: number,
+  deduction?: TokenBillingDeduction | null,
+): 'organization_balance' | 'user_balance' | 'api_token' | 'not_charged' {
   if (cost <= 0) return 'not_charged';
   if (token.balance === -1 && token.userId) {
-    BalanceService.refund(token.userId, cost, 'generate_video_refund');
+    const balanceDeduction = deduction?.balanceDeduction;
+    BalanceService.refundToSource(
+      token.userId,
+      cost,
+      balanceDeduction?.source || 'user',
+      balanceDeduction?.orgId,
+      'generate_video_refund',
+    );
     // Unlimited linked tokens still track usedAmount, so reverse that counter too.
     TokenService.refundBalance(token.id, cost);
-    return 'user_balance';
+    return balanceDeduction?.source === 'org' ? 'organization_balance' : 'user_balance';
   }
   TokenService.refundBalance(token.id, cost);
   return 'api_token';
@@ -1473,6 +1500,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   const ratio = body.ratio || body.aspect_ratio || '16:9';
   const siYueTianSeedance25Spec = getSiYueTianSeedance25VideoSpec(model);
   const resolution = body.resolution || body.resolution_name
+    || getHayaVideoSpec(model)?.resolution
     || siYueTianSeedance25Spec?.resolution
     || (isLongxiaModel(model) ? longxiaResolution(model) : undefined)
     || (isJulunMinimaxH3Model(model) ? JULUN_MINIMAX_H3_RESOLUTION : '720p');
@@ -1955,6 +1983,22 @@ async function handleVideoCreation(req: Request, res: Response) {
     ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS,
     'sd2-c6'
   ].includes(model);
+  if (isHayaChannel(channel)) {
+    const error = validateHayaVideoInput(upstreamModel, { seconds, resolution, ratio, imageCount: image_urls.length,
+      videoCount: video_urls.length, audioCount: audio_urls.length, firstFrame: body.first_frame_url || body.first_frame,
+      lastFrame: body.end_frame_url || body.last_frame_url || body.last_frame });
+    if (error) { cleanupFiles(req.files); return res.status(400).json({ error }); }
+    if (body.size) { cleanupFiles(req.files); return res.status(400).json({ error: 'Haya 模型请使用 ratio 和 resolution，不要同时传 size' }); }
+    if (body.metadata !== undefined && (!body.metadata || typeof body.metadata !== 'object' || Array.isArray(body.metadata))) {
+      cleanupFiles(req.files); return res.status(400).json({ error: 'metadata 必须为对象' });
+    }
+    try {
+      const options = { baseUrl, apiKey, publicBaseUrl: process.env.BACKEND_URL || req.protocol + '://' + req.get('host') };
+      await validateHayaMedia(image_urls, 'image', options);
+      await validateHayaMedia(video_urls, 'video', options);
+      await validateHayaMedia(audio_urls, 'audio', options);
+    } catch (error: any) { cleanupFiles(req.files); return res.status(400).json({ error: error.message }); }
+  }
   const pricingQuote = PricingService.quote(model, { resolution, seconds, count: 1 }, false);
   if (!pricingQuote.billingType) {
     cleanupFiles(req.files);
@@ -2044,8 +2088,13 @@ async function handleVideoCreation(req: Request, res: Response) {
   const isJulunSd25 = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL && isJulunChannel(channel);
 
   if (isHmStudio) {
-    deductTokenOrUserBalance(token, totalCost, model);
-    db.update(contents).set({ status: 'queued' }).where(eq(contents.id, contentId)).run();
+    const billingDeduction = deductTokenOrUserBalance(token, totalCost, model);
+    const queuedRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
+    let queuedMetadata: Record<string, any> = {};
+    try { queuedMetadata = JSON.parse(queuedRecord?.metadata || '{}'); } catch { }
+    queuedMetadata.billingBalanceSource = billingDeduction.balanceDeduction?.source;
+    queuedMetadata.billingOrgId = billingDeduction.balanceDeduction?.orgId;
+    db.update(contents).set({ status: 'queued', metadata: JSON.stringify(queuedMetadata) }).where(eq(contents.id, contentId)).run();
     cleanupFiles(req.files);
     try {
       const queue = enqueueHmStudioVideoContent(contentId);
@@ -2065,7 +2114,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         retry_after: 5,
       });
     } catch (queueError: any) {
-      const refundTarget = refundTokenOrUserBalance(token, totalCost);
+      const refundTarget = refundTokenOrUserBalance(token, totalCost, billingDeduction);
       const refundedAt = new Date().toISOString();
       persistVideoContentFailure(contentId, queueError.message || '视频任务排队失败', {
         billingStatus: totalCost > 0 ? 'refunded' : 'not_charged',
@@ -2076,6 +2125,43 @@ async function handleVideoCreation(req: Request, res: Response) {
       });
       return res.status(queueError.status || 503).json({ error: '视频任务暂时无法排队，请稍后重试' });
     }
+  }
+
+  if (isHayaChannel(channel)) {
+    holdHayaSubmission(contentId!);
+    let deduction: TokenBillingDeduction | null = null;
+    let submittedTaskId = '';
+    try {
+      const options = { baseUrl, apiKey, publicBaseUrl: process.env.BACKEND_URL || req.protocol + '://' + req.get('host') };
+      const images = await prepareHayaMedia(image_urls, 'image', options);
+      const videos = await prepareHayaMedia(video_urls, 'video', options);
+      const audios = await prepareHayaMedia(audio_urls, 'audio', options);
+      deduction = deductTokenOrUserBalance(token, totalCost, model);
+      const job = await submitHayaVideo(baseUrl, apiKey, { model: upstreamModel, prompt, seconds, ratio, resolution, images, videos, audios, metadata: body.metadata },
+        () => patchHayaTask(contentId!, { hayaSubmissionStarted: new Date().toISOString(), hayaMedia: { images, videos, audios },
+          billingStatus: 'reserved', billingBalanceSource: deduction?.balanceDeduction?.source, billingOrgId: deduction?.balanceDeduction?.orgId }),
+        requestId => patchHayaTask(contentId!, { requestId }));
+      submittedTaskId = job.taskId;
+      patchHayaTask(contentId!, { videoId: job.taskId, requestId: job.requestId });
+      const record = db.select().from(contents).where(eq(contents.id, contentId!)).get();
+      releaseHayaSubmission(contentId!);
+      if (record) void resumePollForTask(contentId!, record);
+      db.insert(apiLogs).values({ tokenId: token.id, channelId, model, upstreamModel, cost: totalCost,
+        durationMs: Date.now() - startTime, status: 'success', clientIp }).run();
+      return res.status(202).json({ id: 'task_' + contentId, task_id: 'task_' + contentId, object: 'video', model,
+        status: 'queued', progress: 0, retry_after: 12 });
+    } catch (error: any) {
+      releaseHayaSubmission(contentId!);
+      if ((error instanceof HayaSubmissionError && error.uncertain) || submittedTaskId) {
+        reviewHayaTask(contentId!, 'Haya 提交结果待核实，请勿重复创建任务');
+        return res.status(202).json({ id: 'task_' + contentId, task_id: 'task_' + contentId, object: 'video', model,
+          status: 'queued', progress: 0, requires_review: true, message: '提交结果待核实，请勿重提', retry_after: 12 });
+      }
+      const target = deduction ? refundTokenOrUserBalance(token, totalCost, deduction) : 'not_charged';
+      persistVideoContentFailure(contentId!, error.message, { billingStatus: deduction ? 'refunded' : 'not_charged',
+        queueRefunded: Boolean(deduction), refundAmount: deduction ? totalCost : 0, refundTarget: target });
+      return res.status(502).json({ error: error.message });
+    } finally { cleanupFiles(req.files); }
   }
 
   const upstreamUrl = isHmStudio
@@ -2093,6 +2179,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     : `${baseUrl}/v1/videos`;
 
   let balanceDeducted = false;
+  let billingDeduction: TokenBillingDeduction | null = null;
   try {
     let upstreamRes;
     const { ...otherParams } = body;
@@ -2462,7 +2549,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     const responseBody = await upstreamRes.json() as any;
     const durationMs = Date.now() - startTime;
 
-    deductTokenOrUserBalance(token, totalCost, model);
+    billingDeduction = deductTokenOrUserBalance(token, totalCost, model);
     balanceDeducted = totalCost > 0;
 
     db.insert(apiLogs).values({
@@ -2472,7 +2559,7 @@ async function handleVideoCreation(req: Request, res: Response) {
 
     const upstreamTaskId = responseBody.request_id || responseBody.task_id || responseBody.id;
     if (!upstreamTaskId) {
-      const refundTarget = refundTokenOrUserBalance(token, totalCost);
+      const refundTarget = refundTokenOrUserBalance(token, totalCost, billingDeduction);
       balanceDeducted = false;
       persistVideoContentFailure(contentId, 'Upstream did not return a task ID', {
         billingStatus: totalCost > 0 ? 'refunded' : 'not_charged',
@@ -2510,7 +2597,9 @@ async function handleVideoCreation(req: Request, res: Response) {
       fallbackFrom: failoverReason ? failoverFrom : undefined,
       fallbackReason: failoverReason || undefined,
       progress: 0,
-      tokenId: token.id
+      tokenId: token.id,
+      billingBalanceSource: billingDeduction?.balanceDeduction?.source,
+      billingOrgId: billingDeduction?.balanceDeduction?.orgId,
     };
     db.update(contents).set({ metadata: JSON.stringify(localMeta) }).where(eq(contents.id, contentId)).run();
 
@@ -2545,7 +2634,7 @@ async function handleVideoCreation(req: Request, res: Response) {
 
     if (contentId !== null) {
       if (balanceDeducted) {
-        const refundTarget = refundTokenOrUserBalance(token, totalCost);
+        const refundTarget = refundTokenOrUserBalance(token, totalCost, billingDeduction);
         persistVideoContentFailure(contentId, errorMessage, {
           billingStatus: 'refunded',
           queueRefunded: true,
@@ -2624,6 +2713,7 @@ async function handleVideoQuery(req: Request, res: Response) {
       object: 'video',
       model: record.modelId,
       status: mappedStatus,
+      ...(metadata.hayaNeedsReview ? { requires_review: true, message: metadata.progressText || '提交结果待核实，请勿重提' } : {}),
       progress,
       progress_pct: progress,
       progress_text: mappedStatus === 'completed'

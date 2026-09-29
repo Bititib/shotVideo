@@ -1,3 +1,4 @@
+import { HAYA_VIDEO_MODELS } from '../../shared/hayaVideo.js';
 import { LONGXIA_MODELS, LONGXIA_BASE_URL, isLongxiaChannel, longxiaRate, longxiaResolution } from '../services/longxiaVideoAdapter.js';
 import { db, sqlite } from './index.js';
 import { tiers, users, models, tierModelAccess, settings, channels, channelApiKeys, apiTokens, modelPricing, organizations, orgMembers, contents } from './schema.js';
@@ -185,6 +186,11 @@ export async function syncModelsFromAPI() {
 
   // 强制追加静态模型 (图片/音频/视频 等)
   allVerified.push(
+    ...HAYA_VIDEO_MODELS.map(spec => ({ provider: 'haya', modelId: spec.id, displayName: spec.id,
+      description: 'Haya AI；' + spec.resolution + '；本站支持4–30秒；' + (spec.confirmedMediaLimits
+        ? '最多' + spec.maxImages + '张图片、' + spec.maxVideos + '个视频、' + spec.maxAudios + '段音频参考'
+        : '素材支持范围以模型详情为准') + '；' + (spec.billingType === 'per_second' ? '按秒计费' : '按次计费'),
+      capabilities: JSON.stringify(['video']), isActive: 1 })),
     { provider: 'pidoi', modelId: 'gpt-image-2', displayName: 'gpt-image-2 · Pidoi 原生 4K', description: 'Pidoi 原生 4K 文生图/图生图', capabilities: JSON.stringify(['image']) },
     { provider: 'siyuetian', modelId: 'gpt-image-2-siyuetian', displayName: 'gpt-image-2 · 四月天', description: '四月天 GPT Image 2 异步文生图/图生图', capabilities: JSON.stringify(['image']) },
     { provider: 'mingfei', modelId: MINGFEI_IMAGE_MODEL, displayName: 'gpt-image-2 · MingFei', description: 'MingFei GPT Image 2 异步文生图/图生图', capabilities: JSON.stringify(['image']) },
@@ -1114,6 +1120,10 @@ export async function initDatabase() {
 
   for (const model of LONGXIA_MODELS) {
     unifiedPricing.push({ modelPattern: model, billingType: 'per_second', inputPrice: longxiaRate(model), category: 'video' });
+  }
+
+  for (const spec of HAYA_VIDEO_MODELS) {
+    unifiedPricing.push({ modelPattern: spec.id, billingType: spec.billingType, inputPrice: spec.price, category: 'video' });
   }
 
   for (const pricing of unifiedPricing) {

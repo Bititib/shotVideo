@@ -1,3 +1,4 @@
+import { isHayaChannel, shouldSendHayaAuthorization, hayaTaskUrl } from './hayaVideoAdapter.js';
 import crypto from 'crypto';
 import { execSync, exec } from 'child_process';
 import fs from 'fs';
@@ -68,7 +69,7 @@ export async function downloadAndLocalizeVideo(
   const exactChannel = channelId ? ChannelService.getChannelRaw(channelId, channelApiKeyId) : null;
   const channel = exactChannel || ChannelService.findChannelForModel(model);
   const headers: Record<string, string> = {};
-  const maySendAuthorization = isHmStudioChannel(channel)
+  const maySendAuthorization = isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
     ? shouldSendHmStudioAuthorization(url, channel.baseUrl)
     : isWxHaidiYueChannel(channel)
       ? shouldSendWxHaidiYueAuthorization(url, channel.baseUrl)
@@ -90,7 +91,13 @@ export async function downloadAndLocalizeVideo(
     }
   }
 
-  const response = await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
+  let response = await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
+  // Expired signatures are not failed generations. Retry the authenticated content endpoint.
+  if (isHayaChannel(channel) && [401, 403, 409].includes(response.status)) {
+    response = await fetch(hayaTaskUrl(channel.baseUrl, videoId) + '/content', {
+      headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(300_000),
+    });
+  }
   if (!response.ok) throw new Error(`Failed to fetch video from upstream: ${response.status} ${response.statusText}`);
 
   const buffer = Buffer.from(await response.arrayBuffer());

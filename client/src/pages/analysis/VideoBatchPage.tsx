@@ -1,3 +1,4 @@
+import { getHayaVideoSpec } from '../../../../shared/hayaVideo';
 import { useEffect, useRef, useState } from 'react';
 import { Layers3, Plus, Trash2, Upload, Loader2, Download, RotateCcw } from 'lucide-react';
 import { api } from '../../api/client';
@@ -93,8 +94,10 @@ export default function VideoBatchPage() {
   }
   async function upload(index: number, files: File[]) {
     if (!files.length) return;
-    if (files.some(f => !f.type.startsWith('image/') || f.size > 10 * 1024 * 1024)) { setError('请上传 10 MB 以内的图片'); return; }
-    if (input.creatives[index].reference_images.length + files.length > 10) { setError('每组最多 10 张参考图，实际数量以模型限制为准'); return; }
+    const maxMB = getHayaVideoSpec(input.model) ? 20 : 10;
+    if (files.some(f => !f.type.startsWith('image/') || f.size > maxMB * 1024 * 1024)) { setError('请上传 ' + maxMB + ' MB 以内的图片'); return; }
+    const maxImages = getHayaVideoSpec(input.model)?.maxImages || 10;
+    if (input.creatives[index].reference_images.length + files.length > maxImages) { setError('每组最多 ' + maxImages + ' 张参考图'); return; }
     setBusy(true);
     try {
       const urls = await Promise.all(files.map(f => new Promise<string>((resolve, reject) => {

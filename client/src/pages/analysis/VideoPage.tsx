@@ -1,3 +1,4 @@
+import { getHayaVideoSpec } from '../../../../shared/hayaVideo';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -159,6 +160,7 @@ export const isComicDramaModel = (modelId: string) => {
 };
 
 const GROUP_ORDER = [
+  'Haya AI',
   'HM 系列',
   'Veo (Google) 系列',
   'Seedance 系列',
@@ -170,6 +172,7 @@ const GROUP_ORDER = [
 ];
 
 const getModelGroup = (modelId: string) => {
+  if (getHayaVideoSpec(modelId)) return 'Haya AI';
   const id = modelId.toLowerCase();
   if (isHmStudioVideoModel(modelId)) return 'HM 系列';
   if (id.includes('veo') || id.includes('omni-flash')) return 'Veo (Google) 系列';
@@ -347,6 +350,7 @@ const isWan30Model = (modelId: string) => {
 };
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  if (getHayaVideoSpec(modelId)) return getHayaVideoSpec(modelId)!.maxImages;
   if (SI_YUE_TIAN_SEEDANCE_25_MODELS.has(modelId)) return 30;
   if (isLongxiaModel(modelId)) return 30;
   if (modelId === JULUN_MINIMAX_H3_MODEL) return 9;
@@ -478,6 +482,7 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
+    if (getHayaVideoSpec(m)) return getHayaVideoSpec(m)!.maxVideos;
     if (SI_YUE_TIAN_SEEDANCE_25_MODELS.has(m)) return 0;
     if (isLongxiaModel(m)) return 0;
     if (m === SNUMOM_SD_MINI_MODEL) return 3;
@@ -498,6 +503,7 @@ export default function VideoPage() {
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
+    if (getHayaVideoSpec(m)) return getHayaVideoSpec(m)!.maxAudios;
     if (SI_YUE_TIAN_SEEDANCE_25_MODELS.has(m)) return 10;
     if (isLongxiaModel(m)) return 10;
     if (m === SNUMOM_SD_MINI_MODEL) return 3;
@@ -785,13 +791,13 @@ export default function VideoPage() {
 
         // 正在生产中的记录恢复到 tasks 队列中继续展示生成进度
         const processingTasks: VideoTask[] = parsed
-          .filter((item: any) => item.status === 'processing' || item.status === 'queued')
+          .filter((item: any) => item.status === 'processing' || item.status === 'queued' || item.status === 'review')
           .map((item: any) => ({
             id: `db_${item.id}`,
             prompt: item.metadata?.prompt || item.inputText || item.title || '',
             status: 'generating',
             progress: Number(item.metadata?.progress) || 0,
-            statusMessage: item.status === 'queued'
+            statusMessage: item.status === 'review' ? (item.metadata?.progressText || '结果待核实，请勿重复提交') : item.status === 'queued'
               ? `HM Studio 排队中：前方 ${Math.max(0, Number(item.metadata?.queuePosition || 1) - 1)} 项`
               : (Number(item.metadata?.progress) > 0
                 ? `视频生成中 ${Number(item.metadata.progress)}%`
@@ -966,7 +972,7 @@ export default function VideoPage() {
               setTasks(prev => prev.map(t => t.id === task.id ? {
                 ...t,
                 progress: p,
-                statusMessage: item.status === 'queued'
+                statusMessage: item.status === 'review' ? (meta.progressText || '结果待核实，请勿重复提交') : item.status === 'queued'
                   ? `HM Studio 排队中：前方 ${Math.max(0, Number(meta.queuePosition || 1) - 1)} 项，当前运行 ${meta.queueRunning || 0}/${meta.queueLimit || 10}`
                   : (p > 0 ? `视频生成中 ${p}%` : '正在后台生成中...')
               } : t));
@@ -1081,10 +1087,10 @@ export default function VideoPage() {
       || selectedModel.startsWith('lg-');
     const isSoraV3Pro = selectedModel === 'seedance-2.0-fast';
     const isWan30 = isWan30Model(selectedModel);
-    if (!isOmniVideoEditModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30) {
+    if (!isOmniVideoEditModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30 && !getHayaVideoSpec(selectedModel)) {
       setReferenceVideos([]);
     }
-    if (!isLongxiaModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30) {
+    if (!isLongxiaModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30 && !getHayaVideoSpec(selectedModel)) {
       setReferenceAudios([]);
       setReferenceAudioNames([]);
     }
@@ -1145,8 +1151,9 @@ export default function VideoPage() {
       setError('请选择视频文件');
       return;
     }
-    if (file.size > 100 * 1024 * 1024) {
-      setError('参考视频不能超过 100MB');
+    const maxVideoMB = getHayaVideoSpec(selectedModel) ? 20 : 100;
+    if (file.size > maxVideoMB * 1024 * 1024) {
+      setError('参考视频不能超过 ' + maxVideoMB + 'MB');
       return;
     }
     const readFile = (f: File) => {
@@ -1176,7 +1183,7 @@ export default function VideoPage() {
       return;
     }
     for (const f of filesToRead) {
-      if (f.size > 100 * 1024 * 1024) { setError('参考视频不能超过 100MB'); continue; }
+      if (f.size > maxVideoMB * 1024 * 1024) { setError('参考视频不能超过 ' + maxVideoMB + 'MB'); continue; }
       if (selectedModel === 'seedance-2.5-pro') {
         const objectUrl = URL.createObjectURL(f);
         try {
@@ -1376,7 +1383,7 @@ export default function VideoPage() {
       setError('视频编辑模型必须上传参考视频');
       return;
     }
-    if (!isLongxiaModel(selectedModel) && !isOmniVideoEditModel(selectedModel) && !isWan30Model(selectedModel) && selectedModel !== SNUMOM_SD_MINI_MODEL && selectedModel !== 'seedance-2.5-deal' && selectedModel !== 'seedance-2.5-pro' && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
+    if (!getHayaVideoSpec(selectedModel) && !isLongxiaModel(selectedModel) && !isOmniVideoEditModel(selectedModel) && !isWan30Model(selectedModel) && selectedModel !== SNUMOM_SD_MINI_MODEL && selectedModel !== 'seedance-2.5-deal' && selectedModel !== 'seedance-2.5-pro' && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
       setError('参考视频或音频模式下必须上传至少一张参考图');
       return;
     }

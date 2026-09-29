@@ -1,3 +1,4 @@
+import { isHayaChannel, hayaTaskUrl, normalizeHayaTask } from './hayaVideoAdapter.js';
 import { and, desc, eq, gte, inArray } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { apiTokens, contents } from '../db/schema.js';
@@ -193,9 +194,10 @@ export class VideoRecoveryService {
     const isHaidiYue = isWxHaidiYueChannel(channel);
     const isSnumom = isSnumomWanChannel(channel);
     const isLongxia = isLongxiaChannel(channel);
+    const isHaya = isHayaChannel(channel);
     const isMiaowu = isMiaowuChannel(channel);
     const isSudaShui = /sudashuiapi\.com/i.test(baseUrl) || metadata.actualChannel === 'sudashui';
-    const pollUrl = isHmStudio
+    const pollUrl = isHaya ? hayaTaskUrl(baseUrl, videoId) : isHmStudio
       ? hmStudioTaskUrl(baseUrl, videoId)
       : isHaidiYue
         ? wxHaidiYueTaskUrl(baseUrl, videoId)
@@ -222,7 +224,10 @@ export class VideoRecoveryService {
     let progress = 0;
     let resultUrl = '';
     let error = '';
-    if (isHmStudio) {
+    if (isHaya) {
+      const task = normalizeHayaTask(payload, baseUrl, videoId);
+      normalizedStatus = task.status; progress = task.progress; resultUrl = task.resultUrl; error = task.error;
+    } else if (isHmStudio) {
       const task = normalizeHmStudioTask(payload, baseUrl);
       normalizedStatus = task.status;
       progress = task.progress;
@@ -273,7 +278,7 @@ export class VideoRecoveryService {
       );
       error = extractVideoFailureMessage(data?.error || payload?.error || data?.failure_reason || payload?.failure_reason);
     }
-    if (isVideoFailurePayload(payload)) {
+    if (!isHaya && isVideoFailurePayload(payload)) {
       if (metadata.batchItemId && isBatchQueryUncertain(payload, normalizedStatus)) {
         throw { status: 502, message: '上游查询返回异常，无法确认原任务失败；保留预扣，不会重复生成' };
       }
@@ -296,7 +301,7 @@ export class VideoRecoveryService {
       return {
         ...base,
         status: 'failed',
-        message: extractVideoFailureMessage(payload) || error || '上游任务生成失败',
+        message: (isHaya ? error : extractVideoFailureMessage(payload)) || error || '上游任务生成失败',
       };
     }
     return {
@@ -320,6 +325,16 @@ export class VideoRecoveryService {
       if (inspection.status === 'failed') {
         recordBatchFailure(contentId, inspection.message || '上游确认失败', true);
         tickVideoBatches();
+      } else if (inspection.status === 'processing') {
+        db.update(contents).set({ status: 'processing' }).where(eq(contents.id, contentId)).run();
+        const { resumePollForTask } = await import('../routes/video.js');
+        void resumePollForTask(contentId, { ...batchRecord, status: 'processing' });
+      }
+    }
+    if (!batchMetadata.batchItemId && batchMetadata.hayaSubmissionStarted && batchRecord?.status === 'review') {
+      if (inspection.status === 'failed') {
+        const { failHmQueuedVideo } = await import('../routes/video.js');
+        await failHmQueuedVideo(contentId, new Error(inspection.message), true);
       } else if (inspection.status === 'processing') {
         db.update(contents).set({ status: 'processing' }).where(eq(contents.id, contentId)).run();
         const { resumePollForTask } = await import('../routes/video.js');
@@ -358,6 +373,13 @@ export class VideoRecoveryService {
         return { status: 'completed', message: '该任务已经恢复，无需重复扣费', item: record, alreadyRecovered: true };
       }
 
+      // Haya review records keep their original reservation. Recovering them must not charge twice.
+      if (metadata.hayaSubmissionStarted && !metadata.queueRefunded && record.status !== 'failed') {
+        delete metadata.error; delete metadata.progressText; delete metadata.hayaNeedsReview;
+        Object.assign(metadata, { progress: 100, completedAt: new Date().toISOString(), billingStatus: 'charged', upstreamResultUrl: inspection.upstreamResultUrl });
+        db.update(contents).set({ status: 'completed', resultUrl: localizedUrl, metadata: JSON.stringify(metadata) }).where(eq(contents.id, contentId)).run();
+        return { status: 'completed', message: '任务已恢复，使用原预扣费用结算', chargedAmount: 0, item: db.select().from(contents).where(eq(contents.id, contentId)).get() };
+      }
       const chargeAmount = recoveryChargeAmount(record, metadata);
       const tokenId = Number(metadata.tokenId) || 0;
       if (metadata.refundTarget === 'api_token' && tokenId) {
