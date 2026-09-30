@@ -7,6 +7,7 @@ import { authMiddleware } from '../middleware/auth.js';
 import { tierMiddleware, TierRequest } from '../middleware/tier.js';
 import { quotaMiddleware, logUsage } from '../middleware/quota.js';
 import { PricingService } from '../services/pricingService.js';
+import { extractImageUpstreamTaskId } from '../services/imageTaskMetadataService.js';
 import { ChannelService } from '../services/channelService.js';
 import { BalanceService } from '../services/balanceService.js';
 import { ContentService } from '../services/contentService.js';
@@ -485,6 +486,9 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
         imageUrls: imageUrls || [],
         progresses: new Array(count).fill(actualCount > 0 ? 100 : 0),
         progressText: actualCount > 0 ? '图片生成完成' : '图片生成失败',
+        durationMs: duration,
+        completedAt: actualCount > 0 ? new Date().toISOString() : undefined,
+        failedAt: actualCount > 0 ? undefined : new Date().toISOString(),
         ...extraMetadata,
       });
       db.update(contents).set({
@@ -671,6 +675,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
       const upstreamUrl = baseUrl + '/v1/images/edits';
       const completedImages: string[] = new Array(count).fill('');
       const upstreamImageUrls: string[] = new Array(count).fill('');
+      const upstreamTaskIds: string[] = new Array(count).fill('');
       let completedCount = 0;
 
       // 将 base64 data URI 转为 Blob
@@ -742,6 +747,15 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
           }
 
           const result = await upstream.json() as any;
+          const taskId = extractImageUpstreamTaskId(result, upstream.headers);
+          if (taskId) {
+            upstreamTaskIds[index] = taskId;
+            persistJob({
+              upstreamTaskId: upstreamTaskIds.find(Boolean) || '',
+              taskId: upstreamTaskIds.find(Boolean) || '',
+              upstreamTaskIds: upstreamTaskIds.filter(Boolean),
+            });
+          }
           const imageUrl = result?.data?.[0]?.url || '';
           console.log(`[imageGen/edit] #${index} 完成, url=${imageUrl ? '有' : '无'}`);
 
@@ -765,7 +779,13 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
           if (completedCount === count) {
             const allUrls = completedImages.filter(Boolean);
             sendEvent({ type: 'complete', imageUrls: allUrls, total: count });
-            billUsage(allUrls.length, allUrls, { upstreamImageUrls: upstreamImageUrls.filter(Boolean) });
+            const taskIds = upstreamTaskIds.filter(Boolean);
+            billUsage(allUrls.length, allUrls, {
+              upstreamImageUrls: upstreamImageUrls.filter(Boolean),
+              upstreamTaskId: taskIds[0] || '',
+              taskId: taskIds[0] || '',
+              upstreamTaskIds: taskIds,
+            });
             finishStream();
           }
         }
@@ -782,6 +802,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
         const upstreamUrl = baseUrl + '/v1/images/generations';
         const completedImages: string[] = new Array(count).fill('');
         const upstreamImageUrls: string[] = new Array(count).fill('');
+        const upstreamTaskIds: string[] = new Array(count).fill('');
         let completedCount = 0;
 
         const runSingle = async (index: number) => {
@@ -834,6 +855,15 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
             }
 
             const result = await upstream.json() as any;
+            const taskId = extractImageUpstreamTaskId(result, upstream.headers);
+            if (taskId) {
+              upstreamTaskIds[index] = taskId;
+              persistJob({
+                upstreamTaskId: upstreamTaskIds.find(Boolean) || '',
+                taskId: upstreamTaskIds.find(Boolean) || '',
+                upstreamTaskIds: upstreamTaskIds.filter(Boolean),
+              });
+            }
             let imageUrl = result?.data?.[0]?.url || '';
 
             // 兼容 b64_json 返回格式
@@ -863,7 +893,13 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
             if (completedCount === count) {
               const allUrls = completedImages.filter(Boolean);
               sendEvent({ type: 'complete', imageUrls: allUrls, total: count });
-              billUsage(allUrls.length, allUrls, { upstreamImageUrls: upstreamImageUrls.filter(Boolean) });
+              const taskIds = upstreamTaskIds.filter(Boolean);
+              billUsage(allUrls.length, allUrls, {
+                upstreamImageUrls: upstreamImageUrls.filter(Boolean),
+                upstreamTaskId: taskIds[0] || '',
+                taskId: taskIds[0] || '',
+                upstreamTaskIds: taskIds,
+              });
               finishStream();
             }
           }

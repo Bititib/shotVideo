@@ -1,7 +1,7 @@
 import { parseUtcTimestamp } from '../../../shared/time';
 
-/** Total submission-to-result time, including queueing and saving the video. */
-export function formatVideoGenerationTime(item: { status: string; createdAt: string; metadata?: unknown }): string {
+/** Total submission-to-result time, including queueing and saving the generated asset. */
+export function formatContentGenerationTime(item: { status: string; createdAt: string; metadata?: unknown }): string {
   if (['processing', 'queued'].includes(item.status)) return '生成中';
   let meta: Record<string, any> = {};
   try {
@@ -22,3 +22,6 @@ export function formatVideoGenerationTime(item: { status: string; createdAt: str
   const minutes = Math.floor(seconds % 3600 / 60);
   return `${hours ? `${hours}小时` : ''}${minutes ? `${minutes}分` : ''}${seconds % 60 || (!hours && !minutes) ? `${seconds % 60}秒` : ''}${failed ? '（至失败）' : ''}`;
 }
+
+// Kept for callers outside the content table.
+export const formatVideoGenerationTime = formatContentGenerationTime;

@@ -1,7 +1,35 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { adminApi } from '../../api/admin';
-import { Users, Zap, TrendingUp, BarChart, Settings, Save, Check } from 'lucide-react';
+import { Users, Zap, TrendingUp, BarChart as BarChartIcon, Settings, Save, Check, Video, Image, Mic2, ScanText } from 'lucide-react';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+
+const USAGE_TYPES = [
+  { type: 'video', label: '视频生成', color: '#a95b38', icon: Video },
+  { type: 'image', label: '图片生成', color: '#c18a45', icon: Image },
+  { type: 'audio', label: '语音生成', color: '#65724a', icon: Mic2 },
+  { type: 'analysis', label: '分析工具', color: '#7f6a99', icon: ScanText },
+] as const;
+
+const chartTooltipStyle = {
+  backgroundColor: '#201d19',
+  border: '1px solid rgba(255,255,255,.12)',
+  borderRadius: 12,
+  color: '#fff',
+  fontSize: 12,
+};
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<any>(null);
@@ -49,7 +77,7 @@ export default function DashboardPage() {
           { label: '总用户', value: stats?.totalUsers || 0, icon: Users, color: 'from-[#a95b38] to-[#7f3e25]' },
           { label: '今日活跃', value: stats?.todayActiveUsers || 0, icon: Zap, color: 'from-[#78855b] to-[#596740]' },
           { label: '今日调用', value: stats?.todayCalls || 0, icon: TrendingUp, color: 'from-[#c18a45] to-[#9c682c]' },
-          { label: '总调用量', value: stats?.totalCalls || 0, icon: BarChart, color: 'from-[#c47750] to-[#97482f]' },
+          { label: '总调用量', value: stats?.totalCalls || 0, icon: BarChartIcon, color: 'from-[#c47750] to-[#97482f]' },
         ].map((card, i) => (
           <div key={i} className="bg-white/[0.03] border border-white/5 rounded-2xl p-5">
             <div className="flex items-center justify-between mb-3">
@@ -63,26 +91,46 @@ export default function DashboardPage() {
         ))}
       </div>
 
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {USAGE_TYPES.map(item => {
+          const count = Number(stats?.usageTypeDistribution?.find((row: any) => row.type === item.type)?.count || 0);
+          const Icon = item.icon;
+          return (
+            <div key={item.type} className="rounded-2xl border border-white/5 bg-white/[0.03] p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-xs text-zinc-500">{item.label}</span>
+                <Icon className="h-4 w-4" style={{ color: item.color }} />
+              </div>
+              <div className="flex items-end justify-between gap-2">
+                <p className="text-2xl font-bold text-white">{count.toLocaleString()}</p>
+                <p className="text-[10px] text-zinc-500">
+                  {stats?.totalCalls ? `${(count / stats.totalCalls * 100).toFixed(1)}%` : '0%'}
+                </p>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
       {/* Charts Area */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         {/* 7-day Trend */}
         <div className="bg-white/[0.03] border border-white/5 rounded-2xl p-5">
-          <h3 className="text-sm font-semibold text-white mb-4">近7天调用趋势</h3>
-          <div className="space-y-2">
-            {stats?.trend7Days?.map((d: any, i: number) => {
-              const max = Math.max(...(stats.trend7Days?.map((x: any) => x.count) || [1]));
-              return (
-                <div key={i} className="flex items-center gap-3">
-                  <span className="text-[10px] text-zinc-500 w-20">{d.date?.slice(5)}</span>
-                  <div className="flex-1 h-5 bg-white/5 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full transition-all" style={{ width: `${(d.count / max) * 100}%` }} />
-                  </div>
-                  <span className="text-xs text-zinc-400 w-8 text-right">{d.count}</span>
-                </div>
-              );
-            })}
-            {(!stats?.trend7Days || stats.trend7Days.length === 0) && <p className="text-xs text-zinc-600 text-center py-4">暂无数据</p>}
-          </div>
+          <h3 className="text-sm font-semibold text-white mb-4">近7天分类调用趋势</h3>
+          {stats?.trend7DaysByType?.length ? (
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={stats.trend7DaysByType} margin={{ top: 8, right: 4, left: -24, bottom: 0 }}>
+                  <CartesianGrid stroke="rgba(255,255,255,.06)" vertical={false} />
+                  <XAxis dataKey="date" tickFormatter={(value) => String(value).slice(5)} tick={{ fill: '#71717a', fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <YAxis allowDecimals={false} tick={{ fill: '#71717a', fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={chartTooltipStyle} labelFormatter={(value) => `日期 ${value}`} />
+                  <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+                  {USAGE_TYPES.map(item => <Bar key={item.type} dataKey={item.type} name={item.label} stackId="calls" fill={item.color} />)}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : <p className="text-xs text-zinc-600 text-center py-24">暂无数据</p>}
         </div>
 
         {/* Tier Distribution */}
@@ -108,18 +156,47 @@ export default function DashboardPage() {
 
         {/* Feature Distribution */}
         <div className="bg-white/[0.03] border border-white/5 rounded-2xl p-5 lg:col-span-2">
-          <h3 className="text-sm font-semibold text-white mb-4">功能使用分布</h3>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            {stats?.featureDistribution?.map((d: any, i: number) => {
-              const names: Record<string, string> = { general: '通用分析', ecommerce: '带货分析', image: '图片逆向', copywriting: '电商文案', account: '账号分析', generate_image: 'AI生图', modify_prompt: '换品' };
-              return (
-                <div key={i} className="bg-white/[0.02] border border-white/5 rounded-xl p-3 text-center">
-                  <p className="text-2xl font-bold text-white">{d.count}</p>
-                  <p className="text-[10px] text-zinc-500 mt-1">{names[d.type] || d.type}</p>
-                </div>
-              );
-            })}
-            {(!stats?.featureDistribution || stats.featureDistribution.length === 0) && <p className="text-xs text-zinc-600 col-span-5 text-center py-4">暂无数据</p>}
+          <h3 className="text-sm font-semibold text-white mb-4">调用类型分布</h3>
+          <div className="grid items-center gap-6 md:grid-cols-2">
+            <div className="relative h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={stats?.usageTypeDistribution || []}
+                    dataKey="count"
+                    nameKey="type"
+                    innerRadius={68}
+                    outerRadius={98}
+                    paddingAngle={3}
+                  >
+                    {USAGE_TYPES.map(item => <Cell key={item.type} fill={item.color} stroke="transparent" />)}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={chartTooltipStyle}
+                    formatter={(value: any, _name: any, context: any) => [Number(value).toLocaleString(), USAGE_TYPES.find(item => item.type === context?.payload?.type)?.label || context?.payload?.type]}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-3xl font-bold text-white">{Number(stats?.totalCalls || 0).toLocaleString()}</span>
+                <span className="text-[10px] text-zinc-500">累计调用</span>
+              </div>
+            </div>
+            <div className="space-y-3">
+              {USAGE_TYPES.map(item => {
+                const count = Number(stats?.usageTypeDistribution?.find((row: any) => row.type === item.type)?.count || 0);
+                const percent = stats?.totalCalls ? count / stats.totalCalls * 100 : 0;
+                return (
+                  <div key={item.type} className="rounded-xl border border-white/5 bg-white/[0.02] p-3">
+                    <div className="mb-2 flex items-center justify-between text-xs">
+                      <span className="flex items-center gap-2 text-zinc-300"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />{item.label}</span>
+                      <span className="font-medium text-white">{count.toLocaleString()} <span className="ml-1 text-zinc-500">{percent.toFixed(1)}%</span></span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-white/5"><div className="h-full rounded-full" style={{ width: `${percent}%`, backgroundColor: item.color }} /></div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>

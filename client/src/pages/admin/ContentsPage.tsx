@@ -5,7 +5,7 @@ import { adminApi } from '../../api/admin';
 import { getVideoReferenceAssets } from '../../utils/videoPromptRefs';
 import { getContentFailureInfo } from '../../utils/contentFailure';
 import { formatBeijingTime } from '../../../../shared/time';
-import { formatVideoGenerationTime } from '../../utils/videoTiming';
+import { formatContentGenerationTime } from '../../utils/videoTiming';
 
 interface ContentItem {
   id: number;
@@ -454,7 +454,7 @@ export default function ContentsPage() {
                           month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
                         })}
                       </td>
-                      <td className="whitespace-nowrap px-3 py-3 text-sm text-zinc-400">{isVideo ? formatVideoGenerationTime(item) : '—'}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-sm text-zinc-400">{formatContentGenerationTime(item)}</td>
                       <td className="px-3 py-3">{getStatusBadge(item.status)}</td>
                       <td className="px-3 py-3">
                         <div className="text-sm font-medium text-zinc-200">{getRowChannel(item, meta, routingInfo)}</div>
@@ -707,11 +707,11 @@ export default function ContentsPage() {
                       <div className="text-zinc-500 mb-1">提交时间（北京时间）</div>
                       <div className="text-white">{formatBeijingTime(previewItem.createdAt)}</div>
                     </div>
-                    {previewItem.type === 'video' && <div className="bg-white/[0.03] rounded-lg p-3">
+                    <div className="bg-white/[0.03] rounded-lg p-3">
                       <div className="text-zinc-500 mb-1">生成耗时</div>
-                      <div className="text-white">{formatVideoGenerationTime(previewItem)}</div>
+                      <div className="text-white">{formatContentGenerationTime(previewItem)}</div>
                       <div className="mt-1 text-xs text-zinc-500">从提交到完成，包含排队和保存时间</div>
-                    </div>}
+                    </div>
                     <div className="col-span-2 bg-white/[0.03] rounded-lg p-3">
                       <div className="text-zinc-500 mb-1">上游任务 ID</div>
                       <div className="break-all font-mono text-white">{getUpstreamTaskId(parseMeta(previewItem.metadata)) || '未返回'}</div>

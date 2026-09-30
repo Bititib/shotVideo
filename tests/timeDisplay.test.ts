@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { beijingDayBounds, formatBeijingTime, parseUtcTimestamp } from '../shared/time';
-import { formatVideoGenerationTime } from '../client/src/utils/videoTiming';
+import { formatContentGenerationTime, formatVideoGenerationTime } from '../client/src/utils/videoTiming';
 
 describe('Beijing timestamps and video elapsed time', () => {
   it('treats SQLite timestamps as UTC and preserves explicit offsets', () => {
@@ -28,5 +28,13 @@ describe('Beijing timestamps and video elapsed time', () => {
     expect(formatVideoGenerationTime({ ...item, status: 'completed', metadata: { durationMs: 3605000 } })).toBe('1小时5秒');
     expect(formatVideoGenerationTime({ ...item, status: 'failed', metadata: { failedAt: '2026-09-26T16:01:00Z' } })).toBe('1分（至失败）');
     expect(formatVideoGenerationTime({ ...item, status: 'completed', metadata: { completedAt: 'invalid', durationMs: -1 } })).toBe('未记录');
+  });
+
+  it('formats persisted image generation timing with the same submission-to-result rule', () => {
+    expect(formatContentGenerationTime({
+      status: 'completed',
+      createdAt: '2026-09-30 05:50:00',
+      metadata: { completedAt: '2026-09-30T05:50:42.500Z', durationMs: 42_500 },
+    })).toBe('42秒');
   });
 });

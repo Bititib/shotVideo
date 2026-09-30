@@ -10,6 +10,7 @@ import { TokenService } from '../services/tokenService.js';
 import { ChannelService } from '../services/channelService.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { PricingService } from '../services/pricingService.js';
+import { extractImageUpstreamTaskId } from '../services/imageTaskMetadataService.js';
 import { BalanceService, type BalanceDeduction } from '../services/balanceService.js';
 import { db, sqlite } from '../db/index.js';
 import { apiLogs, settings, models, contents, apiTokens } from '../db/schema.js';
@@ -475,6 +476,8 @@ export function saveApiImageAssets(options: {
   referenceFileNames?: string[];
   channel?: { id?: number; name?: string; type?: string };
   upstreamModel?: string;
+  durationMs?: number;
+  upstreamRequestId?: string;
 }): number[] {
   const items = Array.isArray(options.responseBody?.data) ? options.responseBody.data : [];
   const validItems = items.filter((item: any) => item?.url || item?.b64_json);
@@ -507,6 +510,7 @@ export function saveApiImageAssets(options: {
       || options.responseBody?.upstream_task_id
       || options.responseBody?.task_id
       || options.responseBody?.taskId
+      || options.upstreamRequestId
       || '',
     ).trim();
     const upstreamImageUrl = String(item.upstream_url || item.upstreamUrl || item.url || '').trim();
@@ -538,6 +542,8 @@ export function saveApiImageAssets(options: {
         upstreamImageUrls: upstreamImageUrl ? [upstreamImageUrl] : [],
         upstreamTaskId,
         taskId: upstreamTaskId,
+        durationMs: options.durationMs,
+        completedAt: new Date().toISOString(),
       }),
     }).run();
     assetIds.push(Number(inserted.lastInsertRowid));
@@ -1039,6 +1045,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
           totalCost: actualCost,
           channel: { ...channel, type: 'mingfei' },
           upstreamModel,
+          durationMs,
         });
       } catch (assetError) {
         console.error('[v1/images/generations] MingFei 图片资产保存失败:', assetError);
@@ -1107,6 +1114,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
           totalCost,
           channel,
           upstreamModel,
+          durationMs,
         });
       } catch (assetError) {
         console.error('[v1/images/generations] HM Studio asset save failed:', assetError);
@@ -1187,6 +1195,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
           totalCost: actualCost,
           channel: { ...channel, type: 'siyuetian' },
           upstreamModel,
+          durationMs,
         });
       } catch (assetError) {
         console.error('[v1/images/generations] 四月天图片资产保存失败:', assetError);
@@ -1257,6 +1266,8 @@ router.post('/images/generations', async (req: Request, res: Response) => {
         totalCost: actualCost,
         channel,
         upstreamModel,
+        durationMs,
+        upstreamRequestId: extractImageUpstreamTaskId(responseBody, upstreamRes.headers),
       });
     } catch (assetError) {
       console.error('[v1/images/generations] 保存图片资产失败:', assetError);
@@ -1408,6 +1419,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
           referenceFileNames: imageFiles.map(file => file.originalname),
           channel,
           upstreamModel,
+          durationMs,
         });
       } catch (assetError) {
         console.error('[v1/images/edits] HM Studio asset save failed:', assetError);
@@ -1493,6 +1505,8 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
         referenceFileNames: imageFiles.map(file => file.originalname),
         channel,
         upstreamModel,
+        durationMs,
+        upstreamRequestId: extractImageUpstreamTaskId(responseBody, upstreamRes.headers),
       });
     } catch (assetError) {
       console.error('[v1/images/edits] 保存图片资产失败:', assetError);

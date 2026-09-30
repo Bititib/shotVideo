@@ -90,6 +90,16 @@ function categoryFromCapabilities(capabilities: unknown): string {
   return 'other';
 }
 
+export type DashboardUsageCategory = 'video' | 'image' | 'audio' | 'analysis';
+
+export function dashboardUsageCategory(analysisType: unknown): DashboardUsageCategory {
+  const value = String(analysisType || '').toLowerCase();
+  if (value === 'generate_video' || value.startsWith('generate_video_') || value === 'video_generation') return 'video';
+  if (value === 'generate_image' || value.startsWith('generate_image_') || value === 'image_generation' || value === 'image_gen') return 'image';
+  if (value === 'generate_tts' || value.startsWith('generate_tts_') || value === 'tts' || value === 'audio_generation' || value === 'speech_generation') return 'audio';
+  return 'analysis';
+}
+
 export class AdminService {
   // ============ 仪表盘 ============
   static getDashboardStats() {
@@ -125,15 +135,49 @@ export class AdminService {
       .groupBy(usageLogs.analysisType)
       .all();
 
+    const usageTypeTotals: Record<DashboardUsageCategory, number> = {
+      video: 0,
+      image: 0,
+      audio: 0,
+      analysis: 0,
+    };
+    for (const item of featureDistribution) {
+      usageTypeTotals[dashboardUsageCategory(item.type)] += Number(item.count || 0);
+    }
+    const usageTypeDistribution = (Object.keys(usageTypeTotals) as DashboardUsageCategory[])
+      .map(type => ({ type, count: usageTypeTotals[type] }));
+
     // 近7天趋势
     const trend7Days = db.select({
       date: sql<string>`date(created_at)`,
       count: sql<number>`count(*)`,
     }).from(usageLogs)
-      .where(gte(usageLogs.createdAt, sql`date('now', '-7 days')`))
+      .where(gte(usageLogs.createdAt, sql`date('now', '-6 days')`))
       .groupBy(sql`date(created_at)`)
       .orderBy(sql`date(created_at)`)
       .all();
+
+    const typedTrendRows = db.select({
+      date: sql<string>`date(created_at)`,
+      type: usageLogs.analysisType,
+      count: sql<number>`count(*)`,
+    }).from(usageLogs)
+      .where(gte(usageLogs.createdAt, sql`date('now', '-6 days')`))
+      .groupBy(sql`date(created_at)`, usageLogs.analysisType)
+      .orderBy(sql`date(created_at)`)
+      .all();
+    const trendByDate = new Map<string, { date: string; video: number; image: number; audio: number; analysis: number }>();
+    for (const row of typedTrendRows) {
+      const current = trendByDate.get(row.date) || { date: row.date, video: 0, image: 0, audio: 0, analysis: 0 };
+      current[dashboardUsageCategory(row.type)] += Number(row.count || 0);
+      trendByDate.set(row.date, current);
+    }
+    const trend7DaysByType = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date();
+      date.setUTCDate(date.getUTCDate() - (6 - index));
+      const key = date.toISOString().slice(0, 10);
+      return trendByDate.get(key) || { date: key, video: 0, image: 0, audio: 0, analysis: 0 };
+    });
 
     return {
       totalUsers,
@@ -142,7 +186,9 @@ export class AdminService {
       totalCalls,
       tierDistribution,
       featureDistribution,
+      usageTypeDistribution,
       trend7Days,
+      trend7DaysByType,
     };
   }
 
