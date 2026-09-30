@@ -6,7 +6,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import helmet from 'helmet';
-import cors from 'cors';
+import { applicationCors } from './middleware/cors.js';
 import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import { createServer as createViteServer } from 'vite';
@@ -47,9 +47,7 @@ export async function createApp() {
 
   // 安全中间件
   app.use(helmet({ contentSecurityPolicy: false }));  // CSP 关闭以兼容 Vite
-  // CORS：生产环境限制为指定域名
-  const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',').map(s => s.trim()).filter(Boolean);
-  app.use(cors(allowedOrigins?.length ? { origin: allowedOrigins, credentials: true } : undefined));
+  app.use(applicationCors());
   // Compress API responses and static assets. The reverse proxy currently
   // forwards them uncompressed, so doing this here avoids full-size transfers.
   app.use(compression());

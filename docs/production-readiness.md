@@ -10,11 +10,12 @@ JWT_SECRET=替换为至少32字符的随机密钥
 ADMIN_PASSWORD=替换为至少12字符的管理员强密码
 ADMIN_EMAIL=管理员邮箱
 BACKEND_URL=https://你的域名
-ALLOWED_ORIGINS=https://你的域名
+# 可选：网站前端与 BACKEND_URL 不同域时填写
+# ALLOWED_ORIGINS=https://你的前端域名
 MEDIA_USER_QUOTA_MB=2048
 ```
 
-启动时校验生产配置，缺少配置直接拒绝启动。已有管理员密码不会因环境变量改变而重置，需在后台另行修改旧密码。HTTPS 由部署平台或反向代理终止，转发到应用端口。禁止反向代理直接公开 `data/uploads` 或 `data/private-media`，所有素材请求必须经过应用鉴权，包括 `/uploads` 与 `/api/uploads`。
+启动时校验必填生产配置。ALLOWED_ORIGINS 可不填，网站接口默认允许 BACKEND_URL 的来源。开放 API /v1 独立允许任意浏览器来源（不携带登录 Cookie），仍要求 API Key；不需要登记用户前端域名。已有管理员密码不会因环境变量改变而重置，需在后台另行修改旧密码。HTTPS 由部署平台或反向代理终止，转发到应用端口。禁止反向代理直接公开 `data/uploads` 或 `data/private-media`，所有素材请求必须经过应用鉴权，包括 `/uploads` 与 `/api/uploads`。
 
 ## 素材
 
@@ -81,7 +82,7 @@ git pull --ff-only origin main
 nano .env.production
 ```
 
-保留已有模型配置。按照本文“必填配置”补齐 JWT_SECRET、ADMIN_PASSWORD、BACKEND_URL 和 ALLOWED_ORIGINS；已有合格 JWT_SECRET 无需更换，更换会使现有登录失效。线上渠道密钥优先保留后台已有值；新建渠道可配置 SI_YUE_TIAN_API_KEY、MJNEWAPI_API_KEY、JULUN_API_KEY，缺少密钥的新渠道默认停用。历史源码内曾存在的渠道密钥应在服务商侧更换，不要重新粘回源码。
+保留已有模型配置。按照本文“必填配置”补齐 JWT_SECRET、ADMIN_PASSWORD 和 BACKEND_URL；ALLOWED_ORIGINS 可不填；已有合格 JWT_SECRET 无需更换，更换会使现有登录失效。线上渠道密钥优先保留后台已有值；新建渠道可配置 SI_YUE_TIAN_API_KEY、MJNEWAPI_API_KEY、JULUN_API_KEY，缺少密钥的新渠道默认停用。历史源码内曾存在的渠道密钥应在服务商侧更换，不要重新粘回源码。
 
 如果 git pull 报本地修改或分支冲突，停止更新并保留现场，不使用 git reset --hard 或 git clean。反向代理必须把 /uploads、/api/uploads 和 /api/media 请求交给应用，移除绕过应用鉴权的静态目录 alias。
 
