@@ -1,3 +1,4 @@
+import { bindReferences, referenceLabel, insertReference } from './referenceMentions';
 import BrandMark from '../components/BrandMark';
 import ProjectLibrary from './ProjectLibrary';
 import AssetPicker from './AssetPicker';
@@ -281,6 +282,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     if (!target || target.job?.status === 'running') {setNotice('目标节点不可用或正在生成');return;}
     const eligible=assets.filter(n=>n.src || n.kind === 'text' && n.text.trim());
     if (!eligible.length) {setNotice('没有可用的同类型素材');return;}
+    const attached: CanvasNode[] = [];
     if (intent.mode === 'fill') {
       const source=eligible[0];if(source.kind !== target.kind){setNotice('请选择与当前节点相同类型的素材');return;}
       const versions=[...(target.versions || [])];if(target.src && !versions.some(v=>v.src === target.src))versions.push({id:uid(),src:target.src,prompt:target.text,createdAt:Date.now(),model:target.model});
@@ -292,12 +294,14 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
         const existing=source.origin?.projectId === next.id ? next.nodes.find(n=>n.id === source.origin?.nodeId) : undefined;
         const node=existing || {...source,id:uid(),generator:false,job:undefined,x:target.x-380,y:target.y+i*310};
         if (!canConnect(next.edges,node.id,target.id)) {setNotice('此素材已连接或会形成循环');return;}
+        attached.push(node);
         if(!existing)next.nodes.push(node);
         next.edges.push({id:uid(),from:node.id,to:target.id});
       }
       commit(()=>next);
     }
     setSelected([target.id]);setAssetBrowser(false);setAssetIntent(null);setPanel(true);setNotice(intent.mode === 'fill' ? '已填入节点，原素材保留' : '已引用素材并连接到当前节点');
+    return attached;
   };
   const referenceTarget = (kind: GenerateOptions['kind']) => {
     if (active && active.kind === kind && (!active.src || active.generator)) return active;
@@ -584,19 +588,23 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
   const nodeRight = active ? nodeLeft + active.width * doc.view.zoom : 0;
   const belowNode = active ? (active.y + active.height) * doc.view.zoom + doc.view.y + 16 : size.height - 530;
 
-  let composerLeft = clamp(active ? (nodeLeft + nodeRight - composerWidth) / 2 : (size.width - composerWidth) / 2, 12, Math.max(12, size.width - composerWidth - 12));
-  const nodeTop = active ? active.y * doc.view.zoom + doc.view.y : 100;
-  let composerTop = belowNode + composerHeight < size.height - 90 ? belowNode : nodeTop - composerHeight - 16 >= 70 ? nodeTop - composerHeight - 16 : Math.max(70, size.height - composerHeight - 90);
-  if (active && composerTop < belowNode && composerTop + composerHeight > nodeTop) {
-    if (nodeRight + 16 + composerWidth < size.width - 12) composerLeft = nodeRight + 16;
-    else if (nodeLeft - composerWidth - 16 >= 12) composerLeft = nodeLeft - composerWidth - 16;
-  }
+  // Keep the composer attached below the node in screen coordinates at every zoom.
+  // Viewport constraints must never flip it above the node or pin it to the screen.
+  const composerLeft = active ? (nodeLeft + nodeRight - composerWidth) / 2
+    : Math.max(12, (size.width - composerWidth) / 2);
+  const composerTop = active ? belowNode : Math.max(70, size.height - composerHeight - 90);
   const focusActive = () => {
     if (!active) return;
     const available = Math.max(100, size.height - (panel ? composerHeight : 0) - 190);
     const zoom = Math.min(1, available / active.height, (size.width - 60) / active.width);
     update({...docRef.current, view:{zoom, x:(size.width-active.width*zoom)/2-active.x*zoom, y:80-active.y*zoom}});
   };
+  useEffect(() => {
+    if (!panel || !active) return;
+    // Reframe only when opening/selecting a node, not while the user pans or drags it.
+    if (composerTop + composerHeight > size.height - 90 || active.y * doc.view.zoom + doc.view.y < 70
+      || composerLeft < 12 || composerLeft + composerWidth > size.width - 12) focusActive();
+  }, [panel, active?.id]);
   const contextNode = doc.nodes.find(n => n.id === context?.nodeId);
   const historyNode = doc.nodes.find(n => n.id === nodeHistory);
 
@@ -689,7 +697,16 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
         <button className={mode === 'hand' ? 'active' : ''} onClick={() => setMode('hand')} aria-label="平移工具" title="平移 H · 按住空格"><Hand size={19} /></button><hr />
 <button onClick={() => update({ ...doc, view: zoomAround(doc.view, { x: size.width / 2, y: size.height / 2 }, 1 / 1.2) })} aria-label="缩小画布"><Minus size={15} /></button><button onClick={() => update({ ...doc, view: zoomAround(doc.view, { x: size.width / 2, y: size.height / 2 }, 1 / doc.view.zoom) })} title="恢复 100%">{Math.round(doc.view.zoom * 100)}%</button><button onClick={() => update({ ...doc, view: zoomAround(doc.view, { x: size.width / 2, y: size.height / 2 }, 1.2) })} aria-label="放大画布"><Plus size={15} /></button><button onClick={() => fit()} aria-label="查看全部素材" title="适应画布 F"><Maximize size={15} /></button><hr/><button aria-label={showConnections ? '隐藏连线' : '显示连线'} title="显示 / 隐藏连线" onClick={() => setShowConnections(v => !v)}>{showConnections ? <Eye size={16}/> : <EyeOff size={16}/>}</button><button aria-label={dark ? '浅色画布' : '深色画布'} title={dark ? '切换到灵感浅色 · 鼠尾草绿 / 暖沙 / 奶油米' : '切换到经典黑色'} onClick={() => { const next = !dark; setDark(next); localStorage.setItem('canvas-theme', next ? 'dark' : 'light'); }}>{dark ? <Sun size={16}/> : <Moon size={16}/>}</button><hr/><button className="studio-icon" disabled={!history.past.length || running} onClick={() => undo('undo')} aria-label="撤销" title="撤销 Ctrl / ⌘ Z"><Undo2 size={17} /></button><button className="studio-icon" disabled={!history.future.length || running} onClick={() => undo('redo')} aria-label="重做" title="重做 Ctrl / ⌘ Shift Z"><Redo2 size={17} /></button></div>
         </div>
-      {panel && <div ref={composerElement} className="studio-composer-anchor" data-canvas-ui style={{ left: composerLeft, top: composerTop, width: composerWidth }}><GeneratorPanel onPickReferences={kind => {const target=referenceTarget(kind);openAssets(target.id,'reference');}} onFocus={active ? focusActive : undefined} onReorderReference={active ? (id, direction) => { const incoming = docRef.current.edges.filter(e => e.to === active.id); const index = incoming.findIndex(e => e.from === id); const next = index + direction; if (index < 0 || next < 0 || next >= incoming.length) return; [incoming[index], incoming[next]] = [incoming[next], incoming[index]]; commit(d => ({...d, edges:[...d.edges.filter(e => e.to !== active.id), ...incoming]})); } : undefined} importing={importing} onUploadReferences={kind => uploadReferences(kind)} onDropReferences={(kind, files) => uploadReferences(kind, files)} key={active?.id || "general"} draft={doc.drafts?.[active?.id || "general"]} onDraft={draft => { const key = active?.id || "general"; if (JSON.stringify(docRef.current.drafts?.[key]) !== JSON.stringify(draft)) update({ ...docRef.current, drafts: { ...docRef.current.drafts, [key]: draft } }); }} onRemoveReference={active && (active.generator || !active.src) ? id => { commit(d => ({ ...d, edges: d.edges.filter(e => !(e.from === id && e.to === active.id)) })); } : undefined} references={references} selected={active} busy={active?.job?.status === 'running'} onClose={() => setPanel(false)} onGenerate={options => void generate(options)} onConnect={() => { setLibrary(true); setNotice('选中一张图片即可作为参考；按 Shift 可选择多张。'); }} /></div>}
+      {panel && <div ref={composerElement} className="studio-composer-anchor" data-canvas-ui style={{ left: composerLeft, top: composerTop, width: composerWidth }}><GeneratorPanel document={doc} projects={projects} onMentionReference={(source,draft,start,end) => {
+        if(draft.prompt.length + 20 > 5000) {setNotice('提示词过长，请先缩短再引用素材');return;}
+        const target=referenceTarget(draft.kind);
+        const nodes=applyAssets([source],{id:target.id,mode:'reference'});
+        if(!nodes?.[0]) return;
+        const bindings=bindReferences(draft.referenceBindings,nodes);
+        const result=insertReference(draft.prompt,start,end,referenceLabel(bindings,nodes[0].id)!);
+        update({...docRef.current,drafts:{...docRef.current.drafts,[target.id]:{...draft,prompt:result.prompt,referenceBindings:bindings}}});
+        return {...result,bindings};
+      }} onPickReferences={kind => {const target=referenceTarget(kind);openAssets(target.id,'reference');}} onFocus={active ? focusActive : undefined} onReorderReference={active ? (id, direction) => { const incoming = docRef.current.edges.filter(e => e.to === active.id); const index = incoming.findIndex(e => e.from === id); const next = index + direction; if (index < 0 || next < 0 || next >= incoming.length) return; [incoming[index], incoming[next]] = [incoming[next], incoming[index]]; commit(d => ({...d, edges:[...d.edges.filter(e => e.to !== active.id), ...incoming]})); } : undefined} importing={importing} onUploadReferences={kind => uploadReferences(kind)} onDropReferences={(kind, files) => uploadReferences(kind, files)} key={active?.id || "general"} draft={doc.drafts?.[active?.id || "general"]} onDraft={draft => { const key = active?.id || "general"; if (JSON.stringify(docRef.current.drafts?.[key]) !== JSON.stringify(draft)) update({ ...docRef.current, drafts: { ...docRef.current.drafts, [key]: draft } }); }} onRemoveReference={active && (active.generator || !active.src) ? id => { commit(d => ({ ...d, edges: d.edges.filter(e => !(e.from === id && e.to === active.id)) })); } : undefined} references={references} selected={active} busy={active?.job?.status === 'running'} onClose={() => setPanel(false)} onGenerate={options => void generate(options)} onConnect={() => { setLibrary(true); setNotice('选中一张图片即可作为参考；按 Shift 可选择多张。'); }} /></div>}
         {notice && <div className="studio-toast" role="status"><span>{notice}</span><button onClick={() => setNotice('')} aria-label="关闭提示"><X size={15} /></button></div>}
       </div>
 

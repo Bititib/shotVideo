@@ -529,3 +529,87 @@ describe('project library folders', () => {
     expect(screen.getByText('暂无符合条件的素材')).toBeTruthy();
   });
 });
+
+
+describe('prompt reference mentions', () => {
+  it('shows distinct reference thumbnails, inserts by keyboard, and submits the matching image ordinal', async () => {
+    const first={...newNode('image',{x:0,y:0}),title:'小狗',src:'/dog.png'};
+    const second={...newNode('image',{x:0,y:0}),title:'花园',src:'/garden.png'};
+    const onGenerate=vi.fn();
+    const props={references:[first,second],busy:false,onGenerate,onClose:vi.fn(),onConnect:vi.fn()};
+    const view=render(<MemoryRouter><GeneratorPanel {...props}/></MemoryRouter>);
+    await waitFor(()=>expect(screen.getByRole('button',{name:'生成模型'}).textContent).toContain('Test Image'));
+    const input=screen.getByLabelText('你想创作什么？');
+    fireEvent.change(input,{target:{value:'让@',selectionStart:2}});
+    expect(screen.getByRole('listbox',{name:'可引用素材'})).toBeTruthy();
+    expect(screen.getAllByRole('option').some(n=>n.textContent?.includes('小狗'))).toBe(true);
+    fireEvent.keyDown(input,{key:'Enter'});
+    expect((input as HTMLTextAreaElement).value).toBe('让@图片1 ');
+    view.rerender(<MemoryRouter><GeneratorPanel {...props} references={[second,first]}/></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button',{name:'生成图像'}));
+    expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({prompt:'让参考图片2',inputPrompt:'让@图片1 '}));
+    view.rerender(<MemoryRouter><GeneratorPanel {...props} references={[second]}/></MemoryRouter>);
+    expect(screen.getByRole('alert').textContent).toContain('已断开');
+    expect((screen.getByRole('button',{name:'生成图像'}) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('chooses an unconnected canvas image and connects it before generation', async () => {
+    const image={...newNode('image',{x:0,y:0}),title:'花园参考',src:'/garden.png'};
+    const target={...newNode('image',{x:400,y:0}),title:'生成目标',generator:true};
+    const board=mount({...newDocument(),nodes:[image,target]});
+    fireEvent.pointerDown(screen.getByRole('article',{name:target.title}),{button:0,pointerId:1});
+    fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'),{pointerId:1});
+    const input=await screen.findByLabelText('你想创作什么？');
+    fireEvent.change(input,{target:{value:'@',selectionStart:1}});
+    fireEvent.click(screen.getByRole('button',{name:'本项目 / 画布'}));
+    fireEvent.click(screen.getByRole('option',{name:/花园参考/}));
+    expect(board.current().edges.some(e=>e.from===image.id&&e.to===target.id)).toBe(true);
+    expect((screen.getByLabelText('你想创作什么？') as HTMLTextAreaElement).value).toBe('@图片1 ');
+    expect(board.current().drafts?.[target.id].referenceBindings?.['图片1']).toBe(image.id);
+  });
+});
+
+
+describe('cross-project prompt references',()=>{
+  it('copies a source into the active project and binds the mention to that local node',async()=>{
+    const source={...newNode('image',{x:0,y:0}),title:'其他项目的角色',src:'/actor.png'};
+    const target={...newNode('image',{x:400,y:0}),title:'角色生成',generator:true};
+    const document={...newDocument(),nodes:[target]};
+    const other={...newDocument('角色库'),nodes:[source]};
+    const board=mount(document,[document,other]);
+    fireEvent.pointerDown(screen.getByRole('article',{name:target.title}),{button:0,pointerId:1});
+    fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'),{pointerId:1});
+    const input=await screen.findByLabelText('你想创作什么？');
+    fireEvent.change(input,{target:{value:'@',selectionStart:1}});
+    fireEvent.click(screen.getByRole('button',{name:'跨项目'}));
+    fireEvent.click(screen.getByRole('option',{name:/其他项目的角色/}));
+    const local=board.current().nodes.find(n=>n.src===source.src)!;
+    expect(local.id).not.toBe(source.id);
+    expect(local.origin?.projectId).toBe(other.id);
+    expect(board.current().edges.some(e=>e.from===local.id&&e.to===target.id)).toBe(true);
+    expect(board.current().drafts?.[target.id].referenceBindings?.['图片1']).toBe(local.id);
+    expect(other.nodes).toEqual([source]);
+  });
+});
+
+
+describe('composer node anchoring',()=>{
+  it.each([0.5,1,2])('keeps the composer below and centered on the node at zoom %s',async zoom=>{
+    const node={...newNode('image',{x:400,y:300}),title:'位置检查',generator:true};
+    const board=mount({...newDocument(),nodes:[node],view:{x:30,y:-10,zoom}});
+    fireEvent.pointerDown(screen.getByRole('article',{name:node.title}),{button:0,pointerId:1});
+    fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'),{pointerId:1});
+    const panel=await screen.findByLabelText('创作面板');
+    const anchor=panel.closest('.studio-composer-anchor') as HTMLElement;
+    const assertAnchored=()=>{
+      const view=board.current().view;
+      expect(parseFloat(anchor.style.top)).toBeCloseTo((node.y+node.height)*view.zoom+view.y+16);
+      expect(parseFloat(anchor.style.left)+parseFloat(anchor.style.width)/2).toBeCloseTo((node.x+node.width/2)*view.zoom+view.x);
+    };
+    assertAnchored();
+    fireEvent.click(screen.getByRole('button',{name:'放大画布'}));
+    assertAnchored();
+    fireEvent.click(screen.getByRole('button',{name:'缩小画布'}));
+    assertAnchored();
+  });
+});

@@ -11,7 +11,7 @@ export type CanvasNode = Point & {
   job?: { status: 'running' | 'done' | 'error' | 'interrupted'; contentId?: number; requestId?: string; expectedCount?: number; message: string; progress?: number };
 };
 export type Edge = { id: string; from: string; to: string };
-export type GenerationDraft = { kind: 'image' | 'video' | 'audio'; prompt: string; model: string; ratio: string; resolution: string; seconds: number; count?: number; videoMode?: 'text' | 'reference' | 'frames' | 'edit' | 'multimodal'; firstFrameId?: string; lastFrameId?: string; voice?: string };
+export type GenerationDraft = { kind: 'image' | 'video' | 'audio'; prompt: string; model: string; ratio: string; resolution: string; seconds: number; count?: number; videoMode?: 'text' | 'reference' | 'frames' | 'edit' | 'multimodal'; firstFrameId?: string; lastFrameId?: string; voice?: string; referenceBindings?: Record<string, string> };
 export type CanvasDocument = { assetFolders?: string[]; id: string; title: string; nodes: CanvasNode[]; edges: Edge[]; view: View; updatedAt: number; drafts?: Record<string, GenerationDraft> };
 export type Workspace = { version: 2; activeId: string; projects: CanvasDocument[]; cloudRevision?: number; cloudPending?: boolean };
 export type Snapshot = Pick<CanvasDocument, 'nodes' | 'edges'>;
@@ -131,7 +131,7 @@ export function parseDocument(raw: any): CanvasDocument {
   for (const [key, value] of Object.entries(raw.drafts && typeof raw.drafts === 'object' ? raw.drafts : {}).slice(0, 1001)) {
     const d = value as any;
     if (d && ['image', 'video', 'audio'].includes(d.kind) && ['prompt', 'model', 'ratio', 'resolution'].every(k => typeof d[k] === 'string') && finite(d.seconds))
-      drafts[key.slice(0, 160)] = { kind: d.kind, prompt: d.prompt.slice(0, 5000), model: d.model.slice(0, 200), ratio: d.ratio.slice(0, 20), resolution: d.resolution.slice(0, 20), seconds: d.seconds, count: [1, 2, 4].includes(d.count) ? d.count : 1, videoMode: ['text', 'reference', 'frames', 'edit', 'multimodal'].includes(d.videoMode) ? d.videoMode : 'reference', firstFrameId: typeof d.firstFrameId === 'string' ? d.firstFrameId : '', lastFrameId: typeof d.lastFrameId === 'string' ? d.lastFrameId : '', voice: typeof d.voice === 'string' ? d.voice.slice(0, 40) : 'Zephyr' };
+      drafts[key.slice(0, 160)] = { kind: d.kind, prompt: d.prompt.slice(0, 5000), model: d.model.slice(0, 200), ratio: d.ratio.slice(0, 20), resolution: d.resolution.slice(0, 20), seconds: d.seconds, count: [1, 2, 4].includes(d.count) ? d.count : 1, videoMode: ['text', 'reference', 'frames', 'edit', 'multimodal'].includes(d.videoMode) ? d.videoMode : 'reference', firstFrameId: typeof d.firstFrameId === 'string' ? d.firstFrameId : '', lastFrameId: typeof d.lastFrameId === 'string' ? d.lastFrameId : '', voice: typeof d.voice === 'string' ? d.voice.slice(0, 40) : 'Zephyr', referenceBindings: d.referenceBindings && typeof d.referenceBindings === 'object' ? Object.fromEntries(Object.entries(d.referenceBindings).filter(([label, id]) => /^(图片|视频|音频)[1-9][0-9]{0,4}$/.test(label) && typeof id === 'string').slice(0, 1000).map(([label, id]) => [label, (id as string).slice(0, 160)])) : undefined };
   }
   return { id: typeof raw.id === 'string' ? raw.id : uid(), title: typeof raw.title === 'string' ? raw.title.slice(0, 80) : '我的画布', nodes, edges,
     assetFolders: Array.isArray(raw.assetFolders) ? [...new Set<string>(raw.assetFolders.filter((f:unknown)=>typeof f === 'string' && f.trim()).map((f:string)=>f.trim().slice(0,40)))].slice(0,100) : undefined,
