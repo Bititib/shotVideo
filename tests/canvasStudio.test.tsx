@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import GeneratorPanel from '../client/src/canvas/GeneratorPanel';
 import CanvasStudio from '../client/src/canvas/CanvasStudio';
@@ -27,6 +27,10 @@ beforeEach(() => {
   useAuthStore.setState({ user: { id: 1 } as any, isAuthenticated: true, isLoading: false });
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+function openSelectedComposer() {
+  fireEvent.click(within(screen.getByRole('toolbar', {name:'所选素材操作'})).getByRole('button', {name:'创作',exact:true}));
+}
 
 function mount(initial = newDocument(), projects = [initial]) {
   let current = initial;
@@ -73,6 +77,7 @@ describe('canvas user workflows', () => {
     const board = mount({ ...newDocument(), nodes: [target] });
     fireEvent.pointerDown(screen.getByRole('article', { name: '目标' }), { button: 0, pointerId: 1 });
     fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'), { pointerId: 1 });
+    openSelectedComposer();
     fireEvent.click(screen.getByRole('button', { name: '上传参考图片 / 视频 / 音频' }));
     fireEvent.change(screen.getByLabelText('上传节点参考素材'), { target: { files: [new File(['video'], 'motion.mp4', { type: 'video/mp4' }), new File(['audio'], 'voice.wav', { type: 'audio/wav' })] } });
     await waitFor(() => expect(board.current().nodes).toHaveLength(3));
@@ -91,6 +96,7 @@ describe('canvas user workflows', () => {
     const board = mount({ ...newDocument(), nodes: [image, video, audio, target], edges: [image, video, audio].map(n => ({ id: n.id, from: n.id, to: target.id })) });
     fireEvent.pointerDown(screen.getByRole('article', { name: target.title }), { button: 0, pointerId: 1 });
     fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'), { pointerId: 1 });
+    openSelectedComposer();
     fireEvent.click(screen.getByRole('button', { name: '多模态参考' }));
     await waitFor(() => expect(screen.getByText('AD Multi', {exact:true})).toBeTruthy());
     fireEvent.change(screen.getByLabelText('你想创作什么？'), { target: { value: '参考视频动作与音频节奏' } });
@@ -194,6 +200,7 @@ describe('canvas user workflows', () => {
     const board = mount({ ...newDocument(), nodes: [note, generator], edges: [{ id: 'ref', from: note.id, to: generator.id }] });
     fireEvent.pointerDown(screen.getByRole('article', { name: '生成节点' }), { button: 0, pointerId: 1 });
     fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'), { pointerId: 1 });
+    openSelectedComposer();
     await waitFor(() => expect(screen.getByText('Test Image', {exact:true})).toBeTruthy());
     fireEvent.change(screen.getByLabelText('你想创作什么？'), { target: { value: '新的场景' } });
     fireEvent.change(screen.getByLabelText('生成数量'), { target: { value: '2' } });
@@ -384,6 +391,7 @@ describe('canvas user workflows', () => {
     const board = mount({ ...newDocument(), nodes: [reference] });
     fireEvent.pointerDown(screen.getByRole('article', { name: '参考图' }), { button: 0, pointerId: 1 });
     fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'), { pointerId: 1 });
+    openSelectedComposer();
     await waitFor(() => expect(screen.getByText('Test Image', {exact:true})).toBeTruthy());
     fireEvent.change(screen.getByLabelText('你想创作什么？'), { target: { value: '一片宁静的森林' } });
     vi.mocked(streamGeneration).mockImplementation(async (_kind, _params, _signal, callback) => {
@@ -466,6 +474,7 @@ describe('asset library reuse', () => {
     const board=mount({...newDocument(),nodes:[source,target]});
     fireEvent.pointerDown(screen.getByRole('article',{name:'目标'}),{button:0,pointerId:1});
     fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'),{pointerId:1});
+    openSelectedComposer();
     fireEvent.click(screen.getByRole('button',{name:'从素材库引用'}));
     fireEvent.click(screen.getByRole('button',{name:'引用为参考',exact:true}));
     expect(board.current().nodes).toHaveLength(2);
@@ -495,6 +504,7 @@ it('copies cross-project references while preserving the original project', asyn
   const board=mount(current,[current,other]);
   fireEvent.pointerDown(screen.getByRole('article',{name:'当前目标'}),{button:0,pointerId:1});
   fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'),{pointerId:1});
+    openSelectedComposer();
   fireEvent.click(screen.getByRole('button',{name:'从素材库引用'}));
   fireEvent.click(screen.getByRole('button',{name:'跨项目素材'}));
   fireEvent.click(screen.getByRole('button',{name:'引用为参考',exact:true}));
@@ -588,6 +598,7 @@ describe('prompt reference mentions', () => {
     const board=mount({...newDocument(),nodes:[image,target]});
     fireEvent.pointerDown(screen.getByRole('article',{name:target.title}),{button:0,pointerId:1});
     fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'),{pointerId:1});
+    openSelectedComposer();
     const input=await screen.findByLabelText('你想创作什么？');
     fireEvent.change(input,{target:{value:'@',selectionStart:1}});
     fireEvent.click(screen.getByRole('button',{name:'本项目 / 画布'}));
@@ -608,6 +619,7 @@ describe('cross-project prompt references',()=>{
     const board=mount(document,[document,other]);
     fireEvent.pointerDown(screen.getByRole('article',{name:target.title}),{button:0,pointerId:1});
     fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'),{pointerId:1});
+    openSelectedComposer();
     const input=await screen.findByLabelText('你想创作什么？');
     fireEvent.change(input,{target:{value:'@',selectionStart:1}});
     fireEvent.click(screen.getByRole('button',{name:'跨项目'}));
@@ -623,7 +635,28 @@ describe('cross-project prompt references',()=>{
 
 
 describe('composer node anchoring',()=>{
-  it('opens on click release, but closes during a drag and does not reopen or lose the draft', async () => {
+  it.each([false,true])('opens creation by double-clicking a node (has media: %s)', async hasMedia => {
+    const node={...newNode('image',{x:100,y:100}),title:'双击创作',src:hasMedia ? '/image.png' : undefined};
+    mount({...newDocument(),nodes:[node]});
+    const card=screen.getByRole('article',{name:node.title});
+    fireEvent.pointerDown(card,{button:0,pointerId:1});
+    fireEvent.pointerUp(card,{pointerId:1});
+    expect(screen.queryByLabelText('创作面板')).toBeNull();
+    fireEvent.doubleClick(hasMedia ? screen.getByRole('img',{name:node.title}) : screen.getByRole('button',{name:/下一张好作品/}));
+    expect(await screen.findByLabelText('创作面板')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    await waitFor(()=>expect(screen.getByLabelText('生成模型').textContent).toContain('Test Image'));
+  });
+  it('does not add notes when double-clicking canvas whitespace', () => {
+    const board=mount();
+    fireEvent.doubleClick(screen.getByLabelText('无限画布编辑区'),{clientX:350,clientY:200});
+    expect(board.current().nodes).toHaveLength(0);
+    expect(screen.queryByLabelText('创作面板')).toBeNull();
+    fireEvent.click(screen.getByRole('button',{name:'添加文字',exact:true}));
+    expect(board.current().nodes).toHaveLength(1);
+    expect(board.current().nodes[0].kind).toBe('text');
+  });
+  it('requires an explicit creation action and never opens on selection or dragging, preserving the draft', async () => {
     const node={...newNode('image',{x:100,y:100}),title:'移动素材',src:'/image.png',generator:true};
     const board=mount({...newDocument(),nodes:[node],view:{x:0,y:0,zoom:1}});
     const card=screen.getByRole('article',{name:node.title});
@@ -631,6 +664,8 @@ describe('composer node anchoring',()=>{
     fireEvent.pointerDown(card,{button:0,pointerId:1,clientX:120,clientY:120});
     expect(screen.queryByLabelText('创作面板')).toBeNull();
     fireEvent.pointerUp(surface,{pointerId:1,clientX:120,clientY:120});
+    expect(screen.queryByLabelText('创作面板')).toBeNull();
+    openSelectedComposer();
     const input=await screen.findByLabelText('你想创作什么？');
     fireEvent.change(input,{target:{value:'保留这段创作提示词'}});
     const viewBefore=board.current().view;
@@ -645,6 +680,8 @@ describe('composer node anchoring',()=>{
     expect(board.current().drafts?.[node.id].prompt).toBe('保留这段创作提示词');
     fireEvent.pointerDown(card,{button:0,pointerId:3});
     fireEvent.pointerUp(surface,{pointerId:3});
+    expect(screen.queryByLabelText('创作面板')).toBeNull();
+    openSelectedComposer();
     expect((await screen.findByLabelText('你想创作什么？') as HTMLTextAreaElement).value).toBe('保留这段创作提示词');
   });
 
@@ -662,12 +699,15 @@ describe('composer node anchoring',()=>{
     fireEvent.pointerDown(body,{button:0,pointerId:2});
     fireEvent.pointerCancel(surface,{pointerId:2});
     expect(screen.queryByLabelText('创作面板')).toBeNull();
+    fireEvent.click(body);
+    expect(screen.queryByLabelText('创作面板')).toBeNull();
   });
   it.each([0.5,1,2])('keeps the composer below and centered on the node at zoom %s',async zoom=>{
     const node={...newNode('image',{x:400,y:300}),title:'位置检查',generator:true};
     const board=mount({...newDocument(),nodes:[node],view:{x:30,y:-10,zoom}});
     fireEvent.pointerDown(screen.getByRole('article',{name:node.title}),{button:0,pointerId:1});
     fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'),{pointerId:1});
+    openSelectedComposer();
     const panel=await screen.findByLabelText('创作面板');
     const anchor=panel.closest('.studio-composer-anchor') as HTMLElement;
     const assertAnchored=()=>{
