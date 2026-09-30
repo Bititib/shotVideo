@@ -1,7 +1,8 @@
+import type { TtsVoice } from '../../../shared/tts';
 import { api } from './client';
 
 export type AnalysisModel = { modelId: string; displayName: string };
-export type TtsModel = { modelId: string; displayName: string; description?: string; rate?: number };
+export type TtsModel = { modelId: string; displayName: string; description?: string; rate?: number; voices?: string[]; voiceDetails?: TtsVoice[]; voiceSource?: 'upstream' | 'unavailable' };
 export type ComicDramaCharacter = { name: string; role: string; description: string; assetPrompt: string };
 export type ComicDramaProp = { name: string; description: string; assetPrompt: string };
 export type ComicDramaShot = {
@@ -38,7 +39,7 @@ export type ComicDramaQualityReview = {
 const MODEL_CACHE_TTL_MS = 30_000;
 const PERSISTED_MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const ANALYSIS_MODEL_CACHE_KEY = 'analysis-models-cache-v1';
-const TTS_MODEL_CACHE_KEY = 'tts-models-cache-v1';
+const TTS_MODEL_CACHE_KEY = 'tts-models-cache-v2';
 let analysisModelCache: { token: string; expiresAt: number; data: AnalysisModel[] } | null = null;
 let analysisModelRequest: { token: string; promise: Promise<AnalysisModel[]> } | null = null;
 let ttsModelCache: { token: string; expiresAt: number; data: TtsModel[] } | null = null;
@@ -100,9 +101,9 @@ export const analysisApi = {
   },
 
   /** 获取语音合成模型及费率 */
-  getTtsModels() {
+  getTtsModels(force = false) {
     const token = localStorage.getItem('token') || '';
-    if (ttsModelCache?.token === token && ttsModelCache.expiresAt > Date.now()) {
+    if (!force && ttsModelCache?.token === token && ttsModelCache.expiresAt > Date.now()) {
       return Promise.resolve(ttsModelCache.data);
     }
     if (ttsModelRequest?.token === token) return ttsModelRequest.promise;

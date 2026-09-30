@@ -1,3 +1,4 @@
+import { ttsVoices } from '../../../shared/tts';
 import ReferencePrompt from './ReferencePrompt';
 import { bindReferences, referenceLabel, insertReference, resolveReferenceMentions, type ReferenceBindings } from './referenceMentions';
 import type { CSSProperties } from 'react';
@@ -49,7 +50,7 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
   const [model, setModel] = useState(draft?.model ?? selected?.model ?? '');
   const [images, setImages] = useState<ImageModel[]>([]);
   const [videos, setVideos] = useState<VideoModel[]>([]);
-  const [audios, setAudios] = useState<ImageModel[]>([]);
+  const [audios, setAudios] = useState<(ImageModel & { voices?: string[] })[]>([]);
   const [count, setCount] = useState(draft?.count || 1);
   const [videoMode, setVideoMode] = useState<NonNullable<GenerationDraft['videoMode']>>(draft?.videoMode || (selected?.kind === 'video' && selected.src && !selected.generator ? 'edit' : 'reference'));
   const referenceSignature = references.map(n => n.id + ':' + n.kind).join('|');
@@ -65,7 +66,11 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
   }, [kind, referenceSignature, videoMode]);
   const [firstFrameId, setFirstFrame] = useState(draft?.firstFrameId || '');
   const [lastFrameId, setLastFrame] = useState(draft?.lastFrameId || '');
-  const [voice, setVoice] = useState(draft?.voice || 'Zephyr');
+  const [voice, setVoice] = useState(draft?.voice || '');
+  const voices = ttsVoices(audios.find(m => m.id === model)?.voices);
+  useEffect(() => {
+    if (kind === 'audio') setVoice(current => voices.includes(current) ? current : (voices[0] || ''));
+  }, [kind, voices]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
@@ -76,7 +81,7 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
   useEffect(() => {
     if (kind !== 'audio') return;
     let cancelled = false;
-    analysisApi.getTtsModels().then(data => { if (!cancelled) setAudios(data.map(m => ({ id: m.modelId, name: m.displayName, description: m.description || '', available: true, rate: m.rate }))); }).catch(() => { if (!cancelled) setError('音频模型加载失败，请登录或重试。'); });
+    analysisApi.getTtsModels().then(data => { if (!cancelled) setAudios(data.map(m => ({ id: m.modelId, name: m.displayName, description: m.description || '', available: true, rate: m.rate, voices: m.voices }))); }).catch(() => { if (!cancelled) setError('音频模型加载失败，请登录或重试。'); });
     return () => { cancelled = true; };
   }, [kind, user?.id, retry]);
   useEffect(() => {
@@ -148,11 +153,11 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
       {menu === 'models' && <div ref={popup} className="studio-floating-menu studio-model-menu" style={popupStyle} data-canvas-ui onKeyDown={e => {if(e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return; e.preventDefault(); const options: HTMLButtonElement[]=Array.from(popup.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') || []);const index=options.indexOf(document.activeElement as HTMLButtonElement);options[(index+(e.key === 'ArrowDown' ? 1 : -1)+options.length)%options.length]?.focus();}}><input autoFocus aria-label="搜索模型" placeholder="搜索模型…" value={search} onChange={e => setSearch(e.target.value)}/><div role="listbox" aria-label="可用生成模型">{models.filter(m => (m.name+' '+m.id+' '+(m.description || '')).toLowerCase().includes(search.toLowerCase())).map(m => <button role="option" aria-label={m.name} aria-description={m.description?.trim() || '后台暂未填写模型说明'} aria-selected={model === m.id} key={m.id} onClick={() => {setModel(m.id);setMenu(null);modelTrigger.current?.focus();}}><span className="studio-model-copy"><span className="studio-model-name">{m.name}</span><span className="studio-model-description" title={m.description?.trim() || undefined}>{m.description?.trim() || '后台暂未填写模型说明'}</span></span>{model === m.id && <span className="studio-model-check" aria-hidden="true">✓</span>}</button>)}</div>{!models.some(m => (m.name+' '+m.id+' '+(m.description || '')).toLowerCase().includes(search.toLowerCase())) && <p>未找到匹配模型</p>}</div>}
       <div ref={menu === 'params' ? popup : undefined} hidden={menu !== 'params'} role="dialog" aria-label="生成参数设置" className="studio-floating-menu studio-parameter-popover" style={menu === 'params' ? popupStyle : undefined} data-canvas-ui>
       {kind !== 'audio' && <div className="studio-field-grid"><label className="studio-field">画面比例<select value={ratio} onChange={e => setRatio(e.target.value)}>{ratios.map(r => <option key={r}>{r}</option>)}</select></label><label className="studio-field">清晰度<select value={resolution} onChange={e => setResolution(e.target.value)}>{resolutions.map(r => <option key={r}>{r}</option>)}</select></label></div>}
-      {kind === 'audio' && <label className="studio-field">音色<select value={voice} onChange={e => setVoice(e.target.value)}>{['Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede', 'Despina'].map(v => <option key={v}>{v}</option>)}</select></label>}
+      {kind === 'audio' && !voices.length && <p role="status">上游尚未返回音色列表，暂时无法选择音色。</p>}{kind === 'audio' && <label className="studio-field">音色<select value={voice} onChange={e => setVoice(e.target.value)}>{voices.map(v => <option key={v}>{v}</option>)}</select></label>}
       {kind === 'image' && <label className="studio-field">生成数量<select value={count} onChange={e => setCount(Number(e.target.value))}>{[1, 2, 4].map(n => <option key={n} value={n}>{n} 张</option>)}</select></label>}
       {kind === 'video' && <label className="studio-field">视频时长<select value={seconds} onChange={e => setSeconds(Number(e.target.value))}>{durations.map(s => <option key={s} value={s}>{s} 秒</option>)}</select></label>}
 {referenceLimits && <small>参考上限：{referenceLimits.images} 图 / {referenceLimits.videos} 视频 / {referenceLimits.audios} 音频{referenceLimits.wavOnly ? '（仅 WAV）' : ''}</small>}<small>图片 ≤20 MB · 视频 / 音频 ≤40 MB</small></div></div>
-    <footer className="studio-generate-footer"><button aria-label={busy ? '节点正在生成' : user ? `生成${kind === 'image' ? '图像' : kind === 'audio' ? '音频' : '视频'}` : '登录后生成'} title={user ? '生成' : '登录后生成'} className="studio-generate" disabled={busy || (Boolean(user) && (!activeModel || loading || !hasPrompt || Boolean(mentionResult.error) || Boolean(inputError) || missingRef || frameInvalid || kind === 'video' && videoMode === 'text' && video?.requireRef))} onClick={() => onGenerate({ kind, prompt: mentionResult.prompt, inputPrompt: prompt, referenceBindings: bindings, model, ratio, resolution, seconds, count, videoMode, firstFrameId: firstFrameId || imageRefs[0]?.id, lastFrameId, voice })}><Sparkles size={17} />{busy ? '节点正在生成' : user ? `生成${kind === 'image' ? '图像' : kind === 'audio' ? '音频' : '视频'}` : '登录后生成'}<ArrowUpRight size={17} /></button>
+    <footer className="studio-generate-footer"><button aria-label={busy ? '节点正在生成' : user ? `生成${kind === 'image' ? '图像' : kind === 'audio' ? '音频' : '视频'}` : '登录后生成'} title={user ? '生成' : '登录后生成'} className="studio-generate" disabled={busy || (Boolean(user) && (!activeModel || loading || (kind === 'audio' && !voices.includes(voice)) || !hasPrompt || Boolean(mentionResult.error) || Boolean(inputError) || missingRef || frameInvalid || kind === 'video' && videoMode === 'text' && video?.requireRef))} onClick={() => onGenerate({ kind, prompt: mentionResult.prompt, inputPrompt: prompt, referenceBindings: bindings, model, ratio, resolution, seconds, count, videoMode, firstFrameId: firstFrameId || imageRefs[0]?.id, lastFrameId, voice })}><Sparkles size={17} />{busy ? '节点正在生成' : user ? `生成${kind === 'image' ? '图像' : kind === 'audio' ? '音频' : '视频'}` : '登录后生成'}<ArrowUpRight size={17} /></button>
       <small>{estimatedCost != null ? '将预扣 ¥'+Number(estimatedCost.toFixed(kind === 'audio' ? 6 : kind === 'image' ? 2 : 4))+' · 失败退回' : '价格待确认，以提交时服务端报价为准'}{kind === 'image' && count > 1 ? ' · 按成功张数结算' : ''}</small></footer>
   </aside>;
 }

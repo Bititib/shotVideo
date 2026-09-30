@@ -135,10 +135,11 @@ export async function syncModelsFromAPI() {
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 
       const data = await res.json() as any;
-      const modelList: { id: string }[] = data.data || data.models || [];
+      const modelList: { id?: string; name?: string }[] = data.data || data.models || [];
+      if (!Array.isArray(modelList)) throw new Error('上游模型目录格式无效');
 
       for (const m of modelList) {
-        const modelId = m.id;
+        const modelId = String(m.id || m.name || '').replace(/^models\//, '');
         if (!modelId) continue;
 
         // 确定 capabilities
@@ -209,8 +210,6 @@ export async function syncModelsFromAPI() {
     })),
     { provider: 'google', modelId: 'gemini-3.1-flash-image-preview', displayName: '🍌 nabanana flash', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-3-pro-image-preview', displayName: '🍌 nabanana pro', capabilities: JSON.stringify(['image']) },
-    { provider: 'google', modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', capabilities: JSON.stringify(['tts']) },
-    { provider: 'google', modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', capabilities: JSON.stringify(['tts']) },
     { provider: 'hmstudio', modelId: HM_STUDIO_PRIMARY_VIDEO_MODEL, displayName: 'HM-Seedance V2.5', description: '720p；支持4-30秒；最多10张图片参考，不支持音频和视频参考', capabilities: JSON.stringify(['video']), isActive: 1 },
     ...HM_STUDIO_ADDITIONAL_VIDEO_MODELS.map(model => ({
       provider: 'hmstudio',
@@ -1114,9 +1113,16 @@ export async function initDatabase() {
     { modelPattern: SNUMOM_GROK_IMAGINE_VIDEO_MODEL, billingType: 'per_call', inputPrice: legacyRate('grok_imagine_video_1_5_per_req_rate', 0.60), category: 'video' },
     { modelPattern: SNUMOM_SD_MINI_MODEL, billingType: 'per_call', inputPrice: legacyRate('snumom_sd_mini_per_req_rate', 0.60), category: 'video' },
     { modelPattern: 'grok-imagine-video-1.5-preview', billingType: 'per_call', inputPrice: legacyRate('grok_imagine_video_1_5_preview_rate', 0.70), category: 'video' },
-    { modelPattern: 'gemini-2.5-flash-preview-tts', billingType: 'per_character', inputPrice: legacyRate('tts_rate', 0.01), category: 'tts' },
-    { modelPattern: 'gemini-2.5-pro-preview-tts', billingType: 'per_character', inputPrice: legacyRate('tts_rate', 0.01) * 2, category: 'tts' },
   ];
+
+  // Only price registered/discovered TTS models; a price rule must never invent a model.
+  for (const model of db.select().from(models).all()) {
+    let capabilities: unknown;
+    try { capabilities = JSON.parse(model.capabilities || '[]'); } catch { continue; }
+    if (!Array.isArray(capabilities) || !capabilities.includes('tts')) continue;
+    unifiedPricing.push({ modelPattern: model.modelId, billingType: 'per_character',
+      inputPrice: legacyRate('tts_rate', 0.01) * (model.modelId.includes('pro') ? 2 : 1), category: 'tts' });
+  }
 
   for (const model of LONGXIA_MODELS) {
     unifiedPricing.push({ modelPattern: model, billingType: 'per_second', inputPrice: longxiaRate(model), category: 'video' });

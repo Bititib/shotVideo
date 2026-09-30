@@ -16,7 +16,7 @@ vi.mock('../server/db/index.js', async () => {
 vi.mock('../server/routes/video.js',()=>({ enqueueHmStudioVideoContent:vi.fn(),resumePollForTask:vi.fn(),holdHayaSubmission:vi.fn(),releaseHayaSubmission:vi.fn() }));
 vi.mock('../server/services/channelService.js',()=>({ChannelService:{findChannelsForModel:()=>[{id:1,type:'openai',baseUrl:'https://mock.invalid',apiKey:'fake',modelMapping:{}}],findChannelForModel:()=>({id:1,type:'openai',baseUrl:'https://mock.invalid',apiKey:'fake',modelMapping:{},timeout:1000})}}));
 vi.mock('../server/services/pricingService.js',()=>({PricingService:{quote:(_model:string,params:any)=>({cost:(params.count || 1)*2}),createQuoteResolver:()=> (_model:string,usage:any)=>({cost:(usage.promptTokens+usage.completionTokens)/1000}),calculateCost:(_model:string,input:number,output:number)=>(input+output)/1000}}));
-vi.mock('../server/services/aiService.js',()=>({AIService:{generateTts:vi.fn(),generateImage:vi.fn()}}));
+vi.mock('../server/services/aiService.js',()=>({AIService:{generateTts:vi.fn(),generateImage:vi.fn(),getTtsVoiceCatalog:vi.fn()}}));
 vi.mock('../server/middleware/quota.js',()=>({quotaMiddleware:vi.fn(),logUsage:vi.fn()}));
 vi.mock('../server/services/comicDramaQueueService.js',()=>({ComicDramaQueueService:{}}));
 vi.mock('../server/services/comicDramaAnalysisQueueService.js',()=>({ComicDramaAnalysisQueueService:{}}));
@@ -50,6 +50,24 @@ beforeEach(()=>{
 });
 afterEach(()=>{vi.unstubAllGlobals();vi.clearAllMocks();});
 describe('route precharge order and refunds without paid providers',()=>{
+  it('lists only registered TTS models with their upstream voices', async () => {
+    sqlite.exec(`DELETE FROM models;
+      INSERT INTO models(id,model_id,display_name,capabilities,is_active) VALUES
+      (1,'old-tts','Old TTS','["tts"]',1),
+      (2,'gemini-3.8-flash-tts','Gemini 3.8','["tts"]',1),
+      (3,'disabled-tts','Disabled','["tts"]',0);`);
+    vi.mocked(AIService.getTtsVoiceCatalog).mockResolvedValue([{id:'NewVoice',name:'NewVoice',description:'测试音色'}]);
+    const layer = analysisRouter.stack.find((layer: any) => layer.route?.path === '/tts-models') as any;
+    const res = response(); const next = vi.fn();
+    await layer.route.stack.at(-1).handle({}, res, next);
+    expect(next).not.toHaveBeenCalled();
+    expect(res.body.map((m: any) => m.modelId)).toEqual(['old-tts', 'gemini-3.8-flash-tts']);
+    expect(res.body[1].voices).toEqual(['NewVoice']);
+    expect(res.body[0].voices).toEqual(['NewVoice']);
+    expect(res.body[0].voiceSource).toBe('upstream');
+    expect(res.body[1].voiceDetails[0].description).toBe('测试音色');
+    sqlite.exec('DELETE FROM models');
+  });
   it('website image generation precharges and refunds failed asynchronous jobs',async()=>{
     vi.stubGlobal('fetch',vi.fn(async()=>{expect(userBalance()).toBe(96);return new Response('failed',{status:500});}));
     const res=await invoke(imageRouter,'/generate',{model:'gpt-image-test',prompt:'test',n:2});
@@ -101,6 +119,10 @@ describe('route precharge order and refunds without paid providers',()=>{
     const res=await invoke(apiRouter,'/chat/completions',{model:'test-chat',messages:[]});
     expect(res.headers['X-Billing-Status']).toBe('review');expect(records()[0].actual).toBeNull();
     expect(records()[0].state).toBe('review');
+  });
+  it('rejects an unavailable requested TTS model without charging or substituting a model', async () => {
+    const res = await invoke(analysisRouter, '/generate-tts', { text: 'hello', voice: 'Kore', modelId: 'unavailable-tts' });
+    expect(res.code).toBe(403); expect(AIService.generateTts).not.toHaveBeenCalled(); expect(userBalance()).toBe(100);
   });
   it('TTS precharges before provider invocation and settles on success',async()=>{
     vi.mocked(AIService.generateTts).mockImplementation(async()=>{expect(userBalance()).toBe(98);return {audioBase64:'test',mimeType:'audio/wav'};});

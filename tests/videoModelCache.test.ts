@@ -84,7 +84,7 @@ describe('other model list persistent caches', () => {
       savedAt: Date.now(),
       data: [{ modelId: 'analysis-model', displayName: 'Analysis Model' }],
     }));
-    localStorage.setItem('tts-models-cache-v1', JSON.stringify({
+    localStorage.setItem('tts-models-cache-v2', JSON.stringify({
       token: 'account-a',
       savedAt: Date.now(),
       data: [{ modelId: 'tts-model', displayName: 'TTS Model' }],

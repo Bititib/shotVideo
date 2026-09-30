@@ -210,7 +210,7 @@ export default function ModelsPage({ channelId, onEditingChange }: { channelId?:
             <option value="text">文本分析</option>
             <option value="image">图片分析</option>
             <option value="image_gen">图像生成</option>
-            <option value="video">视频生成</option>
+            <option value="video">视频生成</option><option value="tts">语音合成</option>
           </select>
         </div>
       </div>
@@ -350,9 +350,9 @@ export default function ModelsPage({ channelId, onEditingChange }: { channelId?:
               <div>
                 <label className="block text-xs text-zinc-400 mb-2">能力</label>
                 <div className="flex gap-2">
-                  {['text', 'image', 'image_gen', 'video'].map(cap => (
+                  {['text', 'image', 'image_gen', 'video', 'tts'].map(cap => (
                     <button key={cap} onClick={() => setEdit({ ...edit, capabilities: edit.capabilities.includes(cap) ? edit.capabilities.filter((c: string) => c !== cap) : [...edit.capabilities, cap] })}
-                      className={`px-3 py-1.5 rounded-lg text-xs transition-colors ${edit.capabilities.includes(cap) ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' : 'bg-white/5 text-zinc-400 border border-white/5'}`}>{cap === 'text' ? '文本分析' : cap === 'image' ? '图片分析' : cap === 'image_gen' ? '图像生成' : '视频生成'}</button>
+                      className={`px-3 py-1.5 rounded-lg text-xs transition-colors ${edit.capabilities.includes(cap) ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' : 'bg-white/5 text-zinc-400 border border-white/5'}`}>{cap === 'text' ? '文本分析' : cap === 'image' ? '图片分析' : cap === 'image_gen' ? '图像生成' : cap === 'tts' ? '语音合成' : '视频生成'}</button>
                   ))}
                 </div>
               </div>

@@ -1,27 +1,11 @@
+import './TtsPage.css';
+import { ttsVoices, audioExtension, type TtsVoice } from '../../../../shared/tts';
 import React, { useState, useEffect, useRef } from 'react';
 import { Volume2, Play, Pause, Download, Loader2, Sparkles, AlertCircle, RefreshCw, FileText, Check, Music, Trash2 } from 'lucide-react';
 import { analysisApi, getCachedTtsModels } from '../../api/analysis';
 import { contentApi } from '../../api/content';
 import { formatBeijingTime, parseUtcTimestamp } from '../../../../shared/time';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
-
-interface VoiceOption {
-  id: string;
-  name: string;
-  gender: 'male' | 'female';
-  tags: string[];
-  description: string;
-}
-
-const VOICE_PRESETS: VoiceOption[] = [
-  { id: 'Puck', name: 'Puck', gender: 'male', tags: ['深沉', '成熟'], description: '稳重而有磁性的男声，适合新闻解说、纪录片及正式旁白。' },
-  { id: 'Charon', name: 'Charon', gender: 'male', tags: ['活力', '阳光'], description: '充满朝气与亲和力的男声，非常适合科技数码测评与生活分享。' },
-  { id: 'Kore', name: 'Kore', gender: 'female', tags: ['知性', '温柔'], description: '温和优雅的女声，适合情感解读、故事朗读及有声书。' },
-  { id: 'Fenrir', name: 'Fenrir', gender: 'male', tags: ['硬朗', '激情'], description: '力量感十足的男声，非常适合短视频带货、促销广告及激情解说。' },
-  { id: 'Aoede', name: 'Aoede', gender: 'female', tags: ['甜美', '可爱'], description: '清脆甜美的女声，适合美妆好物分享、萌宠日常及娱乐八卦。' },
-  { id: 'Zephyr', name: 'Zephyr', gender: 'male', tags: ['自然', '磁性'], description: '极具自然感与叙事感的男声，适合长视频解说、电影旁白。' },
-  { id: 'Despina', name: 'Despina', gender: 'female', tags: ['干练', '职业'], description: '清晰爽朗的职业女声，适合企业宣传片、课程讲解及商业演示。' },
-];
 
 const TEXT_TEMPLATES = [
   {
@@ -43,6 +27,7 @@ interface GeneratedVoice {
   text: string;
   voice: string;
   audioUrl: string;
+  mimeType?: string;
   createdAt: Date;
 }
 function base64ToBlobUrl(base64: string, mimeType: string): string {
@@ -65,7 +50,20 @@ export default function TtsPage() {
   const guard = useAuthGuard();
   const [models, setModels] = useState(getCachedTtsModels);
   const [selectedModel, setSelectedModel] = useState(() => models[0]?.modelId || '');
-  const [selectedVoice, setSelectedVoice] = useState('Zephyr');
+  const activeModel = models.find(m => m.modelId === selectedModel);
+  const voices = ttsVoices(activeModel?.voices);
+  const [voiceSearch, setVoiceSearch] = useState('');
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const voiceDetails = new Map<string, TtsVoice>(activeModel?.voiceDetails?.map(v => [v.id, v]) || []);
+  const visibleVoices = voices.filter(id => {
+    const v = voiceDetails.get(id);
+    return [id, v?.description, v?.style, v?.scenario].join(' ').toLowerCase().includes(voiceSearch.trim().toLowerCase());
+  });
+  const [selectedVoice, setSelectedVoice] = useState('');
+  const actualVoice = selectedVoice;
+  useEffect(() => {
+    setSelectedVoice(current => voices.includes(current) ? current : (voices[0] || ''));
+  }, [voices]);
   const [text, setText] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,37 +79,19 @@ export default function TtsPage() {
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // 1. 初始化，加载可用模型与历史记录
-  // 1. 初始化，加载可用模型与历史记录
-  useEffect(() => {
-    analysisApi.getTtsModels()
-      .then((res: any) => {
-        const list = res?.data || res || [];
-        if (list.length > 0) {
-          setModels(list);
-          setSelectedModel(current => list.some((model: any) => model.modelId === current) ? current : list[0].modelId);
-        } else {
-          // 兜底配置
-          const defaultTts = [
-            { modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', rate: 0.01 },
-            { modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', rate: 0.02 },
-          ];
-          setModels(defaultTts);
-          setSelectedModel(defaultTts[0].modelId);
-        }
-      })
-      .catch(() => {
-        const defaultTts = [
-          { modelId: 'gemini-2.5-flash-preview-tts', displayName: 'Gemini 2.5 Flash TTS', rate: 0.01 },
-          { modelId: 'gemini-2.5-pro-preview-tts', displayName: 'Gemini 2.5 Pro TTS', rate: 0.02 },
-        ];
-        setModels(defaultTts);
-        setSelectedModel(defaultTts[0].modelId);
-      });
-
-    // 加载历史音频
-    loadHistory();
-  }, []);
+  const loadModels = async (force = false) => {
+    setModelsLoading(true);
+    try {
+      const list = await analysisApi.getTtsModels(force);
+      setModels(list);
+      setSelectedModel(current => list.some(model => model.modelId === current) ? current : list[0]?.modelId || '');
+      setError(list.length ? null : '暂无可用语音模型，请联系管理员配置。');
+    } catch {
+      setModels([]); setSelectedModel('');
+      setError('语音模型加载失败，请点击刷新重试。');
+    } finally { setModelsLoading(false); }
+  };
+  useEffect(() => { void loadModels(); loadHistory(); }, []);
 
   const loadHistory = (page = 1, append = false) => {
     setHistoryLoading(true);
@@ -121,10 +101,12 @@ export default function TtsPage() {
         const loadedHistory: GeneratedVoice[] = [];
         for (const item of items) {
           let audioUrl = '';
+          let mimeType = 'audio/wav';
           try {
             const data = JSON.parse(item.resultText || '{}');
+            mimeType = data.mimeType || 'audio/wav';
             if (data.audioBase64) {
-              audioUrl = base64ToBlobUrl(data.audioBase64, data.mimeType || 'audio/mp3');
+              audioUrl = base64ToBlobUrl(data.audioBase64, mimeType);
             }
           } catch (e) {
             // 忽略格式不正确的
@@ -135,6 +117,7 @@ export default function TtsPage() {
               text: item.inputText || '',
               voice: item.title?.replace('语音合成 - ', '') || '未知',
               audioUrl,
+              mimeType,
               createdAt: new Date(parseUtcTimestamp(item.createdAt)),
             });
           }
@@ -162,7 +145,8 @@ export default function TtsPage() {
       if (!data.audioBase64) throw new Error('该历史记录没有可播放的音频数据');
       const loadedItem = {
         ...historyItem,
-        audioUrl: base64ToBlobUrl(data.audioBase64, data.mimeType || 'audio/mp3'),
+        mimeType: data.mimeType || 'audio/wav',
+        audioUrl: base64ToBlobUrl(data.audioBase64, data.mimeType || 'audio/wav'),
       };
       setHistory(prev => prev.map(item => item.id === loadedItem.id ? loadedItem : item));
       setCurrentAudio(loadedItem);
@@ -227,16 +211,16 @@ export default function TtsPage() {
 
   // 3. 生成音频
   const handleGenerate = async () => {
-    if (!text.trim() || isGenerating) return;
+    if (!text.trim() || isGenerating || !selectedModel || !actualVoice || modelsLoading) return;
     if (!guard()) return;
 
     setIsGenerating(true);
     setError(null);
 
     try {
-      const res = await analysisApi.generateTts(text.trim(), selectedVoice, selectedModel);
+      const res = await analysisApi.generateTts(text.trim(), actualVoice, selectedModel);
       const audioBase64 = res.audioBase64;
-      const mimeType = res.mimeType || 'audio/mp3';
+      const mimeType = res.mimeType || 'audio/wav';
 
       if (!audioBase64) {
         throw new Error('未返回有效的音频数据');
@@ -246,8 +230,9 @@ export default function TtsPage() {
       const newVoice: GeneratedVoice = {
         id: Date.now().toString(),
         text: text.trim(),
-        voice: selectedVoice,
+        voice: actualVoice,
         audioUrl,
+        mimeType,
         createdAt: new Date(),
       };
 
@@ -270,29 +255,31 @@ export default function TtsPage() {
   };
 
   return (
-    <div className="tts-page flex h-full flex-col lg:flex-row">
+    <div className="tts-page flex h-full flex-col xl:flex-row">
       {/* ===== 左栏：控制配置 ===== */}
-      <div className="w-full lg:w-[360px] shrink-0 h-fit lg:h-full lg:overflow-y-auto border-r border-white/5 bg-black p-6 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+      <div className="tts-controls w-full xl:w-[340px] shrink-0 h-fit xl:h-full xl:overflow-y-auto border-r border-white/5 bg-black p-6" style={{ scrollbarWidth: 'none' }}>
         <div className="flex flex-col gap-6">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-yellow-500/20 to-amber-600/20 border border-yellow-500/30 flex items-center justify-center">
               <Volume2 className="w-5 h-5 text-yellow-400" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-white">语音合成 (TTS)</h2>
-              <p className="text-xs text-zinc-500">将文本转化为超逼真的拟真语音</p>
+              <h2 className="text-lg font-semibold text-white">语音工作室</h2>
+              <p className="text-xs text-zinc-500">选择声音，让文字被听见</p>
             </div>
           </div>
 
           {/* 模型选择 */}
           <div>
-            <label className="block text-xs font-semibold text-zinc-400 mb-2 uppercase tracking-wider">选择模型</label>
-            <div className="grid grid-cols-1 gap-2">
+            <div className="tts-section-heading"><label>01 · 选择模型</label><button type="button" onClick={() => void loadModels(true)} disabled={modelsLoading || isGenerating} aria-label="刷新模型列表"><RefreshCw size={14} className={modelsLoading ? 'animate-spin' : ''} />{modelsLoading ? '加载中' : '刷新'}</button></div>
+            <div className="tts-model-grid">
               {models.map((model) => (
                 <button
                   key={model.modelId}
+                  aria-pressed={selectedModel === model.modelId}
+                  disabled={isGenerating}
                   onClick={() => setSelectedModel(model.modelId)}
-                  className={`flex items-center justify-between px-4 py-3 rounded-xl border text-left transition-all ${
+                  className={`tts-model-card flex items-center justify-between px-4 py-3 rounded-xl border text-left transition-all ${
                     selectedModel === model.modelId
                       ? 'border-yellow-500/50 bg-yellow-500/5 text-white'
                       : 'border-white/5 bg-white/[0.02] text-zinc-400 hover:border-white/10 hover:bg-white/[0.04]'
@@ -303,7 +290,7 @@ export default function TtsPage() {
                       <p className="text-xs font-medium truncate">{model.displayName}</p>
                       {model.rate !== undefined && (
                         <span className="text-[9px] bg-yellow-500/10 text-yellow-500 px-1.5 py-0.5 rounded border border-yellow-500/20 font-medium shrink-0">
-                          ¥{model.rate.toFixed(2)}/字
+                          ¥{model.rate}/字
                         </span>
                       )}
                     </div>
@@ -319,61 +306,42 @@ export default function TtsPage() {
             </div>
           </div>
 
-          {/* 音色选择 */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider">选择音色</label>
-              <span className="text-[10px] text-zinc-500">共 {VOICE_PRESETS.length} 种音色可选</span>
+          <section className="tts-voice-section">
+            <div className="tts-section-heading"><label>02 · 选择声音</label><span>共 {voices.length} 个音色</span></div>
+            <input className="tts-voice-search" aria-label="搜索音色" placeholder="搜索名称、风格或使用场景…" value={voiceSearch} onChange={e => setVoiceSearch(e.target.value)} />
+            <div className="tts-voice-grid">
+              {visibleVoices.map(id => {
+                const voice = voiceDetails.get(id);
+                return <button key={id} aria-label={id} aria-pressed={selectedVoice === id} onClick={() => setSelectedVoice(id)} title={voice?.displayName || id}>
+                  <span className="tts-voice-copy"><span className="tts-voice-name">{id}{selectedVoice === id && <Check size={13} />}</span>
+                  {voice?.gender && <small>{voice.gender === 'female' ? '女声' : voice.gender === 'male' ? '男声' : voice.gender}{voice.style ? ' · ' + voice.style : ''}</small>}
+                  {voice?.description && <span className="tts-voice-description">{voice.description}</span>}
+                  {voice?.scenario && <small>{voice.scenario}</small>}</span>
+                </button>;
+              })}
             </div>
-            <div className="space-y-2 max-h-[350px] overflow-y-auto pr-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
-              {VOICE_PRESETS.map((v) => (
-                <button
-                  key={v.id}
-                  onClick={() => setSelectedVoice(v.id)}
-                  className={`w-full text-left p-3 rounded-xl border transition-all flex flex-col gap-1.5 ${
-                    selectedVoice === v.id
-                      ? 'border-yellow-500/50 bg-yellow-500/5 shadow-lg'
-                      : 'border-white/5 bg-white/[0.01] hover:border-white/10 hover:bg-white/[0.03]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold text-white">{v.name}</span>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
-                        v.gender === 'male' ? 'bg-blue-500/10 text-blue-400' : 'bg-pink-500/10 text-pink-400'
-                      }`}>
-                        {v.gender === 'male' ? '男声' : '女声'}
-                      </span>
-                    </div>
-                    <div className="flex gap-1">
-                      {v.tags.map(t => (
-                        <span key={t} className="text-[9px] bg-white/5 text-zinc-400 px-1 py-0.5 rounded">{t}</span>
-                      ))}
-                    </div>
-                  </div>
-                  <p className="text-[10px] text-zinc-500 leading-relaxed">{v.description}</p>
-                </button>
-              ))}
-            </div>
-          </div>
+            {voices.length > 0 && !visibleVoices.length && <p className="tts-hint">没有匹配的音色，请换个名称搜索。</p>}
+            <p className="tts-hint">{activeModel?.voiceSource === 'upstream' ? '音色信息来自上游服务。' : '上游尚未返回音色列表，暂时无法选择音色。'}</p>
+          </section>
         </div>
       </div>
 
       {/* ===== 右栏：文本输入与音频播放 ===== */}
-      <div className="tts-content-panel flex-1 flex flex-col min-w-0 bg-[#070707] relative p-6 lg:overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
+      <div className="tts-content-panel flex-1 flex flex-col min-w-0 bg-[#070707] relative p-6 xl:overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
         <div className="max-w-4xl mx-auto w-full flex flex-col gap-6 h-full">
+          <div className="tts-composer-heading"><div><span className="tts-eyebrow">TEXT TO SPEECH</span><h1>把文字，变成声音。</h1><p>写下文案，生成一段属于你的配音。</p></div><div className="tts-selection-summary"><span>{activeModel?.displayName || '请选择模型'}</span><strong>{actualVoice || '请选择音色'}</strong></div></div>
           {/* 输入及合成区 */}
           <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-5 flex flex-col gap-4">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-zinc-400">输入文本</span>
+              <label htmlFor="tts-transcript" className="text-xs font-semibold text-zinc-400">配音文案</label>
               <span className="text-[10px] text-zinc-600">{text.length} / 2000 字</span>
             </div>
 
-            <textarea
+            <textarea id="tts-transcript"
               value={text}
               onChange={(e) => setText(e.target.value.slice(0, 2000))}
               placeholder="请输入你想合成为语音的文字，支持中英文混排..."
-              rows={6}
+              rows={9}
               className="w-full bg-black/40 border border-white/5 focus:border-yellow-500/30 rounded-xl p-4 text-sm text-white focus:outline-none placeholder:text-zinc-600 resize-none"
             />
 
@@ -399,11 +367,11 @@ export default function TtsPage() {
             <div className="flex items-center justify-between border-t border-white/5 pt-4 mt-2">
               <div className="text-[11px] text-zinc-500 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-yellow-500/70" />
-                推荐使用 Zephyr 或 Kore 音色，拟真效果极佳
+                {activeModel?.rate !== undefined ? `预计 ¥${(text.trim().length * activeModel.rate).toFixed(2)} · 按输入字数计费` : '请选择模型后生成'}
               </div>
               <button
                 onClick={handleGenerate}
-                disabled={!text.trim() || isGenerating}
+                disabled={!text.trim() || isGenerating || !selectedModel || !actualVoice || modelsLoading}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-medium text-black bg-gradient-to-r from-yellow-500 to-amber-500 hover:from-yellow-400 hover:to-amber-400 disabled:opacity-30 disabled:cursor-not-allowed shadow-lg shadow-yellow-500/10 transition-all shrink-0"
               >
                 {isGenerating ? (
@@ -433,11 +401,11 @@ export default function TtsPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-xs font-semibold text-yellow-400">当前合成的语音</span>
-                  <p className="text-[10px] text-zinc-500 mt-0.5">音色: {currentAudio.voice} · 格式: MP3</p>
+                  <p className="text-[10px] text-zinc-500 mt-0.5">音色: {currentAudio.voice} · 格式: {audioExtension(currentAudio.mimeType).toUpperCase()}</p>
                 </div>
                 <a
                   href={currentAudio.audioUrl}
-                  download={`tts_${currentAudio.voice}_${Date.now()}.mp3`}
+                  download={`tts_${currentAudio.voice}_${Date.now()}.${audioExtension(currentAudio.mimeType)}`}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-[10px] text-zinc-300 transition-colors border border-white/5"
                 >
                   <Download className="w-3 h-3" /> 下载音频

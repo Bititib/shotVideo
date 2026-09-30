@@ -58,6 +58,7 @@ function resolveModel(
   if (requestedModelId) {
     const found = available.find(m => m.modelId === requestedModelId);
     if (found) return found;
+    if (preferTts) throw { status: 403, message: '所选语音模型不可用或当前等级无权使用，请重新选择' };
     // 指定的不在列表中，忽略，走自动选择
   }
 
@@ -66,7 +67,9 @@ function resolveModel(
     return available.find(m => m.modelId.includes('image'));
   }
   if (preferTts) {
-    return available.find(m => m.modelId.includes('tts')) || available.find(m => m.modelId.includes('flash'));
+    const model = available.find(m => m.modelId.includes('tts'));
+    if (!model) throw { status: 403, message: '当前等级没有可用的语音模型' };
+    return model;
   }
   return available.find(m => m.modelId.includes('flash') && !m.modelId.includes('image') && !m.modelId.includes('tts')) || available[0];
 }
@@ -181,51 +184,57 @@ router.get('/models',
 // ============ 语音合成可用模型列表 ============
 router.get('/tts-models',
   optionalAuthMiddleware,
-  (req: TierRequest, res: Response) => {
-    const sourceModels = getEnabledPublicModels('tts')
-      .map(m => ({ modelId: m.modelId, displayName: m.displayName || m.modelId, description: m.description || '' }));
+  async (req: TierRequest, res: Response, next) => {
+    try {
+      const voiceCatalog = await AIService.getTtsVoiceCatalog();
+      const sourceModels = getEnabledPublicModels('tts')
+        .map(m => ({ modelId: m.modelId, displayName: m.displayName || m.modelId, description: m.description || '' }));
 
-    // 获取语音合成的费率设置
-    let ttsRate = 0.01; // 默认 ¥0.01/字
-    const rateSetting = db.select().from(settings).where(eq(settings.key, 'tts_rate')).get();
-    if (rateSetting) {
-      ttsRate = parseFloat(rateSetting.value) || 0.01;
-    } else {
-      // 顺便在数据库中初始化这个设置
-      try {
-        db.insert(settings).values({ key: 'tts_rate', value: '0.01', label: '语音合成费率(¥/字)' }).run();
-      } catch { }
-    }
-
-    const result = sourceModels.map(m => {
-      // 优先从 model_pricing 匹配该模型的定价规则
-      const pricingRules = db.select().from(modelPricing).all();
-      const matchedRule = pricingRules.find(r => r.modelPattern === m.modelId);
-
-      let rate = ttsRate;
-      if (matchedRule) {
-        // 如果管理员在「计费设置」里单独配置了该模型的价格，则直接使用，不乘以任何倍率
-        rate = matchedRule.inputPrice;
+      // 获取语音合成的费率设置
+      let ttsRate = 0.01; // 默认 ¥0.01/字
+      const rateSetting = db.select().from(settings).where(eq(settings.key, 'tts_rate')).get();
+      if (rateSetting) {
+        ttsRate = parseFloat(rateSetting.value) || 0.01;
       } else {
-        // 否则走系统默认的 tts_rate 加上倍率的兜底逻辑
-        const multiplier = m.modelId.includes('pro') ? 2 : 1;
-        rate = ttsRate * multiplier;
+        // 顺便在数据库中初始化这个设置
+        try {
+          db.insert(settings).values({ key: 'tts_rate', value: '0.01', label: '语音合成费率(¥/字)' }).run();
+        } catch { }
       }
 
-      // 管理后台「计费设置」是唯一有效价格来源。
-      const unifiedQuote = PricingService.quote(m.modelId, { characters: 1 }, false);
-      rate = unifiedQuote.rate;
+      const result = sourceModels.map(m => {
+        // 优先从 model_pricing 匹配该模型的定价规则
+        const pricingRules = db.select().from(modelPricing).all();
+        const matchedRule = pricingRules.find(r => r.modelPattern === m.modelId);
 
-      return {
-        modelId: m.modelId,
-        displayName: m.displayName,
-        description: m.description,
-        rate,
-        billingType: unifiedQuote.billingType,
-      };
-    });
+        let rate = ttsRate;
+        if (matchedRule) {
+          // 如果管理员在「计费设置」里单独配置了该模型的价格，则直接使用，不乘以任何倍率
+          rate = matchedRule.inputPrice;
+        } else {
+          // 否则走系统默认的 tts_rate 加上倍率的兜底逻辑
+          const multiplier = m.modelId.includes('pro') ? 2 : 1;
+          rate = ttsRate * multiplier;
+        }
 
-    res.json(result);
+        // 管理后台「计费设置」是唯一有效价格来源。
+        const unifiedQuote = PricingService.quote(m.modelId, { characters: 1 }, false);
+        rate = unifiedQuote.rate;
+
+        return {
+          modelId: m.modelId,
+          displayName: m.displayName,
+          description: m.description,
+          voices: voiceCatalog.map(voice => voice.id),
+          voiceDetails: voiceCatalog,
+          voiceSource: voiceCatalog.length ? 'upstream' : 'unavailable',
+          rate,
+          billingType: unifiedQuote.billingType,
+        };
+      });
+
+      res.json(result);
+    } catch (error) { next(error); }
   }
 );
 
@@ -641,11 +650,11 @@ router.post('/generate-tts',
     await handleAnalysis(req, res, 'generate_tts', async () => {
       const { text, voice } = req.body;
       if (!text) throw { status: 400, message: '请提供合成文本' };
-      if (!voice) throw { status: 400, message: '请提供音色名称' };
+      if (typeof voice !== 'string' || !voice.trim()) throw { status: 400, message: '请提供音色名称' };
 
       const modelConfig = resolveModel(req, false, true);
       if (typeof text !== 'string' || !text.trim()) throw { status: 400, message: '请提供合成文本' };
-      const model = modelConfig?.modelId || 'gemini-2.5-flash-preview-tts';
+      const model = modelConfig!.modelId;
       const cost = PricingService.quote(model, { characters: text.length }, false).cost;
       const reservation = reserveUserCharge(req.userId!, cost, 'generate_tts');
       try {

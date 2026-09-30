@@ -580,7 +580,9 @@ export class ChannelService {
       const modelId = String(typeof item === 'string' ? item : item.id || item.model || item.model_id || '').trim();
       const displayName = String(typeof item === 'string' ? item : item.display_name || item.name || modelId).trim();
       const explicitType = String(typeof item === 'object' ? item.type || item.category || '' : '').toLowerCase();
-      const capability = explicitType.includes('lip') || /lip-sync/i.test(modelId)
+      const capability = explicitType.includes('tts') || /tts|speech/i.test(modelId)
+        ? 'tts'
+        : explicitType.includes('lip') || /lip-sync/i.test(modelId)
         ? 'lip_sync'
         : explicitType.includes('video') || /video|seedance/i.test(modelId)
           ? 'video'
@@ -606,6 +608,8 @@ export class ChannelService {
           isActive: 1,
         }).run();
         added++;
+      } else if (item.capability === 'tts' && existing.capabilities !== JSON.stringify(['tts'])) {
+        db.update(models).set({ capabilities: JSON.stringify(['tts']) }).where(eq(models.id, existing.id)).run();
       }
     }
 

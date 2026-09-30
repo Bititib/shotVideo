@@ -96,11 +96,36 @@ async function post(endpoint: string, body: any) {
 const body = { model: HAYA_MODEL_IDS[0], prompt: '电影感产品展示', video_length: 6, resolution: '720p', aspect_ratio: '16:9' };
 
 describe('Haya in both application entry points (isolated in-memory database)', () => {
+  it('discovers only TTS models actually advertised upstream and preserves them on authentication failure', async () => {
+    const { env } = await import('../server/config/env');
+    const previousKey = env.GEMINI_API_KEY;
+    env.GEMINI_API_KEY = 'test-only';
+    try {
+      upstream = async () => Response.json({ data: [{ id: 'gemini-upstream-only-tts' }] });
+      const { syncModelsFromAPI } = await import('../server/db/seed');
+      await syncModelsFromAPI();
+      const listedTts = () => db.select().from(models).all().filter(m => m.modelId.includes('tts')).map(m => m.modelId);
+      expect(listedTts()).toEqual(['gemini-upstream-only-tts']);
+      upstream = async () => new Response('', { status: 401 });
+      await syncModelsFromAPI();
+      expect(listedTts()).toEqual(['gemini-upstream-only-tts']);
+    } finally { env.GEMINI_API_KEY = previousKey; }
+  });
+  it('classifies synchronized TTS models and repairs old text classification without enabling disabled models', async () => {
+    const channel = ChannelService.createChannel({ name: 'AIStudio2API test', type: 'gemini', baseUrl: 'https://tts.invalid', apiKey: 'test-key' });
+    db.insert(models).values({ modelId: 'gemini-3.8-flash-tts', displayName: 'Custom name', provider: 'google', capabilities: '["text"]', isActive: 0 }).run();
+    upstream = async () => Response.json({ data: [{ id: 'gemini-3.8-flash-tts' }, { id: 'new-tts' }] });
+    await ChannelService.syncModels(channel);
+    const rows = db.select().from(models).all();
+    expect(rows.find(m => m.modelId === 'gemini-3.8-flash-tts')).toMatchObject({ capabilities: '["tts"]', isActive: 0, displayName: 'Custom name' });
+    expect(rows.find(m => m.modelId === 'new-tts')?.capabilities).toBe('["tts"]');
+  });
   it('seeds all seven models even when unrelated upstream discovery is unavailable', async () => {
     sqlite.exec('DELETE FROM models');
     const { syncModelsFromAPI } = await import('../server/db/seed');
     await syncModelsFromAPI();
     expect(db.select().from(models).all().filter(m => m.provider === 'haya').map(m => m.modelId)).toEqual(HAYA_MODEL_IDS);
+    expect(db.select().from(models).all().filter(m => m.modelId.includes('tts'))).toEqual([]);
     await syncModelsFromAPI();
     expect(db.select().from(models).all().filter(m => m.provider === 'haya')).toHaveLength(7);
   });

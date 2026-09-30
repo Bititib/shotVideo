@@ -4,6 +4,7 @@ import path from 'node:path';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { env } from '../config/env.js';
+import { loadTtsVoiceCatalog } from './ttsCatalogService.js';
 import { ChannelService } from './channelService.js';
 import { generalPrompt, generalSchema } from '../prompts/general.js';
 import { ecommercePrompt, ecommerceSchema } from '../prompts/ecommerce.js';
@@ -455,12 +456,16 @@ export class AIService {
     throw new Error('图像生成失败：未返回图片数据');
   }
 
-  /** 语音合成 (TTS) — 使用代理端专用 TTS 接口 */
+  static getTtsVoiceCatalog() {
+    return loadTtsVoiceCatalog(env.GEMINI_API_BASE_URL, getApiKey());
+  }
+
+  /** AIStudio2API Gemini-compatible speech configuration (including Gemini 3.8). */
   static async generateTts(text: string, voice: string, modelConfig?: ModelConfig) {
-    const modelId = modelConfig?.modelId || 'gemini-2.5-flash-preview-tts';
+    if (!modelConfig?.modelId) throw new Error('请先选择可用的语音模型');
+    const modelId = modelConfig.modelId;
     const apiKey = getApiKey(modelConfig);
     const url = `${env.GEMINI_API_BASE_URL}/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
-    const payloadText = `Use ${voice} voice: ${text}`;
 
     const res = await fetch(url, {
       method: 'POST',
@@ -471,8 +476,12 @@ export class AIService {
       body: JSON.stringify({
         contents: [{
           role: 'user',
-          parts: [{ text: payloadText }]
-        }]
+          parts: [{ text }]
+        }],
+        generationConfig: {
+          responseModalities: ['AUDIO'],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
+        },
       }),
     });
 
