@@ -183,7 +183,7 @@ router.get('/tts-models',
   optionalAuthMiddleware,
   (req: TierRequest, res: Response) => {
     const sourceModels = getEnabledPublicModels('tts')
-      .map(m => ({ modelId: m.modelId, displayName: m.displayName || m.modelId }));
+      .map(m => ({ modelId: m.modelId, displayName: m.displayName || m.modelId, description: m.description || '' }));
 
     // 获取语音合成的费率设置
     let ttsRate = 0.01; // 默认 ¥0.01/字
@@ -219,6 +219,7 @@ router.get('/tts-models',
       return {
         modelId: m.modelId,
         displayName: m.displayName,
+        description: m.description,
         rate,
         billingType: unifiedQuote.billingType,
       };

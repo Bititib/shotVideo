@@ -1,7 +1,7 @@
 import { api } from './client';
 
 export type AnalysisModel = { modelId: string; displayName: string };
-export type TtsModel = { modelId: string; displayName: string; rate?: number };
+export type TtsModel = { modelId: string; displayName: string; description?: string; rate?: number };
 export type ComicDramaCharacter = { name: string; role: string; description: string; assetPrompt: string };
 export type ComicDramaProp = { name: string; description: string; assetPrompt: string };
 export type ComicDramaShot = {
