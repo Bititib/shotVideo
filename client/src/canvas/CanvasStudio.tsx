@@ -193,6 +193,22 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     const error = linkError(connecting, id); if (error) { setNotice(error); setConnecting(null); return; }
     commit(d => ({ ...d, edges: [...d.edges, { id: uid(), from: connecting, to: id }] })); setConnecting(null); setNotice('已连接为参考，请在目标节点中查看素材。');
   };
+  const connectSelectionToVideo = (targetId: string) => {
+    const current = docRef.current;
+    const target = current.nodes.find(n => n.id === targetId && n.kind === 'video');
+    if (!target || target.job?.status === 'running') { setNotice('请选择未在生成中的视频节点。'); return; }
+    const edges = [...current.edges];
+    let added = 0, existing = 0, skipped = 0;
+    for (const source of current.nodes.filter(n => selected.includes(n.id) && n.id !== targetId)) {
+      if (edges.some(e => e.from === source.id && e.to === targetId)) { existing++; continue; }
+      if (source.job?.status === 'running' || (source.kind === 'text' ? !source.text.trim() : !source.src)
+        || connectionError(source, target) || !canConnect(edges, source.id, targetId)) { skipped++; continue; }
+      edges.push({ id: uid(), from: source.id, to: targetId }); added++;
+    }
+    if (added) commit(d => ({ ...d, edges }));
+    setConnecting(null);
+    setNotice(`已连接 ${added} 项素材到「${target.title}」${existing ? `，${existing} 项已连接` : ''}${skipped ? `，跳过 ${skipped} 项未就绪或会形成循环的素材` : ''}。生成前可在视频节点中确认参考和模型限制。`);
+  };
   const portPoint = (node: CanvasNode, side: 'in' | 'out'): Point => ({ x: node.x + (side === 'out' ? node.width : 0), y: node.y + node.height / 2 });
   const linkTarget = (point: Point, drag: NonNullable<typeof linkDrag.current>) => {
     const opposite = drag.side === 'out' ? 'in' : 'out';
@@ -381,12 +397,13 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     event.preventDefault(); event.stopPropagation(); setContext(null);
     const point = localPoint(event.clientX, event.clientY);
     const pan = space || mode === 'hand' || event.button === 1;
+    // Wait until release to distinguish selecting a node from moving it.
+    if (ids) setPanel(false);
     let moving = ids ?? [];
     if (!pan && ids) {
       if (event.shiftKey && ids.length === 1) { setSelected(current => current.includes(ids[0]) ? current.filter(id => id !== ids[0]) : [...current, ids[0]]); return; }
       moving = ids.every(id => selected.includes(id)) ? selected : ids;
       setSelected(moving);
-      if (moving.length === 1 && docRef.current.nodes.find(n => n.id === moving[0])?.kind !== 'text') setPanel(true);
     } else if (!pan && !event.shiftKey) setSelected([]);
     gesture.current = { kind: pan ? 'pan' : resize ? 'resize' : ids ? 'move' : 'box', pointer: event.pointerId, start: point, last: point, doc: docRef.current, ids: moving, additive: event.shiftKey, checkpointed: false };
     surface.current?.setPointerCapture(event.pointerId);
@@ -403,8 +420,13 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
       const target = linkTarget(point, drag), fixed = portPoint(source, drag.side);
       const moving = target ? portPoint(target, drag.side === 'out' ? 'in' : 'out') : point;
       const from = drag.side === 'out' ? drag.id : target?.id, to = drag.side === 'out' ? target?.id : drag.id;
+      const batchVideo = drag.side === 'out' && target?.kind === 'video' && selected.length > 1 && selected.includes(drag.id);
+      const valid = batchVideo ? target.job?.status !== 'running' && docRef.current.nodes.some(n => selected.includes(n.id)
+        && n.job?.status !== 'running' && (n.kind === 'text' ? n.text.trim() : n.src)
+        && canConnect(docRef.current.edges, n.id, target.id) && !connectionError(n, target))
+        : Boolean(from && to && canConnect(docRef.current.edges, from, to) && !linkError(from, to));
       setLinkPreview({ from: drag.side === 'out' ? fixed : moving, to: drag.side === 'out' ? moving : fixed,
-        target: target?.id, valid: Boolean(from && to && canConnect(docRef.current.edges, from, to) && !linkError(from, to)) });
+        target: target?.id, valid });
       return;
     }
     if (touches.current.has(event.pointerId)) touches.current.set(event.pointerId, localPoint(event.clientX, event.clientY));
@@ -438,6 +460,9 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
       const local = localPoint(event.clientX, event.clientY), at = screenToWorld(local, docRef.current.view);
       const target = linkTarget(at, drag);
       const from = drag.side === 'out' ? drag.id : target?.id, to = drag.side === 'out' ? target?.id : drag.id;
+      if (drag.side === 'out' && target?.kind === 'video' && selected.length > 1 && selected.includes(drag.id)) {
+        connectSelectionToVideo(target.id); return;
+      }
       if (from && to && linkError(from, to)) { setNotice(linkError(from, to)); return; }
       if (from && to && canConnect(docRef.current.edges, from, to)) {
         commit(d => ({ ...d, edges: [...d.edges, { id: uid(), from, to }] }));
@@ -456,6 +481,12 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     if (event) touches.current.delete(event.pointerId);
     if (pinch.current) { pinch.current = null; gesture.current = null; setMarquee(null); return; }
     const g = gesture.current;
+    if (g && event && event.pointerId !== g.pointer) return;
+    if (g?.kind === 'move' && !g.checkpointed && !g.additive && g.ids.length === 1 && event?.type === 'pointerup') {
+      const released = localPoint(event.clientX, event.clientY);
+      const node = docRef.current.nodes.find(n => n.id === g.ids[0]);
+      if (node && node.kind !== 'text' && Math.abs(released.x - g.start.x) + Math.abs(released.y - g.start.y) < 3) setPanel(true);
+    }
     if (g?.kind === 'box' && g.checkpointed) {
       const a = screenToWorld(g.start, docRef.current.view), b = screenToWorld(g.last, docRef.current.view);
       const ids = docRef.current.nodes.filter(n => intersects(n, a, b)).map(n => n.id);
@@ -653,7 +684,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
               <header><span className="studio-node-icon"><Icon size={14} /></span><input aria-label="素材名称" value={node.title} maxLength={120} onPointerDown={e => e.stopPropagation()} onFocus={() => { textStart.current = docRef.current; setSelected([node.id]); }} onChange={e => editNode(node.id, { title: e.target.value })} onBlur={() => { if (textStart.current && textStart.current.nodes !== docRef.current.nodes) record(textStart.current); textStart.current = null; }} /><span className="studio-node-grip">⠿</span></header>
               {node.kind === 'text' ? <textarea aria-label="卡片文字" placeholder="写下想法、提示词或分镜…" value={node.text} maxLength={50000} onPointerDown={e => { if (space || mode === 'hand') begin(e); else { e.stopPropagation(); setSelected([node.id]); } }} onFocus={() => { textStart.current = docRef.current; }} onChange={e => editNode(node.id, { text: e.target.value })} onBlur={() => { if (textStart.current && textStart.current.nodes !== docRef.current.nodes) record(textStart.current); textStart.current = null; }} />
                 : node.src ? <div className="studio-media" onDoubleClick={event => { event.stopPropagation(); setPreview(node); }}>{node.kind === 'image' ? <img src={node.src} alt={node.title} draggable={false} loading="lazy" /> : node.kind === 'audio' ? <audio src={node.src} controls onPointerDown={e => e.stopPropagation()} /> : <video src={playable(node.src)} controls preload="metadata" onPointerDown={e => e.stopPropagation()} />}</div>
-                  : <button className="studio-node-empty" onPointerDown={e => e.stopPropagation()} onClick={() => { setSelected([node.id]); setPanel(true); }}>{node.job?.status === 'running' ? <Loader2 size={28} className="studio-spin" /> : <Icon size={30} />}<strong>{node.job ? node.job.status === 'running' ? '正在创作中' : node.job.status === 'error' ? '生成未完成' : '请核实任务结果' : node.kind === 'image' ? '下一张好作品，从这里开始' : node.kind === 'audio' ? '让文字拥有声音' : '让画面动起来'}</strong><span>{node.job?.message || '连接参考素材，选中节点开始创作'}</span></button>}
+                  : <button className="studio-node-empty" onPointerDown={e => begin(e, [node.id])} onClick={e => { if (e.detail === 0) { setSelected([node.id]); setPanel(true); } }}>{node.job?.status === 'running' ? <Loader2 size={28} className="studio-spin" /> : <Icon size={30} />}<strong>{node.job ? node.job.status === 'running' ? '正在创作中' : node.job.status === 'error' ? '生成未完成' : '请核实任务结果' : node.kind === 'image' ? '下一张好作品，从这里开始' : node.kind === 'audio' ? '让文字拥有声音' : '让画面动起来'}</strong><span>{node.job?.message || '连接参考素材，选中节点开始创作'}</span></button>}
               {node.job && <div className="studio-node-job" role="status" title={node.job.message}><span>{node.job.message}</span>{node.job.status === 'running' && <progress aria-label="生成进度" max={100} value={node.job.progress == null ? undefined : Math.min(100, Math.max(0,node.job.progress))}/>}</div>}
               {node.kind !== 'text' && <button className="studio-node-pick" disabled={node.job?.status === 'running'} onPointerDown={e=>e.stopPropagation()} onClick={()=>{setSelected([node.id]);openAssets(node.id,'fill');}}>从素材库选择{node.src ? ' / 替换' : ' / 上传'}</button>}
               <footer><span>{node.kind === 'text' ? `${node.text.length} 字` : node.src ? '素材已就绪' : node.job?.progress != null ? `${Math.round(node.job.progress)}%` : '等待创作'}</span>{node.job?.status === 'done' ? <CheckCircle2 size={12} /> : <span>{node.ratio || (node.kind === 'text' ? 'NOTE' : 'CREATIVE')}</span>}</footer>
@@ -664,7 +695,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
           {!doc.nodes.length && <div className="studio-welcome" data-canvas-ui onPointerDown={e => e.stopPropagation()}><span className="studio-welcome-mark"><BrandMark size={56} /></span><p className="studio-eyebrow">A LITTLE SPACE. ENDLESS POSSIBILITIES.</p><h1>给灵感，一点自由。</h1><p>想法、参考图和新的作品，在这里自然连接。</p><div className="studio-start-actions"><button onClick={() => fileInput.current?.click()}><Plus size={17} /> 导入第一份素材</button><button onClick={() => add('text')}><Type size={16} /> 记下一个想法</button></div><div className="studio-start-label"><span /> 或者，从一个创作起点开始 <span /></div><div className="studio-template-grid"><button onClick={() => useTemplate('story')}><span className="template-symbol story">01 / 02 / 03</span><strong>短片分镜</strong><small>从故事到镜头，让叙事连贯</small><ArrowUpRight size={15} /></button><button onClick={() => useTemplate('product')}><span className="template-symbol product"><Frame size={27} /><Sparkles size={15} /></span><strong>产品视觉</strong><small>整理卖点，找到品牌的表达</small><ArrowUpRight size={15} /></button><button onClick={() => useTemplate('mood')}><span className="template-symbol mood"><i /><i /><i /></span><strong>灵感情绪板</strong><small>收集色彩、质感与视觉参考</small><ArrowUpRight size={15} /></button></div><p className="studio-welcome-tip">拖入文件或直接粘贴 · 双击空白处添加文字</p></div>}
           {marquee && <div className="studio-marquee" style={{ left: Math.min(marquee.a.x, marquee.b.x), top: Math.min(marquee.a.y, marquee.b.y), width: Math.abs(marquee.a.x - marquee.b.x), height: Math.abs(marquee.a.y - marquee.b.y) }} />}
         </div>
-        {!!selection.length && <div className="studio-selection-bar" role="toolbar" aria-label="所选素材操作"><span>{selection.length} 项已选</span><button onClick={duplicate} aria-label="复制所选" title="复制 Ctrl / ⌘ D"><Copy size={15} /></button><button onClick={() => commit(d => ({ ...d, nodes: arrange(d.nodes, selected) }))} aria-label="排列所选" title="整齐排列"><LayoutGrid size={15} /></button>{selection.length > 1 && <button onClick={group} aria-label="组合所选" title="组合 Ctrl / ⌘ G"><Frame size={15} /></button>}{selection.some(n => n.group) && <button onClick={() => commit(d => ({ ...d, nodes: d.nodes.map(n => selected.includes(n.id) ? { ...n, group: undefined } : n) }))}>取消分组</button>}{active && doc.edges.some(e => e.from === active.id || e.to === active.id) && <button onClick={() => commit(d => ({ ...d, edges: d.edges.filter(e => e.from !== active.id && e.to !== active.id) }))} aria-label="断开素材连线" title="断开此素材的连线"><Link2 size={15} /></button>}{active?.src && <button onClick={() => setPreview(active)} aria-label="预览素材"><Maximize size={15} /></button>}{active?.src && <button onClick={() => void downloadNode(active)} aria-label="下载素材"><Download size={15} /></button>}<button onClick={remove} disabled={selection.every(n => n.job?.status === 'running')} aria-label="删除所选" title="删除，可撤销"><Trash2 size={15} /></button><button className="studio-selection-create" onClick={() => setPanel(true)}><Sparkles size={14} /> 创作</button></div>}
+        {!!selection.length && <div className="studio-selection-bar" role="toolbar" aria-label="所选素材操作"><span>{selection.length} 项已选</span>{selection.length > 1 && <select className="studio-batch-connect" aria-label="批量连接到视频节点" value="" onChange={e => connectSelectionToVideo(e.target.value)}><option value="" disabled>连接到视频…</option>{doc.nodes.filter(n => n.kind === 'video').map(n => <option key={n.id} value={n.id} disabled={n.job?.status === 'running'}>{n.title}{n.job?.status === 'running' ? '（生成中）' : ''}</option>)}</select>}<button onClick={duplicate} aria-label="复制所选" title="复制 Ctrl / ⌘ D"><Copy size={15} /></button><button onClick={() => commit(d => ({ ...d, nodes: arrange(d.nodes, selected) }))} aria-label="排列所选" title="整齐排列"><LayoutGrid size={15} /></button>{selection.length > 1 && <button onClick={group} aria-label="组合所选" title="组合 Ctrl / ⌘ G"><Frame size={15} /></button>}{selection.some(n => n.group) && <button onClick={() => commit(d => ({ ...d, nodes: d.nodes.map(n => selected.includes(n.id) ? { ...n, group: undefined } : n) }))}>取消分组</button>}{active && doc.edges.some(e => e.from === active.id || e.to === active.id) && <button onClick={() => commit(d => ({ ...d, edges: d.edges.filter(e => e.from !== active.id && e.to !== active.id) }))} aria-label="断开素材连线" title="断开此素材的连线"><Link2 size={15} /></button>}{active?.src && <button onClick={() => setPreview(active)} aria-label="预览素材"><Maximize size={15} /></button>}{active?.src && <button onClick={() => void downloadNode(active)} aria-label="下载素材"><Download size={15} /></button>}<button onClick={remove} disabled={selection.every(n => n.job?.status === 'running')} aria-label="删除所选" title="删除，可撤销"><Trash2 size={15} /></button><button className="studio-selection-create" onClick={() => setPanel(true)}><Sparkles size={14} /> 创作</button></div>}
         {library && <ProjectLibrary document={doc} projects={projects} selected={active} onClose={()=>setLibrary(false)} onFocus={focusNode} onReuse={reuse} onReference={(p,n)=>{if(active)applyAssets([{...n,origin:{projectId:p.id,nodeId:n.id,title:p.title}}],{id:active.id,mode:'reference'});}} onMove={(id,folder)=>commit(d=>({...d,nodes:d.nodes.map(n=>n.id===id?{...n,assetFolder:folder}:n)}))} onCreateFolder={name=>update({...docRef.current,assetFolders:[...new Set([...(docRef.current.assetFolders||[]),name])].slice(0,100)})} onUpload={(files,folder)=>void importFiles(files,center(),undefined,false,folder)} onDownload={n=>void downloadNode(n)}/>}
         {context && <div className="studio-context" data-canvas-ui role="menu" aria-label={contextNode ? '节点操作' : context.link ? '添加并连接节点' : '添加节点'} style={{ left: clamp(context.x, 8, Math.max(8, size.width - 206)), top: clamp(context.y, 8, Math.max(8, size.height - 340)) }}>
           {contextNode ? <>

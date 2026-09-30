@@ -532,6 +532,35 @@ describe('project library folders', () => {
 
 
 describe('prompt reference mentions', () => {
+  it('inserts a mouse-picked reference before blur can dismiss the menu, preserving surrounding text', async () => {
+    const image={...newNode('image',{x:0,y:0}),title:'角色参考',src:'/actor.png'};
+    render(<MemoryRouter><GeneratorPanel references={[image]} busy={false} onGenerate={vi.fn()} onClose={vi.fn()} onConnect={vi.fn()}/></MemoryRouter>);
+    const input=screen.getByLabelText('你想创作什么？') as HTMLTextAreaElement;
+    fireEvent.change(input,{target:{value:'角色=@；保留后文',selectionStart:4}});
+    const option=screen.getByRole('option',{name:/角色参考/});
+    fireEvent.pointerDown(option,{button:0,pointerId:1});
+    fireEvent.mouseDown(option,{button:0});
+    fireEvent.blur(input,{relatedTarget:null});
+    expect(input.value).toBe('角色=@图片1 ；保留后文');
+    expect(screen.queryByRole('listbox',{name:'可引用素材'})).toBeNull();
+    await waitFor(()=>expect(input.selectionStart).toBe(8));
+  });
+
+  it('keeps the menu available during pointer focus changes and reports failed insertions', async () => {
+    const image={...newNode('image',{x:0,y:0}),title:'角色参考',src:'/actor.png'};
+    render(<MemoryRouter><GeneratorPanel references={[image]} busy={false} onGenerate={vi.fn()} onClose={vi.fn()} onConnect={vi.fn()}/></MemoryRouter>);
+    const input=screen.getByLabelText('你想创作什么？') as HTMLTextAreaElement;
+    fireEvent.change(input,{target:{value:'文'.repeat(4999)+'@',selectionStart:5000}});
+    const option=screen.getByRole('option',{name:/角色参考/});
+    fireEvent.pointerDown(option,{pointerId:1});
+    fireEvent.blur(input,{relatedTarget:null});
+    expect(screen.getByRole('listbox',{name:'可引用素材'})).toBeTruthy();
+    fireEvent.pointerUp(option,{pointerId:1});
+    fireEvent.click(option);
+    expect(screen.getByRole('alert').textContent).toContain('5000');
+    expect(input.value.length).toBe(5000);
+    await waitFor(()=>expect(screen.getByRole('button',{name:'生成模型'}).textContent).toContain('Test Image'));
+  });
   it('shows distinct reference thumbnails, inserts by keyboard, and submits the matching image ordinal', async () => {
     const first={...newNode('image',{x:0,y:0}),title:'小狗',src:'/dog.png'};
     const second={...newNode('image',{x:0,y:0}),title:'花园',src:'/garden.png'};
@@ -594,6 +623,46 @@ describe('cross-project prompt references',()=>{
 
 
 describe('composer node anchoring',()=>{
+  it('opens on click release, but closes during a drag and does not reopen or lose the draft', async () => {
+    const node={...newNode('image',{x:100,y:100}),title:'移动素材',src:'/image.png',generator:true};
+    const board=mount({...newDocument(),nodes:[node],view:{x:0,y:0,zoom:1}});
+    const card=screen.getByRole('article',{name:node.title});
+    const surface=screen.getByLabelText('无限画布编辑区');
+    fireEvent.pointerDown(card,{button:0,pointerId:1,clientX:120,clientY:120});
+    expect(screen.queryByLabelText('创作面板')).toBeNull();
+    fireEvent.pointerUp(surface,{pointerId:1,clientX:120,clientY:120});
+    const input=await screen.findByLabelText('你想创作什么？');
+    fireEvent.change(input,{target:{value:'保留这段创作提示词'}});
+    const viewBefore=board.current().view;
+    fireEvent.pointerDown(card,{button:0,pointerId:2,clientX:120,clientY:120});
+    expect(screen.queryByLabelText('创作面板')).toBeNull();
+    fireEvent.pointerMove(surface,{pointerId:2,clientX:200,clientY:160});
+    fireEvent.pointerUp(surface,{pointerId:2,clientX:200,clientY:160});
+    expect(screen.queryByLabelText('创作面板')).toBeNull();
+    expect(board.current().nodes[0].x).toBeCloseTo(100+80/viewBefore.zoom);
+    expect(board.current().nodes[0].y).toBeCloseTo(100+40/viewBefore.zoom);
+    expect(board.current().view).toEqual(viewBefore);
+    expect(board.current().drafts?.[node.id].prompt).toBe('保留这段创作提示词');
+    fireEvent.pointerDown(card,{button:0,pointerId:3});
+    fireEvent.pointerUp(surface,{pointerId:3});
+    expect((await screen.findByLabelText('你想创作什么？') as HTMLTextAreaElement).value).toBe('保留这段创作提示词');
+  });
+
+  it('allows dragging the empty node body without opening the composer, and ignores cancelled clicks', () => {
+    const node={...newNode('video',{x:0,y:0}),title:'空视频',generator:true};
+    const board=mount({...newDocument(),nodes:[node],view:{x:0,y:0,zoom:1}});
+    const body=screen.getByRole('button',{name:/让画面动起来/});
+    const surface=screen.getByLabelText('无限画布编辑区');
+    fireEvent.pointerDown(body,{button:0,pointerId:1,clientX:100,clientY:100});
+    fireEvent.pointerMove(surface,{pointerId:1,clientX:150,clientY:160});
+    fireEvent.pointerUp(surface,{pointerId:1,clientX:150,clientY:160});
+    fireEvent.click(body,{detail:1});
+    expect(board.current().nodes[0]).toMatchObject({x:50,y:60});
+    expect(screen.queryByLabelText('创作面板')).toBeNull();
+    fireEvent.pointerDown(body,{button:0,pointerId:2});
+    fireEvent.pointerCancel(surface,{pointerId:2});
+    expect(screen.queryByLabelText('创作面板')).toBeNull();
+  });
   it.each([0.5,1,2])('keeps the composer below and centered on the node at zoom %s',async zoom=>{
     const node={...newNode('image',{x:400,y:300}),title:'位置检查',generator:true};
     const board=mount({...newDocument(),nodes:[node],view:{x:30,y:-10,zoom}});
@@ -611,5 +680,42 @@ describe('composer node anchoring',()=>{
     assertAnchored();
     fireEvent.click(screen.getByRole('button',{name:'缩小画布'}));
     assertAnchored();
+  });
+});
+
+describe('batch video references', () => {
+  it('connects all selected ready assets once, skips cycles and empty nodes, and undoes in one step', () => {
+    const image={...newNode('image',{x:0,y:0}),src:'/image.png'};
+    const audio={...newNode('audio',{x:0,y:300}),src:'/voice.wav'};
+    const text={...newNode('text',{x:0,y:600}),text:'角色设定'};
+    const empty=newNode('image',{x:0,y:900});
+    const downstream={...newNode('video',{x:900,y:0}),src:'/downstream.mp4'};
+    const target={...newNode('video',{x:500,y:0}),title:'目标视频',generator:true};
+    const edges=[{id:'existing',from:image.id,to:target.id},{id:'cycle',from:target.id,to:downstream.id}];
+    const board=mount({...newDocument(),nodes:[image,audio,text,empty,downstream,target],edges});
+    fireEvent.keyDown(window,{key:'a',ctrlKey:true});
+    fireEvent.change(screen.getByLabelText('批量连接到视频节点'),{target:{value:target.id}});
+    expect(board.current().edges).toHaveLength(4);
+    expect(board.current().edges.filter(e=>e.to===target.id).map(e=>e.from)).toEqual([image.id,audio.id,text.id]);
+    fireEvent.change(screen.getByLabelText('批量连接到视频节点'),{target:{value:target.id}});
+    expect(board.current().edges).toHaveLength(4);
+    fireEvent.click(screen.getByRole('button',{name:'撤销',exact:true}));
+    expect(board.current().edges).toEqual(edges);
+    expect(streamGeneration).not.toHaveBeenCalled();
+  });
+
+  it('drags one selected output port to connect the whole selection to a video', () => {
+    const image={...newNode('image',{x:0,y:0}),title:'批量图片',src:'/image.png'};
+    const audio={...newNode('audio',{x:0,y:300}),src:'/voice.wav'};
+    const target={...newNode('video',{x:500,y:0}),title:'目标视频',generator:true};
+    const initial={...newDocument(),nodes:[image,audio,target],view:{x:0,y:0,zoom:1}};
+    const board=mount(initial);
+    fireEvent.keyDown(window,{key:'a',ctrlKey:true});
+    fireEvent.pointerDown(screen.getByRole('button',{name:'从 批量图片 连接'}),{button:0,pointerId:1,clientX:image.width,clientY:image.height/2});
+    const surface=screen.getByLabelText('无限画布编辑区');
+    fireEvent.pointerMove(surface,{pointerId:1,clientX:target.x,clientY:target.height/2});
+    fireEvent.pointerUp(surface,{pointerId:1,clientX:target.x,clientY:target.height/2});
+    expect(board.current().edges.map(e=>[e.from,e.to])).toEqual([[image.id,target.id],[audio.id,target.id]]);
+    expect(streamGeneration).not.toHaveBeenCalled();
   });
 });

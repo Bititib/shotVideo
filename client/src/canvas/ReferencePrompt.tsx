@@ -12,14 +12,17 @@ type Props = {
 };
 export default function ReferencePrompt(props: Props) {
   const input = useRef<HTMLTextAreaElement>(null);
+  const menuPointer = useRef(false);
   const [query, setQuery] = useState<{start: number; end: number; text: string} | null>(null);
   const [scope, setScope] = useState('upstream');
+  const [pickError, setPickError] = useState('');
   const [index, setIndex] = useState(0);
   const [position, setPosition] = useState({left: 12, top: 12, width: 340, maxHeight: 320, transform: 'none'});
   useEffect(() => {
     if (!query) return;
     const dismiss = (event: PointerEvent) => {
       const target = event.target as HTMLElement;
+      menuPointer.current = false;
       if (target !== input.current && !target.closest('.studio-mention-menu')) setQuery(null);
     };
     const escape = (event: KeyboardEvent) => {
@@ -31,6 +34,7 @@ export default function ReferencePrompt(props: Props) {
     return () => {document.removeEventListener('pointerdown',dismiss);document.removeEventListener('keydown',escape,true);};
   }, [Boolean(query)]);
   const inspect = (value: string, caret: number) => {
+    setPickError('');
     const match = /@([^@\s]{0,60})$/.exec(value.slice(0, caret));
     if (!match || props.kind === 'audio') {setQuery(null); return;}
     setQuery({start: caret - match[0].length, end: caret, text: match[1]}); setIndex(0);
@@ -51,7 +55,8 @@ export default function ReferencePrompt(props: Props) {
   const pick = (node: CanvasNode) => {
     if (!query) return;
     const caret = props.onPick(node, query.start, query.end);
-    if (caret === undefined) return;
+    menuPointer.current = false;
+    if (caret === undefined) {setPickError(props.value.length > 4980 ? '提示词接近 5000 字上限，请缩短后再插入引用。' : '未能引用该素材，请检查素材状态后重试。'); return;}
     setQuery(null);
     requestAnimationFrame(() => {input.current?.focus(); input.current?.setSelectionRange(caret,caret);});
   };
@@ -61,7 +66,7 @@ export default function ReferencePrompt(props: Props) {
       aria-activedescendant={query && nodes[index] ? `reference-mention-${index}` : undefined}
       onChange={e => {props.onChange(e.target.value); inspect(e.target.value,e.target.selectionStart);}}
       onClick={e => inspect(e.currentTarget.value,e.currentTarget.selectionStart)}
-      onBlur={e => {if (!(e.relatedTarget as HTMLElement | null)?.closest('.studio-mention-menu')) setQuery(null);}}
+      onBlur={e => {if (!menuPointer.current && !(e.relatedTarget as HTMLElement | null)?.closest('.studio-mention-menu')) setQuery(null);}}
       onKeyDown={e => {
         if (!query || e.nativeEvent.isComposing) return;
         if (['ArrowDown','ArrowUp','Enter','Escape'].includes(e.key)) {e.preventDefault();e.stopPropagation();}
@@ -77,16 +82,22 @@ export default function ReferencePrompt(props: Props) {
       props.onChange(value);input.current?.focus();inspect(value,caret+1);
       requestAnimationFrame(()=>input.current?.setSelectionRange(caret+1,caret+1));
     }}>@ 引用素材</button>}
-    {query && createPortal(<div className="studio-mention-menu" data-canvas-ui data-theme={input.current?.closest('[data-theme]')?.getAttribute('data-theme') || 'mood'} style={{position:'fixed',...position}} onMouseDown={e => e.preventDefault()}>
+    {query && createPortal(<div className="studio-mention-menu" data-canvas-ui data-theme={input.current?.closest('[data-theme]')?.getAttribute('data-theme') || 'mood'} style={{position:'fixed',...position}}
+      onPointerDown={e => {menuPointer.current=true; e.stopPropagation();}}
+      onPointerUp={e => {menuPointer.current=false; e.stopPropagation();}}
+      onPointerCancel={() => {menuPointer.current=false;}}
+      onClick={e => e.stopPropagation()}>
       <header>引用素材 <small>↑↓ 选择 · Enter 插入 · Esc 关闭</small></header>
       <nav aria-label="引用来源">{[['upstream','上级节点'],['canvas','本项目 / 画布'],['projects','跨项目']].map(([id,label]) =>
         <button key={id} aria-pressed={scope===id} onClick={()=>{setScope(id);setIndex(0);}}>{label}</button>)}</nav>
       <div role="listbox" id="reference-mention-list" aria-label="可引用素材">{nodes.map((node,i) => <button key={(node.origin?.projectId ?? '')+node.id}
-        role="option" id={`reference-mention-${i}`} aria-selected={i===index} onClick={()=>pick(node)}>
+        role="option" id={`reference-mention-${i}`} aria-selected={i===index}
+        onMouseDown={e => {if(e.button===0) {e.preventDefault(); pick(node);}}} onClick={()=>pick(node)}>
         {node.kind==='image' ? <img src={node.src} alt=""/> : <span className="studio-mention-media">{node.kind==='video'?'▶':'♫'}</span>}
         <span><strong>{referenceLabel(props.bindings,node.id) ? '@'+referenceLabel(props.bindings,node.id)+' · ' : ''}{node.title}</strong><small>{node.origin?.title || '已连接到当前节点'}</small></span>
       </button>)}</div>
       {!nodes.length && <p>{query.text ? '没有匹配素材，试试其他名称。' : '暂无可用素材，请切换来源或先上传素材。'}</p>}
+      {pickError && <p role="alert">{pickError}</p>}
       <footer>选中后自动连接为参考；输入 @ 后可继续搜索名称。</footer>
     </div>, document.body)}
   </>;
