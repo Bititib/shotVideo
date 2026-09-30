@@ -31,6 +31,7 @@ X-API-Key: sk-xxxxxxxxxxxxxxxx
 | `402` | API Key 或关联账户余额不足 |
 | `403` | 当前 API Key 无权访问指定模型 |
 | `404` | 模型没有可用渠道，或任务不存在 |
+| `409` | 模型展示名称或历史别名冲突，需要管理员设置唯一名称 |
 | `502` | 上游渠道请求失败或超时 |
 
 ## 2. 获取可用模型
@@ -51,13 +52,17 @@ curl "https://你的域名/v1/models" \
   "object": "list",
   "data": [
     {
-      "id": "gpt-image-2",
+      "id": "gpt-image-2 · Pidoi 原生 4K",
+      "name": "gpt-image-2 · Pidoi 原生 4K",
+      "canonical_id": "gpt-image-2",
       "object": "model",
       "created": 1783309000,
       "owned_by": "system"
     },
     {
-      "id": "sd2.5",
+      "id": "HM-Seedance V2.5",
+      "name": "HM-Seedance V2.5",
+      "canonical_id": "seedance_v2.5",
       "object": "model",
       "created": 1783309000,
       "owned_by": "system"
@@ -67,6 +72,12 @@ curl "https://你的域名/v1/models" \
 ```
 
 > 示例 ID 仅说明响应格式。请以接口实时返回结果为准。模型列表保持 OpenAI 兼容格式；价格请通过下方价格接口查询。
+
+`id` 与网站展示名称一致，可直接复制到生成请求的 `model` 字段，例如 `"model": "HM-Seedance V2.5"`。
+`canonical_id` 是保留兼容的内部 ID，旧客户端仍可传 `seedance_v2.5`。
+文本、图片、图片编辑、视频生成及单模型价格查询均接受这两种写法；模型名称包含空格或中文时，价格查询的 URL 路径需要编码。
+服务端先把名称转换为内部 ID，再执行原有权限、计费与上游渠道映射。后台改名会持久保存旧名称别名；不同模型不能占用相同名称或历史别名。
+价格接口的 `model` 同样返回当前展示名称，并附带 `canonical_id`。生成结果中上游提供的模型字段可能仍为上游 ID。
 
 ### 2.1 获取可用模型价格
 

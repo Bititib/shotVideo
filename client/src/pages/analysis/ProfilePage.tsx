@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { formatBeijingTime } from '../../../../shared/time';
 import {
   AlertCircle,
   CalendarDays,
@@ -222,7 +223,7 @@ export default function ProfilePage() {
         </div>
         <div className="profile-metric-card">
           <div className="profile-metric-icon is-clay"><CalendarDays className="w-5 h-5" /></div>
-          <div><span>注册时间</span><strong className="is-text">{new Date(user.createdAt).toLocaleDateString('zh-CN')}</strong></div>
+          <div><span>注册日期（北京时间）</span><strong className="is-text">{formatBeijingTime(user.createdAt, { year: 'numeric', month: '2-digit', day: '2-digit' })}</strong></div>
         </div>
       </section>
 

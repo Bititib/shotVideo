@@ -1,3 +1,4 @@
+import { issueUploadUrl } from './uploadAccess.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -106,7 +107,7 @@ function saveDataUrl(source: string, kind: MiaowuMediaKind, uploadsRoot: string)
 }
 
 function publicUrlForPath(baseUrl: URL, pathname: string): string {
-  return new URL(pathname, `${baseUrl.origin}/`).toString();
+  return issueUploadUrl(new URL(pathname, `${baseUrl.origin}/`).toString(),baseUrl.origin);
 }
 
 export function prepareMiaowuPublicMediaUrls(

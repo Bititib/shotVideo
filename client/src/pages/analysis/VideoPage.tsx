@@ -1,3 +1,4 @@
+import { startPolling } from '../../utils/polling';
 import { getHayaVideoSpec } from '../../../../shared/hayaVideo';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
@@ -15,6 +16,7 @@ import { feedbackApi } from '../../api/feedback';
 import { getBillingUnit } from '../../utils/billing';
 import { buildReplicatedVideoPrompt, getVideoReferenceAssets, getVideoReferenceCounts, removeVideoPromptReference, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
 import { isLongxiaModel, LONGXIA_RATIOS } from '../../../../shared/longxiaVideo';
+import { formatBeijingTime } from '../../../../shared/time';
 import { isOmniVideoEditModel, isSnumomGrokImagineVideoModel, SNUMOM_SD_MINI_MODEL, snumomSdMiniSecondsForResolution, WX_HAIDIYUE_FACE_SPLIT_MODEL } from '../../utils/videoModelCapabilities';
 import { getContentFailureInfo } from '../../utils/contentFailure';
 import { findUnreadableImageIndexes, isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
@@ -71,6 +73,7 @@ const SI_YUE_TIAN_SEEDANCE_25_MODELS = new Set([
 ]);
 const isHmStudioVideoModel = (modelId: string) => HM_STUDIO_VIDEO_MODEL_IDS.has(modelId);
 const VIDEO_HISTORY_PAGE_SIZE = 6;
+const MAX_VIDEO_PROMPT_LENGTH = 5000;
 function getVideoPlayUrl(url: string | null) {
   if (!url) return '';
   if (url.startsWith('/uploads/')) {
@@ -915,15 +918,16 @@ export default function VideoPage() {
   }, [searchParams]);
 
   // 轮询在后台生成中的数据库任务
+  const pendingDatabaseTaskIds = tasks.filter(t => t.status === 'generating' && t.id.startsWith('db_')).map(t => t.id).join(',');
   useEffect(() => {
     const dbTasks = tasks.filter(t => t.status === 'generating' && t.id.startsWith('db_'));
     if (dbTasks.length === 0) return;
 
     let active = true;
-    const intervalId = setInterval(() => {
-      dbTasks.forEach(task => {
+    const stopPolling = startPolling(async signal => {
+      const results = await Promise.allSettled(dbTasks.map(task => {
         const dbId = parseInt(task.id.replace('db_', ''));
-        contentApi.getById(dbId)
+        return contentApi.getById(dbId, signal)
           .then((res: any) => {
             if (!active) return;
             const item = res;
@@ -978,15 +982,16 @@ export default function VideoPage() {
               } : t));
             }
           })
-          .catch(() => { });
-      });
+          ;
+      }));
+      if (results.some(result => result.status === 'rejected')) throw new Error('任务状态刷新失败');
     }, 5000);
 
     return () => {
       active = false;
-      clearInterval(intervalId);
+      stopPolling();
     };
-  }, [tasks]);
+  }, [pendingDatabaseTaskIds]);
 
   // 自动调整输入框高度，并同步高亮层高度
   useEffect(() => {
@@ -1367,6 +1372,10 @@ export default function VideoPage() {
 
   const handleGenerate = useCallback(async () => {
     if (!prompt.trim()) return;
+    if (prompt.trim().length > MAX_VIDEO_PROMPT_LENGTH) {
+      setError(`提示词字数不能超过 ${MAX_VIDEO_PROMPT_LENGTH} 字`);
+      return;
+    }
     if (!guard()) return;
     const unreadableImageIndexes = await findUnreadableImageIndexes(referenceImages);
     if (unreadableImageIndexes.length > 0) {
@@ -1824,7 +1833,7 @@ export default function VideoPage() {
                           <div className="flex items-center justify-between pt-3 border-t border-[#e4d2bd] text-[10px] text-[#9a7259]">
                             <span className="font-medium">{h.metadata?.resolution || '720p'} · {h.metadata?.seconds || 6}秒 · {h.metadata?.aspect_ratio || '16:9'}</span>
                             <div className="flex items-center gap-2">
-                              <span>{new Date(h.createdAt).toLocaleDateString()}</span>
+                              <span title="北京时间">{formatBeijingTime(h.createdAt, { year: 'numeric', month: '2-digit', day: '2-digit' })}</span>
                               <button type="button" onClick={(e) => { e.stopPropagation(); void handleApplyHistory(h); }}
                                 aria-label="套用这条历史生成配置"
                                 className={`transition-colors flex items-center gap-0.5 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${applyFeedback?.itemId === String(h.id) ? 'text-emerald-600' : 'text-zinc-500 hover:text-indigo-400'}`} title="套用历史配置（包含提示词与参考图片）">
@@ -2012,7 +2021,9 @@ export default function VideoPage() {
                     提示词脚本编辑器
                   </span>
                   <div className="flex items-center gap-3">
-                    <span className="font-mono">{prompt.length} 字</span>
+                    <span className={`font-mono ${prompt.trim().length > MAX_VIDEO_PROMPT_LENGTH ? 'text-red-500 font-semibold' : ''}`}>
+                      {prompt.length} / {MAX_VIDEO_PROMPT_LENGTH} 字
+                    </span>
                     <button
                       onClick={() => setIsMaximized(prev => !prev)}
                       type="button"
@@ -2284,7 +2295,7 @@ export default function VideoPage() {
                   />
 
                   {/* 圆形发送按钮 */}
-                  <button onClick={handleGenerate} disabled={!prompt.trim()}
+                  <button onClick={handleGenerate} disabled={!prompt.trim() || prompt.trim().length > MAX_VIDEO_PROMPT_LENGTH}
                     className="absolute right-3 bottom-3 w-11 h-11 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed z-10" aria-label="开始生成视频">
                     <Play className="w-4 h-4 ml-0.5" />
                   </button>

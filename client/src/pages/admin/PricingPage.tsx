@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useAdminFilters, useAdminScroll } from '../../hooks/useAdminView';
+import { getAdminCached } from '../../api/adminCache';
 import { adminApi } from '../../api/admin';
+import AdminCollection from '../../components/AdminCollection';
+import AdminBatch from '../../components/AdminBatch';
+import { useEditDraft } from '../../hooks/useEditDraft';
+import { priceSource, priceSummary } from '../../utils/adminPricing';
 import { isResolutionPriceKey, pricingResolutionFields } from '../../utils/pricingResolution';
 import {
   Asterisk,
@@ -73,21 +80,26 @@ function formatPrice(value: number) {
   return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
 }
 
-export default function PricingPage() {
-  const [rules, setRules] = useState<PricingRule[]>([]);
-  const [edit, setEdit] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+export default function PricingPage({ modelId, onEditingChange }: { modelId?: string; onEditingChange?: (editing: boolean) => void } = {}) {
+  const cacheKey = modelId ? `/admin/pricing?${new URLSearchParams({ modelId })}` : '/admin/pricing';
+  const [rules, setRules] = useState<PricingRule[]>(() => getAdminCached<PricingRule[]>(cacheKey) || []);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [loading, setLoading] = useState(() => !getAdminCached(cacheKey));
+  useAdminScroll(!loading && !modelId);
   const [saving, setSaving] = useState(false);
+  const { edit, setEdit, close: closeEdit, restore, available } = useEditDraft(`pricing:${modelId || 'all'}`, saving || batchBusy);
   const [error, setError] = useState('');
-  const [search, setSearch] = useState('');
-  const [category, setCategory] = useState<Category>('all');
-  const [billingType, setBillingType] = useState<BillingType>('all');
+  const { values, setFilter, reset } = useAdminFilters({ search: modelId || '', category: 'all', billing: 'all' }, !modelId);
+  const { search, category, billing: billingType } = values;
+  const setSearch = (value: string) => setFilter('search', value);
+  const setCategory = (value: Category) => setFilter('category', value);
+  const setBillingType = (value: BillingType) => setFilter('billing', value);
 
   const load = async () => {
-    setLoading(true);
     setError('');
     try {
-      setRules(await adminApi.getPricing());
+      setRules(await adminApi.getPricing(modelId ? { modelId } : undefined));
     } catch (err: any) {
       setError(err.message || '计费规则加载失败');
     } finally {
@@ -97,9 +109,12 @@ export default function PricingPage() {
 
   useEffect(() => { load(); }, []);
 
+  useEffect(() => { onEditingChange?.(Boolean(edit) || saving || batchBusy); }, [edit, saving, batchBusy, onEditingChange]);
+
   const filteredRules = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     return rules.filter(rule => {
+      if (modelId) return rule.modelPattern === modelId;
       const matchesSearch = !keyword
         || rule.modelPattern.toLowerCase().includes(keyword)
         || rule.displayName.toLowerCase().includes(keyword);
@@ -107,14 +122,15 @@ export default function PricingPage() {
         && (category === 'all' || rule.category === category)
         && (billingType === 'all' || rule.billingType === billingType);
     });
-  }, [rules, search, category, billingType]);
+  }, [rules, search, category, billingType, modelId]);
 
   const countByCategory = (value: Category) => value === 'all'
     ? rules.length
     : rules.filter(rule => rule.category === value).length;
 
   const openNew = () => setEdit({
-    modelPattern: '',
+    modelPattern: modelId || '',
+    lockedModel: Boolean(modelId),
     category: 'video',
     billingType: 'per_call',
     inputPrice: 0,
@@ -133,7 +149,7 @@ export default function PricingPage() {
       resolutionKeys: resolutionFields.keys,
       resolutionPrices: resolutionFields.values,
       isNew: !rule.configured,
-      lockedModel: rule.modelActive === true,
+      lockedModel: Boolean(modelId) || rule.modelActive === true,
     });
   };
 
@@ -199,14 +215,15 @@ export default function PricingPage() {
           <div className="flex items-center gap-2 text-xs font-semibold tracking-[0.18em] uppercase text-[#9a4f2f] mb-2">
             <CircleDollarSign className="w-4 h-4" /> Billing center
           </div>
-          <h1 className="text-2xl md:text-3xl font-bold text-white tracking-tight">统一计费设置</h1>
-          <p className="text-sm text-zinc-500 mt-2 max-w-2xl">卡片自动跟随模型管理中的启用状态；删除或停用模型后会自动从此页消失。</p>
+          <h1 className="text-2xl md:text-3xl font-bold text-white tracking-tight">{modelId ? "模型计费设置" : "统一计费设置"}</h1>
+          <p className="text-sm text-zinc-500 mt-2 max-w-2xl">{modelId ? `正在管理 ${modelId}，保存后可继续操作原模型列表。` : "卡片自动跟随模型管理中的启用状态；删除或停用模型后会自动从此页消失。"}</p>
         </div>
         <button onClick={openNew} className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-semibold transition-colors">
           <Plus className="w-4 h-4" /> 新增计费规则
         </button>
       </header>
 
+      {!modelId && <>
       <section className="pricing-summary-grid grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5" aria-label="计费概览">
         {[
           { label: '启用模型', value: rules.filter(rule => rule.modelActive === true).length, helper: '自动同步' },
@@ -224,7 +241,8 @@ export default function PricingPage() {
         ))}
       </section>
 
-      <section className="pricing-filter-panel rounded-2xl border p-3 md:p-4 mb-6">
+      <button onClick={reset} className="mb-3 text-xs">清除筛选</button>
+      <section className="admin-sticky-filters pricing-filter-panel rounded-2xl border p-3 md:p-4 mb-6">
         <div className="flex flex-col xl:flex-row gap-3 xl:items-center">
           <div className="relative flex-1 min-w-0">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" aria-hidden="true" />
@@ -268,15 +286,23 @@ export default function PricingPage() {
         </div>
       </section>
 
+      </>}
       {error && (
         <div role="alert" className="mb-5 px-4 py-3 rounded-xl border border-red-500/20 bg-red-500/10 text-sm text-red-400">{error}</div>
       )}
 
+      {available && !edit && <button onClick={restore} className="mb-3 underline">恢复未保存的价格草稿</button>}
+      {!modelId && <AdminBatch kind="pricing" items={rules.filter(rule => selected.includes(rule.modelPattern))} onBusy={setBatchBusy} onDone={async () => { setSelected([]); await load(); }} />}
       {loading ? (
         <div className="flex items-center justify-center py-24"><div className="w-8 h-8 border-2 border-[#d8c0a3] border-t-[#9a4f2f] rounded-full animate-spin" /></div>
       ) : filteredRules.length > 0 ? (
-        <div className="pricing-card-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filteredRules.map(rule => {
+        <AdminCollection<PricingRule> name={'pricing-' + (modelId || 'all')} items={filteredRules} id={rule => rule.modelPattern} selected={selected} onSelect={modelId ? undefined : setSelected} columns={[
+          { title: '模型', sort: rule => rule.displayName, render: rule => <><strong>{rule.displayName}</strong><small className="block truncate">{rule.modelPattern}</small></> },
+          { title: '价格', sort: rule => rule.inputPrice, render: rule => priceSummary(rule) },
+          { title: '来源', sort: rule => priceSource(rule), render: rule => priceSource(rule) },
+          { title: '操作', render: rule => <div className="flex gap-2 text-xs"><button disabled={batchBusy} onClick={() => openEdit(rule)}>{rule.configured ? '编辑' : '配置价格'}</button>{rule.configured && <button disabled={batchBusy} onClick={() => handleDelete(rule)}>删除</button>}</div> },
+        ]}>{visibleRules => <div className={modelId ? "pricing-card-grid grid grid-cols-1 gap-4" : "pricing-card-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"}>
+          {visibleRules.map(rule => {
             const Icon = categoryIcons[rule.category] || Coins;
             const extraPrices = Object.entries(rule.extraParams || {}).filter(([key]) => key !== 'category');
             const hasResolutionPrices = extraPrices.some(([key]) => isResolutionPriceKey(key));
@@ -323,6 +349,7 @@ export default function PricingPage() {
                   <button onClick={() => openEdit(rule)} className="pricing-card-action flex-1 inline-flex items-center justify-center gap-1.5 h-10 rounded-xl border text-xs font-semibold">
                     <Pencil className="w-3.5 h-3.5" /> {rule.configured ? '编辑' : rule.inherited ? '设置独立价格' : '配置价格'}
                   </button>
+                  {!modelId && <Link to={"/admin/models?search=" + encodeURIComponent(rule.modelPattern)} className="text-xs px-2">关联模型</Link>}
                   {rule.configured && rule.id !== null && (
                     <button onClick={() => handleDelete(rule)} aria-label={`删除 ${rule.displayName}`} className="pricing-card-action is-danger w-10 h-10 inline-flex items-center justify-center rounded-xl border">
                       <Trash2 className="w-3.5 h-3.5" />
@@ -332,7 +359,7 @@ export default function PricingPage() {
               </article>
             );
           })}
-        </div>
+        </div>}</AdminCollection>
       ) : (
         <div className="pricing-empty rounded-2xl border py-16 text-center">
           <Coins className="w-8 h-8 mx-auto text-zinc-500 mb-3" />
@@ -342,14 +369,15 @@ export default function PricingPage() {
       )}
 
       {edit && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onMouseDown={() => setEdit(null)}>
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onMouseDown={closeEdit}>
           <div role="dialog" aria-modal="true" aria-labelledby="pricing-dialog-title" className="pricing-modal bg-[#1a1a1a] border border-white/10 rounded-2xl p-5 md:p-6 w-full max-w-xl max-h-[92vh] overflow-y-auto" onMouseDown={event => event.stopPropagation()}>
+            {error && <p role="alert" className="mb-4 text-red-500">{error}</p>}
             <div className="flex items-start justify-between gap-4 mb-5">
               <div>
                 <h2 id="pricing-dialog-title" className="text-lg font-bold text-white">{edit.isNew ? '新增计费规则' : '编辑计费规则'}</h2>
                 <p className="text-xs text-zinc-500 mt-1">保存后，模型列表展示与实际扣费会同时生效。</p>
               </div>
-              <button onClick={() => setEdit(null)} aria-label="关闭" className="pricing-modal-close w-10 h-10 rounded-xl inline-flex items-center justify-center">
+              <button onClick={closeEdit} aria-label="关闭" className="pricing-modal-close w-10 h-10 rounded-xl inline-flex items-center justify-center">
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -429,7 +457,7 @@ export default function PricingPage() {
             </div>
 
             <div className="flex gap-3 mt-6">
-              <button onClick={() => setEdit(null)} className="pricing-secondary-button flex-1 h-11 rounded-xl border text-sm font-semibold">取消</button>
+              <button onClick={closeEdit} className="pricing-secondary-button flex-1 h-11 rounded-xl border text-sm font-semibold">取消</button>
               <button onClick={handleSave} disabled={saving} className="flex-1 h-11 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-semibold disabled:opacity-50">
                 {saving ? '保存中…' : '保存并立即生效'}
               </button>

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Clock3, ExternalLink, MessageSquareWarning, Search, Send, UserRound, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { adminApi } from '../../api/admin';
+import { formatBeijingTime as formatDate } from '../../../../shared/time';
 
 interface FeedbackItem {
   id: number;
@@ -28,11 +29,6 @@ const statusMeta = {
   resolved: { label: '已解决', className: 'border-[#abd0b6] bg-[#e9f5ec] text-[#3c7750]', icon: CheckCircle2 },
   ignored: { label: '已忽略', className: 'border-[#d4c8bc] bg-[#f2ede7] text-[#786b60]', icon: X },
 };
-
-function formatDate(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false });
-}
 
 export default function FeedbackPage() {
   const navigate = useNavigate();

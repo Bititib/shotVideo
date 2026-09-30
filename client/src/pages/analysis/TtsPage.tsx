@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Volume2, Play, Pause, Download, Loader2, Sparkles, AlertCircle, RefreshCw, FileText, Check, Music, Trash2 } from 'lucide-react';
 import { analysisApi, getCachedTtsModels } from '../../api/analysis';
 import { contentApi } from '../../api/content';
+import { formatBeijingTime, parseUtcTimestamp } from '../../../../shared/time';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 
 interface VoiceOption {
@@ -134,7 +135,7 @@ export default function TtsPage() {
               text: item.inputText || '',
               voice: item.title?.replace('语音合成 - ', '') || '未知',
               audioUrl,
-              createdAt: new Date(item.createdAt),
+              createdAt: new Date(parseUtcTimestamp(item.createdAt)),
             });
           }
         }
@@ -516,7 +517,7 @@ export default function TtsPage() {
                     <div className="flex-1 min-w-0 flex flex-col gap-1">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-semibold text-white">音色: {h.voice}</span>
-                        <span className="text-[9px] text-zinc-500">{h.createdAt.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                        <span className="text-[9px] text-zinc-500" title="北京时间">{formatBeijingTime(h.createdAt, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
                       <p className="text-[10px] text-zinc-500 truncate leading-relaxed">{h.text}</p>
                     </div>

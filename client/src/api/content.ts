@@ -2,7 +2,7 @@ import { api } from './client';
 
 export const contentApi = {
   /** 获取我的生成内容 */
-  getMyContents(params: { page?: number; pageSize?: number; type?: string; status?: string; search?: string; dateFrom?: string; dateTo?: string } = {}) {
+  getMyContents(params: { page?: number; pageSize?: number; type?: string; status?: string; search?: string; dateFrom?: string; dateTo?: string } = {}, signal?: AbortSignal) {
     const qs = new URLSearchParams();
     if (params.page) qs.set('page', String(params.page));
     if (params.pageSize) qs.set('pageSize', String(params.pageSize));
@@ -11,11 +11,11 @@ export const contentApi = {
     if (params.search) qs.set('search', params.search);
     if (params.dateFrom) qs.set('dateFrom', params.dateFrom);
     if (params.dateTo) qs.set('dateTo', params.dateTo);
-    return api.get<any>(`/contents?${qs.toString()}`);
+    return api.get<any>(`/contents?${qs.toString()}`, { signal });
   },
 
   /** 获取当前 API Key 用户的调用生成记录 */
-  getMyApiHistory(params: { page?: number; pageSize?: number; type?: string; status?: string; search?: string; dateFrom?: string; dateTo?: string } = {}) {
+  getMyApiHistory(params: { page?: number; pageSize?: number; type?: string; status?: string; search?: string; dateFrom?: string; dateTo?: string } = {}, signal?: AbortSignal) {
     const qs = new URLSearchParams();
     if (params.page) qs.set('page', String(params.page));
     if (params.pageSize) qs.set('pageSize', String(params.pageSize));
@@ -24,7 +24,7 @@ export const contentApi = {
     if (params.search) qs.set('search', params.search);
     if (params.dateFrom) qs.set('dateFrom', params.dateFrom);
     if (params.dateTo) qs.set('dateTo', params.dateTo);
-    return api.get<any>(`/contents/api-history?${qs.toString()}`);
+    return api.get<any>(`/contents/api-history?${qs.toString()}`, { signal });
   },
 
   getMyApiHistoryById(id: number) { return api.get<any>(`/contents/api-history/${id}`); },
@@ -43,7 +43,7 @@ export const contentApi = {
   },
 
   /** 获取内容详情 */
-  getById(id: number) { return api.get<any>(`/contents/${id}`); },
+  getById(id: number, signal?: AbortSignal) { return api.get<any>(`/contents/${id}`, { signal }); },
 
   /** 图片地址失效时，根据上游任务 ID 重新获取并保存到本站。 */
   recoverImage(id: number) { return api.post<any>(`/contents/${id}/recover-image`); },

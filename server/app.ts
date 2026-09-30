@@ -1,3 +1,7 @@
+import { protectUploads } from './middleware/uploadAccess.js';
+import { privateReferences } from './middleware/privateReferences.js';
+import mediaRoutes from './routes/media.js';
+import billingAdminRoutes from './routes/billingAdmin.js';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -22,6 +26,7 @@ import orgRoutes from './routes/org.js';
 import contentRoutes from './routes/content.js';
 import userTokenRoutes from './routes/userTokens.js';
 import feedbackRoutes from './routes/feedback.js';
+import canvasRoutes from './routes/canvas.js';
 
 import { AdminService } from './services/adminService.js';
 
@@ -50,48 +55,38 @@ export async function createApp() {
   app.use(compression());
   // Body parsing
   app.use(express.json({ limit: '150mb' }));
+  app.get('/api/health', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json({ status: 'ok' }); });
 
   // Static uploads directory serving
   const uploadDir = path.resolve(process.cwd(), 'data/uploads');
   if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
   }
-  app.use('/uploads/history-assets', express.static(path.join(uploadDir, 'history-assets'), {
-    immutable: true,
-    maxAge: '1y',
-    fallthrough: false,
-  }));
-  app.use('/uploads/wx-haidiyue', express.static(path.join(uploadDir, 'wx-haidiyue'), {
-    immutable: true,
-    maxAge: '30d',
-    fallthrough: false,
-  }));
-  // A missing media file must stay a 404. If it falls through to the SPA route,
-  // index.html is returned with HTTP 200 and downstream image decoders report
-  // the misleading error "unsupported image format".
-  app.use('/uploads', express.static(uploadDir, { fallthrough: false }));
-  // Some production reverse proxies forward only /api and not /uploads.
-  // Keep an equivalent public alias under /api so generated images are always reachable.
-  app.use('/api/uploads', express.static(uploadDir, { fallthrough: false }));
+  // All historical uploads require the owner session or a time-limited provider link.
+  app.use('/uploads', protectUploads, express.static(uploadDir, { fallthrough:false, cacheControl:false }));
+  app.use('/api/uploads', protectUploads, express.static(uploadDir, { fallthrough:false, cacheControl:false }));
 
   // OpenAI 兼容代理层（不走 /api 前缀）
-  app.use('/v1', v1Routes);
+  app.use('/v1', privateReferences, v1Routes);
 
   // API 路由（认证接口额外加严格限流）
   app.use('/api/auth', authLimiter, authRoutes);
-  app.use('/api/analysis', analysisRoutes);
+  app.use('/api/analysis', privateReferences, analysisRoutes);
   app.use('/api/proxy', proxyRoutes);
+  app.use('/api/admin/billing-reservations', billingAdminRoutes);
   app.use('/api/admin', adminRoutes);
   app.use('/api/admin/channels', channelRoutes);
   app.use('/api/admin/tokens', tokenRoutes);
   app.use('/api/admin/pricing', pricingRoutes);
-  app.use('/api/video', videoRoutes);
+  app.use('/api/video', privateReferences, videoRoutes);
   app.use('/api/video-batches', videoBatchRoutes);
-  app.use('/api/image-gen', imageGenRoutes);
+  app.use('/api/image-gen', privateReferences, imageGenRoutes);
   app.use('/api/tokens', userTokenRoutes);
   app.use('/api/org', orgRoutes);
   app.use('/api/contents', contentRoutes);
   app.use('/api/feedback', feedbackRoutes);
+  app.use('/api/canvas', canvasRoutes);
+  app.use('/api/media', mediaRoutes);
 
   // 公开设置接口（联系方式等）
   app.get('/api/settings', (req, res) => {

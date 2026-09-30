@@ -206,3 +206,51 @@ export const modelFeedbacks = sqliteTable('model_feedbacks', {
   updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
   resolvedAt: text('resolved_at'),
 });
+
+// ============ 漫剧项目与持久化任务 ============
+export const comicDramaProjects = sqliteTable('comic_drama_projects', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: integer('user_id').notNull(),
+  orgId: integer('org_id'),
+  title: text('title').notNull().default('未命名漫剧'),
+  script: text('script').notNull(),
+  status: text('status').notNull().default('planned'),
+  blueprint: text('blueprint').notNull().default('{}'),
+  state: text('state').notNull().default('{}'),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+});
+
+// ============ 漫剧分集 ============
+// 项目保存跨集共享的视觉资产与制作偏好；每一集独立保存剧本、分析结果和制作状态。
+export const comicDramaEpisodes = sqliteTable('comic_drama_episodes', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull(),
+  userId: integer('user_id').notNull(),
+  episodeNumber: integer('episode_number').notNull(),
+  title: text('title').notNull().default('未命名剧集'),
+  script: text('script').notNull().default(''),
+  status: text('status').notNull().default('draft'),
+  blueprint: text('blueprint').notNull().default('{}'),
+  state: text('state').notNull().default('{}'),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+});
+
+export const comicDramaTasks = sqliteTable('comic_drama_tasks', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  projectId: integer('project_id').notNull(),
+  episodeId: integer('episode_id'),
+  userId: integer('user_id').notNull(),
+  kind: text('kind').notNull(),
+  entityKey: text('entity_key').notNull(),
+  sortOrder: integer('sort_order').notNull().default(0),
+  status: text('status').notNull().default('pending'),
+  payload: text('payload').notNull().default('{}'),
+  resultUrl: text('result_url'),
+  attempts: integer('attempts').notNull().default(0),
+  qualityScore: integer('quality_score'),
+  qualityReport: text('quality_report'),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+});

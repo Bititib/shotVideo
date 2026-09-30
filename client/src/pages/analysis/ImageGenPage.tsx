@@ -1,3 +1,4 @@
+import { startPolling } from '../../utils/polling';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Image as ImageIcon, Play, Square, Download, RotateCcw, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Grid2x2, Maximize2, Trash2 } from 'lucide-react';
 import { downloadGeneratedImage, fetchImageModels, generateImage, getCachedImageModels, type ImageModel, type ImageSSEEvent } from '../../api/imageGen';
@@ -199,10 +200,10 @@ export default function ImageGenPage() {
     }).catch(() => {});
     let cancelled = false;
 
-    const refreshPersistedJobs = async () => {
+    const refreshPersistedJobs = async (signal: AbortSignal) => {
       try {
-        const res: any = await contentApi.getMyContents({ type: 'image', page: 1, pageSize: 20 });
-        if (cancelled) return;
+        const res: any = await contentApi.getMyContents({ type: 'image', page: 1, pageSize: 20 }, signal);
+        if (cancelled || signal.aborted) return;
         const items = res?.items || res?.data || [];
         const loadedHistory: GeneratedImage[] = [];
         const recoveredBatches: ActiveImageBatch[] = [];
@@ -277,14 +278,13 @@ export default function ImageGenPage() {
           return [...live, ...recoveredBatches.filter(batch => !liveContentIds.has(batch.contentId))];
         });
         setHistoryTotal(Number(res?.total) || 0);
-      } catch { /* keep the current page state and retry */ }
+      } catch (error) { throw error; }
     };
 
-    void refreshPersistedJobs();
-    const timer = window.setInterval(refreshPersistedJobs, 5_000);
+    const stopPolling = startPolling(refreshPersistedJobs, 5_000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, []);
 

@@ -32,6 +32,7 @@ COPY --from=builder /app/client/dist ./client/dist
 # 复制后端代码
 COPY server/ ./server/
 COPY shared/ ./shared/
+COPY scripts/backup.mjs ./scripts/backup.mjs
 COPY tsconfig.json ./
 
 # 创建数据目录
@@ -47,4 +48,5 @@ EXPOSE 3000
 VOLUME ["/app/data"]
 
 # 启动
-CMD ["npx", "tsx", "server/index.ts"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+CMD ["node", "--import", "tsx", "server/index.ts"]

@@ -1,3 +1,7 @@
+# 当前版本更新说明
+
+请按 [生产更新与备份指南](docs/production-readiness.md) 更新当前版本。下文为历史操作参考。
+
 # 运维与渠道配置指南 (Operational Guide)
 
 本指南旨在指导管理员和运维人员如何配置外部 API 渠道、管理大模型属性、自定义销售价格以及进行多渠道扩容管理。
@@ -51,7 +55,7 @@ flowchart TD
    * **渠道名称**：`XS-Token 中转渠道`
    * **渠道类型**：`openai`
    * **Base URL**：`https://api.xs-token.com` （*注意：末尾不要加 `/v1`，后端在路由转发时会自动追加*）
-   * **API Key**：填入您在外部平台申请的真实密钥（形如 `sk-xxxxxxxxxxxxxxxxxxxxxxxx`）
+   * **API Key**：填入您在外部平台申请的真实密钥（形如 `YOUR_PROVIDER_API_KEY`）
    * **支持模型 (Supported Models)**：按行填入需要通过此中转站派发的模型标识（如 `sora-v4-fast`）
 4. 点击 **「保存」**。
 5. 在列表中找到该渠道，点击右侧的 **「测试」**。若提示 `✅ 测试成功`，说明配置就绪。

@@ -1,7 +1,11 @@
+import { mediaOwnerContext, configureUploadAccess } from '../services/uploadAccess.js';
+import { sqlite } from '../db/index.js';
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
 import { TokenService } from '../services/tokenService.js';
+
+configureUploadAccess(sqlite);
 
 export interface AuthRequest extends Request {
   userId?: number;
@@ -22,10 +26,13 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
   const token = authHeader.split(' ')[1];
   try {
     const decoded = jwt.verify(token, env.JWT_SECRET) as { userId: number; role: string; orgId?: number | null };
+    const account = sqlite.prepare('SELECT role, is_active FROM users WHERE id=?').get(decoded.userId) as {role:string;is_active:number}|undefined;
+    if (!account?.is_active) return res.status(401).json({ error: '账号已停用，请重新登录' });
+    res.cookie('media_session', token, { httpOnly:true, secure:env.NODE_ENV==='production', sameSite:'lax', path:'/', maxAge:7*24*60*60*1000 });
     req.userId = decoded.userId;
-    req.userRole = decoded.role;
+    req.userRole = account.role;
     req.orgId = decoded.orgId || null;
-    next();
+    mediaOwnerContext.run(decoded.userId, () => next());
   } catch (err) {
     return res.status(401).json({ error: '登录已过期，请重新登录' });
   }

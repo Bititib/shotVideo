@@ -2,6 +2,7 @@ node_modules
 data
 dist
 .env
+.env.*
 *.db
 *.mp4
 *.webm
@@ -9,3 +10,6 @@ dist
 .gitignore
 tests
 *.md
+
+backups
+output

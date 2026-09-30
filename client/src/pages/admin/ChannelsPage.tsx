@@ -1,4 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
+import AdminCollection from '../../components/AdminCollection';
+import AdminDrawer from '../../components/AdminDrawer';
+import { useEditDraft } from '../../hooks/useEditDraft';
+import { startPolling } from '../../utils/polling';
+import { Link } from 'react-router-dom';
+import { useAdminFilters, useAdminScroll } from '../../hooks/useAdminView';
+import { getAdminCached } from '../../api/adminCache';
 import { adminApi } from '../../api/admin';
 import { Plus, Radio, Trash2, Pencil, Zap, Loader2, Power, PowerOff, RefreshCw, KeyRound, Activity, CircleCheck, CircleX, Timer, ScanFace } from 'lucide-react';
 
@@ -6,13 +13,24 @@ const HM_STUDIO_BASE_URL = 'https://dnyovzpgyokm.sealosbja.site';
 const HAYA_BASE_URL = 'https://hayaai.fun';
 const MIAOWU_BASE_URL = 'https://api.miaowuai.store';
 
+const ModelsPage = lazy(() => import('./ModelsPage'));
 export default function ChannelsPage() {
-  const [channels, setChannels] = useState<any[]>([]);
-  const [edit, setEdit] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [detail, setDetail] = useState<any>(null);
+  const [detailEditing, setDetailEditing] = useState(false);
+  const [detailTab, setDetailTab] = useState('models');
+  const [channels, setChannels] = useState<any[]>(() => getAdminCached<any[]>('/admin/channels') || []);
+  const { values, setFilter, reset } = useAdminFilters({ search: '', type: 'all', status: 'all', id: '', period: 'all' });
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [pendingId, setPendingId] = useState<number | null>(null);
+  const { edit, setEdit, close: closeEdit, restore, available } = useEditDraft('channels', saving);
+  const [loading, setLoading] = useState(() => !getAdminCached('/admin/channels'));
+  useAdminScroll(!loading);
   const [testing, setTesting] = useState<number | null>(null);
   const [syncing, setSyncing] = useState<number | null>(null);
-  const [routingPeriod, setRoutingPeriod] = useState<'all' | '24h' | '7d' | '30d'>('all');
+  const routingPeriod = (['all', '24h', '7d', '30d'].includes(values.period) ? values.period : 'all') as 'all' | '24h' | '7d' | '30d';
+  const setRoutingPeriod = (value: string) => setFilter('period', value);
   const [routingStats, setRoutingStats] = useState<any[]>([]);
   const [routingStatsLoading, setRoutingStatsLoading] = useState(false);
   const [siYueTianStrategy, setSiYueTianStrategy] = useState<'failover' | 'round_robin'>('failover');
@@ -25,13 +43,14 @@ export default function ChannelsPage() {
     status: 1,
   });
 
-  const loadChannels = async (showLoading = true) => {
-    if (showLoading) setLoading(true);
+  const loadChannels = async () => {
+    setError('');
     try {
       const channelRows = await adminApi.getChannels();
       setChannels(channelRows);
     }
-    finally { if (showLoading) setLoading(false); }
+    catch (e: any) { setError(e.message || '渠道加载失败，请重试'); }
+    finally { setLoading(false); }
   };
 
   const loadRoutingStats = async () => {
@@ -64,36 +83,15 @@ export default function ChannelsPage() {
 
   useEffect(() => {
     void loadChannels();
-    void loadSiYueTianStrategy();
+    void loadSiYueTianStrategy().catch(e => setError(e.message));
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    let timer: number | undefined;
-
-    const pollRuntimeStatus = async () => {
-      try {
-        const rows = await adminApi.getChannelRuntimeStatus();
-        if (!cancelled) {
-          const byId = new Map(rows.map((row: any) => [row.id, row]));
-          setChannels(current => current.map(channel => ({
-            ...channel,
-            ...(byId.get(channel.id) || {}),
-          })));
-        }
-      } catch (error) {
-        console.warn('刷新渠道并发状态失败:', error);
-      } finally {
-        if (!cancelled) timer = window.setTimeout(pollRuntimeStatus, 5000);
-      }
-    };
-
-    void pollRuntimeStatus();
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, []);
+  useEffect(() => startPolling(async signal => {
+    const rows = await adminApi.getChannelRuntimeStatus(signal);
+    if (signal.aborted) return;
+    const byId = new Map(rows.map((row: any) => [row.id, row]));
+    setChannels(current => current.map(channel => ({ ...channel, ...(byId.get(channel.id) || {}) })));
+  }, 5000), []);
 
   const openNew = () => setEdit({
     name: '', type: 'openai', baseUrl: '', apiKey: '',
@@ -150,17 +148,18 @@ export default function ChannelsPage() {
       await adminApi.setChannelApiKeyStatus(edit.id, key.id, nextStatus);
       updateHmKey(index, { status: nextStatus });
       await loadChannels();
-    } catch (e: any) { alert(e.message); }
+    } catch (e: any) { setError(e.message); }
   };
 
   const handleSave = async () => {
-    if (!edit) return;
+    if (!edit || saving) return;
+    setSaving(true);
     try {
       const hmKeys = edit.type === 'hmstudio'
         ? (edit.apiKeys || []).filter((key: any) => key.id || String(key.apiKey || '').trim())
         : [];
       if (edit.isNew && edit.type === 'hmstudio' && hmKeys.length === 0) {
-        alert('创建 HM Studio 渠道时请至少添加一个 API Key');
+        setError('创建 HM Studio 渠道时请至少添加一个 API Key');
         return;
       }
       // 解析 mapping 和 models
@@ -193,42 +192,51 @@ export default function ChannelsPage() {
 
       if (edit.isNew) await adminApi.createChannel(data);
       else await adminApi.updateChannel(edit.id, data);
-      setEdit(null); loadChannels();
-    } catch (e: any) { alert(e.message); }
+      setEdit(null); await loadChannels();
+    } catch (e: any) { setError(e.message); } finally { setSaving(false); }
   };
 
   const handleDelete = async (id: number) => {
     if (!confirm('确定删除此渠道？')) return;
-    try { await adminApi.deleteChannel(id); loadChannels(); } catch (e: any) { alert(e.message); }
+    try { await adminApi.deleteChannel(id); loadChannels(); } catch (e: any) { setError(e.message); }
   };
 
   const handleTest = async (id: number) => {
     setTesting(id);
     try {
       const result = await adminApi.testChannel(id);
-      alert(result.success ? `✅ 测试成功，耗时 ${result.durationMs}ms` : `❌ 测试失败：${result.message}`);
+      setNotice(result.success ? `测试成功，耗时 ${result.durationMs}ms` : `测试失败：${result.message}`);
       loadChannels();
-    } catch (e: any) { alert('测试出错: ' + e.message); }
+    } catch (e: any) { setError('测试出错: ' + e.message); }
     finally { setTesting(null); }
   };
 
   const toggleStatus = async (ch: any) => {
-    try { await adminApi.updateChannel(ch.id, { status: ch.status ? 0 : 1 }); loadChannels(); }
-    catch (e: any) { alert(e.message); }
+    if (pendingId !== null) return;
+    setPendingId(ch.id);
+    try { await adminApi.updateChannel(ch.id, { status: ch.status ? 0 : 1 }); await loadChannels(); }
+    catch (e: any) { setError(e.message); } finally { setPendingId(null); }
   };
 
   const syncModels = async (ch: any) => {
     setSyncing(ch.id);
     try {
       const result = await adminApi.syncChannelModels(ch.id);
-      alert(`同步完成：上游 ${result.count} 个模型，新增 ${result.added} 个模型配置`);
+      setNotice(`同步完成：上游 ${result.count} 个模型，新增 ${result.added} 个模型配置`);
       loadChannels();
-    } catch (e: any) { alert('同步失败: ' + e.message); }
+    } catch (e: any) { setError('同步失败: ' + e.message); }
     finally { setSyncing(null); }
   };
 
   if (loading) return <div className="flex items-center justify-center h-full"><div className="w-8 h-8 border-2 border-white/10 border-t-white rounded-full animate-spin" /></div>;
 
+  const filteredChannels = channels.filter(channel => {
+    const query = values.search.trim().toLowerCase();
+    return (!query || [channel.name, channel.type, ...(channel.supportedModels || [])].some(value => String(value).toLowerCase().includes(query)))
+      && (values.type === 'all' || channel.type === values.type)
+      && (values.status === 'all' || String(channel.status) === values.status)
+      && (!values.id || String(channel.id) === values.id);
+  });
   const hmChannels = channels.filter(channel => channel.type === 'hmstudio' && channel.status);
   const hmTotalCapacity = hmChannels.reduce((sum, channel) => sum + Number(channel.concurrencyLimit || 0), 0);
   const hmTotalRunning = hmChannels.reduce((sum, channel) => sum + Number(channel.concurrencyRunning || 0), 0);
@@ -251,6 +259,17 @@ export default function ChannelsPage() {
         </div>
       </div>
 
+      {error && <div role="alert" className="mb-4 p-4 rounded-xl bg-red-500/10 text-red-500">{error} <button onClick={() => void loadChannels()}>重试</button></div>}
+      {notice && <div role="status" className="mb-4 p-3 rounded-xl bg-blue-500/10">{notice}<button onClick={() => setNotice('')} className="ml-3">关闭</button></div>}
+      {available && !edit && <button className="mb-3 underline" onClick={restore}>恢复未保存的渠道草稿（密钥需重新输入）</button>}
+      <div className="admin-sticky-filters flex flex-wrap gap-3 mb-6 rounded-xl border p-3">
+        <input aria-label="搜索渠道" placeholder="搜索渠道名称、类型或模型" value={values.search} onChange={e => setFilter('search', e.target.value)} className="flex-1 min-w-48 rounded-lg border px-3 py-2 text-sm" />
+        <select aria-label="渠道类型" value={values.type} onChange={e => setFilter('type', e.target.value)} className="rounded-lg border px-3 py-2 text-sm"><option value="all">全部类型</option>{Array.from(new Set(channels.map(c => c.type))).map(type => <option key={type} value={type}>{type}</option>)}</select>
+        <select aria-label="渠道状态" value={values.status} onChange={e => setFilter('status', e.target.value)} className="rounded-lg border px-3 py-2 text-sm"><option value="all">全部状态</option><option value="1">启用</option><option value="0">停用</option></select>
+        <button onClick={reset} className="text-xs">清除筛选</button>
+        <span className="text-xs self-center">{filteredChannels.length} / {channels.length} 个渠道{values.id ? ' · 已定位关联渠道' : ''}</span>
+      </div>
+      <details className="mb-4"><summary className="cursor-pointer py-3 font-medium">运行监控与路由策略</summary>
       <div className="mb-6 rounded-2xl border border-amber-500/20 bg-amber-500/[0.06] p-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-semibold text-amber-200">HM Studio 并发池</p>
@@ -383,8 +402,14 @@ export default function ChannelsPage() {
         </div>
       </section>
 
-      <div className="space-y-4">
-        {channels.map(ch => (
+      </details>
+      <AdminCollection<any> name="channels" items={filteredChannels} id={ch => String(ch.id)} columns={[
+        { title: '渠道', sort: ch => ch.name, render: ch => <><strong>{ch.name}</strong><small className="block">{ch.type}</small></> },
+        { title: '状态', sort: ch => ch.status, render: ch => ch.status ? '启用' : '停用' },
+        { title: '模型 / 并发', sort: ch => ch.supportedModels?.length || 0, render: ch => <>{ch.supportedModels?.length || 0} 个模型<br />{ch.concurrencyRunning || 0} 运行 / {ch.concurrencyQueued || 0} 排队</> },
+        { title: '操作', render: ch => <div className="flex flex-wrap gap-2 text-xs"><button onClick={() => { setDetailEditing(false); setDetail(ch); }}>详情与模型</button><button onClick={() => openEdit(ch)}>编辑</button><button disabled={pendingId !== null} onClick={() => toggleStatus(ch)}>{ch.status ? '停用' : '启用'}</button></div> },
+      ]}>{visibleChannels => <div className="space-y-4">
+        {visibleChannels.map(ch => (
           <div key={ch.id} className={`bg-white/[0.02] border rounded-2xl p-5 ${ch.status ? 'border-white/5' : 'border-red-500/20 opacity-60'}`}>
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-3">
@@ -419,7 +444,8 @@ export default function ChannelsPage() {
                     </button>
                   </>
                 )}
-                <button onClick={() => toggleStatus(ch)} aria-label={ch.status ? `停止 ${ch.name}` : `启动 ${ch.name}`}
+                <button onClick={() => { setDetailEditing(false); setDetail(ch); }} className="text-xs px-3 py-1 rounded-lg bg-blue-500/10">关联模型与价格</button>
+                <button disabled={pendingId !== null} onClick={() => toggleStatus(ch)} aria-label={ch.status ? `停止 ${ch.name}` : `启动 ${ch.name}`}
                   className={`flex items-center gap-1 rounded-lg px-3 py-1 text-[10px] font-medium transition-colors ${ch.status ? 'bg-green-500/10 text-green-400 hover:bg-green-500/20' : 'bg-red-500/10 text-red-400 hover:bg-red-500/20'}`}>
                   {ch.status ? <PowerOff className="w-3 h-3" /> : <Power className="w-3 h-3" />}
                   {ch.status ? '停止' : '启动'}
@@ -441,14 +467,18 @@ export default function ChannelsPage() {
             </div>
           </div>
         ))}
-        {channels.length === 0 && <div className="text-center text-zinc-500 py-12">暂无渠道，点击上方按钮添加</div>}
-      </div>
+        {filteredChannels.length === 0 && <div className="text-center text-zinc-500 py-12">{channels.length ? "没有符合筛选条件的渠道" : "暂无渠道，点击上方按钮添加"}</div>}
+      </div>}</AdminCollection>
 
+      {detail && <AdminDrawer wide title={detail.name + ' · 渠道详情'} blocked={detailEditing || Boolean(edit)} onClose={() => { setDetail(null); void loadChannels(); }}>
+        <div className="p-4 flex gap-4"><button disabled={detailEditing} onClick={() => setDetailTab('models')}>关联模型与价格</button><button disabled={detailEditing} onClick={() => setDetailTab('config')}>配置与运行状态</button></div>
+        {detailTab === 'models' ? <Suspense fallback={<p className="p-4" role="status">正在加载关联模型…</p>}><ModelsPage key={detail.id} channelId={String(detail.id)} onEditingChange={setDetailEditing} /></Suspense> : <div className="p-5 space-y-3">{(() => { const current = channels.find(ch => ch.id === detail.id) || detail; return <><p>类型：{current.type}</p><p>地址：{current.baseUrl}</p><p>状态：{current.status ? '启用' : '停用'} · 优先级 {current.priority}</p><p>运行 {current.concurrencyRunning || 0} / 排队 {current.concurrencyQueued || 0}</p><div className="flex flex-wrap gap-4"><button onClick={() => openEdit(current)}>编辑渠道配置</button><button disabled={testing !== null} onClick={() => handleTest(current.id)}>测试连接</button><button disabled={syncing !== null} onClick={() => syncModels(current)}>同步模型</button></div></>; })()}</div>}
+      </AdminDrawer>}
       {/* Edit Modal */}
       {edit && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => setEdit(null)}>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={closeEdit}>
           <div role="dialog" aria-modal="true" aria-labelledby="channel-dialog-title" className="bg-[#1a1a1a] border border-white/10 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
-            <h3 id="channel-dialog-title" className="shrink-0 px-5 pt-5 pb-4 md:px-6 md:pt-6 text-lg font-semibold text-white">{edit.isNew ? '添加渠道' : `编辑: ${edit.name}`}</h3>
+            <p role="alert" className="px-5 text-red-500">{error}</p><h3 id="channel-dialog-title" className="shrink-0 px-5 pt-5 pb-4 md:px-6 md:pt-6 text-lg font-semibold text-white">{edit.isNew ? '添加渠道' : `编辑: ${edit.name}`}</h3>
             <div className="flex-1 overflow-y-auto px-5 pb-5 md:px-6">
               <div className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -623,8 +653,8 @@ export default function ChannelsPage() {
               </div>
             </div>
             <div className="shrink-0 flex gap-3 border-t border-[#e2ccb1] bg-[#fffaf2] px-5 py-4 md:px-6">
-              <button onClick={() => setEdit(null)} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm transition-colors">取消</button>
-              <button onClick={handleSave} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium transition-colors">保存</button>
+              <button onClick={closeEdit} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm transition-colors">取消</button>
+              <button disabled={saving} onClick={handleSave} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium transition-colors">{saving ? "保存中…" : "保存"}</button>
             </div>
           </div>
         </div>

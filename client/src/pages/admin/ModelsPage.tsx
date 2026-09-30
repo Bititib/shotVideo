@@ -1,18 +1,53 @@
-import React, { useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
+import AdminDrawer from '../../components/AdminDrawer';
+import AdminCollection from '../../components/AdminCollection';
+import AdminBatch from '../../components/AdminBatch';
+import { useEditDraft } from '../../hooks/useEditDraft';
+import { priceSource, priceSummary } from '../../utils/adminPricing';
+import { Link } from 'react-router-dom';
+import { useAdminFilters, useAdminScroll } from '../../hooks/useAdminView';
+import { getAdminCached } from '../../api/adminCache';
 import { adminApi } from '../../api/admin';
 import { Plus, Cpu, Power, PowerOff, Search, Filter, Clock, CheckCircle2, XCircle } from 'lucide-react';
 
-export default function ModelsPage() {
-  const [models, setModels] = useState<any[]>([]);
-  const [channels, setChannels] = useState<any[]>([]);
-  const [selectedChannelId, setSelectedChannelId] = useState<string>('all');
-  const [selectedCap, setSelectedCap] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
-  const [edit, setEdit] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+const PricingPage = lazy(() => import('./PricingPage'));
+
+export default function ModelsPage({ channelId, onEditingChange }: { channelId?: string; onEditingChange?: (editing: boolean) => void } = {}) {
+  const [selected, setSelected] = useState<string[]>([]);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [prices, setPrices] = useState<any[]>([]);
+  const [stats, setStats] = useState<Record<number, any>>({});
+  const [statsError, setStatsError] = useState('');
+  const [priceError, setPriceError] = useState('');
+  const [priceModel, setPriceModel] = useState<string | null>(null);
+  const [priceEditing, setPriceEditing] = useState(false);
+  const [models, setModels] = useState<any[]>(() => getAdminCached<any[]>('/admin/models?view=config') || []);
+  const [channels, setChannels] = useState<any[]>(() => getAdminCached<any[]>('/admin/channels') || []);
+  const { values, setFilter, reset } = useAdminFilters({ channel: channelId || 'all', capability: 'all', search: '' }, !channelId);
+  const { channel: selectedChannelId, capability: selectedCap, search: searchQuery } = values;
+  const setSelectedChannelId = (value: string) => setFilter('channel', value);
+  const setSelectedCap = (value: string) => setFilter('capability', value);
+  const setSearchQuery = (value: string) => setFilter('search', value);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [pendingId, setPendingId] = useState<number | null>(null);
+  const { edit, setEdit, close: closeEdit, restore, available } = useEditDraft(`models:${channelId || 'all'}`, saving || batchBusy);
+  useEffect(() => { onEditingChange?.(Boolean(edit) || Boolean(priceModel) || batchBusy); }, [edit, priceModel, batchBusy, onEditingChange]);
+  const [loading, setLoading] = useState(() => !getAdminCached('/admin/models?view=config'));
+  useAdminScroll(!loading && !channelId);
+
+  const loadPrices = async () => {
+    setPriceError('');
+    try { setPrices(await adminApi.getPricing({ scope: 'models' })); } catch { setPriceError('价格加载失败'); }
+  };
+  const loadStats = async () => {
+    setStatsError('');
+    try { const result = await adminApi.getModelStatistics(); setStats(Object.fromEntries(result.items.map(row => [row.id, row]))); }
+    catch { setStatsError('统计暂不可用，模型配置仍可操作'); }
+  };
 
   const load = async () => {
-    setLoading(true);
+    setError('');
     try {
       const [modelsData, channelsData] = await Promise.all([
         adminApi.getModels(),
@@ -21,32 +56,35 @@ export default function ModelsPage() {
       setModels(modelsData || []);
       setChannels(channelsData || []);
     } catch (e) {
-      console.error(e);
+      setError(e instanceof Error ? e.message : '模型加载失败，请重试');
     }
     setLoading(false);
   };
 
   useEffect(() => {
-    load();
+    void load().then(() => { void loadPrices(); void loadStats(); });
   }, []);
 
   const openNew = () => setEdit({ provider: 'google', modelId: '', displayName: '', description: '', apiKey: '', capabilities: ['text'], isActive: 1, isNew: true });
   const openEdit = (m: any) => setEdit({ ...m, description: m.description || '', apiKey: '', isNew: false }); // apiKey is masked, user must re-enter
 
   const handleSave = async () => {
-    if (!edit) return;
+    if (!edit || saving) return;
+    setSaving(true);
     try {
       const data: any = { provider: edit.provider, modelId: edit.modelId, displayName: edit.displayName, description: edit.description, capabilities: edit.capabilities, isActive: edit.isActive };
       if (edit.apiKey) data.apiKey = edit.apiKey; // Only send if user entered a new key
       if (edit.isNew) { await adminApi.createModel(data); } else { await adminApi.updateModel(edit.id, data); }
-      setEdit(null); load();
-    } catch (e: any) { alert(e.message); }
+      setEdit(null); await load();
+    } catch (e: any) { setError(e.message); } finally { setSaving(false); }
   };
 
-  const handleDelete = async (id: number) => { if (!confirm('确定删除此模型？')) return; try { await adminApi.deleteModel(id); load(); } catch (e: any) { alert(e.message); } };
+  const handleDelete = async (id: number) => { if (pendingId !== null || !confirm('确定删除此模型？')) return; setPendingId(id); try { await adminApi.deleteModel(id); setModels(rows => rows.filter(row => row.id !== id)); } catch (e: any) { setError(e.message); } finally { setPendingId(null); } };
 
   const toggleActive = async (m: any) => {
-    try { await adminApi.updateModel(m.id, { isActive: m.isActive ? 0 : 1 }); load(); } catch (e: any) { alert(e.message); }
+    if (pendingId !== null) return;
+    setPendingId(m.id);
+    try { await adminApi.updateModel(m.id, { isActive: m.isActive ? 0 : 1 }); setModels(rows => rows.map(row => row.id === m.id ? { ...row, isActive: m.isActive ? 0 : 1 } : row)); } catch (e: any) { setError(e.message); } finally { setPendingId(null); }
   };
 
   const getChannelModels = (c: any): string[] => {
@@ -59,7 +97,7 @@ export default function ModelsPage() {
   };
 
   // 过滤模型
-  const filteredModels = models.filter(m => {
+  const filteredModels = models.map(m => ({ ...m, ...stats[m.id] })).filter(m => {
     // 1. 搜索过滤
     const matchesSearch = searchQuery
       ? m.displayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -127,8 +165,13 @@ export default function ModelsPage() {
         <button onClick={openNew} className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium transition-colors self-start md:self-auto"><Plus className="w-4 h-4" /> 添加模型</button>
       </div>
 
+      {error && <div role="alert" className="mb-4 rounded-xl bg-red-500/10 p-4 text-red-500">{error} <button onClick={() => void load()}>重试</button></div>}
+      <div className="flex gap-3 mb-3 text-xs"><button onClick={reset}>清除筛选</button>{!channelId && selectedChannelId !== 'all' && <Link to={'/admin/channels?id=' + encodeURIComponent(selectedChannelId)}>查看当前渠道</Link>}</div>
       {/* Filter Bar */}
-      <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4 mb-6 flex flex-col md:flex-row gap-4">
+      {available && !edit && <button className="mb-3 underline" onClick={restore}>恢复未保存的模型草稿（密钥需重新输入）</button>}
+      {statsError && <p role="status">{statsError} <button onClick={() => void loadStats()}>重试统计</button></p>}
+      {priceError && <p role="status">{priceError} <button onClick={() => void loadPrices()}>重试价格</button></p>}
+      <div className="admin-sticky-filters bg-white/[0.02] border border-white/5 rounded-2xl p-4 mb-6 flex flex-col md:flex-row gap-4">
         {/* Search */}
         <div className="flex-1 relative">
           <Search className="absolute left-3.5 top-3 w-4.5 h-4.5 text-zinc-500" />
@@ -145,7 +188,7 @@ export default function ModelsPage() {
         <div className="flex items-center gap-2 min-w-[200px]">
           <Filter className="w-4 h-4 text-zinc-400 shrink-0" />
           <select
-            value={selectedChannelId}
+            value={selectedChannelId} disabled={Boolean(channelId)}
             onChange={e => setSelectedChannelId(e.target.value)}
             className="w-full bg-white/5 border border-white/5 focus:border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none transition-colors cursor-pointer"
           >
@@ -173,13 +216,20 @@ export default function ModelsPage() {
       </div>
 
       {/* Grid List */}
+      <AdminBatch kind="models" items={models.filter(m => selected.includes(String(m.id)))} onBusy={setBatchBusy} onDone={async () => { setSelected([]); await load(); await loadPrices(); }} />
       {filteredModels.length === 0 ? (
         <div className="text-center py-12 bg-white/[0.01] border border-white/5 rounded-2xl">
           <p className="text-zinc-500 text-sm">没有找到符合筛选条件的模型</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredModels.map(m => (
+        <AdminCollection<any> name={'models-' + (channelId || 'all')} items={filteredModels} id={m => String(m.id)} selected={selected} onSelect={setSelected} columns={[
+          { title: '模型', sort: m => m.displayName, render: m => <><strong>{m.displayName}</strong><small className="block truncate" title={m.modelId}>{m.modelId}</small></> },
+          { title: '渠道', render: m => channels.filter(c => getChannelModels(c).includes(m.modelId)).map(c => c.name).join('、') || '独立配置' },
+          { title: '价格 / 来源', sort: m => prices.find(p => p.modelPattern === m.modelId)?.inputPrice ?? -1, render: m => { const rule = prices.find(p => p.modelPattern === m.modelId); return <><div>{priceSummary(rule)}</div><small>{priceSource(rule)}</small></>; } },
+          { title: '状态 / 统计', sort: m => m.isActive, render: m => <><div>{m.isActive ? '启用' : '停用'}</div><small>{m.totalCalls === undefined ? '统计加载中' : `${m.totalCalls} 次 · 成功 ${m.successRate}%`}</small></> },
+          { title: '操作', render: m => <div className="flex flex-wrap gap-2 text-xs"><button disabled={pendingId !== null || batchBusy} aria-label={`${m.isActive ? '停用' : '启用'} ${m.displayName}`} onClick={() => toggleActive(m)}>{m.isActive ? '停用' : '启用'}</button><button disabled={batchBusy} onClick={() => openEdit(m)}>编辑</button><button disabled={batchBusy} onClick={() => { setPriceEditing(false); setPriceModel(m.modelId); }}>管理价格</button><button disabled={batchBusy} onClick={() => handleDelete(m.id)}>删除</button></div> },
+        ]}>{visibleModels => <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {visibleModels.map(m => (
             <div
               key={m.id}
               className={`bg-white/[0.02] border rounded-2xl p-5 flex flex-col justify-between hover:-translate-y-1 hover:shadow-lg hover:shadow-blue-500/[0.02] transition-all duration-300 ${
@@ -199,7 +249,7 @@ export default function ModelsPage() {
                     </div>
                   </div>
                   <button
-                    onClick={() => toggleActive(m)}
+                    disabled={pendingId !== null || batchBusy} aria-label={`${m.isActive ? "停用" : "启用"} ${m.displayName}`} onClick={() => toggleActive(m)}
                     className={`p-1.5 rounded-lg transition-colors shrink-0 ${
                       m.isActive ? 'bg-green-500/10 text-green-400 hover:bg-green-500/20' : 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
                     }`}
@@ -226,6 +276,7 @@ export default function ModelsPage() {
               </div>
 
               {/* Footer Info & Actions */}
+              <div className="text-xs py-2">{priceSummary(prices.find(p => p.modelPattern === m.modelId))} · {priceSource(prices.find(p => p.modelPattern === m.modelId))}</div>
               <div className="border-t border-white/5 pt-4 mt-2">
                 {/* Metric Cards Grid */}
                 <div className="grid grid-cols-2 gap-2 text-[11px] mb-3">
@@ -256,20 +307,24 @@ export default function ModelsPage() {
                 </div>
 
                 <div className="flex gap-2 w-full">
-                  <button onClick={() => openEdit(m)} className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs text-zinc-300 transition-colors">编辑</button>
-                  <button onClick={() => handleDelete(m.id)} className="py-1.5 px-3 bg-red-500/10 hover:bg-red-500/20 rounded-lg text-xs text-red-400 transition-colors">删除</button>
+                  <button disabled={batchBusy} onClick={() => openEdit(m)} className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs text-zinc-300 transition-colors">编辑</button>
+                  <button disabled={batchBusy} onClick={() => { setPriceEditing(false); setPriceModel(m.modelId); }} className="flex-1 py-1.5 text-center rounded-lg text-xs bg-blue-500/10">管理价格</button>
+                  <button disabled={pendingId !== null || batchBusy} onClick={() => handleDelete(m.id)} className="py-1.5 px-3 bg-red-500/10 hover:bg-red-500/20 rounded-lg text-xs text-red-400 transition-colors">删除</button>
                 </div>
               </div>
             </div>
           ))}
-        </div>
+        </div>}</AdminCollection>
       )}
 
+      {priceModel && <AdminDrawer title={priceModel + ' · 价格详情'} blocked={priceEditing} onClose={() => { setPriceModel(null); void loadPrices(); }}>
+        <Suspense fallback={<p role="status" className="p-6">正在加载价格…</p>}><PricingPage key={priceModel} modelId={priceModel} onEditingChange={setPriceEditing} /></Suspense>
+      </AdminDrawer>}
       {/* Edit Modal */}
       {edit && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setEdit(null)}>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={closeEdit}>
           <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-white mb-5">{edit.isNew ? '添加新模型' : `编辑: ${edit.displayName}`}</h3>
+            <p role="alert" className="text-red-500">{error}</p><h3 className="text-lg font-semibold text-white mb-5">{edit.isNew ? '添加新模型' : `编辑: ${edit.displayName}`}</h3>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -303,8 +358,8 @@ export default function ModelsPage() {
               </div>
             </div>
             <div className="flex gap-3 mt-6">
-              <button onClick={() => setEdit(null)} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm transition-colors">取消</button>
-              <button onClick={handleSave} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium transition-colors">保存</button>
+              <button onClick={closeEdit} className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm transition-colors">取消</button>
+              <button disabled={saving} onClick={handleSave} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium transition-colors">{saving ? "保存中…" : "保存"}</button>
             </div>
           </div>
         </div>

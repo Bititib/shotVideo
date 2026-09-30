@@ -101,7 +101,7 @@ export async function downloadGeneratedImage(url: string, filename = 'generated-
   }
 
   const token = localStorage.getItem('token');
-  const response = await fetch(`/api/image-gen/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`, {
+  const response = await fetch(url.startsWith('/api/media/') ? url : `/api/image-gen/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!response.ok) {

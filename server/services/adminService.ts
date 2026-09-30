@@ -1,3 +1,4 @@
+import { validatePublicModelName, rememberPublicModelNames } from './publicModelNameService.js';
 import { db } from '../db/index.js';
 import { users, tiers, models, tierModelAccess, usageLogs, settings, contents, apiLogs, modelPricing, channels, channelApiKeys } from '../db/schema.js';
 import { eq, like, and, gte, sql, desc, count } from 'drizzle-orm';
@@ -327,13 +328,41 @@ export class AdminService {
   }
 
   // ============ 模型管理 ============
-  static getModels() {
+  private static modelStatsCache: { expires: number; rows: any[] } | null = null;
+  static invalidateModelStatistics() { this.modelStatsCache = null; }
+  static getModelStatistics() {
+    if (this.modelStatsCache && this.modelStatsCache.expires > Date.now()) return this.modelStatsCache.rows;
+    const rows = this.getModels().map(({ id, totalCalls, successCalls, failCalls, avgDurationMinutes, successRate, failureRate }) =>
+      ({ id, totalCalls, successCalls, failCalls, avgDurationMinutes, successRate, failureRate }));
+    this.modelStatsCache = { expires: Date.now() + 30000, rows };
+    return rows;
+  }
+  static getModels(includeStats = true): any[] {
     const allModels = db.select().from(models).all();
+    if (!includeStats) return allModels.map(m => ({ ...m, capabilities: JSON.parse(m.capabilities), apiKey: m.apiKey ? '****' + m.apiKey.slice(-4) : null }));
+    // Four queries regardless of model count. Only select fields used by statistics.
+    const contentByModel = new Map<string, Array<{ status: string; resultUrl: string | null; metadata: string; createdAt: string }>>();
+    for (const row of db.select({ modelId: contents.modelId, status: contents.status, resultUrl: contents.resultUrl, metadata: contents.metadata, createdAt: contents.createdAt }).from(contents).all()) {
+      if (!row.modelId) continue;
+      const bucket = contentByModel.get(row.modelId) || [];
+      bucket.push(row);
+      contentByModel.set(row.modelId, bucket);
+    }
+    const apiByModel = new Map(db.select({
+      model: apiLogs.model,
+      total: sql<number>`count(*)`,
+      success: sql<number>`sum(case when ${apiLogs.status} = 'success' then 1 else 0 end)`,
+      duration: sql<number>`sum(case when ${apiLogs.status} = 'success' and ${apiLogs.durationMs} > 0 then ${apiLogs.durationMs} else 0 end)`,
+    }).from(apiLogs).groupBy(apiLogs.model).all().map(row => [row.model, row]));
+    const usageByModel = new Map(db.select({
+      modelId: usageLogs.modelId,
+      total: sql<number>`count(*)`,
+      failed: sql<number>`sum(case when ${usageLogs.status} in ('error', 'failed') then 1 else 0 end)`,
+      duration: sql<number>`sum(case when ${usageLogs.status} not in ('error', 'failed') and ${usageLogs.durationMs} > 0 then ${usageLogs.durationMs} else 0 end)`,
+    }).from(usageLogs).groupBy(usageLogs.modelId).all().map(row => [row.modelId, row]));
     return allModels.map(m => {
       // 1. contents 表 (视频/多媒体生成任务)
-      const contentRows = db.select().from(contents)
-        .where(eq(contents.modelId, m.modelId))
-        .all();
+      const contentRows = contentByModel.get(m.modelId) || [];
 
       let contentTotal = contentRows.length;
       let contentSuccessCount = 0;
@@ -367,47 +396,16 @@ export class AdminService {
         }
       }
 
-      // 2. apiLogs 表 (开放 API 接口调用)
-      const apiLogRows = db.select().from(apiLogs)
-        .where(eq(apiLogs.model, m.modelId))
-        .all();
-
-      let apiTotal = apiLogRows.length;
-      let apiSuccessCount = 0;
-      let apiFailCount = 0;
-      let apiTotalDurationMs = 0;
-
-      for (const row of apiLogRows) {
-        if (row.status === 'success') {
-          apiSuccessCount++;
-          if (row.durationMs && row.durationMs > 0) {
-            apiTotalDurationMs += row.durationMs;
-          }
-        } else {
-          apiFailCount++;
-        }
-      }
-
-      // 3. usageLogs 表 (系统内部分析调用)
-      const usageLogRows = db.select().from(usageLogs)
-        .where(eq(usageLogs.modelId, m.id))
-        .all();
-
-      let usageTotal = usageLogRows.length;
-      let usageSuccessCount = 0;
-      let usageFailCount = 0;
-      let usageTotalDurationMs = 0;
-
-      for (const row of usageLogRows) {
-        if (row.status === 'error' || row.status === 'failed') {
-          usageFailCount++;
-        } else {
-          usageSuccessCount++;
-          if (row.durationMs && row.durationMs > 0) {
-            usageTotalDurationMs += row.durationMs;
-          }
-        }
-      }
+      const apiStats = apiByModel.get(m.modelId);
+      const apiTotal = Number(apiStats?.total || 0);
+      const apiSuccessCount = Number(apiStats?.success || 0);
+      const apiFailCount = apiTotal - apiSuccessCount;
+      const apiTotalDurationMs = Number(apiStats?.duration || 0);
+      const usageStats = usageByModel.get(m.id);
+      const usageTotal = Number(usageStats?.total || 0);
+      const usageFailCount = Number(usageStats?.failed || 0);
+      const usageSuccessCount = usageTotal - usageFailCount;
+      const usageTotalDurationMs = Number(usageStats?.duration || 0);
 
       // 综合统计
       const totalCalls = contentTotal + apiTotal + usageTotal;
@@ -453,6 +451,7 @@ export class AdminService {
       throw { status: 409, message: `模型 ${modelId} 已存在` };
     }
 
+    validatePublicModelName(modelId, displayName);
     db.insert(models).values({
       provider: provider || 'google',
       modelId,
@@ -485,6 +484,9 @@ export class AdminService {
       updates.modelId = nextModelId;
     }
     if (data.displayName !== undefined) updates.displayName = data.displayName;
+    if (data.displayName !== undefined || nextModelId !== model.modelId) {
+      validatePublicModelName(nextModelId, data.displayName ?? model.displayName, model.id);
+    }
     if (data.description !== undefined) updates.description = data.description || null;
     if (data.provider !== undefined) updates.provider = data.provider;
     if (data.apiKey !== undefined) updates.apiKey = data.apiKey || null;
@@ -506,6 +508,9 @@ export class AdminService {
               .where(eq(modelPricing.modelPattern, nextModelId))
               .run();
           }
+        }
+        if (nextModelId !== model.modelId || (data.displayName !== undefined && data.displayName !== model.displayName)) {
+          rememberPublicModelNames(model, tx as any);
         }
         tx.update(models).set(updates).where(eq(models.id, modelId)).run();
       });

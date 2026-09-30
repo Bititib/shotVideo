@@ -8,9 +8,10 @@ router.use(authMiddleware, adminMiddleware);
 
 router.get('/', async (req: AuthRequest, res: Response) => {
   try {
-    const { category, billingType, search } = req.query;
+    const { category, billingType, search, modelId } = req.query;
     res.json(PricingService.getPricingRules({
-      scope: 'active',
+      scope: req.query.scope === 'models' ? 'models' : 'active',
+      modelId: typeof modelId === 'string' ? modelId : undefined,
       category: typeof category === 'string' ? category : undefined,
       billingType: typeof billingType === 'string' ? billingType : undefined,
       search: typeof search === 'string' ? search : undefined,

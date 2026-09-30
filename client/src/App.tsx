@@ -7,6 +7,7 @@ import LoginModal from './components/LoginModal';
 
 // Keep the shell small: each page is downloaded only when its route is opened.
 const LandingPage = lazy(() => import('./pages/LandingPage'));
+const CanvasPage = lazy(() => import('./pages/CanvasPage'));
 const GeneralPage = lazy(() => import('./pages/analysis/GeneralPage'));
 const EcommercePage = lazy(() => import('./pages/analysis/EcommercePage'));
 const ImagePage = lazy(() => import('./pages/analysis/ImagePage'));
@@ -15,6 +16,7 @@ const AccountPage = lazy(() => import('./pages/analysis/AccountPage'));
 const VideoPage = lazy(() => import('./pages/analysis/VideoPage'));
 const VideoBatchPage = lazy(() => import('./pages/analysis/VideoBatchPage'));
 const VideoStudioPage = lazy(() => import('./pages/analysis/VideoStudioPage'));
+const ComicDramaPage = lazy(() => import('./pages/analysis/ComicDramaPage'));
 const ImageGenPage = lazy(() => import('./pages/analysis/ImageGenPage'));
 const TtsPage = lazy(() => import('./pages/analysis/TtsPage'));
 const HistoryPage = lazy(() => import('./pages/analysis/HistoryPage'));
@@ -30,6 +32,7 @@ const TokensPage = lazy(() => import('./pages/admin/TokensPage'));
 const PricingPage = lazy(() => import('./pages/admin/PricingPage'));
 const OrgsPage = lazy(() => import('./pages/admin/OrgsPage'));
 const ContentsPage = lazy(() => import('./pages/admin/ContentsPage'));
+const BillingReviewPage = lazy(() => import('./pages/admin/BillingReviewPage'));
 const FeedbackPage = lazy(() => import('./pages/admin/FeedbackPage'));
 const OrgLayout = lazy(() => import('./pages/org/OrgLayout'));
 const OrgDashboard = lazy(() => import('./pages/org/OrgDashboard'));
@@ -88,6 +91,7 @@ export default function App() {
           <Route path="account" element={<AccountPage />} />
           <Route path="video" element={<VideoPage />} />
           <Route path="video-batch" element={<VideoBatchPage />} />
+          <Route path="comic-drama" element={<ComicDramaPage />} />
           <Route path="image-gen" element={<ImageGenPage />} />
           <Route path="tts" element={<TtsPage />} />
           <Route path="history" element={<ApiKeyRoute><HistoryPage /></ApiKeyRoute>} />
@@ -95,6 +99,7 @@ export default function App() {
           <Route path="profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
         </Route>
         <Route path="/app/video/studio" element={<VideoStudioPage />} />
+        <Route path="/app/canvas" element={<CanvasPage />} />
 
         {/* Admin — 仍需登录+超级管理员权限 */}
         <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
@@ -108,6 +113,7 @@ export default function App() {
           <Route path="orgs" element={<OrgsPage />} />
           <Route path="contents" element={<ContentsPage />} />
           <Route path="feedback" element={<FeedbackPage />} />
+          <Route path="billing-review" element={<BillingReviewPage />} />
         </Route>
 
         {/* Org — 组织管理员面板 */}

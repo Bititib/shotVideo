@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { getPublicSettings } from '../api/admin';
 import {
@@ -92,12 +92,13 @@ export default function LandingPage() {
           <button type="button" className="landing-brand" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} aria-label="返回首页顶部">
             <span className="landing-brand-mark" aria-hidden="true"><Layers3 /></span>
             <span className="landing-brand-copy">
-              <strong>短视频创意风暴</strong>
+              <strong>灵序 AI</strong>
               <small>AI CREATIVE STUDIO</small>
             </span>
           </button>
 
           <div className="landing-nav-links">
+            <Link to="/app/canvas">无限画布</Link>
             <a href="#features">核心能力</a>
             <a href="#workflow">工作流程</a>
             <a href="#pricing">方案定价</a>
@@ -115,17 +116,17 @@ export default function LandingPage() {
         <section className="landing-hero" aria-labelledby="hero-title">
           <div className="landing-hero-inner">
             <div className="landing-hero-copy">
-              <div className="landing-eyebrow"><Sparkles aria-hidden="true" /> AI 驱动的短视频创意工作台</div>
-              <h1 id="hero-title">看懂爆款，<br /><span>再创造下一个爆款。</span></h1>
+              <div className="landing-eyebrow"><Sparkles aria-hidden="true" /> 一站式多模态创作平台</div>
+              <h1 id="hero-title">让灵感，<br /><span>自由成形。</span></h1>
               <p className="landing-hero-description">
-                从视频分析、提示词逆向到图片与视频生成，把分散的创作步骤汇成一条清晰、可复用的工作流。
+                连接图片、视频与声音，在无限画布上完成创作。从视频分析到多模态生成，让每个灵感都有实现的空间。
               </p>
 
               <div className="landing-hero-actions">
                 <button type="button" className="landing-primary-btn" onClick={goToWorkspace}>
                   免费开始使用 <ArrowRight aria-hidden="true" />
                 </button>
-                <a href="#features" className="landing-secondary-btn">查看核心能力</a>
+                <Link to="/app/canvas" className="landing-secondary-btn"><Layers3 aria-hidden="true" /> 打开无限画布</Link>
               </div>
 
               <div className="landing-trust-row" aria-label="产品优势">
@@ -252,8 +253,8 @@ export default function LandingPage() {
       </main>
 
       <footer className="landing-footer">
-        <div className="landing-footer-brand"><span className="landing-brand-mark" aria-hidden="true"><Layers3 /></span><div><strong>短视频创意风暴</strong><small>AI CREATIVE STUDIO</small></div></div>
-        <p>© 2026 短视频创意风暴 · 让创意有迹可循</p>
+        <div className="landing-footer-brand"><span className="landing-brand-mark" aria-hidden="true"><Layers3 /></span><div><strong>灵序 AI</strong><small>AI CREATIVE STUDIO</small></div></div>
+        <p>© 2026 灵序 AI · 让灵感，自由成形。</p>
         <div><a href="#features">产品能力</a><a href="#pricing">方案定价</a><a href="#faq">常见问题</a></div>
       </footer>
     </div>

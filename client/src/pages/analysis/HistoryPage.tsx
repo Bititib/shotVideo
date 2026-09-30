@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useAdminFilters } from '../../hooks/useAdminView';
+import { startPolling } from '../../utils/polling';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -25,6 +27,8 @@ import {
 import { contentApi } from '../../api/content';
 import { downloadGeneratedImage } from '../../api/imageGen';
 import { getContentFailureInfo } from '../../utils/contentFailure';
+import { formatBeijingTime as formatDate } from '../../../../shared/time';
+import { formatVideoGenerationTime } from '../../utils/videoTiming';
 
 interface ContentItem {
   id: number;
@@ -88,12 +92,6 @@ function StatusBadge({ status }: { status: string }) {
   return <span className="history-status">{status}</span>;
 }
 
-function formatDate(value: string) {
-  const normalized = value.includes('T') ? value : `${value.replace(' ', 'T')}Z`;
-  const date = new Date(normalized);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false });
-}
-
 function getMediaUrls(item: ContentItem): string[] {
   const metadata = parseMetadata(item.metadata);
   const urls = [item.resultUrl, ...(Array.isArray(metadata.imageUrls) ? metadata.imageUrls : [])]
@@ -108,17 +106,19 @@ function getVideoPlayUrl(url: string) {
 
 export default function HistoryPage() {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const initialType = searchParams.get('type') || '';
+  const { values, setFilters, reset } = useAdminFilters({ type: '', status: '', search: '', dateFrom: '', dateTo: '', page: '1' });
+  const { type, status, search, dateFrom, dateTo } = values;
+  const page = Math.max(1, Number.parseInt(values.page, 10) || 1);
+  const setPage = (next: number | ((page: number) => number)) => setFilters({ page: String(typeof next === 'function' ? next(page) : next) });
+  const setType = (type: string) => setFilters({ type, page: '1' });
+  const setStatus = (status: string) => setFilters({ status, page: '1' });
+  const setSearch = (search: string) => setFilters({ search, page: '1' });
+  const setDateFrom = (dateFrom: string) => setFilters({ dateFrom, page: '1' });
+  const setDateTo = (dateTo: string) => setFilters({ dateTo, page: '1' });
+  const requestVersion = useRef(0);
   const [items, setItems] = useState<ContentItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [type, setType] = useState(initialType);
-  const [status, setStatus] = useState('');
-  const [search, setSearch] = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState(search.trim());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<ContentItem | null>(null);
@@ -130,18 +130,12 @@ export default function HistoryPage() {
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setDebouncedSearch(search.trim());
-      setPage(1);
     }, 300);
     return () => window.clearTimeout(timer);
   }, [search]);
 
-  useEffect(() => {
-    const next = new URLSearchParams();
-    if (type) next.set('type', type);
-    setSearchParams(next, { replace: true });
-  }, [type, setSearchParams]);
-
-  const loadContents = useCallback(async (quiet = false) => {
+  const loadContents = useCallback(async (quiet = false, signal?: AbortSignal) => {
+    const version = ++requestVersion.current;
     if (!quiet) setLoading(true);
     setError('');
     try {
@@ -153,23 +147,25 @@ export default function HistoryPage() {
         search: debouncedSearch || undefined,
         dateFrom: dateFrom || undefined,
         dateTo: dateTo || undefined,
-      });
+      }, signal);
+      if (signal?.aborted || version !== requestVersion.current) return;
       setItems(data.items || []);
       setTotal(data.total || 0);
     } catch (err: any) {
+      if (signal?.aborted || version !== requestVersion.current) return;
       setError(err.message || '生成记录加载失败，请稍后重试');
+      if (quiet) throw err;
     } finally {
-      if (!quiet) setLoading(false);
+      if (!signal?.aborted && version === requestVersion.current) setLoading(false);
     }
   }, [page, pageSize, type, status, debouncedSearch, dateFrom, dateTo]);
 
-  useEffect(() => { loadContents(); }, [loadContents]);
+  useEffect(() => { const controller = new AbortController(); void loadContents(false, controller.signal); return () => { controller.abort(); requestVersion.current++; }; }, [loadContents]);
 
   const hasPending = items.some(item => normalizeStatus(item.status) === 'processing');
   useEffect(() => {
     if (!hasPending) return;
-    const timer = window.setInterval(() => loadContents(true), 6000);
-    return () => window.clearInterval(timer);
+    return startPolling(signal => loadContents(true, signal), 6000);
   }, [hasPending, loadContents]);
 
   useEffect(() => {
@@ -189,7 +185,7 @@ export default function HistoryPage() {
     try {
       const detail = await contentApi.getMyApiHistoryById(item.id);
       setSelected(detail);
-      if (normalizeStatus(detail.status) !== normalizeStatus(item.status)) loadContents(true);
+      if (normalizeStatus(detail.status) !== normalizeStatus(item.status)) loadContents(true).catch(() => {});
     } catch {
       // The list snapshot is still useful if refreshing the detail fails.
     } finally {
@@ -204,7 +200,7 @@ export default function HistoryPage() {
       await contentApi.deleteMyApiHistory(item.id);
       if (selected?.id === item.id) setSelected(null);
       if (items.length === 1 && page > 1) setPage(current => current - 1);
-      else await loadContents(true);
+      else await loadContents(true).catch(() => {});
     } catch (err: any) {
       setError(err.message || '删除失败，请稍后重试');
     } finally {
@@ -234,7 +230,7 @@ export default function HistoryPage() {
   };
 
   const resetFilters = () => {
-    setType(''); setStatus(''); setSearch(''); setDateFrom(''); setDateTo(''); setPage(1);
+    reset();
   };
 
   return (
@@ -243,7 +239,7 @@ export default function HistoryPage() {
         <div>
           <div className="history-eyebrow"><History /> CREATION ARCHIVE</div>
           <h1>生成记录</h1>
-          <p>集中查看每一次创作结果、参数、状态与费用。</p>
+          <p>集中查看每一次创作结果、参数、状态与费用。时间均为北京时间。</p>
         </div>
         <div className="history-summary" aria-label="记录概览">
           <div><strong>{total}</strong><span>条记录</span></div>
@@ -261,23 +257,23 @@ export default function HistoryPage() {
         </div>
         <div className="history-filter-field">
           <label htmlFor="history-status">状态</label>
-          <select id="history-status" value={status} onChange={event => { setStatus(event.target.value); setPage(1); }}>
+          <select id="history-status" value={status} onChange={event => { setStatus(event.target.value); }}>
             {statusOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
         </div>
         <div className="history-filter-field history-date-field">
           <label htmlFor="history-from">开始日期</label>
-          <input id="history-from" type="date" value={dateFrom} max={dateTo || undefined} onChange={event => { setDateFrom(event.target.value); setPage(1); }} />
+          <input id="history-from" type="date" value={dateFrom} max={dateTo || undefined} onChange={event => { setDateFrom(event.target.value); }} />
         </div>
         <div className="history-filter-field history-date-field">
           <label htmlFor="history-to">结束日期</label>
-          <input id="history-to" type="date" value={dateTo} min={dateFrom || undefined} onChange={event => { setDateTo(event.target.value); setPage(1); }} />
+          <input id="history-to" type="date" value={dateTo} min={dateFrom || undefined} onChange={event => { setDateTo(event.target.value); }} />
         </div>
       </section>
 
       <div className="history-type-tabs" role="tablist" aria-label="记录类型">
         {typeOptions.map(option => (
-          <button key={option.value} role="tab" aria-selected={type === option.value} className={type === option.value ? 'is-active' : ''} onClick={() => { setType(option.value); setPage(1); }}>
+          <button key={option.value} role="tab" aria-selected={type === option.value} className={type === option.value ? 'is-active' : ''} onClick={() => { setType(option.value); }}>
             {option.label}
           </button>
         ))}
@@ -317,6 +313,7 @@ export default function HistoryPage() {
                 <span className="history-item-meta">
                   <em className={config.tone}><TypeIcon />{config.label}</em>
                   <span><Clock3 />{formatDate(item.createdAt)}</span>
+                  {item.type === 'video' && <span>生成耗时：{formatVideoGenerationTime(item)}</span>}
                   <span>{item.modelId || '未记录模型'}</span>
                   {item.cost > 0 && <span className="history-cost">¥{Number(item.cost).toFixed(3)}</span>}
                 </span>
@@ -393,7 +390,8 @@ export default function HistoryPage() {
                     <div><dt>使用模型</dt><dd>{selected.modelId || '未记录'}</dd></div>
                     <div><dt>费用</dt><dd>¥{Number(selected.cost || 0).toFixed(3)}</dd></div>
                     <div><dt>调用来源</dt><dd>{metadata.source === 'api' ? 'API' : '网页工作台'}</dd></div>
-                    {metadata.seconds && <div><dt>时长</dt><dd>{metadata.seconds} 秒</dd></div>}
+                    {selected.type === 'video' && <div><dt>生成耗时（含排队和保存）</dt><dd>{formatVideoGenerationTime(selected)}</dd></div>}
+                    {metadata.seconds && <div><dt>视频时长</dt><dd>{metadata.seconds} 秒</dd></div>}
                     {metadata.resolution && <div><dt>分辨率</dt><dd>{metadata.resolution}</dd></div>}
                   </dl>
                 </section>

@@ -1,3 +1,6 @@
+import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
+import { reserveUserCharge } from '../services/billingReservation.js';
+import { canvasRequestMiddleware, recordCanvasEvent } from '../middleware/canvasRequest.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth.js';
@@ -8,7 +11,7 @@ import { ChannelService } from '../services/channelService.js';
 import { BalanceService } from '../services/balanceService.js';
 import { ContentService } from '../services/contentService.js';
 import { env } from '../config/env.js';
-import { db } from '../db/index.js';
+import { db, sqlite } from '../db/index.js';
 import { contents, models } from '../db/schema.js';
 import { eq, like, and } from 'drizzle-orm';
 import fs from 'fs';
@@ -34,6 +37,7 @@ const router = Router();
  */
 function convertBase64ToPublicUrl(dataUrl: string, prefix: string, req: Request): string {
   if (!dataUrl) return '';
+  if (uploadPath(dataUrl)) return issueUploadUrl(dataUrl, process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`);
   if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
     return dataUrl;
   }
@@ -66,7 +70,7 @@ function convertBase64ToPublicUrl(dataUrl: string, prefix: string, req: Request)
 
     // 优先使用环境变量配置的公网基准 URL
     const baseUrl = process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
-    return `${baseUrl.replace(/\/+$/, '')}/uploads/${filename}`;
+    return issueUploadUrl(`${baseUrl.replace(/\/+$/, '')}/uploads/${filename}`);
   } catch (err: any) {
     console.error('[imageGen] convertBase64ToPublicUrl 失败:', err.message);
     return dataUrl;
@@ -209,7 +213,7 @@ export async function localizeGeneratedImage(
   const uploadDir = path.join(process.cwd(), 'data/uploads');
   if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
   await fs.promises.writeFile(path.join(uploadDir, filename), buffer);
-  const localUrl = `/uploads/${filename}`;
+  const localUrl = registerUpload(`/uploads/${filename}`);
   return options?.relative ? localUrl.replace(/^\/uploads\//, '/api/uploads/') : `${siteBase}${localUrl}`;
 }
 
@@ -245,7 +249,7 @@ router.get('/download', authMiddleware, async (req: TierRequest, res: Response) 
       } catch { /* public signed URLs do not require the channel key */ }
     }
 
-    const upstream = await fetch(requestUrl, {
+    const upstream = await fetch(uploadPath(rawUrl) ? issueUploadUrl(rawUrl,publicBaseUrl(req)) : requestUrl, {
       headers,
       signal: AbortSignal.timeout(60_000),
     });
@@ -336,7 +340,7 @@ router.get('/models', (_req: Request, res: Response) => {
 });
 
 /** POST /api/image-gen/generate — 图片生成（支持多图 + 参考图） */
-router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quotaMiddleware, async (req: TierRequest, res: Response) => {
+router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware('generate_image'), quotaMiddleware, async (req: TierRequest, res: Response) => {
   const {
     prompt,
     model = 'gpt-image-2',
@@ -354,7 +358,8 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
     return res.status(400).json({ error: '请输入图片描述' });
   }
 
-  const count = Math.max(1, Math.min(4, Number(n) || 1));
+  const count = Number(n);
+  if (!Number.isInteger(count) || count < 1 || count > 4) return res.status(400).json({error:'生成数量必须为 1 到 4 的整数'});
 
   const channel = findImageChannel(model);
   if (!channel) {
@@ -369,6 +374,7 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
   res.flushHeaders();
 
   const sendEvent = (data: Record<string, any>) => {
+    recordCanvasEvent(req, data);
     if (!res.writableEnded && !res.destroyed) res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
   const finishStream = () => {
@@ -432,6 +438,18 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
     metadata: persistedMetadata,
     status: 'processing',
   });
+  let reservation: ReturnType<typeof reserveUserCharge>;
+  try {
+    reservation = sqlite.transaction(() => {
+      const charge = reserveUserCharge(req.userId!, estimatedCost, 'generate_image', {contentId, model});
+      Object.assign(persistedMetadata, { billingReservationId: charge.id, billingStatus: 'reserved', reservedCost: estimatedCost, billingBalanceSource: charge.receipt.source, billingOrgId: charge.receipt.orgId });
+      db.update(contents).set({cost: estimatedCost, metadata: JSON.stringify(persistedMetadata)}).where(eq(contents.id, contentId)).run();
+      return charge;
+    })();
+  } catch (error: any) {
+    db.update(contents).set({status:'failed'}).where(eq(contents.id,contentId)).run();
+    sendEvent({type:'error',message:error.message}); finishStream(); return;
+  }
   sendEvent({ type: 'status', message: '图片任务已提交，正在后台生成...', contentId, total: count });
 
   const persistJob = (patch: Record<string, any>, status = 'processing') => {
@@ -441,11 +459,11 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
       metadata: JSON.stringify(persistedMetadata),
     }).where(eq(contents.id, contentId)).run();
   };
-  const persistFailure = (message: string) => persistJob({
+  const persistFailure = (message: string) => { reservation.cancel(); db.update(contents).set({cost:0}).where(eq(contents.id,contentId)).run(); persistJob({
     progressText: message,
     failureReason: message,
-    failedAt: new Date().toISOString(),
-  }, 'failed');
+    failedAt: new Date().toISOString(), billingStatus: 'refunded', refundAmount: estimatedCost,
+  }, 'failed'); };
 
   /** 生成完成后统一计费 + 保存内容 */
   const billUsage = (actualCount: number, imageUrls?: string[], extraMetadata: Record<string, any> = {}) => {
@@ -453,12 +471,14 @@ router.post('/generate', authMiddleware, tierMiddleware('generate_image'), quota
     for (let i = 0; i < actualCount; i++) {
       logUsage(req.userId!, 'generate_image', undefined, duration);
     }
-    const unitCost = PricingService.quote(model, { resolution: billingResolution, count: 1 }, false).cost;
-    const totalCost = Math.round(PricingService.quote(model, { resolution: billingResolution, count: actualCount }, false).cost * 100) / 100;
+    const unitCost = estimatedCost / count;
+    const totalCost = Math.min(estimatedCost, Math.round(unitCost * actualCount * 100) / 100);
+    reservation.settle(totalCost);
     if (totalCost > 0) {
-      const remaining = BalanceService.deduct(req.userId!, totalCost, 'generate_image');
+      const remaining = reservation.receipt.source === 'org' ? BalanceService.getOrgBalance(reservation.receipt.orgId!) : BalanceService.getBalance(req.userId!);
       sendEvent({ type: 'billing', cost: totalCost, count: actualCount, unitCost, remainingBalance: remaining ?? 0 });
     }
+    Object.assign(persistedMetadata, { billingStatus: totalCost ? 'settled' : 'refunded', refundAmount: Math.max(0,estimatedCost-totalCost) });
     // 完成持久化任务；即使浏览器刷新，结果也会保留在内容库。
     try {
       Object.assign(persistedMetadata, {

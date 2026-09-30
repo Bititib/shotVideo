@@ -2,6 +2,7 @@ const API_BASE = '/api';
 
 interface RequestOptions extends RequestInit {
   skipAuth?: boolean;
+  timeoutMs?: number;
 }
 
 class ApiClient {
@@ -10,7 +11,7 @@ class ApiClient {
   }
 
   async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-    const { skipAuth, headers: customHeaders, ...rest } = options;
+    const { skipAuth, headers: customHeaders, timeoutMs, ...rest } = options;
 
     const headers: Record<string, string> = {
       ...(customHeaders as Record<string, string> || {}),
@@ -28,8 +29,15 @@ class ApiClient {
       }
     }
 
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    if (rest.signal?.aborted) cancel();
+    else rest.signal?.addEventListener('abort', cancel, { once: true });
+    const timer = globalThis.setTimeout(cancel, timeoutMs ?? (rest.method === 'GET' ? 30000 : 180000));
+    try {
     const response = await fetch(`${API_BASE}${endpoint}`, {
       ...rest,
+      signal: controller.signal,
       headers,
     });
 
@@ -51,7 +59,16 @@ class ApiClient {
       throw error;
     }
 
-    return response.json();
+    return await response.json();
+    } catch (error) {
+      if (controller.signal.aborted && !rest.signal?.aborted) {
+        throw new Error(rest.method === 'GET' ? '加载超时，请重试' : '请求超时，请先刷新核实操作结果，避免重复提交');
+      }
+      throw error;
+    } finally {
+      globalThis.clearTimeout(timer);
+      rest.signal?.removeEventListener('abort', cancel);
+    }
   }
 
   get<T>(endpoint: string, options?: RequestOptions) {

@@ -790,7 +790,7 @@ export async function initDatabase() {
     db.insert(settings).values([
       { key: 'contact_wechat', value: '', label: '微信号' },
       { key: 'contact_qq', value: '', label: 'QQ号' },
-      { key: 'site_notice', value: '欢迎使用短视频创意风暴！升级会员请联系客服。', label: '站点公告' },
+      { key: 'site_notice', value: '欢迎使用灵序 AI！升级会员请联系客服。', label: '站点公告' },
       { key: 'video_rate_480p', value: '0.03', label: '视频480p费率(¥/秒)' },
       { key: 'video_rate_720p', value: '0.05', label: '视频720p费率(¥/秒)' },
       { key: 'image_rate', value: '0.05', label: '图片生成费率(¥/张)' },
@@ -1435,10 +1435,10 @@ export async function initDatabase() {
         name: '4月天 渠道',
         type: 'openai',
         baseUrl: 'https://llm.chre3.com',
-        apiKey: 'sk-jONZxfxNTSIMij2f7CgUIIdZjQkCmadK8nG51dHa3WcZMvgG',
+        apiKey: process.env.SI_YUE_TIAN_API_KEY?.trim() || '',
         supportedModels: JSON.stringify(chre3Models),
         modelMapping: JSON.stringify({ 'gpt-image-2-siyuetian': 'gpt-image-2' }),
-        status: 1,
+        status: process.env.SI_YUE_TIAN_API_KEY?.trim() ? 1 : 0,
         priority: 0,
         weight: 1,
         maxRetries: 3,
@@ -1674,10 +1674,10 @@ export async function initDatabase() {
         name: 'MJNewAPI 渠道',
         type: 'openai',
         baseUrl: 'https://mjnewapi.diwdiw.cn',
-        apiKey: 'sk-ypnbPu4siWgwzp5EcpqvDTtU4z6q8gHqP3gYj4FV10kku4it',
+        apiKey: process.env.MJNEWAPI_API_KEY?.trim() || '',
         supportedModels: JSON.stringify(mjModels),
         modelMapping: JSON.stringify(mjMapping),
-        status: 1,
+        status: process.env.MJNEWAPI_API_KEY?.trim() ? 1 : 0,
         priority: 0,
         weight: 1,
         maxRetries: 3,
@@ -1687,10 +1687,10 @@ export async function initDatabase() {
     } else {
       db.update(channels)
         .set({
-          apiKey: 'sk-ypnbPu4siWgwzp5EcpqvDTtU4z6q8gHqP3gYj4FV10kku4it',
+          apiKey: existingMj.apiKey || process.env.MJNEWAPI_API_KEY?.trim() || '',
           supportedModels: JSON.stringify(mjModels),
           modelMapping: JSON.stringify(mjMapping),
-          status: 1,
+          status: existingMj.status,
           updatedAt: new Date().toISOString()
         })
         .where(eq(channels.id, existingMj.id))
@@ -1705,7 +1705,7 @@ export async function initDatabase() {
   try {
     const julunModels = ['wan3.0th', JULUN_MINIMAX_H3_MODEL];
     const julunMapping = Object.fromEntries(julunModels.map(modelId => [modelId, modelId]));
-    const julunApiKey = 'sk-yYbcd3cH5lrl6Za89O8beER0iomYfHOyPWSqb9XMv0MLAgWS';
+    const julunApiKey = process.env.JULUN_API_KEY?.trim() || '';
     const existingJulun = db.select().from(channels).where(like(channels.baseUrl, '%julun.cc%')).get();
     if (!existingJulun) {
       db.insert(channels).values({
@@ -1715,7 +1715,7 @@ export async function initDatabase() {
         apiKey: julunApiKey,
         supportedModels: JSON.stringify(julunModels),
         modelMapping: JSON.stringify(julunMapping),
-        status: 1,
+        status: julunApiKey ? 1 : 0,
         priority: 1,
         weight: 1,
         maxRetries: 3,
@@ -1725,7 +1725,7 @@ export async function initDatabase() {
     } else {
       db.update(channels)
         .set({
-          apiKey: julunApiKey,
+          apiKey: existingJulun.apiKey || julunApiKey,
           supportedModels: JSON.stringify(julunModels),
           modelMapping: JSON.stringify(julunMapping),
           updatedAt: new Date().toISOString()

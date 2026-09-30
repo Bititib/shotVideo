@@ -134,10 +134,11 @@ export class TokenService {
 
   /** 扣减额度（原子操作） */
   static deductBalance(tokenId: number, amount: number) {
+    if (!Number.isFinite(amount) || amount < 0) throw new Error('Invalid charge amount');
     if (amount <= 0) return;
 
     const token = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get();
-    if (!token) return;
+    if (!token) throw new Error('Token not found');
 
     if (token.balance === -1) {
       // 无限额度，只更新 usedAmount
@@ -146,12 +147,13 @@ export class TokenService {
         lastUsedAt: new Date().toISOString(),
       }).where(eq(apiTokens.id, tokenId)).run();
     } else {
-      // 有限额度：原子扣减，使用 MAX(0, ...) 防止负数
-      db.update(apiTokens).set({
-        balance: sql`MAX(0, balance - ${amount})`,
+      // Only deduct when the current balance covers the entire reservation.
+      const result = db.update(apiTokens).set({
+        balance: sql`balance - ${amount}`,
         usedAmount: sql`used_amount + ${amount}`,
         lastUsedAt: new Date().toISOString(),
-      }).where(eq(apiTokens.id, tokenId)).run();
+      }).where(and(eq(apiTokens.id, tokenId), sql`balance >= ${amount}`)).run();
+      if (!result.changes) throw Object.assign(new Error('Insufficient token balance'), { status: 402 });
     }
   }
 

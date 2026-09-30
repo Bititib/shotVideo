@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { adminApi } from '../../api/admin';
 import { Search, ChevronLeft, ChevronRight, X, Check, Ban, UserPlus } from 'lucide-react';
 
@@ -7,6 +7,13 @@ export default function UsersPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const requestVersion = useRef(0);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    const timer = window.setTimeout(() => { setDebouncedSearch(search.trim()); setPage(1); }, 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
   const [tiers, setTiers] = useState<any[]>([]);
   const [editUser, setEditUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -16,17 +23,22 @@ export default function UsersPage() {
   const pageSize = 15;
 
   const load = useCallback(async () => {
+    const version = ++requestVersion.current;
     setLoading(true);
+    setError('');
     try {
       const [userData, tierData] = await Promise.all([
-        adminApi.getUsers({ page, pageSize, search: search || undefined }),
+        adminApi.getUsers({ page, pageSize, search: debouncedSearch || undefined }),
         adminApi.getTiers(),
       ]);
+      if (version !== requestVersion.current) return;
       setUsers(userData.items); setTotal(userData.total); setTiers(tierData);
-    } finally { setLoading(false); }
-  }, [page, search]);
+    } catch (e: any) {
+      if (version === requestVersion.current) setError(e.message || '用户列表加载失败');
+    } finally { if (version === requestVersion.current) setLoading(false); }
+  }, [page, debouncedSearch]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { void load(); return () => { requestVersion.current++; }; }, [load]);
 
   const handleUpdate = async () => {
     if (!editUser) return;
@@ -65,6 +77,7 @@ export default function UsersPage() {
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
+      {error && <div role="alert" className="mb-4 p-3 text-red-500">{error} <button onClick={() => void load()}>重试</button></div>}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-white">👥 用户管理</h1>
         <div className="flex items-center gap-3">

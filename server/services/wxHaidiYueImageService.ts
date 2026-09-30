@@ -1,3 +1,4 @@
+import { issueUploadUrl } from './uploadAccess.js';
 import { createHash } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import fs from 'node:fs/promises';
@@ -279,7 +280,7 @@ export async function wxHaidiYueImageToPublicUrl(
     if (error?.code !== 'EEXIST') throw error;
   }
 
-  return `${resolveMediaBaseUrl(options)}/uploads/${CACHE_DIRECTORY}/${filename}`;
+  return issueUploadUrl(`${resolveMediaBaseUrl(options)}/uploads/${CACHE_DIRECTORY}/${filename}`,resolveMediaBaseUrl(options));
 }
 
 /** Cache every image behind one controlled HTTPS origin and only send URLs supported by wx-海底月. */

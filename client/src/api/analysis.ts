@@ -2,6 +2,39 @@ import { api } from './client';
 
 export type AnalysisModel = { modelId: string; displayName: string };
 export type TtsModel = { modelId: string; displayName: string; rate?: number };
+export type ComicDramaCharacter = { name: string; role: string; description: string; assetPrompt: string };
+export type ComicDramaProp = { name: string; description: string; assetPrompt: string };
+export type ComicDramaShot = {
+  shotNumber: number; duration: number; shotSize: string; camera: string; action: string;
+  dialogue: string; characters: string[]; imagePrompt: string; videoPrompt: string;
+  continuityStart?: string; continuityEnd?: string;
+};
+export type ComicDramaScene = {
+  sceneNumber: number; title: string; location: string; time: string; summary: string;
+  assetPrompt: string; shots: ComicDramaShot[];
+};
+export type ComicDramaBlueprint = {
+  projectId?: number; episodeId?: number;
+  title: string; logline: string; genre: string; visualStyle: string; estimatedDuration: number;
+  characters: ComicDramaCharacter[]; props: ComicDramaProp[]; scenes: ComicDramaScene[];
+};
+export type ComicDramaEpisodeSummary = {
+  id: number; projectId: number; episodeNumber: number; title: string; status: string;
+  taskCount: number; doneCount: number; createdAt: string; updatedAt: string;
+  analysisError?: string | null;
+  progress: Record<'asset' | 'storyboard' | 'video', { total: number; done: number; running: number; failed: number; pending: number }>;
+};
+export type ComicDramaSeriesEpisodePlan = {
+  episodeNumber: number; title: string; summary: string; hook: string; startBlock: number; endBlock: number;
+  estimatedDuration: number; characterCount: number; script: string;
+};
+export type ComicDramaSeriesPlan = {
+  title: string; logline: string; genre: string; visualStyle: string; totalCharacters: number;
+  episodes: ComicDramaSeriesEpisodePlan[];
+};
+export type ComicDramaQualityReview = {
+  score: number; consistencyPassed: boolean; summary: string; issues: string[]; correctedPrompt: string;
+};
 const MODEL_CACHE_TTL_MS = 30_000;
 const PERSISTED_MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const ANALYSIS_MODEL_CACHE_KEY = 'analysis-models-cache-v1';
@@ -92,6 +125,84 @@ export const analysisApi = {
     if (videoTitle) formData.append('videoTitle', videoTitle);
     if (modelId) formData.append('modelId', modelId);
     return api.post<any>('/analysis/general', formData);
+  },
+
+  analyzeComicDramaScript(script: string, modelId?: string) {
+    return api.post<ComicDramaBlueprint>('/analysis/comic-drama-script', { script, modelId });
+  },
+
+  planComicDramaSeries(script: string, input: { targetDuration: number; requestedEpisodes?: number; modelId?: string }) {
+    return api.post<ComicDramaSeriesPlan>('/analysis/comic-drama-series-plan', { script, ...input });
+  },
+
+  createComicDramaSeries(input: { title: string; originalScript: string; plan: ComicDramaSeriesPlan }) {
+    return api.post<any>('/analysis/comic-drama-series', input);
+  },
+
+  listComicDramaProjects() {
+    return api.get<Array<{ id: number; title: string; status: string; episodeCount: number; updatedAt: string; createdAt: string }>>('/analysis/comic-drama-projects');
+  },
+
+  getComicDramaProject(projectId: number) {
+    return api.get<any>(`/analysis/comic-drama-projects/${projectId}`);
+  },
+
+  getComicDramaExportSummary(projectId: number, episodeId?: number) {
+    const query = episodeId ? `?episodeId=${episodeId}` : '';
+    return api.get<{ total: number; completed: number; unapproved: number; running: number; missing: number }>(`/analysis/comic-drama-projects/${projectId}/export-summary${query}`);
+  },
+
+  exportComicDramaVideos(projectId: number, input: { episodeId: number; scope: 'current' | 'all'; includeUnapproved: boolean }) {
+    return api.post<{ url: string; count: number }>(`/analysis/comic-drama-projects/${projectId}/export-videos`, input);
+  },
+
+  createComicDramaEpisode(projectId: number, input: { title?: string; script?: string } = {}) {
+    return api.post<any>(`/analysis/comic-drama-projects/${projectId}/episodes`, input);
+  },
+
+  getComicDramaEpisode(projectId: number, episodeId: number) {
+    return api.get<any>(`/analysis/comic-drama-projects/${projectId}/episodes/${episodeId}`);
+  },
+
+  saveComicDramaEpisodeDraft(projectId: number, episodeId: number, input: { title?: string; script?: string }) {
+    return api.put<{ id: number; title: string; status: string; updatedAt: string }>(`/analysis/comic-drama-projects/${projectId}/episodes/${episodeId}`, input);
+  },
+
+  analyzeComicDramaEpisode(projectId: number, episodeId: number, script: string, modelId?: string) {
+    return api.post<ComicDramaBlueprint>(`/analysis/comic-drama-projects/${projectId}/episodes/${episodeId}/analyze`, { script, modelId });
+  },
+
+  analyzeComicDramaEpisodes(projectId: number, input: { episodeIds?: number[]; modelId?: string } = {}) {
+    return api.post<{ projectId: number; queued: number; episodeIds: number[] }>(`/analysis/comic-drama-projects/${projectId}/analyze-episodes`, input);
+  },
+
+  saveComicDramaEpisodeState(projectId: number, episodeId: number, state: any, status = 'producing') {
+    return api.put<{ id: number; projectId: number; status: string; updatedAt: string }>(`/analysis/comic-drama-projects/${projectId}/episodes/${episodeId}/state`, { state, status });
+  },
+
+  saveComicDramaProjectState(projectId: number, state: any, status?: string) {
+    return api.put<{ id: number; status: string; updatedAt: string }>(`/analysis/comic-drama-projects/${projectId}/state`, { state, status });
+  },
+
+  startComicDramaManaged(projectId: number, episodeId: number, state: any, scope: 'current' | 'all' = 'current') {
+    return api.post<{ id: number; status: string }>(`/analysis/comic-drama-projects/${projectId}/managed`, { episodeId, state, scope });
+  },
+
+  stopComicDramaManaged(projectId: number) {
+    return api.post<{ id: number; status: string }>(`/analysis/comic-drama-projects/${projectId}/managed/stop`);
+  },
+
+  reviewComicDramaImage(input: { imageUrl: string; kind: string; name: string; expectedPrompt: string; visualStyle: string; modelId?: string }) {
+    return api.post<ComicDramaQualityReview>('/analysis/comic-drama-quality-review', input);
+  },
+
+  reviewComicDramaVideo(input: { videoUrl: string; name: string; expectedPrompt: string; continuityStart?: string; continuityEnd?: string; visualStyle: string; modelId?: string }) {
+    return api.post<ComicDramaQualityReview>('/analysis/comic-drama-video-quality-review', input);
+  },
+
+  uploadComicDramaAsset(file: File) {
+    const formData = new FormData(); formData.append('file', file);
+    return api.post<{ url: string }>('/analysis/comic-drama-assets/upload', formData);
   },
 
   analyzeEcommerce(file: File, videoTitle?: string, modelId?: string) {

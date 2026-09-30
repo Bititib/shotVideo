@@ -9,3 +9,6 @@ data/
 .npm-cache/
 .node-gyp/
 .runtime/
+
+backups/
+output/production-package-*/

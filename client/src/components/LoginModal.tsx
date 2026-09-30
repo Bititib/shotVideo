@@ -83,7 +83,7 @@ export default function LoginModal() {
               <Layers3 className="w-[19px] h-[19px]" strokeWidth={1.8} />
             </div>
             <span className="login-modal-brand-name text-lg font-bold">
-              短视频创意风暴
+              灵序 AI
             </span>
           </div>
 

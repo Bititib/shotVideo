@@ -1,5 +1,22 @@
-import { api } from './client';
+import { api as client } from './client';
 import { api as contentApiClient } from './client';
+import { cachedAdminGet, invalidateAdminCache } from './adminCache';
+
+// Cache only configuration lists; runtime status and operational statistics stay live.
+const cacheable = new Set(['/admin/models?view=config', '/admin/pricing?scope=models', '/admin/models', '/admin/channels', '/admin/pricing', '/admin/tiers']);
+async function mutate<T>(request: () => Promise<T>) {
+  invalidateAdminCache();
+  try { return await request(); } finally { invalidateAdminCache(); }
+}
+const api = {
+  get<T>(endpoint: string) {
+    return cacheable.has(endpoint) || endpoint.startsWith('/admin/pricing?modelId=')
+      ? cachedAdminGet(endpoint, () => client.get<T>(endpoint)) : client.get<T>(endpoint);
+  },
+  post<T>(endpoint: string, body?: any) { return mutate(() => client.post<T>(endpoint, body)); },
+  put<T>(endpoint: string, body?: any) { return mutate(() => client.put<T>(endpoint, body)); },
+  delete<T>(endpoint: string) { return mutate(() => client.delete<T>(endpoint)); },
+};
 
 export const adminApi = {
   getDashboard() { return api.get<any>('/admin/dashboard'); },
@@ -22,14 +39,15 @@ export const adminApi = {
   updateTier(id: number, data: any) { return api.put<any>(`/admin/tiers/${id}`, data); },
   deleteTier(id: number) { return api.delete<any>(`/admin/tiers/${id}`); },
 
-  getModels() { return api.get<any>('/admin/models'); },
+  getModels() { return api.get<any>('/admin/models?view=config'); },
+  getModelStatistics() { return api.get<{ items: any[] }>('/admin/models/statistics'); },
   createModel(data: any) { return api.post<any>('/admin/models', data); },
   updateModel(id: number, data: any) { return api.put<any>(`/admin/models/${id}`, data); },
   deleteModel(id: number) { return api.delete<any>(`/admin/models/${id}`); },
 
   // 渠道管理
   getChannels() { return api.get<any[]>('/admin/channels'); },
-  getChannelRuntimeStatus() { return api.get<any[]>('/admin/channels/runtime-status'); },
+  getChannelRuntimeStatus(signal?: AbortSignal) { return client.get<any[]>('/admin/channels/runtime-status', { signal }); },
   getVideoRoutingStats(period: 'all' | '24h' | '7d' | '30d' = 'all') {
     return api.get<any>(`/admin/channels/routing-stats?period=${period}`);
   },
@@ -53,8 +71,10 @@ export const adminApi = {
   deleteToken(id: number) { return api.delete<any>(`/admin/tokens/${id}`); },
 
   // 计费管理
-  getPricing(params?: { category?: string; billingType?: string; search?: string }) {
+  getPricing(params?: { category?: string; billingType?: string; search?: string; modelId?: string; scope?: 'models' }) {
     const query = new URLSearchParams();
+    if (params?.modelId) query.set('modelId', params.modelId);
+    if (params?.scope) query.set('scope', params.scope);
     if (params?.category && params.category !== 'all') query.set('category', params.category);
     if (params?.billingType && params.billingType !== 'all') query.set('billingType', params.billingType);
     if (params?.search) query.set('search', params.search);

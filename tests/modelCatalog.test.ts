@@ -21,7 +21,10 @@ vi.mock('../server/config/env.js', async importOriginal => {
   };
 });
 vi.mock('../server/services/channelService.js', () => ({
-  ChannelService: { getActiveChannels: vi.fn(() => [{ supportedModels: ['*'] }]) },
+  ChannelService: {
+    getActiveChannels: vi.fn(() => [{ supportedModels: ['*'] }]),
+    findChannelForModel: vi.fn(() => null),
+  },
 }));
 vi.mock('../server/services/hmStudioOverflowChannelService.js', () => ({
   hasHmStudioOverflowChannel: vi.fn(() => false),
@@ -37,6 +40,9 @@ import v1Router, { getAccessibleModels, getAccessibleModelIds } from '../server/
 import { ChannelService } from '../server/services/channelService.js';
 import { TokenService } from '../server/services/tokenService.js';
 import { hasHmStudioOverflowChannel } from '../server/services/hmStudioOverflowChannelService.js';
+import { resolvePublicModelId, validatePublicModelName } from '../server/services/publicModelNameService.js';
+import { AdminService } from '../server/services/adminService.js';
+import { getHmStudioUpstreamVideoModel } from '../server/services/hmStudioVideoModels.js';
 
 let server: Server;
 let baseUrl: string;
@@ -55,6 +61,7 @@ beforeAll(async () => {
   expect(network).not.toHaveBeenCalled();
   network.mockRestore();
   const app = express();
+  app.use(express.json());
   app.use('/v1', v1Router);
   server = await new Promise<Server>(resolve => {
     const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
@@ -62,7 +69,7 @@ beforeAll(async () => {
   baseUrl = `http://127.0.0.1:${(server.address() as any).port}`;
 });
 afterAll(async () => {
-  if (server) await new Promise<void>(resolve => server.close(() => resolve()));
+  if (server) { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
   vi.restoreAllMocks();
   sqlite.close();
 });
@@ -102,9 +109,9 @@ describe('admin-owned model catalog', () => {
     expect(getAccessibleModelIds({ allowedModels: [] })).not.toContain('seedance_v2.5');
   });
 
-  it('returns the admin name with the unchanged ID, without exposing private model fields', async () => {
+  it('returns the admin name as the callable ID, retaining the canonical ID without exposing secrets', async () => {
     const validate = vi.spyOn(TokenService, 'validateToken').mockReturnValue({
-      valid: true, token: { allowedModels: ['nano-banana-2'] },
+      valid: true, token: { allowedModels: ['nano-banana-2'], balance: 1000000 },
     } as any);
     db.update(models).set({ displayName: '我的图片模型', apiKey: 'private-model-key' })
       .where(eq(models.modelId, 'nano-banana-2')).run();
@@ -112,9 +119,78 @@ describe('admin-owned model catalog', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.data).toEqual([{
-      id: 'nano-banana-2', name: '我的图片模型', object: 'model', created: expect.any(Number), owned_by: 'system',
+      id: '我的图片模型', name: '我的图片模型', canonical_id: 'nano-banana-2', object: 'model', created: expect.any(Number), owned_by: 'system',
     }]);
     expect(JSON.stringify(body)).not.toContain('private-model-key');
+    validate.mockRestore();
+  });
+
+  it('maps frontend HM names and old IDs to the same existing upstream model', () => {
+    const name = '自定义 seedance_v2.5';
+    expect(resolvePublicModelId(name)).toBe('seedance_v2.5');
+    expect(getHmStudioUpstreamVideoModel(resolvePublicModelId(name)))
+      .toBe(getHmStudioUpstreamVideoModel('seedance_v2.5'));
+  });
+
+  it('preserves aliases through admin renames and rejects duplicate names and ID collisions', () => {
+    const row = db.select().from(models).where(eq(models.modelId, 'nano-banana-2')).get()!;
+    AdminService.updateModel(row.id, { displayName: '图片新名称' });
+    expect(resolvePublicModelId('我的图片模型')).toBe(row.modelId);
+    expect(resolvePublicModelId('图片新名称')).toBe(row.modelId);
+    expect(resolvePublicModelId(row.modelId)).toBe(row.modelId);
+    expect(() => validatePublicModelName('another-id', '我的图片模型')).toThrow('已被');
+    expect(() => validatePublicModelName('another-id', '图片新名称')).toThrow('已被');
+    expect(() => validatePublicModelName('another-id', row.modelId)).toThrow('已被');
+  });
+
+  it('normalizes names before permission checks on all generation endpoints, including multipart edits', async () => {
+    const validate = vi.spyOn(TokenService, 'validateToken').mockReturnValue({
+      valid: true, token: { allowedModels: ['different-model'] },
+    } as any);
+    for (const endpoint of ['/chat/completions', '/images/generations', '/images/edits', '/videos', '/videos/generations', '/video/generations']) {
+      const payload = { model: '图片新名称', prompt: 'A peaceful mountain landscape', messages: [{ role: 'user', content: 'Hello' }] };
+      let body: string | FormData = JSON.stringify(payload);
+      const headers: Record<string, string> = { Authorization: 'Bearer test', 'Content-Type': 'application/json' };
+      if (endpoint === '/images/edits') {
+        body = new FormData();
+        body.append('model', payload.model);
+        body.append('prompt', payload.prompt);
+        body.append('image', new Blob(['test'], { type: 'image/png' }), 'test.png');
+        delete headers['Content-Type'];
+      }
+      const response = await fetch(`${baseUrl}/v1${endpoint}`, { method: 'POST', headers, body });
+      expect(response.status, endpoint).toBe(403);
+      expect(JSON.stringify(await response.json())).toContain('nano-banana-2');
+    }
+    validate.mockRestore();
+  });
+
+  it('accepts a permitted public name and routes using its canonical ID', async () => {
+    const validate = vi.spyOn(TokenService, 'validateToken').mockReturnValue({
+      valid: true, token: { allowedModels: ['nano-banana-2'], balance: 1000000 },
+    } as any);
+    const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: 'POST', headers: { Authorization: 'Bearer test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: '图片新名称', messages: [{ role: 'user', content: 'Hello' }] }),
+    });
+    // With no test channel, routing ends here; no paid request is made.
+    expect(response.status).toBe(404);
+    expect(ChannelService.findChannelForModel).toHaveBeenCalledWith('nano-banana-2');
+    validate.mockRestore();
+  });
+
+  it('looks up the same price by public name and old ID', async () => {
+    const validate = vi.spyOn(TokenService, 'validateToken').mockReturnValue({
+      valid: true, token: { allowedModels: ['nano-banana-2'], balance: 1000000 },
+    } as any);
+    const results = [];
+    for (const name of ['图片新名称', 'nano-banana-2']) {
+      const response = await fetch(`${baseUrl}/v1/pricing/${encodeURIComponent(name)}`, { headers: { Authorization: 'Bearer test' } });
+      expect(response.status).toBe(200);
+      results.push(await response.json());
+    }
+    expect(results[0]).toEqual(results[1]);
+    expect(results[0]).toMatchObject({ model: '图片新名称', canonical_id: 'nano-banana-2' });
     validate.mockRestore();
   });
 
@@ -123,5 +199,17 @@ describe('admin-owned model catalog', () => {
       db.update(models).set({ isActive: 0 }).where(eq(models.id, model.id)).run();
     }
     expect(getEnabledPublicModels('image')).toEqual([]);
+  });
+
+  it('rejects ambiguous names instead of selecting an arbitrary model', () => {
+    const first = db.insert(models).values({ modelId: 'collision-a', provider: 'test', displayName: '重复名称' }).returning().get();
+    const second = db.insert(models).values({ modelId: 'collision-b', provider: 'test', displayName: '重复名称' }).returning().get();
+    expect(() => resolvePublicModelId('重复名称')).toThrow('存在冲突');
+    expect(resolvePublicModelId('collision-a')).toBe('collision-a');
+    // An administrator can repair existing duplicates without stealing the remaining name.
+    AdminService.updateModel(first.id, { displayName: '修正后的名称' });
+    expect(resolvePublicModelId('重复名称')).toBe(second.modelId);
+    expect(resolvePublicModelId('修正后的名称')).toBe(first.modelId);
+    expect(resolvePublicModelId('constructor')).toBe('constructor');
   });
 });

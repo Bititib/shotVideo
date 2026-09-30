@@ -1,3 +1,6 @@
+import { resolvePublicModelId, publicModelName } from '../services/publicModelNameService.js';
+import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
+import { reserveCharge } from '../services/billingReservation.js';
 import { getHayaVideoSpec, validateHayaVideoInput } from '../../shared/hayaVideo.js';
 import { isHayaChannel, submitHayaVideo, HayaSubmissionError } from '../services/hayaVideoAdapter.js';
 import { prepareHayaMedia, validateHayaMedia } from '../services/hayaMediaService.js';
@@ -8,7 +11,7 @@ import { ChannelService } from '../services/channelService.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { PricingService } from '../services/pricingService.js';
 import { BalanceService, type BalanceDeduction } from '../services/balanceService.js';
-import { db } from '../db/index.js';
+import { db, sqlite } from '../db/index.js';
 import { apiLogs, settings, models, contents, apiTokens } from '../db/schema.js';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import multer from 'multer';
@@ -117,6 +120,7 @@ import { withVideoFailureMetadata } from '../services/videoFailureService.js';
 import { ContentService } from '../services/contentService.js';
 import { preferredVideoDownloadPath } from '../services/videoLocalizationService.js';
 import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
+import { validateVideoPrompt } from '../services/videoPromptValidation.js';
 
 const router = Router();
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
@@ -311,11 +315,12 @@ type TokenBillingDeduction = {
 
 /** 扣除 Token 或关联用户的余额，并保留真实扣款来源供失败时原路退回。 */
 function deductTokenOrUserBalance(token: any, cost: number, model: string): TokenBillingDeduction {
+  return sqlite.transaction((): TokenBillingDeduction => {
   if (cost <= 0) return { target: 'not_charged' };
   if (token.balance === -1) {
     if (token.userId) {
       const balanceDeduction = BalanceService.deductWithSource(token.userId, cost, 'api_call', { tokenKey: token.tokenKey, model });
-      if (!balanceDeduction) throw new Error('Insufficient linked user balance');
+      if (!balanceDeduction) throw Object.assign(new Error('Insufficient linked user balance'), {status:402});
       TokenService.deductBalance(token.id, cost);
       return {
         target: balanceDeduction.source === 'org' ? 'organization_balance' : 'user_balance',
@@ -327,6 +332,7 @@ function deductTokenOrUserBalance(token: any, cost: number, model: string): Toke
   }
   TokenService.deductBalance(token.id, cost);
   return { target: 'api_token' };
+  })();
 }
 
 /** Return a failed async request's pre-deducted amount to the same billing source. */
@@ -548,6 +554,25 @@ function rewriteVideoUrl(urlStr: string, req: Request, id: string): string {
   return `${protocol}://${host}/v1/files/video?id=${id}`;
 }
 
+
+/** Convert the public name once; all downstream accounting and adapters keep canonical IDs. */
+function normalizeApiModel(req: Request, res: Response): boolean {
+  if (req.body?.model === undefined) return true;
+  if (typeof req.body.model !== 'string') {
+    cleanupFiles(req.files);
+    res.status(400).json({ error: { message: 'model must be a string', type: 'invalid_request_error' } });
+    return false;
+  }
+  try {
+    req.body.model = resolvePublicModelId(req.body.model);
+    return true;
+  } catch (error: any) {
+    cleanupFiles(req.files);
+    res.status(error.status || 500).json({ error: { message: error.message, type: 'invalid_request_error' } });
+    return false;
+  }
+}
+
 /** GET /v1/models — 返回当前 Token 可用的模型列表 */
 router.get('/models', (req: Request, res: Response) => {
   const tokenKey = extractToken(req);
@@ -562,8 +587,9 @@ router.get('/models', (req: Request, res: Response) => {
   res.json({
     object: 'list',
     data: modelList.map(model => ({
-      id: model.modelId,
+      id: publicModelName(model),
       name: model.displayName || model.modelId,
+      canonical_id: model.modelId,
       object: 'model',
       created: Math.floor(Date.now() / 1000),
       owned_by: 'system',
@@ -583,7 +609,7 @@ router.get('/pricing', (req: Request, res: Response) => {
   res.json({
     object: 'list',
     currency: 'CNY',
-    data: PricingService.getPublicPricingForModels(modelList),
+    data: PricingService.getPublicPricingForModels(modelList).map(row => ({ ...row, model: row.display_name || row.model, canonical_id: row.model })),
   });
 });
 
@@ -595,7 +621,7 @@ router.get('/pricing/:model', (req: Request, res: Response) => {
   const { valid, error, token } = TokenService.validateToken(tokenKey);
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
-  const modelId = req.params.model;
+  const modelId = resolvePublicModelId(req.params.model);
   const accessibleModels = getAccessibleModelIds(token);
   if (!accessibleModels.includes(modelId)) {
     return res.status(404).json({
@@ -610,7 +636,7 @@ router.get('/pricing/:model', (req: Request, res: Response) => {
     });
   }
 
-  res.json(pricing);
+  res.json({ ...pricing, model: pricing.display_name || pricing.model, canonical_id: pricing.model });
 });
 
 /** GET /v1/billing/balance — 余额查询 */
@@ -733,6 +759,12 @@ router.get('/billing/usage', (req: Request, res: Response) => {
 });
 
 /** POST /v1/chat/completions — 核心对话代理转发 */
+
+function reserveApiCharge(token: any, cost: number, model: string) {
+  return reserveCharge(cost, amount => deductTokenOrUserBalance(token, amount, model),
+    (amount, receipt) => { refundTokenOrUserBalance(token, amount, receipt); }, { tokenId: token.id, userId: token.userId, unlimitedToken: token.balance === -1, model });
+}
+
 router.post('/chat/completions', async (req: Request, res: Response) => {
   const startTime = Date.now();
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
@@ -743,6 +775,7 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
   const { valid, error, token } = TokenService.validateToken(tokenKey);
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
+  if (!normalizeApiModel(req, res)) return;
   const { model, messages, stream = false, ...otherParams } = req.body;
   if (!model) return res.status(400).json({ error: { message: 'model is required', type: 'invalid_request_error' } });
   if (!messages) return res.status(400).json({ error: { message: 'messages is required', type: 'invalid_request_error' } });
@@ -751,8 +784,21 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
     return res.status(403).json({ error: { message: `Token has no access to model ${model}`, type: 'permission_error' } });
   }
 
-  // 检查余额 (预扣 0.01 元以验证有效性)
-  const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, 0.01);
+  const outputLimit = Number(otherParams.max_completion_tokens ?? otherParams.max_tokens ?? 4096);
+  const choices = Number(otherParams.n ?? 1);
+  if (!Number.isInteger(outputLimit) || outputLimit < 1 || outputLimit > 65536 || !Number.isInteger(choices) || choices < 1 || choices > 4)
+    return res.status(400).json({ error: { message: 'max_tokens must be 1..65536 and n must be 1..4', type: 'invalid_request_error' } });
+  if (otherParams.max_completion_tokens !== undefined) { otherParams.max_completion_tokens = outputLimit; delete otherParams.max_tokens; }
+  else otherParams.max_tokens = outputLimit;
+  if (stream) otherParams.stream_options = { ...otherParams.stream_options, include_usage: true };
+  // UTF-8 bytes conservatively cover text tokens; reserve extra for each media item.
+  const serialized = JSON.stringify({ messages, ...otherParams });
+  const mediaCount = (serialized.match(/"(?:image_url|input_audio|video_url)"/g) || []).length;
+  const quote = PricingService.createQuoteResolver();
+  const calculateCost = (promptTokens: number, completionTokens: number) => quote(model, {promptTokens, completionTokens}).cost;
+  const reservedCost = calculateCost(Buffer.byteLength(serialized, 'utf8') + 1024 + mediaCount * 65536, outputLimit * choices);
+  // Check for a useful error first; the reservation below performs the atomic deduction.
+  const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, reservedCost);
   if (!sufficient) {
     return res.status(402).json({ error: { message: `Insufficient balance. Current: ¥${currentBalance.toFixed(2)}`, type: 'insufficient_balance_error' } });
   }
@@ -771,7 +817,10 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
     ...otherParams,
   });
 
+  let reservation: ReturnType<typeof reserveApiCharge> | undefined;
   try {
+    reservation = reserveApiCharge(token, reservedCost, model);
+    res.setHeader('X-Billing-Reservation', reservation.id);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), channel.timeout || 120000);
 
@@ -810,42 +859,45 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
       const decoder = new TextDecoder();
       let totalPromptTokens = 0;
       let totalCompletionTokens = 0;
+      let sawUsage = false;
+      let pending = "";
 
       try {
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
-
-          const chunk = decoder.decode(value, { stream: true });
+          const chunk = done ? decoder.decode() : decoder.decode(value, { stream: true });
           res.write(chunk);
 
-          const lines = chunk.split('\n');
+          pending += chunk;
+          const lines = pending.split('\n');
+          pending = done ? '' : lines.pop()!;
           for (const line of lines) {
             if (line.startsWith('data: ') && line !== 'data: [DONE]') {
               try {
                 const data = JSON.parse(line.slice(6));
                 if (data.usage) {
+                  sawUsage = true;
                   totalPromptTokens = data.usage.prompt_tokens || 0;
                   totalCompletionTokens = data.usage.completion_tokens || 0;
                 }
               } catch { }
             }
           }
+          if (done) break;
         }
       } finally {
         reader.releaseLock();
       }
 
+      const cost = sawUsage ? calculateCost(totalPromptTokens, totalCompletionTokens) : reservedCost;
+      if (sawUsage) reservation.settle(cost); else reservation.review();
       res.end();
-
-      const cost = PricingService.calculateCost(model, totalPromptTokens, totalCompletionTokens);
-      deductTokenOrUserBalance(token, cost, model);
 
       db.insert(apiLogs).values({
         tokenId: token.id, channelId: channel.id, model, upstreamModel,
         promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens,
         totalTokens: totalPromptTokens + totalCompletionTokens,
-        cost, durationMs: Date.now() - startTime, status: 'success', clientIp,
+        cost, durationMs: Date.now() - startTime, status: sawUsage && cost <= reservedCost ? 'success' : 'billing_review', clientIp,
       }).run();
       return;
     }
@@ -857,13 +909,14 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
     const completionTokens = responseBody.usage?.completion_tokens || 0;
     const totalTokens = responseBody.usage?.total_tokens || promptTokens + completionTokens;
 
-    const cost = PricingService.calculateCost(model, promptTokens, completionTokens);
-    deductTokenOrUserBalance(token, cost, model);
+    const cost = responseBody.usage ? calculateCost(promptTokens, completionTokens) : reservedCost;
+    if (responseBody.usage) reservation.settle(cost); else reservation.review();
+    res.setHeader('X-Billing-Status', responseBody.usage && cost <= reservedCost ? 'settled' : 'review');
 
     db.insert(apiLogs).values({
       tokenId: token.id, channelId: channel.id, model, upstreamModel,
       promptTokens, completionTokens, totalTokens,
-      cost, durationMs, status: 'success', clientIp,
+      cost, durationMs, status: responseBody.usage && cost <= reservedCost ? 'success' : 'billing_review', clientIp,
     }).run();
 
     res.json(responseBody);
@@ -876,8 +929,9 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
       durationMs, status: 'error', errorMessage, clientIp,
     }).run();
 
-    res.status(502).json({ error: { message: `Upstream error: ${errorMessage}`, type: 'server_error' } });
-  }
+    if (res.headersSent) res.end();
+    else res.status(err.status || 502).json({ error: { message: `Upstream error: ${errorMessage}`, type: 'server_error' } });
+  } finally { reservation?.cancel(); }
 });
 
 /** POST /v1/images/generations — 图片生成代理转发 */
@@ -891,6 +945,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
   const { valid, error, token } = TokenService.validateToken(tokenKey);
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
+  if (!normalizeApiModel(req, res)) return;
   const { model, prompt, n = 1, size = '1024x1024', response_format = 'url', ...otherParams } = req.body;
   if (!model) return res.status(400).json({ error: { message: 'model is required', type: 'invalid_request_error' } });
   if (!prompt) return res.status(400).json({ error: { message: 'prompt is required', type: 'invalid_request_error' } });
@@ -928,7 +983,9 @@ router.post('/images/generations', async (req: Request, res: Response) => {
   const baseUrl = channel.baseUrl.replace(/\/+$/, '');
   const upstreamUrl = `${baseUrl}/v1/images/generations`;
 
+  let reservation: ReturnType<typeof reserveApiCharge> | undefined;
   try {
+    reservation = reserveApiCharge(token, totalCost, model);
     if (isMingFeiImageChannel(channel) && isMingFeiImageModel(model)) {
       const referenceImages = Array.isArray(otherParams.reference_images)
         ? otherParams.reference_images.filter((value: unknown) => typeof value === 'string' && value)
@@ -964,7 +1021,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
         data: completed.map(({ upstream_url: _upstreamUrl, ...item }) => item),
       };
       const durationMs = Date.now() - startTime;
-      deductTokenOrUserBalance(token, actualCost, model);
+      reservation.settle(actualCost);
       db.insert(apiLogs).values({
         tokenId: token.id, channelId: channel.id, model, upstreamModel,
         cost: actualCost, durationMs, status: 'success', clientIp,
@@ -1032,7 +1089,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
       const data = await Promise.all(Array.from({ length: count }, () => submitOne()));
       const responseBody = { created: Math.floor(Date.now() / 1000), data };
       const durationMs = Date.now() - startTime;
-      deductTokenOrUserBalance(token, totalCost, model);
+      reservation.settle(totalCost);
       db.insert(apiLogs).values({
         tokenId: token.id, channelId: channel.id, model, upstreamModel,
         cost: totalCost, durationMs, status: 'success', clientIp,
@@ -1112,7 +1169,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
         data: completed.map(({ upstream_url: _upstreamUrl, ...item }) => item),
       };
       const durationMs = Date.now() - startTime;
-      deductTokenOrUserBalance(token, actualCost, model);
+      reservation.settle(actualCost);
       db.insert(apiLogs).values({
         tokenId: token.id, channelId: channel.id, model, upstreamModel,
         cost: actualCost, durationMs, status: 'success', clientIp,
@@ -1167,11 +1224,14 @@ router.post('/images/generations', async (req: Request, res: Response) => {
     const responseBody = await upstreamRes.json() as any;
     const durationMs = Date.now() - startTime;
 
-    deductTokenOrUserBalance(token, totalCost, model);
+    const successfulCount = Array.isArray(responseBody.data) ? responseBody.data.filter((item: any) => item && (item.url || item.b64_json)).length : 0;
+    if (!successfulCount) throw new Error('Upstream returned no images');
+    const actualCost = Math.min(totalCost, Math.round(totalCost * successfulCount / n * 100) / 100);
+    reservation.settle(actualCost);
 
     db.insert(apiLogs).values({
       tokenId: token.id, channelId: channel.id, model, upstreamModel,
-      cost: totalCost, durationMs: durationMs, status: 'success', clientIp,
+      cost: actualCost, durationMs: durationMs, status: 'success', clientIp,
     }).run();
 
     // 补全相对路径
@@ -1194,7 +1254,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
         responseFormat: response_format,
         outputFormat: otherParams.output_format,
         operation: 'generation',
-        totalCost,
+        totalCost: actualCost,
         channel,
         upstreamModel,
       });
@@ -1212,7 +1272,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
     }).run();
     const status = err.status || 502;
     res.status(status).json({ error: { message: status === 429 ? errorMessage : `Upstream error: ${errorMessage}`, type: status === 429 ? 'queue_full_error' : 'server_error' } });
-  }
+  } finally { reservation?.cancel(); }
 });
 
 /** POST /v1/images/edits — 图像编辑与图生图代理转发 */
@@ -1232,6 +1292,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
     return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
   }
 
+  if (!normalizeApiModel(req, res)) return;
   const { model, prompt, n = 1, size = '1024x1024', response_format = 'url', ...otherParams } = req.body;
   if (!model) {
     cleanupFiles(req.files);
@@ -1270,7 +1331,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
     return res.status(404).json({ error: { message: `No available channel for model ${model}`, type: 'not_found_error' } });
   }
 
-  const unitCost = PricingService.calculateCost(model, 0, 0);
+  const unitCost = PricingService.quote(model, {count:1,resolution:String(otherParams.resolution || '')}, false).cost;
   const totalCost = Math.round(unitCost * count * 100) / 100;
 
   const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, totalCost);
@@ -1283,7 +1344,9 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
   const baseUrl = channel.baseUrl.replace(/\/+$/, '');
   const upstreamUrl = `${baseUrl}/v1/images/edits`;
 
+  let reservation: ReturnType<typeof reserveApiCharge> | undefined;
   try {
+    reservation = reserveApiCharge(token, totalCost, model);
     if (isHmStudioChannel(channel)) {
       const queueUserKey = token.userId ? `user:${token.userId}` : `token:${token.id}`;
       hmStudioQueue.assertCanEnqueue(queueUserKey, count);
@@ -1331,7 +1394,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
       cleanupFiles(req.files);
       const responseBody = { created: Math.floor(Date.now() / 1000), data };
       const durationMs = Date.now() - startTime;
-      deductTokenOrUserBalance(token, totalCost, model);
+      reservation.settle(totalCost);
       db.insert(apiLogs).values({
         tokenId: token.id, channelId: channel.id, model, upstreamModel,
         cost: totalCost, durationMs, status: 'success', clientIp,
@@ -1397,11 +1460,14 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
     const responseBody = await upstreamRes.json() as any;
     const durationMs = Date.now() - startTime;
 
-    deductTokenOrUserBalance(token, totalCost, model);
+    const successfulCount = Array.isArray(responseBody.data) ? responseBody.data.filter((item: any) => item && (item.url || item.b64_json)).length : 0;
+    if (!successfulCount) throw new Error('Upstream returned no images');
+    const actualCost = Math.min(totalCost, Math.round(totalCost * successfulCount / n * 100) / 100);
+    reservation.settle(actualCost);
 
     db.insert(apiLogs).values({
       tokenId: token.id, channelId: channel.id, model, upstreamModel,
-      cost: totalCost, durationMs, status: 'success', clientIp,
+      cost: actualCost, durationMs, status: 'success', clientIp,
     }).run();
 
     if (responseBody.data && Array.isArray(responseBody.data)) {
@@ -1423,7 +1489,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
         responseFormat: response_format,
         outputFormat: otherParams.output_format,
         operation: 'edit',
-        totalCost,
+        totalCost: actualCost,
         referenceFileNames: imageFiles.map(file => file.originalname),
         channel,
         upstreamModel,
@@ -1443,7 +1509,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
     }).run();
     const status = err.status || 502;
     res.status(status).json({ error: { message: status === 429 ? errorMessage : `Upstream error: ${errorMessage}`, type: status === 429 ? 'queue_full_error' : 'server_error' } });
-  }
+  } finally { reservation?.cancel(); }
 });
 
 /** 统一视频任务创建核心逻辑 (Unified Video Creation Controller) */
@@ -1466,6 +1532,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
   }
 
+  if (!normalizeApiModel(req, res)) return;
   const body = req.body || {};
 
   const model = body.model;
@@ -1475,9 +1542,10 @@ async function handleVideoCreation(req: Request, res: Response) {
     cleanupFiles(req.files);
     return res.status(400).json({ error: 'model is required' });
   }
-  if (!prompt) {
+  const promptValidationError = validateVideoPrompt(prompt);
+  if (promptValidationError) {
     cleanupFiles(req.files);
-    return res.status(400).json({ error: 'prompt is required' });
+    return res.status(400).json({ error: promptValidationError });
   }
 
   if (token.allowedModels.length > 0 && !token.allowedModels.includes(model)) {
@@ -1537,7 +1605,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         const destPath = path.join(process.cwd(), 'data/uploads', filename);
         fs.writeFileSync(destPath, fileContent);
         const backendUrl = process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
-        return `${backendUrl.replace(/\/+$/, '')}/uploads/${filename}`;
+        return issueUploadUrl(`${backendUrl.replace(/\/+$/, '')}/uploads/${filename}`);
       });
     if (uploadedImages.length > 0) {
       image_urls = [...image_urls, ...uploadedImages];
@@ -1567,7 +1635,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         const destPath = path.join(process.cwd(), 'data/uploads', filename);
         fs.writeFileSync(destPath, fileContent);
         const backendUrl = process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
-        return `${backendUrl.replace(/\/+$/, '')}/uploads/${filename}`;
+        return issueUploadUrl(`${backendUrl.replace(/\/+$/, '')}/uploads/${filename}`);
       });
     if (uploadedVideos.length > 0) {
       video_urls = [...video_urls, ...uploadedVideos];
@@ -1595,7 +1663,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         const destPath = path.join(process.cwd(), 'data/uploads', filename);
         fs.writeFileSync(destPath, fileContent);
         const backendUrl = process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
-        return `${backendUrl.replace(/\/+$/, '')}/uploads/${filename}`;
+        return issueUploadUrl(`${backendUrl.replace(/\/+$/, '')}/uploads/${filename}`);
       });
     if (uploadedAudios.length > 0) {
       audio_urls = [...audio_urls, ...uploadedAudios];
@@ -2088,7 +2156,9 @@ async function handleVideoCreation(req: Request, res: Response) {
   const isJulunSd25 = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL && isJulunChannel(channel);
 
   if (isHmStudio) {
-    const billingDeduction = deductTokenOrUserBalance(token, totalCost, model);
+    let billingDeduction: TokenBillingDeduction;
+    try { billingDeduction = deductTokenOrUserBalance(token, totalCost, model); }
+    catch (error: any) { cleanupFiles(req.files); persistVideoContentFailure(contentId!, error.message, {billingStatus:'not_charged'}); return res.status(error.status || 500).json({error:error.message}); }
     const queuedRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
     let queuedMetadata: Record<string, any> = {};
     try { queuedMetadata = JSON.parse(queuedRecord?.metadata || '{}'); } catch { }
@@ -2181,6 +2251,9 @@ async function handleVideoCreation(req: Request, res: Response) {
   let balanceDeducted = false;
   let billingDeduction: TokenBillingDeduction | null = null;
   try {
+    billingDeduction = deductTokenOrUserBalance(token, totalCost, model);
+    balanceDeducted = totalCost > 0;
+    db.update(contents).set({ metadata: JSON.stringify({ ...JSON.parse(db.select().from(contents).where(eq(contents.id, contentId!)).get()?.metadata || '{}'), billingStatus: 'reserved', billingBalanceSource: billingDeduction.balanceDeduction?.source, billingOrgId: billingDeduction.balanceDeduction?.orgId }) }).where(eq(contents.id, contentId!)).run();
     let upstreamRes;
     const { ...otherParams } = body;
     delete otherParams.model;
@@ -2263,7 +2336,8 @@ async function handleVideoCreation(req: Request, res: Response) {
       if (invalidUrls.length > 0) {
         cleanupFiles(req.files);
         const error = 'Reference materials must use publicly accessible HTTPS URLs. Check BACKEND_URL.';
-        persistVideoContentFailure(contentId, error, { billingStatus: 'not_charged' });
+        refundTokenOrUserBalance(token, totalCost, billingDeduction); balanceDeducted = false;
+        persistVideoContentFailure(contentId, error, { billingStatus: 'refunded', queueRefunded: true, refundAmount: totalCost });
         return res.status(400).json({ error });
       }
 
@@ -2541,7 +2615,8 @@ async function handleVideoCreation(req: Request, res: Response) {
           durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errText.slice(0, 500)}`, clientIp,
         }).run();
 
-        persistVideoContentFailure(contentId, `HTTP ${upstreamRes.status}: ${errText}`, { billingStatus: 'not_charged' });
+        const target = refundTokenOrUserBalance(token, totalCost, billingDeduction); balanceDeducted = false;
+        persistVideoContentFailure(contentId, `HTTP ${upstreamRes.status}: ${errText}`, { billingStatus: 'refunded', queueRefunded: true, refundAmount: totalCost, refundTarget: target });
         return res.status(upstreamRes.status).json({ error: errText });
       }
     }
@@ -2549,8 +2624,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     const responseBody = await upstreamRes.json() as any;
     const durationMs = Date.now() - startTime;
 
-    billingDeduction = deductTokenOrUserBalance(token, totalCost, model);
-    balanceDeducted = totalCost > 0;
+
 
     db.insert(apiLogs).values({
       tokenId: token.id, channelId, model, upstreamModel,

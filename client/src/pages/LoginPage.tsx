@@ -38,7 +38,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-black flex">
+    <div className="lingxu-login-page min-h-screen bg-black flex">
       {/* 左侧品牌区 */}
       <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden items-center justify-center">
         <div className="absolute inset-0 bg-gradient-to-br from-blue-600/20 via-purple-600/10 to-transparent" />
@@ -49,7 +49,7 @@ export default function LoginPage() {
             <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
               <Zap className="w-6 h-6 text-white" />
             </div>
-            <h1 className="text-3xl font-bold text-white">短视频创意风暴</h1>
+            <h1 className="text-3xl font-bold text-white">灵序 AI</h1>
           </div>
 
           <p className="text-xl text-zinc-300 mb-8 leading-relaxed">
@@ -79,7 +79,7 @@ export default function LoginPage() {
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
               <Zap className="w-5 h-5 text-white" />
             </div>
-            <h1 className="text-2xl font-bold text-white">短视频创意风暴</h1>
+            <h1 className="text-2xl font-bold text-white">灵序 AI</h1>
           </div>
 
           <h2 className="text-2xl font-bold text-white mb-2">

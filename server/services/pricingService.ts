@@ -97,14 +97,14 @@ export class PricingService {
     };
   }
 
-  private static inferCategory(modelPattern: string, extraParams: Record<string, any>): PricingCategory {
+  private static inferCategory(modelPattern: string, extraParams: Record<string, any>, knownModel?: typeof models.$inferSelect | null): PricingCategory {
     const explicit = String(extraParams.category || '').toLowerCase();
     if (['text', 'image', 'video', 'tts', 'default', 'other'].includes(explicit)) {
       return explicit as PricingCategory;
     }
     if (modelPattern === '*') return 'default';
 
-    const model = db.select().from(models).where(eq(models.modelId, modelPattern)).get();
+    const model = knownModel === undefined ? db.select().from(models).where(eq(models.modelId, modelPattern)).get() : knownModel;
     if (model) {
       try {
         const capabilities = JSON.parse(model.capabilities || '[]') as string[];
@@ -208,7 +208,7 @@ export class PricingService {
   }
 
   /** 获取规则，并补充模型名称与业务分类；可供管理页搜索及筛选。 */
-  static getPricingRules(query: { category?: string; billingType?: string; search?: string; scope?: 'all' | 'active' } = {}) {
+  static getPricingRules(query: { category?: string; billingType?: string; search?: string; modelId?: string; scope?: 'all' | 'active' | 'models' } = {}) {
     const modelRows = db.select().from(models).all();
     const modelMap = new Map(modelRows.map(model => [model.modelId, model]));
     const search = String(query.search || '').trim().toLowerCase();
@@ -220,7 +220,7 @@ export class PricingService {
         return {
           ...rule,
           extraParams,
-          category: this.inferCategory(rule.modelPattern, extraParams),
+          category: this.inferCategory(rule.modelPattern, extraParams, model || null),
           displayName: model?.displayName || (rule.modelPattern === '*' ? '全局默认规则' : rule.modelPattern),
           modelActive: model ? model.isActive === 1 : null,
           configured: true,
@@ -229,16 +229,16 @@ export class PricingService {
       });
 
     let result: any[] = persistedRules;
-    if (query.scope === 'active') {
+    if (query.scope === 'active' || query.scope === 'models') {
       const exactRuleMap = new Map(persistedRules.map(rule => [rule.modelPattern, rule]));
       const defaultRule = exactRuleMap.get('*');
       const activeModelRules = modelRows
-        .filter(model => model.isActive === 1)
+        .filter(model => query.scope === 'models' || model.isActive === 1 || model.modelId === query.modelId)
         .map(model => {
           const exactRule = exactRuleMap.get(model.modelId);
           if (exactRule) return exactRule;
 
-          const category = this.inferCategory(model.modelId, {});
+          const category = this.inferCategory(model.modelId, {}, model);
           const inheritsDefault = category === 'text' && Boolean(defaultRule);
           return {
             id: null,
@@ -250,7 +250,7 @@ export class PricingService {
             outputPrice: inheritsDefault ? defaultRule.outputPrice : 0,
             extraParams: { category },
             createdAt: null,
-            modelActive: true,
+            modelActive: model.isActive === 1,
             configured: false,
             inherited: inheritsDefault,
           };
@@ -259,6 +259,7 @@ export class PricingService {
     }
 
     return result
+      .filter(rule => !query.modelId || rule.modelPattern === query.modelId)
       .filter(rule => !query.category || query.category === 'all' || rule.category === query.category)
       .filter(rule => !query.billingType || query.billingType === 'all' || rule.billingType === query.billingType)
       .filter(rule => !search || rule.modelPattern.toLowerCase().includes(search) || rule.displayName.toLowerCase().includes(search));

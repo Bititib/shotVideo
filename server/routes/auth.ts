@@ -1,9 +1,9 @@
 import { Router, Request, Response } from 'express';
 import { AuthService } from '../services/authService.js';
-import { BalanceService } from '../services/balanceService.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 
 const router = Router();
+router.post('/logout', (_req,res) => { res.clearCookie('media_session',{path:'/'}); res.json({success:true}); });
 
 // 公开注册已关闭，用户由管理员在后台创建
 router.post('/register', (_req: Request, res: Response) => {
@@ -50,19 +50,9 @@ router.put('/change-password', authMiddleware, async (req: AuthRequest, res: Res
   }
 });
 
-// 模拟余额充值
-router.post('/recharge', authMiddleware, async (req: AuthRequest, res: Response) => {
-  try {
-    const { amount } = req.body;
-    const numAmount = Number(amount);
-    if (!amount || isNaN(numAmount) || numAmount <= 0) {
-      return res.status(400).json({ error: '充值金额必须是大于0的有效数字' });
-    }
-    const newBalance = BalanceService.recharge(req.userId!, numAmount);
-    res.json({ success: true, balance: newBalance });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message || '充值失败' });
-  }
+// Credit can only be issued by an authenticated administrator or a verified payment callback.
+router.post('/recharge', authMiddleware, (_req, res) => {
+  res.status(403).json({ error: '自助模拟充值已关闭，请联系管理员充值' });
 });
 
 export default router;

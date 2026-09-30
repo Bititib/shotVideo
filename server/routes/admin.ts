@@ -151,9 +151,14 @@ router.delete('/tiers/:id', async (req: AuthRequest, res: Response) => {
 });
 
 // ============ 模型管理 ============
+router.get('/models/statistics', (req: AuthRequest, res: Response) => {
+  try { res.json({ items: AdminService.getModelStatistics(), cachedForSeconds: 30 }); }
+  catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
 router.get('/models', async (req: AuthRequest, res: Response) => {
   try {
-    const result = AdminService.getModels();
+    const result = AdminService.getModels(req.query.view !== 'config');
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: err.message || '获取模型列表失败' });
@@ -162,6 +167,7 @@ router.get('/models', async (req: AuthRequest, res: Response) => {
 
 router.post('/models', async (req: AuthRequest, res: Response) => {
   try {
+    AdminService.invalidateModelStatistics();
     AdminService.createModel(req.body);
     res.json({ message: '创建成功' });
   } catch (err: any) {
@@ -172,6 +178,7 @@ router.post('/models', async (req: AuthRequest, res: Response) => {
 router.put('/models/:id', async (req: AuthRequest, res: Response) => {
   try {
     const modelId = parseInt(req.params.id);
+    AdminService.invalidateModelStatistics();
     AdminService.updateModel(modelId, req.body);
     res.json({ message: '更新成功' });
   } catch (err: any) {
@@ -182,6 +189,7 @@ router.put('/models/:id', async (req: AuthRequest, res: Response) => {
 router.delete('/models/:id', async (req: AuthRequest, res: Response) => {
   try {
     const modelId = parseInt(req.params.id);
+    AdminService.invalidateModelStatistics();
     AdminService.deleteModel(modelId);
     res.json({ message: '删除成功' });
   } catch (err: any) {

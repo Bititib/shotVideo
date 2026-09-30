@@ -1,3 +1,6 @@
+import { protectVideoSource } from '../middleware/uploadAccess.js';
+import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
+import { canvasRequestMiddleware, recordCanvasEvent } from '../middleware/canvasRequest.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { HAYA_SECONDS, HAYA_VIDEO_MODELS, getHayaVideoSpec, validateHayaVideoInput } from '../../shared/hayaVideo.js';
 import { isHayaChannel, hayaTaskUrl, normalizeHayaTask, hayaPollDelay, submitHayaVideo, HayaSubmissionError } from '../services/hayaVideoAdapter.js';
@@ -163,6 +166,7 @@ const RATIO_TO_SIZE: Record<string, string> = {
  */
 function convertBase64ToPublicUrl(dataUrl: string, prefix: string, requestOrBaseUrl: Request | string): string {
   if (!dataUrl) return '';
+  if (uploadPath(dataUrl)) return issueUploadUrl(dataUrl, process.env.BACKEND_URL || (typeof requestOrBaseUrl === 'string' ? requestOrBaseUrl : `${requestOrBaseUrl.protocol}://${requestOrBaseUrl.get('host')}`));
   if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
     return dataUrl;
   }
@@ -196,7 +200,7 @@ function convertBase64ToPublicUrl(dataUrl: string, prefix: string, requestOrBase
     fs.writeFileSync(destPath, buffer);
 
     // 优先使用环境变量配置的公网基准 URL
-    return `${baseUrl.replace(/\/+$/, '')}/uploads/${filename}`;
+    return issueUploadUrl(`${baseUrl.replace(/\/+$/, '')}/uploads/${filename}`);
   } catch (err: any) {
     console.error('[video] convertBase64ToPublicUrl 失败:', err.message);
     return dataUrl;
@@ -827,7 +831,7 @@ router.get('/models', (_req: Request, res: Response) => {
 });
 
 /** POST /api/video/generate — SSE 流式视频生成（异步轮询模式） */
-router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'), quotaMiddleware, async (req: TierRequest, res: Response) => {
+router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware, tierMiddleware('video'), quotaMiddleware, async (req: TierRequest, res: Response) => {
   let batchContext: ReturnType<typeof batchContextForRequest> = null;
   try {
     batchContext = batchContextForRequest(req);
@@ -1162,6 +1166,7 @@ router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'),
   res.flushHeaders();
 
   const sendEvent = (data: Record<string, any>) => {
+    recordCanvasEvent(req, data);
     if (!res.destroyed && !res.writableEnded) {
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     }
@@ -2799,7 +2804,7 @@ router.post(['/generate', '/validate'], authMiddleware, tierMiddleware('video'),
 });
 
 // 视频下载代理，解决浏览器跨域下载变成播放的问题
-router.get('/download', async (req: Request, res: Response) => {
+router.get('/download', protectVideoSource, async (req: Request, res: Response) => {
   const url = req.query.url as string;
   if (!url) return res.status(400).json({ error: 'Missing url parameter' });
 
@@ -2903,13 +2908,13 @@ export function cleanVideoCache() {
 
 // 启动时清理，并设定每 12 小时执行一次
 cleanVideoCache();
-setInterval(cleanVideoCache, 12 * 60 * 60 * 1000);
+setInterval(cleanVideoCache, 12 * 60 * 60 * 1000).unref();
 
 // 内存锁：防止同一 URL 被多个并发 Range 请求同时下载+转码
 const playTranscodeLocks = new Map<string, Promise<string>>();
 
 // 视频播放代理：检测并转码 H.265 (HEVC) -> H.264 (AVC)，并发安全
-router.get('/play', async (req: Request, res: Response) => {
+router.get('/play', protectVideoSource, async (req: Request, res: Response) => {
   const url = req.query.url as string;
   if (!url) return res.status(400).json({ error: 'Missing url parameter' });
 

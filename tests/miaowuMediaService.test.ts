@@ -1,3 +1,5 @@
+import { validMediaSignature } from '../server/services/mediaSignature.js';
+function verifiedUrl(value: string) { const url=new URL(value); expect(validMediaSignature(url.pathname,url.searchParams.get('expires'),url.searchParams.get('signature'))).toBe(true); return url.origin+url.pathname; }
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -35,8 +37,8 @@ describe('Miaowu public media preparation', () => {
       { publicBaseUrl: 'https://video.example.com/', uploadsRoot },
     );
 
-    expect(image[0]).toMatch(/^https:\/\/video\.example\.com\/uploads\/miaowu-media\/image_.+\.png$/);
-    expect(audio[0]).toMatch(/^https:\/\/video\.example\.com\/uploads\/miaowu-media\/audio_.+\.mp3$/);
+    expect(verifiedUrl(image[0])).toMatch(/^https:\/\/video\.example\.com\/uploads\/miaowu-media\/image_.+\.png$/);
+    expect(verifiedUrl(audio[0])).toMatch(/^https:\/\/video\.example\.com\/uploads\/miaowu-media\/audio_.+\.mp3$/);
     expect(fs.readdirSync(path.join(uploadsRoot, 'miaowu-media'))).toHaveLength(2);
   });
 
@@ -49,7 +51,7 @@ describe('Miaowu public media preparation', () => {
       ['/uploads/refs/sample.wav'],
       'audio',
       { publicBaseUrl: 'https://video.example.com', uploadsRoot },
-    )).toEqual(['https://video.example.com/uploads/refs/sample.wav']);
+    ).map(verifiedUrl)).toEqual(['https://video.example.com/uploads/refs/sample.wav']);
   });
 
   it('keeps valid external HTTPS URLs and trims whitespace', () => {

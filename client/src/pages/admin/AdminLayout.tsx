@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 import { LayoutDashboard, Users, Star, Cpu, ArrowLeft, Layers3, LogOut, Radio, Key, Coins, Building2, Film, MessageSquareWarning } from 'lucide-react';
 
 const adminNavItems = [
+  { to: '/admin/billing-review', icon: Coins, label: '异常账单' },
   { to: '/admin', icon: LayoutDashboard, label: '仪表盘', end: true },
   { to: '/admin/channels', icon: Radio, label: '渠道管理' },
   { to: '/admin/tokens', icon: Key, label: 'Token 管理' },
@@ -17,6 +18,7 @@ const adminNavItems = [
 ];
 
 const adminPagePreloads: Record<string, () => Promise<unknown>> = {
+  '/admin/billing-review': () => import('./BillingReviewPage'),
   '/admin': () => import('./DashboardPage'),
   '/admin/channels': () => import('./ChannelsPage'),
   '/admin/tokens': () => import('./TokensPage'),
@@ -73,7 +75,9 @@ export default function AdminLayout() {
 
       {/* Content */}
       <main className="admin-content flex-1 min-w-0 overflow-y-auto">
-        <Outlet />
+        <Suspense fallback={<div className="p-8 animate-pulse" role="status">正在加载管理页面…</div>}>
+          <Outlet />
+        </Suspense>
       </main>
     </div>
   );

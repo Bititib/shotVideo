@@ -26,6 +26,9 @@ async function main() {
       setInterval(() => {
         resumeAllPendingVideoTasks();
       }, 60_000);
+      const { ComicDramaQueueService } = await import('./services/comicDramaQueueService.js');
+      ComicDramaQueueService.resumePending();
+      setInterval(() => ComicDramaQueueService.resumePending(), 60_000);
     } catch (e: any) {
       console.error('⚠️ [video-recover] 恢复视频任务失败:', e.message);
     }

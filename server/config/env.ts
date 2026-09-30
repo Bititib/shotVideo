@@ -1,7 +1,10 @@
+import { validateProductionConfig } from './production.js';
 import dotenv from 'dotenv';
 import path from 'path';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+
+validateProductionConfig(process.env);
 
 export const env = {
   PORT: parseInt(process.env.PORT || '3000', 10),

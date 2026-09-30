@@ -1,3 +1,5 @@
+import { validMediaSignature } from '../server/services/mediaSignature.js';
+function verifiedUrl(value: string) { const url=new URL(value); expect(validMediaSignature(url.pathname,url.searchParams.get('expires'),url.searchParams.get('signature'))).toBe(true); return url.origin+url.pathname; }
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -30,8 +32,8 @@ describe('wx-海底月 reference image URL preparation', () => {
       mediaBaseUrl: 'https://media-origin.example.com',
     });
 
-    expect(result).toMatch(/^https:\/\/media-origin\.example\.com\/uploads\/wx-haidiyue\/[a-f0-9]{64}\.jpg$/);
-    expect(await readFile(path.join(uploadsRoot, 'wx-haidiyue', path.basename(result)))).toEqual(JPEG_BYTES);
+    expect(verifiedUrl(result)).toMatch(/^https:\/\/media-origin\.example\.com\/uploads\/wx-haidiyue\/[a-f0-9]{64}\.jpg$/);
+    expect(await readFile(path.join(uploadsRoot, 'wx-haidiyue', path.basename(new URL(result).pathname)))).toEqual(JPEG_BYTES);
   });
 
   it('reads this site uploads directly and republishes them on the media origin', async () => {
@@ -46,7 +48,7 @@ describe('wx-海底月 reference image URL preparation', () => {
       mediaBaseUrl: 'https://media-origin.zhubo.asia',
     });
 
-    expect(prepared[0]).toMatch(/^https:\/\/media-origin\.zhubo\.asia\/uploads\/wx-haidiyue\/[a-f0-9]{64}\.jpg$/);
+    expect(verifiedUrl(prepared[0])).toMatch(/^https:\/\/media-origin\.zhubo\.asia\/uploads\/wx-haidiyue\/[a-f0-9]{64}\.jpg$/);
   });
 
   it('rejects unsupported image bytes before submission', async () => {
@@ -63,7 +65,7 @@ describe('wx-海底月 reference image URL preparation', () => {
     await expect(wxHaidiYueImageToPublicUrl(
       `data:image/png;base64,${PNG_BYTES.toString('base64')}`,
       { uploadsRoot, mediaBaseUrl: 'https://media-origin.example.com' },
-    )).resolves.toMatch(/\.png$/);
+    ).then(verifiedUrl)).resolves.toMatch(/\.png$/);
     await expect(wxHaidiYueImageToPublicUrl('https://127.0.0.1/private.jpg', {
       uploadsRoot,
       mediaBaseUrl: 'https://media-origin.example.com',

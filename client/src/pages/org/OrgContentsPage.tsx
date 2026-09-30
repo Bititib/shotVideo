@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { contentApi } from '../../api/content';
+import { formatBeijingTime } from '../../../../shared/time';
 import { Video, Image, FileText, Megaphone, Search, ChevronLeft, ChevronRight, Trash2, ExternalLink } from 'lucide-react';
 
 const typeConfig: Record<string, { icon: any; label: string; color: string }> = {
@@ -71,7 +72,7 @@ export default function OrgContentsPage() {
                 <div className="flex items-center gap-3 mt-1">
                   <span className="text-[10px] text-zinc-500">{item.userName || item.userEmail}</span>
                   <span className="text-[10px] text-zinc-600">•</span>
-                  <span className="text-[10px] text-zinc-500">{new Date(item.createdAt).toLocaleString()}</span>
+                  <span className="text-[10px] text-zinc-500">{formatBeijingTime(item.createdAt)}（北京时间）</span>
                   {item.cost > 0 && (
                     <>
                       <span className="text-[10px] text-zinc-600">•</span>
