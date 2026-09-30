@@ -1,7 +1,8 @@
+import BrandMark from './BrandMark';
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
-import { X, Mail, Lock, ArrowRight, Layers3, MessageCircle, Eye, EyeOff } from 'lucide-react';
+import { X, Mail, Lock, ArrowRight, MessageCircle, Eye, EyeOff } from 'lucide-react';
 
 export default function LoginModal() {
   const { showLoginModal, closeLoginModal, login } = useAuthStore();
@@ -80,7 +81,7 @@ export default function LoginModal() {
           {/* Logo */}
           <div className="flex items-center gap-3 mb-7 pr-10">
             <div className="login-modal-brand-mark w-10 h-10 rounded-xl flex items-center justify-center" aria-hidden="true">
-              <Layers3 className="w-[19px] h-[19px]" strokeWidth={1.8} />
+              <BrandMark size={40} />
             </div>
             <span className="login-modal-brand-name text-lg font-bold">
               灵序 AI

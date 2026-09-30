@@ -48,3 +48,24 @@ export function ownsResultUrl(owner: number, source: string): boolean {
   if(!sqlite||!/^https?:\/\//.test(source))return false;
   return !!sqlite.prepare('SELECT 1 FROM contents WHERE user_id=? AND result_url=? LIMIT 1').get(owner,source);
 }
+
+/** Admin review is limited to recorded generation results, never arbitrary proxy URLs. */
+export function canReviewResultUrl(viewer: number, source: string): boolean {
+  if (!sqlite) return false;
+  const account = sqlite.prepare('SELECT role,is_active FROM users WHERE id=?').get(viewer) as any;
+  if (!account?.is_active || !['admin', 'super_admin'].includes(account.role)) return false;
+  const resource = uploadPath(source);
+  if (!resource) {
+    return /^https?:\/\//.test(source)
+      && !!sqlite.prepare('SELECT 1 FROM contents WHERE result_url=? LIMIT 1').get(source);
+  }
+  const basename = resource.split('/').pop();
+  const records = sqlite.prepare('SELECT result_url,metadata FROM contents WHERE result_url LIKE ? OR metadata LIKE ?')
+    .all(`%${basename}%`, `%${basename}%`) as any[];
+  return records.some(row => {
+    let meta: any = {};
+    try { meta = JSON.parse(row.metadata || '{}'); } catch {}
+    return [row.result_url, ...(Array.isArray(meta.imageUrls) ? meta.imageUrls : [])]
+      .some(src => typeof src === 'string' && uploadPath(src) === resource);
+  });
+}

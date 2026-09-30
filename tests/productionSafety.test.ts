@@ -95,6 +95,28 @@ describe('production release safety',()=>{
     expect((await fetch(`${base}/video?url=${encodeURIComponent('/uploads/private-test.png')}`)).status).toBe(404);
     expect((await fetch(`${base}/references`,{method:'POST',headers:headers(2),body:JSON.stringify({reference_images:['/uploads/private-test.png']})})).status).toBe(400);
   });
+  it('allows current admins to review recorded user results through cookie playback only, with role revocation enforced', async()=>{
+    const local='/uploads/admin-review.mp4', remote='https://video.example.test/result.mp4';
+    fs.writeFileSync(path.join(temp,'admin-review.mp4'), Buffer.from('test video'));
+    sqlite.prepare('INSERT INTO contents(user_id,result_url,metadata) VALUES(1,?,?)').run(local,'{}');
+    sqlite.prepare('INSERT INTO contents(user_id,result_url,metadata) VALUES(1,?,?)').run(remote,'{}');
+    const adminHeaders={Cookie:`media_session=${token(3)}`};
+    for (const url of [local,remote]) {
+      const endpoint=`${base}/video?url=${encodeURIComponent(url)}`;
+      expect((await fetch(endpoint,{headers:adminHeaders})).status).toBe(200);
+      expect((await fetch(endpoint,{headers:headers(2)})).status).toBe(404);
+      expect((await fetch(endpoint)).status).toBe(404);
+      expect((await fetch(endpoint,{headers:{Cookie:`media_session=${token(2,'super_admin')}`}})).status).toBe(404);
+    }
+    for (const prefix of ['/uploads','/api/uploads']) {
+      expect((await fetch(`${base}${prefix}/admin-review.mp4`,{headers:{...adminHeaders,Range:'bytes=0-3'}})).status).toBe(206);
+    }
+    expect((await fetch(`${base}/video?url=${encodeURIComponent('https://video.example.test/unrecorded.mp4')}`,{headers:adminHeaders})).status).toBe(404);
+    sqlite.prepare('UPDATE users SET role=? WHERE id=3').run('user');
+    try {
+      expect((await fetch(`${base}${local}`,{headers:adminHeaders})).status).toBe(404);
+    } finally { sqlite.prepare('UPDATE users SET role=? WHERE id=3').run('super_admin'); }
+  });
   it('backs up WAL database and media, detects tampering, and restores a readable copy',async()=>{
     const data=path.join(temp,'live'),backup=path.join(temp,'backup');fs.mkdirSync(path.join(data,'private-media'),{recursive:true});
     const db=new Database(path.join(data,'app.db'));db.pragma('journal_mode=WAL');db.exec('CREATE TABLE proof(value TEXT); INSERT INTO proof VALUES (\'saved\')');

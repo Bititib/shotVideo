@@ -1,3 +1,4 @@
+import BrandMark from '../components/BrandMark';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
@@ -90,7 +91,7 @@ export default function LandingPage() {
       <nav className="landing-nav" aria-label="首页导航">
         <div className="landing-nav-inner">
           <button type="button" className="landing-brand" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} aria-label="返回首页顶部">
-            <span className="landing-brand-mark" aria-hidden="true"><Layers3 /></span>
+            <span className="landing-brand-mark" aria-hidden="true"><BrandMark size={40} /></span>
             <span className="landing-brand-copy">
               <strong>灵序 AI</strong>
               <small>AI CREATIVE STUDIO</small>
@@ -253,7 +254,7 @@ export default function LandingPage() {
       </main>
 
       <footer className="landing-footer">
-        <div className="landing-footer-brand"><span className="landing-brand-mark" aria-hidden="true"><Layers3 /></span><div><strong>灵序 AI</strong><small>AI CREATIVE STUDIO</small></div></div>
+        <div className="landing-footer-brand"><span className="landing-brand-mark" aria-hidden="true"><BrandMark size={40} /></span><div><strong>灵序 AI</strong><small>AI CREATIVE STUDIO</small></div></div>
         <p>© 2026 灵序 AI · 让灵感，自由成形。</p>
         <div><a href="#features">产品能力</a><a href="#pricing">方案定价</a><a href="#faq">常见问题</a></div>
       </footer>

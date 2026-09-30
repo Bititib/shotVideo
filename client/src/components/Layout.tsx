@@ -1,3 +1,4 @@
+import BrandMark from './BrandMark';
 import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
@@ -94,7 +95,7 @@ export default function Layout({ children }: { children?: React.ReactNode }) {
           <header className="flex-shrink-0 flex items-center justify-between md:block">
             <div className="earth-brand flex items-center gap-3">
               <div className="earth-brand-mark w-9 h-9 rounded-xl flex items-center justify-center" aria-hidden="true">
-                <Layers3 className="w-[18px] h-[18px]" strokeWidth={1.8} />
+                <BrandMark />
               </div>
               <div className="min-w-0">
                 <h1 className="earth-brand-name text-base md:text-lg font-bold whitespace-nowrap">灵序 AI</h1>

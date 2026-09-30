@@ -46,14 +46,19 @@ import { getHmStudioUpstreamVideoModel } from '../server/services/hmStudioVideoM
 
 let server: Server;
 let baseUrl: string;
+const editedModelIds = [
+  'seedance-2.0', 'seedance_v2.5', 'gpt-image-2',
+  'seedance-2.5-480p', 'seedance-2.5-720p', 'seedance-2.5-1080p',
+];
 beforeAll(async () => {
   // Run the real startup twice, against memory only, without external calls.
   const network = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('External calls disabled in test'));
   await initDatabase();
-  const ids = ['seedance-2.0', 'seedance_v2.5', 'gpt-image-2'];
-  for (const id of ids) {
-    db.update(models).set({ displayName: `自定义 ${id}`, description: '后台填写的说明', isActive: 0 })
-      .where(eq(models.modelId, id)).run();
+  for (const id of editedModelIds) {
+    const row = db.select().from(models).where(eq(models.modelId, id)).get()!;
+    AdminService.updateModel(row.id, {
+      displayName: `自定义 ${id}`, description: '后台填写的说明', isActive: 0,
+    });
   }
   // Exercise the old one-time Seedance migration as well as routine startup sync.
   db.delete(settings).where(eq(settings.key, 'migration_siyuetian_seedance_20_standardize_v1')).run();
@@ -76,7 +81,7 @@ afterAll(async () => {
 
 describe('admin-owned model catalog', () => {
   it('preserves edited names, descriptions and disabled state across restart and legacy migration', () => {
-    for (const id of ['seedance-2.0', 'seedance_v2.5', 'gpt-image-2']) {
+    for (const id of editedModelIds) {
       expect(db.select().from(models).where(eq(models.modelId, id)).get()).toMatchObject({
         displayName: `自定义 ${id}`, description: '后台填写的说明', isActive: 0,
       });

@@ -1,7 +1,8 @@
+import BrandMark from '../../components/BrandMark';
 import React, { Suspense } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
-import { LayoutDashboard, Users, Star, Cpu, ArrowLeft, Layers3, LogOut, Radio, Key, Coins, Building2, Film, MessageSquareWarning } from 'lucide-react';
+import { LayoutDashboard, Users, Star, Cpu, ArrowLeft, LogOut, Radio, Key, Coins, Building2, Film, MessageSquareWarning } from 'lucide-react';
 
 const adminNavItems = [
   { to: '/admin/billing-review', icon: Coins, label: '异常账单' },
@@ -42,7 +43,7 @@ export default function AdminLayout() {
         <div className="p-4 md:p-5 flex-1 min-h-0">
           <div className="flex items-center gap-3 mb-4 md:mb-7">
             <div className="admin-brand-mark w-9 h-9 rounded-xl flex items-center justify-center" aria-hidden="true">
-              <Layers3 className="w-[18px] h-[18px]" strokeWidth={1.8} />
+              <BrandMark />
             </div>
             <div className="min-w-0">
               <h1 className="admin-brand-title text-sm font-bold">管理后台</h1>

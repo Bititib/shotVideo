@@ -1,7 +1,8 @@
+import BrandMark from '../components/BrandMark';
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
-import { Zap, Mail, Lock, User, ArrowRight, Sparkles } from 'lucide-react';
+import { Mail, Lock, User, ArrowRight, Sparkles } from 'lucide-react';
 
 export default function LoginPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -46,8 +47,8 @@ export default function LoginPage() {
 
         <div className="relative z-10 max-w-md px-8">
           <div className="flex items-center gap-3 mb-8">
-            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-              <Zap className="w-6 h-6 text-white" />
+            <div className="w-12 h-12 rounded-2xl lingxu-brand-art flex items-center justify-center">
+              <BrandMark size={48} />
             </div>
             <h1 className="text-3xl font-bold text-white">灵序 AI</h1>
           </div>
@@ -76,8 +77,8 @@ export default function LoginPage() {
         <div className="w-full max-w-md">
           {/* 移动端 Logo */}
           <div className="lg:hidden flex items-center gap-3 mb-10 justify-center">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-              <Zap className="w-5 h-5 text-white" />
+            <div className="w-10 h-10 rounded-xl lingxu-brand-art flex items-center justify-center">
+              <BrandMark size={40} />
             </div>
             <h1 className="text-2xl font-bold text-white">灵序 AI</h1>
           </div>

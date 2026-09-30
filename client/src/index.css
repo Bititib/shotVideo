@@ -1586,3 +1586,6 @@ button.bg-gradient-to-r:disabled, a.bg-gradient-to-r[aria-disabled="true"] {
 .docs-page [class~="bg-rose-500/15"]{background:var(--earth-primary-soft)!important;border-color:var(--earth-line-strong)!important;color:var(--earth-primary)!important}
 .docs-page .pointer-events-none[class~="bg-rose-500/5"],.docs-page .pointer-events-none[class~="bg-blue-500/5"]{background:#cdd5be40!important}
 .docs-page .bg-gradient-to-br svg,.lingxu-login-page .bg-gradient-to-br:not(.absolute) svg{color:#faf8f0!important}
+
+/* The freestanding mascot replaces the old square app badge. */
+.earth-brand-mark, .admin-brand-mark, .login-modal-brand-mark, .landing-brand-mark, .lingxu-login-page .lingxu-brand-art { background: transparent; border: 0; box-shadow: none; }
