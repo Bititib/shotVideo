@@ -79,6 +79,8 @@ import {
 } from '../services/siYueTianChannelService.js';
 import {
   buildSiYueTianSeedance25VideoPayload,
+  getSiYueTianC2Model,
+  validateSiYueTianSeedance20C2Input,
   getSiYueTianSeedance25VideoSpec,
   SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS,
   validateSiYueTianSeedance25VideoInput,
@@ -1725,6 +1727,17 @@ async function handleVideoCreation(req: Request, res: Response) {
     cleanupFiles(req.files);
     return res.status(400).json({ error: siYueTianSeedance25ValidationError });
   }
+  const c2Error = validateSiYueTianSeedance20C2Input(model, image_urls.length, video_urls.length, audio_urls.length);
+  if (c2Error) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: c2Error });
+  }
+  const c2Spec = getSiYueTianC2Model(model);
+  if (c2Spec
+    && (resolution !== c2Spec.resolution || !Number.isInteger(seconds) || seconds < c2Spec.minSeconds || seconds > c2Spec.maxSeconds)) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: `${model} 仅支持${c2Spec.resolution}、${c2Spec.minSeconds}-${c2Spec.maxSeconds}秒整数时长` });
+  }
 
   if (model === 'ad-seedance-2.5-480p') {
     if (!Number.isInteger(seconds) || seconds < 4 || seconds > 30) {
@@ -2430,13 +2443,14 @@ async function handleVideoCreation(req: Request, res: Response) {
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(channel.timeout || 120_000),
       });
-    } else if (siYueTianSeedance25Spec) {
+    } else if (siYueTianSeedance25Spec || c2Spec) {
       const payload = buildSiYueTianSeedance25VideoPayload({
         model: upstreamModel,
         prompt,
         seconds,
         aspectRatio: ratio,
         imageUrls: image_urls,
+        videoUrls: video_urls,
         audioUrls: audio_urls,
       });
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };

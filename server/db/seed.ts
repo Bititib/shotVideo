@@ -40,6 +40,7 @@ import {
 } from '../services/siYueTianImageAdapter.js';
 import {
   SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS,
+  SI_YUE_TIAN_C2_MODELS,
   SI_YUE_TIAN_SEEDANCE_25_VIDEO_SPECS,
 } from '../services/siYueTianVideoModels.js';
 import {
@@ -208,6 +209,7 @@ export async function syncModelsFromAPI() {
       capabilities: JSON.stringify(['video']),
       isActive: 1,
     })),
+    ...SI_YUE_TIAN_C2_MODELS.map(spec => ({ provider: 'siyuetian', modelId: spec.id, displayName: `${spec.name} · 四月天`, description: `最多${spec.images}图、${spec.videos}视频、${spec.audios}音频；按次计费，售价以后台计费设置为准`, capabilities: JSON.stringify(['video']), isActive: 1 })),
     { provider: 'google', modelId: 'gemini-3.1-flash-image-preview', displayName: '🍌 nabanana flash', capabilities: JSON.stringify(['image']) },
     { provider: 'google', modelId: 'gemini-3-pro-image-preview', displayName: '🍌 nabanana pro', capabilities: JSON.stringify(['image']) },
     { provider: 'hmstudio', modelId: HM_STUDIO_PRIMARY_VIDEO_MODEL, displayName: 'HM-Seedance V2.5', description: '720p；支持4-30秒；最多10张图片参考，不支持音频和视频参考', capabilities: JSON.stringify(['video']), isActive: 1 },
@@ -275,7 +277,7 @@ export async function syncModelsFromAPI() {
   ]);
   const hmStudioModelIds = new Set([HM_STUDIO_PRIMARY_VIDEO_MODEL, ...HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS]);
   const siYueTianImageModelIds = new Set<string>(SI_YUE_TIAN_IMAGE_MODELS);
-  const siYueTianVideoModelIds = new Set<string>(SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS);
+  const siYueTianVideoModelIds = new Set<string>([...SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS, ...SI_YUE_TIAN_C2_MODELS.map(spec => spec.id)]);
   const mingFeiImageModelIds = new Set([MINGFEI_IMAGE_MODEL]);
   const pidoiImageModelIds = new Set(['gpt-image-2']);
   allVerified = allVerified.map(model => {
@@ -1067,6 +1069,7 @@ export async function initDatabase() {
     return Number.isFinite(value) && value >= 0 ? value : fallback;
   };
   const unifiedPricing = [
+    ...SI_YUE_TIAN_C2_MODELS.map(spec => ({ modelPattern: spec.id, billingType: 'per_call', inputPrice: spec.price, category: 'video' })),
     { modelPattern: 'veo-omni-flash', billingType: 'per_second', inputPrice: legacyRate('veo_omni_flash_rate', 0.25), category: 'video' },
     { modelPattern: 'veo-omni-flash-video-edit', billingType: 'per_second', inputPrice: 0.09, category: 'video' },
     { modelPattern: 'veo-3-1', billingType: 'per_second', inputPrice: legacyRate('veo_3_1_rate', 0.20), category: 'video' },
@@ -1435,7 +1438,7 @@ export async function initDatabase() {
   // 11) 四月天退出公开 sd2.5，仅保留其他专属模型。
   try {
     const existingChre3 = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get();
-    const chre3Models = ['seedance-2.0', 'sd2-mini', ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS, ...SI_YUE_TIAN_IMAGE_MODELS];
+    const chre3Models = ['seedance-2.0', 'sd2-mini', ...SI_YUE_TIAN_C2_MODELS.map(spec => spec.id), ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS, ...SI_YUE_TIAN_IMAGE_MODELS];
     if (!existingChre3) {
       db.insert(channels).values({
         name: '4月天 渠道',

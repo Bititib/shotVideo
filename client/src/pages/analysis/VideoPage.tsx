@@ -16,6 +16,7 @@ import { feedbackApi } from '../../api/feedback';
 import { getBillingUnit } from '../../utils/billing';
 import { buildReplicatedVideoPrompt, getVideoReferenceAssets, getVideoReferenceCounts, removeVideoPromptReference, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
 import { isLongxiaModel, LONGXIA_RATIOS } from '../../../../shared/longxiaVideo';
+import { getSiYueTianC2Model } from '../../../../shared/siYueTianVideoC2';
 import { formatBeijingTime } from '../../../../shared/time';
 import { isOmniVideoEditModel, isSnumomGrokImagineVideoModel, SNUMOM_SD_MINI_MODEL, snumomSdMiniSecondsForResolution, WX_HAIDIYUE_FACE_SPLIT_MODEL } from '../../utils/videoModelCapabilities';
 import { getContentFailureInfo } from '../../utils/contentFailure';
@@ -353,6 +354,8 @@ const isWan30Model = (modelId: string) => {
 };
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  const c2Spec = getSiYueTianC2Model(modelId);
+  if (c2Spec) return c2Spec.images;
   if (getHayaVideoSpec(modelId)) return getHayaVideoSpec(modelId)!.maxImages;
   if (SI_YUE_TIAN_SEEDANCE_25_MODELS.has(modelId)) return 30;
   if (isLongxiaModel(modelId)) return 30;
@@ -485,6 +488,8 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
+    const c2Spec = getSiYueTianC2Model(m);
+    if (c2Spec) return c2Spec.videos;
     if (getHayaVideoSpec(m)) return getHayaVideoSpec(m)!.maxVideos;
     if (SI_YUE_TIAN_SEEDANCE_25_MODELS.has(m)) return 0;
     if (isLongxiaModel(m)) return 0;
@@ -506,6 +511,8 @@ export default function VideoPage() {
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
+    const c2Spec = getSiYueTianC2Model(m);
+    if (c2Spec) return c2Spec.audios;
     if (getHayaVideoSpec(m)) return getHayaVideoSpec(m)!.maxAudios;
     if (SI_YUE_TIAN_SEEDANCE_25_MODELS.has(m)) return 10;
     if (isLongxiaModel(m)) return 10;

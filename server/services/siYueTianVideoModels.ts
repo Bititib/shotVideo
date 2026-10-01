@@ -1,4 +1,17 @@
+import { getSiYueTianC2Model } from '../../shared/siYueTianVideoC2.js';
+export { getSiYueTianC2Model, SI_YUE_TIAN_C2_MODELS } from '../../shared/siYueTianVideoC2.js';
 export const SI_YUE_TIAN_SEEDANCE_25_MAX_IMAGES = 30;
+export const SI_YUE_TIAN_SEEDANCE_20_C2_MODEL = 'seedance-2.0-c2';
+export const SI_YUE_TIAN_SEEDANCE_20_C2_PRICE = 2.5;
+
+export function validateSiYueTianSeedance20C2Input(model: string, images: number, videos: number, audios: number): string | null {
+  const spec = getSiYueTianC2Model(model);
+  if (!spec) return null;
+  if (images > spec.images) return `${model} 最多支持${spec.images}张参考图片`;
+  if (videos > spec.videos) return spec.videos === 0 ? `${model} 不支持参考视频` : `${model} 最多支持${spec.videos}个参考视频`;
+  if (audios > spec.audios) return `${model} 最多支持${spec.audios}段参考音频`;
+  return null;
+}
 export const SI_YUE_TIAN_SEEDANCE_25_MAX_VIDEOS = 0;
 export const SI_YUE_TIAN_SEEDANCE_25_MAX_AUDIOS = 10;
 export const SI_YUE_TIAN_SEEDANCE_25_MIN_SECONDS = 4;
@@ -49,6 +62,7 @@ export function buildSiYueTianSeedance25VideoPayload(input: {
   seconds: number;
   aspectRatio: string;
   imageUrls: string[];
+  videoUrls?: string[];
   audioUrls: string[];
 }) {
   return {
@@ -57,6 +71,7 @@ export function buildSiYueTianSeedance25VideoPayload(input: {
     duration: input.seconds,
     aspect_ratio: input.aspectRatio,
     image_refs: input.imageUrls.length > 0 ? input.imageUrls : undefined,
+    ...(input.videoUrls?.length ? { video_refs: input.videoUrls } : {}),
     audio_refs: input.audioUrls.length > 0 ? input.audioUrls : undefined,
   };
 }
