@@ -327,9 +327,22 @@ export class AIService {
   /** 电商文案生成 */
   static async analyzeCopywriting(files: Express.Multer.File[], modelConfig?: ModelConfig) {
     const modelId = modelConfig?.modelId || 'gemini-2.5-flash';
-    const uploadedFiles = await Promise.all(files.map(f => this.uploadAndWait(f, modelConfig)));
+    const uploadedFiles: Array<{ uri: string; name: string; mimeType: string }> = [];
     try {
-      const fileParts = uploadedFiles.map(f => ({ fileData: { fileUri: f.uri, mimeType: f.mimeType } }));
+      // AI Studio proxies may support inline images but reject the Files upload protocol.
+      const fileParts: any[] = [];
+      let inlineBytes = 0;
+      for (const file of files) {
+        if (file.mimetype.startsWith('image/')) {
+          inlineBytes += Math.ceil(fs.statSync(file.path).size / 3) * 4;
+          if (inlineBytes > 18_000_000) throw { status: 400, message: '产品图片总大小过大，请压缩图片或减少图片数量后重试。' };
+          fileParts.push({ inlineData: { mimeType: file.mimetype, data: fs.readFileSync(file.path).toString('base64') } });
+        } else {
+          const uploaded = await this.uploadAndWait(file, modelConfig);
+          uploadedFiles.push(uploaded);
+          fileParts.push({ fileData: { fileUri: uploaded.uri, mimeType: uploaded.mimeType } });
+        }
+      }
       const response = await this.callGenerateContent(modelId, {
         contents: [{
           role: 'user',
@@ -344,9 +357,19 @@ export class AIService {
         }
       }, modelConfig);
 
-      const text = response.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
-      return JSON.parse(text);
+      const candidate = response.candidates?.[0];
+      const text = (candidate?.content?.parts || []).filter((part: any) => !part.thought && typeof part.text === 'string').map((part: any) => part.text).join('').trim();
+      if (!text) throw new Error('上游未返回文案内容，素材可能被拦截，请更换素材或模型后重试。');
+      if (candidate?.finishReason === 'MAX_TOKENS') throw new Error('上游返回的文案不完整，请减少素材或更换模型后重试。');
+      try {
+        return JSON.parse(text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
+      } catch {
+        throw new Error('上游返回的文案格式不正确，请重试或更换模型。');
+      }
     } finally {
+      for (const file of files) {
+        try { fs.unlinkSync(file.path); } catch {}
+      }
       for (const f of uploadedFiles) {
         await this.deleteUploadedFile(f.name, modelConfig);
       }

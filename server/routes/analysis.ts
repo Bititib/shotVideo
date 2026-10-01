@@ -121,7 +121,13 @@ async function handleAnalysis(
 
     // 尝试从嵌套 JSON 中提取可读信息
     let parsed: any = null;
-    try { parsed = JSON.parse(raw); } catch { }
+    try { parsed = JSON.parse(raw); } catch {
+      // Service errors include an operation/status prefix before the upstream JSON.
+      const jsonStart = raw.indexOf('{');
+      if (jsonStart >= 0) {
+        try { parsed = JSON.parse(raw.slice(jsonStart)); } catch {}
+      }
+    }
     const deepMsg = parsed?.error?.message || parsed?.message || '';
     const combined = `${raw} ${deepMsg}`.toLowerCase();
 
