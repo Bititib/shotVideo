@@ -38,6 +38,21 @@ export function applyGenerationEvent(node: CanvasNode, event: GenerationEvent): 
   if (event.type === 'complete') return { ...node, job: { ...job, status: job.contentId ? 'running' : 'interrupted', message: '正在核实生成结果，请勿重复提交' } };
   return { ...node, job: { ...job, message: event.type === 'queue' && event.position != null ? (event.position > 0 ? `排队中 · 前方 ${event.position} 个任务` : '任务已就绪，正在开始生成') : event.message || job.message, progress: event.progress ?? job.progress } };
 }
+
+/** Polling must refresh in-flight progress too, especially after the event stream disconnects. */
+export function applyPendingGeneration(node: CanvasNode, data: { status?: string; metadata?: any }): CanvasNode {
+  if (node.job?.status !== 'running') return node;
+  let meta: any = {};
+  try { meta = typeof data.metadata === 'string' ? JSON.parse(data.metadata) : data.metadata || {}; } catch {}
+  const raw = meta.progress ?? (Array.isArray(meta.progresses) && meta.progresses.length ? Math.max(...meta.progresses) : undefined);
+  const progress = typeof raw === 'number' && Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : node.job.progress;
+  const message = typeof meta.progressText === 'string' && meta.progressText ? meta.progressText
+    : data.status === 'queued' ? '任务排队中，正在等待上游处理'
+    : progress === 100 ? '上游已处理完成，正在等待结果保存'
+    : progress != null ? `上游仍在处理 · ${Math.round(progress)}%，正在持续查询结果` : '正在查询上游生成结果';
+  if (node.job.progress === progress && node.job.message === message) return node;
+  return { ...node, job: { ...node.job, progress, message } };
+}
 export async function referenceDataUrl(src: string): Promise<string> {
   if (src.startsWith('data:image/')) return src;
   const response = await fetch(src.startsWith('/api/media/') ? src : `/api/image-gen/download?url=${encodeURIComponent(src)}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` } });

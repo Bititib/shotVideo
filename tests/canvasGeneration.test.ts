@@ -1,8 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { applyGenerationEvent, streamGeneration } from '../client/src/canvas/generation';
+import { applyGenerationEvent, applyPendingGeneration, streamGeneration } from '../client/src/canvas/generation';
 import { newNode } from '../client/src/canvas/model';
 afterEach(() => vi.unstubAllGlobals());
 describe('canvas generation lifecycle', () => {
+  it('refreshes stale 90 percent from polling without claiming a saved video is ready', () => {
+    const node = { ...newNode('video', { x: 0, y: 0 }), job: { status: 'running' as const, contentId: 12, message: '90%', progress: 90 } };
+    const updated = applyPendingGeneration(node, { status: 'processing', metadata: JSON.stringify({ progress: 100, progressText: '视频已生成，正在保存到本站存储' }) });
+    expect(updated.job).toMatchObject({ status: 'running', progress: 100, message: '视频已生成，正在保存到本站存储' });
+    expect(updated.src).toBeUndefined();
+    expect(applyPendingGeneration(updated, { metadata: { progress: 100, progressText: updated.job!.message } })).toBe(updated);
+    const completed = applyGenerationEvent(updated, { type: 'complete', videoUrl: '/uploads/video.mp4' });
+    expect(completed.job?.status).toBe('done');
+    expect(completed.src).toBe('/uploads/video.mp4');
+  });
+  it('tolerates malformed metadata and leaves completed tasks alone', () => {
+    const node = { ...newNode('video', { x: 0, y: 0 }), job: { status: 'running' as const, message: '', progress: 90 } };
+    expect(applyPendingGeneration(node, { metadata: 'bad json' }).job?.progress).toBe(90);
+    const done = applyGenerationEvent(node, { type: 'complete', videoUrl: '/done.mp4' });
+    expect(applyPendingGeneration(done, { metadata: { progress: 1 } })).toBe(done);
+  });
   it('retains all batch results, deduplicates terminal URLs and keeps previous runs', () => {
     let node = { ...newNode('image', { x: 0, y: 0 }), job: { status: 'running' as const, requestId: 'batch', expectedCount: 4, message: '' } } as import('../client/src/canvas/model').CanvasNode;
     node = applyGenerationEvent(node, { type: 'image_ready', imageUrl: '/a.png' });

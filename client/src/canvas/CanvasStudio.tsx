@@ -20,7 +20,7 @@ import ImageTools from './ImageTools';
 import { VIDEO_EDIT_MODEL, videoInputError, readVideoDuration } from './videoInputs';
 import { canvasVideoReferenceLimits } from '../../../shared/canvasVideoReferences';
 import type { GenerateOptions } from './GeneratorPanel';
-import { applyGenerationEvent, referenceDataUrl, streamGeneration } from './generation';
+import { applyGenerationEvent, applyPendingGeneration, referenceDataUrl, streamGeneration } from './generation';
 import { arrange, bounds, canConnect, checkpoint, clamp, duplicateSelection, fitView, intersects, newDocument, newNode, parseDocument, safeMedia, screenToWorld, stepHistory, templateNodes, uid, zoomAround } from './model';
 import type { CanvasDocument, CanvasNode, History, NodeKind, Point, Snapshot } from './model';
 
@@ -562,20 +562,34 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
           } catch (error: any) {
             if (signal.aborted) return;
             if (error.status === 404) editNode(node.id, { job: { ...node.job!, status: 'interrupted', message: '未找到提交记录。请先检查生成记录，再重新创建任务。' } });
-            else throw error;
+            else editNode(node.id, { job: { ...node.job!, message: '任务状态查询暂时失败，将自动重试，请勿重复提交。' } });
           }
           continue;
         }
-        const data = await contentApi.getById(node.job!.contentId!, signal);
+        let data;
+        try { data = await contentApi.getById(node.job!.contentId!, signal); }
+        catch (error: any) {
+          if (signal.aborted || !mounted.current) return;
+          const current = docRef.current.nodes.find(n => n.id === node.id);
+          if (current?.job?.status === 'running' && current.job.contentId === node.job!.contentId) {
+            editNode(node.id, { job: { ...current.job, message: '结果查询暂时失败，将自动重试，请勿重复提交。' } });
+          }
+          continue;
+        }
         if (signal.aborted || !mounted.current) return;
         const current = docRef.current.nodes.find(n => n.id === node.id);
-        if (!current || current.job?.status !== 'running') continue;
-        const meta = typeof data.metadata === 'string' ? JSON.parse(data.metadata || '{}') : data.metadata || {};
+        if (!current || current.job?.status !== 'running' || current.job.contentId !== node.job!.contentId) continue;
+        let meta: any = {};
+        try { meta = typeof data.metadata === 'string' ? JSON.parse(data.metadata || '{}') : data.metadata || {}; } catch {}
         if (data.status === 'completed' || data.status === 'success') {
           const src = data.resultUrl || meta.imageUrls?.[0];
           if (src) { const finished = applyGenerationEvent(current, { type: 'complete', contentId: current.job.contentId, imageUrls: meta.imageUrls?.length ? meta.imageUrls : [src] }); editNode(node.id, finished); }
           else editNode(node.id, { job: { ...current.job, status: 'interrupted', message: '未取得结果地址，请查看生成记录。' } });
         } else if (data.status === 'failed' || data.status === 'error') editNode(node.id, { job: { ...current.job, status: 'error', message: data.errorMessage || meta.error || '生成失败，请到生成记录查看详情。' } });
+        else {
+          const pending = applyPendingGeneration(current, data);
+          if (pending !== current) editNode(node.id, pending);
+        }
       }
     }, 5000);
   }, [pendingIds]);
