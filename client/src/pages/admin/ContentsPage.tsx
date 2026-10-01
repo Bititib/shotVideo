@@ -92,7 +92,7 @@ const getAdminRoutingInfo = (item: ContentItem, metadata: Record<string, any>): 
     routed,
     requestedModel: requestedModel || '未知',
     actualModel: String(metadata.actualModel || requestedModel || '未知'),
-    actualChannel: channelDisplayName(String(metadata.actualChannel || (routed ? '' : 'hmstudio'))),
+    actualChannel: String(metadata.channelName || '').trim() || channelDisplayName(String(metadata.actualChannel || (routed ? '' : 'hmstudio'))),
     reason: routingReasonDisplayName(String(metadata.fallbackReason || '')),
     fallbackAt: String(metadata.fallbackAt || ''),
   };
@@ -301,8 +301,8 @@ export default function ContentsPage() {
     const model = String(item.modelId || meta.model || '');
     const channelName = String(meta.channelName || '').trim();
     const actualChannel = String(meta.actualChannel || '');
-    if (actualChannel && actualChannel !== 'openai') return channelDisplayName(actualChannel);
     if (channelName) return channelName;
+    if (actualChannel && actualChannel !== 'openai') return channelDisplayName(actualChannel);
     if (model === 'wan3.0th' || model.startsWith('Minimax-H3-768p')) return 'Julun';
     if (model === 'sd2.5-haidiyue-face') return 'wx-海底月';
     if (model === 'sd2.5') return '四月天';

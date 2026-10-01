@@ -1,5 +1,5 @@
 import { db } from '../db/index.js';
-import { contents, users } from '../db/schema.js';
+import { contents, users, channels } from '../db/schema.js';
 import { eq, and, desc, sql, like, or } from 'drizzle-orm';
 import { beijingDayBounds } from '../../shared/time.js';
 import crypto from 'crypto';
@@ -18,6 +18,18 @@ export interface SaveContentInput {
   cost?: number;
   metadata?: Record<string, any>;
   status?: string;
+}
+
+/** Resolve historical records by their actual channel ID, never by model-name guesses. */
+export function withAdminChannelName<T extends { metadata?: string | Record<string, any> | null }>(item: T, names?: Map<number, string>): T {
+  let metadata: Record<string, any>;
+  try { metadata = typeof item.metadata === 'string' ? JSON.parse(item.metadata || '{}') : { ...(item.metadata || {}) }; }
+  catch { return item; }
+  const channelId = Number(metadata.channelId);
+  if (!Number.isSafeInteger(channelId) || channelId <= 0) return item;
+  const name = names ? names.get(channelId) : db.select({ name: channels.name }).from(channels).where(eq(channels.id, channelId)).get()?.name;
+  if (!name) return item;
+  return { ...item, metadata: typeof item.metadata === 'string' ? JSON.stringify({ ...metadata, channelName: name }) : { ...metadata, channelName: name } };
 }
 
 interface GetContentsOptions {
@@ -533,6 +545,7 @@ export class ContentService {
 
   /** 管理员查询所有内容（分页+筛选） */
   static getAllContents(options: { page: number; pageSize: number; type?: string; userId?: number; modelId?: string; status?: string; search?: string }) {
+    const channelNames = new Map(db.select({ id: channels.id, name: channels.name }).from(channels).all().map(channel => [channel.id, channel.name]));
     const { page, pageSize, type, userId, modelId, status, search } = options;
     const offset = (page - 1) * pageSize;
 
@@ -596,7 +609,7 @@ export class ContentService {
     return {
       items: items.map(item => compactAdminContentForList(
         item.type === 'video' ? this.materializeAssetsForContent(item.id, item) : item,
-      )),
+      )).map(item => withAdminChannelName(item, channelNames)),
       total,
       page,
       pageSize,

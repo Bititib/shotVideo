@@ -9,9 +9,17 @@ import {
   compactContentForList,
   materializeContentMetadataAssets,
   sanitizeContentRoutingForClient,
+  withAdminChannelName,
 } from '../server/services/contentService.js';
 
 describe('content routing privacy', () => {
+  it('resolves historical openai labels from channel ID without changing route identity or leaking to users', () => {
+    const item = { metadata: JSON.stringify({ channelId: 5, actualChannel: 'openai' }) };
+    const result = withAdminChannelName(item, new Map([[5, '四月天']]));
+    expect(JSON.parse(result.metadata)).toEqual({ channelId: 5, actualChannel: 'openai', channelName: '四月天' });
+    expect(JSON.parse(sanitizeContentRoutingForClient(result).metadata)).not.toHaveProperty('channelName');
+    expect(withAdminChannelName(item, new Map()).metadata).toBe(item.metadata);
+  });
   it('removes administrator-only failover fields from ordinary string metadata', () => {
     const sanitized = sanitizeContentRoutingForClient({
       id: 1,

@@ -1,4 +1,5 @@
 import { startPolling } from '../../utils/polling';
+import { shouldPollVideoTask, videoTaskDatabaseId } from '../../utils/videoTaskSync';
 import { getHayaVideoSpec } from '../../../../shared/hayaVideo';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
@@ -817,7 +818,10 @@ export default function VideoPage() {
             metadata: item.metadata as any,
             createdAt: item.createdAt,
           }));
-        setTasks(processingTasks);
+        setTasks(previous => {
+          const existingIds = new Set(previous.map(videoTaskDatabaseId).filter(Boolean));
+          return [...previous, ...processingTasks.filter(task => !existingIds.has(videoTaskDatabaseId(task)))];
+        });
       })
       .catch((loadError) => {
         console.error('Failed to load video history:', loadError);
@@ -925,20 +929,21 @@ export default function VideoPage() {
   }, [searchParams]);
 
   // 轮询在后台生成中的数据库任务
-  const pendingDatabaseTaskIds = tasks.filter(t => t.status === 'generating' && t.id.startsWith('db_')).map(t => t.id).join(',');
+  const pendingDatabaseTaskIds = tasks.filter(shouldPollVideoTask).map(t => `${t.id}:${videoTaskDatabaseId(t)}`).join(',');
   useEffect(() => {
-    const dbTasks = tasks.filter(t => t.status === 'generating' && t.id.startsWith('db_'));
+    const dbTasks = tasks.filter(shouldPollVideoTask);
     if (dbTasks.length === 0) return;
 
     let active = true;
     const stopPolling = startPolling(async signal => {
       const results = await Promise.allSettled(dbTasks.map(task => {
-        const dbId = parseInt(task.id.replace('db_', ''));
+        const dbId = videoTaskDatabaseId(task)!;
         return contentApi.getById(dbId, signal)
           .then((res: any) => {
             if (!active) return;
             const item = res;
             if (item.status === 'completed' || item.status === 'success') {
+              abortRef.current.delete(task.id);
               // 先将任务标记为完成状态并显示视频，避免直接移除导致视觉"消失"
               setTasks(prev => prev.map(t => t.id === task.id ? {
                 ...t,
@@ -968,6 +973,7 @@ export default function VideoPage() {
                   }).catch(() => { });
               }, 2000);
             } else if (item.status === 'failed') {
+              abortRef.current.delete(task.id);
               setTasks(prev => prev.map(t => t.id === task.id ? {
                 ...t,
                 status: 'error',
@@ -980,12 +986,12 @@ export default function VideoPage() {
               let meta: any = {};
               try { meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : (item.metadata || {}); } catch { }
               const p = meta.progress || 0;
-              setTasks(prev => prev.map(t => t.id === task.id ? {
+              setTasks(prev => prev.map(t => t.id === task.id && t.status === 'generating' ? {
                 ...t,
                 progress: p,
                 statusMessage: item.status === 'review' ? (meta.progressText || '结果待核实，请勿重复提交') : item.status === 'queued'
                   ? `HM Studio 排队中：前方 ${Math.max(0, Number(meta.queuePosition || 1) - 1)} 项，当前运行 ${meta.queueRunning || 0}/${meta.queueLimit || 10}`
-                  : (p > 0 ? `视频生成中 ${p}%` : '正在后台生成中...')
+                  : (meta.progressText || (p > 0 ? `视频生成中 ${p}%` : '正在后台生成中...'))
               } : t));
             }
           })
@@ -1441,7 +1447,7 @@ export default function VideoPage() {
     setTasks(prev => [newTask, ...prev]);
 
     const updateTask = (patch: Partial<VideoTask>) => {
-      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, ...patch } : t));
+      setTasks(prev => prev.map(t => t.id === taskId && t.status === 'generating' ? { ...t, ...patch } : t));
     };
 
     const ctrl = generateVideo(
@@ -1693,7 +1699,7 @@ export default function VideoPage() {
       <div className="flex-1 flex flex-col min-w-0 relative h-full">
         <div className="flex-1 overflow-y-auto p-6 [&::-webkit-scrollbar]:hidden"
           style={{ scrollbarWidth: 'none', paddingBottom: `${Math.max(256, composerHeight + 24)}px` }}>
-          {tasks.length === 0 && history.length === 0 ? (
+          {tasks.length === 0 && history.length === 0 && historyTotal === 0 ? (
             <div className="h-full flex items-center justify-center">
               <div className="text-center">
                 <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-white/5 flex items-center justify-center">
@@ -1793,7 +1799,7 @@ export default function VideoPage() {
               )}
 
               {/* 历史记录 */}
-              {history.length > 0 && (
+              {(history.length > 0 || historyPage * VIDEO_HISTORY_PAGE_SIZE < historyTotal) && (
                 <div>
                   <div className="mb-4 flex items-center justify-between">
                     <p className="text-xs text-[#8a6048] font-semibold tracking-wider uppercase">历史生成</p>

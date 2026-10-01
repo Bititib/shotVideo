@@ -2765,7 +2765,13 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
             return;
           }
           console.log(`[video] ✅ 生成完成: ${resultUrl}`);
+          if (contentId !== null) {
+            const row = db.select().from(contents).where(eq(contents.id, contentId)).get();
+            const metadata = JSON.parse(row?.metadata || '{}');
+            db.update(contents).set({ metadata: JSON.stringify({ ...metadata, progress: 100, upstreamStatus: taskStatus, upstreamResultUrl: resultUrl, progressText: '视频已生成，正在保存到本站存储' }) }).where(eq(contents.id, contentId)).run();
+          }
           sendEvent({ type: 'progress', progress: 100 });
+          sendEvent({ type: 'status', message: '视频已生成，正在保存到本站存储' });
 
           // Persist every completed video on the VPS before exposing it to users.
           let finalVideoUrl = '';
@@ -2781,8 +2787,8 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
             continue;
           }
 
-          sendEvent({ type: 'complete', videoUrl: finalVideoUrl });
           billUsage(finalVideoUrl, resultUrl);
+          sendEvent({ type: 'complete', videoUrl: finalVideoUrl });
           if (contentId !== null) activePolls.delete(contentId);
           if (!res.destroyed && !res.writableEnded) {
             res.write('data: [DONE]\n\n');
@@ -3801,6 +3807,9 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
             break;
           }
           console.log(`[video-recover] ✅ Generating completed: ${resultUrl}`);
+          const latest = db.select().from(contents).where(eq(contents.id, contentId)).get();
+          const savingMetadata = JSON.parse(latest?.metadata || '{}');
+          db.update(contents).set({ metadata: JSON.stringify({ ...savingMetadata, progress: 100, upstreamStatus: taskStatus, upstreamResultUrl: resultUrl, progressText: '视频已生成，正在保存到本站存储' }) }).where(eq(contents.id, contentId)).run();
           let finalVideoUrl = '';
           try {
             if (resultUrl && resultUrl.includes('llm.chre3.com')) {
