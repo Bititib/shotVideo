@@ -16,7 +16,7 @@ vi.mock('../server/db/index.js', async () => {
 vi.mock('../server/routes/video.js',()=>({ enqueueHmStudioVideoContent:vi.fn(),resumePollForTask:vi.fn(),holdHayaSubmission:vi.fn(),releaseHayaSubmission:vi.fn() }));
 vi.mock('../server/services/channelService.js',()=>({ChannelService:{findChannelsForModel:()=>[{id:1,type:'openai',baseUrl:'https://mock.invalid',apiKey:'fake',modelMapping:{}}],findChannelForModel:()=>({id:1,type:'openai',baseUrl:'https://mock.invalid',apiKey:'fake',modelMapping:{},timeout:1000})}}));
 vi.mock('../server/services/pricingService.js',()=>({PricingService:{quote:(_model:string,params:any)=>({cost:(params.count || 1)*2}),createQuoteResolver:()=> (_model:string,usage:any)=>({cost:(usage.promptTokens+usage.completionTokens)/1000}),calculateCost:(_model:string,input:number,output:number)=>(input+output)/1000}}));
-vi.mock('../server/services/aiService.js',()=>({AIService:{generateTts:vi.fn(),generateImage:vi.fn(),getTtsVoiceCatalog:vi.fn()}}));
+vi.mock('../server/services/aiService.js',()=>({AIService:{generateTts:vi.fn(),generateImage:vi.fn(),getTtsVoiceCatalog:vi.fn(),clonedVoices:vi.fn()}}));
 vi.mock('../server/middleware/quota.js',()=>({quotaMiddleware:vi.fn(),logUsage:vi.fn()}));
 vi.mock('../server/services/comicDramaQueueService.js',()=>({ComicDramaQueueService:{}}));
 vi.mock('../server/services/comicDramaAnalysisQueueService.js',()=>({ComicDramaAnalysisQueueService:{}}));
@@ -50,6 +50,24 @@ beforeEach(()=>{
 });
 afterEach(()=>{vi.unstubAllGlobals();vi.clearAllMocks();});
 describe('route precharge order and refunds without paid providers',()=>{
+  it('falls back only on an explicit invalid clone and settles once', async () => {
+    vi.mocked(AIService.clonedVoices).mockReturnValue({ requireVoice: vi.fn() } as any);
+    vi.mocked(AIService.getTtsVoiceCatalog).mockResolvedValue([{ id: 'Zephyr', name: 'Zephyr' }]);
+    vi.mocked(AIService.generateTts).mockRejectedValueOnce(Object.assign(new Error('Voice not found'), { upstreamStatus: 404 })).mockResolvedValueOnce({ audioBase64: 'test', mimeType: 'audio/wav' });
+    const res = await invoke(analysisRouter, '/generate-tts', { text: 'hello', voice: 'voices/voice_123' });
+    expect(res.body.usedVoice).toBe('Zephyr');
+    expect(res.body.warning).toContain('失效');
+    expect(AIService.generateTts).toHaveBeenCalledTimes(2);
+    expect(userBalance()).toBe(98);
+    expect(records()).toHaveLength(1);
+  });
+  it('does not replace a clone when the model itself returns 404', async () => {
+    vi.mocked(AIService.clonedVoices).mockReturnValue({ requireVoice: vi.fn() } as any);
+    vi.mocked(AIService.generateTts).mockRejectedValueOnce(Object.assign(new Error('Model not found'), { upstreamStatus: 404 }));
+    await invoke(analysisRouter, '/generate-tts', { text: 'hello', voice: 'voices/voice_123' });
+    expect(AIService.generateTts).toHaveBeenCalledTimes(1);
+    expect(userBalance()).toBe(100);
+  });
   it('lists only registered TTS models with their upstream voices', async () => {
     sqlite.exec(`DELETE FROM models;
       INSERT INTO models(id,model_id,display_name,capabilities,is_active) VALUES

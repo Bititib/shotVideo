@@ -2,6 +2,7 @@ import type { TtsVoice } from '../../../shared/tts';
 import { api } from './client';
 
 export type AnalysisModel = { modelId: string; displayName: string };
+export type StudioVoice = { voiceId: string; displayName: string; type: 'cloned' | 'prebuilt'; state: string; createdAt?: string };
 export type TtsModel = { modelId: string; displayName: string; description?: string; rate?: number; voices?: string[]; voiceDetails?: TtsVoice[]; voiceSource?: 'upstream' | 'unavailable' };
 export type ComicDramaCharacter = { name: string; role: string; description: string; assetPrompt: string };
 export type ComicDramaProp = { name: string; description: string; assetPrompt: string };
@@ -263,6 +264,12 @@ export const analysisApi = {
   },
 
   generateTts(text: string, voice: string, modelId?: string) {
-    return api.post<{ audioBase64: string; mimeType: string }>('/analysis/generate-tts', { text, voice, modelId });
+    return api.post<{ audioBase64: string; mimeType: string; usedVoice?: string; warning?: string }>('/analysis/generate-tts', { text, voice, modelId });
   },
+  getClonedVoices() { return api.get<StudioVoice[]>('/analysis/cloned-voices'); },
+  cloneVoice(audio: File, displayName: string) {
+    const body = new FormData(); body.append('audio', audio); body.append('displayName', displayName);
+    return api.post<{ voiceId: string; displayName: string; state: string }>('/analysis/cloned-voices', body);
+  },
+  deleteClonedVoice(voiceId: string) { return api.delete('/analysis/cloned-voices', { body: JSON.stringify({ voiceId }) }); },
 };

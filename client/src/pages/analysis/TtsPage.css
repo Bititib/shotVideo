@@ -35,3 +35,11 @@
   .tts-composer-heading h1 { font-size:23px; }
   .tts-content-panel .flex.justify-between { flex-wrap:wrap; gap:12px; }
 }
+.tts-clone-panel { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid #8b967b55; border-radius: 16px; margin-bottom: 20px; }
+.tts-clone-panel h3 { font-weight: 600; }
+.tts-clone-panel input[type=file] { width: 100%; font-size: 12px; }
+.tts-clone-panel button { padding: 10px 12px; border: 1px solid #8b967b66; border-radius: 10px; text-align: left; }
+.tts-clone-panel button:disabled { opacity: .45; cursor: not-allowed; }
+.tts-clone-panel button[aria-pressed=true] { background: #86967433; border-color: #758763; }
+.tts-clone-row { display: flex; gap: 8px; }
+.tts-clone-row > button:first-child { flex: 1; overflow-wrap: anywhere; }

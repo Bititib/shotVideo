@@ -2,7 +2,7 @@ import './TtsPage.css';
 import { ttsVoices, audioExtension, type TtsVoice } from '../../../../shared/tts';
 import React, { useState, useEffect, useRef } from 'react';
 import { Volume2, Play, Pause, Download, Loader2, Sparkles, AlertCircle, RefreshCw, FileText, Check, Music, Trash2 } from 'lucide-react';
-import { analysisApi, getCachedTtsModels } from '../../api/analysis';
+import { analysisApi, getCachedTtsModels, type StudioVoice } from '../../api/analysis';
 import { contentApi } from '../../api/content';
 import { formatBeijingTime, parseUtcTimestamp } from '../../../../shared/time';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
@@ -52,6 +52,16 @@ export default function TtsPage() {
   const [selectedModel, setSelectedModel] = useState(() => models[0]?.modelId || '');
   const activeModel = models.find(m => m.modelId === selectedModel);
   const voices = ttsVoices(activeModel?.voices);
+  const [clones, setClones] = useState<StudioVoice[]>([]);
+  const [cloneName, setCloneName] = useState('');
+  const [cloneFile, setCloneFile] = useState<File | null>(null);
+  const [cloneBusy, setCloneBusy] = useState(false);
+  const [cloneMessage, setCloneMessage] = useState('');
+  const loadClones = async () => {
+    const list = await analysisApi.getClonedVoices();
+    setClones(list.filter(v => v.type === 'cloned'));
+  };
+  useEffect(() => { loadClones().catch(() => {}); }, []);
   const [voiceSearch, setVoiceSearch] = useState('');
   const [modelsLoading, setModelsLoading] = useState(true);
   const voiceDetails = new Map<string, TtsVoice>(activeModel?.voiceDetails?.map(v => [v.id, v]) || []);
@@ -62,8 +72,8 @@ export default function TtsPage() {
   const [selectedVoice, setSelectedVoice] = useState('');
   const actualVoice = selectedVoice;
   useEffect(() => {
-    setSelectedVoice(current => voices.includes(current) ? current : (voices[0] || ''));
-  }, [voices]);
+    setSelectedVoice(current => voices.includes(current) || clones.some(v => v.voiceId === current && v.state === 'ACTIVE') ? current : (voices[0] || ''));
+  }, [voices, clones]);
   const [text, setText] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -221,6 +231,7 @@ export default function TtsPage() {
       const res = await analysisApi.generateTts(text.trim(), actualVoice, selectedModel);
       const audioBase64 = res.audioBase64;
       const mimeType = res.mimeType || 'audio/wav';
+      if (res.warning) setCloneMessage(res.warning);
 
       if (!audioBase64) {
         throw new Error('未返回有效的音频数据');
@@ -230,7 +241,7 @@ export default function TtsPage() {
       const newVoice: GeneratedVoice = {
         id: Date.now().toString(),
         text: text.trim(),
-        voice: actualVoice,
+        voice: res.usedVoice || actualVoice,
         audioUrl,
         mimeType,
         createdAt: new Date(),
@@ -307,6 +318,42 @@ export default function TtsPage() {
           </div>
 
           <section className="tts-voice-section">
+            <div className="tts-clone-panel">
+              <h3>克隆音色</h3>
+              <p className="tts-hint">上传 10～30 秒清晰的单人录音，支持 WAV、MP3、OGG，最大 10MB。请使用本人或已获授权的声音。</p>
+              <input className="tts-voice-search" aria-label="克隆音色名称" placeholder="为声音起个名字" maxLength={60} value={cloneName} onChange={e => setCloneName(e.target.value)} />
+              <input aria-label="参考音频" type="file" accept=".wav,.mp3,.ogg,audio/wav,audio/mpeg,audio/ogg" disabled={cloneBusy} onChange={e => {
+                const file = e.target.files?.[0]; setCloneFile(null); setCloneMessage('');
+                if (!file) return;
+                if (file.size > 10 * 1024 * 1024) { setCloneMessage('音频超过 10MB，请压缩或裁剪后上传'); e.target.value = ''; return; }
+                if (!/\.(wav|mp3|ogg)$/i.test(file.name)) { setCloneMessage('请选择 WAV、MP3 或 OGG 文件'); e.target.value = ''; return; }
+                setCloneFile(file);
+              }} />
+              <button type="button" disabled={cloneBusy || !cloneFile || !cloneName.trim()} onClick={async () => {
+                if (!guard() || !cloneFile) return;
+                setCloneBusy(true); setCloneMessage('');
+                try {
+                  const created = await analysisApi.cloneVoice(cloneFile, cloneName.trim());
+                  await loadClones();
+                  if (created.state === 'ACTIVE') setSelectedVoice(created.voiceId);
+                  setCloneMessage(created.state === 'ACTIVE' ? '声音克隆成功，可以选择该音色生成配音。' : `音色已保存，当前状态：${created.state}`);
+                } catch (e: any) { setCloneMessage(e.message || '克隆失败，请重试'); }
+                finally { setCloneBusy(false); }
+              }}>{cloneBusy ? '正在克隆…' : '创建克隆音色'}</button>
+              <button type="button" disabled={cloneBusy} onClick={() => { if (guard()) loadClones().catch(e => setCloneMessage(e.message)); }}>刷新我的音色</button>
+              {cloneMessage && <p role="status" className="tts-hint">{cloneMessage}</p>}
+              {clones.map(v => <div className="tts-clone-row" key={v.voiceId}>
+                <button type="button" aria-pressed={selectedVoice === v.voiceId} disabled={v.state !== 'ACTIVE' || isGenerating} onClick={() => setSelectedVoice(v.voiceId)}>{v.displayName}{v.state !== 'ACTIVE' ? ` · ${v.state}` : ''}</button>
+                <button type="button" aria-label={`删除音色 ${v.displayName}`} disabled={cloneBusy || isGenerating} onClick={async () => {
+                  if (!confirm(`删除克隆音色“${v.displayName}”？删除后无法继续使用此声音。`)) return;
+                  setCloneBusy(true);
+                  try { await analysisApi.deleteClonedVoice(v.voiceId); await loadClones(); setCloneMessage('克隆音色已删除'); }
+                  catch (e: any) { setCloneMessage(e.message); }
+                  finally { setCloneBusy(false); }
+                }}><Trash2 size={14} /></button>
+              </div>)}
+            </div>
+            <h3>预置音色</h3>
             <div className="tts-section-heading"><label>02 · 选择声音</label><span>共 {voices.length} 个音色</span></div>
             <input className="tts-voice-search" aria-label="搜索音色" placeholder="搜索名称、风格或使用场景…" value={voiceSearch} onChange={e => setVoiceSearch(e.target.value)} />
             <div className="tts-voice-grid">

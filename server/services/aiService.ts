@@ -5,6 +5,7 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { env } from '../config/env.js';
 import { loadTtsVoiceCatalog } from './ttsCatalogService.js';
+import { ClonedVoiceService } from './clonedVoiceService.js';
 import { ChannelService } from './channelService.js';
 import { generalPrompt, generalSchema } from '../prompts/general.js';
 import { ecommercePrompt, ecommerceSchema } from '../prompts/ecommerce.js';
@@ -483,6 +484,10 @@ export class AIService {
     return loadTtsVoiceCatalog(env.GEMINI_API_BASE_URL, getApiKey());
   }
 
+  static clonedVoices(userId: number, modelConfig?: ModelConfig) {
+    return new ClonedVoiceService(userId, env.GEMINI_API_BASE_URL, getApiKey(modelConfig));
+  }
+
   /** AIStudio2API Gemini-compatible speech configuration (including Gemini 3.8). */
   static async generateTts(text: string, voice: string, modelConfig?: ModelConfig) {
     if (!modelConfig?.modelId) throw new Error('请先选择可用的语音模型');
@@ -510,7 +515,7 @@ export class AIService {
 
     if (!res.ok) {
       const errText = await res.text();
-      throw new Error(`TTS 接口调用失败: ${res.status} - ${errText}`);
+      throw Object.assign(new Error(`TTS 接口调用失败: ${res.status} - ${errText}`), { upstreamStatus: res.status });
     }
 
     const response = await res.json();

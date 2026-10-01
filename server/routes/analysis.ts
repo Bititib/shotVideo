@@ -188,6 +188,32 @@ router.get('/models',
 );
 
 // ============ 语音合成可用模型列表 ============
+const cloneUpload = multer({ dest: os.tmpdir(), limits: { fileSize: 10 * 1024 * 1024, files: 1 } });
+router.get('/cloned-voices', authMiddleware, async (req: AuthRequest, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(AIService.clonedVoices(req.userId!).getAllVoices(await AIService.getTtsVoiceCatalog()));
+  } catch (error) { next(error); }
+});
+router.post('/cloned-voices', authMiddleware, tierMiddleware('tts'), (req, res, next) => {
+  cloneUpload.single('audio')(req, res, error => {
+    if (error) return res.status(400).json({ error: error.code === 'LIMIT_FILE_SIZE' ? '参考音频不能超过 10MB，请压缩或裁剪' : '音频上传失败，请只上传一个音频文件' });
+    next();
+  });
+}, async (req: TierRequest, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: '请上传参考音频' });
+    const voice = await AIService.clonedVoices(req.userId!).cloneVoice(req.file.path, String(req.body.displayName || ''), req.file.originalname);
+    res.json({ voiceId: voice.voiceId, displayName: voice.displayName, createdAt: voice.createdAt, state: voice.state });
+  } catch (error: any) { res.status(error.status || 500).json({ error: error.message || '声音克隆失败' }); }
+  finally { if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} } }
+});
+router.delete('/cloned-voices', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    await AIService.clonedVoices(req.userId!).deleteClonedVoice(String(req.body.voiceId || ''));
+    res.json({ success: true });
+  } catch (error: any) { res.status(error.status || 500).json({ error: error.message || '删除音色失败' }); }
+});
 router.get('/tts-models',
   optionalAuthMiddleware,
   async (req: TierRequest, res: Response, next) => {
@@ -661,12 +687,25 @@ router.post('/generate-tts',
       const modelConfig = resolveModel(req, false, true);
       if (typeof text !== 'string' || !text.trim()) throw { status: 400, message: '请提供合成文本' };
       const model = modelConfig!.modelId;
+      if (voice.startsWith('voices/')) AIService.clonedVoices(req.userId!).requireVoice(voice);
       const cost = PricingService.quote(model, { characters: text.length }, false).cost;
       const reservation = reserveUserCharge(req.userId!, cost, 'generate_tts');
       try {
-        const result = await AIService.generateTts(text, voice, modelConfig);
+        let result;
+        let usedVoice = voice;
+        let warning: string | undefined;
+        try { result = await AIService.generateTts(text, voice, modelConfig); }
+        catch (error: any) {
+          const invalidVoice = /(?:voice|speaker)[\s\S]*(?:not found|expired|deleted|invalid)|(?:not found|expired|deleted|invalid)[\s\S]*(?:voice|speaker)/i.test(error.message || '');
+          if (!voice.startsWith('voices/') || ![400, 404, 410].includes(error.upstreamStatus) || !invalidVoice) throw error;
+          const catalog = await AIService.getTtsVoiceCatalog();
+          usedVoice = catalog.find(v => v.id === 'Zephyr')?.id || catalog.find(v => !v.id.startsWith('voices/'))?.id;
+          if (!usedVoice) throw error;
+          result = await AIService.generateTts(text, usedVoice, modelConfig);
+          warning = `该克隆音色已失效，本次已使用 ${usedVoice} 合成，请重新克隆声音。`;
+        }
         reservation.settle(cost);
-        return { ...result, billing: { cost, reservationId: reservation.id } };
+        return { ...result, usedVoice, warning, billing: { cost, reservationId: reservation.id } };
       } finally { reservation.cancel(); }
     });
   }

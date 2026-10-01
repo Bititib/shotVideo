@@ -23,6 +23,8 @@ export async function createBackup(dataDirectory, destination) {
   await fs.mkdir(target,{recursive:false});
   const database=new Database(path.join(data,'app.db'),{readonly:true,fileMustExist:true});
   try {await database.backup(path.join(target,'app.db'));}finally{database.close();}
+  try { await fs.copyFile(path.join(data, 'cloned_voices.json'), path.join(target, 'cloned_voices.json')); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
   for(const directory of ['uploads','private-media']) {
     try {await fs.cp(path.join(data,directory),path.join(target,directory),{recursive:true,errorOnExist:true,force:false,filter:source=>!source.endsWith('.tmp')});}
     catch(e){if(e.code!=='ENOENT')throw e;}
