@@ -6,6 +6,14 @@ const options = { kind: 'video' as const, videoMode: 'edit' as const, model: VID
 const video = { ...newNode('video', { x: 0, y: 0 }), src: '/original.mp4' };
 afterEach(() => vi.restoreAllMocks());
 describe('canvas video editing constraints', () => {
+  it('allows Fast C2 video and audio references with its own channel limits', () => {
+    const audio = { ...newNode('audio', { x: 0, y: 0 }), src: '/voice.mp3' };
+    const multi = { ...options, videoMode: 'multimodal' as const, model: 'seedance-2.0-fast-c2' };
+    expect(videoInputError(multi, [video, audio])).toBe('');
+    expect(videoInputError(multi, [video, video])).toContain('1 个视频');
+    expect(videoInputError(multi, Array(4).fill(audio))).toContain('3 段音频');
+    expect(videoInputError({ ...multi, model: 'seedance-2.0-c2' }, [video])).toContain('0 个视频');
+  });
   it('accepts multimodal references only for supported models and respects audio formats and limits', () => {
     const audio = { ...newNode('audio', { x: 0, y: 0 }), src: 'data:audio/mpeg;base64,eA==' };
     const multi = { ...options, videoMode: 'multimodal' as const, model: 'ad-seedance-2.5-480p' };

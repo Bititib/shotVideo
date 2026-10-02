@@ -87,6 +87,8 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
   const guard = useAuthGuard();
   const [size, setSize] = useState({ width: 1000, height: 700 });
   const selection = doc.nodes.filter(n => selected.includes(n.id));
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
   const active = selection.length === 1 ? selection[0] : undefined;
   const running = doc.nodes.some(n => n.job?.status === 'running');
 
@@ -264,6 +266,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
 
   const importFiles = async (files: File[], at = center(), targetId?: string, fill = false, folder?: string) => {
     if (importing) return;
+    const selectionAtStart = selectedRef.current.join(',');
     setImporting(true);
     const imported: CanvasNode[] = [], failures: string[] = [];
     for (const [i, file] of files.slice(0, 20).entries()) {
@@ -281,8 +284,9 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     }
     if (!mounted.current) return;
     if (folder) imported.forEach(n=>{n.assetFolder=folder;});
-    if (imported.length && fill && targetId) { applyAssets(imported.slice(0,1), {id:targetId,mode:'fill'});setImporting(false);return; }
-    if (imported.length && targetId) { applyAssets(imported,{id:targetId,mode:'reference'});setImporting(false);return; }
+    const keepFocus = selectedRef.current.join(',') === selectionAtStart;
+    if (imported.length && fill && targetId) { applyAssets(imported.slice(0,1), {id:targetId,mode:'fill'}, keepFocus);setImporting(false);return; }
+    if (imported.length && targetId) { applyAssets(imported,{id:targetId,mode:'reference'}, keepFocus);setImporting(false);return; }
     if (imported.length) {
       const targetExists = targetId && docRef.current.nodes.some(n => n.id === targetId);
       commit(d => ({ ...d, nodes: [...d.nodes, ...imported], edges: targetExists ? [...d.edges, ...imported.map(n => ({ id: uid(), from: n.id, to: targetId! }))] : d.edges }));
@@ -292,7 +296,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     setNotice(failures.length ? `${failures.length} 个文件未能导入。支持常见图片（20 MB 内）、MP4 / WebM 视频与 MP3 / WAV / OGG 音频（40 MB 内）。` : `已导入 ${imported.length} 个素材${files.length > 20 ? '，每次最多导入 20 个' : ''}`);
     setImporting(false);
   };
-  const applyAssets = (assets: CanvasNode[], intent = assetIntent) => {
+  const applyAssets = (assets: CanvasNode[], intent = assetIntent, focus = true) => {
     if (!intent) { addAssets(assets); return; }
     const target = docRef.current.nodes.find(n=>n.id === intent.id);
     if (!target || target.job?.status === 'running') {setNotice('目标节点不可用或正在生成');return;}
@@ -316,7 +320,8 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
       }
       commit(()=>next);
     }
-    setSelected([target.id]);setAssetBrowser(false);setAssetIntent(null);setPanel(true);setNotice(intent.mode === 'fill' ? '已填入节点，原素材保留' : '已引用素材并连接到当前节点');
+    if (focus) {setSelected([target.id]);setPanel(true);}
+    setAssetBrowser(false);setAssetIntent(null);setNotice(intent.mode === 'fill' ? '已填入节点，原素材保留' : '已引用素材并连接到当前节点');
     return attached;
   };
   const referenceTarget = (kind: GenerateOptions['kind']) => {
@@ -379,7 +384,8 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     };
     document.addEventListener('keydown', trap);
-    return () => { document.removeEventListener('keydown', trap); previous?.focus(); };
+    // Focusing a node title selects that node again, overriding the reference target.
+    return () => { document.removeEventListener('keydown', trap); if (!previous?.closest('.studio-node')) previous?.focus(); };
   }, [projectMenu, help, preview, compare, batch, nodeHistory, assetBrowser, imageTools]);
 
   const begin = (event: ReactPointerEvent, ids?: string[], resize = false) => {
@@ -546,11 +552,14 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
       if (!controller.signal.aborted) patch(n => n.job?.status === 'done' ? n : { ...n, job: { ...n.job!, status: n.job?.contentId || submitted && n.job?.requestId ? 'running' : submitted ? 'interrupted' : 'error', message: submitted ? `${error.message}。${options.kind === 'audio' ? '请先到生成记录核实配音结果，再决定是否重试。' : '正在核实任务，避免重复提交。'}` : error.message } });
     } finally { controllers.current.delete(result.id); }
   };
-  const pendingIds = doc.nodes.filter(n => n.job?.status === 'running' && (n.job.contentId || n.job.requestId)).map(n => n.job!.contentId || n.job!.requestId).join(',');
+  const reconciledJobs = useRef(new Set<string>());
+  const jobKey = (node: CanvasNode) => `${node.id}:${node.job?.requestId || ''}:${node.job?.contentId || ''}`;
+  const needsReconcile = (node: CanvasNode) => node.job && node.job.status !== 'done' && (node.job.contentId || node.job.requestId) && !reconciledJobs.current.has(jobKey(node));
+  const pendingIds = doc.nodes.filter(needsReconcile).map(n => jobKey(n)).join(',');
   useEffect(() => {
     if (!pendingIds) return;
     return startPolling(async signal => {
-      const jobs = docRef.current.nodes.filter(n => n.job?.status === 'running' && (n.job.contentId || n.job.requestId));
+      const jobs = docRef.current.nodes.filter(needsReconcile);
       for (const node of jobs) {
         if (!node.job!.contentId) {
           if (controllers.current.has(node.id)) continue;
@@ -558,10 +567,10 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
             const request = await api.get<{ contentId?: number; message: string; updatedAt: number }>(`/canvas/requests/${encodeURIComponent(node.job!.requestId!)}`, { signal });
             if (signal.aborted || !mounted.current) return;
             if (request.contentId) editNode(node.id, { job: { ...node.job!, contentId: request.contentId, message: '已恢复任务，正在查询结果…' } });
-            else if (request.message || Date.now() - request.updatedAt > 120000) editNode(node.id, { job: { ...node.job!, status: 'interrupted', message: request.message || '任务尚未关联生成记录，请核实后再创建新任务。' } });
+            else if (request.message || Date.now() - request.updatedAt > 120000) { reconciledJobs.current.add(jobKey(node)); editNode(node.id, { job: { ...node.job!, status: 'interrupted', message: request.message || '任务尚未关联生成记录，请核实后再创建新任务。' } }); }
           } catch (error: any) {
             if (signal.aborted) return;
-            if (error.status === 404) editNode(node.id, { job: { ...node.job!, status: 'interrupted', message: '未找到提交记录。请先检查生成记录，再重新创建任务。' } });
+            if (error.status === 404) { reconciledJobs.current.add(jobKey(node)); editNode(node.id, { job: { ...node.job!, status: 'interrupted', message: '未找到提交记录。请先检查生成记录，再重新创建任务。' } }); }
             else editNode(node.id, { job: { ...node.job!, message: '任务状态查询暂时失败，将自动重试，请勿重复提交。' } });
           }
           continue;
@@ -578,16 +587,16 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
         }
         if (signal.aborted || !mounted.current) return;
         const current = docRef.current.nodes.find(n => n.id === node.id);
-        if (!current || current.job?.status !== 'running' || current.job.contentId !== node.job!.contentId) continue;
+        if (!current || !current.job || current.job.status === 'done' || current.job.contentId !== node.job!.contentId || current.job.requestId !== node.job!.requestId) continue;
         let meta: any = {};
         try { meta = typeof data.metadata === 'string' ? JSON.parse(data.metadata || '{}') : data.metadata || {}; } catch {}
         if (data.status === 'completed' || data.status === 'success') {
           const src = data.resultUrl || meta.imageUrls?.[0];
           if (src) { const finished = applyGenerationEvent(current, { type: 'complete', contentId: current.job.contentId, imageUrls: meta.imageUrls?.length ? meta.imageUrls : [src] }); editNode(node.id, finished); }
-          else editNode(node.id, { job: { ...current.job, status: 'interrupted', message: '未取得结果地址，请查看生成记录。' } });
-        } else if (data.status === 'failed' || data.status === 'error') editNode(node.id, { job: { ...current.job, status: 'error', message: data.errorMessage || meta.error || '生成失败，请到生成记录查看详情。' } });
+          else editNode(node.id, { job: { ...current.job, status: 'running', message: '后台已完成，正在等待结果地址，请勿重复提交。' } });
+        } else if (data.status === 'failed' || data.status === 'error') { reconciledJobs.current.add(jobKey(current)); editNode(node.id, { job: { ...current.job, status: 'error', message: data.errorMessage || meta.error || '生成失败，请到生成记录查看详情。' } }); }
         else {
-          const pending = applyPendingGeneration(current, data);
+          const pending = applyPendingGeneration({...current, job: {...current.job, status:'running'}}, data);
           if (pending !== current) editNode(node.id, pending);
         }
       }

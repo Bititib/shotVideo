@@ -12,6 +12,7 @@ import { analysisApi } from '../client/src/api/analysis';
 import { cropBounds } from '../client/src/canvas/ImageTools';
 import { readVideoDuration } from '../client/src/canvas/videoInputs';
 import { fetchVideoModels } from '../client/src/api/video';
+import { contentApi } from '../client/src/api/content';
 
 vi.mock('../client/src/api/imageGen', () => ({ fetchImageModels: vi.fn().mockResolvedValue([{ id: 'test-image', name: 'Test Image', available: true }]), downloadGeneratedImage: vi.fn() }));
 vi.mock('../client/src/api/video', () => ({ fetchVideoModels: vi.fn().mockResolvedValue([{ id: 'ad-seedance-2.5-480p', name: 'AD Multi', available: true, rates: { '480p': 1 }, allowedSeconds: [5] }, { id: 'test-video', name: 'Test Video', available: true, rates: { '720p': 1 }, allowedSeconds: [5] }, { id: 'veo-omni-flash-video-edit', name: 'Test Video Edit', available: true, rates: { '720p': 1 }, allowedSeconds: [10] }]) }));
@@ -40,6 +41,41 @@ function mount(initial = newDocument(), projects = [initial]) {
 }
 
 describe('canvas user workflows', () => {
+  it.each(['error','interrupted','running'] as const)('recovers a saved 90 percent video from %s using the backend result', async status => {
+    vi.mocked(contentApi.getById).mockResolvedValueOnce({status:'completed',resultUrl:'/finished.mp4'});
+    const node={...newNode('video',{x:0,y:0}),job:{status,contentId:912,message:'视频生成中 90%',progress:90}};
+    const board=mount({...newDocument(),nodes:[node]});
+    await waitFor(()=>expect(board.current().nodes[0].src).toBe('/finished.mp4'));
+    expect(board.current().nodes[0].job).toMatchObject({status:'done',progress:100});
+    expect(streamGeneration).not.toHaveBeenCalled();
+  });
+  it('keeps audio attached to the original target without stealing selection after an async import', async () => {
+    const target={...newNode('video',{x:400,y:0}),generator:true,title:'音频参考目标'};
+    const other={...newNode('image',{x:0,y:0}),title:'另一个节点'};
+    const board=mount({...newDocument(),nodes:[target,other]});
+    fireEvent.doubleClick(screen.getByRole('article',{name:target.title}));
+    fireEvent.click(screen.getByRole('button',{name:'上传参考图片 / 视频 / 音频'}));
+    fireEvent.change(screen.getByLabelText('上传节点参考素材'),{target:{files:[new File(['audio'],'voice.wav',{type:'audio/wav'})]}});
+    fireEvent.pointerDown(screen.getByRole('article',{name:other.title}),{button:0,pointerId:1});
+    fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'),{pointerId:1});
+    await waitFor(()=>expect(board.current().nodes).toHaveLength(3));
+    expect(board.current().edges[0]).toMatchObject({from:board.current().nodes[2].id,to:target.id});
+    expect(screen.getByRole('article',{name:other.title}).className).toContain('is-selected');
+    expect(screen.queryByLabelText('创作面板')).toBeNull();
+  });
+  it('does not reselect the old audio title when the reference picker closes', async () => {
+    const audio={...newNode('audio',{x:0,y:0}),title:'音频参考',src:'/voice.wav'};
+    const target={...newNode('video',{x:400,y:0}),generator:true,title:'当前视频'};
+    const board=mount({...newDocument(),nodes:[audio,target]});
+    act(()=>{screen.getAllByLabelText('素材名称')[0].focus();});
+    fireEvent.doubleClick(screen.getByRole('article',{name:target.title}));
+    fireEvent.click(screen.getByRole('button',{name:'从素材库引用'}));
+    fireEvent.click(screen.getByRole('button',{name:'引用为参考',exact:true}));
+    expect(board.current().edges[0]).toMatchObject({from:audio.id,to:target.id});
+    expect(screen.getByRole('article',{name:target.title}).className).toContain('is-selected');
+    expect(screen.getByLabelText('创作类型')).toHaveProperty('value','video');
+    await waitFor(()=>expect(screen.getByLabelText('生成模型').getAttribute('disabled')).toBeNull());
+  });
   it('distinguishes node and canvas menus and acts on the right-clicked node', () => {
     const first = { ...newNode('image', { x: 0, y: 0 }), title: '原素材', src: '/original.png' };
     const second = { ...newNode('video', { x: 400, y: 0 }), title: '右击目标', src: '/target.mp4' };

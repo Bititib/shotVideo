@@ -34,7 +34,9 @@ export function applyGenerationEvent(node: CanvasNode, event: GenerationEvent): 
   }
   if (node.job.status === 'done') return node;
   if (node.src && (event.type === 'complete' || event.type === 'error')) return { ...node, job: { ...job, status: 'done', message: event.type === 'error' ? `部分结果已保留：${event.message || '生成中断'}` : '已完成', progress: 100 } };
-  if (event.type === 'error' || event.type === 'image_error') return { ...node, job: { ...job, status: 'error', message: event.message || '生成失败，请检查参数后重试' } };
+  if (event.type === 'error' || event.type === 'image_error') return { ...node, job: { ...job,
+    status: job.contentId || job.requestId ? 'running' : 'error',
+    message: job.contentId || job.requestId ? '生成通道中断，正在核实后台结果，请勿重复提交。' : event.message || '生成失败，请检查参数后重试' } };
   if (event.type === 'complete') return { ...node, job: { ...job, status: job.contentId ? 'running' : 'interrupted', message: '正在核实生成结果，请勿重复提交' } };
   return { ...node, job: { ...job, message: event.type === 'queue' && event.position != null ? (event.position > 0 ? `排队中 · 前方 ${event.position} 个任务` : '任务已就绪，正在开始生成') : event.message || job.message, progress: event.progress ?? job.progress } };
 }

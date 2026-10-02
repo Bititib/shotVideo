@@ -150,6 +150,9 @@ const HM_STUDIO_VIDEO_MODEL_RANK = new Map(
 );
 
 export const activePolls = new Set<number>();
+// A live request owns submission as well as polling. Recovery must not adopt it
+// while the upstream POST is still waiting to return its task ID.
+const liveVideoRequests = new Set<number>();
 const hayaLiveRequests = new Set<number>();
 const activePollPromises = new Map<number, Promise<void>>();
 
@@ -1373,6 +1376,10 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
       ? batchStore.attach(batchContext.item.id, batchContext.item.attempts, req.userId!, saveContent)
       : saveContent();
     if (contentId !== null) {
+      if (!isHmStudioChannel(channel)) {
+        liveVideoRequests.add(contentId);
+        activePolls.add(contentId);
+      }
       sendEvent({ type: 'content_id', contentId });
     }
   } catch (e) {
@@ -2819,6 +2826,10 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     res.write('data: [DONE]\n\n');
     res.end();
   } finally {
+    if (contentId !== null) {
+      liveVideoRequests.delete(contentId);
+      if (!isHmStudio) activePolls.delete(contentId);
+    }
     if (isHaya && contentId !== null) releaseHayaSubmission(contentId);
   }
 });
@@ -3416,6 +3427,7 @@ function adoptHmStudioProcessingContent(contentId: number, record: any): HmStudi
 }
 
 export function resumePollForTask(contentId: number, record: any): Promise<void> {
+  if (liveVideoRequests.has(contentId)) return Promise.resolve();
   if (hayaLiveRequests.has(contentId)) return Promise.resolve();
   if (activePolls.has(contentId)) {
     const existingPromise = activePollPromises.get(contentId);
@@ -3899,6 +3911,7 @@ export function resumeAllPendingVideoTasks() {
 
     pendingTasks.forEach((record: any) => {
       const contentId = record.id;
+      if (liveVideoRequests.has(contentId)) return;
       if (hayaLiveRequests.has(contentId)) return;
       let metadata: Record<string, any> = {};
       try { metadata = JSON.parse(record.metadata || '{}'); } catch { }

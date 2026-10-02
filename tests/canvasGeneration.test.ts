@@ -51,7 +51,7 @@ describe('canvas generation lifecycle', () => {
   });
   it('retains the content ID after errors for traceability', () => {
     const node = { ...newNode('video', { x: 0, y: 0 }), job: { status: 'running' as const, contentId: 12, message: '' } };
-    expect(applyGenerationEvent(node, { type: 'error', message: 'failed' }).job).toMatchObject({ contentId: 12, status: 'error' });
+    expect(applyGenerationEvent(node, { type: 'error', message: 'failed' }).job).toMatchObject({ contentId: 12, status: 'running' });
   });
   it('surfaces authorization failures without creating a fake result', async () => {
     vi.stubGlobal('localStorage', { getItem: () => null });
