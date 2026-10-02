@@ -1,4 +1,5 @@
 import { registerUpload } from '../services/uploadAccess.js';
+import { DEFAULT_TTS_CHARACTER_RATE } from '../../shared/tts.js';
 import { reserveUserCharge } from '../services/billingReservation.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { Router, Response } from 'express';
@@ -223,14 +224,14 @@ router.get('/tts-models',
         .map(m => ({ modelId: m.modelId, displayName: m.displayName || m.modelId, description: m.description || '' }));
 
       // 获取语音合成的费率设置
-      let ttsRate = 0.01; // 默认 ¥0.01/字
+      let ttsRate = DEFAULT_TTS_CHARACTER_RATE;
       const rateSetting = db.select().from(settings).where(eq(settings.key, 'tts_rate')).get();
       if (rateSetting) {
-        ttsRate = parseFloat(rateSetting.value) || 0.01;
+        ttsRate = parseFloat(rateSetting.value) || DEFAULT_TTS_CHARACTER_RATE;
       } else {
         // 顺便在数据库中初始化这个设置
         try {
-          db.insert(settings).values({ key: 'tts_rate', value: '0.01', label: '语音合成费率(¥/字)' }).run();
+          db.insert(settings).values({ key: 'tts_rate', value: String(DEFAULT_TTS_CHARACTER_RATE), label: '语音合成费率(¥/字)' }).run();
         } catch { }
       }
 

@@ -1,6 +1,8 @@
 import { HAYA_VIDEO_MODELS } from '../../shared/hayaVideo.js';
 import { LONGXIA_MODELS, LONGXIA_BASE_URL, isLongxiaChannel, longxiaRate, longxiaResolution } from '../services/longxiaVideoAdapter.js';
 import { db, sqlite } from './index.js';
+import { DEFAULT_TTS_CHARACTER_RATE } from '../../shared/tts.js';
+import { migrateTtsPricing } from './ttsPricingMigration.js';
 import { tiers, users, models, tierModelAccess, settings, channels, channelApiKeys, apiTokens, modelPricing, organizations, orgMembers, contents } from './schema.js';
 import { eq, like } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
@@ -1124,7 +1126,7 @@ export async function initDatabase() {
     try { capabilities = JSON.parse(model.capabilities || '[]'); } catch { continue; }
     if (!Array.isArray(capabilities) || !capabilities.includes('tts')) continue;
     unifiedPricing.push({ modelPattern: model.modelId, billingType: 'per_character',
-      inputPrice: legacyRate('tts_rate', 0.01) * (model.modelId.includes('pro') ? 2 : 1), category: 'tts' });
+      inputPrice: legacyRate('tts_rate', DEFAULT_TTS_CHARACTER_RATE), category: 'tts' });
   }
 
   for (const model of LONGXIA_MODELS) {
@@ -1159,6 +1161,8 @@ export async function initDatabase() {
       }).where(eq(modelPricing.id, existing.id)).run();
     }
   }
+
+  migrateTtsPricing(sqlite);
 
   // One-time production migration: align WAN3.0 with the confirmed ¥0.14/second price.
   // The marker prevents future restarts from overwriting administrator edits.

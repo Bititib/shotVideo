@@ -1,5 +1,5 @@
 import './TtsPage.css';
-import { ttsVoices, audioExtension, type TtsVoice } from '../../../../shared/tts';
+import { ttsVoices, audioExtension, ttsPriceLabel, type TtsVoice } from '../../../../shared/tts';
 import React, { useState, useEffect, useRef } from 'react';
 import { Volume2, Play, Pause, Download, Loader2, Sparkles, AlertCircle, RefreshCw, FileText, Check, Music, Trash2 } from 'lucide-react';
 import { analysisApi, getCachedTtsModels, type StudioVoice } from '../../api/analysis';
@@ -309,7 +309,7 @@ export default function TtsPage() {
                       <p className="text-xs font-medium truncate">{model.displayName}</p>
                       {model.rate !== undefined && (
                         <span className="text-[9px] bg-yellow-500/10 text-yellow-500 px-1.5 py-0.5 rounded border border-yellow-500/20 font-medium shrink-0">
-                          ¥{model.rate}/字
+                          {ttsPriceLabel(model.rate)}
                         </span>
                       )}
                     </div>
