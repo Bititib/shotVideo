@@ -1,3 +1,4 @@
+import { balanceInput, balanceUpdate } from '../../utils/balance';
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { adminApi } from '../../api/admin';
 import { Search, ChevronLeft, ChevronRight, X, Check, Ban, UserPlus } from 'lucide-react';
@@ -49,7 +50,7 @@ export default function UsersPage() {
         isActive: editUser.isActive,
         role: editUser.role,
         quotaOverride: editUser.quotaOverride ? parseInt(editUser.quotaOverride) : null,
-        balance: parseFloat(editUser.balance) || 0,
+        ...balanceUpdate(editUser),
         password: editUser.password || undefined,
       });
       setEditUser(null); load();
@@ -159,7 +160,7 @@ export default function UsersPage() {
                   <span>💰 账户余额 (元)</span>
                   <span className="text-[10px] text-zinc-500 font-normal">点击下方按钮快捷充值</span>
                 </label>
-                <input type="number" value={editUser.balance ?? 0} onChange={e => setEditUser({ ...editUser, balance: e.target.value })} step="0.01" min="0" placeholder="0.00" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none placeholder:text-zinc-600" />
+                <input type="number" value={balanceInput(editUser.balance)} onChange={e => setEditUser({ ...editUser, balanceChanged: true, balance: e.target.value })} step="0.01" min="0" placeholder="0.00" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none placeholder:text-zinc-600" />
                 <div className="flex gap-1.5 mt-2">
                   {[10, 50, 100, 500, 1000].map(amount => (
                     <button
@@ -167,7 +168,7 @@ export default function UsersPage() {
                       type="button"
                       onClick={() => {
                         const current = parseFloat(editUser.balance) || 0;
-                        setEditUser({ ...editUser, balance: (current + amount).toFixed(2) });
+                        setEditUser({ ...editUser, balanceChanged: true, balance: (current + amount).toFixed(2) });
                       }}
                       className="flex-1 py-1 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded-lg text-[10px] font-medium transition-colors border border-blue-500/15"
                     >
@@ -182,7 +183,7 @@ export default function UsersPage() {
                         const amount = parseFloat(amountStr);
                         if (!isNaN(amount)) {
                           const current = parseFloat(editUser.balance) || 0;
-                          setEditUser({ ...editUser, balance: Math.max(0, current + amount).toFixed(2) });
+                          setEditUser({ ...editUser, balanceChanged: true, balance: Math.max(0, current + amount).toFixed(2) });
                         }
                       }
                     }}

@@ -1,3 +1,4 @@
+import { balanceInput, balanceUpdate } from '../../utils/balance';
 import React, { useEffect, useState, useCallback } from 'react';
 import { adminApi } from '../../api/admin';
 import { Search, ChevronLeft, ChevronRight, X, Building2, UserPlus, Users, Wallet, Crown } from 'lucide-react';
@@ -55,7 +56,7 @@ export default function OrgsPage() {
       await adminApi.updateOrg(editOrg.id, {
         name: editOrg.name,
         tierId: editOrg.tierId,
-        balance: parseFloat(editOrg.balance) || 0,
+        ...balanceUpdate(editOrg),
         maxMembers: parseInt(editOrg.maxMembers) || 10,
         isActive: editOrg.isActive,
       });
@@ -117,7 +118,7 @@ export default function OrgsPage() {
               </div>
               <div className="bg-white/[0.02] rounded-xl p-3 text-center">
                 <Wallet className="w-3.5 h-3.5 text-green-400 mx-auto mb-1" />
-                <p className="text-lg font-bold text-white">¥{(org.balance || 0).toFixed(0)}</p>
+                <p className="text-lg font-bold text-white">¥{(org.balance || 0).toFixed(2)}</p>
                 <p className="text-[9px] text-zinc-500">余额</p>
               </div>
               <div className="bg-white/[0.02] rounded-xl p-3 text-center">
@@ -209,7 +210,7 @@ export default function OrgsPage() {
                     <span>💰 余额 (¥)</span>
                     <span className="text-[10px] text-zinc-500 font-normal">点击下方按钮快捷充值</span>
                   </label>
-                  <input type="number" value={editOrg.balance ?? 0} onChange={e => setEditOrg({ ...editOrg, balance: e.target.value })} step="0.01" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
+                  <input type="number" value={balanceInput(editOrg.balance)} onChange={e => setEditOrg({ ...editOrg, balanceChanged: true, balance: e.target.value })} step="0.01" className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
                   <div className="flex gap-1.5 mt-2">
                     {[100, 500, 1000, 5000, 10000].map(amount => (
                       <button
@@ -217,7 +218,7 @@ export default function OrgsPage() {
                         type="button"
                         onClick={() => {
                           const current = parseFloat(editOrg.balance) || 0;
-                          setEditOrg({ ...editOrg, balance: (current + amount).toFixed(2) });
+                          setEditOrg({ ...editOrg, balanceChanged: true, balance: (current + amount).toFixed(2) });
                         }}
                         className="flex-1 py-1 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded-lg text-[10px] font-medium transition-colors border border-blue-500/15"
                       >
@@ -232,7 +233,7 @@ export default function OrgsPage() {
                           const amount = parseFloat(amountStr);
                           if (!isNaN(amount)) {
                             const current = parseFloat(editOrg.balance) || 0;
-                            setEditOrg({ ...editOrg, balance: Math.max(0, current + amount).toFixed(2) });
+                            setEditOrg({ ...editOrg, balanceChanged: true, balance: Math.max(0, current + amount).toFixed(2) });
                           }
                         }
                       }}
