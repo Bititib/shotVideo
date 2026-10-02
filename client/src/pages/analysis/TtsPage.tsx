@@ -308,7 +308,7 @@ export default function TtsPage() {
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-xs font-medium truncate">{model.displayName}</p>
                       {model.rate !== undefined && (
-                        <span className="text-[9px] bg-yellow-500/10 text-yellow-500 px-1.5 py-0.5 rounded border border-yellow-500/20 font-medium shrink-0">
+                        <span title={`¥${Number((model.rate * 1200).toFixed(4))}/1200字；标签最多显示4位小数，费用按原始精度计算。`} className="text-[9px] bg-yellow-500/10 text-yellow-500 px-1.5 py-0.5 rounded border border-yellow-500/20 font-medium shrink-0">
                           {ttsPriceLabel(model.rate)}
                         </span>
                       )}

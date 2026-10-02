@@ -18,7 +18,7 @@ it('updates existing TTS prices once, preserves other prices and later admin edi
     expect(rows[0].input_price * 1200).toBeCloseTo(1);
     expect(rows[0].input_price * 600).toBeCloseTo(0.5);
     expect(rows[0].input_price * 2400).toBeCloseTo(2);
-    expect(ttsPriceLabel(rows[0].input_price)).toBe('¥1/1200字');
+    expect(ttsPriceLabel(rows[0].input_price)).toBe('≈¥0.0008/字');
     sqlite.exec('UPDATE model_pricing SET input_price=0.002 WHERE id=1');
     migrateTtsPricing(sqlite);
     expect((sqlite.prepare('SELECT input_price FROM model_pricing WHERE id=1').get() as any).input_price).toBe(0.002);

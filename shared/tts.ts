@@ -1,7 +1,9 @@
 export type TtsVoice = { id: string; name: string; displayName?: string; gender?: string; style?: string; description?: string; scenario?: string; language?: string };
 export const DEFAULT_TTS_CHARACTER_RATE = 1 / 1200;
 export function ttsPriceLabel(rate: number): string {
-  return `¥${Number((rate * 1200).toFixed(4))}/1200字`;
+  const rounded = Number(rate.toFixed(4));
+  const approximate = Math.abs(rounded - rate) > 1e-12;
+  return `${approximate ? '≈' : ''}¥${rounded.toLocaleString('en-US', { maximumFractionDigits: 4, useGrouping: false })}/字`;
 }
 // Only expose voice names returned by the configured upstream.
 const EMPTY_TTS_VOICES: string[] = [];
