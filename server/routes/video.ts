@@ -3254,6 +3254,7 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
             ratio: latestMeta.aspect_ratio || latestMeta.ratio || '16:9',
             resolution: latestMeta.resolution || '720p',
             imageSources: referenceImages,
+            localMediaBaseUrl: process.env.BACKEND_URL || latestMeta.publicBaseUrl,
             videoSources: referenceVideos,
             audioSources: referenceAudios,
             firstFrame,

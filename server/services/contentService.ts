@@ -5,6 +5,7 @@ import { beijingDayBounds } from '../../shared/time.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { registerUpload } from './uploadAccess.js';
 
 export interface SaveContentInput {
   userId: number;
@@ -91,7 +92,7 @@ const HISTORY_ASSET_FIELDS = new Set([
   'reference_images', 'image_urls', 'images', 'image_refs', 'referenceImages', 'reference_image', 'image_url',
   'reference_videos', 'video_urls', 'videos', 'video_refs', 'referenceVideos', 'reference_video', 'video_url',
   'audio_urls', 'reference_audios', 'audios', 'audio_refs', 'referenceAudios', 'audio_url', 'reference_audio',
-  'first_frame', 'first_frame_url', 'last_frame', 'last_frame_url', 'end_frame_url',
+  'first_frame', 'first_frame_url', 'firstFrame', 'last_frame', 'last_frame_url', 'lastFrame', 'end_frame_url',
 ]);
 const MIME_EXTENSIONS: Record<string, string> = {
   'image/jpeg': 'jpg',
@@ -172,7 +173,7 @@ function persistAssetAtomically(filePath: string, buffer: Buffer, expectedHash: 
  */
 export function materializeContentMetadataAssets(
   rawMetadata: string | Record<string, any> | null | undefined,
-  options: { uploadDir?: string; publicBaseUrl?: string } = {},
+  options: { uploadDir?: string; publicBaseUrl?: string; ownerId?: number } = {},
 ): MaterializedContentAssets {
   let metadata: Record<string, any>;
   try {
@@ -216,6 +217,7 @@ export function materializeContentMetadataAssets(
       }
 
       const relativeUrl = `/uploads/history-assets/${filename}`;
+      registerUpload(relativeUrl, options.ownerId);
       const url = publicBaseUrl ? `${publicBaseUrl}${relativeUrl}` : relativeUrl;
       converted.set(value, url);
       changed = true;
@@ -391,7 +393,7 @@ export class ContentService {
   /** Save generated content, materializing inline video references first. */
   static save(input: SaveContentInput): number {
     const persistedMetadata = input.type === 'video'
-      ? materializeContentMetadataAssets(input.metadata).metadata
+      ? materializeContentMetadataAssets(input.metadata, { ownerId: input.userId }).metadata
       : (input.metadata || {});
     const result = db.insert(contents).values({
       userId: input.userId,
@@ -517,7 +519,7 @@ export class ContentService {
     const item = (existingItem || this.getById(contentId)) as T;
     if (item.type !== 'video') return item;
 
-    const materialized = materializeContentMetadataAssets(item.metadata);
+    const materialized = materializeContentMetadataAssets(item.metadata, { ownerId: item.userId });
     if (!materialized.changed) return item;
 
     const metadata = JSON.stringify(materialized.metadata);

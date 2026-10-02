@@ -32,6 +32,7 @@ function resolveLocalUpload(source: string, trustedOrigins: Set<string>): string
     if (!trustedOrigins.has(parsed.origin)) return null;
     pathname = parsed.pathname;
   }
+  pathname = pathname.replace(/^\/api\/uploads\//, '/uploads/');
   if (!pathname.startsWith('/uploads/')) return null;
 
   const uploadsRoot = path.resolve(process.cwd(), 'data', 'uploads');

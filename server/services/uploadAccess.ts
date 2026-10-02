@@ -49,7 +49,7 @@ export function ownsResultUrl(owner: number, source: string): boolean {
   return !!sqlite.prepare('SELECT 1 FROM contents WHERE user_id=? AND result_url=? LIMIT 1').get(owner,source);
 }
 
-/** Admin review is limited to recorded generation results, never arbitrary proxy URLs. */
+/** Admin review is limited to recorded results and local task references. */
 export function canReviewResultUrl(viewer: number, source: string): boolean {
   if (!sqlite) return false;
   const account = sqlite.prepare('SELECT role,is_active FROM users WHERE id=?').get(viewer) as any;
@@ -65,7 +65,12 @@ export function canReviewResultUrl(viewer: number, source: string): boolean {
   return records.some(row => {
     let meta: any = {};
     try { meta = JSON.parse(row.metadata || '{}'); } catch {}
-    return [row.result_url, ...(Array.isArray(meta.imageUrls) ? meta.imageUrls : [])]
+    const referenceFields = ['reference_images', 'image_urls', 'images', 'image_refs', 'referenceImages', 'reference_image', 'image_url',
+      'reference_videos', 'video_urls', 'videos', 'video_refs', 'referenceVideos', 'reference_video', 'video_url',
+      'audio_urls', 'reference_audios', 'audios', 'audio_refs', 'referenceAudios', 'audio_url', 'reference_audio',
+      'first_frame', 'first_frame_url', 'firstFrame', 'last_frame', 'last_frame_url', 'lastFrame', 'end_frame_url'];
+    const references = referenceFields.flatMap(key => Array.isArray(meta[key]) ? meta[key] : [meta[key]]);
+    return [row.result_url, ...(Array.isArray(meta.imageUrls) ? meta.imageUrls : []), ...references]
       .some(src => typeof src === 'string' && uploadPath(src) === resource);
   });
 }

@@ -23,6 +23,7 @@ import { privateReferences } from '../server/middleware/privateReferences.js';
 import { protectUploads, protectVideoSource } from '../server/middleware/uploadAccess.js';
 import { signedMediaUrl, mediaSignature } from '../server/services/mediaSignature.js';
 import { registerUpload } from '../server/services/uploadAccess.js';
+import { materializeContentMetadataAssets } from '../server/services/contentService.js';
 import { createPrivateMediaStore } from '../server/services/privateMediaStore.js';
 import { createBackup, verifyBackup } from '../scripts/backup.mjs';
 
@@ -124,5 +125,35 @@ describe('production release safety',()=>{
     await createBackup(data,backup);await verifyBackup(backup);
     const restored=new Database(path.join(backup,'app.db'),{readonly:true});expect(restored.prepare('SELECT value FROM proof').get()).toEqual({value:'saved'});restored.close();
     fs.writeFileSync(path.join(backup,'private-media','sample.bin'),'broken');await expect(verifyBackup(backup)).rejects.toThrow('verification failed');db.close();
+  });
+  it('lets admins review persisted task references without making them public or granting another user ownership', async()=>{
+    const resource='/uploads/history-assets/reference-review.png';
+    fs.mkdirSync(path.join(temp,'history-assets'),{recursive:true});
+    fs.writeFileSync(path.join(temp,'history-assets/reference-review.png'),png);
+    sqlite.prepare('INSERT INTO contents(user_id,result_url,metadata) VALUES(1,NULL,?)')
+      .run(JSON.stringify({reference_images:[resource]}));
+    expect((await fetch(`${base}${resource}`,{headers:{Cookie:`media_session=${token(3)}`}})).status).toBe(200);
+    const replicateBody=JSON.stringify({reference_images:[resource],reference_videos:[resource],audio_urls:[resource],first_frame:resource,last_frame:resource});
+    const replicated=await fetch(`${base}/references`,{method:'POST',headers:headers(3),body:replicateBody});
+    expect(replicated.status).toBe(200);
+    expect(await replicated.json()).toEqual(JSON.parse(replicateBody));
+    expect((await fetch(`${base}/references`,{method:'POST',headers:headers(2),body:replicateBody})).status).toBe(400);
+    expect((await fetch(`${base}/references`,{method:'POST',headers:headers(3),body:JSON.stringify({reference_images:['/uploads/unrecorded.png']})})).status).toBe(400);
+    expect((await fetch(`${base}${resource}`)).status).toBe(404);
+    expect((await fetch(`${base}${resource}`,{headers:headers(2)})).status).toBe(404);
+    sqlite.prepare('INSERT INTO contents(user_id,result_url,metadata) VALUES(2,NULL,?)')
+      .run(JSON.stringify({reference_images:[resource]}));
+    expect((await fetch(`${base}${resource}`,{headers:headers(2)})).status).toBe(404);
+    registerUpload(resource,1);
+    expect((await fetch(`${base}${resource}`,{headers:headers(1)})).status).toBe(200);
+    expect((await fetch(`${base}/uploads/unrecorded.png`,{headers:headers(3)})).status).toBe(404);
+  });
+  it('registers the actual task owner when materializing inline references', async()=>{
+    const result=materializeContentMetadataAssets({reference_images:[`data:image/png;base64,${png.toString('base64')}`]},
+      {uploadDir:path.join(temp,'history-assets'),ownerId:1});
+    const source=result.metadata.reference_images[0];
+    expect((await fetch(`${base}${source}`,{headers:headers(1)})).status).toBe(200);
+    expect((await fetch(`${base}${source}`,{headers:headers(2)})).status).toBe(404);
+    expect((await fetch(`${base}${source}`)).status).toBe(404);
   });
 });

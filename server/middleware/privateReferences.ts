@@ -1,7 +1,7 @@
 import type { RequestHandler } from 'express';
 import fs from 'node:fs';
 import { mediaUser, privateMediaStore } from '../routes/media.js';
-import { ownsUpload, uploadPath } from '../services/uploadAccess.js';
+import { ownsUpload, uploadPath, canReviewResultUrl } from '../services/uploadAccess.js';
 import { validMediaSignature } from '../services/mediaSignature.js';
 
 /** Resolve owned stable media IDs before provider adapters; never forward a login token. */
@@ -13,7 +13,7 @@ export const privateReferences: RequestHandler = (req,res,next) => {
       const resource=uploadPath(value);
       if(resource) {
         const parsed=new URL(value,'http://local.invalid'),owner=mediaUser(req);
-        if(!(owner&&ownsUpload(owner,value))&&!validMediaSignature(resource,parsed.searchParams.get('expires'),parsed.searchParams.get('signature'))) throw new Error('参考素材不存在或无权访问，请重新选择');
+        if(!(owner&&(ownsUpload(owner,value)||canReviewResultUrl(owner,value)))&&!validMediaSignature(resource,parsed.searchParams.get('expires'),parsed.searchParams.get('signature'))) throw new Error('参考素材不存在或无权访问，请重新选择');
       }
     }
     if(typeof value==='string'&&value.startsWith('/api/media/')) {

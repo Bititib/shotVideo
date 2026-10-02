@@ -12,6 +12,45 @@ import {
 } from '../server/services/hmStudioAdapter.js';
 
 describe('HM Studio adapter', () => {
+  it('uploads persisted reference video and audio bytes with their media types', async () => {
+    const dir=fs.mkdtempSync(path.join(process.cwd(),'data/uploads/hm-multimodal-'));
+    try {
+      fs.writeFileSync(path.join(dir,'video.mov'),Buffer.from('video bytes'));
+      fs.writeFileSync(path.join(dir,'audio.ogg'),Buffer.from('audio bytes'));
+      const prefix=`https://studio.test/uploads/${path.basename(dir)}`;
+      const form=buildHmStudioVideoForm({model:'seedance_v2.5-101010',prompt:'test',duration:6,ratio:'16:9',resolution:'720p',
+        videoSources:[`${prefix}/video.mov`],audioSources:[`${prefix}/audio.ogg`],localMediaBaseUrl:'https://studio.test'});
+      const video=form.get('video_file_1') as Blob,audio=form.get('audio_file_1') as Blob;
+      expect(video.type).toBe('video/quicktime');expect(await video.text()).toBe('video bytes');
+      expect(audio.type).toBe('audio/ogg');expect(await audio.text()).toBe('audio bytes');
+      expect(JSON.parse(String(form.get('materials')))).toEqual([{type:'video',name:'Video1'},{type:'audio',name:'Audio1'}]);
+    } finally {fs.rmSync(dir,{recursive:true,force:true});}
+  });
+  it('uploads persisted private history assets as bytes in every video mode', async () => {
+    const dir = path.join(process.cwd(), 'data/uploads/history-assets');
+    const file = path.join(dir, 'hm-private-reference-test.jpg');
+    const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, bytes);
+    try {
+      for (const source of ['/uploads/history-assets/hm-private-reference-test.jpg',
+        'https://studio.test/uploads/history-assets/hm-private-reference-test.jpg',
+        'https://studio.test/api/uploads/history-assets/hm-private-reference-test.jpg?expires=1&signature=expired']) {
+        for (const [mode, field] of [['first_last_frames', 'first_frame'], ['omni_reference', 'image_file_1'], ['multi_frame', 'frame_1']]) {
+          const form = buildHmStudioVideoForm({ model: 'seedance_v2.5', prompt: 'test', duration: 6,
+            ratio: '16:9', resolution: '720p', imageSources: [source], functionMode: mode, localMediaBaseUrl: 'https://studio.test' });
+          expect(form.get(field)).toBeInstanceOf(Blob);
+          expect(Buffer.from(await (form.get(field) as Blob).arrayBuffer())).toEqual(bytes);
+          expect(form.has('first_frame_url')).toBe(false);
+        }
+      }
+      const remote = 'https://external.test/uploads/history-assets/hm-private-reference-test.jpg';
+      const options = { model: 'seedance_v2.5', prompt: 'test', duration: 6, ratio: '16:9', resolution: '720p', localMediaBaseUrl: 'https://studio.test' };
+      expect(buildHmStudioVideoForm({ ...options, imageSources: [remote] }).get('first_frame_url')).toBe(remote);
+      expect(() => buildHmStudioVideoForm({ ...options, imageSources: ['/uploads/%2e%2e/private.jpg'] })).toThrow('路径不安全');
+      expect(() => buildHmStudioVideoForm({ ...options, imageSources: ['https://studio.test/uploads/history-assets/missing.jpg'] })).toThrow('不存在');
+    } finally { fs.rmSync(file, { force: true }); }
+  });
   it('uses the documented create and task endpoints', () => {
     expect(hmStudioCreateUrl('https://example.test/', 'video')).toBe('https://example.test/v1/videos/generations');
     expect(hmStudioCreateUrl('https://example.test', 'image')).toBe('https://example.test/v1/images/generations');

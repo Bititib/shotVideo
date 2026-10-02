@@ -9,13 +9,14 @@ import { fetchVideoModels, generateVideo, getCachedVideoModels, type VideoModel,
 import ImageSlicerModal from '../../components/ImageSlicerModal';
 import FaceProcessingModal from '../../components/FaceProcessingModal';
 import { contentApi } from '../../api/content';
+import { adminApi } from '../../api/admin';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { saveAsset, getAssets, deleteAsset, type Asset } from '../../utils/idb';
 import { useAuthStore } from '../../stores/authStore';
 import { feedbackApi } from '../../api/feedback';
 import { getBillingUnit } from '../../utils/billing';
-import { buildReplicatedVideoPrompt, getVideoReferenceAssets, getVideoReferenceCounts, removeVideoPromptReference, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
+import { buildReplicatedVideoPrompt, getVideoReferenceAssets, getVideoReferenceFrames, getVideoReferenceCounts, removeVideoPromptReference, restoreVideoPromptRefs as restorePrompt } from '../../utils/videoPromptRefs';
 import { isLongxiaModel, LONGXIA_RATIOS } from '../../../../shared/longxiaVideo';
 import { getSiYueTianC2Model } from '../../../../shared/siYueTianVideoC2';
 import { formatBeijingTime } from '../../../../shared/time';
@@ -430,6 +431,9 @@ const getRefFilename = (dataUrl: string, index: number) => {
 
 export default function VideoPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [replicationLoading, setReplicationLoading] = useState(Boolean(searchParams.get('replicate')));
+  const replicatedModelRef = useRef('');
   const guard = useAuthGuard();
   const [models, setModels] = useState<VideoModel[]>(getCachedVideoModels);
 
@@ -473,6 +477,7 @@ export default function VideoPage() {
   };
 
   useEffect(() => {
+    if (searchParams.get('replicate') || replicatedModelRef.current === selectedModel) return;
     if (referenceImages.length > maxRefs) {
       setReferenceImages(prev => prev.slice(0, maxRefs));
     }
@@ -536,6 +541,7 @@ export default function VideoPage() {
   const maxRefVideos = getMaxRefVideos(selectedModel);
   const maxRefAudios = getMaxRefAudios(selectedModel);
   useEffect(() => {
+    if (searchParams.get('replicate') || replicatedModelRef.current === selectedModel) return;
     setReferenceVideos(previous => previous.length > maxRefVideos ? previous.slice(0, maxRefVideos) : previous);
     setReferenceAudios(previous => previous.length > maxRefAudios ? previous.slice(0, maxRefAudios) : previous);
     setReferenceAudioNames(previous => previous.length > maxRefAudios ? previous.slice(0, maxRefAudios) : previous);
@@ -766,7 +772,7 @@ export default function VideoPage() {
       fetchVideoModels().then((nextModels) => {
         setModels(nextModels);
         if (nextModels.length > 0) {
-          setSelectedModel(current => nextModels.some(model => model.id === current) ? current : nextModels[0].id);
+          setSelectedModel(current => searchParams.get('replicate') || replicatedModelRef.current === current || nextModels.some(model => model.id === current) ? current : nextModels[0].id);
         }
       }).catch(() => { });
     };
@@ -862,29 +868,33 @@ export default function VideoPage() {
   };
 
   // ========== 一键复刻：从管理后台跳转过来时自动填充参数 ==========
-  const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
     const replicateId = searchParams.get('replicate');
     if (!replicateId) return;
 
-    // 从 sessionStorage 读取完整内容数据
-    const raw = sessionStorage.getItem('replicate_content');
-    if (!raw) return;
-    sessionStorage.removeItem('replicate_content');
-
+    let cancelled = false;
+    setReplicationLoading(true);
+    const restore = async () => {
     try {
-      const item = JSON.parse(raw);
+      const item = await adminApi.getContent(Number(replicateId));
+      if (cancelled) return;
+      if (String(item.id) !== replicateId) throw new Error('复刻数据与所选任务不一致，请返回后台重新复刻');
       const meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata || '{}') : (item.metadata || {});
-
-      // 恢复模型
-      if (meta.model || item.modelId) {
-        setSelectedModel(meta.model || item.modelId);
-      }
-
       const restoredAssets = getVideoReferenceAssets(meta);
+      const expected = getVideoReferenceCounts(meta);
+      if (meta.listAssetsCompacted || (['images', 'videos', 'audios'] as const).some(key => expected[key] > restoredAssets[key].length)) {
+        throw new Error('任务详情中的参考素材不完整，无法完整复刻，请重新读取或补传缺失素材');
+      }
+      const restoredModel = meta.model || item.modelId;
+      if (!restoredModel) throw new Error('原任务缺少模型信息，无法完整复刻');
+      replicatedModelRef.current = restoredModel;
+      setSelectedModel(restoredModel);
       const restoredImages = restoredAssets.images;
       const restoredVideos = restoredAssets.videos;
       const restoredAudios = restoredAssets.audios;
+      const frames = getVideoReferenceFrames(meta);
+      setFirstFrame(frames.first);
+      setLastFrame(frames.last);
 
       // 优先恢复 metadata 中的完整提示词，并自动补齐所有素材引用。
       const rawPrompt = meta.prompt || item.inputText || item.title || '';
@@ -917,15 +927,22 @@ export default function VideoPage() {
 
       // 恢复参考音频
       setReferenceAudios(restoredAudios);
-      setReferenceAudioNames(restoredAudios.map((_: any, i: number) => `音频_${i + 1}`));
+      setReferenceAudioNames(restoredAudios.map((_: any, i: number) => meta.audio_names?.[i] || `音频_${i + 1}`));
 
       // 清除 URL 参数，避免刷新页面重复触发
       setSearchParams({}, { replace: true });
+      setError(null);
+      setReplicationLoading(false);
 
       console.log('[replicate] 已恢复任务参数:', { model: meta.model, resolution: meta.resolution, seconds: meta.seconds, refImages: meta.reference_images?.length || 0, refVideos: meta.reference_videos?.length || 0, refAudios: meta.audio_urls?.length || 0 });
     } catch (e) {
+      if (cancelled) return;
       console.error('[replicate] 解析复刻数据失败:', e);
+      setError(e instanceof Error ? e.message : '复刻素材恢复失败，请返回后台重试');
     }
+    };
+    void restore();
+    return () => { cancelled = true; };
   }, [searchParams]);
 
   // 轮询在后台生成中的数据库任务
@@ -1069,6 +1086,8 @@ export default function VideoPage() {
     : ALL_ASPECT_RATIOS;
 
   useEffect(() => {
+    // Replication restores the model and assets together after the initial render.
+    if (searchParams.get('replicate') || replicatedModelRef.current === selectedModel) return;
     if (selectedModel === SNUMOM_SD_MINI_MODEL && duration !== sdMiniRequiredSeconds) {
       setDuration(sdMiniRequiredSeconds);
     } else if (currentModel?.allowedSeconds && !currentModel.allowedSeconds.includes(duration)) {
@@ -1112,7 +1131,8 @@ export default function VideoPage() {
       setReferenceAudios([]);
       setReferenceAudioNames([]);
     }
-    const supportsFirstLast = isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1';
+    const supportsFirstLast = isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1'
+      || isWan30Model(selectedModel) || isHmStudioVideoModel(selectedModel);
     if (!supportsFirstLast) {
       setFirstFrame(null);
       setLastFrame(null);
@@ -1384,6 +1404,7 @@ export default function VideoPage() {
   };
 
   const handleGenerate = useCallback(async () => {
+    if (replicationLoading) return;
     if (!prompt.trim()) return;
     if (prompt.trim().length > MAX_VIDEO_PROMPT_LENGTH) {
       setError(`提示词字数不能超过 ${MAX_VIDEO_PROMPT_LENGTH} 字`);
@@ -1518,7 +1539,7 @@ export default function VideoPage() {
     setReferenceAudioNames([]);
     setFirstFrame(null);
     setLastFrame(null);
-  }, [prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideos, referenceAudios, firstFrame, lastFrame, locallyProcessedImages, complianceEnabled, complianceMode]);
+  }, [replicationLoading, prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideos, referenceAudios, firstFrame, lastFrame, locallyProcessedImages, complianceEnabled, complianceMode]);
 
   const handleRemove = (taskId: string) => {
     if (taskId.startsWith('db_')) {
@@ -1973,7 +1994,7 @@ export default function VideoPage() {
                         : 'snumom WAN3.0 支持 10 图 · 5 视频 · 5 段 MP3/WAV 音频，支持首帧与首尾帧模式'}
                     </span>
                   )}
-                  {(isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1' || selectedModel === 'wan3.0-video' || selectedModel === 'wan3.0-video-prime') && (
+                  {(isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1' || isHmStudioVideoModel(selectedModel) || selectedModel === 'wan3.0-video' || selectedModel === 'wan3.0-video-prime') && (
                     <>
                       <button onClick={() => firstFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-emerald-400" /> 首帧 {firstFrame ? '(已上传)' : ''}
@@ -2308,7 +2329,7 @@ export default function VideoPage() {
                   />
 
                   {/* 圆形发送按钮 */}
-                  <button onClick={handleGenerate} disabled={!prompt.trim() || prompt.trim().length > MAX_VIDEO_PROMPT_LENGTH}
+                  <button onClick={handleGenerate} disabled={replicationLoading || !prompt.trim() || prompt.trim().length > MAX_VIDEO_PROMPT_LENGTH}
                     className="absolute right-3 bottom-3 w-11 h-11 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed z-10" aria-label="开始生成视频">
                     <Play className="w-4 h-4 ml-0.5" />
                   </button>

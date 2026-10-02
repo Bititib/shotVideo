@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildReplicatedVideoPrompt, getVideoReferenceAssets, getVideoReferenceCounts, removeVideoPromptReference, restoreVideoPromptRefs } from '../client/src/utils/videoPromptRefs';
+import { buildReplicatedVideoPrompt, getVideoReferenceAssets, getVideoReferenceFrames, getVideoReferenceCounts, removeVideoPromptReference, restoreVideoPromptRefs } from '../client/src/utils/videoPromptRefs';
 
 const frontendTranslate = (prompt: string, imagesCount: number = 1) => {
   let finalPrompt = prompt.trim();
@@ -58,6 +58,9 @@ describe('Prompt Reference @ Syntax Test Suite', () => {
   });
 
   it('should normalize API and legacy reference asset field names for replication', () => {
+    expect(getVideoReferenceFrames({first_frame_url:'first.jpg',end_frame_url:'last.jpg'})).toEqual({first:'first.jpg',last:'last.jpg'});
+    expect(getVideoReferenceFrames({first_frame:'start.jpg',last_frame:'end.jpg'})).toEqual({first:'start.jpg',last:'end.jpg'});
+    expect(getVideoReferenceFrames({})).toEqual({first:null,last:null});
     expect(getVideoReferenceAssets({
       reference_images: [],
       image_urls: ['image-a'],

@@ -10,6 +10,12 @@ export interface VideoReferenceAssets {
   audios: string[];
 }
 
+export function getVideoReferenceFrames(meta: Record<string, unknown>): { first: string | null; last: string | null } {
+  const read = (keys: string[]) => keys.map(key => meta[key]).find(value => typeof value === 'string' && value.length > 0) as string | undefined;
+  return { first: read(['first_frame', 'first_frame_url', 'firstFrame']) || null,
+    last: read(['last_frame', 'last_frame_url', 'end_frame_url', 'lastFrame']) || null };
+}
+
 function firstAssetList(meta: Record<string, unknown>, arrayKeys: string[], scalarKeys: string[]): string[] {
   for (const key of arrayKeys) {
     const value = meta[key];

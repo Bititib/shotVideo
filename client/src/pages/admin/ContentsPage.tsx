@@ -41,7 +41,7 @@ function ReferenceImagePreview({ src, index }: { src: string; index: number; key
     return (
       <div className="flex aspect-square w-full flex-col items-center justify-center rounded-lg border border-red-400/25 bg-red-500/10 px-1 text-center text-[10px] text-red-300" title={src}>
         <CircleAlert className="mb-1 h-4 w-4" />
-        参考图 {index + 1} 已失效
+        参考图 {index + 1} 无法加载
       </div>
     );
   }
@@ -175,10 +175,8 @@ export default function ContentsPage() {
   };
 
   const handleReplicate = async (item: ContentItem) => {
-    const fullItem = await loadFullContent(item);
-    // Store the content data in sessionStorage for VideoPage to pick up
-    sessionStorage.setItem('replicate_content', JSON.stringify(fullItem));
-    navigate('/app/video?replicate=' + fullItem.id);
+    // Fetch the complete record on the destination page, without browser storage limits.
+    navigate('/app/video?replicate=' + item.id);
   };
 
   const handleRecoverUpstream = async (item: ContentItem) => {

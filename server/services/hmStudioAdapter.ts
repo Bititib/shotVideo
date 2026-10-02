@@ -18,6 +18,7 @@ export type HmStudioVideoOptions = {
   functionMode?: string;
   upstreamChannel?: string;
   face?: unknown;
+  localMediaBaseUrl?: string;
 };
 
 export type NormalizedHmStudioTask = {
@@ -79,12 +80,22 @@ export function shouldSendHmStudioAuthorization(targetUrl: string, baseUrl: stri
   }
 }
 
-function dataUrlToBlob(source: string): { blob: Blob; extension: string } | null {
+function dataUrlToBlob(source: string, localMediaBaseUrl = process.env.BACKEND_URL): { blob: Blob; extension: string } | null {
   const match = source.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) {
-    if (!source.startsWith('/uploads/')) return null;
-    const filename = path.basename(source.split('?')[0]);
-    const localPath = path.join(process.cwd(), 'data', 'uploads', filename);
+    let pathname = source.split('?')[0];
+    if (/^https?:\/\//i.test(source)) {
+      if (!localMediaBaseUrl || new URL(source).origin !== new URL(localMediaBaseUrl).origin) return null;
+      pathname = new URL(source).pathname;
+    }
+    pathname = pathname.replace(/^\/api\/uploads\//, '/uploads/');
+    if (!pathname.startsWith('/uploads/')) return null;
+    const relative = decodeURIComponent(pathname.slice('/uploads/'.length));
+    const root = path.resolve(process.cwd(), 'data', 'uploads');
+    const localPath = path.resolve(root, relative);
+    if (relative.includes('\\') || relative.includes('\0') || relative.split('/').includes('..')
+      || !localPath.startsWith(`${root}${path.sep}`)) throw new Error('参考素材路径不安全');
+    const filename = path.basename(localPath);
     if (!fs.existsSync(localPath)) throw new Error(`本地参考图片不存在: ${filename}`);
     const extension = path.extname(filename).slice(1).toLowerCase() || 'jpg';
     const mimeType = extension === 'png' ? 'image/png'
@@ -92,9 +103,12 @@ function dataUrlToBlob(source: string): { blob: Blob; extension: string } | null
       : extension === 'gif' ? 'image/gif'
       : extension === 'mp4' ? 'video/mp4'
       : extension === 'webm' ? 'video/webm'
+      : extension === 'mov' ? 'video/quicktime'
       : extension === 'wav' ? 'audio/wav'
       : extension === 'mp3' ? 'audio/mpeg'
       : extension === 'm4a' ? 'audio/mp4'
+      : extension === 'aac' ? 'audio/aac'
+      : extension === 'ogg' ? 'audio/ogg'
       : 'image/jpeg';
     return { blob: new Blob([fs.readFileSync(localPath)], { type: mimeType }), extension };
   }
@@ -112,8 +126,9 @@ function appendFileOrUrl(
   urlField: string,
   source: string,
   fallbackExtension: string,
+  localMediaBaseUrl?: string,
 ): void {
-  const parsed = dataUrlToBlob(source);
+  const parsed = dataUrlToBlob(source, localMediaBaseUrl);
   if (parsed) {
     form.append(fileField, parsed.blob, `${fileField}.${parsed.extension || fallbackExtension}`);
   } else if (source) {
@@ -146,12 +161,13 @@ function appendOmniReferences(
   images: string[],
   videos: string[],
   audios: string[],
+  localMediaBaseUrl?: string,
 ): void {
   const materials: Array<{ type: 'image' | 'video' | 'audio'; name: string; url?: string }> = [];
 
   const appendMaterial = (type: 'image' | 'video' | 'audio', source: string, index: number) => {
     const name = `${type === 'image' ? 'Image' : type === 'video' ? 'Video' : 'Audio'}${index + 1}`;
-    const parsed = dataUrlToBlob(source);
+    const parsed = dataUrlToBlob(source, localMediaBaseUrl);
     if (parsed) {
       form.append(`${type}_file_${index + 1}`, parsed.blob, `${name}.${parsed.extension}`);
       materials.push({ type, name });
@@ -195,12 +211,12 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
   if (options.upstreamChannel) form.append('channel', options.upstreamChannel);
 
   if (functionMode === 'omni_reference') {
-    appendOmniReferences(form, [...explicitFrames, ...images], videos, audios);
+    appendOmniReferences(form, [...explicitFrames, ...images], videos, audios, options.localMediaBaseUrl);
   } else if (functionMode === 'multi_frame') {
     const frames = [...explicitFrames, ...images];
     const frameUrls: string[] = [];
     frames.forEach((source, index) => {
-      const parsed = dataUrlToBlob(source);
+      const parsed = dataUrlToBlob(source, options.localMediaBaseUrl);
       if (parsed) form.append(`frame_${index + 1}`, parsed.blob, `frame_${index + 1}.${parsed.extension}`);
       else if (source) frameUrls.push(source);
     });
@@ -208,8 +224,8 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
   } else {
     const first = options.firstFrame || images[0];
     const last = options.lastFrame || images[1];
-    if (first) appendFileOrUrl(form, 'first_frame', 'first_frame_url', first, 'jpg');
-    if (last) appendFileOrUrl(form, 'end_frame', 'end_frame_url', last, 'jpg');
+    if (first) appendFileOrUrl(form, 'first_frame', 'first_frame_url', first, 'jpg', options.localMediaBaseUrl);
+    if (last) appendFileOrUrl(form, 'end_frame', 'end_frame_url', last, 'jpg', options.localMediaBaseUrl);
   }
 
   return form;
