@@ -64,6 +64,10 @@ export class HmStudioQueueService {
   private userOrder: string[] = [];
   private draining = false;
 
+  has(jobId: string): boolean {
+    return this.jobs.has(jobId);
+  }
+
   enqueue<T>(options: {
     id: string;
     userKey: string | number;

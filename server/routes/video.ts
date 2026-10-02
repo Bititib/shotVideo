@@ -3430,6 +3430,14 @@ function adoptHmStudioProcessingContent(contentId: number, record: any): HmStudi
 export function resumePollForTask(contentId: number, record: any): Promise<void> {
   if (liveVideoRequests.has(contentId)) return Promise.resolve();
   if (hayaLiveRequests.has(contentId)) return Promise.resolve();
+  // A queue job becomes "processing" before its POST returns a task ID.
+  // Browser detail polling must not fail/refund that in-flight submission.
+  // The queue owner starts polling once it has persisted the upstream ID.
+  if (hmStudioQueue.has(`video:${contentId}`)) {
+    let pendingMeta: Record<string, any> = {};
+    try { pendingMeta = typeof record.metadata === 'string' ? JSON.parse(record.metadata) : record.metadata || {}; } catch { }
+    if (!pendingMeta.videoId) return Promise.resolve();
+  }
   if (activePolls.has(contentId)) {
     const existingPromise = activePollPromises.get(contentId);
     if (existingPromise) return existingPromise;
