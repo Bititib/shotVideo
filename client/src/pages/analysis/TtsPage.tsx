@@ -55,8 +55,16 @@ export default function TtsPage() {
   const [clones, setClones] = useState<StudioVoice[]>([]);
   const [cloneName, setCloneName] = useState('');
   const [cloneFile, setCloneFile] = useState<File | null>(null);
+  const cloneInputRef = useRef<HTMLInputElement | null>(null);
   const [cloneBusy, setCloneBusy] = useState(false);
   const [cloneMessage, setCloneMessage] = useState('');
+  const chooseCloneFile = (file?: File) => {
+    if (!file) return;
+    setCloneMessage('');
+    if (file.size > 10 * 1024 * 1024) { setCloneMessage('音频超过 10MB，请压缩或裁剪后上传'); return; }
+    if (!/\.(wav|mp3|ogg)$/i.test(file.name)) { setCloneMessage('请选择 WAV、MP3 或 OGG 文件'); return; }
+    setCloneFile(file);
+  };
   const loadClones = async () => {
     const list = await analysisApi.getClonedVoices();
     setClones(list.filter(v => v.type === 'cloned'));
@@ -266,17 +274,17 @@ export default function TtsPage() {
   };
 
   return (
-    <div className="tts-page flex h-full flex-col xl:flex-row">
+    <div className="tts-page tts-workbench">
       {/* ===== 左栏：控制配置 ===== */}
-      <div className="tts-controls w-full xl:w-[340px] shrink-0 h-fit xl:h-full xl:overflow-y-auto border-r border-white/5 bg-black p-6" style={{ scrollbarWidth: 'none' }}>
+      <div className="tts-controls" style={{ scrollbarWidth: 'none' }}>
         <div className="flex flex-col gap-6">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-yellow-500/20 to-amber-600/20 border border-yellow-500/30 flex items-center justify-center">
               <Volume2 className="w-5 h-5 text-yellow-400" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-white">语音工作室</h2>
-              <p className="text-xs text-zinc-500">选择声音，让文字被听见</p>
+              <h2 className="text-lg font-semibold text-white">声音与表现</h2>
+              <p className="text-xs text-zinc-500">模型与音色设置</p>
             </div>
           </div>
 
@@ -318,17 +326,38 @@ export default function TtsPage() {
           </div>
 
           <section className="tts-voice-section">
+            <h3>预置音色</h3>
+            <div className="tts-section-heading"><label>02 · 选择声音</label><span>共 {voices.length} 个音色</span></div>
+            <input className="tts-voice-search" aria-label="搜索音色" placeholder="搜索名称、风格或使用场景…" value={voiceSearch} onChange={e => setVoiceSearch(e.target.value)} />
+            <div className="tts-voice-grid">
+              {visibleVoices.map(id => {
+                const voice = voiceDetails.get(id);
+                return <button key={id} aria-label={id} aria-pressed={selectedVoice === id} onClick={() => setSelectedVoice(id)} title={voice?.displayName || id}>
+                  <span className="tts-voice-copy"><span className="tts-voice-name">{id}{selectedVoice === id && <Check size={13} />}</span>
+                  {voice?.gender && <small>{voice.gender === 'female' ? '女声' : voice.gender === 'male' ? '男声' : voice.gender}{voice.style ? ' · ' + voice.style : ''}</small>}
+                  {voice?.description && <span className="tts-voice-description">{voice.description}</span>}
+                  {voice?.scenario && <small>{voice.scenario}</small>}</span>
+                </button>;
+              })}
+            </div>
+            {voices.length > 0 && !visibleVoices.length && <p className="tts-hint">没有匹配的音色，请换个名称搜索。</p>}
+            <p className="tts-hint">{activeModel?.voiceSource === 'upstream' ? '音色信息来自上游服务。' : '上游尚未返回音色列表，暂时无法选择音色。'}</p>
+            <details className="tts-clone-disclosure" open><summary>我的克隆音色</summary>
             <div className="tts-clone-panel">
               <h3>克隆音色</h3>
               <p className="tts-hint">上传 10～30 秒清晰的单人录音，支持 WAV、MP3、OGG，最大 10MB。请使用本人或已获授权的声音。</p>
               <input className="tts-voice-search" aria-label="克隆音色名称" placeholder="为声音起个名字" maxLength={60} value={cloneName} onChange={e => setCloneName(e.target.value)} />
-              <input aria-label="参考音频" type="file" accept=".wav,.mp3,.ogg,audio/wav,audio/mpeg,audio/ogg" disabled={cloneBusy} onChange={e => {
-                const file = e.target.files?.[0]; setCloneFile(null); setCloneMessage('');
-                if (!file) return;
-                if (file.size > 10 * 1024 * 1024) { setCloneMessage('音频超过 10MB，请压缩或裁剪后上传'); e.target.value = ''; return; }
-                if (!/\.(wav|mp3|ogg)$/i.test(file.name)) { setCloneMessage('请选择 WAV、MP3 或 OGG 文件'); e.target.value = ''; return; }
-                setCloneFile(file);
+              <input ref={cloneInputRef} hidden aria-label="参考音频" type="file" accept=".wav,.mp3,.ogg,audio/wav,audio/mpeg,audio/ogg" disabled={cloneBusy} onChange={e => {
+                chooseCloneFile(e.target.files?.[0]);
+                e.target.value = '';
               }} />
+              <div className="tts-audio-upload" onDragOver={e => e.preventDefault()} onDrop={e => {
+                e.preventDefault();
+                if (!cloneBusy) chooseCloneFile(e.dataTransfer.files?.[0]);
+              }}>
+                <button type="button" disabled={cloneBusy} onClick={() => cloneInputRef.current?.click()}>{cloneFile ? '更换参考音频' : '上传参考音频'}</button>
+                <span role="status">{cloneFile ? `${cloneFile.name} · ${(cloneFile.size / 1024 / 1024).toFixed(2)} MB` : '点击按钮选择文件，也可将音频拖到这里'}</span>
+              </div>
               <button type="button" disabled={cloneBusy || !cloneFile || !cloneName.trim()} onClick={async () => {
                 if (!guard() || !cloneFile) return;
                 setCloneBusy(true); setCloneMessage('');
@@ -353,33 +382,20 @@ export default function TtsPage() {
                 }}><Trash2 size={14} /></button>
               </div>)}
             </div>
-            <h3>预置音色</h3>
-            <div className="tts-section-heading"><label>02 · 选择声音</label><span>共 {voices.length} 个音色</span></div>
-            <input className="tts-voice-search" aria-label="搜索音色" placeholder="搜索名称、风格或使用场景…" value={voiceSearch} onChange={e => setVoiceSearch(e.target.value)} />
-            <div className="tts-voice-grid">
-              {visibleVoices.map(id => {
-                const voice = voiceDetails.get(id);
-                return <button key={id} aria-label={id} aria-pressed={selectedVoice === id} onClick={() => setSelectedVoice(id)} title={voice?.displayName || id}>
-                  <span className="tts-voice-copy"><span className="tts-voice-name">{id}{selectedVoice === id && <Check size={13} />}</span>
-                  {voice?.gender && <small>{voice.gender === 'female' ? '女声' : voice.gender === 'male' ? '男声' : voice.gender}{voice.style ? ' · ' + voice.style : ''}</small>}
-                  {voice?.description && <span className="tts-voice-description">{voice.description}</span>}
-                  {voice?.scenario && <small>{voice.scenario}</small>}</span>
-                </button>;
-              })}
-            </div>
-            {voices.length > 0 && !visibleVoices.length && <p className="tts-hint">没有匹配的音色，请换个名称搜索。</p>}
-            <p className="tts-hint">{activeModel?.voiceSource === 'upstream' ? '音色信息来自上游服务。' : '上游尚未返回音色列表，暂时无法选择音色。'}</p>
+            </details>
           </section>
         </div>
       </div>
 
       {/* ===== 右栏：文本输入与音频播放 ===== */}
-      <div className="tts-content-panel flex-1 flex flex-col min-w-0 bg-[#070707] relative p-6 xl:overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
-        <div className="max-w-4xl mx-auto w-full flex flex-col gap-6 h-full">
-          <div className="tts-composer-heading"><div><span className="tts-eyebrow">TEXT TO SPEECH</span><h1>把文字，变成声音。</h1><p>写下文案，生成一段属于你的配音。</p></div><div className="tts-selection-summary"><span>{activeModel?.displayName || '请选择模型'}</span><strong>{actualVoice || '请选择音色'}</strong></div></div>
+      <div className="tts-content-panel" style={{ scrollbarWidth: 'none' }}>
+        <div className="tts-main-stack">
+          <div className="tts-composer-heading"><div><span className="tts-eyebrow">TEXT TO SPEECH</span><h1>让文字拥有声音</h1><p>从一段文案开始，创作你的下一段配音。</p></div><div className="tts-selection-summary"><span>{activeModel?.displayName || '请选择模型'}</span><strong>{actualVoice || '请选择音色'}</strong></div></div>
+          <section className="tts-scenarios" aria-label="文案场景">{TEXT_TEMPLATES.map((tpl, i) => <button type="button" key={tpl.title} aria-pressed={text === tpl.text} onClick={() => setText(tpl.text)}><Sparkles size={18} /><strong>{tpl.title}</strong><span>{['抓住注意力，讲清产品卖点', '用声音带观众走进故事', '温柔表达，让情绪自然流动'][i]}</span></button>)}</section>
           {/* 输入及合成区 */}
-          <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-5 flex flex-col gap-4">
-            <div className="flex items-center justify-between">
+          <div className="tts-editor-card">
+            <header className="tts-editor-toolbar"><span>单人配音</span><small>支持中英文文案</small></header>
+            <div className="tts-editor-label flex items-center justify-between">
               <label htmlFor="tts-transcript" className="text-xs font-semibold text-zinc-400">配音文案</label>
               <span className="text-[10px] text-zinc-600">{text.length} / 2000 字</span>
             </div>
@@ -392,26 +408,9 @@ export default function TtsPage() {
               className="w-full bg-black/40 border border-white/5 focus:border-yellow-500/30 rounded-xl p-4 text-sm text-white focus:outline-none placeholder:text-zinc-600 resize-none"
             />
 
-            {/* 模板快速填充 */}
-            <div className="flex flex-col gap-2">
-              <span className="text-[10px] text-zinc-500 flex items-center gap-1">
-                <FileText className="w-3 h-3" /> 常用文案模板：
-              </span>
-              <div className="flex gap-2 flex-wrap">
-                {TEXT_TEMPLATES.map((tpl) => (
-                  <button
-                    key={tpl.title}
-                    onClick={() => setText(tpl.text)}
-                    className="text-[10px] bg-white/5 hover:bg-white/10 text-zinc-300 px-2.5 py-1.5 rounded-lg border border-white/5 transition-all"
-                  >
-                    {tpl.title}
-                  </button>
-                ))}
-              </div>
-            </div>
-
+            <div className="tts-editor-footer"><span>正文将用于语音合成</span><button type="button" disabled={!text || isGenerating} onClick={() => setText('')}>清空文案</button></div>
             {/* 生成按钮 */}
-            <div className="flex items-center justify-between border-t border-white/5 pt-4 mt-2">
+            <div className="tts-submit-row">
               <div className="text-[11px] text-zinc-500 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-yellow-500/70" />
                 {activeModel?.rate !== undefined ? `预计 ¥${(text.trim().length * activeModel.rate).toFixed(2)} · 按输入字数计费` : '请选择模型后生成'}
@@ -419,7 +418,7 @@ export default function TtsPage() {
               <button
                 onClick={handleGenerate}
                 disabled={!text.trim() || isGenerating || !selectedModel || !actualVoice || modelsLoading}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-medium text-black bg-gradient-to-r from-yellow-500 to-amber-500 hover:from-yellow-400 hover:to-amber-400 disabled:opacity-30 disabled:cursor-not-allowed shadow-lg shadow-yellow-500/10 transition-all shrink-0"
+                className="tts-generate-button"
               >
                 {isGenerating ? (
                   <>
@@ -442,83 +441,20 @@ export default function TtsPage() {
             </div>
           )}
 
-          {/* 当前音频播放器 */}
-          {currentAudio && (
-            <div className="bg-gradient-to-r from-yellow-500/10 to-amber-600/10 border border-yellow-500/20 rounded-2xl p-5 flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <span className="text-xs font-semibold text-yellow-400">当前合成的语音</span>
-                  <p className="text-[10px] text-zinc-500 mt-0.5">音色: {currentAudio.voice} · 格式: {audioExtension(currentAudio.mimeType).toUpperCase()}</p>
-                </div>
-                <a
-                  href={currentAudio.audioUrl}
-                  download={`tts_${currentAudio.voice}_${Date.now()}.${audioExtension(currentAudio.mimeType)}`}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-[10px] text-zinc-300 transition-colors border border-white/5"
-                >
-                  <Download className="w-3 h-3" /> 下载音频
-                </a>
-              </div>
+          {currentAudio && <section className="tts-player-dock" aria-label="音频播放器"><div className="tts-player-info"><Volume2 size={20} /><div><strong>{currentAudio.text}</strong><span>{currentAudio.voice} · {audioExtension(currentAudio.mimeType).toUpperCase()}</span></div></div><button type="button" className="tts-player-toggle" aria-label={isPlaying ? '暂停音频' : '播放音频'} onClick={togglePlay}>{isPlaying ? <Pause size={19} /> : <Play size={19} />}</button><input aria-label="播放进度" type="range" min={0} max={duration || 0} step={0.1} value={currentTime} onChange={handleSeek} /><span className="tts-player-time">{formatTime(currentTime)} / {formatTime(duration)}</span><a href={currentAudio.audioUrl} download={'tts_' + Date.now() + '.' + audioExtension(currentAudio.mimeType)} aria-label="下载音频"><Download size={18} /></a></section>}
 
-              {/* 音频条 */}
-              <div className="flex items-center gap-4 bg-black/40 rounded-xl p-4 border border-white/5">
-                <button
-                  onClick={togglePlay}
-                  className="w-10 h-10 rounded-full bg-yellow-500 flex items-center justify-center text-black hover:scale-105 transition-transform"
-                >
-                  {isPlaying ? <Pause className="w-4 h-4 fill-black" /> : <Play className="w-4 h-4 fill-black ml-0.5" />}
-                </button>
-
-                <div className="flex-1 flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between text-[10px] text-zinc-500 tabular-nums">
-                    <span>{formatTime(currentTime)}</span>
-                    <span>{formatTime(duration)}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={duration || 0}
-                    step={0.1}
-                    value={currentTime}
-                    onChange={handleSeek}
-                    className="w-full accent-yellow-500 bg-white/10 h-1 rounded-lg appearance-none cursor-pointer"
-                  />
-                </div>
-
-                {/* 动态音浪 */}
-                <div className="flex items-end gap-0.5 h-6">
-                  {[...Array(8)].map((_, i) => (
-                    <div
-                      key={i}
-                      className={`w-0.5 bg-yellow-500/80 rounded-full transition-all duration-300`}
-                      style={{
-                        height: isPlaying ? `${Math.floor(Math.random() * 100)}%` : '15%',
-                        animation: isPlaying ? `wave 1.2s ease-in-out infinite alternate` : 'none',
-                        animationDelay: `${i * 0.15}s`
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* 文本预览 */}
-              <div className="bg-black/20 rounded-xl p-3 border border-white/5">
-                <span className="text-[10px] text-zinc-600 block mb-1">文字脚本：</span>
-                <p className="text-[11px] text-zinc-400 leading-relaxed line-clamp-3">{currentAudio.text}</p>
-              </div>
-            </div>
-          )}
-
+          {!history.length && <section className="tts-empty"><Music size={25} /><h3>最近的声音</h3><p>{historyLoading ? '正在读取记录…' : '生成第一段配音后，在这里试听和回看。'}</p></section>}
           {/* 历史生成列表 */}
           {history.length > 0 && (
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-zinc-400">历史合成记录 ({history.length})</span>
+                <span className="text-xs font-semibold text-zinc-400">最近的声音 ({history.length})</span>
                 <button onClick={() => loadHistory(1, false)} className="text-zinc-500 hover:text-zinc-300 text-[10px] flex items-center gap-1 transition-colors">
                   <RefreshCw className="w-3 h-3" /> 刷新
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="tts-history-list">
                 {history.map((h) => (
                   <div
                     key={h.id}

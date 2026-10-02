@@ -41,6 +41,23 @@ it('uploads a reference, selects the persisted cloned voice and displays fallbac
 });
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
+it('opens the reference picker from the upload button and accepts a dropped file', async () => {
+  render(<TtsPage />);
+  await screen.findByRole('button', { name: 'NewVoice' });
+  const input = screen.getByLabelText('参考音频') as HTMLInputElement;
+  const click = vi.spyOn(input, 'click').mockImplementation(() => {});
+  fireEvent.click(screen.getByRole('button', { name: '上传参考音频' }));
+  expect(click).toHaveBeenCalledTimes(1);
+  fireEvent.change(screen.getByLabelText('克隆音色名称'), { target: { value: '测试音色' } });
+  const file = new File(['sample'], 'reference.wav', { type: 'audio/wav' });
+  fireEvent.drop(screen.getByRole('button', { name: '上传参考音频' }).parentElement!, { dataTransfer: { files: [file] } });
+  expect(screen.getByText(/reference.wav ·/)).toBeTruthy();
+  expect((screen.getByRole('button', { name: '创建克隆音色' }) as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.change(input, { target: { files: [] } });
+  expect(screen.getByText(/reference.wav ·/)).toBeTruthy();
+  click.mockRestore();
+});
+
 it('submits an upstream-only voice and downloads the actual WAV format', async () => {
   render(<TtsPage />);
   fireEvent.click(await screen.findByRole('button', { name: 'SecondVoice' }));
