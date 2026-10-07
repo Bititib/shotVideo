@@ -22,6 +22,7 @@ export const privateReferences: RequestHandler = (req,res,next) => {
       const media=match&&privateMediaStore().get(match[1]);
       if(!media||media.user_id!==mediaUser(req))throw new Error('参考素材不存在或无权访问，请重新选择');
       total+=media.bytes;if(total>120*1024*1024)throw new Error('参考素材总量超过 120 MB，请减少素材');
+      // Keep validation on local bytes; URL-capable adapters publish only after validation.
       const data=`data:${media.mime};base64,${fs.readFileSync(privateMediaStore().filePath(media)).toString('base64')}`;
       cache.set(value,data);return data;
     }

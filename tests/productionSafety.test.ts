@@ -93,20 +93,21 @@ describe('production release safety',()=>{
     expect(r.status).toBe(403);
     expect((await fetch(`${base}/api/admin/billing-reservations`,{headers:headers(3)})).status).toBe(200);
   });
-  it('persists media separately, deduplicates per owner, denies anonymous and other users, supports range playback',async()=>{
+  it('publishes media for anonymous reading while retaining owner-only upload management',async()=>{
     const body=JSON.stringify({dataUrl:`data:image/png;base64,${png.toString('base64')}`,filename:'参考.png'});
     const upload=await fetch(`${base}/api/media`,{method:'POST',headers:headers(),body});expect(upload.status).toBe(201);
     const cookie=upload.headers.get('set-cookie')!.split(';')[0];expect(cookie).toContain('media_session=');
     const media=await upload.json();
-    expect((await fetch(`${base}${media.url}`)).status).toBe(404);
-    expect((await fetch(`${base}${media.url}`,{headers:headers(2)})).status).toBe(404);
+    expect((await fetch(`${base}${media.url}`)).status).toBe(200);
+    expect((await fetch(`${base}${media.url}`,{headers:headers(2)})).status).toBe(200);
+    expect((await fetch(`${base}${media.url}/link`,{method:'POST',headers:headers(2)})).status).toBe(404);
     const own=await fetch(`${base}${media.url}`,{headers:{Cookie:cookie,Range:'bytes=0-7'}});expect(own.status).toBe(206);expect((await own.arrayBuffer()).byteLength).toBe(8);
     const again=await fetch(`${base}/api/media`,{method:'POST',headers:headers(),body}).then(r=>r.json());expect(again.id).toBe(media.id);
     const other=await fetch(`${base}/api/media`,{method:'POST',headers:headers(2),body}).then(r=>r.json());expect(other.id).not.toBe(media.id);
     const reference=await fetch(`${base}/references`,{method:'POST',headers:headers(),body:JSON.stringify({reference_videos:[media.url]})}).then(r=>r.json());expect(reference.reference_videos[0]).toBe(`data:image/png;base64,${png.toString('base64')}`);
     expect((await fetch(`${base}/references`,{method:'POST',headers:headers(2),body:JSON.stringify({reference_images:[media.url]})})).status).toBe(400);
     const signed=await fetch(`${base}${media.url}/link`,{method:'POST',headers:headers()}).then(r=>r.json());expect((await fetch(signed.url)).status).toBe(200);
-    const expired=Math.floor(Date.now()/1000)-1;expect((await fetch(`${base}${media.url}?expires=${expired}&signature=${mediaSignature(media.url,expired)}`)).status).toBe(404);
+    const expired=Math.floor(Date.now()/1000)-1;expect((await fetch(`${base}${media.url}?expires=${expired}&signature=${mediaSignature(media.url,expired)}`)).status).toBe(200);
   });
   it('rejects active content disguised as media and enforces quota',()=>{
     const db=new Database(':memory:');const store=createPrivateMediaStore(db,path.join(temp,'quota'));

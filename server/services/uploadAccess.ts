@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type Database from 'better-sqlite3';
 let sqlite: Database.Database | undefined;
 export function configureUploadAccess(database: Database.Database) { sqlite=database; }
-import { signedMediaUrl } from './mediaSignature.js';
+import { publishReferenceUrl } from './publicReferenceService.js';
 
 export const mediaOwnerContext = new AsyncLocalStorage<number>();
 export function uploadPath(source: string): string | null {
@@ -21,11 +21,11 @@ export function registerUpload(source: string, owner=mediaOwnerContext.getStore(
   return source;
 }
 /** Only use on a freshly written file or an already-authorized reference. */
-export function issueUploadUrl(source: string, base?: string, seconds=3600) {
+export function issueUploadUrl(source: string, base?: string, _seconds=3600) {
   const resource=uploadPath(/^https?:/.test(source) ? new URL(source).pathname : source);if(!resource)return source;
   registerUpload(resource);
   const origin=base||(/^https?:/.test(source)?new URL(source).origin:process.env.BACKEND_URL||'');
-  return signedMediaUrl(resource,origin,seconds);
+  return publishReferenceUrl(resource, origin);
 }
 export function ownsUpload(owner: number, source: string): boolean {
   const resource=uploadPath(source);if(!resource||!sqlite)return false;

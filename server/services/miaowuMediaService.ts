@@ -1,4 +1,4 @@
-import { issueUploadUrl } from './uploadAccess.js';
+import { publishReferenceUrl } from './publicReferenceService.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -106,8 +106,8 @@ function saveDataUrl(source: string, kind: MiaowuMediaKind, uploadsRoot: string)
   return `/uploads/miaowu-media/${filename}`;
 }
 
-function publicUrlForPath(baseUrl: URL, pathname: string): string {
-  return issueUploadUrl(new URL(pathname, `${baseUrl.origin}/`).toString(),baseUrl.origin);
+function publicUrlForPath(baseUrl: URL, pathname: string, uploadsRoot: string): string {
+  return publishReferenceUrl(new URL(pathname, `${baseUrl.origin}/`).toString(),baseUrl.origin,uploadsRoot);
 }
 
 export function prepareMiaowuPublicMediaUrls(
@@ -124,11 +124,11 @@ export function prepareMiaowuPublicMediaUrls(
       const source = rawSource.trim();
 
       if (source.startsWith('data:')) {
-        return publicUrlForPath(publicBaseUrl, saveDataUrl(source, kind, uploadsRoot));
+        return publicUrlForPath(publicBaseUrl, saveDataUrl(source, kind, uploadsRoot), uploadsRoot);
       }
       if (source.startsWith('/uploads/')) {
         localUploadPath(source, uploadsRoot);
-        return publicUrlForPath(publicBaseUrl, source);
+        return publicUrlForPath(publicBaseUrl, source, uploadsRoot);
       }
       if (!/^https?:\/\//i.test(source)) {
         throw new Error('仅支持 Base64、本站上传地址或公网 http(s) URL');
@@ -137,7 +137,7 @@ export function prepareMiaowuPublicMediaUrls(
       const parsed = new URL(source);
       if (parsed.origin === publicBaseUrl.origin && parsed.pathname.startsWith('/uploads/')) {
         localUploadPath(parsed.pathname, uploadsRoot);
-        return publicUrlForPath(publicBaseUrl, `${parsed.pathname}${parsed.search}`);
+        return publicUrlForPath(publicBaseUrl, `${parsed.pathname}${parsed.search}`, uploadsRoot);
       }
       return parsed.toString();
     } catch (error: any) {

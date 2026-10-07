@@ -1,5 +1,4 @@
-import fs from 'fs';
-import path from 'path';
+import { publishReferenceUrl } from './publicReferenceService.js';
 import { HM_STUDIO_FAST803_MODEL, HM_STUDIO_FAST813_MODEL, HM_STUDIO_MINI503_MODEL } from '../../shared/hmStudioVideo.js';
 
 export const HM_STUDIO_CHANNEL_TYPE = 'hmstudio';
@@ -34,6 +33,7 @@ export type NormalizedHmStudioTask = {
 };
 
 export type HmStudioImageOptions = {
+  localMediaBaseUrl?: string;
   model: string;
   prompt: string;
   ratio: string;
@@ -84,60 +84,11 @@ export function shouldSendHmStudioAuthorization(targetUrl: string, baseUrl: stri
   }
 }
 
-function dataUrlToBlob(source: string, localMediaBaseUrl = process.env.BACKEND_URL): { blob: Blob; extension: string } | null {
-  const match = source.match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) {
-    let pathname = source.split('?')[0];
-    if (/^https?:\/\//i.test(source)) {
-      if (!localMediaBaseUrl || new URL(source).origin !== new URL(localMediaBaseUrl).origin) return null;
-      pathname = new URL(source).pathname;
-    }
-    pathname = pathname.replace(/^\/api\/uploads\//, '/uploads/');
-    if (!pathname.startsWith('/uploads/')) return null;
-    const relative = decodeURIComponent(pathname.slice('/uploads/'.length));
-    const root = path.resolve(process.cwd(), 'data', 'uploads');
-    const localPath = path.resolve(root, relative);
-    if (relative.includes('\\') || relative.includes('\0') || relative.split('/').includes('..')
-      || !localPath.startsWith(`${root}${path.sep}`)) throw new Error('参考素材路径不安全');
-    const filename = path.basename(localPath);
-    if (!fs.existsSync(localPath)) throw new Error(`本地参考图片不存在: ${filename}`);
-    const extension = path.extname(filename).slice(1).toLowerCase() || 'jpg';
-    const mimeType = extension === 'png' ? 'image/png'
-      : extension === 'webp' ? 'image/webp'
-      : extension === 'gif' ? 'image/gif'
-      : extension === 'mp4' ? 'video/mp4'
-      : extension === 'webm' ? 'video/webm'
-      : extension === 'mov' ? 'video/quicktime'
-      : extension === 'wav' ? 'audio/wav'
-      : extension === 'mp3' ? 'audio/mpeg'
-      : extension === 'm4a' ? 'audio/mp4'
-      : extension === 'aac' ? 'audio/aac'
-      : extension === 'ogg' ? 'audio/ogg'
-      : 'image/jpeg';
-    return { blob: new Blob([fs.readFileSync(localPath)], { type: mimeType }), extension };
-  }
-
-  const mimeType = match[1];
-  const buffer = Buffer.from(match[2], 'base64');
-  const subtype = mimeType.split('/')[1]?.split('+')[0] || 'bin';
-  const extension = subtype === 'jpeg' ? 'jpg' : subtype;
-  return { blob: new Blob([buffer], { type: mimeType }), extension };
-}
-
 function appendFileOrUrl(
-  form: FormData,
-  fileField: string,
-  urlField: string,
-  source: string,
-  fallbackExtension: string,
-  localMediaBaseUrl?: string,
+  form: FormData, _fileField: string, urlField: string, source: string,
+  _fallbackExtension: string, localMediaBaseUrl?: string,
 ): void {
-  const parsed = dataUrlToBlob(source, localMediaBaseUrl);
-  if (parsed) {
-    form.append(fileField, parsed.blob, `${fileField}.${parsed.extension || fallbackExtension}`);
-  } else if (source) {
-    form.append(urlField, source);
-  }
+  if (source) form.append(urlField, publishReferenceUrl(source, localMediaBaseUrl));
 }
 
 function replaceReferenceMarkers(prompt: string): string {
@@ -171,13 +122,7 @@ function appendOmniReferences(
 
   const appendMaterial = (type: 'image' | 'video' | 'audio', source: string, index: number) => {
     const name = `${type === 'image' ? 'Image' : type === 'video' ? 'Video' : 'Audio'}${index + 1}`;
-    const parsed = dataUrlToBlob(source, localMediaBaseUrl);
-    if (parsed) {
-      form.append(`${type}_file_${index + 1}`, parsed.blob, `${name}.${parsed.extension}`);
-      materials.push({ type, name });
-    } else if (source) {
-      materials.push({ type, name, url: source });
-    }
+    if (source) materials.push({ type, name, url: publishReferenceUrl(source, localMediaBaseUrl) });
   };
 
   images.forEach((source, index) => appendMaterial('image', source, index));
@@ -225,9 +170,7 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
     const frames = [...explicitFrames, ...images];
     const frameUrls: string[] = [];
     frames.forEach((source, index) => {
-      const parsed = dataUrlToBlob(source, options.localMediaBaseUrl);
-      if (parsed) form.append(`frame_${index + 1}`, parsed.blob, `frame_${index + 1}.${parsed.extension}`);
-      else if (source) frameUrls.push(source);
+      if (source) frameUrls.push(publishReferenceUrl(source, options.localMediaBaseUrl));
     });
     if (frameUrls.length > 0) form.append('multi_frames', JSON.stringify(frameUrls));
   } else {
@@ -255,9 +198,7 @@ export function buildHmStudioImageForm(options: HmStudioImageOptions): FormData 
 
   const imageUrls: string[] = [];
   for (const source of (options.imageSources || []).filter(Boolean).slice(0, 10)) {
-    const parsed = dataUrlToBlob(source);
-    if (parsed) form.append('images', parsed.blob, `reference.${parsed.extension}`);
-    else imageUrls.push(source);
+    imageUrls.push(publishReferenceUrl(source, options.localMediaBaseUrl));
   }
   if (imageUrls.length === 1) form.append('image_url', imageUrls[0]);
   if (imageUrls.length > 1) form.append('image_urls', JSON.stringify(imageUrls));

@@ -1,5 +1,6 @@
 import { protectVideoSource } from '../middleware/uploadAccess.js';
 import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
+import { publishReferenceUrl } from '../services/publicReferenceService.js';
 import { canvasRequestMiddleware, recordCanvasEvent } from '../middleware/canvasRequest.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { HAYA_SECONDS, HAYA_VIDEO_MODELS, getHayaVideoSpec, validateHayaVideoInput } from '../../shared/hayaVideo.js';
@@ -215,50 +216,10 @@ function convertBase64ToPublicUrl(dataUrl: string, prefix: string, requestOrBase
 }
 
 /**
- * 将 base64 数据上传到 SudaShuiAPI 文件服务
+ * 将参考素材保存为本站公开 URL，供 SudaShui 上游读取
  */
-async function uploadToSudaShui(dataUrl: string, apiKey: string): Promise<string> {
-  if (!dataUrl) return '';
-  if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
-    return dataUrl;
-  }
-
-  try {
-    const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-    if (!matches) return dataUrl;
-
-    const mimeType = matches[1];
-    const base64Data = matches[2];
-    const buffer = Buffer.from(base64Data, 'base64');
-
-    let ext = mimeType.split('/')[1] || 'jpg';
-    if (mimeType === 'audio/mpeg') ext = 'mp3';
-    else if (mimeType.includes('wav')) ext = 'wav';
-
-    const formData = new FormData();
-    const blob = new Blob([buffer], { type: mimeType });
-    formData.append('file', blob, `file_${Date.now()}.${ext}`);
-
-    const resp = await fetch('https://files.sudashuiapi.com', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: formData,
-      signal: AbortSignal.timeout(60000)
-    });
-
-    if (!resp.ok) {
-      const errTxt = await resp.text().catch(() => '');
-      throw new Error(`SudaShui upload failed: ${resp.status} ${errTxt}`);
-    }
-
-    const data = await resp.json() as any;
-    return data.url;
-  } catch (err: any) {
-    console.error('[video] uploadToSudaShui 失败:', err.message);
-    throw err;
-  }
+async function uploadToSudaShui(source: string, publicBaseUrl: string): Promise<string> {
+  return source ? publishReferenceUrl(source, publicBaseUrl) : '';
 }
 
 /** 上传素材到 Pidoi（Sora V3 Pro）文件存储 */
@@ -1614,6 +1575,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     } else if (isHmStudio) {
       sendEvent({ type: 'status', message: '正在整理素材并提交 HM Studio 任务...' });
       const formData = buildHmStudioVideoForm({
+        localMediaBaseUrl: process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`,
         model: upstreamModel,
         prompt: prompt.trim(),
         duration: Number(video_length) || 5,
@@ -1780,15 +1742,15 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
 
       const imageUrls: string[] = [];
       for (const img of (reference_images || []).slice(0, 9)) {
-        imageUrls.push(await uploadToSudaShui(img, channel.apiKey));
+        imageUrls.push(await uploadToSudaShui(img, process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`));
       }
       const videoUrls: string[] = [];
       for (const v of finalVideos.slice(0, 3)) {
-        videoUrls.push(await uploadToSudaShui(v, channel.apiKey));
+        videoUrls.push(await uploadToSudaShui(v, process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`));
       }
       const audioUpUrls: string[] = [];
       for (const a of finalAudios.slice(0, 3)) {
-        audioUpUrls.push(await uploadToSudaShui(a, channel.apiKey));
+        audioUpUrls.push(await uploadToSudaShui(a, process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`));
       }
 
       const payload = buildSudaShuiVideoPayload({

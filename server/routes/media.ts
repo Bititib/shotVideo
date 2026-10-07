@@ -5,7 +5,6 @@ import { sqlite } from '../db/index.js';
 import { env } from '../config/env.js';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { createPrivateMediaStore } from '../services/privateMediaStore.js';
-import { signedMediaUrl, validMediaSignature } from '../services/mediaSignature.js';
 import { prepareVideoForDelivery, videoDeliveryContentType } from '../services/videoCompatibilityService.js';
 
 const router=Router();
@@ -34,12 +33,12 @@ router.post('/:id/link',authMiddleware,(req:AuthRequest,res)=>{
   if(!media||media.user_id!==req.userId) {res.status(404).json({error:'素材不存在'});return;}
   const base=process.env.BACKEND_URL||`${req.protocol}://${req.get('host')}`;
   res.setHeader('Cache-Control','no-store');
-  res.json({url:signedMediaUrl(`/api/media/${media.id}`,base),expiresIn:3600});
+  res.json({url:`${base.replace(/\/$/, '')}/api/media/${media.id}`,expiresIn:null});
 });
 router.get('/:id',async (req:AuthRequest,res)=>{
-  const media=privateMediaStore().get(req.params.id),resource=`/api/media/${req.params.id}`;
-  if(!media||!(validMediaSignature(resource,req.query.expires,req.query.signature)||mediaUser(req)===media.user_id)) {res.status(404).json({error:'素材不存在或无权访问'});return;}
-  res.setHeader('Cache-Control','private, no-store');res.setHeader('Content-Type',media.mime);
+  const media=privateMediaStore().get(req.params.id);
+  if(!media) {res.status(404).json({error:'素材不存在'});return;}
+  res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type',media.mime);
   res.setHeader('X-Content-Type-Options','nosniff');
   try {
     const source = privateMediaStore().filePath(media);

@@ -1,5 +1,6 @@
 import { resolvePublicModelId, publicModelName } from '../services/publicModelNameService.js';
 import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
+import { publishReferenceUrl } from '../services/publicReferenceService.js';
 import { reserveCharge } from '../services/billingReservation.js';
 import { getHayaVideoSpec, validateHayaVideoInput } from '../../shared/hayaVideo.js';
 import { isHayaChannel, submitHayaVideo, HayaSubmissionError } from '../services/hayaVideoAdapter.js';
@@ -1058,6 +1059,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
       hmStudioQueue.assertCanEnqueue(queueUserKey, count);
       const executeOne = async () => {
         const formData = buildHmStudioImageForm({
+          localMediaBaseUrl: process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`,
           model: upstreamModel,
           prompt,
           ratio: otherParams.ratio || otherParams.aspect_ratio || '1:1',
@@ -1367,6 +1369,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
       });
       const executeOne = async () => {
         const hmForm = buildHmStudioImageForm({
+          localMediaBaseUrl: process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`,
           model: upstreamModel,
           prompt,
           ratio: otherParams.ratio || otherParams.aspect_ratio || '1:1',
@@ -2300,6 +2303,7 @@ async function handleVideoCreation(req: Request, res: Response) {
 
     if (isHmStudio) {
       const formData = buildHmStudioVideoForm({
+        localMediaBaseUrl: process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`,
         model: upstreamModel,
         prompt,
         duration: seconds,
@@ -2538,14 +2542,15 @@ async function handleVideoCreation(req: Request, res: Response) {
           audios: audio_urls.map(url => ({ url })),
         });
       } else if (isSudaShuiModel) {
+        const referenceBase = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
         payload = buildSudaShuiVideoPayload({
           model: upstreamModel,
           prompt,
           duration: seconds,
           aspectRatio: ratio,
-          imageUrls: image_urls,
-          videoUrls: video_urls,
-          audioUrls: audio_urls,
+          imageUrls: image_urls.map(source => publishReferenceUrl(source, referenceBase)),
+          videoUrls: video_urls.map(source => publishReferenceUrl(source, referenceBase)),
+          audioUrls: audio_urls.map(source => publishReferenceUrl(source, referenceBase)),
         });
         console.log(`[v1-video] SudaShui create: model=${model} upstreamModel=${upstreamModel} duration=${seconds} images=${image_urls.length} videos=${video_urls.length} audios=${audio_urls.length}`);
       } else if (model.includes('grok-imagine-video') || model.includes('grok-video')) {

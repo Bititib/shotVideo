@@ -1,6 +1,7 @@
 import { protectUploads } from './middleware/uploadAccess.js';
 import { h264Uploads } from './middleware/h264Uploads.js';
 import { privateReferences } from './middleware/privateReferences.js';
+import { publicReferences } from './middleware/publicReferences.js';
 import mediaRoutes from './routes/media.js';
 import billingAdminRoutes from './routes/billingAdmin.js';
 import express from 'express';
@@ -55,6 +56,7 @@ export async function createApp() {
   // Body parsing
   app.use(express.json({ limit: '150mb' }));
   app.get('/api/health', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json({ status: 'ok' }); });
+  app.use('/reference-assets', publicReferences());
 
   // Static uploads directory serving
   const uploadDir = path.resolve(process.cwd(), 'data/uploads');

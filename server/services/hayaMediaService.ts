@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
-import { hayaApiBaseUrl } from './hayaVideoAdapter.js';
+import { publishReferenceBytes } from './publicReferenceService.js';
 
 export type HayaMediaKind = 'image' | 'video' | 'audio';
 export const HAYA_MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -74,16 +74,7 @@ export async function prepareHayaMedia(sources: string[], kind: HayaMediaKind, o
   for (const source of sources) {
     const media = await readMedia(source, kind, options);
     if (media.url) { urls.push(media.url); continue; }
-    const form = new FormData();
-    form.append('file', new Blob([new Uint8Array(media.bytes!)], { type: media.mime }), media.filename);
-    const response = await fetch(`${hayaApiBaseUrl(options.baseUrl)}/v1/files`, {
-      method: 'POST', headers: { Authorization: `Bearer ${options.apiKey}` }, body: form,
-      signal: AbortSignal.timeout(120_000), redirect: 'error',
-    });
-    if (!response.ok) throw new Error(`Haya 素材上传失败 (${response.status}): ${(await response.text()).slice(0, 500)}`);
-    const file = await response.json() as any;
-    if (file.media_type !== kind || typeof file.url !== 'string') throw new Error('Haya 上传响应的素材类型或 URL 不正确');
-    urls.push(publicMediaUrl(file.url));
+    urls.push(publicMediaUrl(publishReferenceBytes(media.bytes!, media.mime!, options.publicBaseUrl)));
   }
   return urls;
 }

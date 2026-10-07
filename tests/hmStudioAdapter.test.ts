@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import os from 'node:os';
 import fs from 'fs';
 import path from 'path';
+const publicDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-public-refs-'));
+beforeAll(() => { vi.stubEnv('PUBLIC_REFERENCE_DIR', publicDir); vi.stubEnv('BACKEND_URL', 'https://studio.test'); });
+afterAll(() => { vi.unstubAllEnvs(); fs.rmSync(publicDir, { recursive: true, force: true }); });
 import {
   buildHmStudioImageForm,
   buildHmStudioVideoForm,
@@ -45,21 +49,21 @@ describe('HM Studio adapter', () => {
     expect(buildHmStudioImageForm(imageOptions).has('channel')).toBe(false);
     expect(buildHmStudioImageForm({ ...imageOptions, upstreamChannel: 'custom' }).get('channel')).toBe('custom');
   });
-  it('uploads persisted reference video and audio bytes with their media types', async () => {
+  it('sends persisted reference video and audio as unsigned public URLs', async () => {
     const dir=fs.mkdtempSync(path.join(process.cwd(),'data/uploads/hm-multimodal-'));
     try {
-      fs.writeFileSync(path.join(dir,'video.mov'),Buffer.from('video bytes'));
-      fs.writeFileSync(path.join(dir,'audio.ogg'),Buffer.from('audio bytes'));
+      fs.writeFileSync(path.join(dir,'video.mov'),Buffer.from('0000ftypqt  video bytes'));
+      fs.writeFileSync(path.join(dir,'audio.ogg'),Buffer.from('OggS audio bytes'));
       const prefix=`https://studio.test/uploads/${path.basename(dir)}`;
       const form=buildHmStudioVideoForm({model:'seedance_v2.5-101010',prompt:'test',duration:6,ratio:'16:9',resolution:'720p',
         videoSources:[`${prefix}/video.mov`],audioSources:[`${prefix}/audio.ogg`],localMediaBaseUrl:'https://studio.test'});
-      const video=form.get('video_file_1') as Blob,audio=form.get('audio_file_1') as Blob;
-      expect(video.type).toBe('video/quicktime');expect(await video.text()).toBe('video bytes');
-      expect(audio.type).toBe('audio/ogg');expect(await audio.text()).toBe('audio bytes');
-      expect(JSON.parse(String(form.get('materials')))).toEqual([{type:'video',name:'Video1'},{type:'audio',name:'Audio1'}]);
+      expect(form.has('video_file_1')).toBe(false); expect(form.has('audio_file_1')).toBe(false);
+      const materials = JSON.parse(String(form.get('materials')));
+      expect(materials).toEqual([{type:'video',name:'Video1',url:expect.stringMatching(/^https:\/\/studio.test\/reference-assets\/.+\.mov$/)},
+        {type:'audio',name:'Audio1',url:expect.stringMatching(/^https:\/\/studio.test\/reference-assets\/.+\.ogg$/)}]);
     } finally {fs.rmSync(dir,{recursive:true,force:true});}
   });
-  it('uploads persisted private history assets as bytes in every video mode', async () => {
+  it('publishes historical assets as URLs in every video mode', async () => {
     const dir = path.join(process.cwd(), 'data/uploads/history-assets');
     const file = path.join(dir, 'hm-private-reference-test.jpg');
     const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
@@ -72,9 +76,11 @@ describe('HM Studio adapter', () => {
         for (const [mode, field] of [['first_last_frames', 'first_frame'], ['omni_reference', 'image_file_1'], ['multi_frame', 'frame_1']]) {
           const form = buildHmStudioVideoForm({ model: 'seedance_v2.5', prompt: 'test', duration: 6,
             ratio: '16:9', resolution: '720p', imageSources: [source], functionMode: mode, localMediaBaseUrl: 'https://studio.test' });
-          expect(form.get(field)).toBeInstanceOf(Blob);
-          expect(Buffer.from(await (form.get(field) as Blob).arrayBuffer())).toEqual(bytes);
-          expect(form.has('first_frame_url')).toBe(false);
+          expect(form.has(field)).toBe(false);
+          const url = mode === 'first_last_frames' ? String(form.get('first_frame_url'))
+            : mode === 'omni_reference' ? JSON.parse(String(form.get('materials')))[0].url : JSON.parse(String(form.get('multi_frames')))[0];
+          expect(url).toMatch(/^https:\/\/studio.test\/reference-assets\/[a-f0-9-]+\.jpg$/);
+          expect(fs.readFileSync(path.join(publicDir, path.basename(new URL(url).pathname)))).toEqual(bytes);
         }
       }
       const remote = 'https://external.test/uploads/history-assets/hm-private-reference-test.jpg';
@@ -118,7 +124,7 @@ describe('HM Studio adapter', () => {
     expect(form.has('face_split')).toBe(false);
   });
 
-  it('uploads a processed local image as multipart bytes', async () => {
+  it('sends a processed local image as a public first-frame URL', async () => {
     const uploadDir = path.join(process.cwd(), 'data', 'uploads');
     const filename = 'hm_face_adapter_test.jpg';
     const filePath = path.join(uploadDir, filename);
@@ -133,10 +139,8 @@ describe('HM Studio adapter', () => {
         resolution: '720p',
         imageSources: [`/uploads/${filename}`],
       });
-      const uploaded = form.get('first_frame');
-      expect(uploaded).toBeInstanceOf(Blob);
-      expect(await (uploaded as Blob).arrayBuffer()).toEqual(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]).buffer);
-      expect(form.has('first_frame_url')).toBe(false);
+      expect(form.has('first_frame')).toBe(false);
+      expect(form.get('first_frame_url')).toMatch(/^https:\/\/studio.test\/reference-assets\/[a-f0-9-]+\.jpg$/);
     } finally {
       fs.rmSync(filePath, { force: true });
     }

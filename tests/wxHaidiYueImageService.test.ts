@@ -1,9 +1,8 @@
-import { validMediaSignature } from '../server/services/mediaSignature.js';
-function verifiedUrl(value: string) { const url=new URL(value); expect(validMediaSignature(url.pathname,url.searchParams.get('expires'),url.searchParams.get('signature'))).toBe(true); return url.origin+url.pathname; }
+function verifiedUrl(value: string) { const url=new URL(value); expect(url.search).toBe(''); return url.origin+url.pathname; }
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   prepareWxHaidiYueImageUrls,
   wxHaidiYueImageToPublicUrl,
@@ -16,10 +15,12 @@ const PNG_BYTES = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB', 'base64');
 async function tempUploadsRoot(): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), 'wx-haidiyue-images-'));
   tempDirs.push(root);
+  vi.stubEnv('PUBLIC_REFERENCE_DIR', path.join(root, 'public'));
   return root;
 }
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(tempDirs.splice(0).map(dir => rm(dir, { recursive: true, force: true })));
 });
 
@@ -32,8 +33,8 @@ describe('wx-海底月 reference image URL preparation', () => {
       mediaBaseUrl: 'https://media-origin.example.com',
     });
 
-    expect(verifiedUrl(result)).toMatch(/^https:\/\/media-origin\.example\.com\/uploads\/wx-haidiyue\/[a-f0-9]{64}\.jpg$/);
-    expect(await readFile(path.join(uploadsRoot, 'wx-haidiyue', path.basename(new URL(result).pathname)))).toEqual(JPEG_BYTES);
+    expect(verifiedUrl(result)).toMatch(/^https:\/\/media-origin\.example\.com\/reference-assets\/[a-f0-9-]{36}\.jpg$/);
+    expect(await readFile(path.join(uploadsRoot, 'public', path.basename(new URL(result).pathname)))).toEqual(JPEG_BYTES);
   });
 
   it('reads this site uploads directly and republishes them on the media origin', async () => {
@@ -48,7 +49,7 @@ describe('wx-海底月 reference image URL preparation', () => {
       mediaBaseUrl: 'https://media-origin.zhubo.asia',
     });
 
-    expect(verifiedUrl(prepared[0])).toMatch(/^https:\/\/media-origin\.zhubo\.asia\/uploads\/wx-haidiyue\/[a-f0-9]{64}\.jpg$/);
+    expect(verifiedUrl(prepared[0])).toMatch(/^https:\/\/media-origin\.zhubo\.asia\/reference-assets\/[a-f0-9-]{36}\.jpg$/);
   });
 
   it('rejects unsupported image bytes before submission', async () => {
