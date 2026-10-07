@@ -88,6 +88,7 @@ describe('HM new catalog integration (in-memory database, no upstream generation
       expect(JSON.parse(channel.supportedModels!)).toContain(id);
       expect(db.select().from(models).where(eq(models.modelId, id)).get()?.provider).toBe('hmstudio');
       expect(list.find(m => m.id === id)).toMatchObject({ available: true, billingType: 'per_call', rates,
+        modelStatus: { state: 'unknown', reason: 'insufficient_data' },
         allowedSeconds: Array.from({ length: 12 }, (_, i) => i + 4) });
     }
   });
@@ -146,5 +147,17 @@ describe('HM new catalog integration (in-memory database, no upstream generation
       .where(eq(modelPricing.modelPattern, 'SD2.0FAST803')).run();
     await initDatabase();
     expect(PricingService.quote('SD2.0FAST803', { resolution: '2k' }, false).cost).toBe(4);
+  });
+  it('exposes observed model status changes independently of legacy percentage statistics', async () => {
+    const modelId = 'SD2.0FAST813';
+    const readStatus = async () => {
+      const list = await (await nativeFetch(origin + '/api/video/models')).json() as any[];
+      return list.find(m => m.id === modelId).modelStatus;
+    };
+    expect(await readStatus()).toMatchObject({ state: 'unknown' });
+    for (let i = 0; i < 3; i++) db.insert(contents).values({ userId, type: 'video', modelId, status: 'failed' }).run();
+    expect(await readStatus()).toMatchObject({ state: 'unavailable', reason: 'consecutive_failures' });
+    for (let i = 0; i < 20; i++) db.insert(contents).values({ userId, type: 'video', modelId, status: 'completed', resultUrl: '/video.mp4' }).run();
+    expect(await readStatus()).toMatchObject({ state: 'healthy', reason: 'recent_successes' });
   });
 });

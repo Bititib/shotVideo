@@ -1,3 +1,5 @@
+import type { VideoModelStatus } from '../../../shared/videoModelStatus';
+
 export interface VideoModel {
   id: string;
   name: string;
@@ -17,6 +19,7 @@ export interface VideoModel {
   successRate?: number;
   successRateEstimated?: boolean;
   totalCalls?: number;
+  modelStatus?: VideoModelStatus;
 }
 
 export interface VideoGenerateParams {

@@ -18,6 +18,7 @@ import { guardBatchSubmissionResponse, isBatchQueryUncertain } from '../services
 import { PricingService } from '../services/pricingService.js';
 import { hmStudioPoolKey, hmStudioQueue, type HmStudioQueueSnapshot } from '../services/hmStudioQueueService.js';
 import { calculateSuccessRate, isWithinRecentDays } from '../services/successRateService.js';
+import { calculateVideoModelStatus } from '../services/videoModelStatusService.js';
 import {
   buildHmStudioVideoForm,
   hmStudioCreateUrl,
@@ -598,6 +599,7 @@ router.get('/models', (_req: Request, res: Response) => {
   const recentTerminalRows = allStatsModelIds.length === 0
     ? []
     : db.select({
+        id: contents.id,
         modelId: contents.modelId,
         status: contents.status,
         resultUrl: contents.resultUrl,
@@ -805,13 +807,15 @@ router.get('/models', (_req: Request, res: Response) => {
     const successCalls = modelRecentRows.filter(r => r.status === 'completed' || r.status === 'success' || Boolean(r.resultUrl?.trim())).length;
     const failureCalls = modelRecentRows.filter(r => r.status === 'failed').length;
     const successStats = calculateSuccessRate(successCalls, failureCalls);
+    const available = findVideoChannel(m.id, activeVideoChannels) !== null
+      || (m.id === HM_STUDIO_PRIMARY_VIDEO_MODEL && hmStudioOverflowAvailable);
 
     return {
       id: m.id,
       name: m.name || preset?.name || m.id,
       description: m.description || preset?.description || 'AI 视频生成服务',
-      available: findVideoChannel(m.id, activeVideoChannels) !== null
-        || (m.id === HM_STUDIO_PRIMARY_VIDEO_MODEL && hmStudioOverflowAvailable),
+      available,
+      modelStatus: calculateVideoModelStatus(recentRowsByModel.get(m.id) || [], available),
       maxSeconds: preset?.maxSeconds,
       allowedSeconds: meta?.allowedSeconds || null,
       requireRef: meta?.requireRef || false,

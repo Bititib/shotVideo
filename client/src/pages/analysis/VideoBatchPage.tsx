@@ -9,6 +9,7 @@ import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { formatBeijingTime, parseUtcTimestamp } from '../../../../shared/time';
 import type { VideoBatchInput, VideoBatchDetail, VideoBatchItem, BatchItemStatus } from '../../../../shared/videoBatch';
 import './VideoBatchPage.css';
+import VideoModelStatusIndicator from '../../components/VideoModelStatusIndicator';
 
 const emptyCreative = () => ({ prompt: '', count: 10, reference_images: [] as string[], reference_videos: [] as string[], audio_urls: [] as string[] });
 const statusLabels: Record<BatchItemStatus, string> = { queued: '等待排队', dispatching: '提交中', running: '生成中', retry_wait: '等待重试', completed: '已完成', failed: '失败已退款', cancelled: '取消已退款', review: '结果待核实' };
@@ -51,6 +52,23 @@ export default function VideoBatchPage() {
         resolution: Object.keys(data[0]?.rates || { '720p': 0 })[0],
         video_length: data[0]?.allowedSeconds?.[0] || 6 }));
     }).catch(e => setError(e.message));
+  }, []);
+  useEffect(() => {
+    let active = true;
+    const refresh = () => {
+      if (document.visibilityState !== 'visible') return;
+      // Refresh status without resetting the user's chosen duration or resolution.
+      fetchVideoModels().then(data => { if (active) setModels(data); }).catch(() => {});
+    };
+    const timer = window.setInterval(refresh, 60_000);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
   }, []);
   useEffect(() => {
     if (!isAuthenticated) { setBatches([]); setDetail(null); setSelected(null); setPreview(null); return; }
@@ -170,7 +188,7 @@ export default function VideoBatchPage() {
             const m = models.find(v => v.id === e.target.value);
             edit({ model: e.target.value, resolution: Object.keys(m?.rates || { '720p': 0 })[0], video_length: m?.allowedSeconds?.[0] || Math.min(6, m?.maxSeconds || 6) });
           }}><option value="" disabled>请选择模型</option>{models.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
-          {model && <p className="vb-help">{model.description}</p>}
+          {model && <><VideoModelStatusIndicator status={model.modelStatus} /><p className="vb-help">{model.description}</p></>}
           <div className="vb-three">
             <label>画面比例<select value={input.aspect_ratio} onChange={e => edit({ aspect_ratio: e.target.value })}>{['9:16', '16:9', '1:1', '4:3', '3:4', '21:9'].map(v => <option key={v}>{v}</option>)}</select></label>
             <label>时长（秒）{model?.allowedSeconds?.length ? <select value={input.video_length} onChange={e => edit({ video_length: Number(e.target.value) })}>{model.allowedSeconds.map(v => <option key={v}>{v}</option>)}</select> : <input type="number" min={1} max={model?.maxSeconds || 120} value={input.video_length} onChange={e => edit({ video_length: Number(e.target.value) })} />}</label>

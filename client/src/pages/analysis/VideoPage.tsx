@@ -9,6 +9,7 @@ import { Video, Play, Square, Download, Loader2, Check, AlertCircle, Sparkles, M
 import { fetchVideoModels, generateVideo, getCachedVideoModels, type VideoModel, type VideoSSEEvent } from '../../api/video';
 import ImageSlicerModal from '../../components/ImageSlicerModal';
 import FaceProcessingModal from '../../components/FaceProcessingModal';
+import VideoModelStatusIndicator from '../../components/VideoModelStatusIndicator';
 import { contentApi } from '../../api/content';
 import { adminApi } from '../../api/admin';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
@@ -788,9 +789,11 @@ export default function VideoPage() {
       if (document.visibilityState === 'visible') refreshModelPricing();
     };
     refreshModelPricing();
+    const refreshTimer = window.setInterval(handleVisibilityChange, 60_000);
     window.addEventListener('focus', refreshModelPricing);
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
+      window.clearInterval(refreshTimer);
       window.removeEventListener('focus', refreshModelPricing);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
@@ -1674,18 +1677,7 @@ export default function VideoPage() {
                                     ¥{(m.rates[resolution as keyof typeof m.rates] !== undefined ? m.rates[resolution as keyof typeof m.rates] : Object.values(m.rates)[0])?.toFixed(2)}{getBillingUnit(m.billingType)}
                                   </span>
                                 )}
-                                {m.successRate !== undefined && (
-                                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-medium ${m.successRateEstimated
-                                    ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
-                                    : (m.successRate ?? 100) >= 80
-                                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                                      : (m.successRate ?? 100) >= 50
-                                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                                        : 'bg-red-500/10 text-red-400 border-red-500/20'
-                                    }`}>
-                                    {m.successRateEstimated ? `参考成功率 ${m.successRate}%` : `成功率 ${m.successRate}%`}
-                                  </span>
-                                )}
+                                <VideoModelStatusIndicator status={m.modelStatus} />
                                 {isSelected && <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
                               </div>
                             </div>
