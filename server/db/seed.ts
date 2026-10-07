@@ -201,6 +201,7 @@ export async function syncModelsFromAPI() {
     { provider: 'siyuetian', modelId: 'gpt-image-2.5-flare', displayName: 'gpt-image-2.5-flare', description: 'OpenAI GPT Image 2.5 Flare 快速通用图像（异步）', capabilities: JSON.stringify(['image']) },
     { provider: 'siyuetian', modelId: 'gpt-image-2.5-sunburst', displayName: 'gpt-image-2.5-sunburst', description: 'OpenAI GPT Image 2.5 Sunburst 高质量图像（异步）', capabilities: JSON.stringify(['image']) },
     { provider: 'siyuetian', modelId: 'nano-banana-2', displayName: 'nano-banana-2', description: 'Google Gemini 3.1 Flash 图像（异步）', capabilities: JSON.stringify(['image']) },
+    { provider: 'siyuetian', modelId: 'nano-banana-2.1', displayName: 'nano-banana-2.1', description: 'Google Nano Banana 2.1 图像（四月天，异步）', capabilities: JSON.stringify(['image']) },
     { provider: 'siyuetian', modelId: 'nano-banana-2-lite', displayName: 'nano-banana-2-lite', description: 'Google Gemini 3.1 Flash Lite 轻量图像（异步）', capabilities: JSON.stringify(['image']) },
     { provider: 'siyuetian', modelId: 'nano-banana-pro', displayName: 'nano-banana-pro', description: 'Google Gemini 3 Pro 高级图像（异步）', capabilities: JSON.stringify(['image']) },
     ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_SPECS.map(spec => ({

@@ -13,7 +13,7 @@ beforeAll(async () => {
 });
 
 describe('四月天图片模型配置', () => {
-  it('将六个模型作为可选图片模型写入数据库', () => {
+  it('将全部四月天图片模型作为可选模型写入数据库', () => {
     for (const modelId of SI_YUE_TIAN_IMAGE_MODELS) {
       const model = db.select().from(models).where(eq(models.modelId, modelId)).get();
       expect(model).toMatchObject({ provider: 'siyuetian', isActive: 1 });

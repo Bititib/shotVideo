@@ -96,6 +96,7 @@ const DEFAULT_IMAGE_MODELS = [
   { id: 'gpt-image-2.5-flare', name: 'gpt-image-2.5-flare', description: 'OpenAI GPT Image 2.5 Flare 快速通用图像（异步）', icon: '🤖' },
   { id: 'gpt-image-2.5-sunburst', name: 'gpt-image-2.5-sunburst', description: 'OpenAI GPT Image 2.5 Sunburst 高质量图像（异步）', icon: '🤖' },
   { id: 'nano-banana-2', name: 'nano-banana-2', description: 'Google Gemini 3.1 Flash 图像（异步）', icon: '🍌' },
+  { id: 'nano-banana-2.1', name: 'nano-banana-2.1', description: 'Google Nano Banana 2.1 图像（四月天，异步）', icon: '🍌' },
   { id: 'nano-banana-2-lite', name: 'nano-banana-2-lite', description: 'Google Gemini 3.1 Flash Lite 轻量图像（异步）', icon: '🍌' },
   { id: 'nano-banana-pro', name: 'nano-banana-pro', description: 'Google Gemini 3 Pro 高级图像（异步）', icon: '🍌' },
   { id: 'gemini-3.1-flash-image-preview', name: '🍌 nabanana flash', description: '2k高清画质，极速生成', icon: '☄️' },

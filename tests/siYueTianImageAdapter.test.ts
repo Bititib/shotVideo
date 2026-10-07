@@ -16,12 +16,13 @@ function json(body: unknown, status = 200): Response {
 }
 
 describe('四月天异步图片适配器', () => {
-  it('包含全部六个图片模型并标明图生图能力', () => {
+  it('包含全部图片模型并标明图生图能力', () => {
     expect(SI_YUE_TIAN_IMAGE_MODELS).toEqual([
       'gpt-image-2-siyuetian',
       'gpt-image-2.5-flare',
       'gpt-image-2.5-sunburst',
       'nano-banana-2',
+      'nano-banana-2.1',
       'nano-banana-2-lite',
       'nano-banana-pro',
     ]);
@@ -33,6 +34,21 @@ describe('四月天异步图片适配器', () => {
     ]);
     expect(isSiYueTianImageChannel({ baseUrl: 'https://llm.chre3.com' }, 'nano-banana-pro')).toBe(true);
     expect(siYueTianUpstreamImageModel('gpt-image-2-siyuetian')).toBe('gpt-image-2');
+  });
+
+  it('Nano Banana 2.1 使用原始模型名提交并通过内容接口获取结果', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(json({ task_id: 'task_nb21', status: 'queued' }, 202))
+      .mockResolvedValueOnce(json({ status: 'succeeded', result: { image_url: '/outputs/masked.png' } }));
+    const result = await generateSiYueTianImage({
+      baseUrl: 'https://llm.chre3.com', apiKey: 'test-key', model: 'nano-banana-2.1',
+      prompt: '测试', maxAttempts: 1, fetchImpl: fetchImpl as typeof fetch, sleep: async () => {},
+    });
+    expect(isSiYueTianImageChannel({ baseUrl: 'https://llm.chre3.com' }, 'nano-banana-2.1')).toBe(true);
+    expect(fetchImpl).toHaveBeenNthCalledWith(1, 'https://llm.chre3.com/v1/images/generations', expect.objectContaining({
+      body: expect.stringContaining('"model":"nano-banana-2.1"'),
+    }));
+    expect(result.imageUrl).toBe('https://llm.domie.studio/v1/videos/task_nb21/content');
   });
 
   it('四月天 GPT Image 2 使用独立公开 ID 并映射到上游原始模型', async () => {

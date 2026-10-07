@@ -5,6 +5,7 @@ export const SI_YUE_TIAN_IMAGE_MODELS = [
   'gpt-image-2.5-flare',
   'gpt-image-2.5-sunburst',
   'nano-banana-2',
+  'nano-banana-2.1',
   'nano-banana-2-lite',
   'nano-banana-pro',
 ] as const;
@@ -16,6 +17,7 @@ export const SI_YUE_TIAN_UPSTREAM_IMAGE_MODELS = [
   'gpt-image-2.5-flare',
   'gpt-image-2.5-sunburst',
   'nano-banana-2',
+  'nano-banana-2.1',
   'nano-banana-2-lite',
   'nano-banana-pro',
 ] as const;
