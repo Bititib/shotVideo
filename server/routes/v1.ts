@@ -66,7 +66,7 @@ import {
   MJ_OVERFLOW_VIDEO_MODEL,
   SI_YUE_TIAN_PRIMARY_VIDEO_MODEL,
 } from '../services/videoFailoverService.js';
-import { validateHmStudioAdditionalVideoInput } from '../services/hmStudioVideoModels.js';
+import { normalizeHmStudioVideoResolution, validateHmStudioAdditionalVideoInput } from '../services/hmStudioVideoModels.js';
 import {
   findHmStudioOverflowPlan,
   hasHmStudioOverflowChannel,
@@ -1583,7 +1583,7 @@ async function handleVideoCreation(req: Request, res: Response) {
 
   const ratio = body.ratio || body.aspect_ratio || '16:9';
   const siYueTianSeedance25Spec = getSiYueTianSeedance25VideoSpec(model);
-  const resolution = body.resolution || body.resolution_name
+  const resolution = normalizeHmStudioVideoResolution(model, body.resolution || body.resolution_name) || body.resolution || body.resolution_name
     || getHayaVideoSpec(model)?.resolution
     || siYueTianSeedance25Spec?.resolution
     || (isLongxiaModel(model) ? longxiaResolution(model) : undefined)

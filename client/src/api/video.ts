@@ -12,6 +12,7 @@ export interface VideoModel {
     '480p'?: number;
     '720p'?: number;
     '1080p'?: number;
+    '2k'?: number;
   };
   successRate?: number;
   successRateEstimated?: boolean;

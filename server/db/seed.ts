@@ -1088,6 +1088,7 @@ export async function initDatabase() {
       billingType: 'per_call',
       inputPrice: model.defaultPrice,
       category: 'video',
+      extraParams: model.resolutionPrices || {},
     })),
     { modelPattern: WX_HAIDIYUE_FACE_SPLIT_MODEL, billingType: 'per_call', inputPrice: WX_HAIDIYUE_FACE_SPLIT_PRICE, category: 'video' },
     { modelPattern: 'sd2-c6', billingType: 'per_call', inputPrice: legacyRate('sd2_c6_rate', 2.50), category: 'video' },

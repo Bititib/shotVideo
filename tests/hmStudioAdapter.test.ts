@@ -12,6 +12,21 @@ import {
 } from '../server/services/hmStudioAdapter.js';
 
 describe('HM Studio adapter', () => {
+  it.each(['SD2.0FAST803', 'SD2.0FAST813', 'SD2.0MINI503'])('sends the exact new upstream model and mixed audio references for %s', model => {
+    const resolution = model.includes('MINI') ? '720p' : '2k';
+    const form = buildHmStudioVideoForm({ model, prompt: '[ref_1] [ref_audio_1]', duration: 15,
+      ratio: '9:16', resolution, imageSources: ['https://example.test/image.jpg'],
+      audioSources: ['https://example.test/audio.mp3'],
+      videoSources: model === 'SD2.0FAST813' ? ['https://example.test/video.mp4'] : [] });
+    expect(form.get('model')).toBe(model);
+    expect(form.get('duration')).toBe('15');
+    expect(form.get('video_resolution')).toBe(resolution);
+    expect(form.get('function_mode')).toBe('omni_reference');
+    expect(form.get('prompt')).toBe('@Image1 @Audio1');
+    const materials = JSON.parse(String(form.get('materials')));
+    expect(materials).toContainEqual({ type: 'audio', name: 'Audio1', url: 'https://example.test/audio.mp3' });
+    expect(materials.filter((m: any) => m.type === 'video')).toHaveLength(model === 'SD2.0FAST813' ? 1 : 0);
+  });
   it('uploads persisted reference video and audio bytes with their media types', async () => {
     const dir=fs.mkdtempSync(path.join(process.cwd(),'data/uploads/hm-multimodal-'));
     try {

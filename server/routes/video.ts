@@ -74,6 +74,7 @@ import {
 } from '../services/videoFailoverService.js';
 import {
   getHmStudioAdditionalVideoModel,
+  normalizeHmStudioVideoResolution,
   HM_STUDIO_ADDITIONAL_VIDEO_MODELS,
   validateHmStudioAdditionalVideoInput,
 } from '../services/hmStudioVideoModels.js';
@@ -729,9 +730,10 @@ router.get('/models', (_req: Request, res: Response) => {
         '720p': rate,
       };
     } else if (m.id === 'seedance_v2.5' || getHmStudioAdditionalVideoModel(m.id)) {
-      rates = {
-        '720p': quotePrice(m.id, { resolution: '720p' }).rate,
-      };
+      const spec = getHmStudioAdditionalVideoModel(m.id);
+      rates = Object.fromEntries((spec?.resolutions || [spec?.resolution || '720p']).map(resolution => [
+        resolution, quotePrice(m.id, { resolution }).rate,
+      ]));
     } else if (m.id === 'td-seedance-2.5-720p' || m.id === 'xd-seedance-2.5-720p') {
       rates = {
         '720p': quotePrice(m.id, { resolution: '720p' }).rate,
@@ -868,7 +870,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     compliance_mode,         // 合规素材风格
   } = req.body;
   let reference_images: string[] = Array.isArray(rawReferenceImages) ? rawReferenceImages : [];
-  const resolution = requestedResolution || getHayaVideoSpec(model)?.resolution || (isLongxiaModel(model) ? longxiaResolution(model) : undefined) || (isJulunMinimaxH3Model(model) ? JULUN_MINIMAX_H3_RESOLUTION : '720p');
+  const resolution = normalizeHmStudioVideoResolution(model, requestedResolution) || requestedResolution || getHayaVideoSpec(model)?.resolution || (isLongxiaModel(model) ? longxiaResolution(model) : undefined) || (isJulunMinimaxH3Model(model) ? JULUN_MINIMAX_H3_RESOLUTION : '720p');
 
   // 向后兼容：合并旧单值字段到新数组
   const finalVideos: string[] = (Array.isArray(reference_videos) && reference_videos.length > 0)

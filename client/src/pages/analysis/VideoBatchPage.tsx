@@ -1,4 +1,5 @@
 import { getHayaVideoSpec } from '../../../../shared/hayaVideo';
+import { getHmStudioAdditionalVideoModel } from '../../../../shared/hmStudioVideo';
 import { useEffect, useRef, useState } from 'react';
 import { Layers3, Plus, Trash2, Upload, Loader2, Download, RotateCcw } from 'lucide-react';
 import { api } from '../../api/client';
@@ -96,7 +97,7 @@ export default function VideoBatchPage() {
     if (!files.length) return;
     const maxMB = getHayaVideoSpec(input.model) ? 20 : 10;
     if (files.some(f => !f.type.startsWith('image/') || f.size > maxMB * 1024 * 1024)) { setError('请上传 ' + maxMB + ' MB 以内的图片'); return; }
-    const maxImages = getHayaVideoSpec(input.model)?.maxImages || 10;
+    const maxImages = getHmStudioAdditionalVideoModel(input.model)?.maxImages ?? getHayaVideoSpec(input.model)?.maxImages ?? 10;
     if (input.creatives[index].reference_images.length + files.length > maxImages) { setError('每组最多 ' + maxImages + ' 张参考图'); return; }
     setBusy(true);
     try {

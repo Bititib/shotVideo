@@ -1,6 +1,7 @@
 import { startPolling } from '../../utils/polling';
 import { shouldPollVideoTask, videoTaskDatabaseId } from '../../utils/videoTaskSync';
 import { getHayaVideoSpec } from '../../../../shared/hayaVideo';
+import { getHmStudioAdditionalVideoModel, HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS } from '../../../../shared/hmStudioVideo';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -64,6 +65,7 @@ const HM_STUDIO_SEEDANCE_V20_933_MODEL = 'seedance_v2.0-933';
 const HM_STUDIO_SEEDANCE_V25_101010_MODEL = 'seedance_v2.5-101010';
 const HM_STUDIO_SEEDANCE_V25_301010_MODEL = 'seedance_v2.5-301010';
 const HM_STUDIO_VIDEO_MODEL_IDS = new Set([
+  ...HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS,
   'seedance_v2.5',
   HM_STUDIO_SEEDANCE_V20_933_MODEL,
   HM_STUDIO_SEEDANCE_V25_101010_MODEL,
@@ -356,6 +358,8 @@ const isWan30Model = (modelId: string) => {
 };
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  const hmSpec = getHmStudioAdditionalVideoModel(modelId);
+  if (hmSpec) return hmSpec.maxImages;
   const c2Spec = getSiYueTianC2Model(modelId);
   if (c2Spec) return c2Spec.images;
   if (getHayaVideoSpec(modelId)) return getHayaVideoSpec(modelId)!.maxImages;
@@ -494,6 +498,8 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
+    const hmSpec = getHmStudioAdditionalVideoModel(m);
+    if (hmSpec) return hmSpec.maxVideos;
     const c2Spec = getSiYueTianC2Model(m);
     if (c2Spec) return c2Spec.videos;
     if (getHayaVideoSpec(m)) return getHayaVideoSpec(m)!.maxVideos;
@@ -517,6 +523,8 @@ export default function VideoPage() {
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
+    const hmSpec = getHmStudioAdditionalVideoModel(m);
+    if (hmSpec) return hmSpec.maxAudios;
     const c2Spec = getSiYueTianC2Model(m);
     if (c2Spec) return c2Spec.audios;
     if (getHayaVideoSpec(m)) return getHayaVideoSpec(m)!.maxAudios;
@@ -1060,7 +1068,7 @@ export default function VideoPage() {
   const isOmniModel = selectedModel.startsWith('omni-flash') || selectedModel.startsWith('veo-omni-flash');
   const RESOLUTIONS = currentModel?.rates
     ? Object.keys(currentModel.rates)
-      .sort((a, b) => parseInt(a) - parseInt(b))
+      .sort((a, b) => (a.endsWith('k') ? parseFloat(a) * 1000 : parseInt(a)) - (b.endsWith('k') ? parseFloat(b) * 1000 : parseInt(b)))
       .map(r => ({ value: r, label: r }))
     : isOmniModel
       ? [{ value: '720p', label: '720p' }, { value: '1080p', label: '1080p' }]
@@ -1116,6 +1124,7 @@ export default function VideoPage() {
     }
 
     const isSudashui = selectedModel.startsWith('sd-')
+      || isHmStudioVideoModel(selectedModel)
       || selectedModel.startsWith('seedance-')
       || selectedModel === HM_STUDIO_SEEDANCE_V20_933_MODEL
       || selectedModel === HM_STUDIO_SEEDANCE_V25_101010_MODEL
