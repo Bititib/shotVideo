@@ -49,6 +49,22 @@ export function ownsResultUrl(owner: number, source: string): boolean {
   return !!sqlite.prepare('SELECT 1 FROM contents WHERE user_id=? AND result_url=? LIMIT 1').get(owner,source);
 }
 
+/** Only completed video result fields are public. Reference metadata, uploaded
+ * materials, images and in-progress/failed tasks must never grant public access. */
+export function isPublicVideoResult(source: string): boolean {
+  if (!sqlite || !source) return false;
+  const resource = uploadPath(source);
+  if (!resource) {
+    if (!/^https?:\/\//.test(source)) return false;
+    return !!sqlite.prepare("SELECT 1 FROM contents WHERE type='video' AND status='completed' AND result_url=? LIMIT 1").get(source);
+  }
+  const basename = resource.split('/').pop();
+  if (!basename) return false;
+  const candidates = sqlite.prepare("SELECT result_url FROM contents WHERE type='video' AND status='completed' AND result_url LIKE ?")
+    .all(`%${basename}%`) as { result_url: string }[];
+  return candidates.some(row => uploadPath(row.result_url) === resource);
+}
+
 /** Admin review is limited to recorded results and local task references. */
 export function canReviewResultUrl(viewer: number, source: string): boolean {
   if (!sqlite) return false;

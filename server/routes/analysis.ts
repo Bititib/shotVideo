@@ -1,4 +1,5 @@
 import { registerUpload } from '../services/uploadAccess.js';
+import { prepareVideoForDelivery } from '../services/videoCompatibilityService.js';
 import { DEFAULT_TTS_CHARACTER_RATE } from '../../shared/tts.js';
 import { reserveUserCharge } from '../services/billingReservation.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
@@ -379,7 +380,7 @@ router.post('/comic-drama-projects/:id/export-videos', authMiddleware, async (re
   try {
     for (const row of exportable) {
       const archiveUrl = String(row.result_url).startsWith('/api/uploads/') ? String(row.result_url).slice(4) : row.result_url;
-      const file = resolveBatchArchiveFile(archiveUrl, path.resolve('data/uploads'));
+      const file = await prepareVideoForDelivery(resolveBatchArchiveFile(archiveUrl, path.resolve('data/uploads')));
       const payload = (() => { try { return JSON.parse(row.payload || '{}'); } catch { return {}; } })();
       const episode = String(Number(row.episode_number || 1)).padStart(2, '0');
       const scene = String(Number(payload.sceneNumber || 1)).padStart(2, '0');

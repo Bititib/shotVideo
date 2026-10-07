@@ -1,58 +1,24 @@
 import { isHayaChannel, shouldSendHayaAuthorization, hayaTaskUrl } from './hayaVideoAdapter.js';
 import crypto from 'crypto';
-import { execSync, exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { promisify } from 'util';
+import { prepareVideoForDelivery } from './videoCompatibilityService.js';
 import { ChannelService } from './channelService.js';
 import { isHmStudioChannel, shouldSendHmStudioAuthorization } from './hmStudioAdapter.js';
 import { isLongxiaChannel } from './longxiaVideoAdapter.js';
 import { isMiaowuChannel, shouldSendMiaowuAuthorization } from './miaowuVideoAdapter.js';
 import { isWxHaidiYueChannel, shouldSendWxHaidiYueAuthorization } from './wxHaidiYueAdapter.js';
 
-const execPromise = promisify(exec);
-
-export function detectVideoCodec(filePath: string): string {
-  try {
-    return execSync(
-      `ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "${filePath}"`,
-      { encoding: 'utf8' },
-    ).trim().toLowerCase();
-  } catch {
-    return '';
-  }
-}
-
 export function originalVideoPathFor(filePath: string): string {
   const extension = path.extname(filePath);
-  return extension
-    ? `${filePath.slice(0, -extension.length)}.original${extension}`
-    : `${filePath}.original`;
+  return extension ? `${filePath.slice(0, -extension.length)}.original${extension}` : `${filePath}.original`;
 }
 
-export function preferredVideoDownloadPath(filePath: string): string {
-  const originalPath = originalVideoPathFor(filePath);
-  return fs.existsSync(originalPath) && fs.statSync(originalPath).isFile()
-    ? originalPath
-    : filePath;
-}
+// Prefer H.264; a valid original remains available if conversion fails.
+export const preferredVideoDownloadPath = prepareVideoForDelivery;
 
-async function ensureBrowserCompatibleVideo(filePath: string): Promise<void> {
-  if (detectVideoCodec(filePath) !== 'hevc') return;
-
-  const originalPath = originalVideoPathFor(filePath);
-  if (!fs.existsSync(originalPath)) fs.copyFileSync(filePath, originalPath);
-  const transcodedPath = `${filePath}.${crypto.randomUUID()}.h264.mp4`;
-  try {
-    console.log(`[video] HEVC detected; transcoding localized video to H.264: ${filePath}`);
-    await execPromise(
-      `ffmpeg -y -i "${originalPath}" -c:v libx264 -tag:v avc1 -pix_fmt yuv420p -preset superfast -movflags +faststart -c:a copy "${transcodedPath}"`,
-    );
-    fs.renameSync(transcodedPath, filePath);
-    console.log(`[video] Browser-compatible H.264 video ready: ${filePath}`);
-  } finally {
-    if (fs.existsSync(transcodedPath)) fs.unlinkSync(transcodedPath);
-  }
+function localVideoUrl(filePath: string): string {
+  return '/uploads/' + path.relative(path.resolve('data/uploads'), filePath).split(path.sep).join('/');
 }
 
 /** Download a completed upstream video to durable VPS storage. */
@@ -64,7 +30,10 @@ export async function downloadAndLocalizeVideo(
   channelApiKeyId?: number | null,
 ): Promise<string> {
   if (!url) throw new Error('Upstream completed without a video URL');
-  if (url.startsWith('/uploads/')) return url;
+  if (url.startsWith('/uploads/')) {
+    const { resolveBatchArchiveFile } = await import('./videoBatchArchive.js');
+    return localVideoUrl(await prepareVideoForDelivery(resolveBatchArchiveFile(url, path.resolve('data/uploads'))));
+  }
 
   const exactChannel = channelId ? ChannelService.getChannelRaw(channelId, channelApiKeyId) : null;
   const channel = exactChannel || ChannelService.findChannelForModel(model);
@@ -86,8 +55,7 @@ export async function downloadAndLocalizeVideo(
     const existingName = `video_${safeId}.${extension}`;
     const existingPath = path.join(uploadDir, existingName);
     if (fs.existsSync(existingPath) && fs.statSync(existingPath).size > 0) {
-      await ensureBrowserCompatibleVideo(existingPath);
-      return `/uploads/videos/${existingName}`;
+      return localVideoUrl(await prepareVideoForDelivery(existingPath));
     }
   }
 
@@ -118,11 +86,10 @@ export async function downloadAndLocalizeVideo(
   try {
     fs.writeFileSync(tempPath, buffer);
     fs.renameSync(tempPath, finalPath);
-    await ensureBrowserCompatibleVideo(finalPath);
+    const compatiblePath = await prepareVideoForDelivery(finalPath);
+    return localVideoUrl(compatiblePath);
   } finally {
     if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
   }
 
-  console.log(`[video] Video localized to VPS: /uploads/videos/${filename}`);
-  return `/uploads/videos/${filename}`;
 }

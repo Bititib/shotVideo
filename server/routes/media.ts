@@ -6,6 +6,7 @@ import { env } from '../config/env.js';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { createPrivateMediaStore } from '../services/privateMediaStore.js';
 import { signedMediaUrl, validMediaSignature } from '../services/mediaSignature.js';
+import { prepareVideoForDelivery, videoDeliveryContentType } from '../services/videoCompatibilityService.js';
 
 const router=Router();
 let store: ReturnType<typeof createPrivateMediaStore>;
@@ -35,11 +36,18 @@ router.post('/:id/link',authMiddleware,(req:AuthRequest,res)=>{
   res.setHeader('Cache-Control','no-store');
   res.json({url:signedMediaUrl(`/api/media/${media.id}`,base),expiresIn:3600});
 });
-router.get('/:id',(req:AuthRequest,res)=>{
+router.get('/:id',async (req:AuthRequest,res)=>{
   const media=privateMediaStore().get(req.params.id),resource=`/api/media/${req.params.id}`;
   if(!media||!(validMediaSignature(resource,req.query.expires,req.query.signature)||mediaUser(req)===media.user_id)) {res.status(404).json({error:'素材不存在或无权访问'});return;}
   res.setHeader('Cache-Control','private, no-store');res.setHeader('Content-Type',media.mime);
   res.setHeader('X-Content-Type-Options','nosniff');
-  res.sendFile(privateMediaStore().filePath(media));
+  try {
+    const source = privateMediaStore().filePath(media);
+    const file = media.mime.startsWith('video/') ? await prepareVideoForDelivery(source) : source;
+    if (media.mime.startsWith('video/')) res.type(videoDeliveryContentType(file));
+    res.sendFile(file);
+  } catch {
+    res.status(502).json({ error: '视频兼容版准备失败，请稍后重试' });
+  }
 });
 export default router;

@@ -19,6 +19,7 @@ describe('HM Studio adapter', () => {
       audioSources: ['https://example.test/audio.mp3'],
       videoSources: model === 'SD2.0FAST813' ? ['https://example.test/video.mp4'] : [] });
     expect(form.get('model')).toBe(model);
+    expect(form.getAll('channel')).toEqual(['lumen']);
     expect(form.get('duration')).toBe('15');
     expect(form.get('video_resolution')).toBe(resolution);
     expect(form.get('function_mode')).toBe('omni_reference');
@@ -26,6 +27,23 @@ describe('HM Studio adapter', () => {
     const materials = JSON.parse(String(form.get('materials')));
     expect(materials).toContainEqual({ type: 'audio', name: 'Audio1', url: 'https://example.test/audio.mp3' });
     expect(materials.filter((m: any) => m.type === 'video')).toHaveLength(model === 'SD2.0FAST813' ? 1 : 0);
+  });
+  it.each(['SD2.0FAST803', 'SD2.0FAST813', 'SD2.0MINI503'])('pins %s to lumen even for old/default channel overrides', model => {
+    for (const upstreamChannel of [undefined, '', 'default', 'official', '低价', 'lumen']) {
+      const form = buildHmStudioVideoForm({ model, prompt: 'test', duration: 4, ratio: '16:9', resolution: '720p', upstreamChannel });
+      expect(form.getAll('channel')).toEqual(['lumen']);
+      expect(form.get('model')).toBe(model);
+    }
+  });
+  it('leaves older HM video and image channel routing unchanged', () => {
+    for (const model of ['MINIMAX-H3-2.5采样', 'MINIMAX-H3-2.0采样-933', 'MINIMAX-H3-2.5采样-101010', 'MINIMAX-H3-2.5采样-301010']) {
+      const options = { model, prompt: 'test', duration: 6, ratio: '16:9', resolution: '720p' };
+      expect(buildHmStudioVideoForm(options).has('channel')).toBe(false);
+      expect(buildHmStudioVideoForm({ ...options, upstreamChannel: 'custom' }).get('channel')).toBe('custom');
+    }
+    const imageOptions = { model: 'jimen-5.0', prompt: 'test', ratio: '1:1' };
+    expect(buildHmStudioImageForm(imageOptions).has('channel')).toBe(false);
+    expect(buildHmStudioImageForm({ ...imageOptions, upstreamChannel: 'custom' }).get('channel')).toBe('custom');
   });
   it('uploads persisted reference video and audio bytes with their media types', async () => {
     const dir=fs.mkdtempSync(path.join(process.cwd(),'data/uploads/hm-multimodal-'));

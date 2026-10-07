@@ -124,7 +124,9 @@ import {
 } from '../services/miaowuVideoAdapter.js';
 import { buildLongxiaVideoPayload, isLongxiaChannel, isLongxiaModel, longxiaResolution, LONGXIA_MODELS, LONGXIA_SECONDS, longxiaVideoCreateUrl, longxiaVideoTaskUrl, normalizeLongxiaVideoTask } from '../services/longxiaVideoAdapter.js';
 import { prepareMiaowuPublicMediaUrls } from '../services/miaowuMediaService.js';
-import { detectVideoCodec, downloadAndLocalizeVideo, originalVideoPathFor, preferredVideoDownloadPath } from '../services/videoLocalizationService.js';
+import { downloadAndLocalizeVideo } from '../services/videoLocalizationService.js';
+import { prepareVideoForDelivery, cacheVideoForDelivery, videoDeliveryContentType, videoDeliveryExtension } from '../services/videoCompatibilityService.js';
+import { resolveBatchArchiveFile } from '../services/videoBatchArchive.js';
 import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
 import { validateVideoPrompt } from '../services/videoPromptValidation.js';
 import { parseUtcTimestamp } from '../../shared/time.js';
@@ -135,11 +137,8 @@ import { models, settings, contents } from '../db/schema.js';
 import { eq, like, and, inArray, gte, sql } from 'drizzle-orm';
 import fs from 'fs';
 import path from 'path';
-import { exec, execSync } from 'child_process';
-import { promisify } from 'util';
 import crypto from 'crypto';
 
-const execPromise = promisify(exec);
 const router = Router();
 const VIDEO_MODELS_CACHE_TTL_MS = 15_000;
 let videoModelsResponseCache: { expiresAt: number; data: any[] } | null = null;
@@ -442,38 +441,7 @@ function findVideoChannel(modelId: string, activeChannels?: any[]) {
  * 自动将 Grok 视频下载并本地化保存到 `data/uploads` 目录中，防止上游链接失效或鉴权失败
  */
 export async function downloadAndLocalizeGrokVideo(url: string, videoId: string, model: string): Promise<string> {
-  if (!url) return '';
-  // 如果已经是本地相对路径或本地 uploads 路径，无需重复本地化
-  if (url.startsWith('/') || url.includes('/uploads/')) {
-    return url;
-  }
-
-  console.log(`[video] 开始本地化 Grok 视频: ${url} (task: ${videoId})`);
-
-  const channel = findVideoChannel(model);
-  const headers: Record<string, string> = {};
-  if (channel?.apiKey) {
-    headers['Authorization'] = `Bearer ${channel.apiKey}`;
-  }
-
-  const response = await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch Grok video from upstream: ${response.statusText}`);
-  }
-
-  const uploadDir = path.join(process.cwd(), 'data/uploads');
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-  }
-
-  const filename = `grok_${videoId}.mp4`;
-  const destPath = path.join(uploadDir, filename);
-  const buffer = Buffer.from(await response.arrayBuffer());
-  fs.writeFileSync(destPath, buffer);
-
-  const localizedUrl = `/uploads/${filename}`;
-  console.log(`[video] Grok 视频本地化成功: ${localizedUrl}`);
-  return localizedUrl;
+  return downloadAndLocalizeVideo(url, videoId, model);
 }
 
 /**
@@ -481,84 +449,7 @@ export async function downloadAndLocalizeGrokVideo(url: string, videoId: string,
  * 使用 UUID 唯一临时文件名，防止并发冲突；转码完成后原子 rename 交付。
  */
 export async function localizeChre3Video(url: string, videoId: string, model: string): Promise<string> {
-  if (!url) return '';
-  // 已经是本地路径，跳过
-  if (url.startsWith('/') || url.includes('/uploads/')) return url;
-  // 仅处理 4月天渠道
-  if (!url.includes('llm.chre3.com')) return url;
-
-  const uploadDir = path.join(process.cwd(), 'data/uploads');
-  if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-
-  const safeId = videoId.replace(/[^a-zA-Z0-9_-]/g, '_');
-  const finalFilename = `video_${safeId}.mp4`;
-  const finalPath = path.join(uploadDir, finalFilename);
-  const originalPath = originalVideoPathFor(finalPath);
-
-  // 如果此视频已经本地化过，直接返回
-  if (fs.existsSync(finalPath)) {
-    console.log(`[video/transcode] 已存在本地缓存: ${finalFilename}`);
-    return `/uploads/${finalFilename}`;
-  }
-
-  const uuid = crypto.randomUUID();
-  const tempDownload = path.join(uploadDir, `tmp_dl_${uuid}.mp4`);
-  const tempTranscoded = path.join(uploadDir, `tmp_tc_${uuid}.mp4`);
-
-  try {
-    console.log(`[video/transcode] 开始下载 4月天渠道视频: ${url}`);
-
-    // 获取渠道授权头
-    const channel = findVideoChannel(model);
-    const headers: Record<string, string> = {};
-    if (channel?.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
-
-    const resp = await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
-    if (!resp.ok) throw new Error(`下载失败: ${resp.status} ${resp.statusText}`);
-    const buffer = Buffer.from(await resp.arrayBuffer());
-    fs.writeFileSync(tempDownload, buffer);
-    console.log(`[video/transcode] 下载完成: ${buffer.length} bytes`);
-
-    // ffprobe 检测编码
-    let isHevc = false;
-    try {
-      const probeOut = execSync(
-        `ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of default=noprint_wrappers=1 "${tempDownload}"`,
-        { encoding: 'utf8' }
-      );
-      isHevc = probeOut.includes('hevc');
-      console.log(`[video/transcode] 编码检测: ${probeOut.trim()} (HEVC=${isHevc})`);
-    } catch {
-      console.warn('[video/transcode] ffprobe 检测失败，默认视为 HEVC');
-      isHevc = true;
-    }
-
-    if (isHevc) {
-      console.log('[video/transcode] 检测到 HEVC (H.265)，启动 FFmpeg 转码为 H.264...');
-      if (fs.existsSync(originalPath)) fs.unlinkSync(originalPath);
-      fs.renameSync(tempDownload, originalPath);
-      await execPromise(
-        `ffmpeg -y -i "${originalPath}" -c:v libx264 -pix_fmt yuv420p -preset superfast -movflags faststart -c:a copy "${tempTranscoded}"`
-      );
-      // 原子 rename 到最终路径
-      fs.renameSync(tempTranscoded, finalPath);
-      console.log(`[video/transcode] H.264 转码完成: ${finalFilename}`);
-    } else {
-      // 非 HEVC，直接 rename
-      fs.renameSync(tempDownload, finalPath);
-      console.log(`[video/transcode] 非 HEVC 编码，直接本地化: ${finalFilename}`);
-    }
-
-    return `/uploads/${finalFilename}`;
-  } catch (err: any) {
-    console.error(`[video/transcode] 4月天视频本地化失败: ${err.message}`);
-    // 返回原始 URL 作为 fallback，仍可通过 /play 代理播放
-    return url;
-  } finally {
-    // 清理临时文件
-    try { if (fs.existsSync(tempDownload)) fs.unlinkSync(tempDownload); } catch { }
-    try { if (fs.existsSync(tempTranscoded)) fs.unlinkSync(tempTranscoded); } catch { }
-  }
+  return downloadAndLocalizeVideo(url, videoId, model);
 }
 /** GET /api/video/models — 可用的视频模型列表（公开，不需要登录） */
 router.get('/models', (_req: Request, res: Response) => {
@@ -2848,61 +2739,12 @@ router.get('/download', protectVideoSource, async (req: Request, res: Response) 
   try {
     const filename = req.query.filename as string || 'video.mp4';
 
-    // 1. 判断是否是本地已存储的视频文件（如果是，直接使用 res.sendFile 返回，避免 fetch 报错）
-    let isLocalFile = false;
-    let localFilePath = '';
-
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      isLocalFile = true;
-      const cleanPath = url.replace(/^.*\/uploads\//, '');
-      localFilePath = path.join(process.cwd(), 'data/uploads', cleanPath);
-    } else {
-      const uploadsIndex = url.indexOf('/uploads/');
-      if (uploadsIndex !== -1) {
-        isLocalFile = true;
-        const cleanPath = url.substring(uploadsIndex + '/uploads/'.length);
-        localFilePath = path.join(process.cwd(), 'data/uploads', cleanPath);
-      }
-    }
-
-    if (isLocalFile) {
-      if (fs.existsSync(localFilePath)) {
-        return res.download(preferredVideoDownloadPath(localFilePath), filename);
-      } else {
-        return res.status(404).send('Local video file not found');
-      }
-    }
-
-    // 2. 如果是上游在线视频，代理下载并处理授权头
-    const headers: Record<string, string> = {};
-    if (url.includes('llm.chre3.com')) {
-      const channel = findVideoChannel('sd2-c7');
-      if (channel?.apiKey) {
-        headers['Authorization'] = `Bearer ${channel.apiKey}`;
-      }
-    }
-
-    const response = await fetch(url, { headers });
-    if (!response.ok) throw new Error(`Failed to fetch video: ${response.statusText}`);
-
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
-    res.setHeader('Content-Type', response.headers.get('Content-Type') || 'video/mp4');
-    const contentLength = response.headers.get('Content-Length');
-    if (contentLength) res.setHeader('Content-Length', contentLength);
-
-    const reader = response.body?.getReader();
-    if (!reader) return res.status(500).send('No video stream body');
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    res.end();
+    const local = /^\/(?:api\/)?uploads\//.test(url) || /^https?:\/\//.test(url) && new URL(url).pathname.startsWith('/uploads/');
+    const compatiblePath = local
+      ? await prepareVideoForDelivery(resolveBatchArchiveFile(url.replace(/^\/api\/uploads\//, '/uploads/'), path.resolve('data/uploads')))
+      : await cacheVideoForDelivery(url, videoSourceHeaders(url));
+    res.type(videoDeliveryContentType(compatiblePath));
+    return res.download(compatiblePath, filename.replace(/\.(mp4|webm|mov|mkv|m4v)$/i, '') + videoDeliveryExtension(compatiblePath));
   } catch (err: any) {
     console.error('[video/download] error:', err.message);
     res.status(502).send(`Download failed: ${err.message}`);
@@ -2947,116 +2789,29 @@ export function cleanVideoCache() {
 cleanVideoCache();
 setInterval(cleanVideoCache, 12 * 60 * 60 * 1000).unref();
 
-// 内存锁：防止同一 URL 被多个并发 Range 请求同时下载+转码
-const playTranscodeLocks = new Map<string, Promise<string>>();
+function videoSourceHeaders(url: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (new URL(url).hostname === 'llm.chre3.com') {
+    const channel = findVideoChannel('sd2-c7');
+    if (channel?.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
+  }
+  return headers;
+}
 
-// 视频播放代理：检测并转码 H.265 (HEVC) -> H.264 (AVC)，并发安全
+// Playback and downloads prefer H.264, with original fallback and native Range support.
 router.get('/play', protectVideoSource, async (req: Request, res: Response) => {
   const url = req.query.url as string;
   if (!url) return res.status(400).json({ error: 'Missing url parameter' });
-
   try {
-    let localSourcePath = '';
-    if (url.startsWith('/uploads/')) {
-      const uploadsRoot = path.resolve(process.cwd(), 'data', 'uploads');
-      const relativePath = url.slice('/uploads/'.length).replace(/^[/\\]+/, '');
-      const candidatePath = path.resolve(uploadsRoot, relativePath);
-      if (candidatePath !== uploadsRoot && !candidatePath.startsWith(`${uploadsRoot}${path.sep}`)) {
-        return res.status(400).send('Invalid local video path');
-      }
-      if (!fs.existsSync(candidatePath) || !fs.statSync(candidatePath).isFile()) {
-        return res.status(404).send('Local video file not found');
-      }
-      localSourcePath = candidatePath;
-
-      // Preserve native Range handling for already compatible local files.
-      // Existing HEVC files continue through the locked transcoding cache below.
-      if (detectVideoCodec(localSourcePath) !== 'hevc') {
-        return res.sendFile(localSourcePath);
-      }
-    }
-
-    const hash = crypto.createHash('md5').update(url).digest('hex');
-    const cachedFilePath = path.join(videoCacheDir, `${hash}.mp4`);
-
-    // 1. 如果缓存已存在，直接返回
-    if (fs.existsSync(cachedFilePath)) {
-      return res.sendFile(cachedFilePath);
-    }
-
-    // 2. 检查是否已有相同 URL 的转码任务正在进行（内存锁去重）
-    let transcodePromise = playTranscodeLocks.get(hash);
-    if (!transcodePromise) {
-      // 没有进行中的任务，创建新的
-      transcodePromise = (async () => {
-        const uuid = crypto.randomUUID();
-        const tempOriginalPath = path.join(videoCacheDir, `${hash}_temp_${uuid}.mp4`);
-        const tempTranscodedPath = path.join(videoCacheDir, `${hash}_tc_${uuid}.mp4`);
-
-        try {
-          console.log(`[video/play] 开始下载并检测视频是否需要转码: ${url}`);
-
-          // 动态匹配授权头
-          const headers: Record<string, string> = {};
-          if (url.includes('llm.chre3.com')) {
-            const channel = findVideoChannel('sd2-c7');
-            if (channel?.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
-          }
-
-          if (localSourcePath) {
-            fs.copyFileSync(localSourcePath, tempOriginalPath);
-          } else {
-            const fetchResp = await fetch(url, { headers });
-          if (!fetchResp.ok) throw new Error(`无法获取原始视频流: ${fetchResp.statusText}`);
-            const buffer = Buffer.from(await fetchResp.arrayBuffer());
-            fs.writeFileSync(tempOriginalPath, buffer);
-          }
-
-          // ffprobe 检测编码
-          let isHevc = false;
-          try {
-            isHevc = detectVideoCodec(tempOriginalPath) === 'hevc';
-          } catch {
-            console.warn('[video/play] ffprobe 探测失败，默认尝试转码');
-            isHevc = true;
-          }
-
-          if (isHevc) {
-            console.log(`[video/play] 检测到 H.265 (HEVC)，转码为 H.264...`);
-            await execPromise(
-              `ffmpeg -y -i "${tempOriginalPath}" -c:v libx264 -tag:v avc1 -pix_fmt yuv420p -preset superfast -movflags +faststart -c:a copy "${tempTranscodedPath}"`
-            );
-            // 原子 rename 交付缓存
-            fs.renameSync(tempTranscodedPath, cachedFilePath);
-            console.log(`[video/play] H.264 转码完成: ${cachedFilePath}`);
-          } else {
-            console.log(`[video/play] 标准 H.264 编码，直接缓存`);
-            fs.renameSync(tempOriginalPath, cachedFilePath);
-          }
-
-          return cachedFilePath;
-        } finally {
-          // 清理临时文件
-          try { if (fs.existsSync(tempOriginalPath)) fs.unlinkSync(tempOriginalPath); } catch { }
-          try { if (fs.existsSync(tempTranscodedPath)) fs.unlinkSync(tempTranscodedPath); } catch { }
-        }
-      })();
-
-      playTranscodeLocks.set(hash, transcodePromise);
-      // 在 chain 的最末尾挂载 catch，防止 finally 返回的 Rejected Promise 导致 Node 进程崩溃 (unhandledRejection)
-      transcodePromise
-        .finally(() => playTranscodeLocks.delete(hash))
-        .catch(() => { });
-    } else {
-      console.log(`[video/play] 复用正在进行的转码任务: ${hash}`);
-    }
-
-    // 3. 等待转码完成，返回缓存文件
-    await transcodePromise;
-    res.sendFile(cachedFilePath);
+    const local = /^\/(?:api\/)?uploads\//.test(url);
+    const compatiblePath = local
+      ? await prepareVideoForDelivery(resolveBatchArchiveFile(url.replace(/^\/api\/uploads\//, '/uploads/'), path.resolve('data/uploads')))
+      : await cacheVideoForDelivery(url, videoSourceHeaders(url));
+    res.type(videoDeliveryContentType(compatiblePath));
+    return res.sendFile(compatiblePath);
   } catch (err: any) {
-    console.error('[video/play] 播放代理失败:', err.message);
-    res.status(502).send(`Playback proxy failed: ${err.message}`);
+    console.error('[video/play] H.264 playback failed:', err.message);
+    res.status(502).send('H.264 视频准备失败，请稍后重试');
   }
 });
 
@@ -3094,11 +2849,12 @@ router.post('/merge', authMiddleware, async (req: Request, res: Response) => {
     execSync(`ffmpeg -y -f concat -safe 0 -i "${listFile}" -c copy "${outputFile}"`, { timeout: 120000 });
 
     // 4. 返回合并文件
-    const stat = fs.statSync(outputFile);
+    const compatibleFile = await prepareVideoForDelivery(outputFile);
+    const stat = fs.statSync(compatibleFile);
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Content-Length', stat.size);
     res.setHeader('Content-Disposition', 'attachment; filename="merged.mp4"');
-    const stream = fs.createReadStream(outputFile);
+    const stream = fs.createReadStream(compatibleFile);
     stream.pipe(res);
     stream.on('end', () => {
       // 清理临时文件

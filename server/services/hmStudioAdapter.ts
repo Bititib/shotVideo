@@ -1,8 +1,12 @@
 import fs from 'fs';
 import path from 'path';
+import { HM_STUDIO_FAST803_MODEL, HM_STUDIO_FAST813_MODEL, HM_STUDIO_MINI503_MODEL } from '../../shared/hmStudioVideo.js';
 
 export const HM_STUDIO_CHANNEL_TYPE = 'hmstudio';
 export const HM_STUDIO_UPSTREAM_FACE_ENABLED = true;
+const HM_STUDIO_LUMEN_VIDEO_MODELS = new Set([
+  HM_STUDIO_FAST803_MODEL, HM_STUDIO_FAST813_MODEL, HM_STUDIO_MINI503_MODEL,
+]);
 
 export type HmStudioVideoOptions = {
   model: string;
@@ -208,7 +212,12 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
   // at the adapter boundary so web, API, retry and recovery paths cannot drift.
   form.append('face', String(HM_STUDIO_UPSTREAM_FACE_ENABLED));
   if (functionMode) form.append('function_mode', functionMode);
-  if (options.upstreamChannel) form.append('channel', options.upstreamChannel);
+  // FAST/MINI are only available in HM's lumen pool, not its default pool.
+  // Enforce this at the shared submission boundary (web/API/batch/retries),
+  // including old queued payloads that explicitly persisted a default channel.
+  const upstreamChannel = HM_STUDIO_LUMEN_VIDEO_MODELS.has(options.model.trim().toUpperCase())
+    ? 'lumen' : options.upstreamChannel;
+  if (upstreamChannel) form.append('channel', upstreamChannel);
 
   if (functionMode === 'omni_reference') {
     appendOmniReferences(form, [...explicitFrames, ...images], videos, audios, options.localMediaBaseUrl);

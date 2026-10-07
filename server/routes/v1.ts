@@ -121,7 +121,7 @@ import { enqueueHmStudioVideoContent, resumePollForTask, holdHayaSubmission, rel
 import { localizeGeneratedImage } from './imageGen.js';
 import { withVideoFailureMetadata } from '../services/videoFailureService.js';
 import { ContentService } from '../services/contentService.js';
-import { preferredVideoDownloadPath } from '../services/videoLocalizationService.js';
+import { prepareVideoForDelivery, cacheVideoForDelivery, videoDeliveryContentType } from '../services/videoCompatibilityService.js';
 import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
 import { validateVideoPrompt } from '../services/videoPromptValidation.js';
 
@@ -201,8 +201,6 @@ export function canAccessVideoRecord(record: any, token: any): boolean {
     && token.userId !== undefined
     && Number(record.userId) === Number(token.userId);
 }
-
-const VIDEO_CONTENT_URL_TTL_SECONDS = Math.max(300, Number.parseInt(process.env.VIDEO_CONTENT_URL_TTL_SECONDS || '86400', 10) || 86400);
 
 export function createVideoContentSignature(contentId: number, expiresAt: number): string {
   return crypto.createHmac('sha256', env.JWT_SECRET)
@@ -2805,9 +2803,7 @@ async function handleVideoQuery(req: Request, res: Response) {
 
     const host = req.get('host');
     const protocol = req.protocol;
-    const contentExpiresAt = Math.floor(Date.now() / 1000) + VIDEO_CONTENT_URL_TTL_SECONDS;
-    const contentSignature = createVideoContentSignature(record.id, contentExpiresAt);
-    const contentUrl = `${protocol}://${host}/v1/videos/task_${record.id}/content?expires=${contentExpiresAt}&signature=${encodeURIComponent(contentSignature)}`;
+    const contentUrl = `${protocol}://${host}/v1/videos/task_${record.id}/content`;
 
     const responseJson: Record<string, any> = {
       id: `task_${record.id}`,
@@ -2895,6 +2891,7 @@ router.get('/video/generations/:id', handleVideoQuery);
 /** GET /v1/videos/:id/content — 统一视频内容直连下载/播放 */
 router.get('/videos/:id/content', async (req: Request, res: Response) => {
   const idParam = req.params.id;
+  if (!/^(?:task_)?[1-9]\d*$/.test(idParam)) return res.status(404).json({ error: 'Video not found' });
   let contentId = NaN;
   if (idParam.startsWith('task_')) {
     contentId = parseInt(idParam.slice(5), 10);
@@ -2902,32 +2899,17 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
     contentId = parseInt(idParam, 10);
   }
 
-  const tokenKey = extractToken(req);
-  let token: any = null;
-  if (tokenKey) {
-    const validation = TokenService.validateToken(tokenKey);
-    if (!validation.valid) return res.status(401).json({ error: { message: validation.error, type: 'invalid_request_error' } });
-    token = validation.token;
-  } else if (!verifyVideoContentSignature(contentId, req.query.expires, req.query.signature)) {
-    return res.status(401).json({ error: { message: 'Missing API key or valid signed URL', type: 'invalid_request_error' } });
-  }
-
   let record = null;
   if (!isNaN(contentId)) {
     record = db.select().from(contents).where(eq(contents.id, contentId)).get();
   }
 
-  if (!record) {
-    return res.status(404).json({ error: 'Task not found' });
+  // Public binary delivery only. Task details, generation and billing remain
+  // authenticated; old signed URLs also work without checking their expiration.
+  if (!record || record.type !== 'video' || record.status !== 'completed') {
+    return res.status(404).json({ error: 'Video not found' });
   }
-
-  if (token && !canAccessVideoRecord(record, token)) {
-    return res.status(404).json({ error: 'Task not found' });
-  }
-
-  if (record.status !== 'completed') {
-    return res.status(400).json({ error: `Task status is ${record.status}, not completed yet` });
-  }
+  res.setHeader('Cache-Control', 'no-store');
 
   const url = record.resultUrl;
   if (!url) {
@@ -2954,15 +2936,13 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
     return res.status(502).json({ error: 'Invalid stored video URL' });
   }
 
-  if (isLocalFile) {
-    if (fs.existsSync(localFilePath)) {
-      const downloadPath = preferredVideoDownloadPath(localFilePath);
-      res.setHeader('Content-Type', path.extname(downloadPath).toLowerCase() === '.webm' ? 'video/webm' : 'video/mp4');
+  try {
+    if (isLocalFile && fs.existsSync(localFilePath)) {
+      const downloadPath = await prepareVideoForDelivery(localFilePath);
+      res.setHeader('Content-Type', videoDeliveryContentType(downloadPath));
       return res.sendFile(downloadPath);
     }
-  }
 
-  try {
     let metadata: any = {};
     try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
 
@@ -2998,8 +2978,8 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
       metadata: JSON.stringify(metadata),
     }).where(eq(contents.id, contentId)).run();
 
-    const downloadPath = preferredVideoDownloadPath(localizedPath);
-    res.setHeader('Content-Type', path.extname(downloadPath).toLowerCase() === '.webm' ? 'video/webm' : 'video/mp4');
+    const downloadPath = await prepareVideoForDelivery(localizedPath);
+    res.setHeader('Content-Type', videoDeliveryContentType(downloadPath));
     return res.sendFile(downloadPath);
   } catch (err: any) {
     res.status(502).send(`Video localization failed: ${err.message}`);
@@ -3026,28 +3006,9 @@ router.get('/files/video', async (req: Request, res: Response) => {
     const headers: Record<string, string> = {};
     if (config.apiKey) headers['Authorization'] = `Bearer ${config.apiKey}`;
 
-    const upstreamRes = await fetch(upstreamUrl, { headers, signal: AbortSignal.timeout(300_000) });
-    if (!upstreamRes.ok) {
-      return res.status(upstreamRes.status).send(`Failed to stream video: ${upstreamRes.statusText}`);
-    }
-
-    res.setHeader('Content-Type', upstreamRes.headers.get('Content-Type') || 'video/mp4');
-    const len = upstreamRes.headers.get('Content-Length');
-    if (len) res.setHeader('Content-Length', len);
-
-    const reader = upstreamRes.body?.getReader();
-    if (!reader) return res.status(500).send('No video stream body from upstream');
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    res.end();
+    const compatiblePath = await cacheVideoForDelivery(upstreamUrl, headers);
+    res.type(videoDeliveryContentType(compatiblePath));
+    return res.sendFile(compatiblePath);
   } catch (err: any) {
     res.status(502).send(`Video stream failed: ${err.message}`);
   }

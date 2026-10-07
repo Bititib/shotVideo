@@ -16,7 +16,7 @@ export function resolveBatchArchiveFile(url: string, root: string) {
   const realRoot = fs.realpathSync(root);
   const file = fs.realpathSync(path.resolve(realRoot, pathname.slice('/uploads/'.length)));
   const relative = path.relative(realRoot, file);
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative) || !fs.statSync(file).isFile() || !/\.(mp4|webm|mov)$/i.test(file)) throw new Error('无效的视频文件路径');
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative) || !fs.statSync(file).isFile() || !/\.(mp4|webm|mov|mkv|m4v)$/i.test(file)) throw new Error('无效的视频文件路径');
   return file;
 }
 

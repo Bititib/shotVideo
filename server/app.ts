@@ -1,4 +1,5 @@
 import { protectUploads } from './middleware/uploadAccess.js';
+import { h264Uploads } from './middleware/h264Uploads.js';
 import { privateReferences } from './middleware/privateReferences.js';
 import mediaRoutes from './routes/media.js';
 import billingAdminRoutes from './routes/billingAdmin.js';
@@ -60,9 +61,9 @@ export async function createApp() {
   if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
   }
-  // All historical uploads require the owner session or a time-limited provider link.
-  app.use('/uploads', protectUploads, express.static(uploadDir, { fallthrough:false, cacheControl:false }));
-  app.use('/api/uploads', protectUploads, express.static(uploadDir, { fallthrough:false, cacheControl:false }));
+  // Completed video results are public; other uploads still require authorization.
+  app.use('/uploads', protectUploads, h264Uploads(uploadDir), express.static(uploadDir, { fallthrough:false, cacheControl:false }));
+  app.use('/api/uploads', protectUploads, h264Uploads(uploadDir), express.static(uploadDir, { fallthrough:false, cacheControl:false }));
 
   // OpenAI 兼容代理层（不走 /api 前缀）
   app.use('/v1', privateReferences, v1Routes);

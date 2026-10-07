@@ -36,7 +36,7 @@ beforeAll(async()=>{
   vi.stubEnv('MEDIA_STORAGE_DIR',path.join(temp,'private'));
   sqlite.exec(`CREATE TABLE users(id INTEGER PRIMARY KEY,role TEXT,is_active INTEGER,balance REAL,updated_at TEXT);
     INSERT INTO users VALUES(1,'user',1,10,NULL),(2,'user',1,20,NULL),(3,'super_admin',1,0,NULL);
-    CREATE TABLE contents(id INTEGER PRIMARY KEY,user_id INTEGER,result_url TEXT,metadata TEXT,cost REAL);`);
+    CREATE TABLE contents(id INTEGER PRIMARY KEY,user_id INTEGER,result_url TEXT,metadata TEXT,cost REAL,type TEXT,status TEXT);`);
   const app=express();app.use(express.json({limit:'60mb'}));
   app.use('/api/media',mediaRoutes);app.use('/api/auth',authRoutes);app.use('/api/admin/billing-reservations',billingRoutes);
   app.post('/references',privateReferences,(req,res)=>res.json(req.body));
@@ -48,6 +48,35 @@ beforeAll(async()=>{
 afterAll(async()=>{await new Promise<void>(resolve=>server.close(()=>resolve()));sqlite.close();vi.unstubAllEnvs();fs.rmSync(temp,{recursive:true,force:true});});
 
 describe('production release safety',()=>{
+  it('allows anonymous completed video links, aliases and downloads, but keeps references and unfinished results private', async () => {
+    const result = '/uploads/public-result.mp4';
+    const reference = '/uploads/public-reference.mp4';
+    fs.writeFileSync(path.join(temp, 'public-result.mp4'), Buffer.from('public video bytes'));
+    fs.writeFileSync(path.join(temp, 'public-reference.mp4'), Buffer.from('private reference bytes'));
+    const id = sqlite.prepare("INSERT INTO contents(user_id,type,status,result_url,metadata) VALUES(1,'video','completed',?,?)")
+      .run(result, JSON.stringify({ reference_videos: [reference] })).lastInsertRowid;
+    for (const prefix of ['/uploads', '/api/uploads']) {
+      const response = await fetch(`${base}${prefix}/public-result.mp4?expires=1&signature=expired`, { headers: { Range: 'bytes=0-3' } });
+      expect(response.status).toBe(206);
+      expect(await response.text()).toBe('publ');
+      expect((await fetch(`${base}${prefix}/public-result.mp4`, { method: 'HEAD' })).status).toBe(200);
+      expect((await fetch(`${base}${prefix}/public-reference.mp4`)).status).toBe(404);
+    }
+    expect((await fetch(`${base}/video?url=${encodeURIComponent(result)}`)).status).toBe(200);
+    expect((await fetch(`${base}/video?url=${encodeURIComponent(reference)}`)).status).toBe(404);
+    const remote = 'https://cdn.example.test/public-result.mp4';
+    sqlite.prepare("INSERT INTO contents(user_id,type,status,result_url) VALUES(1,'video','completed',?)").run(remote);
+    expect((await fetch(`${base}/video?url=${encodeURIComponent(remote)}`)).status).toBe(200);
+    expect((await fetch(`${base}/video?url=${encodeURIComponent('https://cdn.example.test/unrecorded.mp4')}`)).status).toBe(404);
+    for (const status of ['processing', 'failed', 'review']) {
+      sqlite.prepare('UPDATE contents SET status=? WHERE id=?').run(status, id);
+      expect((await fetch(`${base}${result}`)).status).toBe(404);
+    }
+    sqlite.prepare("UPDATE contents SET type='image',status='completed' WHERE id=?").run(id);
+    expect((await fetch(`${base}${result}`)).status).toBe(404);
+    sqlite.prepare('DELETE FROM contents WHERE id=?').run(id);
+    expect((await fetch(`${base}${result}`)).status).toBe(404);
+  });
   it('fails closed on missing production credentials and insecure origins',()=>{
     expect(()=>validateProductionConfig({NODE_ENV:'production'})).toThrow('生产配置');
     const good={NODE_ENV:'production',JWT_SECRET:'b8a4d021861e4bb2b5f3dbd3f90eb617',ADMIN_PASSWORD:'random-secret-299374',BACKEND_URL:'https://studio.test',ALLOWED_ORIGINS:'https://studio.test'};

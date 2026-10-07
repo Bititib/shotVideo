@@ -5,6 +5,7 @@ import { randomBytes } from 'crypto';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { resolveBatchArchiveFile, streamVideoZip } from '../services/videoBatchArchive.js';
+import { prepareVideoForDelivery, videoDeliveryExtension } from '../services/videoCompatibilityService.js';
 import type { Response, NextFunction } from 'express';
 import { authMiddleware } from '../middleware/auth.js';
 import { tierMiddleware, type TierRequest } from '../middleware/tier.js';
@@ -129,18 +130,20 @@ router.post('/:id/retry-failed', tierMiddleware('video'), quotaMiddleware, handl
   res.json(batchStore.detail(Number(req.params.id), req.userId!));
   tickVideoBatches();
 }));
-router.post('/:id/download', handle((req, res) => {
+router.post('/:id/download', handle(async (req, res) => {
   const detail = batchStore.detail(Number(req.params.id), req.userId!);
   const completed = detail.items.filter(i => i.status === 'completed' && i.result_url);
   if (!completed.length) throw new Error('暂无已成功的视频');
   let totalBytes = 0;
-  const files = completed.map(i => {
+  const files: { path: string; name: string }[] = [];
+  for (const i of completed) {
     let file: string;
     try { file = resolveBatchArchiveFile(i.result_url, path.resolve('data/uploads')); }
     catch { throw new Error(`视频 #${i.content_id} 缓存已过期或尚未本地保存，请先在资产管理中心恢复后下载`); }
+    file = await prepareVideoForDelivery(file);
     totalBytes += fs.statSync(file).size;
-    return { path: file, name: `creative-${i.creative_index + 1}-video-${i.ordinal}${path.extname(file)}` };
-  });
+    files.push({ path: file, name: `creative-${i.creative_index + 1}-video-${i.ordinal}${videoDeliveryExtension(file)}` });
+  }
   if (totalBytes > 3 * 1024 ** 3) throw new Error('视频合计超过 3 GB，请分批单独下载');
   for (const [key, value] of downloadTickets) if (value.expires < Date.now() || value.userId === req.userId) downloadTickets.delete(key);
   const key = randomBytes(32).toString('hex');

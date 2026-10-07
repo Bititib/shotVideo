@@ -2,6 +2,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { ensureH264Video } from '../server/services/videoCompatibilityService.js';
 
 vi.mock('../server/db/index.js', async () => {
   const { default: Database } = await import('better-sqlite3');
@@ -96,6 +100,58 @@ async function post(endpoint: string, body: any) {
 const body = { model: HAYA_MODEL_IDS[0], prompt: '电影感产品展示', video_length: 6, resolution: '720p', aspect_ratio: '16:9' };
 
 describe('Haya in both application entry points (isolated in-memory database)', () => {
+  it('prefers H.264 in the content API and falls back to valid HEVC on conversion failure without charging', async () => {
+    const root = path.resolve('data/uploads');
+    fs.mkdirSync(root, { recursive: true });
+    const directory = fs.mkdtempSync(path.join(root, 'h264-api-test-'));
+    try {
+      const source = path.join(directory, 'historical.mp4');
+      execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'color=s=64x64:r=5:d=0.4',
+        '-c:v', 'libx265', '-pix_fmt', 'yuv420p', '-threads', '1', '-x265-params',
+        'pools=1:frame-threads=1:log-level=error', source], { stdio: 'pipe' });
+      fs.copyFileSync(source, path.join(directory, 'historical.original.mp4'));
+      db.insert(contents).values({ userId: 1, type: 'video', status: 'completed',
+        resultUrl: `/uploads/${path.basename(directory)}/historical.mp4`, modelId: HAYA_MODEL_IDS[0], cost: 1 }).run();
+      const endpoint = `${origin}/v1/videos/task_${latest().id}/content`;
+      const task = await (await nativeFetch(`${origin}/v1/videos/task_${latest().id}`, { headers: { Authorization: 'Bearer test' } })).json() as any;
+      expect(task.url).toBe(endpoint);
+      expect(task.result_url).toBe(endpoint);
+      const anonymous = await nativeFetch(endpoint);
+      expect(anonymous.status).toBe(200);
+      await anonymous.arrayBuffer();
+      const oldSigned = await nativeFetch(endpoint + '?expires=1&signature=expired');
+      expect(oldSigned.status).toBe(200);
+      await oldSigned.arrayBuffer();
+      const head = await nativeFetch(endpoint, { method: 'HEAD' });
+      expect(head.status).toBe(200);
+      expect(head.headers.get('content-type')).toBe('video/mp4');
+      expect((await nativeFetch(`${origin}/v1/videos/task_${latest().id}`)).status).toBe(401);
+      const response = await nativeFetch(endpoint, { headers: { Authorization: 'Bearer test', Range: 'bytes=0-127' } });
+      expect(response.status).toBe(206);
+      expect(response.headers.get('content-type')).toBe('video/mp4');
+      const compatible = await ensureH264Video(source);
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(fs.readFileSync(compatible).subarray(0, 128));
+      expect(compatible).not.toContain('.original.');
+      fs.unlinkSync(compatible);
+      fs.mkdirSync(compatible); // fail conversion publishing, leaving source intact
+      const fallback = await nativeFetch(endpoint, { headers: { Authorization: 'Bearer test' } });
+      expect(fallback.status).toBe(200);
+      expect(Buffer.from(await fallback.arrayBuffer())).toEqual(fs.readFileSync(source));
+      // Probe failure must be handled by the API, not fall back to the original.
+      fs.writeFileSync(source, 'broken source');
+      expect((await nativeFetch(endpoint, { headers: { Authorization: 'Bearer test' } })).status).toBe(502);
+      expect(balance()).toBe(100);
+      expect(fetch).not.toHaveBeenCalled();
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+  it('does not expose failed/pending tasks or non-video assets through public content URLs', async () => {
+    for (const input of [{ type: 'video', status: 'processing' }, { type: 'video', status: 'failed' }, { type: 'image', status: 'completed' }]) {
+      db.insert(contents).values({ userId: 1, ...input, resultUrl: '/uploads/private.mp4' }).run();
+      const response = await nativeFetch(`${origin}/v1/videos/task_${latest().id}/content`);
+      expect(response.status).toBe(404);
+    }
+    expect((await nativeFetch(`${origin}/v1/videos/task_1junk/content`)).status).toBe(404);
+  });
   it('discovers only TTS models actually advertised upstream and preserves them on authentication failure', async () => {
     const { env } = await import('../server/config/env');
     const previousKey = env.GEMINI_API_KEY;
