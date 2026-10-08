@@ -26,7 +26,7 @@ vi.mock('../server/services/videoBatchService.js', async () => {
   }) };
 });
 
-import routes from '../server/routes/videoBatches';
+import routes, { validateBatchInput } from '../server/routes/videoBatches';
 import { sqlite } from '../server/db/index.js';
 const nativeFetch = globalThis.fetch;
 let server: Server; let origin: string;
@@ -55,6 +55,23 @@ beforeEach(() => {
 afterAll(async () => { vi.unstubAllGlobals(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); sqlite.close(); });
 
 describe('batch HTTP endpoints', () => {
+  it('accepts up to 30 reference images for the 2.5-s model', () => {
+    const images = Array.from({ length: 30 }, (_, index) => `https://example.test/${index}.jpg`);
+    const validated = validateBatchInput({
+      ...input,
+      model: '2.5-s',
+      video_length: 30,
+      creatives: [{ ...input.creatives[0], reference_images: images }],
+    });
+    expect(validated.creatives[0].reference_images).toHaveLength(30);
+    expect(() => validateBatchInput({
+      ...input,
+      model: '2.5-s',
+      video_length: 30,
+      creatives: [{ ...input.creatives[0], reference_images: [...images, 'https://example.test/30.jpg'] }],
+    })).toThrow('素材格式或数量不正确');
+  });
+
   it('requires login and rejects oversized prompts before price checks or reservation', async () => {
     expect((await request('', undefined, 0)).status).toBe(401);
     const result = await request('/quote', { ...input, creatives: [{ ...input.creatives[0], prompt: '字'.repeat(5001) }] });

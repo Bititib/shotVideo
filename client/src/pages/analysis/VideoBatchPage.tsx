@@ -10,6 +10,7 @@ import { formatBeijingTime, parseUtcTimestamp } from '../../../../shared/time';
 import type { VideoBatchInput, VideoBatchDetail, VideoBatchItem, BatchItemStatus } from '../../../../shared/videoBatch';
 import './VideoBatchPage.css';
 import VideoModelStatusIndicator from '../../components/VideoModelStatusIndicator';
+import { WX_HAIDIYUE_MULTIMODAL_MODEL } from '../../utils/videoModelCapabilities';
 
 const emptyCreative = () => ({ prompt: '', count: 10, reference_images: [] as string[], reference_videos: [] as string[], audio_urls: [] as string[] });
 const statusLabels: Record<BatchItemStatus, string> = { queued: '等待排队', dispatching: '提交中', running: '生成中', retry_wait: '等待重试', completed: '已完成', failed: '失败已退款', cancelled: '取消已退款', review: '结果待核实' };
@@ -115,7 +116,9 @@ export default function VideoBatchPage() {
     if (!files.length) return;
     const maxMB = getHayaVideoSpec(input.model) ? 20 : 10;
     if (files.some(f => !f.type.startsWith('image/') || f.size > maxMB * 1024 * 1024)) { setError('请上传 ' + maxMB + ' MB 以内的图片'); return; }
-    const maxImages = getHmStudioAdditionalVideoModel(input.model)?.maxImages ?? getHayaVideoSpec(input.model)?.maxImages ?? 10;
+    const maxImages = input.model === WX_HAIDIYUE_MULTIMODAL_MODEL
+      ? 30
+      : getHmStudioAdditionalVideoModel(input.model)?.maxImages ?? getHayaVideoSpec(input.model)?.maxImages ?? 10;
     if (input.creatives[index].reference_images.length + files.length > maxImages) { setError('每组最多 ' + maxImages + ' 张参考图'); return; }
     setBusy(true);
     try {

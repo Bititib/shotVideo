@@ -5,6 +5,8 @@ import {
   normalizeWxHaidiYueTask,
   resolveWxHaidiYueFaceSplit,
   shouldSendWxHaidiYueAuthorization,
+  validateWxHaidiYueVideoInput,
+  WX_HAIDIYUE_MULTIMODAL_MODEL,
   wxHaidiYueCreateUrl,
   wxHaidiYueTaskUrl,
 } from '../server/services/wxHaidiYueAdapter.js';
@@ -41,6 +43,44 @@ describe('wx-海底月 sd2.5 adapter', () => {
       aspectRatio: '16:9',
       faceSplit: 'false',
     })).toMatchObject({ face_split: false });
+  });
+
+  it('sends the new multimodal model and all supported reference media', () => {
+    expect(buildWxHaidiYueVideoPayload({
+      model: WX_HAIDIYUE_MULTIMODAL_MODEL,
+      prompt: 'multimodal test',
+      duration: 30,
+      aspectRatio: '9:16',
+      images: ['https://cdn.test/a.jpg'],
+      videos: ['https://cdn.test/a.mp4'],
+      audios: ['https://cdn.test/a.wav'],
+      faceSplit: false,
+    })).toEqual({
+      model: '2.5-s',
+      prompt: 'multimodal test',
+      duration: 30,
+      aspect_ratio: '9:16',
+      image: 'https://cdn.test/a.jpg',
+      videos: ['https://cdn.test/a.mp4'],
+      audios: ['https://cdn.test/a.wav'],
+      face_split: false,
+    });
+  });
+
+  it('enforces the 2.5-s 30-image, 10-video, 10-audio and 30-second limits', () => {
+    const valid = {
+      seconds: 30,
+      resolution: '720p',
+      ratio: '16:9',
+      imageCount: 30,
+      videoCount: 10,
+      audioCount: 10,
+    };
+    expect(validateWxHaidiYueVideoInput(WX_HAIDIYUE_MULTIMODAL_MODEL, valid)).toBeNull();
+    expect(validateWxHaidiYueVideoInput(WX_HAIDIYUE_MULTIMODAL_MODEL, { ...valid, seconds: 29 })).toContain('只支持30秒');
+    expect(validateWxHaidiYueVideoInput(WX_HAIDIYUE_MULTIMODAL_MODEL, { ...valid, imageCount: 31 })).toContain('最多支持30张');
+    expect(validateWxHaidiYueVideoInput(WX_HAIDIYUE_MULTIMODAL_MODEL, { ...valid, videoCount: 11 })).toContain('最多支持10个参考视频');
+    expect(validateWxHaidiYueVideoInput(WX_HAIDIYUE_MULTIMODAL_MODEL, { ...valid, audioCount: 11 })).toContain('最多支持10段参考音频');
   });
 
   it('uses the channel switch as the default and lets an explicit request value override it', () => {

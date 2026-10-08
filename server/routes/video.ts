@@ -106,10 +106,14 @@ import {
   isWxHaidiYueChannel,
   normalizeWxHaidiYueTask,
   resolveWxHaidiYueFaceSplit,
+  validateWxHaidiYueVideoInput,
   wxHaidiYueCreateUrl,
   wxHaidiYueTaskUrl,
   WX_HAIDIYUE_FACE_SPLIT_MODEL,
   WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME,
+  WX_HAIDIYUE_MODELS,
+  WX_HAIDIYUE_MULTIMODAL_MODEL,
+  WX_HAIDIYUE_MULTIMODAL_MODEL_NAME,
 } from '../services/wxHaidiYueAdapter.js';
 import { prepareWxHaidiYueImageUrls } from '../services/wxHaidiYueImageService.js';
 import {
@@ -316,6 +320,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   'sd2-c7': { series: 'sd2-c7', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   [SI_YUE_TIAN_PRIMARY_VIDEO_MODEL]: { series: 'sd2.5-legacy', allowedSeconds: [30], requireRef: false },
   [WX_HAIDIYUE_FACE_SPLIT_MODEL]: { series: 'wx-haidiyue-sd2.5', allowedSeconds: [30], requireRef: false },
+  [WX_HAIDIYUE_MULTIMODAL_MODEL]: { series: 'wx-haidiyue-2.5-s', allowedSeconds: [30], requireRef: false },
   'seedance-2.0-720p': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-2.0-fast-720p': { series: 'seedance-fast-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
   'seedance-720': { series: 'seedance-720p', allowedSeconds: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], requireRef: false },
@@ -377,6 +382,7 @@ const DEFAULT_VIDEO_MODELS = [
   { id: MIAOWU_SEEDANCE_25_DEAL_MODEL, name: 'Seedance 2.5 Deal', description: '喵呜 API；支持5-30秒、480p/720p；最多30张图片和10段音频参考，不支持视频参考；按次计费', maxSeconds: 30, icon: '🎬' },
   { id: MIAOWU_SEEDANCE_25_PRO_MODEL, name: 'Seedance 2.5 Pro', description: '喵呜 API；支持4-30秒、480p/720p；最多30张图片、10个视频和10段音频参考；参考视频时长不得超过输出时长；按秒计费', maxSeconds: 30, icon: '🎬' },
   { id: WX_HAIDIYUE_FACE_SPLIT_MODEL, name: WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME, description: '支持真人；固定30秒；最多9张参考图；固定按次计费 ¥2.00/次', maxSeconds: 30, icon: '👤' },
+  { id: WX_HAIDIYUE_MULTIMODAL_MODEL, name: WX_HAIDIYUE_MULTIMODAL_MODEL_NAME, description: '海底月多模态模型；固定30秒；最多30图、10视频、10音频；固定按次计费 ¥6.00/次', maxSeconds: 30, icon: '🎬' },
   { id: 'sd2-mini', name: 'Seedance Mini (sd2-mini)', description: 'Seedance Mini 720p (933)，支持9图、3音频参考（无视频参考），固定按次计费 ¥2.00/次', maxSeconds: 15, icon: '⚡' },
   { id: 'seedance2.0-933', name: 'seedance2.0 933', description: 'seedance2.0 933 模型，支持9图、3音频参考（无视频参考），固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🚀' },
   { id: 'seedance2.0 933', name: 'seedance2.0 933', description: 'seedance2.0 933 模型，支持9图、3音频参考（无视频参考），固定按次计费 ¥3.00/次', maxSeconds: 15, icon: '🚀' },
@@ -522,7 +528,7 @@ router.get('/models', (_req: Request, res: Response) => {
       rates = {
         '720p': rate,
       };
-    } else if (m.id === WX_HAIDIYUE_FACE_SPLIT_MODEL) {
+    } else if (WX_HAIDIYUE_MODELS.includes(m.id as typeof WX_HAIDIYUE_MODELS[number])) {
       rates = {
         '720p': quotePrice(m.id, { resolution: '720p' }).rate,
       };
@@ -853,16 +859,17 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     }
   }
 
-  if (model === WX_HAIDIYUE_FACE_SPLIT_MODEL) {
-    const allowedRatios = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
-    if (Number(video_length) !== 30) return res.status(400).json({ error: 'sd2.5 固定支持 30 秒' });
-    if (resolution !== '720p') return res.status(400).json({ error: 'sd2.5 仅提供 720p 选项' });
-    if (!allowedRatios.includes(aspect_ratio)) return res.status(400).json({ error: `sd2.5 不支持比例 ${aspect_ratio}` });
-    if (reference_images.length > 9) return res.status(400).json({ error: 'sd2.5 最多支持 9 张参考图片' });
-    if (finalVideos.length > 0 || finalAudios.length > 0 || first_frame || last_frame) {
-      return res.status(400).json({ error: 'sd2.5 不支持视频、音频或首尾帧参考' });
-    }
-  }
+  const wxHaidiYueValidationError = validateWxHaidiYueVideoInput(model, {
+    seconds: Number(video_length),
+    resolution,
+    ratio: aspect_ratio,
+    imageCount: reference_images.length,
+    videoCount: finalVideos.length,
+    audioCount: finalAudios.length,
+    hasFirstFrame: Boolean(first_frame),
+    hasLastFrame: Boolean(last_frame),
+  });
+  if (wxHaidiYueValidationError) return res.status(400).json({ error: wxHaidiYueValidationError });
 
   if (isJulunMinimaxH3Model(model)) {
     if (![10, 15].includes(Number(video_length))) {
@@ -1333,6 +1340,9 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     });
     return preparedWxImagesPromise;
   };
+  const wxMediaBaseUrl = env.WX_HAIDIYUE_IMAGE_BASE_URL || requestPublicBaseUrl;
+  const getPreparedWxVideos = () => finalVideos.map(source => publishReferenceUrl(source, wxMediaBaseUrl));
+  const getPreparedWxAudios = () => finalAudios.map(source => publishReferenceUrl(source, wxMediaBaseUrl));
   const size = RATIO_TO_SIZE[aspect_ratio] || '1280x720';
   const isSeedanceFast = model === 'seedance-2.0-fast';
   const isSoraV4 = model === 'sora-v4-fast' || model === 'sora-v4-pro';
@@ -1480,10 +1490,13 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
         if (overflowPlan.kind === 'wx-haidiyue') {
           sendEvent({ type: 'status', message: '正在通过 wx-海底月备用线路提交视频任务...' });
           const payload = buildWxHaidiYueVideoPayload({
+            model: selectedUpstreamModel,
             prompt: prompt.trim(),
             duration: Number(video_length) || 6,
             aspectRatio: aspect_ratio,
             images: await getPreparedWxImages(),
+            videos: getPreparedWxVideos(),
+            audios: getPreparedWxAudios(),
             faceSplit: local_face_processed
               ? false
               : model === WX_HAIDIYUE_FACE_SPLIT_MODEL
@@ -1608,10 +1621,13 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     } else if (isWxHaidiYue) {
       sendEvent({ type: 'status', message: '正在提交视频任务...' });
       const payload = buildWxHaidiYueVideoPayload({
+        model: upstreamModel,
         prompt: prompt.trim(),
         duration: Number(video_length) || 5,
         aspectRatio: aspect_ratio,
         images: await getPreparedWxImages(),
+        videos: getPreparedWxVideos(),
+        audios: getPreparedWxAudios(),
         faceSplit: local_face_processed
           ? false
           : model === WX_HAIDIYUE_FACE_SPLIT_MODEL
@@ -3028,6 +3044,7 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
             let fallbackResponse: Awaited<ReturnType<typeof fetch>>;
             if (overflowPlan.kind === 'wx-haidiyue') {
               const fallbackPayload = buildWxHaidiYueVideoPayload({
+                model: fallbackUpstreamModel,
                 prompt: String(latestMeta.prompt || latest.inputText || '').trim(),
                 duration: Number(latestMeta.seconds) || 6,
                 aspectRatio: latestMeta.aspect_ratio || latestMeta.ratio || '16:9',
@@ -3037,6 +3054,8 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
                     || latestMeta.publicBaseUrl
                     || process.env.BACKEND_URL,
                 }),
+                videos: referenceVideos.map((source: string) => publishReferenceUrl(source, latestMeta.publicBaseUrl || process.env.BACKEND_URL)),
+                audios: referenceAudios.map((source: string) => publishReferenceUrl(source, latestMeta.publicBaseUrl || process.env.BACKEND_URL)),
                 faceSplit: latestMeta.local_face_processed
                   ? false
                   : model === WX_HAIDIYUE_FACE_SPLIT_MODEL

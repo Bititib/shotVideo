@@ -9,6 +9,10 @@ import {
   WX_HAIDIYUE_FACE_SPLIT_MODEL,
   WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME,
   WX_HAIDIYUE_FACE_SPLIT_PRICE,
+  WX_HAIDIYUE_MODELS,
+  WX_HAIDIYUE_MULTIMODAL_MODEL,
+  WX_HAIDIYUE_MULTIMODAL_MODEL_NAME,
+  WX_HAIDIYUE_MULTIMODAL_PRICE,
   WX_HAIDIYUE_UPSTREAM_MODEL,
 } from '../server/services/wxHaidiYueAdapter.js';
 
@@ -46,6 +50,27 @@ describe('wx-海底月 face_split channel setting', () => {
     expect(publicSd25Channels.length).toBeGreaterThan(0);
     expect(publicSd25Channels.every(channel => channel.type === 'wx-haidiyue')).toBe(true);
     expect(db.select().from(models).where(eq(models.modelId, 'sd2.5-haidiyue-face')).get()).toBeUndefined();
+
+    expect(db.select().from(models).where(eq(models.modelId, WX_HAIDIYUE_MULTIMODAL_MODEL)).get()).toMatchObject({
+      displayName: WX_HAIDIYUE_MULTIMODAL_MODEL_NAME,
+      description: '海底月多模态模型；固定30秒；最多30图、10视频、10音频；固定按次计费 ¥6.00/次',
+      provider: 'wx-haidiyue',
+      isActive: 1,
+    });
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, WX_HAIDIYUE_MULTIMODAL_MODEL)).get()).toMatchObject({
+      billingType: 'per_call',
+      inputPrice: WX_HAIDIYUE_MULTIMODAL_PRICE,
+    });
+    expect(PricingService.quote(WX_HAIDIYUE_MULTIMODAL_MODEL, { seconds: 30 }, false)).toMatchObject({
+      billingType: 'per_call',
+      rate: 6,
+      cost: 6,
+    });
+    const multimodalChannels = db.select().from(channels).all().filter(channel => {
+      try { return JSON.parse(channel.supportedModels || '[]').includes(WX_HAIDIYUE_MULTIMODAL_MODEL); } catch { return false; }
+    });
+    expect(multimodalChannels.length).toBeGreaterThan(0);
+    expect(multimodalChannels.every(channel => channel.type === 'wx-haidiyue')).toBe(true);
   });
 
   it('defaults to enabled and persists administrator changes', () => {
@@ -59,10 +84,14 @@ describe('wx-海底月 face_split channel setting', () => {
     expect(db.select().from(channels).where(eq(channels.id, channelId)).get()?.faceSplitEnabled).toBe(1);
     expect(ChannelService.getChannels().find(channel => channel.id === channelId)?.faceSplitEnabled).toBe(1);
     expect(ChannelService.getChannels().find(channel => channel.id === channelId)).toMatchObject({
-      supportedModels: [WX_HAIDIYUE_FACE_SPLIT_MODEL],
-      modelMapping: { [WX_HAIDIYUE_FACE_SPLIT_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL },
+      supportedModels: [...WX_HAIDIYUE_MODELS],
+      modelMapping: {
+        [WX_HAIDIYUE_FACE_SPLIT_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL,
+        [WX_HAIDIYUE_MULTIMODAL_MODEL]: WX_HAIDIYUE_MULTIMODAL_MODEL,
+      },
     });
     expect(ChannelService.findChannelForModel(WX_HAIDIYUE_FACE_SPLIT_MODEL)?.id).toBe(channelId);
+    expect(ChannelService.findChannelForModel(WX_HAIDIYUE_MULTIMODAL_MODEL)?.id).toBe(channelId);
 
     ChannelService.updateChannel(channelId, { faceSplitEnabled: 0 });
     expect(db.select().from(channels).where(eq(channels.id, channelId)).get()?.faceSplitEnabled).toBe(0);

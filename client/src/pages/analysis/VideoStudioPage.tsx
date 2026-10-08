@@ -6,7 +6,7 @@ import ImageSlicerModal from '../../components/ImageSlicerModal';
 import FaceProcessingModal from '../../components/FaceProcessingModal';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
-import { SNUMOM_SD_MINI_MODEL, WX_HAIDIYUE_FACE_SPLIT_MODEL } from '../../utils/videoModelCapabilities';
+import { isWxHaidiYueVideoModel, SNUMOM_SD_MINI_MODEL, WX_HAIDIYUE_MULTIMODAL_MODEL } from '../../utils/videoModelCapabilities';
 import { findUnreadableImageIndexes, isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
 
 interface Segment { id: string; prompt: string; videoUrl: string; duration: number; model: string; lastFrame?: string; }
@@ -87,6 +87,7 @@ const isHmStudioVideoModel = (modelId: string) => HM_STUDIO_VIDEO_MODEL_IDS.has(
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === SNUMOM_SD_MINI_MODEL) return 9;
   if (modelId === 'sd2.5') return 9;
+  if (modelId === WX_HAIDIYUE_MULTIMODAL_MODEL) return 30;
   if (modelId === HM_STUDIO_SEEDANCE_V20_933_MODEL) return 9;
   if (modelId === HM_STUDIO_SEEDANCE_V25_101010_MODEL) return 10;
   if (modelId === HM_STUDIO_SEEDANCE_V25_301010_MODEL) return 30;
@@ -267,7 +268,7 @@ export default function VideoStudioPage() {
     }
     const hasLocallyProcessedImages = referenceImages.some(image => locallyProcessedImages.has(image));
     const allImagesLocallyProcessed = referenceImages.length > 0 && referenceImages.every(image => locallyProcessedImages.has(image));
-    if (selectedModel === WX_HAIDIYUE_FACE_SPLIT_MODEL && hasLocallyProcessedImages && !allImagesLocallyProcessed) {
+    if (isWxHaidiYueVideoModel(selectedModel) && hasLocallyProcessedImages && !allImagesLocallyProcessed) {
       setError('WX-Seedance V2.5 使用本地人脸拆分时，需要将全部参考图处理后再提交');
       return;
     }

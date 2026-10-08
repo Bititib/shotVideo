@@ -103,6 +103,7 @@ import {
   buildWxHaidiYueVideoPayload,
   isWxHaidiYueChannel,
   resolveWxHaidiYueFaceSplit,
+  validateWxHaidiYueVideoInput,
   wxHaidiYueCreateUrl,
   WX_HAIDIYUE_FACE_SPLIT_MODEL,
 } from '../services/wxHaidiYueAdapter.js';
@@ -1915,24 +1916,19 @@ async function handleVideoCreation(req: Request, res: Response) {
     return res.status(400).json({ error: hmStudioAdditionalValidationError });
   }
 
-  if (model === WX_HAIDIYUE_FACE_SPLIT_MODEL) {
-    const allowedRatios = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
-    if (seconds !== 30) {
-      cleanupFiles(req.files);
-      return res.status(400).json({ error: 'sd2.5 only supports exactly 30 seconds' });
-    }
-    if (resolution !== '720p') {
-      cleanupFiles(req.files);
-      return res.status(400).json({ error: 'sd2.5 only provides the 720p option' });
-    }
-    if (!allowedRatios.includes(ratio)) {
-      cleanupFiles(req.files);
-      return res.status(400).json({ error: `sd2.5 ratio must be one of ${allowedRatios.join(', ')}` });
-    }
-    if (image_urls.length > 9 || video_urls.length > 0 || audio_urls.length > 0 || body.first_frame_url || body.end_frame_url || body.last_frame_url) {
-      cleanupFiles(req.files);
-      return res.status(400).json({ error: 'sd2.5 supports at most 9 images and does not support video, audio, or first/last-frame references' });
-    }
+  const wxHaidiYueValidationError = validateWxHaidiYueVideoInput(model, {
+    seconds,
+    resolution,
+    ratio,
+    imageCount: image_urls.length,
+    videoCount: video_urls.length,
+    audioCount: audio_urls.length,
+    hasFirstFrame: Boolean(body.first_frame_url),
+    hasLastFrame: Boolean(body.end_frame_url || body.last_frame_url),
+  });
+  if (wxHaidiYueValidationError) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: wxHaidiYueValidationError });
   }
 
   if (model === 'td-seedance-2.5-720p') {
@@ -2334,10 +2330,13 @@ async function handleVideoCreation(req: Request, res: Response) {
         mediaBaseUrl: env.WX_HAIDIYUE_IMAGE_BASE_URL || requestPublicBaseUrl,
       });
       const payload = buildWxHaidiYueVideoPayload({
+        model: upstreamModel,
         prompt,
         duration: seconds,
         aspectRatio: ratio,
         images: preparedImages,
+        videos: video_urls.map(source => publishReferenceUrl(source, env.WX_HAIDIYUE_IMAGE_BASE_URL || requestPublicBaseUrl)),
+        audios: audio_urls.map(source => publishReferenceUrl(source, env.WX_HAIDIYUE_IMAGE_BASE_URL || requestPublicBaseUrl)),
         faceSplit: model === WX_HAIDIYUE_FACE_SPLIT_MODEL
           ? true
           : resolveWxHaidiYueFaceSplit(channel, body.face_split),

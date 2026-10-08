@@ -16,6 +16,7 @@ import { batchStore, tickVideoBatches } from '../services/videoBatchService.js';
 import { materializeContentMetadataAssets } from '../services/contentService.js';
 import { validateVideoPrompt } from '../services/videoPromptValidation.js';
 import type { VideoBatchInput } from '../../shared/videoBatch.js';
+import { WX_HAIDIYUE_MULTIMODAL_MAX_IMAGES, WX_HAIDIYUE_MULTIMODAL_MODEL } from '../services/wxHaidiYueAdapter.js';
 
 const router = Router();
 // Short-lived, single-use capabilities: no account JWT in a URL or browser memory
@@ -60,7 +61,8 @@ export function validateBatchInput(body: any): VideoBatchInput {
     const error = validateVideoPrompt(c?.prompt);
     if (error) throw new Error(`创意 ${index + 1}：${error}`);
     if (!Number.isInteger(c.count) || c.count < 1 || c.count > 100) throw new Error('每组生成数量需为 1–100 的整数');
-    return { prompt: c.prompt, count: c.count, reference_images: media(c.reference_images, 10, true),
+    const maxImages = body.model === WX_HAIDIYUE_MULTIMODAL_MODEL ? WX_HAIDIYUE_MULTIMODAL_MAX_IMAGES : 10;
+    return { prompt: c.prompt, count: c.count, reference_images: media(c.reference_images, maxImages, true),
       reference_videos: media(c.reference_videos, 10, false), audio_urls: media(c.audio_urls, 10, false) };
   });
   if (creatives.reduce((n, c) => n + c.count, 0) > 100) throw new Error('单批次最多生成 100 条视频');

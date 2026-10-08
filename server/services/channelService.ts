@@ -8,8 +8,7 @@ import {
   isWxHaidiYueChannel,
   WX_HAIDIYUE_CHANNEL_NAME,
   WX_HAIDIYUE_CHANNEL_TYPE,
-  WX_HAIDIYUE_FACE_SPLIT_MODEL,
-  WX_HAIDIYUE_UPSTREAM_MODEL,
+  WX_HAIDIYUE_MODELS,
 } from './wxHaidiYueAdapter.js';
 import { isLongxiaChannel, LONGXIA_MODELS, longxiaApiBaseUrl } from './longxiaVideoAdapter.js';
 import { isMiaowuChannel, MIAOWU_DEFAULT_VIDEO_MODELS, miaowuVideoModelListUrl } from './miaowuVideoAdapter.js';
@@ -394,11 +393,11 @@ export class ChannelService {
       baseUrl,
       apiKey: type === 'hmstudio' ? '' : (apiKey || ''),
       modelMapping: JSON.stringify(isHaya ? (modelMapping && Object.keys(modelMapping).length ? modelMapping : Object.fromEntries(HAYA_MODEL_IDS.map(id => [id, id]))) : isWxHaidiYue
-        ? { [WX_HAIDIYUE_FACE_SPLIT_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL }
+        ? Object.fromEntries(WX_HAIDIYUE_MODELS.map(modelId => [modelId, modelId]))
         : isLongxia ? (modelMapping && Object.keys(modelMapping).length ? modelMapping : Object.fromEntries(LONGXIA_MODELS.map(id => [id, id])))
         : isMiaowu ? miaowuMapping : (modelMapping || {})),
       supportedModels: JSON.stringify(isHaya ? (supportedModels?.length ? supportedModels : HAYA_MODEL_IDS) : isWxHaidiYue
-        ? [WX_HAIDIYUE_FACE_SPLIT_MODEL]
+        ? [...WX_HAIDIYUE_MODELS]
         : isLongxia ? (supportedModels?.length ? supportedModels : [...LONGXIA_MODELS])
         : isMiaowu ? miaowuModels : (supportedModels || [])),
       priority: priority ?? 0,
@@ -446,8 +445,8 @@ export class ChannelService {
     if (data.status !== undefined) updates.status = data.status;
     if (nextType === WX_HAIDIYUE_CHANNEL_TYPE) {
       updates.name = WX_HAIDIYUE_CHANNEL_NAME;
-      updates.supportedModels = JSON.stringify([WX_HAIDIYUE_FACE_SPLIT_MODEL]);
-      updates.modelMapping = JSON.stringify({ [WX_HAIDIYUE_FACE_SPLIT_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL });
+      updates.supportedModels = JSON.stringify(WX_HAIDIYUE_MODELS);
+      updates.modelMapping = JSON.stringify(Object.fromEntries(WX_HAIDIYUE_MODELS.map(modelId => [modelId, modelId])));
       updates.faceSplitEnabled = data.faceSplitEnabled !== undefined
         ? (data.faceSplitEnabled === 0 || data.faceSplitEnabled === false ? 0 : 1)
         : (channel.type === WX_HAIDIYUE_CHANNEL_TYPE ? channel.faceSplitEnabled : 1);
@@ -550,11 +549,11 @@ export class ChannelService {
     // 该渠道只暴露本站独立的海底月模型，不允许“同步模型”加入其他上游模型。
     if (isWxHaidiYueChannel(channel)) {
       db.update(channels).set({
-        supportedModels: JSON.stringify([WX_HAIDIYUE_FACE_SPLIT_MODEL]),
-        modelMapping: JSON.stringify({ [WX_HAIDIYUE_FACE_SPLIT_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL }),
+        supportedModels: JSON.stringify(WX_HAIDIYUE_MODELS),
+        modelMapping: JSON.stringify(Object.fromEntries(WX_HAIDIYUE_MODELS.map(modelId => [modelId, modelId]))),
         updatedAt: new Date().toISOString(),
       }).where(eq(channels.id, id)).run();
-      return { count: 1, added: 0, models: [WX_HAIDIYUE_FACE_SPLIT_MODEL] };
+      return { count: WX_HAIDIYUE_MODELS.length, added: 0, models: [...WX_HAIDIYUE_MODELS] };
     }
 
     const url = isHayaChannel(channel) ? hayaApiBaseUrl(channel.baseUrl) + '/v1/models' : isLongxiaChannel(channel)

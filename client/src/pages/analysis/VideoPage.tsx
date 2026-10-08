@@ -22,7 +22,7 @@ import { buildReplicatedVideoPrompt, getVideoReferenceAssets, getVideoReferenceF
 import { isLongxiaModel, LONGXIA_RATIOS } from '../../../../shared/longxiaVideo';
 import { getSiYueTianC2Model } from '../../../../shared/siYueTianVideoC2';
 import { formatBeijingTime } from '../../../../shared/time';
-import { isOmniVideoEditModel, isSnumomGrokImagineVideoModel, SNUMOM_SD_MINI_MODEL, snumomSdMiniSecondsForResolution, WX_HAIDIYUE_FACE_SPLIT_MODEL } from '../../utils/videoModelCapabilities';
+import { isOmniVideoEditModel, isSnumomGrokImagineVideoModel, isWxHaidiYueVideoModel, SNUMOM_SD_MINI_MODEL, snumomSdMiniSecondsForResolution, WX_HAIDIYUE_FACE_SPLIT_MODEL, WX_HAIDIYUE_MULTIMODAL_MODEL } from '../../utils/videoModelCapabilities';
 import { getContentFailureInfo } from '../../utils/contentFailure';
 import { findUnreadableImageIndexes, isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
 
@@ -381,8 +381,8 @@ const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   if (modelId === 'ad-seedance-2.5-480p') return 30;
   if (modelId === 'td-seedance-2.5-720p') return 30;
   if (modelId === 'vd-seedance-2.5-480p' || modelId === 'vd-seedance-2.5-720p') return 9;
+  if (modelId === WX_HAIDIYUE_MULTIMODAL_MODEL) return 30;
   if (modelId === WX_HAIDIYUE_FACE_SPLIT_MODEL) return 9;
-  if (modelId === 'sd2.5') return 9;
   if (modelId === 'sd2-c7') return 10;
   if (modelId === 'sd2-c6') return 9;
   if (modelId === 'tejiasd2' || modelId === 'sd2.0-fast-480p' || modelId.startsWith('sd-') || modelId.startsWith('sd2-') || modelId.startsWith('seedance-') || modelId.includes('sdas-') || modelId.startsWith('lg-')) return 9;
@@ -519,7 +519,8 @@ export default function VideoPage() {
     if (m === 'ad-seedance-2.5-480p') return 10;
     if (m === 'td-seedance-2.5-720p') return 10;
     if (m === 'vd-seedance-2.5-480p' || m === 'vd-seedance-2.5-720p') return 3;
-    if (m === WX_HAIDIYUE_FACE_SPLIT_MODEL || m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
+    if (m === WX_HAIDIYUE_MULTIMODAL_MODEL) return 10;
+    if (m === WX_HAIDIYUE_FACE_SPLIT_MODEL || m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     return 0;
   };
@@ -543,7 +544,8 @@ export default function VideoPage() {
     if (m === 'ad-seedance-2.5-480p') return 10;
     if (m === 'td-seedance-2.5-720p') return 10;
     if (m === 'vd-seedance-2.5-480p' || m === 'vd-seedance-2.5-720p') return 0;
-    if (m === WX_HAIDIYUE_FACE_SPLIT_MODEL || m === 'sd2.5' || m === 'sd2-c6' || m === 'sd2-c7') return 0;
+    if (m === WX_HAIDIYUE_MULTIMODAL_MODEL) return 10;
+    if (m === WX_HAIDIYUE_FACE_SPLIT_MODEL || m === 'sd2-c6' || m === 'sd2-c7') return 0;
     if (m === 'tejiasd2' || m === 'sd2.0-fast-480p' || m.includes('sdas-') || m.startsWith('sd-') || m.startsWith('sd2-') || m.startsWith('seedance-') || m.startsWith('lg-')) return 3;
     return 0;
   };
@@ -1079,7 +1081,7 @@ export default function VideoPage() {
 
   const ASPECT_RATIOS = isLongxiaModel(selectedModel)
     ? ALL_ASPECT_RATIOS.filter(ratio => LONGXIA_RATIOS.includes(ratio.value))
-    : selectedModel === WX_HAIDIYUE_FACE_SPLIT_MODEL
+    : isWxHaidiYueVideoModel(selectedModel)
     ? ALL_ASPECT_RATIOS.filter(ratio => ratio.value !== '3:2' && ratio.value !== '2:3')
     : isWan30Model(selectedModel)
     ? [
@@ -1121,7 +1123,7 @@ export default function VideoPage() {
       if (!wanRatios.includes(aspectRatio)) setAspectRatio('16:9');
     }
 
-    if (selectedModel === WX_HAIDIYUE_FACE_SPLIT_MODEL) {
+    if (isWxHaidiYueVideoModel(selectedModel)) {
       const haidiYueRatios = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
       if (!haidiYueRatios.includes(aspectRatio)) setAspectRatio('16:9');
     }
@@ -1430,7 +1432,7 @@ export default function VideoPage() {
     }
     const hasLocallyProcessedImages = referenceImages.some(image => locallyProcessedImages.has(image));
     const allImagesLocallyProcessed = referenceImages.length > 0 && referenceImages.every(image => locallyProcessedImages.has(image));
-    if (selectedModel === WX_HAIDIYUE_FACE_SPLIT_MODEL && hasLocallyProcessedImages && !allImagesLocallyProcessed) {
+    if (isWxHaidiYueVideoModel(selectedModel) && hasLocallyProcessedImages && !allImagesLocallyProcessed) {
       setError('WX-Seedance V2.5 使用本地人脸拆分时，需要将全部参考图处理后再提交，避免上游重复处理');
       return;
     }
@@ -1438,7 +1440,7 @@ export default function VideoPage() {
       setError('视频编辑模型必须上传参考视频');
       return;
     }
-    if (!getHayaVideoSpec(selectedModel) && !isLongxiaModel(selectedModel) && !isOmniVideoEditModel(selectedModel) && !isWan30Model(selectedModel) && selectedModel !== SNUMOM_SD_MINI_MODEL && selectedModel !== 'seedance-2.5-deal' && selectedModel !== 'seedance-2.5-pro' && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
+    if (!getHayaVideoSpec(selectedModel) && !isLongxiaModel(selectedModel) && !isOmniVideoEditModel(selectedModel) && !isWan30Model(selectedModel) && selectedModel !== SNUMOM_SD_MINI_MODEL && selectedModel !== WX_HAIDIYUE_MULTIMODAL_MODEL && selectedModel !== 'seedance-2.5-deal' && selectedModel !== 'seedance-2.5-pro' && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
       setError('参考视频或音频模式下必须上传至少一张参考图');
       return;
     }

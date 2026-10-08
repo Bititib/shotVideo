@@ -16,6 +16,10 @@ import {
   WX_HAIDIYUE_FACE_SPLIT_MODEL,
   WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME,
   WX_HAIDIYUE_FACE_SPLIT_PRICE,
+  WX_HAIDIYUE_MODELS,
+  WX_HAIDIYUE_MULTIMODAL_MODEL,
+  WX_HAIDIYUE_MULTIMODAL_MODEL_NAME,
+  WX_HAIDIYUE_MULTIMODAL_PRICE,
   WX_HAIDIYUE_UPSTREAM_MODEL,
 } from '../services/wxHaidiYueAdapter.js';
 import {
@@ -246,6 +250,7 @@ export async function syncModelsFromAPI() {
     { provider: 'newtoken', modelId: 'veo-omni-flash-video-edit', displayName: 'Veo Omni Flash 视频编辑', description: '【不卡人脸-定制版】无水印视频编辑；必须提供1个参考视频，可附加多张参考图；固定10秒，参考视频最长15秒', capabilities: JSON.stringify(['video']) },
     { provider: 'pidoi', modelId: 'veo-3-1', displayName: 'Veo 3-1', capabilities: JSON.stringify(['video']) },
     { provider: 'wx-haidiyue', modelId: WX_HAIDIYUE_FACE_SPLIT_MODEL, displayName: WX_HAIDIYUE_FACE_SPLIT_MODEL_NAME, description: '支持真人；固定30秒；最多9张参考图；固定按次计费 ¥2.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'wx-haidiyue', modelId: WX_HAIDIYUE_MULTIMODAL_MODEL, displayName: WX_HAIDIYUE_MULTIMODAL_MODEL_NAME, description: '海底月多模态模型；固定30秒；最多30图、10视频、10音频；固定按次计费 ¥6.00/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'seedance', modelId: 'seedance-2.0', displayName: 'Seedance 2.0', description: 'Seedance 2.0 文生/图生视频 (异步，¥1.5/次)', capabilities: JSON.stringify(['video']), isActive: 1 },
     ...LONGXIA_MODELS.map(modelId => ({ provider: 'longxia', modelId,
       displayName: 'LongXia Seedance 2.5 ' + longxiaResolution(modelId) + '（按秒）',
@@ -304,7 +309,7 @@ export async function syncModelsFromAPI() {
         || siYueTianImageModelIds.has(m.modelId)
         || siYueTianVideoModelIds.has(m.modelId)
         || mingFeiImageModelIds.has(m.modelId)
-        || m.modelId === WX_HAIDIYUE_FACE_SPLIT_MODEL)
+        || WX_HAIDIYUE_MODELS.includes(m.modelId as typeof WX_HAIDIYUE_MODELS[number]))
         && existing.provider !== m.provider;
       // Existing presentation fields belong to the administrator, not startup defaults.
       if (providerNeedsUpdate || existing.capabilities !== m.capabilities) {
@@ -1092,6 +1097,7 @@ export async function initDatabase() {
       extraParams: model.resolutionPrices || {},
     })),
     { modelPattern: WX_HAIDIYUE_FACE_SPLIT_MODEL, billingType: 'per_call', inputPrice: WX_HAIDIYUE_FACE_SPLIT_PRICE, category: 'video' },
+    { modelPattern: WX_HAIDIYUE_MULTIMODAL_MODEL, billingType: 'per_call', inputPrice: WX_HAIDIYUE_MULTIMODAL_PRICE, category: 'video' },
     { modelPattern: 'sd2-c6', billingType: 'per_call', inputPrice: legacyRate('sd2_c6_rate', 2.50), category: 'video' },
     { modelPattern: 'sd2-mini', billingType: 'per_call', inputPrice: legacyRate('sd2_mini_rate', 2.00), category: 'video' },
     { modelPattern: 'seedance2.0-933', billingType: 'per_call', inputPrice: legacyRate('seedance2_0_933_rate', 3.00), category: 'video' },
@@ -1877,7 +1883,7 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 HM Studio 渠道出错:', err.message);
   }
 
-  // 18) wx-海底月承载独立的 sd2.5 人脸拆分选项，也可作为 HM Studio 满载时的备用渠道。
+  // 18) wx-海底月承载 sd2.5 与 2.5-s，也可作为 HM Studio 满载时的备用渠道。
   try {
     const wxHaidiYueBaseUrl = 'https://ap.968968968.xyz/v1';
     const wxHaidiYueApiKey = env.WX_HAIDIYUE_API_KEY.trim();
@@ -1891,8 +1897,11 @@ export async function initDatabase() {
       name: WX_HAIDIYUE_CHANNEL_NAME,
       type: WX_HAIDIYUE_CHANNEL_TYPE,
       baseUrl: wxHaidiYueBaseUrl,
-      supportedModels: JSON.stringify([WX_HAIDIYUE_FACE_SPLIT_MODEL]),
-      modelMapping: JSON.stringify({ [WX_HAIDIYUE_FACE_SPLIT_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL }),
+      supportedModels: JSON.stringify(WX_HAIDIYUE_MODELS),
+      modelMapping: JSON.stringify({
+        [WX_HAIDIYUE_FACE_SPLIT_MODEL]: WX_HAIDIYUE_UPSTREAM_MODEL,
+        [WX_HAIDIYUE_MULTIMODAL_MODEL]: WX_HAIDIYUE_MULTIMODAL_MODEL,
+      }),
       priority: 100,
       weight: 1,
       maxRetries: 0,
@@ -1917,7 +1926,7 @@ export async function initDatabase() {
         updates.status = 0;
       }
       db.update(channels).set(updates).where(eq(channels.id, existingWxHaidiYue.id)).run();
-      console.log(`🔄 已校准 ${WX_HAIDIYUE_CHANNEL_NAME}（${WX_HAIDIYUE_FACE_SPLIT_MODEL} -> ${WX_HAIDIYUE_UPSTREAM_MODEL}）`);
+      console.log(`🔄 已校准 ${WX_HAIDIYUE_CHANNEL_NAME}（${WX_HAIDIYUE_MODELS.join(', ')}）`);
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 wx-海底月 sd2.5 分流渠道出错:', err.message);
@@ -1926,7 +1935,7 @@ export async function initDatabase() {
   // The public model id is exclusive to wx-海底月. Remove stale bindings from
   // every other channel, including administrator-created legacy channels.
   try {
-    const publicModelId = WX_HAIDIYUE_FACE_SPLIT_MODEL;
+    const publicModelIds = new Set<string>(WX_HAIDIYUE_MODELS);
     for (const channel of db.select().from(channels).all()) {
       if (channel.type === WX_HAIDIYUE_CHANNEL_TYPE) continue;
       let supportedModels: string[] = [];
@@ -1934,10 +1943,10 @@ export async function initDatabase() {
       try { supportedModels = JSON.parse(channel.supportedModels || '[]'); } catch { }
       try { modelMapping = JSON.parse(channel.modelMapping || '{}'); } catch { }
       if (!Array.isArray(supportedModels)) supportedModels = [];
-      const filteredModels = supportedModels.filter(modelId => modelId !== publicModelId);
-      const hadMapping = Object.prototype.hasOwnProperty.call(modelMapping, publicModelId);
+      const filteredModels = supportedModels.filter(modelId => !publicModelIds.has(modelId));
+      const hadMapping = [...publicModelIds].some(modelId => Object.prototype.hasOwnProperty.call(modelMapping, modelId));
       if (filteredModels.length === supportedModels.length && !hadMapping) continue;
-      delete modelMapping[publicModelId];
+      for (const modelId of publicModelIds) delete modelMapping[modelId];
       db.update(channels).set({
         supportedModels: JSON.stringify(filteredModels),
         modelMapping: JSON.stringify(modelMapping),
