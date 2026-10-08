@@ -186,6 +186,7 @@ const getModelGroup = (modelId: string) => {
   if (isHmStudioVideoModel(modelId)) return 'HM 系列';
   if (id.includes('veo') || id.includes('omni-flash')) return 'Veo (Google) 系列';
   if (id.includes('minimax')) return 'MiniMax 系列';
+  if (id === WX_HAIDIYUE_MULTIMODAL_MODEL) return 'Seedance 系列';
   if (id === SNUMOM_SD_MINI_MODEL) return 'Seedance 系列';
   if (id.includes('seedance') || id.includes('sd2') || id.includes('sdas') || id.includes('lg-')) return 'Seedance 系列';
   if (id.includes('sora')) return 'Sora 系列';
