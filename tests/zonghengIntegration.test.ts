@@ -1,3 +1,4 @@
+import { ZONGHENG_VIDEO_MODELS } from '../shared/zonghengVideo';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
@@ -107,7 +108,73 @@ afterEach(()=>{
 afterAll(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));sqlite.close();});
 async function post(endpoint:string,body:any){return nativeFetch(origin+endpoint,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer test'},body:JSON.stringify(body)});}
 const request={model:'zongheng-video-public',prompt:'产品视频',video_length:6,resolution:'720p',aspect_ratio:'16:9'};
+function installConfirmedVideos() {
+  const ids = ZONGHENG_VIDEO_MODELS.map(spec => 'zongheng-' + spec.id);
+  for (const id of ids) {
+    db.insert(models).values({modelId:id,displayName:id,provider:'zongheng',capabilities:'["video"]'}).run();
+    db.insert(modelPricing).values({modelPattern:id,billingType:'per_call',inputPrice:2}).run();
+  }
+  const channel=db.select().from(channels).get()!;
+  ChannelService.updateChannel(channel.id,{supportedModels:ids,modelMapping:Object.fromEntries(ZONGHENG_VIDEO_MODELS.map(spec=>['zongheng-'+spec.id,spec.id]))});
+}
 describe('Zongheng legacy entry points, isolated database and simulated provider',()=>{
+  it('classifies all four supplied IDs as video and repairs old text entries without changing their enabled state',async()=>{
+    db.insert(models).values({modelId:'zongheng-Cseadanco2.5K',displayName:'保留名称',provider:'zongheng',capabilities:'["text"]',isActive:0}).run();
+    upstream=async()=>Response.json({data:ZONGHENG_VIDEO_MODELS.map(spec=>({id:spec.id}))});
+    await ChannelService.syncModels(db.select().from(channels).get()!.id);
+    for(const spec of ZONGHENG_VIDEO_MODELS){
+      expect(db.select().from(models).all().find(m=>m.modelId==='zongheng-'+spec.id)).toMatchObject({capabilities:'["video"]',isActive:0});
+    }
+    expect(db.select().from(models).all().find(m=>m.modelId==='zongheng-Cseadanco2.5K')?.displayName).toBe('保留名称');
+    expect(JSON.parse(db.select().from(channels).get()!.modelMapping)).toEqual(Object.fromEntries(ZONGHENG_VIDEO_MODELS.map(spec=>['zongheng-'+spec.id,spec.id])));
+  });
+  it('lists exact legacy durations and one resolution for each confirmed video model',async()=>{
+    installConfirmedVideos();
+    const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
+    for(const spec of ZONGHENG_VIDEO_MODELS){
+      expect(listed.find(m=>m.id==='zongheng-'+spec.id)).toMatchObject({allowedSeconds:spec.seconds,maxSeconds:spec.seconds[spec.seconds.length-1],rates:{[spec.resolution]:2},series:'zongheng',available:true});
+      expect(Object.keys(listed.find(m=>m.id==='zongheng-'+spec.id).rates)).toEqual([spec.resolution]);
+      expect(listed.find(m=>m.id==='zongheng-'+spec.id).routingLimits).toBeUndefined();
+    }
+  });
+  it.each(ZONGHENG_VIDEO_MODELS)('uses mapped $id with valid defaults in website and API generation',async spec=>{
+    installConfirmedVideos();
+    for(const endpoint of ['/api/video/generate','/v1/videos']){
+      upstream=async(_url,init)=>{
+        if(init.method==='POST'){expect(JSON.parse(init.body)).toMatchObject({model:spec.id,duration:spec.seconds[0],resolution:spec.resolution});return Response.json({task_id:'vid_confirmed'});}
+        return Response.json({status:'succeeded',video_url:'https://media.invalid/done.mp4'});
+      };
+      const response=await post(endpoint,{model:'zongheng-'+spec.id,prompt:'产品视频'});
+      expect(response.status).toBe(endpoint.startsWith('/api/')?200:202);await response.text();
+      await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    }
+    expect(balance()).toBe(96);
+  });
+  it('honors API video_length and canonicalizes 2K for matching the legacy price',async()=>{
+    installConfirmedVideos();
+    sqlite.prepare('UPDATE model_pricing SET extra_params=? WHERE model_pattern=?').run(JSON.stringify({'2k':3}),'zongheng-Xminimex-h3');
+    upstream=async(_url,init)=>{
+      if(init.method==='POST'){expect(JSON.parse(init.body)).toMatchObject({model:'Xminimex-h3',duration:13,resolution:'2k'});return Response.json({task_id:'vid_2k'});}
+      return Response.json({status:'succeeded',video_url:'https://media.invalid/done.mp4'});
+    };
+    const response=await post('/v1/videos',{model:'zongheng-Xminimex-h3',prompt:'产品视频',video_length:13,resolution:'2K'});
+    expect(response.status).toBe(202);await vi.waitFor(()=>expect(latest().status).toBe('completed'));expect(balance()).toBe(97);
+  });
+  it('rejects conflicting API duration aliases without submission or charge',async()=>{
+    installConfirmedVideos();
+    const response=await post('/v1/videos',{model:'zongheng-wan-1080',prompt:'产品视频',seconds:5,video_length:30});
+    expect(response.status).toBe(400);expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(ZONGHENG_VIDEO_MODELS)('rejects invalid $id duration and resolution before charging in all legacy entry points',async spec=>{
+    installConfirmedVideos();
+    for(const endpoint of ['/api/video/validate','/api/video/generate','/v1/videos']){
+      for(const fields of [{video_length:4,seconds:4,resolution:spec.resolution},{video_length:spec.seconds[0],seconds:spec.seconds[0],resolution:'480p'}]){
+        const response=await post(endpoint,{model:'zongheng-'+spec.id,prompt:'产品视频',...fields});
+        expect(response.status).toBe(400);
+      }
+    }
+    expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();
+  });
   it('discovers namespaced disabled models and preserves provider public IDs',async()=>{
     upstream=async url=>{expect(url).toBe('https://channel.invalid/v1/models');return Response.json({data:[{id:'gpt-image-2',type:'image'},{id:'custom-model',type:'video'},{id:'gpt-public'}]});};
     const result=await ChannelService.syncModels(db.select().from(channels).get()!.id);

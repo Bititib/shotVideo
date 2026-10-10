@@ -1,3 +1,4 @@
+import { getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, zonghengBaseUrl, buildZonghengVideoPayload, validateZonghengVideoAliases, buildZonghengImagePayload, validateZonghengImageReferences, zonghengImageSize, submitZonghengVideo, ZonghengSubmissionError } from '../services/zonghengAdapter.js';
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
 import { patchZonghengTask, reviewZonghengTask, zonghengOrder } from '../services/zonghengTaskService.js';
@@ -1623,8 +1624,13 @@ async function handleVideoCreation(req: Request, res: Response) {
     return res.status(403).json({ error: `Token has no access to model ${model}` });
   }
 
-  // 规范化并提取入参别名 (seconds / duration)
-  let seconds = body.seconds !== undefined ? Number(body.seconds) : undefined;
+  // Keep the website/API duration aliases consistent for the legacy video route.
+  const suppliedDurations = [body.seconds, body.duration, body.video_length].filter(value => value !== undefined).map(Number);
+  if (suppliedDurations.some(value => !Number.isFinite(value)) || new Set(suppliedDurations).size > 1) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: 'seconds, duration and video_length must agree and be valid numbers' });
+  }
+  let seconds = body.seconds !== undefined ? Number(body.seconds) : body.video_length !== undefined ? Number(body.video_length) : undefined;
   const duration = body.duration !== undefined ? Number(body.duration) : undefined;
 
   if (seconds !== undefined && duration !== undefined && seconds !== duration) {
@@ -1632,12 +1638,12 @@ async function handleVideoCreation(req: Request, res: Response) {
     return res.status(400).json({ error: 'seconds and duration must be equal when both are provided' });
   }
   if (seconds === undefined) {
-    seconds = duration !== undefined ? duration : 6;
+    seconds = duration !== undefined ? duration : getZonghengVideoSpec(model)?.seconds[0] || 6;
   }
 
   const ratio = body.ratio || body.aspect_ratio || '16:9';
   const siYueTianSeedance25Spec = getSiYueTianSeedance25VideoSpec(model);
-  const resolution = normalizeHmStudioVideoResolution(model, body.resolution || body.resolution_name) || body.resolution || body.resolution_name
+  const resolution = normalizeZonghengVideoResolution(model, body.resolution || body.resolution_name) || normalizeHmStudioVideoResolution(model, body.resolution || body.resolution_name) || body.resolution || body.resolution_name
     || getHayaVideoSpec(model)?.resolution
     || siYueTianSeedance25Spec?.resolution
     || (isLongxiaModel(model) ? longxiaResolution(model) : undefined)

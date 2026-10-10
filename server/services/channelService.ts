@@ -1,3 +1,4 @@
+import { getZonghengVideoSpec } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, zonghengBaseUrl, ZONGHENG_MODEL_PREFIX } from './zonghengAdapter.js';
 import { HAYA_MODEL_IDS } from '../../shared/hayaVideo.js';
 import { isHayaChannel, hayaApiBaseUrl } from './hayaVideoAdapter.js';
@@ -587,7 +588,8 @@ export class ChannelService {
       if (!modelId) return { modelId: '', displayName: '', capability: 'text' };
       const displayName = String(typeof item === 'string' ? item : item.display_name || item.name || modelId).trim();
       const explicitType = String(typeof item === 'object' ? item.type || item.category || '' : '').toLowerCase();
-      const capability = explicitType.includes('tts') || /tts|speech/i.test(modelId)
+      const knownZonghengVideo = isZonghengChannel(channel) && Boolean(getZonghengVideoSpec(modelId));
+      const capability = knownZonghengVideo ? 'video' : explicitType.includes('tts') || /tts|speech/i.test(modelId)
         ? 'tts'
         : explicitType.includes('lip') || /lip-sync/i.test(modelId)
         ? 'lip_sync'
@@ -616,6 +618,8 @@ export class ChannelService {
           isActive: isZonghengChannel(channel) ? 0 : 1,
         }).run();
         added++;
+      } else if (isZonghengChannel(channel) && getZonghengVideoSpec(item.modelId) && existing.capabilities !== JSON.stringify(['video'])) {
+        db.update(models).set({ capabilities: JSON.stringify(['video']) }).where(eq(models.id, existing.id)).run();
       } else if (item.capability === 'tts' && existing.capabilities !== JSON.stringify(['tts'])) {
         db.update(models).set({ capabilities: JSON.stringify(['tts']) }).where(eq(models.id, existing.id)).run();
       }

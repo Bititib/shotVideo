@@ -1,3 +1,4 @@
+import { ZONGHENG_VIDEO_MODELS, ZONGHENG_MODEL_PREFIX, getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, buildZonghengVideoPayload, submitZonghengVideo, ZonghengSubmissionError, zonghengTaskUrl, normalizeZonghengTask } from '../services/zonghengAdapter.js';
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
 import { patchZonghengTask, reviewZonghengTask, zonghengOrder } from '../services/zonghengTaskService.js';
@@ -289,6 +290,7 @@ interface ModelMeta {
   requireRef: boolean;               // 是否必须传参考图
 }
 const MODEL_META: Record<string, ModelMeta> = {
+  ...Object.fromEntries(ZONGHENG_VIDEO_MODELS.map(spec => [ZONGHENG_MODEL_PREFIX + spec.id, { series: 'zongheng', allowedSeconds: [...spec.seconds], requireRef: false }])),
   ...Object.fromEntries(SI_YUE_TIAN_C2_MODELS.map(spec => [spec.id, { series: 'siyuetian-c2', allowedSeconds: Array.from({ length: spec.maxSeconds - spec.minSeconds + 1 }, (_, i) => i + spec.minSeconds), requireRef: false }])),
   ...Object.fromEntries(HAYA_VIDEO_MODELS.map(spec => [spec.id, { series: 'haya', allowedSeconds: HAYA_SECONDS, requireRef: false }])),
   ...Object.fromEntries(SI_YUE_TIAN_SEEDANCE_25_VIDEO_SPECS.map(spec => [spec.id, {
@@ -346,6 +348,7 @@ const MODEL_META: Record<string, ModelMeta> = {
 };
 
 const DEFAULT_VIDEO_MODELS = [
+  ...ZONGHENG_VIDEO_MODELS.map(spec => ({ id: ZONGHENG_MODEL_PREFIX + spec.id, name: '纵横科技 · ' + spec.id, description: spec.resolution + '；' + spec.seconds.join('、') + '秒', maxSeconds: spec.seconds[spec.seconds.length - 1], icon: '🎬' })),
   ...SI_YUE_TIAN_C2_MODELS.map(spec => ({ id: spec.id, name: `${spec.name} · 四月天`, description: `最多${spec.images}图、${spec.videos}视频、${spec.audios}音频；按次计费`, maxSeconds: spec.maxSeconds, icon: '🎬' })),
   ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_SPECS.map(spec => ({
     id: spec.id,
@@ -658,7 +661,7 @@ router.get('/models', (_req: Request, res: Response) => {
     // The pricing table is authoritative; legacy setting reads above are retained
     // only so old databases can be migrated without losing their former values.
     const billingType = quotePrice(m.id).billingType;
-    const configuredResolutions = getHayaVideoSpec(m.id) ? [getHayaVideoSpec(m.id)!.resolution] : Object.keys(rates).length > 0 ? Object.keys(rates) : ['720p'];
+    const configuredResolutions = getZonghengVideoSpec(m.id) ? [getZonghengVideoSpec(m.id)!.resolution] : getHayaVideoSpec(m.id) ? [getHayaVideoSpec(m.id)!.resolution] : Object.keys(rates).length > 0 ? Object.keys(rates) : ['720p'];
     rates = Object.fromEntries(configuredResolutions.map(resolution => [
       resolution,
       quotePrice(m.id, { resolution }).rate,
@@ -719,7 +722,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     prompt,
     model = 'nd-seedance-2.0-720p',
     aspect_ratio = '16:9',
-    video_length = 6,
+    video_length = getZonghengVideoSpec(model)?.seconds[0] || 6,
     resolution: requestedResolution,
     reference_images: rawReferenceImages = [],   // base64 dataURL 数组
     reference_videos = [],   // 新多视频数组字段
@@ -736,7 +739,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     compliance_mode,         // 合规素材风格
   } = req.body;
   let reference_images: string[] = Array.isArray(rawReferenceImages) ? rawReferenceImages : [];
-  const resolution = normalizeHmStudioVideoResolution(model, requestedResolution) || requestedResolution || getHayaVideoSpec(model)?.resolution || (isLongxiaModel(model) ? longxiaResolution(model) : undefined) || (isJulunMinimaxH3Model(model) ? JULUN_MINIMAX_H3_RESOLUTION : '720p');
+  const resolution = normalizeZonghengVideoResolution(model, requestedResolution) || normalizeHmStudioVideoResolution(model, requestedResolution) || requestedResolution || getHayaVideoSpec(model)?.resolution || (isLongxiaModel(model) ? longxiaResolution(model) : undefined) || (isJulunMinimaxH3Model(model) ? JULUN_MINIMAX_H3_RESOLUTION : '720p');
 
   // 向后兼容：合并旧单值字段到新数组
   const finalVideos: string[] = (Array.isArray(reference_videos) && reference_videos.length > 0)

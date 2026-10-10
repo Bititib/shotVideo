@@ -1,3 +1,4 @@
+import { ZONGHENG_VIDEO_MODELS, getZonghengVideoSpec } from '../shared/zonghengVideo';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -9,6 +10,18 @@ afterEach(() => vi.unstubAllGlobals());
 const input = { model:'公开模型',prompt:' 产品展示 ',seconds:10,ratio:'9:16',resolution:'720p',images:['https://example.com/i.jpg'],videos:['https://example.com/v.mp4'],audios:['https://example.com/a.wav'],generateAudio:false };
 const options = {baseUrl:'https://channel.invalid/v1/',apiKey:'test-key',publicBaseUrl:'https://our.invalid'};
 describe('Zongheng public protocol', () => {
+  it.each(ZONGHENG_VIDEO_MODELS)('validates confirmed parameters for $id and preserves the exact public ID', spec => {
+    expect(getZonghengVideoSpec('zongheng-' + spec.id)).toBe(spec);
+    for (const seconds of spec.seconds) {
+      expect(buildZonghengVideoPayload({...input, model:spec.id, seconds, resolution:spec.resolution.toUpperCase()})).toMatchObject({model:spec.id, duration:seconds, resolution:spec.resolution});
+    }
+    expect(() => buildZonghengVideoPayload({...input,model:spec.id,seconds:4,resolution:spec.resolution})).toThrow('仅支持');
+    expect(() => buildZonghengVideoPayload({...input,model:spec.id,seconds:spec.seconds[0],resolution:'480p'})).toThrow(spec.resolution);
+  });
+  it('does not silently substitute similar-looking public model IDs', () => {
+    expect(getZonghengVideoSpec('Cseadance2.5K')).toBeUndefined();
+    expect(getZonghengVideoSpec('Xminimax-h3')).toBeUndefined();
+  });
   it('whitelists unified fields, preserves all materials and false audio setting', () => {
     const payload = buildZonghengVideoPayload({...input,extra:{secret:true},metadata:{upstream:'hidden'}} as any);
     expect(payload).toEqual({model:'公开模型',prompt:'产品展示',duration:10,ratio:'9:16',resolution:'720p',images:input.images,reference_videos:input.videos,reference_audios:input.audios,generate_audio:false});
