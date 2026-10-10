@@ -11,6 +11,7 @@ const input = { model:'公开模型',prompt:' 产品展示 ',seconds:10,ratio:'9
 const options = {baseUrl:'https://channel.invalid/v1/',apiKey:'test-key',publicBaseUrl:'https://our.invalid'};
 describe('Zongheng public protocol', () => {
   it.each(ZONGHENG_VIDEO_MODELS)('validates confirmed parameters for $id and preserves the exact public ID', spec => {
+    expect(getZonghengVideoSpec('ZH-' + spec.id)).toBe(spec);
     expect(getZonghengVideoSpec('zongheng-' + spec.id)).toBe(spec);
     for (const seconds of spec.seconds) {
       expect(buildZonghengVideoPayload({...input, model:spec.id, seconds, resolution:spec.resolution.toUpperCase()})).toMatchObject({model:spec.id, duration:seconds, resolution:spec.resolution});

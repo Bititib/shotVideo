@@ -1,3 +1,4 @@
+import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { models, settings } from '../db/schema.js';
@@ -20,7 +21,7 @@ export class PublicModelNameError extends Error {
 export function resolvePublicModelId(value: string): string {
   const rows = db.select().from(models).all();
   const oldAlias = aliases()[value];
-  const matches = rows.filter(row => row.modelId === value || row.displayName === value || row.id === oldAlias);
+  const matches = rows.filter(row => row.modelId === value || row.modelId === canonicalZonghengModelId(value) || row.displayName === value || row.id === oldAlias);
   if (matches.length > 1) throw new PublicModelNameError(`模型名称“${value}”存在冲突，请管理员设置唯一名称`);
   return matches[0]?.modelId || value;
 }

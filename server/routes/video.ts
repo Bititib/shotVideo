@@ -1,4 +1,4 @@
-import { ZONGHENG_VIDEO_MODELS, ZONGHENG_MODEL_PREFIX, getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
+import { canonicalZonghengModelId, ZONGHENG_VIDEO_MODELS, ZONGHENG_MODEL_PREFIX, getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, buildZonghengVideoPayload, submitZonghengVideo, ZonghengSubmissionError, zonghengTaskUrl, normalizeZonghengTask } from '../services/zonghengAdapter.js';
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
 import { patchZonghengTask, reviewZonghengTask, zonghengOrder } from '../services/zonghengTaskService.js';
@@ -718,6 +718,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     batchContext = batchContextForRequest(req);
     if (batchContext) req.body = batchContext.body;
   } catch (error: any) { return res.status(409).json({ error: error.message }); }
+  if (typeof req.body?.model === 'string') req.body.model = canonicalZonghengModelId(req.body.model);
   const {
     prompt,
     model = 'nd-seedance-2.0-720p',
@@ -3240,7 +3241,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   }
   activePolls.add(contentId);
 
-  let model = record.modelId || '';
+  let model = canonicalZonghengModelId(record.modelId || '');
   if (model === 'sdas-xh-sd2.0-933-3-pro-720p') {
     model = 'sdas-pd-sd2.0-pro-933-5-720p';
   }

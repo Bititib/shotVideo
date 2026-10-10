@@ -1,3 +1,4 @@
+import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { db } from '../db/index.js';
 import { modelPricing, models } from '../db/schema.js';
 import { eq, desc } from 'drizzle-orm';
@@ -44,7 +45,7 @@ function roundCost(value: number): number {
 
 export class PricingService {
   private static getRule(modelName: string, allowWildcard = true) {
-    const exact = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, modelName)).get();
+    const exact = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, canonicalZonghengModelId(modelName))).get();
     if (exact || !allowWildcard) return exact;
     return db.select().from(modelPricing).where(eq(modelPricing.modelPattern, '*')).get();
   }

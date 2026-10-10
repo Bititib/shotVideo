@@ -542,7 +542,7 @@ export default function ChannelsPage() {
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
                 </div>
               )}
-              {edit.type === 'zongheng' && <p className="text-xs leading-5 text-zinc-400">同步模型会创建带 zongheng- 前缀的停用入口；请核对模型能力、配置价格后启用。视频参考素材提交时上传，图片暂仅支持文生图。</p>}
+              {edit.type === 'zongheng' && <p className="text-xs leading-5 text-zinc-400">同步模型会创建带 ZH- 前缀的停用入口；请核对模型能力、配置价格后启用。视频参考素材提交时上传，图片暂仅支持文生图。</p>}
               {edit.type === 'wx-haidiyue' && (
                 <section aria-labelledby="haidi-face-split-title" className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3.5 sm:p-4">
                   <div className="flex items-center justify-between gap-4">

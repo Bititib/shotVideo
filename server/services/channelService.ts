@@ -1,4 +1,4 @@
-import { getZonghengVideoSpec } from '../../shared/zonghengVideo.js';
+import { canonicalZonghengModelId, getZonghengVideoSpec } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, zonghengBaseUrl, ZONGHENG_MODEL_PREFIX } from './zonghengAdapter.js';
 import { HAYA_MODEL_IDS } from '../../shared/hayaVideo.js';
 import { isHayaChannel, hayaApiBaseUrl } from './hayaVideoAdapter.js';
@@ -315,6 +315,7 @@ export class ChannelService {
   }
 
   static findChannelsForModel(modelName: string, activeChannels?: any[]) {
+    modelName = canonicalZonghengModelId(modelName);
     const registered = modelName.startsWith(ZONGHENG_MODEL_PREFIX)
       ? db.select().from(models).where(eq(models.modelId, modelName)).get() : undefined;
     return (activeChannels || this.getActiveChannels())

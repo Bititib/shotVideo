@@ -1,3 +1,4 @@
+import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, ZonghengSubmissionError, buildZonghengImagePayload, validateZonghengImageReferences, zonghengImageSize } from '../services/zonghengAdapter.js';
 import { generateZonghengImages } from '../services/zonghengImageService.js';
 import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
@@ -345,6 +346,7 @@ router.get('/models', (_req: Request, res: Response) => {
 
 /** POST /api/image-gen/generate — 图片生成（支持多图 + 参考图） */
 router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware('generate_image'), quotaMiddleware, async (req: TierRequest, res: Response) => {
+  if (typeof req.body?.model === 'string') req.body.model = canonicalZonghengModelId(req.body.model);
   const {
     prompt,
     model = 'gpt-image-2',

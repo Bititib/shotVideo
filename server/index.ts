@@ -1,3 +1,4 @@
+import { migrateZonghengModelPrefix } from './services/zonghengPrefixMigration.js';
 import { env } from './config/env.js';
 import { initDatabase } from './db/seed.js';
 import { createApp } from './app.js';
@@ -7,6 +8,7 @@ async function main() {
 
   // 初始化数据库
   await initDatabase();
+  migrateZonghengModelPrefix();
 
   // 创建 Express 应用
   const app = await createApp();
