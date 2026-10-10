@@ -47,6 +47,7 @@ interface GetContentsOptions {
 }
 
 const INTERNAL_VIDEO_ROUTING_FIELDS = [
+  'zonghengOrderId', 'zonghengSubmissionStarted', 'zonghengPollDelay',
   'actualModel',
   'actualChannel',
   'fallbackFrom',

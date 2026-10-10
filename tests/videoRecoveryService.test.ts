@@ -1,4 +1,28 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
+vi.mock('../server/db/index.js', async () => {
+  const { default: Database } = await import('better-sqlite3');
+  const { drizzle } = await import('drizzle-orm/better-sqlite3');
+  const { getTableConfig, SQLiteSyncDialect } = await import('drizzle-orm/sqlite-core');
+  const schema = await import('../server/db/schema');
+  const sqlite = new Database(':memory:');
+  const dialect = new SQLiteSyncDialect();
+  for (const table of Object.values(schema)) {
+    const config = getTableConfig(table as any);
+    const columns = config.columns.map(c => {
+      let def = '';
+      if (c.default !== undefined) {
+        const value = typeof c.default === 'object' ? dialect.sqlToQuery(c.default as any).sql
+          : typeof c.default === 'string' ? "'" + c.default.replace(/'/g, "''") + "'" : String(c.default);
+        def = ' DEFAULT ' + value;
+      }
+      return '"' + c.name + '" ' + c.getSQLType() + (c.primary ? ' PRIMARY KEY' : '') + def;
+    });
+    sqlite.exec('CREATE TABLE "' + config.name + '" (' + columns.join(',') + ')');
+  }
+  return { sqlite, db: drizzle(sqlite, { schema }) };
+});
+
 import fs from 'fs';
 import path from 'path';
 import { db, sqlite } from '../server/db/index.js';
@@ -7,6 +31,9 @@ import { eq } from 'drizzle-orm';
 import { BalanceService } from '../server/services/balanceService.js';
 import { VideoRecoveryService } from '../server/services/videoRecoveryService.js';
 
+let validVideo: Buffer;
+beforeAll(() => { validVideo = execFileSync('ffmpeg', ['-v','error','-f','lavfi','-i','color=s=16x16:r=10:d=0.2','-c:v','libx264','-pix_fmt','yuv420p','-f','mp4','-movflags','frag_keyframe+empty_moov','pipe:1']); });
+afterAll(() => sqlite.close());
 const TEST_EMAIL = 'video-recovery@test.local';
 const TEST_CHANNEL_NAME = 'video-recovery-haidiyue';
 let userId = 0;
@@ -19,6 +46,8 @@ beforeEach(() => {
   sqlite.prepare('DELETE FROM channels WHERE name = ?').run(TEST_CHANNEL_NAME);
   sqlite.prepare('DELETE FROM users WHERE email = ?').run(TEST_EMAIL);
   if (fs.existsSync(localizedVideoPath)) fs.unlinkSync(localizedVideoPath);
+  const genericPath = path.join(process.cwd(), 'data/uploads/videos/video_generic-video-model_upstream-task-1.mp4');
+  if (fs.existsSync(genericPath)) fs.unlinkSync(genericPath);
 
   userId = Number(sqlite.prepare(`
     INSERT INTO users (email, username, password_hash, role, tier_id, balance)
@@ -52,7 +81,7 @@ beforeEach(() => {
         video_url: 'https://recovery-upstream.test/media/recovered.mp4',
       }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }
-    return new Response(Buffer.from([0, 0, 0, 12, 102, 116, 121, 112, 105, 115, 111, 109]), {
+    return new Response(validVideo, {
       status: 200,
       headers: { 'Content-Type': 'video/mp4' },
     });
@@ -65,6 +94,8 @@ afterEach(() => {
   sqlite.prepare('DELETE FROM channels WHERE name = ?').run(TEST_CHANNEL_NAME);
   sqlite.prepare('DELETE FROM users WHERE email = ?').run(TEST_EMAIL);
   if (fs.existsSync(localizedVideoPath)) fs.unlinkSync(localizedVideoPath);
+  const genericPath = path.join(process.cwd(), 'data/uploads/videos/video_generic-video-model_upstream-task-1.mp4');
+  if (fs.existsSync(genericPath)) fs.unlinkSync(genericPath);
 });
 
 describe('VideoRecoveryService', () => {

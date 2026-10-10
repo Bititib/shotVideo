@@ -1,3 +1,4 @@
+import { isZonghengChannel } from './zonghengAdapter.js';
 import { isHayaChannel, shouldSendHayaAuthorization, hayaTaskUrl } from './hayaVideoAdapter.js';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -38,7 +39,7 @@ export async function downloadAndLocalizeVideo(
   const exactChannel = channelId ? ChannelService.getChannelRaw(channelId, channelApiKeyId) : null;
   const channel = exactChannel || ChannelService.findChannelForModel(model);
   const headers: Record<string, string> = {};
-  const maySendAuthorization = isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
+  const maySendAuthorization = isZonghengChannel(channel) ? false : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
     ? shouldSendHmStudioAuthorization(url, channel.baseUrl)
     : isWxHaidiYueChannel(channel)
       ? shouldSendWxHaidiYueAuthorization(url, channel.baseUrl)

@@ -1,3 +1,5 @@
+import { isZonghengChannel, ZonghengSubmissionError, buildZonghengImagePayload, validateZonghengImageReferences, zonghengImageSize } from '../services/zonghengAdapter.js';
+import { generateZonghengImages } from '../services/zonghengImageService.js';
 import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
 import { reserveUserCharge } from '../services/billingReservation.js';
 import { canvasRequestMiddleware, recordCanvasEvent } from '../middleware/canvasRequest.js';
@@ -368,6 +370,14 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
     return res.status(503).json({ error: '未配置图片生成渠道。请在管理后台添加渠道。' });
   }
 
+  if (isZonghengChannel(channel)) {
+    try {
+      validateZonghengImageReferences(req.body);
+      buildZonghengImagePayload({ model: channel.modelMapping?.[model] || model, prompt, n: count,
+        size: req.body.size || zonghengImageSize(aspect_ratio, resolution), aspectRatio: aspect_ratio, quality, referenceImages: reference_images });
+      if (PricingService.quote(model, {count:1,resolution}, false).billingType !== 'per_call') throw new Error('请先配置模型价格');
+    } catch (e: any) { return res.status(400).json({ error: e.message }); }
+  }
   // SSE headers
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -502,6 +512,30 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
   };
 
   try {
+    if (isZonghengChannel(channel)) {
+      let submitted = false, accepted = false;
+      let upstreamImages: string[] = [];
+      try {
+        const images = await generateZonghengImages(channel.baseUrl, channel.apiKey, {
+          model: channel.modelMapping?.[model] || model, prompt, n: count, size: req.body.size || zonghengImageSize(aspect_ratio, resolution),
+          aspectRatio: aspect_ratio, quality, referenceImages: reference_images }, () => {
+            persistJob({ zonghengSubmissionStarted: new Date().toISOString() }); submitted = true;
+          }, channel.timeout);
+        accepted = true; upstreamImages = images.map((i: any) => i.url);
+        persistJob({ upstreamImageUrls: upstreamImages, progressText: '图片已生成，正在保存到本站存储' });
+        const urls = await Promise.all(images.map((item: any, index: number) => localizeGeneratedImage(item.url, 'zongheng_' + contentId + '_' + index, req,
+          { ...channel, apiKey: '' }, {relative:true})));
+        billUsage(urls.length, urls, { upstreamImageUrls: upstreamImages });
+        urls.forEach((imageUrl: string, index: number) => sendEvent({type:'image_ready',imageUrl,index,total:count}));
+        sendEvent({type:'complete',imageUrls:urls,total:count});
+      } catch (e: any) {
+        if (accepted || submitted && (!(e instanceof ZonghengSubmissionError) || e.uncertain)) {
+          reservation.review(); persistJob({ billingStatus:'review',requiresReview:true,progressText:e.message,upstreamImageUrls:upstreamImages }, 'review');
+          sendEvent({type:'error',message:'图片提交或保存结果待核实，费用保留，请勿重复提交',contentId});
+        } else { persistFailure(e.message); sendEvent({type:'error',message:e.message}); }
+      }
+      finishStream(); return;
+    }
     if (isMingFeiImageChannel(channel) && isMingFeiImageModel(model)) {
       const referenceUrls = hasRef
         ? reference_images.slice(0, 16).map((image: string, index: number) => convertBase64ToPublicUrl(image, `mingfei_ref_${index}`, req))

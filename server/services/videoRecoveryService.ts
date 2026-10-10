@@ -1,3 +1,4 @@
+import { isZonghengChannel, zonghengTaskUrl, normalizeZonghengTask } from './zonghengAdapter.js';
 import { isHayaChannel, hayaTaskUrl, normalizeHayaTask } from './hayaVideoAdapter.js';
 import { and, desc, eq, gte, inArray } from 'drizzle-orm';
 import { db } from '../db/index.js';
@@ -195,9 +196,10 @@ export class VideoRecoveryService {
     const isSnumom = isSnumomWanChannel(channel);
     const isLongxia = isLongxiaChannel(channel);
     const isHaya = isHayaChannel(channel);
+    const isZongheng = isZonghengChannel(channel);
     const isMiaowu = isMiaowuChannel(channel);
     const isSudaShui = /sudashuiapi\.com/i.test(baseUrl) || metadata.actualChannel === 'sudashui';
-    const pollUrl = isHaya ? hayaTaskUrl(baseUrl, videoId) : isHmStudio
+    const pollUrl = isZongheng ? zonghengTaskUrl(baseUrl, videoId) : isHaya ? hayaTaskUrl(baseUrl, videoId) : isHmStudio
       ? hmStudioTaskUrl(baseUrl, videoId)
       : isHaidiYue
         ? wxHaidiYueTaskUrl(baseUrl, videoId)
@@ -224,7 +226,10 @@ export class VideoRecoveryService {
     let progress = 0;
     let resultUrl = '';
     let error = '';
-    if (isHaya) {
+    if (isZongheng) {
+      const task = normalizeZonghengTask(payload);
+      normalizedStatus = task.status; progress = task.progress; resultUrl = task.resultUrl; error = task.error;
+    } else if (isHaya) {
       const task = normalizeHayaTask(payload, baseUrl, videoId);
       normalizedStatus = task.status; progress = task.progress; resultUrl = task.resultUrl; error = task.error;
     } else if (isHmStudio) {
@@ -278,7 +283,7 @@ export class VideoRecoveryService {
       );
       error = extractVideoFailureMessage(data?.error || payload?.error || data?.failure_reason || payload?.failure_reason);
     }
-    if (!isHaya && isVideoFailurePayload(payload)) {
+    if (!isHaya && !isZongheng && isVideoFailurePayload(payload)) {
       if (metadata.batchItemId && isBatchQueryUncertain(payload, normalizedStatus)) {
         throw { status: 502, message: '上游查询返回异常，无法确认原任务失败；保留预扣，不会重复生成' };
       }
@@ -291,7 +296,7 @@ export class VideoRecoveryService {
     };
 
     if (normalizedStatus === 'completed' || normalizedStatus === 'success') {
-      if (!resultUrl && !isHmStudio && !isHaidiYue && !isMiaowu && !isLongxia && !isSudaShui) {
+      if (!resultUrl && !isZongheng && !isHmStudio && !isHaidiYue && !isMiaowu && !isLongxia && !isSudaShui) {
         resultUrl = `${baseUrl}/v1/files/video?id=${encodeURIComponent(videoId)}`;
       }
       if (!resultUrl) throw { status: 502, message: '上游任务已成功，但未返回视频地址' };
@@ -331,7 +336,7 @@ export class VideoRecoveryService {
         void resumePollForTask(contentId, { ...batchRecord, status: 'processing' });
       }
     }
-    if (!batchMetadata.batchItemId && batchMetadata.hayaSubmissionStarted && batchRecord?.status === 'review') {
+    if (!batchMetadata.batchItemId && (batchMetadata.hayaSubmissionStarted || batchMetadata.zonghengSubmissionStarted) && batchRecord?.status === 'review') {
       if (inspection.status === 'failed') {
         const { failHmQueuedVideo } = await import('../routes/video.js');
         await failHmQueuedVideo(contentId, new Error(inspection.message), true);
@@ -374,8 +379,8 @@ export class VideoRecoveryService {
       }
 
       // Haya review records keep their original reservation. Recovering them must not charge twice.
-      if (metadata.hayaSubmissionStarted && !metadata.queueRefunded && record.status !== 'failed') {
-        delete metadata.error; delete metadata.progressText; delete metadata.hayaNeedsReview;
+      if ((metadata.hayaSubmissionStarted || metadata.zonghengSubmissionStarted) && !metadata.queueRefunded && record.status !== 'failed') {
+        delete metadata.error; delete metadata.progressText; delete metadata.hayaNeedsReview; delete metadata.requiresReview;
         Object.assign(metadata, { progress: 100, completedAt: new Date().toISOString(), billingStatus: 'charged', upstreamResultUrl: inspection.upstreamResultUrl });
         db.update(contents).set({ status: 'completed', resultUrl: localizedUrl, metadata: JSON.stringify(metadata) }).where(eq(contents.id, contentId)).run();
         return { status: 'completed', message: '任务已恢复，使用原预扣费用结算', chargedAmount: 0, item: db.select().from(contents).where(eq(contents.id, contentId)).get() };

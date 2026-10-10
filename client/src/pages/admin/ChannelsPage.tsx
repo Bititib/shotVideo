@@ -418,7 +418,7 @@ export default function ChannelsPage() {
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-white">{ch.name}</h3>
-                  <p className="text-[10px] text-zinc-500 font-mono"><span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold mr-1.5 ${ch.type === 'gemini' ? 'bg-emerald-500/15 text-emerald-400' : ch.type === 'grok2api' ? 'bg-orange-500/15 text-orange-400' : ch.type === 'hmstudio' ? 'bg-amber-500/15 text-amber-300' : 'bg-blue-500/15 text-blue-400'}`}>{ch.type === 'openai' ? 'OpenAI' : ch.type === 'gemini' ? 'Gemini' : ch.type === 'grok2api' ? 'Grok2API' : ch.type === 'hmstudio' ? 'HM Studio' : ch.type === 'haya' ? 'Haya AI' : ch.type === 'miaowu' ? '喵呜 API' : ch.type}</span>{ch.baseUrl}</p>
+                  <p className="text-[10px] text-zinc-500 font-mono"><span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold mr-1.5 ${ch.type === 'gemini' ? 'bg-emerald-500/15 text-emerald-400' : ch.type === 'grok2api' ? 'bg-orange-500/15 text-orange-400' : ch.type === 'hmstudio' ? 'bg-amber-500/15 text-amber-300' : 'bg-blue-500/15 text-blue-400'}`}>{ch.type === 'zongheng' ? '纵横科技' : ch.type === 'openai' ? 'OpenAI' : ch.type === 'gemini' ? 'Gemini' : ch.type === 'grok2api' ? 'Grok2API' : ch.type === 'hmstudio' ? 'HM Studio' : ch.type === 'haya' ? 'Haya AI' : ch.type === 'miaowu' ? '喵呜 API' : ch.type}</span>{ch.baseUrl}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -498,7 +498,9 @@ export default function ChannelsPage() {
                       apiKeys: e.target.value === 'hmstudio' && (!edit.apiKeys || edit.apiKeys.length === 0)
                         ? [newHmKey()]
                         : edit.apiKeys,
-                      baseUrl: e.target.value === 'hmstudio' && !edit.baseUrl
+                      baseUrl: e.target.value === 'zongheng' && !edit.baseUrl
+                        ? 'https://cnd-coo-new.pages.dev'
+                        : e.target.value === 'hmstudio' && !edit.baseUrl
                         ? HM_STUDIO_BASE_URL
                         : e.target.value === 'haya' && !edit.baseUrl
                           ? HAYA_BASE_URL
@@ -513,6 +515,7 @@ export default function ChannelsPage() {
                           : edit.baseUrl,
                     })}
                       className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                      <option value="zongheng">纵横科技（视频／图片／GPT）</option>
                       <option value="openai">OpenAI 兼容（Chat 代理）</option>
                       <option value="hmstudio">HM Studio（图片/视频异步任务）</option>
                       <option value="wx-haidiyue">wx-海底月（sd2.5 人脸拆分）</option>
@@ -539,6 +542,7 @@ export default function ChannelsPage() {
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
                 </div>
               )}
+              {edit.type === 'zongheng' && <p className="text-xs leading-5 text-zinc-400">同步模型会创建带 zongheng- 前缀的停用入口；请核对模型能力、配置价格后启用。视频参考素材提交时上传，图片暂仅支持文生图。</p>}
               {edit.type === 'wx-haidiyue' && (
                 <section aria-labelledby="haidi-face-split-title" className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3.5 sm:p-4">
                   <div className="flex items-center justify-between gap-4">

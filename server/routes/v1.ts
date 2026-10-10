@@ -1,3 +1,7 @@
+import { isZonghengChannel, zonghengBaseUrl, buildZonghengVideoPayload, validateZonghengVideoAliases, buildZonghengImagePayload, validateZonghengImageReferences, zonghengImageSize, submitZonghengVideo, ZonghengSubmissionError } from '../services/zonghengAdapter.js';
+import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
+import { patchZonghengTask, reviewZonghengTask, zonghengOrder } from '../services/zonghengTaskService.js';
+import { generateZonghengImages } from '../services/zonghengImageService.js';
 import { resolvePublicModelId, publicModelName } from '../services/publicModelNameService.js';
 import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
 import { publishReferenceUrl } from '../services/publicReferenceService.js';
@@ -119,7 +123,7 @@ import {
 } from '../services/miaowuVideoAdapter.js';
 import { buildLongxiaVideoPayload, isLongxiaChannel, isLongxiaModel, longxiaResolution, longxiaVideoCreateUrl } from '../services/longxiaVideoAdapter.js';
 import { prepareMiaowuPublicMediaUrls } from '../services/miaowuMediaService.js';
-import { enqueueHmStudioVideoContent, resumePollForTask, holdHayaSubmission, releaseHayaSubmission } from './video.js';
+import { enqueueHmStudioVideoContent, resumePollForTask, holdHayaSubmission, releaseHayaSubmission, holdZonghengSubmission, releaseZonghengSubmission } from './video.js';
 import { localizeGeneratedImage } from './imageGen.js';
 import { withVideoFailureMetadata } from '../services/videoFailureService.js';
 import { ContentService } from '../services/contentService.js';
@@ -817,7 +821,7 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
   }
 
   const upstreamModel = channel.modelMapping[model] || model;
-  const upstreamUrl = channel.baseUrl.replace(/\/+$/, '') + '/v1/chat/completions';
+  const upstreamUrl = (isZonghengChannel(channel) ? zonghengBaseUrl(channel.baseUrl) : channel.baseUrl.replace(/\/+$/, '')) + '/v1/chat/completions';
   const upstreamBody = JSON.stringify({
     model: upstreamModel,
     messages,
@@ -976,8 +980,20 @@ router.post('/images/generations', async (req: Request, res: Response) => {
     return res.status(404).json({ error: { message: `No available channel for model ${model}`, type: 'not_found_error' } });
   }
 
+  let zonghengSize = size;
+  if (isZonghengChannel(channel)) {
+    try {
+      validateZonghengImageReferences(req.body);
+      if (!['url', 'b64_json'].includes(response_format)) throw new Error('response_format 仅支持 url 或 b64_json');
+      zonghengSize = req.body.size || zonghengImageSize(otherParams.aspect_ratio || '1:1', otherParams.output_resolution || otherParams.resolution || '1K');
+      buildZonghengImagePayload({ model, prompt, size: zonghengSize, aspectRatio: otherParams.aspect_ratio, quality: otherParams.quality, n: count,
+      referenceImages: otherParams.reference_images || otherParams.images || otherParams.image_urls || (otherParams.image_url ? [otherParams.image_url] : []) }); }
+    catch (e: any) { return res.status(400).json({ error: { message: e.message, type: 'invalid_request_error' } }); }
+    if (PricingService.quote(model, {count:1}, false).billingType !== 'per_call') return res.status(400).json({ error: { message: '请先配置模型价格', type: 'invalid_request_error' } });
+  }
   const billingResolution = isMingFeiImageModel(model)
     ? normalizeMingFeiResolution(otherParams.output_resolution || otherParams.resolution)
+    : isZonghengChannel(channel) ? String(otherParams.output_resolution || otherParams.resolution || '1K')
     : String(otherParams.resolution || '');
   const unitCost = PricingService.quote(model, { resolution: billingResolution, count: 1 }, false).cost;
   const totalCost = Math.round(PricingService.quote(model, { resolution: billingResolution, count }, false).cost * 100) / 100;
@@ -994,6 +1010,39 @@ router.post('/images/generations', async (req: Request, res: Response) => {
   let reservation: ReturnType<typeof reserveApiCharge> | undefined;
   try {
     reservation = reserveApiCharge(token, totalCost, model);
+    if (isZonghengChannel(channel)) {
+      const imageId = ContentService.save({ userId: token.userId || 1, type: 'image', modelId: model, title: prompt.slice(0,200), cost: totalCost, status: 'processing',
+        metadata: { source: 'api', channelId: channel.id, upstreamModel, billingReservationId: reservation.id, billingStatus: 'reserved', count } });
+      let accepted = false;
+      let submitted = false;
+      let upstreamImages: string[] = [];
+      try {
+        const images = await generateZonghengImages(channel.baseUrl, channel.apiKey, { model: upstreamModel, prompt, size: zonghengSize,
+          aspectRatio: otherParams.aspect_ratio, quality: otherParams.quality, n: count }, () => {
+            db.update(contents).set({ metadata: JSON.stringify({source:'api',channelId:channel.id,upstreamModel,billingReservationId:reservation!.id,
+              billingStatus:'reserved',count,zonghengSubmissionStarted:new Date().toISOString()}) }).where(eq(contents.id,imageId)).run();
+            submitted = true;
+          }, channel.timeout);
+        accepted = true; upstreamImages = images.map((item: any) => item.url);
+        const urls = await Promise.all(images.map((item: any, index: number) => localizeGeneratedImage(item.url, 'zongheng_api_' + imageId + '_' + index, req, { ...channel, apiKey: '' }, {relative:true})));
+        const data = await Promise.all(urls.map(async (url: string) => response_format === 'b64_json'
+          ? { b64_json: fs.readFileSync(path.resolve('data', url.replace(/^\/(?:api\/)?/,''))).toString('base64') }
+          : { url: req.protocol + '://' + req.get('host') + url }));
+        const cost = Math.min(totalCost, Math.round(totalCost * urls.length / count * 100) / 100);
+        reservation.settle(cost);
+        db.update(contents).set({ status: 'completed', resultUrl: urls[0], cost, metadata: JSON.stringify({ source: 'api', channelId: channel.id,
+          billingReservationId: reservation.id, billingStatus: 'settled', imageUrls: urls, upstreamImageUrls: upstreamImages, count, completedAt: new Date().toISOString() }) }).where(eq(contents.id,imageId)).run();
+        db.insert(apiLogs).values({tokenId:token.id,channelId:channel.id,model,upstreamModel,cost,durationMs:Date.now()-startTime,status:'success',clientIp}).run();
+        return res.json({ created: Math.floor(Date.now()/1000), data });
+      } catch (e: any) {
+        const uncertain = accepted || submitted && (!(e instanceof ZonghengSubmissionError) || e.uncertain);
+        if (uncertain) reservation.review(); else reservation.cancel();
+        db.update(contents).set({ status: uncertain ? 'review' : 'failed', cost: uncertain ? totalCost : 0,
+          metadata: JSON.stringify({ source:'api',channelId:channel.id,billingReservationId:reservation.id,billingStatus:uncertain?'review':'refunded',
+            requiresReview:uncertain,progressText:e.message,upstreamImageUrls:upstreamImages }) }).where(eq(contents.id,imageId)).run();
+        return res.status(uncertain ? 202 : 502).json({ id:imageId,requires_review:uncertain,error:{message:e.message,type:uncertain?'submission_uncertain':'upstream_error'} });
+      }
+    }
     if (isMingFeiImageChannel(channel) && isMingFeiImageModel(model)) {
       const referenceImages = Array.isArray(otherParams.reference_images)
         ? otherParams.reference_images.filter((value: unknown) => typeof value === 'string' && value)
@@ -1345,6 +1394,9 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
     return res.status(404).json({ error: { message: `No available channel for model ${model}`, type: 'not_found_error' } });
   }
 
+  if (isZonghengChannel(channel)) {
+    cleanupFiles(req.files); return res.status(400).json({ error: { message: '纵横科技尚未确认图片编辑协议，请使用文生图', type: 'invalid_request_error' } });
+  }
   const unitCost = PricingService.quote(model, {count:1,resolution:String(otherParams.resolution || '')}, false).cost;
   const totalCost = Math.round(unitCost * count * 100) / 100;
 
@@ -1593,7 +1645,9 @@ async function handleVideoCreation(req: Request, res: Response) {
 
   // 提取图片素材别名
   let image_urls: string[] = [];
-  if (Array.isArray(body.image_urls)) {
+  if (Array.isArray(body.reference_images)) {
+    image_urls = body.reference_images;
+  } else if (Array.isArray(body.image_urls)) {
     image_urls = body.image_urls;
   } else if (Array.isArray(body.Ingredients_images)) {
     image_urls = body.Ingredients_images;
@@ -1632,7 +1686,9 @@ async function handleVideoCreation(req: Request, res: Response) {
 
   // 提取视频素材别名
   let video_urls: string[] = [];
-  if (Array.isArray(body.video_urls)) {
+  if (Array.isArray(body.reference_videos)) {
+    video_urls = body.reference_videos;
+  } else if (Array.isArray(body.video_urls)) {
     video_urls = body.video_urls;
   } else if (typeof body.video_url === 'string') {
     video_urls = [body.video_url];
@@ -1662,7 +1718,9 @@ async function handleVideoCreation(req: Request, res: Response) {
 
   // 提取音频素材别名
   let audio_urls: string[] = [];
-  if (Array.isArray(body.audio_urls)) {
+  if (Array.isArray(body.reference_audios)) {
+    audio_urls = body.reference_audios;
+  } else if (Array.isArray(body.audio_urls)) {
     audio_urls = body.audio_urls;
   } else if (Array.isArray(body.audios)) {
     audio_urls = body.audios;
@@ -2051,6 +2109,18 @@ async function handleVideoCreation(req: Request, res: Response) {
     return res.status(404).json({ error: `No available channel for model ${model}` });
   }
 
+  if (isZonghengChannel(channel)) {
+    try {
+      validateZonghengVideoAliases(body);
+      const firstFrame = body.start_frame || body.first_frame_url || body.first_frame || '';
+      const lastFrame = body.end_frame || body.end_frame_url || body.last_frame_url || body.last_frame || '';
+      buildZonghengVideoPayload({ model: upstreamModel, prompt, seconds, ratio, resolution, images: image_urls, videos: video_urls, audios: audio_urls,
+        firstFrame, lastFrame, quality: body.quality, negativePrompt: body.negative_prompt, generateAudio: body.generate_audio });
+      const options = { baseUrl, apiKey, publicBaseUrl: process.env.BACKEND_URL || req.protocol + '://' + req.get('host') };
+      await validateZonghengMedia([...image_urls, firstFrame, lastFrame].filter(Boolean), 'image', options);
+      await validateZonghengMedia(video_urls, 'video', options); await validateZonghengMedia(audio_urls, 'audio', options);
+    } catch (error: any) { cleanupFiles(req.files); return res.status(400).json({ error: error.message }); }
+  }
   // 计费计算与校验
   const rate = getVideoRate(model, resolution);
   const isFlatRate = [
@@ -2221,6 +2291,41 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
   }
 
+  if (isZonghengChannel(channel)) {
+    holdZonghengSubmission(contentId!);
+    let deduction: TokenBillingDeduction | null = null;
+    let taskId = '';
+    try {
+      const options = { baseUrl, apiKey, publicBaseUrl: process.env.BACKEND_URL || req.protocol + '://' + req.get('host') };
+      const images = await prepareZonghengMedia(image_urls, 'image', options);
+      const videos = await prepareZonghengMedia(video_urls, 'video', options);
+      const audios = await prepareZonghengMedia(audio_urls, 'audio', options);
+      const frames = await prepareZonghengMedia([body.start_frame || body.first_frame_url || body.first_frame, body.end_frame || body.end_frame_url || body.last_frame_url || body.last_frame].filter(Boolean), 'image', options);
+      deduction = deductTokenOrUserBalance(token, totalCost, model);
+      const job = await submitZonghengVideo(baseUrl, apiKey, { model: upstreamModel, prompt, seconds, ratio, resolution, images, videos, audios,
+        firstFrame: frames[0], lastFrame: frames[1], quality: body.quality, negativePrompt: body.negative_prompt, generateAudio: body.generate_audio }, zonghengOrder(contentId!),
+        () => patchZonghengTask(contentId!, { zonghengSubmissionStarted: new Date().toISOString(), billingStatus: 'reserved',
+          billingBalanceSource: deduction?.balanceDeduction?.source, billingOrgId: deduction?.balanceDeduction?.orgId }), channel.timeout);
+      taskId = job.taskId;
+      patchZonghengTask(contentId!, { videoId: taskId, zonghengPollDelay: job.pollDelay });
+      releaseZonghengSubmission(contentId!);
+      const record = db.select().from(contents).where(eq(contents.id, contentId!)).get();
+      if (record) void resumePollForTask(contentId!, record);
+      db.insert(apiLogs).values({ tokenId: token.id, channelId, model, upstreamModel, cost: totalCost, durationMs: Date.now() - startTime, status: 'success', clientIp }).run();
+      return res.status(202).json({ id: 'task_' + contentId, task_id: 'task_' + contentId, object: 'video', model, status: 'queued', progress: 0,
+        status_url: req.protocol + '://' + req.get('host') + '/v1/videos/task_' + contentId, retry_after: job.pollDelay / 1000 });
+    } catch (error: any) {
+      if (error instanceof ZonghengSubmissionError && error.uncertain || taskId) {
+        reviewZonghengTask(contentId!, '纵横科技提交结果待核实，请勿重复创建任务');
+        return res.status(202).json({ id: 'task_' + contentId, task_id: 'task_' + contentId, object: 'video', model,
+          status: 'queued', progress: 0, requires_review: true, message: '提交结果待核实，请勿重提' });
+      }
+      const target = deduction ? refundTokenOrUserBalance(token, totalCost, deduction) : 'not_charged';
+      persistVideoContentFailure(contentId!, error.message, { billingStatus: deduction ? 'refunded' : 'not_charged',
+        queueRefunded: Boolean(deduction), refundAmount: deduction ? totalCost : 0, refundTarget: target });
+      return res.status(502).json({ error: error.message });
+    } finally { releaseZonghengSubmission(contentId!); cleanupFiles(req.files); }
+  }
   if (isHayaChannel(channel)) {
     holdHayaSubmission(contentId!);
     let deduction: TokenBillingDeduction | null = null;
@@ -2815,7 +2920,7 @@ async function handleVideoQuery(req: Request, res: Response) {
       object: 'video',
       model: record.modelId,
       status: mappedStatus,
-      ...(metadata.hayaNeedsReview ? { requires_review: true, message: metadata.progressText || '提交结果待核实，请勿重提' } : {}),
+      ...((metadata.hayaNeedsReview || metadata.requiresReview) ? { requires_review: true, message: metadata.progressText || '提交结果待核实，请勿重提' } : {}),
       progress,
       progress_pct: progress,
       progress_text: mappedStatus === 'completed'
