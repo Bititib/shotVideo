@@ -1,6 +1,8 @@
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import AdminCollection from '../../components/AdminCollection';
 import AdminDrawer from '../../components/AdminDrawer';
+import ChannelDetails, { type ChannelFeedback } from '../../components/ChannelDetails';
+import '../../components/ChannelDetails.css';
 import { useEditDraft } from '../../hooks/useEditDraft';
 import { startPolling } from '../../utils/polling';
 import { Link } from 'react-router-dom';
@@ -22,6 +24,8 @@ export default function ChannelsPage() {
   const { values, setFilter, reset } = useAdminFilters({ search: '', type: 'all', status: 'all', id: '', period: 'all' });
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [channelFeedback, setChannelFeedback] = useState<ChannelFeedback | null>(null);
+  const [modelsRevision, setModelsRevision] = useState(0);
   const [saving, setSaving] = useState(false);
   const [pendingId, setPendingId] = useState<number | null>(null);
   const { edit, setEdit, close: closeEdit, restore, available } = useEditDraft('channels', saving);
@@ -202,12 +206,19 @@ export default function ChannelsPage() {
   };
 
   const handleTest = async (id: number) => {
+    if (testing !== null || syncing !== null) return;
     setTesting(id);
+    setChannelFeedback(null);
     try {
       const result = await adminApi.testChannel(id);
-      setNotice(result.success ? `测试成功，耗时 ${result.durationMs}ms` : `测试失败：${result.message}`);
+      const message = result.success ? `测试成功，耗时 ${result.durationMs}ms` : `测试失败：${result.message}`;
+      setNotice(message);
+      setChannelFeedback({ channelId: id, kind: result.success ? 'success' : 'error', message });
       loadChannels();
-    } catch (e: any) { setError('测试出错: ' + e.message); }
+    } catch (e: any) {
+      const message = '测试出错: ' + e.message;
+      setError(message); setChannelFeedback({ channelId: id, kind: 'error', message });
+    }
     finally { setTesting(null); }
   };
 
@@ -219,12 +230,21 @@ export default function ChannelsPage() {
   };
 
   const syncModels = async (ch: any) => {
+    if (syncing !== null || testing !== null) return;
     setSyncing(ch.id);
+    setChannelFeedback(null);
     try {
       const result = await adminApi.syncChannelModels(ch.id);
-      setNotice(`同步完成：上游 ${result.count} 个模型，新增 ${result.added} 个模型配置`);
-      loadChannels();
-    } catch (e: any) { setError('同步失败: ' + e.message); }
+      const message = `同步完成：上游 ${result.count} 个模型，新增 ${result.added} 个模型配置`
+        + (result.count === 0 ? '。请检查渠道 Key 的模型授权。' : ch.type === 'zongheng' ? '。新模型默认停用，请配置价格后启用。' : '。');
+      setNotice(message);
+      setChannelFeedback({ channelId: ch.id, kind: 'success', message });
+      await loadChannels();
+      setModelsRevision(revision => revision + 1);
+    } catch (e: any) {
+      const message = '同步失败: ' + e.message;
+      setError(message); setChannelFeedback({ channelId: ch.id, kind: 'error', message });
+    }
     finally { setSyncing(null); }
   };
 
@@ -407,7 +427,7 @@ export default function ChannelsPage() {
         { title: '渠道', sort: ch => ch.name, render: ch => <><strong>{ch.name}</strong><small className="block">{ch.type}</small></> },
         { title: '状态', sort: ch => ch.status, render: ch => ch.status ? '启用' : '停用' },
         { title: '模型 / 并发', sort: ch => ch.supportedModels?.length || 0, render: ch => <>{ch.supportedModels?.length || 0} 个模型<br />{ch.concurrencyRunning || 0} 运行 / {ch.concurrencyQueued || 0} 排队</> },
-        { title: '操作', render: ch => <div className="flex flex-wrap gap-2 text-xs"><button onClick={() => { setDetailEditing(false); setDetail(ch); }}>详情与模型</button><button onClick={() => openEdit(ch)}>编辑</button><button disabled={pendingId !== null} onClick={() => toggleStatus(ch)}>{ch.status ? '停用' : '启用'}</button></div> },
+        { title: '操作', render: ch => <div className="channel-table-actions"><button onClick={() => { setDetailEditing(false); setDetailTab('models'); setDetail(ch); }}>详情与模型</button><button className="channel-details-primary" disabled={syncing !== null || testing !== null} onClick={() => { setDetailEditing(false); setDetailTab('models'); setDetail(ch); void syncModels(ch); }}><RefreshCw className={syncing === ch.id ? 'animate-spin' : ''} aria-hidden="true" />{syncing === ch.id ? '正在同步…' : '同步模型'}</button><button onClick={() => openEdit(ch)}>编辑</button><button disabled={pendingId !== null} onClick={() => toggleStatus(ch)}>{ch.status ? '停用' : '启用'}</button></div> },
       ]}>{visibleChannels => <div className="space-y-4">
         {visibleChannels.map(ch => (
           <div key={ch.id} className={`bg-white/[0.02] border rounded-2xl p-5 ${ch.status ? 'border-white/5' : 'border-red-500/20 opacity-60'}`}>
@@ -470,9 +490,18 @@ export default function ChannelsPage() {
         {filteredChannels.length === 0 && <div className="text-center text-zinc-500 py-12">{channels.length ? "没有符合筛选条件的渠道" : "暂无渠道，点击上方按钮添加"}</div>}
       </div>}</AdminCollection>
 
-      {detail && <AdminDrawer wide title={detail.name + ' · 渠道详情'} blocked={detailEditing || Boolean(edit)} onClose={() => { setDetail(null); void loadChannels(); }}>
-        <div className="p-4 flex gap-4"><button disabled={detailEditing} onClick={() => setDetailTab('models')}>关联模型与价格</button><button disabled={detailEditing} onClick={() => setDetailTab('config')}>配置与运行状态</button></div>
-        {detailTab === 'models' ? <Suspense fallback={<p className="p-4" role="status">正在加载关联模型…</p>}><ModelsPage key={detail.id} channelId={String(detail.id)} onEditingChange={setDetailEditing} /></Suspense> : <div className="p-5 space-y-3">{(() => { const current = channels.find(ch => ch.id === detail.id) || detail; return <><p>类型：{current.type}</p><p>地址：{current.baseUrl}</p><p>状态：{current.status ? '启用' : '停用'} · 优先级 {current.priority}</p><p>运行 {current.concurrencyRunning || 0} / 排队 {current.concurrencyQueued || 0}</p><div className="flex flex-wrap gap-4"><button onClick={() => openEdit(current)}>编辑渠道配置</button><button disabled={testing !== null} onClick={() => handleTest(current.id)}>测试连接</button><button disabled={syncing !== null} onClick={() => syncModels(current)}>同步模型</button></div></>; })()}</div>}
+      {detail && <AdminDrawer wide title={detail.name + ' · 渠道详情'} blocked={detailEditing || Boolean(edit) || syncing === detail.id || testing === detail.id} onClose={() => { setDetail(null); void loadChannels(); }}>
+        <ChannelDetails channel={channels.find(ch => ch.id === detail.id) || detail}
+          tab={detailTab} onTabChange={setDetailTab}
+          busy={detailEditing || Boolean(edit) || syncing !== null || testing !== null}
+          testing={testing === detail.id} syncing={syncing === detail.id} feedback={channelFeedback}
+          onEdit={() => openEdit(channels.find(ch => ch.id === detail.id) || detail)}
+          onTest={() => { void handleTest(detail.id); }}
+          onSync={() => { void syncModels(channels.find(ch => ch.id === detail.id) || detail); }}>
+          <Suspense fallback={<p role="status">正在加载关联模型…</p>}>
+            <ModelsPage key={detail.id + ':' + modelsRevision} channelId={String(detail.id)} onEditingChange={setDetailEditing} />
+          </Suspense>
+        </ChannelDetails>
       </AdminDrawer>}
       {/* Edit Modal */}
       {edit && (
