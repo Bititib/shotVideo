@@ -1,5 +1,6 @@
 import { startPolling } from '../../utils/polling';
 import { shouldPollVideoTask, videoTaskDatabaseId } from '../../utils/videoTaskSync';
+import { getZonghengVideoSpec } from '../../../../shared/zonghengVideo';
 import { getHayaVideoSpec } from '../../../../shared/hayaVideo';
 import { getHmStudioAdditionalVideoModel, HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS } from '../../../../shared/hmStudioVideo';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -181,6 +182,8 @@ const GROUP_ORDER = [
 ];
 
 const getModelGroup = (modelId: string) => {
+  const zongheng = getZonghengVideoSpec(modelId);
+  if (zongheng) return { seedance: 'Seedance 系列', minimax: 'MiniMax 系列', wan: 'Wan 系列' }[zongheng.family];
   if (getHayaVideoSpec(modelId)) return 'Haya AI';
   const id = modelId.toLowerCase();
   if (isHmStudioVideoModel(modelId)) return 'HM 系列';

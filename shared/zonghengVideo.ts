@@ -6,12 +6,12 @@ export function canonicalZonghengModelId(model: string): string {
   return model.startsWith(LEGACY_ZONGHENG_MODEL_PREFIX) ? ZONGHENG_MODEL_PREFIX + model.slice(LEGACY_ZONGHENG_MODEL_PREFIX.length) : model;
 }
 export const ZONGHENG_VIDEO_MODELS = [
-  { id: 'Cseadanco2.5K', resolution: '720p', seconds: [10, 15, 20, 25, 30] },
-  { id: 'Xminimex-h3', resolution: '2k', seconds: Array.from({ length: 11 }, (_, i) => i + 5) },
-  { id: 'wan-1080', resolution: '1080p', seconds: [5, 10, 15, 20, 25, 30] },
-  { id: 'A-SD2.0', resolution: '720p', seconds: [5, 10, 15] },
-  { id: 'kksedanco2.5', resolution: '720p', seconds: Array.from({ length: 26 }, (_, i) => i + 5) },
-  { id: 'LLseadanco2.51', resolution: '720p', seconds: Array.from({ length: 25 }, (_, i) => i + 6) },
+  { id: 'Cseadanco2.5K', family: 'seedance', resolution: '720p', seconds: [10, 15, 20, 25, 30] },
+  { id: 'Xminimex-h3', family: 'minimax', resolution: '2k', seconds: Array.from({ length: 11 }, (_, i) => i + 5) },
+  { id: 'wan-1080', family: 'wan', resolution: '1080p', seconds: [5, 10, 15, 20, 25, 30] },
+  { id: 'A-SD2.0', family: 'seedance', resolution: '720p', seconds: [5, 10, 15] },
+  { id: 'kksedanco2.5', family: 'seedance', resolution: '720p', seconds: Array.from({ length: 26 }, (_, i) => i + 5) },
+  { id: 'LLseadanco2.51', family: 'seedance', resolution: '720p', seconds: Array.from({ length: 25 }, (_, i) => i + 6) },
 ] as const;
 export function getZonghengVideoSpec(model: string) {
   const canonical = canonicalZonghengModelId(model);
