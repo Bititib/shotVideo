@@ -16,12 +16,23 @@ describe('Zongheng public protocol', () => {
     for (const seconds of spec.seconds) {
       expect(buildZonghengVideoPayload({...input, model:spec.id, seconds, resolution:spec.resolution.toUpperCase()})).toMatchObject({model:spec.id, duration:seconds, resolution:spec.resolution});
     }
-    expect(() => buildZonghengVideoPayload({...input,model:spec.id,seconds:4,resolution:spec.resolution})).toThrow('仅支持');
+    for (const seconds of [spec.seconds[0] - 1, spec.seconds[spec.seconds.length - 1] + 1]) {
+      expect(() => buildZonghengVideoPayload({...input,model:spec.id,seconds,resolution:spec.resolution})).toThrow('仅支持');
+    }
     expect(() => buildZonghengVideoPayload({...input,model:spec.id,seconds:spec.seconds[0],resolution:'480p'})).toThrow(spec.resolution);
+  });
+  it.each([{id:'kksedanco2.5',first:5,count:26},{id:'LLseadanco2.51',first:6,count:25}])('keeps the user-confirmed 720p duration range for $id', ({id,first,count}) => {
+    const spec = getZonghengVideoSpec('ZH-' + id)!;
+    expect(spec).toMatchObject({id,resolution:'720p'});
+    expect(spec.seconds[0]).toBe(first);
+    expect(spec.seconds[spec.seconds.length - 1]).toBe(30);
+    expect(spec.seconds).toHaveLength(count);
   });
   it('does not silently substitute similar-looking public model IDs', () => {
     expect(getZonghengVideoSpec('Cseadance2.5K')).toBeUndefined();
     expect(getZonghengVideoSpec('Xminimax-h3')).toBeUndefined();
+    expect(getZonghengVideoSpec('kkseedance2.5')).toBeUndefined();
+    expect(getZonghengVideoSpec('LLseadanco2.52')).toBeUndefined();
   });
   it('whitelists unified fields, preserves all materials and false audio setting', () => {
     const payload = buildZonghengVideoPayload({...input,extra:{secret:true},metadata:{upstream:'hidden'}} as any);

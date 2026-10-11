@@ -146,7 +146,7 @@ describe('Zongheng legacy entry points, isolated database and simulated provider
     const record=latest();await video.resumePollForTask(record.id,record);
     expect(latest()).toMatchObject({status:'completed',modelId:oldId,cost:3});expect(balance()).toBe(100);expect(fetch).toHaveBeenCalledTimes(1);
   });
-  it('classifies all four supplied IDs as video and repairs old text entries without changing their enabled state',async()=>{
+  it('classifies all confirmed IDs as video and repairs old text entries without changing their enabled state',async()=>{
     db.insert(models).values({modelId:'ZH-Cseadanco2.5K',displayName:'保留名称',provider:'zongheng',capabilities:'["text"]',isActive:0}).run();
     upstream=async()=>Response.json({data:ZONGHENG_VIDEO_MODELS.map(spec=>({id:spec.id}))});
     await ChannelService.syncModels(db.select().from(channels).get()!.id);
@@ -196,7 +196,7 @@ describe('Zongheng legacy entry points, isolated database and simulated provider
   it.each(ZONGHENG_VIDEO_MODELS)('rejects invalid $id duration and resolution before charging in all legacy entry points',async spec=>{
     installConfirmedVideos();
     for(const endpoint of ['/api/video/validate','/api/video/generate','/v1/videos']){
-      for(const fields of [{video_length:4,seconds:4,resolution:spec.resolution},{video_length:spec.seconds[0],seconds:spec.seconds[0],resolution:'480p'}]){
+      for(const fields of [{video_length:spec.seconds[0]-1,seconds:spec.seconds[0]-1,resolution:spec.resolution},{video_length:spec.seconds[0],seconds:spec.seconds[0],resolution:'480p'}]){
         const response=await post(endpoint,{model:'ZH-'+spec.id,prompt:'产品视频',...fields});
         expect(response.status).toBe(400);
       }
