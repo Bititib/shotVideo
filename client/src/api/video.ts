@@ -1,6 +1,8 @@
+import type { ModelInputLimits } from '../../../shared/modelRouting';
 import type { VideoModelStatus } from '../../../shared/videoModelStatus';
 
 export interface VideoModel {
+  routingLimits?: ModelInputLimits;
   id: string;
   name: string;
   description: string;
@@ -23,6 +25,7 @@ export interface VideoModel {
 }
 
 export interface VideoGenerateParams {
+  expectedCost?: number;
   prompt: string;
   model?: string;
   aspect_ratio?: string;
@@ -172,4 +175,16 @@ export function generateVideo(
 
 
   return controller;
+}
+
+export interface VideoQuote { model: string; resolution: string; seconds: number; cost: number; rate: number; billingType: 'per_call' | 'per_second' }
+export async function fetchVideoQuote(model: string, resolution: string, seconds: number, signal?: AbortSignal): Promise<VideoQuote> {
+  const token = localStorage.getItem('token');
+  const response = await fetch('/api/video/quote', { method: 'POST', signal,
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    body: JSON.stringify({ model, resolution, video_length: seconds }) });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || '费用预估失败');
+  if (!Number.isFinite(result.cost) || result.cost < 0) throw new Error('费用预估无效');
+  return result;
 }

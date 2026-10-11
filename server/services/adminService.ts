@@ -1,3 +1,4 @@
+import { getModelSpecifications } from './modelRoutingService.js';
 import { validatePublicModelName, rememberPublicModelNames } from './publicModelNameService.js';
 import { db } from '../db/index.js';
 import { users, tiers, models, tierModelAccess, usageLogs, settings, contents, apiLogs, modelPricing, channels, channelApiKeys } from '../db/schema.js';
@@ -522,6 +523,7 @@ export class AdminService {
     const nextModelId = data.modelId !== undefined ? String(data.modelId).trim() : model.modelId;
     if (!nextModelId) throw { status: 400, message: '模型 ID 不能为空' };
     if (nextModelId !== model.modelId) {
+      if (getModelSpecifications().some(s => s.modelId === model.modelId || s.aliases.includes(model.modelId) || s.routes.some(r => r.executionModel === model.modelId))) throw { status: 409, message: '该模型已关联统一规格，请先解除关联；公开规格 API ID 保存后应保持稳定' };
       const duplicateModel = db.select().from(models).where(eq(models.modelId, nextModelId)).get();
       if (duplicateModel) throw { status: 409, message: `模型 ${nextModelId} 已存在` };
       const oldPricing = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, model.modelId)).get();
@@ -578,6 +580,7 @@ export class AdminService {
   static deleteModel(modelId: number) {
     const model = db.select().from(models).where(eq(models.id, modelId)).get();
     if (!model) throw { status: 404, message: '模型不存在' };
+    if (getModelSpecifications().some(s => s.modelId === model.modelId || s.aliases.includes(model.modelId) || s.routes.some(r => r.executionModel === model.modelId))) throw { status: 409, message: '该模型已关联统一规格，请先解除关联或停用模型' };
 
     db.transaction(tx => {
       tx.delete(modelPricing).where(eq(modelPricing.modelPattern, model.modelId)).run();
@@ -596,11 +599,12 @@ export class AdminService {
     return db.select().from(settings).all().filter(item => !item.key.includes('_rate')
       && item.key !== 'image_rate'
       && item.key !== DELETED_MODELS_SETTING
-      && !item.key.startsWith('internal_'));
+      && !item.key.startsWith('internal_') && !item.key.startsWith('model_specification_'));
   }
 
   static updateSettings(items: { key: string; value: string }[]) {
     for (const item of items) {
+      if (item.key.startsWith('model_specification_')) throw { status: 400, message: '模型规格及线路健康状态请在「模型规格与线路」中管理' };
       if (item.key.includes('_rate') || item.key === 'image_rate' || item.key === DELETED_MODELS_SETTING) {
         throw { status: 400, message: '模型价格请在「计费设置」中修改' };
       }

@@ -48,7 +48,7 @@ describe('model management workflow', () => {
     const drawer = await screen.findByRole('dialog', { name: 'video-a · 价格详情' });
     fireEvent.click(await within(drawer).findByRole('button', { name: '编辑', exact: true }));
     const editor = await screen.findByRole('dialog', { name: '编辑计费规则' });
-    fireEvent.change(within(editor).getByLabelText('单价（¥/次）'), { target: { value: '2.5' } });
+    fireEvent.change(within(editor).getByLabelText('单价（¥/条）'), { target: { value: '2.5' } });
     fireEvent.click(within(editor).getByRole('button', { name: '保存并立即生效' }));
     await waitFor(() => expect(adminApi.updatePricing).toHaveBeenCalledWith(2, expect.objectContaining({ modelPattern: 'video-a', inputPrice: 2.5 })));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '编辑计费规则' })).toBeNull());
@@ -63,4 +63,10 @@ describe('model management workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: '重试' }));
     expect(await screen.findByText('Video A')).toBeTruthy();
   });
+});
+
+it('opens the exact sale price from the routing-page link',async()=>{
+  render(React.createElement(MemoryRouter,{initialEntries:['/admin/models?priceModel=video-a']},React.createElement(ModelsPage)));
+  expect(await screen.findByText('video-a · 价格详情')).toBeTruthy();
+  await waitFor(()=>expect(adminApi.getPricing).toHaveBeenCalledWith({modelId:'video-a'}));
 });

@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+// Adapter tests must never initialize or migrate the workspace database.
+vi.mock('../server/db/index.js', () => ({ db: {}, sqlite: {} }));
+vi.mock('../server/services/channelService.js', () => ({ ChannelService: {} }));
 import {
   generateSiYueTianImage,
   isSiYueTianImageChannel,

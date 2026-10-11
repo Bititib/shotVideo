@@ -2,6 +2,12 @@ import { canonicalZonghengModelId, ZONGHENG_VIDEO_MODELS, ZONGHENG_MODEL_PREFIX,
 import { isZonghengChannel, buildZonghengVideoPayload, submitZonghengVideo, ZonghengSubmissionError, zonghengTaskUrl, normalizeZonghengTask } from '../services/zonghengAdapter.js';
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
 import { patchZonghengTask, reviewZonghengTask, zonghengOrder } from '../services/zonghengTaskService.js';
+import videoQuotes from './videoQuotes.js';
+import { assertExpectedVideoCost } from '../services/videoQuoteService.js';
+import { resolvePublicModelId } from '../services/publicModelNameService.js';
+import { handleSpecificationGeneration, resumeSpecificationTasks } from '../services/specificationGenerationService.js';
+import { getModelSpecification, specificationAvailable, selectModelRoutes } from '../services/modelRoutingService.js';
+import { specificationRequest } from '../services/specificationGenerationService.js';
 import { protectVideoSource } from '../middleware/uploadAccess.js';
 import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
 import { publishReferenceUrl } from '../services/publicReferenceService.js';
@@ -149,6 +155,7 @@ import path from 'path';
 import crypto from 'crypto';
 
 const router = Router();
+router.use('/quote', videoQuotes);
 const VIDEO_MODELS_CACHE_TTL_MS = 15_000;
 let videoModelsResponseCache: { expiresAt: number; data: any[] } | null = null;
 const HM_STUDIO_VIDEO_MODEL_ORDER = [
@@ -488,6 +495,7 @@ router.get('/models', (_req: Request, res: Response) => {
   }
 
   const result = publicSourceModels.map(m => {
+    const managedSpec = getModelSpecification(m.id);
     const preset = DEFAULT_VIDEO_MODELS.find(d => d.id === m.id);
     const meta = MODEL_META[m.id];
     const multiplier = meta?.series === '1.5' ? 1.2 : 1.0;
@@ -672,7 +680,7 @@ router.get('/models', (_req: Request, res: Response) => {
     const successCalls = modelRecentRows.filter(r => r.status === 'completed' || r.status === 'success' || Boolean(r.resultUrl?.trim())).length;
     const failureCalls = modelRecentRows.filter(r => r.status === 'failed').length;
     const successStats = calculateSuccessRate(successCalls, failureCalls);
-    const available = findVideoChannel(m.id, activeVideoChannels) !== null
+    const available = managedSpec ? specificationAvailable(managedSpec) : findVideoChannel(m.id, activeVideoChannels) !== null
       || (m.id === HM_STUDIO_PRIMARY_VIDEO_MODEL && hmStudioOverflowAvailable);
 
     return {
@@ -681,11 +689,12 @@ router.get('/models', (_req: Request, res: Response) => {
       description: m.description || preset?.description || 'AI 视频生成服务',
       available,
       modelStatus: calculateVideoModelStatus(recentRowsByModel.get(m.id) || [], available),
-      maxSeconds: preset?.maxSeconds,
-      allowedSeconds: meta?.allowedSeconds || null,
+      routingLimits: managedSpec?.limits,
+      maxSeconds: managedSpec?.limits.duration.max ?? preset?.maxSeconds,
+      allowedSeconds: managedSpec ? managedSpec.limits.duration.mode === 'fixed' ? [managedSpec.limits.duration.min] : managedSpec.limits.duration.mode === 'options' ? managedSpec.limits.duration.values : Array.from({ length: Math.floor((managedSpec.limits.duration.max - managedSpec.limits.duration.min) / managedSpec.limits.duration.step) + 1 }, (_, index) => managedSpec.limits.duration.min + index * managedSpec.limits.duration.step) : meta?.allowedSeconds || null,
       requireRef: meta?.requireRef || false,
       series: meta?.series || 'legacy',
-      rates,
+      rates: managedSpec ? Object.fromEntries(managedSpec.limits.resolutions.map(r => [r, quotePrice(m.id, { resolution: r }).rate])) : rates,
       billingType,
       successRate: successStats.rate,
       successRateEstimated: successStats.estimated,
@@ -693,7 +702,7 @@ router.get('/models', (_req: Request, res: Response) => {
     };
   });
 
-  const availableModels = result.filter(m => m.available).sort((left, right) => {
+  const availableModels = result.filter(m => m.available || Boolean(m.routingLimits)).sort((left, right) => {
     const leftRank = HM_STUDIO_VIDEO_MODEL_RANK.get(left.id);
     const rightRank = HM_STUDIO_VIDEO_MODEL_RANK.get(right.id);
     if (leftRank !== undefined && rightRank !== undefined) return leftRank - rightRank;
@@ -718,6 +727,15 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     batchContext = batchContextForRequest(req);
     if (batchContext) req.body = batchContext.body;
   } catch (error: any) { return res.status(409).json({ error: error.message }); }
+  if (req.path === '/validate' && getModelSpecification(resolvePublicModelId(req.body?.model || ''))) {
+    try { const spec = getModelSpecification(resolvePublicModelId(req.body.model))!;
+      const body = { ...req.body, resolution: req.body.resolution || spec.limits.resolutions[0], video_length: req.body.video_length ?? req.body.seconds ?? req.body.duration ?? (spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) };
+      const input = specificationRequest(body, 'video', '').input; const candidates = selectModelRoutes(spec, input); const quote = PricingService.quote(spec.modelId, { resolution: input.resolution, seconds: input.seconds, count: 1 }, false);
+      if (!quote.billingType) throw Object.assign(new Error('该规格尚未配置用户售价'), { status: 400 });
+      return res.status(candidates.length ? 200 : 503).json(candidates.length ? { valid: true, unitCost: quote.cost } : { error: '没有匹配线路' });
+    } catch (e: any) { return res.status(e.status || 400).json({ error: e.message }); }
+  }
+  if (await handleSpecificationGeneration(req, res, 'video')) return;
   if (typeof req.body?.model === 'string') req.body.model = canonicalZonghengModelId(req.body.model);
   const {
     prompt,
@@ -1189,6 +1207,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     res.write('data: [DONE]\n\n');
     return res.end();
   }
+  try { assertExpectedVideoCost(req.body, unifiedQuote.cost); } catch (error: any) { sendEvent({ type: 'error', message: error.message }); res.write('data: [DONE]\n\n'); return res.end(); }
   const estimatedRate = unifiedQuote.rate;
   const estimatedCost = batchContext ? 0 : unifiedQuote.cost;
 
@@ -3221,6 +3240,7 @@ function adoptHmStudioProcessingContent(contentId: number, record: any): HmStudi
 }
 
 export function resumePollForTask(contentId: number, record: any): Promise<void> {
+  if (JSON.parse(record.metadata || '{}').managedSpecification) { resumeSpecificationTasks(); return Promise.resolve(); }
   if (liveVideoRequests.has(contentId)) return Promise.resolve();
   if (hayaLiveRequests.has(contentId) || zonghengLiveRequests.has(contentId)) return Promise.resolve();
   // A queue job becomes "processing" before its POST returns a task ID.
@@ -3718,6 +3738,7 @@ export function holdHayaSubmission(contentId: number) { hayaLiveRequests.add(con
 export function releaseHayaSubmission(contentId: number) { hayaLiveRequests.delete(contentId); activePolls.delete(contentId); }
 
 export function resumeAllPendingVideoTasks() {
+  resumeSpecificationTasks();
   console.log('🔍 [video-recover] Scanning for queued and processing video tasks...');
   try {
     const pendingTasks = db.select().from(contents)
@@ -3732,6 +3753,7 @@ export function resumeAllPendingVideoTasks() {
       if (hayaLiveRequests.has(contentId) || zonghengLiveRequests.has(contentId)) return;
       let metadata: Record<string, any> = {};
       try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
+      if (metadata.managedSpecification) return;
       // A server interruption after POST but before saving its task ID is not a
       // confirmed failure. Never re-submit that batch attempt automatically.
       if (metadata.zonghengSubmissionStarted && !metadata.videoId) {

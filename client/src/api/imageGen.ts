@@ -1,4 +1,6 @@
+import type { ModelInputLimits } from '../../../shared/modelRouting';
 export interface ImageModel {
+  routingLimits?: ModelInputLimits;
   id: string;
   name: string;
   description: string;

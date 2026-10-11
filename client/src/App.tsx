@@ -27,6 +27,7 @@ const DashboardPage = lazy(() => import('./pages/admin/DashboardPage'));
 const UsersPage = lazy(() => import('./pages/admin/UsersPage'));
 const TiersPage = lazy(() => import('./pages/admin/TiersPage'));
 const ModelsPage = lazy(() => import('./pages/admin/ModelsPage'));
+const ModelRoutingPage = lazy(() => import('./pages/admin/ModelRoutingPage'));
 const ChannelsPage = lazy(() => import('./pages/admin/ChannelsPage'));
 const TokensPage = lazy(() => import('./pages/admin/TokensPage'));
 const PricingPage = lazy(() => import('./pages/admin/PricingPage'));
@@ -110,6 +111,7 @@ export default function App() {
           <Route path="users" element={<UsersPage />} />
           <Route path="tiers" element={<TiersPage />} />
           <Route path="models" element={<ModelsPage />} />
+          <Route path="model-routing" element={<ModelRoutingPage />} />
           <Route path="orgs" element={<OrgsPage />} />
           <Route path="contents" element={<ContentsPage />} />
           <Route path="feedback" element={<FeedbackPage />} />

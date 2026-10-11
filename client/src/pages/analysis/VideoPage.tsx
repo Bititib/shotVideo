@@ -1,3 +1,5 @@
+import { useVideoQuote } from '../../hooks/useVideoQuote';
+import { routingMismatches } from '../../../../shared/modelRouting';
 import { startPolling } from '../../utils/polling';
 import { shouldPollVideoTask, videoTaskDatabaseId } from '../../utils/videoTaskSync';
 import { getZonghengVideoSpec } from '../../../../shared/zonghengVideo';
@@ -363,6 +365,8 @@ const isWan30Model = (modelId: string) => {
 };
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  const managed = models.find(m => m.id === modelId)?.routingLimits;
+  if (managed) return managed.maxImages;
   const hmSpec = getHmStudioAdditionalVideoModel(modelId);
   if (hmSpec) return hmSpec.maxImages;
   const c2Spec = getSiYueTianC2Model(modelId);
@@ -444,6 +448,7 @@ export default function VideoPage() {
   const [replicationLoading, setReplicationLoading] = useState(Boolean(searchParams.get('replicate')));
   const replicatedModelRef = useRef('');
   const guard = useAuthGuard();
+  const quoteUser = useAuthStore(state => state.user);
   const [models, setModels] = useState<VideoModel[]>(getCachedVideoModels);
 
   const groupedModels = React.useMemo(() => {
@@ -503,6 +508,7 @@ export default function VideoPage() {
 
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
+    const managed = models.find(model => model.id === m)?.routingLimits; if (managed) return managed.maxVideos;
     const hmSpec = getHmStudioAdditionalVideoModel(m);
     if (hmSpec) return hmSpec.maxVideos;
     const c2Spec = getSiYueTianC2Model(m);
@@ -529,6 +535,7 @@ export default function VideoPage() {
     return 0;
   };
   const getMaxRefAudios = (m: string) => {
+    const managed = models.find(model => model.id === m)?.routingLimits; if (managed) return managed.maxAudios;
     const hmSpec = getHmStudioAdditionalVideoModel(m);
     if (hmSpec) return hmSpec.maxAudios;
     const c2Spec = getSiYueTianC2Model(m);
@@ -787,7 +794,7 @@ export default function VideoPage() {
       fetchVideoModels().then((nextModels) => {
         setModels(nextModels);
         if (nextModels.length > 0) {
-          setSelectedModel(current => searchParams.get('replicate') || replicatedModelRef.current === current || nextModels.some(model => model.id === current) ? current : nextModels[0].id);
+          setSelectedModel(current => searchParams.get('replicate') || (Boolean(replicatedModelRef.current) && replicatedModelRef.current === current) || nextModels.some(model => model.id === current) ? current : nextModels[0].id);
         }
       }).catch(() => { });
     };
@@ -1067,8 +1074,9 @@ export default function VideoPage() {
 
   // 当选中模型变化时，动态调整可选时长与分辨率
   const currentModel = models.find(m => m.id === selectedModel);
+  const videoQuote = useVideoQuote(selectedModel, resolution, duration, Boolean(quoteUser && currentModel));
   const sdMiniRequiredSeconds = snumomSdMiniSecondsForResolution(resolution);
-  const DURATIONS = selectedModel === SNUMOM_SD_MINI_MODEL
+  const DURATIONS = currentModel?.routingLimits ? (currentModel.allowedSeconds || []).map(value => ({ value, label: value + ' 秒' })) : selectedModel === SNUMOM_SD_MINI_MODEL
     ? ALL_DURATIONS.filter(d => d.value === sdMiniRequiredSeconds)
     : currentModel?.allowedSeconds
     ? ALL_DURATIONS.filter(d => currentModel.allowedSeconds!.includes(d.value))
@@ -1083,7 +1091,7 @@ export default function VideoPage() {
       ? [{ value: '720p', label: '720p' }, { value: '1080p', label: '1080p' }]
       : [{ value: '480p', label: '480p' }, { value: '720p', label: '720p' }];
 
-  const ASPECT_RATIOS = isLongxiaModel(selectedModel)
+  const ASPECT_RATIOS = currentModel?.routingLimits ? ALL_ASPECT_RATIOS.filter(r => currentModel.routingLimits!.ratios.includes(r.value)) : isLongxiaModel(selectedModel)
     ? ALL_ASPECT_RATIOS.filter(ratio => LONGXIA_RATIOS.includes(ratio.value))
     : isWxHaidiYueVideoModel(selectedModel)
     ? ALL_ASPECT_RATIOS.filter(ratio => ratio.value !== '3:2' && ratio.value !== '2:3')
@@ -1121,6 +1129,12 @@ export default function VideoPage() {
       }
     }
 
+    if (currentModel?.routingLimits) {
+      if (!currentModel.routingLimits.ratios.includes(aspectRatio)) setAspectRatio(currentModel.routingLimits.ratios[0] || '16:9');
+      if (!currentModel.routingLimits.firstFrame) setFirstFrame(null);
+      if (!currentModel.routingLimits.lastFrame) setLastFrame(null);
+      return;
+    }
     if (isLongxiaModel(selectedModel) && !LONGXIA_RATIOS.includes(aspectRatio)) setAspectRatio('16:9');
     if (isWan30Model(selectedModel)) {
       const wanRatios = ['1:1', '16:9', '9:16', '4:3', '3:4'];
@@ -1429,6 +1443,12 @@ export default function VideoPage() {
       return;
     }
     if (!guard()) return;
+    if (!videoQuote.quote || videoQuote.loading) { setError(videoQuote.error || '正在预估费用，请稍候'); return; }
+    if (currentModel?.routingLimits) {
+      const reasons = routingMismatches(currentModel.routingLimits, { images: referenceImages.length, videos: referenceVideos.length, audios: referenceAudios.length, outputs: 1, seconds: duration, resolution, ratio: aspectRatio, firstFrame: Boolean(firstFrame), lastFrame: Boolean(lastFrame) }, 'video');
+      if (reasons.length) { setError(reasons.join('；')); return; }
+      if (currentModel.available === false) { setError('该规格暂时没有可用线路'); return; }
+    }
     const unreadableImageIndexes = await findUnreadableImageIndexes(referenceImages);
     if (unreadableImageIndexes.length > 0) {
       setError(`参考图 ${unreadableImageIndexes.map(index => index + 1).join('、')} 已失效或格式损坏，请删除后重新上传`);
@@ -1444,7 +1464,7 @@ export default function VideoPage() {
       setError('视频编辑模型必须上传参考视频');
       return;
     }
-    if (!getHayaVideoSpec(selectedModel) && !isLongxiaModel(selectedModel) && !isOmniVideoEditModel(selectedModel) && !isWan30Model(selectedModel) && selectedModel !== SNUMOM_SD_MINI_MODEL && selectedModel !== WX_HAIDIYUE_MULTIMODAL_MODEL && selectedModel !== 'seedance-2.5-deal' && selectedModel !== 'seedance-2.5-pro' && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
+    if (!currentModel?.routingLimits && !getHayaVideoSpec(selectedModel) && !isLongxiaModel(selectedModel) && !isOmniVideoEditModel(selectedModel) && !isWan30Model(selectedModel) && selectedModel !== SNUMOM_SD_MINI_MODEL && selectedModel !== WX_HAIDIYUE_MULTIMODAL_MODEL && selectedModel !== 'seedance-2.5-deal' && selectedModel !== 'seedance-2.5-pro' && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
       setError('参考视频或音频模式下必须上传至少一张参考图');
       return;
     }
@@ -1492,6 +1512,7 @@ export default function VideoPage() {
     const ctrl = generateVideo(
       {
         prompt: finalPrompt,
+        expectedCost: videoQuote.quote.cost,
         model: selectedModel,
         aspect_ratio: aspectRatio,
         video_length: duration,
@@ -1527,6 +1548,7 @@ export default function VideoPage() {
             useAuthStore.getState().fetchProfile().catch(() => { });
             break;
           case 'error':
+            videoQuote.refresh();
             updateTask({ status: 'error', error: event.message || '生成失败', statusMessage: '' });
             abortRef.current.delete(taskId);
             useAuthStore.getState().fetchProfile().catch(() => { });
@@ -1557,7 +1579,7 @@ export default function VideoPage() {
     setReferenceAudioNames([]);
     setFirstFrame(null);
     setLastFrame(null);
-  }, [replicationLoading, prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideos, referenceAudios, firstFrame, lastFrame, locallyProcessedImages, complianceEnabled, complianceMode]);
+  }, [replicationLoading, prompt, selectedModel, aspectRatio, duration, resolution, referenceImages, referenceVideos, referenceAudios, firstFrame, lastFrame, locallyProcessedImages, complianceEnabled, complianceMode, currentModel, videoQuote.quote, videoQuote.loading, videoQuote.error, videoQuote.refresh]);
 
   const handleRemove = (taskId: string) => {
     if (taskId.startsWith('db_')) {
@@ -1680,7 +1702,7 @@ export default function VideoPage() {
                               <div className="flex items-center gap-2 flex-wrap justify-end">
                                 {m.rates && (
                                   <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
-                                    ¥{(m.rates[resolution as keyof typeof m.rates] !== undefined ? m.rates[resolution as keyof typeof m.rates] : Object.values(m.rates)[0])?.toFixed(2)}{getBillingUnit(m.billingType)}
+                                    ¥{(m.rates[resolution as keyof typeof m.rates] !== undefined ? m.rates[resolution as keyof typeof m.rates] : Object.values(m.rates)[0])?.toFixed(2)}{getBillingUnit(m.billingType, 'video')}
                                   </span>
                                 )}
                                 <VideoModelStatusIndicator status={m.modelStatus} />
@@ -1693,7 +1715,7 @@ export default function VideoPage() {
                                 {Object.entries(m.rates).map(([resKey, resRate], rIdx, arr) => (
                                   <React.Fragment key={resKey}>
                                     <span>
-                                      {resKey}: <span className="text-zinc-400">¥{(Number(resRate) || 0).toFixed(2)}{getBillingUnit(m.billingType)}</span>
+                                      {resKey}: <span className="text-zinc-400">¥{(Number(resRate) || 0).toFixed(2)}{getBillingUnit(m.billingType, 'video')}</span>
                                     </span>
                                     {rIdx < arr.length - 1 && <span className="text-zinc-800">•</span>}
                                   </React.Fragment>
@@ -2001,7 +2023,7 @@ export default function VideoPage() {
                         : 'snumom WAN3.0 支持 10 图 · 5 视频 · 5 段 MP3/WAV 音频，支持首帧与首尾帧模式'}
                     </span>
                   )}
-                  {(isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1' || isHmStudioVideoModel(selectedModel) || selectedModel === 'wan3.0-video' || selectedModel === 'wan3.0-video-prime') && (
+                  {(currentModel?.routingLimits ? currentModel.routingLimits.firstFrame || currentModel.routingLimits.lastFrame : isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1' || isHmStudioVideoModel(selectedModel) || selectedModel === 'wan3.0-video' || selectedModel === 'wan3.0-video-prime') && (
                     <>
                       <button onClick={() => firstFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-emerald-400" /> 首帧 {firstFrame ? '(已上传)' : ''}
@@ -2336,10 +2358,14 @@ export default function VideoPage() {
                   />
 
                   {/* 圆形发送按钮 */}
-                  <button onClick={handleGenerate} disabled={replicationLoading || !prompt.trim() || prompt.trim().length > MAX_VIDEO_PROMPT_LENGTH}
+                  <button onClick={handleGenerate} disabled={replicationLoading || !prompt.trim() || prompt.trim().length > MAX_VIDEO_PROMPT_LENGTH || Boolean(quoteUser && (!videoQuote.quote || videoQuote.loading))}
                     className="absolute right-3 bottom-3 w-11 h-11 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed z-10" aria-label="开始生成视频">
                     <Play className="w-4 h-4 ml-0.5" />
                   </button>
+                </div>
+                <div aria-live="polite" className="flex flex-wrap items-center justify-between gap-2 px-2 pt-2 text-xs text-[#765b47]">
+                  <span>{!quoteUser ? '登录后可查看本次费用' : videoQuote.loading ? '正在预估费用…' : videoQuote.quote ? <>本次预计消费 <strong>¥{videoQuote.quote.cost.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 6 })}</strong> · {videoQuote.quote.billingType === 'per_second' ? '¥' + videoQuote.quote.rate.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 6 }) + '/秒 × ' + videoQuote.quote.seconds + ' 秒' : '按条计费，1 条视频'}</> : videoQuote.error || '请选择模型与参数'}</span>
+                  {videoQuote.error && <button type="button" className="min-h-11 underline" onClick={videoQuote.refresh}>重新预估</button>}
                 </div>
               </div>
             </div>

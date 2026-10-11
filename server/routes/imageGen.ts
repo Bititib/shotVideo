@@ -1,6 +1,8 @@
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, ZonghengSubmissionError, buildZonghengImagePayload, validateZonghengImageReferences, zonghengImageSize } from '../services/zonghengAdapter.js';
 import { generateZonghengImages } from '../services/zonghengImageService.js';
+import { handleSpecificationGeneration } from '../services/specificationGenerationService.js';
+import { getModelSpecification, specificationAvailable } from '../services/modelRoutingService.js';
 import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
 import { reserveUserCharge } from '../services/billingReservation.js';
 import { canvasRequestMiddleware, recordCanvasEvent } from '../middleware/canvasRequest.js';
@@ -334,8 +336,9 @@ router.get('/models', (_req: Request, res: Response) => {
     return {
       id: m.id,
       name: m.name || preset?.name || m.id,
-      description: preset?.description || 'AI 图片生成服务',
-      available: findImageChannel(m.id) !== null,
+      description: getModelSpecification(m.id)?.imageFamily ? '输出 ' + getModelSpecification(m.id)!.limits.resolutions[0] + '；按参考图数量匹配可用线路' : preset?.description || 'AI 图片生成服务',
+      routingLimits: getModelSpecification(m.id)?.limits,
+      available: getModelSpecification(m.id) ? specificationAvailable(getModelSpecification(m.id)!) : findImageChannel(m.id) !== null,
       rate,
       resolutionPrices: pricing?.resolution_prices || {},
     };
@@ -346,6 +349,7 @@ router.get('/models', (_req: Request, res: Response) => {
 
 /** POST /api/image-gen/generate — 图片生成（支持多图 + 参考图） */
 router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware('generate_image'), quotaMiddleware, async (req: TierRequest, res: Response) => {
+  if (await handleSpecificationGeneration(req, res, 'image')) return;
   if (typeof req.body?.model === 'string') req.body.model = canonicalZonghengModelId(req.body.model);
   const {
     prompt,

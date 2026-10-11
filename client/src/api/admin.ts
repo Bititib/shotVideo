@@ -19,6 +19,12 @@ const api = {
 };
 
 export const adminApi = {
+  getModelSpecificationSuggestions() { return api.get<any[]>('/admin/model-specifications/suggestions'); },
+  getModelSpecifications() { return api.get<any[]>('/admin/model-specifications'); },
+  saveModelSpecification(data: any) { return api.put<any>('/admin/model-specifications/' + encodeURIComponent(data.modelId), data); },
+  deleteModelSpecification(id: string) { return api.delete<any>('/admin/model-specifications/' + encodeURIComponent(id)); },
+  simulateModelRoutes(id: string, data: any) { return api.post<any>('/admin/model-specifications/' + encodeURIComponent(id) + '/simulate', data); },
+  resetModelRouteHealth(id: string, key: string) { return api.post<any>('/admin/model-specifications/' + encodeURIComponent(id) + '/reset-health', { key }); },
   getDashboard() { return api.get<any>('/admin/dashboard'); },
 
   getUsers(params: { page?: number; pageSize?: number; search?: string; tierId?: number; isActive?: number } = {}) {

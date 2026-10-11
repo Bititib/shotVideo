@@ -1,3 +1,4 @@
+vi.mock('../server/services/modelRoutingService.js', () => ({ getModelSpecification: () => undefined }));
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import type { Server } from 'http';

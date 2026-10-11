@@ -1,4 +1,6 @@
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
+import { createVideoAliasChecker } from './modelSaleService.js';
+import { getModelSpecifications } from './modelRoutingService.js';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { models, settings } from '../db/schema.js';
@@ -18,12 +20,22 @@ export class PublicModelNameError extends Error {
 }
 
 /** Resolve before permissions, pricing and routing; unknown legacy IDs retain their old behavior. */
-export function resolvePublicModelId(value: string): string {
+export function resolvePublicModelId(value: string, input: { resolution?: unknown; output_resolution?: unknown; quality?: unknown } = {}): string {
   const rows = db.select().from(models).all();
   const oldAlias = aliases()[value];
   const matches = rows.filter(row => row.modelId === value || row.modelId === canonicalZonghengModelId(value) || row.displayName === value || row.id === oldAlias);
   if (matches.length > 1) throw new PublicModelNameError(`模型名称“${value}”存在冲突，请管理员设置唯一名称`);
-  return matches[0]?.modelId || value;
+  const id = matches[0]?.modelId || value;
+  const specs = getModelSpecifications();
+  if (specs.some(spec => spec.modelId === id)) return id;
+  const checkAlias = createVideoAliasChecker();
+  const linked = specs.filter(spec => spec.aliases.includes(id) && !checkAlias(spec, id));
+  if (!linked.some(spec => spec.imageFamily)) return linked[0]?.modelId || id;
+  const explicit = input.output_resolution || input.resolution;
+  const resolution = String(explicit || (id === 'gpt-image-2' ? input.quality === 'low' ? '1K' : '4K' : '2K'));
+  const match = linked.find(spec => spec.limits.resolutions.some(r => r.toLowerCase() === resolution.toLowerCase()));
+  if (!match) throw Object.assign(new PublicModelNameError('该模型的 ' + resolution + ' 规格尚未配置，请使用已开放的分辨率或对应 API 模型 ID'), { status:400 });
+  return match.modelId;
 }
 
 export function publicModelName(model: Pick<Model, 'modelId' | 'displayName'>): string {

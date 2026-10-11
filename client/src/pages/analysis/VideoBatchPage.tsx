@@ -116,9 +116,9 @@ export default function VideoBatchPage() {
     if (!files.length) return;
     const maxMB = getHayaVideoSpec(input.model) ? 20 : 10;
     if (files.some(f => !f.type.startsWith('image/') || f.size > maxMB * 1024 * 1024)) { setError('请上传 ' + maxMB + ' MB 以内的图片'); return; }
-    const maxImages = input.model === WX_HAIDIYUE_MULTIMODAL_MODEL
+    const maxImages = model?.routingLimits?.maxImages ?? (input.model === WX_HAIDIYUE_MULTIMODAL_MODEL
       ? 30
-      : getHmStudioAdditionalVideoModel(input.model)?.maxImages ?? getHayaVideoSpec(input.model)?.maxImages ?? 10;
+      : getHmStudioAdditionalVideoModel(input.model)?.maxImages ?? getHayaVideoSpec(input.model)?.maxImages ?? 10);
     if (input.creatives[index].reference_images.length + files.length > maxImages) { setError('每组最多 ' + maxImages + ' 张参考图'); return; }
     setBusy(true);
     try {
@@ -189,11 +189,11 @@ export default function VideoBatchPage() {
           <label>批次名称<input value={input.name} maxLength={80} placeholder="例如：秋季新品带货 · 第一批" onChange={e => edit({ name: e.target.value })} /></label>
           <label>视频模型<select value={input.model} onChange={e => {
             const m = models.find(v => v.id === e.target.value);
-            edit({ model: e.target.value, resolution: Object.keys(m?.rates || { '720p': 0 })[0], video_length: m?.allowedSeconds?.[0] || Math.min(6, m?.maxSeconds || 6) });
+            edit({ model: e.target.value, aspect_ratio: m?.routingLimits?.ratios.includes(input.aspect_ratio) === false ? m.routingLimits.ratios[0] : input.aspect_ratio, resolution: Object.keys(m?.rates || { '720p': 0 })[0], video_length: m?.allowedSeconds?.[0] || Math.min(6, m?.maxSeconds || 6) });
           }}><option value="" disabled>请选择模型</option>{models.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
           {model && <><VideoModelStatusIndicator status={model.modelStatus} /><p className="vb-help">{model.description}</p></>}
           <div className="vb-three">
-            <label>画面比例<select value={input.aspect_ratio} onChange={e => edit({ aspect_ratio: e.target.value })}>{['9:16', '16:9', '1:1', '4:3', '3:4', '21:9'].map(v => <option key={v}>{v}</option>)}</select></label>
+            <label>画面比例<select value={input.aspect_ratio} onChange={e => edit({ aspect_ratio: e.target.value })}>{(model?.routingLimits?.ratios || ['9:16', '16:9', '1:1', '4:3', '3:4', '21:9']).map(v => <option key={v}>{v}</option>)}</select></label>
             <label>时长（秒）{model?.allowedSeconds?.length ? <select value={input.video_length} onChange={e => edit({ video_length: Number(e.target.value) })}>{model.allowedSeconds.map(v => <option key={v}>{v}</option>)}</select> : <input type="number" min={1} max={model?.maxSeconds || 120} value={input.video_length} onChange={e => edit({ video_length: Number(e.target.value) })} />}</label>
             <label>分辨率<select value={input.resolution} onChange={e => edit({ resolution: e.target.value })}>{Object.keys(model?.rates || { '720p': 0 }).map(v => <option key={v}>{v}</option>)}</select></label>
           </div>

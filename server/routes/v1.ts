@@ -3,6 +3,9 @@ import { isZonghengChannel, zonghengBaseUrl, buildZonghengVideoPayload, validate
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
 import { patchZonghengTask, reviewZonghengTask, zonghengOrder } from '../services/zonghengTaskService.js';
 import { generateZonghengImages } from '../services/zonghengImageService.js';
+import { createVideoAliasChecker } from '../services/modelSaleService.js';
+import { handleSpecificationGeneration } from '../services/specificationGenerationService.js';
+import { getModelSpecifications, getModelSpecification } from '../services/modelRoutingService.js';
 import { resolvePublicModelId, publicModelName } from '../services/publicModelNameService.js';
 import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
 import { publishReferenceUrl } from '../services/publicReferenceService.js';
@@ -182,13 +185,14 @@ export function filterRoutableModels(
 export function getAccessibleModels(token: { allowedModels: string[] }) {
   const registeredModels = getEnabledPublicModels();
   const activeChannels = ChannelService.getActiveChannels();
-  const routingChannels: Array<{ supportedModels: string[] }> = [...activeChannels];
+  const routingChannels: Array<{ supportedModels: string[] }> = [...activeChannels, ...getModelSpecifications().map(spec => ({ supportedModels: [spec.modelId] }))];
   if (hasHmStudioOverflowChannel(activeChannels)) {
     routingChannels.push({ supportedModels: [HM_STUDIO_PRIMARY_VIDEO_MODEL] });
   }
+  const checkAlias = createVideoAliasChecker();
   const routable = new Set(filterRoutableModels(registeredModels.map(model => model.modelId), routingChannels));
   return registeredModels.filter(model => routable.has(model.modelId)
-    && (token.allowedModels.length === 0 || token.allowedModels.includes(model.modelId)));
+    && (token.allowedModels.length === 0 || token.allowedModels.includes(model.modelId) || getModelSpecification(model.modelId)?.aliases.some(alias => token.allowedModels.includes(alias) && !checkAlias(getModelSpecification(model.modelId)!, alias))));
 }
 
 export function getAccessibleModelIds(token: { allowedModels: string[] }): string[] {
@@ -577,7 +581,7 @@ function normalizeApiModel(req: Request, res: Response): boolean {
     return false;
   }
   try {
-    req.body.model = resolvePublicModelId(req.body.model);
+    req.body.model = resolvePublicModelId(req.body.model, req.body);
     return true;
   } catch (error: any) {
     cleanupFiles(req.files);
@@ -600,7 +604,7 @@ router.get('/models', (req: Request, res: Response) => {
   res.json({
     object: 'list',
     data: modelList.map(model => ({
-      id: publicModelName(model),
+      id: getModelSpecification(model.modelId) ? model.modelId : publicModelName(model),
       name: model.displayName || model.modelId,
       canonical_id: model.modelId,
       object: 'model',
@@ -959,6 +963,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
   if (!normalizeApiModel(req, res)) return;
+  if (await handleSpecificationGeneration(req, res, 'image', { token, reserve: (amount, id) => reserveApiCharge(token, amount, id) })) return;
   const { model, prompt, n = 1, size = '1024x1024', response_format = 'url', ...otherParams } = req.body;
   if (!model) return res.status(400).json({ error: { message: 'model is required', type: 'invalid_request_error' } });
   if (!prompt) return res.status(400).json({ error: { message: 'prompt is required', type: 'invalid_request_error' } });
@@ -1357,6 +1362,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
   }
 
   if (!normalizeApiModel(req, res)) return;
+  if (await handleSpecificationGeneration(req, res, 'image', { token, reserve: (amount, id) => reserveApiCharge(token, amount, id) })) return;
   const { model, prompt, n = 1, size = '1024x1024', response_format = 'url', ...otherParams } = req.body;
   if (!model) {
     cleanupFiles(req.files);
@@ -1604,6 +1610,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   }
 
   if (!normalizeApiModel(req, res)) return;
+  if (await handleSpecificationGeneration(req, res, 'video', { token, reserve: (amount, id) => reserveApiCharge(token, amount, id) })) return;
   const body = req.body || {};
 
   const model = body.model;

@@ -1,3 +1,4 @@
+import { getModelSpecification } from '../services/modelRoutingService.js';
 import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -45,9 +46,10 @@ const handle = (fn: (req: TierRequest, res: Response) => any) => (req: TierReque
 
 export function validateBatchInput(body: any): VideoBatchInput {
   if (!body || typeof body.model !== 'string' || !body.model) throw new Error('请选择视频模型');
-  if (!['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].includes(body.aspect_ratio)) throw new Error('请选择正确画面比例');
-  if (!Number.isInteger(body.video_length) || body.video_length < 1 || body.video_length > 120) throw new Error('视频时长必须为 1–120 秒的整数');
-  if (!['480p', '720p', '1080p', '2k', '4k'].includes(body.resolution)) throw new Error('请选择正确分辨率');
+  const limits = getModelSpecification(body.model)?.limits;
+  if (!(limits?.ratios || ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']).includes(body.aspect_ratio)) throw new Error('请选择正确画面比例');
+  if (!Number.isFinite(body.video_length) || (!limits && !Number.isInteger(body.video_length)) || body.video_length < 1 || body.video_length > (limits ? 3600 : 120)) throw new Error('视频时长必须为 1–120 秒的整数');
+  if (!(limits?.resolutions || ['480p', '720p', '1080p', '2k', '4k']).includes(body.resolution)) throw new Error('请选择正确分辨率');
   if (typeof body.autoRetry !== 'boolean' || !Number.isInteger(body.maxRetries) || body.maxRetries < 0 || body.maxRetries > 3) throw new Error('自动重试最多 3 次');
   if (!Array.isArray(body.creatives) || body.creatives.length < 1 || body.creatives.length > 20) throw new Error('每个批次支持 1–20 组创意');
   const media = (value: unknown, max: number, images: boolean): string[] => {
@@ -61,9 +63,9 @@ export function validateBatchInput(body: any): VideoBatchInput {
     const error = validateVideoPrompt(c?.prompt);
     if (error) throw new Error(`创意 ${index + 1}：${error}`);
     if (!Number.isInteger(c.count) || c.count < 1 || c.count > 100) throw new Error('每组生成数量需为 1–100 的整数');
-    const maxImages = body.model === WX_HAIDIYUE_MULTIMODAL_MODEL ? WX_HAIDIYUE_MULTIMODAL_MAX_IMAGES : 10;
+    const maxImages = limits?.maxImages ?? (body.model === WX_HAIDIYUE_MULTIMODAL_MODEL ? WX_HAIDIYUE_MULTIMODAL_MAX_IMAGES : 10);
     return { prompt: c.prompt, count: c.count, reference_images: media(c.reference_images, maxImages, true),
-      reference_videos: media(c.reference_videos, 10, false), audio_urls: media(c.audio_urls, 10, false) };
+      reference_videos: media(c.reference_videos, limits?.maxVideos ?? 10, false), audio_urls: media(c.audio_urls, limits?.maxAudios ?? 10, false) };
   });
   if (creatives.reduce((n, c) => n + c.count, 0) > 100) throw new Error('单批次最多生成 100 条视频');
   return { name: typeof body.name === 'string' ? body.name.slice(0, 80) || '批量视频' : '批量视频',

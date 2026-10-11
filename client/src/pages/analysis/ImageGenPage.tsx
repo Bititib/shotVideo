@@ -172,8 +172,11 @@ export default function ImageGenPage() {
   const guard = useAuthGuard();
   const [models, setModels] = useState<ImageModel[]>(getCachedImageModels);
   const [selectedModel, setSelectedModel] = useState(() => models[0]?.id || '');
+  const managedLimits = models.find(m => m.id === selectedModel)?.routingLimits;
+  const maxReferenceImages = managedLimits?.maxImages ?? 10;
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState('1:1');
+  const [managedQuality, setManagedQuality] = useState('');
   const [pidoiQuality, setPidoiQuality] = useState<'low' | 'high'>('high');
   const [mingFeiQuality, setMingFeiQuality] = useState<'low' | 'medium' | 'high'>('medium');
   const [mingFeiResolution, setMingFeiResolution] = useState<'1K' | '2K' | '4K'>('2K');
@@ -326,9 +329,10 @@ export default function ImageGenPage() {
 
   const handleFileSelect = async (files: FileList | null) => {
     if (!files) return;
-    const remaining = 10 - referenceImages.length;
-    if (remaining <= 0) { setError('最多上传 10 张参考图'); return; }
-    const validFiles = Array.from(files).filter(isSupportedImageFile).slice(0, remaining);
+    const remaining = maxReferenceImages - referenceImages.length;
+    if (remaining <= 0) { setError('最多上传 ' + maxReferenceImages + ' 张参考图'); return; }
+    const validFiles = Array.from(files).filter(isSupportedImageFile);
+    if (validFiles.length > remaining) { setError('该规格最多 ' + maxReferenceImages + ' 张参考图，请减少选中的图片'); return; }
     if (validFiles.length === 0) return;
     const oversized = validFiles.find(f => f.size > 20 * 1024 * 1024);
     if (oversized) { setError(`参考图 "${oversized.name}" 超过 20MB 上限`); return; }
@@ -341,8 +345,16 @@ export default function ImageGenPage() {
   // 全局拖拽 + Ctrl+V 粘贴上传参考图
   useImageDropPaste(handleFileSelect);
 
+  useEffect(() => {
+    if (!managedLimits) return;
+    if (!managedLimits.qualities.includes(managedQuality)) setManagedQuality(managedLimits.qualities[0] || '');
+    if (!managedLimits.resolutions.includes(mingFeiResolution)) setMingFeiResolution((managedLimits.resolutions[0] || '2K') as any);
+    if (!managedLimits.ratios.includes(aspectRatio)) setAspectRatio(managedLimits.ratios[0] || '1:1');
+    if (imageCount > managedLimits.maxOutputs) setImageCount(managedLimits.maxOutputs);
+  }, [selectedModel, managedLimits, mingFeiResolution, aspectRatio, imageCount, managedQuality]);
   const handleGenerate = useCallback(() => {
     if (!prompt.trim()) return;
+    if (managedLimits && (referenceImages.length < managedLimits.minImages || referenceImages.length > managedLimits.maxImages)) { setError('该规格需要 ' + managedLimits.minImages + '–' + managedLimits.maxImages + ' 张参考图'); return; }
     if (activeBatches.length >= MAX_CONCURRENT_BATCHES) {
       setError(`最多同时生成 ${MAX_CONCURRENT_BATCHES} 批图片，请等待任一批完成`);
       return;
@@ -357,7 +369,7 @@ export default function ImageGenPage() {
     const batchAspectRatio = aspectRatio;
     const batchCount = imageCount;
     const batchReferences = [...referenceImages];
-    const batchQuality = batchModel === 'gpt-image-2'
+    const batchQuality = managedLimits ? managedQuality || undefined : batchModel === 'gpt-image-2'
       ? pidoiQuality
       : batchModel === 'gpt-image-2-mingfei' ? mingFeiQuality : undefined;
     const batchResolution = batchModel === 'gpt-image-2-mingfei' ? mingFeiResolution : undefined;
@@ -384,7 +396,7 @@ export default function ImageGenPage() {
         prompt: batchPrompt,
         model: batchModel,
         aspect_ratio: batchAspectRatio,
-        resolution: batchModel === 'gpt-image-2'
+        resolution: managedLimits ? managedLimits.resolutions.length === 1 ? managedLimits.resolutions[0] as '1K' | '2K' | '4K' : mingFeiResolution : batchModel === 'gpt-image-2'
           ? (batchQuality === 'high' ? '4K' : '1K')
           : batchResolution,
         quality: batchQuality,
@@ -462,7 +474,7 @@ export default function ImageGenPage() {
       },
     );
     batchControllersRef.current.set(batchId, ctrl);
-  }, [prompt, selectedModel, aspectRatio, pidoiQuality, mingFeiQuality, mingFeiResolution, imageCount, activeBatches.length, referenceImages, guard]);
+  }, [prompt, selectedModel, aspectRatio, pidoiQuality, mingFeiQuality, mingFeiResolution, imageCount, activeBatches.length, referenceImages, guard, managedLimits, managedQuality]);
 
   const handleCancelBatch = useCallback((batchId: string) => {
     batchControllersRef.current.get(batchId)?.abort();
@@ -556,7 +568,7 @@ export default function ImageGenPage() {
                       <span>单价: <span className="text-zinc-400">¥{model.rate.toFixed(2)} / 张</span></span>
                     </div>
                   )}
-                  {!model.available && <div className="mt-2 text-xs text-amber-500/80 flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5" /> 未配置渠道</div>}
+                  {!model.available && <div className="mt-2 text-xs text-amber-500/80 flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5" /> 暂不可用</div>}
                 </button>
               ))}
               <div className="p-4 rounded-xl border border-dashed border-white/5 opacity-40 mt-4">
@@ -709,11 +721,14 @@ export default function ImageGenPage() {
             <div className="max-w-5xl mx-auto">
               {/* 工具栏 */}
               <div className="flex items-center gap-2 mb-3 flex-wrap">
-                <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={ASPECT_RATIOS} prefix="比例: " />
-                {selectedModel === 'gpt-image-2' && (
+                <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={managedLimits ? ASPECT_RATIOS.filter(r => managedLimits.ratios.includes(r.value)) : ASPECT_RATIOS} prefix="比例: " />
+                {selectedModel === 'gpt-image-2' && !managedLimits && (
                   <CustomSelect value={pidoiQuality} onChange={setPidoiQuality} options={PIDOI_QUALITY_OPTIONS} prefix="画质: " />
                 )}
-                {selectedModel === 'gpt-image-2-mingfei' && (
+                {Boolean(managedLimits?.qualities.length) && <CustomSelect value={managedQuality} onChange={setManagedQuality} options={managedLimits!.qualities.map(q => ({ value: q, label: q }))} prefix="质量: " />}
+                {managedLimits?.resolutions.length === 1 && <span className="rounded-lg border border-white/5 px-2.5 py-1.5 text-[11px] text-zinc-300">输出 {managedLimits.resolutions[0]}</span>}
+                {managedLimits && managedLimits.resolutions.length > 1 && <CustomSelect value={mingFeiResolution} onChange={setMingFeiResolution} options={managedLimits.resolutions.map(r => ({ value: r, label: r }))} prefix="分辨率: " />}
+                {selectedModel === 'gpt-image-2-mingfei' && !managedLimits && (
                   <>
                     <CustomSelect value={mingFeiQuality} onChange={setMingFeiQuality} options={MINGFEI_QUALITY_OPTIONS} prefix="质量: " />
                     <CustomSelect value={mingFeiResolution} onChange={setMingFeiResolution} options={MINGFEI_RESOLUTION_OPTIONS} prefix="分辨率: " />
@@ -724,9 +739,9 @@ export default function ImageGenPage() {
                     )}
                   </>
                 )}
-                <CustomSelect value={imageCount} onChange={setImageCount} options={COUNT_OPTIONS} icon={Grid2x2} prefix="数量: " />
+                <CustomSelect value={imageCount} onChange={setImageCount} options={managedLimits ? COUNT_OPTIONS.filter(o => o.value <= managedLimits.maxOutputs) : COUNT_OPTIONS} icon={Grid2x2} prefix="数量: " />
                 <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
-                  <Upload className="w-3 h-3 text-pink-400" /> 参考图 ({referenceImages.length}/10)
+                  <Upload className="w-3 h-3 text-pink-400" /> 参考图 ({referenceImages.length}/{maxReferenceImages})
                 </button>
                 <input ref={fileInputRef} type="file" accept={MOBILE_IMAGE_ACCEPT} multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
               </div>
@@ -744,7 +759,7 @@ export default function ImageGenPage() {
                             className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><X className="w-3.5 h-3.5 text-white" /></button>
                         </div>
                       ))}
-                      {referenceImages.length < 10 && (
+                      {referenceImages.length < maxReferenceImages && (
                         <button onClick={() => fileInputRef.current?.click()}
                           className="w-12 h-12 rounded-lg border border-dashed border-white/10 hover:border-pink-500/30 flex items-center justify-center text-zinc-600 hover:text-pink-400 transition-colors shrink-0">
                           <Upload className="w-3.5 h-3.5" />
@@ -764,7 +779,7 @@ export default function ImageGenPage() {
                   rows={3}
                   className="w-full bg-transparent px-4 py-3 pr-16 text-sm text-white focus:outline-none placeholder:text-zinc-600 resize-none [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' } as React.CSSProperties} />
                 {/* 圆形发送按钮：已有任务运行时仍可继续提交新批次 */}
-                <button onClick={handleGenerate} disabled={!prompt.trim() || activeBatches.length >= MAX_CONCURRENT_BATCHES}
+                <button onClick={handleGenerate} disabled={!prompt.trim() || activeBatches.length >= MAX_CONCURRENT_BATCHES || models.find(m => m.id === selectedModel)?.available === false}
                   className="absolute right-3 bottom-3 w-11 h-11 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white shadow-lg shadow-pink-500/20 disabled:opacity-30 disabled:cursor-not-allowed"
                   aria-label={activeBatches.length >= MAX_CONCURRENT_BATCHES ? '已达到并发批次上限' : '开始生成图片'}
                   title={activeBatches.length > 0 ? `正在运行 ${activeBatches.length}/${MAX_CONCURRENT_BATCHES} 批，点击继续提交` : '开始生成图片'}>

@@ -13,6 +13,7 @@ import { Plus, Radio, Trash2, Pencil, Zap, Loader2, Power, PowerOff, RefreshCw, 
 
 const HM_STUDIO_BASE_URL = 'https://dnyovzpgyokm.sealosbja.site';
 const HAYA_BASE_URL = 'https://hayaai.fun';
+const BLOB_DRAW_BASE_URL = 'https://www.iblob.cc/api/v1';
 const MIAOWU_BASE_URL = 'https://api.miaowuai.store';
 
 const ModelsPage = lazy(() => import('./ModelsPage'));
@@ -438,7 +439,7 @@ export default function ChannelsPage() {
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-white">{ch.name}</h3>
-                  <p className="text-[10px] text-zinc-500 font-mono"><span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold mr-1.5 ${ch.type === 'gemini' ? 'bg-emerald-500/15 text-emerald-400' : ch.type === 'grok2api' ? 'bg-orange-500/15 text-orange-400' : ch.type === 'hmstudio' ? 'bg-amber-500/15 text-amber-300' : 'bg-blue-500/15 text-blue-400'}`}>{ch.type === 'zongheng' ? '纵横科技' : ch.type === 'openai' ? 'OpenAI' : ch.type === 'gemini' ? 'Gemini' : ch.type === 'grok2api' ? 'Grok2API' : ch.type === 'hmstudio' ? 'HM Studio' : ch.type === 'haya' ? 'Haya AI' : ch.type === 'miaowu' ? '喵呜 API' : ch.type}</span>{ch.baseUrl}</p>
+                  <p className="text-[10px] text-zinc-500 font-mono"><span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold mr-1.5 ${ch.type === 'gemini' ? 'bg-emerald-500/15 text-emerald-400' : ch.type === 'grok2api' ? 'bg-orange-500/15 text-orange-400' : ch.type === 'hmstudio' ? 'bg-amber-500/15 text-amber-300' : 'bg-blue-500/15 text-blue-400'}`}>{ch.type === 'zongheng' ? '纵横科技' : ch.type === 'openai' ? 'OpenAI' : ch.type === 'gemini' ? 'Gemini' : ch.type === 'grok2api' ? 'Grok2API' : ch.type === 'hmstudio' ? 'HM Studio' : ch.type === 'blobdraw' ? 'BlobDraw' : ch.type === 'haya' ? 'Haya AI' : ch.type === 'miaowu' ? '喵呜 API' : ch.type}</span>{ch.baseUrl}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -531,6 +532,8 @@ export default function ChannelsPage() {
                         ? 'https://cnd-coo-new.pages.dev'
                         : e.target.value === 'hmstudio' && !edit.baseUrl
                         ? HM_STUDIO_BASE_URL
+                        : e.target.value === 'blobdraw' && !edit.baseUrl
+                          ? BLOB_DRAW_BASE_URL
                         : e.target.value === 'haya' && !edit.baseUrl
                           ? HAYA_BASE_URL
                         : e.target.value === 'longxia' && !edit.baseUrl
@@ -552,6 +555,7 @@ export default function ChannelsPage() {
                       <option value="longxia">LongXia（视频按秒计费）</option>
                       <option value="haya">Haya AI（素材上传／视频异步任务）</option>
                       <option value="miaowu">喵呜 API（视频异步任务）</option>
+                      <option value="blobdraw">BlobDraw（视频生成）</option>
                       <option value="mingfei">MingFei（GPT Image 2 异步任务）</option>
                       <option value="gemini">Gemini（分析服务）</option>
                       <option value="grok2api">Grok2API（视频/图片生成）</option>
@@ -571,6 +575,7 @@ export default function ChannelsPage() {
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
                 </div>
               )}
+              {edit.type === 'blobdraw' && <p className="text-xs leading-5 text-zinc-400">保存密钥后点击“同步模型”。视频模型和参考素材上限将自动导入；配置用户售价后在模型管理中启用。密钥需要读取和生成两项权限。</p>}
               {edit.type === 'zongheng' && <p className="text-xs leading-5 text-zinc-400">同步模型会创建带 ZH- 前缀的停用入口；请核对模型能力、配置价格后启用。视频参考素材提交时上传，图片暂仅支持文生图。</p>}
               {edit.type === 'wx-haidiyue' && (
                 <section aria-labelledby="haidi-face-split-title" className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3.5 sm:p-4">

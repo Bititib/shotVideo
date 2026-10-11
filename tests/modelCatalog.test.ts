@@ -1,3 +1,5 @@
+import { defaultRoutingLimits } from '../shared/modelRouting.js';
+import { saveModelSpecification } from '../server/services/modelRoutingService.js';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
@@ -216,5 +218,19 @@ describe('admin-owned model catalog', () => {
     expect(resolvePublicModelId('重复名称')).toBe(second.modelId);
     expect(resolvePublicModelId('修正后的名称')).toBe(first.modelId);
     expect(resolvePublicModelId('constructor')).toBe('constructor');
+  });
+});
+
+describe('separate sale permissions',()=>{
+  it('does not expose a differently billed canonical model to an old-alias-only API token',()=>{
+    for(const id of ['sale-canonical-test','sale-legacy-test']){
+      db.insert(models).values({modelId:id,displayName:id,provider:'test',capabilities:'["video"]'}).run();
+      sqlite.prepare('INSERT INTO model_pricing(model_pattern,billing_type,input_price,extra_params) VALUES(?,?,?,?)').run(id,'per_call',2,'{}');
+    }
+    saveModelSpecification({modelId:'sale-canonical-test',kind:'video',enabled:true,aliases:['sale-legacy-test'],limits:defaultRoutingLimits(),routes:[]});
+    expect(getAccessibleModelIds({allowedModels:['sale-legacy-test']})).toEqual(['sale-canonical-test']);
+    sqlite.prepare('UPDATE model_pricing SET billing_type=?,input_price=? WHERE model_pattern=?').run('per_second',.1,'sale-legacy-test');
+    expect(getAccessibleModelIds({allowedModels:['sale-legacy-test']})).toEqual(['sale-legacy-test']);
+    db.delete(settings).where(eq(settings.key,'model_specification_routes_v1')).run();
   });
 });

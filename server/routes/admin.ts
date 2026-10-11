@@ -1,3 +1,4 @@
+import modelSpecificationRoutes from './modelSpecifications.js';
 import { Router, Response } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
@@ -11,6 +12,7 @@ const router = Router();
 
 // 所有管理路由都需要登录 + 管理员权限
 router.use(authMiddleware, adminMiddleware);
+router.use('/model-specifications', modelSpecificationRoutes);
 
 // 内部队列诊断：仅管理员登录态可访问，不暴露在公开 /v1 API。
 router.get('/hm-queue', (_req: AuthRequest, res: Response) => {

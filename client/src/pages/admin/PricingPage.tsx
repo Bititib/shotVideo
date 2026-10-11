@@ -63,6 +63,8 @@ const unitLabels: Record<string, string> = {
   per_character: '/字',
 };
 
+const pricingUnit = (type: string, category?: string) => type === 'per_call' && category === 'video' ? '/条' : type === 'per_call' && category === 'image' ? '/张' : unitLabels[type];
+
 const categoryLabels: Record<string, string> = {
   text: '文本', image: '图片', video: '视频', tts: '语音', default: '默认', other: '其他',
 };
@@ -316,7 +318,7 @@ export default function PricingPage({ modelId, onEditingChange }: { modelId?: st
                     <div className="min-w-0">
                       <div className="flex flex-wrap gap-1.5 mb-1.5">
                         <span className="pricing-badge">{categoryLabels[rule.category] || '其他'}</span>
-                        <span className="pricing-badge is-soft">{billingLabels[rule.billingType]}</span>
+                        <span className="pricing-badge is-soft">{rule.billingType === 'per_call' && rule.category === 'video' ? '按条计费' : billingLabels[rule.billingType]}</span>
                         {rule.inherited && <span className="pricing-badge is-inherited">继承默认</span>}
                         {!rule.configured && !rule.inherited && <span className="pricing-badge is-warning">待配置</span>}
                       </div>
@@ -335,7 +337,7 @@ export default function PricingPage({ modelId, onEditingChange }: { modelId?: st
                   ) : (
                     <div>
                       <p className="text-[10px] text-zinc-500">{hasResolutionPrices ? '规格外兜底单价' : '当前单价'}</p>
-                      <p className="text-2xl font-bold tabular-nums text-white mt-1">¥{formatPrice(rule.inputPrice)}<span className="text-xs font-medium text-zinc-500 ml-1">{unitLabels[rule.billingType]}</span></p>
+                      <p className="text-2xl font-bold tabular-nums text-white mt-1">¥{formatPrice(rule.inputPrice)}<span className="text-xs font-medium text-zinc-500 ml-1">{pricingUnit(rule.billingType, rule.category)}</span></p>
                     </div>
                   )}
                   {extraPrices.length > 0 && (
@@ -399,14 +401,14 @@ export default function PricingPage({ modelId, onEditingChange }: { modelId?: st
                 <div>
                   <label htmlFor="pricing-type" className="block text-xs font-semibold text-zinc-400 mb-1.5">计费方式</label>
                   <select id="pricing-type" value={edit.billingType} onChange={event => setEdit({ ...edit, billingType: event.target.value })} className="w-full h-11 rounded-xl border px-3 text-sm focus:outline-none">
-                    <option value="per_call">按次</option><option value="per_second">按秒</option><option value="per_character">按字</option><option value="per_token">按 Token</option>
+                    <option value="per_call">{edit.category === 'video' ? '按条' : edit.category === 'image' ? '按张' : '按次'}</option><option value="per_second">按秒</option><option value="per_character">按字</option><option value="per_token">按 Token</option>
                   </select>
                 </div>
               </div>
 
               <div className={`grid grid-cols-1 ${edit.billingType === 'per_token' ? 'sm:grid-cols-2' : ''} gap-4`}>
                 <div>
-                  <label htmlFor="pricing-input" className="block text-xs font-semibold text-zinc-400 mb-1.5">{edit.billingType === 'per_token' ? '输入价格（¥/百万 Token）' : `${(edit.resolutionKeys || []).length > 0 ? '规格外兜底单价' : '单价'}（¥${unitLabels[edit.billingType] || ''}）`}</label>
+                  <label htmlFor="pricing-input" className="block text-xs font-semibold text-zinc-400 mb-1.5">{edit.billingType === 'per_token' ? '输入价格（¥/百万 Token）' : `${(edit.resolutionKeys || []).length > 0 ? '规格外兜底单价' : '单价'}（¥${pricingUnit(edit.billingType, edit.category) || ''}）`}</label>
                   <input id="pricing-input" type="number" min="0" step="0.001" value={edit.inputPrice} onChange={event => setEdit({ ...edit, inputPrice: event.target.value })} className="w-full h-11 rounded-xl border px-4 text-sm tabular-nums focus:outline-none" />
                   {(edit.resolutionKeys || []).length > 0 && <p className="text-[10px] text-zinc-500 mt-1.5">仅在请求未匹配下方分辨率时使用。</p>}
                 </div>
@@ -452,7 +454,7 @@ export default function PricingPage({ modelId, onEditingChange }: { modelId?: st
               <div>
                 <label htmlFor="pricing-extra" className="block text-xs font-semibold text-zinc-400 mb-1.5">其他规格价格（可选）</label>
                 <textarea id="pricing-extra" value={edit.extraText} onChange={event => setEdit({ ...edit, extraText: event.target.value })} rows={3} placeholder={'premium: 0.25\nlong_duration: 0.40'} className="w-full rounded-xl border px-4 py-3 text-sm font-mono resize-y focus:outline-none" />
-                <p className="text-[10px] text-zinc-500 mt-1.5">用于时长、质量等非分辨率规格，每行填写“规格: 单价”。</p>
+                <p className="text-[10px] text-zinc-500 mt-1.5">{edit.category === 'video' ? '视频报价使用基础单价与分辨率单价。不同固定时长售价的服务请保留独立入口，其他参数不会自动作为时长阶梯价。' : '填写额外配置，每行填写“规格: 单价”。'}</p>
               </div>
             </div>
 

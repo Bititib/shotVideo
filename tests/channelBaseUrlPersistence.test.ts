@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
+// This test repeatedly runs startup migrations and must never open the local app.db.
+vi.mock('../server/db/index.js', async () => {
+  const { default: Database } = await import('better-sqlite3');
+  const { drizzle } = await import('drizzle-orm/better-sqlite3');
+  const sqlite = new Database(':memory:');
+  return { sqlite, db: drizzle(sqlite) };
+});
 vi.mock('../server/config/env.js', () => ({
   env: {
     NODE_ENV: 'test', GEMINI_API_KEY: '', GEMINI_API_BASE_URL: 'https://google.invalid',

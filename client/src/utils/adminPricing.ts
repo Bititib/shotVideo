@@ -7,7 +7,7 @@ export function priceSummary(rule: any) {
   if (!rule || (!rule.configured && !rule.inherited)) return '—';
   const input = Number(rule.inputPrice).toLocaleString('zh-CN', { maximumFractionDigits: 6 });
   const extra = Object.keys(rule.extraParams || {}).some(key => key !== 'category');
-  return `¥${input}${priceUnits[rule.billingType] || ''}${rule.billingType === 'per_token' ? ` · 输出 ¥${rule.outputPrice}` : ''}${extra ? ' · 含规格价' : ''}`;
+  return `¥${input}${rule.billingType === 'per_call' && rule.category === 'video' ? '/条' : rule.billingType === 'per_call' && rule.category === 'image' ? '/张' : priceUnits[rule.billingType] || ''}${rule.billingType === 'per_token' ? ` · 输出 ¥${rule.outputPrice}` : ''}${extra ? ' · 含规格价' : ''}`;
 }
 export function scalePricing(rule: any, percent: number) {
   if (!Number.isFinite(percent) || percent < -100 || percent > 10000) throw Error('调整幅度必须在 -100% 至 10000% 之间');

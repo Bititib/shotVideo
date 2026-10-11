@@ -57,6 +57,7 @@ const INTERNAL_VIDEO_ROUTING_FIELDS = [
   'channelName',
   'channelApiKeyId',
   'upstreamModel',
+  'routingRouteId', 'routingHealthKey', 'routingAttempts', 'submissionStartedAt', 'managedSpecification', 'imageJobs', 'imageSubmissionIndex',
 ];
 
 /** Remove administrator-only channel and failover details from ordinary content responses. */

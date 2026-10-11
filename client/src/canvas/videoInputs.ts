@@ -1,15 +1,23 @@
+import { routingMismatches, type ModelInputLimits } from '../../../shared/modelRouting';
 import type { CanvasNode, GenerationDraft } from './model';
 import { canvasVideoReferenceLimits } from '../../../shared/canvasVideoReferences';
 
 export const VIDEO_EDIT_MODEL = 'veo-omni-flash-video-edit';
 
 /** Validate the same constraints before both enabling Generate and submitting. */
-export function videoInputError(options: Pick<GenerationDraft, 'kind' | 'videoMode' | 'model' | 'ratio' | 'seconds'>, references: CanvasNode[]): string {
+export function videoInputError(options: Pick<GenerationDraft, 'kind' | 'videoMode' | 'model' | 'ratio' | 'seconds'> & Partial<Pick<GenerationDraft, 'resolution' | 'count' | 'firstFrameId' | 'lastFrameId'>>, references: CanvasNode[], managedLimits?: ModelInputLimits): string {
   const pending = references.find(n => n.job?.status === 'running' || (n.kind === 'text' ? !n.text.trim() : !n.src));
   if (pending) return `参考节点「${pending.title}」${pending.job?.status === 'running' ? '正在生成，请等待完成' : '还没有内容，请先上传或生成素材'}。`;
   if (options.kind === 'audio' && references.some(n => n.kind !== 'text')) return '语音合成只使用文字参考，不支持媒体参考或音色克隆。';
   if (options.kind === 'video' && options.videoMode === 'text' && references.some(n => n.kind === 'image')) return '已连接图片，请切换图片参考模式后生成。';
+  if (managedLimits && options.kind === 'image') return routingMismatches(managedLimits, { images: references.filter(n => n.kind === 'image').length, videos: references.filter(n => n.kind === 'video').length, audios: references.filter(n => n.kind === 'audio').length, outputs: options.count || 1, seconds: 1, resolution: options.resolution || managedLimits.resolutions[0] || '', ratio: options.ratio, firstFrame: false, lastFrame: false }, 'image').join('；');
   if (options.kind !== 'video') return references.some(n => n.kind === 'video' || n.kind === 'audio') ? '此模式不支持视频或音频参考，请移除对应连线或切换视频编辑。' : '';
+  if (managedLimits) {
+    if (!['multimodal', 'edit'].includes(options.videoMode) && references.some(n => ['video','audio'].includes(n.kind))) return '视频或音频参考请切换多模态模式';
+    const frames = options.videoMode === 'frames';
+    const images = frames ? 0 : references.filter(n => n.kind === 'image' && n.src).length;
+    return routingMismatches(managedLimits, { images, videos: references.filter(n => n.kind === 'video' && n.src).length, audios: references.filter(n => n.kind === 'audio' && n.src).length, outputs: 1, seconds: options.seconds, resolution: options.resolution || managedLimits.resolutions[0] || '', ratio: options.ratio, firstFrame: frames && Boolean(options.firstFrameId), lastFrame: frames && Boolean(options.lastFrameId) }, 'video').join('；');
+  }
   const videos = references.filter(n => n.kind === 'video' && n.src);
   const audios = references.filter(n => n.kind === 'audio' && n.src);
   if (options.videoMode === 'edit') {

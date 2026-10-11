@@ -503,16 +503,16 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     if (!guard()) return;
     if (!options.model || !options.prompt.trim()) { setNotice('请先填写提示词并选择模型。'); return; }
     if (active?.job?.status === 'running') { setNotice('这个节点正在生成，可以在其他节点继续创作。'); return; }
-    const inputError = videoInputError(options, references);
+    const inputError = videoInputError(options, references, options.routingLimits);
     if (inputError) { setNotice(inputError); return; }
     const source = active;
     const target = source && source.kind === options.kind && (!source.src || source.generator) ? source
       : newNode(options.kind, source ? { x: source.x + source.width + 100, y: source.y } : center());
     const capturedRefs = references.slice();
-    const imageLimit = options.videoMode === 'multimodal' ? canvasVideoReferenceLimits(options.model)?.images || 10 : 10;
+    const imageLimit = options.routingLimits?.maxImages ?? (options.videoMode === 'multimodal' ? canvasVideoReferenceLimits(options.model)?.images || 10 : 10);
     const imageRefs = capturedRefs.filter(n => n.kind === 'image' && n.src);
     if (imageRefs.length > imageLimit) { setNotice(`当前模式最多使用 ${imageLimit} 张参考图片，请移除多余连线。`); return; }
-    if (options.kind === 'video' && options.videoMode === 'frames' && (!/^(veo|wan3\.0)/i.test(options.model) || !imageRefs.some(n => n.id === options.firstFrameId) || Boolean(options.lastFrameId && !imageRefs.some(n => n.id === options.lastFrameId)))) { setNotice('请重新选择有效的首尾帧，并使用支持首尾帧的模型。'); return; }
+    if (options.kind === 'video' && options.videoMode === 'frames' && (!(options.routingLimits ? options.routingLimits.firstFrame : /^(veo|wan3\.0)/i.test(options.model)) || !imageRefs.some(n => n.id === options.firstFrameId) || Boolean(options.lastFrameId && !imageRefs.some(n => n.id === options.lastFrameId)))) { setNotice('请重新选择有效的首尾帧，并使用支持首尾帧的模型。'); return; }
     const versions = [...(target.versions || [])];
     if (target.src && !versions.some(v => v.src === target.src)) versions.push({ id: uid(), src: target.src, prompt: target.text, model: target.model, ratio: target.ratio, createdAt: Date.now() });
     const result: CanvasNode = { ...target, versions, src: undefined, generator: true, text: options.prompt, model: options.model, ratio: options.ratio, settings: { resolution: options.resolution, seconds: options.seconds },
@@ -545,7 +545,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
         ...(options.kind === 'video' && (options.videoMode === 'edit' || options.videoMode === 'multimodal') ? { reference_videos: capturedRefs.filter(n => n.kind === 'video' && n.src).map(n => n.src!), ...(options.videoMode === 'multimodal' ? { audio_urls: capturedRefs.filter(n => n.kind === 'audio' && n.src).map(n => n.src!) } : {}) } : {}),
         reference_images: options.kind === 'video' && (options.videoMode === 'text' || options.videoMode === 'frames') ? undefined : refs.length ? refs : undefined,
         ...(options.kind === 'video' && options.videoMode === 'frames' ? { first_frame: refs[imageRefs.findIndex(n => n.id === options.firstFrameId)], last_frame: refs[imageRefs.findIndex(n => n.id === options.lastFrameId)] } : {}),
-        ...(options.kind === 'image' ? { n: options.count || 1, quality: options.resolution === '4K' ? 'high' : options.resolution === '2K' ? 'medium' : 'low' } : { video_length: options.seconds }) };
+        ...(options.kind === 'image' ? { n: options.count || 1, quality: options.resolution === '4K' ? 'high' : options.resolution === '2K' ? 'medium' : 'low' } : { video_length: options.seconds, expectedCost: options.expectedCost }) };
       await streamGeneration(options.kind, params, controller.signal, event => patch(n => applyGenerationEvent(n, event)));
       patch(n => n.job?.status === 'running' ? { ...n, job: { ...n.job, status: n.job.contentId || n.job.requestId ? 'running' : 'interrupted', message: '响应已结束，正在核实结果。可到生成记录查看。' } } : n);
     } catch (error: any) {

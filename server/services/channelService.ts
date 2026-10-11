@@ -1,5 +1,6 @@
 import { canonicalZonghengModelId, getZonghengVideoSpec } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, zonghengBaseUrl, ZONGHENG_MODEL_PREFIX } from './zonghengAdapter.js';
+import { isBlobDrawChannel, blobDrawApiBase, fetchBlobDrawModels } from './blobDrawAdapter.js';
 import { HAYA_MODEL_IDS } from '../../shared/hayaVideo.js';
 import { isHayaChannel, hayaApiBaseUrl } from './hayaVideoAdapter.js';
 import { db } from '../db/index.js';
@@ -395,8 +396,8 @@ export class ChannelService {
       : [...MIAOWU_DEFAULT_VIDEO_MODELS];
     const result = db.insert(channels).values({
       name: isWxHaidiYue ? WX_HAIDIYUE_CHANNEL_NAME : name,
-      type: isZonghengChannel({ type, baseUrl }) ? 'zongheng' : isHaya ? 'haya' : type || 'openai',
-      baseUrl: isZonghengChannel({ type, baseUrl }) ? zonghengBaseUrl(baseUrl) : baseUrl,
+      type: isBlobDrawChannel({ type, baseUrl }) ? 'blobdraw' : isZonghengChannel({ type, baseUrl }) ? 'zongheng' : isHaya ? 'haya' : type || 'openai',
+      baseUrl: isBlobDrawChannel({ type, baseUrl }) ? blobDrawApiBase(baseUrl) : isZonghengChannel({ type, baseUrl }) ? zonghengBaseUrl(baseUrl) : baseUrl,
       apiKey: type === 'hmstudio' ? '' : (apiKey || ''),
       modelMapping: JSON.stringify(isHaya ? (modelMapping && Object.keys(modelMapping).length ? modelMapping : Object.fromEntries(HAYA_MODEL_IDS.map(id => [id, id]))) : isWxHaidiYue
         ? Object.fromEntries(WX_HAIDIYUE_MODELS.map(modelId => [modelId, modelId]))
@@ -438,6 +439,9 @@ export class ChannelService {
 
     if (isZonghengChannel({ type: nextType, baseUrl: data.baseUrl ?? channel.baseUrl })) {
       data = { ...data, type: 'zongheng', baseUrl: zonghengBaseUrl(data.baseUrl ?? channel.baseUrl) };
+    }
+    if (isBlobDrawChannel({ type: nextType, baseUrl: data.baseUrl ?? channel.baseUrl })) {
+      data = { ...data, type: 'blobdraw', baseUrl: blobDrawApiBase(data.baseUrl ?? channel.baseUrl) };
     }
     const updates: Record<string, any> = {};
     if (data.name !== undefined) updates.name = data.name;
@@ -514,6 +518,13 @@ export class ChannelService {
 
     const start = Date.now();
     try {
+      if (isBlobDrawChannel(channel)) {
+        await fetchBlobDrawModels(channel);
+        const durationMs = Date.now() - start;
+        const result = { success: true, message: 'success:' + durationMs + 'ms', durationMs };
+        db.update(channels).set({ lastTestAt: new Date().toISOString(), lastTestResult: result.message }).where(eq(channels.id, id)).run();
+        return result;
+      }
       const baseUrl = channel.baseUrl.replace(/\/+$/, '');
       const url = isZonghengChannel(channel) ? zonghengBaseUrl(channel.baseUrl) + '/v1/models' : isHayaChannel(channel) ? hayaApiBaseUrl(channel.baseUrl) + '/v1/models' : isLongxiaChannel(channel)
         ? longxiaApiBaseUrl(channel.baseUrl) + '/v1/models'
@@ -554,6 +565,11 @@ export class ChannelService {
     const channel = this.getChannelRaw(id);
     if (!channel) throw { status: 404, message: '渠道不存在' };
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
+
+    if (isBlobDrawChannel(channel)) {
+      const { syncBlobDrawModels } = await import('./blobDrawCatalogService.js');
+      return syncBlobDrawModels(channel);
+    }
 
     // 该渠道只暴露本站独立的海底月模型，不允许“同步模型”加入其他上游模型。
     if (isWxHaidiYueChannel(channel)) {
