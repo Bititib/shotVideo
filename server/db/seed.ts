@@ -1449,7 +1449,9 @@ export async function initDatabase() {
 
   // 11) 四月天退出公开 sd2.5，仅保留其他专属模型。
   try {
-    const existingChre3 = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get();
+    const existingChre3 = db.select().from(channels).all().find(channel =>
+      channel.name === '4月天 渠道' || channel.baseUrl === 'https://llm.chre3.com'
+    );
     const chre3Models = ['seedance-2.0', 'sd2-mini', ...SI_YUE_TIAN_C2_MODELS.map(spec => spec.id), ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS, ...SI_YUE_TIAN_IMAGE_MODELS];
     if (!existingChre3) {
       db.insert(channels).values({
@@ -1727,7 +1729,9 @@ export async function initDatabase() {
     const julunModels = ['wan3.0th', JULUN_MINIMAX_H3_MODEL];
     const julunMapping = Object.fromEntries(julunModels.map(modelId => [modelId, modelId]));
     const julunApiKey = process.env.JULUN_API_KEY?.trim() || '';
-    const existingJulun = db.select().from(channels).where(like(channels.baseUrl, '%julun.cc%')).get();
+    const existingJulun = db.select().from(channels).all().find(channel =>
+      channel.name === 'AI开放平台 (julun.cc) 渠道' || channel.baseUrl.includes('julun.cc')
+    );
     if (!existingJulun) {
       db.insert(channels).values({
         name: 'AI开放平台 (julun.cc) 渠道',
@@ -1786,7 +1790,8 @@ export async function initDatabase() {
     } else {
       db.update(channels).set({
         type: 'snumom',
-        baseUrl: snumomBaseUrl,
+        // Preserve the administrator's endpoint across restarts and upgrades.
+        baseUrl: existingSnumom.baseUrl || snumomBaseUrl,
         ...(snumomApiKey ? { apiKey: snumomApiKey, status: 1 } : {}),
         supportedModels: JSON.stringify(snumomModels),
         modelMapping: JSON.stringify(snumomMapping),
@@ -1831,7 +1836,7 @@ export async function initDatabase() {
       const updates: Record<string, any> = {
         name: 'HM Studio 渠道',
         type: 'hmstudio',
-        baseUrl: hmStudioBaseUrl,
+        baseUrl: hmStudioChannel.baseUrl || hmStudioBaseUrl,
         updatedAt: new Date().toISOString(),
       };
       const hasStoredHmKey = Boolean(
@@ -1918,7 +1923,9 @@ export async function initDatabase() {
       }).run();
       console.log(`📦 已自动创建 ${WX_HAIDIYUE_CHANNEL_NAME}（${wxHaidiYueApiKey ? '已启用' : '等待配置 API Key'}）`);
     } else {
-      const updates: Record<string, any> = { ...fixedConfig };
+      const updates: Record<string, any> = {
+        ...fixedConfig, baseUrl: existingWxHaidiYue.baseUrl || wxHaidiYueBaseUrl,
+      };
       if (wxHaidiYueApiKey) {
         updates.apiKey = wxHaidiYueApiKey;
         if (!existingWxHaidiYue.apiKey) updates.status = 1;

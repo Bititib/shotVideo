@@ -41,7 +41,7 @@ function linkHmStudioModel(modelId: string, apiKey?: string | null) {
   modelMapping[modelId] = getHmStudioUpstreamVideoModel(modelId);
 
   const updates: Record<string, any> = {
-    name: 'HM Studio 渠道', type: 'hmstudio', baseUrl: HM_STUDIO_BASE_URL,
+    name: 'HM Studio 渠道', type: 'hmstudio', baseUrl: channel.baseUrl || HM_STUDIO_BASE_URL,
     supportedModels: JSON.stringify(supportedModels),
     modelMapping: JSON.stringify(modelMapping),
     updatedAt: new Date().toISOString(),
