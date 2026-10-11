@@ -70,6 +70,29 @@ describe('Zongheng namespace migration in isolated storage', () => {
     sqlite.prepare('UPDATE models SET display_name=?').run(oldId);
     migrateZonghengModelPrefix();expect(db.select().from(models).get()?.displayName).toBe(nextId);expect(resolvePublicModelId(oldId)).toBe(nextId);
   });
+
+  it.each([oldId, nextId])('renames the generated display name for %s and keeps it as an API alias', id => {
+    const oldName = '纵横科技 · Cseadanco2.5K';
+    sqlite.prepare('UPDATE models SET model_id=?, display_name=?').run(id, oldName);
+    const result = migrateZonghengModelPrefix();
+    expect(result.models).toBe(1);
+    expect(db.select().from(models).get()).toMatchObject({id:modelId,modelId:nextId,displayName:nextId,isActive:0});
+    expect(resolvePublicModelId(oldName)).toBe(nextId);
+    expect(migrateZonghengModelPrefix()).toEqual({models:0,prices:0,channels:0,tokens:0});
+  });
+  it('preserves a custom display name for an existing ZH model', () => {
+    sqlite.prepare('UPDATE models SET model_id=?').run(nextId);
+    migrateZonghengModelPrefix();
+    expect(db.select().from(models).get()?.displayName).toBe('自定义名称');
+  });
+  it('rolls back if a generated display name is reserved by another model alias', () => {
+    const oldName = '纵横科技 · Cseadanco2.5K';
+    sqlite.prepare('UPDATE models SET model_id=?, display_name=?').run(nextId, oldName);
+    sqlite.prepare('UPDATE settings SET value=?').run(JSON.stringify({[oldName]:999}));
+    expect(()=>migrateZonghengModelPrefix()).toThrow('冲突');
+    expect(db.select().from(models).get()?.displayName).toBe(oldName);
+    expect(db.select().from(modelPricing).get()?.modelPattern).toBe(oldId);
+  });
   it.each(['model','price','mapping'])('rolls back all changes when a %s conflicts with the new prefix', conflict => {
     if(conflict==='model') db.insert(models).values({modelId:nextId,displayName:'existing',provider:'zongheng'}).run();
     if(conflict==='price') db.insert(modelPricing).values({modelPattern:nextId,billingType:'per_call',inputPrice:11}).run();

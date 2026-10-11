@@ -1,27 +1,34 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { models, modelPricing, channels, apiTokens, settings } from '../db/schema.js';
-import { canonicalZonghengModelId, LEGACY_ZONGHENG_MODEL_PREFIX } from '../../shared/zonghengVideo.js';
+import { canonicalZonghengModelId, LEGACY_ZONGHENG_MODEL_PREFIX, ZONGHENG_MODEL_PREFIX } from '../../shared/zonghengVideo.js';
 
 /** Rename configuration only. Numeric model IDs, task history and financial records stay intact. */
 export function migrateZonghengModelPrefix() {
   return db.transaction(tx => {
     const counts = { models: 0, prices: 0, channels: 0, tokens: 0 };
     const rows = tx.select().from(models).all();
-    const oldRows = rows.filter(row => row.modelId.startsWith(LEGACY_ZONGHENG_MODEL_PREFIX));
+    // The old synchronizer generated these labels even after IDs had the ZH- prefix.
+    const generatedName = (row: typeof models.$inferSelect) => row.displayName.startsWith('纵横科技 · ');
+    const renamedRows = rows.filter(row => row.modelId.startsWith(LEGACY_ZONGHENG_MODEL_PREFIX)
+      || row.provider === 'zongheng' && row.modelId.startsWith(ZONGHENG_MODEL_PREFIX) && generatedName(row));
     const aliasKey = 'public_model_name_aliases_v1';
     const aliasRow = tx.select().from(settings).where(eq(settings.key, aliasKey)).get();
     const aliases = JSON.parse(aliasRow?.value || '{}');
     if (!aliases || typeof aliases !== 'object' || Array.isArray(aliases)) throw new Error('模型历史名称映射无效，停止前缀迁移');
-    for (const row of oldRows) {
+    for (const row of renamedRows) {
       const next = canonicalZonghengModelId(row.modelId);
+      const displayName = generatedName(row) || row.displayName === row.modelId ? next : row.displayName;
+      const priorNames = [...new Set([row.modelId, ...(displayName !== row.displayName ? [row.displayName] : [])])];
       if (rows.some(other => other.id !== row.id && (other.modelId === next || other.displayName === next))
         || aliases[next] !== undefined && aliases[next] !== row.id
-        || aliases[row.modelId] !== undefined && aliases[row.modelId] !== row.id) {
+        || priorNames.some(name => aliases[name] !== undefined && aliases[name] !== row.id
+          || rows.some(other => other.id !== row.id && (other.modelId === name || other.displayName === name)))) {
         throw new Error('模型前缀迁移存在冲突：' + next + '；已保留原配置');
       }
-      aliases[row.modelId] = row.id;
-      tx.update(models).set({ modelId: next, displayName: row.displayName === row.modelId ? next : row.displayName }).where(eq(models.id, row.id)).run();
+      // Keep former display names callable by existing API clients.
+      for (const name of priorNames) aliases[name] = row.id;
+      tx.update(models).set({ modelId: next, displayName }).where(eq(models.id, row.id)).run();
       counts.models++;
     }
     const prices = tx.select().from(modelPricing).all();
@@ -51,7 +58,7 @@ export function migrateZonghengModelPrefix() {
       tx.update(apiTokens).set({allowedModels:JSON.stringify(renameList(allowed))}).where(eq(apiTokens.id,row.id)).run();
       counts.tokens++;
     }
-    if (oldRows.length) tx.insert(settings).values({key:aliasKey,value:JSON.stringify(aliases),label:'API 模型历史名称映射'})
+    if (renamedRows.length) tx.insert(settings).values({key:aliasKey,value:JSON.stringify(aliases),label:'API 模型历史名称映射'})
       .onConflictDoUpdate({target:settings.key,set:{value:JSON.stringify(aliases)}}).run();
     return counts;
   });

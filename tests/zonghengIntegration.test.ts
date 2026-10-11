@@ -156,6 +156,15 @@ describe('Zongheng legacy entry points, isolated database and simulated provider
     expect(db.select().from(models).all().find(m=>m.modelId==='ZH-Cseadanco2.5K')?.displayName).toBe('保留名称');
     expect(JSON.parse(db.select().from(channels).get()!.modelMapping)).toEqual(Object.fromEntries(ZONGHENG_VIDEO_MODELS.map(spec=>['ZH-'+spec.id,spec.id])));
   });
+
+  it('uses ZH IDs as default display names even when upstream supplies a different label',async()=>{
+    upstream=async()=>Response.json({data:[{id:'LLseadanco2.51',display_name:'上游展示名称'},{id:'custom-model',name:'另一个上游名称'}]});
+    await ChannelService.syncModels(db.select().from(channels).get()!.id);
+    for(const id of ['LLseadanco2.51','custom-model']){
+      expect(db.select().from(models).all().find(m=>m.modelId==='ZH-'+id)).toMatchObject({displayName:'ZH-'+id,isActive:0});
+    }
+    expect(JSON.parse(db.select().from(channels).get()!.modelMapping)).toEqual({'ZH-LLseadanco2.51':'LLseadanco2.51','ZH-custom-model':'custom-model'});
+  });
   it('lists exact legacy durations and one resolution for each confirmed video model',async()=>{
     installConfirmedVideos();
     const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];

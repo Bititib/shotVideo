@@ -600,7 +600,7 @@ export class ChannelService {
             ? 'image'
             : 'text';
       return { modelId: isZonghengChannel(channel) ? ZONGHENG_MODEL_PREFIX + modelId : modelId,
-        displayName: isZonghengChannel(channel) ? '纵横科技 · ' + (displayName || modelId) : displayName || modelId, capability };
+        displayName: isZonghengChannel(channel) ? ZONGHENG_MODEL_PREFIX + modelId : displayName || modelId, capability };
     }).filter((item: any) => item.modelId && (!isHayaChannel(channel) || HAYA_MODEL_IDS.includes(item.modelId)));
 
     const unique = [...new Map(normalized.map((item: any) => [item.modelId, item])).values()] as Array<{
