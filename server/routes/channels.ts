@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import { BlobDrawApiError } from '../services/blobDrawAdapter.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
 import { ChannelService } from '../services/channelService.js';
@@ -72,12 +73,25 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
   } catch (err: any) { res.status(err.status || 500).json({ error: err.message }); }
 });
 
+// Upstream authentication is independent of the administrator's website session.
+function channelOperationError(res: Response, error: any) {
+  if (error instanceof BlobDrawApiError) {
+    const message = error.status === 401
+      ? 'BlobDraw 上游 API Key 校验失败，请检查渠道中填写的开放 API 密钥。'
+      : error.status === 403
+        ? 'BlobDraw 上游拒绝访问，请检查 API Key 的读取权限和模型授权。'
+        : error.message;
+    return res.status(502).json({ error: message, code: 'UPSTREAM_ERROR', upstreamStatus: error.status });
+  }
+  return res.status(error.status || 500).json({ error: error.message });
+}
+
 // 测试渠道连通性
 router.post('/:id/test', async (req: AuthRequest, res: Response) => {
   try {
     const result = await ChannelService.testChannel(parseInt(req.params.id));
     res.json(result);
-  } catch (err: any) { res.status(err.status || 500).json({ error: err.message }); }
+  } catch (err: any) { channelOperationError(res, err); }
 });
 
 // 从上游同步当前可用模型
@@ -85,7 +99,7 @@ router.post('/:id/sync-models', async (req: AuthRequest, res: Response) => {
   try {
     const result = await ChannelService.syncModels(parseInt(req.params.id));
     res.json(result);
-  } catch (err: any) { res.status(err.status || 500).json({ error: err.message }); }
+  } catch (err: any) { channelOperationError(res, err); }
 });
 
 export default router;

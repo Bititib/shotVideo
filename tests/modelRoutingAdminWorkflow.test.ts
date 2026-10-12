@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
+import '@testing-library/jest-dom/vitest';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -190,5 +191,33 @@ describe('sale prices and upstream cost configuration', () => {
     fireEvent.click(screen.getByRole('checkbox',{name:/旧渠道入口/,hidden:true}));
     fireEvent.click(screen.getByRole('button',{name:'保存规格与线路'}));
     await waitFor(()=>expect(adminApi.saveModelSpecification).toHaveBeenCalledWith(expect.objectContaining({aliases:[]})));
+  });
+});
+
+describe('model specification loading failures', () => {
+  it('does not present an authentication failure as an empty model catalog, and can retry', async () => {
+    vi.mocked(adminApi.getModelSpecifications).mockRejectedValueOnce(Error('请先登录'));
+    mount();
+    expect(await screen.findByRole('heading', { name: '规格数据加载失败' })).toBeVisible();
+    expect(screen.getByRole('alert')).toHaveTextContent('请先登录');
+    expect(screen.queryByText('开始管理模型线路')).toBeNull();
+    expect(screen.queryByRole('button', { name: '添加第一个规格' })).toBeNull();
+    expect(screen.getByRole('button', { name: '添加规格' })).toBeDisabled();
+    const stats = document.querySelector('.routing-overview')!;
+    expect(stats.querySelectorAll('strong').length).toBe(4);
+    for (const value of stats.querySelectorAll('strong')) expect(value.textContent).toBe('—个');
+    fireEvent.click(screen.getByRole('button', { name: '重新加载' }));
+    expect(await screen.findByRole('button', { name: '管理线路' })).toBeVisible();
+    expect(screen.getByRole('button', { name: '添加规格' })).toBeEnabled();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+  it('retains previously loaded specifications when a later refresh fails', async () => {
+    mount();
+    expect(await screen.findByRole('button', { name: '管理线路' })).toBeVisible();
+    vi.mocked(adminApi.getModelSpecifications).mockRejectedValueOnce(Error('连接失败'));
+    fireEvent.click(screen.getByRole('button', { name: '刷新状态' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('连接失败');
+    expect(screen.getByRole('button', { name: '管理线路' })).toBeVisible();
+    expect(screen.queryByText('开始管理模型线路')).toBeNull();
   });
 });

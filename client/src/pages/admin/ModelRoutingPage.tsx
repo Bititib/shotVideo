@@ -41,21 +41,24 @@ export default function ModelRoutingPage() {
     const [edit, setEdit] = useState<ModelSpecification | null>(null), [displayName, setDisplayName] = useState(''), [baseline, setBaseline] = useState('');
     const [tab, setTab] = useState<EditorTab>('routes'), [expandedRoute, setExpandedRoute] = useState<string | null>(null), [exitWarning, setExitWarning] = useState(false), [copied, setCopied] = useState(false);
     const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false), [loading, setLoading] = useState(true);
+    const [loadFailed, setLoadFailed] = useState(false);
     const [simulation, setSimulation] = useState({ images: 0, videos: 0, audios: 0, seconds: 15, resolution: '720p', ratio: '16:9', n: 1, firstFrame: false, lastFrame: false, quality: '' });
     const [result, setResult] = useState<any>(null), [filter, setFilter] = useState('all'), [search, setSearch] = useState(''), [kindFilter, setKindFilter] = useState('all'), [statusFilter, setStatusFilter] = useState('all');
     const resultRef = useRef<HTMLDivElement>(null);
     const topRef = useRef<HTMLDivElement>(null), dirty = Boolean(edit && snapshot(edit, displayName) !== baseline), saved = edit ? specs.find(s => s.modelId === edit.modelId) : undefined;
-    const load = async () => { try {
+    const load = async () => { setLoading(true); try {
         const [a, b, c, d, e] = await Promise.all([adminApi.getModelSpecifications(), adminApi.getModels(), adminApi.getChannels(), adminApi.getModelSpecificationSuggestions(), adminApi.getPricing({ scope: 'models' })]);
         setSpecs(a);
         setModels(b);
         setChannels(c);
         setSuggestions(d);
         setPrices(e);
+        setLoadFailed(false);
         setError('');
         return a;
     }
     catch (e: any) {
+        setLoadFailed(true);
         setError(e.message);
         return null;
     }
@@ -142,18 +145,18 @@ export default function ModelRoutingPage() {
         return; event.preventDefault(); changeTab(tabs[next].id); document.getElementById('routing-tab-' + tabs[next].id)?.focus(); };
     return <div className="model-routing-page" ref={topRef}>
  {!edit ? <>
- <header className="routing-page-header"><div><span className="routing-eyebrow"><Radio size={15}/>模型服务管理</span><h1>模型规格与线路</h1><p>保留清楚的售卖入口，为可替代渠道配置能力、成本与自动分流。</p></div><div className="routing-header-actions"><button className={buttonClass} onClick={() => void load()} disabled={busy || loading}><RefreshCw size={16}/>刷新状态</button><button className={buttonClass + ' is-primary'} onClick={create} disabled={busy || loading}><Plus size={17}/>添加规格</button></div></header>
+ <header className="routing-page-header"><div><span className="routing-eyebrow"><Radio size={15}/>模型服务管理</span><h1>模型规格与线路</h1><p>保留清楚的售卖入口，为可替代渠道配置能力、成本与自动分流。</p></div><div className="routing-header-actions"><button className={buttonClass} onClick={() => void load()} disabled={busy || loading}><RefreshCw size={16}/>刷新状态</button><button className={buttonClass + ' is-primary'} onClick={create} disabled={busy || loading || loadFailed}><Plus size={17}/>添加规格</button></div></header>
  {error && <div role="alert" className="routing-message is-error"><AlertCircle size={18}/><span>{error}</span></div>}
  <section className="routing-overview" aria-label="规格概况">
- <div><span>全部规格</span><strong>{loading ? '—' : specs.length}<small>个</small></strong><p>图片 {specs.filter(s => s.kind === 'image').length} · 视频 {specs.filter(s => s.kind === 'video').length}</p></div>
- <div><span><CheckCircle2 size={15}/>可用规格</span><strong>{loading ? '—' : specs.filter(available).length}<small>个</small></strong><p>已开放且有可用线路</p></div>
- <button className={attention ? 'is-attention' : ''} onClick={() => setStatusFilter(statusFilter === 'attention' ? 'all' : 'attention')} aria-pressed={statusFilter === 'attention'}><span><AlertCircle size={15}/>待处理规格</span><strong>{loading ? '—' : attention}<small>个</small></strong><p>{attention ? '点击查看暂无可用线路的规格' : '已开放规格均有线路可用'}</p></button>
- <div><span>关联渠道</span><strong>{loading ? '—' : new Set(specs.flatMap(s => s.routes.map((r: ModelRoute) => r.channelId))).size}<small>个</small></strong><p>能力匹配后按成本优先分流</p></div>
+ <div><span>全部规格</span><strong>{loading || loadFailed ? '—' : specs.length}<small>个</small></strong><p>图片 {specs.filter(s => s.kind === 'image').length} · 视频 {specs.filter(s => s.kind === 'video').length}</p></div>
+ <div><span><CheckCircle2 size={15}/>可用规格</span><strong>{loading || loadFailed ? '—' : specs.filter(available).length}<small>个</small></strong><p>已开放且有可用线路</p></div>
+ <button className={attention ? 'is-attention' : ''} onClick={() => setStatusFilter(statusFilter === 'attention' ? 'all' : 'attention')} aria-pressed={statusFilter === 'attention'}><span><AlertCircle size={15}/>待处理规格</span><strong>{loading || loadFailed ? '—' : attention}<small>个</small></strong><p>{attention ? '点击查看暂无可用线路的规格' : loadFailed ? '状态尚未读取成功' : '已开放规格均有线路可用'}</p></button>
+ <div><span>关联渠道</span><strong>{loading || loadFailed ? '—' : new Set(specs.flatMap(s => s.routes.map((r: ModelRoute) => r.channelId))).size}<small>个</small></strong><p>能力匹配后按成本优先分流</p></div>
  </section>
  <section className="routing-catalog" aria-label="规格列表">
  <div className="routing-catalog-heading"><div className="routing-type-filters" aria-label="生成类型筛选">{[{ id: 'all', label: '全部规格', icon: Layers3 }, { id: 'image', label: '图片', icon: Image }, { id: 'video', label: '视频', icon: Video }].map(t => <button key={t.id} aria-pressed={kindFilter === t.id} onClick={() => setKindFilter(t.id)}><t.icon size={16}/>{t.label}<small>{t.id === 'all' ? specs.length : specs.filter(s => s.kind === t.id).length}</small></button>)}</div><Link className="routing-text-link" to="/admin/models">模型与用户售价<ArrowUpRight size={15}/></Link></div>
  <div className="routing-toolbar"><label className="routing-search"><Search size={17}/><input className={inputClass} aria-label="搜索规格" placeholder="搜索模型名称或 API ID" value={search} onChange={e => setSearch(e.target.value)}/></label><label><span className="sr-only">按关联渠道筛选</span><select className={inputClass} value={filter} onChange={e => setFilter(e.target.value)}><option value="all">全部渠道</option>{channels.map(c => <option key={c.id} value={c.id}>{c.name}{c.status ? '' : '（已禁用）'}</option>)}</select></label><label><span className="sr-only">按规格状态筛选</span><select className={inputClass} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}><option value="all">全部状态</option><option value="available">可用</option><option value="attention">待处理</option><option value="disabled">已关闭</option></select></label></div>
- {loading ? <div className="routing-skeleton" role="status">正在加载规格…</div> : visible.length ? <div className="routing-spec-list">{visible.map(s => <article className="routing-spec-row" key={s.modelId}>
+ {loading ? <div className="routing-skeleton" role="status">正在加载规格…</div> : loadFailed && !specs.length ? <div className="routing-empty" role="status"><AlertCircle size={30}/><h2>规格数据加载失败</h2><p>未能读取已保存的规格，请解决上方错误后重新加载。</p><button className={buttonClass} onClick={() => void load()}>重新加载</button></div> : visible.length ? <div className="routing-spec-list">{visible.map(s => <article className="routing-spec-row" key={s.modelId}>
  <div className={'routing-kind-icon ' + (s.kind === 'video' ? 'is-video' : '')}>{s.kind === 'image' ? <Image size={21}/> : <Video size={21}/>}</div>
  <div className="routing-spec-info"><div><h2>{s.displayName}</h2><span className={'routing-status ' + (!s.enabled ? 'is-neutral' : available(s) ? 'is-good' : 'is-warning')}>{!s.enabled ? '已关闭' : available(s) ? '可用' : '待处理'}</span></div><code>{s.modelId}</code><div className="routing-spec-meta"><span>{s.limits.resolutions.join(' / ')}</span><span>{s.kind === 'image' ? '参考图 ≤ ' + s.limits.maxImages + ' 张' : s.limits.maxImages + ' 图 · ' + s.limits.maxVideos + ' 视频 · ' + s.limits.maxAudios + ' 音频'}</span>{s.kind === 'video' && <span>{durationLabel(s.limits)}</span>}</div><p className="routing-sale-inline">{saleSummary(saleFor(s.modelId), s.kind, s.limits.resolutions)}{s.aliasIssues?.length ? ' · 旧入口合并待核对' : ''}</p></div>
  <div className="routing-spec-channels"><strong>{s.availableRouteCount || 0}<span> / {s.routes.length} 条线路可用</span></strong><p title={channelNames(s.routes).join('、')}>{channelNames(s.routes).join(' · ') || '尚未关联渠道'}</p></div><button className={buttonClass + ' routing-manage'} onClick={() => open(s)}>管理线路<ChevronRight size={16}/></button>
