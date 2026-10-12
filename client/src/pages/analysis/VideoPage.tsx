@@ -1,3 +1,4 @@
+import { BLOB_DRAW_BB_MODEL } from '../../../../shared/blobDrawVideo';
 import { useVideoQuote } from '../../hooks/useVideoQuote';
 import { routingMismatches } from '../../../../shared/modelRouting';
 import { startPolling } from '../../utils/polling';
@@ -172,6 +173,7 @@ export const isComicDramaModel = (modelId: string) => {
 };
 
 const GROUP_ORDER = [
+  'BlobDraw',
   'Haya AI',
   'HM 系列',
   'Veo (Google) 系列',
@@ -184,6 +186,7 @@ const GROUP_ORDER = [
 ];
 
 const getModelGroup = (modelId: string) => {
+  if (modelId === BLOB_DRAW_BB_MODEL || modelId.startsWith('blobdraw-')) return 'BlobDraw';
   const zongheng = getZonghengVideoSpec(modelId);
   if (zongheng) return { seedance: 'Seedance 系列', minimax: 'MiniMax 系列', wan: 'Wan 系列' }[zongheng.family];
   if (getHayaVideoSpec(modelId)) return 'Haya AI';
@@ -462,7 +465,7 @@ export default function VideoPage() {
   }, [models]);
 
   const [selectedModel, setSelectedModel] = useState(() => models[0]?.id || '');
-  const [expandedModelGroups, setExpandedModelGroups] = useState<Set<string>>(new Set());
+  const [expandedModelGroups, setExpandedModelGroups] = useState<Set<string>>(new Set(['BlobDraw']));
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [duration, setDuration] = useState(6);
