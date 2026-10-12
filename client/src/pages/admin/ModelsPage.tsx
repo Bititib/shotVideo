@@ -169,7 +169,7 @@ export default function ModelsPage({ channelId, onEditingChange }: { channelId?:
       </div>
 
       {error && <div role="alert" className="mb-4 rounded-xl bg-red-500/10 p-4 text-red-500">{error} <button onClick={() => void load()}>重试</button></div>}
-      <div className="flex gap-3 mb-3 text-xs"><Link to="/admin/model-routing">管理模型规格与线路</Link><button onClick={reset}>清除筛选</button>{!channelId && selectedChannelId !== 'all' && <Link to={'/admin/channels?id=' + encodeURIComponent(selectedChannelId)}>查看当前渠道</Link>}</div>
+      <div className="flex gap-3 mb-3 text-xs"><button onClick={reset}>清除筛选</button>{!channelId && selectedChannelId !== 'all' && <Link to={'/admin/channels?id=' + encodeURIComponent(selectedChannelId)}>查看当前渠道</Link>}</div>
       {/* Filter Bar */}
       {available && !edit && <button className="mb-3 underline" onClick={restore}>恢复未保存的模型草稿（密钥需重新输入）</button>}
       {statsError && <p role="status">{statsError} <button onClick={() => void loadStats()}>重试统计</button></p>}
