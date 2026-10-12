@@ -10,6 +10,7 @@ import { useAdminFilters, useAdminScroll } from '../../hooks/useAdminView';
 import { getAdminCached } from '../../api/adminCache';
 import { adminApi } from '../../api/admin';
 import { Plus, Radio, Trash2, Pencil, Zap, Loader2, Power, PowerOff, RefreshCw, KeyRound, Activity, CircleCheck, CircleX, Timer, ScanFace } from 'lucide-react';
+import { FUNAI_BASE_URL } from '../../../../shared/funAi';
 
 const HM_STUDIO_BASE_URL = 'https://dnyovzpgyokm.sealosbja.site';
 const HAYA_BASE_URL = 'https://hayaai.fun';
@@ -237,7 +238,7 @@ export default function ChannelsPage() {
     try {
       const result = await adminApi.syncChannelModels(ch.id);
       const message = `同步完成：上游 ${result.count} 个模型，新增 ${result.added} 个模型配置`
-        + (result.count === 0 ? '。请检查渠道 Key 的模型授权。' : ch.type === 'zongheng' ? '。新模型默认停用，请配置价格后启用。' : '。');
+        + (result.count === 0 ? '。请检查渠道 Key 的模型授权。' : ['zongheng', 'funai'].includes(ch.type) ? '。新模型默认停用，请配置价格后启用。' : '。');
       setNotice(message);
       setChannelFeedback({ channelId: ch.id, kind: 'success', message });
       await loadChannels();
@@ -528,7 +529,10 @@ export default function ChannelsPage() {
                       apiKeys: e.target.value === 'hmstudio' && (!edit.apiKeys || edit.apiKeys.length === 0)
                         ? [newHmKey()]
                         : edit.apiKeys,
-                      baseUrl: e.target.value === 'zongheng' && !edit.baseUrl
+                      maxRetries: e.target.value === 'funai' ? 0 : edit.maxRetries,
+                      baseUrl: e.target.value === 'funai' && !edit.baseUrl
+                        ? FUNAI_BASE_URL
+                        : e.target.value === 'zongheng' && !edit.baseUrl
                         ? 'https://cnd-coo-new.pages.dev'
                         : e.target.value === 'hmstudio' && !edit.baseUrl
                         ? HM_STUDIO_BASE_URL
@@ -548,6 +552,7 @@ export default function ChannelsPage() {
                     })}
                       className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
                       <option value="zongheng">纵横科技（视频／图片／GPT）</option>
+                      <option value="funai">FunAI（图片／视频生成）</option>
                       <option value="openai">OpenAI 兼容（Chat 代理）</option>
                       <option value="hmstudio">HM Studio（图片/视频异步任务）</option>
                       <option value="wx-haidiyue">wx-海底月（sd2.5 人脸拆分）</option>
@@ -576,6 +581,7 @@ export default function ChannelsPage() {
                 </div>
               )}
               {edit.type === 'blobdraw' && <p className="text-xs leading-5 text-zinc-400">保存密钥后点击“同步模型”。视频模型和参考素材上限将自动导入；配置用户售价后在模型管理中启用。密钥需要读取和生成两项权限。</p>}
+              {edit.type === 'funai' && <p className="text-xs leading-5 text-zinc-400">保存密钥后同步图片与视频模型。新模型默认停用，配置售价后启用；图片按 1K、2K、4K 分别建立入口。生成结果不确定时保留原任务，避免重复扣费。</p>}
               {edit.type === 'zongheng' && <p className="text-xs leading-5 text-zinc-400">同步模型会创建带 ZH- 前缀的停用入口；请核对模型能力、配置价格后启用。视频参考素材提交时上传，图片暂仅支持文生图。</p>}
               {edit.type === 'wx-haidiyue' && (
                 <section aria-labelledby="haidi-face-split-title" className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3.5 sm:p-4">

@@ -1,4 +1,5 @@
 import { isBlobDrawChannel } from './blobDrawAdapter.js';
+import { isFunAiChannel, shouldSendFunAiAuthorization, funAiTaskUrl } from './funAiAdapter.js';
 import { isZonghengChannel } from './zonghengAdapter.js';
 import { isHayaChannel, shouldSendHayaAuthorization, hayaTaskUrl } from './hayaVideoAdapter.js';
 import crypto from 'crypto';
@@ -40,7 +41,7 @@ export async function downloadAndLocalizeVideo(
   const exactChannel = channelId ? ChannelService.getChannelRaw(channelId, channelApiKeyId) : null;
   const channel = exactChannel || ChannelService.findChannelForModel(model);
   const headers: Record<string, string> = {};
-  const maySendAuthorization = isBlobDrawChannel(channel) ? false : isZonghengChannel(channel) ? false : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
+  const maySendAuthorization = isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isBlobDrawChannel(channel) ? false : isZonghengChannel(channel) ? false : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
     ? shouldSendHmStudioAuthorization(url, channel.baseUrl)
     : isWxHaidiYueChannel(channel)
       ? shouldSendWxHaidiYueAuthorization(url, channel.baseUrl)
@@ -66,6 +67,11 @@ export async function downloadAndLocalizeVideo(
   if (isHayaChannel(channel) && [401, 403, 409].includes(response.status)) {
     response = await fetch(hayaTaskUrl(channel.baseUrl, videoId) + '/content', {
       headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(300_000),
+    });
+  }
+  if (isFunAiChannel(channel) && [401, 403, 404].includes(response.status) && url !== funAiTaskUrl(channel.baseUrl, videoId) + '/content') {
+    response = await fetch(funAiTaskUrl(channel.baseUrl, videoId) + '/content', {
+      headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(300_000), redirect: 'error',
     });
   }
   if (!response.ok) throw new Error(`Failed to fetch video from upstream: ${response.status} ${response.statusText}`);

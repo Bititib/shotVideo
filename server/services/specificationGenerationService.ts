@@ -1,4 +1,5 @@
 import { isBlobDrawChannel } from './blobDrawAdapter.js';
+import { isFunAiChannel } from './funAiAdapter.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
 import { assertExpectedVideoCost } from './videoQuoteService.js';
 import fs from 'node:fs';
@@ -139,7 +140,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         onEvent({ type: 'complete', videoUrl: url, contentId: id }); return;
       } catch (error: any) { console.warn('[specification] result save failed', id, error.message); patch(id, { progressText: '上游已完成，正在保存结果' }); }
     }
-    await wait(isBlobDrawChannel(channel) ? 10_000 : 8_000);
+    await wait(isFunAiChannel(channel) ? 5_000 : isBlobDrawChannel(channel) ? 10_000 : 8_000);
   }
   holdForReview(id, '任务仍待核实，保留原线路和费用，请勿重复提交');
   onEvent({ type: 'error', message: '任务仍待核实，请在历史记录查看' });

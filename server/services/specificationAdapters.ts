@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { isFunAiChannel, funAiBaseUrl, buildFunAiVideoPayload, pollFunAiTask, generateFunAiImage, FunAiApiError } from './funAiAdapter.js';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { RouteCandidate } from './modelRoutingService.js';
@@ -66,12 +67,26 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
     const notSent = ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(code);
     throw new SpecificationUpstreamError('提交连接失败，请在生成记录中核实：' + String(code || e?.message || '未知错误'), notSent, !notSent);
   }
-  if (!response.ok) throw submissionFailure(response.status, await response.text());
+  if (!response.ok) {
+    const text = await response.text();
+    throw submissionFailure(response.status, channel.apiKey ? text.split(channel.apiKey).join('[REDACTED]') : text);
+  }
   try { return await response.json() as any; }
   catch { throw new SpecificationUpstreamError('上游已响应但结果无法解析，请勿重复提交', false, true); }
 }
 export async function submitSpecificationVideo(target: RouteCandidate, request: SpecificationRequest, onStarting: (metadata?: Record<string, unknown>) => void) {
   const c = target.channel, model = target.route.upstreamModel, exec = target.route.executionModel, i = request.input;
+  if (isFunAiChannel(c)) {
+    let payload: Record<string, any>;
+    try {
+      const refs = (items: string[]) => items.map(s => s.startsWith('data:') ? s : publishSpecificationAsset(s, request.publicBaseUrl));
+      payload = buildFunAiVideoPayload(model, { ...request, images: refs(request.images), videos: refs(request.videos), audios: refs(request.audios),
+        firstFrame: request.firstFrame ? refs([request.firstFrame])[0] : '', lastFrame: request.lastFrame ? refs([request.lastFrame])[0] : '' });
+    } catch (error: any) { throw new SpecificationUpstreamError(error.message, true); }
+    const job = await post(funAiBaseUrl(c.baseUrl) + '/v1/videos', c, payload, onStarting);
+    if (!['string','number'].includes(typeof job?.id) || !String(job.id).trim()) throw new SpecificationUpstreamError('FunAI 未返回任务 ID，请核实原请求', false, true);
+    return String(job.id);
+  }
   if (isBlobDrawChannel(c)) {
     try {
       return await submitBlobDrawVideo(c, { model, prompt: request.prompt, seconds: i.seconds, ratio: i.ratio, resolution: i.resolution,
@@ -175,6 +190,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   return String(id);
 }
 export async function pollSpecificationVideo(channel: any, taskId: string) {
+  if (isFunAiChannel(channel)) return pollFunAiTask(channel, taskId);
   if (isBlobDrawChannel(channel)) return pollBlobDrawVideo(channel, taskId);
   const base = apiBase(channel.baseUrl);
   const url = channel.type === 'hmstudio' ? hmStudioTaskUrl(channel.baseUrl, taskId)
@@ -211,13 +227,24 @@ export async function generateSpecificationImage(target: RouteCandidate, request
       const notSent = ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(e?.cause?.code || e?.code);
       throw new SpecificationUpstreamError('图片提交连接失败', notSent, !notSent);
     }
-    if (init?.method?.toUpperCase() === 'POST' && !response.ok) throw submissionFailure(response.status, await response.text());
-    if (init?.method?.toUpperCase() !== 'POST' && response.ok && /json/.test(response.headers.get('content-type') || '')) {
+    if (init?.method?.toUpperCase() === 'POST' && !response.ok) {
+      const text = await response.text();
+      throw submissionFailure(response.status, c.apiKey ? text.split(c.apiKey).join('[REDACTED]') : text);
+    }
+    if (!isFunAiChannel(c) && init?.method?.toUpperCase() !== 'POST' && response.ok && /json/.test(response.headers.get('content-type') || '')) {
       const task = await response.clone().json().catch(() => null) as any;
       if (task?.status === 'failed') throw new SpecificationUpstreamError('上游图片生成失败：' + String(task.error?.message || task.error || task.message || '生成失败'), false, false, false, 0, true);
     }
     return response;
   };
+  if (isFunAiChannel(c)) {
+    try { return await generateFunAiImage(c, model, request, trackedFetch, onSubmitted); }
+    catch (error: any) {
+      if (error instanceof SpecificationUpstreamError) throw error;
+      if (error instanceof FunAiApiError) throw new SpecificationUpstreamError(error.message, false, error.uncertain, false, error.status, error.confirmedFailure);
+      throw new SpecificationUpstreamError(error.message || 'FunAI 图片生成失败', !started, started);
+    }
+  }
   const options = { baseUrl: c.baseUrl, apiKey: c.apiKey, prompt: request.prompt, aspectRatio: i.ratio, resolution: i.resolution,
     referenceImages: request.images.map(s => publishSpecificationAsset(s, request.publicBaseUrl)), quality: i.quality,
     fetchImpl: trackedFetch, onSubmitted };
@@ -292,6 +319,10 @@ export function imageSize(ratio: string) {
 
 /** Resume a previously accepted image job; this function never submits a POST. */
 export async function pollSpecificationImage(channel: any, taskId: string) {
+  if (isFunAiChannel(channel)) {
+    const task = await pollFunAiTask(channel, taskId, fetch, 'image');
+    return { status: task.status === 'cancelled' ? 'failed' : task.status, imageUrl: task.resultUrl, error: task.error };
+  }
   const base = apiBase(channel.baseUrl), hm = channel.type === 'hmstudio', mf = isMingFeiImageChannel(channel), sy = isSiYueTianImageChannel(channel);
   if (!hm && !mf && !sy) throw new Error('此线路没有异步图片查询协议');
   const url = hm ? hmStudioTaskUrl(channel.baseUrl, taskId) : mf ? base + '/v1/videos/' + encodeURIComponent(taskId) : base + '/v1/images/generations/' + encodeURIComponent(taskId);

@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import { BlobDrawApiError } from '../services/blobDrawAdapter.js';
+import { FunAiApiError } from '../services/funAiAdapter.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
 import { ChannelService } from '../services/channelService.js';
@@ -75,6 +76,9 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
 
 // Upstream authentication is independent of the administrator's website session.
 function channelOperationError(res: Response, error: any) {
+  if (error instanceof FunAiApiError) {
+    return res.status(502).json({ error: error.message, code: 'UPSTREAM_ERROR', upstreamStatus: error.status });
+  }
   if (error instanceof BlobDrawApiError) {
     const message = error.status === 401
       ? 'BlobDraw 上游 API Key 校验失败，请检查渠道中填写的开放 API 密钥。'
