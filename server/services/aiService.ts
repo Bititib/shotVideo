@@ -10,7 +10,8 @@ import { ChannelService } from './channelService.js';
 import { generalPrompt, generalSchema } from '../prompts/general.js';
 import { ecommercePrompt, ecommerceSchema } from '../prompts/ecommerce.js';
 import { imagePrompt, imageSchema } from '../prompts/image.js';
-import { copywritingPrompt, copywritingSchema } from '../prompts/copywriting.js';
+import { copywritingPrompt, copywritingSystemPrompt, copywritingSchema, copywritingDetailSchema } from '../prompts/copywriting.js';
+import { isProductDetailCopy, parseCopywritingOptions, type CopywritingOptions } from '../../shared/copywriting.js';
 import { accountPrompt, accountSchema } from '../prompts/account.js';
 import { modifyPromptTemplate, modifyPromptSchema } from '../prompts/ecommerce.js';
 import {
@@ -326,14 +327,16 @@ export class AIService {
   }
 
   /** 电商文案生成 */
-  static async analyzeCopywriting(files: Express.Multer.File[], modelConfig?: ModelConfig) {
+  static async analyzeCopywriting(files: Express.Multer.File[], modelConfig?: ModelConfig, input?: CopywritingOptions) {
     const modelId = modelConfig?.modelId || 'gemini-2.5-flash';
     const uploadedFiles: Array<{ uri: string; name: string; mimeType: string }> = [];
     try {
+      const options = parseCopywritingOptions(input);
       // AI Studio proxies may support inline images but reject the Files upload protocol.
       const fileParts: any[] = [];
       let inlineBytes = 0;
       for (const file of files) {
+        if (!/^(image|video)\//.test(file.mimetype)) throw { status: 400, message: '请上传产品图片或视频' };
         if (file.mimetype.startsWith('image/')) {
           inlineBytes += Math.ceil(fs.statSync(file.path).size / 3) * 4;
           if (inlineBytes > 18_000_000) throw { status: 400, message: '产品图片总大小过大，请压缩图片或减少图片数量后重试。' };
@@ -345,16 +348,17 @@ export class AIService {
         }
       }
       const response = await this.callGenerateContent(modelId, {
+        systemInstruction: { parts: [{ text: copywritingSystemPrompt(options.mode) }] },
         contents: [{
           role: 'user',
           parts: [
-            { text: copywritingPrompt() },
+            { text: copywritingPrompt(options) },
             ...fileParts
           ]
         }],
         generationConfig: {
           responseMimeType: 'application/json',
-          responseSchema: copywritingSchema,
+          responseSchema: options.mode === 'detail' ? copywritingDetailSchema : copywritingSchema,
         }
       }, modelConfig);
 
@@ -363,7 +367,9 @@ export class AIService {
       if (!text) throw new Error('上游未返回文案内容，素材可能被拦截，请更换素材或模型后重试。');
       if (candidate?.finishReason === 'MAX_TOKENS') throw new Error('上游返回的文案不完整，请减少素材或更换模型后重试。');
       try {
-        return JSON.parse(text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
+        const result = JSON.parse(text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
+        if (options.mode === 'detail' && (!isProductDetailCopy(result?.detailPage) || result.detailPage.sections.length < 3)) throw new Error('invalid detail document');
+        return options.mode === 'detail' ? { detailPage: result.detailPage } : result;
       } catch {
         throw new Error('上游返回的文案格式不正确，请重试或更换模型。');
       }

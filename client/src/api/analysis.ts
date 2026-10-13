@@ -223,10 +223,11 @@ export const analysisApi = {
     return api.post<any>('/analysis/image', formData);
   },
 
-  analyzeCopywriting(files: File[], modelId?: string) {
+  analyzeCopywriting(files: File[], modelId?: string, options?: import('../../../shared/copywriting').CopywritingOptions) {
     const formData = new FormData();
     files.forEach(f => formData.append('files', f));
     if (modelId) formData.append('modelId', modelId);
+    if (options) formData.append('copywritingOptions', JSON.stringify(options));
     return api.post<any>('/analysis/copywriting', formData);
   },
 

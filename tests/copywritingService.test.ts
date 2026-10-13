@@ -5,6 +5,8 @@ import path from 'node:path';
 vi.mock('../server/config/env.js', () => ({ env: { GEMINI_API_BASE_URL: 'https://upstream.invalid', GEMINI_API_KEY: 'test-key' } }));
 vi.mock('../server/services/channelService.js', () => ({ ChannelService: { findChannelByType: () => null } }));
 import { AIService } from '../server/services/aiService';
+import { defaultCopywritingOptions } from '../shared/copywriting';
+import { copywritingSystemPrompt } from '../server/prompts/copywriting';
 
 const dirs: string[] = [];
 function image() {
@@ -15,6 +17,34 @@ function image() {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
 
 describe('copywriting image analysis', () => {
+  it('uses the existing image/model call with the detail schema and confirmed product facts', async () => {
+    const detailPage = { title: '商品标题', subtitle: '副标题', sections: Array.from({ length: 3 }, (_, i) => ({ heading: '分屏 ' + i, body: '有依据的产品文案', bullets: [] })), specifications: [], faqs: [], factsToConfirm: ['材质待确认'] };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ detailPage }) }] } }] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await AIService.analyzeCopywriting([image()], { id: 1, modelId: 'selected-model', apiKey: null }, { ...defaultCopywritingOptions, mode: 'detail', platform: 'amazon', language: 'en', productFacts: '颜色绿色', factsConfirmed: true });
+    expect(result.detailPage).toEqual(detailPage);
+    const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(payload.generationConfig.responseSchema.required).toEqual(['detailPage']);
+    expect(payload.contents[0].parts[0].text).toContain('颜色绿色');
+    expect(payload.contents[0].parts[0].text).toContain('English');
+    expect(payload.contents[0].role).toBe('user');
+    expect(payload.systemInstruction).toEqual({ parts: [{ text: copywritingSystemPrompt('detail') }] });
+    expect(payload.systemInstruction.parts[0].text).not.toContain('颜色绿色');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects unconfirmed facts before any upstream call and removes uploaded files', async () => {
+    const file = image(), fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
+    await expect(AIService.analyzeCopywriting([file], undefined, { ...defaultCopywritingOptions, mode: 'detail', productFacts: '材质棉' })).rejects.toMatchObject({ status: 400 });
+    expect(fetchMock).not.toHaveBeenCalled(); expect(fs.existsSync(file.path)).toBe(false);
+  });
+
+  it('rejects malformed detail output rather than reporting successful generation', async () => {
+    const file = image();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: JSON.stringify({ detailPage: { title: '不完整' } }) }] } }] }) }));
+    await expect(AIService.analyzeCopywriting([file], undefined, { ...defaultCopywritingOptions, mode: 'detail' })).rejects.toThrow('格式不正确');
+    expect(fs.existsSync(file.path)).toBe(false);
+  });
   it('sends images inline without Files API and reads the non-thinking JSON answer', async () => {
     const files = [image(), image()];
     const result = { tiktok: { hook: 'hello' }, amazon: {}, detailPageImages: [] };
@@ -23,7 +53,9 @@ describe('copywriting image analysis', () => {
     expect(await AIService.analyzeCopywriting(files, { id: 1, modelId: 'selected-model', apiKey: null })).toEqual(result);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toContain('/models/selected-model:generateContent');
-    const parts = JSON.parse(fetchMock.mock.calls[0][1].body).contents[0].parts;
+    const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(payload.systemInstruction).toEqual({ parts: [{ text: copywritingSystemPrompt('marketing') }] });
+    const parts = payload.contents[0].parts;
     expect(parts.slice(1)).toEqual(files.map(() => ({ inlineData: { mimeType: 'image/png', data: Buffer.from('image fixture').toString('base64') } })));
     expect(files.every(file => !fs.existsSync(file.path))).toBe(true);
   });

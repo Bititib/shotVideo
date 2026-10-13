@@ -5,6 +5,7 @@ import { ContentService, sanitizeContentRoutingForClient } from '../services/con
 import { db } from '../db/index.js';
 import { contents, users } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
+import { isProductDetailCopy } from '../../shared/copywriting.js';
 import { activePolls, enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
 import { ChannelService } from '../services/channelService.js';
 import { localizeGeneratedImage } from './imageGen.js';
@@ -144,6 +145,25 @@ router.get('/:id', (req: AuthRequest, res: Response) => {
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '获取内容失败' });
   }
+});
+
+/** Save manual edits to an existing owned copywriting document; accounting fields stay server-owned. */
+router.put('/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ error: '记录 ID 无效' });
+    const item = ContentService.getById(id);
+    if (item.userId !== req.userId) return res.status(403).json({ error: '无权修改此内容' });
+    if (item.type !== 'copywriting' || item.status !== 'completed') return res.status(400).json({ error: '仅支持编辑已生成的详情页文案' });
+    const detail = req.body?.detailPage;
+    if (!isProductDetailCopy(detail) || JSON.stringify(detail).length > 120_000) return res.status(400).json({ error: '文案格式无效或内容过长' });
+    const original = JSON.parse(item.resultText || '{}');
+    if (!isProductDetailCopy(original.detailPage)) return res.status(400).json({ error: '该记录不是详情页文案' });
+    const metadata = JSON.parse(item.metadata || '{}');
+    db.update(contents).set({ title: detail.title.slice(0, 200), resultText: JSON.stringify({ ...original, detailPage: detail }),
+      metadata: JSON.stringify({ ...metadata, editedAt: new Date().toISOString() }) }).where(eq(contents.id, id)).run();
+    res.json({ id, message: '文案已保存' });
+  } catch (err: any) { res.status(err.status || 500).json({ error: err.message || '文案保存失败' }); }
 });
 
 /** POST /api/contents/:id/recover-image — 图片地址失效时从上游任务重新取回并本地化。 */

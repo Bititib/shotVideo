@@ -1,4 +1,5 @@
 import { useAdminFilters } from '../../hooks/useAdminView';
+import { formatProductDetail, isProductDetailCopy } from '../../../../shared/copywriting';
 import { startPolling } from '../../utils/polling';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -380,7 +381,13 @@ export default function HistoryPage() {
                 </section>
 
                 {selected.resultText && normalizeStatus(selected.status) !== 'failed' && (
-                  <section className="history-detail-section"><h3>生成结果</h3><pre>{selected.resultText}</pre></section>
+                  <section className="history-detail-section"><h3>生成结果</h3><pre>{(() => {
+                    if (selected.type === 'copywriting') try {
+                      const result = JSON.parse(selected.resultText || '{}');
+                      if (isProductDetailCopy(result.detailPage)) return formatProductDetail(result.detailPage, 'txt', metadata.copywritingOptions?.language === 'en' ? 'en' : 'zh-CN');
+                    } catch { /* preserve legacy plain text */ }
+                    return selected.resultText;
+                  })()}</pre></section>
                 )}
 
                 <section className="history-detail-section">
@@ -397,6 +404,7 @@ export default function HistoryPage() {
                 </section>
               </div>
               <footer>
+                {selected.type === 'copywriting' && <button className="history-secondary-action" onClick={() => navigate(`/app/copywriting?contentId=${selected.id}`)}><Copy />查看 / 编辑文案</button>}
                 {selected.type === 'video' && <button className="history-secondary-action" onClick={() => { sessionStorage.setItem('replicate_content', JSON.stringify(selected)); navigate(`/app/video?replicate=${selected.id}`); }}><Copy />再次创作</button>}
                 <button className="history-delete-action" disabled={deletingId === selected.id} onClick={() => handleDelete(selected)}><Trash2 />删除记录</button>
               </footer>

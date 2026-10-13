@@ -1,6 +1,7 @@
 import { registerUpload } from '../services/uploadAccess.js';
 import { prepareVideoForDelivery } from '../services/videoCompatibilityService.js';
 import { DEFAULT_TTS_CHARACTER_RATE } from '../../shared/tts.js';
+import { parseCopywritingOptions } from '../../shared/copywriting.js';
 import { reserveUserCharge } from '../services/billingReservation.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { Router, Response } from 'express';
@@ -89,7 +90,7 @@ async function handleAnalysis(
     const duration = Date.now() - startTime;
 
     // 记录使用日志
-    const modelId = req.availableModels?.[0]?.id;
+    const modelId = analysisType === 'copywriting' ? resolveModel(req)?.id : req.availableModels?.[0]?.id;
     logUsage(req.userId!, analysisType, modelId, duration);
 
     // 保存到内容库
@@ -98,21 +99,26 @@ async function handleAnalysis(
         : analysisType === 'generate_image' || analysisType === 'modify_prompt' ? 'image'
           : analysisType === 'generate_tts' ? 'audio'
             : 'analysis';
-      const title = contentType === 'audio'
+      const copyOptions = analysisType === 'copywriting' ? req.body.copywritingOptions : undefined;
+      const title = contentType === 'copywriting'
+        ? copyOptions?.productName || result?.detailPage?.title || result?.amazon?.title || '电商文案'
+        : contentType === 'audio'
         ? `语音合成 - ${req.body?.voice || '未知'}`
         : (req.body?.videoTitle || req.body?.accountHandle || req.body?.prompt || req.body?.text || analysisType);
       const resultTextStr = typeof result === 'string' ? result : JSON.stringify(result);
-      ContentService.save({
+      const contentId = ContentService.save({
         userId: req.userId!,
         orgId: req.orgId || null,
         type: contentType,
         title: typeof title === 'string' ? title.slice(0, 200) : analysisType,
-        inputText: (req.body?.videoTitle || req.body?.prompt || req.body?.text || '').slice(0, 500),
-        resultText: contentType === 'audio' ? resultTextStr : resultTextStr.slice(0, 5000),
-        modelId: req.availableModels?.[0]?.modelId,
+        inputText: (copyOptions?.productFacts || req.body?.videoTitle || req.body?.prompt || req.body?.text || '').slice(0, 500),
+        resultText: contentType === 'audio' || contentType === 'copywriting' ? resultTextStr : resultTextStr.slice(0, 5000),
+        modelId: analysisType === 'copywriting' ? resolveModel(req)?.modelId : req.availableModels?.[0]?.modelId,
         cost: result?.billing?.cost || 0,
-        metadata: result?.billing ? { billingReservationId: result.billing.reservationId, billingStatus: 'settled' } : undefined,
+        metadata: { ...(result?.billing ? { billingReservationId: result.billing.reservationId, billingStatus: 'settled' } : {}),
+          ...(copyOptions ? { copywritingOptions: copyOptions } : {}) },
       });
+      if (analysisType === 'copywriting') result.contentId = contentId;
     } catch (e) { console.error('[content] 保存失败:', e); }
 
     res.json(result);
@@ -604,9 +610,14 @@ router.post('/copywriting',
     await handleAnalysis(req, res, 'copywriting', async () => {
       const files = req.files as Express.Multer.File[];
       if (!files || files.length === 0) throw { status: 400, message: '请上传产品图片或视频' };
-
-      const modelConfig = resolveModel(req);
-      return AIService.analyzeCopywriting(files, modelConfig);
+      try {
+        const options = parseCopywritingOptions(req.body.copywritingOptions);
+        req.body.copywritingOptions = options;
+        const modelConfig = resolveModel(req);
+        return await AIService.analyzeCopywriting(files, modelConfig, options);
+      } finally {
+        for (const file of files) { try { fs.unlinkSync(file.path); } catch { /* service may already remove it */ } }
+      }
     });
   }
 );

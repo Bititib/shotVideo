@@ -44,6 +44,7 @@ export const contentApi = {
 
   /** 获取内容详情 */
   getById(id: number, signal?: AbortSignal) { return api.get<any>(`/contents/${id}`, { signal }); },
+  update(id: number, data: { detailPage: import('../../../shared/copywriting').ProductDetailCopy }) { return api.put<any>(`/contents/${id}`, data); },
 
   /** 图片地址失效时，根据上游任务 ID 重新获取并保存到本站。 */
   recoverImage(id: number) { return api.post<any>(`/contents/${id}/recover-image`); },
