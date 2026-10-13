@@ -50,6 +50,32 @@ beforeEach(()=>{
 });
 afterEach(()=>{vi.unstubAllGlobals();vi.clearAllMocks();});
 describe('route precharge order and refunds without paid providers',()=>{
+  it('submits all five references in the editing request at the supported limit', async () => {
+    const fetchMock = vi.fn(async (_url: any, init: any) => {
+      expect(init.body).toBeInstanceOf(FormData);
+      expect(init.body.getAll('image[]')).toHaveLength(5);
+      return Response.json({ data: [{ url: 'http://localhost/uploads/test.png' }] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await invoke(imageRouter, '/generate', { model: 'gpt-image-2', prompt: '换背景', reference_images: Array(5).fill('data:image/png;base64,aA==') });
+    await vi.waitFor(() => expect(res.ended).toBe(true));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://mock.invalid/v1/images/edits');
+    expect(res.chunks.join('')).toContain('image_ready');
+  });
+  it.each([
+    { model: 'gpt-image-2', reference_images: Array(6).fill('data:image/png;base64,aA==') },
+    { model: 'gpt-image-2-siyuetian', reference_images: Array(10).fill('data:image/png;base64,aA==') },
+    { model: 'nano-banana-2-lite', reference_images: ['data:image/png;base64,aA=='] },
+    { model: 'gpt-image-2', reference_images: 'invalid-array' },
+  ])('rejects invalid image references before charging or submitting ($model)', async body => {
+    const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
+    const res = await invoke(imageRouter, '/generate', { ...body, prompt: '换背景' });
+    expect(res.code).toBe(400); expect(res.body.error).toMatch(/参考图|图生图/);
+    expect(userBalance()).toBe(100);
+    expect(sqlite.prepare("SELECT name FROM sqlite_master WHERE name='billing_reservations'").get()).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
   it('falls back only on an explicit invalid clone and settles once', async () => {
     vi.mocked(AIService.clonedVoices).mockReturnValue({ requireVoice: vi.fn() } as any);
     vi.mocked(AIService.getTtsVoiceCatalog).mockResolvedValue([{ id: 'Zephyr', name: 'Zephyr' }]);

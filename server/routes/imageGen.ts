@@ -1,4 +1,5 @@
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
+import { legacyImageReferenceLimit } from '../../shared/imageCapabilities.js';
 import { isZonghengChannel, ZonghengSubmissionError, buildZonghengImagePayload, validateZonghengImageReferences, zonghengImageSize } from '../services/zonghengAdapter.js';
 import { generateZonghengImages } from '../services/zonghengImageService.js';
 import { handleSpecificationGeneration } from '../services/specificationGenerationService.js';
@@ -338,6 +339,7 @@ router.get('/models', (_req: Request, res: Response) => {
       name: m.name || preset?.name || m.id,
       description: getModelSpecification(m.id)?.imageFamily ? '输出 ' + getModelSpecification(m.id)!.limits.resolutions[0] + '；按参考图数量匹配可用线路' : preset?.description || 'AI 图片生成服务',
       routingLimits: getModelSpecification(m.id)?.limits,
+      maxReferenceImages: getModelSpecification(m.id)?.limits.maxImages ?? legacyImageReferenceLimit(m.id),
       available: getModelSpecification(m.id) ? specificationAvailable(getModelSpecification(m.id)!) : findImageChannel(m.id) !== null,
       rate,
       resolutionPrices: pricing?.resolution_prices || {},
@@ -374,6 +376,16 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
   const channel = findImageChannel(model);
   if (!channel) {
     return res.status(503).json({ error: '未配置图片生成渠道。请在管理后台添加渠道。' });
+  }
+
+  if (!Array.isArray(reference_images) || !reference_images.every(image => typeof image === 'string' && image.trim())) {
+    return res.status(400).json({ error: '参考图必须是有效的图片数组' });
+  }
+  const maxReferenceImages = isZonghengChannel(channel) ? 0 : legacyImageReferenceLimit(model);
+  if (reference_images.length > maxReferenceImages) {
+    return res.status(400).json({ error: maxReferenceImages === 0
+      ? '当前模型不支持图生图，请选择支持参考图的模型'
+      : `当前模型最多支持 ${maxReferenceImages} 张参考图，请减少图片后重试` });
   }
 
   if (isZonghengChannel(channel)) {
@@ -544,7 +556,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
     }
     if (isMingFeiImageChannel(channel) && isMingFeiImageModel(model)) {
       const referenceUrls = hasRef
-        ? reference_images.slice(0, 16).map((image: string, index: number) => convertBase64ToPublicUrl(image, `mingfei_ref_${index}`, req))
+        ? reference_images.map((image: string, index: number) => convertBase64ToPublicUrl(image, `mingfei_ref_${index}`, req))
         : [];
       const completedImages: string[] = new Array(count).fill('');
       const upstreamTaskIds: string[] = new Array(count).fill('');
@@ -616,7 +628,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
 
     if (isSiYueTianImageChannel(channel, model)) {
       const referenceUrls = hasRef
-        ? reference_images.slice(0, 9).map((image: string, index: number) => convertBase64ToPublicUrl(image, `image_ref_${index}`, req))
+        ? reference_images.map((image: string, index: number) => convertBase64ToPublicUrl(image, `image_ref_${index}`, req))
         : [];
       const completedImages: string[] = new Array(count).fill('');
       const upstreamTaskIds: string[] = new Array(count).fill('');
@@ -721,20 +733,30 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
 
       // 将 base64 data URI 转为 Blob
       const refBlobs: Blob[] = [];
-      for (const refImg of reference_images.slice(0, 5)) {
+      for (const refImg of reference_images) {
         try {
           if (typeof refImg === 'string' && refImg.startsWith('data:')) {
-            const [meta, b64] = refImg.split(',');
-            const mime = meta.match(/data:([^;]+)/)?.[1] || 'image/png';
-            const buf = Buffer.from(b64, 'base64');
+            const match = refImg.match(/^data:(image\/[\w.+-]+);base64,([a-zA-Z0-9+/=\s]+)$/);
+            if (!match) throw new Error('图片数据格式无效');
+            const mime = match[1];
+            const buf = Buffer.from(match[2], 'base64');
+            if (!buf.length) throw new Error('图片内容为空');
             refBlobs.push(new Blob([buf], { type: mime }));
           } else if (typeof refImg === 'string' && refImg.startsWith('http')) {
             // URL 类型：下载后转 Blob
             const dl = await fetch(refImg);
-            if (dl.ok) refBlobs.push(await dl.blob());
+            if (!dl.ok) throw new Error('图片下载失败');
+            refBlobs.push(await dl.blob());
+          } else {
+            throw new Error('图片地址格式无效');
           }
         } catch (e) {
           console.error('[imageGen/edit] 参考图处理失败:', e);
+          const message = `参考图 ${refBlobs.length + 1} 读取失败，请重新上传`;
+          sendEvent({ type: 'error', message });
+          persistFailure(message);
+          finishStream();
+          return;
         }
       }
 

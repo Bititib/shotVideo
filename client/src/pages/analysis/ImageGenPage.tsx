@@ -1,7 +1,8 @@
 import { startPolling } from '../../utils/polling';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Image as ImageIcon, Play, Square, Download, RotateCcw, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Grid2x2, Maximize2, Trash2 } from 'lucide-react';
-import { downloadGeneratedImage, fetchImageModels, generateImage, getCachedImageModels, type ImageModel, type ImageSSEEvent } from '../../api/imageGen';
+import { Image as ImageIcon, ArrowUpRight, Pencil, Plus, ChevronDown, SlidersHorizontal, MoreHorizontal, Square, Download, RotateCcw, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Maximize2, Trash2 } from 'lucide-react';
+import './ImageGenPage.css';
+import { downloadGeneratedImage, fetchImageModels, generateImage, generatedImageReference, getCachedImageModels, imageReferenceLimit, type ImageModel, type ImageSSEEvent } from '../../api/imageGen';
 import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
@@ -76,94 +77,73 @@ interface ActiveImageBatch {
 
 const MAX_CONCURRENT_BATCHES = 4;
 
-function CustomSelect({ value, options, onChange, icon: Icon, prefix }: any) {
-  const [isOpen, setIsOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setIsOpen(false); };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, []);
-  const selected = options.find((o: any) => o.value === value);
+function SettingSelect({ label, value, options, onChange }: { label: string; value: string | number; options: { value: string | number; label: string }[]; onChange: (value: any) => void }) {
   return (
-    <div className="relative" ref={ref}>
-      <button onClick={() => setIsOpen(!isOpen)} className={`flex items-center gap-2 bg-white/[0.03] hover:bg-white/[0.05] rounded-lg px-3 py-2 text-[11px] text-zinc-300 transition-colors border ${isOpen ? 'border-pink-500/30' : 'border-transparent'}`}>
-        {selected?.icon ? <selected.icon className="w-3.5 h-3.5 text-pink-400" /> : Icon && <Icon className="w-3.5 h-3.5 text-pink-400" />}
-        {prefix}{selected?.label || value}
-      </button>
-      {isOpen && (
-        <div className="absolute bottom-full left-0 mb-2 min-w-full w-max bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl p-1 z-50 flex flex-col max-h-[240px] overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
-          {options.map((o: any) => (
-            <button key={o.value} onClick={() => { onChange(o.value); setIsOpen(false); }}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-left text-[11px] transition-colors ${value === o.value ? 'bg-pink-500/20 text-pink-300' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'}`}>
-              {o.icon && <o.icon className="w-3.5 h-3.5" />}
-              {o.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <label className="ig-field"><span>{label}</span><div className="ig-select-wrap">
+      <select aria-label={label} value={value} onChange={e => onChange(typeof value === 'number' ? Number(e.target.value) : e.target.value)}>
+        {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+      </select><ChevronDown size={15} aria-hidden="true" />
+    </div></label>
   );
 }
 
 /** 瀑布流图片卡片 */
-function ImageCard({ url, index, onPreview }: { url: string; index: number; onPreview: () => void; key?: any }) {
+function ImageCard({ url, index, onPreview, onEdit, editing }: { url: string; index: number; onPreview: () => void; onEdit: () => void; editing: boolean; key?: any }) {
   return (
-    <div className="group relative rounded-xl overflow-hidden border border-white/5 hover:border-pink-500/30 transition-all cursor-pointer bg-black/20" onClick={onPreview}>
-      <img src={url} alt={`生成图片 ${index + 1}`} className="w-full block max-h-[60vh] object-contain" loading="lazy" />
-      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-        <div className="absolute bottom-2 right-2 flex gap-1.5">
-          <button onClick={(e) => { e.stopPropagation(); onPreview(); }} className="p-1.5 bg-black/50 backdrop-blur rounded-lg text-white/80 hover:text-white"><Maximize2 className="w-3.5 h-3.5" /></button>
-          <button type="button" onClick={(e) => downloadImageFile(e, url, `generated-image-${index + 1}.png`)} className="p-1.5 bg-black/50 backdrop-blur rounded-lg text-white/80 hover:text-white"><Download className="w-3.5 h-3.5" /></button>
-        </div>
+    <article className="ig-artwork">
+      <button type="button" className="ig-artwork-preview" aria-label={`预览生成图片 ${index + 1}`} onClick={onPreview}>
+        <img src={url} alt={`生成图片 ${index + 1}`} loading="lazy" /><span className="ig-preview-badge"><Maximize2 size={15} /></span>
+      </button>
+      <div className="ig-artwork-footer"><button type="button" aria-label="继续改图" disabled={editing} onClick={onEdit} className="ig-edit"><Pencil size={14} />改图</button>
+        <button type="button" aria-label={`下载生成图片 ${index + 1}`} className="ig-icon-button" onClick={e => void downloadImageFile(e, url, `generated-image-${index + 1}.png`)}><Download size={16} /></button>
       </div>
-    </div>
+    </article>
   );
 }
 
 /** 生成中的占位卡片 - 骨架屏风格 */
 function PlaceholderCard({ index, progress }: { index: number; progress: number; key?: any }) {
   return (
-    <div className="relative h-[180px] w-[160px] rounded-xl border border-white/[0.06] bg-[#111] overflow-hidden flex flex-col items-center justify-center gap-2">
-      {/* 闪光扫描动画 */}
-      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/[0.03] to-transparent animate-[shimmer_2s_infinite]" style={{ backgroundSize: '200% 100%' }} />
-      {/* 进度环 */}
+    <div className="ig-placeholder" role="status" aria-label={`图片 ${index + 1} ${progress > 0 ? '生成中' : '排队中'}`}>
       <div className="relative w-12 h-12">
         <svg className="w-12 h-12 -rotate-90" viewBox="0 0 48 48">
-          <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
-          <circle cx="24" cy="24" r="20" fill="none" stroke="url(#ipg)" strokeWidth="3" strokeLinecap="round"
+          <circle cx="24" cy="24" r="20" fill="none" stroke="var(--ig-line)" strokeWidth="3" />
+          <circle cx="24" cy="24" r="20" fill="none" stroke="var(--ig-accent)" strokeWidth="3" strokeLinecap="round"
             strokeDasharray={`${2 * Math.PI * 20}`}
             strokeDashoffset={`${2 * Math.PI * 20 * (1 - (progress || 0) / 100)}`}
             className="transition-all duration-700 ease-out" />
-          <defs><linearGradient id="ipg" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#ec4899" /><stop offset="100%" stopColor="#f43f5e" /></linearGradient></defs>
         </svg>
         <div className="absolute inset-0 flex items-center justify-center">
           {progress > 0 ? (
-            <span className="text-[11px] font-bold text-white tabular-nums">{progress}%</span>
+            <span>{progress}%</span>
           ) : (
-            <Loader2 className="w-4 h-4 text-pink-400/60 animate-spin" />
+            <Loader2 size={16} className="ig-spin" />
           )}
         </div>
       </div>
-      <span className="text-[10px] text-zinc-500 font-medium">#{index + 1} {progress > 0 ? '生成中' : '排队中'}</span>
-      {/* 底部进度条 */}
-      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/[0.04]">
-        <div className="h-full bg-gradient-to-r from-pink-500 to-rose-500 transition-all duration-700 ease-out" style={{ width: `${progress || 0}%` }} />
-      </div>
+      <span>#{index + 1} {progress > 0 ? '生成中' : '排队中'}</span>
     </div>
   );
 }
 
 /** 全屏预览浮层 */
-function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
+function Lightbox({ url, onClose, onEdit, editing }: { url: string; onClose: () => void; onEdit: () => void; editing: boolean }) {
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', escape);
+    return () => window.removeEventListener('keydown', escape);
+  }, [onClose]);
   return (
-    <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-sm flex items-center justify-center p-8" onClick={onClose}>
-      <button onClick={onClose} className="absolute top-4 right-4 p-2 text-zinc-400 hover:text-white"><X className="w-6 h-6" /></button>
-      <img src={url} alt="预览" className="max-w-full max-h-full object-contain rounded-2xl shadow-2xl" onClick={(e) => e.stopPropagation()} />
+    <div className="ig-lightbox" role="dialog" aria-modal="true" aria-label="图片预览" onClick={onClose}>
+      <button type="button" aria-label="关闭预览" onClick={onClose} className="ig-lightbox-close" autoFocus><X size={21} /></button>
+      <img src={url} alt="预览" onClick={(e) => e.stopPropagation()} />
+      <div className="ig-lightbox-actions">
+      <button type="button" disabled={editing} onClick={e => { e.stopPropagation(); onEdit(); }}><Pencil size={16} />继续改图</button>
       <button type="button" onClick={(e) => downloadImageFile(e, url, 'generated-image.png')}
-        className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-2 px-5 py-2.5 bg-white/10 hover:bg-white/20 backdrop-blur rounded-xl text-sm text-white transition-colors">
-        <Download className="w-4 h-4" /> 下载原图
+        >
+        <Download size={16} /> 下载原图
       </button>
+      </div>
     </div>
   );
 }
@@ -172,8 +152,14 @@ export default function ImageGenPage() {
   const guard = useAuthGuard();
   const [models, setModels] = useState<ImageModel[]>(getCachedImageModels);
   const [selectedModel, setSelectedModel] = useState(() => models[0]?.id || '');
-  const managedLimits = models.find(m => m.id === selectedModel)?.routingLimits;
-  const maxReferenceImages = managedLimits?.maxImages ?? 10;
+  const selectedImageModel = models.find(m => m.id === selectedModel);
+  const managedLimits = selectedImageModel?.routingLimits;
+  const maxReferenceImages = imageReferenceLimit(selectedImageModel);
+  const [generationMode, setGenerationMode] = useState<'text' | 'image'>('text');
+  const [referenceImporting, setReferenceImporting] = useState(false);
+  const referenceImportingRef = useRef(false);
+  const [referenceNotice, setReferenceNotice] = useState('');
+  const [editFocusRequest, setEditFocusRequest] = useState(0);
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState('1:1');
   const [managedQuality, setManagedQuality] = useState('');
@@ -195,6 +181,34 @@ export default function ImageGenPage() {
   const [recoveringHistoryIds, setRecoveringHistoryIds] = useState<Set<number>>(() => new Set());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const continueEditing = async (url: string) => {
+    if (referenceImportingRef.current) return;
+    const target = selectedImageModel?.available && maxReferenceImages > 0 ? selectedImageModel
+      : models.find(model => model.available && imageReferenceLimit(model) > 0);
+    if (!target) { setError('暂无可用的图生图模型，请联系管理员配置渠道'); return; }
+    referenceImportingRef.current = true;
+    setReferenceImporting(true);
+    setLightboxUrl(null);
+    setError(null);
+    try {
+      const reference = await generatedImageReference(url);
+      setSelectedModel(target.id);
+      setReferenceImages([reference]);
+      setGenerationMode('image');
+      setPrompt('');
+      setReferenceNotice(target.id === selectedModel ? '已带入原图，请填写修改要求。' : `已带入原图并切换至 ${target.name}，请填写修改要求。`);
+      setEditFocusRequest(request => request + 1);
+    } catch (error: any) { setError(error?.message || '原图读取失败，请重新上传'); }
+    finally { referenceImportingRef.current = false; setReferenceImporting(false); }
+  };
+
+  // Wait until the reference preview is rendered before scrolling to the editor.
+  useEffect(() => {
+    if (!editFocusRequest) return;
+    textareaRef.current?.focus();
+    textareaRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }, [editFocusRequest]);
 
   useEffect(() => {
     fetchImageModels().then((nextModels) => {
@@ -329,6 +343,8 @@ export default function ImageGenPage() {
 
   const handleFileSelect = async (files: FileList | null) => {
     if (!files) return;
+    if (referenceImportingRef.current) return;
+    if (maxReferenceImages === 0) { setError('当前模型不支持图生图，请选择支持参考图的模型'); return; }
     const remaining = maxReferenceImages - referenceImages.length;
     if (remaining <= 0) { setError('最多上传 ' + maxReferenceImages + ' 张参考图'); return; }
     const validFiles = Array.from(files).filter(isSupportedImageFile);
@@ -336,8 +352,12 @@ export default function ImageGenPage() {
     if (validFiles.length === 0) return;
     const oversized = validFiles.find(f => f.size > 20 * 1024 * 1024);
     if (oversized) { setError(`参考图 "${oversized.name}" 超过 20MB 上限`); return; }
-    try { const urls = await Promise.all(validFiles.map(readFileAsDataURL)); setReferenceImages(prev => [...prev, ...urls]); }
+    referenceImportingRef.current = true;
+    setReferenceImporting(true);
+    setError(null);
+    try { const urls = await Promise.all(validFiles.map(readFileAsDataURL)); setReferenceImages(prev => [...prev, ...urls]); setGenerationMode('image'); setReferenceNotice(''); }
     catch (error: any) { setError(error?.message || '图片读取失败'); }
+    finally { referenceImportingRef.current = false; setReferenceImporting(false); }
   };
 
   const removeRefImage = (index: number) => setReferenceImages(prev => prev.filter((_, i) => i !== index));
@@ -354,7 +374,12 @@ export default function ImageGenPage() {
   }, [selectedModel, managedLimits, mingFeiResolution, aspectRatio, imageCount, managedQuality]);
   const handleGenerate = useCallback(() => {
     if (!prompt.trim()) return;
-    if (managedLimits && (referenceImages.length < managedLimits.minImages || referenceImages.length > managedLimits.maxImages)) { setError('该规格需要 ' + managedLimits.minImages + '–' + managedLimits.maxImages + ' 张参考图'); return; }
+    if (referenceImporting) return;
+    const batchReferences = generationMode === 'image' ? [...referenceImages] : [];
+    if (generationMode === 'image' && maxReferenceImages === 0) { setError('当前模型不支持图生图，请选择支持参考图的模型'); return; }
+    if (generationMode === 'image' && !batchReferences.length) { setError('请先上传需要修改的原图'); return; }
+    if (batchReferences.length > maxReferenceImages) { setError(`当前模型最多支持 ${maxReferenceImages} 张参考图，请减少图片后重试`); return; }
+    if (managedLimits && batchReferences.length < managedLimits.minImages) { setError('该规格至少需要 ' + managedLimits.minImages + ' 张参考图，请切换至图生图并上传'); return; }
     if (activeBatches.length >= MAX_CONCURRENT_BATCHES) {
       setError(`最多同时生成 ${MAX_CONCURRENT_BATCHES} 批图片，请等待任一批完成`);
       return;
@@ -368,7 +393,6 @@ export default function ImageGenPage() {
     const batchModel = selectedModel;
     const batchAspectRatio = aspectRatio;
     const batchCount = imageCount;
-    const batchReferences = [...referenceImages];
     const batchQuality = managedLimits ? managedQuality || undefined : batchModel === 'gpt-image-2'
       ? pidoiQuality
       : batchModel === 'gpt-image-2-mingfei' ? mingFeiQuality : undefined;
@@ -474,7 +498,7 @@ export default function ImageGenPage() {
       },
     );
     batchControllersRef.current.set(batchId, ctrl);
-  }, [prompt, selectedModel, aspectRatio, pidoiQuality, mingFeiQuality, mingFeiResolution, imageCount, activeBatches.length, referenceImages, guard, managedLimits, managedQuality]);
+  }, [prompt, selectedModel, aspectRatio, pidoiQuality, mingFeiQuality, mingFeiResolution, imageCount, activeBatches.length, referenceImages, guard, managedLimits, managedQuality, generationMode, maxReferenceImages, referenceImporting]);
 
   const handleCancelBatch = useCallback((batchId: string) => {
     batchControllersRef.current.get(batchId)?.abort();
@@ -539,260 +563,73 @@ export default function ImageGenPage() {
   const hasCurrentWork = generatedImages.length > 0 || activeBatches.length > 0;
   const selectedMingFeiRate = models.find(model => model.id === 'gpt-image-2-mingfei')?.resolutionPrices?.[mingFeiResolution];
 
+  const displayRate = selectedModel === 'gpt-image-2-mingfei' && Number.isFinite(selectedMingFeiRate)
+    ? selectedMingFeiRate : selectedImageModel?.rate;
+  const canGenerate = Boolean(prompt.trim() && !referenceImporting && activeBatches.length < MAX_CONCURRENT_BATCHES
+    && selectedImageModel?.available && (generationMode === 'text' || (maxReferenceImages > 0 && referenceImages.length > 0 && referenceImages.length <= maxReferenceImages)));
+
   return (
-    <div className="imagegen-page flex flex-col lg:flex-row min-h-full lg:h-full">
-      {/* ===== 左栏 ===== */}
-      <div className="w-full lg:w-[320px] shrink-0 h-fit lg:h-full lg:overflow-y-auto border-r border-white/5 bg-black [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
-        <div className="p-6 flex flex-col min-h-full">
-          <h2 className="text-xl font-semibold text-white mb-6 flex items-center gap-3"><ImageIcon className="w-6 h-6 text-pink-400" /> 图片生成</h2>
-          <div className="mb-6">
-            <label className="block text-xs font-semibold text-zinc-400 mb-3 uppercase tracking-wider">选择模型</label>
-            <div className="space-y-3">
-              {models.map((model) => (
-                <button key={model.id} onClick={() => setSelectedModel(model.id)}
-                  className={`earth-image-model-card w-full text-left px-4 py-3 rounded-xl border transition-all ${selectedModel === model.id ? 'is-selected border-pink-500/50 bg-pink-500/10 shadow-lg shadow-pink-500/5' : 'border-white/5 bg-white/[0.02] hover:border-white/10 hover:bg-white/[0.04]'}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium text-white">{model.name}</p>
-                    <div className="flex items-center gap-2">
-                      {model.rate !== undefined && (
-                        <span className="text-[10px] bg-pink-500/10 text-pink-400 px-1.5 py-0.5 rounded border border-pink-500/20 font-medium">
-                          ¥{model.rate.toFixed(2)}/张
-                        </span>
-                      )}
-                      {selectedModel === model.id && <div className="w-5 h-5 rounded-full bg-pink-500 flex items-center justify-center shrink-0"><Check className="w-3 h-3 text-white" /></div>}
-                    </div>
-                  </div>
-                  <p className="text-xs text-zinc-500 mt-1 leading-relaxed">{model.description}</p>
-                  {model.rate !== undefined && (
-                    <div className="mt-2 flex items-center gap-2 text-[10px] text-zinc-600 border-t border-white/5 pt-1.5">
-                      <span>单价: <span className="text-zinc-400">¥{model.rate.toFixed(2)} / 张</span></span>
-                    </div>
-                  )}
-                  {!model.available && <div className="mt-2 text-xs text-amber-500/80 flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5" /> 暂不可用</div>}
-                </button>
-              ))}
-              <div className="p-4 rounded-xl border border-dashed border-white/5 opacity-40 mt-4">
-                <p className="text-sm text-zinc-600 mb-1">更多模型</p><p className="text-xs text-zinc-700">即将支持...</p>
-              </div>
+    <div className="image-studio">
+      <header className="ig-header"><h1>图片<span>{generatedImages.length + visibleHistory.length}</span></h1>{generatedImages.length > 0 && <button type="button" className="ig-text-button" onClick={() => setGeneratedImages([])}><RotateCcw size={14} />清空本次</button>}</header>
+      <div className="ig-workspace">
+        <section className="ig-gallery" aria-label="我的作品">
+          <div className="ig-gallery-content">
+            {generatedImages.length > 0 && <section className="ig-result-section"><h3>本次生成<span>{generatedImages.length} 张</span></h3><div className="ig-artwork-grid">{generatedImages.map((url, index) => <ImageCard key={url + index} url={url} index={index} onPreview={() => setLightboxUrl(url)} onEdit={() => void continueEditing(url)} editing={referenceImporting} />)}</div></section>}
+            {activeBatches.map((batch, batchIndex) => <section key={batch.id} className="ig-batch"><header><div><h3>生成中 · 批次 {batchIndex + 1}</h3><p title={batch.prompt}>{batch.statusMessage || batch.prompt}</p></div>{batch.persisted || batch.contentId ? <span className="ig-processing"><Loader2 size={14} className="ig-spin" />后台处理中</span> : <button type="button" className="ig-text-button" onClick={() => handleCancelBatch(batch.id)}><Square size={13} />取消本批</button>}</header><div className="ig-artwork-grid">{batch.images.map((url, index) => url ? <ImageCard key={index} url={url} index={index} onPreview={() => setLightboxUrl(url)} onEdit={() => void continueEditing(url)} editing={referenceImporting} /> : batch.failedIndexes.includes(index) ? <div className="ig-failed" key={index}><AlertCircle size={24} /><span>图片 {index + 1} 生成失败</span></div> : <PlaceholderCard key={index} index={index} progress={batch.progresses[index] || 0} />)}</div></section>)}
+
+            {visibleHistory.length > 0 && <section className="ig-result-section"><div className="ig-artwork-grid">{visibleHistory.map(item => <article className="ig-artwork" key={item.id}>
+              {item.missing ? <div className="ig-missing"><AlertCircle size={25} /><strong>原文件暂时无法读取</strong><div><button type="button" className="ig-text-button" disabled={recoveringHistoryIds.has(Number.parseInt(item.id.split('_')[0], 10))} onClick={() => void recoverHistoryImage(item)}>{recoveringHistoryIds.has(Number.parseInt(item.id.split('_')[0], 10)) ? '获取中…' : '重新获取'}</button><button type="button" className="ig-text-button" onClick={() => void deleteHistoryRecord(item)}>删除</button></div></div>
+                : <button type="button" className="ig-artwork-preview" aria-label="预览历史图片" onClick={() => setLightboxUrl(item.imageUrl)}><img src={item.imageUrl} alt="历史图片" loading="lazy" onError={() => markHistoryImageMissing(item.id)} /><span className="ig-preview-badge"><Maximize2 size={15} /></span></button>}
+              {!item.missing && <div className="ig-artwork-footer"><button type="button" aria-label="继续改图" className="ig-edit" disabled={referenceImporting} onClick={() => void continueEditing(item.imageUrl)}><Pencil size={14} />改图</button><div className="ig-artwork-actions"><details className="ig-card-menu"><summary aria-label="更多操作" title="更多操作"><MoreHorizontal size={17} /></summary><div>
+                {item.prompt && <button type="button" className="ig-icon-button" aria-label="套用提示词" title="套用提示词" onClick={() => { setPrompt(item.prompt); textareaRef.current?.focus(); }}><RotateCcw size={15} /></button>}
+                <button type="button" className="ig-icon-button" aria-label="删除记录" title="删除记录" onClick={() => void deleteHistoryRecord(item)}><Trash2 size={15} /></button>
+                </div></details><button type="button" className="ig-icon-button" aria-label="下载历史图片" title="下载原图" onClick={event => void downloadImageFile(event, item.imageUrl, 'generated-image-' + item.id + '.png')}><Download size={16} /></button>
+              </div></div>}
+            </article>)}</div>{historyPage * 12 < historyTotal && <button type="button" className="ig-load-more" disabled={historyLoading} onClick={() => void loadMoreHistory()}>{historyLoading ? '加载中…' : '加载更多作品'}<ChevronDown size={15} /></button>}</section>}
+
+            {!hasCurrentWork && visibleHistory.length === 0 && <div className="ig-empty"><ImageIcon size={34} strokeWidth={1.1} /><span>还没有作品</span></div>}
+          </div>
+        </section>
+        <form className="ig-composer" onSubmit={event => { event.preventDefault(); handleGenerate(); }}>
+          <div className="ig-composer-top">
+            <div className="ig-modes" role="group" aria-label="图片生成模式">
+              <button type="button" aria-pressed={generationMode === 'text'} onClick={() => { setGenerationMode('text'); setError(null); setReferenceNotice(''); }}>文生图</button>
+              <button type="button" aria-label="图生图 / 改图" aria-pressed={generationMode === 'image'} onClick={() => { setGenerationMode('image'); setError(null); setReferenceNotice(''); }}>图生图</button>
+            </div>
+            {activeBatches.length > 0 && <span className="ig-processing"><Loader2 size={13} className="ig-spin" />{activeBatches.length} 批进行中</span>}
+          </div>
+          <input ref={fileInputRef} type="file" accept={MOBILE_IMAGE_ACCEPT} multiple hidden onChange={event => { void handleFileSelect(event.target.files); event.target.value = ''; }} />
+          {generationMode === 'image' && <section className="ig-original-section" aria-label="原图上传">
+            <div className="ig-references">
+              {referenceImages.map((image, index) => <div className="ig-reference" key={index}><img src={image} alt={'参考图 ' + (index + 1)} /><span className="ig-reference-number">{index + 1}</span><button type="button" className="ig-reference-remove" aria-label={'移除参考图 ' + (index + 1)} onClick={() => removeRefImage(index)}><X size={12} /></button></div>)}
+              <button type="button" className="ig-upload" aria-label={'上传原图 (' + referenceImages.length + '/' + maxReferenceImages + ')'} title={'最多 ' + maxReferenceImages + ' 张，单张不超过 20 MB'} disabled={maxReferenceImages === 0 || referenceImporting || referenceImages.length >= maxReferenceImages} onClick={() => fileInputRef.current?.click()}><Plus size={20} /><span>{referenceImages.length ? '添加' : '原图'}</span></button>
+            </div>
+            {maxReferenceImages === 0 && <p className="ig-warning" role="status">当前模型仅支持文生图</p>}
+            {referenceImages.length > maxReferenceImages && <p className="ig-warning" role="status">当前模型最多支持 {maxReferenceImages} 张参考图，请移除多余图片。</p>}
+          </section>}
+          <textarea id="ig-prompt" ref={textareaRef} value={prompt} onChange={event => setPrompt(event.target.value)} onKeyDown={handleKeyDown}
+            aria-label={generationMode === 'image' ? '修改要求' : '图片描述'} rows={2} placeholder={generationMode === 'image' ? '想修改哪里？' : '描述你想要的画面…'} />
+          {error && <div role="alert" className="ig-error"><AlertCircle size={16} /><span>{error}</span><button type="button" aria-label="关闭错误提示" onClick={() => setError(null)}><X size={14} /></button></div>}
+          <div className="ig-toolbar">
+            <SettingSelect label="生成模型" value={selectedModel} onChange={setSelectedModel} options={models.map(model => ({ value: model.id, label: model.name + (!model.available ? ' · 暂不可用' : imageReferenceLimit(model) === 0 ? ' · 仅文生图' : '') }))} />
+            <SettingSelect label="画面比例" value={aspectRatio} onChange={setAspectRatio} options={managedLimits ? ASPECT_RATIOS.filter(ratio => managedLimits.ratios.includes(ratio.value)) : ASPECT_RATIOS} />
+            <SettingSelect label="生成数量" value={imageCount} onChange={setImageCount} options={managedLimits ? COUNT_OPTIONS.filter(option => option.value <= managedLimits.maxOutputs) : COUNT_OPTIONS} />
+            <details className="ig-advanced"><summary aria-label="画质设置" title="画质设置"><SlidersHorizontal size={17} /></summary><div className="ig-settings">
+            {selectedModel === 'gpt-image-2' && !managedLimits && <SettingSelect label="输出画质" value={pidoiQuality} onChange={setPidoiQuality} options={PIDOI_QUALITY_OPTIONS} />}
+            {Boolean(managedLimits?.qualities.length) && <SettingSelect label="生成质量" value={managedQuality} onChange={setManagedQuality} options={managedLimits!.qualities.map(quality => ({ value: quality, label: quality }))} />}
+            {managedLimits?.resolutions.length === 1 && <div className="ig-fixed-setting"><span>输出分辨率</span><strong>{managedLimits.resolutions[0]}</strong></div>}
+            {managedLimits && managedLimits.resolutions.length > 1 && <SettingSelect label="输出分辨率" value={mingFeiResolution} onChange={setMingFeiResolution} options={managedLimits.resolutions.map(resolution => ({ value: resolution, label: resolution }))} />}
+            {selectedModel === 'gpt-image-2-mingfei' && !managedLimits && <><SettingSelect label="生成质量" value={mingFeiQuality} onChange={setMingFeiQuality} options={MINGFEI_QUALITY_OPTIONS} /><SettingSelect label="输出分辨率" value={mingFeiResolution} onChange={setMingFeiResolution} options={MINGFEI_RESOLUTION_OPTIONS} /></>}
+              {!managedLimits && !['gpt-image-2','gpt-image-2-mingfei'].includes(selectedModel) && <span className="ig-default-quality">默认画质</span>}
+            </div></details>
+            <div className="ig-submit-section">{displayRate !== undefined && <span className="ig-estimate" title="预计费用">¥{(Number(displayRate) * imageCount).toFixed(2)}</span>}
+              <button type="submit" className="ig-submit" disabled={!canGenerate} aria-label={activeBatches.length >= MAX_CONCURRENT_BATCHES ? '已达到并发批次上限' : generationMode === 'image' ? '开始改图' : '开始生成图片'} title="Enter 生成"><ArrowUpRight size={20} /><span>生成</span></button>
             </div>
           </div>
-        </div>
+          <span className="ig-sr-only" role="status">{referenceImporting ? '正在读取参考图' : referenceNotice}</span>
+        </form>
       </div>
-
-      {/* ===== 右栏 ===== */}
-      <div className="flex-1 flex flex-col min-w-0 relative">
-        {/* 图片预览区 - 保持原始比例 */}
-        <div className="flex-1 overflow-y-auto p-6 pb-40 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
-          {hasCurrentWork && (
-            <>
-              {/* 已完成的图片 */}
-              <div className="flex flex-wrap gap-3 items-start">
-                {generatedImages.map((url, i) => (
-                  <ImageCard key={`completed-${i}-${url}`} url={url} index={i} onPreview={() => setLightboxUrl(url)} />
-                ))}
-              </div>
-
-              {/* 每一批任务独立维护进度和取消操作 */}
-              <div className="mt-4 space-y-4">
-                {activeBatches.map((batch, batchIndex) => (
-                  <section key={batch.id} className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-3">
-                    <div className="mb-3 flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-medium text-zinc-300">批次 {batchIndex + 1} · {batch.prompt}</p>
-                        <p className="mt-1 text-[11px] text-zinc-500">
-                          {batch.statusMessage || `已完成 ${batch.images.filter(Boolean).length} / ${batch.count} 张`}
-                        </p>
-                      </div>
-                      {batch.persisted || batch.contentId ? (
-                        <span className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-amber-400/80">
-                          <Loader2 className="h-3 w-3 animate-spin" /> 后台处理中
-                        </span>
-                      ) : (
-                        <button type="button" onClick={() => handleCancelBatch(batch.id)} className="flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400">
-                          <Square className="h-3 w-3" /> 取消本批
-                        </button>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap items-start gap-3">
-                      {batch.images.map((url, index) => {
-                        if (url) return <ImageCard key={`${batch.id}-${index}`} url={url} index={index} onPreview={() => setLightboxUrl(url)} />;
-                        if (batch.failedIndexes.includes(index)) {
-                          return (
-                            <div key={`${batch.id}-failed-${index}`} className="flex h-[180px] w-[160px] flex-col items-center justify-center gap-2 rounded-xl border border-red-500/20 bg-red-500/5 text-red-400">
-                              <AlertCircle className="h-5 w-5" />
-                              <span className="text-[10px]">#{index + 1} 生成失败</span>
-                            </div>
-                          );
-                        }
-                        return <PlaceholderCard key={`${batch.id}-pending-${index}`} index={index} progress={batch.progresses[index] || 0} />;
-                      })}
-                    </div>
-                  </section>
-                ))}
-              </div>
-
-              {/* 操作栏 */}
-              {generatedImages.length > 0 && (
-                <div className="flex items-center justify-center gap-3 mt-4">
-                  <button onClick={() => setGeneratedImages([])} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs text-zinc-300 transition-colors">
-                    <RotateCcw className="w-3.5 h-3.5" /> 清空本页结果
-                  </button>
-                  <span className="text-[11px] text-zinc-600">共 {generatedImages.length} 张 · 点击放大</span>
-                </div>
-              )}
-            </>
-          )}
-
-          {visibleHistory.length > 0 && (
-            <section className={hasCurrentWork ? 'mt-8 border-t border-white/5 pt-6' : ''}>
-              <p className="text-xs text-zinc-500 mb-3">历史生成记录 ({visibleHistory.length})</p>
-              <div className="flex flex-wrap gap-3 items-start">
-                {visibleHistory.map((h) => (
-                  <div key={h.id} className="group relative rounded-xl overflow-hidden border border-white/5 hover:border-pink-500/40 transition-all cursor-pointer bg-black/30" onClick={() => setLightboxUrl(h.imageUrl)}>
-                    {h.missing ? (
-                      <div className="flex h-[180px] w-[180px] flex-col items-center justify-center gap-3 bg-red-500/5 px-4 text-center" onClick={event => event.stopPropagation()}>
-                        <AlertCircle className="h-6 w-6 text-red-400" />
-                        <p className="text-xs font-medium text-red-300">文件已丢失</p>
-                        <div className="flex gap-2">
-                          <button type="button" disabled={recoveringHistoryIds.has(Number.parseInt(String(h.id).split('_')[0], 10))}
-                            onClick={() => void recoverHistoryImage(h)}
-                            className="rounded-lg bg-pink-500/15 px-2.5 py-1.5 text-[11px] text-pink-300 hover:bg-pink-500/25 disabled:opacity-50">
-                            {recoveringHistoryIds.has(Number.parseInt(String(h.id).split('_')[0], 10)) ? '获取中…' : '重新获取'}
-                          </button>
-                          <button type="button" onClick={() => void deleteHistoryRecord(h)}
-                            className="rounded-lg bg-red-500/10 px-2.5 py-1.5 text-[11px] text-red-300 hover:bg-red-500/20">删除</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <img src={h.imageUrl} alt="历史图片" className="block h-[180px] w-auto object-contain" loading="lazy" onError={() => markHistoryImageMissing(h.id)} />
-                    )}
-                    {!h.missing && <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                      <div className="absolute bottom-1.5 right-1.5 flex gap-1">
-                        {h.prompt && (
-                          <button onClick={(e) => { e.stopPropagation(); setPrompt(h.prompt); textareaRef.current?.focus(); }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white" title={`套用提示词: ${h.prompt}`}>
-                            <RotateCcw className="w-3 h-3" />
-                          </button>
-                        )}
-                        <button onClick={(e) => { e.stopPropagation(); setLightboxUrl(h.imageUrl); }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Maximize2 className="w-3 h-3" /></button>
-                        <button onClick={(e) => { e.stopPropagation(); void deleteHistoryRecord(h); }} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-red-400" title="删除记录">
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                        <button type="button" onClick={(e) => downloadImageFile(e, h.imageUrl, `generated-image-${h.id}.png`)} className="p-1 bg-black/50 backdrop-blur rounded-md text-white/80 hover:text-white"><Download className="w-3 h-3" /></button>
-                      </div>
-                    </div>}
-                  </div>
-                ))}
-              </div>
-              {historyPage * 12 < historyTotal && (
-                <div className="mt-5 flex justify-center">
-                  <button type="button" disabled={historyLoading} onClick={loadMoreHistory} className="rounded-xl border border-white/10 bg-white/5 px-5 py-2 text-xs text-zinc-300 transition-colors hover:bg-white/10 disabled:cursor-wait disabled:opacity-50">
-                    {historyLoading ? '加载中…' : '加载更多'}
-                  </button>
-                </div>
-              )}
-            </section>
-          )}
-
-          {!hasCurrentWork && visibleHistory.length === 0 && (
-            <div className="h-full flex items-center justify-center">
-              <div className="text-center">
-                <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-pink-500/10 to-rose-500/10 border border-white/5 flex items-center justify-center">
-                  <Sparkles className="w-8 h-8 text-pink-400/60" />
-                </div>
-                <p className="text-sm text-zinc-500 mb-1">输入描述，生成AI图片</p>
-                <p className="text-[11px] text-zinc-700">支持多图生成 · 点击放大查看</p>
-              </div>
-            </div>
-          )}
-
-        </div>
-
-        {/* 错误提示 */}
-        {error && (
-          <div className="absolute bottom-[180px] left-4 right-4 z-10 px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 flex items-center gap-2 backdrop-blur-sm">
-            <AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{error}</span>
-            <button onClick={() => setError(null)} className="text-red-500/60 hover:text-red-400 text-xs">✕</button>
-          </div>
-        )}
-
-        {/* 悬浮输入区 */}
-        <div className="absolute bottom-0 left-0 right-0 z-10">
-          <div className="imagegen-composer bg-gradient-to-t from-[#0c0c0c] via-[#0c0c0c]/95 to-transparent pt-8 px-6 pb-5">
-            <div className="max-w-5xl mx-auto">
-              {/* 工具栏 */}
-              <div className="flex items-center gap-2 mb-3 flex-wrap">
-                <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={managedLimits ? ASPECT_RATIOS.filter(r => managedLimits.ratios.includes(r.value)) : ASPECT_RATIOS} prefix="比例: " />
-                {selectedModel === 'gpt-image-2' && !managedLimits && (
-                  <CustomSelect value={pidoiQuality} onChange={setPidoiQuality} options={PIDOI_QUALITY_OPTIONS} prefix="画质: " />
-                )}
-                {Boolean(managedLimits?.qualities.length) && <CustomSelect value={managedQuality} onChange={setManagedQuality} options={managedLimits!.qualities.map(q => ({ value: q, label: q }))} prefix="质量: " />}
-                {managedLimits?.resolutions.length === 1 && <span className="rounded-lg border border-white/5 px-2.5 py-1.5 text-[11px] text-zinc-300">输出 {managedLimits.resolutions[0]}</span>}
-                {managedLimits && managedLimits.resolutions.length > 1 && <CustomSelect value={mingFeiResolution} onChange={setMingFeiResolution} options={managedLimits.resolutions.map(r => ({ value: r, label: r }))} prefix="分辨率: " />}
-                {selectedModel === 'gpt-image-2-mingfei' && !managedLimits && (
-                  <>
-                    <CustomSelect value={mingFeiQuality} onChange={setMingFeiQuality} options={MINGFEI_QUALITY_OPTIONS} prefix="质量: " />
-                    <CustomSelect value={mingFeiResolution} onChange={setMingFeiResolution} options={MINGFEI_RESOLUTION_OPTIONS} prefix="分辨率: " />
-                    {Number.isFinite(selectedMingFeiRate) && (
-                      <span className="rounded-lg border border-pink-500/15 bg-pink-500/10 px-2.5 py-1.5 text-[11px] text-pink-300">
-                        当前 ¥{Number(selectedMingFeiRate).toFixed(2)}/张
-                      </span>
-                    )}
-                  </>
-                )}
-                <CustomSelect value={imageCount} onChange={setImageCount} options={managedLimits ? COUNT_OPTIONS.filter(o => o.value <= managedLimits.maxOutputs) : COUNT_OPTIONS} icon={Grid2x2} prefix="数量: " />
-                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
-                  <Upload className="w-3 h-3 text-pink-400" /> 参考图 ({referenceImages.length}/{maxReferenceImages})
-                </button>
-                <input ref={fileInputRef} type="file" accept={MOBILE_IMAGE_ACCEPT} multiple className="hidden" onChange={(e) => { handleFileSelect(e.target.files); e.target.value = ''; }} />
-              </div>
-              {/* 输入容器 */}
-              <div className="relative bg-white/[0.04] border border-white/[0.08] focus-within:border-pink-500/30 rounded-2xl transition-all shadow-2xl shadow-black/30">
-                {referenceImages.length > 0 && (
-                  <>
-                    <div className="flex items-center gap-2 px-4 pt-3 pb-1 overflow-x-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
-                      {referenceImages.map((img, i) => (
-                        <div key={i} className="relative w-12 h-12 rounded-lg overflow-hidden border border-white/10 group cursor-pointer shrink-0 hover:border-pink-500/30 transition-colors">
-                          <img src={img} alt="" className="w-full h-full object-cover" />
-                          {/* 序号标签 */}
-                          <div className="absolute top-0 left-0 bg-pink-500/80 text-white text-[8px] font-bold px-1 py-0.5 rounded-br-md leading-none">图{i + 1}</div>
-                          <button onClick={() => removeRefImage(i)}
-                            className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><X className="w-3.5 h-3.5 text-white" /></button>
-                        </div>
-                      ))}
-                      {referenceImages.length < maxReferenceImages && (
-                        <button onClick={() => fileInputRef.current?.click()}
-                          className="w-12 h-12 rounded-lg border border-dashed border-white/10 hover:border-pink-500/30 flex items-center justify-center text-zinc-600 hover:text-pink-400 transition-colors shrink-0">
-                          <Upload className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-                    {/* 使用提示 */}
-                    <p className="px-4 pt-1 text-[10px] text-zinc-600">
-                      💡 在提示词中用「图1」「图2」引用对应参考图，如：<span className="text-zinc-500">参考图1中的人物，穿上图2中的衣服</span>
-                    </p>
-                  </>
-                )}
-                <textarea ref={textareaRef} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={handleKeyDown}
-                  placeholder={referenceImages.length > 0
-                    ? `在提示词中引用参考图，例如：\n• 参考图1中的人物站在海边，电影级画质\n• 把图1的人物放到图2的场景中`
-                    : '描述你想生成的图片内容，例如：一只在太空漂浮的猫...'}
-                  rows={3}
-                  className="w-full bg-transparent px-4 py-3 pr-16 text-sm text-white focus:outline-none placeholder:text-zinc-600 resize-none [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' } as React.CSSProperties} />
-                {/* 圆形发送按钮：已有任务运行时仍可继续提交新批次 */}
-                <button onClick={handleGenerate} disabled={!prompt.trim() || activeBatches.length >= MAX_CONCURRENT_BATCHES || models.find(m => m.id === selectedModel)?.available === false}
-                  className="absolute right-3 bottom-3 w-11 h-11 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white shadow-lg shadow-pink-500/20 disabled:opacity-30 disabled:cursor-not-allowed"
-                  aria-label={activeBatches.length >= MAX_CONCURRENT_BATCHES ? '已达到并发批次上限' : '开始生成图片'}
-                  title={activeBatches.length > 0 ? `正在运行 ${activeBatches.length}/${MAX_CONCURRENT_BATCHES} 批，点击继续提交` : '开始生成图片'}>
-                  <Play className="w-4 h-4 ml-0.5" />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 全屏预览浮层 */}
-      {lightboxUrl && <Lightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} />}
+      {lightboxUrl && <Lightbox url={lightboxUrl} onClose={() => setLightboxUrl(null)} onEdit={() => void continueEditing(lightboxUrl)} editing={referenceImporting} />}
     </div>
   );
 }

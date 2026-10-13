@@ -1,12 +1,36 @@
 import type { ModelInputLimits } from '../../../shared/modelRouting';
+import { legacyImageReferenceLimit } from '../../../shared/imageCapabilities';
 export interface ImageModel {
   routingLimits?: ModelInputLimits;
+  maxReferenceImages?: number;
   id: string;
   name: string;
   description: string;
   available: boolean;
   rate?: number;
   resolutionPrices?: Record<string, number>;
+}
+
+export function imageReferenceLimit(model: ImageModel | undefined): number {
+  return model ? model.routingLimits?.maxImages ?? model.maxReferenceImages ?? legacyImageReferenceLimit(model.id) : 0;
+}
+
+/** Read generated images through the authenticated download endpoint before reusing them. */
+export async function generatedImageReference(url: string): Promise<string> {
+  if (url.startsWith('data:image/')) return url;
+  const token = localStorage.getItem('token');
+  const response = await fetch(url.startsWith('/api/media/') ? url : `/api/image-gen/download?url=${encodeURIComponent(url)}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!response.ok) throw new Error('原图读取失败，请重新上传图片后再试');
+  const blob = await response.blob();
+  if (!blob.type.startsWith('image/')) throw new Error('原图不是有效图片，请重新上传');
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('原图读取失败，请重新上传'));
+    reader.readAsDataURL(blob);
+  });
 }
 
 export interface ImageGenerateParams {
