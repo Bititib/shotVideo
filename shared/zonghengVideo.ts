@@ -12,6 +12,8 @@ export const ZONGHENG_VIDEO_MODELS = [
   { id: 'A-SD2.0', family: 'seedance', resolution: '720p', seconds: [5, 10, 15] },
   { id: 'kksedanco2.5', family: 'seedance', resolution: '720p', seconds: Array.from({ length: 26 }, (_, i) => i + 5) },
   { id: 'LLseadanco2.51', family: 'seedance', resolution: '720p', seconds: Array.from({ length: 25 }, (_, i) => i + 6) },
+  { id: 'TTsedanco2.5-480', family: 'seedance', resolution: '480p', seconds: Array.from({ length: 26 }, (_, i) => i + 5) },
+  { id: 'TTseadanco2.5-720', family: 'seedance', resolution: '720p', seconds: Array.from({ length: 26 }, (_, i) => i + 5) },
 ] as const;
 export function getZonghengVideoSpec(model: string) {
   const canonical = canonicalZonghengModelId(model);

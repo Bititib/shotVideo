@@ -19,7 +19,7 @@ describe('Zongheng public protocol', () => {
     for (const seconds of [spec.seconds[0] - 1, spec.seconds[spec.seconds.length - 1] + 1]) {
       expect(() => buildZonghengVideoPayload({...input,model:spec.id,seconds,resolution:spec.resolution})).toThrow('仅支持');
     }
-    expect(() => buildZonghengVideoPayload({...input,model:spec.id,seconds:spec.seconds[0],resolution:'480p'})).toThrow(spec.resolution);
+    expect(() => buildZonghengVideoPayload({...input,model:spec.id,seconds:spec.seconds[0],resolution:spec.resolution === '480p' ? '1080p' : '480p'})).toThrow(spec.resolution);
   });
   it.each([{id:'kksedanco2.5',first:5,count:26},{id:'LLseadanco2.51',first:6,count:25}])('keeps the user-confirmed 720p duration range for $id', ({id,first,count}) => {
     const spec = getZonghengVideoSpec('ZH-' + id)!;
@@ -27,6 +27,15 @@ describe('Zongheng public protocol', () => {
     expect(spec.seconds[0]).toBe(first);
     expect(spec.seconds[spec.seconds.length - 1]).toBe(30);
     expect(spec.seconds).toHaveLength(count);
+  });
+
+  it.each([
+    {id:'TTsedanco2.5-480',resolution:'480p'},
+    {id:'TTseadanco2.5-720',resolution:'720p'},
+  ])('keeps the exact TT model ID and its 5–30 second resolution profile for $id', ({id,resolution}) => {
+    const spec = getZonghengVideoSpec('ZH-' + id)!;
+    expect(spec).toMatchObject({id,family:'seedance',resolution});
+    expect(spec.seconds).toEqual(Array.from({length:26},(_,i)=>i+5));
   });
   it('does not silently substitute similar-looking public model IDs', () => {
     expect(getZonghengVideoSpec('Cseadance2.5K')).toBeUndefined();

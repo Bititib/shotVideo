@@ -165,6 +165,32 @@ describe('Zongheng legacy entry points, isolated database and simulated provider
     }
     expect(JSON.parse(db.select().from(channels).get()!.modelMapping)).toEqual({'ZH-LLseadanco2.51':'LLseadanco2.51','ZH-custom-model':'custom-model'});
   });
+
+  it.each([
+    {id:'TTsedanco2.5-480',resolution:'480p',rate:0.35},
+    {id:'TTseadanco2.5-720',resolution:'720p',rate:0.5},
+  ])('lists and bills the configured per-second TT model $id at its exact resolution',async({id,resolution,rate})=>{
+    installConfirmedVideos();
+    const modelId='ZH-'+id;
+    sqlite.prepare('UPDATE model_pricing SET billing_type=?,input_price=? WHERE model_pattern=?').run('per_second',rate,modelId);
+    const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
+    expect(listed.find(m=>m.id===modelId)).toMatchObject({
+      available:true,billingType:'per_second',allowedSeconds:Array.from({length:26},(_,i)=>i+5),maxSeconds:30,rates:{[resolution]:rate},
+    });
+    expect(Object.keys(listed.find(m=>m.id===modelId).rates)).toEqual([resolution]);
+    upstream=async(_url,init)=>{
+      if(init.method==='POST'){
+        expect(JSON.parse(init.body)).toMatchObject({model:id,duration:6,resolution});
+        return Response.json({task_id:'vid_tt'});
+      }
+      return Response.json({status:'succeeded',video_url:'https://media.invalid/tt.mp4'});
+    };
+    const response=await post('/v1/videos',{model:modelId,prompt:'产品视频',video_length:6,resolution});
+    expect(response.status).toBe(202);
+    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    expect(latest().cost).toBeCloseTo(rate*6,6);
+    expect(balance()).toBeCloseTo(100-rate*6,6);
+  });
   it('lists exact legacy durations and one resolution for each confirmed video model',async()=>{
     installConfirmedVideos();
     const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
@@ -205,7 +231,7 @@ describe('Zongheng legacy entry points, isolated database and simulated provider
   it.each(ZONGHENG_VIDEO_MODELS)('rejects invalid $id duration and resolution before charging in all legacy entry points',async spec=>{
     installConfirmedVideos();
     for(const endpoint of ['/api/video/validate','/api/video/generate','/v1/videos']){
-      for(const fields of [{video_length:spec.seconds[0]-1,seconds:spec.seconds[0]-1,resolution:spec.resolution},{video_length:spec.seconds[0],seconds:spec.seconds[0],resolution:'480p'}]){
+      for(const fields of [{video_length:spec.seconds[0]-1,seconds:spec.seconds[0]-1,resolution:spec.resolution},{video_length:spec.seconds[0],seconds:spec.seconds[0],resolution:spec.resolution === '480p' ? '1080p' : '480p'}]){
         const response=await post(endpoint,{model:'ZH-'+spec.id,prompt:'产品视频',...fields});
         expect(response.status).toBe(400);
       }
