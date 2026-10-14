@@ -40,7 +40,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void 
 }
 
 export default function ComicDramaPage() {
-  const { requireAuth } = useAuthGuard();
+  const requireAuth = useAuthGuard();
   const [script, setScript] = useState('');
   const [inputMode, setInputMode] = useState<'episode' | 'series'>('episode');
   const [targetEpisodeDuration, setTargetEpisodeDuration] = useState(90);
