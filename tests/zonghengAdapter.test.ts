@@ -21,7 +21,7 @@ describe('Zongheng public protocol', () => {
     }
     expect(() => buildZonghengVideoPayload({...input,model:spec.id,seconds:spec.seconds[0],resolution:spec.resolution === '480p' ? '1080p' : '480p'})).toThrow(spec.resolution);
   });
-  it.each([{id:'kksedanco2.5',first:5,count:26},{id:'LLseadanco2.51',first:6,count:25}])('keeps the user-confirmed 720p duration range for $id', ({id,first,count}) => {
+  it.each([{id:'kksedanco2.5',first:5,count:26},{id:'LLseadanco2.51',first:6,count:25},{id:'MMseadanco2.5-PRO',first:5,count:26}])('keeps the user-confirmed 720p duration range for $id', ({id,first,count}) => {
     const spec = getZonghengVideoSpec('ZH-' + id)!;
     expect(spec).toMatchObject({id,resolution:'720p'});
     expect(spec.seconds[0]).toBe(first);

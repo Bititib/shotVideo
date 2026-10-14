@@ -26,6 +26,7 @@ const entries = [
   { id:'ZH-LLseadanco2.51', group:'Seedance 系列', resolution:'720p' },
   { id:'ZH-TTsedanco2.5-480', group:'Seedance 系列', resolution:'480p' },
   { id:'ZH-TTseadanco2.5-720', group:'Seedance 系列', resolution:'720p' },
+  { id:'ZH-MMseadanco2.5-PRO', group:'Seedance 系列', resolution:'720p' },
   { id:'ZH-Xminimex-h3', group:'MiniMax 系列', resolution:'2k' },
   { id:'ZH-wan-1080', group:'Wan 系列', resolution:'1080p' },
   { id:'seedance_v2.5', group:'HM 系列', resolution:'720p' },

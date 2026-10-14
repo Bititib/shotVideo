@@ -191,6 +191,36 @@ describe('Zongheng legacy entry points, isolated database and simulated provider
     expect(latest().cost).toBeCloseTo(rate*6,6);
     expect(balance()).toBeCloseTo(100-rate*6,6);
   });
+
+  it('repairs an enabled MMseadanco2.5-PRO entry and preserves its per-call price and exact upstream ID',async()=>{
+    const modelId='ZH-MMseadanco2.5-PRO';
+    db.insert(models).values({modelId,displayName:'自定义 PRO 名称',provider:'zongheng',capabilities:'["text"]',isActive:1}).run();
+    db.insert(modelPricing).values({modelPattern:modelId,billingType:'per_call',inputPrice:3,extraParams:'{"720p":4}'}).run();
+    const channelId=db.select().from(channels).get()!.id;
+    upstream=async()=>Response.json({data:[{id:'MMseadanco2.5-PRO'}]});
+    await ChannelService.syncModels(channelId);
+    expect(db.select().from(models).all().find(m=>m.modelId===modelId)).toMatchObject({
+      displayName:'自定义 PRO 名称',capabilities:'["video"]',isActive:1,
+    });
+    expect(JSON.parse(db.select().from(channels).get()!.modelMapping)[modelId]).toBe('MMseadanco2.5-PRO');
+    const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
+    expect(listed.find(m=>m.id===modelId)).toMatchObject({
+      billingType:'per_call',allowedSeconds:Array.from({length:26},(_,i)=>i+5),maxSeconds:30,rates:{'720p':4},available:true,
+    });
+    expect(Object.keys(listed.find(m=>m.id===modelId).rates)).toEqual(['720p']);
+    upstream=async(_url,init)=>{
+      if(init.method==='POST'){
+        expect(JSON.parse(init.body)).toMatchObject({model:'MMseadanco2.5-PRO',duration:30,resolution:'720p'});
+        return Response.json({task_id:'vid_mm_pro'});
+      }
+      return Response.json({status:'succeeded',video_url:'https://media.invalid/mm-pro.mp4'});
+    };
+    const response=await post('/v1/videos',{model:modelId,prompt:'产品视频',video_length:30,resolution:'720p'});
+    expect(response.status).toBe(202);
+    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    expect(latest().cost).toBe(4);
+    expect(balance()).toBe(96);
+  });
   it('lists exact legacy durations and one resolution for each confirmed video model',async()=>{
     installConfirmedVideos();
     const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
