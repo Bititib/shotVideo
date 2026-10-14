@@ -3,7 +3,7 @@ import { useVideoQuote } from '../../hooks/useVideoQuote';
 import { routingMismatches } from '../../../../shared/modelRouting';
 import { startPolling } from '../../utils/polling';
 import { shouldPollVideoTask, videoTaskDatabaseId } from '../../utils/videoTaskSync';
-import { getZonghengVideoSpec } from '../../../../shared/zonghengVideo';
+import { getZonghengVideoSpec, getZonghengVideoReferenceLimits } from '../../../../shared/zonghengVideo';
 import { getHayaVideoSpec } from '../../../../shared/hayaVideo';
 import { getHmStudioAdditionalVideoModel, HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS } from '../../../../shared/hmStudioVideo';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -369,6 +369,8 @@ const isWan30Model = (modelId: string) => {
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
   const managed = models.find(m => m.id === modelId)?.routingLimits;
   if (managed) return managed.maxImages;
+  const zongheng = getZonghengVideoReferenceLimits(modelId);
+  if (zongheng) return zongheng.images;
   const hmSpec = getHmStudioAdditionalVideoModel(modelId);
   if (hmSpec) return hmSpec.maxImages;
   const c2Spec = getSiYueTianC2Model(modelId);
@@ -511,6 +513,7 @@ export default function VideoPage() {
   // 各模型的参考视频/音频上限
   const getMaxRefVideos = (m: string) => {
     const managed = models.find(model => model.id === m)?.routingLimits; if (managed) return managed.maxVideos;
+    const zongheng = getZonghengVideoReferenceLimits(m); if (zongheng) return zongheng.videos;
     const hmSpec = getHmStudioAdditionalVideoModel(m);
     if (hmSpec) return hmSpec.maxVideos;
     const c2Spec = getSiYueTianC2Model(m);
@@ -538,6 +541,7 @@ export default function VideoPage() {
   };
   const getMaxRefAudios = (m: string) => {
     const managed = models.find(model => model.id === m)?.routingLimits; if (managed) return managed.maxAudios;
+    const zongheng = getZonghengVideoReferenceLimits(m); if (zongheng) return zongheng.audios;
     const hmSpec = getHmStudioAdditionalVideoModel(m);
     if (hmSpec) return hmSpec.maxAudios;
     const c2Spec = getSiYueTianC2Model(m);
@@ -1158,10 +1162,10 @@ export default function VideoPage() {
       || selectedModel.startsWith('lg-');
     const isSoraV3Pro = selectedModel === 'seedance-2.0-fast';
     const isWan30 = isWan30Model(selectedModel);
-    if (!isOmniVideoEditModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30 && !getHayaVideoSpec(selectedModel)) {
+    if (!getZonghengVideoReferenceLimits(selectedModel)?.videos && !isOmniVideoEditModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30 && !getHayaVideoSpec(selectedModel)) {
       setReferenceVideos([]);
     }
-    if (!isLongxiaModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30 && !getHayaVideoSpec(selectedModel)) {
+    if (!getZonghengVideoReferenceLimits(selectedModel)?.audios && !isLongxiaModel(selectedModel) && !isSudashui && !isSoraV3Pro && !isWan30 && !getHayaVideoSpec(selectedModel)) {
       setReferenceAudios([]);
       setReferenceAudioNames([]);
     }
@@ -1466,7 +1470,7 @@ export default function VideoPage() {
       setError('视频编辑模型必须上传参考视频');
       return;
     }
-    if (!currentModel?.routingLimits && !getHayaVideoSpec(selectedModel) && !isLongxiaModel(selectedModel) && !isOmniVideoEditModel(selectedModel) && !isWan30Model(selectedModel) && selectedModel !== SNUMOM_SD_MINI_MODEL && selectedModel !== WX_HAIDIYUE_MULTIMODAL_MODEL && selectedModel !== 'seedance-2.5-deal' && selectedModel !== 'seedance-2.5-pro' && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
+    if (!currentModel?.routingLimits && !getZonghengVideoReferenceLimits(selectedModel) && !getHayaVideoSpec(selectedModel) && !isLongxiaModel(selectedModel) && !isOmniVideoEditModel(selectedModel) && !isWan30Model(selectedModel) && selectedModel !== SNUMOM_SD_MINI_MODEL && selectedModel !== WX_HAIDIYUE_MULTIMODAL_MODEL && selectedModel !== 'seedance-2.5-deal' && selectedModel !== 'seedance-2.5-pro' && (referenceAudios.length > 0 || referenceVideos.length > 0) && referenceImages.length === 0) {
       setError('参考视频或音频模式下必须上传至少一张参考图');
       return;
     }

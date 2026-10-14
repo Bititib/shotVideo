@@ -246,6 +246,37 @@ describe('Zongheng legacy entry points, isolated database and simulated provider
     expect(latest().cost).toBe(4);
     expect(balance()).toBe(96);
   });
+
+  it.each(['/api/video/generate','/v1/videos'])('passes all 30 images, 10 videos and 10 audios through %s without truncation',async endpoint=>{
+    installConfirmedVideos();
+    const images=Array.from({length:30},(_,i)=>'https://media.invalid/i-'+i+'.jpg');
+    const videos=Array.from({length:10},(_,i)=>'https://media.invalid/v-'+i+'.mp4');
+    const audios=Array.from({length:10},(_,i)=>'https://media.invalid/a-'+i+'.mp3');
+    const body={model:'ZH-MMseadanco2.5-PRO',prompt:'多素材视频',video_length:10,resolution:'720p',reference_images:images,reference_videos:videos,audio_urls:audios};
+    const validation=await post('/api/video/validate',body);
+    expect(validation.status).toBe(200);expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();
+    upstream=async(_url,init)=>{
+      if(init.method==='POST'){
+        expect(JSON.parse(init.body)).toMatchObject({model:'MMseadanco2.5-PRO',images,reference_videos:videos,reference_audios:audios});
+        return Response.json({task_id:'vid_all_references'});
+      }
+      return Response.json({status:'succeeded',video_url:'https://media.invalid/all.mp4'});
+    };
+    const response=await post(endpoint,body);
+    expect(response.status).toBe(endpoint==='/v1/videos'?202:200);
+    await response.text();
+    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    expect(balance()).toBe(98);
+  });
+  it.each([{field:'reference_images',count:31,ext:'jpg'},{field:'reference_videos',count:11,ext:'mp4'},{field:'audio_urls',count:11,ext:'mp3'}])('rejects excess $field before charging or uploading in every legacy entry point',async({field,count,ext})=>{
+    installConfirmedVideos();
+    for(const endpoint of ['/api/video/validate','/api/video/generate','/v1/videos']){
+      const response=await post(endpoint,{model:'ZH-MMseadanco2.5-PRO',prompt:'素材超限测试',video_length:10,resolution:'720p',[field]:Array.from({length:count},(_,i)=>'https://media.invalid/'+i+'.'+ext)});
+      expect(response.status).toBe(400);
+      expect((await response.json() as any).error).toContain('最多支持 30 张图片、10 个视频、10 段音频');
+    }
+    expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();expect(db.select().from(contents).all()).toHaveLength(0);
+  });
   it('lists exact legacy durations and one resolution for each confirmed video model',async()=>{
     installConfirmedVideos();
     const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];

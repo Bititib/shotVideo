@@ -1,5 +1,6 @@
 import { routingMismatches, type ModelInputLimits } from '../../../shared/modelRouting';
 import type { CanvasNode, GenerationDraft } from './model';
+import { validateZonghengVideoReferences } from '../../../shared/zonghengVideo';
 import { canvasVideoReferenceLimits } from '../../../shared/canvasVideoReferences';
 
 export const VIDEO_EDIT_MODEL = 'veo-omni-flash-video-edit';
@@ -20,6 +21,8 @@ export function videoInputError(options: Pick<GenerationDraft, 'kind' | 'videoMo
   }
   const videos = references.filter(n => n.kind === 'video' && n.src);
   const audios = references.filter(n => n.kind === 'audio' && n.src);
+  try { validateZonghengVideoReferences(options.model, { images: references.filter(n => n.kind === 'image' && n.src).length, videos: videos.length, audios: audios.length }); }
+  catch (error) { return (error as Error).message; }
   if (options.videoMode === 'edit') {
     if (videos.length !== 1) return '视频编辑需要且只能连接一个原视频。';
     if (audios.length) return '此视频编辑模型不支持音频参考，请移除音频连线。';

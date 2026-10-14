@@ -1,4 +1,4 @@
-import { normalizeZonghengVideoResolution, validateZonghengVideoSpec } from '../../shared/zonghengVideo.js';
+import { normalizeZonghengVideoResolution, validateZonghengVideoSpec, validateZonghengVideoReferences } from '../../shared/zonghengVideo.js';
 export { ZONGHENG_MODEL_PREFIX } from '../../shared/zonghengVideo.js';
 // Zongheng public API, used only by the legacy channel routes.
 export const ZONGHENG_BASE_URL = 'https://cnd-coo-new.pages.dev';
@@ -33,6 +33,7 @@ export function buildZonghengVideoPayload(i: ZonghengVideoInput) {
   if (i.images.length && (i.firstFrame || i.lastFrame)) throw new Error('普通参考图与独立首尾帧不能混用');
   if (i.generateAudio !== undefined && typeof i.generateAudio !== 'boolean') throw new Error('generate_audio 必须为布尔值');
   validateZonghengVideoSpec(i.model, i.seconds, i.resolution);
+  validateZonghengVideoReferences(i.model, { images: i.images.length, videos: i.videos.length, audios: i.audios.length });
   const resolution = normalizeZonghengVideoResolution(i.model, i.resolution) || i.resolution;
   return { model: i.model, prompt: i.prompt.trim(), duration: i.seconds, ratio: i.ratio, resolution,
     ...(i.images.length ? { images: i.images } : {}), ...(i.videos.length ? { reference_videos: i.videos } : {}),

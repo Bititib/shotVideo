@@ -1,9 +1,12 @@
+import { getZonghengVideoReferenceLimits } from './zonghengVideo';
 import { getSiYueTianC2Model } from './siYueTianVideoC2';
 
 // Explicitly supported by the existing video route/adapters. Unknown models
 // remain usable in other modes; never infer multimodal support from a name.
 export type VideoReferenceLimits = { images: number; videos: number; audios: number; wavOnly?: boolean };
 export function canvasVideoReferenceLimits(model: string): VideoReferenceLimits | undefined {
+  const zongheng = getZonghengVideoReferenceLimits(model);
+  if (zongheng) return zongheng;
   const c2 = getSiYueTianC2Model(model);
   if (c2) return { images: c2.images, videos: c2.videos, audios: c2.audios };
   if (['ad-seedance-2.5-480p', 'td-seedance-2.5-720p'].includes(model)) return { images: 30, videos: 10, audios: 10 };

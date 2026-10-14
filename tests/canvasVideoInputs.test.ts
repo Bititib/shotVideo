@@ -6,6 +6,19 @@ const options = { kind: 'video' as const, videoMode: 'edit' as const, model: VID
 const video = { ...newNode('video', { x: 0, y: 0 }), src: '/original.mp4' };
 afterEach(() => vi.restoreAllMocks());
 describe('canvas video editing constraints', () => {
+
+  it.each(['ZH-MMseadanco2.5-PRO','ZH-TTsedanco2.5-480','ZH-TTseadanco2.5-720'])('accepts full ZH reference sets for %s in canvas and rejects each excess', model => {
+    const image={...newNode('image',{x:0,y:0}),src:'/photo.jpg'};
+    const audio={...newNode('audio',{x:0,y:0}),src:'/voice.mp3'};
+    const multi={...options,model,videoMode:'multimodal' as const};
+    const refs=[...Array(30).fill(image),...Array(10).fill(video),...Array(10).fill(audio)];
+    expect(videoInputError(multi,refs)).toBe('');
+    for(const extra of [image,video,audio]) expect(videoInputError(multi,[...refs,extra])).toContain('最多支持 30 张图片、10 个视频、10 段音频');
+    expect(videoInputError({...multi,videoMode:'reference'},Array(30).fill(image))).toBe('');
+    expect(videoInputError({...multi,videoMode:'reference'},Array(31).fill(image))).toContain('最多支持');
+    expect(videoInputError(multi,[video,audio])).toBe('');
+  });
+
   it('allows Fast C2 video and audio references with its own channel limits', () => {
     const audio = { ...newNode('audio', { x: 0, y: 0 }), src: '/voice.mp3' };
     const multi = { ...options, videoMode: 'multimodal' as const, model: 'seedance-2.0-fast-c2' };

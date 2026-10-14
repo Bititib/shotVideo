@@ -1,3 +1,4 @@
+import { getZonghengVideoReferenceLimits } from '../../../../shared/zonghengVideo';
 import { getHayaVideoSpec } from '../../../../shared/hayaVideo';
 import { getHmStudioAdditionalVideoModel } from '../../../../shared/hmStudioVideo';
 import { useEffect, useRef, useState } from 'react';
@@ -116,7 +117,7 @@ export default function VideoBatchPage() {
     if (!files.length) return;
     const maxMB = getHayaVideoSpec(input.model) ? 20 : 10;
     if (files.some(f => !f.type.startsWith('image/') || f.size > maxMB * 1024 * 1024)) { setError('请上传 ' + maxMB + ' MB 以内的图片'); return; }
-    const maxImages = model?.routingLimits?.maxImages ?? (input.model === WX_HAIDIYUE_MULTIMODAL_MODEL
+    const maxImages = model?.routingLimits?.maxImages ?? getZonghengVideoReferenceLimits(input.model)?.images ?? (input.model === WX_HAIDIYUE_MULTIMODAL_MODEL
       ? 30
       : getHmStudioAdditionalVideoModel(input.model)?.maxImages ?? getHayaVideoSpec(input.model)?.maxImages ?? 10);
     if (input.creatives[index].reference_images.length + files.length > maxImages) { setError('每组最多 ' + maxImages + ' 张参考图'); return; }

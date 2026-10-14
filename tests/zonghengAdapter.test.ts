@@ -37,6 +37,18 @@ describe('Zongheng public protocol', () => {
     expect(spec).toMatchObject({id,family:'seedance',resolution});
     expect(spec.seconds).toEqual(Array.from({length:26},(_,i)=>i+5));
   });
+
+  it.each(["Cseadanco2.5K","kksedanco2.5","LLseadanco2.51","TTsedanco2.5-480","TTseadanco2.5-720","MMseadanco2.5-PRO"])('preserves 30 image, 10 video and 10 audio references for %s and rejects overflow', model => {
+    const spec = getZonghengVideoSpec(model)!;
+    const images = Array.from({length:30},(_,i)=>'https://media.invalid/i-'+i+'.jpg');
+    const videos = Array.from({length:10},(_,i)=>'https://media.invalid/v-'+i+'.mp4');
+    const audios = Array.from({length:10},(_,i)=>'https://media.invalid/a-'+i+'.mp3');
+    const data = {...input,model,seconds:20,resolution:spec.resolution,images,videos,audios};
+    expect(buildZonghengVideoPayload(data)).toMatchObject({images,reference_videos:videos,reference_audios:audios});
+    for(const field of ['images','videos','audios'] as const){
+      expect(()=>buildZonghengVideoPayload({...data,[field]:[...data[field],data[field][0]]})).toThrow('最多支持 30 张图片、10 个视频、10 段音频');
+    }
+  });
   it('does not silently substitute similar-looking public model IDs', () => {
     expect(getZonghengVideoSpec('Cseadance2.5K')).toBeUndefined();
     expect(getZonghengVideoSpec('Xminimax-h3')).toBeUndefined();

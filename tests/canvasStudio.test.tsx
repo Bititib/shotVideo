@@ -15,7 +15,7 @@ import { fetchVideoModels } from '../client/src/api/video';
 import { contentApi } from '../client/src/api/content';
 
 vi.mock('../client/src/api/imageGen', () => ({ fetchImageModels: vi.fn().mockResolvedValue([{ id: 'test-image', name: 'Test Image', available: true }]), downloadGeneratedImage: vi.fn() }));
-vi.mock('../client/src/api/video', () => ({ fetchVideoModels: vi.fn().mockResolvedValue([{ id: 'ad-seedance-2.5-480p', name: 'AD Multi', available: true, rates: { '480p': 1 }, allowedSeconds: [5] }, { id: 'test-video', name: 'Test Video', available: true, rates: { '720p': 1 }, allowedSeconds: [5] }, { id: 'veo-omni-flash-video-edit', name: 'Test Video Edit', available: true, rates: { '720p': 1 }, allowedSeconds: [10] }]) }));
+vi.mock('../client/src/api/video', () => ({ fetchVideoQuote: vi.fn(async (model, resolution, seconds) => ({ model, resolution, seconds, cost: 1, billingType: 'per_call' })), fetchVideoModels: vi.fn().mockResolvedValue([{ id: 'ad-seedance-2.5-480p', name: 'AD Multi', available: true, rates: { '480p': 1 }, allowedSeconds: [5] }, { id: 'test-video', name: 'Test Video', available: true, rates: { '720p': 1 }, allowedSeconds: [5] }, { id: 'veo-omni-flash-video-edit', name: 'Test Video Edit', available: true, rates: { '720p': 1 }, allowedSeconds: [10] }]) }));
 vi.mock('../client/src/canvas/videoInputs', async importOriginal => ({ ...await importOriginal<any>(), readVideoDuration: vi.fn().mockResolvedValue(8) }));
 vi.mock('../client/src/api/content', () => ({ contentApi: { getById: vi.fn().mockResolvedValue({ status: 'processing' }) } }));
 vi.mock('../client/src/api/analysis', () => ({ analysisApi: { getTtsModels: vi.fn().mockResolvedValue([{ modelId: 'test-tts', displayName: 'Test Voice', voices: ['Zephyr'] }]), generateTts: vi.fn().mockResolvedValue({ mimeType: 'audio/wav', audioBase64: 'aGVsbG8=' }) } }));
@@ -124,6 +124,31 @@ describe('canvas user workflows', () => {
     expect(board.current().edges).toHaveLength(1); expect(board.current().nodes).toHaveLength(3);
     expect(streamGeneration).not.toHaveBeenCalled();
   });
+
+  it.each(['reference','multimodal','video-audio-only'])('submits the full ZH reference set from canvas in %s mode',async mode=>{
+    const images=mode==='video-audio-only'?[]:Array.from({length:30},(_,i)=>({...newNode('image',{x:0,y:0}),src:'/image-'+i+'.png'}));
+    const videos=mode==='reference'?[]:Array.from({length:10},(_,i)=>({...newNode('video',{x:0,y:0}),src:'/motion-'+i+'.mp4'}));
+    const audios=mode==='reference'?[]:Array.from({length:10},(_,i)=>({...newNode('audio',{x:0,y:0}),src:'/voice-'+i+'.mp3'}));
+    const refs=[...images,...videos,...audios];
+    const target={...newNode('video',{x:500,y:0}),generator:true,title:'ZH 完整素材目标'};
+    vi.mocked(fetchVideoModels).mockResolvedValueOnce([{id:'ZH-MMseadanco2.5-PRO',name:'ZH PRO',description:'',available:true,rates:{'720p':4},allowedSeconds:[10]}]);
+    const board=mount({...newDocument(),nodes:[...refs,target],edges:refs.map(n=>({id:n.id,from:n.id,to:target.id}))});
+    fireEvent.pointerDown(screen.getByRole('article',{name:target.title}),{button:0,pointerId:1});
+    fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'),{pointerId:1});
+    openSelectedComposer();
+    await waitFor(()=>expect(screen.getByText('ZH PRO',{exact:true})).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('你想创作什么？'),{target:{value:'保留所有参考素材'}});
+    vi.mocked(streamGeneration).mockImplementation(async(_kind,_params,_signal,cb)=>cb({type:'complete',videoUrl:'/zh-result.mp4'}));
+    const submit=screen.getByRole('button',{name:'生成视频',exact:true});
+    await waitFor(()=>expect((submit as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(submit);
+    await waitFor(()=>expect(board.current().nodes.find(n=>n.id===target.id)?.job?.status).toBe('done'));
+    const params=vi.mocked(streamGeneration).mock.calls[0][1];
+    expect(params.model).toBe('ZH-MMseadanco2.5-PRO');
+    expect(params.reference_images || []).toHaveLength(images.length);
+    expect(params.reference_videos || []).toEqual(videos.map(n=>n.src));
+    expect(params.audio_urls || []).toEqual(audios.map(n=>n.src));
+  });
   it('sends connected images, video and audio to multimodal generation', async () => {
     const image = { ...newNode('image', { x: 0, y: 0 }), src: '/image.png' };
     const video = { ...newNode('video', { x: 0, y: 300 }), src: '/motion.mp4' };
@@ -137,6 +162,7 @@ describe('canvas user workflows', () => {
     await waitFor(() => expect(screen.getByText('AD Multi', {exact:true})).toBeTruthy());
     fireEvent.change(screen.getByLabelText('你想创作什么？'), { target: { value: '参考视频动作与音频节奏' } });
     vi.mocked(streamGeneration).mockImplementation(async (_kind, _params, _signal, cb) => cb({ type: 'complete', videoUrl: '/result.mp4' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: '生成视频', exact: true }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole('button', { name: '生成视频', exact: true }));
     await waitFor(() => expect(board.current().nodes[3].job?.status).toBe('done'));
     expect(streamGeneration).toHaveBeenCalledWith('video', expect.objectContaining({ model: 'ad-seedance-2.5-480p', reference_images: ['data:image/png;base64,aGVsbG8='], reference_videos: ['/motion.mp4'], audio_urls: ['/voice.wav'] }), expect.anything(), expect.anything());
@@ -168,6 +194,7 @@ describe('canvas user workflows', () => {
     expect(screen.queryByRole('option', { name: 'Test Video', exact: true })).toBeNull();
     fireEvent.change(screen.getByLabelText('你想创作什么？'), { target: { value: '保持动作，将背景改为雪山' } });
     vi.mocked(streamGeneration).mockImplementation(async (_kind, _params, _signal, cb) => cb({ type: 'complete', videoUrl: '/edited.mp4', contentId: 93 }));
+    await waitFor(() => expect((screen.getByRole('button', { name: '生成视频', exact: true }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole('button', { name: '生成视频', exact: true }));
     await waitFor(() => expect(board.current().nodes[1].job?.status).toBe('done'));
     expect(readVideoDuration).toHaveBeenCalledWith('/original.mp4', expect.any(AbortSignal));
@@ -184,6 +211,7 @@ describe('canvas user workflows', () => {
     await waitFor(() => expect(screen.getByText('Test Video Edit', {exact:true})).toBeTruthy());
     fireEvent.change(screen.getByLabelText('你想创作什么？'), { target: { value: '修改背景' } });
     vi.mocked(readVideoDuration).mockRejectedValueOnce(new Error('原视频超过 15 秒'));
+    await waitFor(() => expect((screen.getByRole('button', { name: '生成视频', exact: true }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole('button', { name: '生成视频', exact: true }));
     await waitFor(() => expect(board.current().nodes[1].job?.status).toBe('error'));
     expect(streamGeneration).not.toHaveBeenCalled(); expect(board.current().nodes[0].src).toBe('/long.mp4');
