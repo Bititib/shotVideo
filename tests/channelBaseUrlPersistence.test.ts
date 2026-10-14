@@ -17,7 +17,8 @@ vi.mock('../server/config/env.js', () => ({
   }, getApiKeys: () => [],
 }));
 import { db } from '../server/db/index';
-import { channels, models } from '../server/db/schema';
+import { PricingService } from '../server/services/pricingService';
+import { channels, models, modelPricing } from '../server/db/schema';
 import { initDatabase } from '../server/db/seed';
 import { ChannelService } from '../server/services/channelService';
 import { AdminService } from '../server/services/adminService';
@@ -91,6 +92,26 @@ describe('administrator channel URLs survive startup', () => {
     AdminService.updateModel(model.id, { displayName: 'Renamed HM URL regression' });
     expect(byName('HM Studio 渠道').baseUrl).toBe(baseUrl);
     expect(byName('HM Studio 渠道').id).toBe(channel.id);
+  });
+
+  it('does not create an undiscovered MM PRO model or its price', () => {
+    expect(db.select().from(models).where(eq(models.modelId, 'ZH-MMseadanco2.5-PRO')).get()).toBeUndefined();
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, 'ZH-MMseadanco2.5-PRO')).get()).toBeUndefined();
+  });
+  it('fills an existing MM PRO model price at 4 per video on upgrade and preserves later admin edits', async () => {
+    const modelId='ZH-MMseadanco2.5-PRO';
+    db.insert(models).values({modelId,displayName:'PRO 自定义名称',provider:'zongheng',capabilities:'["video"]',isActive:0}).run();
+    await initDatabase();
+    const price=db.select().from(modelPricing).where(eq(modelPricing.modelPattern,modelId)).get()!;
+    expect(price).toMatchObject({billingType:'per_call',inputPrice:4,outputPrice:0});
+    expect(JSON.parse(price.extraParams)).toEqual({category:'video','720p':4});
+    for(const seconds of [5,15,30]) expect(PricingService.quote(modelId,{resolution:'720p',seconds},false).cost).toBe(4);
+    expect(db.select().from(models).where(eq(models.modelId,modelId)).get()).toMatchObject({displayName:'PRO 自定义名称',isActive:0});
+    db.update(modelPricing).set({inputPrice:6,extraParams:JSON.stringify({category:'video','720p':6})}).where(eq(modelPricing.id,price.id)).run();
+    await initDatabase();
+    expect(PricingService.quote(modelId,{resolution:'720p',seconds:30},false).cost).toBe(6);
+    db.delete(modelPricing).where(eq(modelPricing.id,price.id)).run();
+    db.delete(models).where(eq(models.modelId,modelId)).run();
   });
   it('does not contact any upstream service during startup regression checks', () => {
     expect(network).not.toHaveBeenCalled();

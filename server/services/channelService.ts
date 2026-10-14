@@ -1,3 +1,4 @@
+import { ensureZonghengVideoPricing } from './zonghengPricingService.js';
 import { canonicalZonghengModelId, getZonghengVideoSpec } from '../../shared/zonghengVideo.js';
 import { isFunAiChannel, funAiBaseUrl, fetchFunAiModels } from './funAiAdapter.js';
 import { isZonghengChannel, zonghengBaseUrl, ZONGHENG_MODEL_PREFIX } from './zonghengAdapter.js';
@@ -652,6 +653,7 @@ export class ChannelService {
       }
     }
 
+    if (isZonghengChannel(channel)) ensureZonghengVideoPricing();
     const modelIds = unique.map(item => item.modelId);
     const mapping = Object.fromEntries(modelIds.map(modelId => [modelId, isZonghengChannel(channel) ? modelId.slice(ZONGHENG_MODEL_PREFIX.length) : modelId]));
     db.update(channels).set({

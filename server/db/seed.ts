@@ -1,3 +1,4 @@
+import { ensureZonghengVideoPricing } from '../services/zonghengPricingService.js';
 import { HAYA_VIDEO_MODELS } from '../../shared/hayaVideo.js';
 import { LONGXIA_MODELS, LONGXIA_BASE_URL, isLongxiaChannel, longxiaRate, longxiaResolution } from '../services/longxiaVideoAdapter.js';
 import { db, sqlite } from './index.js';
@@ -2033,6 +2034,7 @@ export async function initDatabase() {
     console.error('⚠️ 清理旧拆分渠道出错:', err.message);
   }
 
+  ensureZonghengVideoPricing();
   console.log('✅ 数据库初始化完成');
 }
 
