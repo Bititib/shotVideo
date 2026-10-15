@@ -3,7 +3,7 @@ import { db } from '../db/index.js';
 import { contents } from '../db/schema.js';
 import type { DeveloperModelCatalog, DeveloperModelKind, DeveloperEndpoint } from '../../shared/developerModels.js';
 import { TokenService } from './tokenService.js';
-import { getAccessibleModels, callableModelId } from './modelAccessService.js';
+import { getAccessibleModels } from './modelAccessService.js';
 import { getModelSpecification, specificationAvailable } from './modelRoutingService.js';
 import { existingModelLimits } from './modelInputPresets.js';
 import { PricingService } from './pricingService.js';
@@ -11,6 +11,7 @@ import { calculateVideoModelStatus } from './videoModelStatusService.js';
 import { ChannelService } from './channelService.js';
 import { hasHmStudioOverflowChannel } from './hmStudioOverflowChannelService.js';
 import { HM_STUDIO_PRIMARY_VIDEO_MODEL } from './videoFailoverService.js';
+import { publicApiModelMetadata } from './publicModelMetadataService.js';
 
 export function getDeveloperModels(userId: number, tokenId: number): DeveloperModelCatalog {
   // Ownership is checked before looking up or validating any secret.
@@ -48,13 +49,12 @@ export function getDeveloperModels(userId: number, tokenId: number): DeveloperMo
       const recent = kinds.includes('video') ? db.select({ id: contents.id, status: contents.status, resultUrl: contents.resultUrl, createdAt: contents.createdAt })
         .from(contents).where(eq(contents.modelId, model.modelId)).orderBy(desc(contents.id)).limit(20).all() : [];
       return {
-        id: callableModelId(model), canonicalId: model.modelId, name: model.displayName || model.modelId,
-        description: model.description || '', kinds, endpoints, limits,
+        ...publicApiModelMetadata(model, activeChannels.map(channel => channel.name || '')), canonicalId: model.modelId, kinds, endpoints, limits,
         // Explicit allowlist: never serialize upstream costs, routes or credentials.
         pricing: price ? { currency: price.currency, billing_type: price.billing_type, unit: price.unit,
           unit_price: price.unit_price, output_unit_price: price.output_unit_price, resolution_prices: price.resolution_prices } : null,
         available, health: kinds.includes('video') ? calculateVideoModelStatus(recent, available) : null,
       };
-    }),
+    }).filter(model => model.available),
   };
 }

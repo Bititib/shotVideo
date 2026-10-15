@@ -574,7 +574,7 @@ router.get('/models', (req: Request, res: Response) => {
     object: 'list',
     data: modelList.map(model => ({
       id: callableModelId(model),
-      name: model.displayName || model.modelId,
+      name: model.modelId,
       canonical_id: model.modelId,
       object: 'model',
       created: Math.floor(Date.now() / 1000),
@@ -595,7 +595,7 @@ router.get('/pricing', (req: Request, res: Response) => {
   res.json({
     object: 'list',
     currency: 'CNY',
-    data: PricingService.getPublicPricingForModels(modelList).map(row => ({ ...row, model: row.display_name || row.model, canonical_id: row.model })),
+    data: PricingService.getPublicPricingForModels(modelList).map(row => ({ ...row, display_name: row.model, canonical_id: row.model })),
   });
 });
 
@@ -622,7 +622,7 @@ router.get('/pricing/:model', (req: Request, res: Response) => {
     });
   }
 
-  res.json({ ...pricing, model: pricing.display_name || pricing.model, canonical_id: pricing.model });
+  res.json({ ...pricing, display_name: pricing.model, canonical_id: pricing.model });
 });
 
 /** GET /v1/billing/balance — 余额查询 */

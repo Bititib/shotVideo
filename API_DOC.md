@@ -56,16 +56,16 @@ curl "https://你的域名/v1/models" \
   "object": "list",
   "data": [
     {
-      "id": "gpt-image-2 · Pidoi 原生 4K",
-      "name": "gpt-image-2 · Pidoi 原生 4K",
+      "id": "gpt-image-2",
+      "name": "gpt-image-2",
       "canonical_id": "gpt-image-2",
       "object": "model",
       "created": 1783309000,
       "owned_by": "system"
     },
     {
-      "id": "HM-Seedance V2.5",
-      "name": "HM-Seedance V2.5",
+      "id": "seedance_v2.5",
+      "name": "seedance_v2.5",
       "canonical_id": "seedance_v2.5",
       "object": "model",
       "created": 1783309000,
@@ -77,11 +77,10 @@ curl "https://你的域名/v1/models" \
 
 > 示例 ID 仅说明响应格式。请以接口实时返回结果为准。模型列表保持 OpenAI 兼容格式；价格请通过下方价格接口查询。
 
-`id` 与网站展示名称一致，可直接复制到生成请求的 `model` 字段，例如 `"model": "HM-Seedance V2.5"`。
-`canonical_id` 是保留兼容的内部 ID，旧客户端仍可传 `seedance_v2.5`。
-文本、图片、图片编辑、视频生成及单模型价格查询均接受这两种写法；模型名称包含空格或中文时，价格查询的 URL 路径需要编码。
-服务端先把名称转换为内部 ID，再执行原有权限、计费与上游渠道映射。后台改名会持久保存旧名称别名；不同模型不能占用相同名称或历史别名。
-价格接口的 `model` 同样返回当前展示名称，并附带 `canonical_id`。生成结果中上游提供的模型字段可能仍为上游 ID。
+`id`、`name` 与 `canonical_id` 均返回稳定的模型标识，例如 `seedance_v2.5`，不使用包含中文或渠道信息的后台展示名。复制 `id` 到生成请求的 `model` 字段即可。
+历史展示名及已保存别名仍可用于文本、图片、图片编辑、视频生成及单模型价格查询；名称包含空格或中文时，URL 路径需要编码。后台改名不会改变公开 API ID。
+模型必须在后台启用、拥有启用且有效的线路，并符合当前 Key 的白名单才会公开。新同步模型默认停用；历史上仅有自动同步描述的模型需管理员保存启用确认后才会公开。自动同步来源文案不会作为公开描述，正常功能描述继续读取后台配置。
+价格接口的 `model` 和 `display_name` 同样返回稳定模型标识，并附带 `canonical_id`。生成结果中上游提供的模型字段可能仍为上游 ID。
 
 ### 2.1 获取可用模型价格
 

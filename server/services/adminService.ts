@@ -1,4 +1,5 @@
 import { getModelSpecifications } from './modelRoutingService.js';
+import { recordPublicModelReview } from './publicModelMetadataService.js';
 import { validatePublicModelName, rememberPublicModelNames } from './publicModelNameService.js';
 import { db } from '../db/index.js';
 import { users, tiers, models, tierModelAccess, usageLogs, settings, contents, apiLogs, modelPricing, channels, channelApiKeys } from '../db/schema.js';
@@ -499,7 +500,7 @@ export class AdminService {
     }
 
     validatePublicModelName(modelId, displayName);
-    db.insert(models).values({
+    const createdModel = db.insert(models).values({
       provider: provider || 'google',
       modelId,
       displayName,
@@ -507,7 +508,8 @@ export class AdminService {
       apiKey: apiKey || null,
       capabilities: JSON.stringify(capabilities || ['text']),
       isActive: data.isActive === 0 ? 0 : 1,
-    }).run();
+    }).returning().get();
+    recordPublicModelReview(createdModel.id, createdModel.isActive === 1);
 
     if (provider === 'hmstudio') linkHmStudioModel(modelId, apiKey);
 
@@ -561,6 +563,7 @@ export class AdminService {
           rememberPublicModelNames(model, tx as any);
         }
         tx.update(models).set(updates).where(eq(models.id, modelId)).run();
+        if (data.isActive !== undefined) recordPublicModelReview(modelId, data.isActive === 1, tx as any);
       });
     }
 

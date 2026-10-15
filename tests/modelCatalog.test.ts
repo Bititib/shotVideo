@@ -24,7 +24,7 @@ vi.mock('../server/config/env.js', async importOriginal => {
 });
 vi.mock('../server/services/channelService.js', () => ({
   ChannelService: {
-    getActiveChannels: vi.fn(() => [{ supportedModels: ['*'] }]),
+    getActiveChannels: vi.fn(() => [{ apiKey: 'test-key', supportedModels: ['*'] }]),
     findChannelForModel: vi.fn(() => null),
   },
 }));
@@ -116,7 +116,7 @@ describe('admin-owned model catalog', () => {
     expect(getAccessibleModelIds({ allowedModels: [] })).not.toContain('seedance_v2.5');
   });
 
-  it('returns the admin name as the callable ID, retaining the canonical ID without exposing secrets', async () => {
+  it('returns stable API IDs independently of admin display names, without exposing secrets', async () => {
     const validate = vi.spyOn(TokenService, 'validateToken').mockReturnValue({
       valid: true, token: { allowedModels: ['nano-banana-2'], balance: 1000000 },
     } as any);
@@ -126,7 +126,7 @@ describe('admin-owned model catalog', () => {
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.data).toEqual([{
-      id: '我的图片模型', name: '我的图片模型', canonical_id: 'nano-banana-2', object: 'model', created: expect.any(Number), owned_by: 'system',
+      id: 'nano-banana-2', name: 'nano-banana-2', canonical_id: 'nano-banana-2', object: 'model', created: expect.any(Number), owned_by: 'system',
     }]);
     expect(JSON.stringify(body)).not.toContain('private-model-key');
     validate.mockRestore();
@@ -197,7 +197,7 @@ describe('admin-owned model catalog', () => {
       results.push(await response.json());
     }
     expect(results[0]).toEqual(results[1]);
-    expect(results[0]).toMatchObject({ model: '图片新名称', canonical_id: 'nano-banana-2' });
+    expect(results[0]).toMatchObject({ model: 'nano-banana-2', display_name: 'nano-banana-2', canonical_id: 'nano-banana-2' });
     validate.mockRestore();
   });
 
@@ -228,7 +228,8 @@ describe('separate sale permissions',()=>{
       sqlite.prepare('INSERT INTO model_pricing(model_pattern,billing_type,input_price,extra_params) VALUES(?,?,?,?)').run(id,'per_call',2,'{}');
     }
     saveModelSpecification({modelId:'sale-canonical-test',kind:'video',enabled:true,aliases:['sale-legacy-test'],limits:defaultRoutingLimits(),routes:[]});
-    expect(getAccessibleModelIds({allowedModels:['sale-legacy-test']})).toEqual(['sale-canonical-test']);
+    // An alias alone cannot make an empty/disabled specification routable.
+    expect(getAccessibleModelIds({allowedModels:['sale-legacy-test']})).toEqual([]);
     sqlite.prepare('UPDATE model_pricing SET billing_type=?,input_price=? WHERE model_pattern=?').run('per_second',.1,'sale-legacy-test');
     expect(getAccessibleModelIds({allowedModels:['sale-legacy-test']})).toEqual(['sale-legacy-test']);
     db.delete(settings).where(eq(settings.key,'model_specification_routes_v1')).run();

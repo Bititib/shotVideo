@@ -654,7 +654,7 @@ export class ChannelService {
           displayName: item.displayName,
           description: `由 ${channel.name} 同步`,
           capabilities: JSON.stringify([item.capability]),
-          isActive: isZonghengChannel(channel) ? 0 : 1,
+          isActive: 0,
         }).run();
         added++;
       } else if (isZonghengChannel(channel) && getZonghengVideoSpec(item.modelId) && existing.capabilities !== JSON.stringify(['video'])) {
