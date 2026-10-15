@@ -14,7 +14,7 @@ describe('Zongheng public protocol', () => {
     expect(getZonghengVideoSpec('ZH-' + spec.id)).toBe(spec);
     expect(getZonghengVideoSpec('zongheng-' + spec.id)).toBe(spec);
     for (const seconds of spec.seconds) {
-      expect(buildZonghengVideoPayload({...input, model:spec.id, seconds, resolution:spec.resolution.toUpperCase()})).toMatchObject({model:spec.id, duration:seconds, resolution:spec.resolution});
+      expect(buildZonghengVideoPayload({...input, model:spec.id, seconds, resolution:spec.resolution.toUpperCase(), videos:'references' in spec && spec.references.videos===0 ? [] : input.videos})).toMatchObject({model:spec.id, duration:seconds, resolution:spec.resolution});
     }
     for (const seconds of [spec.seconds[0] - 1, spec.seconds[spec.seconds.length - 1] + 1]) {
       expect(() => buildZonghengVideoPayload({...input,model:spec.id,seconds,resolution:spec.resolution})).toThrow('仅支持');
@@ -47,6 +47,18 @@ describe('Zongheng public protocol', () => {
     expect(buildZonghengVideoPayload(data)).toMatchObject({images,reference_videos:videos,reference_audios:audios});
     for(const field of ['images','videos','audios'] as const){
       expect(()=>buildZonghengVideoPayload({...data,[field]:[...data[field],data[field][0]]})).toThrow('最多支持 30 张图片、10 个视频、10 段音频');
+    }
+  });
+
+  it('keeps the 300-second label separate from the fixed 15-second output and enforces 9 images / 3 audios', () => {
+    const model='sedanco2.0-300秒必出';
+    expect(getZonghengVideoSpec('ZH-'+model)).toMatchObject({family:'seedance',resolution:'720p',seconds:[15],references:{images:9,videos:0,audios:3}});
+    const data={...input,model,seconds:15,images:Array(9).fill('https://media.invalid/i.jpg'),videos:[],audios:Array(3).fill('https://media.invalid/a.mp3')};
+    expect(buildZonghengVideoPayload(data)).toMatchObject({model,duration:15,images:data.images,reference_audios:data.audios});
+    expect(buildZonghengVideoPayload(data)).not.toHaveProperty('reference_videos');
+    for(const seconds of [5,10,14,16,30,300]) expect(()=>buildZonghengVideoPayload({...data,seconds})).toThrow('仅支持 15 秒');
+    for(const field of ['images','videos','audios'] as const) {
+      expect(()=>buildZonghengVideoPayload({...data,[field]:[...data[field],'https://media.invalid/extra']})).toThrow('最多支持 9 张图片、0 个视频、3 段音频');
     }
   });
   it('does not silently substitute similar-looking public model IDs', () => {

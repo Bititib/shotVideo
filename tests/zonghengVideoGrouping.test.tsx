@@ -25,6 +25,7 @@ import VideoPage from '../client/src/pages/analysis/VideoPage';
 
 const entries = [
   { id:'ZH-Cseadanco2.5K', group:'Seedance 系列', resolution:'720p' },
+  { id:'ZH-sedanco2.0-300秒必出', group:'Seedance 系列', resolution:'720p' },
   { id:'ZH-A-SD2.0', group:'Seedance 系列', resolution:'720p' },
   { id:'ZH-kksedanco2.5', group:'Seedance 系列', resolution:'720p' },
   { id:'ZH-LLseadanco2.51', group:'Seedance 系列', resolution:'720p' },
@@ -41,12 +42,25 @@ beforeEach(() => {
   mocks.generate.mockReturnValue(new AbortController());
   vi.stubGlobal('ResizeObserver',class {observe(){} disconnect(){} unobserve(){}});
   mocks.list.mockResolvedValue(entries.map(({id,resolution})=>({
-    id,name:id,description:'测试模型',available:true,allowedSeconds:[10],rates:{[resolution]:1},
+    id,name:id,description:'测试模型',available:true,allowedSeconds:id==='ZH-sedanco2.0-300秒必出'?[15]:[10],rates:{[resolution]:1},
   })));
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('legacy video sidebar family grouping', () => {
+
+  it('shows fixed 15 seconds, 9 image slots and 3 audio slots for the new Seedance 2.0 model',async()=>{
+    render(<MemoryRouter><VideoPage/></MemoryRouter>);
+    const toggle=await screen.findByRole('button',{name:/Seedance 系列/});
+    if(toggle.getAttribute('aria-expanded')!=='true')fireEvent.click(toggle);
+    const panel=document.getElementById(toggle.getAttribute('aria-controls')!)!;
+    fireEvent.click(within(panel).getByText('ZH-sedanco2.0-300秒必出'));
+    expect(screen.getByRole('button',{name:'上传参考图片，最多 9 张'})).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'上传参考音频，最多 3 段'})).toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:/上传参考视频/})).not.toBeInTheDocument();
+    await screen.findByText('15 秒');
+  });
+
 
   it('shows the confirmed reference upload limits for every ZH Seedance 2.5 entry', async () => {
     render(<MemoryRouter><VideoPage/></MemoryRouter>);

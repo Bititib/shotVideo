@@ -277,6 +277,42 @@ describe('Zongheng legacy entry points, isolated database and simulated provider
     }
     expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();expect(db.select().from(contents).all()).toHaveLength(0);
   });
+
+  it.each(['/api/video/generate','/v1/videos'])('discovers and submits the Unicode Seedance 2.0 model via %s at 2.5 per video',async endpoint=>{
+    const modelId='ZH-sedanco2.0-300秒必出',raw='sedanco2.0-300秒必出';
+    upstream=async()=>Response.json({data:[{id:raw}]});
+    await ChannelService.syncModels(db.select().from(channels).get()!.id);
+    expect(db.select().from(models).all().find(m=>m.modelId===modelId)).toMatchObject({displayName:modelId,capabilities:'["video"]',isActive:0});
+    const price=db.select().from(modelPricing).all().find(p=>p.modelPattern===modelId)!;
+    expect(price).toMatchObject({billingType:'per_call',inputPrice:2.5,outputPrice:0});
+    expect(JSON.parse(price.extraParams)).toEqual({category:'video','720p':2.5});
+    sqlite.prepare('UPDATE models SET is_active=1 WHERE model_id=?').run(modelId);
+    const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
+    expect(listed.find(m=>m.id===modelId)).toMatchObject({allowedSeconds:[15],maxSeconds:15,rates:{'720p':2.5},billingType:'per_call',available:true});
+    const images=Array.from({length:9},(_,i)=>'https://media.invalid/i-'+i+'.jpg');
+    const audios=Array.from({length:3},(_,i)=>'https://media.invalid/a-'+i+'.mp3');
+    upstream=async(_url,init)=>{
+      if(init.method==='POST'){
+        expect(JSON.parse(init.body)).toMatchObject({model:raw,duration:15,resolution:'720p',images,reference_audios:audios});
+        expect(JSON.parse(init.body)).not.toHaveProperty('reference_videos');
+        return Response.json({task_id:'vid_sedanco20'});
+      }
+      return Response.json({status:'succeeded',video_url:'https://media.invalid/sedanco20.mp4'});
+    };
+    const response=await post(endpoint,{model:modelId,prompt:'15秒产品视频',reference_images:images,audio_urls:audios});
+    expect(response.status).toBe(endpoint==='/v1/videos'?202:200);
+    await response.text();
+    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    expect(latest().cost).toBe(2.5);expect(balance()).toBe(97.5);
+  });
+  it.each([{field:'reference_images',count:10},{field:'reference_videos',count:1},{field:'audio_urls',count:4}])('rejects excess $field for fixed Seedance 2.0 before submission or charging',async({field,count})=>{
+    installConfirmedVideos();
+    for(const endpoint of ['/api/video/validate','/api/video/generate','/v1/videos']){
+      const response=await post(endpoint,{model:'ZH-sedanco2.0-300秒必出',prompt:'超限测试',video_length:15,resolution:'720p',[field]:Array(count).fill('https://media.invalid/source')});
+      expect(response.status).toBe(400);expect((await response.json() as any).error).toContain('最多支持 9 张图片、0 个视频、3 段音频');
+    }
+    expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();expect(db.select().from(contents).all()).toHaveLength(0);
+  });
   it('lists exact legacy durations and one resolution for each confirmed video model',async()=>{
     installConfirmedVideos();
     const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];

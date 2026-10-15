@@ -113,6 +113,21 @@ describe('administrator channel URLs survive startup', () => {
     db.delete(modelPricing).where(eq(modelPricing.id,price.id)).run();
     db.delete(models).where(eq(models.modelId,modelId)).run();
   });
+
+  it('initializes the registered Seedance 2.0 price at 2.5 per video without resetting future edits',async()=>{
+    const modelId='ZH-sedanco2.0-300秒必出';
+    db.insert(models).values({modelId,displayName:'固定15秒自定义名称',provider:'zongheng',capabilities:'["video"]',isActive:0}).run();
+    await initDatabase();
+    const price=db.select().from(modelPricing).where(eq(modelPricing.modelPattern,modelId)).get()!;
+    expect(price).toMatchObject({billingType:'per_call',inputPrice:2.5,outputPrice:0});
+    expect(PricingService.quote(modelId,{resolution:'720p',seconds:15},false).cost).toBe(2.5);
+    expect(db.select().from(models).where(eq(models.modelId,modelId)).get()).toMatchObject({displayName:'固定15秒自定义名称',isActive:0});
+    db.update(modelPricing).set({inputPrice:3,extraParams:JSON.stringify({category:'video','720p':3})}).where(eq(modelPricing.id,price.id)).run();
+    await initDatabase();
+    expect(PricingService.quote(modelId,{resolution:'720p',seconds:15},false).cost).toBe(3);
+    db.delete(modelPricing).where(eq(modelPricing.id,price.id)).run();
+    db.delete(models).where(eq(models.modelId,modelId)).run();
+  });
   it('does not contact any upstream service during startup regression checks', () => {
     expect(network).not.toHaveBeenCalled();
   });

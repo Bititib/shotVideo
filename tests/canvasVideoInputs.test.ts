@@ -7,6 +7,16 @@ const video = { ...newNode('video', { x: 0, y: 0 }), src: '/original.mp4' };
 afterEach(() => vi.restoreAllMocks());
 describe('canvas video editing constraints', () => {
 
+  it('uses Seedance 2.0 limits of 9 images and 3 audios without enabling video references',()=>{
+    const image={...newNode('image',{x:0,y:0}),src:'/image.jpg'};
+    const audio={...newNode('audio',{x:0,y:0}),src:'/voice.mp3'};
+    const multi={...options,model:'ZH-sedanco2.0-300秒必出',seconds:15,videoMode:'multimodal' as const};
+    const refs=[...Array(9).fill(image),...Array(3).fill(audio)];
+    expect(videoInputError(multi,refs)).toBe('');
+    for(const extra of [image,video,audio])expect(videoInputError(multi,[...refs,extra])).toContain('最多支持 9 张图片、0 个视频、3 段音频');
+  });
+
+
   it.each(['ZH-MMseadanco2.5-PRO','ZH-TTsedanco2.5-480','ZH-TTseadanco2.5-720'])('accepts full ZH reference sets for %s in canvas and rejects each excess', model => {
     const image={...newNode('image',{x:0,y:0}),src:'/photo.jpg'};
     const audio={...newNode('audio',{x:0,y:0}),src:'/voice.mp3'};
