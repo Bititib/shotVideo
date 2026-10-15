@@ -51,3 +51,7 @@ describe('admin content failure details', () => {
       .toBe('生成服务暂时不可用，请稍后重试');
   });
 });
+
+it('shows the failure reason persisted by image generation', () => {
+  expect(getContentFailureInfo(JSON.stringify({ failureReason: '图片 #1: 超时' })).message).toBe('图片 #1: 超时');
+});

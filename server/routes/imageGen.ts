@@ -1,3 +1,5 @@
+import { startSseHeartbeat } from '../services/sseHeartbeat.js';
+import { imageGenerationTimeout } from '../services/imageGenerationTimeout.js';
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { legacyImageReferenceLimit } from '../../shared/imageCapabilities.js';
 import { isZonghengChannel, ZonghengSubmissionError, buildZonghengImagePayload, validateZonghengImageReferences, zonghengImageSize } from '../services/zonghengAdapter.js';
@@ -13,7 +15,7 @@ import { authMiddleware } from '../middleware/auth.js';
 import { tierMiddleware, TierRequest } from '../middleware/tier.js';
 import { quotaMiddleware, logUsage } from '../middleware/quota.js';
 import { PricingService } from '../services/pricingService.js';
-import { extractImageUpstreamTaskId } from '../services/imageTaskMetadataService.js';
+import { imageResponseEvidence } from '../services/imageTaskMetadataService.js';
 import { ChannelService } from '../services/channelService.js';
 import { BalanceService } from '../services/balanceService.js';
 import { ContentService } from '../services/contentService.js';
@@ -402,12 +404,19 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
+  const stopHeartbeat = startSseHeartbeat(res);
 
   const sendEvent = (data: Record<string, any>) => {
+    if (data.type === 'image_error') {
+      const errors = { ...(persistedMetadata.imageErrors || {}), [data.index ?? 0]: data.message };
+      persistJob({ imageErrors: errors, failureReason: Object.values(errors).join('；'),
+        failedIndexes: Object.keys(errors).map(Number) });
+    }
     recordCanvasEvent(req, data);
     if (!res.writableEnded && !res.destroyed) res.write(`data: ${JSON.stringify(data)}\n\n`);
   };
   const finishStream = () => {
+    stopHeartbeat();
     if (res.writableEnded || res.destroyed) return;
     res.write('data: [DONE]\n\n');
     res.end();
@@ -453,6 +462,9 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
       ? 'mingfei'
       : isSiYueTianImageChannel(channel, model) ? 'siyuetian' : channel.type,
     upstreamModel: channel.modelMapping?.[model] || model,
+    requestTimeoutMs: imageGenerationTimeout(channel),
+    upstreamResponses: !isMingFeiImageChannel(channel) && !isSiYueTianImageChannel(channel, model) && (hasRef || model.startsWith('gpt-image'))
+      ? Array.from({ length: count }, () => ({ id: '', state: 'awaiting_response' })) : [],
     upstreamTaskId: '',
     taskId: '',
     upstreamTaskIds: [],
@@ -488,6 +500,16 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
       status,
       metadata: JSON.stringify(persistedMetadata),
     }).where(eq(contents.id, contentId)).run();
+  };
+  const captureResponse = (index: number, response?: { headers: Headers; status: number }, payload?: unknown,
+    stage: 'headers_received' | 'response_without_id' | 'response_unreadable' = 'headers_received') => {
+    const entries = [...persistedMetadata.upstreamResponses];
+    const evidence = response ? imageResponseEvidence(payload, response.headers, response.status, stage)
+      : { ...entries[index], state: entries[index]?.id ? 'captured' : entries[index]?.httpStatus ? 'response_unreadable' : 'no_response' };
+    entries[index] = evidence;
+    const ids = entries.map(entry => entry.id).filter(Boolean);
+    persistJob({ upstreamResponses: entries, upstreamTaskIds: ids, upstreamTaskId: ids[0] || '', taskId: ids[0] || '' });
+    return evidence.id || '';
   };
   const persistFailure = (message: string) => { reservation.cancel(); db.update(contents).set({cost:0}).where(eq(contents.id,contentId)).run(); persistJob({
     progressText: message,
@@ -771,7 +793,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
 
       const runSingle = async (index: number) => {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 180_000);
+        const timer = setTimeout(() => controller.abort(), imageGenerationTimeout(channel));
 
         try {
           // 发送生成中进度
@@ -798,19 +820,20 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
             body: formData,
             signal: controller.signal,
           });
-          clearTimeout(timer);
-
+          upstreamTaskIds[index] = captureResponse(index, upstream);
           sendEvent({ type: 'progress', progress: 70, index });
 
           if (!upstream.ok) {
-            const errText = await upstream.text().catch(() => '');
+            const errText = await upstream.text();
+            let errorPayload: unknown; try { errorPayload = JSON.parse(errText); } catch {}
+            upstreamTaskIds[index] = captureResponse(index, upstream, errorPayload, 'response_without_id');
             console.error(`[imageGen/edit] #${index} 上游返回 ${upstream.status}: ${errText.slice(0, 200)}`);
             sendEvent({ type: 'image_error', index, message: `请求 #${index + 1} 失败 (${upstream.status})` });
             return;
           }
 
           const result = await upstream.json() as any;
-          const taskId = extractImageUpstreamTaskId(result, upstream.headers);
+          const taskId = captureResponse(index, upstream, result, 'response_without_id');
           if (taskId) {
             upstreamTaskIds[index] = taskId;
             persistJob({
@@ -835,9 +858,11 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
         } catch (err: any) {
           clearTimeout(timer);
           const msg = err.name === 'AbortError' ? '超时' : (err.message || '请求失败');
+          upstreamTaskIds[index] = captureResponse(index);
           console.error(`[imageGen/edit] #${index} 异常:`, msg);
           sendEvent({ type: 'image_error', index, message: `图片 #${index + 1}: ${msg}` });
         } finally {
+          clearTimeout(timer);
           completedCount++;
           if (completedCount === count) {
             const allUrls = completedImages.filter(Boolean);
@@ -870,7 +895,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
 
         const runSingle = async (index: number) => {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 120_000);
+          const timer = setTimeout(() => controller.abort(), imageGenerationTimeout(channel));
 
           const requestBody: Record<string, any> = {
             model,
@@ -895,12 +920,13 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
               body: JSON.stringify(requestBody),
               signal: controller.signal,
             });
-            clearTimeout(timer);
-
+            upstreamTaskIds[index] = captureResponse(index, upstream);
             sendEvent({ type: 'progress', progress: 60, index });
 
             if (!upstream.ok) {
-              const errText = await upstream.text().catch(() => '');
+              const errText = await upstream.text();
+              let errorPayload: unknown; try { errorPayload = JSON.parse(errText); } catch {}
+              upstreamTaskIds[index] = captureResponse(index, upstream, errorPayload, 'response_without_id');
               console.error(`[imageGen/gpt] #${index} 上游返回 ${upstream.status}: ${errText.slice(0, 200)}`);
               let upstreamMessage = '';
               try {
@@ -918,7 +944,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
             }
 
             const result = await upstream.json() as any;
-            const taskId = extractImageUpstreamTaskId(result, upstream.headers);
+            const taskId = captureResponse(index, upstream, result, 'response_without_id');
             if (taskId) {
               upstreamTaskIds[index] = taskId;
               persistJob({
@@ -949,9 +975,11 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
           } catch (err: any) {
             clearTimeout(timer);
             const msg = err.name === 'AbortError' ? '超时' : (err.message || '请求失败');
+            upstreamTaskIds[index] = captureResponse(index);
             console.error(`[imageGen/gpt] #${index} 异常:`, msg);
             sendEvent({ type: 'image_error', index, message: `图片 #${index + 1}: ${msg}` });
           } finally {
+            clearTimeout(timer);
             completedCount++;
             if (completedCount === count) {
               const allUrls = completedImages.filter(Boolean);
@@ -980,7 +1008,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
 
         const runSingle = async (index: number) => {
           const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 120_000);
+          const timer = setTimeout(() => controller.abort(), imageGenerationTimeout(channel));
 
           const requestBody: Record<string, any> = {
             model,
@@ -1002,8 +1030,6 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
               body: JSON.stringify(requestBody),
               signal: controller.signal,
             });
-            clearTimeout(timer);
-
             if (!upstream.ok) {
               sendEvent({ type: 'image_error', index, message: `请求 #${index + 1} 失败 (${upstream.status})` });
               return;
@@ -1079,6 +1105,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
             const msg = err.name === 'AbortError' ? '超时' : (err.message || '请求失败');
             sendEvent({ type: 'image_error', index, message: `图片 #${index + 1}: ${msg}` });
           } finally {
+            clearTimeout(timer);
             completedCount++;
             // 所有任务完成后发送 complete
             if (completedCount === count) {

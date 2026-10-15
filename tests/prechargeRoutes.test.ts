@@ -189,3 +189,50 @@ describe('route precharge order and refunds without paid providers',()=>{
     expect(res.code).toBe(500);expect(userBalance()).toBe(100);expect(records()[0].state).toBe('refunded');
   });
 });
+
+describe('image response evidence survives unsuccessful requests', () => {
+  it.each([false, true])('persists nested upstream error ID and failure reason (edit=%s)', async edit => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { request_id: 'req-failed', message: 'provider rejected input' } }, { status: 400 })));
+    const res = await invoke(imageRouter, '/generate', { model: 'gpt-image-2', prompt: 'test', ...(edit ? { reference_images: ['data:image/png;base64,aA=='] } : {}) });
+    await vi.waitFor(() => expect(res.ended).toBe(true));
+    const content: any = sqlite.prepare('SELECT * FROM contents ORDER BY id DESC LIMIT 1').get();
+    const metadata = JSON.parse(content.metadata);
+    expect(content.status).toBe('failed'); expect(content.cost).toBe(0);
+    expect(metadata.upstreamTaskId).toBe('req-failed');
+    expect(metadata.upstreamResponses[0]).toEqual({ id: 'req-failed', state: 'captured', httpStatus: 400 });
+    expect(metadata.failureReason).toContain('400');
+  });
+  it('retains a header ID when reading a success response fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{invalid', { headers: { 'x-request-id': 'req-broken' } })));
+    const res = await invoke(imageRouter, '/generate', { model: 'gpt-image-2', prompt: 'test' });
+    await vi.waitFor(() => expect(res.ended).toBe(true));
+    const content: any = sqlite.prepare('SELECT * FROM contents ORDER BY id DESC LIMIT 1').get();
+    expect(JSON.parse(content.metadata).upstreamTaskId).toBe('req-broken');
+  });
+  it('distinguishes no response from a complete response with no ID', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('connection reset'); }));
+    const res = await invoke(imageRouter, '/generate', { model: 'gpt-image-2', prompt: 'test' });
+    await vi.waitFor(() => expect(res.ended).toBe(true));
+    const content: any = sqlite.prepare('SELECT * FROM contents ORDER BY id DESC LIMIT 1').get();
+    expect(JSON.parse(content.metadata).upstreamResponses[0].state).toBe('no_response');
+  });
+  it('keeps the timeout active until the body is read and no longer aborts at two minutes', async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      vi.stubGlobal('fetch', vi.fn(async (_url: any, init: any) => {
+        signal = init.signal;
+        return { ok: true, status: 200, headers: new Headers({ 'x-request-id': 'req-slow' }), json: () => new Promise((_resolve, reject) => {
+          signal!.addEventListener('abort', () => reject(Object.assign(new Error('timeout'), { name: 'AbortError' })), { once: true });
+        }) };
+      }));
+      const res = await invoke(imageRouter, '/generate', { model: 'gpt-image-2', prompt: 'test' });
+      await vi.advanceTimersByTimeAsync(180_001);
+      expect(signal?.aborted).toBe(false); expect(res.ended).not.toBe(true);
+      await vi.advanceTimersByTimeAsync(720_000);
+      expect(signal?.aborted).toBe(true); expect(res.ended).toBe(true);
+      const content: any = sqlite.prepare('SELECT * FROM contents ORDER BY id DESC LIMIT 1').get();
+      expect(JSON.parse(content.metadata).upstreamTaskId).toBe('req-slow');
+    } finally { vi.useRealTimers(); }
+  });
+});

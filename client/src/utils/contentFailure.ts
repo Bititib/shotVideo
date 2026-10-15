@@ -55,6 +55,7 @@ export function getContentFailureInfo(metadata: unknown, resultText?: unknown): 
   const candidates = [
     meta.error,
     meta.errorMessage,
+    meta.failureReason,
     meta.failure_reason,
     meta.fail_reason,
     resultText,

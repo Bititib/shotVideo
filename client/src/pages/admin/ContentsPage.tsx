@@ -221,7 +221,7 @@ export default function ContentsPage() {
     if (!preview.eligibleCount) {
       window.alert(
         `近三天共有 ${preview.failedCount || 0} 条失败视频，没有可重新获取的记录。\n`
-        + `缺少上游任务 ID：${preview.missingTaskIdCount || 0} 条。`,
+        + `缺少上游任务 / 请求 ID：${preview.missingTaskIdCount || 0} 条。`,
       );
       return;
     }
@@ -271,6 +271,14 @@ export default function ContentsPage() {
     return `/api/video/play?url=${encodeURIComponent(url)}`;
   };
 
+  const displayStatus = (item: ContentItem) => {
+    const meta = parseMeta(item.metadata);
+    if (!['processing', 'queued', 'review'].includes(item.status)) return item.status;
+    const overdue = item.type === 'image' && Date.now() - new Date(item.createdAt).getTime()
+      > Math.max(30 * 60_000, Number(meta.requestTimeoutMs || 0) + 60_000);
+    return meta.requiresReview || overdue ? 'review' : item.status;
+  };
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'completed': case 'success':
@@ -315,10 +323,20 @@ export default function ContentsPage() {
       || meta.requestId
       || meta.request_id
       || meta.taskId
-      || meta.task_id;
+      || meta.task_id
+      || meta.upstreamTaskIds?.find((id: unknown) => typeof id === 'string' && id.trim());
 
     if (typeof value !== 'string' && typeof value !== 'number') return '';
     return String(value).trim();
+  };
+
+  const missingUpstreamId = (meta: Record<string, any>) => {
+    const responses = Array.isArray(meta.upstreamResponses) ? meta.upstreamResponses : [];
+    if (responses.some((item: any) => item.state === 'response_without_id')) return '上游响应未提供 ID';
+    if (responses.some((item: any) => item.state === 'response_unreadable' || item.state === 'headers_received')) return '响应读取中断，未取得 ID';
+    if (responses.some((item: any) => item.state === 'no_response')) return '未收到上游响应';
+    if (responses.some((item: any) => item.state === 'awaiting_response')) return '等待上游响应';
+    return '无已保存 ID（旧记录）';
   };
 
   const getSpecification = (meta: Record<string, any>) => [
@@ -432,7 +450,7 @@ export default function ContentsPage() {
                   <th className="px-3 py-3 font-medium">金额</th>
                   <th className="px-3 py-3 font-medium">用户</th>
                   <th className="px-3 py-3 font-medium">规格</th>
-                  <th className="px-3 py-3 font-medium">上游任务 ID</th>
+                  <th className="px-3 py-3 font-medium">上游任务 / 请求 ID</th>
                   <th className="px-3 py-3 font-medium">本地记录 ID</th>
                   <th className="px-4 py-3 text-right font-medium">操作</th>
                 </tr>
@@ -453,7 +471,7 @@ export default function ContentsPage() {
                         })}
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 text-sm text-zinc-400">{formatContentGenerationTime(item)}</td>
-                      <td className="px-3 py-3">{getStatusBadge(item.status)}</td>
+                      <td className="px-3 py-3">{getStatusBadge(displayStatus(item))}</td>
                       <td className="px-3 py-3">
                         <div className="text-sm font-medium text-zinc-200">{getRowChannel(item, meta, routingInfo)}</div>
                         {routingInfo?.routed && <div className="mt-0.5 text-xs text-cyan-400">已分流</div>}
@@ -484,7 +502,7 @@ export default function ContentsPage() {
                             {upstreamTaskId}
                           </button>
                         ) : (
-                          <span className="text-xs text-zinc-500">未返回</span>
+                          <span className="text-xs text-zinc-500">{missingUpstreamId(meta)}</span>
                         )}
                       </td>
                       <td className="px-3 py-3">
@@ -557,7 +575,7 @@ export default function ContentsPage() {
             <div className="content-detail-header">
               <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
                 <h3 id="content-detail-title" className="text-sm font-medium text-white">{previewItem.type === 'video' ? '视频详情' : '内容详情'} #{previewItem.id}</h3>
-                {getStatusBadge(previewItem.status)}
+                {getStatusBadge(displayStatus(previewItem))}
                 {previewLoading && <span className="text-[10px] text-zinc-500">正在按需加载完整素材…</span>}
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -611,16 +629,16 @@ export default function ContentsPage() {
                     <span>{['failed', 'error'].includes(previewItem.status) ? '本次生成未获得结果' : '生成结果暂未就绪'}</span>
                   </div>}
 
-                  {(['failed', 'error', 'review'].includes(previewItem.status)) && (() => {
+                  {(['failed', 'error', 'review'].includes(displayStatus(previewItem))) && (() => {
                     const failure = getContentFailureInfo(previewItem.metadata, previewItem.resultText);
                     return (
                       <div className={`rounded-xl border p-4 ${failure.hasRecordedReason ? 'border-red-500/25 bg-red-500/10' : 'border-amber-500/25 bg-amber-500/10'}`}>
                         <div className={`mb-2 flex items-center gap-2 text-xs font-semibold ${failure.hasRecordedReason ? 'text-red-300' : 'text-amber-300'}`}>
                           <CircleAlert className="h-4 w-4" />
-                          {previewItem.status === 'review' ? '结果待核实' : '失败原因'}
+                          {displayStatus(previewItem) === 'review' ? '结果待核实' : '失败原因'}
                         </div>
                         <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-200">
-                          {failure.message}
+                          {displayStatus(previewItem) === 'review' && !failure.hasRecordedReason ? '后台尚未确认最终结果，请核查原上游请求，勿重复提交' : failure.message}
                         </pre>
                         {failure.failedAt && (
                           <div className="mt-2 text-[10px] text-zinc-500">
@@ -711,8 +729,8 @@ export default function ContentsPage() {
                       <div className="mt-1 text-xs text-zinc-500">从提交到完成，包含排队和保存时间</div>
                     </div>
                     <div className="col-span-2 bg-white/[0.03] rounded-lg p-3">
-                      <div className="text-zinc-500 mb-1">上游任务 ID</div>
-                      <div className="break-all font-mono text-white">{getUpstreamTaskId(parseMeta(previewItem.metadata)) || '未返回'}</div>
+                      <div className="text-zinc-500 mb-1">上游任务 / 请求 ID</div>
+                      <div className="break-all font-mono text-white">{getUpstreamTaskId(parseMeta(previewItem.metadata)) || missingUpstreamId(parseMeta(previewItem.metadata))}</div>
                     </div>
                     <div className="bg-white/[0.03] rounded-lg p-3">
                       <div className="text-zinc-500 mb-1">本地记录 ID</div>

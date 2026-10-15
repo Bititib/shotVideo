@@ -1,3 +1,4 @@
+import { startSseHeartbeat } from './sseHeartbeat.js';
 import { isBlobDrawChannel } from './blobDrawAdapter.js';
 import { isFunAiChannel } from './funAiAdapter.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
@@ -200,7 +201,13 @@ async function runImages(id: number, candidates: RouteCandidate[], request: Spec
         const invoke = () => {
           if (!routeStillEnabled(metadata(id).requestedModel, target, request.input)) throw new SpecificationUpstreamError('线路已手动禁用或修改', true);
           return generateSpecificationImage(target, request, () => patch(id, { submissionStartedAt: new Date().toISOString(), imageSubmissionIndex: index }),
-            taskId => { accepted = true; taskIds.push(taskId); jobs.push({ index, taskId, channelId: target.channel.id, apiKeyId: target.channel.apiKeyId, healthKey: target.healthKey, status: 'pending' }); patch(id, { upstreamTaskIds: taskIds, upstreamTaskId: taskId, imageJobs: jobs }); });
+            taskId => { accepted = true; taskIds.push(taskId); jobs.push({ index, taskId, channelId: target.channel.id, apiKeyId: target.channel.apiKeyId, healthKey: target.healthKey, status: 'pending' }); patch(id, { upstreamTaskIds: taskIds, upstreamTaskId: taskId, imageJobs: jobs }); },
+            evidence => {
+              const meta = metadata(id), responses = [...(meta.upstreamResponses || [])];
+              responses[index] = evidence;
+              patch(id, { upstreamResponses: responses,
+                ...(evidence.id ? { upstreamTaskId: evidence.id, upstreamTaskIds: [...new Set([...(meta.upstreamTaskIds || []), evidence.id])] } : {}) });
+            });
         };
         const result = target.channel.type === 'hmstudio' ? await hmStudioQueue.enqueue({ id: 'spec-image-' + id + '-' + index + '-' + target.route.id,
           userKey: metadata(id).queueUserKey, poolKey: hmStudioPoolKey(target.channel), task: invoke,
@@ -216,9 +223,9 @@ async function runImages(id: number, candidates: RouteCandidate[], request: Spec
         onEvent({ type: 'image_ready', imageUrl: url, index, total: request.input.outputs, contentId: id }); done = true; break;
       } catch (e: any) {
         if (e instanceof HmStudioQueueFullError) e = new SpecificationUpstreamError(e.message, true);
-        if ((accepted && !(e instanceof SpecificationUpstreamError && e.confirmedFailure)) || e instanceof SpecificationUpstreamError && e.uncertain) { noteRouteResult(target.healthKey, false, e.message); holdForReview(id, '图片提交或结果待核实，请勿重复提交'); uncertain = true; break; }
+        if ((accepted && !(e instanceof SpecificationUpstreamError && e.confirmedFailure)) || e instanceof SpecificationUpstreamError && e.uncertain) { noteRouteResult(target.healthKey, false, e.message); holdForReview(id, '图片提交或结果待核实，请勿重复提交：' + e.message); uncertain = true; break; }
         if (e instanceof SpecificationUpstreamError) noteRouteResult(target.healthKey, false, e.message, e.blocked);
-        const job = jobs.find(j => j.index === index); if (job) job.status = 'failed'; patch(id, { imageJobs: jobs, submissionStartedAt: null });
+        const job = jobs.find(j => j.index === index); if (job) job.status = 'failed'; patch(id, { imageJobs: jobs, submissionStartedAt: null, failureReason: e.message || '图片生成失败' });
         if (!(e instanceof SpecificationUpstreamError && e.retrySafe)) { onEvent({ type: 'image_error', index, message: e.message }); break; }
         const attempts = metadata(id).routingAttempts || [];
         patch(id, { routingAttempts: [...attempts, { routeId: target.route.id, index, reason: e.message }], submissionStartedAt: null });
@@ -228,7 +235,7 @@ async function runImages(id: number, candidates: RouteCandidate[], request: Spec
     if (!done) onEvent({ type: 'image_error', index, message: '当前图片没有可用线路或生成失败' });
   }
   if (urls.length) { complete(id, urls); onEvent({ type: 'complete', imageUrls: urls, contentId: id }); }
-  else { failTask(id, '图片生成失败'); onEvent({ type: 'error', message: '图片生成失败' }); }
+  else { const reason = metadata(id).failureReason || '图片生成失败'; failTask(id, reason); onEvent({ type: 'error', message: reason }); }
 }
 type ApiContext = { token: any; reserve: (amount: number, model: string) => any };
 export async function handleSpecificationGeneration(req: Request, res: Response, kind: MediaKind, apiContext?: ApiContext): Promise<boolean> {
@@ -239,6 +246,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
   const modelId = spec?.modelId || suppliedId;
   if (!spec) return false;
   let id: number | undefined;
+  let stopHeartbeat = () => {};
   try {
     if (spec.kind !== kind) throw fail('模型类型与接口不匹配');
     const model = db.select().from(models).where(eq(models.modelId, modelId)).get();
@@ -303,6 +311,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     if (!apiContext) {
       res.setHeader('Content-Type', 'text/event-stream'); res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive'); res.setHeader('X-Accel-Buffering', 'no'); res.flushHeaders();
+      stopHeartbeat = startSseHeartbeat(res);
       emit({ type: 'content_id', contentId: id }); emit({ type: 'status', message: '任务已保存，正在选择可用线路', contentId: id, total: request.input.outputs });
     }
     active.add(id!);
@@ -335,6 +344,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     else if (!res.writableEnded) res.end();
     return true;
   } finally {
+    stopHeartbeat();
     for (const file of Array.isArray(req.files) ? req.files : []) { if (file.path) { try { fs.unlinkSync(file.path); } catch {} } }
   }
 }

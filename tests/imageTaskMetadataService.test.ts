@@ -30,3 +30,9 @@ describe('image upstream task metadata', () => {
     expect(extractImageUpstreamTaskId({ data: [{ url: 'https://example.com/image.png' }] })).toBe('');
   });
 });
+
+it('recognizes nested error identifiers and case-insensitive plain headers', () => {
+  expect(extractImageUpstreamTaskId({ error: { request_id: 'req-error' } })).toBe('req-error');
+  expect(extractImageUpstreamTaskId({}, { 'X-Request-ID': 'req-header' })).toBe('req-header');
+  expect(extractImageUpstreamTaskId({ result: { task_id: 'task-result' } })).toBe('task-result');
+});

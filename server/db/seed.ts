@@ -1,3 +1,4 @@
+import { migratePidoiImageTimeout } from './imageTimeoutMigration.js';
 import { ensureZonghengVideoPricing } from '../services/zonghengPricingService.js';
 import { HAYA_VIDEO_MODELS } from '../../shared/hayaVideo.js';
 import { ASYNC_VIDEO_BASE_URL, ASYNC_VIDEO_CHANNEL_TYPE } from '../../shared/asyncVideo.js';
@@ -1593,6 +1594,7 @@ export async function initDatabase() {
   } catch (err: any) {
     console.error('⚠️ 初始化 Pidoi 图片渠道出错:', err.message);
   }
+  migratePidoiImageTimeout(sqlite);
 
   // 14) MingFei GPT Image 2：独立公开模型，避免与现有 Pidoi/四月天线路串线。
   try {

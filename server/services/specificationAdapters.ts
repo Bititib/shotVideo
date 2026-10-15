@@ -1,6 +1,7 @@
+import { imageGenerationTimeout } from './imageGenerationTimeout.js';
 import { isAsyncVideoChannel, buildAsyncVideoPayload, asyncVideoCreateUrl, pollAsyncVideo } from './asyncVideoAdapter.js';
 import fs from 'node:fs';
-import { extractImageUpstreamTaskId } from './imageTaskMetadataService.js';
+import { extractImageUpstreamTaskId, imageResponseEvidence, type ImageResponseEvidence } from './imageTaskMetadataService.js';
 import { isFunAiChannel, funAiBaseUrl, buildFunAiVideoPayload, pollFunAiTask, generateFunAiImage, FunAiApiError } from './funAiAdapter.js';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -57,7 +58,7 @@ export function publishSpecificationAsset(source: string, baseUrl: string): stri
   return publishReferenceUrl('/uploads/' + name, baseUrl);
 }
 const apiBase = (url: string) => url.replace(/\/+$/, '').replace(/\/v1$/i, '');
-async function post(url: string, channel: any, payload: unknown, onStarting: () => void, onParsed?: (body: any, headers: Headers) => void) {
+async function post(url: string, channel: any, payload: unknown, onStarting: () => void, onParsed?: (body: any, headers: Headers) => void, onResponse?: (evidence: ImageResponseEvidence) => void) {
   const form = payload instanceof FormData;
   onStarting();
   let response: Response;
@@ -65,17 +66,24 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
     response = await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + channel.apiKey, ...(!form ? { 'Content-Type': 'application/json' } : {}) },
       body: form ? payload : JSON.stringify(payload), signal: AbortSignal.timeout(channel.timeout || 120_000), redirect: 'error' });
   } catch (e: any) {
+    onResponse?.({ id: '', state: 'no_response' });
     const code = e?.cause?.code || e?.code;
     const notSent = ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(code);
     throw new SpecificationUpstreamError('提交连接失败，请在生成记录中核实：' + String(code || e?.message || '未知错误'), notSent, !notSent);
   }
+  onResponse?.(imageResponseEvidence(undefined, response.headers, response.status, 'headers_received'));
   if (!response.ok) {
-    const text = await response.text();
+    let text: string;
+    try { text = await response.text(); }
+    catch { onResponse?.(imageResponseEvidence(undefined, response.headers, response.status, 'response_unreadable')); throw new SpecificationUpstreamError('上游错误响应读取中断，请核实原请求', false, true); }
+    let body: unknown; try { body = JSON.parse(text); } catch {}
+    onResponse?.(imageResponseEvidence(body, response.headers, response.status, 'response_without_id'));
     throw submissionFailure(response.status, channel.apiKey ? text.split(channel.apiKey).join('[REDACTED]') : text);
   }
   let result: any;
   try { result = await response.json(); }
-  catch { throw new SpecificationUpstreamError('上游已响应但结果无法解析，请勿重复提交', false, true); }
+  catch { onResponse?.(imageResponseEvidence(undefined, response.headers, response.status, 'response_unreadable')); throw new SpecificationUpstreamError('上游已响应但结果无法解析，请勿重复提交', false, true); }
+  onResponse?.(imageResponseEvidence(result, response.headers, response.status, 'response_without_id'));
   onParsed?.(result, response.headers);
   return result;
 }
@@ -232,8 +240,8 @@ export async function pollSpecificationVideo(channel: any, taskId: string) {
     resultUrl: String(data.url || data.video_url || data.result_url || data.output?.url || data.output?.video_url || data.metadata?.url || data.result?.url || data.result?.video_url || (Array.isArray(data.data) ? data.data[0]?.url : '') || ''),
     error: typeof data.error === 'string' ? data.error : data.error?.message || data.message || '' };
 }
-export async function generateSpecificationImage(target: RouteCandidate, request: SpecificationRequest, onStarting: () => void, onSubmitted: (id: string) => void) {
-  const c = target.channel, model = target.route.upstreamModel, i = request.input;
+export async function generateSpecificationImage(target: RouteCandidate, request: SpecificationRequest, onStarting: () => void, onSubmitted: (id: string) => void, onResponse?: (evidence: ImageResponseEvidence) => void) {
+  const c = { ...target.channel, timeout: imageGenerationTimeout(target.channel) }, model = target.route.upstreamModel, i = request.input;
   let started = false;
   const trackedFetch: typeof fetch = async (url, init) => {
     init = { ...init, signal: init?.signal || AbortSignal.timeout(c.timeout || 120_000), redirect: 'error' };
@@ -326,7 +334,7 @@ export async function generateSpecificationImage(target: RouteCandidate, request
   const result = await post(url, c, payload, onStarting, (body, headers) => {
     taskId = extractImageUpstreamTaskId(body, headers);
     if (taskId) onSubmitted(taskId);
-  });
+  }, onResponse);
   const item = result.data?.[0], imageUrl = item?.url || (item?.b64_json ? 'data:image/png;base64,' + item.b64_json : '');
   if (!imageUrl) throw new SpecificationUpstreamError('上游已受理但未返回图片，请核实原请求', false, true);
   return { imageUrl, reportedImageUrl: imageUrl, taskId, raw: result };

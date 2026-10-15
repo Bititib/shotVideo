@@ -65,6 +65,7 @@ interface ActiveImageBatch {
   id: string;
   contentId?: number;
   persisted?: boolean;
+  phase?: 'queued' | 'processing' | 'checking' | 'review' | 'failed';
   prompt: string;
   model: string;
   aspectRatio: string;
@@ -102,9 +103,13 @@ function ImageCard({ url, index, onPreview, onEdit, editing }: { url: string; in
 }
 
 /** 生成中的占位卡片 - 骨架屏风格 */
-function PlaceholderCard({ index, progress }: { index: number; progress: number; key?: any }) {
+const batchPhaseLabel = (phase?: ActiveImageBatch['phase']) => ({ queued: '排队中', processing: '生成中', checking: '核实中', review: '待核实', failed: '失败' })[phase || 'processing'];
+
+function PlaceholderCard({ index, progress, phase }: { index: number; progress: number; phase?: ActiveImageBatch['phase']; key?: any }) {
+  const label = batchPhaseLabel(phase);
+  if (phase === 'review' || phase === 'checking' || phase === 'failed') return <div className="ig-failed" role="status"><AlertCircle size={24} /><span>图片 {index + 1} {label}</span></div>;
   return (
-    <div className="ig-placeholder" role="status" aria-label={`图片 ${index + 1} ${progress > 0 ? '生成中' : '排队中'}`}>
+    <div className="ig-placeholder" role="status" aria-label={`图片 ${index + 1} ${label}`}>
       <div className="relative w-12 h-12">
         <svg className="w-12 h-12 -rotate-90" viewBox="0 0 48 48">
           <circle cx="24" cy="24" r="20" fill="none" stroke="var(--ig-line)" strokeWidth="3" />
@@ -121,7 +126,7 @@ function PlaceholderCard({ index, progress }: { index: number; progress: number;
           )}
         </div>
       </div>
-      <span>#{index + 1} {progress > 0 ? '生成中' : '排队中'}</span>
+      <span>#{index + 1} {label}</span>
     </div>
   );
 }
@@ -168,6 +173,9 @@ export default function ImageGenPage() {
   const [mingFeiResolution, setMingFeiResolution] = useState<'1K' | '2K' | '4K'>('2K');
   const [imageCount, setImageCount] = useState(1);
   const [activeBatches, setActiveBatches] = useState<ActiveImageBatch[]>([]);
+  const activeBatchesRef = useRef(activeBatches);
+  activeBatchesRef.current = activeBatches;
+  const activeBatchCount = activeBatches.filter(batch => batch.phase !== 'failed' && batch.phase !== 'review').length;
   const [error, setError] = useState<string | null>(null);
   const [generatedImages, setGeneratedImages] = useState<string[]>([]);
   const [history, setHistory] = useState<GeneratedImage[]>([]);
@@ -221,7 +229,17 @@ export default function ImageGenPage() {
       try {
         const res: any = await contentApi.getMyContents({ type: 'image', page: 1, pageSize: 20 }, signal);
         if (cancelled || signal.aborted) return;
-        const items = res?.items || res?.data || [];
+        const items: any[] = [...(res?.items || res?.data || [])];
+        const visibleIds = new Set(items.map(item => Number(item.id)));
+        const trackedIds = [...new Set<number>(activeBatchesRef.current.map(batch => batch.contentId).filter((id): id is number => Boolean(id) && !visibleIds.has(id)))];
+        const details = await Promise.allSettled(trackedIds.map(id => contentApi.getById(id, signal)));
+        if (cancelled || signal.aborted) return;
+        const missingIds = new Set<number>();
+        details.forEach((result, index) => {
+          if (result.status === 'fulfilled' && result.value?.id) items.push(result.value);
+          else missingIds.add(trackedIds[index]);
+        });
+        const returnedIds = new Set(items.map(item => Number(item.id)));
         const loadedHistory: GeneratedImage[] = [];
         const recoveredBatches: ActiveImageBatch[] = [];
         const existingUrls = new Set<string>();
@@ -237,9 +255,13 @@ export default function ImageGenPage() {
           const itemAspectRatio = metadata.aspectRatio || metadata.aspect_ratio || '';
           const storedImageUrls = Array.isArray(metadata.imageUrls) ? metadata.imageUrls : [];
           const imageUrls = storedImageUrls.filter(Boolean);
+          const isReview = metadata.requiresReview || item.status === 'review';
+          const isFailed = ['failed', 'error', 'cancelled'].includes(item.status);
           const isProcessing = item.status === 'processing' || item.status === 'queued';
+          const overdue = isProcessing && Number.isFinite(createdAt.getTime())
+            && Date.now() - createdAt.getTime() > Math.max(30 * 60_000, Number(metadata.requestTimeoutMs || 0) + 60_000);
 
-          if (isProcessing) {
+          if (isProcessing || isReview || isFailed) {
             const count = Math.max(1, Math.min(4, Number(metadata.count) || 1));
             const images = new Array(count).fill('');
             storedImageUrls.slice(0, count).forEach((url: string, index: number) => { images[index] = url || ''; });
@@ -253,6 +275,7 @@ export default function ImageGenPage() {
               id: `persisted-image-${item.id}`,
               contentId: Number(item.id),
               persisted: true,
+              phase: isReview ? 'review' : isFailed ? 'failed' : overdue ? 'checking' : item.status === 'queued' ? 'queued' : 'processing',
               prompt: promptText,
               model,
               aspectRatio: itemAspectRatio,
@@ -262,7 +285,10 @@ export default function ImageGenPage() {
               failedIndexes: Array.isArray(metadata.failedIndexes)
                 ? metadata.failedIndexes.filter((value: unknown) => Number.isInteger(value))
                 : [],
-              statusMessage: metadata.progressText || '图片正在后台生成，刷新页面不会丢失',
+              statusMessage: isReview ? (metadata.failureReason || metadata.error || metadata.progressText || '结果待管理员核实，请勿重复提交')
+                : isFailed ? (metadata.failureReason || metadata.error || metadata.progressText || '图片生成失败，请在生成记录中查看详情')
+                : overdue ? '等待时间较长，后台尚未确认成功或失败，请联系管理员核实该任务'
+                : metadata.progressText || '图片正在后台生成，刷新页面不会丢失',
             });
             continue;
           }
@@ -289,19 +315,39 @@ export default function ImageGenPage() {
           previous.forEach(item => { if (!urls.has(item.imageUrl)) next.push(item); });
           return next;
         });
+        // Database state also reconciles live streams: their terminal event may have been lost.
+        for (const batch of activeBatchesRef.current) {
+          const item = items.find(item => Number(item.id) === batch.contentId);
+          if (item && (!['processing', 'queued'].includes(item.status) || recoveredBatches.find(next => next.contentId === batch.contentId)?.phase === 'review')) {
+            batchControllersRef.current.get(batch.id)?.abort();
+            batchControllersRef.current.delete(batch.id);
+          }
+        }
         setActiveBatches(previous => {
-          const live = previous.filter(batch => !batch.persisted);
-          const liveContentIds = new Set(live.map(batch => batch.contentId).filter(Boolean));
-          return [...live, ...recoveredBatches.filter(batch => !liveContentIds.has(batch.contentId))];
+          const seen = new Set<number>();
+          const next = previous.flatMap(batch => {
+            if (!batch.contentId || !returnedIds.has(batch.contentId)) return [{ ...batch,
+              ...(batch.contentId && missingIds.has(batch.contentId) ? { phase: 'checking' as const, statusMessage: '暂时无法读取任务状态，正在重试核实，请勿重复提交' } : {}) }];
+            seen.add(batch.contentId);
+            const recovered = recoveredBatches.find(item => item.contentId === batch.contentId);
+            return recovered ? [{ ...recovered, id: batch.id }] : [];
+          });
+          return [...next, ...recoveredBatches.filter(batch => !seen.has(batch.contentId!))];
         });
         setHistoryTotal(Number(res?.total) || 0);
-      } catch (error) { throw error; }
+      } catch (error) {
+        if (!cancelled && !signal.aborted) setActiveBatches(previous => previous.map(batch =>
+          batch.phase === 'failed' || batch.phase === 'review' ? batch : { ...batch, phase: 'checking', statusMessage: '暂时无法读取任务状态，正在重试核实，请勿重复提交' }));
+        throw error;
+      }
     };
 
     const stopPolling = startPolling(refreshPersistedJobs, 5_000);
     return () => {
       cancelled = true;
       stopPolling();
+      batchControllersRef.current.forEach(controller => controller.abort());
+      batchControllersRef.current.clear();
     };
   }, []);
 
@@ -380,7 +426,7 @@ export default function ImageGenPage() {
     if (generationMode === 'image' && !batchReferences.length) { setError('请先上传需要修改的原图'); return; }
     if (batchReferences.length > maxReferenceImages) { setError(`当前模型最多支持 ${maxReferenceImages} 张参考图，请减少图片后重试`); return; }
     if (managedLimits && batchReferences.length < managedLimits.minImages) { setError('该规格至少需要 ' + managedLimits.minImages + ' 张参考图，请切换至图生图并上传'); return; }
-    if (activeBatches.length >= MAX_CONCURRENT_BATCHES) {
+    if (activeBatchCount >= MAX_CONCURRENT_BATCHES) {
       setError(`最多同时生成 ${MAX_CONCURRENT_BATCHES} 批图片，请等待任一批完成`);
       return;
     }
@@ -430,10 +476,14 @@ export default function ImageGenPage() {
       (event: ImageSSEEvent) => {
         switch (event.type) {
           case 'queue':
-            updateBatch(batch => ({ ...batch, statusMessage: event.message || '图片任务排队中...' }));
+            updateBatch(batch => ({ ...batch, phase: event.status === 'processing' ? 'processing' : 'queued', statusMessage: event.message || '图片任务排队中...' }));
             break;
+          case 'disconnected':
+            updateBatch(batch => ({ ...batch, contentId: event.contentId || batch.contentId, phase: batch.contentId || event.contentId ? 'checking' : 'review', statusMessage: event.message || '连接已断开，请到生成记录核实结果' }));
+            break;
+          case 'content_id':
           case 'status':
-            updateBatch(batch => ({ ...batch, contentId: event.contentId || batch.contentId, statusMessage: event.message || '' }));
+            updateBatch(batch => ({ ...batch, contentId: event.contentId || batch.contentId, phase: 'processing', statusMessage: event.message || batch.statusMessage }));
             break;
           case 'progress': {
             const idx = event.index ?? -1;
@@ -441,7 +491,7 @@ export default function ImageGenPage() {
               updateBatch(batch => {
                 const progresses = [...batch.progresses];
                 progresses[idx] = event.progress || 0;
-                return { ...batch, progresses };
+                return { ...batch, phase: 'processing', progresses };
               });
             }
             break;
@@ -482,7 +532,7 @@ export default function ImageGenPage() {
                   createdAt: new Date(),
                   aspectRatio: batchAspectRatio,
                 })),
-                ...previous,
+                ...previous.filter(item => !completedUrls.includes(item.imageUrl)),
               ]);
             }
             batchControllersRef.current.delete(batchId);
@@ -492,13 +542,13 @@ export default function ImageGenPage() {
           case 'error':
             setError(event.message || '生成失败');
             batchControllersRef.current.delete(batchId);
-            setActiveBatches(previous => previous.filter(batch => batch.id !== batchId));
+            updateBatch(batch => ({ ...batch, phase: batch.contentId ? 'checking' : 'failed', statusMessage: event.message || '生成失败' }));
             break;
         }
       },
     );
     batchControllersRef.current.set(batchId, ctrl);
-  }, [prompt, selectedModel, aspectRatio, pidoiQuality, mingFeiQuality, mingFeiResolution, imageCount, activeBatches.length, referenceImages, guard, managedLimits, managedQuality, generationMode, maxReferenceImages, referenceImporting]);
+  }, [prompt, selectedModel, aspectRatio, pidoiQuality, mingFeiQuality, mingFeiResolution, imageCount, activeBatchCount, referenceImages, guard, managedLimits, managedQuality, generationMode, maxReferenceImages, referenceImporting]);
 
   const handleCancelBatch = useCallback((batchId: string) => {
     batchControllersRef.current.get(batchId)?.abort();
@@ -565,7 +615,7 @@ export default function ImageGenPage() {
 
   const displayRate = selectedModel === 'gpt-image-2-mingfei' && Number.isFinite(selectedMingFeiRate)
     ? selectedMingFeiRate : selectedImageModel?.rate;
-  const canGenerate = Boolean(prompt.trim() && !referenceImporting && activeBatches.length < MAX_CONCURRENT_BATCHES
+  const canGenerate = Boolean(prompt.trim() && !referenceImporting && activeBatchCount < MAX_CONCURRENT_BATCHES
     && selectedImageModel?.available && (generationMode === 'text' || (maxReferenceImages > 0 && referenceImages.length > 0 && referenceImages.length <= maxReferenceImages)));
 
   return (
@@ -575,7 +625,7 @@ export default function ImageGenPage() {
         <section className="ig-gallery" aria-label="我的作品">
           <div className="ig-gallery-content">
             {generatedImages.length > 0 && <section className="ig-result-section"><h3>本次生成<span>{generatedImages.length} 张</span></h3><div className="ig-artwork-grid">{generatedImages.map((url, index) => <ImageCard key={url + index} url={url} index={index} onPreview={() => setLightboxUrl(url)} onEdit={() => void continueEditing(url)} editing={referenceImporting} />)}</div></section>}
-            {activeBatches.map((batch, batchIndex) => <section key={batch.id} className="ig-batch"><header><div><h3>生成中 · 批次 {batchIndex + 1}</h3><p title={batch.prompt}>{batch.statusMessage || batch.prompt}</p></div>{batch.persisted || batch.contentId ? <span className="ig-processing"><Loader2 size={14} className="ig-spin" />后台处理中</span> : <button type="button" className="ig-text-button" onClick={() => handleCancelBatch(batch.id)}><Square size={13} />取消本批</button>}</header><div className="ig-artwork-grid">{batch.images.map((url, index) => url ? <ImageCard key={index} url={url} index={index} onPreview={() => setLightboxUrl(url)} onEdit={() => void continueEditing(url)} editing={referenceImporting} /> : batch.failedIndexes.includes(index) ? <div className="ig-failed" key={index}><AlertCircle size={24} /><span>图片 {index + 1} 生成失败</span></div> : <PlaceholderCard key={index} index={index} progress={batch.progresses[index] || 0} />)}</div></section>)}
+            {activeBatches.map((batch, batchIndex) => <section key={batch.id} className="ig-batch"><header><div><h3>{batchPhaseLabel(batch.phase)} · {batch.contentId ? `任务 #${batch.contentId}` : `批次 ${batchIndex + 1}`}</h3><p title={batch.prompt}>{batch.statusMessage || batch.prompt}</p></div>{batch.persisted || batch.contentId ? <span className="ig-processing">{batchPhaseLabel(batch.phase)}</span> : <button type="button" className="ig-text-button" onClick={() => handleCancelBatch(batch.id)}><Square size={13} />取消本批</button>}</header><div className="ig-artwork-grid">{batch.images.map((url, index) => url ? <ImageCard key={index} url={url} index={index} onPreview={() => setLightboxUrl(url)} onEdit={() => void continueEditing(url)} editing={referenceImporting} /> : batch.phase === 'failed' || batch.failedIndexes.includes(index) ? <div className="ig-failed" key={index}><AlertCircle size={24} /><span>图片 {index + 1} 生成失败</span></div> : <PlaceholderCard key={index} index={index} progress={batch.progresses[index] || 0} phase={batch.phase} />)}</div></section>)}
 
             {visibleHistory.length > 0 && <section className="ig-result-section"><div className="ig-artwork-grid">{visibleHistory.map(item => <article className="ig-artwork" key={item.id}>
               {item.missing ? <div className="ig-missing"><AlertCircle size={25} /><strong>原文件暂时无法读取</strong><div><button type="button" className="ig-text-button" disabled={recoveringHistoryIds.has(Number.parseInt(item.id.split('_')[0], 10))} onClick={() => void recoverHistoryImage(item)}>{recoveringHistoryIds.has(Number.parseInt(item.id.split('_')[0], 10)) ? '获取中…' : '重新获取'}</button><button type="button" className="ig-text-button" onClick={() => void deleteHistoryRecord(item)}>删除</button></div></div>
@@ -623,7 +673,7 @@ export default function ImageGenPage() {
               {!managedLimits && !['gpt-image-2','gpt-image-2-mingfei'].includes(selectedModel) && <span className="ig-default-quality">默认画质</span>}
             </div></details>
             <div className="ig-submit-section">{displayRate !== undefined && <span className="ig-estimate" title="预计费用">¥{(Number(displayRate) * imageCount).toFixed(2)}</span>}
-              <button type="submit" className="ig-submit" disabled={!canGenerate} aria-label={activeBatches.length >= MAX_CONCURRENT_BATCHES ? '已达到并发批次上限' : generationMode === 'image' ? '开始改图' : '开始生成图片'} title="Enter 生成"><ArrowUpRight size={20} /><span>生成</span></button>
+              <button type="submit" className="ig-submit" disabled={!canGenerate} aria-label={activeBatchCount >= MAX_CONCURRENT_BATCHES ? '已达到并发批次上限' : generationMode === 'image' ? '开始改图' : '开始生成图片'} title="Enter 生成"><ArrowUpRight size={20} /><span>生成</span></button>
             </div>
           </div>
           <span className="ig-sr-only" role="status">{referenceImporting ? '正在读取参考图' : referenceNotice}</span>

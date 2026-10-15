@@ -44,7 +44,8 @@ export interface ImageGenerateParams {
 }
 
 export interface ImageSSEEvent {
-  type: 'status' | 'queue' | 'progress' | 'content' | 'image_ready' | 'image_error' | 'complete' | 'error';
+  type: 'content_id' | 'disconnected' | 'status' | 'queue' | 'progress' | 'content' | 'image_ready' | 'image_error' | 'complete' | 'error';
+  status?: string;
   progress?: number;
   index?: number;               // 多图时的图片索引
   total?: number;               // 多图总数
@@ -157,54 +158,49 @@ export function generateImage(
   const controller = new AbortController();
   const token = localStorage.getItem('token');
 
+  let terminal = false;
+  let contentId: number | undefined;
+  const emit = (event: ImageSSEEvent) => {
+    if (controller.signal.aborted || terminal) return;
+    contentId = event.contentId || contentId;
+    if (event.type === 'complete' || event.type === 'error') terminal = true;
+    onEvent({ ...event, contentId });
+  };
+  const disconnected = () => emit({ type: 'disconnected', contentId,
+    message: '实时连接已断开，正在核实后台结果，请勿重复提交' });
   fetch('/api/image-gen/generate', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(params),
-    signal: controller.signal,
-  })
-    .then(async (response) => {
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        onEvent({ type: 'error', message: err.error || `请求失败 (${response.status})` });
-        return;
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        onEvent({ type: 'error', message: '无响应流' });
-        return;
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(params), signal: controller.signal,
+  }).then(async response => {
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      emit({ type: 'error', message: err.error || `请求失败 (${response.status})` });
+      return;
+    }
+    const reader = response.body?.getReader();
+    if (!reader) { disconnected(); return; }
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const consume = (line: string) => {
+      if (!line.startsWith('data:')) return;
+      const data = line.slice(5).trim();
+      if (!data || data === '[DONE]') return;
+      let event: ImageSSEEvent;
+      try { event = JSON.parse(data); } catch { return; }
+      emit(event);
+    };
+    try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
+        buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-            try {
-              const event: ImageSSEEvent = JSON.parse(line.slice(6));
-              onEvent(event);
-            } catch { /* skip */ }
-          }
-        }
+        lines.forEach(consume);
+        if (done) { consume(buffer); break; }
       }
-    })
-    .catch((err) => {
-      if (err.name !== 'AbortError') {
-        onEvent({ type: 'error', message: err.message });
-      }
-    });
-
+      if (!terminal) disconnected();
+    } finally { reader.releaseLock(); }
+  }).catch(() => { if (!controller.signal.aborted) disconnected(); });
   return controller;
 }
