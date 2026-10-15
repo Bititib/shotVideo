@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 import { canAccessVideoRecord, createVideoContentSignature, extractToken, filterRoutableModels, normalizeVideoApiStatus, saveApiImageAssets, verifyVideoContentSignature, videoTaskFailureDetails, videoTaskQueueDetails } from '../server/routes/v1.js';
 import { TokenService } from '../server/services/tokenService.js';
 import { ContentService } from '../server/services/contentService.js';

@@ -21,7 +21,7 @@ interface EndpointDoc {
   responseExample: string;
 }
 
-export default function DocsPage() {
+export default function DocsPage({ embedded = false }: { embedded?: boolean }) {
   const [activeTab, setActiveTab] = useState<string>('getting-started');
   const [copiedText, setCopiedText] = useState<string | null>(null);
   const [langTab, setLangTab] = useState<'curl' | 'python'>('curl');
@@ -427,7 +427,7 @@ print(resp.json())`,
   return (
     <div className="docs-page min-h-screen bg-[#09090b] text-zinc-100 p-4 md:p-8">
       {/* 头部面板 */}
-      <div className="max-w-6xl mx-auto mb-8 border border-zinc-800/60 bg-zinc-950/80 backdrop-blur-md rounded-2xl p-6 relative overflow-hidden">
+      {!embedded && <div className="max-w-6xl mx-auto mb-8 border border-zinc-800/60 bg-zinc-950/80 backdrop-blur-md rounded-2xl p-6 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-80 h-80 bg-rose-500/5 rounded-full blur-[100px] pointer-events-none" />
         <div className="absolute bottom-0 left-0 w-80 h-80 bg-blue-500/5 rounded-full blur-[100px] pointer-events-none" />
 
@@ -456,7 +456,7 @@ print(resp.json())`,
             </button>
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* 两栏主体布局 */}
       <div className="max-w-6xl mx-auto flex flex-col lg:flex-row gap-6">

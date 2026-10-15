@@ -21,7 +21,7 @@ const ImageGenPage = lazy(() => import('./pages/analysis/ImageGenPage'));
 const TtsPage = lazy(() => import('./pages/analysis/TtsPage'));
 const HistoryPage = lazy(() => import('./pages/analysis/HistoryPage'));
 const ProfilePage = lazy(() => import('./pages/analysis/ProfilePage'));
-const DocsPage = lazy(() => import('./pages/DocsPage'));
+const DeveloperPage = lazy(() => import('./pages/DeveloperPage'));
 const AdminLayout = lazy(() => import('./pages/admin/AdminLayout'));
 const DashboardPage = lazy(() => import('./pages/admin/DashboardPage'));
 const UsersPage = lazy(() => import('./pages/admin/UsersPage'));
@@ -95,7 +95,8 @@ export default function App() {
           <Route path="image-gen" element={<ImageGenPage />} />
           <Route path="tts" element={<TtsPage />} />
           <Route path="history" element={<ApiKeyRoute><HistoryPage /></ApiKeyRoute>} />
-          <Route path="docs" element={<DocsPage />} />
+          <Route path="docs" element={<DeveloperPage />} />
+          <Route path="models" element={<Navigate to="/app/docs?tab=models" replace />} />
           <Route path="profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
         </Route>
         <Route path="/app/video/studio" element={<VideoStudioPage />} />

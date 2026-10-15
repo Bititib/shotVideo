@@ -18,7 +18,7 @@ const navItems: Array<{ to: string; icon: typeof PlaySquare; label: string; colo
   { to: '/app/image-gen', icon: ImageIcon, label: '图片生成', color: 'text-pink-400', feature: 'image_gen' },
   { to: '/app/tts', icon: Volume2, label: '语音合成', color: 'text-yellow-400', feature: 'tts' },
   { to: '/app/history', icon: History, label: '生成记录', color: 'text-amber-400', feature: 'history', requiresApiKey: true },
-  { to: '/app/docs', icon: FileText, label: '接口文档', color: 'text-rose-400', feature: 'docs' },
+  { to: '/app/docs', icon: FileText, label: '开发者中心', color: 'text-rose-400', feature: 'docs' },
 ];
 
 const tierColors: Record<string, string> = {

@@ -29,6 +29,7 @@ import contentRoutes from './routes/content.js';
 import userTokenRoutes from './routes/userTokens.js';
 import feedbackRoutes from './routes/feedback.js';
 import canvasRoutes from './routes/canvas.js';
+import developerRoutes from './routes/developer.js';
 
 import { AdminService } from './services/adminService.js';
 
@@ -83,6 +84,7 @@ export async function createApp() {
   app.use('/api/video-batches', videoBatchRoutes);
   app.use('/api/image-gen', privateReferences, imageGenRoutes);
   app.use('/api/tokens', userTokenRoutes);
+  app.use('/api/developer', developerRoutes);
   app.use('/api/org', orgRoutes);
   app.use('/api/contents', contentRoutes);
   app.use('/api/feedback', feedbackRoutes);

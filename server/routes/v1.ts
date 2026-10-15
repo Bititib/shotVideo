@@ -3,10 +3,9 @@ import { isZonghengChannel, zonghengBaseUrl, buildZonghengVideoPayload, validate
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
 import { patchZonghengTask, reviewZonghengTask, zonghengOrder } from '../services/zonghengTaskService.js';
 import { generateZonghengImages } from '../services/zonghengImageService.js';
-import { createVideoAliasChecker } from '../services/modelSaleService.js';
 import { handleSpecificationGeneration } from '../services/specificationGenerationService.js';
 import { getModelSpecifications, getModelSpecification } from '../services/modelRoutingService.js';
-import { resolvePublicModelId, publicModelName } from '../services/publicModelNameService.js';
+import { resolvePublicModelId } from '../services/publicModelNameService.js';
 import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
 import { publishReferenceUrl } from '../services/publicReferenceService.js';
 import { reserveCharge } from '../services/billingReservation.js';
@@ -17,7 +16,8 @@ import { patchHayaTask, reviewHayaTask } from '../services/hayaTaskService.js';
 import { Router, Request, Response } from 'express';
 import { TokenService } from '../services/tokenService.js';
 import { ChannelService } from '../services/channelService.js';
-import { getEnabledPublicModels } from '../services/modelCatalogService.js';
+import { getAccessibleModels, getAccessibleModelIds, callableModelId } from '../services/modelAccessService.js';
+export { filterRoutableModels, getAccessibleModels, getAccessibleModelIds } from '../services/modelAccessService.js';
 import { PricingService } from '../services/pricingService.js';
 import { extractImageUpstreamTaskId } from '../services/imageTaskMetadataService.js';
 import { BalanceService, type BalanceDeduction } from '../services/balanceService.js';
@@ -166,37 +166,6 @@ export function extractToken(req: Pick<Request, 'headers'>): string | null {
   const apiKeyHeader = req.headers['x-api-key'];
   const apiKey = Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader;
   return typeof apiKey === 'string' && apiKey.trim() ? apiKey.trim() : null;
-}
-
-export function filterRoutableModels(
-  modelIds: string[],
-  activeChannels: Array<{ supportedModels: string[] }>,
-): string[] {
-  const hasWildcardChannel = activeChannels.some(ch => ch.supportedModels.includes('*'));
-  if (hasWildcardChannel) return modelIds;
-
-  const routableModels = new Set(
-    activeChannels.flatMap(ch => ch.supportedModels.filter(modelId => modelId !== '*')),
-  );
-  return modelIds.filter(modelId => routableModels.has(modelId));
-}
-
-/** Public discovery uses registered, enabled models; execution keeps its existing routing. */
-export function getAccessibleModels(token: { allowedModels: string[] }) {
-  const registeredModels = getEnabledPublicModels();
-  const activeChannels = ChannelService.getActiveChannels();
-  const routingChannels: Array<{ supportedModels: string[] }> = [...activeChannels, ...getModelSpecifications().map(spec => ({ supportedModels: [spec.modelId] }))];
-  if (hasHmStudioOverflowChannel(activeChannels)) {
-    routingChannels.push({ supportedModels: [HM_STUDIO_PRIMARY_VIDEO_MODEL] });
-  }
-  const checkAlias = createVideoAliasChecker();
-  const routable = new Set(filterRoutableModels(registeredModels.map(model => model.modelId), routingChannels));
-  return registeredModels.filter(model => routable.has(model.modelId)
-    && (token.allowedModels.length === 0 || token.allowedModels.includes(model.modelId) || getModelSpecification(model.modelId)?.aliases.some(alias => token.allowedModels.includes(alias) && !checkAlias(getModelSpecification(model.modelId)!, alias))));
-}
-
-export function getAccessibleModelIds(token: { allowedModels: string[] }): string[] {
-  return getAccessibleModels(token).map(model => model.modelId);
 }
 
 /** 仅允许创建任务的 Token（或同一用户的旧任务）访问本地视频记录。 */
@@ -604,7 +573,7 @@ router.get('/models', (req: Request, res: Response) => {
   res.json({
     object: 'list',
     data: modelList.map(model => ({
-      id: getModelSpecification(model.modelId) ? model.modelId : publicModelName(model),
+      id: callableModelId(model),
       name: model.displayName || model.modelId,
       canonical_id: model.modelId,
       object: 'model',

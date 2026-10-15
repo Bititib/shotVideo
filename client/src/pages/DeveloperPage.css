@@ -1,0 +1,26 @@
+.developer-page { max-width:1440px; margin:auto; padding:32px clamp(18px,3vw,42px); color:var(--earth-ink); }
+.developer-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:22px; margin-bottom:26px; }
+.developer-eyebrow { font-size:10px; letter-spacing:1.8px; font-weight:600; color:var(--earth-muted); }
+.developer-heading h1 { font-size:28px; font-weight:650; letter-spacing:-.8px; margin:7px 0; }
+.developer-heading > div > p:last-child { color:var(--earth-muted); font-size:12px; line-height:1.8; }
+.developer-base { min-width:0; position:relative; }
+.developer-base > span { color:var(--earth-muted); font-size:10px; letter-spacing:1px; }
+.developer-base > div { display:flex; align-items:center; gap:10px; margin-top:5px; }
+.developer-base code { font-size:12px; overflow-wrap:anywhere; }
+.developer-base button { display:flex; padding:7px; border-radius:6px; color:var(--earth-muted); cursor:pointer; }
+.developer-base button:hover { background:var(--earth-primary-soft); color:var(--earth-primary); }
+.developer-base small { position:absolute; top:100%; right:0; font-size:10px; color:var(--earth-primary); }
+.developer-tabs { display:flex; gap:24px; border-bottom:1px solid var(--earth-line); margin-bottom:24px; }
+.developer-tabs > button { display:flex; align-items:center; gap:8px; padding:13px 2px; margin-bottom:-1px; border-bottom:2px solid transparent; color:var(--earth-muted); font-size:13px; cursor:pointer; }
+.developer-tabs > button[aria-selected=true] { border-bottom-color:var(--earth-primary); color:var(--earth-primary); font-weight:600; }
+.developer-page :focus-visible { outline:2px solid var(--earth-primary); outline-offset:3px; }
+.developer-page [hidden] { display:none !important; }
+.developer-page .api-model-page { max-width:none; padding:0; }
+.developer-page .docs-page { min-height:0; padding:0; background:transparent !important; }
+.developer-page .docs-page > div { max-width:none; }
+.developer-loading { padding:45px 0; text-align:center; font-size:13px; color:var(--earth-muted); }
+.developer-login { padding:64px 20px; display:flex; flex-direction:column; align-items:center; gap:12px; color:var(--earth-muted); text-align:center; }
+.developer-login h2 { color:var(--earth-ink); font-size:18px; font-weight:600; }
+.developer-login p { font-size:13px; }
+.developer-login button { margin-top:6px; padding:9px 20px; border-radius:8px; background:var(--earth-primary); color:var(--earth-surface-raised); font-size:12px; cursor:pointer; }
+@media(max-width:640px) { .developer-page { padding-top:24px; } .developer-heading { gap:14px; margin-bottom:20px; } .developer-heading h1 { font-size:24px; } .developer-base { width:100%; } .developer-tabs { margin-bottom:18px; } }
