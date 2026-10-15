@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { canConnect, type CanvasDocument, type CanvasNode } from './model';
-import { REFERENCE_PROMPT_LIMIT, referenceKinds, referenceLabel, type ReferenceBindings } from './referenceMentions';
+import { referenceKinds, referenceLabel, type ReferenceBindings } from './referenceMentions';
 import { connectionError } from './videoInputs';
 
 type Props = {
@@ -111,7 +111,7 @@ export default function ReferencePrompt(props: Props) {
     requestAnimationFrame(() => {input.current?.focus(); input.current?.setSelectionRange(caret,caret);});
   };
   return <>
-    <textarea ref={input} id="canvas-prompt" className="studio-prompt" value={props.value} maxLength={REFERENCE_PROMPT_LIMIT}
+    <textarea ref={input} id="canvas-prompt" className="studio-prompt" value={props.value}
       aria-autocomplete="list" aria-controls={query ? 'reference-mention-list' : undefined}
       aria-activedescendant={query && nodes[activeIndex] ? `reference-mention-${activeIndex}` : undefined}
       onChange={e => {props.onChange(e.target.value); inspect(e.target.value,e.target.selectionStart);}}
@@ -129,7 +129,6 @@ export default function ReferencePrompt(props: Props) {
     {props.kind !== 'audio' && <button className="studio-mention-trigger" onClick={() => {
       const caret=input.current?.selectionStart ?? props.value.length;
       const value=props.value.slice(0,caret)+'@'+props.value.slice(caret);
-      if(value.length > REFERENCE_PROMPT_LIMIT) return;
       props.onChange(value);input.current?.focus();inspect(value,caret+1);
       requestAnimationFrame(()=>input.current?.setSelectionRange(caret+1,caret+1));
     }}>@ 引用素材</button>}

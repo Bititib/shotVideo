@@ -225,9 +225,12 @@ describe('managed video execution', () => {
     setup();
     const submit = vi.spyOn(adapters, 'submitSpecificationVideo').mockRejectedValueOnce(new adapters.SpecificationUpstreamError('capacity', true)).mockResolvedValueOnce('accepted-2');
     const poll = vi.spyOn(adapters, 'pollSpecificationVideo').mockResolvedValue({ status: 'completed', progress: 100, resultUrl: 'https://result.invalid/video.mp4', error: '' } as any);
-    await handleSpecificationGeneration(req(), response(), 'video');
+    const request = req(); request.body.prompt = '镜头'.repeat(10000) + '结尾';
+    await handleSpecificationGeneration(request, response(), 'video');
     expect(submit).toHaveBeenCalledTimes(2); expect(poll).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }), 'accepted-2');
+    expect(submit.mock.calls.every(call => call[1].prompt === request.body.prompt)).toBe(true);
     const row = db.select().from(contents).all().at(-1)!, meta = JSON.parse(row.metadata);
+    expect(row.inputText).toBe(request.body.prompt);
     expect(row.status).toBe('completed'); expect(meta.channelId).toBe(2); expect(meta.videoId).toBe('accepted-2');
     expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(98);
   });
@@ -343,10 +346,12 @@ describe('managed adapter protocol boundaries', () => {
     const payload=JSON.parse(send.mock.calls[0][1].body);
     expect(payload.image_refs).toEqual(request.images);expect(payload.audio_refs).toEqual(request.audios);expect(payload.duration).toBe(15);
   });
-  it('uses the native HM model and multipart protocol without truncating references', async () => {
+  it('uses the native HM protocol without truncating a 12000-character prompt or references', async () => {
     const send=vi.fn().mockResolvedValue(json({id:'hm-accepted'}));vi.stubGlobal('fetch',send);
-    await adapters.submitSpecificationVideo(target('hmstudio','seedance_v2.5'),input({reference_images:['https://assets.invalid/a.png','https://assets.invalid/b.png']}),vi.fn());
+    const prompt = '分镜'.repeat(6000) + '必须保留的结尾';
+    await adapters.submitSpecificationVideo(target('hmstudio','seedance_v2.5'),input({prompt,reference_images:['https://assets.invalid/a.png','https://assets.invalid/b.png']}),vi.fn());
     const form=send.mock.calls[0][1].body as FormData;
+    expect(form.get('prompt')).toBe(prompt);
     expect(form.get('model')).toBe('MINIMAX-H3-2.5采样');expect(form.get('function_mode')).toBe('omni_reference');
     expect(String(form.get('materials'))).toContain('https://assets.invalid/a.png');
     expect(String(form.get('materials'))).toContain('https://assets.invalid/b.png');

@@ -10,6 +10,18 @@ const workspace = (): Workspace => {
   return { version: 2, activeId: doc.id, projects: [doc], cloudRevision: 0, cloudPending: true };
 };
 describe('canvas cloud persistence and recovery', () => {
+  it('saves and reopens a long prompt without losing its final reference', () => {
+    const db = new Database(':memory:');
+    try {
+      const store = createCanvasWorkspaceStore(db), original = workspace(), doc = original.projects[0];
+      const prompt = '分镜脚本'.repeat(5000) + '@图片1 最后一个镜头';
+      doc.drafts = {general:{kind:'video',prompt,model:'seedance_v2.5',ratio:'16:9',resolution:'720p',seconds:30,count:1,referenceBindings:{图片1:'actor'}}};
+      expect(store.put(1, 0, original)).toEqual({conflict:false,revision:1});
+      const reopened = createCanvasWorkspaceStore(db).get(1).workspace.projects[0];
+      expect(reopened.drafts?.general.prompt).toBe(prompt);
+      expect(reopened.drafts?.general.referenceBindings).toEqual({图片1:'actor'});
+    } finally { db.close(); }
+  });
   it('isolates owners and rejects a stale write without replacing cloud content', () => {
     const db = new Database(':memory:');
     try {

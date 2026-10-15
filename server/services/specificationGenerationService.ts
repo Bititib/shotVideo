@@ -48,7 +48,8 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
   const firstFrame = body.first_frame || body.first_frame_url || '';
   const lastFrame = body.last_frame || body.last_frame_url || body.end_frame_url || '';
   const outputs = Number(body.n ?? 1), seconds = Number(body.video_length ?? body.seconds ?? body.duration ?? 6);
-  if (typeof body.prompt !== 'string' || !body.prompt.trim() || body.prompt.length > 10000) throw fail('描述必须是 1–10000 字符的文本');
+  if (typeof body.prompt !== 'string' || !body.prompt.trim()) throw fail('请输入描述');
+  if (kind === 'image' && body.prompt.length > 10000) throw fail('图片描述必须是 1–10000 字符的文本');
   if (!Number.isInteger(outputs) || outputs < 1 || outputs > 4) throw fail('输出数量必须为 1–4');
   if (kind === 'video' && (!Number.isFinite(seconds) || seconds <= 0 || outputs !== 1)) throw fail('视频时长或输出数量无效');
   if (typeof firstFrame !== 'string' || typeof lastFrame !== 'string') throw fail('首尾帧必须是图片 URL 或 Base64');

@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { arrange, bounds, canConnect, checkpoint, duplicateSelection, fitView, intersects, newDocument, newNode, parseDocument, screenToWorld, stepHistory, templateNodes, zoomAround } from '../client/src/canvas/model';
 
 describe('canvas editing invariants', () => {
+  it.each([12000, 20000, 60000])('preserves %i-character prompts in drafts, nodes and versions after saving and reopening', length => {
+    const prompt = '完整分镜'.repeat(Math.ceil(length / 4)).slice(0, length) + '@图片1 结尾';
+    const node = {...newNode('video', {x:0,y:0}), text:prompt, versions:[{id:'version',src:'/video.mp4',prompt,createdAt:1}]};
+    const doc = {...newDocument(), nodes:[node], drafts:{[node.id]:{kind:'video',prompt,model:'seedance_v2.5',ratio:'16:9',resolution:'720p',seconds:30,count:1,referenceBindings:{图片1:'actor'}}}};
+    const restored = parseDocument(JSON.parse(JSON.stringify(doc)));
+    expect(restored.drafts?.[node.id].prompt).toBe(prompt);
+    expect(restored.drafts?.[node.id].referenceBindings).toEqual({图片1:'actor'});
+    expect(restored.nodes[0].text).toBe(prompt);
+    expect(restored.nodes[0].versions?.[0].prompt).toBe(prompt);
+  });
   it('keeps the world point under the cursor stable even at zoom limits', () => {
     const view = { x: -400, y: 180, zoom: .6 }, cursor = { x: 413, y: 208 };
     for (const factor of [.0001, .8, 1.2, 100]) {

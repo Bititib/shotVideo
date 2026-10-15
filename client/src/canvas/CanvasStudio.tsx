@@ -1,4 +1,4 @@
-import { bindReferences, referenceLabel, insertReference, referenceInsertionError } from './referenceMentions';
+import { bindReferences, referenceLabel, insertReference } from './referenceMentions';
 import BrandMark from '../components/BrandMark';
 import ProjectLibrary from './ProjectLibrary';
 import AssetPicker from './AssetPicker';
@@ -754,12 +754,6 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
 <button onClick={() => update({ ...doc, view: zoomAround(doc.view, { x: size.width / 2, y: size.height / 2 }, 1 / 1.2) })} aria-label="缩小画布"><Minus size={15} /></button><button onClick={() => update({ ...doc, view: zoomAround(doc.view, { x: size.width / 2, y: size.height / 2 }, 1 / doc.view.zoom) })} title="恢复 100%">{Math.round(doc.view.zoom * 100)}%</button><button onClick={() => update({ ...doc, view: zoomAround(doc.view, { x: size.width / 2, y: size.height / 2 }, 1.2) })} aria-label="放大画布"><Plus size={15} /></button><button onClick={() => fit()} aria-label="查看全部素材" title="适应画布 F"><Maximize size={15} /></button><hr/><button aria-label={showConnections ? '隐藏连线' : '显示连线'} title="显示 / 隐藏连线" onClick={() => setShowConnections(v => !v)}>{showConnections ? <Eye size={16}/> : <EyeOff size={16}/>}</button><button aria-label={dark ? '浅色画布' : '深色画布'} title={dark ? '切换到灵感浅色 · 鼠尾草绿 / 暖沙 / 奶油米' : '切换到经典黑色'} onClick={() => { const next = !dark; setDark(next); localStorage.setItem('canvas-theme', next ? 'dark' : 'light'); }}>{dark ? <Sun size={16}/> : <Moon size={16}/>}</button><hr/><button className="studio-icon" disabled={!history.past.length || running} onClick={() => undo('undo')} aria-label="撤销" title="撤销 Ctrl / ⌘ Z"><Undo2 size={17} /></button><button className="studio-icon" disabled={!history.future.length || running} onClick={() => undo('redo')} aria-label="重做" title="重做 Ctrl / ⌘ Shift Z"><Redo2 size={17} /></button></div>
         </div>
       {panel && <div ref={composerElement} className="studio-composer-anchor" data-canvas-ui style={{ left: composerLeft, top: composerTop, width: composerWidth }}><GeneratorPanel document={doc} projects={projects} onMentionReference={(source,draft,start,end) => {
-        // Check the actual replacement before creating nodes or changing connections.
-        const existing = source.origin?.projectId === docRef.current.id ? docRef.current.nodes.find(n => n.id === source.origin?.nodeId) : undefined;
-        const prospectiveSource = existing || {...source, id: uid()};
-        const prospectiveBindings = bindReferences(draft.referenceBindings, [...references, prospectiveSource]);
-        const error = referenceInsertionError(insertReference(draft.prompt, start, end, referenceLabel(prospectiveBindings, prospectiveSource.id)!).prompt);
-        if (error) return {error};
         const target=referenceTarget(draft.kind);
         // Creating a generator from selected media must retain the inputs already mentioned.
         const carry=references.filter(node=>!docRef.current.edges.some(edge=>edge.from===node.id&&edge.to===target.id))

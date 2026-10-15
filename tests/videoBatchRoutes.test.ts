@@ -73,10 +73,20 @@ describe('batch HTTP endpoints', () => {
     })).toThrow('素材格式或数量不正确');
   });
 
-  it('requires login and rejects oversized prompts before price checks or reservation', async () => {
+  it('requires login and rejects empty prompts before price checks or reservation', async () => {
     expect((await request('', undefined, 0)).status).toBe(401);
-    const result = await request('/quote', { ...input, creatives: [{ ...input.creatives[0], prompt: '字'.repeat(5001) }] });
-    expect(result.status).toBe(400); expect(result.body.error).toContain('5000'); expect(fetch).not.toHaveBeenCalled(); expect(balance()).toBe(100);
+    const result = await request('/quote', { ...input, creatives: [{ ...input.creatives[0], prompt: '   ' }] });
+    expect(result.status).toBe(400); expect(result.body.error).toContain('请输入视频描述'); expect(fetch).not.toHaveBeenCalled(); expect(balance()).toBe(100);
+  });
+  it('quotes and stores a 20000-character creative without truncation', async () => {
+    const prompt = '字'.repeat(20000) + '保留结尾';
+    const longInput = {...input, creatives:[{...input.creatives[0], prompt}]};
+    expect((await request('/quote', longInput)).status).toBe(200);
+    expect(balance()).toBe(100);
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string).prompt).toBe(prompt);
+    expect((await request('', longInput)).status).toBe(200);
+    const row = sqlite.prepare('SELECT payload FROM video_batches').get() as any;
+    expect(JSON.parse(row.payload).creatives[0].prompt).toBe(prompt);
   });
   it.each([0, 101, 1.5])('rejects invalid quantity %s without reservation', async count => {
     expect((await request('', { ...input, creatives: [{ ...input.creatives[0], count }] })).status).toBe(400);

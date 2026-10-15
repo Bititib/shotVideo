@@ -83,7 +83,6 @@ const SI_YUE_TIAN_SEEDANCE_25_MODELS = new Set([
 ]);
 const isHmStudioVideoModel = (modelId: string) => HM_STUDIO_VIDEO_MODEL_IDS.has(modelId);
 const VIDEO_HISTORY_PAGE_SIZE = 6;
-const MAX_VIDEO_PROMPT_LENGTH = 5000;
 function getVideoPlayUrl(url: string | null) {
   if (!url) return '';
   if (url.startsWith('/uploads/')) {
@@ -1444,10 +1443,6 @@ export default function VideoPage() {
   const handleGenerate = useCallback(async () => {
     if (replicationLoading) return;
     if (!prompt.trim()) return;
-    if (prompt.trim().length > MAX_VIDEO_PROMPT_LENGTH) {
-      setError(`提示词字数不能超过 ${MAX_VIDEO_PROMPT_LENGTH} 字`);
-      return;
-    }
     if (!guard()) return;
     if (!videoQuote.quote || videoQuote.loading) { setError(videoQuote.error || '正在预估费用，请稍候'); return; }
     if (currentModel?.routingLimits) {
@@ -2090,8 +2085,8 @@ export default function VideoPage() {
                     提示词脚本编辑器
                   </span>
                   <div className="flex items-center gap-3">
-                    <span className={`font-mono ${prompt.trim().length > MAX_VIDEO_PROMPT_LENGTH ? 'text-red-500 font-semibold' : ''}`}>
-                      {prompt.length} / {MAX_VIDEO_PROMPT_LENGTH} 字
+                    <span className="font-mono">
+                      {prompt.length} 字符
                     </span>
                     <button
                       onClick={() => setIsMaximized(prev => !prev)}
@@ -2364,7 +2359,7 @@ export default function VideoPage() {
                   />
 
                   {/* 圆形发送按钮 */}
-                  <button onClick={handleGenerate} disabled={replicationLoading || !prompt.trim() || prompt.trim().length > MAX_VIDEO_PROMPT_LENGTH || Boolean(quoteUser && (!videoQuote.quote || videoQuote.loading))}
+                  <button onClick={handleGenerate} disabled={replicationLoading || !prompt.trim() || Boolean(quoteUser && (!videoQuote.quote || videoQuote.loading))}
                     className="absolute right-3 bottom-3 w-11 h-11 rounded-full flex items-center justify-center transition-all bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/20 disabled:opacity-30 disabled:cursor-not-allowed z-10" aria-label="开始生成视频">
                     <Play className="w-4 h-4 ml-0.5" />
                   </button>

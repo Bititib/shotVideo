@@ -1,11 +1,6 @@
 import type { CanvasNode, GenerationDraft } from './model';
 
 export type ReferenceBindings = Record<string, string>;
-export const REFERENCE_PROMPT_LIMIT = 5000;
-export function referenceInsertionError(prompt: string) {
-  const excess = prompt.length - REFERENCE_PROMPT_LIMIT;
-  return excess > 0 ? `插入引用后为 ${prompt.length} / ${REFERENCE_PROMPT_LIMIT} 字符，请先减少 ${excess} 个字符再引用。` : '';
-}
 export const referenceKinds = { image: '图片', video: '视频', audio: '音频' } as const;
 export function bindReferences(previous: ReferenceBindings = {}, nodes: CanvasNode[]): ReferenceBindings {
   const next = { ...previous };
