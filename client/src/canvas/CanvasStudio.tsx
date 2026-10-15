@@ -756,10 +756,14 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
       {panel && <div ref={composerElement} className="studio-composer-anchor" data-canvas-ui style={{ left: composerLeft, top: composerTop, width: composerWidth }}><GeneratorPanel document={doc} projects={projects} onMentionReference={(source,draft,start,end) => {
         if(draft.prompt.length + 20 > 5000) {setNotice('提示词过长，请先缩短再引用素材');return;}
         const target=referenceTarget(draft.kind);
-        const nodes=applyAssets([source],{id:target.id,mode:'reference'});
-        if(!nodes?.[0]) return;
+        // Creating a generator from selected media must retain the inputs already mentioned.
+        const carry=references.filter(node=>!docRef.current.edges.some(edge=>edge.from===node.id&&edge.to===target.id))
+          .map(node=>({...node,origin:{projectId:docRef.current.id,nodeId:node.id,title:docRef.current.title}}));
+        const nodes=applyAssets([...carry,source],{id:target.id,mode:'reference'});
+        const picked=nodes?.at(-1);
+        if(!picked) return;
         const bindings=bindReferences(draft.referenceBindings,nodes);
-        const result=insertReference(draft.prompt,start,end,referenceLabel(bindings,nodes[0].id)!);
+        const result=insertReference(draft.prompt,start,end,referenceLabel(bindings,picked.id)!);
         update({...docRef.current,drafts:{...docRef.current.drafts,[target.id]:{...draft,prompt:result.prompt,referenceBindings:bindings}}});
         return {...result,bindings};
       }} onPickReferences={kind => {const target=referenceTarget(kind);openAssets(target.id,'reference');}} onFocus={active ? focusActive : undefined} onReorderReference={active ? (id, direction) => { const incoming = docRef.current.edges.filter(e => e.to === active.id); const index = incoming.findIndex(e => e.from === id); const next = index + direction; if (index < 0 || next < 0 || next >= incoming.length) return; [incoming[index], incoming[next]] = [incoming[next], incoming[index]]; commit(d => ({...d, edges:[...d.edges.filter(e => e.to !== active.id), ...incoming]})); } : undefined} importing={importing} onUploadReferences={kind => uploadReferences(kind)} onDropReferences={(kind, files) => uploadReferences(kind, files)} key={active?.id || "general"} draft={doc.drafts?.[active?.id || "general"]} onDraft={draft => { const key = active?.id || "general"; if (JSON.stringify(docRef.current.drafts?.[key]) !== JSON.stringify(draft)) update({ ...docRef.current, drafts: { ...docRef.current.drafts, [key]: draft } }); }} onRemoveReference={active && (active.generator || !active.src) ? id => { commit(d => ({ ...d, edges: d.edges.filter(e => !(e.from === id && e.to === active.id)) })); } : undefined} references={references} selected={active} busy={active?.job?.status === 'running'} onClose={() => setPanel(false)} onGenerate={options => void generate(options)} onConnect={() => { setLibrary(true); setNotice('选中一张图片即可作为参考；按 Shift 可选择多张。'); }} /></div>}

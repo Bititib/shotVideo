@@ -23,7 +23,7 @@ export function insertReference(prompt: string, start: number, end: number, labe
 /** Match the per-media order actually submitted by CanvasStudio, not visual position. */
 export function resolveReferenceMentions(prompt: string, bindings: ReferenceBindings, nodes: CanvasNode[], options: Pick<GenerationDraft, 'kind' | 'videoMode' | 'firstFrameId' | 'lastFrameId'>) {
   let error = '';
-  const resolved = prompt.replace(/@(图片|视频|音频)(\d+)(?!\d)/g, (token, kind, number) => {
+  const resolved = prompt.replace(/[@＠](图片|视频|音频)(\d+)(?!\d)/g, (token, kind, number) => {
     const node = nodes.find(n => n.id === bindings[kind + number]);
     if (!node?.src || node.kind === 'text' || node.job?.status === 'running') {
       error ||= `${token} 的素材已断开或不可用，请重新引用或删除提示词中的标记。`;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { CanvasDocument, CanvasNode } from './model';
-import { referenceLabel, type ReferenceBindings } from './referenceMentions';
+import { canConnect, type CanvasDocument, type CanvasNode } from './model';
+import { referenceKinds, referenceLabel, type ReferenceBindings } from './referenceMentions';
 import { connectionError } from './videoInputs';
 
 type Props = {
@@ -14,7 +14,7 @@ export default function ReferencePrompt(props: Props) {
   const input = useRef<HTMLTextAreaElement>(null);
   const menuPointer = useRef(false);
   const [query, setQuery] = useState<{start: number; end: number; text: string} | null>(null);
-  const [scope, setScope] = useState('upstream');
+  const [scope, setScope] = useState('canvas');
   const [pickError, setPickError] = useState('');
   const [index, setIndex] = useState(0);
   const [position, setPosition] = useState({left: 12, top: 12, width: 340, maxHeight: 320, transform: 'none'});
@@ -35,7 +35,7 @@ export default function ReferencePrompt(props: Props) {
   }, [Boolean(query)]);
   const inspect = (value: string, caret: number) => {
     setPickError('');
-    const match = /@([^@\s]{0,60})$/.exec(value.slice(0, caret));
+    const match = /[@＠]([^@＠\s]{0,60})$/.exec(value.slice(0, caret));
     if (!match || props.kind === 'audio') {setQuery(null); return;}
     setQuery({start: caret - match[0].length, end: caret, text: match[1]}); setIndex(0);
     const rect = input.current!.getBoundingClientRect();
@@ -46,12 +46,21 @@ export default function ReferencePrompt(props: Props) {
     setPosition({left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)), top, width, maxHeight: Math.max(100,Math.min(height,above ? rect.top-20 : window.innerHeight-top-12)), transform: above ? 'translateY(-100%)' : 'none'});
   };
   const local = props.document?.nodes ?? props.references;
+  // Existing media is an input to a NEW generation; only a generator/empty node is the actual target.
+  const target = props.target && (props.target.generator || !props.target.src) ? props.target : undefined;
+  const seen = new Set<string>();
+  const canvasCandidates = [...props.references, ...local].filter(node => {
+    if (seen.has(node.id)) return false;
+    seen.add(node.id); return true;
+  });
   const candidates = scope === 'upstream' ? props.references : scope === 'projects'
     ? (props.projects ?? []).filter(p => p.id !== props.document?.id).flatMap(p => p.nodes.map(n => ({...n, origin: {projectId:p.id, nodeId:n.id, title:p.title}})))
-    : local.map(n => props.document ? {...n, origin: {projectId:props.document.id, nodeId:n.id, title:props.document.title}} : n);
-  const nodes = candidates.filter(n => n.id !== props.target?.id && n.kind !== 'text' && n.src && n.job?.status !== 'running'
-    && !connectionError(n, {kind:props.kind} as CanvasNode)
-    && ((referenceLabel(props.bindings,n.id) ?? '')+' '+n.title+' '+(n.origin?.title ?? '')).toLowerCase().includes(query?.text.toLowerCase() ?? ''));
+    : canvasCandidates.map(n => props.document ? {...n, origin: {projectId:props.document.id, nodeId:n.id, title:props.document.title}} : n);
+  const nodes = candidates.filter(n => (scope === 'projects' || n.id !== target?.id) && n.kind !== 'text' && n.src && n.job?.status !== 'running'
+    && !connectionError(n, {...target, kind:props.kind} as CanvasNode)
+    && (scope === 'projects' || !target || !props.document || props.references.some(reference => reference.id === n.id) || canConnect(props.document.edges, n.id, target.id))
+    && ((referenceLabel(props.bindings,n.id) ?? '')+' '+referenceKinds[n.kind]+' '+n.title+' '+(n.origin?.title ?? '')).toLowerCase().includes(query?.text.toLowerCase() ?? ''));
+  const activeIndex = Math.min(index, Math.max(0, nodes.length - 1));
   const pick = (node: CanvasNode) => {
     if (!query) return;
     const caret = props.onPick(node, query.start, query.end);
@@ -63,17 +72,18 @@ export default function ReferencePrompt(props: Props) {
   return <>
     <textarea ref={input} id="canvas-prompt" className="studio-prompt" value={props.value} maxLength={5000}
       aria-autocomplete="list" aria-controls={query ? 'reference-mention-list' : undefined}
-      aria-activedescendant={query && nodes[index] ? `reference-mention-${index}` : undefined}
+      aria-activedescendant={query && nodes[activeIndex] ? `reference-mention-${activeIndex}` : undefined}
       onChange={e => {props.onChange(e.target.value); inspect(e.target.value,e.target.selectionStart);}}
+      onCompositionEnd={e => inspect(e.currentTarget.value, e.currentTarget.selectionStart)}
       onClick={e => inspect(e.currentTarget.value,e.currentTarget.selectionStart)}
       onBlur={e => {if (!menuPointer.current && !(e.relatedTarget as HTMLElement | null)?.closest('.studio-mention-menu')) setQuery(null);}}
       onKeyDown={e => {
         if (!query || e.nativeEvent.isComposing) return;
         if (['ArrowDown','ArrowUp','Enter','Escape'].includes(e.key)) {e.preventDefault();e.stopPropagation();}
         if (e.key === 'Escape') setQuery(null);
-        if (e.key === 'ArrowDown') setIndex(i => (i+1) % Math.max(1,nodes.length));
-        if (e.key === 'ArrowUp') setIndex(i => (i-1+nodes.length) % Math.max(1,nodes.length));
-        if (e.key === 'Enter' && nodes[index]) pick(nodes[index]);
+        if (e.key === 'ArrowDown') setIndex((activeIndex+1) % Math.max(1,nodes.length));
+        if (e.key === 'ArrowUp') setIndex((activeIndex-1+nodes.length) % Math.max(1,nodes.length));
+        if (e.key === 'Enter' && nodes[activeIndex]) pick(nodes[activeIndex]);
       }} placeholder={props.placeholder}/>
     {props.kind !== 'audio' && <button className="studio-mention-trigger" onClick={() => {
       const caret=input.current?.selectionStart ?? props.value.length;
@@ -91,7 +101,7 @@ export default function ReferencePrompt(props: Props) {
       <nav aria-label="引用来源">{[['upstream','上级节点'],['canvas','本项目 / 画布'],['projects','跨项目']].map(([id,label]) =>
         <button key={id} aria-pressed={scope===id} onClick={()=>{setScope(id);setIndex(0);}}>{label}</button>)}</nav>
       <div role="listbox" id="reference-mention-list" aria-label="可引用素材">{nodes.map((node,i) => <button key={(node.origin?.projectId ?? '')+node.id}
-        role="option" id={`reference-mention-${i}`} aria-selected={i===index}
+        role="option" id={`reference-mention-${i}`} aria-selected={i===activeIndex}
         onMouseDown={e => {if(e.button===0) {e.preventDefault(); pick(node);}}} onClick={()=>pick(node)}>
         {node.kind==='image' ? <img src={node.src} alt=""/> : <span className="studio-mention-media">{node.kind==='video'?'▶':'♫'}</span>}
         <span><strong>{referenceLabel(props.bindings,node.id) ? '@'+referenceLabel(props.bindings,node.id)+' · ' : ''}{node.title}</strong><small>{node.origin?.title || '已连接到当前节点'}</small></span>

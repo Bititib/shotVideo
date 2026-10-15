@@ -606,6 +606,25 @@ describe('project library folders', () => {
 
 
 describe('prompt reference mentions', () => {
+  it('offers the selected uploaded image as a reference for a new generation', async () => {
+    const image = { ...newNode('image', { x: 0, y: 0 }), title: '已上传角色图', src: '/selected-actor.png' };
+    render(<MemoryRouter><GeneratorPanel selected={image} document={{ ...newDocument(), nodes: [image] }} references={[image]} busy={false} onGenerate={vi.fn()} onClose={vi.fn()} onConnect={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button', { name: '@ 引用素材' }));
+    expect(screen.getByRole('option', { name: /已上传角色图/ })).toBeTruthy();
+    fireEvent.keyDown(screen.getByLabelText('你想创作什么？'), { key: 'Enter' });
+    expect((screen.getByLabelText('你想创作什么？') as HTMLTextAreaElement).value).toBe('@图片1 ');
+    await waitFor(() => expect(screen.getByRole('button', { name: '生成模型' }).textContent).toContain('Test Image'));
+  });
+  it('recognizes full-width mention input and resolves it to the correct reference', async () => {
+    const image = { ...newNode('image', { x: 0, y: 0 }), title: '角色参考', src: '/actor.png' };
+    render(<MemoryRouter><GeneratorPanel references={[image]} busy={false} onGenerate={vi.fn()} onClose={vi.fn()} onConnect={vi.fn()} /></MemoryRouter>);
+    const input = screen.getByLabelText('你想创作什么？');
+    fireEvent.change(input, { target: { value: '让＠', selectionStart: 2 } });
+    expect(screen.getByRole('option', { name: /角色参考/ })).toBeTruthy();
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect((input as HTMLTextAreaElement).value).toBe('让@图片1 ');
+    await waitFor(() => expect(screen.getByRole('button', { name: '生成模型' }).textContent).toContain('Test Image'));
+  });
   it('inserts a mouse-picked reference before blur can dismiss the menu, preserving surrounding text', async () => {
     const image={...newNode('image',{x:0,y:0}),title:'角色参考',src:'/actor.png'};
     render(<MemoryRouter><GeneratorPanel references={[image]} busy={false} onGenerate={vi.fn()} onClose={vi.fn()} onConnect={vi.fn()}/></MemoryRouter>);
@@ -665,11 +684,28 @@ describe('prompt reference mentions', () => {
     openSelectedComposer();
     const input=await screen.findByLabelText('你想创作什么？');
     fireEvent.change(input,{target:{value:'@',selectionStart:1}});
-    fireEvent.click(screen.getByRole('button',{name:'本项目 / 画布'}));
     fireEvent.click(screen.getByRole('option',{name:/花园参考/}));
     expect(board.current().edges.some(e=>e.from===image.id&&e.to===target.id)).toBe(true);
     expect((screen.getByLabelText('你想创作什么？') as HTMLTextAreaElement).value).toBe('@图片1 ');
     expect(board.current().drafts?.[target.id].referenceBindings?.['图片1']).toBe(image.id);
+  });
+  it('preserves the selected image when another mention creates a new generator', async () => {
+    const first = { ...newNode('image', { x: 0, y: 0 }), title: '角色原图', src: '/actor.png' };
+    const second = { ...newNode('image', { x: 400, y: 0 }), title: '场景参考', src: '/scene.png' };
+    const board = mount({ ...newDocument(), nodes: [first, second] });
+    fireEvent.pointerDown(screen.getByRole('article', { name: first.title }), { button: 0, pointerId: 1 });
+    fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'), { pointerId: 1 });
+    openSelectedComposer();
+    fireEvent.click(screen.getByRole('button', { name: '@ 引用素材' }));
+    fireEvent.click(screen.getByRole('option', { name: /角色原图/ }));
+    const prompt = '@图片1 和 @';
+    fireEvent.change(screen.getByLabelText('你想创作什么？'), { target: { value: prompt, selectionStart: prompt.length } });
+    fireEvent.click(screen.getByRole('option', { name: /场景参考/ }));
+    const target = board.current().nodes.find(node => node.generator)!;
+    expect(board.current().edges.filter(edge => edge.to === target.id).map(edge => edge.from)).toEqual([first.id, second.id]);
+    expect(board.current().drafts?.[target.id].referenceBindings).toMatchObject({ 图片1: first.id, 图片2: second.id });
+    expect((screen.getByLabelText('你想创作什么？') as HTMLTextAreaElement).value).toBe('@图片1 和 @图片2 ');
+    await waitFor(() => expect(screen.getByRole('button', { name: '生成模型' }).textContent).toContain('Test Image'));
   });
 });
 
