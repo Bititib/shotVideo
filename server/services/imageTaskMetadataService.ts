@@ -3,14 +3,10 @@ export function extractImageUpstreamTaskId(
   headers?: Pick<Headers, 'get'> | Record<string, string | string[] | undefined> | null,
 ): string {
   const data = Array.isArray(payload?.data) ? payload.data[0] : payload?.data;
-  const payloadValue = payload?.task_id
-    || payload?.taskId
-    || data?.task_id
-    || data?.taskId
-    || payload?.id
-    || data?.id;
-  if (payloadValue !== undefined && payloadValue !== null && String(payloadValue).trim()) {
-    return String(payloadValue).trim();
+  const values = [payload?.task_id, payload?.taskId, data?.task_id, data?.taskId,
+    payload?.request_id, payload?.requestId, data?.request_id, data?.requestId, payload?.id, data?.id];
+  for (const value of values) {
+    if ((typeof value === 'string' || typeof value === 'number') && String(value).trim()) return String(value).trim();
   }
 
   const headerNames = ['x-request-id', 'request-id', 'x-task-id', 'x-trace-id'];

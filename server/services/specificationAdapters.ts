@@ -1,5 +1,6 @@
 import { isAsyncVideoChannel, buildAsyncVideoPayload, asyncVideoCreateUrl, pollAsyncVideo } from './asyncVideoAdapter.js';
 import fs from 'node:fs';
+import { extractImageUpstreamTaskId } from './imageTaskMetadataService.js';
 import { isFunAiChannel, funAiBaseUrl, buildFunAiVideoPayload, pollFunAiTask, generateFunAiImage, FunAiApiError } from './funAiAdapter.js';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -56,7 +57,7 @@ export function publishSpecificationAsset(source: string, baseUrl: string): stri
   return publishReferenceUrl('/uploads/' + name, baseUrl);
 }
 const apiBase = (url: string) => url.replace(/\/+$/, '').replace(/\/v1$/i, '');
-async function post(url: string, channel: any, payload: unknown, onStarting: () => void) {
+async function post(url: string, channel: any, payload: unknown, onStarting: () => void, onParsed?: (body: any, headers: Headers) => void) {
   const form = payload instanceof FormData;
   onStarting();
   let response: Response;
@@ -72,8 +73,11 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
     const text = await response.text();
     throw submissionFailure(response.status, channel.apiKey ? text.split(channel.apiKey).join('[REDACTED]') : text);
   }
-  try { return await response.json() as any; }
+  let result: any;
+  try { result = await response.json(); }
   catch { throw new SpecificationUpstreamError('上游已响应但结果无法解析，请勿重复提交', false, true); }
+  onParsed?.(result, response.headers);
+  return result;
 }
 export async function submitSpecificationVideo(target: RouteCandidate, request: SpecificationRequest, onStarting: (metadata?: Record<string, unknown>) => void) {
   const c = target.channel, model = target.route.upstreamModel, exec = target.route.executionModel, i = request.input;
@@ -318,9 +322,11 @@ export async function generateSpecificationImage(target: RouteCandidate, request
     }
     payload = form; url = base + '/v1/images/edits';
   }
-  const result = await post(url, c, payload, onStarting);
-  const taskId = String(result.task_id || result.id || '');
-  if (taskId) onSubmitted(taskId);
+  let taskId = '';
+  const result = await post(url, c, payload, onStarting, (body, headers) => {
+    taskId = extractImageUpstreamTaskId(body, headers);
+    if (taskId) onSubmitted(taskId);
+  });
   const item = result.data?.[0], imageUrl = item?.url || (item?.b64_json ? 'data:image/png;base64,' + item.b64_json : '');
   if (!imageUrl) throw new SpecificationUpstreamError('上游已受理但未返回图片，请核实原请求', false, true);
   return { imageUrl, reportedImageUrl: imageUrl, taskId, raw: result };

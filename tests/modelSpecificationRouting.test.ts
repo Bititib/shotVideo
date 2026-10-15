@@ -164,6 +164,29 @@ function response() {
   r.end = vi.fn(() => { r.writableEnded = true; }); return r;
 }
 describe('managed image execution and single reservation', () => {
+  it('persists response-header IDs for each generated image through the existing task metadata flow', async () => {
+    const imageLimits = { ...limits(), resolutions: ['4K'], maxOutputs: 4 };
+    const s: ModelSpecification = { ...spec(), modelId: 'routing-image-test', kind: 'image', aliases: [], limits: imageLimits,
+      routes: [{ ...route(1), executionModel: 'gpt-image-2', upstreamModel: 'gpt-image-2', costUnit: 'per_call', limits: imageLimits }] };
+    saveModelSpecification(s);
+    vi.mocked(ChannelService.getActiveChannels).mockReturnValue([{ ...channel(1), supportedModels: ['gpt-image-2'] }]);
+    sqlite.prepare('INSERT INTO model_pricing(model_pattern,billing_type,input_price,output_price,extra_params) VALUES(?,?,?,?,?)').run(s.modelId, 'per_call', 2, 0, '{}');
+    const upstream = vi.fn()
+      .mockResolvedValueOnce(Response.json({ data: [{ url: 'https://result.invalid/1.png' }] }, { headers: { 'x-request-id': 'req-image-1' } }))
+      .mockResolvedValueOnce(Response.json({ data: [{ url: 'https://result.invalid/2.png' }] }, { headers: { 'x-request-id': 'req-image-2' } }));
+    vi.stubGlobal('fetch', upstream);
+    const res = response();
+    await handleSpecificationGeneration({ body: { model: s.modelId, prompt: 'test', resolution: '4K', n: 2 }, protocol: 'https', get: () => 'app.invalid', userId } as any, res, 'image');
+    const row = db.select().from(contents).all().at(-1)!;
+    expect(row.status).toBe('completed');
+    const meta = JSON.parse(row.metadata);
+    expect(meta.upstreamTaskIds).toEqual(['req-image-1', 'req-image-2']);
+    expect(meta.imageJobs.map((job: any) => ({ taskId: job.taskId, status: job.status }))).toEqual([
+      { taskId: 'req-image-1', status: 'completed' }, { taskId: 'req-image-2', status: 'completed' },
+    ]);
+    expect(meta.upstreamTaskId).toBeTruthy(); expect(upstream).toHaveBeenCalledTimes(2);
+    expect(row.cost).toBe(4); expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(96);
+  });
   it('switches after a confirmed rejection, records the actual route and charges once', async () => {
     const s: ModelSpecification = { ...spec(), modelId: 'routing-image-test', kind: 'image', aliases: [],
       limits: { ...limits(), resolutions: ['2K'], maxOutputs: 4 }, routes: spec().routes.map(r => ({ ...r, cost: r.channelId, costUnit: 'per_call', limits: { ...limits(), resolutions: ['2K'], maxOutputs: 4 } })) };
