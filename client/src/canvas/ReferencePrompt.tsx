@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { canConnect, type CanvasDocument, type CanvasNode } from './model';
 import { referenceKinds, referenceLabel, type ReferenceBindings } from './referenceMentions';
@@ -18,6 +18,53 @@ export default function ReferencePrompt(props: Props) {
   const [pickError, setPickError] = useState('');
   const [index, setIndex] = useState(0);
   const [position, setPosition] = useState({left: 12, top: 12, width: 340, maxHeight: 320, transform: 'none'});
+  useLayoutEffect(() => {
+    if (!query || !input.current) return;
+    const textarea = input.current;
+    const ancestors: HTMLElement[] = [];
+    for (let parent = textarea.parentElement; parent; parent = parent.parentElement) ancestors.push(parent);
+    const place = () => {
+      const viewport = window.visualViewport;
+      const minX = (viewport?.offsetLeft ?? 0) + 12, minY = (viewport?.offsetTop ?? 0) + 12;
+      const maxX = minX + (viewport?.width ?? window.innerWidth) - 24;
+      const maxY = minY + (viewport?.height ?? window.innerHeight) - 24;
+      const rect = textarea.getBoundingClientRect();
+      let top = rect.top, bottom = rect.bottom;
+      // Anchor to the part of a resized prompt that is visible inside its scroll panel.
+      for (const parent of ancestors) {
+        const style = getComputedStyle(parent);
+        if (!/(auto|scroll|hidden|clip)/.test(style.overflowY || style.overflow)) continue;
+        const clip = parent.getBoundingClientRect();
+        top = Math.max(top, clip.top); bottom = Math.min(bottom, clip.bottom);
+      }
+      top = Math.max(minY, Math.min(top, maxY));
+      bottom = Math.max(top, Math.min(bottom, maxY));
+      const above = Math.max(0, top - minY - 8), below = Math.max(0, maxY - bottom - 8);
+      const availableHeight = Math.max(1, maxY - minY);
+      const preferredHeight = Math.min(320, availableHeight);
+      const up = above > below;
+      const room = up ? above : below;
+      // In a short viewport use the viewport itself, rather than placing an unusable list off screen.
+      const cramped = room < Math.min(160, preferredHeight);
+      const maxHeight = cramped ? preferredHeight : Math.min(preferredHeight, room);
+      const desiredTop = up ? top - 8 - maxHeight : bottom + 8;
+      const width = Math.max(1, Math.min(380, maxX - minX));
+      setPosition({left: Math.max(minX, Math.min(rect.left, maxX - width)), top: up && !cramped ? top - 8 : Math.max(minY, Math.min(desiredTop, maxY - maxHeight)), width, maxHeight, transform: up && !cramped ? 'translateY(-100%)' : 'none'});
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    window.visualViewport?.addEventListener('resize', place);
+    window.visualViewport?.addEventListener('scroll', place);
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(place);
+    observer?.observe(textarea);
+    ancestors.forEach(parent => observer?.observe(parent));
+    return () => {
+      window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true);
+      window.visualViewport?.removeEventListener('resize', place); window.visualViewport?.removeEventListener('scroll', place);
+      observer?.disconnect();
+    };
+  }, [Boolean(query)]);
   useEffect(() => {
     if (!query) return;
     const dismiss = (event: PointerEvent) => {
@@ -38,12 +85,6 @@ export default function ReferencePrompt(props: Props) {
     const match = /[@＠]([^@＠\s]{0,60})$/.exec(value.slice(0, caret));
     if (!match || props.kind === 'audio') {setQuery(null); return;}
     setQuery({start: caret - match[0].length, end: caret, text: match[1]}); setIndex(0);
-    const rect = input.current!.getBoundingClientRect();
-    const width = Math.min(380, window.innerWidth - 24);
-    const height = Math.min(320, window.innerHeight - 24);
-    const above = rect.bottom + height + 8 >= window.innerHeight && rect.top > 160;
-    const top = above ? rect.top - 8 : rect.bottom + 8;
-    setPosition({left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)), top, width, maxHeight: Math.max(100,Math.min(height,above ? rect.top-20 : window.innerHeight-top-12)), transform: above ? 'translateY(-100%)' : 'none'});
   };
   const local = props.document?.nodes ?? props.references;
   // Existing media is an input to a NEW generation; only a generator/empty node is the actual target.
