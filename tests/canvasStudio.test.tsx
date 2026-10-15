@@ -650,8 +650,11 @@ describe('prompt reference mentions', () => {
     expect(screen.getByRole('listbox',{name:'可引用素材'})).toBeTruthy();
     fireEvent.pointerUp(option,{pointerId:1});
     fireEvent.click(option);
-    expect(screen.getByRole('alert').textContent).toContain('5000');
+    expect(screen.getByRole('alert').textContent).toContain('5004 / 5000');
+    expect(screen.getByRole('alert').textContent).toContain('减少 4 个字符');
     expect(input.value.length).toBe(5000);
+    expect(screen.getByLabelText('提示词字数').textContent).toContain('剩余 0');
+    expect(screen.getByLabelText('提示词字数').closest('.studio-inspector-scroll')).toBeNull();
     await waitFor(()=>expect(screen.getByRole('button',{name:'生成模型'}).textContent).toContain('Test Image'));
   });
   it('shows distinct reference thumbnails, inserts by keyboard, and submits the matching image ordinal', async () => {
@@ -673,6 +676,39 @@ describe('prompt reference mentions', () => {
     view.rerender(<MemoryRouter><GeneratorPanel {...props} references={[second]}/></MemoryRouter>);
     expect(screen.getByRole('alert').textContent).toContain('已断开');
     expect((screen.getByRole('button',{name:'生成图像'}) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('allows replacing a search term at the limit when the resulting mention fits', async () => {
+    const image = {...newNode('image', {x:0,y:0}), title:'角色参考', src:'/actor.png'};
+    render(<MemoryRouter><GeneratorPanel references={[image]} busy={false} onGenerate={vi.fn()} onClose={vi.fn()} onConnect={vi.fn()}/></MemoryRouter>);
+    const input = screen.getByLabelText('你想创作什么？') as HTMLTextAreaElement;
+    fireEvent.change(input, {target:{value:'文'.repeat(4995)+'@角色参考', selectionStart:5000}});
+    fireEvent.mouseDown(screen.getByRole('option', {name:/角色参考/}), {button:0});
+    expect(input.value).toBe('文'.repeat(4995)+'@图片1 ');
+    expect(screen.queryByRole('listbox', {name:'可引用素材'})).toBeNull();
+    await waitFor(()=>expect(screen.getByRole('button',{name:'生成模型'}).textContent).toContain('Test Image'));
+  });
+
+  it.each([4996, 4997])('checks the actual insertion length before connecting an unconnected image at %i characters', async length => {
+    const image = {...newNode('image', {x:0,y:0}), title:'长度检查参考', src:'/actor.png'};
+    const target = {...newNode('video', {x:400,y:0}), generator:true, title:'长度检查目标'};
+    const board = mount({...newDocument(), nodes:[image,target]});
+    fireEvent.doubleClick(screen.getByRole('article', {name:target.title}));
+    const input = screen.getByLabelText('你想创作什么？') as HTMLTextAreaElement;
+    const prompt = '文'.repeat(length-1)+'@';
+    fireEvent.change(input, {target:{value:prompt,selectionStart:length}});
+    fireEvent.click(screen.getByRole('option', {name:/长度检查参考/}));
+    if (length === 4996) {
+      expect(input.value).toBe('文'.repeat(4995)+'@图片1 ');
+      expect(board.current().edges).toHaveLength(1);
+    } else {
+      expect(input.value).toBe(prompt);
+      expect(board.current().edges).toHaveLength(0);
+      expect(board.current().nodes).toHaveLength(2);
+      expect(screen.getByRole('alert').textContent).toContain('5001 / 5000');
+      expect(screen.getByRole('alert').textContent).toContain('减少 1 个字符');
+    }
+    await waitFor(()=>expect(screen.getByRole('button',{name:'生成模型'}).hasAttribute('disabled')).toBe(false));
   });
 
   it('chooses an unconnected canvas image and connects it before generation', async () => {

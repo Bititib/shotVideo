@@ -1,14 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { canConnect, type CanvasDocument, type CanvasNode } from './model';
-import { referenceKinds, referenceLabel, type ReferenceBindings } from './referenceMentions';
+import { REFERENCE_PROMPT_LIMIT, referenceKinds, referenceLabel, type ReferenceBindings } from './referenceMentions';
 import { connectionError } from './videoInputs';
 
 type Props = {
   value: string; onChange: (value: string) => void; placeholder: string;
   references: CanvasNode[]; bindings: ReferenceBindings; document?: CanvasDocument;
   projects?: CanvasDocument[]; target?: CanvasNode; kind: 'image' | 'video' | 'audio';
-  onPick: (node: CanvasNode, start: number, end: number) => number | undefined;
+  onPick: (node: CanvasNode, start: number, end: number) => number | {error: string} | undefined;
 };
 export default function ReferencePrompt(props: Props) {
   const input = useRef<HTMLTextAreaElement>(null);
@@ -106,12 +106,12 @@ export default function ReferencePrompt(props: Props) {
     if (!query) return;
     const caret = props.onPick(node, query.start, query.end);
     menuPointer.current = false;
-    if (caret === undefined) {setPickError(props.value.length > 4980 ? '提示词接近 5000 字上限，请缩短后再插入引用。' : '未能引用该素材，请检查素材状态后重试。'); return;}
+    if (typeof caret !== 'number') {setPickError(caret?.error || '未能引用该素材，请检查素材状态后重试。'); return;}
     setQuery(null);
     requestAnimationFrame(() => {input.current?.focus(); input.current?.setSelectionRange(caret,caret);});
   };
   return <>
-    <textarea ref={input} id="canvas-prompt" className="studio-prompt" value={props.value} maxLength={5000}
+    <textarea ref={input} id="canvas-prompt" className="studio-prompt" value={props.value} maxLength={REFERENCE_PROMPT_LIMIT}
       aria-autocomplete="list" aria-controls={query ? 'reference-mention-list' : undefined}
       aria-activedescendant={query && nodes[activeIndex] ? `reference-mention-${activeIndex}` : undefined}
       onChange={e => {props.onChange(e.target.value); inspect(e.target.value,e.target.selectionStart);}}
@@ -129,7 +129,7 @@ export default function ReferencePrompt(props: Props) {
     {props.kind !== 'audio' && <button className="studio-mention-trigger" onClick={() => {
       const caret=input.current?.selectionStart ?? props.value.length;
       const value=props.value.slice(0,caret)+'@'+props.value.slice(caret);
-      if(value.length > 5000) return;
+      if(value.length > REFERENCE_PROMPT_LIMIT) return;
       props.onChange(value);input.current?.focus();inspect(value,caret+1);
       requestAnimationFrame(()=>input.current?.setSelectionRange(caret+1,caret+1));
     }}>@ 引用素材</button>}

@@ -386,6 +386,9 @@
 
 /* Prompt reference chooser stays above the composer without being clipped. */
 .studio-mention-trigger{font-size:11px;padding:4px 8px;margin:0 0 8px;border:1px solid var(--s-border);border-radius:7px;color:var(--s-muted)}
+.studio-node-first .studio-composer-anchor .studio-inspector{grid-template-areas:'body body' 'count count' 'tools submit'}
+.studio-prompt-count{grid-area:count;padding:2px 4px 6px;font-size:10px;color:var(--s-muted);line-height:1.5}
+.studio-prompt-count.near-limit{color:var(--s-text);font-weight:600}
 .studio-reference-label{font-weight:600;color:inherit;white-space:nowrap}
 .studio-mention-menu{z-index:1100;display:flex;flex-direction:column;border:1px solid #cccdbf;border-radius:14px;padding:10px;background:#f8f5ec;color:#394236;box-shadow:0 12px 36px #0003;font-size:12px;overflow:hidden}
 .studio-mention-menu[data-theme=dark]{background:#202225;color:#edeef0;border-color:#40434a}
