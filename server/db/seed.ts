@@ -1,5 +1,6 @@
 import { ensureZonghengVideoPricing } from '../services/zonghengPricingService.js';
 import { HAYA_VIDEO_MODELS } from '../../shared/hayaVideo.js';
+import { ASYNC_VIDEO_BASE_URL, ASYNC_VIDEO_CHANNEL_TYPE } from '../../shared/asyncVideo.js';
 import { LONGXIA_MODELS, LONGXIA_BASE_URL, isLongxiaChannel, longxiaRate, longxiaResolution } from '../services/longxiaVideoAdapter.js';
 import { db, sqlite } from './index.js';
 import { DEFAULT_TTS_CHARACTER_RATE } from '../../shared/tts.js';
@@ -1988,6 +1989,20 @@ export async function initDatabase() {
     if (miaowuChannels.length > 0) console.log('🔄 已校准喵呜渠道并绑定 Seedance 2.5 模型');
   } catch (err: any) {
     console.error('⚠️ 校准喵呜渠道模型绑定出错:', err.message);
+  }
+
+  // Seed the supplied endpoint once; preserve administrator configuration on restart.
+  if (!db.select().from(channels).where(eq(channels.type, ASYNC_VIDEO_CHANNEL_TYPE)).get()) {
+    db.insert(channels).values({
+      name: 'Vx-乐2.0fast', type: ASYNC_VIDEO_CHANNEL_TYPE, baseUrl: ASYNC_VIDEO_BASE_URL,
+      apiKey: '', status: 0, maxRetries: 0, supportedModels: '[]', modelMapping: '{}',
+    }).run();
+  }
+  const vxLeChannel = db.select().from(channels).where(eq(channels.type, ASYNC_VIDEO_CHANNEL_TYPE)).all()
+    .find(channel => channel.name === 'Vx-乐2.0fast' || channel.baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, '') === ASYNC_VIDEO_BASE_URL);
+  if (vxLeChannel) {
+    const { ensureVxLeSeedanceModel } = await import('../services/asyncVideoCatalogService.js');
+    ensureVxLeSeedanceModel(vxLeChannel);
   }
 
   // Register the channel without enabling paid requests until a key is configured.

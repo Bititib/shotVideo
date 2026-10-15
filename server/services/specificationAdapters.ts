@@ -1,3 +1,4 @@
+import { isAsyncVideoChannel, buildAsyncVideoPayload, asyncVideoCreateUrl, pollAsyncVideo } from './asyncVideoAdapter.js';
 import fs from 'node:fs';
 import { isFunAiChannel, funAiBaseUrl, buildFunAiVideoPayload, pollFunAiTask, generateFunAiImage, FunAiApiError } from './funAiAdapter.js';
 import path from 'node:path';
@@ -76,6 +77,18 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
 }
 export async function submitSpecificationVideo(target: RouteCandidate, request: SpecificationRequest, onStarting: (metadata?: Record<string, unknown>) => void) {
   const c = target.channel, model = target.route.upstreamModel, exec = target.route.executionModel, i = request.input;
+  if (isAsyncVideoChannel(c)) {
+    let payload: ReturnType<typeof buildAsyncVideoPayload>;
+    try {
+      payload = buildAsyncVideoPayload({ ...request, model, seconds: i.seconds, ratio: i.ratio,
+        images: request.images.map(source => publishSpecificationAsset(source, request.publicBaseUrl)) });
+    } catch (error: any) { throw new SpecificationUpstreamError(error.message, true); }
+    const job = await post(asyncVideoCreateUrl(c.baseUrl), c, payload, onStarting);
+    if (!['string', 'number'].includes(typeof job?.task_id) || !String(job.task_id).trim()) {
+      throw new SpecificationUpstreamError('异步视频未返回任务 ID，请核实原请求', false, true);
+    }
+    return String(job.task_id);
+  }
   if (isFunAiChannel(c)) {
     let payload: Record<string, any>;
     try {
@@ -190,6 +203,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   return String(id);
 }
 export async function pollSpecificationVideo(channel: any, taskId: string) {
+  if (isAsyncVideoChannel(channel)) return pollAsyncVideo(channel, taskId);
   if (isFunAiChannel(channel)) return pollFunAiTask(channel, taskId);
   if (isBlobDrawChannel(channel)) return pollBlobDrawVideo(channel, taskId);
   const base = apiBase(channel.baseUrl);

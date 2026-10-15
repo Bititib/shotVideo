@@ -9,7 +9,7 @@ export default function ChannelDetails({ channel, tab, onTabChange, busy, testin
   onEdit: () => void; onTest: () => void; onSync: () => void; children: ReactNode;
 }) {
   const modelCount = channel.supportedModels?.length || 0;
-  const provider = channel.type === 'funai' ? 'FunAI' : channel.type === 'zongheng' ? '纵横科技' : channel.type === 'hmstudio' ? 'HM Studio' : channel.type;
+  const provider = channel.type === 'async-video' ? '异步视频 API' : channel.type === 'funai' ? 'FunAI' : channel.type === 'zongheng' ? '纵横科技' : channel.type === 'hmstudio' ? 'HM Studio' : channel.type;
   const currentFeedback = feedback?.channelId === channel.id ? feedback : null;
   return (
     <div className="channel-details">

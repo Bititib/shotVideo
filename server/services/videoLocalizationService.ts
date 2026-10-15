@@ -1,3 +1,4 @@
+import { isAsyncVideoChannel, resolveAsyncVideoUrl } from './asyncVideoAdapter.js';
 import { isBlobDrawChannel } from './blobDrawAdapter.js';
 import { isFunAiChannel, shouldSendFunAiAuthorization, funAiTaskUrl } from './funAiAdapter.js';
 import { isZonghengChannel } from './zonghengAdapter.js';
@@ -41,7 +42,7 @@ export async function downloadAndLocalizeVideo(
   const exactChannel = channelId ? ChannelService.getChannelRaw(channelId, channelApiKeyId) : null;
   const channel = exactChannel || ChannelService.findChannelForModel(model);
   const headers: Record<string, string> = {};
-  const maySendAuthorization = isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isBlobDrawChannel(channel) ? false : isZonghengChannel(channel) ? false : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
+  const maySendAuthorization = isAsyncVideoChannel(channel) ? false : isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isBlobDrawChannel(channel) ? false : isZonghengChannel(channel) ? false : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
     ? shouldSendHmStudioAuthorization(url, channel.baseUrl)
     : isWxHaidiYueChannel(channel)
       ? shouldSendWxHaidiYueAuthorization(url, channel.baseUrl)
@@ -63,6 +64,10 @@ export async function downloadAndLocalizeVideo(
   }
 
   let response = await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
+  if (isAsyncVideoChannel(channel) && [401, 403, 404].includes(response.status)) {
+    const freshUrl = await resolveAsyncVideoUrl(channel, videoId);
+    response = await fetch(freshUrl, { signal: AbortSignal.timeout(300_000), redirect: 'error' });
+  }
   // Expired signatures are not failed generations. Retry the authenticated content endpoint.
   if (isHayaChannel(channel) && [401, 403, 409].includes(response.status)) {
     response = await fetch(hayaTaskUrl(channel.baseUrl, videoId) + '/content', {

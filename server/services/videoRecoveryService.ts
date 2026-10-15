@@ -1,3 +1,4 @@
+import { isAsyncVideoChannel, asyncVideoTaskUrl, normalizeAsyncVideoTask, resolveAsyncVideoUrl } from './asyncVideoAdapter.js';
 import { isZonghengChannel, zonghengTaskUrl, normalizeZonghengTask } from './zonghengAdapter.js';
 import { isHayaChannel, hayaTaskUrl, normalizeHayaTask } from './hayaVideoAdapter.js';
 import { and, desc, eq, gte, inArray } from 'drizzle-orm';
@@ -199,7 +200,7 @@ export class VideoRecoveryService {
     const isZongheng = isZonghengChannel(channel);
     const isMiaowu = isMiaowuChannel(channel);
     const isSudaShui = /sudashuiapi\.com/i.test(baseUrl) || metadata.actualChannel === 'sudashui';
-    const pollUrl = isZongheng ? zonghengTaskUrl(baseUrl, videoId) : isHaya ? hayaTaskUrl(baseUrl, videoId) : isHmStudio
+    const pollUrl = isAsyncVideoChannel(channel) ? asyncVideoTaskUrl(baseUrl, videoId) : isZongheng ? zonghengTaskUrl(baseUrl, videoId) : isHaya ? hayaTaskUrl(baseUrl, videoId) : isHmStudio
       ? hmStudioTaskUrl(baseUrl, videoId)
       : isHaidiYue
         ? wxHaidiYueTaskUrl(baseUrl, videoId)
@@ -226,7 +227,11 @@ export class VideoRecoveryService {
     let progress = 0;
     let resultUrl = '';
     let error = '';
-    if (isZongheng) {
+    if (isAsyncVideoChannel(channel)) {
+      const task = normalizeAsyncVideoTask(payload);
+      normalizedStatus = task.status; progress = task.progress; error = task.error;
+      if (task.status === 'completed') resultUrl = await resolveAsyncVideoUrl(channel, videoId);
+    } else if (isZongheng) {
       const task = normalizeZonghengTask(payload);
       normalizedStatus = task.status; progress = task.progress; resultUrl = task.resultUrl; error = task.error;
     } else if (isHaya) {

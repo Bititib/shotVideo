@@ -11,6 +11,7 @@ import { getAdminCached } from '../../api/adminCache';
 import { adminApi } from '../../api/admin';
 import { Plus, Radio, Trash2, Pencil, Zap, Loader2, Power, PowerOff, RefreshCw, KeyRound, Activity, CircleCheck, CircleX, Timer, ScanFace } from 'lucide-react';
 import { FUNAI_BASE_URL } from '../../../../shared/funAi';
+import { ASYNC_VIDEO_BASE_URL } from '../../../../shared/asyncVideo';
 
 const HM_STUDIO_BASE_URL = 'https://dnyovzpgyokm.sealosbja.site';
 const HAYA_BASE_URL = 'https://hayaai.fun';
@@ -529,8 +530,10 @@ export default function ChannelsPage() {
                       apiKeys: e.target.value === 'hmstudio' && (!edit.apiKeys || edit.apiKeys.length === 0)
                         ? [newHmKey()]
                         : edit.apiKeys,
-                      maxRetries: e.target.value === 'funai' ? 0 : edit.maxRetries,
-                      baseUrl: e.target.value === 'funai' && !edit.baseUrl
+                      maxRetries: ['funai', 'async-video'].includes(e.target.value) ? 0 : edit.maxRetries,
+                      baseUrl: e.target.value === 'async-video' && !edit.baseUrl
+                        ? ASYNC_VIDEO_BASE_URL
+                        : e.target.value === 'funai' && !edit.baseUrl
                         ? FUNAI_BASE_URL
                         : e.target.value === 'zongheng' && !edit.baseUrl
                         ? 'https://cnd-coo-new.pages.dev'
@@ -558,6 +561,7 @@ export default function ChannelsPage() {
                       <option value="wx-haidiyue">wx-海底月（sd2.5 人脸拆分）</option>
                       <option value="snumom">snumom（视频异步任务）</option>
                       <option value="longxia">LongXia（视频按秒计费）</option>
+                      <option value="async-video">异步视频 API（generations / tasks）</option>
                       <option value="haya">Haya AI（素材上传／视频异步任务）</option>
                       <option value="miaowu">喵呜 API（视频异步任务）</option>
                       <option value="blobdraw">BlobDraw（视频生成）</option>
