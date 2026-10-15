@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getSiYueTianC2Model,
   validateSiYueTianSeedance20C2Input,
   buildSiYueTianSeedance25VideoPayload,
   getSiYueTianSeedance25VideoSpec,
@@ -9,6 +10,7 @@ import {
 
 describe('四月天 Seedance 2.5 视频模型', () => {
   it.each([
+    ['seedance-2.0-mini-720p', 9, 0, 3],
     ['seedance-2.0-fast-c2', 9, 1, 3],
     ['wan-3.0-c2', 10, 5, 5],
   ] as const)('%s 校验所有素材边界且完整保留视频音频', (model, images, videos, audios) => {
@@ -23,9 +25,23 @@ describe('四月天 Seedance 2.5 视频模型', () => {
       audioUrls: Array.from({ length: audios }, (_, i) => `https://example.com/${i}.mp3`),
     });
     expect(payload.image_refs).toHaveLength(images);
-    expect(payload.video_refs).toHaveLength(videos);
+    if (videos > 0) expect(payload.video_refs).toHaveLength(videos);
+    else expect(payload.video_refs).toBeUndefined();
     expect(payload.audio_refs).toHaveLength(audios);
     expect(payload.model).toBe(model);
+  });
+  it('Mini 720p 使用独立模型名、按次价格与最长15秒配置', () => {
+    expect(getSiYueTianC2Model('seedance-2.0-mini-720p')).toMatchObject({
+      id: 'seedance-2.0-mini-720p', images: 9, videos: 0, audios: 3,
+      price: 1, minSeconds: 4, maxSeconds: 15, resolution: '720p',
+    });
+    expect(buildSiYueTianSeedance25VideoPayload({
+      model: 'seedance-2.0-mini-720p', prompt: '测试', seconds: 15,
+      aspectRatio: '16:9', imageUrls: [], audioUrls: [],
+    })).toMatchObject({ model: 'seedance-2.0-mini-720p', duration: 15 });
+  });
+  it('Mini 720p 拒绝视频参考', () => {
+    expect(validateSiYueTianSeedance20C2Input('seedance-2.0-mini-720p', 9, 1, 3)).toContain('不支持参考视频');
   });
   it('C2 接受9图3音频，拒绝视频和超限素材', () => {
     expect(validateSiYueTianSeedance20C2Input('seedance-2.0-c2', 9, 0, 3)).toBeNull();
