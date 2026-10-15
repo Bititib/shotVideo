@@ -441,7 +441,7 @@ export default function ChannelsPage() {
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-white">{ch.name}</h3>
-                  <p className="text-[10px] text-zinc-500 font-mono"><span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold mr-1.5 ${ch.type === 'gemini' ? 'bg-emerald-500/15 text-emerald-400' : ch.type === 'grok2api' ? 'bg-orange-500/15 text-orange-400' : ch.type === 'hmstudio' ? 'bg-amber-500/15 text-amber-300' : 'bg-blue-500/15 text-blue-400'}`}>{ch.type === 'zongheng' ? '纵横科技' : ch.type === 'openai' ? 'OpenAI' : ch.type === 'gemini' ? 'Gemini' : ch.type === 'grok2api' ? 'Grok2API' : ch.type === 'hmstudio' ? 'HM Studio' : ch.type === 'blobdraw' ? 'BlobDraw' : ch.type === 'haya' ? 'Haya AI' : ch.type === 'miaowu' ? '喵呜 API' : ch.type}</span>{ch.baseUrl}</p>
+                  <p className="text-[10px] text-zinc-500 font-mono"><span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold mr-1.5 ${ch.type === 'gemini' ? 'bg-emerald-500/15 text-emerald-400' : ch.type === 'grok2api' ? 'bg-orange-500/15 text-orange-400' : ch.type === 'hmstudio' ? 'bg-amber-500/15 text-amber-300' : 'bg-blue-500/15 text-blue-400'}`}>{ch.type === 'async-video' ? 'Vx-乐2.0fast' : ch.type === 'zongheng' ? '纵横科技' : ch.type === 'openai' ? 'OpenAI' : ch.type === 'gemini' ? 'Gemini' : ch.type === 'grok2api' ? 'Grok2API' : ch.type === 'hmstudio' ? 'HM Studio' : ch.type === 'blobdraw' ? 'BlobDraw' : ch.type === 'haya' ? 'Haya AI' : ch.type === 'miaowu' ? '喵呜 API' : ch.type}</span>{ch.baseUrl}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -561,7 +561,7 @@ export default function ChannelsPage() {
                       <option value="wx-haidiyue">wx-海底月（sd2.5 人脸拆分）</option>
                       <option value="snumom">snumom（视频异步任务）</option>
                       <option value="longxia">LongXia（视频按秒计费）</option>
-                      <option value="async-video">异步视频 API（generations / tasks）</option>
+                      <option value="async-video">Vx-乐2.0fast（视频生成）</option>
                       <option value="haya">Haya AI（素材上传／视频异步任务）</option>
                       <option value="miaowu">喵呜 API（视频异步任务）</option>
                       <option value="blobdraw">BlobDraw（视频生成）</option>
