@@ -63,3 +63,10 @@
   .channels-page .channel-list-actions > button,.channels-page .channel-list-more summary { min-height:40px; }.channels-page .channel-list-action,.channels-page .channel-list-more summary { width:40px; }
 }
 @media (prefers-reduced-motion:reduce) { .channel-list-row { transition:none; } }
+.channel-delete-confirm { padding:24px; font-size:14px; line-height:1.8; }
+.channel-delete-confirm strong { overflow-wrap:anywhere; font-weight:600; }
+.channel-delete-confirm .channel-delete-hint { margin-top:10px; color:var(--earth-muted); font-size:12px; }
+.channel-delete-confirm > div { display:flex; justify-content:flex-end; gap:10px; margin-top:24px; }
+.channels-page .channel-delete-confirm button { min-height:40px; padding:8px 16px; border:1px solid var(--earth-line); border-radius:9px; background:var(--earth-surface-raised); font-size:12px; }
+.channels-page .channel-delete-confirm .channel-delete-submit { background:#a65d4d; border-color:#a65d4d; color:#fffdf7; }
+.channel-delete-error { margin-top:14px; color:#a65d4d; font-size:12px; }

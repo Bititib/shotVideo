@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { KeyRound, Loader2, MoreHorizontal, Pencil, Radio, RefreshCw, Trash2, Zap } from 'lucide-react';
 
 export default function ChannelListItem({ channel: ch, syncing, testing, pending, onOpen, onSync, onEdit, onToggle, onTest, onAddKey, onDelete }: {
@@ -7,6 +7,11 @@ export default function ChannelListItem({ channel: ch, syncing, testing, pending
   onTest: () => void; onAddKey: () => void; onDelete: () => void;
 }) {
   const menu = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const closeOutside = (event: PointerEvent) => { if (menu.current?.open && !menu.current.contains(event.target as Node)) menu.current.open = false; };
+    document.addEventListener('pointerdown', closeOutside);
+    return () => document.removeEventListener('pointerdown', closeOutside);
+  }, []);
   return <article className={`channel-list-row${ch.status ? '' : ' is-disabled'}`}>
     <div className="channel-list-identity">
       <span className="channel-list-icon" aria-hidden="true"><Radio /></span>
@@ -22,12 +27,12 @@ export default function ChannelListItem({ channel: ch, syncing, testing, pending
     <div className="channel-list-actions">
       <button type="button" className="channel-list-sync" disabled={syncing !== null || testing !== null} onClick={onSync}><RefreshCw className={syncing === ch.id ? 'animate-spin' : ''} aria-hidden="true" />{syncing === ch.id ? '同步中…' : '同步模型'}</button>
       <button type="button" className="channel-list-action" aria-label={`编辑${ch.name}`} title="编辑渠道" onClick={onEdit}><Pencil aria-hidden="true" /></button>
-      <details ref={menu} className="channel-list-more" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.open = false; }} onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}>
+      <details ref={menu} className="channel-list-more" onBlur={event => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) event.currentTarget.open = false; }} onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}>
         <summary aria-label={`${ch.name}更多操作`} title="更多操作"><MoreHorizontal aria-hidden="true" /></summary>
         <div className="channel-list-menu" onClick={() => { if (menu.current) menu.current.open = false; }}>
           <button type="button" disabled={testing !== null || syncing !== null} onClick={onTest}>{testing === ch.id ? <Loader2 className="animate-spin" /> : <Zap />}测试连接</button>
           {ch.type === 'hmstudio' && <button type="button" onClick={onAddKey}><KeyRound />添加 Key</button>}
-          <button type="button" className="is-danger" onClick={onDelete}><Trash2 />删除渠道</button>
+          <button type="button" className="is-danger" disabled={pending || syncing !== null || testing !== null} onClick={onDelete}><Trash2 />删除渠道</button>
         </div>
       </details>
     </div>

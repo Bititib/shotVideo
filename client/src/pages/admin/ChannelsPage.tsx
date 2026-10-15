@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import AdminCollection from '../../components/AdminCollection';
 import ChannelListItem from '../../components/ChannelListItem';
 import './ChannelsPage.css';
@@ -33,6 +33,10 @@ export default function ChannelsPage() {
   const [modelsRevision, setModelsRevision] = useState(0);
   const [saving, setSaving] = useState(false);
   const [pendingId, setPendingId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+  const deleteInFlight = useRef(false);
   const { edit, setEdit, close: closeEdit, restore, available } = useEditDraft('channels', saving);
   const [loading, setLoading] = useState(() => !getAdminCached('/admin/channels'));
   useAdminScroll(!loading);
@@ -205,9 +209,18 @@ export default function ChannelsPage() {
     } catch (e: any) { setError(e.message); } finally { setSaving(false); }
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('确定删除此渠道？')) return;
-    try { await adminApi.deleteChannel(id); loadChannels(); } catch (e: any) { setError(e.message); }
+  const handleDelete = async () => {
+    if (!deleteTarget || deleteInFlight.current) return;
+    const target = deleteTarget;
+    deleteInFlight.current = true; setDeleting(true); setDeleteError('');
+    try {
+      await adminApi.deleteChannel(target.id);
+      setChannels(current => current.filter(channel => channel.id !== target.id));
+      setDetail((current: any) => current?.id === target.id ? null : current);
+      setDeleteTarget(null); setNotice(`已删除渠道「${target.name}」`);
+      void loadChannels();
+    } catch (e: any) { setDeleteError(e.message || '删除失败，请重试'); }
+    finally { deleteInFlight.current = false; setDeleting(false); }
   };
 
   const handleTest = async (id: number) => {
@@ -438,9 +451,19 @@ export default function ChannelsPage() {
           onSync={() => { setDetailEditing(false); setDetailTab('models'); setDetail(ch); void syncModels(ch); }}
           onEdit={() => openEdit(ch)} onToggle={() => { void toggleStatus(ch); }}
           onTest={() => { setDetailEditing(false); setDetailTab('config'); setDetail(ch); void handleTest(ch.id); }}
-          onAddKey={() => openAddHmKey(ch)} onDelete={() => { void handleDelete(ch.id); }} />}
+          onAddKey={() => openAddHmKey(ch)} onDelete={() => { setDeleteError(''); setDeleteTarget({ id: ch.id, name: ch.name }); }} />}
       />
       {!filteredChannels.length && !loading && <div className="channels-empty">{channels.length ? '没有符合筛选条件的渠道' : '暂无渠道，点击上方按钮添加'}</div>}
+
+      {deleteTarget && <AdminDrawer compact title="删除渠道" blocked={deleting} onClose={() => setDeleteTarget(null)}>
+        <div className="channel-delete-confirm">
+          <p>确定删除渠道 <strong>「{deleteTarget.name}」</strong>？</p>
+          <p className="channel-delete-hint">渠道配置及密钥将被删除，历史生成记录保留。</p>
+          {deleteError && <p role="alert" className="channel-delete-error">{deleteError}</p>}
+          <div><button type="button" disabled={deleting} onClick={() => setDeleteTarget(null)}>取消</button>
+            <button type="button" className="channel-delete-submit" disabled={deleting} onClick={() => { void handleDelete(); }}>{deleting ? '正在删除…' : '确认删除'}</button></div>
+        </div>
+      </AdminDrawer>}
 
       {detail && <AdminDrawer wide title={detail.name + ' · 渠道详情'} blocked={detailEditing || Boolean(edit) || syncing === detail.id || testing === detail.id} onClose={() => { setDetail(null); void loadChannels(); }}>
         <ChannelDetails channel={channels.find(ch => ch.id === detail.id) || detail}

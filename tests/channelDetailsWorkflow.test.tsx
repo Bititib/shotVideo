@@ -10,7 +10,7 @@ import ChannelsPage from '../client/src/pages/admin/ChannelsPage';
 vi.mock('../client/src/utils/polling', () => ({ startPolling: () => () => {} }));
 vi.mock('../client/src/api/admin', () => ({ adminApi: {
   getChannels: vi.fn(), getSettings: vi.fn(), getModels: vi.fn(), getModelStatistics: vi.fn(),
-  getPricing: vi.fn(), syncChannelModels: vi.fn(), testChannel: vi.fn(),
+  getPricing: vi.fn(), syncChannelModels: vi.fn(), testChannel: vi.fn(), deleteChannel: vi.fn(),
 } }));
 const ids = ['ZH-Cseadanco2.5K', 'ZH-Xminimex-h3', 'ZH-wan-1080', 'ZH-A-SD2.0'];
 const base = { id: 9, name: '纵横渠道', type: 'zongheng', status: 1, baseUrl: 'https://example.invalid',
@@ -35,6 +35,50 @@ const open = async () => {
 };
 
 describe('channel details and model sync workflow', () => {
+  const openDelete = async () => {
+    const summary = await screen.findByLabelText('纵横渠道更多操作');
+    fireEvent.click(summary);
+    fireEvent.blur(summary, { relatedTarget: null });
+    fireEvent.click(screen.getByRole('button', { name: '删除渠道', exact: true }));
+    return screen.findByRole('dialog', { name: '删除渠道' });
+  };
+  it('uses an in-page confirmation and cancellation never sends a delete request', async () => {
+    const native = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    mount(); const dialog = await openDelete();
+    expect(within(dialog).getByText('「纵横渠道」')).toBeVisible();
+    expect(adminApi.deleteChannel).not.toHaveBeenCalled(); expect(native).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+    expect(screen.queryByRole('dialog')).toBeNull(); expect(adminApi.deleteChannel).not.toHaveBeenCalled();
+  });
+  it('sends deletion once, blocks dismissal while pending and removes the channel after success', async () => {
+    let finish!: () => void;
+    vi.mocked(adminApi.deleteChannel).mockImplementation(() => new Promise(resolve => {
+      finish = () => { vi.mocked(adminApi.getChannels).mockResolvedValue([]); resolve({ message: '删除成功' }); };
+    }));
+    mount(); const dialog = await openDelete();
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认删除' }));
+    expect(within(dialog).getByRole('button', { name: '正在删除…' })).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: '取消' })).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: '关闭', exact: true })).toBeDisabled();
+    fireEvent.keyDown(dialog, { key: 'Escape' }); expect(screen.getByRole('dialog')).toBeVisible();
+    expect(adminApi.deleteChannel).toHaveBeenCalledExactlyOnceWith(9);
+    await act(async () => finish());
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.queryByRole('button', { name: '查看纵横渠道详情' })).toBeNull();
+    expect(screen.getByText('已删除渠道「纵横渠道」')).toHaveAttribute('role', 'status');
+  });
+  it('keeps failed deletion and its error in the confirmation so it can be retried', async () => {
+    vi.mocked(adminApi.deleteChannel).mockRejectedValueOnce(Error('无权删除此渠道')).mockResolvedValueOnce({});
+    mount(); const dialog = await openDelete();
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认删除' }));
+    await waitFor(() => expect(within(dialog).getByRole('alert')).toHaveTextContent('无权删除此渠道'));
+    expect(within(dialog).getByRole('button', { name: '确认删除' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '查看纵横渠道详情' })).toBeInTheDocument();
+    vi.mocked(adminApi.getChannels).mockResolvedValue([]);
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认删除' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(adminApi.deleteChannel).toHaveBeenCalledTimes(2);
+  });
   it('keeps sync visible on the initial models tab and gives an empty channel a direct action', async () => {
     mount(); const drawer = await open();
     expect(within(drawer).getByRole('button', { name: '同步模型' })).toBeVisible();

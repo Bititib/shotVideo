@@ -1,7 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 
-export default function AdminDrawer({ title, blocked, onClose, children, wide = false }: {
-  title: string; blocked: boolean; onClose: () => void; children: ReactNode; wide?: boolean;
+export default function AdminDrawer({ title, blocked, onClose, children, wide = false, compact = false }: {
+  title: string; blocked: boolean; onClose: () => void; children: ReactNode; wide?: boolean; compact?: boolean;
 }) {
   const panel = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -12,11 +12,11 @@ export default function AdminDrawer({ title, blocked, onClose, children, wide = 
     return () => { document.body.style.overflow = overflow; previous?.focus({ preventScroll: true }); };
   }, []);
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex justify-end" onMouseDown={e => {
+    <div className={`fixed inset-0 z-50 bg-black/40 flex ${compact ? 'items-center justify-center p-4' : 'justify-end'}`} onMouseDown={e => {
       if (e.target === e.currentTarget && !blocked) onClose();
     }}>
       <div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title}
-        className={`h-full w-full ${wide ? 'max-w-6xl' : 'max-w-3xl'} overflow-y-auto bg-[#fffaf2] shadow-2xl`}
+        className={`w-full ${compact ? 'max-w-md max-h-[90vh] rounded-2xl' : `h-full ${wide ? 'max-w-6xl' : 'max-w-3xl'}`} overflow-y-auto bg-[#fffaf2] shadow-2xl`}
         onKeyDown={e => {
           if (e.key === 'Escape' && !blocked) { e.stopPropagation(); onClose(); }
           if (e.key !== 'Tab') return;
