@@ -30,7 +30,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const mount = () => render(<MemoryRouter initialEntries={['/admin/channels']}><ChannelsPage /></MemoryRouter>);
 const open = async () => {
-  fireEvent.click(await screen.findByRole('button', { name: '详情与模型' }));
+  fireEvent.click(await screen.findByRole('button', { name: '查看纵横渠道详情' }));
   return screen.findByRole('dialog', { name: '纵横渠道 · 渠道详情' });
 };
 

@@ -2,9 +2,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { useAuthStore } from '../stores/authStore';
 
 export interface CollectionColumn<T> { title: string; render: (item: T) => ReactNode; sort?: (item: T) => string | number; }
-export default function AdminCollection<T>({ name, items, id, columns, children, selected = [], onSelect, selectable = () => true }: {
+export default function AdminCollection<T>({ name, items, id, columns, children, listItem, listHeader, selected = [], onSelect, selectable = () => true }: {
   name: string; items: T[]; id: (item: T) => string; columns: CollectionColumn<T>[];
-  children: (items: T[]) => ReactNode; selected?: string[]; onSelect?: (ids: string[]) => void; selectable?: (item: T) => boolean;
+  children?: (items: T[]) => ReactNode; listItem?: (item: T) => ReactNode; listHeader?: ReactNode;
+  selected?: string[]; onSelect?: (ids: string[]) => void; selectable?: (item: T) => boolean;
 }) {
   const user = useAuthStore(state => state.user?.id);
   const key = `collection:${user}:${name}`;
@@ -26,17 +27,20 @@ export default function AdminCollection<T>({ name, items, id, columns, children,
   const visible = sorted.slice(start, start + 18);
   const candidates = items.filter(selectable).map(id);
   const toggle = (item: T) => onSelect?.(selected.includes(id(item)) ? selected.filter(key => key !== id(item)) : [...selected, id(item)]);
-  const updateView = (patch: any) => { setView((old: any) => ({ ...old, top: 0, ...patch })); setTop(0); if (viewport.current) viewport.current.scrollTop = 0; };
+  const updateView = (patch: any) => { setView((old: any) => ({ ...old, top: 0, ...(listItem ? { page: 1 } : {}), ...patch })); setTop(0); if (viewport.current) viewport.current.scrollTop = 0; };
   return <section className="admin-collection">
     <div className="admin-list-tools flex flex-wrap items-center gap-3 rounded-xl border p-3 mb-3">
       <span className="text-xs">共 {items.length} 条</span>
-      <button aria-pressed={mode === 'table'} onClick={() => updateView({ mode: 'table' })}>表格</button>
-      <button aria-pressed={mode === 'cards'} onClick={() => updateView({ mode: 'cards' })}>卡片</button>
+      {!listItem && <><button aria-pressed={mode === 'table'} onClick={() => updateView({ mode: 'table' })}>表格</button>
+      <button aria-pressed={mode === 'cards'} onClick={() => updateView({ mode: 'cards' })}>卡片</button></>}
       <select aria-label="排序字段" value={view.sort || 0} onChange={e => updateView({ sort: Number(e.target.value) })}>{columns.map((column, index) => column.sort && <option key={index} value={index}>{column.title}</option>)}</select>
       <button onClick={() => updateView({ desc: !view.desc })}>{view.desc ? '降序' : '升序'}</button>
       {onSelect && <><button onClick={() => onSelect(candidates)}>选择筛选结果（{candidates.length}）</button><button onClick={() => onSelect([])}>清空选择</button><span className="text-xs">已选 {selected.length}</span></>}
     </div>
-    {mode === 'table' ? <div ref={viewport} className="admin-table-viewport overflow-auto rounded-xl border" style={{ maxHeight: 560 }} onScroll={e => { const next = e.currentTarget.scrollTop; setTop(next); setView((old: any) => ({ ...old, top: next })); }}>
+    {listItem ? <>
+      <div className="admin-list-view">{listHeader}<ul aria-label={name}>{sorted.slice((page - 1) * 24, page * 24).map(item => <li key={id(item)}>{listItem(item)}</li>)}</ul></div>
+      {pages > 1 && <div className="admin-list-pagination"><button disabled={page === 1} onClick={() => updateView({ page: page - 1 })}>上一页</button><span>{page} / {pages}</span><button disabled={page === pages} onClick={() => updateView({ page: page + 1 })}>下一页</button></div>}
+    </> : mode === 'table' ? <div ref={viewport} className="admin-table-viewport overflow-auto rounded-xl border" style={{ maxHeight: 560 }} onScroll={e => { const next = e.currentTarget.scrollTop; setTop(next); setView((old: any) => ({ ...old, top: next })); }}>
       <table className="w-full text-sm border-collapse" style={{ minWidth: 720, tableLayout: 'fixed' }} aria-label={name} aria-rowcount={items.length + 1}>
         <thead className="sticky top-0 z-10 bg-[#fffaf2]"><tr>{onSelect && <th className="w-12 p-3">选择</th>}{columns.map((column, index) => <th key={index} className="p-3 text-left border-b">{column.title}</th>)}</tr></thead>
         <tbody>
@@ -48,6 +52,6 @@ export default function AdminCollection<T>({ name, items, id, columns, children,
           {start + visible.length < sorted.length && <tr aria-hidden="true"><td colSpan={columns.length + 1} style={{ height: (sorted.length - start - visible.length) * 64, padding: 0 }} /></tr>}
         </tbody>
       </table>
-    </div> : <>{children(sorted.slice((page - 1) * 24, page * 24))}<div className="flex items-center justify-center gap-4 p-4"><button disabled={page === 1} onClick={() => updateView({ page: page - 1 })}>上一页</button><span>{page} / {pages}</span><button disabled={page === pages} onClick={() => updateView({ page: page + 1 })}>下一页</button></div></>}
+    </div> : <>{children?.(sorted.slice((page - 1) * 24, page * 24))}<div className="flex items-center justify-center gap-4 p-4"><button disabled={page === 1} onClick={() => updateView({ page: page - 1 })}>上一页</button><span>{page} / {pages}</span><button disabled={page === pages} onClick={() => updateView({ page: page + 1 })}>下一页</button></div></>}
   </section>;
 }

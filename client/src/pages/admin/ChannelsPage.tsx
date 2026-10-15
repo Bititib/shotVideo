@@ -1,5 +1,7 @@
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import AdminCollection from '../../components/AdminCollection';
+import ChannelListItem from '../../components/ChannelListItem';
+import './ChannelsPage.css';
 import AdminDrawer from '../../components/AdminDrawer';
 import ChannelDetails, { type ChannelFeedback } from '../../components/ChannelDetails';
 import '../../components/ChannelDetails.css';
@@ -272,11 +274,11 @@ export default function ChannelsPage() {
   };
 
   return (
-    <div className="p-4 md:p-8 max-w-4xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
-        <h1 className="text-2xl font-bold text-white">📡 渠道管理</h1>
+    <div className="channels-page">
+      <div className="channels-page-header flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+        <h1 className="channels-heading"><Radio aria-hidden="true" />渠道管理</h1>
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={openNew} className="h-11 flex items-center gap-2 px-4 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
+          <button type="button" onClick={openNew} className="channels-add h-11 flex items-center gap-2 px-4 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
             <Plus className="w-4 h-4" /> 添加渠道
           </button>
         </div>
@@ -427,71 +429,18 @@ export default function ChannelsPage() {
 
       </details>
       <AdminCollection<any> name="channels" items={filteredChannels} id={ch => String(ch.id)} columns={[
-        { title: '渠道', sort: ch => ch.name, render: ch => <><strong>{ch.name}</strong><small className="block">{ch.type}</small></> },
-        { title: '状态', sort: ch => ch.status, render: ch => ch.status ? '启用' : '停用' },
-        { title: '模型 / 并发', sort: ch => ch.supportedModels?.length || 0, render: ch => <>{ch.supportedModels?.length || 0} 个模型<br />{ch.concurrencyRunning || 0} 运行 / {ch.concurrencyQueued || 0} 排队</> },
-        { title: '操作', render: ch => <div className="channel-table-actions"><button onClick={() => { setDetailEditing(false); setDetailTab('models'); setDetail(ch); }}>详情与模型</button><button className="channel-details-primary" disabled={syncing !== null || testing !== null} onClick={() => { setDetailEditing(false); setDetailTab('models'); setDetail(ch); void syncModels(ch); }}><RefreshCw className={syncing === ch.id ? 'animate-spin' : ''} aria-hidden="true" />{syncing === ch.id ? '正在同步…' : '同步模型'}</button><button onClick={() => openEdit(ch)}>编辑</button><button disabled={pendingId !== null} onClick={() => toggleStatus(ch)}>{ch.status ? '停用' : '启用'}</button></div> },
-      ]}>{visibleChannels => <div className="space-y-4">
-        {visibleChannels.map(ch => (
-          <div key={ch.id} className={`bg-white/[0.02] border rounded-2xl p-5 ${ch.status ? 'border-white/5' : 'border-red-500/20 opacity-60'}`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center border border-white/5 ${ch.status ? 'bg-gradient-to-br from-green-500/20 to-emerald-500/20' : 'bg-gradient-to-br from-red-500/20 to-orange-500/20'}`}>
-                  <Radio className={`w-5 h-5 ${ch.status ? 'text-green-400' : 'text-red-400'}`} />
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-white">{ch.name}</h3>
-                  <p className="text-[10px] text-zinc-500 font-mono"><span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold mr-1.5 ${ch.type === 'gemini' ? 'bg-emerald-500/15 text-emerald-400' : ch.type === 'grok2api' ? 'bg-orange-500/15 text-orange-400' : ch.type === 'hmstudio' ? 'bg-amber-500/15 text-amber-300' : 'bg-blue-500/15 text-blue-400'}`}>{ch.type === 'async-video' ? 'Vx-乐2.0fast' : ch.type === 'zongheng' ? '纵横科技' : ch.type === 'openai' ? 'OpenAI' : ch.type === 'gemini' ? 'Gemini' : ch.type === 'grok2api' ? 'Grok2API' : ch.type === 'hmstudio' ? 'HM Studio' : ch.type === 'blobdraw' ? 'BlobDraw' : ch.type === 'haya' ? 'Haya AI' : ch.type === 'miaowu' ? '喵呜 API' : ch.type}</span>{ch.baseUrl}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button onClick={() => syncModels(ch)} disabled={syncing === ch.id}
-                  className="flex items-center gap-1 text-[10px] px-3 py-1 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg text-amber-300 disabled:opacity-50">
-                  <RefreshCw className={`w-3 h-3 ${syncing === ch.id ? 'animate-spin' : ''}`} /> 同步模型
-                </button>
-                <button onClick={() => handleTest(ch.id)} disabled={testing === ch.id}
-                  className="flex items-center gap-1 text-[10px] px-3 py-1 bg-yellow-500/10 hover:bg-yellow-500/20 rounded-lg text-yellow-400 disabled:opacity-50">
-                  {testing === ch.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />} 测试
-                </button>
-                {ch.type === 'hmstudio' && (
-                  <>
-                    {(ch.apiKeys || []).some((key: any) => key.status === 0) && (
-                      <button onClick={() => openEdit(ch)}
-                        className="flex items-center gap-1 text-[10px] px-3 py-1 bg-red-500/10 hover:bg-red-500/20 rounded-lg text-red-400">
-                        <Power className="w-3 h-3" /> 启动 Key ({(ch.apiKeys || []).filter((key: any) => key.status === 0).length})
-                      </button>
-                    )}
-                    <button onClick={() => openAddHmKey(ch)}
-                      className="flex items-center gap-1 text-[10px] px-3 py-1 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg text-amber-300">
-                      <KeyRound className="w-3 h-3" /> 添加 Key
-                    </button>
-                  </>
-                )}
-                <button onClick={() => { setDetailEditing(false); setDetail(ch); }} className="text-xs px-3 py-1 rounded-lg bg-blue-500/10">关联模型与价格</button>
-                <button disabled={pendingId !== null} onClick={() => toggleStatus(ch)} aria-label={ch.status ? `停止 ${ch.name}` : `启动 ${ch.name}`}
-                  className={`flex items-center gap-1 rounded-lg px-3 py-1 text-[10px] font-medium transition-colors ${ch.status ? 'bg-green-500/10 text-green-400 hover:bg-green-500/20' : 'bg-red-500/10 text-red-400 hover:bg-red-500/20'}`}>
-                  {ch.status ? <PowerOff className="w-3 h-3" /> : <Power className="w-3 h-3" />}
-                  {ch.status ? '停止' : '启动'}
-                </button>
-                <button onClick={() => openEdit(ch)} className="text-[10px] px-3 py-1 bg-white/5 hover:bg-white/10 rounded-lg text-zinc-300"><Pencil className="w-3 h-3 inline mr-1" />编辑</button>
-                <button onClick={() => handleDelete(ch.id)} className="text-[10px] px-3 py-1 bg-red-500/10 hover:bg-red-500/20 rounded-lg text-red-400"><Trash2 className="w-3 h-3 inline mr-1" />删除</button>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-4 text-xs text-zinc-400">
-              <span>模型数: <span className="text-zinc-300">{ch.supportedModels?.length || 0}</span></span>
-              <span>优先级: <span className="text-zinc-300">{ch.priority}</span></span>
-              <span>权重: <span className="text-zinc-300">{ch.weight}</span></span>
-              <span>超时: <span className="text-zinc-300">{(ch.timeout / 1000).toFixed(0)}s</span></span>
-              {ch.type === 'hmstudio' && <span>Keys: <span className="text-amber-200 tabular-nums">{ch.apiKeyCount || 0}</span></span>}
-              {ch.type === 'hmstudio' && <span>运行: <span className="text-emerald-300 tabular-nums">{ch.concurrencyRunning || 0}/{ch.concurrencyLimit ?? 0}</span></span>}
-              {ch.type === 'hmstudio' && <span>排队: <span className="text-amber-300 tabular-nums">{ch.concurrencyQueued || 0}</span></span>}
-              {ch.type === 'wx-haidiyue' && <span>人脸拆分: <span className={ch.faceSplitEnabled === 0 ? 'text-zinc-400' : 'text-emerald-300'}>{ch.faceSplitEnabled === 0 ? '关闭' : '开启'}</span></span>}
-              {ch.lastTestResult && <span>{ch.lastTestResult.startsWith('auto_disabled:') ? '自动停止' : '最后测试'}: <span className={ch.lastTestResult?.startsWith('success') ? 'text-green-400' : 'text-red-400'}>{ch.lastTestResult.replace(/^auto_disabled:/, '')}</span></span>}
-            </div>
-          </div>
-        ))}
-        {filteredChannels.length === 0 && <div className="text-center text-zinc-500 py-12">{channels.length ? "没有符合筛选条件的渠道" : "暂无渠道，点击上方按钮添加"}</div>}
-      </div>}</AdminCollection>
+        { title: '渠道名称', sort: ch => ch.name, render: ch => ch.name },
+        { title: '启用状态', sort: ch => ch.status, render: ch => ch.status },
+        { title: '模型数量', sort: ch => ch.supportedModels?.length || 0, render: ch => ch.supportedModels?.length || 0 },
+      ]} listHeader={<div className="channel-list-header" aria-hidden="true"><span>渠道</span><span>状态</span><span>关联模型</span><span>实时任务</span><span>操作</span></div>}
+        listItem={ch => <ChannelListItem channel={ch} syncing={syncing} testing={testing} pending={pendingId !== null}
+          onOpen={() => { setDetailEditing(false); setDetailTab('models'); setDetail(ch); }}
+          onSync={() => { setDetailEditing(false); setDetailTab('models'); setDetail(ch); void syncModels(ch); }}
+          onEdit={() => openEdit(ch)} onToggle={() => { void toggleStatus(ch); }}
+          onTest={() => { setDetailEditing(false); setDetailTab('config'); setDetail(ch); void handleTest(ch.id); }}
+          onAddKey={() => openAddHmKey(ch)} onDelete={() => { void handleDelete(ch.id); }} />}
+      />
+      {!filteredChannels.length && !loading && <div className="channels-empty">{channels.length ? '没有符合筛选条件的渠道' : '暂无渠道，点击上方按钮添加'}</div>}
 
       {detail && <AdminDrawer wide title={detail.name + ' · 渠道详情'} blocked={detailEditing || Boolean(edit) || syncing === detail.id || testing === detail.id} onClose={() => { setDetail(null); void loadChannels(); }}>
         <ChannelDetails channel={channels.find(ch => ch.id === detail.id) || detail}
