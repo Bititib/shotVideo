@@ -192,7 +192,7 @@ export async function localizeGeneratedImage(
   const absoluteSource = new URL(sourceUrl, channel?.baseUrl || siteBase);
   if (!['http:', 'https:'].includes(absoluteSource.protocol)) throw new Error('不支持的图片 URL 协议');
   const headers: Record<string, string> = {};
-  if (channel?.apiKey && channel.baseUrl) {
+  if (channel?.apiKey && channel.baseUrl && !isPidoiImageChannel(channel)) {
     try {
       const channelOrigin = new URL(channel.baseUrl).origin;
       const authorizedOrigins = new Set([channelOrigin]);
@@ -557,6 +557,33 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
   };
 
   try {
+    if (isPidoiImageChannel(channel)) {
+      const diagnostic: ImageRequestContext = { stage: 'submit', contentId, channelId: channel.id };
+      pidoiImageActive.add(contentId);
+      persistJob({ imageProtocol: 'pidoi-async-v1', asyncStartedAt: Date.now(), pidoiImageJobs: [], publicBaseUrl: process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}` });
+      try {
+        const images = (reference_images || []).map((source: string) => convertBase64ToPublicUrl(source, 'pidoi_ref', req));
+        for (let index = 0; index < count; index++) {
+          Object.assign(diagnostic, { stage: 'submit', index, taskId: undefined });
+          const task = await submitPidoiImage(channel, { model: persistedMetadata.upstreamModel, prompt, n: 1,
+            size, resolution, aspect_ratio, quality: effectiveQuality, images, response_format: 'url',
+            output_format, background });
+          Object.assign(diagnostic, { stage: 'persist', taskId: task.taskId });
+          persistedMetadata.pidoiImageJobs.push({ index, taskId: task.taskId, status: task.status, sourceUrl: task.imageUrl });
+          const ids = persistedMetadata.pidoiImageJobs.map((job: any) => job.taskId);
+          persistJob({ upstreamTaskId: ids[0], taskId: ids[0], upstreamTaskIds: ids,
+            progressText: '任务已受理，正在后台生成' });
+        }
+      } catch (e: any) {
+        logImageRequestFailure(diagnostic, e);
+        reservation.review();
+        persistJob({ billingStatus: 'review', progressText: '提交结果待核对，不会自动重新提交' }, 'review');
+      } finally { pidoiImageActive.delete(contentId); }
+      sendEvent({ type: 'status', contentId, background: true, message: '后台任务已保存，可刷新页面查看进度', total: count });
+      finishStream();
+      void recoverPidoiImage(contentId);
+      return;
+    }
     if (isZonghengChannel(channel)) {
       let submitted = false, accepted = false;
       let upstreamImages: string[] = [];
@@ -797,6 +824,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
       console.log(`[imageGen/edit] 参考图 ${refBlobs.length} 张, 并发 ${count} 个请求, model=${editModel}`);
 
       const runSingle = async (index: number) => {
+        const diagnostic: ImageRequestContext = { stage: 'submit', contentId, channelId: channel.id, index };
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), imageGenerationTimeout(channel));
 
@@ -832,13 +860,15 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
             const errText = await upstream.text();
             let errorPayload: unknown; try { errorPayload = JSON.parse(errText); } catch {}
             upstreamTaskIds[index] = captureResponse(index, upstream, errorPayload, 'response_without_id');
-            console.error(`[imageGen/edit] #${index} 上游返回 ${upstream.status}: ${errText.slice(0, 200)}`);
+            logImageRequestFailure({ ...diagnostic, taskId: upstreamTaskIds[index] }, { status: upstream.status });
             sendEvent({ type: 'image_error', index, message: `请求 #${index + 1} 失败 (${upstream.status})` });
             return;
           }
 
           const result = await upstream.json() as any;
           const taskId = captureResponse(index, upstream, result, 'response_without_id');
+          diagnostic.taskId = taskId;
+          diagnostic.stage = 'persist';
           if (taskId) {
             upstreamTaskIds[index] = taskId;
             persistJob({
@@ -853,7 +883,9 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
           sendEvent({ type: 'progress', progress: 100, index });
 
           if (imageUrl) {
+            diagnostic.stage = 'download';
             const localizedUrl = await localizeGeneratedImage(imageUrl, `edited_image_${index}`, req, channel, { relative: true });
+            diagnostic.stage = 'persist';
             completedImages[index] = localizedUrl;
             upstreamImageUrls[index] = imageUrl;
             sendEvent({ type: 'image_ready', imageUrl: localizedUrl, index, total: count });
@@ -864,7 +896,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
           clearTimeout(timer);
           const msg = err.name === 'AbortError' ? '超时' : (err.message || '请求失败');
           upstreamTaskIds[index] = captureResponse(index);
-          console.error(`[imageGen/edit] #${index} 异常:`, msg);
+          logImageRequestFailure({ ...diagnostic, taskId: upstreamTaskIds[index] }, err);
           sendEvent({ type: 'image_error', index, message: `图片 #${index + 1}: ${msg}` });
         } finally {
           clearTimeout(timer);
@@ -899,6 +931,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
         let completedCount = 0;
 
         const runSingle = async (index: number) => {
+          const diagnostic: ImageRequestContext = { stage: 'submit', contentId, channelId: channel.id, index };
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), imageGenerationTimeout(channel));
 
@@ -932,7 +965,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
               const errText = await upstream.text();
               let errorPayload: unknown; try { errorPayload = JSON.parse(errText); } catch {}
               upstreamTaskIds[index] = captureResponse(index, upstream, errorPayload, 'response_without_id');
-              console.error(`[imageGen/gpt] #${index} 上游返回 ${upstream.status}: ${errText.slice(0, 200)}`);
+              logImageRequestFailure({ ...diagnostic, taskId: upstreamTaskIds[index] }, { status: upstream.status });
               let upstreamMessage = '';
               try {
                 const parsed = JSON.parse(errText);
@@ -950,6 +983,8 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
 
             const result = await upstream.json() as any;
             const taskId = captureResponse(index, upstream, result, 'response_without_id');
+            diagnostic.taskId = taskId;
+            diagnostic.stage = 'persist';
             if (taskId) {
               upstreamTaskIds[index] = taskId;
               persistJob({
@@ -970,7 +1005,9 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
             sendEvent({ type: 'progress', progress: 100, index });
 
              if (imageUrl) {
+               diagnostic.stage = 'download';
                const localizedUrl = await localizeGeneratedImage(imageUrl, `gpt_image_${index}`, req, channel, { relative: true });
+               diagnostic.stage = 'persist';
                completedImages[index] = localizedUrl;
                upstreamImageUrls[index] = imageUrl;
                sendEvent({ type: 'image_ready', imageUrl: localizedUrl, index, total: count });
@@ -981,7 +1018,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
             clearTimeout(timer);
             const msg = err.name === 'AbortError' ? '超时' : (err.message || '请求失败');
             upstreamTaskIds[index] = captureResponse(index);
-            console.error(`[imageGen/gpt] #${index} 异常:`, msg);
+            logImageRequestFailure({ ...diagnostic, taskId: upstreamTaskIds[index] }, err);
             sendEvent({ type: 'image_error', index, message: `图片 #${index + 1}: ${msg}` });
           } finally {
             clearTimeout(timer);
@@ -1137,3 +1174,6 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
 });
 
 export default router;
+import { isPidoiImageChannel, submitPidoiImage } from '../services/pidoiImageAdapter.js';
+import { pidoiImageActive, recoverPidoiImage } from '../services/pidoiImageWorker.js';
+import { logImageRequestFailure, type ImageRequestContext } from '../services/imageRequestDiagnostics.js';

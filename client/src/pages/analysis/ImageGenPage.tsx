@@ -487,7 +487,8 @@ export default function ImageGenPage() {
             break;
           case 'content_id':
           case 'status':
-            updateBatch(batch => ({ ...batch, contentId: event.contentId || batch.contentId, phase: 'processing', statusMessage: event.message || batch.statusMessage }));
+            updateBatch(batch => ({ ...batch, contentId: event.contentId || batch.contentId, persisted: event.background || batch.persisted, phase: 'processing', statusMessage: event.message || batch.statusMessage }));
+            if (event.background) batchControllersRef.current.delete(batchId);
             break;
           case 'progress': {
             const idx = event.index ?? -1;

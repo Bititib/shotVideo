@@ -20,6 +20,9 @@ async function main() {
 
     const { startVideoBatchWorker } = await import('./services/videoBatchService.js');
     startVideoBatchWorker();
+    const { resumePidoiImages } = await import('./services/pidoiImageWorker.js');
+    void resumePidoiImages().catch(error => console.error('[pidoi-image-recover]', error.message));
+    setInterval(() => { void resumePidoiImages().catch(error => console.error('[pidoi-image-recover]', error.message)); }, 10_000);
 
     // 监听端口后再恢复队列，确保 HM 能访问本站托管的参考素材。
     try {

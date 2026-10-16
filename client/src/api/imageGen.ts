@@ -44,6 +44,7 @@ export interface ImageGenerateParams {
 }
 
 export interface ImageSSEEvent {
+  background?: boolean;
   type: 'content_id' | 'disconnected' | 'status' | 'queue' | 'progress' | 'content' | 'image_ready' | 'image_error' | 'complete' | 'error';
   status?: string;
   progress?: number;

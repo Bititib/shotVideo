@@ -319,6 +319,15 @@ export async function generateSpecificationImage(target: RouteCandidate, request
     if (i.quality && i.quality !== payload.quality) throw new SpecificationUpstreamError('质量档位与输出分辨率不匹配', true);
   }
   for (const key of ['quality', 'output_format', 'background', 'output_compression']) if (request.body[key] !== undefined) payload[key] = request.body[key];
+  if (isPidoiImageChannel(c)) {
+    try {
+      return await generatePidoiImage(c, { ...payload, images: options.referenceImages,
+        resolution: i.resolution, aspect_ratio: i.ratio }, onSubmitted, trackedFetch);
+    } catch (e: any) {
+      if (e.imageRequestStage) logImageRequestFailure({ stage: e.imageRequestStage, channelId: c.id, taskId: e.upstreamTaskId }, e);
+      throw new SpecificationUpstreamError(e.message, false, !e.confirmedFailure, false, 0, e instanceof PidoiImageError && e.confirmedFailure);
+    }
+  }
   let url = base + '/v1/images/generations';
   if (request.images.length) {
     const form = new FormData();
@@ -347,6 +356,7 @@ export function imageSize(ratio: string) {
 
 /** Resume a previously accepted image job; this function never submits a POST. */
 export async function pollSpecificationImage(channel: any, taskId: string) {
+  if (isPidoiImageChannel(channel)) return pollPidoiImage(channel, taskId);
   if (isFunAiChannel(channel)) {
     const task = await pollFunAiTask(channel, taskId, fetch, 'image');
     return { status: task.status === 'cancelled' ? 'failed' : task.status, imageUrl: task.resultUrl, error: task.error };
@@ -361,3 +371,5 @@ export async function pollSpecificationImage(channel: any, taskId: string) {
   const status = String(task.status || '').toLowerCase();
   return { status: status === 'succeeded' ? 'completed' : status, imageUrl: ['completed','succeeded'].includes(status) ? (mf ? mingFeiImageContentUrl(channel.baseUrl, taskId) : siYueTianImageContentUrl(taskId)) : '', error: typeof task.error === 'string' ? task.error : task.error?.message || task.message || '' };
 }
+import { isPidoiImageChannel, generatePidoiImage, pollPidoiImage, PidoiImageError } from './pidoiImageAdapter.js';
+import { logImageRequestFailure } from './imageRequestDiagnostics.js';

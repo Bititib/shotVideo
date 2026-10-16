@@ -209,7 +209,7 @@ async function downloadPublicImage(
       });
     } catch (error: any) {
       const reason = error?.name === 'TimeoutError' || error?.name === 'AbortError' ? '连接超时' : '连接失败';
-      throw new Error(`参考图下载失败（${current.hostname}：${reason}）`);
+      throw Object.assign(new Error(`参考图下载失败（${current.hostname}：${reason}）`), { cause: error });
     }
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('location');
@@ -253,6 +253,10 @@ async function readSourceImage(source: string, options: WxHaidiYueImageOptions):
     options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     options.fetchImpl || fetch,
   );
+}
+
+export async function readValidatedImage(source: string, options: WxHaidiYueImageOptions = {}) {
+  return readSourceImage(source, options);
 }
 
 function resolveMediaBaseUrl(options: WxHaidiYueImageOptions): string {
