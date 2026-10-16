@@ -1,4 +1,5 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 import { eq } from 'drizzle-orm';
 import { db } from '../server/db/index.js';
 import { modelFeedbacks, users } from '../server/db/schema.js';
@@ -9,6 +10,7 @@ let userId = 0;
 
 describe('model failure feedback', () => {
   beforeAll(() => {
+    db.insert(users).values({ email: 'feedback@test.local', username: 'feedback-test', passwordHash: 'test' }).run();
     const user = db.select().from(users).get();
     if (!user) throw new Error('test user is missing');
     userId = user.id;

@@ -18,7 +18,8 @@ import { TokenService } from '../services/tokenService.js';
 import { ChannelService } from '../services/channelService.js';
 import { getAccessibleModels, getAccessibleModelIds, callableModelId } from '../services/modelAccessService.js';
 export { filterRoutableModels, getAccessibleModels, getAccessibleModelIds } from '../services/modelAccessService.js';
-import { PricingService } from '../services/pricingService.js';
+import { PricingService, type PricingSnapshot } from '../services/pricingService.js';
+import { userModelDenied } from '../services/userModelAccessService.js';
 import { extractImageUpstreamTaskId } from '../services/imageTaskMetadataService.js';
 import { BalanceService, type BalanceDeduction } from '../services/balanceService.js';
 import { db, sqlite } from '../db/index.js';
@@ -444,6 +445,7 @@ function normalizeImageExtension(value: unknown): string {
 
 /** 将开放 API 返回的每张图片保存为独立内容资产。资产入库失败不影响已成功的上游响应。 */
 export function saveApiImageAssets(options: {
+  pricingSnapshot?: PricingSnapshot;
   token: any;
   responseBody: any;
   model: string;
@@ -463,9 +465,9 @@ export function saveApiImageAssets(options: {
   const validItems = items.filter((item: any) => item?.url || item?.b64_json);
   if (validItems.length === 0) return [];
 
-  const totalCents = Math.max(0, Math.round(options.totalCost * 100));
-  const baseCents = Math.floor(totalCents / validItems.length);
-  const remainder = totalCents % validItems.length;
+  const totalMicros = Math.max(0, Math.round(options.totalCost * 1_000_000));
+  const baseMicros = Math.floor(totalMicros / validItems.length);
+  const remainder = totalMicros % validItems.length;
   const assetIds: number[] = [];
 
   validItems.forEach((item: any, index: number) => {
@@ -481,7 +483,7 @@ export function saveApiImageAssets(options: {
       resultUrl = `/uploads/api-images/${filename}`;
     }
 
-    const assetCost = (baseCents + (index < remainder ? 1 : 0)) / 100;
+    const assetCost = (baseMicros + (index < remainder ? 1 : 0)) / 1_000_000;
     const upstreamTaskId = String(
       item.upstream_task_id
       || item.task_id
@@ -507,6 +509,7 @@ export function saveApiImageAssets(options: {
       metadata: JSON.stringify({
         source: 'api',
         operation: options.operation,
+        pricingSnapshot: options.pricingSnapshot,
         tokenId: options.token.id,
         tokenName: options.token.name || '',
         size: options.size,
@@ -585,6 +588,7 @@ router.get('/models', (req: Request, res: Response) => {
 
 /** GET /v1/pricing — 返回当前 Token 可用模型的公开价格。 */
 router.get('/pricing', (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'private, no-store');
   const tokenKey = extractToken(req);
   if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
 
@@ -595,12 +599,13 @@ router.get('/pricing', (req: Request, res: Response) => {
   res.json({
     object: 'list',
     currency: 'CNY',
-    data: PricingService.getPublicPricingForModels(modelList).map(row => ({ ...row, display_name: row.model, canonical_id: row.model })),
+    data: PricingService.getPublicPricingForModels(modelList, token.userId ?? null).map(row => ({ ...row, display_name: row.model, canonical_id: row.model })),
   });
 });
 
 /** GET /v1/pricing/:model — 返回一个可用模型的公开价格。 */
 router.get('/pricing/:model', (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'private, no-store');
   const tokenKey = extractToken(req);
   if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
 
@@ -615,7 +620,7 @@ router.get('/pricing/:model', (req: Request, res: Response) => {
     });
   }
 
-  const pricing = PricingService.getPublicPricingForModels([modelId])[0];
+  const pricing = PricingService.getPublicPricingForModels([modelId], token.userId ?? null)[0];
   if (!pricing) {
     return res.status(404).json({
       error: { message: `Model '${modelId}' has no pricing rule`, type: 'invalid_request_error' },
@@ -746,9 +751,9 @@ router.get('/billing/usage', (req: Request, res: Response) => {
 
 /** POST /v1/chat/completions — 核心对话代理转发 */
 
-function reserveApiCharge(token: any, cost: number, model: string) {
+function reserveApiCharge(token: any, cost: number, model: string, pricingSnapshot?: PricingSnapshot) {
   return reserveCharge(cost, amount => deductTokenOrUserBalance(token, amount, model),
-    (amount, receipt) => { refundTokenOrUserBalance(token, amount, receipt); }, { tokenId: token.id, userId: token.userId, unlimitedToken: token.balance === -1, model });
+    (amount, receipt) => { refundTokenOrUserBalance(token, amount, receipt); }, { tokenId: token.id, userId: token.userId, unlimitedToken: token.balance === -1, model, pricingSnapshot });
 }
 
 router.post('/chat/completions', async (req: Request, res: Response) => {
@@ -766,7 +771,7 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
   if (!model) return res.status(400).json({ error: { message: 'model is required', type: 'invalid_request_error' } });
   if (!messages) return res.status(400).json({ error: { message: 'messages is required', type: 'invalid_request_error' } });
 
-  if (token.allowedModels.length > 0 && !token.allowedModels.includes(model)) {
+  if (userModelDenied(token.userId, model) || (token.allowedModels.length > 0 && !token.allowedModels.includes(model))) {
     return res.status(403).json({ error: { message: `Token has no access to model ${model}`, type: 'permission_error' } });
   }
 
@@ -780,7 +785,7 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
   // UTF-8 bytes conservatively cover text tokens; reserve extra for each media item.
   const serialized = JSON.stringify({ messages, ...otherParams });
   const mediaCount = (serialized.match(/"(?:image_url|input_audio|video_url)"/g) || []).length;
-  const quote = PricingService.createQuoteResolver();
+  const quote = PricingService.createQuoteResolver(true, token.userId ?? null);
   const calculateCost = (promptTokens: number, completionTokens: number) => quote(model, {promptTokens, completionTokens}).cost;
   const reservedCost = calculateCost(Buffer.byteLength(serialized, 'utf8') + 1024 + mediaCount * 65536, outputLimit * choices);
   // Check for a useful error first; the reservation below performs the atomic deduction.
@@ -805,7 +810,7 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
 
   let reservation: ReturnType<typeof reserveApiCharge> | undefined;
   try {
-    reservation = reserveApiCharge(token, reservedCost, model);
+    reservation = reserveApiCharge(token, reservedCost, model, quote(model, {}).pricingSnapshot);
     res.setHeader('X-Billing-Reservation', reservation.id);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), channel.timeout || 120000);
@@ -932,7 +937,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
   if (!normalizeApiModel(req, res)) return;
-  if (await handleSpecificationGeneration(req, res, 'image', { token, reserve: (amount, id) => reserveApiCharge(token, amount, id) })) return;
+  if (await handleSpecificationGeneration(req, res, 'image', { token, reserve: (amount, id, snapshot) => reserveApiCharge(token, amount, id, snapshot) })) return;
   const { model, prompt, n = 1, size = '1024x1024', response_format = 'url', ...otherParams } = req.body;
   if (!model) return res.status(400).json({ error: { message: 'model is required', type: 'invalid_request_error' } });
   if (!prompt) return res.status(400).json({ error: { message: 'prompt is required', type: 'invalid_request_error' } });
@@ -942,7 +947,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
     return res.status(400).json({ error: { message: 'n must be an integer between 1 and 4', type: 'invalid_request_error' } });
   }
 
-  if (token.allowedModels.length > 0 && !token.allowedModels.includes(model)) {
+  if (userModelDenied(token.userId, model) || (token.allowedModels.length > 0 && !token.allowedModels.includes(model))) {
     return res.status(403).json({ error: { message: `Token has no access to model ${model}`, type: 'permission_error' } });
   }
 
@@ -964,14 +969,15 @@ router.post('/images/generations', async (req: Request, res: Response) => {
       buildZonghengImagePayload({ model, prompt, size: zonghengSize, aspectRatio: otherParams.aspect_ratio, quality: otherParams.quality, n: count,
       referenceImages: otherParams.reference_images || otherParams.images || otherParams.image_urls || (otherParams.image_url ? [otherParams.image_url] : []) }); }
     catch (e: any) { return res.status(400).json({ error: { message: e.message, type: 'invalid_request_error' } }); }
-    if (PricingService.quote(model, {count:1}, false).billingType !== 'per_call') return res.status(400).json({ error: { message: '请先配置模型价格', type: 'invalid_request_error' } });
+    if (PricingService.quote(model, {count:1}, false, token.userId ?? null).billingType !== 'per_call') return res.status(400).json({ error: { message: '请先配置模型价格', type: 'invalid_request_error' } });
   }
   const billingResolution = isMingFeiImageModel(model)
     ? normalizeMingFeiResolution(otherParams.output_resolution || otherParams.resolution)
     : isZonghengChannel(channel) ? String(otherParams.output_resolution || otherParams.resolution || '1K')
     : String(otherParams.resolution || '');
-  const unitCost = PricingService.quote(model, { resolution: billingResolution, count: 1 }, false).cost;
-  const totalCost = Math.round(PricingService.quote(model, { resolution: billingResolution, count }, false).cost * 100) / 100;
+  const pricingQuote = PricingService.quote(model, { resolution: billingResolution, count }, false, token.userId ?? null);
+  const unitCost = pricingQuote.cost / count;
+  const totalCost = Math.round(pricingQuote.cost * 1_000_000) / 1_000_000;
 
   const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, totalCost);
   if (!sufficient) {
@@ -984,17 +990,17 @@ router.post('/images/generations', async (req: Request, res: Response) => {
 
   let reservation: ReturnType<typeof reserveApiCharge> | undefined;
   try {
-    reservation = reserveApiCharge(token, totalCost, model);
+    reservation = reserveApiCharge(token, totalCost, model, pricingQuote.pricingSnapshot);
     if (isZonghengChannel(channel)) {
       const imageId = ContentService.save({ userId: token.userId || 1, type: 'image', modelId: model, title: prompt.slice(0,200), cost: totalCost, status: 'processing',
-        metadata: { source: 'api', channelId: channel.id, upstreamModel, billingReservationId: reservation.id, billingStatus: 'reserved', count } });
+        metadata: { source: 'api', pricingSnapshot: pricingQuote.pricingSnapshot, resolution: billingResolution, channelId: channel.id, upstreamModel, billingReservationId: reservation.id, billingStatus: 'reserved', count } });
       let accepted = false;
       let submitted = false;
       let upstreamImages: string[] = [];
       try {
         const images = await generateZonghengImages(channel.baseUrl, channel.apiKey, { model: upstreamModel, prompt, size: zonghengSize,
           aspectRatio: otherParams.aspect_ratio, quality: otherParams.quality, n: count }, () => {
-            db.update(contents).set({ metadata: JSON.stringify({source:'api',channelId:channel.id,upstreamModel,billingReservationId:reservation!.id,
+            db.update(contents).set({ metadata: JSON.stringify({source:'api',pricingSnapshot:pricingQuote.pricingSnapshot,resolution:billingResolution,channelId:channel.id,upstreamModel,billingReservationId:reservation!.id,
               billingStatus:'reserved',count,zonghengSubmissionStarted:new Date().toISOString()}) }).where(eq(contents.id,imageId)).run();
             submitted = true;
           }, channel.timeout);
@@ -1003,9 +1009,9 @@ router.post('/images/generations', async (req: Request, res: Response) => {
         const data = await Promise.all(urls.map(async (url: string) => response_format === 'b64_json'
           ? { b64_json: fs.readFileSync(path.resolve('data', url.replace(/^\/(?:api\/)?/,''))).toString('base64') }
           : { url: req.protocol + '://' + req.get('host') + url }));
-        const cost = Math.min(totalCost, Math.round(totalCost * urls.length / count * 100) / 100);
+        const cost = Math.min(totalCost, Math.round(totalCost * urls.length / count * 1_000_000) / 1_000_000);
         reservation.settle(cost);
-        db.update(contents).set({ status: 'completed', resultUrl: urls[0], cost, metadata: JSON.stringify({ source: 'api', channelId: channel.id,
+        db.update(contents).set({ status: 'completed', resultUrl: urls[0], cost, metadata: JSON.stringify({ source: 'api', pricingSnapshot: pricingQuote.pricingSnapshot, resolution: billingResolution, channelId: channel.id,
           billingReservationId: reservation.id, billingStatus: 'settled', imageUrls: urls, upstreamImageUrls: upstreamImages, count, completedAt: new Date().toISOString() }) }).where(eq(contents.id,imageId)).run();
         db.insert(apiLogs).values({tokenId:token.id,channelId:channel.id,model,upstreamModel,cost,durationMs:Date.now()-startTime,status:'success',clientIp}).run();
         return res.json({ created: Math.floor(Date.now()/1000), data });
@@ -1013,7 +1019,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
         const uncertain = accepted || submitted && (!(e instanceof ZonghengSubmissionError) || e.uncertain);
         if (uncertain) reservation.review(); else reservation.cancel();
         db.update(contents).set({ status: uncertain ? 'review' : 'failed', cost: uncertain ? totalCost : 0,
-          metadata: JSON.stringify({ source:'api',channelId:channel.id,billingReservationId:reservation.id,billingStatus:uncertain?'review':'refunded',
+          metadata: JSON.stringify({ source:'api',pricingSnapshot:pricingQuote.pricingSnapshot,resolution:billingResolution,channelId:channel.id,billingReservationId:reservation.id,billingStatus:uncertain?'review':'refunded',
             requiresReview:uncertain,progressText:e.message,upstreamImageUrls:upstreamImages }) }).where(eq(contents.id,imageId)).run();
         return res.status(uncertain ? 202 : 502).json({ id:imageId,requires_review:uncertain,error:{message:e.message,type:uncertain?'submission_uncertain':'upstream_error'} });
       }
@@ -1047,7 +1053,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
         throw localizationFailure?.reason || generationFailure?.reason || new Error('MingFei 图片生成失败');
       }
 
-      const actualCost = Math.round(unitCost * completed.length * 100) / 100;
+      const actualCost = Math.round(unitCost * completed.length * 1_000_000) / 1_000_000;
       const responseBody = {
         created: Math.floor(Date.now() / 1000),
         data: completed.map(({ upstream_url: _upstreamUrl, ...item }) => item),
@@ -1060,6 +1066,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
       }).run();
       try {
         saveApiImageAssets({
+          pricingSnapshot: pricingQuote.pricingSnapshot,
           token,
           responseBody: { ...responseBody, data: completed },
           model,
@@ -1130,6 +1137,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
       }).run();
       try {
         saveApiImageAssets({
+          pricingSnapshot: pricingQuote.pricingSnapshot,
           token,
           responseBody,
           model,
@@ -1198,7 +1206,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
         throw localizationFailure?.reason || generationFailure?.reason || new Error('四月天图片生成失败');
       }
 
-      const actualCost = Math.round(unitCost * completed.length * 100) / 100;
+      const actualCost = Math.round(unitCost * completed.length * 1_000_000) / 1_000_000;
       const responseBody = {
         created: Math.floor(Date.now() / 1000),
         data: completed.map(({ upstream_url: _upstreamUrl, ...item }) => item),
@@ -1211,6 +1219,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
       }).run();
       try {
         saveApiImageAssets({
+          pricingSnapshot: pricingQuote.pricingSnapshot,
           token,
           responseBody: { ...responseBody, data: completed },
           model,
@@ -1262,7 +1271,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
 
     const successfulCount = Array.isArray(responseBody.data) ? responseBody.data.filter((item: any) => item && (item.url || item.b64_json)).length : 0;
     if (!successfulCount) throw new Error('Upstream returned no images');
-    const actualCost = Math.min(totalCost, Math.round(totalCost * successfulCount / n * 100) / 100);
+    const actualCost = Math.min(totalCost, Math.round(totalCost * successfulCount / n * 1_000_000) / 1_000_000);
     reservation.settle(actualCost);
 
     db.insert(apiLogs).values({
@@ -1282,6 +1291,7 @@ router.post('/images/generations', async (req: Request, res: Response) => {
 
     try {
       saveApiImageAssets({
+          pricingSnapshot: pricingQuote.pricingSnapshot,
         token,
         responseBody,
         model,
@@ -1331,7 +1341,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
   }
 
   if (!normalizeApiModel(req, res)) return;
-  if (await handleSpecificationGeneration(req, res, 'image', { token, reserve: (amount, id) => reserveApiCharge(token, amount, id) })) return;
+  if (await handleSpecificationGeneration(req, res, 'image', { token, reserve: (amount, id, snapshot) => reserveApiCharge(token, amount, id, snapshot) })) return;
   const { model, prompt, n = 1, size = '1024x1024', response_format = 'url', ...otherParams } = req.body;
   if (!model) {
     cleanupFiles(req.files);
@@ -1359,7 +1369,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
     return res.status(400).json({ error: { message: 'n must be an integer between 1 and 4', type: 'invalid_request_error' } });
   }
 
-  if (token.allowedModels.length > 0 && !token.allowedModels.includes(model)) {
+  if (userModelDenied(token.userId, model) || (token.allowedModels.length > 0 && !token.allowedModels.includes(model))) {
     cleanupFiles(req.files);
     return res.status(403).json({ error: { message: `Token has no access to model ${model}`, type: 'permission_error' } });
   }
@@ -1373,8 +1383,9 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
   if (isZonghengChannel(channel)) {
     cleanupFiles(req.files); return res.status(400).json({ error: { message: '纵横科技尚未确认图片编辑协议，请使用文生图', type: 'invalid_request_error' } });
   }
-  const unitCost = PricingService.quote(model, {count:1,resolution:String(otherParams.resolution || '')}, false).cost;
-  const totalCost = Math.round(unitCost * count * 100) / 100;
+  const pricingQuote = PricingService.quote(model, {count:1,resolution:String(otherParams.resolution || '')}, false, token.userId ?? null);
+  const unitCost = pricingQuote.cost;
+  const totalCost = Math.round(unitCost * count * 1_000_000) / 1_000_000;
 
   const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, totalCost);
   if (!sufficient) {
@@ -1388,7 +1399,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
 
   let reservation: ReturnType<typeof reserveApiCharge> | undefined;
   try {
-    reservation = reserveApiCharge(token, totalCost, model);
+    reservation = reserveApiCharge(token, totalCost, model, pricingQuote.pricingSnapshot);
     if (isHmStudioChannel(channel)) {
       const queueUserKey = token.userId ? `user:${token.userId}` : `token:${token.id}`;
       hmStudioQueue.assertCanEnqueue(queueUserKey, count);
@@ -1444,6 +1455,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
       }).run();
       try {
         saveApiImageAssets({
+          pricingSnapshot: pricingQuote.pricingSnapshot,
           token, responseBody, model, prompt, size,
           responseFormat: response_format,
           outputFormat: otherParams.output_format,
@@ -1506,7 +1518,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
 
     const successfulCount = Array.isArray(responseBody.data) ? responseBody.data.filter((item: any) => item && (item.url || item.b64_json)).length : 0;
     if (!successfulCount) throw new Error('Upstream returned no images');
-    const actualCost = Math.min(totalCost, Math.round(totalCost * successfulCount / n * 100) / 100);
+    const actualCost = Math.min(totalCost, Math.round(totalCost * successfulCount / n * 1_000_000) / 1_000_000);
     reservation.settle(actualCost);
 
     db.insert(apiLogs).values({
@@ -1525,6 +1537,7 @@ router.post('/images/edits', upload.any(), async (req: Request, res: Response) =
 
     try {
       saveApiImageAssets({
+          pricingSnapshot: pricingQuote.pricingSnapshot,
         token,
         responseBody,
         model,
@@ -1579,7 +1592,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   }
 
   if (!normalizeApiModel(req, res)) return;
-  if (await handleSpecificationGeneration(req, res, 'video', { token, reserve: (amount, id) => reserveApiCharge(token, amount, id) })) return;
+  if (await handleSpecificationGeneration(req, res, 'video', { token, reserve: (amount, id, snapshot) => reserveApiCharge(token, amount, id, snapshot) })) return;
   const body = req.body || {};
 
   const model = body.model;
@@ -1595,7 +1608,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     return res.status(400).json({ error: promptValidationError });
   }
 
-  if (token.allowedModels.length > 0 && !token.allowedModels.includes(model)) {
+  if (userModelDenied(token.userId, model) || (token.allowedModels.length > 0 && !token.allowedModels.includes(model))) {
     cleanupFiles(req.files);
     return res.status(403).json({ error: `Token has no access to model ${model}` });
   }
@@ -2143,7 +2156,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       await validateHayaMedia(audio_urls, 'audio', options);
     } catch (error: any) { cleanupFiles(req.files); return res.status(400).json({ error: error.message }); }
   }
-  const pricingQuote = PricingService.quote(model, { resolution, seconds, count: 1 }, false);
+  const pricingQuote = PricingService.quote(model, { resolution, seconds, count: 1 }, false, token.userId ?? null);
   if (!pricingQuote.billingType) {
     cleanupFiles(req.files);
     return res.status(400).json({ error: `Model ${model} has no pricing rule. Configure it in Admin > Pricing.` });
@@ -2171,6 +2184,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       metadata: {
         source: 'api',
         resolution,
+        pricingSnapshot: pricingQuote.pricingSnapshot,
         seconds,
         aspect_ratio: ratio,
         model,

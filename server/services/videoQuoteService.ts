@@ -4,10 +4,12 @@ import { resolvePublicModelId } from './publicModelNameService.js';
 import { getModelSpecification } from './modelRoutingService.js';
 import { existingModelLimits } from './modelInputPresets.js';
 import { PricingService } from './pricingService.js';
+import { assertUserModelAccess } from './userModelAccessService.js';
 const fail = (message: string, status = 400) => Object.assign(new Error(message), { status });
 /** Quote customer prices only. No uploads, upstream calls, reservations or task creation. */
-export function quoteVideoRequest(body: any) {
+export function quoteVideoRequest(body: any, userId?: number) {
   const model = resolvePublicModelId(String(body?.model || ''));
+  assertUserModelAccess(userId, model);
   const row = db.select().from(models).all().find(m => m.modelId === model);
   const spec = getModelSpecification(model);
   if (!row || !row.isActive || !JSON.parse(row.capabilities).includes('video') || spec?.enabled === false) throw fail('视频模型未开放', 404);
@@ -22,7 +24,7 @@ export function quoteVideoRequest(body: any) {
     if (!(d.mode === 'fixed' ? seconds === d.min : d.mode === 'options' ? d.values.includes(seconds)
       : seconds >= d.min && seconds <= d.max && Math.abs((seconds-d.min)/d.step - Math.round((seconds-d.min)/d.step)) < 1e-8)) throw fail('该模型不支持所选时长');
   }
-  const quote = PricingService.quote(model, { resolution, seconds, count: 1 }, false);
+  const quote = PricingService.quote(model, { resolution, seconds, count: 1 }, false, userId);
   if (!['per_call', 'per_second'].includes(quote.billingType || '') || !Number.isFinite(quote.cost) || quote.cost < 0) throw fail('该模型尚未配置有效视频售价');
   return { model, resolution, seconds, cost: quote.cost, rate: quote.rate, billingType: quote.billingType };
 }

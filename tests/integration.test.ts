@@ -2,7 +2,8 @@
  * 认证系统 + API 路由集成测试
  * 测试：注册、登录、JWT验证、权限控制、配额、管理员功能
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
+vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 import { initDatabase } from '../server/db/seed.js';
 import { db, sqlite } from '../server/db/index.js';
 import { users, tiers, models, tierModelAccess, usageLogs, channels, modelPricing } from '../server/db/schema.js';
@@ -77,7 +78,7 @@ describe('种子数据完整性', () => {
     expect(allModels.length).toBeGreaterThanOrEqual(2);
     const ids = allModels.map(m => m.modelId);
     expect(ids).toContain('gemini-2.5-flash');
-    expect(ids).toContain('gemini-2.5-flash-image');
+    expect(ids).toContain('gemini-3.1-flash-image-preview');
   });
 
   it('模型默认不应有独立 API Key (使用全局 fallback)', () => {
@@ -104,9 +105,9 @@ describe('种子数据完整性', () => {
       HM_STUDIO_SEEDANCE_V25_301010_MODEL,
     ]));
     expect(mapping).toMatchObject({
-      [HM_STUDIO_SEEDANCE_V20_933_MODEL]: HM_STUDIO_SEEDANCE_V20_933_MODEL,
-      [HM_STUDIO_SEEDANCE_V25_101010_MODEL]: HM_STUDIO_SEEDANCE_V25_101010_MODEL,
-      [HM_STUDIO_SEEDANCE_V25_301010_MODEL]: HM_STUDIO_SEEDANCE_V25_301010_MODEL,
+      [HM_STUDIO_SEEDANCE_V20_933_MODEL]: 'MINIMAX-H3-2.0采样-933',
+      [HM_STUDIO_SEEDANCE_V25_101010_MODEL]: 'MINIMAX-H3-2.5采样-101010',
+      [HM_STUDIO_SEEDANCE_V25_301010_MODEL]: 'MINIMAX-H3-2.5采样-301010',
     });
 
     const v20 = db.select().from(models).where(eq(models.modelId, HM_STUDIO_SEEDANCE_V20_933_MODEL)).get();
@@ -179,11 +180,10 @@ describe('种子数据完整性', () => {
   it('巨轮渠道永久绑定 MiniMax H3 768p 并按 ¥0.18/秒计费', () => {
     const channel = db.select().from(channels).all().find(item => item.baseUrl.includes('julun.cc'));
     expect(channel).toBeDefined();
-    expect(JSON.parse(channel!.supportedModels)).toEqual(['wan3.0th', JULUN_MINIMAX_H3_MODEL, 'sd2.5']);
+    expect(JSON.parse(channel!.supportedModels)).toEqual(['wan3.0th', JULUN_MINIMAX_H3_MODEL]);
     expect(JSON.parse(channel!.modelMapping)).toMatchObject({
       'wan3.0th': 'wan3.0th',
       [JULUN_MINIMAX_H3_MODEL]: JULUN_MINIMAX_H3_MODEL,
-      'sd2.5': 'sd2.5',
     });
 
     const model = db.select().from(models).where(eq(models.modelId, JULUN_MINIMAX_H3_MODEL)).get();

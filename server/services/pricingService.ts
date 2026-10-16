@@ -1,5 +1,6 @@
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
-import { db } from '../db/index.js';
+import { db, sqlite } from '../db/index.js';
+import { ensureUserModelTables } from '../db/userModelMigration.js';
 import { modelPricing, models } from '../db/schema.js';
 import { eq, desc } from 'drizzle-orm';
 
@@ -15,6 +16,19 @@ export interface PricingUsage {
   count?: number;
   resolution?: string;
 }
+
+export interface PricingSnapshot {
+  model: string;
+  source: 'user' | 'model' | 'default';
+  ruleId: number;
+  revision: number | null;
+  billingType: BillingType;
+  inputPrice: number;
+  outputPrice: number;
+  extraParams: Record<string, any>;
+  usage?: PricingUsage;
+}
+type PriceRule = typeof modelPricing.$inferSelect & { priceSource?: 'user'; revision?: number };
 
 export interface PublicModelPricing {
   model: string;
@@ -44,20 +58,42 @@ function roundCost(value: number): number {
 }
 
 export class PricingService {
-  private static getRule(modelName: string, allowWildcard = true) {
+  private static hasUserPrices(modelPattern: string) {
+    ensureUserModelTables(sqlite);
+    return Boolean(sqlite.prepare(`SELECT 1 FROM user_model_pricing p JOIN models m ON m.id=p.model_id
+      WHERE m.model_id=? OR (?='*' AND NOT EXISTS(SELECT 1 FROM model_pricing r WHERE r.model_pattern=m.model_id)) LIMIT 1`)
+      .get(modelPattern, modelPattern));
+  }
+
+  private static userRules(userId?: number | null): PriceRule[] {
+    if (!userId) return [];
+    ensureUserModelTables(sqlite);
+    return (sqlite.prepare(`SELECT p.id, m.model_id AS modelPattern, p.billing_type AS billingType,
+      p.input_price AS inputPrice, p.output_price AS outputPrice, p.extra_params AS extraParams,
+      p.updated_at AS createdAt, p.revision FROM user_model_pricing p JOIN models m ON m.id=p.model_id WHERE p.user_id=?`)
+      .all(userId) as PriceRule[]).map(rule => ({ ...rule, priceSource: 'user' }));
+  }
+
+  private static getRule(modelName: string, allowWildcard = true, userId?: number | null): PriceRule | undefined {
+    const custom = this.userRules(userId).find(rule => rule.modelPattern === canonicalZonghengModelId(modelName));
+    if (custom) return custom;
     const exact = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, canonicalZonghengModelId(modelName))).get();
     if (exact || !allowWildcard) return exact;
     return db.select().from(modelPricing).where(eq(modelPricing.modelPattern, '*')).get();
   }
 
   private static quoteRule(
-    rule: typeof modelPricing.$inferSelect | undefined,
+    rule: PriceRule | undefined,
     usage: PricingUsage = {},
+    capture = false,
+    modelName = rule?.modelPattern || '',
   ) {
     if (!rule) return { rate: 0, cost: 0, billingType: null as BillingType | null, matchedPattern: null };
 
     const extra = parseExtraParams(rule.extraParams);
-    const resolutionRate = usage.resolution !== undefined ? Number(extra[usage.resolution]) : NaN;
+    const resolutionValue = usage.resolution === undefined ? undefined
+      : Object.entries(extra).find(([key]) => key.toLowerCase() === usage.resolution!.toLowerCase())?.[1];
+    const resolutionRate = resolutionValue === undefined || resolutionValue === null || resolutionValue === '' ? NaN : Number(resolutionValue);
     const rate = Number.isFinite(resolutionRate) && resolutionRate >= 0 ? resolutionRate : rule.inputPrice;
     let cost = 0;
 
@@ -83,18 +119,25 @@ export class PricingService {
       cost: roundCost(cost),
       billingType: rule.billingType as BillingType,
       matchedPattern: rule.modelPattern,
+      ...(capture ? { pricingSnapshot: {
+        model: modelName, source: rule.priceSource || (rule.modelPattern === '*' ? 'default' : 'model'),
+        ruleId: rule.id, revision: rule.revision ?? null, billingType: rule.billingType as BillingType,
+        inputPrice: rule.inputPrice, outputPrice: rule.outputPrice, extraParams: extra,
+        usage: { ...usage },
+      } satisfies PricingSnapshot } : {}),
     };
   }
 
   /** Load the pricing table once and reuse it for a batch of quotes. */
-  static createQuoteResolver(allowWildcard = true) {
-    const rules = db.select().from(modelPricing).all();
+  static createQuoteResolver(allowWildcard = true, userId?: number | null) {
+    const rules: PriceRule[] = [...db.select().from(modelPricing).all(), ...this.userRules(userId)];
     const ruleByPattern = new Map(rules.map(rule => [rule.modelPattern, rule]));
     const wildcardRule = allowWildcard ? ruleByPattern.get('*') : undefined;
 
     return (modelName: string, usage: PricingUsage = {}) => {
-      const rule = ruleByPattern.get(modelName) || wildcardRule;
-      return this.quoteRule(rule, usage);
+      const canonical = canonicalZonghengModelId(modelName);
+      const rule = ruleByPattern.get(canonical) || wildcardRule;
+      return this.quoteRule(rule, usage, userId !== undefined, canonical);
     };
   }
 
@@ -142,6 +185,11 @@ export class PricingService {
     if (duplicate && duplicate.id !== currentId) {
       throw { status: 409, message: `模型 ${modelPattern} 已有计费规则，请直接编辑现有规则` };
     }
+    ensureUserModelTables(sqlite);
+    const incompatible = sqlite.prepare(`SELECT 1 FROM user_model_pricing p JOIN models m ON m.id=p.model_id
+      WHERE p.billing_type<>? AND (m.model_id=? OR (?='*' AND NOT EXISTS(SELECT 1 FROM model_pricing r WHERE r.model_pattern=m.model_id))) LIMIT 1`)
+      .get(billingType, modelPattern, modelPattern);
+    if (incompatible) throw { status: 409, message: '此模型存在不同计费单位的用户专属价格，请先恢复默认价格' };
 
     const extraParams = data.extraParams && typeof data.extraParams === 'object' && !Array.isArray(data.extraParams)
       ? data.extraParams
@@ -150,11 +198,11 @@ export class PricingService {
   }
 
   /** Build public pricing descriptors for externally visible model IDs. */
-  static getPublicPricingForModels(modelNames: string[]): PublicModelPricing[] {
+  static getPublicPricingForModels(modelNames: string[], userId?: number | null): PublicModelPricing[] {
     const uniqueModelNames = Array.from(new Set(modelNames));
     if (uniqueModelNames.length === 0) return [];
 
-    const pricingRows = db.select().from(modelPricing).all();
+    const pricingRows = [...db.select().from(modelPricing).all(), ...this.userRules(userId)];
     const exactRules = new Map(pricingRows.map(rule => [rule.modelPattern, rule]));
     const wildcardRule = exactRules.get('*');
     const modelRows = db.select().from(models).all();
@@ -290,6 +338,10 @@ export class PricingService {
       extraParams: data.extraParams ?? currentExtra,
     }, id);
 
+    if ((rule.billingType !== current.billingType || rule.modelPattern !== current.modelPattern) && this.hasUserPrices(current.modelPattern)) {
+      throw { status: 409, message: '此模型存在用户专属价格，请先恢复这些用户的默认价格，再修改模型标识或计费单位' };
+    }
+
     db.update(modelPricing).set({
       modelPattern: rule.modelPattern,
       billingType: rule.billingType,
@@ -302,13 +354,20 @@ export class PricingService {
   static deletePricingRule(id: number) {
     const rule = db.select().from(modelPricing).where(eq(modelPricing.id, id)).get();
     if (!rule) throw { status: 404, message: '计费规则不存在' };
+    if (this.hasUserPrices(rule.modelPattern)) throw { status: 409, message: '此模型存在用户专属价格，请先恢复默认价格，再删除全局规则' };
     db.delete(modelPricing).where(eq(modelPricing.id, id)).run();
   }
 
   /** 返回单价及最终费用。视频等非文本业务默认不使用全局 Token 兜底。 */
-  static quote(modelName: string, usage: PricingUsage = {}, allowWildcard = true) {
-    const rule = this.getRule(modelName, allowWildcard);
-    return this.quoteRule(rule, usage);
+  static quote(modelName: string, usage: PricingUsage = {}, allowWildcard = true, userId?: number | null) {
+    const rule = this.getRule(modelName, allowWildcard, userId);
+    return this.quoteRule(rule, usage, userId !== undefined, canonicalZonghengModelId(modelName));
+  }
+
+  static quoteSnapshot(snapshot: PricingSnapshot, usage: PricingUsage = {}) {
+    return this.quoteRule({ id: snapshot.ruleId, modelPattern: snapshot.model, billingType: snapshot.billingType,
+      inputPrice: snapshot.inputPrice, outputPrice: snapshot.outputPrice, extraParams: JSON.stringify(snapshot.extraParams), createdAt: null },
+      { ...snapshot.usage, ...Object.fromEntries(Object.entries(usage).filter(([, value]) => value !== undefined)) });
   }
 
   /** 兼容现有文本/图片调用。 */
@@ -317,7 +376,7 @@ export class PricingService {
   }
 
   /** 视频、语音等按用量业务必须精确匹配，避免误用全局 Token 价格。 */
-  static calculateUsageCost(modelName: string, usage: PricingUsage): number {
-    return this.quote(modelName, usage, false).cost;
+  static calculateUsageCost(modelName: string, usage: PricingUsage, userId?: number | null): number {
+    return this.quote(modelName, usage, false, userId).cost;
   }
 }

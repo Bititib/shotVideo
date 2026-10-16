@@ -2,7 +2,8 @@
  * 计费系统单元测试
  * 覆盖：BalanceService / TokenService / PricingService 的核心计费逻辑
  */
-import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 import { db, sqlite } from '../server/db/index.js';
 import { users, tiers, apiTokens, modelPricing } from '../server/db/schema.js';
 import { eq } from 'drizzle-orm';
@@ -251,10 +252,10 @@ describe('TokenService.deductBalance', () => {
   });
 
   it('有限额度：不应扣为负数', () => {
-    TokenService.deductBalance(tokenId, 60.00); // 超出余额
+    expect(() => TokenService.deductBalance(tokenId, 60.00)).toThrow('Insufficient token balance');
     const token = TokenService.findByKey(tokenKey);
-    expect(token!.balance).toBe(0); // MAX(0, ...) 保护
-    expect(token!.usedAmount).toBe(60.00);
+    expect(token!.balance).toBe(50.00);
+    expect(token!.usedAmount).toBe(0);
   });
 
   it('有限额度：多次扣减累积', () => {
@@ -274,7 +275,7 @@ describe('TokenService.deductBalance', () => {
   });
 
   it('金额为负数时不扣减', () => {
-    TokenService.deductBalance(tokenId, -10);
+    expect(() => TokenService.deductBalance(tokenId, -10)).toThrow('Invalid charge amount');
     const token = TokenService.findByKey(tokenKey);
     expect(token!.balance).toBe(50.00);
     expect(token!.usedAmount).toBe(0);
@@ -294,8 +295,8 @@ describe('TokenService.deductBalance', () => {
     expect(token!.usedAmount).toBe(100.00);
   });
 
-  it('不存在的 Token 不应报错', () => {
-    expect(() => TokenService.deductBalance(999999, 10.00)).not.toThrow();
+  it('不存在的 Token 拒绝扣费', () => {
+    expect(() => TokenService.deductBalance(999999, 10.00)).toThrow('Token not found');
   });
 
   it('应该更新 lastUsedAt', () => {

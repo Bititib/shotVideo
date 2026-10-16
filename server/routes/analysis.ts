@@ -11,6 +11,7 @@ import { quotaMiddleware, logUsage } from '../middleware/quota.js';
 import { AIService } from '../services/aiService.js';
 import { ContentService } from '../services/contentService.js';
 import { PricingService } from '../services/pricingService.js';
+import { filterUserModels, assertUserModelAccess } from '../services/userModelAccessService.js';
 import { ComicDramaProjectService } from '../services/comicDramaProjectService.js';
 import { ComicDramaQueueService } from '../services/comicDramaQueueService.js';
 import { ComicDramaAnalysisQueueService } from '../services/comicDramaAnalysisQueueService.js';
@@ -59,6 +60,7 @@ function resolveModel(
 
   // 用户指定了模型 → 校验是否在可用列表中
   if (requestedModelId) {
+    assertUserModelAccess(req.userId, requestedModelId);
     const found = available.find(m => m.modelId === requestedModelId);
     if (found) return found;
     if (preferTts) throw { status: 403, message: '所选语音模型不可用或当前等级无权使用，请重新选择' };
@@ -177,11 +179,9 @@ router.get('/models',
 
     const accessList = db.select().from(tierModelAccess).where(eq(tierModelAccess.tierId, tierId)).all();
     const modelIds = accessList.map(a => a.modelId);
-    if (modelIds.length === 0) return res.json([]);
 
     const allModels = getEnabledPublicModels();
-    const available = allModels
-      .filter(m => modelIds.includes(m.id))
+    const available = filterUserModels(req.userId, allModels, modelIds)
       .filter(m => {
         // 分析页面只显示纯文本分析模型，排除图片生成/视频/图片类模型
         try {
@@ -227,7 +227,8 @@ router.get('/tts-models',
   async (req: TierRequest, res: Response, next) => {
     try {
       const voiceCatalog = await AIService.getTtsVoiceCatalog();
-      const sourceModels = getEnabledPublicModels('tts')
+      res.setHeader('Cache-Control', req.userId ? 'private, no-store' : 'no-cache');
+      const sourceModels = filterUserModels(req.userId, getEnabledPublicModels('tts'))
         .map(m => ({ modelId: m.modelId, displayName: m.displayName || m.modelId, description: m.description || '' }));
 
       // 获取语音合成的费率设置
@@ -258,7 +259,7 @@ router.get('/tts-models',
         }
 
         // 管理后台「计费设置」是唯一有效价格来源。
-        const unifiedQuote = PricingService.quote(m.modelId, { characters: 1 }, false);
+        const unifiedQuote = PricingService.quote(m.modelId, { characters: 1 }, false, req.userId ?? null);
         rate = unifiedQuote.rate;
 
         return {
@@ -675,8 +676,9 @@ router.post('/generate-image',
       const modelConfig = resolveModel(req, true);
       if (!modelConfig) throw { status: 403, message: '当前等级无法使用图像生成模型' };
 
-      const cost = PricingService.quote(modelConfig.modelId, { count: 1 }, false).cost;
-      const reservation = reserveUserCharge(req.userId!, cost, 'generate_image');
+      const quote = PricingService.quote(modelConfig.modelId, { count: 1 }, false, req.userId);
+      const cost = quote.cost;
+      const reservation = reserveUserCharge(req.userId!, cost, 'generate_image', { model: modelConfig.modelId, pricingSnapshot: quote.pricingSnapshot });
       try {
         const result = await AIService.generateImage(prompt, aspectRatio || '16:9', req.file, modelConfig);
         reservation.settle(cost);
@@ -701,8 +703,9 @@ router.post('/generate-tts',
       if (typeof text !== 'string' || !text.trim()) throw { status: 400, message: '请提供合成文本' };
       const model = modelConfig!.modelId;
       if (voice.startsWith('voices/')) AIService.clonedVoices(req.userId!).requireVoice(voice);
-      const cost = PricingService.quote(model, { characters: text.length }, false).cost;
-      const reservation = reserveUserCharge(req.userId!, cost, 'generate_tts');
+      const quote = PricingService.quote(model, { characters: text.length }, false, req.userId);
+      const cost = quote.cost;
+      const reservation = reserveUserCharge(req.userId!, cost, 'generate_tts', { model, pricingSnapshot: quote.pricingSnapshot });
       try {
         let result;
         let usedVoice = voice;

@@ -50,6 +50,7 @@ describe('HM Studio adapter', () => {
     expect(buildHmStudioImageForm({ ...imageOptions, upstreamChannel: 'custom' }).get('channel')).toBe('custom');
   });
   it('sends persisted reference video and audio as unsigned public URLs', async () => {
+    fs.mkdirSync(path.resolve('data/uploads'), { recursive: true });
     const dir=fs.mkdtempSync(path.join(process.cwd(),'data/uploads/hm-multimodal-'));
     try {
       fs.writeFileSync(path.join(dir,'video.mov'),Buffer.from('0000ftypqt  video bytes'));

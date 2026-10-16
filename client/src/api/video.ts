@@ -69,7 +69,7 @@ export function getCachedVideoModels(): VideoModel[] {
   if (typeof localStorage === 'undefined') return [];
   try {
     const cached = JSON.parse(localStorage.getItem(PERSISTED_MODEL_CACHE_KEY) || 'null');
-    if (!cached || !Array.isArray(cached.data) || Date.now() - Number(cached.savedAt || 0) > PERSISTED_MODEL_CACHE_TTL_MS) {
+    if (!cached || (cached.identity ?? '') !== (localStorage.getItem('token') || '') || !Array.isArray(cached.data) || Date.now() - Number(cached.savedAt || 0) > PERSISTED_MODEL_CACHE_TTL_MS) {
       return [];
     }
     return cached.data.filter((model: any) => model && typeof model.id === 'string' && typeof model.name === 'string');
@@ -78,10 +78,10 @@ export function getCachedVideoModels(): VideoModel[] {
   }
 }
 
-function persistVideoModels(data: VideoModel[]) {
+function persistVideoModels(data: VideoModel[], identity: string) {
   if (typeof localStorage === 'undefined') return;
   try {
-    localStorage.setItem(PERSISTED_MODEL_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), data }));
+    localStorage.setItem(PERSISTED_MODEL_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), identity, data }));
   } catch { /* storage may be disabled or full */ }
 }
 
@@ -102,7 +102,7 @@ export async function fetchVideoModels(): Promise<VideoModel[]> {
       if (!res.ok) throw new Error('获取模型列表失败');
       const data = await res.json() as VideoModel[];
       videoModelCache = { token: cacheKey, expiresAt: Date.now() + MODEL_CACHE_TTL_MS, data };
-      persistVideoModels(data);
+      if ((localStorage.getItem('token') || '') === cacheKey) persistVideoModels(data, cacheKey);
       return data;
     })
     .finally(() => {

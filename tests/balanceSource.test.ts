@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 import { db, sqlite } from '../server/db/index.js';
 import { organizations, users } from '../server/db/schema.js';
 import { eq } from 'drizzle-orm';

@@ -3,6 +3,7 @@ import { Router, Response } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
 import { AdminService } from '../services/adminService.js';
+import { UserModelSettingsService } from '../services/userModelSettingsService.js';
 import { OrgService } from '../services/orgService.js';
 import { FeedbackService } from '../services/feedbackService.js';
 import { ChannelService } from '../services/channelService.js';
@@ -13,6 +14,19 @@ const router = Router();
 // 所有管理路由都需要登录 + 管理员权限
 router.use(authMiddleware, adminMiddleware);
 router.use('/model-specifications', modelSpecificationRoutes);
+
+router.get('/users/:id/models', (req: AuthRequest, res: Response) => {
+  try { res.setHeader('Cache-Control', 'no-store'); res.json(UserModelSettingsService.list(Number(req.params.id))); }
+  catch (error: any) { res.status(error.status || 500).json({ error: error.message }); }
+});
+router.put('/users/:id/models', (req: AuthRequest, res: Response) => {
+  try { res.json(UserModelSettingsService.saveMany(Number(req.params.id), req.userId!, req.body?.changes)); }
+  catch (error: any) { res.status(error.status || 500).json({ error: error.message }); }
+});
+router.put('/users/:id/models/:modelId', (req: AuthRequest, res: Response) => {
+  try { res.json(UserModelSettingsService.save(Number(req.params.id), Number(req.params.modelId), req.userId!, req.body)); }
+  catch (error: any) { res.status(error.status || 500).json({ error: error.message }); }
+});
 
 // 内部队列诊断：仅管理员登录态可访问，不暴露在公开 /v1 API。
 router.get('/hm-queue', (_req: AuthRequest, res: Response) => {

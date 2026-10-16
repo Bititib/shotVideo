@@ -795,8 +795,11 @@ export default function VideoPage() {
   };
 
   useEffect(() => {
+    let cancelled = false;
+    setModels(getCachedVideoModels());
     const refreshModelPricing = () => {
       fetchVideoModels().then((nextModels) => {
+        if (cancelled) return;
         setModels(nextModels);
         if (nextModels.length > 0) {
           setSelectedModel(current => searchParams.get('replicate') || (Boolean(replicatedModelRef.current) && replicatedModelRef.current === current) || nextModels.some(model => model.id === current) ? current : nextModels[0].id);
@@ -811,11 +814,12 @@ export default function VideoPage() {
     window.addEventListener('focus', refreshModelPricing);
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
+      cancelled = true;
       window.clearInterval(refreshTimer);
       window.removeEventListener('focus', refreshModelPricing);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, []);
+  }, [quoteUser?.id]);
 
   useEffect(() => {
 

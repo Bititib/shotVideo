@@ -18,7 +18,9 @@ import { isHayaChannel, hayaTaskUrl, normalizeHayaTask, hayaPollDelay, submitHay
 import { prepareHayaMedia, validateHayaMedia } from '../services/hayaMediaService.js';
 import { patchHayaTask, reviewHayaTask } from '../services/hayaTaskService.js';
 import { Router, Request, Response } from 'express';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, optionalAuthMiddleware, type AuthRequest } from '../middleware/auth.js';
+import { userModelMiddleware } from '../middleware/userModel.js';
+import { filterUserModels } from '../services/userModelAccessService.js';
 import { tierMiddleware, TierRequest } from '../middleware/tier.js';
 import { quotaMiddleware, logUsage } from '../middleware/quota.js';
 import { ChannelService } from '../services/channelService.js';
@@ -433,13 +435,14 @@ export async function localizeChre3Video(url: string, videoId: string, model: st
   return downloadAndLocalizeVideo(url, videoId, model);
 }
 /** GET /api/video/models — 可用的视频模型列表（公开，不需要登录） */
-router.get('/models', (_req: Request, res: Response) => {
-  if (env.NODE_ENV === 'production' && videoModelsResponseCache?.expiresAt > Date.now()) {
+router.get('/models', optionalAuthMiddleware, (req: AuthRequest, res: Response) => {
+  if (req.userId) res.setHeader('Cache-Control', 'private, no-store');
+  if (!req.userId && env.NODE_ENV === 'production' && videoModelsResponseCache?.expiresAt > Date.now()) {
     res.setHeader('Cache-Control', 'public, max-age=10, stale-while-revalidate=30');
     return res.json(videoModelsResponseCache.data);
   }
 
-  const publicSourceModels = getEnabledPublicModels('video')
+  const publicSourceModels = filterUserModels(req.userId, getEnabledPublicModels('video'))
     .map(m => ({ id: m.modelId, name: m.displayName, description: m.description }));
 
   // Read settings, pricing, channels, and recent statistics once per request.
@@ -456,7 +459,7 @@ router.get('/models', (_req: Request, res: Response) => {
   const soraV4FastRate = settingNumber('sora_v4_fast_rate', '0.189');
   const soraV4ProRate = settingNumber('sora_v4_pro_rate', '0.25');
   const veoOmniFlashRate = settingNumber('veo_omni_flash_rate', '0.25');
-  const quotePrice = PricingService.createQuoteResolver(false);
+  const quotePrice = PricingService.createQuoteResolver(false, req.userId ?? null);
   const activeVideoChannels = ChannelService.getActiveChannels();
   const hmStudioOverflowAvailable = hasHmStudioOverflowChannel(activeVideoChannels);
 
@@ -710,7 +713,7 @@ router.get('/models', (_req: Request, res: Response) => {
     if (rightRank !== undefined) return 1;
     return 0;
   });
-  if (env.NODE_ENV === 'production') {
+  if (!req.userId && env.NODE_ENV === 'production') {
     videoModelsResponseCache = {
       expiresAt: Date.now() + VIDEO_MODELS_CACHE_TTL_MS,
       data: availableModels,
@@ -721,7 +724,7 @@ router.get('/models', (_req: Request, res: Response) => {
 });
 
 /** POST /api/video/generate — SSE 流式视频生成（异步轮询模式） */
-router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware, tierMiddleware('video'), quotaMiddleware, async (req: TierRequest, res: Response) => {
+router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware, tierMiddleware('video'), userModelMiddleware('nd-seedance-2.0-720p'), quotaMiddleware, async (req: TierRequest, res: Response) => {
   let batchContext: ReturnType<typeof batchContextForRequest> = null;
   try {
     batchContext = batchContextForRequest(req);
@@ -730,9 +733,9 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   if (req.path === '/validate' && getModelSpecification(resolvePublicModelId(req.body?.model || ''))) {
     try { const spec = getModelSpecification(resolvePublicModelId(req.body.model))!;
       const body = { ...req.body, resolution: req.body.resolution || spec.limits.resolutions[0], video_length: req.body.video_length ?? req.body.seconds ?? req.body.duration ?? (spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) };
-      const input = specificationRequest(body, 'video', '').input; const candidates = selectModelRoutes(spec, input); const quote = PricingService.quote(spec.modelId, { resolution: input.resolution, seconds: input.seconds, count: 1 }, false);
+      const input = specificationRequest(body, 'video', '').input; const candidates = selectModelRoutes(spec, input); const quote = PricingService.quote(spec.modelId, { resolution: input.resolution, seconds: input.seconds, count: 1 }, false, req.userId);
       if (!quote.billingType) throw Object.assign(new Error('该规格尚未配置用户售价'), { status: 400 });
-      return res.status(candidates.length ? 200 : 503).json(candidates.length ? { valid: true, unitCost: quote.cost } : { error: '没有匹配线路' });
+      return res.status(candidates.length ? 200 : 503).json(candidates.length ? { valid: true, unitCost: quote.cost, pricingSnapshot: quote.pricingSnapshot } : { error: '没有匹配线路' });
     } catch (e: any) { return res.status(e.status || 400).json({ error: e.message }); }
   }
   if (await handleSpecificationGeneration(req, res, 'video')) return;
@@ -1067,9 +1070,9 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
 
   // Reuse exactly the same model/material checks before a batch is charged.
   if (req.path === '/validate') {
-    const quote = PricingService.quote(model, { resolution, seconds: Number(video_length), count: 1 }, false);
+    const quote = PricingService.quote(model, { resolution, seconds: Number(video_length), count: 1 }, false, req.userId);
     if (!['per_call', 'per_second'].includes(quote.billingType || '') || !Number.isFinite(quote.cost) || quote.cost < 0) return res.status(400).json({ error: '该模型未配置有效价格' });
-    return res.json({ unitCost: quote.cost, resolution, reference_images });
+    return res.json({ unitCost: quote.cost, resolution, reference_images, pricingSnapshot: quote.pricingSnapshot });
   }
   if (batchContext && isBatchChannelAtCapacity(channel)) {
     return res.status(429).json({ code: 'BATCH_CAPACITY', error: '渠道正在忙，任务保持排队，不重新扣费' });
@@ -1201,13 +1204,15 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS,
   ].includes(model);
   const estimatedSeconds = Number(video_length) || 6;
-  const unifiedQuote = PricingService.quote(model, { resolution, seconds: estimatedSeconds, count: 1 }, false);
+  const pricingUsage = { resolution, seconds: estimatedSeconds, count: 1 };
+  const unifiedQuote = batchContext?.pricingSnapshot ? { ...PricingService.quoteSnapshot(batchContext.pricingSnapshot, pricingUsage), pricingSnapshot: batchContext.pricingSnapshot }
+    : PricingService.quote(model, pricingUsage, false, req.userId);
   if (!['per_call', 'per_second'].includes(unifiedQuote.billingType || '')) {
     sendEvent({ type: 'error', message: `模型 ${model} 尚未在计费设置中配置价格` });
     res.write('data: [DONE]\n\n');
     return res.end();
   }
-  try { assertExpectedVideoCost(req.body, unifiedQuote.cost); } catch (error: any) { sendEvent({ type: 'error', message: error.message }); res.write('data: [DONE]\n\n'); return res.end(); }
+  try { if (!batchContext) assertExpectedVideoCost(req.body, unifiedQuote.cost); } catch (error: any) { sendEvent({ type: 'error', message: error.message }); res.write('data: [DONE]\n\n'); return res.end(); }
   const estimatedRate = unifiedQuote.rate;
   const estimatedCost = batchContext ? 0 : unifiedQuote.cost;
 
@@ -1239,6 +1244,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
       cost: estimatedCost,
       status: 'processing',
       metadata: {
+        pricingSnapshot: unifiedQuote.pricingSnapshot,
         ...(batchContext ? { batchId: batchContext.batch.id, batchItemId: batchContext.item.id,
           batchAttempt: batchContext.item.attempts, batchReservedAmount: batchContext.item.unit_cost, billingStatus: 'batch_reserved' } : {}),
         resolution,
@@ -3676,11 +3682,11 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
             : (Date.now() - startTime);
 
           logUsage(record.userId, 'generate_video', undefined, durationMs);
-          const cost = metadata.batchItemId ? 0 : (Number(record.cost) || PricingService.calculateUsageCost(model, {
+          const cost = metadata.batchItemId ? 0 : (metadata.pricingSnapshot || metadata.billingReservationId ? Number(record.cost) : (Number(record.cost) || PricingService.calculateUsageCost(model, {
             resolution,
             seconds: Number(video_length) || 0,
             count: 1,
-          }));
+          })));
           let meta = {};
           try {
             meta = JSON.parse(currentRecord.metadata || '{}');

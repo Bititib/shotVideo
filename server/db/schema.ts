@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
 // ============ 等级配置表 ============
@@ -158,6 +158,27 @@ export const modelPricing = sqliteTable('model_pricing', {
 });
 
 // ============ API 调用日志表 ============
+export const userModelAccess = sqliteTable('user_model_access', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  modelId: integer('model_id').notNull().references(() => models.id, { onDelete: 'cascade' }),
+  accessMode: text('access_mode').notNull(),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+}, table => [uniqueIndex('user_model_access_pair').on(table.userId, table.modelId)]);
+
+export const userModelPricing = sqliteTable('user_model_pricing', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  modelId: integer('model_id').notNull().references(() => models.id, { onDelete: 'cascade' }),
+  billingType: text('billing_type').notNull(),
+  inputPrice: real('input_price').notNull(),
+  outputPrice: real('output_price').notNull(),
+  extraParams: text('extra_params').notNull().default('{}'),
+  revision: integer('revision').notNull().default(1),
+  updatedBy: integer('updated_by').notNull(),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+}, table => [uniqueIndex('user_model_pricing_pair').on(table.userId, table.modelId)]);
+
 export const apiLogs = sqliteTable('api_logs', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   tokenId: integer('token_id'),                           // FK → api_tokens.id

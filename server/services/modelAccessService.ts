@@ -1,4 +1,5 @@
 import { ChannelService } from './channelService.js';
+import { filterUserModels } from './userModelAccessService.js';
 import { getEnabledPublicModels } from './modelCatalogService.js';
 import { getModelSpecifications, inspectModelRoutes } from './modelRoutingService.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
@@ -13,8 +14,8 @@ export function filterRoutableModels(modelIds: string[], activeChannels: Array<{
 }
 
 /** Shared discovery policy for external API clients and the developer catalog. */
-export function getAccessibleModels(token: { allowedModels: string[] }) {
-  const registeredModels = getEnabledPublicModels();
+export function getAccessibleModels(token: { allowedModels: string[]; userId?: number | null }) {
+  const registeredModels = filterUserModels(token.userId, getEnabledPublicModels());
   const activeChannels = ChannelService.getActiveChannels().filter(channel => Boolean(channel.apiKey?.trim()));
   const specs = getModelSpecifications();
   const specMap = new Map(specs.map(spec => [spec.modelId, spec]));
@@ -32,7 +33,7 @@ export function getAccessibleModels(token: { allowedModels: string[] }) {
       || specMap.get(model.modelId)?.aliases.some(alias => token.allowedModels.includes(alias) && !checkAlias(specMap.get(model.modelId)!, alias))));
 }
 
-export function getAccessibleModelIds(token: { allowedModels: string[] }): string[] {
+export function getAccessibleModelIds(token: { allowedModels: string[]; userId?: number | null }): string[] {
   return getAccessibleModels(token).map(model => model.modelId);
 }
 

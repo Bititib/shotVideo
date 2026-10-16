@@ -3,6 +3,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import * as schema from './schema.js';
+import { ensureUserModelTables } from './userModelMigration.js';
 
 const dataDir = path.resolve(process.cwd(), 'data');
 if (!fs.existsSync(dataDir)) {
@@ -10,11 +11,13 @@ if (!fs.existsSync(dataDir)) {
 }
 
 const dbPath = path.join(dataDir, 'app.db');
-const sqlite = new Database(dbPath);
+// Test workers must never mutate the application's on-disk database.
+const sqlite = new Database(process.env.NODE_ENV === 'test' ? ':memory:' : dbPath);
 
 // 开启 WAL 模式提升并发性能
 sqlite.pragma('journal_mode = WAL');
 sqlite.pragma('foreign_keys = ON');
+ensureUserModelTables(sqlite);
 
 // 自动向旧表补充可能缺失的列 (如 status / description)
 try {

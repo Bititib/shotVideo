@@ -1,6 +1,7 @@
 import { api as client } from './client';
 import { api as contentApiClient } from './client';
 import { cachedAdminGet, invalidateAdminCache } from './adminCache';
+import type { UserModelSetting } from '../../../shared/userModelSettings';
 
 // Cache only configuration lists; runtime status and operational statistics stay live.
 const cacheable = new Set(['/admin/models?view=config', '/admin/pricing?scope=models', '/admin/models', '/admin/channels', '/admin/pricing', '/admin/tiers']);
@@ -39,6 +40,9 @@ export const adminApi = {
   createUser(data: { email: string; username?: string; password: string; tierId?: string }) { return api.post<any>('/admin/users', data); },
   updateUser(id: number, data: any) { return api.put<any>(`/admin/users/${id}`, data); },
   deleteUser(id: number) { return api.delete<any>(`/admin/users/${id}`); },
+  getUserModels(id: number) { return api.get<UserModelSetting[]>(`/admin/users/${id}/models`); },
+  updateUserModel(userId: number, modelId: number, data: any) { return api.put<UserModelSetting>(`/admin/users/${userId}/models/${modelId}`, data); },
+  updateUserModels(userId: number, changes: any[]) { return api.put<UserModelSetting[]>(`/admin/users/${userId}/models`, { changes }); },
 
   getTiers() { return api.get<any>('/admin/tiers'); },
   createTier(data: any) { return api.post<any>('/admin/tiers', data); },

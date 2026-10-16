@@ -22,7 +22,7 @@ export function getDeveloperModels(userId: number, tokenId: number): DeveloperMo
   const models = getAccessibleModels(token);
   const activeChannels = ChannelService.getActiveChannels();
   const hmOverflow = hasHmStudioOverflowChannel(activeChannels);
-  const prices = new Map(PricingService.getPublicPricingForModels(models.map(model => model.modelId)).map(price => [price.model, price]));
+  const prices = new Map(PricingService.getPublicPricingForModels(models.map(model => model.modelId), userId).map(price => [price.model, price]));
   return {
     token: { id: token.id, name: token.name || 'API Key', maskedKey: owned.tokenKey.slice(0, 6) + '****' + owned.tokenKey.slice(-4) },
     checkedAt: new Date().toISOString(),

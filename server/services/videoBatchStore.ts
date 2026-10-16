@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { VideoBatchInput } from '../../shared/videoBatch.js';
+import type { PricingSnapshot } from './pricingService.js';
 
 type Receipt = { source: 'user' | 'org'; orgId?: number };
 export interface BatchLedger {
@@ -63,7 +64,7 @@ export class VideoBatchStore {
   existing(userId: number, key: string): any {
     return this.sql.prepare('SELECT id FROM video_batches WHERE user_id=? AND request_key=?').get(userId, key);
   }
-  create(userId: number, key: string, input: VideoBatchInput, unitCost: number, origin: string) {
+  create(userId: number, key: string, input: VideoBatchInput, unitCost: number, origin: string, pricingSnapshot?: PricingSnapshot) {
     return this.sql.transaction(() => {
       const old = this.existing(userId, key);
       if (old) return old.id as number;
@@ -73,7 +74,7 @@ export class VideoBatchStore {
       if (!receipt) throw new Error('余额不足，无法预扣整个批次的费用');
       const id = Number(this.sql.prepare(`INSERT INTO video_batches
         (user_id,request_key,name,model,payload,public_origin,total,auto_retry,max_retries) VALUES (?,?,?,?,?,?,?,?,?)`)
-        .run(userId, key, input.name, input.model, JSON.stringify(input), origin, total, +input.autoRetry, input.maxRetries).lastInsertRowid);
+        .run(userId, key, input.name, input.model, JSON.stringify({ ...input, pricingSnapshot }), origin, total, +input.autoRetry, input.maxRetries).lastInsertRowid);
       const insert = this.sql.prepare(`INSERT INTO video_batch_items
         (batch_id,user_id,creative_index,ordinal,unit_cost,receipt) VALUES (?,?,?,?,?,?)`);
       input.creatives.forEach((c, index) => {
@@ -111,10 +112,10 @@ export class VideoBatchStore {
       throw new Error('批量任务已处理或不可提交');
     }
     const b = this.batch(i.batch_id, userId);
-    const payload: VideoBatchInput = JSON.parse(b.payload);
-    const { creatives, name, autoRetry, maxRetries, ...settings } = payload;
+    const payload: VideoBatchInput & { pricingSnapshot?: PricingSnapshot } = JSON.parse(b.payload);
+    const { creatives, name, autoRetry, maxRetries, pricingSnapshot, ...settings } = payload;
     const { count, ...creative } = creatives[i.creative_index];
-    return { item: i, batch: b, body: { ...settings, ...creative } };
+    return { item: i, batch: b, pricingSnapshot, body: { ...settings, ...creative } };
   }
   attach(id: number, attempt: number, userId: number, save: () => number): number {
     return this.sql.transaction(() => {

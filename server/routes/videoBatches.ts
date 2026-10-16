@@ -1,4 +1,5 @@
 import { getModelSpecification } from '../services/modelRoutingService.js';
+import type { PricingSnapshot } from '../services/pricingService.js';
 import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -79,6 +80,7 @@ async function preflight(req: TierRequest, input: VideoBatchInput) {
   const model = sqlite.prepare('SELECT * FROM models WHERE model_id=? AND is_active=1').get(input.model) as any;
   if (!model || !JSON.parse(model.capabilities || '[]').includes('video')) throw new Error('该视频模型已下架或不可用');
   let unitCost = -1;
+  let pricingSnapshot: PricingSnapshot | undefined;
   const { creatives, ...config } = input;
   for (let index = 0; index < creatives.length; index++) {
     const response = await fetch(`http://127.0.0.1:${env.PORT}/api/video/validate`, {
@@ -91,13 +93,15 @@ async function preflight(req: TierRequest, input: VideoBatchInput) {
     if (!Number.isFinite(result.unitCost) || result.unitCost < 0) throw new Error('费用配置异常');
     if (unitCost >= 0 && unitCost !== result.unitCost) throw new Error('价格正在调整，请重新预估');
     unitCost = result.unitCost;
+    pricingSnapshot = result.pricingSnapshot;
   }
   const total = input.creatives.reduce((n, c) => n + c.count, 0);
-  return { unitCost, total, totalCost: Math.round(unitCost * total * 1e6) / 1e6 };
+  return { unitCost, total, totalCost: Math.round(unitCost * total * 1e6) / 1e6, pricingSnapshot };
 }
 
 router.post('/quote', tierMiddleware('video'), quotaMiddleware, handle(async (req, res) => {
-  res.json(await preflight(req, validateBatchInput(req.body)));
+  const { pricingSnapshot: _snapshot, ...quote } = await preflight(req, validateBatchInput(req.body));
+  res.json(quote);
 }));
 router.post('/', tierMiddleware('video'), quotaMiddleware, handle(async (req, res) => {
   const key = req.body?.requestKey;
@@ -111,7 +115,7 @@ router.post('/', tierMiddleware('video'), quotaMiddleware, handle(async (req, re
   if (active.n + quote.total > 200) throw new Error('您尚有较多未完成任务，请等待现有批次完成（最多 200 条）');
   // Store each creative's assets once instead of duplicating base64 for 100 tasks.
   input.creatives = input.creatives.map(c => ({ ...c, ...materializeContentMetadataAssets(c, { publicBaseUrl: originFor(req) }).metadata }));
-  const id = batchStore.create(req.userId!, key, input, quote.unitCost, originFor(req));
+  const id = batchStore.create(req.userId!, key, input, quote.unitCost, originFor(req), quote.pricingSnapshot);
   res.json(batchStore.detail(id, req.userId!));
   tickVideoBatches();
 }));

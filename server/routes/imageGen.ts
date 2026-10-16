@@ -11,7 +11,9 @@ import { reserveUserCharge } from '../services/billingReservation.js';
 import { canvasRequestMiddleware, recordCanvasEvent } from '../middleware/canvasRequest.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { Router, Request, Response } from 'express';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, optionalAuthMiddleware, type AuthRequest } from '../middleware/auth.js';
+import { userModelMiddleware } from '../middleware/userModel.js';
+import { filterUserModels } from '../services/userModelAccessService.js';
 import { tierMiddleware, TierRequest } from '../middleware/tier.js';
 import { quotaMiddleware, logUsage } from '../middleware/quota.js';
 import { PricingService } from '../services/pricingService.js';
@@ -323,12 +325,13 @@ function findImageChannel(modelId: string) {
 }
 
 /** GET /api/image-gen/models — 可用的图片模型列表（公开，不需要登录） */
-router.get('/models', (_req: Request, res: Response) => {
-  const sourceModels = getEnabledPublicModels('image')
+router.get('/models', optionalAuthMiddleware, (req: AuthRequest, res: Response) => {
+  res.setHeader('Cache-Control', req.userId ? 'private, no-store' : 'no-cache');
+  const sourceModels = filterUserModels(req.userId, getEnabledPublicModels('image'))
     .map(m => ({ id: m.modelId, name: m.displayName }));
 
   const publicPricing = new Map(
-    PricingService.getPublicPricingForModels(sourceModels.map(model => model.id))
+    PricingService.getPublicPricingForModels(sourceModels.map(model => model.id), req.userId ?? null)
       .map(pricing => [pricing.model, pricing]),
   );
 
@@ -352,7 +355,7 @@ router.get('/models', (_req: Request, res: Response) => {
 });
 
 /** POST /api/image-gen/generate — 图片生成（支持多图 + 参考图） */
-router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware('generate_image'), quotaMiddleware, async (req: TierRequest, res: Response) => {
+router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware('generate_image'), userModelMiddleware('gpt-image-2'), quotaMiddleware, async (req: TierRequest, res: Response) => {
   if (await handleSpecificationGeneration(req, res, 'image')) return;
   if (typeof req.body?.model === 'string') req.body.model = canonicalZonghengModelId(req.body.model);
   const {
@@ -395,7 +398,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
       validateZonghengImageReferences(req.body);
       buildZonghengImagePayload({ model: channel.modelMapping?.[model] || model, prompt, n: count,
         size: req.body.size || zonghengImageSize(aspect_ratio, resolution), aspectRatio: aspect_ratio, quality, referenceImages: reference_images });
-      if (PricingService.quote(model, {count:1,resolution}, false).billingType !== 'per_call') throw new Error('请先配置模型价格');
+      if (PricingService.quote(model, {count:1,resolution}, false, req.userId).billingType !== 'per_call') throw new Error('请先配置模型价格');
     } catch (e: any) { return res.status(400).json({ error: e.message }); }
   }
   // SSE headers
@@ -440,7 +443,8 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
 
   // 预估费用并检查余额
   const billingResolution = isMingFeiImageModel(model) ? normalizeMingFeiResolution(resolution) : String(resolution || '');
-  const estimatedCost = Math.round(PricingService.quote(model, { resolution: billingResolution, count }, false).cost * 100) / 100;
+  const pricingQuote = PricingService.quote(model, { resolution: billingResolution, count }, false, req.userId);
+  const estimatedCost = Math.round(pricingQuote.cost * 1_000_000) / 1_000_000;
   const { sufficient, balance: currentBalance } = BalanceService.checkBalance(req.userId!, estimatedCost);
   if (!sufficient) {
     sendEvent({ type: 'error', message: `余额不足，预估费用 ¥${estimatedCost.toFixed(2)}，当前余额 ¥${currentBalance.toFixed(2)}` });
@@ -449,6 +453,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
   }
 
   const persistedMetadata: Record<string, any> = {
+    pricingSnapshot: pricingQuote.pricingSnapshot,
     aspect_ratio,
     aspectRatio: aspect_ratio,
     resolution,
@@ -483,7 +488,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
   let reservation: ReturnType<typeof reserveUserCharge>;
   try {
     reservation = sqlite.transaction(() => {
-      const charge = reserveUserCharge(req.userId!, estimatedCost, 'generate_image', {contentId, model});
+      const charge = reserveUserCharge(req.userId!, estimatedCost, 'generate_image', {contentId, model, pricingSnapshot: pricingQuote.pricingSnapshot});
       Object.assign(persistedMetadata, { billingReservationId: charge.id, billingStatus: 'reserved', reservedCost: estimatedCost, billingBalanceSource: charge.receipt.source, billingOrgId: charge.receipt.orgId });
       db.update(contents).set({cost: estimatedCost, metadata: JSON.stringify(persistedMetadata)}).where(eq(contents.id, contentId)).run();
       return charge;
@@ -524,7 +529,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
       logUsage(req.userId!, 'generate_image', undefined, duration);
     }
     const unitCost = estimatedCost / count;
-    const totalCost = Math.min(estimatedCost, Math.round(unitCost * actualCount * 100) / 100);
+    const totalCost = Math.min(estimatedCost, Math.round(unitCost * actualCount * 1_000_000) / 1_000_000);
     reservation.settle(totalCost);
     if (totalCost > 0) {
       const remaining = reservation.receipt.source === 'org' ? BalanceService.getOrgBalance(reservation.receipt.orgId!) : BalanceService.getBalance(req.userId!);

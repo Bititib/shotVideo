@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { tierMiddleware } from '../middleware/tier.js';
 import { quoteVideoRequest } from '../services/videoQuoteService.js';
 const router = Router();
-router.post('/', authMiddleware, tierMiddleware('video'), (req, res, next) => {
-  try { res.json(quoteVideoRequest(req.body)); } catch (error) { next(error); }
+router.post('/', authMiddleware, tierMiddleware('video'), (req: AuthRequest, res, next) => {
+  try { res.setHeader('Cache-Control', 'private, no-store'); res.json(quoteVideoRequest(req.body, req.userId)); } catch (error) { next(error); }
 });
 export default router;

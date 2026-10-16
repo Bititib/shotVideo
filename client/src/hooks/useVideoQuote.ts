@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchVideoQuote, type VideoQuote } from '../api/video';
+import { useAuthStore } from '../stores/authStore';
 export function useVideoQuote(model: string, resolution: string, seconds: number, enabled: boolean) {
+  const userId = useAuthStore(state => state.user?.id);
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<{ key: string; quote?: VideoQuote; error?: string; loading: boolean }>({ key: '', loading: false });
-  const key = JSON.stringify([model, resolution, seconds, enabled, revision]);
+  const key = JSON.stringify([userId, model, resolution, seconds, enabled, revision]);
   const refresh = useCallback(() => setRevision(r => r+1), []);
   useEffect(() => {
     if (!enabled || !model || !resolution) { setState({ key, loading: false }); return; }

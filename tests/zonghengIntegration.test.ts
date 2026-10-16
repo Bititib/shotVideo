@@ -32,7 +32,7 @@ vi.mock('../server/db/index.js', async () => {
   return { sqlite, db: drizzle(sqlite, { schema }) };
 });
 vi.mock('../server/config/env.js', () => ({ env: { NODE_ENV: 'test', JWT_SECRET: 'test', VIDEO_TASK_POLL_TIMEOUT_MS: 1, PORT: 9876 } }));
-vi.mock('../server/middleware/auth.js', () => ({ authMiddleware: (req: any, _res: any, next: any) => { req.userId = 1; next(); } }));
+vi.mock('../server/middleware/auth.js', () => ({ authMiddleware: (req: any, _res: any, next: any) => { req.userId = 1; next(); }, optionalAuthMiddleware: (_req: any, _res: any, next: any) => next() }));
 vi.mock('../server/middleware/tier.js', () => ({ tierMiddleware: () => (_req: any, _res: any, next: any) => next() }));
 vi.mock('../server/middleware/quota.js', () => ({ quotaMiddleware: (_req: any, _res: any, next: any) => next(), logUsage: vi.fn() }));
 vi.mock('../server/services/tokenService.js', () => ({ TokenService: {

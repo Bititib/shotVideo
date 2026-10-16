@@ -6,6 +6,7 @@ import { downloadGeneratedImage, fetchImageModels, generateImage, generatedImage
 import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { useAuthStore } from '../../stores/authStore';
 import { isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
 
 interface GeneratedImage {
@@ -155,6 +156,7 @@ function Lightbox({ url, onClose, onEdit, editing }: { url: string; onClose: () 
 
 export default function ImageGenPage() {
   const guard = useAuthGuard();
+  const pricingUserId = useAuthStore(state => state.user?.id);
   const [models, setModels] = useState<ImageModel[]>(getCachedImageModels);
   const [selectedModel, setSelectedModel] = useState(() => models[0]?.id || '');
   const selectedImageModel = models.find(m => m.id === selectedModel);
@@ -219,11 +221,13 @@ export default function ImageGenPage() {
   }, [editFocusRequest]);
 
   useEffect(() => {
+    let cancelled = false;
+    setModels(getCachedImageModels());
     fetchImageModels().then((nextModels) => {
+      if (cancelled) return;
       setModels(nextModels);
       setSelectedModel(current => nextModels.some(model => model.id === current) ? current : (nextModels[0]?.id || ''));
     }).catch(() => {});
-    let cancelled = false;
 
     const refreshPersistedJobs = async (signal: AbortSignal) => {
       try {
@@ -349,7 +353,7 @@ export default function ImageGenPage() {
       batchControllersRef.current.forEach(controller => controller.abort());
       batchControllersRef.current.clear();
     };
-  }, []);
+  }, [pricingUserId]);
 
   const loadMoreHistory = async () => {
     const nextPage = historyPage + 1;

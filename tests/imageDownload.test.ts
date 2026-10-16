@@ -1,7 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 import fs from 'fs';
 import path from 'path';
 import { localizeGeneratedImage, storedImageUrls } from '../server/routes/imageGen.js';
+import { publicReferenceRoot } from '../server/services/publicReferenceService.js';
+const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jXioAAAAASUVORK5CYII=';
+afterEach(() => {
+  const root = path.resolve('data/uploads');
+  for (const name of fs.readdirSync(root).filter(name => name.startsWith('localize_test_') || name.startsWith('relative_history_test_'))) fs.unlinkSync(path.join(root, name));
+});
 
 describe('image download ownership metadata', () => {
   it('collects the primary and multi-image result URLs without duplicates', () => {
@@ -26,15 +33,15 @@ describe('image download ownership metadata', () => {
 
   it('turns a generated data URL into a directly accessible uploads URL', async () => {
     const url = await localizeGeneratedImage(
-      'data:image/png;base64,aGVsbG8=',
+      'data:image/png;base64,' + png,
       'localize_test',
       { protocol: 'http', headers: {}, get: () => 'localhost:3000' } as any,
     );
     const filename = path.basename(new URL(url).pathname);
-    const filePath = path.join(process.cwd(), 'data/uploads', filename);
+    const filePath = path.join(publicReferenceRoot(), filename);
     try {
-      expect(new URL(url).pathname).toMatch(/^\/uploads\/localize_test_/);
-      expect(fs.readFileSync(filePath).toString()).toBe('hello');
+      expect(new URL(url).pathname).toMatch(/^\/reference-assets\/[\da-f-]+\.png$/);
+      expect(fs.readFileSync(filePath)).toEqual(Buffer.from(png, 'base64'));
     } finally {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     }
@@ -42,16 +49,16 @@ describe('image download ownership metadata', () => {
 
   it('can return a same-site relative URL for browser history records', async () => {
     const url = await localizeGeneratedImage(
-      'data:image/png;base64,aGVsbG8=',
+      'data:image/png;base64,' + png,
       'relative_history_test',
       { protocol: 'https', headers: {}, get: () => 'wrong-public-host.example' } as any,
       undefined,
       { relative: true },
     );
-    const filePath = path.join(process.cwd(), 'data', url.replace(/^\/api\//, ''));
+    const filePath = path.join(publicReferenceRoot(), path.basename(url));
     try {
-      expect(url).toMatch(/^\/api\/uploads\/relative_history_test_/);
-      expect(fs.readFileSync(filePath).toString()).toBe('hello');
+      expect(url).toMatch(/^\/reference-assets\/[\da-f-]+\.png$/);
+      expect(fs.readFileSync(filePath)).toEqual(Buffer.from(png, 'base64'));
     } finally {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     }

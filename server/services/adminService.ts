@@ -3,7 +3,7 @@ import { recordPublicModelReview } from './publicModelMetadataService.js';
 import { validatePublicModelName, rememberPublicModelNames } from './publicModelNameService.js';
 import { db } from '../db/index.js';
 import { users, tiers, models, tierModelAccess, usageLogs, settings, contents, apiLogs, modelPricing, channels, channelApiKeys } from '../db/schema.js';
-import { eq, like, and, gte, sql, desc, count } from 'drizzle-orm';
+import { eq, like, or, and, gte, sql, desc, count } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { getHmStudioUpstreamVideoModel } from './hmStudioVideoModels.js';
 
@@ -217,8 +217,9 @@ export class AdminService {
 
     // Build conditions
     const conditions: any[] = [];
-    if (search) {
-      conditions.push(like(users.email, `%${search}%`));
+    const keyword = search?.trim();
+    if (keyword) {
+      conditions.push(or(like(users.email, `%${keyword}%`), like(users.username, `%${keyword}%`)));
     }
     if (tierId !== undefined) {
       conditions.push(eq(users.tierId, tierId));

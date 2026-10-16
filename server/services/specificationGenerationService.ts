@@ -3,6 +3,8 @@ import { isBlobDrawChannel } from './blobDrawAdapter.js';
 import { isFunAiChannel } from './funAiAdapter.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
 import { assertExpectedVideoCost } from './videoQuoteService.js';
+import { assertUserModelAccess } from './userModelAccessService.js';
+import type { PricingSnapshot } from './pricingService.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Request, Response } from 'express';
@@ -237,7 +239,7 @@ async function runImages(id: number, candidates: RouteCandidate[], request: Spec
   if (urls.length) { complete(id, urls); onEvent({ type: 'complete', imageUrls: urls, contentId: id }); }
   else { const reason = metadata(id).failureReason || '图片生成失败'; failTask(id, reason); onEvent({ type: 'error', message: reason }); }
 }
-type ApiContext = { token: any; reserve: (amount: number, model: string) => any };
+type ApiContext = { token: any; reserve: (amount: number, model: string, pricingSnapshot?: PricingSnapshot) => any };
 export async function handleSpecificationGeneration(req: Request, res: Response, kind: MediaKind, apiContext?: ApiContext): Promise<boolean> {
   let suppliedId: string;
   try { suppliedId = typeof req.body?.model === 'string' ? resolvePublicModelId(req.body.model, req.body) : ''; }
@@ -252,6 +254,8 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     const model = db.select().from(models).where(eq(models.modelId, modelId)).get();
     if (!spec.enabled || !model?.isActive) throw fail('该模型规格已禁用', 403);
     const token = apiContext?.token, checkAlias = createVideoAliasChecker();
+    const userId = token?.userId ?? (req as any).userId ?? 0;
+    assertUserModelAccess(userId, modelId);
     if (token?.allowedModels?.length && !token.allowedModels.includes(modelId) && !spec.aliases.some(alias => token.allowedModels.includes(alias) && !checkAlias(spec, alias))) throw fail('Token 无权调用此模型', 403);
     const body = { ...req.body, aspect_ratio: req.body.aspect_ratio || req.body.ratio || (spec.limits.ratios.includes(kind === 'image' ? '1:1' : '16:9') ? (kind === 'image' ? '1:1' : '16:9') : spec.limits.ratios[0]) };
     const files = Array.isArray(req.files) ? req.files : [];
@@ -279,17 +283,19 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     request.images = normalized.slice(0, request.images.length);
     if (request.firstFrame) request.firstFrame = normalized[request.images.length];
     if (request.lastFrame) request.lastFrame = normalized[request.images.length + Number(Boolean(request.firstFrame))];
-    const quote = PricingService.quote(modelId, { resolution: request.input.resolution, seconds: request.input.seconds, count: request.input.outputs }, false);
+    const batch = !apiContext && kind === 'video' ? batchContextForRequest(req as any) : null;
+    const usage = { resolution: request.input.resolution, seconds: request.input.seconds, count: request.input.outputs };
+    const quote = batch?.pricingSnapshot ? { ...PricingService.quoteSnapshot(batch.pricingSnapshot, usage), pricingSnapshot: batch.pricingSnapshot }
+      : PricingService.quote(modelId, usage, false, userId || null);
     if (!quote.billingType) throw fail('该规格尚未配置用户售价');
     if (kind === 'video') {
       if (!['per_call', 'per_second'].includes(quote.billingType)) throw fail('视频用户售价必须按条或按秒配置');
-      assertExpectedVideoCost(body, quote.cost);
+      if (!batch) assertExpectedVideoCost(body, quote.cost);
     }
-    const batch = !apiContext && kind === 'video' ? batchContextForRequest(req as any) : null;
-    const userId = token?.userId || (req as any).userId || 0;
     const create = () => ContentService.save({ userId, orgId: (req as any).orgId || null, type: kind, modelId,
       title: request.prompt.slice(0, 200), inputText: request.prompt, status: 'queued', cost: batch ? 0 : quote.cost,
       metadata: { managedSpecification: true, requestedModel: modelId, model: modelId, count: request.input.outputs,
+        pricingSnapshot: quote.pricingSnapshot,
         seconds: request.input.seconds, resolution: request.input.resolution, aspect_ratio: request.input.ratio,
         reference_images: request.images, reference_videos: request.videos, audio_urls: request.audios,
         first_frame: request.firstFrame, last_frame: request.lastFrame, queueUserKey: token ? 'token:' + token.id : 'user:' + userId,
@@ -299,7 +305,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     sqlite.transaction(() => {
       id = batch ? batchStore.attach(batch.item.id, batch.item.attempts, userId, create) : create();
       if (!batch) {
-        charge = apiContext ? apiContext.reserve(quote.cost, modelId) : reserveUserCharge(userId, quote.cost, 'specification_generate', { contentId: id, model: modelId });
+        charge = apiContext ? apiContext.reserve(quote.cost, modelId, quote.pricingSnapshot) : reserveUserCharge(userId, quote.cost, 'specification_generate', { contentId: id, model: modelId, pricingSnapshot: quote.pricingSnapshot });
         patch(id!, { billingReservationId: charge.id, reservedCost: quote.cost, billingStatus: 'reserved' });
       }
     })();

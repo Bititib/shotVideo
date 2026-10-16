@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
+import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { cleanVideoCache, downloadAndLocalizeGrokVideo } from '../server/routes/video.js';
 
 describe('Video Cache and Localization Tests', () => {
@@ -40,10 +42,15 @@ describe('Video Cache and Localization Tests', () => {
   });
 
   it('downloadAndLocalizeGrokVideo should return immediately for local relative URLs', async () => {
-    const localized = await downloadAndLocalizeGrokVideo('/uploads/already_local.mp4', '123', 'grok-imagine-video');
-    expect(localized).toBe('/uploads/already_local.mp4');
+    const filename = `local-video-test-${randomUUID()}.mp4`;
+    const file = path.resolve('data/uploads', filename);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'color=s=16x16:r=10:d=0.2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov', 'pipe:1']));
+    try {
+      const localized = await downloadAndLocalizeGrokVideo(`/uploads/${filename}`, '123', 'grok-imagine-video');
+      expect(localized).toBe(`/uploads/${filename}`);
+    } finally { fs.unlinkSync(file); }
 
-    const empty = await downloadAndLocalizeGrokVideo('', '123', 'grok-imagine-video');
-    expect(empty).toBe('');
+    await expect(downloadAndLocalizeGrokVideo('', '123', 'grok-imagine-video')).rejects.toThrow('without a video URL');
   });
 });

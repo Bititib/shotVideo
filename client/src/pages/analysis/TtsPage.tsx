@@ -6,6 +6,7 @@ import { analysisApi, getCachedTtsModels, type StudioVoice } from '../../api/ana
 import { contentApi } from '../../api/content';
 import { formatBeijingTime, parseUtcTimestamp } from '../../../../shared/time';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
+import { useAuthStore } from '../../stores/authStore';
 
 const TEXT_TEMPLATES = [
   {
@@ -47,6 +48,7 @@ function base64ToBlobUrl(base64: string, mimeType: string): string {
 }
 
 export default function TtsPage() {
+  const pricingUserId = useAuthStore(state => state.user?.id);
   const guard = useAuthGuard();
   const [models, setModels] = useState(getCachedTtsModels);
   const [selectedModel, setSelectedModel] = useState(() => models[0]?.modelId || '');
@@ -109,7 +111,7 @@ export default function TtsPage() {
       setError('语音模型加载失败，请点击刷新重试。');
     } finally { setModelsLoading(false); }
   };
-  useEffect(() => { void loadModels(); loadHistory(); }, []);
+  useEffect(() => { void loadModels(); loadHistory(); }, [pricingUserId]);
 
   const loadHistory = (page = 1, append = false) => {
     setHistoryLoading(true);

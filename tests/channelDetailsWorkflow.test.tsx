@@ -100,10 +100,9 @@ describe('channel details and model sync workflow', () => {
     const drawer = await screen.findByRole('dialog');
     expect(within(drawer).getByRole('button', { name: '正在同步…' })).toBeDisabled();
     expect(within(drawer).getByRole('button', { name: '关闭', exact: true })).toBeDisabled();
-    await waitFor(() => expect(adminApi.getModels).toHaveBeenCalled());
     await act(async () => finish());
-    await waitFor(() => expect(within(drawer).getByRole('status')).toHaveTextContent('新增 4 个模型配置'));
-    expect(within(drawer).getByRole('status')).toHaveTextContent('新模型默认停用');
+    await waitFor(() => expect(adminApi.getModels).toHaveBeenCalled());
+    expect(await within(drawer).findByText(/新增 4 个模型配置/)).toHaveTextContent('新模型默认停用');
     for (const id of ids) expect((await within(drawer).findAllByText(id))[0]).toBeVisible();
     expect(within(drawer).queryByText('还没有关联模型')).toBeNull();
     expect(adminApi.syncChannelModels).toHaveBeenCalledExactlyOnceWith(9);
@@ -119,8 +118,7 @@ describe('channel details and model sync workflow', () => {
     vi.mocked(adminApi.syncChannelModels).mockResolvedValue({ count: 0, added: 0 });
     mount(); const drawer = await open();
     fireEvent.click(within(drawer).getByRole('button', { name: '立即同步' }));
-    await waitFor(() => expect(within(drawer).getByRole('status')).toHaveTextContent('上游 0 个模型'));
-    expect(within(drawer).getByRole('status')).toHaveTextContent('模型授权');
+    expect(await within(drawer).findByText(/上游 0 个模型/)).toHaveTextContent('模型授权');
   });
   it('reports an unsuccessful connection test as an error in the drawer', async () => {
     vi.mocked(adminApi.testChannel).mockResolvedValue({ success: false, message: '连接被拒绝' });

@@ -3,6 +3,7 @@ import { db } from '../db/index.js';
 import { users, tiers, tierModelAccess, models } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import type { AuthRequest } from './auth.js';
+import { filterUserModels } from '../services/userModelAccessService.js';
 
 export interface TierRequest extends AuthRequest {
   userTier?: {
@@ -58,15 +59,9 @@ export function tierMiddleware(feature: string) {
       // 获取该等级可用的模型列表
       const accessList = db.select().from(tierModelAccess).where(eq(tierModelAccess.tierId, tier.id)).all();
       const modelIds = accessList.map(a => a.modelId);
-      if (modelIds.length > 0) {
-        req.availableModels = db.select().from(models)
-          .where(eq(models.isActive, 1))
-          .all()
-          .filter(m => modelIds.includes(m.id))
-          .map(m => ({ id: m.id, modelId: m.modelId, apiKey: m.apiKey }));
-      } else {
-        req.availableModels = [];
-      }
+      req.availableModels = filterUserModels(req.userId, db.select().from(models)
+        .where(eq(models.isActive, 1)).all(), modelIds)
+        .map(m => ({ id: m.id, modelId: m.modelId, apiKey: m.apiKey }));
 
       return next();
     }

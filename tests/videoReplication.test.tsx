@@ -11,6 +11,7 @@ vi.mock('../client/src/api/video', () => ({
   getCachedVideoModels: () => [{ id: 'seedance_v2.5', name: '默认模型', available: true }],
   fetchVideoModels: async () => [{ id: 'seedance_v2.5-101010', name: '多模态模型', available: true, rates: {'720p':1}, allowedSeconds:[6,10] }],
   generateVideo: mocks.generate,
+  fetchVideoQuote: vi.fn(async (model: string, resolution: string, seconds: number) => ({ model, resolution, seconds, cost: 1, billingType: 'per_call' })),
 }));
 vi.mock('../client/src/api/content', () => ({ contentApi: { getMyContents: async () => ({items:[],total:0}) } }));
 vi.mock('../client/src/hooks/useAuthGuard', () => ({ useAuthGuard: () => () => true }));
@@ -18,6 +19,8 @@ vi.mock('../client/src/components/FaceProcessingModal', () => ({default:()=>null
 vi.mock('../client/src/components/ImageSlicerModal', () => ({default:()=>null}));
 vi.mock('../client/src/utils/idb', () => ({getAssets:async()=>[],saveAsset:vi.fn(),deleteAsset:vi.fn()}));
 import VideoPage from '../client/src/pages/analysis/VideoPage';
+import { useAuthStore } from '../client/src/stores/authStore';
+const initialAuth = useAuthStore.getState();
 
 const metadata = {
   model:'seedance_v2.5-101010',prompt:'[ref_0.jpg] [ref_video_1] [ref_audio_1] 一起跳舞',
@@ -28,9 +31,10 @@ const metadata = {
   first_frame:'/uploads/history-assets/first.jpg',last_frame:'/uploads/history-assets/last.jpg',
 };
 beforeEach(()=>{vi.clearAllMocks();mocks.generate.mockReturnValue(new AbortController());sessionStorage.clear();
+  useAuthStore.setState({ user: { id: 1 } as any, isAuthenticated: true });
   vi.stubGlobal('ResizeObserver',class {observe(){} disconnect(){} unobserve(){}});
 });
-afterEach(()=>{cleanup();vi.unstubAllGlobals();});
+afterEach(()=>{cleanup();vi.unstubAllGlobals();useAuthStore.setState(initialAuth);});
 const mount=()=>render(<MemoryRouter initialEntries={['/app/video?replicate=11983']}><VideoPage/></MemoryRouter>);
 describe('complete admin video replication',()=>{
   it('fetches full detail without session storage and submits every image, video, audio and frame in order',async()=>{

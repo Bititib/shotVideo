@@ -1,6 +1,7 @@
 import { balanceInput, balanceUpdate } from '../../utils/balance';
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { adminApi } from '../../api/admin';
+import UserModelSettings from '../../components/UserModelSettings';
 import { Search, ChevronLeft, ChevronRight, X, Check, Ban, UserPlus } from 'lucide-react';
 
 export default function UsersPage() {
@@ -17,6 +18,7 @@ export default function UsersPage() {
   }, [search]);
   const [tiers, setTiers] = useState<any[]>([]);
   const [editUser, setEditUser] = useState<any>(null);
+  const [modelUser, setModelUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [newUser, setNewUser] = useState({ email: '', username: '', password: '', tierId: '' });
@@ -92,11 +94,11 @@ export default function UsersPage() {
       {/* Search */}
       <div className="relative mb-6">
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-        <input type="text" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} placeholder="搜索邮箱..." className="w-full bg-white/[0.03] border border-white/5 rounded-xl pl-11 pr-4 py-3 text-sm text-white focus:outline-none focus:border-white/10 placeholder:text-zinc-600" />
+        <input type="text" aria-label="搜索用户名或邮箱" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} placeholder="搜索用户名或邮箱..." className="w-full bg-white/[0.03] border border-white/5 rounded-xl pl-11 pr-4 py-3 text-sm text-white focus:outline-none focus:border-white/10 placeholder:text-zinc-600" />
       </div>
 
       {/* Table */}
-      <div className="bg-white/[0.02] border border-white/5 rounded-2xl overflow-hidden mb-6">
+      <div className="bg-white/[0.02] border border-white/5 rounded-2xl overflow-x-auto mb-6">
         <table className="w-full">
           <thead><tr className="border-b border-white/5">
             {['ID', '邮箱', '用户名', '等级', '余额', '今日用量', '状态', '操作'].map(h => <th key={h} className="text-left text-[10px] text-zinc-500 uppercase tracking-wider px-4 py-3 font-medium">{h}</th>)}
@@ -117,6 +119,7 @@ export default function UsersPage() {
                   <td className="px-4 py-3">{u.isActive ? <span className="text-xs text-green-400">启用</span> : <span className="text-xs text-red-400">禁用</span>}</td>
                   <td className="px-4 py-3 flex items-center gap-2">
                     <button onClick={() => setEditUser({ ...u })} className="text-[10px] px-2.5 py-1 bg-white/5 hover:bg-white/10 rounded-lg text-zinc-300 transition-colors">编辑</button>
+                    <button onClick={() => setModelUser(u)} className="text-[10px] px-2.5 py-1 bg-blue-500/10 hover:bg-blue-500/20 rounded-lg text-blue-400 transition-colors">模型与价格</button>
                     <button onClick={() => handleDelete(u.id)} className="text-[10px] px-2.5 py-1 bg-red-500/10 hover:bg-red-500/20 rounded-lg text-red-400 transition-colors">删除</button>
                   </td>
                 </tr>
@@ -135,6 +138,7 @@ export default function UsersPage() {
         </div>
       )}
 
+      {modelUser && <UserModelSettings user={modelUser} onClose={() => setModelUser(null)} />}
       {/* Edit Modal */}
       {editUser && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={() => setEditUser(null)}>

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 import { ChannelService } from '../server/services/channelService.js';
 import { db } from '../server/db/index.js';
 import { settings } from '../server/db/schema.js';
