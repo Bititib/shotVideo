@@ -2,7 +2,7 @@ import { publicGenerationError } from '../../shared/generationMessages.js';
 import { getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, zonghengBaseUrl, buildZonghengVideoPayload, validateZonghengVideoAliases, buildZonghengImagePayload, validateZonghengImageReferences, zonghengImageSize, submitZonghengVideo, ZonghengSubmissionError } from '../services/zonghengAdapter.js';
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
-import { patchZonghengTask, reviewZonghengTask, zonghengOrder } from '../services/zonghengTaskService.js';
+import { patchZonghengTask, reviewZonghengTask, zonghengOrder, recordZonghengSubmissionError } from '../services/zonghengTaskService.js';
 import { generateZonghengImages } from '../services/zonghengImageService.js';
 import { handleSpecificationGeneration } from '../services/specificationGenerationService.js';
 import { getModelSpecifications, getModelSpecification } from '../services/modelRoutingService.js';
@@ -2312,6 +2312,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       return res.status(202).json({ id: 'task_' + contentId, task_id: 'task_' + contentId, object: 'video', model, status: 'queued', progress: 0,
         status_url: req.protocol + '://' + req.get('host') + '/v1/videos/task_' + contentId, retry_after: job.pollDelay / 1000 });
     } catch (error: any) {
+      recordZonghengSubmissionError(contentId!, error);
       if (error instanceof ZonghengSubmissionError && error.uncertain || taskId) {
         reviewZonghengTask(contentId!, '纵横科技提交结果待核实，请勿重复创建任务');
         return res.status(202).json({ id: 'task_' + contentId, task_id: 'task_' + contentId, object: 'video', model,

@@ -103,6 +103,21 @@ describe('Zongheng public protocol', () => {
     vi.stubGlobal('fetch',vi.fn(async()=>Response.json({error:{message:'request rejected'}},{status})));
     await expect(submitZonghengVideo(options.baseUrl,options.apiKey,input,'order-1',()=>{})).rejects.toMatchObject({uncertain:status>=500});
   });
+  it.each([
+    {reason:'http_error',httpStatus:503,make:()=>Promise.resolve(Response.json({error:{message:'busy'}},{status:503}))},
+    {reason:'invalid_task_response',httpStatus:200,make:()=>Promise.resolve(Response.json({success:true}))},
+    {reason:'invalid_json',httpStatus:200,make:()=>Promise.resolve(new Response('<html>gateway</html>',{status:200}))},
+    {reason:'timeout',httpStatus:undefined,make:()=>Promise.reject(new DOMException('secret provider timeout','TimeoutError'))},
+    {reason:'network_error',httpStatus:undefined,make:()=>Promise.reject(new TypeError('secret provider URL sk-private-key',{cause:{code:'ENOTFOUND'}}))},
+  ])('records safe $reason evidence while preserving uncertain submissions and never retrying POST',async ({reason,httpStatus,make})=>{
+    vi.stubGlobal('fetch',vi.fn(make));
+    const error=await submitZonghengVideo(options.baseUrl,options.apiKey,input,'order-diagnostic',()=>{}).catch(e=>e);
+    expect(error).toBeInstanceOf(ZonghengSubmissionError);expect(error.uncertain).toBe(true);
+    expect(error.diagnostics).toMatchObject({reason,httpStatus});expect(error.diagnostics.elapsedMs).toBeGreaterThanOrEqual(0);
+    expect(JSON.stringify(error.diagnostics)).not.toMatch(/secret|sk-private|https?:/);
+    if(reason==='network_error')expect(error.diagnostics.networkCode).toBe('ENOTFOUND');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it('uploads local bytes, keeps signed URLs, validates paths and 25MB limit before generation', async()=>{
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'zongheng-media-'));
     try {

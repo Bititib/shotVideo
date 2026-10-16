@@ -1,3 +1,4 @@
+import { ZonghengSubmissionError } from './zonghengAdapter.js';
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { db } from '../db/index.js';
@@ -19,4 +20,13 @@ export function reviewZonghengTask(id: number, message: string) {
   const row = db.select().from(contents).where(eq(contents.id,id)).get();
   if (!row || row.status === 'completed') return;
   db.update(contents).set({ status: 'review', metadata: JSON.stringify({ ...JSON.parse(row.metadata || '{}'), requiresReview: true, progressText: message }) }).where(eq(contents.id,id)).run();
+}
+
+/** Record submission evidence for administrators without response bodies or credentials. */
+export function recordZonghengSubmissionError(id: number, error: unknown) {
+  if (!(error instanceof ZonghengSubmissionError) || !error.diagnostics) return;
+  try {
+    patchZonghengTask(id, { zonghengSubmissionDiagnostics: { ...error.diagnostics, recordedAt: new Date().toISOString() } });
+  } catch { console.warn('[video-submit] Could not persist submission diagnostics for task', id); }
+  console.warn('[video-submit]', JSON.stringify({ contentId: id, ...error.diagnostics }));
 }

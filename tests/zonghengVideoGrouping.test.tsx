@@ -5,14 +5,14 @@ import { cleanup, fireEvent, render, screen, within, waitFor } from '@testing-li
 import '@testing-library/jest-dom/vitest';
 import { MemoryRouter } from 'react-router-dom';
 
-const mocks = vi.hoisted(() => ({ list: vi.fn(), detail: vi.fn(), generate: vi.fn() }));
+const mocks = vi.hoisted(() => ({ list: vi.fn(), detail: vi.fn(), generate: vi.fn(), history: vi.fn(), content: vi.fn() }));
 vi.mock('../client/src/api/video', () => ({
   getCachedVideoModels: () => [],
   fetchVideoModels: mocks.list,
   generateVideo: mocks.generate,
 }));
 vi.mock('../client/src/api/admin', () => ({ adminApi: { getContent: mocks.detail } }));
-vi.mock('../client/src/api/content', () => ({ contentApi: { getMyContents: async () => ({items:[],total:0}) } }));
+vi.mock('../client/src/api/content', () => ({ contentApi: { getMyContents: mocks.history, getById: mocks.content } }));
 vi.mock('../client/src/hooks/useAuthGuard', () => ({ useAuthGuard: () => () => true }));
 vi.mock('../client/src/components/FaceProcessingModal', () => ({default:()=>null}));
 vi.mock('../client/src/components/ImageSlicerModal', () => ({default:()=>null}));
@@ -22,6 +22,7 @@ vi.mock('../client/src/utils/imageNormalization', async importOriginal => ({
   ...await importOriginal<any>(), findUnreadableImageIndexes: async () => [],
 }));
 import VideoPage from '../client/src/pages/analysis/VideoPage';
+import { useAuthStore } from '../client/src/stores/authStore';
 
 const entries = [
   { id:'ZH-Cseadanco2.5K', group:'Seedance 系列', resolution:'720p' },
@@ -40,15 +41,28 @@ const entries = [
 ];
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.history.mockResolvedValue({items:[],total:0});
+  mocks.content.mockResolvedValue({status:'processing'});
+  useAuthStore.setState({user:null,isAuthenticated:false});
   mocks.generate.mockReturnValue(new AbortController());
   vi.stubGlobal('ResizeObserver',class {observe(){} disconnect(){} unobserve(){}});
   mocks.list.mockResolvedValue(entries.map(({id,resolution})=>({
     id,name:id,description:'测试模型',available:true,allowedSeconds:id==='ZH-sedanco2.0-300秒必出'?[15]:[10],rates:{[resolution]:1},
   })));
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); useAuthStore.setState({user:null,isAuthenticated:false}); });
 
 describe('legacy video sidebar family grouping', () => {
+  it('shows a restored review task without a generating loader or a new submission', async () => {
+    const item={id:12965,status:'review',modelId:'ZH-kksedanco2.5',cost:6.5,createdAt:'2026-10-16 12:27:55',metadata:{model:'ZH-kksedanco2.5',prompt:'待核实示例',seconds:30,resolution:'720p',aspect_ratio:'16:9',requiresReview:true,progressText:'纵横科技提交结果待核实'}};
+    mocks.history.mockResolvedValue({items:[item],total:1});mocks.content.mockResolvedValue(item);
+    useAuthStore.setState({user:{id:1} as any,isAuthenticated:true});
+    render(<MemoryRouter><VideoPage/></MemoryRouter>);
+    await screen.findByText('结果待核实');
+    expect(screen.getByText('提交结果待核实，请在生成记录核实原任务，请勿重复提交。')).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('纵横科技');expect(mocks.generate).not.toHaveBeenCalled();
+    expect(document.querySelector('.animate-spin')).toBeNull();
+  });
 
   it('shows fixed 15 seconds, 9 image slots and 3 audio slots for the new Seedance 2.0 model',async()=>{
     render(<MemoryRouter><VideoPage/></MemoryRouter>);

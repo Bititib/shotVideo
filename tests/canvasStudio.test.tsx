@@ -41,6 +41,19 @@ function mount(initial = newDocument(), projects = [initial]) {
 }
 
 describe('canvas user workflows', () => {
+  it.each([
+    {status:'review',metadata:{error:'纵横科技提交结果待核实，费用保留'}},
+    {status:'processing',metadata:{requiresReview:true}},
+    {status:'processing',metadata:{hayaNeedsReview:true}},
+  ])('stops the generating spinner for a backend review task without retrying the original submission: %j', async result => {
+    vi.mocked(contentApi.getById).mockResolvedValueOnce(result);
+    const node={...newNode('video',{x:0,y:0}),title:'待核实视频任务',job:{status:'running' as const,contentId:12965,message:'生成中',progress:51}};
+    const board=mount({...newDocument(),nodes:[node]});
+    await waitFor(()=>expect(board.current().nodes[0].job).toMatchObject({status:'interrupted',contentId:12965,message:'提交结果待核实，请在生成记录核实原任务，请勿重复提交。'}));
+    expect(board.current().nodes[0].src).toBeUndefined();expect(streamGeneration).not.toHaveBeenCalled();
+    expect(screen.getByRole('article',{name:node.title}).querySelector('.studio-spin')).toBeNull();
+    expect(document.body.textContent).not.toContain('纵横科技');
+  });
   it('hides upstream identity in restored failed nodes, tooltips and the selected composer', async () => {
     const raw='纵横科技提交失败 (400): invalid_parameters: 视频时长不符合当前模型要求';
     const node={...newNode('video',{x:0,y:0}),title:'历史失败任务',model:'test-video',job:{status:'error' as const,message:raw}};

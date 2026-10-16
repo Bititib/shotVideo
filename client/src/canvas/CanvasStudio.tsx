@@ -597,6 +597,10 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
           if (src) { const finished = applyGenerationEvent(current, { type: 'complete', contentId: current.job.contentId, imageUrls: meta.imageUrls?.length ? meta.imageUrls : [src] }); editNode(node.id, finished); }
           else editNode(node.id, { job: { ...current.job, status: 'running', message: '后台已完成，正在等待结果地址，请勿重复提交。' } });
         } else if (data.status === 'failed' || data.status === 'error') { reconciledJobs.current.add(jobKey(current)); editNode(node.id, { job: { ...current.job, status: 'error', message: publicGenerationError(data.errorMessage || meta.error) } }); }
+        else if (data.status === 'review' || meta.requiresReview || meta.hayaNeedsReview) {
+          reconciledJobs.current.add(jobKey(current));
+          editNode(node.id, { job: { ...current.job, status: 'interrupted', message: publicGenerationError('提交结果待核实，请勿重复提交') } });
+        }
         else {
           const pending = applyPendingGeneration({...current, job: {...current.job, status:'running'}}, data);
           if (pending !== current) editNode(node.id, pending);

@@ -1,8 +1,9 @@
+import { publicGenerationError } from '../../../../shared/generationMessages';
 import { BLOB_DRAW_BB_MODEL } from '../../../../shared/blobDrawVideo';
 import { useVideoQuote } from '../../hooks/useVideoQuote';
 import { routingMismatches } from '../../../../shared/modelRouting';
 import { startPolling } from '../../utils/polling';
-import { shouldPollVideoTask, videoTaskDatabaseId } from '../../utils/videoTaskSync';
+import { videoTaskNeedsReview, shouldPollVideoTask, videoTaskDatabaseId } from '../../utils/videoTaskSync';
 import { getZonghengVideoSpec, getZonghengVideoReferenceLimits } from '../../../../shared/zonghengVideo';
 import { getHayaVideoSpec } from '../../../../shared/hayaVideo';
 import { getHmStudioAdditionalVideoModel, HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS } from '../../../../shared/hmStudioVideo';
@@ -33,7 +34,7 @@ import { findUnreadableImageIndexes, isSupportedImageFile, MOBILE_IMAGE_ACCEPT, 
 interface VideoTask {
   id: string;
   prompt: string;
-  status: 'generating' | 'complete' | 'error';
+  status: 'generating' | 'review' | 'complete' | 'error';
   progress: number;
   statusMessage: string;
   videoUrl: string | null;
@@ -845,9 +846,9 @@ export default function VideoPage() {
           .map((item: any) => ({
             id: `db_${item.id}`,
             prompt: item.metadata?.prompt || item.inputText || item.title || '',
-            status: 'generating',
+            status: videoTaskNeedsReview(item) ? 'review' : 'generating',
             progress: Number(item.metadata?.progress) || 0,
-            statusMessage: item.status === 'review' ? (item.metadata?.progressText || '结果待核实，请勿重复提交') : item.status === 'queued'
+            statusMessage: videoTaskNeedsReview(item) ? publicGenerationError('提交结果待核实，请勿重复提交') : item.status === 'queued'
               ? `HM Studio 排队中：前方 ${Math.max(0, Number(item.metadata?.queuePosition || 1) - 1)} 项`
               : (Number(item.metadata?.progress) > 0
                 ? `视频生成中 ${Number(item.metadata.progress)}%`
@@ -1022,6 +1023,9 @@ export default function VideoPage() {
                     setTasks(prev => prev.filter(t => t.id !== task.id));
                   }).catch(() => { });
               }, 2000);
+            } else if (videoTaskNeedsReview(item)) {
+              abortRef.current.delete(task.id);
+              setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'review', statusMessage: publicGenerationError('提交结果待核实，请勿重复提交') } : t));
             } else if (item.status === 'failed') {
               abortRef.current.delete(task.id);
               setTasks(prev => prev.map(t => t.id === task.id ? {
@@ -1036,8 +1040,9 @@ export default function VideoPage() {
               let meta: any = {};
               try { meta = typeof item.metadata === 'string' ? JSON.parse(item.metadata) : (item.metadata || {}); } catch { }
               const p = meta.progress || 0;
-              setTasks(prev => prev.map(t => t.id === task.id && t.status === 'generating' ? {
+              setTasks(prev => prev.map(t => t.id === task.id && (t.status === 'generating' || t.status === 'review') ? {
                 ...t,
+                status: 'generating',
                 progress: p,
                 statusMessage: item.status === 'review' ? (meta.progressText || '结果待核实，请勿重复提交') : item.status === 'queued'
                   ? `HM Studio 排队中：前方 ${Math.max(0, Number(meta.queuePosition || 1) - 1)} 项，当前运行 ${meta.queueRunning || 0}/${meta.queueLimit || 10}`
@@ -1790,6 +1795,12 @@ export default function VideoPage() {
                                 <span className="w-11 h-11 rounded-full border border-white/70 bg-black/20 backdrop-blur-sm flex items-center justify-center group-hover:scale-105 transition-transform"><Play className="w-5 h-5 text-white fill-white/10 translate-x-0.5" /></span>
                               </div>
                             </>
+                          ) : task.status === 'review' ? (
+                            <div className="flex flex-col items-center gap-2 p-4" role="status">
+                              <AlertCircle className="w-8 h-8 text-amber-400/70" />
+                              <p className="text-sm text-amber-300">结果待核实</p>
+                              <p className="text-xs text-amber-200/80 text-center">{task.statusMessage}</p>
+                            </div>
                           ) : task.status === 'error' ? (
                             <div className="flex flex-col items-center gap-2 p-4">
                               <AlertCircle className="w-8 h-8 text-red-400/60" />

@@ -2,7 +2,7 @@ import { publicGenerationEvent } from '../../shared/generationMessages.js';
 import { canonicalZonghengModelId, ZONGHENG_VIDEO_MODELS, ZONGHENG_MODEL_PREFIX, getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, buildZonghengVideoPayload, submitZonghengVideo, ZonghengSubmissionError, zonghengTaskUrl, normalizeZonghengTask } from '../services/zonghengAdapter.js';
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
-import { patchZonghengTask, reviewZonghengTask, zonghengOrder } from '../services/zonghengTaskService.js';
+import { patchZonghengTask, reviewZonghengTask, zonghengOrder, recordZonghengSubmissionError } from '../services/zonghengTaskService.js';
 import videoQuotes from './videoQuotes.js';
 import { assertExpectedVideoCost } from '../services/videoQuoteService.js';
 import { resolvePublicModelId } from '../services/publicModelNameService.js';
@@ -1507,6 +1507,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
         videoId = job.taskId; zonghengDelay = job.pollDelay;
         patchZonghengTask(contentId, { videoId, zonghengPollDelay: job.pollDelay });
       } catch (error: any) {
+        recordZonghengSubmissionError(contentId, error);
         if (error instanceof ZonghengSubmissionError && error.uncertain || videoId) {
           reviewZonghengTask(contentId, '纵横科技提交结果待核实，费用保留，请勿重复提交');
           sendEvent({ type: 'error', message: '提交结果待核实，请在历史记录核实原任务，请勿重复提交' });

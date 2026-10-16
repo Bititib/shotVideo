@@ -67,6 +67,13 @@ describe('content routing privacy', () => {
     expect(JSON.stringify(sanitized)).not.toContain('纵横科技');expect(meta.error).toBe(raw);expect(item.errorMessage).toBe(raw);
   });
 
+  it('keeps administrator submission diagnostics out of user content responses', () => {
+    const item={status:'review',metadata:{requiresReview:true,zonghengSubmissionDiagnostics:{reason:'timeout',httpStatus:504,elapsedMs:120000}}};
+    const sanitized=sanitizeContentRoutingForClient(item);
+    expect(sanitized.metadata).not.toHaveProperty('zonghengSubmissionDiagnostics');
+    expect(item.metadata.zonghengSubmissionDiagnostics).toMatchObject({reason:'timeout',httpStatus:504});
+    expect(sanitized.metadata.requiresReview).toBe(true);
+  });
   it('preserves ordinary generation metadata', () => {
     const sanitized = sanitizeContentRoutingForClient({
       metadata: { model: 'seedance_v2.5', seconds: 10, progressText: '视频生成中 40%' },

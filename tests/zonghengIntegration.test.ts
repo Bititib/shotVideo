@@ -440,7 +440,8 @@ describe('Zongheng legacy entry points, isolated database and simulated provider
     expect(response.status).toBe(202);await vi.waitFor(()=>expect(latest().status).toBe('completed'));expect(uploads).toBe(2);expect(balance()).toBe(98);
   });
   it.each(['/api/video/generate','/v1/videos'])('retains uncertain submissions at %s without refund or resubmission',async endpoint=>{
-    upstream=async()=>{throw Error('timeout');};await(await post(endpoint,request)).text();expect(latest().status).toBe('review');expect(balance()).toBe(98);expect(fetch).toHaveBeenCalledTimes(1);
+    upstream=async()=>{throw new DOMException('private provider timeout','TimeoutError');};await(await post(endpoint,request)).text();expect(latest().status).toBe('review');expect(balance()).toBe(98);expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(latest().metadata!).zonghengSubmissionDiagnostics).toMatchObject({reason:'timeout',elapsedMs:expect.any(Number),recordedAt:expect.any(String)});
     video.resumeAllPendingVideoTasks();expect(fetch).toHaveBeenCalledTimes(1);
   });
   it.each(['/api/video/generate','/v1/videos'])('hides provider identity in rejection responses at %s while retaining diagnostics and refunding once',async endpoint=>{
