@@ -41,6 +41,16 @@ function mount(initial = newDocument(), projects = [initial]) {
 }
 
 describe('canvas user workflows', () => {
+  it('hides upstream identity in restored failed nodes, tooltips and the selected composer', async () => {
+    const raw='纵横科技提交失败 (400): invalid_parameters: 视频时长不符合当前模型要求';
+    const node={...newNode('video',{x:0,y:0}),title:'历史失败任务',model:'test-video',job:{status:'error' as const,message:raw}};
+    mount({...newDocument(),nodes:[node]});
+    const safe='视频时长不符合当前模型要求，请选择支持的时长后重试。';
+    expect(document.body.textContent).not.toContain('纵横科技');expect(screen.getByTitle(safe)).toBeTruthy();
+    fireEvent.doubleClick(screen.getByRole('article',{name:node.title}));
+    await waitFor(()=>expect(document.querySelector('.studio-job-detail')?.textContent).toContain(safe));
+    expect(document.body.textContent).not.toContain('纵横科技');
+  });
   it.each(['error','interrupted','running'] as const)('recovers a saved 90 percent video from %s using the backend result', async status => {
     vi.mocked(contentApi.getById).mockResolvedValueOnce({status:'completed',resultUrl:'/finished.mp4'});
     const node={...newNode('video',{x:0,y:0}),job:{status,contentId:912,message:'视频生成中 90%',progress:90}};

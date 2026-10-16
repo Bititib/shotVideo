@@ -147,7 +147,8 @@ describe('LongXia application integration', () => {
     const events = await response.text();
     expect(response.status, events).toBe(200);
     expect(events).toContain('"cost":14.5');
-    expect(events).toContain('LongXia 提交失败 (503)');
+    expect(events).toContain('生成服务暂时不可用');
+    expect(events).not.toContain('LongXia');
     expect(upstream).toHaveBeenCalledOnce();
     expect(JSON.parse((upstream.mock.calls[0] as any)[1].body)).toMatchObject({ duration: 25, size: '16:9', assets: [{ category: 'audio', url: 'https://example.com/ref.mp3' }] });
     expect(db.select().from(users).where(eq(users.id, user.id)).get()!.balance).toBe(100);

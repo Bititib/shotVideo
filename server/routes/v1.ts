@@ -1,3 +1,4 @@
+import { publicGenerationError } from '../../shared/generationMessages.js';
 import { getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, zonghengBaseUrl, buildZonghengVideoPayload, validateZonghengVideoAliases, buildZonghengImagePayload, validateZonghengImageReferences, zonghengImageSize, submitZonghengVideo, ZonghengSubmissionError } from '../services/zonghengAdapter.js';
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
@@ -234,8 +235,8 @@ export function videoTaskFailureDetails(metadata: Record<string, any>): {
     ? String(rawError.message || JSON.stringify(rawError))
     : String(rawError || 'Video generation failed');
   return {
-    error: message,
-    error_message: message,
+    error: publicGenerationError(message),
+    error_message: publicGenerationError(message),
     ...(metadata?.failedAt ? { failed_at: String(metadata.failedAt) } : {}),
     ...(metadata?.billingStatus ? { billing_status: String(metadata.billingStatus) } : {}),
     ...(metadata?.queueRefunded !== undefined ? { refunded: Boolean(metadata.queueRefunded) } : {}),
@@ -2319,7 +2320,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       const target = deduction ? refundTokenOrUserBalance(token, totalCost, deduction) : 'not_charged';
       persistVideoContentFailure(contentId!, error.message, { billingStatus: deduction ? 'refunded' : 'not_charged',
         queueRefunded: Boolean(deduction), refundAmount: deduction ? totalCost : 0, refundTarget: target });
-      return res.status(502).json({ error: error.message });
+      return res.status(502).json({ error: publicGenerationError(error.message) });
     } finally { releaseZonghengSubmission(contentId!); cleanupFiles(req.files); }
   }
   if (isHayaChannel(channel)) {
@@ -2355,7 +2356,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       const target = deduction ? refundTokenOrUserBalance(token, totalCost, deduction) : 'not_charged';
       persistVideoContentFailure(contentId!, error.message, { billingStatus: deduction ? 'refunded' : 'not_charged',
         queueRefunded: Boolean(deduction), refundAmount: deduction ? totalCost : 0, refundTarget: target });
-      return res.status(502).json({ error: error.message });
+      return res.status(502).json({ error: publicGenerationError(error.message) });
     } finally { cleanupFiles(req.files); }
   }
 

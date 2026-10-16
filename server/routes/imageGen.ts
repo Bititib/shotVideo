@@ -1,3 +1,4 @@
+import { publicGenerationEvent } from '../../shared/generationMessages.js';
 import { startSseHeartbeat } from '../services/sseHeartbeat.js';
 import { imageGenerationTimeout } from '../services/imageGenerationTimeout.js';
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
@@ -416,7 +417,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
         failedIndexes: Object.keys(errors).map(Number) });
     }
     recordCanvasEvent(req, data);
-    if (!res.writableEnded && !res.destroyed) res.write(`data: ${JSON.stringify(data)}\n\n`);
+    if (!res.writableEnded && !res.destroyed) res.write(`data: ${JSON.stringify(publicGenerationEvent(data))}\n\n`);
   };
   const finishStream = () => {
     stopHeartbeat();

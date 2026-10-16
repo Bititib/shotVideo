@@ -443,6 +443,14 @@ describe('Zongheng legacy entry points, isolated database and simulated provider
     upstream=async()=>{throw Error('timeout');};await(await post(endpoint,request)).text();expect(latest().status).toBe('review');expect(balance()).toBe(98);expect(fetch).toHaveBeenCalledTimes(1);
     video.resumeAllPendingVideoTasks();expect(fetch).toHaveBeenCalledTimes(1);
   });
+  it.each(['/api/video/generate','/v1/videos'])('hides provider identity in rejection responses at %s while retaining diagnostics and refunding once',async endpoint=>{
+    const detail='视频时长不符合当前模型要求，请选择支持的时长后重试';
+    upstream=async()=>Response.json({error_code:'invalid_parameters',error_detail:detail},{status:400});
+    const response=await post(endpoint,request),text=await response.text();
+    expect(text).toContain('视频时长不符合当前模型要求');expect(text).not.toContain('纵横科技');expect(text).not.toContain('invalid_parameters');
+    expect(latest().status).toBe('failed');expect(JSON.parse(latest().metadata!).error).toContain('纵横科技提交失败');
+    expect(balance()).toBe(100);expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it.each(['/api/video/generate','/v1/videos'])('refunds confirmed rejection at %s',async endpoint=>{
     upstream=async()=>Response.json({error:{message:'余额不足'}},{status:402});await(await post(endpoint,request)).text();expect(latest().status).toBe('failed');expect(balance()).toBe(100);expect(fetch).toHaveBeenCalledTimes(1);
   });

@@ -56,6 +56,17 @@ describe('content routing privacy', () => {
     expect(metadata).not.toHaveProperty('upstreamModel');
   });
 
+  it.each([true,false])('hides provider details from historical failure fields with string metadata=%s without changing admin diagnostics', stringMetadata => {
+    const raw='纵横科技提交失败 (400): invalid_parameters: 视频时长不符合当前模型要求';
+    const meta={error:raw,failureReason:raw,imageErrors:{0:raw},progressText:raw,channelName:'纵横科技',fallbackFrom:'private'};
+    const item={id:12927,status:'failed',errorMessage:raw,metadata:stringMetadata?JSON.stringify(meta):meta};
+    const sanitized=sanitizeContentRoutingForClient(item);
+    const result=typeof sanitized.metadata==='string'?JSON.parse(sanitized.metadata):sanitized.metadata;
+    const safe='视频时长不符合当前模型要求，请选择支持的时长后重试。';
+    expect(sanitized.errorMessage).toBe(safe);expect(result).toMatchObject({error:safe,failureReason:safe,imageErrors:{0:safe},progressText:safe});
+    expect(JSON.stringify(sanitized)).not.toContain('纵横科技');expect(meta.error).toBe(raw);expect(item.errorMessage).toBe(raw);
+  });
+
   it('preserves ordinary generation metadata', () => {
     const sanitized = sanitizeContentRoutingForClient({
       metadata: { model: 'seedance_v2.5', seconds: 10, progressText: '视频生成中 40%' },
@@ -86,7 +97,7 @@ describe('content routing privacy', () => {
       model: 'seedance_v2.5',
       reference_videos: [],
       reference_images: [remoteImage],
-      error: 'Video generation timed out after 30 minutes',
+      error: '任务处理超时，请在生成记录核实原任务状态，请勿重复提交。',
       listAssetsCompacted: true,
       omittedInlineAssetCount: 2,
       referenceAssetCounts: { images: 2, videos: 1, audios: 0 },

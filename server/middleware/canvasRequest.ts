@@ -1,3 +1,4 @@
+import { publicGenerationError } from '../../shared/generationMessages.js';
 import { createHash } from 'node:crypto';
 import type { Response, NextFunction } from 'express';
 import type { AuthRequest } from './auth.js';
@@ -16,7 +17,7 @@ export function canvasRequestMiddleware(req: AuthRequest, res: Response, next: N
     if (!claim.fresh) {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-store');
-      res.end(`data: ${JSON.stringify({ type: claim.request.message && !claim.request.contentId ? 'error' : 'status', contentId: claim.request.contentId ?? undefined, message: claim.request.message || '已提交过此任务，正在恢复结果，请勿重复提交' })}\n\n`); return;
+      res.end(`data: ${JSON.stringify({ type: claim.request.message && !claim.request.contentId ? 'error' : 'status', contentId: claim.request.contentId ?? undefined, message: (claim.request.message ? publicGenerationError(claim.request.message) : '') || '已提交过此任务，正在恢复结果，请勿重复提交' })}\n\n`); return;
     }
     res.on('finish', () => {
       if (res.statusCode >= 400) canvasRequestStore().record(req.userId!, id, { type: 'error', message: '任务请求未通过，请检查模型、额度及输入参数后重新创建任务。' });

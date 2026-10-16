@@ -85,8 +85,8 @@ describe('OpenAI-compatible API access', () => {
       error: 'Upstream rejected the reference image',
       failedAt: '2026-08-29T10:20:00.000Z',
     })).toEqual({
-      error: 'Upstream rejected the reference image',
-      error_message: 'Upstream rejected the reference image',
+      error: '参考素材不符合模型要求，请检查素材数量、格式和大小。',
+      error_message: '参考素材不符合模型要求，请检查素材数量、格式和大小。',
       failed_at: '2026-08-29T10:20:00.000Z',
     });
   });
@@ -101,8 +101,8 @@ describe('OpenAI-compatible API access', () => {
       refundTarget: 'api_token',
       refundedAt: '2026-08-29T08:13:04.240Z',
     })).toEqual({
-      error: '系统繁忙，请重试',
-      error_message: '系统繁忙，请重试',
+      error: '生成未完成，请在生成记录查看任务状态，或联系管理员处理。',
+      error_message: '生成未完成，请在生成记录查看任务状态，或联系管理员处理。',
       failed_at: '2026-08-29T08:13:04.234Z',
       billing_status: 'refunded',
       refunded: true,

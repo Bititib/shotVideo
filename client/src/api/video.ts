@@ -1,3 +1,4 @@
+import { publicGenerationEvent } from '../../../shared/generationMessages';
 import type { ModelInputLimits } from '../../../shared/modelRouting';
 import type { VideoModelStatus } from '../../../shared/videoModelStatus';
 
@@ -117,6 +118,7 @@ export function generateVideo(
   params: VideoGenerateParams,
   onEvent: (event: VideoSSEEvent) => void,
 ): AbortController {
+  const emit = (event: VideoSSEEvent) => onEvent(publicGenerationEvent(event));
   const controller = new AbortController();
   const token = localStorage.getItem('token');
 
@@ -132,13 +134,13 @@ export function generateVideo(
     .then(async (response) => {
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
-        onEvent({ type: 'error', message: err.error || `请求失败 (${response.status})` });
+        emit({ type: 'error', message: err.error || `请求失败 (${response.status})` });
         return;
       }
 
       const reader = response.body?.getReader();
       if (!reader) {
-        onEvent({ type: 'error', message: '无响应流' });
+        emit({ type: 'error', message: '无响应流' });
         return;
       }
 
@@ -148,7 +150,7 @@ export function generateVideo(
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
-          onEvent({ type: 'close' });
+          emit({ type: 'close' });
           break;
         }
 
@@ -160,7 +162,7 @@ export function generateVideo(
           if (line.startsWith('data: ') && line !== 'data: [DONE]') {
             try {
               const event: VideoSSEEvent = JSON.parse(line.slice(6));
-              onEvent(event);
+              emit(event);
             } catch { /* skip */ }
           }
         }
@@ -169,7 +171,7 @@ export function generateVideo(
     .catch((err) => {
       if (err.name !== 'AbortError') {
         // 网络闪断或连接中断时，触发 close 事件提升为后台轮询，防止硬报错误导用户
-        onEvent({ type: 'close' });
+        emit({ type: 'close' });
       }
     });
 

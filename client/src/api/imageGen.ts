@@ -1,3 +1,4 @@
+import { publicGenerationEvent } from '../../../shared/generationMessages';
 import type { ModelInputLimits } from '../../../shared/modelRouting';
 import { legacyImageReferenceLimit } from '../../../shared/imageCapabilities';
 export interface ImageModel {
@@ -165,7 +166,7 @@ export function generateImage(
     if (controller.signal.aborted || terminal) return;
     contentId = event.contentId || contentId;
     if (event.type === 'complete' || event.type === 'error') terminal = true;
-    onEvent({ ...event, contentId });
+    onEvent(publicGenerationEvent({ ...event, contentId }));
   };
   const disconnected = () => emit({ type: 'disconnected', contentId,
     message: '实时连接已断开，正在核实后台结果，请勿重复提交' });

@@ -1,3 +1,4 @@
+import { publicCanvasJobMessage } from '../../../shared/generationMessages';
 import { useVideoQuote } from '../hooks/useVideoQuote';
 import type { ModelInputLimits } from '../../../shared/modelRouting';
 import { ttsVoices } from '../../../shared/tts';
@@ -137,7 +138,7 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
           if (!result || 'error' in result) return result;
           setPrompt(result.prompt);setBindings(result.bindings);return result.caret;
         }} placeholder={kind === 'image' ? '描述主体、场景、光线和你想要的感觉…' : kind === 'audio' ? '输入希望朗读的文字…' : videoMode === 'edit' ? '描述想修改的部分，以及需要保留的主体与动作…' : '描述主体动作、镜头运动和画面变化…'}/>
-      {selected?.job && <p className="studio-job-detail">{selected.job.message}{selected.job.status !== 'done' && <Link to="/app/history">查看生成记录 <ArrowUpRight size={12} /></Link>}</p>}
+      {selected?.job && <p className="studio-job-detail">{publicCanvasJobMessage(selected.job)}{selected.job.status !== 'done' && <Link to="/app/history">查看生成记录 <ArrowUpRight size={12} /></Link>}</p>}
       {selected?.origin && <p className="studio-hint">来源：{selected.origin.title} · 原始素材已保留</p>}
       <section className="studio-attachments" onDragOver={e => { e.preventDefault(); e.stopPropagation(); }} onDrop={e => { e.preventDefault(); e.stopPropagation(); onDropReferences?.(kind, Array.from(e.dataTransfer.files)); }}>
 {onPickReferences && <button className="studio-attach-button" disabled={busy} onClick={()=>onPickReferences(kind)}>从素材库引用</button>}

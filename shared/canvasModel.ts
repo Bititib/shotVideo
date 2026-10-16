@@ -1,3 +1,4 @@
+import { publicCanvasJobMessage } from './generationMessages.js';
 export type Point = { x: number; y: number };
 export type View = Point & { zoom: number };
 export type NodeKind = 'text' | 'image' | 'video' | 'audio';
@@ -118,7 +119,7 @@ export function parseDocument(raw: any): CanvasDocument {
         requestId: typeof n.job.requestId === 'string' && /^[a-zA-Z0-9-]{16,100}$/.test(n.job.requestId) ? n.job.requestId : undefined,
         expectedCount: Number.isInteger(n.job.expectedCount) ? clamp(n.job.expectedCount, 1, 4) : undefined,
         contentId: Number.isSafeInteger(n.job.contentId) && n.job.contentId > 0 ? n.job.contentId : undefined,
-        message: typeof n.job.message === 'string' ? n.job.message : '', progress: finite(n.job.progress) ? clamp(n.job.progress, 0, 100) : undefined,
+        message: publicCanvasJobMessage({ status: n.job.status, message: typeof n.job.message === 'string' ? n.job.message : '' }), progress: finite(n.job.progress) ? clamp(n.job.progress, 0, 100) : undefined,
       } : undefined,
     };
   });

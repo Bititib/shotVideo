@@ -7,6 +7,6 @@ export default defineConfig({ test: {
     'tests/canvasVideoInputs.test.ts', 'tests/channelBaseUrlPersistence.test.ts', 'tests/zongheng*.test.{ts,tsx}', 'tests/hayaIntegration.test.ts', 'tests/prechargeRoutes.test.ts',
     'tests/videoRecoveryService.test.ts', 'tests/longxiaIntegration.test.ts',
     'tests/miaowuChannelConfig.test.ts', 'tests/channel_api_keys.test.ts',
-    'tests/contentRoutingPrivacy.test.ts', 'tests/videoBatchRoutes.test.ts', 'tests/modelCatalog.test.ts',
+    'tests/publicGenerationMessages.test.ts', 'tests/contentRoutingPrivacy.test.ts', 'tests/videoBatchRoutes.test.ts', 'tests/modelCatalog.test.ts',
   ],
 } });

@@ -1,3 +1,4 @@
+import { publicGenerationEvent } from '../../shared/generationMessages.js';
 import { canonicalZonghengModelId, ZONGHENG_VIDEO_MODELS, ZONGHENG_MODEL_PREFIX, getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, buildZonghengVideoPayload, submitZonghengVideo, ZonghengSubmissionError, zonghengTaskUrl, normalizeZonghengTask } from '../services/zonghengAdapter.js';
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
@@ -1088,7 +1089,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   const sendEvent = (data: Record<string, any>) => {
     recordCanvasEvent(req, data);
     if (!res.destroyed && !res.writableEnded) {
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
+      res.write(`data: ${JSON.stringify(publicGenerationEvent(data))}\n\n`);
     }
   };
 

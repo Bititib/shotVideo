@@ -1,14 +1,15 @@
+import { publicGenerationEvent, publicGenerationError } from '../../../shared/generationMessages';
 import { uid, type CanvasNode } from './model';
 export type GenerationEvent = { type: string; position?: number; message?: string; contentId?: number; progress?: number; imageUrl?: string; imageUrls?: string[]; videoUrl?: string };
 export function parseEvent(line: string): GenerationEvent | null {
   if (!line.startsWith('data:')) return null;
-  try { const event = JSON.parse(line.slice(5).trim()); return typeof event.type === 'string' ? event : null; } catch { return null; }
+  try { const event = JSON.parse(line.slice(5).trim()); return typeof event.type === 'string' ? publicGenerationEvent(event) : null; } catch { return null; }
 }
 export async function streamGeneration(kind: 'image' | 'video', params: Record<string, unknown>, signal: AbortSignal, onEvent: (event: GenerationEvent) => void) {
   const response = await fetch(`/api/${kind === 'image' ? 'image-gen' : 'video'}/generate`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('token') || ''}` }, body: JSON.stringify(params), signal,
   });
-  if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.error || `请求失败 (${response.status})`); }
+  if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(publicGenerationError(error.error || `请求失败 (${response.status})`)); }
   const reader = response.body?.getReader();
   if (!reader) throw new Error('没有收到生成响应，请在生成记录中核实任务');
   const decoder = new TextDecoder(); let buffer = '';
@@ -23,6 +24,7 @@ export async function streamGeneration(kind: 'image' | 'video', params: Record<s
 }
 export function applyGenerationEvent(node: CanvasNode, event: GenerationEvent): CanvasNode {
   if (!node.job) return node;
+  event = publicGenerationEvent(event);
   const job = { ...node.job, contentId: event.contentId ?? node.job.contentId };
   const urls = [...new Set([event.imageUrl, ...(event.imageUrls || []), event.videoUrl].filter(Boolean))] as string[];
   if (urls.length) {

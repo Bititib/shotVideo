@@ -1,3 +1,4 @@
+import { publicGenerationError } from '../../shared/generationMessages.js';
 import { Router } from 'express';
 import { sqlite } from '../db/index.js';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
@@ -13,7 +14,7 @@ router.get('/requests/:id', (req: AuthRequest, res, next) => {
   try {
     const request = canvasRequestStore().get(req.userId!, req.params.id);
     if (!request) { res.status(404).json({ error: '未找到任务，请先到生成记录核实' }); return; }
-    res.json({ contentId: request.contentId, message: request.message, updatedAt: request.updatedAt });
+    res.json({ contentId: request.contentId, message: request.message ? publicGenerationError(request.message) : request.message, updatedAt: request.updatedAt });
   } catch (error) { next(error); }
 });
 router.get('/workspace', (req: AuthRequest, res, next) => {

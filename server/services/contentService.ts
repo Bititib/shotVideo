@@ -1,3 +1,4 @@
+import { publicGenerationError, publicGenerationStatus } from '../../shared/generationMessages.js';
 import { db } from '../db/index.js';
 import { contents, users, channels } from '../db/schema.js';
 import { eq, and, desc, sql, like, or } from 'drizzle-orm';
@@ -68,17 +69,33 @@ export function sanitizeContentRoutingForClient<T extends { metadata?: string | 
       ? JSON.parse(item.metadata || '{}')
       : { ...(item.metadata || {}) };
   } catch {
-    return item;
+    metadata = {};
   }
 
+  for (const field of ['error', 'errorMessage', 'failureReason', 'errorDetail']) {
+    if (metadata[field]) metadata[field] = publicGenerationError(metadata[field]);
+  }
+  if (metadata.imageErrors && typeof metadata.imageErrors === 'object') {
+    metadata.imageErrors = Object.fromEntries(Object.entries(metadata.imageErrors).map(([key, value]) => [key, publicGenerationError(value)]));
+  }
+  const state = (item as { status?: string }).status;
+  if (metadata.progressText && (['failed', 'error', 'review'].includes(state || '') || metadata.requiresReview || metadata.hayaNeedsReview)) {
+    metadata.progressText = publicGenerationError(metadata.progressText);
+  } else if (metadata.progressText) {
+    metadata.progressText = publicGenerationStatus(metadata.progressText);
+  }
+  const publicItem = { ...item } as T & Record<string, any>;
+  for (const field of ['error', 'errorMessage', 'failureReason']) {
+    if (publicItem[field]) (publicItem as Record<string, any>)[field] = publicGenerationError(publicItem[field]);
+  }
   const wasRouted = Boolean(metadata.fallbackFrom || metadata.fallbackReason || metadata.actualChannel === 'wx-haidiyue');
   for (const field of INTERNAL_VIDEO_ROUTING_FIELDS) delete metadata[field];
-  if (wasRouted && typeof metadata.progressText === 'string') {
+  if (wasRouted && !['failed', 'error', 'review'].includes(state || '') && typeof metadata.progressText === 'string') {
     metadata.progressText = '视频生成中';
   }
 
   return {
-    ...item,
+    ...publicItem,
     metadata: typeof item.metadata === 'string' ? JSON.stringify(metadata) : metadata,
   };
 }
