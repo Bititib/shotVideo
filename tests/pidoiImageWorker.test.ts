@@ -62,4 +62,15 @@ describe('Pidoi 原任务恢复', () => {
     await recoverPidoiImage(12);
     expect(mocks.poll).not.toHaveBeenCalled();
   });
+  it('兼容接口已经返回图片时直接下载原结果，不轮询空 ID 或跟踪用的 request ID', async () => {
+    for (const taskId of ['', 'request_trace']) {
+      mocks.row.metadata = JSON.stringify({ imageProtocol: 'pidoi-async-v1', count: 1, channelId: 5,
+        progresses: [0], publicBaseUrl: 'https://local.test', pidoiImageJobs: [{ taskId, index: 0,
+          protocol: 'openai-compatible', status: 'completed', sourceUrl: 'https://cdn/signed.png' }] });
+      await recoverPidoiImage(12);
+    }
+    expect(mocks.poll).not.toHaveBeenCalled();
+    expect(mocks.localize).toHaveBeenCalledTimes(2);
+    expect(mocks.finalize).toHaveBeenCalledWith(12, 'completed', expect.anything(), '/api/uploads/result.png');
+  });
 });

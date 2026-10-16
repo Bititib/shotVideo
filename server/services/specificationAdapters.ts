@@ -249,11 +249,11 @@ export async function generateSpecificationImage(target: RouteCandidate, request
     let response: Response;
     try { response = await fetch(url, init); }
     catch (e: any) {
-      if (!started) throw e;
+      if (!started || isPidoiImageChannel(c)) throw e;
       const notSent = ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(e?.cause?.code || e?.code);
       throw new SpecificationUpstreamError('图片提交连接失败', notSent, !notSent);
     }
-    if (init?.method?.toUpperCase() === 'POST' && !response.ok) {
+    if (init?.method?.toUpperCase() === 'POST' && !response.ok && !isPidoiImageChannel(c)) {
       const text = await response.text();
       throw submissionFailure(response.status, c.apiKey ? text.split(c.apiKey).join('[REDACTED]') : text);
     }
@@ -322,7 +322,8 @@ export async function generateSpecificationImage(target: RouteCandidate, request
   if (isPidoiImageChannel(c)) {
     try {
       return await generatePidoiImage(c, { ...payload, images: options.referenceImages,
-        resolution: i.resolution, aspect_ratio: i.ratio }, onSubmitted, trackedFetch);
+        resolution: i.resolution, aspect_ratio: i.ratio }, onSubmitted, trackedFetch, { referenceImages: request.images,
+          onResponse: (response, payload) => onResponse?.(imageResponseEvidence(payload, response.headers, response.status, 'response_without_id')) });
     } catch (e: any) {
       if (e.imageRequestStage) logImageRequestFailure({ stage: e.imageRequestStage, channelId: c.id, taskId: e.upstreamTaskId }, e);
       throw new SpecificationUpstreamError(e.message, false, !e.confirmedFailure, false, 0, e instanceof PidoiImageError && e.confirmedFailure);

@@ -561,27 +561,44 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
       const diagnostic: ImageRequestContext = { stage: 'submit', contentId, channelId: channel.id };
       pidoiImageActive.add(contentId);
       persistJob({ imageProtocol: 'pidoi-async-v1', asyncStartedAt: Date.now(), pidoiImageJobs: [], publicBaseUrl: process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}` });
+      sendEvent({ type: 'status', contentId, background: true, message: '图片任务已保存，正在后台生成', total: count });
+      finishStream();
+      // Keep the website async even when this channel only exposes OpenAI's
+      // synchronous compatibility endpoint. Database polling drives the browser.
+      void (async () => {
       try {
         const images = (reference_images || []).map((source: string) => convertBase64ToPublicUrl(source, 'pidoi_ref', req));
         for (let index = 0; index < count; index++) {
           Object.assign(diagnostic, { stage: 'submit', index, taskId: undefined });
           const task = await submitPidoiImage(channel, { model: persistedMetadata.upstreamModel, prompt, n: 1,
             size, resolution, aspect_ratio, quality: effectiveQuality, images, response_format: 'url',
-            output_format, background });
+            output_format, background }, fetch, {
+              referenceImages: reference_images,
+              onResponse: (response, payload) => captureResponse(index, response, payload, 'response_without_id'),
+              onCompatibility: () => persistJob({ pidoiSubmissionProtocol: 'openai-compatible', progressText: '图片正在后台生成，请稍候' }),
+            });
           Object.assign(diagnostic, { stage: 'persist', taskId: task.taskId });
-          persistedMetadata.pidoiImageJobs.push({ index, taskId: task.taskId, status: task.status, sourceUrl: task.imageUrl });
-          const ids = persistedMetadata.pidoiImageJobs.map((job: any) => job.taskId);
+          persistedMetadata.pidoiImageJobs.push({ index, taskId: task.taskId, status: task.status, sourceUrl: task.imageUrl, protocol: task.protocol, error: task.error });
+          const ids = persistedMetadata.pidoiImageJobs.map((job: any) => job.taskId).filter(Boolean);
           persistJob({ upstreamTaskId: ids[0], taskId: ids[0], upstreamTaskIds: ids,
-            progressText: '任务已受理，正在后台生成' });
+            pidoiSubmissionProtocol: task.protocol, upstreamImageUrls: persistedMetadata.pidoiImageJobs.map((job: any) => job.sourceUrl).filter(Boolean),
+            progressText: task.status === 'completed' ? '图片已生成，正在保存' : '任务已受理，正在后台生成' });
         }
       } catch (e: any) {
         logImageRequestFailure(diagnostic, e);
-        reservation.review();
-        persistJob({ billingStatus: 'review', progressText: '提交结果待核对，不会自动重新提交' }, 'review');
+        const message = String(e?.message || '图片提交失败');
+        const confirmedFailure = e.confirmedFailure === true && diagnostic.stage === 'submit';
+        persistJob({ submissionFailure: { stage: diagnostic.stage, index: diagnostic.index, httpStatus: e.status,
+          confirmedFailure, message, at: new Date().toISOString() } });
+        if (confirmedFailure && !persistedMetadata.pidoiImageJobs.length) persistFailure(message);
+        else {
+          reservation.review();
+          persistJob({ billingStatus: 'review', failureReason: message,
+            progressText: confirmedFailure ? message : '提交结果待核对，不会自动重新提交' }, 'review');
+        }
       } finally { pidoiImageActive.delete(contentId); }
-      sendEvent({ type: 'status', contentId, background: true, message: '后台任务已保存，可刷新页面查看进度', total: count });
-      finishStream();
-      void recoverPidoiImage(contentId);
+      await recoverPidoiImage(contentId);
+      })().catch(error => logImageRequestFailure({ stage: 'persist', contentId, channelId: channel.id }, error));
       return;
     }
     if (isZonghengChannel(channel)) {

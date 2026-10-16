@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { isPidoiImageChannel, parsePidoiImageTask, submitPidoiImage, pollPidoiImage } from '../server/services/pidoiImageAdapter';
 const channel = { baseUrl: 'https://pidoi.com/v1/', apiKey: 'test-key' };
 const response = (data: any) => new Response(JSON.stringify({ code: 'success', data }));
+afterEach(() => vi.restoreAllMocks());
 describe('Pidoi 异步图片协议', () => {
   it('只匹配 Pidoi 域名，不影响四月天', () => {
     expect(isPidoiImageChannel(channel)).toBe(true);
@@ -28,5 +29,54 @@ describe('Pidoi 异步图片协议', () => {
     await expect(submitPidoiImage(channel, {}, f)).rejects.toThrow('timeout');
     expect(f).toHaveBeenCalledTimes(1);
     await expect(submitPidoiImage(channel, {}, vi.fn().mockResolvedValue(response({ status: 'IN_PROGRESS' })))).rejects.toThrow('未返回任务 ID');
+  });
+  it('单数路由明确不存在时使用与 API 相同的复数入口，解析 URL 且不伪造任务 ID', async () => {
+    const f = vi.fn().mockResolvedValueOnce(new Response('404 page not found', { status: 404 }))
+      .mockResolvedValueOnce(Response.json({ data: [{ url: 'https://storage/result.png?sig=test' }] }));
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const task = await submitPidoiImage({ ...channel, timeout: 120_000 }, { model: 'gpt-image-2', prompt: 'cat', n: 1, quality: 'high' }, f);
+    expect(f.mock.calls.map(call => call[0])).toEqual(['https://pidoi.com/v1/image/generations', 'https://pidoi.com/v1/images/generations']);
+    expect(task).toMatchObject({ taskId: '', status: 'completed', protocol: 'openai-compatible', imageUrl: 'https://storage/result.png?sig=test' });
+    expect(timeout).toHaveBeenCalledWith(900_000);
+  });
+  it('兼容图生图使用原始参考图 FormData，保持多图和重复位置', async () => {
+    const f = vi.fn().mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+      .mockResolvedValueOnce(Response.json({ data: [{ b64_json: 'aW1hZ2U=' }] }));
+    const sources = ['data:image/png;base64,aA==', 'data:image/png;base64,aA=='];
+    const task = await submitPidoiImage(channel, { model: 'gpt-image-2', images: ['https://local/ref1', 'https://local/ref1'], n: 1, quality: 'high' }, f, { referenceImages: sources });
+    const init = f.mock.calls[1][1];
+    expect(f.mock.calls[1][0]).toBe('https://pidoi.com/v1/images/edits');
+    expect(init.body).toBeInstanceOf(FormData);
+    expect(init.body.getAll('image[]')).toHaveLength(2);
+    expect(init.headers).toEqual({ Authorization: 'Bearer test-key' });
+    expect(task.imageUrl).toBe('data:image/png;base64,aW1hZ2U=');
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+  it.each([400, 401, 403, 429])('明确拒绝 %s 可以退款，但不切换入口重提', async status => {
+    const f = vi.fn().mockResolvedValue(new Response('rejected', { status }));
+    await expect(submitPidoiImage(channel, {}, f)).rejects.toMatchObject({ confirmedFailure: true, status });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+  it.each([408, 500, 502, 504])('不确定错误 %s 不退款、不切换入口', async status => {
+    const f = vi.fn().mockResolvedValue(new Response('gateway failure', { status }));
+    await expect(submitPidoiImage(channel, {}, f)).rejects.toMatchObject({ confirmedFailure: false });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+  it('model-not-found、带任务 ID 的 404 和查询 404 都不能触发重新提交', async () => {
+    for (const raw of [{ error: { message: 'Model not found' } }, { task_id: 'task_accepted', message: 'Not Found' }]) {
+      const f = vi.fn().mockResolvedValue(Response.json(raw, { status: 404 }));
+      await expect(submitPidoiImage(channel, {}, f)).rejects.toThrow();
+      expect(f).toHaveBeenCalledTimes(1);
+    }
+    const f = vi.fn().mockResolvedValue(new Response('Not Found', { status: 404 }));
+    await expect(pollPidoiImage(channel, 'task_existing', f)).rejects.toMatchObject({ confirmedFailure: false });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+  it('兼容入口超时后也不重提，并保留原网络错误原因', async () => {
+    const cause = { code: 'ETIMEDOUT' };
+    const f = vi.fn().mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+      .mockRejectedValueOnce(Object.assign(new TypeError('fetch failed'), { cause }));
+    await expect(submitPidoiImage(channel, {}, f)).rejects.toMatchObject({ cause, imageRequestStage: 'submit' });
+    expect(f).toHaveBeenCalledTimes(2);
   });
 });

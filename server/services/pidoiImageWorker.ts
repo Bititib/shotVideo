@@ -23,17 +23,21 @@ export async function recoverPidoiImage(contentId: number) {
     const jobs = m.pidoiImageJobs || [];
     for (const job of jobs) {
       if (job.localUrl || job.status === 'failed') continue;
-      Object.assign(diagnostic, { stage: 'poll', taskId: job.taskId, index: job.index });
-      const task = await pollPidoiImage(channel, job.taskId);
-      diagnostic.stage = 'persist';
-      job.status = task.status;
-      job.error = task.error;
-      if (task.imageUrl) job.sourceUrl = task.imageUrl;
-      m.progresses[job.index] = task.progress;
+      if (job.protocol !== 'openai-compatible' || !job.sourceUrl || job.status !== 'completed') {
+        if (!job.taskId) continue; // Unknown submissions cannot be queried or resubmitted.
+        Object.assign(diagnostic, { stage: 'poll', taskId: job.taskId, index: job.index });
+        const task = await pollPidoiImage(channel, job.taskId);
+        diagnostic.stage = 'persist';
+        job.status = task.status;
+        job.error = task.error;
+        if (task.imageUrl) job.sourceUrl = task.imageUrl;
+        m.progresses[job.index] = task.progress;
+      }
       m.upstreamImageUrls = jobs.map((j: any) => j.sourceUrl).filter(Boolean);
-      m.progressText = task.status === 'completed' ? '图片已生成，正在保存' : '上游生成中';
+      m.progressText = job.status === 'completed' ? '图片已生成，正在保存' : '上游生成中';
       save();
       if (job.sourceUrl) {
+        Object.assign(diagnostic, { taskId: job.taskId, index: job.index });
         diagnostic.stage = 'download';
         // Signed Pidoi storage URLs must never receive the channel API key.
         const result = await localizeRecoveredImages([{ url: job.sourceUrl, channelId: 0, channelApiKeyId: null }], contentId, row.user_id, m.publicBaseUrl);

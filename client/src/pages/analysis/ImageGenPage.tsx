@@ -2,7 +2,7 @@ import { startPolling } from '../../utils/polling';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Image as ImageIcon, ArrowUpRight, Pencil, Plus, ChevronDown, SlidersHorizontal, MoreHorizontal, Square, Download, RotateCcw, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Maximize2, Trash2 } from 'lucide-react';
 import './ImageGenPage.css';
-import { downloadGeneratedImage, fetchImageModels, generateImage, generatedImageReference, getCachedImageModels, imageReferenceLimit, type ImageModel, type ImageSSEEvent } from '../../api/imageGen';
+import { downloadGeneratedImage, fetchImageModels, generateImage, generatedImageReference, getCachedImageModels, imageReferenceLimit, type ImageGenerateParams, type ImageModel, type ImageSSEEvent } from '../../api/imageGen';
 import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
@@ -17,6 +17,7 @@ interface GeneratedImage {
   createdAt: Date;
   aspectRatio: string;
   missing?: boolean;
+  requestParams?: ImageGenerateParams;
 }
 
 const ASPECT_RATIOS = [
@@ -75,6 +76,7 @@ interface ActiveImageBatch {
   progresses: number[];
   failedIndexes: number[];
   statusMessage: string;
+  requestParams?: ImageGenerateParams;
 }
 
 const MAX_CONCURRENT_BATCHES = 4;
@@ -90,7 +92,7 @@ function SettingSelect({ label, value, options, onChange }: { label: string; val
 }
 
 /** 瀑布流图片卡片 */
-function ImageCard({ url, index, onPreview, onEdit, editing }: { url: string; index: number; onPreview: () => void; onEdit: () => void; editing: boolean; key?: any }) {
+function ImageCard({ url, index, onPreview, onEdit, editing, onRegenerate, onDelete, actionBusy }: { url: string; index: number; onPreview: () => void; onEdit: () => void; editing: boolean; onRegenerate?: () => void; onDelete?: () => void; actionBusy?: boolean; key?: any }) {
   return (
     <article className="ig-artwork">
       <button type="button" className="ig-artwork-preview" aria-label={`预览生成图片 ${index + 1}`} onClick={onPreview}>
@@ -99,6 +101,10 @@ function ImageCard({ url, index, onPreview, onEdit, editing }: { url: string; in
       <div className="ig-artwork-footer"><button type="button" aria-label="继续改图" disabled={editing} onClick={onEdit} className="ig-edit"><Pencil size={14} />改图</button>
         <button type="button" aria-label={`下载生成图片 ${index + 1}`} className="ig-icon-button" onClick={e => void downloadImageFile(e, url, `generated-image-${index + 1}.png`)}><Download size={16} /></button>
       </div>
+      {(onRegenerate || onDelete) && <div className="ig-record-actions">
+        {onRegenerate && <button type="button" className="ig-text-button" disabled={editing || actionBusy} onClick={onRegenerate}><RotateCcw size={14} />重新生成</button>}
+        {onDelete && <button type="button" className="ig-text-button ig-delete" disabled={actionBusy} onClick={onDelete}><Trash2 size={14} />删除</button>}
+      </div>}
     </article>
   );
 }
@@ -179,6 +185,10 @@ export default function ImageGenPage() {
   activeBatchesRef.current = activeBatches;
   const activeBatchCount = activeBatches.filter(batch => batch.phase !== 'failed' && batch.phase !== 'review').length;
   const [error, setError] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState('');
+  const [busyRecords, setBusyRecords] = useState<Set<string>>(() => new Set());
+  const busyRecordsRef = useRef(new Set<string>());
+  const deletedContentIdsRef = useRef(new Set<number>());
   const [generatedImages, setGeneratedImages] = useState<string[]>([]);
   const [history, setHistory] = useState<GeneratedImage[]>([]);
   const [historyPage, setHistoryPage] = useState(1);
@@ -233,14 +243,14 @@ export default function ImageGenPage() {
       try {
         const res: any = await contentApi.getMyContents({ type: 'image', page: 1, pageSize: 20 }, signal);
         if (cancelled || signal.aborted) return;
-        const items: any[] = [...(res?.items || res?.data || [])];
+        const items: any[] = [...(res?.items || res?.data || [])].filter(item => !deletedContentIdsRef.current.has(Number(item.id)));
         const visibleIds = new Set(items.map(item => Number(item.id)));
-        const trackedIds = [...new Set<number>(activeBatchesRef.current.map(batch => batch.contentId).filter((id): id is number => Boolean(id) && !visibleIds.has(id)))];
+        const trackedIds = [...new Set<number>(activeBatchesRef.current.filter(batch => batch.phase !== 'failed').map(batch => batch.contentId).filter((id): id is number => Boolean(id) && !visibleIds.has(id) && !deletedContentIdsRef.current.has(id!)))];
         const details = await Promise.allSettled(trackedIds.map(id => contentApi.getById(id, signal)));
         if (cancelled || signal.aborted) return;
         const missingIds = new Set<number>();
         details.forEach((result, index) => {
-          if (result.status === 'fulfilled' && result.value?.id) items.push(result.value);
+          if (result.status === 'fulfilled' && result.value?.id && !deletedContentIdsRef.current.has(Number(result.value.id))) items.push(result.value);
           else missingIds.add(trackedIds[index]);
         });
         const returnedIds = new Set(items.map(item => Number(item.id)));
@@ -314,9 +324,10 @@ export default function ImageGenPage() {
         }
 
         setHistory(previous => {
-          const next = [...loadedHistory];
+          const next = loadedHistory.filter(item => !deletedContentIdsRef.current.has(Number(item.id.split('_')[0])))
+            .map(item => ({ ...item, requestParams: previous.find(saved => saved.imageUrl === item.imageUrl)?.requestParams }));
           const urls = new Set(next.map(item => item.imageUrl));
-          previous.forEach(item => { if (!urls.has(item.imageUrl)) next.push(item); });
+          previous.forEach(item => { if (!urls.has(item.imageUrl) && !deletedContentIdsRef.current.has(Number(item.id.split('_')[0]))) next.push(item); });
           return next;
         });
         // Database state also reconciles live streams: their terminal event may have been lost.
@@ -330,13 +341,14 @@ export default function ImageGenPage() {
         setActiveBatches(previous => {
           const seen = new Set<number>();
           const next = previous.flatMap(batch => {
+            if (batch.contentId && deletedContentIdsRef.current.has(batch.contentId)) return [];
             if (!batch.contentId || !returnedIds.has(batch.contentId)) return [{ ...batch,
               ...(batch.contentId && missingIds.has(batch.contentId) ? { phase: 'checking' as const, statusMessage: '暂时无法读取任务状态，正在重试核实，请勿重复提交' } : {}) }];
             seen.add(batch.contentId);
             const recovered = recoveredBatches.find(item => item.contentId === batch.contentId);
-            return recovered ? [{ ...recovered, id: batch.id }] : [];
+            return recovered ? [{ ...recovered, id: batch.id, requestParams: batch.requestParams }] : [];
           });
-          return [...next, ...recoveredBatches.filter(batch => !seen.has(batch.contentId!))];
+          return [...next, ...recoveredBatches.filter(batch => !seen.has(batch.contentId!) && !deletedContentIdsRef.current.has(batch.contentId!))];
         });
         setHistoryTotal(Number(res?.total) || 0);
       } catch (error) {
@@ -373,7 +385,7 @@ export default function ImageGenPage() {
         add(item.resultUrl, 'main');
         if (Array.isArray(metadata.imageUrls)) metadata.imageUrls.forEach((url: string, index: number) => add(url, String(index)));
       }
-      setHistory(prev => [...prev, ...loaded]);
+      setHistory(prev => [...prev, ...loaded].filter(item => !deletedContentIdsRef.current.has(Number(item.id.split('_')[0]))));
       setHistoryPage(nextPage);
       setHistoryTotal(Number(res?.total) || 0);
     } finally {
@@ -448,6 +460,12 @@ export default function ImageGenPage() {
       : batchModel === 'gpt-image-2-mingfei' ? mingFeiQuality : undefined;
     const batchResolution = batchModel === 'gpt-image-2-mingfei' ? mingFeiResolution : undefined;
 
+    const requestParams: ImageGenerateParams = {
+      prompt: batchPrompt, model: batchModel, aspect_ratio: batchAspectRatio,
+      resolution: managedLimits ? managedLimits.resolutions.length === 1 ? managedLimits.resolutions[0] as '1K' | '2K' | '4K' : mingFeiResolution : batchModel === 'gpt-image-2' ? (batchQuality === 'high' ? '4K' : '1K') : batchResolution,
+      quality: batchQuality as ImageGenerateParams['quality'], n: batchCount,
+      reference_images: batchReferences.length > 0 ? batchReferences : undefined,
+    };
     setActiveBatches(previous => [...previous, {
       id: batchId,
       prompt: batchPrompt,
@@ -458,25 +476,17 @@ export default function ImageGenPage() {
       progresses: new Array(batchCount).fill(0),
       failedIndexes: [],
       statusMessage: `正在生成 ${batchCount} 张图片...`,
+      requestParams,
     }]);
     setError(null);
+    setActionNotice('');
 
     const updateBatch = (updater: (batch: ActiveImageBatch) => ActiveImageBatch) => {
       setActiveBatches(previous => previous.map(batch => batch.id === batchId ? updater(batch) : batch));
     };
 
     const ctrl = generateImage(
-      {
-        prompt: batchPrompt,
-        model: batchModel,
-        aspect_ratio: batchAspectRatio,
-        resolution: managedLimits ? managedLimits.resolutions.length === 1 ? managedLimits.resolutions[0] as '1K' | '2K' | '4K' : mingFeiResolution : batchModel === 'gpt-image-2'
-          ? (batchQuality === 'high' ? '4K' : '1K')
-          : batchResolution,
-        quality: batchQuality,
-        n: batchCount,
-        reference_images: batchReferences.length > 0 ? batchReferences : undefined,
-      },
+      requestParams,
       (event: ImageSSEEvent) => {
         switch (event.type) {
           case 'queue':
@@ -529,13 +539,14 @@ export default function ImageGenPage() {
             if (completedUrls.length > 0) {
               setGeneratedImages(previous => [...previous, ...completedUrls]);
               setHistory(previous => [
-                ...completedUrls.map(url => ({
-                  id: `${Date.now()}-${Math.random()}`,
+                ...completedUrls.map((url, index) => ({
+                  id: event.contentId ? `${event.contentId}_${index}` : `local-${batchId}_${index}`,
                   prompt: batchPrompt,
                   imageUrl: url,
                   model: batchModel,
                   createdAt: new Date(),
                   aspectRatio: batchAspectRatio,
+                  requestParams,
                 })),
                 ...previous.filter(item => !completedUrls.includes(item.imageUrl)),
               ]);
@@ -594,17 +605,72 @@ export default function ImageGenPage() {
     setHistory(previous => previous.map(item => item.id === historyId ? { ...item, missing: true } : item));
   }, []);
 
-  const deleteHistoryRecord = useCallback(async (historyItem: GeneratedImage) => {
-    const contentId = Number.parseInt(String(historyItem.id).split('_')[0], 10);
-    if (!Number.isSafeInteger(contentId) || contentId <= 0) return;
-    if (!window.confirm('确定要删除这条图片生成记录吗？')) return;
+  const prepareRegeneration = async (record: ActiveImageBatch | GeneratedImage) => {
+    const key = record.id;
+    if (busyRecordsRef.current.has(key)) return;
+    busyRecordsRef.current.add(key);
+    setBusyRecords(new Set(busyRecordsRef.current));
     try {
-      await contentApi.delete(contentId);
-      setHistory(previous => previous.filter(item => Number.parseInt(String(item.id).split('_')[0], 10) !== contentId));
-    } catch {
-      setError('删除失败');
-    }
-  }, []);
+      const contentId = 'contentId' in record ? record.contentId : /^\d+_/.test(record.id) ? Number(record.id.split('_')[0]) : undefined;
+      let params = 'requestParams' in record ? record.requestParams : undefined;
+      let unknownReferences = false;
+      if (!params) {
+        const detail = contentId ? await contentApi.getById(contentId) : undefined;
+        const meta = typeof detail?.metadata === 'string' ? JSON.parse(detail.metadata || '{}') : detail?.metadata || {};
+        const references = meta.reference_images || meta.referenceImages;
+        unknownReferences = !Array.isArray(references);
+        params = {
+          prompt: detail?.inputText || detail?.title || record.prompt,
+          model: detail?.modelId || detail?.model || record.model,
+          aspect_ratio: meta.aspectRatio || meta.aspect_ratio || record.aspectRatio || '1:1',
+          n: Number(meta.count) || ('count' in record ? record.count : 1),
+          resolution: meta.resolution, quality: meta.quality,
+          reference_images: Array.isArray(references) ? references.filter((source: unknown): source is string => typeof source === 'string' && Boolean(source)) : [],
+        };
+      }
+      const target = models.find(model => model.id === params!.model && model.available);
+      if (!target) throw new Error('原模型暂不可用，请选择可用模型后重新生成');
+      setSelectedModel(target.id);
+      setPrompt(params.prompt);
+      setAspectRatio(params.aspect_ratio || '1:1');
+      setImageCount(Math.max(1, Math.min(4, Number(params.n) || 1)));
+      if (params.resolution) setMingFeiResolution(params.resolution);
+      if (params.quality) { setManagedQuality(params.quality); setMingFeiQuality(params.quality); }
+      if (target.id === 'gpt-image-2') setPidoiQuality(params.quality === 'low' || params.resolution === '1K' ? 'low' : 'high');
+      const references = params.reference_images || [];
+      setReferenceImages(references);
+      setGenerationMode(references.length || target.routingLimits?.minImages ? 'image' : 'text');
+      setError(null);
+      setActionNotice(`已恢复原任务参数，确认后点击“生成”创建新任务，将按当前价格计费。${unknownReferences ? '历史记录未保存参考图；如原任务为图生图，请切换图生图并重新上传。' : ''}`);
+      setEditFocusRequest(request => request + 1);
+    } catch (error: any) { setError(error?.message || '读取原任务失败，请稍后重试'); }
+    finally { busyRecordsRef.current.delete(key); setBusyRecords(new Set(busyRecordsRef.current)); }
+  };
+
+  const deleteImageRecord = useCallback(async (record: ActiveImageBatch | GeneratedImage) => {
+    const contentId = 'contentId' in record ? record.contentId : /^\d+_/.test(record.id) ? Number(record.id.split('_')[0]) : undefined;
+    const key = record.id;
+    if (busyRecordsRef.current.has(key)) return;
+    if (!window.confirm('确定要删除这条图片生成记录吗？')) return;
+    busyRecordsRef.current.add(key);
+    setBusyRecords(new Set(busyRecordsRef.current));
+    try {
+      if (contentId) {
+        await contentApi.delete(contentId);
+        deletedContentIdsRef.current.add(contentId);
+        setHistoryTotal(previous => Math.max(0, previous - 1));
+      }
+      const removedUrls = new Set(history.filter(item => item.id === key || (contentId && Number(item.id.split('_')[0]) === contentId)).map(item => item.imageUrl));
+      setHistory(previous => previous.filter(item => item.id !== key && (!contentId || Number(item.id.split('_')[0]) !== contentId)));
+      batchControllersRef.current.get(key)?.abort();
+      batchControllersRef.current.delete(key);
+      setActiveBatches(previous => previous.filter(batch => batch.id !== key && (!contentId || batch.contentId !== contentId)));
+      if ('imageUrl' in record) removedUrls.add(record.imageUrl);
+      setGeneratedImages(previous => previous.filter(url => !removedUrls.has(url)));
+      setError(null);
+    } catch (error: any) { setError(error?.message || '删除失败，请稍后重试'); }
+    finally { busyRecordsRef.current.delete(key); setBusyRecords(new Set(busyRecordsRef.current)); }
+  }, [history]);
 
   useEffect(() => () => {
     batchControllersRef.current.forEach(controller => controller.abort());
@@ -629,17 +695,29 @@ export default function ImageGenPage() {
       <div className="ig-workspace">
         <section className="ig-gallery" aria-label="我的作品">
           <div className="ig-gallery-content">
-            {generatedImages.length > 0 && <section className="ig-result-section"><h3>本次生成<span>{generatedImages.length} 张</span></h3><div className="ig-artwork-grid">{generatedImages.map((url, index) => <ImageCard key={url + index} url={url} index={index} onPreview={() => setLightboxUrl(url)} onEdit={() => void continueEditing(url)} editing={referenceImporting} />)}</div></section>}
-            {activeBatches.map((batch, batchIndex) => <section key={batch.id} className="ig-batch"><header><div><h3>{batchPhaseLabel(batch.phase)} · {batch.contentId ? `任务 #${batch.contentId}` : `批次 ${batchIndex + 1}`}</h3><p title={batch.prompt}>{batch.statusMessage || batch.prompt}</p></div>{batch.persisted || batch.contentId ? <span className="ig-processing">{batchPhaseLabel(batch.phase)}</span> : <button type="button" className="ig-text-button" onClick={() => handleCancelBatch(batch.id)}><Square size={13} />取消本批</button>}</header><div className="ig-artwork-grid">{batch.images.map((url, index) => url ? <ImageCard key={index} url={url} index={index} onPreview={() => setLightboxUrl(url)} onEdit={() => void continueEditing(url)} editing={referenceImporting} /> : batch.phase === 'failed' || batch.failedIndexes.includes(index) ? <div className="ig-failed" key={index}><AlertCircle size={24} /><span>图片 {index + 1} 生成失败</span></div> : <PlaceholderCard key={index} index={index} progress={batch.progresses[index] || 0} phase={batch.phase} />)}</div></section>)}
+            {generatedImages.length > 0 && <section className="ig-result-section"><h3>本次生成<span>{generatedImages.length} 张</span></h3><div className="ig-artwork-grid">{generatedImages.map((url, index) => {
+              const record = history.find(item => item.imageUrl === url);
+              return <ImageCard key={url + index} url={url} index={index} onPreview={() => setLightboxUrl(url)} onEdit={() => void continueEditing(url)} editing={referenceImporting}
+                actionBusy={record ? busyRecords.has(record.id) : false} onRegenerate={record ? () => void prepareRegeneration(record) : undefined} onDelete={record ? () => void deleteImageRecord(record) : undefined} />;
+            })}</div></section>}
+            {activeBatches.map((batch, batchIndex) => <section key={batch.id} className="ig-batch"><header><div><h3>{batchPhaseLabel(batch.phase)} · {batch.contentId ? `任务 #${batch.contentId}` : `批次 ${batchIndex + 1}`}</h3><p title={batch.prompt}>{batch.statusMessage || batch.prompt}</p></div>{batch.persisted || batch.contentId ? <span className="ig-processing">{batchPhaseLabel(batch.phase)}</span> : <button type="button" className="ig-text-button" onClick={() => handleCancelBatch(batch.id)}><Square size={13} />取消本批</button>}</header><div className="ig-artwork-grid">{batch.images.map((url, index) => url ? <ImageCard key={index} url={url} index={index} onPreview={() => setLightboxUrl(url)} onEdit={() => void continueEditing(url)} editing={referenceImporting} /> : batch.phase === 'failed' || batch.failedIndexes.includes(index) ? <div className="ig-failed" key={index}><AlertCircle size={24} /><span>图片 {index + 1} 生成失败</span></div> : <PlaceholderCard key={index} index={index} progress={batch.progresses[index] || 0} phase={batch.phase} />)}</div>
+              {batch.phase === 'failed' && <div className="ig-record-actions" aria-label={`任务 ${batch.contentId || batchIndex + 1} 操作`}>
+                <button type="button" className="ig-text-button" disabled={busyRecords.has(batch.id) || referenceImporting} onClick={() => void prepareRegeneration(batch)}><RotateCcw size={14} />重新生成</button>
+                <button type="button" className="ig-text-button ig-delete" disabled={busyRecords.has(batch.id)} onClick={() => void deleteImageRecord(batch)}><Trash2 size={14} />删除</button>
+              </div>}
+            </section>)}
 
             {visibleHistory.length > 0 && <section className="ig-result-section"><div className="ig-artwork-grid">{visibleHistory.map(item => <article className="ig-artwork" key={item.id}>
-              {item.missing ? <div className="ig-missing"><AlertCircle size={25} /><strong>原文件暂时无法读取</strong><div><button type="button" className="ig-text-button" disabled={recoveringHistoryIds.has(Number.parseInt(item.id.split('_')[0], 10))} onClick={() => void recoverHistoryImage(item)}>{recoveringHistoryIds.has(Number.parseInt(item.id.split('_')[0], 10)) ? '获取中…' : '重新获取'}</button><button type="button" className="ig-text-button" onClick={() => void deleteHistoryRecord(item)}>删除</button></div></div>
+              {item.missing ? <div className="ig-missing"><AlertCircle size={25} /><strong>原文件暂时无法读取</strong><div><button type="button" className="ig-text-button" disabled={recoveringHistoryIds.has(Number.parseInt(item.id.split('_')[0], 10))} onClick={() => void recoverHistoryImage(item)}>{recoveringHistoryIds.has(Number.parseInt(item.id.split('_')[0], 10)) ? '获取中…' : '重新获取'}</button></div></div>
                 : <button type="button" className="ig-artwork-preview" aria-label="预览历史图片" onClick={() => setLightboxUrl(item.imageUrl)}><img src={item.imageUrl} alt="历史图片" loading="lazy" onError={() => markHistoryImageMissing(item.id)} /><span className="ig-preview-badge"><Maximize2 size={15} /></span></button>}
               {!item.missing && <div className="ig-artwork-footer"><button type="button" aria-label="继续改图" className="ig-edit" disabled={referenceImporting} onClick={() => void continueEditing(item.imageUrl)}><Pencil size={14} />改图</button><div className="ig-artwork-actions"><details className="ig-card-menu"><summary aria-label="更多操作" title="更多操作"><MoreHorizontal size={17} /></summary><div>
                 {item.prompt && <button type="button" className="ig-icon-button" aria-label="套用提示词" title="套用提示词" onClick={() => { setPrompt(item.prompt); textareaRef.current?.focus(); }}><RotateCcw size={15} /></button>}
-                <button type="button" className="ig-icon-button" aria-label="删除记录" title="删除记录" onClick={() => void deleteHistoryRecord(item)}><Trash2 size={15} /></button>
                 </div></details><button type="button" className="ig-icon-button" aria-label="下载历史图片" title="下载原图" onClick={event => void downloadImageFile(event, item.imageUrl, 'generated-image-' + item.id + '.png')}><Download size={16} /></button>
               </div></div>}
+              <div className="ig-record-actions">
+                <button type="button" className="ig-text-button" disabled={busyRecords.has(item.id) || referenceImporting} onClick={() => void prepareRegeneration(item)}><RotateCcw size={14} />重新生成</button>
+                <button type="button" className="ig-text-button ig-delete" disabled={busyRecords.has(item.id)} onClick={() => void deleteImageRecord(item)}><Trash2 size={14} />删除</button>
+              </div>
             </article>)}</div>{historyPage * 12 < historyTotal && <button type="button" className="ig-load-more" disabled={historyLoading} onClick={() => void loadMoreHistory()}>{historyLoading ? '加载中…' : '加载更多作品'}<ChevronDown size={15} /></button>}</section>}
 
             {!hasCurrentWork && visibleHistory.length === 0 && <div className="ig-empty"><ImageIcon size={34} strokeWidth={1.1} /><span>还没有作品</span></div>}
@@ -651,7 +729,7 @@ export default function ImageGenPage() {
               <button type="button" aria-pressed={generationMode === 'text'} onClick={() => { setGenerationMode('text'); setError(null); setReferenceNotice(''); }}>文生图</button>
               <button type="button" aria-label="图生图 / 改图" aria-pressed={generationMode === 'image'} onClick={() => { setGenerationMode('image'); setError(null); setReferenceNotice(''); }}>图生图</button>
             </div>
-            {activeBatches.length > 0 && <span className="ig-processing"><Loader2 size={13} className="ig-spin" />{activeBatches.length} 批进行中</span>}
+            {activeBatchCount > 0 && <span className="ig-processing"><Loader2 size={13} className="ig-spin" />{activeBatchCount} 批进行中</span>}
           </div>
           <input ref={fileInputRef} type="file" accept={MOBILE_IMAGE_ACCEPT} multiple hidden onChange={event => { void handleFileSelect(event.target.files); event.target.value = ''; }} />
           {generationMode === 'image' && <section className="ig-original-section" aria-label="原图上传">
@@ -665,6 +743,7 @@ export default function ImageGenPage() {
           <textarea id="ig-prompt" ref={textareaRef} value={prompt} onChange={event => setPrompt(event.target.value)} onKeyDown={handleKeyDown}
             aria-label={generationMode === 'image' ? '修改要求' : '图片描述'} rows={2} placeholder={generationMode === 'image' ? '想修改哪里？' : '描述你想要的画面…'} />
           {error && <div role="alert" className="ig-error"><AlertCircle size={16} /><span>{error}</span><button type="button" aria-label="关闭错误提示" onClick={() => setError(null)}><X size={14} /></button></div>}
+          {actionNotice && <p className="ig-action-notice" role="status">{actionNotice}</p>}
           <div className="ig-toolbar">
             <SettingSelect label="生成模型" value={selectedModel} onChange={setSelectedModel} options={models.map(model => ({ value: model.id, label: model.name + (!model.available ? ' · 暂不可用' : imageReferenceLimit(model) === 0 ? ' · 仅文生图' : '') }))} />
             <SettingSelect label="画面比例" value={aspectRatio} onChange={setAspectRatio} options={managedLimits ? ASPECT_RATIOS.filter(ratio => managedLimits.ratios.includes(ratio.value)) : ASPECT_RATIOS} />
