@@ -31,6 +31,7 @@ const entries = [
   { id:'ZH-LLseadanco2.51', group:'Seedance 系列', resolution:'720p' },
   { id:'ZH-TTsedanco2.5-480', group:'Seedance 系列', resolution:'480p' },
   { id:'ZH-TTseadanco2.5-720', group:'Seedance 系列', resolution:'720p' },
+  { id:'ZH-KKseadanco2.5X', group:'Seedance 系列', resolution:'720p' },
   { id:'ZH-MMseadanco2.5-PRO', group:'Seedance 系列', resolution:'720p' },
   { id:'ZH-Xminimex-h3', group:'MiniMax 系列', resolution:'2k' },
   { id:'ZH-wan-1080', group:'Wan 系列', resolution:'1080p' },
@@ -67,7 +68,7 @@ describe('legacy video sidebar family grouping', () => {
     const toggle=await screen.findByRole('button',{name:/Seedance 系列/});
     if(toggle.getAttribute('aria-expanded')!=='true') fireEvent.click(toggle);
     const panel=document.getElementById(toggle.getAttribute('aria-controls')!)!;
-    for(const id of ["ZH-Cseadanco2.5K","ZH-kksedanco2.5","ZH-LLseadanco2.51","ZH-TTsedanco2.5-480","ZH-TTseadanco2.5-720","ZH-MMseadanco2.5-PRO"]){
+    for(const id of ["ZH-Cseadanco2.5K","ZH-kksedanco2.5","ZH-LLseadanco2.51","ZH-TTsedanco2.5-480","ZH-TTseadanco2.5-720","ZH-MMseadanco2.5-PRO","ZH-KKseadanco2.5X"]){
       fireEvent.click(within(panel).getByText(id));
       expect(screen.getByRole('button',{name:'上传参考图片，最多 30 张'})).toBeInTheDocument();
       expect(screen.getByRole('button',{name:'上传参考视频，最多 10 个'})).toBeInTheDocument();

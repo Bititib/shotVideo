@@ -5,6 +5,7 @@ import { models, modelPricing } from '../db/schema.js';
 /** Price discovered models only. Later administrator edits remain authoritative. */
 export function ensureZonghengVideoPricing() {
   const defaults = [
+    { modelId: 'ZH-KKseadanco2.5X', price: 6.5 },
     { modelId: 'ZH-MMseadanco2.5-PRO', price: 4 },
     { modelId: 'ZH-sedanco2.0-300秒必出', price: 2.5 },
   ];

@@ -192,6 +192,46 @@ describe('Zongheng legacy entry points, isolated database and simulated provider
     expect(balance()).toBeCloseTo(100-rate*6,6);
   });
 
+  it.each(['/api/video/generate','/v1/videos'].flatMap(endpoint=>[5,30].map(seconds=>({endpoint,seconds}))))('discovers KK X and charges 6.5 once for $seconds seconds via $endpoint with all references',async({endpoint,seconds})=>{
+    const raw='KKseadanco2.5X',modelId='ZH-'+raw;
+    const channelId=db.select().from(channels).get()!.id;
+    upstream=async()=>Response.json({data:[{id:raw}]});
+    await ChannelService.syncModels(channelId);
+    expect(db.select().from(models).all().find(m=>m.modelId===modelId)).toMatchObject({displayName:modelId,capabilities:'["video"]',isActive:0});
+    expect(JSON.parse(db.select().from(channels).get()!.modelMapping)[modelId]).toBe(raw);
+    const price=db.select().from(modelPricing).all().find(p=>p.modelPattern===modelId)!;
+    expect(price).toMatchObject({billingType:'per_call',inputPrice:6.5,outputPrice:0});
+    expect(JSON.parse(price.extraParams)).toEqual({category:'video','720p':6.5});
+    sqlite.prepare('UPDATE models SET is_active=1 WHERE model_id=?').run(modelId);
+    const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
+    expect(listed.find(m=>m.id===modelId)).toMatchObject({billingType:'per_call',allowedSeconds:Array.from({length:26},(_,i)=>i+5),maxSeconds:30,rates:{'720p':6.5},available:true});
+    const images=Array.from({length:30},(_,i)=>'https://media.invalid/i-'+i+'.jpg');
+    const videos=Array.from({length:10},(_,i)=>'https://media.invalid/v-'+i+'.mp4');
+    const audios=Array.from({length:10},(_,i)=>'https://media.invalid/a-'+i+'.mp3');
+    upstream=async(_url,init)=>{
+      if(init.method==='POST'){
+        expect(JSON.parse(init.body)).toMatchObject({model:raw,duration:seconds,resolution:'720p',images,reference_videos:videos,reference_audios:audios});
+        return Response.json({task_id:'vid_kkx'});
+      }
+      return Response.json({status:'succeeded',video_url:'https://media.invalid/kkx.mp4'});
+    };
+    const response=await post(endpoint,{model:modelId,prompt:'产品视频',video_length:seconds,resolution:'720p',reference_images:images,reference_videos:videos,audio_urls:audios});
+    expect(response.status).toBe(endpoint==='/v1/videos'?202:200);await response.text();
+    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    expect(latest().cost).toBe(6.5);expect(balance()).toBe(93.5);
+  });
+  it('preserves administrator pricing and enablement when KK X is synchronized again',async()=>{
+    const modelId='ZH-KKseadanco2.5X',channelId=db.select().from(channels).get()!.id;
+    upstream=async()=>Response.json({data:[{id:'KKseadanco2.5X'}]});
+    await ChannelService.syncModels(channelId);
+    sqlite.prepare('UPDATE models SET is_active=1,display_name=? WHERE model_id=?').run('自定义 KK X',modelId);
+    sqlite.prepare('UPDATE model_pricing SET input_price=?,extra_params=? WHERE model_pattern=?').run(7,JSON.stringify({category:'video','720p':7}),modelId);
+    await ChannelService.syncModels(channelId);
+    expect(db.select().from(models).all().find(m=>m.modelId===modelId)).toMatchObject({isActive:1,displayName:'自定义 KK X'});
+    const prices=db.select().from(modelPricing).all().filter(p=>p.modelPattern===modelId);
+    expect(prices).toHaveLength(1);expect(prices[0]).toMatchObject({billingType:'per_call',inputPrice:7});expect(JSON.parse(prices[0].extraParams)['720p']).toBe(7);
+  });
+
   it('repairs an enabled MMseadanco2.5-PRO entry and preserves its per-call price and exact upstream ID',async()=>{
     const modelId='ZH-MMseadanco2.5-PRO';
     db.insert(models).values({modelId,displayName:'自定义 PRO 名称',provider:'zongheng',capabilities:'["text"]',isActive:1}).run();

@@ -16,6 +16,7 @@ export const ZONGHENG_VIDEO_MODELS = [
   { id: 'LLseadanco2.51', family: 'seedance', references: SEEDANCE_25_REFERENCES, resolution: '720p', seconds: Array.from({ length: 25 }, (_, i) => i + 6) },
   { id: 'TTsedanco2.5-480', family: 'seedance', references: SEEDANCE_25_REFERENCES, resolution: '480p', seconds: Array.from({ length: 26 }, (_, i) => i + 5) },
   { id: 'TTseadanco2.5-720', family: 'seedance', references: SEEDANCE_25_REFERENCES, resolution: '720p', seconds: Array.from({ length: 26 }, (_, i) => i + 5) },
+  { id: 'KKseadanco2.5X', family: 'seedance', references: SEEDANCE_25_REFERENCES, resolution: '720p', seconds: Array.from({ length: 26 }, (_, i) => i + 5) },
   { id: 'MMseadanco2.5-PRO', family: 'seedance', references: SEEDANCE_25_REFERENCES, resolution: '720p', seconds: Array.from({ length: 26 }, (_, i) => i + 5) },
 ] as const;
 export function getZonghengVideoSpec(model: string) {

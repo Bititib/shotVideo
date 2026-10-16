@@ -21,7 +21,7 @@ describe('Zongheng public protocol', () => {
     }
     expect(() => buildZonghengVideoPayload({...input,model:spec.id,seconds:spec.seconds[0],resolution:spec.resolution === '480p' ? '1080p' : '480p'})).toThrow(spec.resolution);
   });
-  it.each([{id:'kksedanco2.5',first:5,count:26},{id:'LLseadanco2.51',first:6,count:25},{id:'MMseadanco2.5-PRO',first:5,count:26}])('keeps the user-confirmed 720p duration range for $id', ({id,first,count}) => {
+  it.each([{id:'kksedanco2.5',first:5,count:26},{id:'LLseadanco2.51',first:6,count:25},{id:'MMseadanco2.5-PRO',first:5,count:26},{id:'KKseadanco2.5X',first:5,count:26}])('keeps the user-confirmed 720p duration range for $id', ({id,first,count}) => {
     const spec = getZonghengVideoSpec('ZH-' + id)!;
     expect(spec).toMatchObject({id,resolution:'720p'});
     expect(spec.seconds[0]).toBe(first);
@@ -38,7 +38,7 @@ describe('Zongheng public protocol', () => {
     expect(spec.seconds).toEqual(Array.from({length:26},(_,i)=>i+5));
   });
 
-  it.each(["Cseadanco2.5K","kksedanco2.5","LLseadanco2.51","TTsedanco2.5-480","TTseadanco2.5-720","MMseadanco2.5-PRO"])('preserves 30 image, 10 video and 10 audio references for %s and rejects overflow', model => {
+  it.each(["Cseadanco2.5K","kksedanco2.5","LLseadanco2.51","TTsedanco2.5-480","TTseadanco2.5-720","MMseadanco2.5-PRO","KKseadanco2.5X"])('preserves 30 image, 10 video and 10 audio references for %s and rejects overflow', model => {
     const spec = getZonghengVideoSpec(model)!;
     const images = Array.from({length:30},(_,i)=>'https://media.invalid/i-'+i+'.jpg');
     const videos = Array.from({length:10},(_,i)=>'https://media.invalid/v-'+i+'.mp4');
