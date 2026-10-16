@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { buildZonghengVideoPayload, buildZonghengImagePayload, normalizeZonghengTask, submitZonghengVideo, ZonghengSubmissionError, zonghengBaseUrl, zonghengPollDelay, zonghengImageSize, validateZonghengVideoAliases } from '../server/services/zonghengAdapter';
+import { buildZonghengVideoPayload, buildZonghengImagePayload, normalizeZonghengTask, zonghengRequestNotSent, zonghengTaskMetadata, submitZonghengVideo, ZonghengSubmissionError, zonghengBaseUrl, zonghengPollDelay, zonghengImageSize, validateZonghengVideoAliases } from '../server/services/zonghengAdapter';
 import { prepareZonghengMedia, validateZonghengMedia } from '../server/services/zonghengMediaService';
 import { generateZonghengImages } from '../server/services/zonghengImageService';
 afterEach(() => vi.unstubAllGlobals());
@@ -112,11 +112,26 @@ describe('Zongheng public protocol', () => {
   ])('records safe $reason evidence while preserving uncertain submissions and never retrying POST',async ({reason,httpStatus,make})=>{
     vi.stubGlobal('fetch',vi.fn(make));
     const error=await submitZonghengVideo(options.baseUrl,options.apiKey,input,'order-diagnostic',()=>{}).catch(e=>e);
-    expect(error).toBeInstanceOf(ZonghengSubmissionError);expect(error.uncertain).toBe(true);
+    expect(error).toBeInstanceOf(ZonghengSubmissionError);expect(error.uncertain).toBe(reason !== 'network_error');
     expect(error.diagnostics).toMatchObject({reason,httpStatus});expect(error.diagnostics.elapsedMs).toBeGreaterThanOrEqual(0);
     expect(JSON.stringify(error.diagnostics)).not.toMatch(/secret|sk-private|https?:/);
     if(reason==='network_error')expect(error.diagnostics.networkCode).toBe('ENOTFOUND');
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it('recognizes generated-but-mirroring replies without inventing a result or completing the task', () => {
+    const payload={status:'processing',progress:99,completed_at:'2026-10-16 13:35:20',delivery_pending:true,delivery_status:'mirroring',video_url:null,next_poll_seconds:10};
+    expect(normalizeZonghengTask(payload)).toMatchObject({status:'processing',progress:99,resultUrl:'',upstreamGenerated:true,deliveryPending:true,progressText:'视频已生成，正在等待结果交付'});
+    expect(zonghengTaskMetadata(payload)).toMatchObject({upstreamGenerated:true,upstreamDeliveryPending:true,upstreamDeliveryStatus:'mirroring'});
+    expect(normalizeZonghengTask({...payload,status:'failed',error_detail:'交付失败'})).toMatchObject({status:'failed',deliveryPending:false,error:'交付失败'});
+  });
+  it('refund certainty uses connection evidence, not error text or a generic timeout', () => {
+    expect(zonghengRequestNotSent(new TypeError('fetch failed',{cause:{code:'ENOTFOUND'}}))).toBe(true);
+    expect(zonghengRequestNotSent(new AggregateError([{code:'ECONNREFUSED'},{code:'EAI_AGAIN'}]))).toBe(true);
+    expect(zonghengRequestNotSent(new AggregateError([{code:'ECONNREFUSED'},{code:'ECONNRESET'}]))).toBe(false);
+    expect(zonghengRequestNotSent(new DOMException('timeout','TimeoutError'))).toBe(false);
+    expect(zonghengRequestNotSent({code:'ETIMEDOUT'})).toBe(false);
+    expect(zonghengRequestNotSent({code:'ENOTFOUND'},200)).toBe(false);
+    expect(zonghengRequestNotSent(new Error('ENOTFOUND'))).toBe(false);
   });
   it('uploads local bytes, keeps signed URLs, validates paths and 25MB limit before generation', async()=>{
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'zongheng-media-'));

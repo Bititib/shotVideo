@@ -82,7 +82,7 @@ beforeAll(async()=>{
   intervalSpy.mockRestore();
 });
 beforeEach(()=>{
-  for(const table of ['contents','channels','models','model_pricing','users','api_logs','settings'])sqlite.exec('DELETE FROM '+table);
+  for(const table of ['contents','channels','models','model_pricing','users','api_tokens','api_logs','settings'])sqlite.exec('DELETE FROM '+table);
   sqlite.exec('DROP TABLE IF EXISTS billing_reservations');
   db.insert(users).values({id:1,email:'test',username:'test',passwordHash:'test',balance:100}).run();
   for(const [id,kind] of [['ZH-video-public','video'],['ZH-image-public','image'],['ZH-gpt-public','text']]){
@@ -438,6 +438,58 @@ describe('Zongheng legacy entry points, isolated database and simulated provider
     };
     const response=await post('/v1/videos',{...request,seconds:6,start_frame:reference,end_frame:reference,generate_audio:false,negative_prompt:'模糊',quality:'standard'});
     expect(response.status).toBe(202);await vi.waitFor(()=>expect(latest().status).toBe('completed'));expect(uploads).toBe(2);expect(balance()).toBe(98);
+  });
+  it.each(['/api/video/generate','/v1/videos'].flatMap(endpoint=>['ENOTFOUND','EAI_AGAIN','ECONNREFUSED','UND_ERR_CONNECT_TIMEOUT'].map(code=>({endpoint,code}))))('refunds a proven unsent request once at $endpoint for $code',async({endpoint,code})=>{
+    upstream=async()=>{throw new TypeError('fetch failed',{cause:{code}});};
+    const response=await post(endpoint,request);await response.text();
+    expect(latest()).toMatchObject({status:'failed',cost:0});expect(balance()).toBe(100);
+    expect(JSON.parse(latest().metadata!).zonghengSubmissionDiagnostics).toMatchObject({requestNotSent:true,networkCode:code});
+    video.resumeAllPendingVideoTasks();expect(balance()).toBe(100);expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it.each(['/api/video/generate','/v1/videos'].flatMap(endpoint=>['succeeded','failed'].map(finalStatus=>({endpoint,finalStatus}))))('waits through mirroring then synchronizes $finalStatus at $endpoint without resubmission',async({endpoint,finalStatus})=>{
+    let finish=false,posts=0;
+    upstream=async(_url,init)=>{
+      if(init.method==='POST'){posts++;return Response.json({task_id:'vid_delivery'});}
+      expect(init.cache).toBe('no-store');expect(init.headers['Cache-Control']).toContain('no-cache');
+      return Response.json(finish?{status:finalStatus,video_url:finalStatus==='succeeded'?'https://media.invalid/ready.mp4':null,error_detail:'交付失败'}:{status:'processing',progress:99,completed_at:'2026-10-16 13:35:20',delivery_pending:true,delivery_status:'mirroring',video_url:null,next_poll_seconds:1});
+    };
+    db.insert((await import('../server/db/schema')).apiTokens).values({id:1,userId:1,name:'test',tokenKey:'test',balance:-1}).run();
+    const response=await post(endpoint,request);
+    await vi.waitFor(()=>expect(JSON.parse(latest().metadata!)).toMatchObject({upstreamGenerated:true,upstreamDeliveryPending:true,progressText:'视频已生成，正在等待结果交付'}));
+    expect(latest().status).toBe('processing');expect(latest().resultUrl).toBeFalsy();expect(balance()).toBe(98);
+    finish=true;await response.text();await vi.waitFor(()=>expect(latest().status).toBe(finalStatus==='succeeded'?'completed':'failed'));
+    expect(balance()).toBe(finalStatus==='succeeded'?98:100);expect(posts).toBe(1);
+  });
+  it('recovers an orphaned active marker without restarting the app or submitting again',async()=>{
+    const channelId=db.select().from(channels).get()!.id;
+    const id=Number(db.insert(contents).values({userId:1,type:'video',status:'processing',modelId:request.model,cost:2,metadata:JSON.stringify({videoId:'vid_orphan',channelId})}).run().lastInsertRowid);
+    video.activePolls.add(id);upstream=async(_url,init)=>{expect(init.method).not.toBe('POST');return Response.json({status:'succeeded',video_url:'https://media.invalid/orphan.mp4'});};
+    video.resumeAllPendingVideoTasks();await vi.waitFor(()=>expect(db.select().from(contents).all().find(r=>r.id===id)?.status).toBe('completed'));
+  });
+  it.each(['/api/video/generate','/v1/videos'])('refreshes the original channel configuration while polling %s',async endpoint=>{
+    let posts=0,changed=false;
+    upstream=async(url,init)=>{
+      if(init.method==='POST'){posts++;return Response.json({task_id:'vid_original_channel',next_poll_seconds:1});}
+      if(!changed)return Response.json({status:'processing',progress:51,next_poll_seconds:1});
+      expect(url).toBe('https://updated.invalid/v1/tasks/vid_original_channel');expect(init.headers.Authorization).toBe('Bearer updated-key');
+      return Response.json({status:'succeeded',video_url:'https://media.invalid/updated.mp4'});
+    };
+    const response=await post(endpoint,request);await vi.waitFor(()=>expect(JSON.parse(latest().metadata!).progress).toBe(51));
+    ChannelService.updateChannel(db.select().from(channels).get()!.id,{baseUrl:'https://updated.invalid',apiKey:'updated-key'});changed=true;
+    await response.text();await vi.waitFor(()=>expect(latest().status).toBe('completed'));expect(balance()).toBe(98);expect(posts).toBe(1);
+  });
+  it('retries only result download when local saving fails, with no refund or new generation',async()=>{
+    const {downloadAndLocalizeVideo}=await import('../server/services/videoLocalizationService');
+    vi.mocked(downloadAndLocalizeVideo).mockRejectedValueOnce(new Error('temporary storage failure'));
+    let posts=0,gets=0;
+    upstream=async(_url,init)=>{if(init.method==='POST'){posts++;return Response.json({task_id:'vid_save'});}gets++;return Response.json({status:'succeeded',video_url:'https://media.invalid/save.mp4'});};
+    const response=await post('/api/video/generate',request);await response.text();
+    expect(latest()).toMatchObject({status:'completed',resultUrl:'/uploads/videos/zongheng-test.mp4',cost:2});expect(balance()).toBe(98);expect(posts).toBe(1);expect(gets).toBe(2);
+  });
+  it('automatically refunds persisted proof of non-submission after an interrupted finalization',()=>{
+    sqlite.exec('UPDATE users SET balance=98 WHERE id=1');
+    db.insert(contents).values({userId:1,type:'video',status:'processing',modelId:request.model,cost:2,metadata:JSON.stringify({channelId:db.select().from(channels).get()!.id,zonghengSubmissionStarted:'before restart',zonghengSubmissionDiagnostics:{requestNotSent:true,reason:'network_error',networkCode:'ENOTFOUND'}})}).run();
+    video.resumeAllPendingVideoTasks();video.resumeAllPendingVideoTasks();expect(latest()).toMatchObject({status:'failed',cost:0});expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();
   });
   it.each(['/api/video/generate','/v1/videos'])('retains uncertain submissions at %s without refund or resubmission',async endpoint=>{
     upstream=async()=>{throw new DOMException('private provider timeout','TimeoutError');};await(await post(endpoint,request)).text();expect(latest().status).toBe('review');expect(balance()).toBe(98);expect(fetch).toHaveBeenCalledTimes(1);

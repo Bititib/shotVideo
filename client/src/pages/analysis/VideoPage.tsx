@@ -1,3 +1,4 @@
+import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
 import { publicGenerationError } from '../../../../shared/generationMessages';
 import { BLOB_DRAW_BB_MODEL } from '../../../../shared/blobDrawVideo';
 import { useVideoQuote } from '../../hooks/useVideoQuote';
@@ -1043,6 +1044,7 @@ export default function VideoPage() {
               setTasks(prev => prev.map(t => t.id === task.id && (t.status === 'generating' || t.status === 'review') ? {
                 ...t,
                 status: 'generating',
+                metadata: {...t.metadata,...meta},
                 progress: p,
                 statusMessage: item.status === 'review' ? (meta.progressText || '结果待核实，请勿重复提交') : item.status === 'queued'
                   ? `HM Studio 排队中：前方 ${Math.max(0, Number(meta.queuePosition || 1) - 1)} 项，当前运行 ${meta.queueRunning || 0}/${meta.queueLimit || 10}`
@@ -1783,7 +1785,13 @@ export default function VideoPage() {
                       <article key={task.id} className={`group relative h-full min-h-[330px] rounded-2xl overflow-hidden border flex flex-col transition-all duration-200 shadow-[0_10px_30px_rgba(89,55,35,0.07)] ${task.status === 'generating' ? 'border-[#c98a61] bg-[#fbf3e7]' : task.status === 'error' ? 'border-red-300 bg-red-50/60' : 'border-[#d8c0a3] bg-[#fbf5eb] hover:-translate-y-0.5 hover:border-[#b66a45] hover:shadow-[0_16px_36px_rgba(89,55,35,0.12)]'}`}>
                         {/* 视频区域 */}
                         <div className="relative w-full aspect-video bg-[#211a16] flex items-center justify-center overflow-hidden border-b border-[#d8c0a3]">
-                          {task.status === 'generating' ? (
+                          {videoTaskPhase(task.status,{...task.metadata,progressText:task.statusMessage}) === 'awaiting_delivery' ? (
+                            <div className="flex flex-col items-center gap-2 p-4" role="status">
+                              <Check className="w-8 h-8 text-amber-300" />
+                              <p className="text-sm text-amber-300">已生成，等待交付</p>
+                              <p className="text-xs text-amber-200/80 text-center">视频已生成，正在等待结果交付</p>
+                            </div>
+                          ) : task.status === 'generating' ? (
                             <WoodenFishLoader progress={task.progress} statusMessage={task.statusMessage} />
                           ) : task.status === 'complete' && task.videoUrl ? (
                             <>

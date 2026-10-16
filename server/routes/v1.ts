@@ -2318,9 +2318,11 @@ async function handleVideoCreation(req: Request, res: Response) {
         return res.status(202).json({ id: 'task_' + contentId, task_id: 'task_' + contentId, object: 'video', model,
           status: 'queued', progress: 0, requires_review: true, message: '提交结果待核实，请勿重提' });
       }
-      const target = deduction ? refundTokenOrUserBalance(token, totalCost, deduction) : 'not_charged';
-      persistVideoContentFailure(contentId!, error.message, { billingStatus: deduction ? 'refunded' : 'not_charged',
-        queueRefunded: Boolean(deduction), refundAmount: deduction ? totalCost : 0, refundTarget: target });
+      sqlite.transaction(() => {
+        const target = deduction ? refundTokenOrUserBalance(token, totalCost, deduction) : 'not_charged';
+        persistVideoContentFailure(contentId!, error.message, { billingStatus: deduction ? 'refunded' : 'not_charged',
+          queueRefunded: Boolean(deduction), refundAmount: deduction ? totalCost : 0, refundTarget: target });
+      })();
       return res.status(502).json({ error: publicGenerationError(error.message) });
     } finally { releaseZonghengSubmission(contentId!); cleanupFiles(req.files); }
   }

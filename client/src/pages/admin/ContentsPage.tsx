@@ -1,3 +1,4 @@
+import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Film, Copy, ChevronLeft, ChevronRight, Image, Video, Music, Eye, X, CircleAlert, Loader2, RefreshCw } from 'lucide-react';
@@ -111,14 +112,14 @@ export default function ContentsPage() {
   const [previewItem, setPreviewItem] = useState<ContentItem | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [recoveringId, setRecoveringId] = useState<number | null>(null);
+  const [confirmingUnacceptedId, setConfirmingUnacceptedId] = useState<number | null>(null);
   const [bulkPreviewing, setBulkPreviewing] = useState(false);
   const [bulkRecovering, setBulkRecovering] = useState(false);
   const [previewTab, setPreviewTab] = useState<'video' | 'refs'>('video');
   const pageSize = 20;
 
-  const fetchContents = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
+  const fetchContents = useCallback(async (silent = false, stillCurrent = () => true) => {
+    if (!silent) { setLoading(true); setLoadError(null); }
     try {
       const data = await adminApi.getContents({
         page,
@@ -127,17 +128,41 @@ export default function ContentsPage() {
         status: statusFilter || undefined,
         type: typeFilter || undefined
       });
+      if (!stillCurrent()) return;
       setItems(data.items || []);
       setTotal(data.total || 0);
     } catch (e) {
       console.error(e);
-      setLoadError(e instanceof Error ? e.message : '无法获取内容列表，请稍后重试');
+      if (!silent && stillCurrent()) setLoadError(e instanceof Error ? e.message : '无法获取内容列表，请稍后重试');
     } finally {
-      setLoading(false);
+      if (!silent && stillCurrent()) setLoading(false);
     }
   }, [page, pageSize, search, statusFilter, typeFilter]);
 
-  useEffect(() => { fetchContents(); }, [fetchContents]);
+  useEffect(() => { let active = true; void fetchContents(false, () => active); return () => { active = false; }; }, [fetchContents]);
+  const hasPendingRecords = items.some(item => ['processing','queued','review'].includes(item.status));
+  const pendingPreviewId = previewItem && ['processing','queued','review'].includes(previewItem.status) ? previewItem.id : null;
+  const shouldRefreshPending = hasPendingRecords || pendingPreviewId !== null;
+  useEffect(() => {
+    if (loading || !shouldRefreshPending) return;
+    let active = true, inFlight = false;
+    const refresh = async () => {
+      if (!active || inFlight || document.hidden) return;
+      inFlight = true;
+      try {
+        await fetchContents(true, () => active);
+        if (pendingPreviewId) {
+          const detail = await adminApi.getContent(pendingPreviewId);
+          if (active) setPreviewItem(current => current?.id === pendingPreviewId ? {...current,...detail} : current);
+        }
+      } catch { /* Retain the last visible result and retry on the next interval. */ }
+      finally { inFlight = false; }
+    };
+    const timer = window.setInterval(() => { void refresh(); }, 5000);
+    const onVisible = () => { if (!document.hidden) void refresh(); };
+    window.addEventListener('focus', onVisible); document.addEventListener('visibilitychange', onVisible);
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener('focus', onVisible); document.removeEventListener('visibilitychange', onVisible); };
+  }, [fetchContents, loading, shouldRefreshPending, pendingPreviewId]);
 
   useEffect(() => {
     if (!previewItem) return;
@@ -177,6 +202,22 @@ export default function ContentsPage() {
   const handleReplicate = async (item: ContentItem) => {
     // Fetch the complete record on the destination page, without browser storage limits.
     navigate('/app/video?replicate=' + item.id);
+  };
+
+  const handleConfirmNotAccepted = async (item: ContentItem) => {
+    if (!window.confirm(`确认已在上游核对记录 #${item.id}，该订单未创建任务、未产生上游费用？将标记失败并把 ¥${Number(item.cost).toFixed(2)} 退回原扣款来源。`)) return;
+    const note = window.prompt('请填写核对依据，例如上游业务订单号、核对时间及未接单的确认结果：');
+    if (note === null) return;
+    if (note.trim().length < 6 || note.length > 500) { window.alert('请填写 6–500 字的核对依据'); return; }
+    setConfirmingUnacceptedId(item.id);
+    try {
+      const result = await adminApi.confirmContentNotAccepted(item.id, note.trim());
+      const refreshed = await adminApi.getContent(item.id);
+      setPreviewItem(current => current?.id === item.id ? { ...current, ...refreshed } : current);
+      await fetchContents();
+      window.alert(result.alreadyResolved ? '该记录已处理，未重复退款' : `已标记失败，已退回 ¥${result.refundedAmount.toFixed(2)}`);
+    } catch (error: any) { window.alert(error.message || '确认未接单退款失败'); }
+    finally { setConfirmingUnacceptedId(null); }
   };
 
   const handleRecoverUpstream = async (item: ContentItem) => {
@@ -279,7 +320,9 @@ export default function ContentsPage() {
     return meta.requiresReview || overdue ? 'review' : item.status;
   };
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, metadata?: unknown) => {
+    const phase = videoTaskPhase(status, metadata);
+    if (phase === 'awaiting_delivery' || phase === 'saving') return <span className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs text-amber-400">{phase === 'awaiting_delivery' ? '等待交付' : '保存中'}</span>;
     switch (status) {
       case 'completed': case 'success':
         return <span className="inline-flex min-w-12 justify-center rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-xs font-medium text-emerald-400">成功</span>;
@@ -336,7 +379,7 @@ export default function ContentsPage() {
     if (responses.some((item: any) => item.state === 'response_unreadable' || item.state === 'headers_received')) return '响应读取中断，未取得 ID';
     if (responses.some((item: any) => item.state === 'no_response')) return '未收到上游响应';
     if (responses.some((item: any) => item.state === 'awaiting_response')) return '等待上游响应';
-    return '无已保存 ID（旧记录）';
+    return '未取得上游任务 ID';
   };
 
   const getSpecification = (meta: Record<string, any>) => [
@@ -471,7 +514,7 @@ export default function ContentsPage() {
                         })}
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 text-sm text-zinc-400">{formatContentGenerationTime(item)}</td>
-                      <td className="px-3 py-3">{getStatusBadge(displayStatus(item))}</td>
+                      <td className="px-3 py-3">{getStatusBadge(displayStatus(item), item.metadata)}</td>
                       <td className="px-3 py-3">
                         <div className="text-sm font-medium text-zinc-200">{getRowChannel(item, meta, routingInfo)}</div>
                         {routingInfo?.routed && <div className="mt-0.5 text-xs text-cyan-400">已分流</div>}
@@ -575,7 +618,7 @@ export default function ContentsPage() {
             <div className="content-detail-header">
               <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
                 <h3 id="content-detail-title" className="text-sm font-medium text-white">{previewItem.type === 'video' ? '视频详情' : '内容详情'} #{previewItem.id}</h3>
-                {getStatusBadge(displayStatus(previewItem))}
+                {getStatusBadge(displayStatus(previewItem), previewItem.metadata)}
                 {previewLoading && <span className="text-[10px] text-zinc-500">正在按需加载完整素材…</span>}
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -640,6 +683,16 @@ export default function ContentsPage() {
                         <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-200">
                           {displayStatus(previewItem) === 'review' && !failure.hasRecordedReason ? '后台尚未确认最终结果，请核查原上游请求，勿重复提交' : failure.message}
                         </pre>
+                        {previewItem.type === 'video' && previewItem.status === 'review'
+                          && previewItem.modelId?.startsWith('ZH-') && !getUpstreamTaskId(parseMeta(previewItem.metadata))
+                          && !parseMeta(previewItem.metadata).batchItemId && !previewItem.resultUrl?.trim()
+                          && !parseMeta(previewItem.metadata).upstreamResultUrl && (
+                            <button type="button" disabled={confirmingUnacceptedId === previewItem.id}
+                              onClick={() => { void handleConfirmNotAccepted(previewItem); }}
+                              className="mt-3 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200 disabled:opacity-50">
+                              {confirmingUnacceptedId === previewItem.id ? '正在处理退款…' : '确认未接单并退款'}
+                            </button>
+                          )}
                         {failure.failedAt && (
                           <div className="mt-2 text-[10px] text-zinc-500">
                             失败时间（北京时间）：{formatBeijingTime(failure.failedAt)}

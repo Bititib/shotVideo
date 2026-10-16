@@ -18,7 +18,7 @@ export function zonghengError(payload: any): string {
 }
 export interface ZonghengSubmissionDiagnostics {
   reason: 'http_error' | 'invalid_task_response' | 'invalid_json' | 'timeout' | 'network_error';
-  httpStatus?: number; elapsedMs: number; networkCode?: string;
+  httpStatus?: number; elapsedMs: number; networkCode?: string; requestNotSent?: boolean;
 }
 export class ZonghengSubmissionError extends Error {
   constructor(message: string, readonly uncertain: boolean, readonly diagnostics?: ZonghengSubmissionDiagnostics) { super(message); }
@@ -66,10 +66,39 @@ export function validateZonghengVideoAliases(body: Record<string, any>) {
 }
 export function normalizeZonghengTask(p: any) {
   if (!['processing', 'succeeded', 'failed'].includes(p?.status)) throw new Error('纵横科技查询未返回有效任务状态');
+  const awaitingDelivery = p.status === 'processing' && p.delivery_pending === true
+    && p.delivery_status === 'mirroring' && typeof p.completed_at === 'string' && Boolean(p.completed_at.trim());
   return { status: p.status === 'succeeded' ? 'completed' : p.status,
     progress: p.status === 'succeeded' ? 100 : Math.max(0, Math.min(99, Number(p.progress) || 0)),
     resultUrl: p.status === 'succeeded' ? String(p.video_url || p.url || p.result_url || '') : '',
+    upstreamGenerated: p.status === 'succeeded' || awaitingDelivery,
+    deliveryPending: awaitingDelivery,
+    deliveryStatus: awaitingDelivery ? 'mirroring' : p.status === 'succeeded' ? 'ready' : '',
+    generationCompletedAt: typeof p.completed_at === 'string' ? p.completed_at : '',
+    progressText: awaitingDelivery ? '视频已生成，正在等待结果交付' : '',
     error: p.status === 'failed' ? zonghengError(p) : '', pollDelay: zonghengPollDelay(p.next_poll_seconds) };
+}
+export function zonghengTaskMetadata(payload: any) {
+  const task = normalizeZonghengTask(payload);
+  return { upstreamGenerated: task.upstreamGenerated, upstreamDeliveryPending: task.deliveryPending,
+    upstreamDeliveryStatus: task.deliveryStatus, upstreamGenerationCompletedAt: task.generationCompletedAt || undefined,
+    progressText: task.progressText || undefined };
+}
+/** Only connection establishment errors prove that this POST was never sent.
+ * Generic aborts, socket resets, and response-body failures remain uncertain.
+ */
+export function zonghengRequestNotSent(error: unknown, httpStatus?: number): boolean {
+  if (httpStatus !== undefined) return false;
+  const beforeConnection = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'UND_ERR_CONNECT_TIMEOUT']);
+  const seen = new Set<object>();
+  const check = (value: any): boolean => {
+    if (!value || typeof value !== 'object' || seen.has(value)) return false;
+    seen.add(value);
+    if (Array.isArray(value.errors) && value.errors.length) return value.errors.every(check);
+    if (typeof value.code === 'string') return beforeConnection.has(value.code);
+    return check(value.cause);
+  };
+  return check(error);
 }
 export async function submitZonghengVideo(base: string, apiKey: string, input: ZonghengVideoInput, idempotencyKey: string,
   beforeSubmit: () => void, timeout = 120_000) {
@@ -96,8 +125,9 @@ export async function submitZonghengVideo(base: string, apiKey: string, input: Z
     const code = String(error?.cause?.code || error?.code || '');
     const reason = ['TimeoutError', 'AbortError'].includes(error?.name) || ['UND_ERR_CONNECT_TIMEOUT', 'ETIMEDOUT'].includes(code)
       ? 'timeout' : error instanceof SyntaxError ? 'invalid_json' : 'network_error';
-    throw new ZonghengSubmissionError('纵横科技提交结果待核实，请勿重复创建任务', true,
-      { reason, httpStatus, elapsedMs: Date.now() - startedAt, ...(knownCodes.includes(code) ? { networkCode: code } : {}) });
+    const requestNotSent = zonghengRequestNotSent(error, httpStatus);
+    throw new ZonghengSubmissionError(requestNotSent ? '连接生成服务失败，请求未发送' : '纵横科技提交结果待核实，请勿重复创建任务', !requestNotSent,
+      { reason, httpStatus, elapsedMs: Date.now() - startedAt, requestNotSent, ...(knownCodes.includes(code) ? { networkCode: code } : {}) });
   }
 }
 export function zonghengImageSize(ratio: string, resolution: string): string {

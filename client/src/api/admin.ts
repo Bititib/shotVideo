@@ -123,6 +123,7 @@ export const adminApi = {
   previewRecentFailedVideoRecovery(days = 3) { return api.get<any>(`/admin/contents/recovery/preview?days=${days}`); },
   recoverRecentFailedVideos(days = 3) { return api.post<any>('/admin/contents/recovery/run', { days }); },
   recheckContentUpstream(id: number) { return api.post<any>(`/admin/contents/${id}/recheck-upstream`); },
+  confirmContentNotAccepted(id: number, note: string) { return api.post<{id:number;status:string;refundedAmount:number;alreadyResolved:boolean}>(`/admin/contents/${id}/confirm-not-accepted`, {confirmedNotAccepted:true,note}); },
   recoverContentUpstream(id: number) { return api.post<any>(`/admin/contents/${id}/recover-upstream`); },
 
   // 模型故障反馈

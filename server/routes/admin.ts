@@ -337,6 +337,13 @@ router.post('/contents/:id/recheck-upstream', async (req: AuthRequest, res: Resp
   }
 });
 
+router.post('/contents/:id/confirm-not-accepted', async (req: AuthRequest, res: Response) => {
+  try {
+    const { confirmZonghengNotAccepted } = await import('../services/zonghengSubmissionResolutionService.js');
+    res.json(confirmZonghengNotAccepted(Number(req.params.id), req.userId!, req.body?.confirmedNotAccepted, req.body?.note));
+  } catch (err: any) { res.status(err.status || 500).json({error:err.message || '确认未接单退款失败'}); }
+});
+
 router.post('/contents/:id/recover-upstream', async (req: AuthRequest, res: Response) => {
   try {
     const { VideoRecoveryService } = await import('../services/videoRecoveryService.js');

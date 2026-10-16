@@ -1,6 +1,8 @@
+import { refundConfirmedZonghengVideo } from '../services/zonghengSubmissionResolutionService.js';
+import { queryZonghengTask } from '../services/zonghengTaskQueryService.js';
 import { publicGenerationEvent } from '../../shared/generationMessages.js';
 import { canonicalZonghengModelId, ZONGHENG_VIDEO_MODELS, ZONGHENG_MODEL_PREFIX, getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
-import { isZonghengChannel, buildZonghengVideoPayload, submitZonghengVideo, ZonghengSubmissionError, zonghengTaskUrl, normalizeZonghengTask } from '../services/zonghengAdapter.js';
+import { isZonghengChannel, buildZonghengVideoPayload, submitZonghengVideo, ZonghengSubmissionError, zonghengTaskUrl, normalizeZonghengTask, zonghengTaskMetadata } from '../services/zonghengAdapter.js';
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
 import { patchZonghengTask, reviewZonghengTask, zonghengOrder, recordZonghengSubmissionError } from '../services/zonghengTaskService.js';
 import videoQuotes from './videoQuotes.js';
@@ -1344,6 +1346,11 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
       activePolls.delete(contentId);
       return;
     }
+    if (contentId !== null && isZonghengChannel(channel) && confirmedUpstreamFailure) {
+      refundConfirmedZonghengVideo(contentId, readableError);
+      activePolls.delete(contentId);
+      return;
+    }
     if (estimatedCost > 0) {
       BalanceService.refundToSource(
         req.userId!,
@@ -2524,10 +2531,9 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
           pollUrl = `${baseUrl}/v1/video/generations/${videoId}`;
         }
 
-        const pollResp = await fetch(pollUrl, {
-          headers,
-          signal: AbortSignal.timeout(15_000),
-        });
+        const pollResp = isZongheng
+          ? await queryZonghengTask(videoId, dbChannel?.id, dbChannel?.apiKeyId, channel)
+          : await fetch(pollUrl, { headers, signal: AbortSignal.timeout(15_000) });
 
         if (!pollResp.ok) {
           const detail = await pollResp.text().catch(() => '');
@@ -2694,7 +2700,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
 
         if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'generating' || taskStatus === 'post_processing' || taskStatus === 'finalizing' || taskStatus === 'in_progress') {
           sendEvent({ type: 'progress', progress });
-          const hmProgressText = isHmStudio ? normalizeHmStudioTask(status, baseUrl).progressText : '';
+          const hmProgressText = isZongheng ? normalizeZonghengTask(status).progressText : isHmStudio ? normalizeHmStudioTask(status, baseUrl).progressText : '';
           sendEvent({ type: 'status', message: hmProgressText || `视频生成中 ${progress}%` });
           // 将实时进度写入数据库，以便前端刷新页面后恢复时能读取
           if (contentId !== null) {
@@ -2704,6 +2710,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
                 const meta = JSON.parse(row.metadata || '{}');
                 meta.progress = progress;
                 meta.upstreamStatus = taskStatus;
+                if (isZongheng) Object.assign(meta, zonghengTaskMetadata(status));
                 if (hmProgressText) meta.progressText = hmProgressText;
                 db.update(contents).set({ metadata: JSON.stringify(meta) }).where(eq(contents.id, contentId)).run();
               }
@@ -2711,7 +2718,11 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
           }
         } else if (taskStatus === 'completed' || taskStatus === 'success') {
           if (!resultUrl) {
-            if (isZongheng) continue;
+            if (isZongheng) {
+              if (contentId !== null) patchZonghengTask(contentId, {upstreamStatus:taskStatus,upstreamGenerated:true,upstreamDeliveryPending:true,progress:99,progressText:'视频已生成，正在等待结果交付'});
+              sendEvent({type:'status',message:'视频已生成，正在等待结果交付'});
+              continue;
+            }
             if (batchContext && contentId) {
               noteBatchQueryProblem(contentId, '上游已完成，等待视频链接，不会重复生成');
               continue;
@@ -2727,7 +2738,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
           if (contentId !== null) {
             const row = db.select().from(contents).where(eq(contents.id, contentId)).get();
             const metadata = JSON.parse(row?.metadata || '{}');
-            db.update(contents).set({ metadata: JSON.stringify({ ...metadata, progress: 100, upstreamStatus: taskStatus, upstreamResultUrl: resultUrl, progressText: '视频已生成，正在保存到本站存储' }) }).where(eq(contents.id, contentId)).run();
+            db.update(contents).set({ metadata: JSON.stringify({ ...metadata, ...(isZongheng ? zonghengTaskMetadata(status) : {}), progress: 100, upstreamStatus: taskStatus, upstreamResultUrl: resultUrl, progressText: '视频已生成，正在保存到本站存储' }) }).where(eq(contents.id, contentId)).run();
           }
           sendEvent({ type: 'progress', progress: 100 });
           sendEvent({ type: 'status', message: '视频已生成，正在保存到本站存储' });
@@ -2958,6 +2969,10 @@ export async function failHmQueuedVideo(contentId: number, error: unknown, confi
     ? ChannelService.getChannelRaw(Number(metadata.channelId), Number(metadata.channelApiKeyId) || null)
     : null;
   const message = clarifyVideoCapacityFailure(rawMessage, isHmStudioChannel(taskChannel));
+  if (isZonghengChannel(taskChannel) && confirmedUpstreamFailure) {
+    refundConfirmedZonghengVideo(contentId, message);
+    return;
+  }
   const refundAmount = Number(record.cost) || 0;
   if (refundAmount > 0 && !metadata.queueRefunded) {
     if (metadata.billingSource === 'token' && metadata.tokenId) {
@@ -3484,10 +3499,9 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           pollUrl = `${baseUrl}/v1/video/generations/${videoId}`;
         }
 
-        const pollResp = await fetch(pollUrl, {
-          headers,
-          signal: AbortSignal.timeout(15_000),
-        });
+        const pollResp = isZongheng
+          ? await queryZonghengTask(videoId, Number(metadata.channelId) || undefined, Number(metadata.channelApiKeyId) || null, channel)
+          : await fetch(pollUrl, { headers, signal: AbortSignal.timeout(15_000) });
 
         if (!pollResp.ok) {
           const detail = await pollResp.text().catch(() => '');
@@ -3645,6 +3659,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
             const meta = JSON.parse(currentRecord.metadata || '{}');
             meta.progress = progress;
             meta.upstreamStatus = taskStatus;
+            if (isZongheng) Object.assign(meta, zonghengTaskMetadata(statusData));
             if (isHmStudio) {
               const progressText = normalizeHmStudioTask(statusData, baseUrl).progressText;
               if (progressText) meta.progressText = progressText;
@@ -3653,7 +3668,10 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           } catch { }
         } else if (taskStatus === 'completed' || taskStatus === 'success') {
           if (!resultUrl) {
-            if (isZongheng) continue;
+            if (isZongheng) {
+              patchZonghengTask(contentId, {upstreamStatus:taskStatus,upstreamGenerated:true,upstreamDeliveryPending:true,progress:99,progressText:'视频已生成，正在等待结果交付'});
+              continue;
+            }
             if (metadata.batchItemId) {
               noteBatchQueryProblem(contentId, '上游已完成，等待视频链接，不会重复生成');
               continue;
@@ -3664,7 +3682,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           console.log(`[video-recover] ✅ Generating completed: ${resultUrl}`);
           const latest = db.select().from(contents).where(eq(contents.id, contentId)).get();
           const savingMetadata = JSON.parse(latest?.metadata || '{}');
-          db.update(contents).set({ metadata: JSON.stringify({ ...savingMetadata, progress: 100, upstreamStatus: taskStatus, upstreamResultUrl: resultUrl, progressText: '视频已生成，正在保存到本站存储' }) }).where(eq(contents.id, contentId)).run();
+          db.update(contents).set({ metadata: JSON.stringify({ ...savingMetadata, ...(isZongheng ? zonghengTaskMetadata(statusData) : {}), progress: 100, upstreamStatus: taskStatus, upstreamResultUrl: resultUrl, progressText: '视频已生成，正在保存到本站存储' }) }).where(eq(contents.id, contentId)).run();
           let finalVideoUrl = '';
           try {
             if (resultUrl && resultUrl.includes('llm.chre3.com')) {
@@ -3765,6 +3783,10 @@ export function resumeAllPendingVideoTasks() {
       // A server interruption after POST but before saving its task ID is not a
       // confirmed failure. Never re-submit that batch attempt automatically.
       if (metadata.zonghengSubmissionStarted && !metadata.videoId) {
+        if (metadata.zonghengSubmissionDiagnostics?.requestNotSent === true) {
+          refundConfirmedZonghengVideo(contentId, '连接生成服务失败，请求未发送');
+          return;
+        }
         reviewZonghengTask(contentId, '纵横科技提交被中断，请核实原订单，禁止重复提交'); return;
       }
       if (metadata.hayaSubmissionStarted && !metadata.videoId) {
@@ -3782,8 +3804,8 @@ export function resumeAllPendingVideoTasks() {
         } catch (error: any) {
           console.error(`[video-recover] Failed to recover HM Studio task ${contentId}:`, error.message);
         }
-      } else if (!activePolls.has(contentId)) {
-        resumePollForTask(contentId, record);
+      } else {
+        void resumePollForTask(contentId, record);
       }
     });
   } catch (err: any) {
