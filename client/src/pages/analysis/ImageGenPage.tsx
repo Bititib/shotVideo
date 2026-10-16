@@ -1,6 +1,6 @@
 import { startPolling } from '../../utils/polling';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Image as ImageIcon, ArrowUpRight, Pencil, Plus, ChevronDown, SlidersHorizontal, MoreHorizontal, Square, Download, RotateCcw, Loader2, Check, AlertCircle, Sparkles, Monitor, Smartphone, RectangleHorizontal, Upload, X, Maximize2, Trash2 } from 'lucide-react';
+import { Image as ImageIcon, ArrowUpRight, Pencil, Plus, ChevronDown, SlidersHorizontal, Square, Download, RotateCcw, Loader2, AlertCircle, Monitor, Smartphone, RectangleHorizontal, X, Maximize2, Trash2 } from 'lucide-react';
 import './ImageGenPage.css';
 import { downloadGeneratedImage, fetchImageModels, generateImage, generatedImageReference, getCachedImageModels, imageReferenceLimit, type ImageGenerateParams, type ImageModel, type ImageSSEEvent } from '../../api/imageGen';
 import { contentApi } from '../../api/content';
@@ -17,6 +17,9 @@ interface GeneratedImage {
   createdAt: Date;
   aspectRatio: string;
   missing?: boolean;
+  galleryId?: string;
+  slotIndex?: number;
+  count?: number;
   requestParams?: ImageGenerateParams;
 }
 
@@ -67,6 +70,8 @@ interface ActiveImageBatch {
   id: string;
   contentId?: number;
   persisted?: boolean;
+  createdAt: Date;
+  galleryId?: string;
   phase?: 'queued' | 'processing' | 'checking' | 'review' | 'failed';
   prompt: string;
   model: string;
@@ -81,6 +86,99 @@ interface ActiveImageBatch {
 
 const MAX_CONCURRENT_BATCHES = 4;
 
+const HISTORY_PAGE_SIZE = 20;
+const GALLERY_FILTERS = [
+  { value: 'all', label: '全部' }, { value: 'processing', label: '生成中' },
+  { value: 'completed', label: '成功' }, { value: 'failed', label: '失败' },
+  { value: 'review', label: '待核实' },
+] as const;
+type GalleryFilter = typeof GALLERY_FILTERS[number]['value'];
+
+// SQLite timestamps are UTC even when the serialized value has no timezone.
+function parseImageCreatedAt(value: string) {
+  const normalized = /^\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d(?:\.\d+)?$/.test(value || '')
+    ? value.replace(' ', 'T') + 'Z' : value;
+  const date = new Date(normalized);
+  return Number.isFinite(date.getTime()) ? date : new Date(0);
+}
+
+function parseImageRecords(items: any[]) {
+  const loadedHistory: GeneratedImage[] = [];
+  const recoveredBatches: ActiveImageBatch[] = [];
+  const existingUrls = new Set<string>();
+
+  for (const item of items) {
+    let metadata: Record<string, any> = {};
+    try {
+      metadata = typeof item.metadata === 'string' ? JSON.parse(item.metadata || '{}') : (item.metadata || {});
+    } catch { /* ignore malformed legacy metadata */ }
+    const promptText = item.inputText || item.title || '';
+    const model = item.model || item.modelId || '';
+    const createdAt = parseImageCreatedAt(item.createdAt);
+    const itemAspectRatio = metadata.aspectRatio || metadata.aspect_ratio || '';
+    const storedImageUrls = Array.isArray(metadata.imageUrls) ? metadata.imageUrls : [];
+    const imageUrls = storedImageUrls.filter(Boolean);
+    const isReview = metadata.requiresReview || item.status === 'review';
+    const isFailed = ['failed', 'error', 'cancelled'].includes(item.status);
+    const isProcessing = item.status === 'processing' || item.status === 'queued';
+    const overdue = isProcessing && createdAt.getTime() > 0
+      && Date.now() - createdAt.getTime() > Math.max(30 * 60_000, Number(metadata.requestTimeoutMs || 0) + 60_000);
+
+    if (isProcessing || isReview || isFailed) {
+      const count = Math.max(1, Math.min(4, Number(metadata.count) || 1));
+      const images = new Array(count).fill('');
+      storedImageUrls.slice(0, count).forEach((url: string, index: number) => { images[index] = url || ''; });
+      const progresses = new Array(count).fill(0);
+      if (Array.isArray(metadata.progresses)) {
+        metadata.progresses.slice(0, count).forEach((value: unknown, index: number) => {
+          progresses[index] = Math.max(0, Math.min(100, Number(value) || 0));
+        });
+      }
+      recoveredBatches.push({
+        id: `persisted-image-${item.id}`,
+        contentId: Number(item.id),
+        persisted: true,
+        createdAt,
+        galleryId: String(item.id),
+        phase: isReview ? 'review' : isFailed ? 'failed' : overdue ? 'checking' : item.status === 'queued' ? 'queued' : 'processing',
+        prompt: promptText,
+        model,
+        aspectRatio: itemAspectRatio,
+        count,
+        images,
+        progresses,
+        failedIndexes: Array.isArray(metadata.failedIndexes)
+          ? metadata.failedIndexes.filter((value: unknown) => Number.isInteger(value))
+          : [],
+        statusMessage: isReview ? (metadata.failureReason || metadata.error || metadata.progressText || '结果待管理员核实，请勿重复提交')
+          : isFailed ? (metadata.failureReason || metadata.error || metadata.progressText || '图片生成失败，请在生成记录中查看详情')
+          : overdue ? '等待时间较长，后台尚未确认成功或失败，请联系管理员核实该任务'
+          : metadata.progressText || '图片正在后台生成，刷新页面不会丢失',
+      });
+      continue;
+    }
+
+    const addHistory = (url: string, suffix: string) => {
+      if (!url || existingUrls.has(`${item.id}:${url}`)) return;
+      existingUrls.add(`${item.id}:${url}`);
+      loadedHistory.push({
+        id: `${item.id}_${suffix}`,
+        galleryId: String(item.id),
+        slotIndex: suffix === 'main' ? 0 : Number(suffix),
+        count: Math.max(1, Number(metadata.count) || imageUrls.length),
+        prompt: promptText,
+        imageUrl: url,
+        model,
+        createdAt,
+        aspectRatio: itemAspectRatio,
+      });
+    };
+    storedImageUrls.forEach((url: string, index: number) => addHistory(url, String(index)));
+    if (!imageUrls.length) addHistory(item.resultUrl, 'main');
+  }
+
+  return { loadedHistory, recoveredBatches };
+}
 function SettingSelect({ label, value, options, onChange }: { label: string; value: string | number; options: { value: string | number; label: string }[]; onChange: (value: any) => void }) {
   return (
     <label className="ig-field"><span>{label}</span><div className="ig-select-wrap">
@@ -88,24 +186,6 @@ function SettingSelect({ label, value, options, onChange }: { label: string; val
         {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select><ChevronDown size={15} aria-hidden="true" />
     </div></label>
-  );
-}
-
-/** 瀑布流图片卡片 */
-function ImageCard({ url, index, onPreview, onEdit, editing, onRegenerate, onDelete, actionBusy }: { url: string; index: number; onPreview: () => void; onEdit: () => void; editing: boolean; onRegenerate?: () => void; onDelete?: () => void; actionBusy?: boolean; key?: any }) {
-  return (
-    <article className="ig-artwork">
-      <button type="button" className="ig-artwork-preview" aria-label={`预览生成图片 ${index + 1}`} onClick={onPreview}>
-        <img src={url} alt={`生成图片 ${index + 1}`} loading="lazy" /><span className="ig-preview-badge"><Maximize2 size={15} /></span>
-      </button>
-      <div className="ig-artwork-footer"><button type="button" aria-label="继续改图" disabled={editing} onClick={onEdit} className="ig-edit"><Pencil size={14} />改图</button>
-        <button type="button" aria-label={`下载生成图片 ${index + 1}`} className="ig-icon-button" onClick={e => void downloadImageFile(e, url, `generated-image-${index + 1}.png`)}><Download size={16} /></button>
-      </div>
-      {(onRegenerate || onDelete) && <div className="ig-record-actions">
-        {onRegenerate && <button type="button" className="ig-text-button" disabled={editing || actionBusy} onClick={onRegenerate}><RotateCcw size={14} />重新生成</button>}
-        {onDelete && <button type="button" className="ig-text-button ig-delete" disabled={actionBusy} onClick={onDelete}><Trash2 size={14} />删除</button>}
-      </div>}
-    </article>
   );
 }
 
@@ -189,7 +269,7 @@ export default function ImageGenPage() {
   const [busyRecords, setBusyRecords] = useState<Set<string>>(() => new Set());
   const busyRecordsRef = useRef(new Set<string>());
   const deletedContentIdsRef = useRef(new Set<number>());
-  const [generatedImages, setGeneratedImages] = useState<string[]>([]);
+  const [galleryFilter, setGalleryFilter] = useState<GalleryFilter>('all');
   const [history, setHistory] = useState<GeneratedImage[]>([]);
   const [historyPage, setHistoryPage] = useState(1);
   const [historyTotal, setHistoryTotal] = useState(0);
@@ -241,7 +321,7 @@ export default function ImageGenPage() {
 
     const refreshPersistedJobs = async (signal: AbortSignal) => {
       try {
-        const res: any = await contentApi.getMyContents({ type: 'image', page: 1, pageSize: 20 }, signal);
+        const res: any = await contentApi.getMyContents({ type: 'image', page: 1, pageSize: HISTORY_PAGE_SIZE }, signal);
         if (cancelled || signal.aborted) return;
         const items: any[] = [...(res?.items || res?.data || [])].filter(item => !deletedContentIdsRef.current.has(Number(item.id)));
         const visibleIds = new Set(items.map(item => Number(item.id)));
@@ -254,80 +334,24 @@ export default function ImageGenPage() {
           else missingIds.add(trackedIds[index]);
         });
         const returnedIds = new Set(items.map(item => Number(item.id)));
-        const loadedHistory: GeneratedImage[] = [];
-        const recoveredBatches: ActiveImageBatch[] = [];
-        const existingUrls = new Set<string>();
-
-        for (const item of items) {
-          let metadata: Record<string, any> = {};
-          try {
-            metadata = typeof item.metadata === 'string' ? JSON.parse(item.metadata || '{}') : (item.metadata || {});
-          } catch { /* ignore malformed legacy metadata */ }
-          const promptText = item.inputText || item.title || '';
-          const model = item.model || item.modelId || '';
-          const createdAt = new Date(item.createdAt);
-          const itemAspectRatio = metadata.aspectRatio || metadata.aspect_ratio || '';
-          const storedImageUrls = Array.isArray(metadata.imageUrls) ? metadata.imageUrls : [];
-          const imageUrls = storedImageUrls.filter(Boolean);
-          const isReview = metadata.requiresReview || item.status === 'review';
-          const isFailed = ['failed', 'error', 'cancelled'].includes(item.status);
-          const isProcessing = item.status === 'processing' || item.status === 'queued';
-          const overdue = isProcessing && Number.isFinite(createdAt.getTime())
-            && Date.now() - createdAt.getTime() > Math.max(30 * 60_000, Number(metadata.requestTimeoutMs || 0) + 60_000);
-
-          if (isProcessing || isReview || isFailed) {
-            const count = Math.max(1, Math.min(4, Number(metadata.count) || 1));
-            const images = new Array(count).fill('');
-            storedImageUrls.slice(0, count).forEach((url: string, index: number) => { images[index] = url || ''; });
-            const progresses = new Array(count).fill(0);
-            if (Array.isArray(metadata.progresses)) {
-              metadata.progresses.slice(0, count).forEach((value: unknown, index: number) => {
-                progresses[index] = Math.max(0, Math.min(100, Number(value) || 0));
-              });
-            }
-            recoveredBatches.push({
-              id: `persisted-image-${item.id}`,
-              contentId: Number(item.id),
-              persisted: true,
-              phase: isReview ? 'review' : isFailed ? 'failed' : overdue ? 'checking' : item.status === 'queued' ? 'queued' : 'processing',
-              prompt: promptText,
-              model,
-              aspectRatio: itemAspectRatio,
-              count,
-              images,
-              progresses,
-              failedIndexes: Array.isArray(metadata.failedIndexes)
-                ? metadata.failedIndexes.filter((value: unknown) => Number.isInteger(value))
-                : [],
-              statusMessage: isReview ? (metadata.failureReason || metadata.error || metadata.progressText || '结果待管理员核实，请勿重复提交')
-                : isFailed ? (metadata.failureReason || metadata.error || metadata.progressText || '图片生成失败，请在生成记录中查看详情')
-                : overdue ? '等待时间较长，后台尚未确认成功或失败，请联系管理员核实该任务'
-                : metadata.progressText || '图片正在后台生成，刷新页面不会丢失',
-            });
-            continue;
-          }
-
-          const addHistory = (url: string, suffix: string) => {
-            if (!url || existingUrls.has(url)) return;
-            existingUrls.add(url);
-            loadedHistory.push({
-              id: `${item.id}_${suffix}`,
-              prompt: promptText,
-              imageUrl: url,
-              model,
-              createdAt,
-              aspectRatio: itemAspectRatio,
-            });
-          };
-          addHistory(item.resultUrl, 'main');
-          imageUrls.forEach((url: string, index: number) => addHistory(url, String(index)));
-        }
+        const { loadedHistory, recoveredBatches } = parseImageRecords(items);
 
         setHistory(previous => {
           const next = loadedHistory.filter(item => !deletedContentIdsRef.current.has(Number(item.id.split('_')[0])))
-            .map(item => ({ ...item, requestParams: previous.find(saved => saved.imageUrl === item.imageUrl)?.requestParams }));
+            .map(item => {
+              const saved = previous.find(saved => saved.id === item.id)
+                || previous.find(saved => saved.imageUrl === item.imageUrl && (!/^\d+_/.test(saved.id) || saved.id.split('_')[0] === item.id.split('_')[0]));
+              const batch = activeBatchesRef.current.find(batch => batch.contentId === Number(item.id.split('_')[0]));
+              return { ...item, requestParams: saved?.requestParams || batch?.requestParams,
+                missing: saved?.imageUrl === item.imageUrl ? saved.missing : false,
+                createdAt: saved?.createdAt || batch?.createdAt || item.createdAt,
+                galleryId: saved?.galleryId || batch?.galleryId || item.galleryId };
+            });
           const urls = new Set(next.map(item => item.imageUrl));
-          previous.forEach(item => { if (!urls.has(item.imageUrl) && !deletedContentIdsRef.current.has(Number(item.id.split('_')[0]))) next.push(item); });
+          previous.forEach(item => {
+            const contentId = Number(item.id.split('_')[0]);
+            if (!returnedIds.has(contentId) && (contentId > 0 || !urls.has(item.imageUrl)) && !deletedContentIdsRef.current.has(contentId)) next.push(item);
+          });
           return next;
         });
         // Database state also reconciles live streams: their terminal event may have been lost.
@@ -346,7 +370,7 @@ export default function ImageGenPage() {
               ...(batch.contentId && missingIds.has(batch.contentId) ? { phase: 'checking' as const, statusMessage: '暂时无法读取任务状态，正在重试核实，请勿重复提交' } : {}) }];
             seen.add(batch.contentId);
             const recovered = recoveredBatches.find(item => item.contentId === batch.contentId);
-            return recovered ? [{ ...recovered, id: batch.id, requestParams: batch.requestParams }] : [];
+            return recovered ? [{ ...recovered, id: batch.id, createdAt: batch.createdAt, galleryId: batch.galleryId, requestParams: batch.requestParams }] : [];
           });
           return [...next, ...recoveredBatches.filter(batch => !seen.has(batch.contentId!) && !deletedContentIdsRef.current.has(batch.contentId!))];
         });
@@ -371,23 +395,23 @@ export default function ImageGenPage() {
     const nextPage = historyPage + 1;
     setHistoryLoading(true);
     try {
-      const res: any = await contentApi.getMyContents({ type: 'image', page: nextPage, pageSize: 12 });
+      const res: any = await contentApi.getMyContents({ type: 'image', page: nextPage, pageSize: HISTORY_PAGE_SIZE });
       const items = res?.items || res?.data || [];
-      const loaded: GeneratedImage[] = [];
-      const urls = new Set(history.map(item => item.imageUrl));
-      for (const item of items) {
-        const metadata = typeof item.metadata === 'string' ? (() => { try { return JSON.parse(item.metadata); } catch { return {}; } })() : (item.metadata || {});
-        const add = (url: string, suffix: string) => {
-          if (!url || urls.has(url)) return;
-          urls.add(url);
-          loaded.push({ id: `${item.id}_${suffix}`, prompt: item.inputText || item.title || '', imageUrl: url, model: item.model || item.modelId || '', createdAt: new Date(item.createdAt), aspectRatio: metadata.aspectRatio || '' });
-        };
-        add(item.resultUrl, 'main');
-        if (Array.isArray(metadata.imageUrls)) metadata.imageUrls.forEach((url: string, index: number) => add(url, String(index)));
-      }
-      setHistory(prev => [...prev, ...loaded].filter(item => !deletedContentIdsRef.current.has(Number(item.id.split('_')[0]))));
+      const { loadedHistory, recoveredBatches } = parseImageRecords(items);
+      setHistory(previous => {
+        const ids = new Set(previous.map(item => item.id));
+        return [...previous, ...loadedHistory.filter(item => !ids.has(item.id))]
+          .filter(item => !deletedContentIdsRef.current.has(Number(item.id.split('_')[0])));
+      });
+      setActiveBatches(previous => {
+        const ids = new Set(previous.map(item => item.contentId));
+        return [...previous, ...recoveredBatches.filter(item => !ids.has(item.contentId))]
+          .filter(item => !deletedContentIdsRef.current.has(item.contentId!));
+      });
       setHistoryPage(nextPage);
       setHistoryTotal(Number(res?.total) || 0);
+    } catch (error: any) {
+      setError(error?.message || '加载记录失败，请稍后重试');
     } finally {
       setHistoryLoading(false);
     }
@@ -451,6 +475,7 @@ export default function ImageGenPage() {
     const batchId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID()
       : `image-batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const batchCreatedAt = new Date();
     const batchPrompt = prompt.trim();
     const batchModel = selectedModel;
     const batchAspectRatio = aspectRatio;
@@ -468,6 +493,8 @@ export default function ImageGenPage() {
     };
     setActiveBatches(previous => [...previous, {
       id: batchId,
+      galleryId: batchId,
+      createdAt: batchCreatedAt,
       prompt: batchPrompt,
       model: batchModel,
       aspectRatio: batchAspectRatio,
@@ -481,13 +508,17 @@ export default function ImageGenPage() {
     setError(null);
     setActionNotice('');
 
+    setGalleryFilter('all');
+
     const updateBatch = (updater: (batch: ActiveImageBatch) => ActiveImageBatch) => {
       setActiveBatches(previous => previous.map(batch => batch.id === batchId ? updater(batch) : batch));
     };
 
+    let submittedContentId: number | undefined;
     const ctrl = generateImage(
       requestParams,
       (event: ImageSSEEvent) => {
+        if (event.contentId) submittedContentId = event.contentId;
         switch (event.type) {
           case 'queue':
             updateBatch(batch => ({ ...batch, phase: event.status === 'processing' ? 'processing' : 'queued', statusMessage: event.message || '图片任务排队中...' }));
@@ -528,6 +559,7 @@ export default function ImageGenPage() {
             if (event.index !== undefined) {
               updateBatch(batch => ({
                 ...batch,
+                statusMessage: event.message || batch.statusMessage,
                 failedIndexes: batch.failedIndexes.includes(event.index!)
                   ? batch.failedIndexes
                   : [...batch.failedIndexes, event.index!],
@@ -537,14 +569,16 @@ export default function ImageGenPage() {
           case 'complete': {
             const completedUrls = (event.imageUrls || []).filter(Boolean);
             if (completedUrls.length > 0) {
-              setGeneratedImages(previous => [...previous, ...completedUrls]);
               setHistory(previous => [
                 ...completedUrls.map((url, index) => ({
-                  id: event.contentId ? `${event.contentId}_${index}` : `local-${batchId}_${index}`,
+                  id: submittedContentId ? `${submittedContentId}_${index}` : `local-${batchId}_${index}`,
                   prompt: batchPrompt,
                   imageUrl: url,
                   model: batchModel,
-                  createdAt: new Date(),
+                  createdAt: batchCreatedAt,
+                  galleryId: batchId,
+                  slotIndex: index,
+                  count: completedUrls.length,
                   aspectRatio: batchAspectRatio,
                   requestParams,
                 })),
@@ -651,7 +685,7 @@ export default function ImageGenPage() {
     const contentId = 'contentId' in record ? record.contentId : /^\d+_/.test(record.id) ? Number(record.id.split('_')[0]) : undefined;
     const key = record.id;
     if (busyRecordsRef.current.has(key)) return;
-    if (!window.confirm('确定要删除这条图片生成记录吗？')) return;
+    if (!window.confirm((record.count || 1) > 1 ? `确定删除这条任务及其全部 ${record.count} 张图片记录吗？` : '确定要删除这条图片生成记录吗？')) return;
     busyRecordsRef.current.add(key);
     setBusyRecords(new Set(busyRecordsRef.current));
     try {
@@ -660,13 +694,10 @@ export default function ImageGenPage() {
         deletedContentIdsRef.current.add(contentId);
         setHistoryTotal(previous => Math.max(0, previous - 1));
       }
-      const removedUrls = new Set(history.filter(item => item.id === key || (contentId && Number(item.id.split('_')[0]) === contentId)).map(item => item.imageUrl));
       setHistory(previous => previous.filter(item => item.id !== key && (!contentId || Number(item.id.split('_')[0]) !== contentId)));
       batchControllersRef.current.get(key)?.abort();
       batchControllersRef.current.delete(key);
       setActiveBatches(previous => previous.filter(batch => batch.id !== key && (!contentId || batch.contentId !== contentId)));
-      if ('imageUrl' in record) removedUrls.add(record.imageUrl);
-      setGeneratedImages(previous => previous.filter(url => !removedUrls.has(url)));
       setError(null);
     } catch (error: any) { setError(error?.message || '删除失败，请稍后重试'); }
     finally { busyRecordsRef.current.delete(key); setBusyRecords(new Set(busyRecordsRef.current)); }
@@ -679,9 +710,25 @@ export default function ImageGenPage() {
 
   const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate(); } };
 
-  const generatedImageUrls = new Set(generatedImages);
-  const visibleHistory = history.filter(item => !generatedImageUrls.has(item.imageUrl));
-  const hasCurrentWork = generatedImages.length > 0 || activeBatches.length > 0;
+  const activeContentIds = new Set(activeBatches.map(batch => batch.contentId).filter(Boolean));
+  const galleryCards = [
+    ...activeBatches.flatMap(batch => batch.images.map((url, index) => ({
+      key: `${batch.galleryId || batch.contentId || batch.id}_${index}`,
+      record: batch as ActiveImageBatch | GeneratedImage, batch, image: undefined as GeneratedImage | undefined,
+      index, count: batch.count, url, contentId: batch.contentId,
+      status: (url ? 'completed' : batch.phase === 'failed' || batch.failedIndexes.includes(index) ? 'failed'
+        : batch.phase === 'review' || batch.phase === 'checking' ? 'review' : 'processing') as GalleryFilter,
+    }))),
+    ...history.filter(item => !activeContentIds.has(Number(item.id.split('_')[0]))).map(item => ({
+      key: `${item.galleryId || item.id.split('_')[0]}_${item.slotIndex ?? 0}`,
+      record: item as ActiveImageBatch | GeneratedImage, batch: undefined as ActiveImageBatch | undefined, image: item,
+      index: item.slotIndex ?? 0, count: item.count || 1, url: item.imageUrl,
+      contentId: /^\d+_/.test(item.id) ? Number(item.id.split('_')[0]) : undefined,
+      status: 'completed' as GalleryFilter,
+    })),
+  ].sort((a, b) => b.record.createdAt.getTime() - a.record.createdAt.getTime()
+    || (b.contentId || 0) - (a.contentId || 0) || a.index - b.index || a.key.localeCompare(b.key));
+  const visibleCards = galleryCards.filter(card => galleryFilter === 'all' || card.status === galleryFilter);
   const selectedMingFeiRate = models.find(model => model.id === 'gpt-image-2-mingfei')?.resolutionPrices?.[mingFeiResolution];
 
   const displayRate = selectedModel === 'gpt-image-2-mingfei' && Number.isFinite(selectedMingFeiRate)
@@ -691,36 +738,39 @@ export default function ImageGenPage() {
 
   return (
     <div className="image-studio">
-      <header className="ig-header"><h1>图片<span>{generatedImages.length + visibleHistory.length}</span></h1>{generatedImages.length > 0 && <button type="button" className="ig-text-button" onClick={() => setGeneratedImages([])}><RotateCcw size={14} />清空本次</button>}</header>
+      <header className="ig-header"><h1>图片<span>{galleryCards.length}</span></h1><span className="ig-sort-hint">最新提交在前</span></header>
       <div className="ig-workspace">
         <section className="ig-gallery" aria-label="我的作品">
+          <div className="ig-gallery-filters" role="group" aria-label="生成记录筛选">
+            {GALLERY_FILTERS.map(filter => <button key={filter.value} type="button" aria-pressed={galleryFilter === filter.value}
+              onClick={() => setGalleryFilter(filter.value)}>{filter.label}<span>{filter.value === 'all' ? galleryCards.length : galleryCards.filter(card => card.status === filter.value).length}</span></button>)}
+          </div>
           <div className="ig-gallery-content">
-            {generatedImages.length > 0 && <section className="ig-result-section"><h3>本次生成<span>{generatedImages.length} 张</span></h3><div className="ig-artwork-grid">{generatedImages.map((url, index) => {
-              const record = history.find(item => item.imageUrl === url);
-              return <ImageCard key={url + index} url={url} index={index} onPreview={() => setLightboxUrl(url)} onEdit={() => void continueEditing(url)} editing={referenceImporting}
-                actionBusy={record ? busyRecords.has(record.id) : false} onRegenerate={record ? () => void prepareRegeneration(record) : undefined} onDelete={record ? () => void deleteImageRecord(record) : undefined} />;
-            })}</div></section>}
-            {activeBatches.map((batch, batchIndex) => <section key={batch.id} className="ig-batch"><header><div><h3>{batchPhaseLabel(batch.phase)} · {batch.contentId ? `任务 #${batch.contentId}` : `批次 ${batchIndex + 1}`}</h3><p title={batch.prompt}>{batch.statusMessage || batch.prompt}</p></div>{batch.persisted || batch.contentId ? <span className="ig-processing">{batchPhaseLabel(batch.phase)}</span> : <button type="button" className="ig-text-button" onClick={() => handleCancelBatch(batch.id)}><Square size={13} />取消本批</button>}</header><div className="ig-artwork-grid">{batch.images.map((url, index) => url ? <ImageCard key={index} url={url} index={index} onPreview={() => setLightboxUrl(url)} onEdit={() => void continueEditing(url)} editing={referenceImporting} /> : batch.phase === 'failed' || batch.failedIndexes.includes(index) ? <div className="ig-failed" key={index}><AlertCircle size={24} /><span>图片 {index + 1} 生成失败</span></div> : <PlaceholderCard key={index} index={index} progress={batch.progresses[index] || 0} phase={batch.phase} />)}</div>
-              {batch.phase === 'failed' && <div className="ig-record-actions" aria-label={`任务 ${batch.contentId || batchIndex + 1} 操作`}>
-                <button type="button" className="ig-text-button" disabled={busyRecords.has(batch.id) || referenceImporting} onClick={() => void prepareRegeneration(batch)}><RotateCcw size={14} />重新生成</button>
-                <button type="button" className="ig-text-button ig-delete" disabled={busyRecords.has(batch.id)} onClick={() => void deleteImageRecord(batch)}><Trash2 size={14} />删除</button>
-              </div>}
-            </section>)}
-
-            {visibleHistory.length > 0 && <section className="ig-result-section"><div className="ig-artwork-grid">{visibleHistory.map(item => <article className="ig-artwork" key={item.id}>
-              {item.missing ? <div className="ig-missing"><AlertCircle size={25} /><strong>原文件暂时无法读取</strong><div><button type="button" className="ig-text-button" disabled={recoveringHistoryIds.has(Number.parseInt(item.id.split('_')[0], 10))} onClick={() => void recoverHistoryImage(item)}>{recoveringHistoryIds.has(Number.parseInt(item.id.split('_')[0], 10)) ? '获取中…' : '重新获取'}</button></div></div>
-                : <button type="button" className="ig-artwork-preview" aria-label="预览历史图片" onClick={() => setLightboxUrl(item.imageUrl)}><img src={item.imageUrl} alt="历史图片" loading="lazy" onError={() => markHistoryImageMissing(item.id)} /><span className="ig-preview-badge"><Maximize2 size={15} /></span></button>}
-              {!item.missing && <div className="ig-artwork-footer"><button type="button" aria-label="继续改图" className="ig-edit" disabled={referenceImporting} onClick={() => void continueEditing(item.imageUrl)}><Pencil size={14} />改图</button><div className="ig-artwork-actions"><details className="ig-card-menu"><summary aria-label="更多操作" title="更多操作"><MoreHorizontal size={17} /></summary><div>
-                {item.prompt && <button type="button" className="ig-icon-button" aria-label="套用提示词" title="套用提示词" onClick={() => { setPrompt(item.prompt); textareaRef.current?.focus(); }}><RotateCcw size={15} /></button>}
-                </div></details><button type="button" className="ig-icon-button" aria-label="下载历史图片" title="下载原图" onClick={event => void downloadImageFile(event, item.imageUrl, 'generated-image-' + item.id + '.png')}><Download size={16} /></button>
-              </div></div>}
-              <div className="ig-record-actions">
-                <button type="button" className="ig-text-button" disabled={busyRecords.has(item.id) || referenceImporting} onClick={() => void prepareRegeneration(item)}><RotateCcw size={14} />重新生成</button>
-                <button type="button" className="ig-text-button ig-delete" disabled={busyRecords.has(item.id)} onClick={() => void deleteImageRecord(item)}><Trash2 size={14} />删除</button>
-              </div>
-            </article>)}</div>{historyPage * 12 < historyTotal && <button type="button" className="ig-load-more" disabled={historyLoading} onClick={() => void loadMoreHistory()}>{historyLoading ? '加载中…' : '加载更多作品'}<ChevronDown size={15} /></button>}</section>}
-
-            {!hasCurrentWork && visibleHistory.length === 0 && <div className="ig-empty"><ImageIcon size={34} strokeWidth={1.1} /><span>还没有作品</span></div>}
+            <div className="ig-artwork-grid ig-unified-grid">
+              {visibleCards.map(({ key, record, batch, image, index, count, url, contentId, status }) => {
+                const canManage = !batch || batch.phase === 'failed';
+                const statusLabel = image?.missing ? '文件待恢复' : status === 'completed' ? '成功' : batchPhaseLabel(batch?.phase === 'checking' ? 'checking' : status === 'failed' ? 'failed' : batch?.phase);
+                return <article className="ig-artwork ig-task-card" key={key} data-task-id={contentId || record.id} data-status={status} aria-label={`${contentId ? '任务 #' + contentId : '本次任务'} · 图片 ${index + 1}`}>
+                  <header className="ig-task-heading"><span className={`ig-task-status ig-task-status-${image?.missing ? 'review' : status}`}>{statusLabel}</span><span>{count > 1 ? `第 ${index + 1} / ${count} 张` : '1 张'}</span></header>
+                  {image?.missing ? <div className="ig-missing"><AlertCircle size={25} /><strong>原文件暂时无法读取</strong><button type="button" className="ig-text-button" disabled={recoveringHistoryIds.has(contentId!)} onClick={() => void recoverHistoryImage(image)}>{recoveringHistoryIds.has(contentId!) ? '获取中…' : '重新获取'}</button></div>
+                    : url ? <button type="button" className="ig-artwork-preview" aria-label="预览图片" onClick={() => setLightboxUrl(url)}><img src={url} alt={image ? '历史图片' : `生成图片 ${index + 1}`} loading="lazy" onError={image ? () => markHistoryImageMissing(image.id) : undefined} /><span className="ig-preview-badge"><Maximize2 size={15} /></span></button>
+                    : <PlaceholderCard index={index} progress={batch?.progresses[index] || 0} phase={status === 'failed' ? 'failed' : batch?.phase} />}
+                  <div className="ig-task-info">
+                    <p className="ig-task-prompt" title={record.prompt}>{record.prompt || '未填写描述'}</p>
+                    <div className="ig-task-meta"><span>{contentId ? `任务 #${contentId}` : '本次任务'}</span><time dateTime={record.createdAt.toISOString()}>{record.createdAt.getTime() ? record.createdAt.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '时间未记录'}</time></div>
+                    <p className="ig-task-detail" title={batch?.statusMessage || record.model}>{batch && !url ? batch.statusMessage : `${models.find(model => model.id === record.model)?.name || record.model} · ${record.aspectRatio || '默认比例'}`}</p>
+                  </div>
+                  <div className="ig-record-actions" aria-label={`任务 ${contentId || record.id} 操作`}>
+                    {url && !image?.missing && <><button type="button" aria-label="继续改图" className="ig-text-button" disabled={referenceImporting} onClick={() => void continueEditing(url)}><Pencil size={14} />改图</button><button type="button" className="ig-text-button" aria-label="下载图片" onClick={event => void downloadImageFile(event, url, `generated-image-${contentId || record.id}-${index + 1}.png`)}><Download size={14} />下载</button></>}
+                    {canManage && <><button type="button" className="ig-text-button ig-regenerate" title={count > 1 ? '套用整批生成参数' : '套用生成参数'} disabled={busyRecords.has(record.id) || referenceImporting} onClick={() => void prepareRegeneration(record)}><RotateCcw size={14} />重新生成</button><button type="button" className="ig-text-button ig-delete" disabled={busyRecords.has(record.id)} onClick={() => void deleteImageRecord(record)}><Trash2 size={14} />删除</button></>}
+                    {batch && !canManage && !batch.contentId && !batch.persisted && <button type="button" className="ig-text-button" onClick={() => handleCancelBatch(batch.id)}><Square size={13} />取消本批</button>}
+                    {batch && !canManage && !url && (batch.contentId || batch.persisted) && <span className="ig-task-wait">{status === 'review' ? '结果待核实，请勿重复提交' : '后台生成中，可继续提交其他任务'}</span>}
+                  </div>
+                </article>;
+              })}
+            </div>
+            {visibleCards.length === 0 && <div className="ig-empty"><ImageIcon size={34} strokeWidth={1.1} /><span>{galleryCards.length ? '已加载记录中暂无此状态的图片' : '还没有作品'}</span></div>}
+            {historyPage * HISTORY_PAGE_SIZE < historyTotal && <button type="button" className="ig-load-more" disabled={historyLoading} onClick={() => void loadMoreHistory()}>{historyLoading ? '加载中…' : '加载更多记录'}<ChevronDown size={15} /></button>}
           </div>
         </section>
         <form className="ig-composer" onSubmit={event => { event.preventDefault(); handleGenerate(); }}>

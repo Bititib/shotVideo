@@ -140,4 +140,30 @@
   .image-studio .ig-submit { min-width:44px; width:44px; height:40px; padding:0; }
   .ig-submit > span { display:none; }
 }
+.ig-sort-hint { color:var(--ig-muted); font-size:12px; }
+.ig-gallery-filters { display:flex; flex-wrap:wrap; gap:6px; padding:0 2px 14px; }
+.image-studio .ig-gallery-filters button { display:flex; align-items:center; gap:7px; min-height:44px; padding:8px 13px; border:1px solid transparent; border-radius:10px; background:transparent; color:var(--ig-ink); font-size:13px; }
+.ig-gallery-filters button[aria-pressed="true"] { border-color:#c9d4c1; background:var(--ig-soft); color:var(--ig-accent); font-weight:600; }
+.ig-gallery-filters button:hover { background:var(--ig-soft); }
+.ig-gallery-filters button > span { font-size:11px; font-weight:400; }
+.ig-unified-grid { grid-template-columns:repeat(4,minmax(0,1fr)); align-items:stretch; }
+.ig-task-card { display:flex; flex-direction:column; padding:12px; border:1px solid var(--ig-line); border-radius:16px; background:var(--ig-surface); }
+.ig-task-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; font-size:11px; color:var(--ig-muted); }
+.ig-task-status { padding:4px 8px; border-radius:6px; color:var(--ig-accent); background:var(--ig-soft); }
+.ig-task-status-failed { color:#a33d34; background:#fff0eb; }
+.ig-task-status-review { color:#805c24; background:#fbf0db; }
+.ig-task-card .ig-artwork-preview,.ig-task-card .ig-placeholder,.ig-task-card .ig-failed,.ig-task-card .ig-missing { width:100%; height:auto; min-height:0; aspect-ratio:1; border-radius:10px; flex-shrink:0; box-sizing:border-box; }
+.ig-task-card[data-status="review"] .ig-failed { color:#805c24; background:#fcf6e9; border-color:#e9d9b5; }
+.ig-task-info { padding:12px 0 8px; min-width:0; }
+.ig-task-prompt { margin:0 0 8px; color:var(--ig-ink); font-size:13px; line-height:1.6; height:3.2em; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; }
+.ig-task-meta { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:4px; color:#66705f; font-size:11px; font-variant-numeric:tabular-nums; }
+.ig-task-detail { margin:7px 0 0; height:3em; line-height:1.5; font-size:11px; color:#66705f; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; }
+.ig-task-card .ig-record-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); grid-template-rows:44px 44px; gap:6px; height:103px; box-sizing:border-box; flex-shrink:0; margin-top:auto; padding-top:8px; border-top:1px solid var(--ig-line); align-content:start; }
+.ig-task-card .ig-regenerate { grid-column:1; grid-row:2; }
+.ig-task-card .ig-delete { grid-column:2; grid-row:2; }
+.image-studio .ig-task-card .ig-record-actions .ig-text-button { min-width:0; padding:6px; font-size:12px; white-space:nowrap; }
+.ig-task-wait { grid-column:1/-1; padding:12px 0; color:#66705f; font-size:11px; line-height:1.6; }
+@media (max-width:1399px) { .ig-unified-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media (max-width:1100px) { .ig-unified-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:559px) { .ig-unified-grid { grid-template-columns:minmax(0,1fr); } .ig-gallery-filters { gap:2px; padding-bottom:10px; } .image-studio .ig-gallery-filters button { padding:8px; font-size:12px; gap:4px; } .ig-task-card { padding:12px; } }
 @media (prefers-reduced-motion:reduce) { .image-studio *, .image-studio *::before,.image-studio *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
