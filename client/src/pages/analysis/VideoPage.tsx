@@ -16,6 +16,7 @@ import { fetchVideoModels, generateVideo, getCachedVideoModels, type VideoModel,
 import ImageSlicerModal from '../../components/ImageSlicerModal';
 import FaceProcessingModal from '../../components/FaceProcessingModal';
 import VideoModelStatusIndicator from '../../components/VideoModelStatusIndicator';
+import { VideoPoster } from '../../components/MediaPreview';
 import { contentApi } from '../../api/content';
 import { adminApi } from '../../api/admin';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
@@ -1795,10 +1796,7 @@ export default function VideoPage() {
                             <WoodenFishLoader progress={task.progress} statusMessage={task.statusMessage} />
                           ) : task.status === 'complete' && task.videoUrl ? (
                             <>
-                              <video src={getVideoPlayUrl(task.videoUrl)} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="none" playsInline muted loop
-                                onLoadedMetadata={(e) => showVideoPreviewFrame(e.currentTarget)}
-                                onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
-                                onMouseLeave={(e) => { e.currentTarget.pause(); showVideoPreviewFrame(e.currentTarget); }} />
+                              <VideoPoster src={task.videoUrl || ''} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} />
                               <div className="absolute inset-0 bg-black/20 flex items-center justify-center group-hover:bg-black/5 transition-colors cursor-pointer" onClick={() => setPlayingVideo({ url: task.videoUrl!, prompt: restorePrompt(task.prompt) })}>
                                 <span className="w-11 h-11 rounded-full border border-white/70 bg-black/20 backdrop-blur-sm flex items-center justify-center group-hover:scale-105 transition-transform"><Play className="w-5 h-5 text-white fill-white/10 translate-x-0.5" /></span>
                               </div>
@@ -1900,10 +1898,7 @@ export default function VideoPage() {
                             </div>
                           ) : (
                             <>
-                              <video src={getVideoPlayUrl(h.resultUrl)} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} preload="none" playsInline muted loop
-                                onLoadedMetadata={(e) => showVideoPreviewFrame(e.currentTarget)}
-                                onMouseEnter={(e) => e.currentTarget.play().catch(() => { })}
-                                onMouseLeave={(e) => { e.currentTarget.pause(); showVideoPreviewFrame(e.currentTarget); }} />
+                              <VideoPoster src={h.resultUrl || ''} className={`w-full h-full ${isVertical(h.metadata?.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} />
                               <div className="absolute inset-0 bg-black/20 flex items-center justify-center group-hover:bg-black/5 transition-colors">
                                 <span className="w-11 h-11 rounded-full border border-white/70 bg-black/20 backdrop-blur-sm flex items-center justify-center group-hover:scale-105 transition-transform"><Play className="w-5 h-5 text-white fill-white/10 translate-x-0.5" /></span>
                               </div>

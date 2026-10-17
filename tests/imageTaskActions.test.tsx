@@ -174,7 +174,9 @@ describe('统一图片网格', () => {
     expect(cards()).toHaveLength(2);
     expect(cards()[0]).toBe(before[0]);
     expect(cards()[1]).toBe(before[1]);
-    expect(cards().map(card => card.querySelector('img')?.getAttribute('src'))).toEqual(['/api/uploads/first.png', '/api/uploads/second.png']);
+    expect(cards().map(card => card.querySelector('img')?.getAttribute('src'))).toEqual(['/api/uploads/first.png?preview=image', '/api/uploads/second.png?preview=image']);
+    fireEvent.click(cards()[0].querySelector<HTMLButtonElement>('[aria-label="预览图片"]')!);
+    expect(document.querySelector('.ig-lightbox img')?.getAttribute('src')).toBe('/api/uploads/first.png');
   });
 
   it('keeps a live result at its submission position even when another task finishes first', async () => {
@@ -223,6 +225,8 @@ describe('统一图片网格', () => {
     render(<ImageGenPage />);
     const image = await screen.findByRole('img', { name: '历史图片' });
     expect(document.querySelector('time')?.dateTime).toBe('2026-10-16T08:00:00.000Z');
+    fireEvent.error(image); // derivative failed: try original before flagging the task
+    expect(image.getAttribute('src')).toBe('/api/uploads/broken.png');
     fireEvent.error(image);
     await act(async () => { await polling.run!(); });
     expect(screen.getByText('原文件暂时无法读取')).toBeTruthy();
@@ -230,6 +234,6 @@ describe('统一图片网格', () => {
     vi.mocked(contentApi.getMyContents).mockResolvedValue({ items: [{ ...done, resultUrl: '/api/uploads/recovered.png' }], total: 1 });
     await act(async () => { await polling.run!(); });
     expect(screen.queryByText('原文件暂时无法读取')).toBeNull();
-    expect(screen.getByRole('img').getAttribute('src')).toBe('/api/uploads/recovered.png');
+    expect(screen.getByRole('img').getAttribute('src')).toBe('/api/uploads/recovered.png?preview=image');
   });
 });

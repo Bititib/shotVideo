@@ -7,6 +7,8 @@ import jwt from 'jsonwebtoken';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import Database from 'better-sqlite3';
+import sharp from 'sharp';
+import { mediaPreviews } from '../server/middleware/mediaPreviews.js';
 vi.mock('../server/db/index.js', async()=>{
   const {default:Database}=await import('better-sqlite3');
   const {drizzle}=await import('drizzle-orm/better-sqlite3');
@@ -40,7 +42,8 @@ beforeAll(async()=>{
   const app=express();app.use(express.json({limit:'60mb'}));
   app.use('/api/media',mediaRoutes);app.use('/api/auth',authRoutes);app.use('/api/admin/billing-reservations',billingRoutes);
   app.post('/references',privateReferences,(req,res)=>res.json(req.body));
-  app.use('/uploads',protectUploads,express.static(temp));app.use('/api/uploads',protectUploads,express.static(temp));
+  const previews = mediaPreviews(temp, path.join(temp, 'preview-cache'));
+  app.use('/uploads',protectUploads,previews,express.static(temp,{cacheControl:false}));app.use('/api/uploads',protectUploads,previews,express.static(temp,{cacheControl:false}));
   app.get('/video',protectVideoSource,(_req,res)=>res.json({ok:true}));
   server=await new Promise(resolve=>{const listener=app.listen(0,'127.0.0.1',()=>resolve(listener));});
   base=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -48,6 +51,40 @@ beforeAll(async()=>{
 afterAll(async()=>{await new Promise<void>(resolve=>server.close(()=>resolve()));sqlite.close();vi.unstubAllEnvs();fs.rmSync(temp,{recursive:true,force:true});});
 
 describe('production release safety',()=>{
+  it('authorizes preview requests before generation or cache validation, retaining original Range delivery', async () => {
+    const resource = '/uploads/preview-security.png';
+    await sharp({ create: { width: 1600, height: 900, channels: 3, background: 'green' } }).png().toFile(path.join(temp, 'preview-security.png'));
+    registerUpload(resource, 1);
+    for (const prefix of ['/uploads', '/api/uploads']) {
+      const url = `${base}${prefix}/preview-security.png?preview=image`;
+      expect((await fetch(url)).status).toBe(404);
+      expect((await fetch(url, { headers: headers(2) })).status).toBe(404);
+      const own = await fetch(url, { headers: headers(1) });
+      expect(own.status).toBe(200);
+      expect(own.headers.get('content-type')).toContain('image/webp');
+      expect(own.headers.get('cache-control')).toBe('private, no-cache, must-revalidate');
+      expect(own.headers.get('vary')).toContain('Cookie');
+      const etag = own.headers.get('etag')!;
+      expect(etag).toBeTruthy();
+      expect(await sharp(Buffer.from(await own.arrayBuffer())).metadata()).toMatchObject({ width: 640, height: 360 });
+      // Undici otherwise injects request no-cache for conditional requests, disabling Express freshness.
+      const cached = await fetch(url, { headers: { ...headers(1), 'If-None-Match': etag, 'Cache-Control': 'max-age=0' } });
+      expect(cached.status).toBe(304);
+      const denied = await fetch(url, { headers: { ...headers(2), 'If-None-Match': etag } });
+      expect(denied.status).toBe(404);
+      expect(denied.headers.get('cache-control')).toBe('no-store');
+      const head = await fetch(url, { method: 'HEAD', headers: headers(1) });
+      expect(head.status).toBe(200); expect(await head.text()).toBe('');
+      const original = await fetch(`${base}${prefix}/preview-security.png`, { headers: { ...headers(1), Range: 'bytes=0-7' } });
+      expect(original.status).toBe(206);
+      expect(Buffer.from(await original.arrayBuffer())).toEqual(fs.readFileSync(path.join(temp, 'preview-security.png')).subarray(0, 8));
+    }
+    const signed = new URL(signedMediaUrl(resource, base)); signed.searchParams.set('preview', 'image');
+    expect((await fetch(signed)).status).toBe(200);
+    const expired = Math.floor(Date.now()/1000)-1;
+    expect((await fetch(`${base}${resource}?preview=image&expires=${expired}&signature=${mediaSignature(resource,expired)}`)).status).toBe(404);
+    expect((await fetch(`${base}${resource}?preview=poster`, { headers: headers(1) })).status).toBe(415);
+  });
   it('allows anonymous completed video links, aliases and downloads, but keeps references and unfinished results private', async () => {
     const result = '/uploads/public-result.mp4';
     const reference = '/uploads/public-reference.mp4';

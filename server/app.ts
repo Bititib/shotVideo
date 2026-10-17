@@ -1,5 +1,6 @@
 import { protectUploads } from './middleware/uploadAccess.js';
 import { h264Uploads } from './middleware/h264Uploads.js';
+import { mediaPreviews } from './middleware/mediaPreviews.js';
 import { privateReferences } from './middleware/privateReferences.js';
 import { publicReferences } from './middleware/publicReferences.js';
 import mediaRoutes from './routes/media.js';
@@ -65,8 +66,8 @@ export async function createApp() {
     fs.mkdirSync(uploadDir, { recursive: true });
   }
   // Completed video results are public; other uploads still require authorization.
-  app.use('/uploads', protectUploads, h264Uploads(uploadDir), express.static(uploadDir, { fallthrough:false, cacheControl:false }));
-  app.use('/api/uploads', protectUploads, h264Uploads(uploadDir), express.static(uploadDir, { fallthrough:false, cacheControl:false }));
+  app.use('/uploads', protectUploads, mediaPreviews(uploadDir), h264Uploads(uploadDir), express.static(uploadDir, { fallthrough:false, cacheControl:false }));
+  app.use('/api/uploads', protectUploads, mediaPreviews(uploadDir), h264Uploads(uploadDir), express.static(uploadDir, { fallthrough:false, cacheControl:false }));
 
   // OpenAI 兼容代理层（不走 /api 前缀）
   app.use('/v1', privateReferences, v1Routes);

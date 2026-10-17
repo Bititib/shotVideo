@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { prepareVideoForDelivery } from './videoCompatibilityService.js';
+import { createMediaPreview } from './mediaPreviewService.js';
 import { ChannelService } from './channelService.js';
 import { isHmStudioChannel, shouldSendHmStudioAuthorization } from './hmStudioAdapter.js';
 import { isLongxiaChannel } from './longxiaVideoAdapter.js';
@@ -22,6 +23,8 @@ export function originalVideoPathFor(filePath: string): string {
 export const preferredVideoDownloadPath = prepareVideoForDelivery;
 
 function localVideoUrl(filePath: string): string {
+  // Prepare the card cover without delaying completion or making users download video for a preview.
+  void createMediaPreview(filePath, 'poster').catch(() => {});
   return '/uploads/' + path.relative(path.resolve('data/uploads'), filePath).split(path.sep).join('/');
 }
 

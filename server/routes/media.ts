@@ -6,6 +6,7 @@ import { env } from '../config/env.js';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { createPrivateMediaStore } from '../services/privateMediaStore.js';
 import { prepareVideoForDelivery, videoDeliveryContentType } from '../services/videoCompatibilityService.js';
+import { createMediaPreview } from '../services/mediaPreviewService.js';
 
 const router=Router();
 let store: ReturnType<typeof createPrivateMediaStore>;
@@ -38,14 +39,25 @@ router.post('/:id/link',authMiddleware,(req:AuthRequest,res)=>{
 router.get('/:id',async (req:AuthRequest,res)=>{
   const media=privateMediaStore().get(req.params.id);
   if(!media) {res.status(404).json({error:'素材不存在'});return;}
-  res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type',media.mime);
+  res.setHeader('Cache-Control','private, no-cache, must-revalidate');res.setHeader('Content-Type',media.mime);
+  res.vary('Cookie'); res.vary('Authorization');
   res.setHeader('X-Content-Type-Options','nosniff');
   try {
     const source = privateMediaStore().filePath(media);
+    if (req.query.preview !== undefined) {
+      const kind = req.query.preview;
+      if (!(kind === 'image' && media.mime.startsWith('image/') || kind === 'poster' && media.mime.startsWith('video/'))) {
+        res.setHeader('Cache-Control', 'no-store'); res.status(415).end(); return;
+      }
+      const preview = await createMediaPreview(source, kind as 'image' | 'poster');
+      res.type(kind === 'image' ? 'image/webp' : 'image/jpeg');
+      res.sendFile(preview, { cacheControl: false }); return;
+    }
     const file = media.mime.startsWith('video/') ? await prepareVideoForDelivery(source) : source;
     if (media.mime.startsWith('video/')) res.type(videoDeliveryContentType(file));
-    res.sendFile(file);
+    res.sendFile(file, { cacheControl: false });
   } catch {
+    res.setHeader('Cache-Control', 'no-store');
     res.status(502).json({ error: '视频兼容版准备失败，请稍后重试' });
   }
 });

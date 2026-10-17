@@ -2,6 +2,7 @@ import { startPolling } from '../../utils/polling';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Image as ImageIcon, ArrowUpRight, Pencil, Plus, ChevronDown, SlidersHorizontal, Square, Download, RotateCcw, Loader2, AlertCircle, Monitor, Smartphone, RectangleHorizontal, X, Maximize2, Trash2 } from 'lucide-react';
 import './ImageGenPage.css';
+import { ImageThumbnail } from '../../components/MediaPreview';
 import { downloadGeneratedImage, fetchImageModels, generateImage, generatedImageReference, getCachedImageModels, imageReferenceLimit, type ImageGenerateParams, type ImageModel, type ImageSSEEvent } from '../../api/imageGen';
 import { contentApi } from '../../api/content';
 import { useImageDropPaste } from '../../hooks/useImageDropPaste';
@@ -753,7 +754,7 @@ export default function ImageGenPage() {
                 return <article className="ig-artwork ig-task-card" key={key} data-task-id={contentId || record.id} data-status={status} aria-label={`${contentId ? '任务 #' + contentId : '本次任务'} · 图片 ${index + 1}`}>
                   <header className="ig-task-heading"><span className={`ig-task-status ig-task-status-${image?.missing ? 'review' : status}`}>{statusLabel}</span><span>{count > 1 ? `第 ${index + 1} / ${count} 张` : '1 张'}</span></header>
                   {image?.missing ? <div className="ig-missing"><AlertCircle size={25} /><strong>原文件暂时无法读取</strong><button type="button" className="ig-text-button" disabled={recoveringHistoryIds.has(contentId!)} onClick={() => void recoverHistoryImage(image)}>{recoveringHistoryIds.has(contentId!) ? '获取中…' : '重新获取'}</button></div>
-                    : url ? <button type="button" className="ig-artwork-preview" aria-label="预览图片" onClick={() => setLightboxUrl(url)}><img src={url} alt={image ? '历史图片' : `生成图片 ${index + 1}`} loading="lazy" onError={image ? () => markHistoryImageMissing(image.id) : undefined} /><span className="ig-preview-badge"><Maximize2 size={15} /></span></button>
+                    : url ? <button type="button" className="ig-artwork-preview" aria-label="预览图片" onClick={() => setLightboxUrl(url)}><ImageThumbnail src={url} alt={image ? '历史图片' : `生成图片 ${index + 1}`} loading="lazy" onError={image ? () => markHistoryImageMissing(image.id) : undefined} /><span className="ig-preview-badge"><Maximize2 size={15} /></span></button>
                     : <PlaceholderCard index={index} progress={batch?.progresses[index] || 0} phase={status === 'failed' ? 'failed' : batch?.phase} />}
                   <div className="ig-task-info">
                     <p className="ig-task-prompt" title={record.prompt}>{record.prompt || '未填写描述'}</p>
