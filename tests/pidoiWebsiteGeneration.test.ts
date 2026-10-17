@@ -102,6 +102,68 @@ describe('Pidoi 网页提交到保存和结算', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('兼容入口明确返回 451 时结束失败、退回预占费用且不重新提交', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+      .mockResolvedValueOnce(Response.json({ error: { code: 'content_policy_violation', message: 'Content rejected' } }, { status: 451 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await generate();
+    await vi.waitFor(() => expect(row().status).toBe('failed'));
+    expect(row().cost).toBe(0);
+    expect(JSON.parse(row().metadata)).toMatchObject({ billingStatus: 'refunded',
+      submissionFailure: { httpStatus: 451, confirmedFailure: true },
+      upstreamResponses: [{ httpStatus: 451, state: 'response_without_id' }] });
+    expect(reservation().state).toBe('refunded');
+    expect(balance()).toBe(100);
+    await recoverPidoiImage(row().id);
+    expect(balance()).toBe(100);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(localizeRecoveredImages).not.toHaveBeenCalled();
+  });
+
+  async function legacy451(overrides: Record<string, any> = {}) {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('connection lost')));
+    await generate();
+    await vi.waitFor(() => expect(pidoiImageActive.size).toBe(0));
+    const r = row();
+    const metadata = { ...JSON.parse(r.metadata), pidoiSubmissionProtocol: 'openai-compatible',
+      upstreamResponses: [{ id: '', httpStatus: 451, state: 'response_without_id' }],
+      submissionFailure: { stage: 'submit', index: 0, httpStatus: 451, confirmedFailure: false, message: 'Content rejected (451)' },
+      ...overrides };
+    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify(metadata), r.id);
+    vi.mocked(fetch).mockClear();
+    return r.id;
+  }
+
+  it('旧版误判的单张 451 任务自动修正并且并发/重复恢复只退款一次', async () => {
+    const id = await legacy451();
+    expect(balance()).toBeCloseTo(99.78);
+    await Promise.all([recoverPidoiImage(id), recoverPidoiImage(id)]);
+    await recoverPidoiImage(id);
+    expect(row()).toMatchObject({ status: 'failed', cost: 0 });
+    expect(JSON.parse(row().metadata)).toMatchObject({ billingStatus: 'refunded', requiresReview: false,
+      submissionFailure: { confirmedFailure: true }, failureClassificationCorrection: { reason: 'http_451_rejection' } });
+    expect(reservation().state).toBe('refunded');
+    expect(balance()).toBe(100);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(localizeRecoveredImages).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { count: 2 }, { upstreamTaskId: 'task_accepted' }, { upstreamTaskIds: ['task_accepted'] },
+    { upstreamImageUrls: ['https://storage.test/image.png'] }, { imageUrls: ['/api/uploads/image.png'] },
+    { submissionFailure: { stage: 'poll', httpStatus: 451 } },
+    { upstreamResponses: [{ id: '', httpStatus: 500, state: 'response_without_id' }] },
+    { pidoiSubmissionProtocol: 'async' }, { managedSpecification: true },
+  ])('不对有受理证据、多图或证据不匹配的旧任务退款：%j', async overrides => {
+    const id = await legacy451(overrides);
+    await recoverPidoiImage(id);
+    expect(row().status).toBe('review');
+    expect(balance()).toBeCloseTo(99.78);
+    expect(reservation().state).toBe('review');
+    expect(JSON.parse(row().metadata).failureClassificationCorrection).toBeUndefined();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('图片下载失败保存原结果，下次恢复只下载，不重新生成', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
       .mockResolvedValueOnce(Response.json({ data: [{ url: 'https://storage.test/cat.png' }] }));

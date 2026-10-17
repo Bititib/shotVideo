@@ -39,7 +39,7 @@ async function readResponse(c: Channel, response: Response, options: SubmitOptio
     // A task identifier overrides HTTP status: the submission may have been accepted.
     const taskId = raw?.task_id || raw?.taskId || raw?.data?.task_id || raw?.data?.taskId || raw?.error?.task_id
       || (String(raw?.id || '').startsWith('task_') ? raw.id : '') || response.headers.get('x-task-id');
-    const rejected = submission && !taskId && [400, 401, 402, 403, 404, 405, 413, 415, 422, 429].includes(response.status);
+    const rejected = submission && !taskId && [400, 401, 402, 403, 404, 405, 413, 415, 422, 429, 451].includes(response.status);
     const message = String(raw?.error?.message || raw?.message || text).trim();
     const routeUnavailable = rejected && [404, 405].includes(response.status)
       && (/^(?:404\s+)?(?:page\s+)?not found[.!]?$/i.test(message)

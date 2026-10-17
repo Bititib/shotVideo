@@ -16,6 +16,28 @@ export async function recoverPidoiImage(contentId: number) {
     if (!row || !['processing', 'review'].includes(row.status)) return;
     const m = JSON.parse(row.metadata || '{}');
     if (m.imageProtocol !== 'pidoi-async-v1' || m.managedSpecification) return;
+    // Older versions classified a definite HTTP 451 rejection as an unknown
+    // submission. Correct only single-image compatibility requests with matching
+    // response evidence and no accepted jobs/results. Finalization uses the
+    // reservation ledger transaction, so repeated scans cannot refund twice.
+    if (row.status === 'review' && m.billingStatus === 'review'
+      && m.pidoiSubmissionProtocol === 'openai-compatible' && m.count === 1
+      && m.submissionFailure?.stage === 'submit' && m.submissionFailure.httpStatus === 451
+      && Array.isArray(m.upstreamResponses) && m.upstreamResponses.length === 1
+      && m.upstreamResponses[0]?.httpStatus === 451 && m.upstreamResponses[0]?.state === 'response_without_id'
+      && !m.upstreamResponses[0]?.id
+      && Array.isArray(m.pidoiImageJobs) && m.pidoiImageJobs.length === 0
+      && !m.taskId && !m.upstreamTaskId && !m.requestId && !m.request_id
+      && !m.task_id && !m.upstream_task_id && !m.upstreamTaskIds?.length
+      && !row.result_url && !m.imageUrls?.length && !m.upstreamImageUrls?.length) {
+      const message = m.submissionFailure.message || '上游拒绝图片请求（HTTP 451）';
+      finalizeReservedContent(contentId, 'failed', {
+        submissionFailure: { ...m.submissionFailure, confirmedFailure: true },
+        failureReason: message, progressText: message, failedAt: new Date().toISOString(),
+        failureClassificationCorrection: { from: 'review', reason: 'http_451_rejection', at: new Date().toISOString() },
+      });
+      return;
+    }
     const channel = ChannelService.getChannelRaw(m.channelId, m.channelApiKeyId);
     if (!channel) return;
     diagnostic.channelId = m.channelId;
