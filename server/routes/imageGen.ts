@@ -512,6 +512,8 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
     const entries = [...persistedMetadata.upstreamResponses];
     const evidence = response ? imageResponseEvidence(payload, response.headers, response.status, stage)
       : { ...entries[index], state: entries[index]?.id ? 'captured' : entries[index]?.httpStatus ? 'response_unreadable' : 'no_response' };
+    const taskEvidence = isPidoiImageChannel(channel) ? pidoiTaskEvidence(payload) : undefined;
+    if (taskEvidence) Object.assign(evidence, { id: taskEvidence.taskId, pollPath: taskEvidence.pollPath, state: 'captured' });
     entries[index] = evidence;
     const ids = entries.map(entry => entry.id).filter(Boolean);
     persistJob({ upstreamResponses: entries, upstreamTaskIds: ids, upstreamTaskId: ids[0] || '', taskId: ids[0] || '' });
@@ -579,7 +581,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
               onCompatibility: () => persistJob({ pidoiSubmissionProtocol: 'openai-compatible', progressText: '图片正在后台生成，请稍候' }),
             });
           Object.assign(diagnostic, { stage: 'persist', taskId: task.taskId });
-          persistedMetadata.pidoiImageJobs.push({ index, taskId: task.taskId, status: task.status, sourceUrl: task.imageUrl, protocol: task.protocol, error: task.error });
+          persistedMetadata.pidoiImageJobs.push({ index, taskId: task.taskId, pollPath: task.pollPath, status: task.status, sourceUrl: task.imageUrl, protocol: task.protocol, error: task.error });
           const ids = persistedMetadata.pidoiImageJobs.map((job: any) => job.taskId).filter(Boolean);
           persistJob({ upstreamTaskId: ids[0], taskId: ids[0], upstreamTaskIds: ids,
             pidoiSubmissionProtocol: task.protocol, upstreamImageUrls: persistedMetadata.pidoiImageJobs.map((job: any) => job.sourceUrl).filter(Boolean),
@@ -590,8 +592,17 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
         const message = String(e?.message || '图片提交失败');
         const confirmedFailure = e.confirmedFailure === true && diagnostic.stage === 'submit';
         persistJob({ submissionFailure: { stage: diagnostic.stage, index: diagnostic.index, httpStatus: e.status,
-          confirmedFailure, message, at: new Date().toISOString() } });
+          taskId: e.upstreamTaskId, confirmedFailure, message, at: new Date().toISOString() } });
         if (confirmedFailure && !persistedMetadata.pidoiImageJobs.length) persistFailure(message);
+        else if (confirmedFailure) {
+          // The remaining sequential POSTs were never sent. Mark only these slots
+          // failed, then settle accepted jobs individually without resubmission.
+          for (let index = Number(diagnostic.index); index < count; index++) {
+            if (!persistedMetadata.pidoiImageJobs.some((job: any) => job.index === index))
+              persistedMetadata.pidoiImageJobs.push({ index, status: 'failed', error: message });
+          }
+          persistJob({ progressText: '部分请求被拒绝，正在核对已提交任务' });
+        }
         else {
           reservation.review();
           persistJob({ billingStatus: 'review', failureReason: message,
@@ -1193,5 +1204,6 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
 
 export default router;
 import { isPidoiImageChannel, submitPidoiImage } from '../services/pidoiImageAdapter.js';
+import { pidoiTaskEvidence } from '../services/pidoiImageEvidence.js';
 import { pidoiImageActive, recoverPidoiImage } from '../services/pidoiImageWorker.js';
 import { logImageRequestFailure, type ImageRequestContext } from '../services/imageRequestDiagnostics.js';

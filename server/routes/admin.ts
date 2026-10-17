@@ -1,4 +1,5 @@
 import modelSpecificationRoutes from './modelSpecifications.js';
+import pidoiImageAdminRoutes from './pidoiImageAdmin.js';
 import { Router, Response } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
@@ -14,6 +15,7 @@ const router = Router();
 // 所有管理路由都需要登录 + 管理员权限
 router.use(authMiddleware, adminMiddleware);
 router.use('/model-specifications', modelSpecificationRoutes);
+router.use('/contents', pidoiImageAdminRoutes);
 
 router.get('/users/:id/models', (req: AuthRequest, res: Response) => {
   try { res.setHeader('Cache-Control', 'no-store'); res.json(UserModelSettingsService.list(Number(req.params.id))); }

@@ -122,7 +122,7 @@ function parseImageRecords(items: any[]) {
     const isReview = metadata.requiresReview || item.status === 'review';
     const isFailed = ['failed', 'error', 'cancelled'].includes(item.status);
     const isProcessing = item.status === 'processing' || item.status === 'queued';
-    const overdue = isProcessing && createdAt.getTime() > 0
+    const overdue = metadata.imageProtocol !== 'pidoi-async-v1' && isProcessing && createdAt.getTime() > 0
       && Date.now() - createdAt.getTime() > Math.max(30 * 60_000, Number(metadata.requestTimeoutMs || 0) + 60_000);
 
     if (isProcessing || isReview || isFailed) {

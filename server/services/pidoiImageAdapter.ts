@@ -1,5 +1,6 @@
 import { imageGenerationTimeout, DEFAULT_IMAGE_GENERATION_TIMEOUT_MS } from './imageGenerationTimeout.js';
 import { extractImageUpstreamTaskId } from './imageTaskMetadataService.js';
+import { pidoiTaskEvidence } from './pidoiImageEvidence.js';
 
 export function isPidoiImageChannel(channel: { baseUrl?: string; name?: string }) {
   try { const host = new URL(channel.baseUrl || '').hostname; return host === 'pidoi.com' || host.endsWith('.pidoi.com'); } catch { return false; }
@@ -7,7 +8,7 @@ export function isPidoiImageChannel(channel: { baseUrl?: string; name?: string }
 type Channel = { baseUrl: string; apiKey: string; timeout?: unknown };
 const apiBase = (c: Channel) => c.baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, '');
 const endpoint = (c: Channel) => apiBase(c) + '/v1/image/generations';
-type PidoiImageTask = { taskId: string; status: 'processing' | 'completed' | 'failed'; progress: number; imageUrl: string; error: string; raw: any; protocol?: 'async' | 'openai-compatible' };
+type PidoiImageTask = { taskId: string; status: 'processing' | 'completed' | 'failed'; progress: number; imageUrl: string; error: string; raw: any; pollPath?: string; protocol?: 'async' | 'openai-compatible' };
 type SubmitOptions = {
   referenceImages?: string[];
   onResponse?: (response: Response, payload?: unknown) => void;
@@ -17,11 +18,22 @@ export class PidoiImageError extends Error {
   constructor(message: string, public confirmedFailure = false) { super(message); }
 }
 export function parsePidoiImageTask(raw: any): PidoiImageTask {
+  const evidence = pidoiTaskEvidence(raw);
+  if (evidence && raw?.code !== 'success') {
+    const data = evidence.node;
+    const state = String(data.status || data.task_status || '').toLowerCase();
+    const status = ['completed', 'succeeded', 'success'].includes(state) ? 'completed'
+      : ['failed', 'failure', 'cancelled', 'canceled'].includes(state) ? 'failed'
+      : ['queued', 'pending', 'in_progress', 'processing', 'running'].includes(state) ? 'processing' : undefined;
+    if (status) return { ...evidence, status, progress: Math.max(0, Math.min(100, parseFloat(data.progress) || 0)),
+      imageUrl: status === 'completed' ? String(data.result_url || data.image_url || data.result?.image_url || data.metadata?.url || '') : '',
+      error: String(data.fail_reason || data.error?.message || data.error || ''), raw };
+  }
   if (raw?.code !== 'success' || !raw.data) throw new PidoiImageError(raw?.message || 'Pidoi 图片任务查询失败');
   const data = raw.data;
   const status = data.status === 'SUCCESS' ? 'completed' : data.status === 'FAILURE' ? 'failed' : 'processing';
   if (!['SUCCESS', 'FAILURE', 'IN_PROGRESS'].includes(data.status)) throw new PidoiImageError('Pidoi 返回未知任务状态');
-  return { taskId: String(data.task_id || ''), status, progress: Math.max(0, Math.min(100, parseFloat(data.progress) || 0)),
+  return { taskId: String(data.task_id || ''), pollPath: evidence?.pollPath, status, progress: Math.max(0, Math.min(100, parseFloat(data.progress) || 0)),
     imageUrl: status === 'completed' ? String(data.result_url || '') : '', error: String(data.fail_reason || ''), raw };
 }
 function safeMessage(c: Channel, message: unknown) {
@@ -37,8 +49,9 @@ async function readResponse(c: Channel, response: Response, options: SubmitOptio
   if (!response.ok) {
     // Only a definite rejection can release funds or select a compatibility endpoint.
     // A task identifier overrides HTTP status: the submission may have been accepted.
-    const taskId = raw?.task_id || raw?.taskId || raw?.data?.task_id || raw?.data?.taskId || raw?.error?.task_id
-      || (String(raw?.id || '').startsWith('task_') ? raw.id : '') || response.headers.get('x-task-id');
+    const evidence = pidoiTaskEvidence(raw || text);
+    const headerId = response.headers.get('x-task-id') || '';
+    const taskId = evidence?.taskId || (/^[A-Za-z0-9_-]{1,200}$/.test(headerId) ? headerId : '');
     const rejected = submission && !taskId && [400, 401, 402, 403, 404, 405, 413, 415, 422, 429, 451].includes(response.status);
     const message = String(raw?.error?.message || raw?.message || text).trim();
     const routeUnavailable = rejected && [404, 405].includes(response.status)
@@ -46,15 +59,17 @@ async function readResponse(c: Channel, response: Response, options: SubmitOptio
         || /cannot\s+(?:post|get)\s+\/|(?:invalid|unknown)\s+(?:url|route|endpoint)|no\s+route/i.test(message)
         || (response.status === 405 && /method not allowed/i.test(message)));
     throw Object.assign(new PidoiImageError(`Pidoi 图片提交失败 (${response.status})${raw?.error?.message || raw?.message ? '：' + safeMessage(c, raw?.error?.message || raw?.message) : ''}`, rejected),
-      { status: response.status, routeUnavailable, upstreamTaskId: taskId || undefined });
+      { status: response.status, routeUnavailable, upstreamTaskId: taskId || undefined,
+        acceptedTask: submission && taskId ? { taskId, pollPath: evidence?.pollPath, status: 'processing', progress: 0, imageUrl: '', error: '', protocol: 'async', raw: {} } : undefined });
   }
   if (!raw) throw new PidoiImageError('Pidoi 响应不是有效 JSON，提交结果待核对');
   return raw;
 }
 
-async function request(c: Channel, suffix: string, body: unknown, fetchImpl: typeof fetch, options: SubmitOptions = {}) {
+async function request(c: Channel, suffix: string, body: unknown, fetchImpl: typeof fetch, options: SubmitOptions = {}, pollPath?: string) {
   try {
-  const response = await fetchImpl(endpoint(c) + suffix, {
+  const safePath = pollPath && pidoiTaskEvidence({ task_id: decodeURIComponent(suffix.slice(1)), task_url: pollPath })?.pollPath;
+  const response = await fetchImpl(safePath ? apiBase(c) + safePath : endpoint(c) + suffix, {
     method: body === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(60_000),
     headers: { Authorization: 'Bearer ' + c.apiKey, 'Content-Type': 'application/json' },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -100,6 +115,11 @@ async function submitCompatibleImage(c: Channel, body: Record<string, any>, fetc
     const response = await fetchImpl(apiBase(c) + path, { method: 'POST', headers, body: requestBody,
       signal: AbortSignal.timeout(Math.max(DEFAULT_IMAGE_GENERATION_TIMEOUT_MS, imageGenerationTimeout(c))), redirect: 'error' });
     const raw = await readResponse(c, response, options);
+    const evidence = pidoiTaskEvidence(raw);
+    if (evidence) {
+      try { return { ...parsePidoiImageTask(raw), protocol: 'async' }; }
+      catch { /* A synchronous image result may also carry a correlation ID. */ }
+    }
     const item = raw?.data?.[0];
     const source = item?.url || (item?.b64_json ? 'data:image/png;base64,' + item.b64_json : '');
     if (!source) throw new PidoiImageError('Pidoi 兼容接口未返回图片，结果待核对');
@@ -117,26 +137,34 @@ export async function submitPidoiImage(c: Channel, body: Record<string, any>, fe
     if (!task.taskId) throw new PidoiImageError('Pidoi 未返回任务 ID，提交结果待核对');
     return { ...task, protocol: 'async' };
   } catch (error: any) {
+    if (error.acceptedTask) return error.acceptedTask;
     // An explicit route-not-found response created no image task. Network errors,
     // gateway timeouts, invalid parameters and accepted tasks never trigger a POST retry.
     if (!error.routeUnavailable) throw error;
     options.onCompatibility?.();
-    return submitCompatibleImage(c, body, fetchImpl, options);
+    try { return await submitCompatibleImage(c, body, fetchImpl, options); }
+    catch (compatibleError: any) {
+      if (compatibleError.acceptedTask) return compatibleError.acceptedTask;
+      throw compatibleError;
+    }
   }
 }
-export function pollPidoiImage(c: Channel, taskId: string, fetchImpl = fetch) {
-  return request(c, '/' + encodeURIComponent(taskId), undefined, fetchImpl);
+export async function pollPidoiImage(c: Channel, taskId: string, fetchImpl = fetch, pollPath?: string) {
+  const task = await request(c, '/' + encodeURIComponent(taskId), undefined, fetchImpl, {}, pollPath);
+  if (task.taskId && task.taskId !== taskId) throw new PidoiImageError('上游返回任务 ID 不一致，停止结算');
+  return task;
 }
 export async function generatePidoiImage(c: Channel, body: Record<string, any>, onSubmitted: (id: string) => void, fetchImpl = fetch, options: SubmitOptions = {}) {
   let task = await submitPidoiImage(c, body, fetchImpl, options);
   if (task.taskId) onSubmitted(task.taskId);
   const id = task.taskId;
+  const originalPollPath = task.pollPath;
   const deadline = Date.now() + 20 * 60_000;
   while (true) {
     if (task.status === 'failed') throw new PidoiImageError(task.error || 'Pidoi 图片生成失败', true);
     if (task.status === 'completed' && task.imageUrl) return { ...task, taskId: id, reportedImageUrl: task.imageUrl };
     if (Date.now() >= deadline) throw new PidoiImageError('图片仍在处理中，保留任务等待恢复');
     await new Promise(resolve => setTimeout(resolve, 5000));
-    task = await pollPidoiImage(c, id, fetchImpl);
+    task = await pollPidoiImage(c, id, fetchImpl, task.pollPath || originalPollPath);
   }
 }

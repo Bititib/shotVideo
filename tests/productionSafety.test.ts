@@ -9,6 +9,7 @@ import type { AddressInfo } from 'node:net';
 import Database from 'better-sqlite3';
 import sharp from 'sharp';
 import { mediaPreviews } from '../server/middleware/mediaPreviews.js';
+import pidoiImageAdminRoutes from '../server/routes/pidoiImageAdmin.js';
 vi.mock('../server/db/index.js', async()=>{
   const {default:Database}=await import('better-sqlite3');
   const {drizzle}=await import('drizzle-orm/better-sqlite3');
@@ -41,6 +42,7 @@ beforeAll(async()=>{
     CREATE TABLE contents(id INTEGER PRIMARY KEY,user_id INTEGER,result_url TEXT,metadata TEXT,cost REAL,type TEXT,status TEXT);`);
   const app=express();app.use(express.json({limit:'60mb'}));
   app.use('/api/media',mediaRoutes);app.use('/api/auth',authRoutes);app.use('/api/admin/billing-reservations',billingRoutes);
+  app.use('/api/admin/contents',pidoiImageAdminRoutes);
   app.post('/references',privateReferences,(req,res)=>res.json(req.body));
   const previews = mediaPreviews(temp, path.join(temp, 'preview-cache'));
   app.use('/uploads',protectUploads,previews,express.static(temp,{cacheControl:false}));app.use('/api/uploads',protectUploads,previews,express.static(temp,{cacheControl:false}));
@@ -51,6 +53,15 @@ beforeAll(async()=>{
 afterAll(async()=>{await new Promise<void>(resolve=>server.close(()=>resolve()));sqlite.close();vi.unstubAllEnvs();fs.rmSync(temp,{recursive:true,force:true});});
 
 describe('production release safety',()=>{
+  it('protects image recheck and refund endpoints from anonymous users and forged admin roles', async()=>{
+    for (const action of ['image-recheck','image-confirm-failure']) {
+      const endpoint=`${base}/api/admin/contents/99999/${action}`;
+      const body=JSON.stringify({confirmedFailure:true,note:'核实未成功，申请全额退款'});
+      expect((await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body})).status).toBe(401);
+      expect((await fetch(endpoint,{method:'POST',headers:{...headers(1),Authorization:`Bearer ${token(1,'super_admin')}`},body})).status).toBe(403);
+      expect((await fetch(endpoint,{method:'POST',headers:headers(3),body})).status).toBe(404);
+    }
+  });
   it('authorizes preview requests before generation or cache validation, retaining original Range delivery', async () => {
     const resource = '/uploads/preview-security.png';
     await sharp({ create: { width: 1600, height: 900, channels: 3, background: 'green' } }).png().toFile(path.join(temp, 'preview-security.png'));

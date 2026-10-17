@@ -1,5 +1,6 @@
 import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
 import React, { useState, useEffect, useCallback } from 'react';
+import { PidoiImageReviewActions } from '../../components/PidoiImageReviewActions';
 import { useNavigate } from 'react-router-dom';
 import { Search, Film, Copy, ChevronLeft, ChevronRight, Image, Video, Music, Eye, X, CircleAlert, Loader2, RefreshCw } from 'lucide-react';
 import { adminApi } from '../../api/admin';
@@ -315,12 +316,14 @@ export default function ContentsPage() {
   const displayStatus = (item: ContentItem) => {
     const meta = parseMeta(item.metadata);
     if (!['processing', 'queued', 'review'].includes(item.status)) return item.status;
+    if (meta.imageProtocol === 'pidoi-async-v1') return item.status; // Worker owns recovery/settlement, not a browser timer.
     const overdue = item.type === 'image' && Date.now() - new Date(item.createdAt).getTime()
       > Math.max(30 * 60_000, Number(meta.requestTimeoutMs || 0) + 60_000);
     return meta.requiresReview || overdue ? 'review' : item.status;
   };
 
   const getStatusBadge = (status: string, metadata?: unknown) => {
+    if (status === 'processing' && parseMeta(typeof metadata === 'string' ? metadata : JSON.stringify(metadata || {})).recoveryStage === 'download') return <span className="text-xs text-amber-400">保存重试中</span>;
     const phase = videoTaskPhase(status, metadata);
     if (phase === 'awaiting_delivery' || phase === 'saving') return <span className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs text-amber-400">{phase === 'awaiting_delivery' ? '等待交付' : '保存中'}</span>;
     switch (status) {
@@ -375,7 +378,7 @@ export default function ContentsPage() {
 
   const missingUpstreamId = (meta: Record<string, any>) => {
     const responses = Array.isArray(meta.upstreamResponses) ? meta.upstreamResponses : [];
-    if (responses.some((item: any) => item.state === 'response_without_id')) return '上游响应未提供 ID';
+    if (responses.some((item: any) => item.state === 'response_without_id')) return '响应未解析到任务/请求 ID';
     if (responses.some((item: any) => item.state === 'response_unreadable' || item.state === 'headers_received')) return '响应读取中断，未取得 ID';
     if (responses.some((item: any) => item.state === 'no_response')) return '未收到上游响应';
     if (responses.some((item: any) => item.state === 'awaiting_response')) return '等待上游响应';
@@ -672,6 +675,14 @@ export default function ContentsPage() {
                     <span>{['failed', 'error'].includes(previewItem.status) ? '本次生成未获得结果' : '生成结果暂未就绪'}</span>
                   </div>}
 
+                  {previewItem.type === 'image' && <PidoiImageReviewActions key={previewItem.id}
+                    id={previewItem.id} status={previewItem.status} cost={previewItem.cost}
+                    metadata={parseMeta(previewItem.metadata)} hasResult={Boolean(previewItem.resultUrl)}
+                    onResolved={async () => {
+                      const refreshed = await adminApi.getContent(previewItem.id);
+                      setPreviewItem(current => current?.id === refreshed.id ? { ...current, ...refreshed } : current);
+                      await fetchContents();
+                    }} />}
                   {(['failed', 'error', 'review'].includes(displayStatus(previewItem))) && (() => {
                     const failure = getContentFailureInfo(previewItem.metadata, previewItem.resultText);
                     return (
@@ -707,6 +718,9 @@ export default function ContentsPage() {
                                   ? '未扣款'
                                   : failure.billingStatus === 'batch_reserved'
                                     ? '批次预扣保留，重试不重复扣费'
+                                  : failure.billingStatus === 'review' ? '费用暂存，等待结果确认'
+                                  : failure.billingStatus === 'reserved' ? '已预扣，尚未结算'
+                                  : failure.billingStatus === 'settled' ? '已结算'
                                   : failure.billingStatus}
                             </div>
                             {failure.refunded && failure.refundAmount !== undefined && (

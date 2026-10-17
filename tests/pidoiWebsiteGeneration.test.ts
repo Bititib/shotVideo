@@ -27,22 +27,23 @@ import router from '../server/routes/imageGen.js';
 import { localizeRecoveredImages } from '../server/services/pidoiImageStorage.js';
 import { recoverPidoiImage, pidoiImageActive } from '../server/services/pidoiImageWorker.js';
 import { generateSpecificationImage } from '../server/services/specificationAdapters.js';
+import { confirmPidoiImageFailure, recheckPidoiImage } from '../server/services/pidoiImageResolutionService.js';
 
 function row() { return sqlite.prepare('SELECT * FROM contents ORDER BY id DESC LIMIT 1').get() as any; }
 function balance() { return (sqlite.prepare('SELECT balance FROM users WHERE id=1').get() as any).balance; }
 function reservation() { return sqlite.prepare('SELECT * FROM billing_reservations ORDER BY id DESC LIMIT 1').get() as any; }
-async function generate() {
+async function generate(count = 1) {
   const layer = router.stack.find((layer: any) => layer.route?.path === '/generate' && layer.route.methods.post) as any;
   const chunks: string[] = [];
   const res: any = { setHeader: vi.fn(), flushHeaders: vi.fn(), write: (chunk: string) => chunks.push(chunk),
     end: () => { res.writableEnded = true; }, status: (code: number) => { res.code = code; return res; }, json: vi.fn() };
-  const req: any = { userId: 1, body: { model: 'gpt-image-2', prompt: 'cat', quality: 'high', resolution: '4K', n: 1 }, protocol: 'https', get: () => 'local.test', headers: {}, socket: {} };
+  const req: any = { userId: 1, body: { model: 'gpt-image-2', prompt: 'cat', quality: 'high', resolution: '4K', n: count }, protocol: 'https', get: () => 'local.test', headers: {}, socket: {} };
   await layer.route.stack.at(-1).handle(req, res, () => {});
   return { res, chunks };
 }
 beforeEach(() => {
   sqlite.exec(`DELETE FROM users; DELETE FROM contents; DROP TABLE IF EXISTS billing_reservations;
-    INSERT INTO users(id,balance) VALUES(1,100);`);
+    INSERT INTO users(id,balance,role,is_active) VALUES(1,100,'user',1),(9,0,'super_admin',1);`);
   vi.mocked(localizeRecoveredImages).mockResolvedValue({ urls: ['/api/uploads/result.png'], issues: [], failures: [] });
 });
 afterEach(async () => {
@@ -51,6 +52,105 @@ afterEach(async () => {
 });
 
 describe('Pidoi 网页提交到保存和结算', () => {
+  it('多张图片部分明确拒绝时只结算成功部分，其余自动退款，不再留在待核实',async()=>{
+    const f=vi.fn().mockResolvedValueOnce(Response.json({code:'success',data:{task_id:'task_first',status:'IN_PROGRESS'}}))
+      .mockResolvedValueOnce(Response.json({error:{message:'Content rejected'}},{status:451}))
+      .mockResolvedValueOnce(Response.json({code:'success',data:{task_id:'task_first',status:'SUCCESS',result_url:'https://storage.test/first.png'}}));
+    vi.stubGlobal('fetch',f);await generate(3);
+    await vi.waitFor(()=>expect(row().status).toBe('completed'));
+    expect(row().cost).toBeCloseTo(.22);expect(balance()).toBeCloseTo(99.78);
+    expect(reservation()).toMatchObject({state:'settled',actual:.22});
+    expect(JSON.parse(row().metadata)).toMatchObject({refundAmount:.44,requiresReview:false,failedImageIndexes:[1,2]});
+    expect(f.mock.calls.map(c=>c[1].method)).toEqual(['POST','POST','GET']);
+    await recoverPidoiImage(row().id);expect(balance()).toBeCloseTo(99.78);
+  });
+  it.each(['SUCCESS','FAILURE'])('兼容 502 包含任务 JSON 时继续 GET，最终 %s 正确结算', async status => {
+    const f=vi.fn().mockResolvedValueOnce(new Response('Not Found',{status:404}))
+      .mockResolvedValueOnce(Response.json({error:{message:JSON.stringify({id:'task_embedded',status:'queued',task_url:'/v1/image/generations/task_embedded'})}},{status:502}))
+      .mockResolvedValueOnce(Response.json({code:'success',data:{task_id:'task_embedded',status,result_url:'https://storage.test/cat.png',fail_reason:status==='FAILURE'?'Rejected':''}}));
+    vi.stubGlobal('fetch',f);
+    await generate();
+    await vi.waitFor(()=>expect(row().status).toBe(status==='SUCCESS'?'completed':'failed'));
+    const meta=JSON.parse(row().metadata);
+    expect(meta.upstreamTaskId).toBe('task_embedded');
+    expect(meta.upstreamResponses[0]).toMatchObject({id:'task_embedded',httpStatus:502,state:'captured'});
+    expect(f.mock.calls.map(c=>c[1].method)).toEqual(['POST','POST','GET']);
+    expect(balance()).toBeCloseTo(status==='SUCCESS'?99.78:100);
+    await recoverPidoiImage(row().id);
+    expect(f).toHaveBeenCalledTimes(3);
+  });
+
+  it('旧记录从截断错误消息找回 ID 并恢复原任务，不重新提交',async()=>{
+    vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new Error('connection lost')));
+    await generate(); await vi.waitFor(()=>expect(pidoiImageActive.size).toBe(0));
+    const r=row(),m=JSON.parse(r.metadata);
+    m.submissionFailure={stage:'submit',index:0,httpStatus:502,message:'Pidoi 图片提交失败 (502)：{"created":123,"id":"task_old","status":"queued","task_ur'};
+    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify(m),r.id);
+    const f=vi.fn().mockResolvedValue(Response.json({code:'success',data:{task_id:'task_old',status:'SUCCESS',result_url:'https://storage.test/old.png'}}));
+    vi.stubGlobal('fetch',f);
+    await recoverPidoiImage(r.id);
+    expect(row().status).toBe('completed');expect(balance()).toBeCloseTo(99.78);
+    expect(f).toHaveBeenCalledExactlyOnceWith('https://pidoi.com/v1/image/generations/task_old',expect.objectContaining({method:'GET'}));
+    expect(JSON.parse(row().metadata).upstreamTaskId).toBe('task_old');
+  });
+
+  async function unknownSubmission() {
+    vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new Error('connection lost')));
+    await generate(); await vi.waitFor(()=>expect(pidoiImageActive.size).toBe(0));
+    return row().id;
+  }
+  it('管理员核实退款与任务终止原子完成，重复操作和后台扫描均不再退款',async()=>{
+    const id=await unknownSubmission();
+    const result=confirmPidoiImageFailure(id,9,true,'已核对上游记录，未产生任何图片');
+    expect(result).toMatchObject({alreadyResolved:false,refundedAmount:0.22});
+    expect(row()).toMatchObject({status:'failed',cost:0});expect(balance()).toBe(100);
+    expect(reservation().state).toBe('refunded');
+    expect(sqlite.prepare('SELECT admin_id FROM billing_resolution_audit WHERE reservation_id=?').get(reservation().id)).toEqual({admin_id:9});
+    expect(confirmPidoiImageFailure(id,9,true,'再次点击确认相同失败记录').alreadyResolved).toBe(true);
+    await recoverPidoiImage(id);expect(balance()).toBe(100);
+    expect(JSON.parse(row().metadata)).toMatchObject({requiresReview:false,refundTarget:'user_balance',pidoiFailureResolution:{adminId:9}});
+  });
+  it('任务更新失败时回滚余额、账单与审核记录',async()=>{
+    const id=await unknownSubmission();
+    sqlite.exec("CREATE TRIGGER reject_failure BEFORE UPDATE OF status ON contents WHEN NEW.status='failed' BEGIN SELECT RAISE(ABORT,'test failure'); END;");
+    try { expect(()=>confirmPidoiImageFailure(id,9,true,'核实未成功，测试原子退款')).toThrow('test failure'); }
+    finally { sqlite.exec('DROP TRIGGER reject_failure'); }
+    expect(balance()).toBeCloseTo(99.78);expect(row().status).toBe('review');expect(reservation().state).toBe('review');
+    expect(sqlite.prepare('SELECT id FROM billing_resolution_audit WHERE reservation_id=?').get(reservation().id)).toBeUndefined();
+  });
+  it('组织退款返回最初扣款组织，不随用户当前归属变化',async()=>{
+    sqlite.exec('DELETE FROM organizations; INSERT INTO organizations(id,balance) VALUES(21,10),(22,20); UPDATE users SET org_id=21 WHERE id=1;');
+    const id=await unknownSubmission();
+    sqlite.exec('UPDATE users SET org_id=22 WHERE id=1;');
+    confirmPidoiImageFailure(id,9,true,'核实未成功，退回原始组织');
+    expect(sqlite.prepare('SELECT balance FROM organizations WHERE id=21').get()).toEqual({balance:10});
+    expect(sqlite.prepare('SELECT balance FROM organizations WHERE id=22').get()).toEqual({balance:20});
+    expect(balance()).toBe(100);expect(JSON.parse(row().metadata).refundTarget).toBe('organization_balance');
+  });
+  it('拒绝无权限、缺少确认、运行中、账单归属错误的退款',async()=>{
+    const id=await unknownSubmission();
+    expect(()=>confirmPidoiImageFailure(id,1,true,'普通用户试图申请后台退款')).toThrow('超级管理员');
+    expect(()=>confirmPidoiImageFailure(id,9,false,'没有确认上游状态不能退款')).toThrow('核实依据');
+    expect(()=>confirmPidoiImageFailure(id,9,true,'短')).toThrow('核实依据');
+    pidoiImageActive.add(id);
+    expect(()=>confirmPidoiImageFailure(id,9,true,'后台仍在恢复中不可退款')).toThrow('正在提交或恢复');
+    pidoiImageActive.delete(id);
+    const bill=reservation();
+    sqlite.prepare('UPDATE billing_reservations SET context=? WHERE id=?').run(JSON.stringify({userId:9,contentId:id}),bill.id);
+    expect(()=>confirmPidoiImageFailure(id,9,true,'账单归属异常不可进行退款')).toThrow('归属不一致');
+    expect(balance()).toBeCloseTo(99.78);expect(row().status).toBe('review');
+  });
+  it('阻止已成功或部分成功任务全额退款，查询只检查原任务',async()=>{
+    const id=await unknownSubmission();
+    const m=JSON.parse(row().metadata);m.pidoiImageJobs=[{taskId:'task_known',index:0,status:'completed',sourceUrl:'https://storage.test/good.png'}];
+    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify(m),id);
+    expect(()=>confirmPidoiImageFailure(id,9,true,'部分图片已经生成，不能全额退款')).toThrow('已有成功结果');
+    const f=vi.fn().mockResolvedValue(Response.json({code:'success',data:{task_id:'task_known',status:'SUCCESS',result_url:'https://storage.test/good.png'}}));
+    vi.stubGlobal('fetch',f);
+    expect(await recheckPidoiImage(id,9)).toMatchObject({status:'completed'});
+    expect(f.mock.calls.every(c=>c[1].method==='GET')).toBe(true);
+    expect(balance()).toBeCloseTo(99.78);
+  });
   it('异步入口不存在时，网站使用与 API 相同的入口生成并下载，最终同步成功', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response('404 page not found', { status: 404 }))
       .mockResolvedValueOnce(Response.json({ data: [{ url: 'https://storage.test/cat.png?signature=x' }] }));
@@ -161,7 +261,8 @@ describe('Pidoi 网页提交到保存和结算', () => {
     expect(balance()).toBeCloseTo(99.78);
     expect(reservation().state).toBe('review');
     expect(JSON.parse(row().metadata).failureClassificationCorrection).toBeUndefined();
-    expect(fetch).not.toHaveBeenCalled();
+    if ('upstreamTaskId' in overrides || 'upstreamTaskIds' in overrides) expect(fetch).toHaveBeenCalledWith(expect.stringContaining('task_accepted'), expect.objectContaining({method:'GET'}));
+    else expect(fetch).not.toHaveBeenCalled();
   });
 
   it('图片下载失败保存原结果，下次恢复只下载，不重新生成', async () => {

@@ -64,7 +64,7 @@ describe('Pidoi 异步图片协议', () => {
   });
   it('带已受理任务 ID 的 451 和查询 451 仍不能认定生成失败', async () => {
     const submit = vi.fn().mockResolvedValue(Response.json({ task_id: 'task_accepted', error: { code: 'content_policy_violation' } }, { status: 451 }));
-    await expect(submitPidoiImage(channel, {}, submit)).rejects.toMatchObject({ confirmedFailure: false, upstreamTaskId: 'task_accepted' });
+    await expect(submitPidoiImage(channel, {}, submit)).resolves.toMatchObject({ status: 'processing', taskId: 'task_accepted' });
     expect(submit).toHaveBeenCalledTimes(1);
     const poll = vi.fn().mockResolvedValue(new Response('Unavailable', { status: 451 }));
     await expect(pollPidoiImage(channel, 'task_existing', poll)).rejects.toMatchObject({ confirmedFailure: false });
@@ -73,7 +73,8 @@ describe('Pidoi 异步图片协议', () => {
   it('model-not-found、带任务 ID 的 404 和查询 404 都不能触发重新提交', async () => {
     for (const raw of [{ error: { message: 'Model not found' } }, { task_id: 'task_accepted', message: 'Not Found' }]) {
       const f = vi.fn().mockResolvedValue(Response.json(raw, { status: 404 }));
-      await expect(submitPidoiImage(channel, {}, f)).rejects.toThrow();
+      if ('task_id' in raw) await expect(submitPidoiImage(channel, {}, f)).resolves.toMatchObject({ taskId: 'task_accepted', status: 'processing' });
+      else await expect(submitPidoiImage(channel, {}, f)).rejects.toThrow();
       expect(f).toHaveBeenCalledTimes(1);
     }
     const f = vi.fn().mockResolvedValue(new Response('Not Found', { status: 404 }));

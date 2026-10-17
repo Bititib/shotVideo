@@ -13,6 +13,15 @@ beforeEach(() => {
   mocks.localize.mockResolvedValue({ urls: ['/api/uploads/result.png'], issues: [] });
 });
 describe('Pidoi 原任务恢复', () => {
+  it('已拿到图片但状态回退不能误退款，仍尝试保存已有结果',async()=>{
+    const meta=JSON.parse(mocks.row.metadata);
+    Object.assign(meta.pidoiImageJobs[0],{status:'completed',sourceUrl:'https://cdn/already-generated.png'});
+    mocks.row.metadata=JSON.stringify(meta);
+    mocks.poll.mockResolvedValue({status:'failed',progress:100,error:'stale failure'});
+    await recoverPidoiImage(12);
+    expect(mocks.localize).toHaveBeenCalled();
+    expect(mocks.finalize).toHaveBeenCalledWith(12,'completed',expect.anything(),'/api/uploads/result.png');
+  });
   it('查询网络失败日志保留任务关联和底层原因', async () => {
     const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {

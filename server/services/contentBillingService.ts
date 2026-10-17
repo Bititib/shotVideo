@@ -2,7 +2,8 @@ import { sqlite } from '../db/index.js';
 import { BalanceService } from './balanceService.js';
 
 /** Durable finalization also used by recovery pollers. Unknown upstream outcomes keep funds in review. */
-export function finalizeReservedContent(contentId: number, outcome: 'completed' | 'failed' | 'review', patch: Record<string, any> = {}, resultUrl?: string): boolean {
+export function finalizeReservedContent(contentId: number, outcome: 'completed' | 'failed' | 'review', patch: Record<string, any> = {}, resultUrl?: string, completedFraction = 1): boolean {
+  if (!Number.isFinite(completedFraction) || completedFraction <= 0 || completedFraction > 1) throw new Error('完成比例无效，停止结算');
   return sqlite.transaction(() => {
     const content = sqlite.prepare('SELECT * FROM contents WHERE id=?').get(contentId) as any;
     if (!content) return false;
@@ -17,8 +18,9 @@ export function finalizeReservedContent(contentId: number, outcome: 'completed' 
       sqlite.prepare("UPDATE contents SET status='review', metadata=? WHERE id=?").run(JSON.stringify({ ...merged, billingStatus: 'review', requiresReview: true }), contentId);
       return true;
     }
-    const actual = outcome === 'completed' ? reservation.amount : 0;
-    const refund = reservation.amount - actual;
+    const actual = outcome === 'completed' ? completedFraction === 1 ? reservation.amount
+      : Math.min(reservation.amount, Math.round(reservation.amount * completedFraction * 1e6) / 1e6) : 0;
+    const refund = completedFraction === 1 ? reservation.amount - actual : Math.max(0, Math.round((reservation.amount - actual) * 1e6) / 1e6);
     const receipt = JSON.parse(reservation.receipt), context = JSON.parse(reservation.context);
     if (refund > 0) BalanceService.refundToSource(context.userId, refund, receipt.source, receipt.orgId, (context.operation || 'generate_video') + '_refund');
     const state = outcome === 'completed' ? 'settled' : 'refunded';
