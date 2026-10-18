@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../server/db/index.js';
 import { channels, contents, models, modelPricing, settings, users } from '../server/db/schema.js';
 import { ChannelService } from '../server/services/channelService.js';
-import { getModelSpecification, saveModelSpecification, selectModelRoutes } from '../server/services/modelRoutingService.js';
+import { getModelSpecification, saveModelSpecification, selectModelRoutes, specificationAvailability } from '../server/services/modelRoutingService.js';
 import { handleSpecificationGeneration, resumeSpecificationTasks } from '../server/services/specificationGenerationService.js';
 import { generateSpecificationImage } from '../server/services/specificationAdapters.js';
 import { localizeGeneratedImage } from '../server/routes/imageGen.js';
@@ -221,6 +221,7 @@ describe('MJ image channel', () => {
       expect(record).toMatchObject({ status:'failed', cost:0 });
       expect(meta).toMatchObject({ count:4, nativeImageOutputs:4, billingStatus:'refunded', refundAmount:2,
         routingAttempts:[{ reason:expect.stringContaining('insufficient credits'), upstreamStatus:status }] });
+      expect(specificationAvailability(getModelSpecification(MJ_MODEL_ID)!)).toEqual({ available:true });
       expect(meta.failureReason).toContain('insufficient credits');
       expect(meta.failureReason).not.toContain(key);
       expect(meta.error).toBe(meta.failureReason);
@@ -262,4 +263,19 @@ describe('MJ image channel', () => {
     expect(canvasRequestStore().get(1, requestId)?.message).toBe('上游积分不足，暂时无法生成，请联系管理员补充额度后重试。');
     expect(fetch).toHaveBeenCalledOnce();
   });
+});
+
+
+it('lets the user immediately submit again after credit exhaustion without automatic resubmission', async () => {
+  enable();
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error:'insufficient credits' }, { status:402 })));
+  await handleSpecificationGeneration(request(), response(), 'image');
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(specificationAvailability(getModelSpecification(MJ_MODEL_ID)!)).toEqual({ available:true });
+  await handleSpecificationGeneration(request(), response(), 'image');
+  expect(fetch).toHaveBeenCalledTimes(2);
+  const records = db.select().from(contents).all();
+  expect(records).toHaveLength(2);
+  expect(records.every(record => record.status === 'failed' && record.cost === 0)).toBe(true);
+  expect(db.select().from(users).get()!.balance).toBe(100);
 });

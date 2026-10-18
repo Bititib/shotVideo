@@ -1,7 +1,7 @@
 /** Fixed public status fields; never expose provider responses or route identifiers. */
 export type ModelAvailability = { available: boolean; unavailableReason?: 'credits' | 'credentials' | 'cooldown' | 'configuration'; retryAt?: number };
 export function isUpstreamCreditFailure(text: string): boolean {
-  if (/\b401\b|invalid.?api.?key|invalid.?key|key.{0,12}(?:expired|revoked)|unauthori[sz]ed|permission.denied|密钥.*(?:无效|失效)|权限不足/i.test(text)) return false;
+  if (/\b401\b|\binvalid[\s_-]+(?:api[\s_-]*)?key\b|\bkey[\s_-]+(?:is[\s_-]+)?(?:expired|revoked)\b|unauthori[sz]ed|permission.denied|密钥.*(?:无效|失效)|权限不足/i.test(text)) return false;
   return /\binsufficient[\s_-]+(?:credits?|balance|funds)\b|\bnot[\s_-]+enough[\s_-]+credits?\b|\bcredits?(?:[\s_-]+balance)?\s*(?::|is)?\s*(?:insufficient|exhausted|depleted)\b|积分(?:余额)?不足|余额不足|额度不足/i.test(text);
 }
 export function modelAvailabilityMessage(model?: Partial<ModelAvailability>, now = Date.now()): string {

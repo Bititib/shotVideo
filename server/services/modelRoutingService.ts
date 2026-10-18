@@ -79,14 +79,14 @@ export function saveModelSpecification(value: ModelSpecification): ModelSpecific
   sqlite.transaction(() => write(CONFIG_KEY, [...other, result]))(); return result;
 }
 export function deleteModelSpecification(modelId: string) { write(CONFIG_KEY, getModelSpecifications().filter(s => s.modelId !== modelId)); }
-export const CREDIT_COOLDOWN_MS = 60_000;
 export function getRouteHealth() {
   const health = read<Record<string, RouteHealth>>(HEALTH_KEY, {});
   let changed = false;
-  // Old credit locks become a bounded cooldown based on the original failure time.
-  for (const item of Object.values(health)) if (item.state === 'blocked' && isUpstreamCreditFailure(item.lastError)) {
-    item.state = 'cooldown';
-    item.retryAt = (Date.parse(item.updatedAt) || Date.now()) + CREDIT_COOLDOWN_MS;
+  // Credit exhaustion is diagnostic only; also release locks saved by older versions.
+  for (const item of Object.values(health)) if (item.state !== 'healthy' && isUpstreamCreditFailure(item.lastError)) {
+    item.state = 'healthy';
+    item.retryAt = 0;
+    item.probeUntil = 0;
     changed = true;
   }
   if (changed) write(HEALTH_KEY, health);
@@ -100,7 +100,7 @@ export function noteRouteResult(key: string, ok: boolean, message = '', blocked 
   const failures = ok ? 0 : old.failures + 1;
   const credits = !ok && isUpstreamCreditFailure(message);
   health[key] = { ...old, failures, successes: old.successes + Number(ok), generationFailures: old.generationFailures + Number(generation && !ok),
-    state: old.state === 'blocked' || blocked && !credits ? 'blocked' : ok ? 'healthy' : 'cooldown', retryAt: ok ? 0 : Date.now() + (credits ? CREDIT_COOLDOWN_MS : Math.min(15 * 60_000, 30_000 * 2 ** Math.min(failures - 1, 5))),
+    state: old.state === 'blocked' || blocked && !credits ? 'blocked' : ok || credits ? 'healthy' : 'cooldown', retryAt: ok || credits ? 0 : Date.now() + Math.min(15 * 60_000, 30_000 * 2 ** Math.min(failures - 1, 5)),
     probeUntil: 0, lastError: old.state === 'blocked' ? old.lastError : ok ? '' : message.replace(/sk-[\w-]+/g, '[REDACTED]').slice(0, 300), updatedAt: new Date().toISOString() };
   write(HEALTH_KEY, health);
 }
