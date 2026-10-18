@@ -11,6 +11,7 @@ const messages = {
   parameters: '生成参数不符合模型要求，请检查时长、分辨率及参考素材。',
   review: '提交结果待核实，请在生成记录核实原任务，请勿重复提交。',
   timeout: '任务处理超时，请在生成记录核实原任务状态，请勿重复提交。',
+  upstreamCredits: '上游积分不足，暂时无法生成，请联系管理员补充额度后重试。',
   unavailable: '生成服务暂时不可用，请稍后查看任务状态或联系管理员。',
   fallback: '生成未完成，请在生成记录查看任务状态，或联系管理员处理。',
 };
@@ -20,6 +21,7 @@ export function publicGenerationError(value: unknown): string {
   if (/^(请先登录|请登录后重试)[。！!]?$/.test(text)) return '请先登录';
   if (/请求未发送|连接生成服务失败/i.test(text)) return messages.submission;
   if (/待核实|结果不确定|uncertain|请勿重复|禁止重复/i.test(text)) return messages.review;
+  if (/\binsufficient[\s_-]+credits?\b|\bnot[\s_-]+enough[\s_-]+credits?\b|\bcredits?(?:[\s_-]+balance)?\s*(?::|is)?\s*(?:insufficient|exhausted|depleted)\b|积分(?:余额)?不足|上游(?:账户|账号)?(?:余额|额度)不足/i.test(text)) return messages.upstreamCredits;
   if (/超时|timed?\s*out|timeout/i.test(text)) return messages.timeout;
   if (/时长|duration|seconds?.*(?:invalid|support|range|must)/i.test(text)) return messages.duration;
   if (/分辨率|resolution/i.test(text)) return messages.resolution;

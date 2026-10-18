@@ -1,4 +1,5 @@
 import { startSseHeartbeat } from './sseHeartbeat.js';
+import { publicGenerationError, publicGenerationEvent } from '../../shared/generationMessages.js';
 import { isBlobDrawChannel } from './blobDrawAdapter.js';
 import { isFunAiChannel } from './funAiAdapter.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
@@ -256,6 +257,7 @@ async function saveMjResults(id: number, channel: any, req: Request, onEvent: (d
 }
 
 async function runMjImages(id: number, candidates: RouteCandidate[], request: SpecificationRequest, req: Request, onEvent: (data: any) => void) {
+  let failureReason = 'MJ 图片生成失败';
   for (const target of candidates) {
     if (!isMjChannel(target.channel) || !routeStillEnabled(metadata(id).requestedModel, target, request.input) || !claimRouteProbe(target.healthKey)) continue;
     let accepted = false;
@@ -276,11 +278,16 @@ async function runMjImages(id: number, candidates: RouteCandidate[], request: Sp
         holdForReview(id, error.message || 'MJ 原任务结果待核实，请勿重复提交');
         onEvent({ type: 'error', message: 'MJ 原任务结果待核实，已保存图片保留，请勿重复提交' }); return;
       }
+      failureReason = error.message || 'MJ 图片生成失败';
+      patch(id, { routingAttempts: [...(metadata(id).routingAttempts || []), {
+        routeId: target.route.id, reason: failureReason, at: new Date().toISOString(),
+        ...(error instanceof SpecificationUpstreamError ? { upstreamStatus: error.upstreamStatus } : {}),
+      }], submissionStartedAt: null });
       if (error instanceof SpecificationUpstreamError) noteRouteResult(target.healthKey, false, error.message, error.blocked);
       if (!(error instanceof SpecificationUpstreamError && error.retrySafe)) break;
     }
   }
-  failTask(id, 'MJ 图片生成失败'); onEvent({ type: 'error', message: 'MJ 图片生成失败' });
+  failTask(id, failureReason); onEvent({ type: 'error', message: failureReason });
 }
 type ApiContext = { token: any; reserve: (amount: number, model: string, pricingSnapshot?: PricingSnapshot) => any };
 export async function handleSpecificationGeneration(req: Request, res: Response, kind: MediaKind, apiContext?: ApiContext): Promise<boolean> {
@@ -357,8 +364,9 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     })();
     const emit = (data: any) => {
       if (apiContext) return;
-      recordCanvasEvent(req, data);
-      if (!res.writableEnded && !res.destroyed) res.write('data: ' + JSON.stringify(data) + '\n\n');
+      const event = publicGenerationEvent(data);
+      recordCanvasEvent(req, event);
+      if (!res.writableEnded && !res.destroyed) res.write('data: ' + JSON.stringify(event) + '\n\n');
     };
     if (!apiContext) {
       res.setHeader('Content-Type', 'text/event-stream'); res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -385,7 +393,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
       await run();
       if (apiContext) {
         const row = db.select().from(contents).where(eq(contents.id, id!)).get()!, meta = JSON.parse(row.metadata);
-        if (row.status !== 'completed') res.status(meta.requiresReview ? 202 : 502).json({ id: 'task_' + id, status: row.status, requires_review: Boolean(meta.requiresReview), error: meta.error || '生成失败' });
+        if (row.status !== 'completed') res.status(meta.requiresReview ? 202 : 502).json({ id: 'task_' + id, status: row.status, requires_review: Boolean(meta.requiresReview), error: publicGenerationError(meta.requiresReview ? '提交结果待核实，请勿重复提交' : meta.error || '生成失败') });
         else res.json({ created: Math.floor(Date.now() / 1000), data: meta.imageUrls.map((url: string) => (request.body.response_format === 'b64_json' ? { b64_json: fs.readFileSync(path.join('data/uploads', path.basename(url))).toString('base64') } : { url: issueUploadUrl(url, request.publicBaseUrl) })) });
       } else if (!res.writableEnded && !res.destroyed) res.end('data: [DONE]\n\n');
     }

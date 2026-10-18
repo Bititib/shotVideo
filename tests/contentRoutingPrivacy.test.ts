@@ -13,6 +13,24 @@ import {
 } from '../server/services/contentService.js';
 
 describe('content routing privacy', () => {
+  it('retains review guidance when a task has an uncertain credit-related error', () => {
+    const result = sanitizeContentRoutingForClient({ status:'processing', metadata:{ requiresReview:true, fallbackFrom:'private-route',
+      error:'insufficient credits', progressText:'insufficient credits', billingStatus:'review' } });
+    expect(result.metadata).toMatchObject({ requiresReview:true, billingStatus:'review',
+      error:'提交结果待核实，请在生成记录核实原任务，请勿重复提交。',
+      progressText:'提交结果待核实，请在生成记录核实原任务，请勿重复提交。' });
+  });
+  it.each([false, true])('explains upstream credit failures in history without exposing admin diagnostics (JSON=%s)', json => {
+    const raw = '上游提交失败 (402)：{"error":"insufficient credits","provider":"private-provider"}';
+    const meta = { error:raw, failureReason:raw, progressText:raw, billingStatus:'refunded', refundAmount:0.6 };
+    const item = { status:'failed', metadata:json ? JSON.stringify(meta) : meta };
+    const result = sanitizeContentRoutingForClient(item);
+    const publicMeta = typeof result.metadata === 'string' ? JSON.parse(result.metadata) : result.metadata;
+    const safe = '上游积分不足，暂时无法生成，请联系管理员补充额度后重试。';
+    expect(publicMeta).toMatchObject({ error:safe, failureReason:safe, progressText:safe, billingStatus:'refunded', refundAmount:0.6 });
+    expect(JSON.stringify(result)).not.toContain('private-provider');
+    expect(meta.failureReason).toBe(raw);
+  });
   it('resolves historical openai labels from channel ID without changing route identity or leaking to users', () => {
     const item = { metadata: JSON.stringify({ channelId: 5, actualChannel: 'openai' }) };
     const result = withAdminChannelName(item, new Map([[5, '四月天']]));

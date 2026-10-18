@@ -12,6 +12,9 @@ import { localizeGeneratedImage } from '../server/routes/imageGen.js';
 import { LEGACY_MJ_MODEL_ID, MJ_MODEL_ID, MJ_SIZES } from '../shared/mj.js';
 import { mjBaseUrl } from '../server/services/mjAdapter.js';
 import { routeRequestCost } from '../shared/modelRouting.js';
+import { reserveUserCharge } from '../server/services/billingReservation.js';
+import { sanitizeContentRoutingForClient } from '../server/services/contentService.js';
+import { canvasRequestStore } from '../server/middleware/canvasRequest.js';
 
 const key = 'private-mj-test-key';
 const input = { images: 0, videos: 0, audios: 0, outputs: 4, seconds: 6,
@@ -204,5 +207,59 @@ describe('MJ image channel', () => {
     await handleSpecificationGeneration(request(), response(), 'image');
     expect(db.select().from(contents).all()[0]).toMatchObject({ status: 'failed', cost: 0 });
     expect(db.select().from(users).all()[0].balance).toBe(100); expect(fetch).toHaveBeenCalledOnce();
+  });
+  it.each([400, 402, 403].flatMap(status => ['workbench', 'api'].map(transport => ({ status, transport }))))
+    ('retains the upstream credit rejection, displays a clear reason and refunds once: $transport / $status', async ({ status, transport }) => {
+      enable();
+      vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error:{ message:'insufficient credits' },
+        provider:'private-provider', diagnostic:'https://private.invalid?key=' + key }, { status })));
+      const res = response();
+      await handleSpecificationGeneration(request(), res, 'image', transport === 'api' ? {
+        token:{ id:1, userId:1 }, reserve:amount => reserveUserCharge(1, amount, 'test_mj_api'),
+      } : undefined);
+      const record = db.select().from(contents).get()!, meta = JSON.parse(record.metadata);
+      expect(record).toMatchObject({ status:'failed', cost:0 });
+      expect(meta).toMatchObject({ count:4, nativeImageOutputs:4, billingStatus:'refunded', refundAmount:2,
+        routingAttempts:[{ reason:expect.stringContaining('insufficient credits'), upstreamStatus:status }] });
+      expect(meta.failureReason).toContain('insufficient credits');
+      expect(meta.failureReason).not.toContain(key);
+      expect(meta.error).toBe(meta.failureReason);
+      const safe = '上游积分不足，暂时无法生成，请联系管理员补充额度后重试。';
+      expect(JSON.parse(sanitizeContentRoutingForClient(record).metadata)).toMatchObject({ error:safe, failureReason:safe, progressText:safe });
+      if (transport === 'api') expect(res.body).toMatchObject({ status:'failed', error:safe });
+      else {
+        const events = res.write.mock.calls.map(([line]: [string]) => JSON.parse(line.slice(6)));
+        expect(events).toContainEqual({ type:'error', message:safe });
+        expect(JSON.stringify(events)).not.toContain('private-provider');
+      }
+      expect(db.select().from(users).get()?.balance).toBe(100);
+      expect(fetch).toHaveBeenCalledOnce();
+    });
+  it.each(['workbench', 'api'])('keeps ambiguous credit-related server failures under review without resubmitting: %s', async transport => {
+    enable();
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error:{ message:'insufficient credits' } }, { status:500 })));
+    const res = response();
+    await handleSpecificationGeneration(request(), res, 'image', transport === 'api' ? {
+      token:{ id:1, userId:1 }, reserve:amount => reserveUserCharge(1, amount, 'test_mj_api'),
+    } : undefined);
+    const record = db.select().from(contents).get()!, meta = JSON.parse(record.metadata);
+    expect(meta).toMatchObject({ requiresReview:true, billingStatus:'review' });
+    expect(JSON.parse(sanitizeContentRoutingForClient(record).metadata).error).toContain('请勿重复提交');
+    if (transport === 'api') {
+      expect(res.statusCode).toBe(202);
+      expect(res.body).toMatchObject({ requires_review:true, error:expect.stringContaining('请勿重复提交') });
+    } else expect(res.write.mock.calls.map(([line]: [string]) => JSON.parse(line.slice(6))))
+      .toContainEqual({ type:'error', message:expect.stringContaining('请勿重复提交') });
+    expect(db.select().from(users).get()?.balance).toBe(98);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it('keeps the explicit credit guidance when a canvas task is restored after disconnection', async () => {
+    enable();
+    const requestId = 'mj-credit-reconnect-task';
+    canvasRequestStore().claim(1, requestId, 'credit-error-parameters');
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error:'insufficient credits' }, { status:402 })));
+    await handleSpecificationGeneration(request({ canvasRequestId:requestId }), response(), 'image');
+    expect(canvasRequestStore().get(1, requestId)?.message).toBe('上游积分不足，暂时无法生成，请联系管理员补充额度后重试。');
+    expect(fetch).toHaveBeenCalledOnce();
   });
 });
