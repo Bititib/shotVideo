@@ -43,6 +43,33 @@ function mount(initial = newDocument(), projects = [initial]) {
 }
 
 describe('canvas user workflows', () => {
+  it('selects an MJ candidate above the node, preserves all versions and connections, and can undo the choice', async () => {
+    const versions = ['old','current'].flatMap(requestId => [1,2,3,4].map(index => ({ id: requestId + index,
+      src: '/' + requestId + index + '.png', model: KMAI_MJ_MODEL_ID, prompt: 'a paper boat',
+      ratio: '1:1', resolution: '1K', createdAt: index, requestId })));
+    const image = { ...newNode('image', { x: 250, y: 340 }), model: KMAI_MJ_MODEL_ID, title: 'MJ 候选节点',
+      src: '/current1.png', versions, job: { status: 'done' as const, requestId: 'current', message: '已完成' } };
+    const target = { ...newNode('video', { x: 700, y: 340 }), title: '后续视频' };
+    const edge = { id: 'mj-reference', from: image.id, to: target.id };
+    const board = mount({ ...newDocument(), nodes: [image, target], edges: [edge] });
+    fireEvent.pointerDown(screen.getByRole('article', { name: 'MJ 候选节点' }), { button:0, pointerId:1 });
+    fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'), { pointerId:1 });
+    const picker = screen.getByRole('region', { name: 'MJ 四张候选图片' });
+    expect(within(picker).getAllByRole('button')).toHaveLength(4);
+    expect(within(picker).getAllByRole('img').map(image => image.getAttribute('src'))).toEqual(['/current1.png','/current2.png','/current3.png','/current4.png']);
+    fireEvent.click(within(picker).getByRole('button', { name: '将第 3 张图片设为当前版本' }));
+    expect(board.current().nodes[0].src).toBe('/current3.png');
+    expect(board.current().nodes[0].versions).toHaveLength(8);
+    expect(board.current().nodes[0]).toMatchObject({ x:250,y:340 });
+    expect(board.current().edges).toEqual([edge]); expect(streamGeneration).not.toHaveBeenCalled();
+    expect(board.current().drafts?.[image.id]).toMatchObject({ model:KMAI_MJ_MODEL_ID,count:4 });
+    expect(screen.getByRole('button', { name:'将第 3 张图片设为当前版本' }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name:'撤销',exact:true }));
+    expect(board.current().nodes[0].src).toBe('/current1.png');
+    fireEvent.click(screen.getByRole('button', { name:'重做',exact:true }));
+    expect(board.current().nodes[0].src).toBe('/current3.png');
+    await act(async () => {});
+  });
   it('submits one native MJ task without quality and keeps all four results in node history', async () => {
     vi.mocked(fetchImageModels).mockResolvedValueOnce([{ id: KMAI_MJ_MODEL_ID, name: 'MJ', description: '', available: true, rate: 2, routingLimits: kmaiMjLimits() }]);
     const generator = { ...newNode('image', { x: 0, y: 0 }, 'a paper boat'), generator: true, model: KMAI_MJ_MODEL_ID, title: 'MJ 节点' };

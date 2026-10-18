@@ -16,6 +16,7 @@ import { downloadGeneratedImage } from '../api/imageGen';
 import { normalizeImageFile, isSupportedImageFile } from '../utils/imageNormalization';
 import { startPolling } from '../utils/polling';
 import GeneratorPanel from './GeneratorPanel';
+import MjImagePicker, { latestMjImages } from './MjImagePicker';
 
 import ImageTools from './ImageTools';
 import { VIDEO_EDIT_MODEL, videoInputError, readVideoDuration } from './videoInputs';
@@ -24,7 +25,7 @@ import { canvasVideoReferenceLimits } from '../../../shared/canvasVideoReference
 import type { GenerateOptions } from './GeneratorPanel';
 import { applyGenerationEvent, applyPendingGeneration, referenceDataUrl, streamGeneration } from './generation';
 import { arrange, bounds, canConnect, checkpoint, clamp, duplicateSelection, fitView, intersects, newDocument, newNode, parseDocument, safeMedia, screenToWorld, stepHistory, templateNodes, uid, zoomAround } from './model';
-import type { CanvasDocument, CanvasNode, History, NodeKind, Point, Snapshot } from './model';
+import type { CanvasDocument, CanvasNode, CanvasVersion, History, NodeKind, Point, Snapshot } from './model';
 
 type Props = { key?: string; initial: CanvasDocument; projects: CanvasDocument[]; status: string; onSync?: () => void; onImportGuest?: () => Promise<void>; onPersist?: () => Promise<void>; onChange: (doc: CanvasDocument) => void; onSwitch: (id: string) => void; onCreate: (doc: CanvasDocument) => void };
 type Gesture = { kind: 'pan' | 'move' | 'box' | 'resize'; pointer: number; start: Point; last: Point; doc: CanvasDocument; ids: string[]; additive: boolean; checkpointed: boolean };
@@ -120,6 +121,19 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     historyRef.current = next; setHistory(next);
   };
   const commit = (transform: (current: CanvasDocument) => CanvasDocument) => { record(); update(transform(docRef.current)); };
+  const selectImageVersion = (nodeId: string, version: CanvasVersion) => {
+    const node = docRef.current.nodes.find(item => item.id === nodeId);
+    if (!node || node.job?.status === 'running' || node.src === version.src) return;
+    commit(current => ({ ...current, nodes: current.nodes.map(item => item.id === nodeId ? {
+      ...item, src: version.src, text: version.prompt, model: version.model || item.model, ratio: version.ratio || item.ratio,
+      settings: { resolution: version.resolution || item.settings?.resolution || '1K', seconds: item.settings?.seconds || 5 },
+      job: { ...item.job, status: 'done', contentId: version.contentId ?? item.job?.contentId, message: '已设为当前版本' },
+    } : item), drafts: { ...current.drafts, [nodeId]: {
+      ...current.drafts?.[nodeId], kind: 'image', prompt: version.prompt, model: version.model || node.model || '',
+      ratio: version.ratio || node.ratio || '1:1', resolution: version.resolution || node.settings?.resolution || '1K',
+      seconds: node.settings?.seconds || 5, count: 4,
+    } } }));
+  };
   const editNode = (id: string, patch: Partial<CanvasNode>) => update({ ...docRef.current, nodes: docRef.current.nodes.map(n => n.id === id ? { ...n, ...patch } : n) });
   const undo = (direction: 'undo' | 'redo') => {
     if (running) { setNotice('生成过程中可以继续编辑；任务完成后可撤销或重做。'); return; }
@@ -638,6 +652,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
   const miniBounds = bounds(doc.nodes);
   const miniScale = Math.min(148 / Math.max(miniBounds.width, 1), 78 / Math.max(miniBounds.height, 1));
   const visibleNodes = doc.nodes.filter(n => intersects(n, screenToWorld({ x: -400, y: -400 }, doc.view), screenToWorld({ x: size.width + 400, y: size.height + 400 }, doc.view)) || selected.includes(n.id));
+  const mjImages = active ? latestMjImages(active) : [];
   const composerWidth = Math.min(550, Math.max(240, size.width - 24));
   const nodeLeft = active ? active.x * doc.view.zoom + doc.view.x : 0;
   const nodeRight = active ? nodeLeft + active.width * doc.view.zoom : 0;
@@ -758,6 +773,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
         <button className={mode === 'hand' ? 'active' : ''} onClick={() => setMode('hand')} aria-label="平移工具" title="平移 H · 按住空格"><Hand size={19} /></button><hr />
 <button onClick={() => update({ ...doc, view: zoomAround(doc.view, { x: size.width / 2, y: size.height / 2 }, 1 / 1.2) })} aria-label="缩小画布"><Minus size={15} /></button><button onClick={() => update({ ...doc, view: zoomAround(doc.view, { x: size.width / 2, y: size.height / 2 }, 1 / doc.view.zoom) })} title="恢复 100%">{Math.round(doc.view.zoom * 100)}%</button><button onClick={() => update({ ...doc, view: zoomAround(doc.view, { x: size.width / 2, y: size.height / 2 }, 1.2) })} aria-label="放大画布"><Plus size={15} /></button><button onClick={() => fit()} aria-label="查看全部素材" title="适应画布 F"><Maximize size={15} /></button><hr/><button aria-label={showConnections ? '隐藏连线' : '显示连线'} title="显示 / 隐藏连线" onClick={() => setShowConnections(v => !v)}>{showConnections ? <Eye size={16}/> : <EyeOff size={16}/>}</button><button aria-label={dark ? '浅色画布' : '深色画布'} title={dark ? '切换到灵感浅色 · 鼠尾草绿 / 暖沙 / 奶油米' : '切换到经典黑色'} onClick={() => { const next = !dark; setDark(next); localStorage.setItem('canvas-theme', next ? 'dark' : 'light'); }}>{dark ? <Sun size={16}/> : <Moon size={16}/>}</button><hr/><button className="studio-icon" disabled={!history.past.length || running} onClick={() => undo('undo')} aria-label="撤销" title="撤销 Ctrl / ⌘ Z"><Undo2 size={17} /></button><button className="studio-icon" disabled={!history.future.length || running} onClick={() => undo('redo')} aria-label="重做" title="重做 Ctrl / ⌘ Shift Z"><Redo2 size={17} /></button></div>
         </div>
+      {active && mjImages.length === 4 && <MjImagePicker key={active.id + ':' + mjImages[0].id} node={active} versions={mjImages} view={doc.view} viewport={size} onSelect={version => selectImageVersion(active.id, version)} />}
       {panel && <div ref={composerElement} className="studio-composer-anchor" data-canvas-ui style={{ left: composerLeft, top: composerTop, width: composerWidth }}><GeneratorPanel document={doc} projects={projects} onMentionReference={(source,draft,start,end) => {
         const target=referenceTarget(draft.kind);
         // Creating a generator from selected media must retain the inputs already mentioned.
