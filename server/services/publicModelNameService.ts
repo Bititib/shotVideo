@@ -1,4 +1,5 @@
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
+import { normalizeMjModelId } from '../../shared/mj.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
 import { getModelSpecifications } from './modelRoutingService.js';
 import { eq } from 'drizzle-orm';
@@ -21,6 +22,7 @@ export class PublicModelNameError extends Error {
 
 /** Resolve before permissions, pricing and routing; unknown legacy IDs retain their old behavior. */
 export function resolvePublicModelId(value: string, input: { resolution?: unknown; output_resolution?: unknown; quality?: unknown } = {}): string {
+  value = normalizeMjModelId(value);
   const rows = db.select().from(models).all();
   const oldAlias = aliases()[value];
   const matches = rows.filter(row => row.modelId === value || row.modelId === canonicalZonghengModelId(value) || row.displayName === value || row.id === oldAlias);

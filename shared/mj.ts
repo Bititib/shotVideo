@@ -1,13 +1,15 @@
 import { defaultRoutingLimits, type ModelInputLimits } from './modelRouting.js';
 
-export const KMAI_BASE_URL = 'https://kmai.us.ci';
-export const KMAI_CHANNEL_TYPE = 'kmai';
-export const KMAI_MJ_UPSTREAM_MODEL = 'mj_imagine';
-export const KMAI_MJ_FAMILY = 'kmai-mj-imagine';
-export const KMAI_MJ_MODEL_ID = KMAI_MJ_FAMILY + '-1k';
+export const MJ_CHANNEL_TYPE = 'mj';
+export const MJ_UPSTREAM_MODEL = 'mj_imagine';
+export const MJ_FAMILY = 'mj-imagine';
+export const MJ_MODEL_ID = MJ_FAMILY + '-1k';
+// Accept saved projects and requests from the first release without exposing its old name.
+export const LEGACY_MJ_MODEL_ID = 'kmai-mj-imagine-1k';
+export const normalizeMjModelId = (id: string) => id === LEGACY_MJ_MODEL_ID ? MJ_MODEL_ID : id;
 
 /** Documented 1K sizes; their long edge must stay below 1800 pixels. */
-export const KMAI_MJ_SIZES: Record<string, string> = {
+export const MJ_SIZES: Record<string, string> = {
   '1:1': '1024x1024', '16:9': '1280x720', '9:16': '720x1280',
   '5:4': '1280x1024', '4:5': '1024x1280', '4:3': '1024x768', '3:4': '768x1024',
   '3:2': '1200x800', '2:3': '800x1200', '2:1': '1440x720', '21:9': '1680x720',
@@ -15,7 +17,7 @@ export const KMAI_MJ_SIZES: Record<string, string> = {
   '8:1': '1728x216', '1:8': '216x1728',
 };
 
-export function kmaiMjLimits(): ModelInputLimits {
+export function mjLimits(): ModelInputLimits {
   return { ...defaultRoutingLimits(), maxImages: 6, maxOutputs: 4, outputsPerTask: 4,
-    resolutions: ['1K'], ratios: Object.keys(KMAI_MJ_SIZES) };
+    resolutions: ['1K'], ratios: Object.keys(MJ_SIZES) };
 }

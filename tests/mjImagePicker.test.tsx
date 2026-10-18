@@ -3,16 +3,16 @@ import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import MjImagePicker, { latestMjImages } from '../client/src/canvas/MjImagePicker';
-import { KMAI_MJ_MODEL_ID } from '../shared/kmai';
+import { MJ_MODEL_ID } from '../shared/mj';
 import { newNode, type CanvasVersion } from '../client/src/canvas/model';
 
 afterEach(cleanup);
 const versions = (requestId: string): CanvasVersion[] => [1,2,3,4].map(n => ({
   id: requestId + '-' + n, src: '/' + requestId + '-' + n + '.png', prompt: '纸船',
-  model: KMAI_MJ_MODEL_ID, ratio: '1:1', resolution: '1K', createdAt: n, requestId,
+  model: MJ_MODEL_ID, ratio: '1:1', resolution: '1K', createdAt: n, requestId,
 }));
 const current = versions('current');
-const node = { ...newNode('image', { x: 250, y: 340 }), model: KMAI_MJ_MODEL_ID, src: current[0].src,
+const node = { ...newNode('image', { x: 250, y: 340 }), model: MJ_MODEL_ID, src: current[0].src,
   versions: [...versions('previous'), ...current], job: { status: 'done' as const, requestId: 'current', expectedCount: 4, message: '已完成' } };
 
 describe('floating MJ image choices', () => {

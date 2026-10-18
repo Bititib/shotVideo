@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Check } from 'lucide-react';
-import { KMAI_MJ_MODEL_ID } from '../../../shared/kmai';
+import { MJ_MODEL_ID } from '../../../shared/mj';
 import type { CanvasNode, CanvasVersion, View } from './model';
 
 export function latestMjImages(node: CanvasNode): CanvasVersion[] {
   if (node.kind !== 'image' || node.job?.status === 'running') return [];
   const versions = node.versions || [], last = versions.at(-1);
-  if (!last || (last.model || node.model) !== KMAI_MJ_MODEL_ID) return [];
+  if (!last || (last.model || node.model) !== MJ_MODEL_ID) return [];
   const batch = last.requestId ? versions.filter(version => version.requestId === last.requestId)
     : last.contentId ? versions.filter(version => version.contentId === last.contentId) : versions.slice(-4);
   return batch.length === 4 ? batch : [];

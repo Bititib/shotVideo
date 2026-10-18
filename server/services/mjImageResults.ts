@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { Request } from 'express';
 import { registerUpload } from './uploadAccess.js';
+import { mjBaseUrl } from './mjAdapter.js';
 
 export type MjImageJob = { index: number; sourceUrl: string; localUrl?: string; status: 'saving' | 'completed' };
 export type MjImageBatch = { sourceUrls: string[]; gridLocalUrl?: string; jobs: MjImageJob[] };
@@ -25,6 +26,7 @@ export async function splitMjGrid(buffer: Buffer): Promise<Buffer[]> {
 export async function saveMjImageBatch(batch: MjImageBatch, contentId: number, req: Request,
   channel: { baseUrl: string; apiKey: string }, persist: () => void,
   onReady: (url: string, index: number) => void): Promise<string[]> {
+  channel = { ...channel, baseUrl: mjBaseUrl(channel.baseUrl) };
   const { localizeGeneratedImage } = await import('../routes/imageGen.js');
   if (batch.sourceUrls.length === 1 && !batch.jobs.length) {
     if (!batch.gridLocalUrl) {

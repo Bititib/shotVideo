@@ -25,9 +25,9 @@ import { recordCanvasEvent } from '../middleware/canvasRequest.js';
 import { logUsage } from '../middleware/quota.js';
 import { routingMismatches, type MediaKind } from '../../shared/modelRouting.js';
 import { issueUploadUrl } from './uploadAccess.js';
-import { isKmaiChannel } from './kmaiAdapter.js';
-import { KMAI_MJ_MODEL_ID } from '../../shared/kmai.js';
-import { saveMjImageBatch, type MjImageBatch } from './kmaiImageResults.js';
+import { isMjChannel } from './mjAdapter.js';
+import { MJ_MODEL_ID } from '../../shared/mj.js';
+import { saveMjImageBatch, type MjImageBatch } from './mjImageResults.js';
 import { resolvePublicModelId } from './publicModelNameService.js';
 import { batchContextForRequest, batchStore, markBatchSubmitting, recordBatchFailure } from './videoBatchService.js';
 
@@ -257,7 +257,7 @@ async function saveMjResults(id: number, channel: any, req: Request, onEvent: (d
 
 async function runMjImages(id: number, candidates: RouteCandidate[], request: SpecificationRequest, req: Request, onEvent: (data: any) => void) {
   for (const target of candidates) {
-    if (!isKmaiChannel(target.channel) || !routeStillEnabled(metadata(id).requestedModel, target, request.input) || !claimRouteProbe(target.healthKey)) continue;
+    if (!isMjChannel(target.channel) || !routeStillEnabled(metadata(id).requestedModel, target, request.input) || !claimRouteProbe(target.healthKey)) continue;
     let accepted = false;
     try {
       patch(id, { routingRouteId: target.route.id, routingHealthKey: target.healthKey, channelId: target.channel.id,
@@ -314,7 +314,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
         for (const key of field === 'reference_images' ? ['image_urls','image_url','images'] : field === 'reference_videos' ? ['reference_video','video_urls','video_url'] : ['audio_url','reference_audios','audios']) delete body[key];
         body[field] = [...values, data]; }
     }
-    const nativeImageOutputs = kind === 'image' && modelId === KMAI_MJ_MODEL_ID ? 4 : undefined;
+    const nativeImageOutputs = kind === 'image' && modelId === MJ_MODEL_ID ? 4 : undefined;
     if (nativeImageOutputs && body.n !== undefined && ![1, 4].includes(Number(body.n))) throw fail('MJ 每次任务固定返回 4 张图片');
     const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (spec.limits.duration.mode === 'fixed' ? spec.limits.duration.min : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'));
     const mismatch = routingMismatches(spec.limits, request.input, kind);

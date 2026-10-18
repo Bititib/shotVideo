@@ -1,4 +1,4 @@
-import { isKmaiChannel, kmaiBaseUrl, fetchKmaiMjModels } from './kmaiAdapter.js';
+import { isMjChannel, normalizeMjBaseUrl, fetchMjModels } from './mjAdapter.js';
 import { isAsyncVideoChannel, asyncVideoBaseUrl, fetchAsyncVideoModels } from './asyncVideoAdapter.js';
 import { ensureZonghengVideoPricing } from './zonghengPricingService.js';
 import { canonicalZonghengModelId, getZonghengVideoSpec } from '../../shared/zonghengVideo.js';
@@ -386,7 +386,7 @@ export class ChannelService {
 
   static createChannel(data: any) {
     const { name, type, baseUrl, apiKey, modelMapping, supportedModels, priority, weight, maxRetries, timeout } = data;
-    if (!name || !baseUrl) throw { status: 400, message: '渠道名称和 Base URL 不能为空' };
+    if (!name || (!baseUrl && !isMjChannel({ type }))) throw { status: 400, message: '渠道名称和 Base URL 不能为空' };
 
     const isWxHaidiYue = type === WX_HAIDIYUE_CHANNEL_TYPE;
     const isLongxia = isLongxiaChannel({ type, baseUrl });
@@ -400,8 +400,8 @@ export class ChannelService {
       : [...MIAOWU_DEFAULT_VIDEO_MODELS];
     const result = db.insert(channels).values({
       name: isWxHaidiYue ? WX_HAIDIYUE_CHANNEL_NAME : name,
-      type: isFunAiChannel({ type, baseUrl }) ? 'funai' : isBlobDrawChannel({ type, baseUrl }) ? 'blobdraw' : isZonghengChannel({ type, baseUrl }) ? 'zongheng' : isHaya ? 'haya' : type || 'openai',
-      baseUrl: isKmaiChannel({ type }) ? kmaiBaseUrl(baseUrl) : isAsyncVideoChannel({ type }) ? asyncVideoBaseUrl(baseUrl) : isFunAiChannel({ type, baseUrl }) ? funAiBaseUrl(baseUrl) : isBlobDrawChannel({ type, baseUrl }) ? blobDrawApiBase(baseUrl) : isZonghengChannel({ type, baseUrl }) ? zonghengBaseUrl(baseUrl) : baseUrl,
+      type: isMjChannel({ type }) ? 'mj' : isFunAiChannel({ type, baseUrl }) ? 'funai' : isBlobDrawChannel({ type, baseUrl }) ? 'blobdraw' : isZonghengChannel({ type, baseUrl }) ? 'zongheng' : isHaya ? 'haya' : type || 'openai',
+      baseUrl: isMjChannel({ type }) ? normalizeMjBaseUrl(baseUrl) : isAsyncVideoChannel({ type }) ? asyncVideoBaseUrl(baseUrl) : isFunAiChannel({ type, baseUrl }) ? funAiBaseUrl(baseUrl) : isBlobDrawChannel({ type, baseUrl }) ? blobDrawApiBase(baseUrl) : isZonghengChannel({ type, baseUrl }) ? zonghengBaseUrl(baseUrl) : baseUrl,
       apiKey: type === 'hmstudio' ? '' : (apiKey || ''),
       modelMapping: JSON.stringify(isHaya ? (modelMapping && Object.keys(modelMapping).length ? modelMapping : Object.fromEntries(HAYA_MODEL_IDS.map(id => [id, id]))) : isWxHaidiYue
         ? Object.fromEntries(WX_HAIDIYUE_MODELS.map(modelId => [modelId, modelId]))
@@ -414,7 +414,7 @@ export class ChannelService {
       priority: priority ?? 0,
       weight: weight ?? 1,
       concurrencyLimit: DEFAULT_HM_CONCURRENCY,
-      maxRetries: isKmaiChannel({ type }) || isAsyncVideoChannel({ type }) || isHaya || isFunAiChannel({ type, baseUrl }) ? 0 : maxRetries ?? 3,
+      maxRetries: isMjChannel({ type }) || isAsyncVideoChannel({ type }) || isHaya || isFunAiChannel({ type, baseUrl }) ? 0 : maxRetries ?? 3,
       timeout: timeout ?? 120000,
       faceSplitEnabled: isWxHaidiYue
         ? (data.faceSplitEnabled === 0 || data.faceSplitEnabled === false ? 0 : 1)
@@ -441,8 +441,8 @@ export class ChannelService {
     if (!channel) throw { status: 404, message: '渠道不存在' };
     const nextType = data.type ?? channel.type;
 
-    if (isKmaiChannel({ type: nextType })) {
-      data = { ...data, baseUrl: kmaiBaseUrl(data.baseUrl ?? channel.baseUrl), maxRetries: 0 };
+    if (isMjChannel({ type: nextType })) {
+      data = { ...data, type: 'mj', baseUrl: normalizeMjBaseUrl(data.baseUrl ?? channel.baseUrl), maxRetries: 0 };
     }
 
     if (isAsyncVideoChannel({ type: nextType })) {
@@ -534,9 +534,9 @@ export class ChannelService {
 
     const start = Date.now();
     try {
-      if (isKmaiChannel(channel) || isAsyncVideoChannel(channel) || isBlobDrawChannel(channel) || isFunAiChannel(channel)) {
-        if (isKmaiChannel(channel)) {
-          if (!(await fetchKmaiMjModels(channel)).length) throw new Error('该 Key 未提供 mj_imagine 模型，请检查模型授权');
+      if (isMjChannel(channel) || isAsyncVideoChannel(channel) || isBlobDrawChannel(channel) || isFunAiChannel(channel)) {
+        if (isMjChannel(channel)) {
+          if (!(await fetchMjModels(channel)).length) throw new Error('该 Key 未提供 mj_imagine 模型，请检查模型授权');
         } else if (isAsyncVideoChannel(channel)) await fetchAsyncVideoModels(channel);
         else if (isFunAiChannel(channel)) await fetchFunAiModels(channel); else await fetchBlobDrawModels(channel);
         const durationMs = Date.now() - start;
@@ -585,9 +585,9 @@ export class ChannelService {
     if (!channel) throw { status: 404, message: '渠道不存在' };
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
 
-    if (isKmaiChannel(channel)) {
-      const { syncKmaiMjModels } = await import('./kmaiCatalogService.js');
-      return syncKmaiMjModels(channel);
+    if (isMjChannel(channel)) {
+      const { syncMjModels } = await import('./mjCatalogService.js');
+      return syncMjModels(channel);
     }
 
     if (isAsyncVideoChannel(channel)) {

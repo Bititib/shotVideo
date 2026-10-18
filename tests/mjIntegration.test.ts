@@ -9,10 +9,11 @@ import { getModelSpecification, saveModelSpecification, selectModelRoutes } from
 import { handleSpecificationGeneration, resumeSpecificationTasks } from '../server/services/specificationGenerationService.js';
 import { generateSpecificationImage } from '../server/services/specificationAdapters.js';
 import { localizeGeneratedImage } from '../server/routes/imageGen.js';
-import { KMAI_MJ_MODEL_ID, KMAI_MJ_SIZES } from '../shared/kmai.js';
+import { LEGACY_MJ_MODEL_ID, MJ_MODEL_ID, MJ_SIZES } from '../shared/mj.js';
+import { mjBaseUrl } from '../server/services/mjAdapter.js';
 import { routeRequestCost } from '../shared/modelRouting.js';
 
-const key = 'private-kmai-test-key';
+const key = 'private-mj-test-key';
 const input = { images: 0, videos: 0, audios: 0, outputs: 4, seconds: 6,
   resolution: '1K', ratio: '1:1', firstFrame: false, lastFrame: false };
 const discovery = () => Response.json({ data: ['mj_imagine', 'gpt-image-2', 'seedance-2.0', 'indextts2-v1'].map(id => ({ id })) });
@@ -22,14 +23,14 @@ beforeEach(async () => {
   for (const table of [contents, settings, models, channels, modelPricing, users]) db.delete(table).run();
   db.insert(users).values({ id: 1, email: 'mj@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
   vi.stubGlobal('fetch', vi.fn(async () => discovery()));
-  channelId = ChannelService.createChannel({ name: 'KMAI MJ', type: 'kmai', baseUrl: 'https://kmai.us.ci/v1/', apiKey: key });
+  channelId = ChannelService.createChannel({ name: 'MJ', type: 'mj', baseUrl: 'https://mj-provider.example/v1/', apiKey: key });
   await ChannelService.syncModels(channelId);
 });
 afterEach(() => vi.unstubAllGlobals());
 afterAll(() => sqlite.close());
 function enable() {
-  db.update(models).set({ isActive: 1 }).where(eq(models.modelId, KMAI_MJ_MODEL_ID)).run();
-  db.insert(modelPricing).values({ modelPattern: KMAI_MJ_MODEL_ID, billingType: 'per_call', inputPrice: 2, outputPrice: 0 }).run();
+  db.update(models).set({ isActive: 1 }).where(eq(models.modelId, MJ_MODEL_ID)).run();
+  db.insert(modelPricing).values({ modelPattern: MJ_MODEL_ID, billingType: 'per_call', inputPrice: 2, outputPrice: 0 }).run();
 }
 function imageRequest(overrides: Record<string, any> = {}) {
   return { prompt: 'a paper boat', input, images: [], videos: [], audios: [], firstFrame: '', lastFrame: '',
@@ -42,32 +43,47 @@ function response() {
   res.end = vi.fn(() => { res.writableEnded = true; }); return res;
 }
 const request = (body: Record<string, unknown> = {}) => ({ userId: 1, headers: {}, protocol: 'https', get: () => 'app.example',
-  body: { model: KMAI_MJ_MODEL_ID, prompt: 'a paper boat', ...body } } as any);
+  body: { model: MJ_MODEL_ID, prompt: 'a paper boat', ...body } } as any);
 
-describe('KMAI MJ image channel', () => {
+describe('MJ image channel', () => {
+  it('uses a neutral public name and a server-side default endpoint', async () => {
+    expect(MJ_MODEL_ID).toBe('mj-imagine-1k');
+    expect(db.select().from(models).get()).toMatchObject({ provider:'mj', displayName:'MJ · 1K' });
+    const defaultChannel = ChannelService.createChannel({ name:'MJ 默认', type:'mj', baseUrl:'', apiKey:key });
+    await ChannelService.syncModels(defaultChannel);
+    expect(ChannelService.getChannelRaw(defaultChannel)).toMatchObject({ type:'mj', baseUrl:'' });
+    enable();
+    const spec = getModelSpecification(MJ_MODEL_ID)!;
+    const target = selectModelRoutes(spec, input).find(candidate => candidate.channel.id === defaultChannel)!;
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data:[1,2,3,4].map(n => ({ url:'/v1/public/image/task-' + n })) })));
+    await generateSpecificationImage(target, imageRequest(), vi.fn(), vi.fn());
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe(mjBaseUrl('') + '/v1/images/generations');
+    const res = response(); await handleSpecificationGeneration(request({ model:LEGACY_MJ_MODEL_ID }), res, 'image');
+    expect(db.select().from(contents).get()?.modelId).toBe(MJ_MODEL_ID);
+  });
   it('imports only MJ as a disabled image entry without converting upstream credits into a price', async () => {
     expect(await ChannelService.testChannel(channelId)).toMatchObject({ success: true });
-    expect(db.select().from(models).all()).toEqual([expect.objectContaining({ modelId: KMAI_MJ_MODEL_ID, capabilities: '["image"]', isActive: 0 })]);
-    expect(ChannelService.getChannelRaw(channelId)).toMatchObject({ baseUrl: 'https://kmai.us.ci', maxRetries: 0,
-      supportedModels: JSON.stringify([KMAI_MJ_MODEL_ID]), modelMapping: JSON.stringify({ [KMAI_MJ_MODEL_ID]: 'mj_imagine' }) });
-    expect(getModelSpecification(KMAI_MJ_MODEL_ID)).toMatchObject({ imageFamily: 'kmai-mj-imagine', kind: 'image',
+    expect(db.select().from(models).all()).toEqual([expect.objectContaining({ modelId: MJ_MODEL_ID, capabilities: '["image"]', isActive: 0 })]);
+    expect(ChannelService.getChannelRaw(channelId)).toMatchObject({ baseUrl: 'https://mj-provider.example', maxRetries: 0,
+      supportedModels: JSON.stringify([MJ_MODEL_ID]), modelMapping: JSON.stringify({ [MJ_MODEL_ID]: 'mj_imagine' }) });
+    expect(getModelSpecification(MJ_MODEL_ID)).toMatchObject({ imageFamily: 'mj-imagine', kind: 'image',
       limits: { resolutions: ['1K'], maxImages: 6, maxOutputs: 4, outputsPerTask: 4 }, routes: [{ cost: null, costUnit: 'unknown' }] });
     expect(db.select().from(modelPricing).all()).toEqual([]);
-    ChannelService.updateChannel(channelId, { baseUrl: 'https://kmai.us.ci/v1/', maxRetries: 4 });
-    expect(ChannelService.getChannelRaw(channelId)).toMatchObject({ baseUrl: 'https://kmai.us.ci', maxRetries: 0 });
+    ChannelService.updateChannel(channelId, { baseUrl: 'https://mj-provider.example/v1/', maxRetries: 4 });
+    expect(ChannelService.getChannelRaw(channelId)).toMatchObject({ baseUrl: 'https://mj-provider.example', maxRetries: 0 });
   });
   it('preserves administrator settings across synchronization and adds a second channel to the same entry', async () => {
     enable();
-    const spec = getModelSpecification(KMAI_MJ_MODEL_ID)!;
+    const spec = getModelSpecification(MJ_MODEL_ID)!;
     spec.enabled = false; spec.limits.maxImages = 2; spec.routes[0].enabled = false;
     spec.routes[0].costUnit = 'per_image'; spec.routes[0].cost = 0.5;
     saveModelSpecification(spec);
     await ChannelService.syncModels(channelId);
-    expect(getModelSpecification(KMAI_MJ_MODEL_ID)).toEqual(spec);
+    expect(getModelSpecification(MJ_MODEL_ID)).toEqual(spec);
     expect(db.select().from(modelPricing).all()[0].inputPrice).toBe(2);
-    const second = ChannelService.createChannel({ name: 'MJ second', type: 'kmai', baseUrl: 'https://provider.example', apiKey: 'second-key' });
+    const second = ChannelService.createChannel({ name: 'MJ second', type: 'mj', baseUrl: 'https://provider.example', apiKey: 'second-key' });
     await ChannelService.syncModels(second);
-    expect(getModelSpecification(KMAI_MJ_MODEL_ID)!.routes).toHaveLength(2);
+    expect(getModelSpecification(MJ_MODEL_ID)!.routes).toHaveLength(2);
     expect(db.select().from(models).all()).toHaveLength(1);
   });
   it('keeps saved configuration on invalid discovery and stops routing when MJ is removed', async () => {
@@ -79,18 +95,18 @@ describe('KMAI MJ image channel', () => {
     expect(await ChannelService.testChannel(channelId)).toMatchObject({ success: false, message: expect.stringContaining('mj_imagine') });
     expect(await ChannelService.syncModels(channelId)).toMatchObject({ count: 0 });
     enable();
-    expect(selectModelRoutes(getModelSpecification(KMAI_MJ_MODEL_ID)!, input)).toEqual([]);
+    expect(selectModelRoutes(getModelSpecification(MJ_MODEL_ID)!, input)).toEqual([]);
   });
-  it.each(Object.entries(KMAI_MJ_SIZES))('sends the documented 1K size for %s without quality parameters', async (ratio, size) => {
+  it.each(Object.entries(MJ_SIZES))('sends the documented 1K size for %s without quality parameters', async (ratio, size) => {
     enable();
-    const target = selectModelRoutes(getModelSpecification(KMAI_MJ_MODEL_ID)!, { ...input, ratio })[0];
+    const target = selectModelRoutes(getModelSpecification(MJ_MODEL_ID)!, { ...input, ratio })[0];
     const upstream = vi.fn(async () => Response.json({ data: [{ url: 'https://cdn.example/mj.png' }] }));
     vi.stubGlobal('fetch', upstream);
     const start = vi.fn();
     expect(await generateSpecificationImage(target, imageRequest({ input: { ...input, ratio } }), start, vi.fn()))
       .toMatchObject({ imageUrl: 'https://cdn.example/mj.png' });
     const [url, init] = upstream.mock.calls[0] as any;
-    expect(url).toBe('https://kmai.us.ci/v1/images/generations');
+    expect(url).toBe('https://mj-provider.example/v1/images/generations');
     expect(init.headers).toEqual({ Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' });
     expect(JSON.parse(init.body)).toEqual({ model: 'mj_imagine', prompt: 'a paper boat', size });
     expect(Math.max(...size.split('x').map(Number))).toBeLessThan(1800);
@@ -99,12 +115,12 @@ describe('KMAI MJ image channel', () => {
   it.each([1, 6])('uploads all %i reference images as files with their original MIME types', async count => {
     enable();
     const images = Array.from({ length: count }, (_, i) => 'data:image/png;base64,' + Buffer.from('reference-' + i).toString('base64'));
-    const target = selectModelRoutes(getModelSpecification(KMAI_MJ_MODEL_ID)!, { ...input, images: count })[0];
+    const target = selectModelRoutes(getModelSpecification(MJ_MODEL_ID)!, { ...input, images: count })[0];
     const upstream = vi.fn(async () => Response.json({ data: [{ url: '/v1/public/image/mj-id' }] }));
     vi.stubGlobal('fetch', upstream);
     await generateSpecificationImage(target, imageRequest({ input: { ...input, images: count }, images }), vi.fn(), vi.fn());
     const [url, init] = upstream.mock.calls[0] as any;
-    expect(url).toBe('https://kmai.us.ci/v1/images/edits');
+    expect(url).toBe('https://mj-provider.example/v1/images/edits');
     expect(init.headers).toEqual({ Authorization: 'Bearer ' + key });
     const form: FormData = init.body;
     expect(form.get('model')).toBe('mj_imagine'); expect(form.get('size')).toBe('1024x1024');
@@ -115,7 +131,7 @@ describe('KMAI MJ image channel', () => {
     }
   });
   it('rejects unsupported input before any request even when routing limits were loosened', async () => {
-    enable(); const target = selectModelRoutes(getModelSpecification(KMAI_MJ_MODEL_ID)!, input)[0];
+    enable(); const target = selectModelRoutes(getModelSpecification(MJ_MODEL_ID)!, input)[0];
     const upstream = vi.fn(); vi.stubGlobal('fetch', upstream);
     for (const override of [{ images: Array(7).fill('data:image/png;base64,eA==') }, { input: { ...input, resolution: '2K' } },
       { input: { ...input, ratio: '7:2' } }, { audios: ['audio'] }, { images: ['https://external.example/ref.png'] },
@@ -166,7 +182,7 @@ describe('KMAI MJ image channel', () => {
   });
   it('prices a native four-image task as one call and preserves all results for API clients', async () => {
     enable();
-    const spec = getModelSpecification(KMAI_MJ_MODEL_ID)!;
+    const spec = getModelSpecification(MJ_MODEL_ID)!;
     expect(routeRequestCost({ ...spec.routes[0], cost: 2, costUnit: 'per_call' }, input)).toBe(2);
     expect(routeRequestCost({ ...spec.routes[0], cost: 0.5, costUnit: 'per_image' }, input)).toBe(2);
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [1,2,3,4].map(n => ({ url: 'https://cdn.example/' + n + '.png' })) })));

@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import ImageGenPage from '../client/src/pages/analysis/ImageGenPage';
 import { fetchImageModels, generatedImageReference, generateImage, getCachedImageModels } from '../client/src/api/imageGen';
 import { contentApi } from '../client/src/api/content';
-import { KMAI_MJ_MODEL_ID, kmaiMjLimits } from '../shared/kmai';
+import { MJ_MODEL_ID, mjLimits } from '../shared/mj';
 
 vi.mock('../client/src/api/imageGen', async original => ({
   ...await original<any>(), fetchImageModels: vi.fn(), getCachedImageModels: vi.fn(),
@@ -42,17 +42,17 @@ function history() {
 
 describe('图片生成与继续改图', () => {
   it('offers every managed MJ ratio and submits its fixed resolution without quality', async () => {
-    const mj = [{ id: KMAI_MJ_MODEL_ID, name: 'MJ', description: '', available: true, maxReferenceImages: 6, routingLimits: kmaiMjLimits() }];
+    const mj = [{ id: MJ_MODEL_ID, name: 'MJ', description: '', available: true, maxReferenceImages: 6, routingLimits: mjLimits() }];
     vi.mocked(getCachedImageModels).mockReturnValue(mj);
     vi.mocked(fetchImageModels).mockResolvedValue(mj);
     render(<ImageGenPage />);
     const ratio = screen.getByRole('combobox', { name: '画面比例' }) as HTMLSelectElement;
-    expect(Array.from(ratio.options, option => option.value)).toEqual(kmaiMjLimits().ratios);
+    expect(Array.from(ratio.options, option => option.value)).toEqual(mjLimits().ratios);
     fireEvent.change(ratio, { target: { value: '1:8' } });
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'a tall tree' } });
     fireEvent.click(screen.getByRole('button', { name: '开始生成图片' }));
     expect(screen.getByText('4 张 · 按次计费')).toBeTruthy();
-    expect(vi.mocked(generateImage).mock.calls[0][0]).toMatchObject({ model: KMAI_MJ_MODEL_ID, resolution: '1K', aspect_ratio: '1:8', n: 4 });
+    expect(vi.mocked(generateImage).mock.calls[0][0]).toMatchObject({ model: MJ_MODEL_ID, resolution: '1K', aspect_ratio: '1:8', n: 4 });
     expect(vi.mocked(generateImage).mock.calls[0][0].quality).toBeUndefined();
   });
   it('requires an original image before editing', async () => {

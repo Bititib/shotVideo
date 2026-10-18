@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import * as schema from './schema.js';
 import { ensureUserModelTables } from './userModelMigration.js';
+import { migrateMjNaming } from './mjNamingMigration.js';
 
 const dataDir = path.resolve(process.cwd(), 'data');
 if (!fs.existsSync(dataDir)) {
@@ -131,5 +132,6 @@ try {
   }
 } catch (e) {}
 
+migrateMjNaming(sqlite);
 export const db = drizzle(sqlite, { schema });
 export { sqlite };

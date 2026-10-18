@@ -9,7 +9,7 @@ export default function ChannelDetails({ channel, tab, onTabChange, busy, testin
   onEdit: () => void; onTest: () => void; onSync: () => void; children: ReactNode;
 }) {
   const modelCount = channel.supportedModels?.length || 0;
-  const provider = channel.type === 'kmai' ? 'KMAI · MJ' : channel.type === 'async-video' ? 'Vx-乐2.0fast' : channel.type === 'funai' ? 'FunAI' : channel.type === 'zongheng' ? '纵横科技' : channel.type === 'hmstudio' ? 'HM Studio' : channel.type;
+  const provider = channel.type === 'mj' ? 'MJ' : channel.type === 'async-video' ? 'Vx-乐2.0fast' : channel.type === 'funai' ? 'FunAI' : channel.type === 'zongheng' ? '纵横科技' : channel.type === 'hmstudio' ? 'HM Studio' : channel.type;
   const currentFeedback = feedback?.channelId === channel.id ? feedback : null;
   return (
     <div className="channel-details">
@@ -19,7 +19,7 @@ export default function ChannelDetails({ channel, tab, onTabChange, busy, testin
           <div><p className="channel-details-eyebrow">渠道概览 · {provider}</p><h3>{channel.name}</h3></div>
           <span className={'channel-details-status ' + (channel.status ? 'is-active' : '')}><i />{channel.status ? '已启用' : '已停用'}</span>
         </div>
-        <p className="channel-details-address">{channel.baseUrl}</p>
+        <p className="channel-details-address">{channel.baseUrl || '默认接口'}</p>
         <div className="channel-details-metrics">
           <div><span><Layers3 aria-hidden="true" />关联模型</span><strong>{modelCount}<small>个</small></strong></div>
           <div><span><Activity aria-hidden="true" />运行中</span><strong>{channel.concurrencyRunning || 0}<small>个任务</small></strong></div>
@@ -47,7 +47,7 @@ export default function ChannelDetails({ channel, tab, onTabChange, busy, testin
       {tab === 'models' ? <div className="channel-details-models">{children}</div> : <div className="channel-details-config">
         <section><h3>连接配置</h3><dl>
           <div><dt>渠道类型</dt><dd>{provider}</dd></div>
-          <div><dt>接口地址</dt><dd className="channel-details-url">{channel.baseUrl}</dd></div>
+          <div><dt>接口地址</dt><dd className="channel-details-url">{channel.baseUrl || '默认接口'}</dd></div>
           <div><dt>API Key</dt><dd>{channel.apiKey || channel.apiKeyCount ? '已配置' : '未配置'}</dd></div>
         </dl></section>
         <section><h3>调度与运行</h3><dl>

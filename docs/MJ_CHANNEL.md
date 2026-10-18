@@ -1,15 +1,15 @@
-# KMAI MJ 图片渠道
+# MJ 图片渠道
 
-文档来源：<https://kmai.us.ci/docs>，核对日期：2026-10-18。
+接口协议核对日期：2026-10-18。
 
-仅接入上游 `mj_imagine`。本站调用名为 `kmai-mj-imagine-1k`，显示名为「MJ · 1K（KMAI）」。
+仅接入上游 `mj_imagine`。本站调用名为 `mj-imagine-1k`，显示名为「MJ · 1K」。
 
 ## 配置
 
-1. 在「渠道管理」新增渠道，选择「KMAI（MJ 图片）」。
-2. Base URL 默认 `https://kmai.us.ci`；填写自己的 KMAI API Key，保存。
+1. 在「渠道管理」新增渠道，选择「MJ（图片）」。
+2. Base URL 留空使用默认接口，也可填写自定义兼容接口地址；填写自己的 API Key，保存。
 3. 点击「测试连接」和「同步模型」。同步仅导入 MJ，不导入该 Key 的其他模型。
-4. 在模型管理配置本站按次售价并启用「MJ · 1K（KMAI）」。该价格是一次 MJ 任务的价格，一次返回 4 张图片。在模型路由核对渠道成本和输入限制。
+4. 在模型管理配置本站按次售价并启用「MJ · 1K」。该价格是一次 MJ 任务的价格，一次返回 4 张图片。在模型路由核对渠道成本和输入限制。
 
 支持带 `/v1` 的 Base URL，保存时自动移除版本后缀。新模型默认停用，不创建售价，不将上游积分直接换算成人民币。重新同步保留管理员配置的价格、限制、开关和已有线路。
 
@@ -30,7 +30,7 @@
 ## 验证
 
 ```text
-npx vitest run tests/kmaiIntegration.test.ts tests/kmaiImageResults.test.ts tests/imageGenerationFlow.test.tsx tests/canvasStudio.test.tsx
+npx vitest run tests/mjIntegration.test.ts tests/mjImageResults.test.ts tests/imageGenerationFlow.test.tsx tests/canvasStudio.test.tsx tests/mjImagePicker.test.tsx tests/mjNamingMigration.test.ts
 npm run lint
 npm run build
 ```

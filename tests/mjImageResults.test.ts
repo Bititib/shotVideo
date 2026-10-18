@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import sharp from 'sharp';
 vi.mock('../server/routes/imageGen.js', () => ({ localizeGeneratedImage: vi.fn(async () => '/api/uploads/mj-grid.png') }));
 import { localizeGeneratedImage } from '../server/routes/imageGen.js';
-import { saveMjImageBatch, splitMjGrid, type MjImageBatch } from '../server/services/kmaiImageResults.js';
+import { saveMjImageBatch, splitMjGrid, type MjImageBatch } from '../server/services/mjImageResults.js';
 
 afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
 const colors = [[255,0,0], [0,255,0], [0,0,255], [255,255,0]];
@@ -32,11 +32,11 @@ describe('MJ four-image result persistence', () => {
     const write = vi.spyOn(fs, 'writeFile').mockResolvedValue();
     const batch: MjImageBatch = { sourceUrls: ['https://cdn.example/mj-grid.png'], jobs: [] };
     const persist = vi.fn(), ready = vi.fn();
-    const urls = await saveMjImageBatch(batch, 123, {} as any, { baseUrl: 'https://kmai.us.ci', apiKey: 'test' }, persist, ready);
+    const urls = await saveMjImageBatch(batch, 123, {} as any, { baseUrl: 'https://mj-provider.example', apiKey: 'test' }, persist, ready);
     expect(new Set(urls).size).toBe(4); expect(ready).toHaveBeenCalledTimes(4);
     expect(write).toHaveBeenCalledTimes(4); expect(localizeGeneratedImage).toHaveBeenCalledOnce();
     expect(batch.gridLocalUrl).toBe('/api/uploads/mj-grid.png');
-    expect(await saveMjImageBatch(batch, 123, {} as any, { baseUrl: 'https://kmai.us.ci', apiKey: 'test' }, persist, ready)).toEqual(urls);
+    expect(await saveMjImageBatch(batch, 123, {} as any, { baseUrl: 'https://mj-provider.example', apiKey: 'test' }, persist, ready)).toEqual(urls);
     expect(write).toHaveBeenCalledTimes(4); expect(localizeGeneratedImage).toHaveBeenCalledOnce();
   });
 });
