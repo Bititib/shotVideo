@@ -48,7 +48,7 @@ interface GetContentsOptions {
 }
 
 const INTERNAL_VIDEO_ROUTING_FIELDS = [
-  'mjRecovery',
+  'mjRecovery', 'mjSubmissionDiagnostics',
   'zonghengOrderId', 'zonghengSubmissionStarted', 'zonghengPollDelay', 'zonghengSubmissionDiagnostics', 'zonghengNotAcceptedResolution',
   'actualModel',
   'actualChannel',

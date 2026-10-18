@@ -346,24 +346,20 @@ export class ChannelService {
     return this.findChannelsByType(type)[0] || null;
   }
 
-  /** Submission-stage capacity failures are disabled until an admin starts the route again. */
+  /** Legacy failure-reporting callback; automatic errors never change operator switches. */
   static disableExecutionTarget(target: any, reason: string) {
     const detail = String(reason || '上游提交失败').replace(/\s+/g, ' ').slice(0, 240);
     const now = new Date().toISOString();
     if (target?.type === 'hmstudio' && Number(target.apiKeyId) > 0) {
-      db.update(channelApiKeys).set({ status: 0, updatedAt: now })
-        .where(and(eq(channelApiKeys.id, Number(target.apiKeyId)), eq(channelApiKeys.channelId, Number(target.id))))
-        .run();
       db.update(channels).set({
         lastTestAt: now,
-        lastTestResult: `auto_disabled:${maskApiKey(String(target.apiKey || ''))}:${detail}`,
+        lastTestResult: `submission_error:${maskApiKey(String(target.apiKey || ''))}:${detail}`,
         updatedAt: now,
       }).where(eq(channels.id, Number(target.id))).run();
     } else if (Number(target?.id) > 0) {
       db.update(channels).set({
-        status: 0,
         lastTestAt: now,
-        lastTestResult: `auto_disabled:${detail}`,
+        lastTestResult: `submission_error:${detail}`,
         updatedAt: now,
       }).where(eq(channels.id, Number(target.id))).run();
     }

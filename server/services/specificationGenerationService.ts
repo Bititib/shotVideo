@@ -317,6 +317,8 @@ async function runMjImages(id: number, candidates: RouteCandidate[], request: Sp
   for (const target of candidates) {
     if (!isMjChannel(target.channel) || !routeStillEnabled(metadata(id).requestedModel, target, request.input) || !claimRouteProbe(target.healthKey)) continue;
     let accepted = false;
+    let phase: 'submit' | 'save' = 'submit';
+    const startedAt = Date.now();
     try {
       patch(id, { routingRouteId: target.route.id, routingHealthKey: target.healthKey, channelId: target.channel.id,
         channelApiKeyId: target.channel.apiKeyId, upstreamModel: target.route.upstreamModel, actualModel: target.route.executionModel,
@@ -327,9 +329,15 @@ async function runMjImages(id: number, candidates: RouteCandidate[], request: Sp
       accepted = true;
       const sourceUrls = 'imageUrls' in result && Array.isArray(result.imageUrls) ? result.imageUrls : [result.imageUrl];
       patch(id, { nativeImageBatch: { sourceUrls, jobs: [] }, upstreamImageUrls: sourceUrls });
+      phase = 'save';
       await saveMjResults(id, target.channel, req, onEvent);
       noteRouteResult(target.healthKey, true); return;
     } catch (error: any) {
+      const httpStatus = error instanceof SpecificationUpstreamError ? error.upstreamStatus : 0;
+      patch(id, { mjSubmissionDiagnostics: { phase, elapsedMs: Math.max(0, Date.now() - startedAt), finishedAt: new Date().toISOString(),
+        ...(httpStatus ? { httpStatus } : {}),
+        reason: phase === 'save' ? 'result_save' : [502, 504, 524].includes(httpStatus) ? 'gateway_timeout'
+          : error instanceof SpecificationUpstreamError && error.uncertain ? 'response_uncertain' : 'submission_rejected' } });
       if (accepted || error instanceof SpecificationUpstreamError && error.uncertain) {
         holdForReview(id, error.message || 'MJ 原任务结果待核实，请勿重复提交');
         onEvent({ type: 'error', message: 'MJ 原任务结果待核实，已保存图片保留，请勿重复提交' }); return;
@@ -384,7 +392,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     if (mismatch.length) throw fail(mismatch.join('；'));
     request.input.resolution = spec.limits.resolutions.find(r => r.toLowerCase() === request.input.resolution.toLowerCase()) || request.input.resolution;
     const candidates = selectModelRoutes(spec, request.input);
-    if (!candidates.length) throw fail(modelAvailabilityMessage(specificationAvailability(spec)) || '该规格暂时没有健康且满足参数的线路', 503);
+    if (!candidates.length) throw fail(modelAvailabilityMessage(specificationAvailability(spec)) || '该规格暂时没有满足参数的可用线路', 503);
     const trustedOrigins = [request.publicBaseUrl, req.protocol + '://' + req.get('host')];
     const imageSources = [...request.images, ...(request.firstFrame ? [request.firstFrame] : []), ...(request.lastFrame ? [request.lastFrame] : [])];
     const normalized = await validateAndNormalizeImageReferences(imageSources, { trustedOrigins, trustedRemoteOrigins: (process.env.REFERENCE_IMAGE_REMOTE_ORIGINS || 'https://filer2.fdai.xyz').split(/[\s,]+/).filter(Boolean) });

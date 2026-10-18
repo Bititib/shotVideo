@@ -1,4 +1,4 @@
-import { isUpstreamCreditFailure, type ModelAvailability } from '../../shared/upstreamAvailability.js';
+import type { ModelAvailability } from '../../shared/upstreamAvailability.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
 import { MJ_OVERFLOW_VIDEO_MODEL } from './videoFailoverService.js';
 import { randomUUID } from 'node:crypto';
@@ -82,8 +82,8 @@ export function deleteModelSpecification(modelId: string) { write(CONFIG_KEY, ge
 export function getRouteHealth() {
   const health = read<Record<string, RouteHealth>>(HEALTH_KEY, {});
   let changed = false;
-  // Credit exhaustion is diagnostic only; also release locks saved by older versions.
-  for (const item of Object.values(health)) if (item.state !== 'healthy' && isUpstreamCreditFailure(item.lastError)) {
+  // Automatic failures are diagnostic only. Release historical cooldowns and locks.
+  for (const item of Object.values(health)) if (item.state !== 'healthy' || item.retryAt || item.probeUntil) {
     item.state = 'healthy';
     item.retryAt = 0;
     item.probeUntil = 0;
@@ -94,23 +94,17 @@ export function getRouteHealth() {
 }
 export function routeHealthKey(route: ModelRoute, apiKeyId?: number | null) { return route.channelId + ':' + (apiKeyId || 0) + ':' + route.upstreamModel; }
 export function resetRouteHealth(key: string) { const health = getRouteHealth(); delete health[key]; write(HEALTH_KEY, health); }
-export function noteRouteResult(key: string, ok: boolean, message = '', blocked = false, generation = false) {
+export function noteRouteResult(key: string, ok: boolean, message = '', _blocked = false, generation = false) {
   const health = getRouteHealth();
   const old = health[key] || { failures: 0, successes: 0, generationFailures: 0, state: 'healthy', retryAt: 0, lastError: '', updatedAt: '' };
   const failures = ok ? 0 : old.failures + 1;
-  const credits = !ok && isUpstreamCreditFailure(message);
   health[key] = { ...old, failures, successes: old.successes + Number(ok), generationFailures: old.generationFailures + Number(generation && !ok),
-    state: old.state === 'blocked' || blocked && !credits ? 'blocked' : ok || credits ? 'healthy' : 'cooldown', retryAt: ok || credits ? 0 : Date.now() + Math.min(15 * 60_000, 30_000 * 2 ** Math.min(failures - 1, 5)),
-    probeUntil: 0, lastError: old.state === 'blocked' ? old.lastError : ok ? '' : message.replace(/sk-[\w-]+/g, '[REDACTED]').slice(0, 300), updatedAt: new Date().toISOString() };
+    state: 'healthy', retryAt: 0,
+    probeUntil: 0, lastError: ok ? '' : message.replace(/sk-[\w-]+/g, '[REDACTED]').slice(0, 300), updatedAt: new Date().toISOString() };
   write(HEALTH_KEY, health);
 }
-export function claimRouteProbe(key: string): boolean {
-  return sqlite.transaction(() => {
-    const health = getRouteHealth(), item = health[key];
-    if (!item || item.state === 'healthy') return true;
-    if (item.state === 'blocked' || item.retryAt > Date.now() || (item.probeUntil || 0) > Date.now()) return false;
-    item.probeUntil = Date.now() + 10 * 60_000; write(HEALTH_KEY, health); return true;
-  })();
+export function claimRouteProbe(_key: string): boolean {
+  return true;
 }
 export function inspectModelRoutes(spec: ModelSpecification, input?: RoutingInput, activeChannels = ChannelService.getActiveChannels()) {
   const health = getRouteHealth(), registry = db.select().from(models).all(), model = registry.find(m => m.modelId === spec.modelId);
@@ -120,9 +114,8 @@ export function inspectModelRoutes(spec: ModelSpecification, input?: RoutingInpu
     const reason = execution?.isActive === 0 && execution.modelId !== MJ_OVERFLOW_VIDEO_MODEL ? ['执行模型已禁用'] : !spec.enabled || model?.isActive !== 1 ? ['规格已禁用'] : !route.enabled ? ['模型线路已禁用'] : !executions.length ? ['渠道或 Key 已禁用 / 未配置'] : [];
     const matches = input ? routingMismatches(route.limits, input, spec.kind) : [];
     const targets = executions.map(channel => ({ route, channel, cost: input ? routeRequestCost(route, input) : null, healthKey: routeHealthKey(route, channel.apiKeyId) }));
-    const available = targets.filter(t => { const h = health[t.healthKey]; return !h || h.state === 'healthy' || (h.state === 'cooldown' && h.retryAt <= Date.now() && (h.probeUntil || 0) <= Date.now()); });
-    return { route, reasons: [...reason, ...matches, ...(executions.length && !available.length ? ['线路故障或恢复试用中'] : [])],
-      cost: input ? routeRequestCost(route, input) : null, health: targets.map(t => ({ key: t.healthKey, ...(health[t.healthKey] || { state: 'healthy' }) })), candidates: available };
+    return { route, reasons: [...reason, ...matches],
+      cost: input ? routeRequestCost(route, input) : null, health: targets.map(t => ({ key: t.healthKey, ...(health[t.healthKey] || { state: 'healthy' }) })), candidates: targets };
   });
 }
 export function selectModelRoutes(spec: ModelSpecification, input: RoutingInput): RouteCandidate[] {
@@ -134,15 +127,7 @@ export function selectModelRoutes(spec: ModelSpecification, input: RoutingInput)
 export function specificationAvailability(spec: ModelSpecification): ModelAvailability {
   const routes = inspectModelRoutes(spec);
   if (routes.some(item => !item.reasons.length)) return { available: true };
-  // Ignore manual/configuration failures when determining the earliest eligible recovery.
-  const eligible = routes.filter(item => item.reasons.every(reason => reason === '线路故障或恢复试用中'));
-  const health = eligible.flatMap(item => item.health);
-  const timed = health.filter(h => h.state === 'cooldown') as (RouteHealth & { key: string })[];
-  if (timed.length) {
-    const next = timed.sort((a, b) => Math.max(a.retryAt, a.probeUntil || 0) - Math.max(b.retryAt, b.probeUntil || 0))[0];
-    return { available: false, unavailableReason: isUpstreamCreditFailure(next.lastError) ? 'credits' : 'cooldown', retryAt: Math.max(next.retryAt, next.probeUntil || 0) };
-  }
-  return { available: false, unavailableReason: health.some(h => h.state === 'blocked') ? 'credentials' : 'configuration' };
+  return { available: false, unavailableReason: 'configuration' };
 }
 export function specificationAvailable(spec: ModelSpecification) { return specificationAvailability(spec).available; }
 

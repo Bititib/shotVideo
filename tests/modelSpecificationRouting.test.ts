@@ -115,19 +115,18 @@ describe('specification matching and cost routing', () => {
     expect(item.reasons).toContain('时长不匹配');
     expect(JSON.stringify({ route: item.route, reasons: item.reasons, health: item.health })).not.toContain('test-only-key');
   });
-  it('persists cooldown, permits one recovery probe and preserves manual disable', () => {
+  it('records failures without cooldown or probe locks, while preserving manual disable', () => {
     const s = spec(); saveModelSpecification(s);
     noteRouteResult('1:0:upstream-1', false, 'busy');
-    expect(selectModelRoutes(s, request).map(t => t.channel.id)).toEqual([2]);
-    const health = getRouteHealth(); health['1:0:upstream-1'].retryAt = 0;
-    db.update(settings).set({ value: JSON.stringify(health) }).where(eq(settings.key, 'model_specification_health_v1')).run();
-    expect(claimRouteProbe('1:0:upstream-1')).toBe(true); expect(claimRouteProbe('1:0:upstream-1')).toBe(false);
+    expect(selectModelRoutes(s, request).map(t => t.channel.id)).toEqual([1, 2]);
+    expect(getRouteHealth()['1:0:upstream-1']).toMatchObject({ state: 'healthy', retryAt: 0, failures: 1, lastError: 'busy' });
+    expect(claimRouteProbe('1:0:upstream-1')).toBe(true); expect(claimRouteProbe('1:0:upstream-1')).toBe(true);
     resetRouteHealth('1:0:upstream-1'); s.routes[0].enabled = false; saveModelSpecification(s);
     expect(selectModelRoutes(s, request).map(t => t.channel.id)).toEqual([2]);
   });
-  it('keeps invalid-key routes blocked until an admin resets health', () => {
+  it('records invalid-key errors without auto-locking the route', () => {
     noteRouteResult('1:0:upstream-1', false, 'key expired', true);
-    expect(claimRouteProbe('1:0:upstream-1')).toBe(false);
+    expect(claimRouteProbe('1:0:upstream-1')).toBe(true);
     resetRouteHealth('1:0:upstream-1'); expect(claimRouteProbe('1:0:upstream-1')).toBe(true);
   });
   it('rejects invalid configuration and never infers unlimited capabilities', () => {
@@ -552,7 +551,7 @@ it('uses separate duration-cost associations for the same channel without assumi
 });
 
 
-describe('credit failures never suspend routing', () => {
+describe('automatic failures never suspend routing', () => {
   it('allows immediate repeated submissions and never overrides operator switches', () => {
     const s = { ...spec(), routes: [route(1)] }; saveModelSpecification(s);
     noteRouteResult('1:0:upstream-1', false, '上游提交失败 (402)：insufficient credits', true);
@@ -567,7 +566,7 @@ describe('credit failures never suspend routing', () => {
     s.routes[0].enabled = false;
     expect(specificationAvailability(s)).toEqual({ available:false, unavailableReason:'configuration' });
   });
-  it.each(['blocked', 'cooldown'])('releases persisted credit %s immediately', state => {
+  it.each(['blocked', 'cooldown'])('releases all historical %s states immediately', state => {
     const old = new Date(Date.now() - 120_000).toISOString();
     db.insert(settings).values({ key:'model_specification_health_v1', value:JSON.stringify({
       '1:0:upstream-1':{ state, lastError:'insufficient credits', updatedAt:old, failures:1, retryAt:Date.now()+60000, probeUntil:Date.now()+600000 },
@@ -576,21 +575,23 @@ describe('credit failures never suspend routing', () => {
     const health = getRouteHealth();
     expect(health['1:0:upstream-1']).toMatchObject({ state:'healthy', retryAt:0, probeUntil:0 });
     expect(claimRouteProbe('1:0:upstream-1')).toBe(true);
-    expect(claimRouteProbe('2:0:upstream-2')).toBe(false);
+    expect(claimRouteProbe('2:0:upstream-2')).toBe(true);
+    expect(health['2:0:upstream-2']).toMatchObject({ state:'healthy', retryAt:0, probeUntil:0, lastError:'invalid API key' });
     const stored = JSON.parse(db.select().from(settings).where(eq(settings.key,'model_specification_health_v1')).get()!.value);
     expect(stored['1:0:upstream-1'].state).toBe('healthy');
   });
-  it.each(['上游提交失败 (401)：insufficient credits', 'invalid API key', 'permission denied', 'key expired'])('keeps credential failures locked: %s', message => {
+  it.each(['上游提交失败 (401)：insufficient credits', 'invalid API key', 'permission denied', 'key expired', 'gateway timeout (504)', 'upstream busy'])('retains diagnostics without locking: %s', message => {
     noteRouteResult('1:0:upstream-1', false, message, true);
-    expect(getRouteHealth()['1:0:upstream-1'].state).toBe('blocked');
-    expect(claimRouteProbe('1:0:upstream-1')).toBe(false);
+    expect(getRouteHealth()['1:0:upstream-1']).toMatchObject({ state:'healthy', retryAt:0, lastError:message });
+    expect(claimRouteProbe('1:0:upstream-1')).toBe(true);
   });
-  it('keeps a manual credential lock even if an in-flight older request reports credits or success', () => {
+  it('never reenables an operator-disabled route when old requests finish', () => {
+    const s = spec(); s.routes[0].enabled = false; saveModelSpecification(s);
     noteRouteResult('1:0:upstream-1', false, 'invalid API key', true);
     noteRouteResult('1:0:upstream-1', false, 'insufficient credits', true);
-    expect(getRouteHealth()['1:0:upstream-1'].state).toBe('blocked');
+    expect(selectModelRoutes(getModelSpecification(s.modelId)!, request).map(t => t.channel.id)).toEqual([2]);
     noteRouteResult('1:0:upstream-1', true);
-    expect(getRouteHealth()['1:0:upstream-1'].state).toBe('blocked');
+    expect(selectModelRoutes(getModelSpecification(s.modelId)!, request).map(t => t.channel.id)).toEqual([2]);
   });
   it('keeps credit-exhausted routes selectable alongside backups', () => {
     const s = spec(); saveModelSpecification(s);

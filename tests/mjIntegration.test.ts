@@ -65,8 +65,20 @@ describe('MJ image channel', () => {
     expect(meta).toMatchObject({ requiresReview: true, billingStatus: 'review', error: expect.stringContaining('504') });
     expect(meta.error).not.toContain('<html');
     expect(meta.error).toContain('任务可能已受理或完成');
+    expect(meta.mjSubmissionDiagnostics).toMatchObject({ phase:'submit', httpStatus:504, reason:'gateway_timeout', elapsedMs:expect.any(Number) });
+    expect(JSON.parse(sanitizeContentRoutingForClient(record).metadata)).not.toHaveProperty('mjSubmissionDiagnostics');
     expect(fetch).toHaveBeenCalledOnce();
     expect(db.select().from(users).all()[0].balance).toBe(98);
+  });
+  it('allows a separately requested new task after a 504 while never automatically resubmitting the uncertain one', async () => {
+    await gatewayTimeout();
+    expect(specificationAvailability(getModelSpecification(MJ_MODEL_ID)!)).toEqual({ available:true });
+    await handleSpecificationGeneration(request(), response(), 'image');
+    expect(fetch).toHaveBeenCalledTimes(2);
+    const records = db.select().from(contents).all();
+    expect(records).toHaveLength(2);
+    expect(records.every(row => JSON.parse(row.metadata).requiresReview)).toBe(true);
+    expect(db.select().from(users).all()[0].balance).toBe(96);
   });
   it('recovers four verified original results with the original funds and owner, then is idempotent', async () => {
     const record = await gatewayTimeout();
@@ -314,7 +326,7 @@ describe('MJ image channel', () => {
     vi.mocked(localizeGeneratedImage).mockRejectedValueOnce(new Error('download interrupted'));
     await handleSpecificationGeneration(request({ n: 4 }), response(), 'image');
     const record = db.select().from(contents).all()[0];
-    expect(JSON.parse(record.metadata)).toMatchObject({ requiresReview: true, nativeImageBatch: { sourceUrls: expect.any(Array) } });
+    expect(JSON.parse(record.metadata)).toMatchObject({ requiresReview: true, nativeImageBatch: { sourceUrls: expect.any(Array) }, mjSubmissionDiagnostics: { phase:'save', reason:'result_save' } });
     resumeSpecificationTasks();
     await vi.waitFor(() => expect(db.select().from(contents).all()[0].status).toBe('completed'));
     expect(JSON.parse(db.select().from(contents).all()[0].metadata).imageUrls).toHaveLength(4);

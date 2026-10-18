@@ -88,19 +88,33 @@ describe('HM Studio channel API keys', () => {
     })).toThrow();
   });
 
-  it('auto-disables only the failed HM key and allows an admin to start it again', () => {
+  it('reports HM failures without disabling keys and preserves manual key switches', () => {
     const target = ChannelService.getActiveChannels().find(channel => channel.id === channelId)!;
     expect(target.apiKeyId).toBeTruthy();
 
     ChannelService.disableExecutionTarget(target, '当前分组上游负载已饱和，请稍后再试');
     const stopped = db.select().from(channelApiKeys).where(eq(channelApiKeys.id, target.apiKeyId!)).get();
     const parent = db.select().from(channels).where(eq(channels.id, channelId)).get();
-    expect(stopped?.status).toBe(0);
+    expect(stopped?.status).toBe(1);
     expect(parent?.status).toBe(1);
-    expect(parent?.lastTestResult).toContain('auto_disabled:');
+    expect(parent?.lastTestResult).toContain('submission_error:');
+
+    ChannelService.setHmStudioKeyStatus(channelId, target.apiKeyId!, 0);
+    ChannelService.disableExecutionTarget(target, 'gateway timeout');
+    expect(db.select().from(channelApiKeys).where(eq(channelApiKeys.id, target.apiKeyId!)).get()?.status).toBe(0);
 
     ChannelService.setHmStudioKeyStatus(channelId, target.apiKeyId!, 1);
     const restarted = db.select().from(channelApiKeys).where(eq(channelApiKeys.id, target.apiKeyId!)).get();
     expect(restarted?.status).toBe(1);
+  });
+  it('reports a normal channel failure without changing its enabled or manually disabled status', () => {
+    const id = ChannelService.createChannel({ name: 'failure-diagnostics-' + suffix, type: 'openai', baseUrl: 'https://example.invalid', apiKey: 'test-only-key', supportedModels: [] });
+    try {
+      ChannelService.disableExecutionTarget({ id, type: 'openai' }, 'gateway timeout');
+      expect(db.select().from(channels).where(eq(channels.id,id)).get()).toMatchObject({ status:1, lastTestResult:'submission_error:gateway timeout' });
+      db.update(channels).set({ status:0 }).where(eq(channels.id,id)).run();
+      ChannelService.disableExecutionTarget({ id, type: 'openai' }, 'busy');
+      expect(db.select().from(channels).where(eq(channels.id,id)).get()?.status).toBe(0);
+    } finally { db.delete(channels).where(eq(channels.id,id)).run(); }
   });
 });
