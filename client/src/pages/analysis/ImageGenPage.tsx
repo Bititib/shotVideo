@@ -130,12 +130,15 @@ function parseImageRecords(items: any[]) {
       const count = Math.max(1, Math.min(4, Number(metadata.count) || 1));
       const images = new Array(count).fill('');
       storedImageUrls.slice(0, count).forEach((url: string, index: number) => { images[index] = url || ''; });
-      const progresses = new Array(count).fill(0);
+      const taskProgress = typeof metadata.progress === 'number' && Number.isFinite(metadata.progress)
+        ? Math.max(0, Math.min(99, metadata.progress)) : 0;
+      const progresses = new Array(count).fill(taskProgress);
       if (Array.isArray(metadata.progresses)) {
         metadata.progresses.slice(0, count).forEach((value: unknown, index: number) => {
           progresses[index] = Math.max(0, Math.min(100, Number(value) || 0));
         });
       }
+      images.forEach((url, index) => { if (url) progresses[index] = 100; });
       recoveredBatches.push({
         id: `persisted-image-${item.id}`,
         contentId: Number(item.id),
@@ -545,14 +548,18 @@ export default function ImageGenPage() {
             if (event.background) batchControllersRef.current.delete(batchId);
             break;
           case 'progress': {
-            const idx = event.index ?? -1;
-            if (idx >= 0) {
-              updateBatch(batch => {
-                const progresses = [...batch.progresses];
-                progresses[idx] = event.progress || 0;
-                return { ...batch, phase: 'processing', progresses };
-              });
-            }
+            if (typeof event.progress !== 'number' || !Number.isFinite(event.progress)) break;
+            const progress = Math.max(0, Math.min(100, event.progress));
+            updateBatch(batch => {
+              const progresses = [...batch.progresses];
+              // MJ reports one task's progress for all native outputs, without an image index.
+              const indexes = event.index === undefined ? progresses.map((_, index) => index) : [event.index];
+              for (const index of indexes) {
+                if (Number.isInteger(index) && index >= 0 && index < progresses.length
+                  && !batch.images[index] && !batch.failedIndexes.includes(index)) progresses[index] = progress;
+              }
+              return { ...batch, phase: 'processing', progresses };
+            });
             break;
           }
           case 'image_ready':

@@ -41,6 +41,41 @@ function history() {
 }
 
 describe('图片生成与继续改图', () => {
+  it('displays MJ task progress on all pending images without requiring an image index', async () => {
+    const mj = [{ id: MJ_MODEL_ID, name: 'MJ', description: '', available: true, routingLimits: mjLimits() }];
+    vi.mocked(getCachedImageModels).mockReturnValue(mj);
+    vi.mocked(fetchImageModels).mockResolvedValue(mj);
+    render(<ImageGenPage />);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'a paper boat' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始生成图片' }));
+    const emit = vi.mocked(generateImage).mock.calls[0][1];
+    await act(async () => { emit({ type: 'progress', progress: 42 }); });
+    expect(screen.getAllByText('42%')).toHaveLength(4);
+    await act(async () => {
+      emit({ type: 'image_ready', index: 0, imageUrl: '/api/uploads/first.png' });
+      emit({ type: 'progress', progress: 70 });
+    });
+    expect(screen.getAllByText('70%')).toHaveLength(3);
+    expect(screen.getAllByRole('button', { name: /^预览.*图片/ })).toHaveLength(1);
+    await act(async () => { emit({ type: 'progress', index: 1, progress: 85 }); });
+    expect(screen.getAllByText('85%')).toHaveLength(1);
+    expect(screen.getAllByText('70%')).toHaveLength(2);
+  });
+  it('restores the persisted task progress after a page refresh', async () => {
+    vi.mocked(contentApi.getMyContents).mockResolvedValue({ items: [{ id: 13439, status: 'processing',
+      modelId: MJ_MODEL_ID, createdAt: new Date().toISOString(), metadata: JSON.stringify({ count: 4, progress: 57 }) }], total: 1 } as any);
+    render(<ImageGenPage />);
+    expect(await screen.findAllByText('57%')).toHaveLength(4);
+    expect(generateImage).not.toHaveBeenCalled();
+  });
+  it('shows generation status without inventing a percentage when none was supplied', async () => {
+    vi.mocked(contentApi.getMyContents).mockResolvedValue({ items: [{ id: 13439, status: 'processing',
+      modelId: MJ_MODEL_ID, createdAt: new Date().toISOString(), metadata: JSON.stringify({ count: 4 }) }], total: 1 } as any);
+    render(<ImageGenPage />);
+    await screen.findByRole('status', { name: /^图片 1 (生成中|排队中)$/ });
+    expect(screen.queryByText(/^\d+%$/)).toBeNull();
+    expect(generateImage).not.toHaveBeenCalled();
+  });
   it('offers every managed MJ ratio and submits its fixed resolution without quality', async () => {
     const mj = [{ id: MJ_MODEL_ID, name: 'MJ', description: '', available: true, maxReferenceImages: 6, routingLimits: mjLimits() }];
     vi.mocked(getCachedImageModels).mockReturnValue(mj);
