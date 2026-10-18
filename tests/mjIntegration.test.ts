@@ -6,7 +6,10 @@ import { db, sqlite } from '../server/db/index.js';
 import { channels, contents, models, modelPricing, settings, users } from '../server/db/schema.js';
 import { ChannelService } from '../server/services/channelService.js';
 import { getModelSpecification, saveModelSpecification, selectModelRoutes, specificationAvailability } from '../server/services/modelRoutingService.js';
-import { handleSpecificationGeneration, resumeSpecificationTasks } from '../server/services/specificationGenerationService.js';
+import { handleSpecificationGeneration, resumeSpecificationTasks, recoverMjSpecificationImages } from '../server/services/specificationGenerationService.js';
+import { mediaOwnerContext } from '../server/services/uploadAccess.js';
+import imageFiles from 'node:fs/promises';
+import sharp from 'sharp';
 import { generateSpecificationImage } from '../server/services/specificationAdapters.js';
 import { localizeGeneratedImage } from '../server/routes/imageGen.js';
 import { LEGACY_MJ_MODEL_ID, MJ_MODEL_ID, MJ_SIZES } from '../shared/mj.js';
@@ -23,6 +26,7 @@ const discovery = () => Response.json({ data: ['mj_imagine', 'gpt-image-2', 'see
 let channelId: number;
 beforeEach(async () => {
   vi.clearAllMocks();
+  vi.mocked(localizeGeneratedImage).mockReset().mockImplementation(async (_url, prefix) => '/api/uploads/' + prefix + '.png');
   for (const table of [contents, settings, models, channels, modelPricing, users]) db.delete(table).run();
   db.insert(users).values({ id: 1, email: 'mj@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
   vi.stubGlobal('fetch', vi.fn(async () => discovery()));
@@ -49,6 +53,112 @@ const request = (body: Record<string, unknown> = {}) => ({ userId: 1, headers: {
   body: { model: MJ_MODEL_ID, prompt: 'a paper boat', ...body } } as any);
 
 describe('MJ image channel', () => {
+  const originalResults = [1, 2, 3, 4].map(n => 'https://mj-provider.example/v1/public/image/evt-original-' + n);
+  async function gatewayTimeout() {
+    enable();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('<!DOCTYPE html><html>gateway timeout</html>', { status: 504 })));
+    await handleSpecificationGeneration(request(), response(), 'image');
+    return db.select().from(contents).all()[0];
+  }
+  it('keeps a gateway timeout uncertain, explains it without HTML and never retries the paid POST', async () => {
+    const record = await gatewayTimeout();
+    const meta = JSON.parse(record.metadata);
+    expect(meta).toMatchObject({ requiresReview: true, billingStatus: 'review', error: expect.stringContaining('504') });
+    expect(meta.error).not.toContain('<html');
+    expect(meta.error).toContain('任务可能已受理或完成');
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(db.select().from(users).all()[0].balance).toBe(98);
+  });
+  it('recovers four verified original results with the original funds and owner, then is idempotent', async () => {
+    const record = await gatewayTimeout();
+    vi.mocked(localizeGeneratedImage).mockImplementation(async (_url, prefix) => {
+      expect(mediaOwnerContext.getStore()).toBe(1);
+      return '/api/uploads/' + prefix + '.png';
+    });
+    expect(await recoverMjSpecificationImages(record.id, originalResults, 2, request())).toMatchObject({ status: 'completed' });
+    const recovered = db.select().from(contents).all()[0], meta = JSON.parse(recovered.metadata);
+    expect(recovered).toMatchObject({ status: 'completed', cost: 2 });
+    expect(meta).toMatchObject({ requiresReview: false, error: null, billingStatus: 'settled', imageUrls: expect.any(Array), mjRecovery: { actorId: 2 } });
+    expect(meta.imageUrls).toHaveLength(4);
+    expect(JSON.parse(sanitizeContentRoutingForClient(recovered).metadata)).not.toHaveProperty('mjRecovery');
+    expect(sqlite.prepare('SELECT state,actual FROM billing_reservations WHERE id=?').get(meta.billingReservationId)).toEqual({ state: 'settled', actual: 2 });
+    expect(db.select().from(users).all()[0].balance).toBe(98);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(localizeGeneratedImage).toHaveBeenCalledTimes(4);
+    expect(await recoverMjSpecificationImages(record.id, originalResults, 2, request())).toMatchObject({ alreadyRecovered: true });
+    expect(localizeGeneratedImage).toHaveBeenCalledTimes(4);
+  });
+  it('preserves saved images and held funds after download interruption and resumes only missing originals', async () => {
+    const record = await gatewayTimeout();
+    vi.mocked(localizeGeneratedImage).mockResolvedValueOnce('/api/uploads/first.png').mockRejectedValueOnce(new Error('download interrupted'));
+    await expect(recoverMjSpecificationImages(record.id, originalResults, 2, request())).rejects.toThrow('download interrupted');
+    let meta = JSON.parse(db.select().from(contents).all()[0].metadata);
+    expect(meta.nativeImageBatch.jobs[0].localUrl).toBe('/api/uploads/first.png');
+    expect(sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(meta.billingReservationId)).toEqual({ state: 'review' });
+    expect(db.select().from(users).all()[0].balance).toBe(98);
+    await expect(recoverMjSpecificationImages(record.id, originalResults, 2, request())).resolves.toMatchObject({ status: 'completed' });
+    meta = JSON.parse(db.select().from(contents).all()[0].metadata);
+    expect(meta.imageUrls[0]).toBe('/api/uploads/first.png');
+    expect(localizeGeneratedImage).toHaveBeenCalledTimes(5);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it.each([
+    ['https://other.example/v1/public/image/evt-1'],
+    ['https://mj-provider.example/v1/private/image/evt-1'],
+    ['https://mj-provider.example/v1/public/image/evt-1?key=secret'],
+    ['http://mj-provider.example/v1/public/image/evt-1'],
+    originalResults.slice(0, 2),
+    Array(4).fill(originalResults[0]),
+  ])('rejects unverified result addresses before downloading: %j', async (...urls) => {
+    const record = await gatewayTimeout();
+    await expect(recoverMjSpecificationImages(record.id, urls, 2, request())).rejects.toThrow();
+    expect(localizeGeneratedImage).not.toHaveBeenCalled();
+    expect(db.select().from(users).all()[0].balance).toBe(98);
+  });
+  it('rejects recovery when another operation refunded the original reservation', async () => {
+    const record = await gatewayTimeout(), meta = JSON.parse(record.metadata);
+    sqlite.prepare("UPDATE billing_reservations SET state='refunded',actual=0 WHERE id=?").run(meta.billingReservationId);
+    await expect(recoverMjSpecificationImages(record.id, originalResults, 2, request())).rejects.toThrow('原预扣费用已变更');
+    expect(localizeGeneratedImage).not.toHaveBeenCalled();
+    expect(db.select().from(contents).all()[0].status).not.toBe('completed');
+  });
+  it('splits one original grid into four images before settling the original reservation', async () => {
+    const record = await gatewayTimeout();
+    const png = await sharp({ create: { width: 20, height: 12, channels: 3, background: '#ac55ef' } }).png().toBuffer();
+    const read = vi.spyOn(imageFiles, 'readFile').mockResolvedValue(png);
+    const write = vi.spyOn(imageFiles, 'writeFile').mockResolvedValue();
+    try {
+      expect(await recoverMjSpecificationImages(record.id, [originalResults[0]], 2, request())).toMatchObject({ status: 'completed' });
+      expect(localizeGeneratedImage).toHaveBeenCalledOnce();
+      expect(write).toHaveBeenCalledTimes(4);
+      const saved = db.select().from(contents).all()[0];
+      expect(JSON.parse(saved.metadata).imageUrls).toHaveLength(4);
+      expect(saved.cost).toBe(2);
+      expect(db.select().from(users).all()[0].balance).toBe(98);
+      expect(fetch).toHaveBeenCalledOnce();
+    } finally { read.mockRestore(); write.mockRestore(); }
+  });
+  it('rejects a reservation belonging to another content record before any download', async () => {
+    const record = await gatewayTimeout(), meta = JSON.parse(record.metadata);
+    sqlite.prepare('UPDATE billing_reservations SET context=? WHERE id=?').run(JSON.stringify({ userId: 1, contentId: record.id + 1 }), meta.billingReservationId);
+    await expect(recoverMjSpecificationImages(record.id, originalResults, 2, request())).rejects.toThrow('原预扣记录不匹配');
+    expect(localizeGeneratedImage).not.toHaveBeenCalled();
+  });
+  it('blocks concurrent recovery while the original image is downloading', async () => {
+    const record = await gatewayTimeout();
+    let release!: (url: string) => void;
+    let started!: () => void;
+    const downloading = new Promise<void>(resolve => { started = resolve; });
+    vi.mocked(localizeGeneratedImage).mockImplementationOnce(() => new Promise(resolve => { release = resolve; started(); }));
+    const first = recoverMjSpecificationImages(record.id, originalResults, 2, request());
+    await downloading;
+    try {
+      await expect(recoverMjSpecificationImages(record.id, originalResults, 2, request())).rejects.toThrow('原任务不处于待核实状态');
+    } finally { release('/api/uploads/first.png'); }
+    await expect(first).resolves.toMatchObject({ status: 'completed' });
+    expect(localizeGeneratedImage).toHaveBeenCalledTimes(4);
+    expect(db.select().from(users).all()[0].balance).toBe(98);
+  });
   it('uses a neutral public name and a server-side default endpoint', async () => {
     expect(MJ_MODEL_ID).toBe('mj-imagine-1k');
     expect(db.select().from(models).get()).toMatchObject({ provider:'mj', displayName:'MJ · 1K' });

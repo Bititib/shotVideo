@@ -17,6 +17,14 @@ router.use(authMiddleware, adminMiddleware);
 router.use('/model-specifications', modelSpecificationRoutes);
 router.use('/contents', pidoiImageAdminRoutes);
 
+router.post('/contents/:id/recover-mj-images', async (req: AuthRequest, res: Response) => {
+  try {
+    if (req.body?.confirmedOriginalResult !== true) throw { status: 400, message: '请先核对上游日志，确认原任务成功及图片地址' };
+    const { recoverMjSpecificationImages } = await import('../services/specificationGenerationService.js');
+    res.json(await recoverMjSpecificationImages(Number(req.params.id), req.body?.resultUrls, req.userId!, req));
+  } catch (error: any) { res.status(error.status || 502).json({ error: error.message || '取回 MJ 原任务图片失败' }); }
+});
+
 router.get('/users/:id/models', (req: AuthRequest, res: Response) => {
   try { res.setHeader('Cache-Control', 'no-store'); res.json(UserModelSettingsService.list(Number(req.params.id))); }
   catch (error: any) { res.status(error.status || 500).json({ error: error.message }); }

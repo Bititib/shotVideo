@@ -1,6 +1,7 @@
 import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
 import React, { useState, useEffect, useCallback } from 'react';
 import { PidoiImageReviewActions } from '../../components/PidoiImageReviewActions';
+import { MjImageReviewActions } from '../../components/MjImageReviewActions';
 import { useNavigate } from 'react-router-dom';
 import { Search, Film, Copy, ChevronLeft, ChevronRight, Image, Video, Music, Eye, X, CircleAlert, Loader2, RefreshCw } from 'lucide-react';
 import { adminApi } from '../../api/admin';
@@ -685,6 +686,13 @@ export default function ContentsPage() {
                     <span>{['failed', 'error'].includes(previewItem.status) ? '本次生成未获得结果' : '生成结果暂未就绪'}</span>
                   </div>}
 
+                  {previewItem.type === 'image' && <MjImageReviewActions key={'mj-' + previewItem.id}
+                    id={previewItem.id} metadata={parseMeta(previewItem.metadata)} hasResult={Boolean(previewItem.resultUrl)}
+                    onResolved={async () => {
+                      const refreshed = await adminApi.getContent(previewItem.id);
+                      setPreviewItem(current => current?.id === refreshed.id ? { ...current, ...refreshed } : current);
+                      await fetchContents();
+                    }} />}
                   {previewItem.type === 'image' && <PidoiImageReviewActions key={previewItem.id}
                     id={previewItem.id} status={previewItem.status} cost={previewItem.cost}
                     metadata={parseMeta(previewItem.metadata)} hasResult={Boolean(previewItem.resultUrl)}

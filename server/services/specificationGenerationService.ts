@@ -26,8 +26,8 @@ import { hmStudioQueue, hmStudioPoolKey, HmStudioQueueFullError } from './hmStud
 import { recordCanvasEvent } from '../middleware/canvasRequest.js';
 import { logUsage } from '../middleware/quota.js';
 import { routingMismatches, type MediaKind } from '../../shared/modelRouting.js';
-import { issueUploadUrl } from './uploadAccess.js';
-import { isMjChannel } from './mjAdapter.js';
+import { issueUploadUrl, mediaOwnerContext } from './uploadAccess.js';
+import { isMjChannel, mjBaseUrl } from './mjAdapter.js';
 import { MJ_MODEL_ID } from '../../shared/mj.js';
 import { saveMjImageBatch, type MjImageBatch } from './mjImageResults.js';
 import { resolvePublicModelId } from './publicModelNameService.js';
@@ -255,6 +255,60 @@ async function saveMjResults(id: number, channel: any, req: Request, onEvent: (d
   patch(id, { submissionStartedAt: null });
   complete(id, urls);
   onEvent({ type: 'complete', imageUrls: urls, contentId: id });
+}
+
+/** Admin recovery of a verified original MJ result; never creates a task or a new charge. */
+export async function recoverMjSpecificationImages(id: number, resultUrls: unknown, actorId: number, req: Request) {
+  if (!Number.isSafeInteger(id) || id <= 0) throw fail('记录 ID 无效');
+  const record = db.select().from(contents).where(eq(contents.id, id)).get();
+  if (!record) throw fail('任务记录不存在', 404);
+  const meta = metadata(id);
+  if (record.type !== 'image' || meta.nativeImageOutputs !== 4 || meta.count !== 4) throw fail('仅支持原生四张 MJ 任务');
+  if (record.status === 'completed' && record.resultUrl) return { status: 'completed', alreadyRecovered: true, message: '原任务已经恢复，未重复扣费' };
+  if (active.has(id) || !meta.requiresReview || !['queued', 'processing', 'review'].includes(record.status)) throw fail('原任务不处于待核实状态', 409);
+  const channel = ChannelService.getChannelRaw(meta.channelId, meta.channelApiKeyId);
+  if (!channel || !isMjChannel(channel)) throw fail('原 MJ 渠道不存在', 409);
+  if (!Array.isArray(resultUrls) || ![1, 4].includes(resultUrls.length)) throw fail('请填写一张四宫格或四张原任务图片的下载地址');
+  const origin = new URL(mjBaseUrl(channel.baseUrl)).origin;
+  const sources = resultUrls.map(source => {
+    let url: URL; try { url = new URL(source); } catch { throw fail('图片下载地址无效'); }
+    if (typeof source !== 'string' || source.length > 2048 || url.protocol !== 'https:' || url.origin !== origin
+      || url.username || url.password || url.search || url.hash || !/^\/v1\/public\/image\/[\w-]+$/.test(url.pathname)) {
+      throw fail('请从原渠道日志复制该任务的公开图片下载地址');
+    }
+    return url.href;
+  });
+  if (new Set(sources).size !== sources.length) throw fail('图片下载地址不能重复');
+  const checkReservation = () => {
+    const reservation = sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(meta.billingReservationId) as any;
+    if (!reservation || !['reserved', 'review'].includes(reservation.state) || !Number.isFinite(reservation.amount)
+      || reservation.amount !== meta.reservedCost) throw fail('原预扣费用已变更，请人工核对；本次未扣费', 409);
+    const context = JSON.parse(reservation.context);
+    if (context.contentId && context.contentId !== id || context.userId !== record.userId
+      && !(meta.tokenId && context.tokenId === meta.tokenId)) throw fail('原预扣记录不匹配', 409);
+  };
+  checkReservation();
+  const batch = meta.nativeImageBatch as MjImageBatch | undefined;
+  if (batch && JSON.stringify(batch.sourceUrls) !== JSON.stringify(sources)) throw fail('已记录原结果地址，请使用相同地址继续恢复', 409);
+  active.add(id);
+  try {
+    patch(id, { nativeImageBatch: batch || { sourceUrls: sources, jobs: [] }, upstreamImageUrls: sources,
+      mjRecovery: { actorId, startedAt: new Date().toISOString(), previousError: meta.error || null } });
+    // Downloads may fail; settle only after all four local images are available.
+    const currentBatch = metadata(id).nativeImageBatch as MjImageBatch;
+    await mediaOwnerContext.run(record.userId, () => saveMjImageBatch(currentBatch, id, req, channel, () => {
+      patch(id, { nativeImageBatch: currentBatch, imageJobs: currentBatch.jobs });
+    }, () => {}));
+    const urls = currentBatch.jobs.map(job => job.localUrl).filter((url): url is string => Boolean(url));
+    if (urls.length !== 4 || urls.some(url => !url.startsWith('/api/uploads/'))) throw fail('原任务四张图片尚未完整保存，请使用相同地址重试', 502);
+    sqlite.transaction(() => {
+      checkReservation();
+      complete(id, urls);
+      patch(id, { error: null, failureReason: null, submissionStartedAt: null,
+        mjRecovery: { ...metadata(id).mjRecovery, completedAt: new Date().toISOString() } });
+    })();
+    return { status: 'completed', message: '原任务四张图片已恢复，使用原预扣费用结算，未重复扣费' };
+  } finally { active.delete(id); }
 }
 
 async function runMjImages(id: number, candidates: RouteCandidate[], request: SpecificationRequest, req: Request, onEvent: (data: any) => void) {

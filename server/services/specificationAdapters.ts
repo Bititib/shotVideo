@@ -41,6 +41,9 @@ export function submissionFailure(status: number, text: string): SpecificationUp
   const rejected = !task && ([401, 402, 429].includes(status) || (status === 403 && /api.?key|unauthori[sz]ed|余额|quota|credit/i.test(text))
     || (status === 503 && /unavailable|maintenance|维护|不可用|overload|capacity|busy/i.test(text)));
   const blocked = [401, 402].includes(status) || (status === 403 && rejected);
+  if ([502, 504, 524].includes(status) && /<!doctype\s+html|<html\b/i.test(text)) {
+    return new SpecificationUpstreamError('上游网关响应超时 (' + status + ')，任务可能已受理或完成；请核对原任务结果，勿重复提交', false, true, false, status);
+  }
   return new SpecificationUpstreamError('上游提交失败 (' + status + ')：' + text.replace(/sk-[\w-]+/g, '[REDACTED]').slice(0, 300),
     rejected, Boolean(task) || status === 408 || status >= 500 && !rejected, blocked, status);
 }

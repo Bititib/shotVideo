@@ -120,6 +120,7 @@ export const adminApi = {
     return contentApiClient.get<any>(`/admin/contents?${qs.toString()}`, { cache: 'no-store' });
   },
   getContent(id: number) { return api.get<any>(`/admin/contents/${id}`); },
+  recoverMjImages(id: number, resultUrls: string[]) { return api.post<{status:string;message:string}>(`/admin/contents/${id}/recover-mj-images`, { resultUrls, confirmedOriginalResult: true }); },
   recheckPidoiImage(id: number) { return api.post<{message:string}>(`/admin/contents/${id}/image-recheck`); },
   confirmPidoiImageFailure(id: number, note: string) { return api.post<{refundedAmount:number;alreadyResolved:boolean}>(`/admin/contents/${id}/image-confirm-failure`, {confirmedFailure:true,note}); },
   previewRecentFailedVideoRecovery(days = 3) { return api.get<any>(`/admin/contents/recovery/preview?days=${days}`); },
