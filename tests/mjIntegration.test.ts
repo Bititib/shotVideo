@@ -522,3 +522,82 @@ it('lets the user immediately submit again after credit exhaustion without autom
   expect(records.every(record => record.status === 'failed' && record.cost === 0)).toBe(true);
   expect(db.select().from(users).get()!.balance).toBe(100);
 });
+
+
+describe('MJ image response receipt persistence', () => {
+  const cases = [
+    { label: 'task_id', fields: { task_id: 'evt-mj-task', request_id: 'req-secondary' }, headers: { 'x-request-id': 'req-header' }, id: 'evt-mj-task' },
+    { label: 'id', fields: { id: 'evt-mj-log' }, headers: {}, id: 'evt-mj-log' },
+    { label: 'request header', fields: {}, headers: { 'x-request-id': 'req-mj-image' }, id: 'req-mj-image' },
+    { label: 'missing ID', fields: {}, headers: {}, id: '' },
+  ];
+  it.each(cases.flatMap(item => [false, true].map(edit => ({ ...item, edit }))))
+    ('persists $label through image saving (edit=$edit)', async ({ fields, headers, id, edit }) => {
+      enable();
+      const sharp = (await import('sharp')).default;
+      const reference = edit ? 'data:image/png;base64,' + (await sharp({ create: {
+        width: 64, height: 64, channels: 3, background: '#88aacc',
+      } }).png().toBuffer()).toString('base64') : undefined;
+      const upstream = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ created: 1792324800,
+        data: [{ url: 'https://mj-provider.example/v1/public/image/original-resource' }], ...fields }, { headers }));
+      vi.stubGlobal('fetch', upstream);
+      // The receipt must already be durable before result localization can fail or restart.
+      vi.mocked(localizeGeneratedImage).mockImplementation(async (_url, prefix) => {
+        expect(JSON.parse(db.select().from(contents).get()!.metadata)).toMatchObject({
+          upstreamTaskId: id, upstreamTaskIds: id ? [id] : [],
+          upstreamResponses: [{ id, httpStatus: 200, state: id ? 'captured' : 'response_without_id' }],
+        });
+        return '/api/uploads/' + prefix + '.png';
+      });
+      await handleSpecificationGeneration(request(reference ? { reference_images: [reference] } : {}), response(), 'image');
+      const record = db.select().from(contents).get()!;
+      expect(record).toMatchObject({ status: 'completed', cost: 2 });
+      expect(JSON.parse(record.metadata)).toMatchObject({ upstreamTaskId: id, billingStatus: 'settled', count: 1 });
+      expect(upstream).toHaveBeenCalledOnce();
+      expect(upstream.mock.calls[0][0]).toBe('https://mj-provider.example/v1/images/' + (edit ? 'edits' : 'generations'));
+      expect(localizeGeneratedImage).toHaveBeenCalledOnce();
+      expect(db.select().from(users).get()!.balance).toBe(98);
+    });
+});
+
+describe('documented MJ HTTP 402 contract', () => {
+  const cases = [
+    { label:'empty body', body:'', id:'' },
+    { label:'generic JSON', body:JSON.stringify({ error:'Payment Required' }), id:'' },
+    { label:'HTML body', body:'<html>Payment Required</html>', id:'' },
+    { label:'log receipt', body:JSON.stringify({ task_id:'evt-credit-rejected', error:'Payment Required' }), id:'evt-credit-rejected' },
+  ];
+  it.each(cases.flatMap(item => ['workbench','api'].map(transport => ({...item, transport}))))
+    ('refunds without locking or review: $label / $transport', async ({body,id,transport}) => {
+      enable();
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status:402 })));
+      const res = response();
+      await handleSpecificationGeneration(request(), res, 'image', transport === 'api' ? {
+        token:{id:1,userId:1}, reserve:amount => reserveUserCharge(1,amount,'test_402'),
+      } : undefined);
+      const record = db.select().from(contents).get()!, meta = JSON.parse(record.metadata);
+      expect(record).toMatchObject({status:'failed',cost:0});
+      expect(meta.requiresReview).not.toBe(true);
+      expect(meta).toMatchObject({billingStatus:'refunded', upstreamTaskId:id,
+        upstreamResponses:[{id,httpStatus:402,state:id ? 'captured' : 'response_without_id'}]});
+      expect(specificationAvailability(getModelSpecification(MJ_MODEL_ID)!)).toEqual({available:true});
+      expect(ChannelService.getChannelRaw(channelId)?.status).toBe(1);
+      expect(db.select().from(users).get()!.balance).toBe(100);
+      expect(JSON.parse(sanitizeContentRoutingForClient(record).metadata).error).toBe('上游积分不足，暂时无法生成，请联系管理员补充额度后重试。');
+      if (transport === 'api') expect(res.body.error).toContain('上游积分不足');
+      else expect(res.write.mock.calls.some(([line]:[string]) => line.includes('上游积分不足'))).toBe(true);
+      expect(fetch).toHaveBeenCalledOnce();
+    });
+  it('classifies 402 from received headers even if the body is interrupted, and retains its receipt', async () => {
+    enable();
+    const upstream = new Response('', {status:402,headers:{'x-request-id':'evt-credit-header'}});
+    vi.spyOn(upstream,'text').mockRejectedValue(new Error('interrupted'));
+    vi.stubGlobal('fetch',vi.fn(async () => upstream));
+    await handleSpecificationGeneration(request(),response(),'image');
+    const record = db.select().from(contents).get()!;
+    expect(record).toMatchObject({status:'failed',cost:0});
+    expect(JSON.parse(record.metadata)).toMatchObject({billingStatus:'refunded',upstreamTaskId:'evt-credit-header',
+      upstreamResponses:[{id:'evt-credit-header',httpStatus:402,state:'captured'}]});
+    expect(db.select().from(users).get()!.balance).toBe(100);
+  });
+});

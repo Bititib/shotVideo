@@ -32,7 +32,11 @@ export type SpecificationRequest = { prompt: string; input: RoutingInput; images
 export class SpecificationUpstreamError extends Error {
   constructor(message: string, public readonly retrySafe: boolean, public readonly uncertain = false, public readonly blocked = false, public readonly upstreamStatus = 0, public readonly confirmedFailure = false) { super(message); }
 }
-export function submissionFailure(status: number, text: string): SpecificationUpstreamError {
+export function submissionFailure(status: number, text: string, channel?: { type?: string | null }): SpecificationUpstreamError {
+  // The MJ contract defines HTTP 402 as a precharge rejection, even if a log ID is attached.
+  // Classify by status, not provider wording or the presence of a diagnostic identifier.
+  if (isMjChannel(channel) && status === 402) return new SpecificationUpstreamError(
+    '上游积分不足 (HTTP 402)：' + text.replace(/sk-[\w-]+/g, '[REDACTED]').slice(0, 300), true, false, false, status, true);
   // A gateway timeout/server error can happen AFTER the provider created a job.
   // Only explicit rejections without a task identifier are eligible for retry.
   let payload: any;
@@ -79,10 +83,14 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
   if (!response.ok) {
     let text: string;
     try { text = await response.text(); }
-    catch { onResponse?.(imageResponseEvidence(undefined, response.headers, response.status, 'response_unreadable')); throw new SpecificationUpstreamError('上游错误响应读取中断，请核实原请求', false, true); }
+    catch {
+      onResponse?.(imageResponseEvidence(undefined, response.headers, response.status, 'response_unreadable'));
+      if (isMjChannel(channel) && response.status === 402) throw submissionFailure(402, '错误响应正文未完整读取', channel);
+      throw new SpecificationUpstreamError('上游错误响应读取中断，请核实原请求', false, true);
+    }
     let body: unknown; try { body = JSON.parse(text); } catch {}
     onResponse?.(imageResponseEvidence(body, response.headers, response.status, 'response_without_id'));
-    throw submissionFailure(response.status, channel.apiKey ? text.split(channel.apiKey).join('[REDACTED]') : text);
+    throw submissionFailure(response.status, channel.apiKey ? text.split(channel.apiKey).join('[REDACTED]') : text, channel);
   }
   let result: any;
   try { result = await response.json(); }
