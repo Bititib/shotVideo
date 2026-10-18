@@ -55,11 +55,15 @@ import {
 } from '../services/newTokenAdapter.js';
 import {
   buildSnumomWanPayload,
+  canonicalSnumomVideoModel,
   isSnumomWanChannel,
+  isSnumomWan30VideoModel,
   SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES,
   SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
   SNUMOM_GROK_IMAGINE_VIDEO_SECONDS,
+  snumomWanBillableSeconds,
 } from '../services/snumomWanAdapter.js';
+import { probeReferenceVideoSeconds } from '../services/videoDurationProbe.js';
 import {
   buildSudaShuiVideoPayload,
   sudaShuiVideoCreateUrl,
@@ -1592,6 +1596,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
   }
 
+  if (typeof req.body?.model === 'string') req.body.model = canonicalSnumomVideoModel(req.body.model);
   if (!normalizeApiModel(req, res)) return;
   if (await handleSpecificationGeneration(req, res, 'video', { token, reserve: (amount, id, snapshot) => reserveApiCharge(token, amount, id, snapshot) })) return;
   const body = req.body || {};
@@ -1642,7 +1647,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   // 提取图片素材别名
   let image_urls: string[] = [];
   if (Array.isArray(body.reference_images)) {
-    image_urls = body.reference_images;
+    image_urls = body.reference_images.map((item: any) => typeof item === 'string' ? item : item?.url).filter(Boolean);
   } else if (Array.isArray(body.image_urls)) {
     image_urls = body.image_urls;
   } else if (Array.isArray(body.Ingredients_images)) {
@@ -1683,7 +1688,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   // 提取视频素材别名
   let video_urls: string[] = [];
   if (Array.isArray(body.reference_videos)) {
-    video_urls = body.reference_videos;
+    video_urls = body.reference_videos.map((item: any) => typeof item === 'string' ? item : item?.url).filter(Boolean);
   } else if (Array.isArray(body.video_urls)) {
     video_urls = body.video_urls;
   } else if (typeof body.video_url === 'string') {
@@ -1715,7 +1720,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   // 提取音频素材别名
   let audio_urls: string[] = [];
   if (Array.isArray(body.reference_audios)) {
-    audio_urls = body.reference_audios;
+    audio_urls = body.reference_audios.map((item: any) => typeof item === 'string' ? item : item?.url).filter(Boolean);
   } else if (Array.isArray(body.audio_urls)) {
     audio_urls = body.audio_urls;
   } else if (Array.isArray(body.audios)) {
@@ -1857,7 +1862,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   }
 
   if (model === 'wan3.0-video' || model === 'wan3.0-video-prime') {
-    const allowedRatios = ['1:1', '16:9', '9:16', '4:3', '3:4'];
+    const allowedRatios = ['adaptive', '21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
     if (!Number.isInteger(seconds) || seconds < 2 || seconds > 30) {
       cleanupFiles(req.files);
       return res.status(400).json({ error: `${model} seconds must be an integer from 2 to 30` });
@@ -2003,11 +2008,19 @@ async function handleVideoCreation(req: Request, res: Response) {
   if (model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL) {
     if (!SNUMOM_GROK_IMAGINE_VIDEO_SECONDS.includes(Number(seconds))) {
       cleanupFiles(req.files);
-      return res.status(400).json({ error: `${model} seconds must be an integer from 3 to 15` });
+      return res.status(400).json({ error: `${model} seconds must be an integer from 1 to 15` });
     }
     if (image_urls.length > SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES) {
       cleanupFiles(req.files);
       return res.status(400).json({ error: `${model} supports at most ${SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES} images` });
+    }
+    if (video_urls.length > 0 || audio_urls.length > 0) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `${model} does not support video or audio references` });
+    }
+    if (body.last_frame_url || body.end_frame_url || body.last_frame) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `${model} does not support a last frame` });
     }
   }
 
@@ -2157,7 +2170,30 @@ async function handleVideoCreation(req: Request, res: Response) {
       await validateHayaMedia(audio_urls, 'audio', options);
     } catch (error: any) { cleanupFiles(req.files); return res.status(400).json({ error: error.message }); }
   }
-  const pricingQuote = PricingService.quote(model, { resolution, seconds, count: 1 }, false, token.userId ?? null);
+  let referenceVideoDurations: number[] = [];
+  let referenceVideoRawDurations: number[] = [];
+  let referenceVideoSeconds = 0;
+  if (isSnumomWanChannel(channel) && isSnumomWan30VideoModel(model) && video_urls.length > 0) {
+    try {
+      const probed = await probeReferenceVideoSeconds(video_urls);
+      referenceVideoRawDurations = probed.rawDurations;
+      referenceVideoDurations = probed.durations;
+      referenceVideoSeconds = probed.total;
+      if (referenceVideoDurations.some(value => value < 1 || value > 15) || referenceVideoSeconds > 15) {
+        cleanupFiles(req.files);
+        return res.status(400).json({ error: 'Wan 3.0 reference videos must be 1-15 seconds each and at most 15 seconds total' });
+      }
+      if (seconds + referenceVideoSeconds > 30) {
+        cleanupFiles(req.files);
+        return res.status(400).json({ error: 'Wan 3.0 output plus reference video duration must not exceed 30 seconds' });
+      }
+    } catch (error: any) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `Unable to probe reference video duration: ${error?.message || 'unknown error'}` });
+    }
+  }
+  const billableSeconds = snumomWanBillableSeconds(model, seconds, referenceVideoSeconds);
+  const pricingQuote = PricingService.quote(model, { resolution, seconds: billableSeconds, count: 1 }, false, token.userId ?? null);
   if (!pricingQuote.billingType) {
     cleanupFiles(req.files);
     return res.status(400).json({ error: `Model ${model} has no pricing rule. Configure it in Admin > Pricing.` });
@@ -2187,6 +2223,10 @@ async function handleVideoCreation(req: Request, res: Response) {
         resolution,
         pricingSnapshot: pricingQuote.pricingSnapshot,
         seconds,
+        billableSeconds,
+        referenceVideoSeconds,
+        referenceVideoRawDurations,
+        referenceVideoDurations,
         aspect_ratio: ratio,
         model,
         prompt,

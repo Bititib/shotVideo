@@ -1091,7 +1091,7 @@ export default function VideoPage() {
 
   // 当选中模型变化时，动态调整可选时长与分辨率
   const currentModel = models.find(m => m.id === selectedModel);
-  const videoQuote = useVideoQuote(selectedModel, resolution, duration, Boolean(quoteUser && currentModel));
+  const videoQuote = useVideoQuote(selectedModel, resolution, duration, Boolean(quoteUser && currentModel), referenceVideos);
   const sdMiniRequiredSeconds = snumomSdMiniSecondsForResolution(resolution);
   const DURATIONS = currentModel?.routingLimits ? (currentModel.allowedSeconds || []).map(value => ({ value, label: value + ' 秒' })) : selectedModel === SNUMOM_SD_MINI_MODEL
     ? ALL_DURATIONS.filter(d => d.value === sdMiniRequiredSeconds)
@@ -1114,6 +1114,8 @@ export default function VideoPage() {
     ? ALL_ASPECT_RATIOS.filter(ratio => ratio.value !== '3:2' && ratio.value !== '2:3')
     : isWan30Model(selectedModel)
     ? [
+      { value: 'adaptive', label: '自适应', icon: Square },
+      { value: '21:9', label: '21:9', icon: RectangleHorizontal },
       { value: '1:1', label: '1:1', icon: Square },
       { value: '16:9', label: '16:9', icon: RectangleHorizontal },
       { value: '9:16', label: '9:16', icon: Smartphone },

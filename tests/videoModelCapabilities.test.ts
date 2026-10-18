@@ -15,9 +15,9 @@ describe('video model capabilities', () => {
   });
 
   it('recognizes the exact snumom Grok per-request model ID', () => {
-    expect(SNUMOM_GROK_IMAGINE_VIDEO_MODEL).toBe('grok-imagine-video-1.5（按次）');
+    expect(SNUMOM_GROK_IMAGINE_VIDEO_MODEL).toBe('grok-imagine-video-1.5');
     expect(isSnumomGrokImagineVideoModel('grok-imagine-video-1.5（按次）')).toBe(true);
-    expect(isSnumomGrokImagineVideoModel('grok-imagine-video-1.5')).toBe(false);
+    expect(isSnumomGrokImagineVideoModel('grok-imagine-video-1.5')).toBe(true);
   });
 
   it('maps sd-mini resolution to its only valid duration', () => {

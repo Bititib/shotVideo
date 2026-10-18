@@ -3,7 +3,8 @@ const OMNI_VIDEO_EDIT_MODELS = new Set([
   'veo-omni-flash-video-edit',
 ]);
 
-export const SNUMOM_GROK_IMAGINE_VIDEO_MODEL = 'grok-imagine-video-1.5（按次）';
+export const SNUMOM_GROK_IMAGINE_VIDEO_MODEL = 'grok-imagine-video-1.5';
+const SNUMOM_GROK_IMAGINE_VIDEO_LEGACY_MODEL = 'grok-imagine-video-1.5（按次）';
 export const SNUMOM_SD_MINI_MODEL = 'sd-mini';
 export const WX_HAIDIYUE_FACE_SPLIT_MODEL = 'sd2.5';
 export const WX_HAIDIYUE_MULTIMODAL_MODEL = '2.5-s';
@@ -18,7 +19,7 @@ export function isOmniVideoEditModel(modelId: string): boolean {
 }
 
 export function isSnumomGrokImagineVideoModel(modelId: string): boolean {
-  return modelId === SNUMOM_GROK_IMAGINE_VIDEO_MODEL;
+  return modelId === SNUMOM_GROK_IMAGINE_VIDEO_MODEL || modelId === SNUMOM_GROK_IMAGINE_VIDEO_LEGACY_MODEL;
 }
 
 export function snumomSdMiniSecondsForResolution(resolution: string): 10 | 15 {

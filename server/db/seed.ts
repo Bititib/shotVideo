@@ -27,6 +27,7 @@ import {
 } from '../services/wxHaidiYueAdapter.js';
 import {
   SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
+  SNUMOM_GROK_IMAGINE_VIDEO_LEGACY_MODEL,
   SNUMOM_SD_MINI_MODEL,
   SNUMOM_VIDEO_MODELS,
 } from '../services/snumomWanAdapter.js';
@@ -235,7 +236,7 @@ export async function syncModelsFromAPI() {
     { provider: 'julun', modelId: JULUN_MINIMAX_H3_MODEL, displayName: 'MiniMax H3 768p（933）', description: '巨轮 MiniMax H3；固定768p；仅支持10秒或15秒；最多9图、3视频、3音频参考；按秒计费 ¥0.18/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'snumom', modelId: 'wan3.0-video', displayName: 'Wan 3.0 Video（标准版）', description: 'snumom 标准版；支持2-30秒、480P/720P/1080P；最多10图、5视频、5音频参考；支持文生、首帧及首尾帧视频', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'snumom', modelId: 'wan3.0-video-prime', displayName: 'Wan 3.0 Video Prime（高速版）', description: 'snumom 高速版；生成速度更快；支持2-30秒、480P/720P/1080P；最多10图、5视频、5音频参考', capabilities: JSON.stringify(['video']), isActive: 1 },
-    { provider: 'snumom', modelId: SNUMOM_GROK_IMAGINE_VIDEO_MODEL, displayName: 'Grok Imagine Video 1.5（按次）', description: 'snumom Grok Imagine Video 1.5；支持3-15秒；最多7张参考图；按次计费 ¥0.60/次', capabilities: JSON.stringify(['video']), isActive: 1 },
+    { provider: 'snumom', modelId: SNUMOM_GROK_IMAGINE_VIDEO_MODEL, displayName: 'Grok Imagine Video 1.5', description: '支持1-15秒、480P/720P；最多7张参考图；不支持参考视频或音频；按次计费 ¥0.60/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'snumom', modelId: SNUMOM_SD_MINI_MODEL, displayName: 'Seedance 2.0 Mini', description: '支持9图、3视频、3音频参考，不卡脸；480p支持15秒，720p仅支持10秒；按次计费 ¥0.60/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
     { provider: 'sudashui', modelId: 'sdas-mj-minimax-h3-2k', displayName: 'Minimax H3 (2K)', capabilities: JSON.stringify(['video']) },
@@ -338,6 +339,7 @@ export async function syncModelsFromAPI() {
 
   // 备用执行模型只参与内部路由；即使旧版本曾将其启用，也要在升级时重新隐藏。
   db.update(models).set({ isActive: 0 }).where(eq(models.modelId, 'xd-seedance-2.5-720p')).run();
+  db.update(models).set({ isActive: 0 }).where(eq(models.modelId, SNUMOM_GROK_IMAGINE_VIDEO_LEGACY_MODEL)).run();
 
   // 强制删除已废弃或不能使用的旧视频模型
   try {
@@ -879,7 +881,7 @@ export async function initDatabase() {
     { key: 'seedance_2_5_c1_rate', value: '0.25', label: 'Seedance 2.5 (c1) 费率(¥/秒)' },
     { key: 'xd_seedance_2_5_720p_rate', value: '1.20', label: 'Seedance 2.5 (720p/XD版) 费率(¥/次)' },
     { key: 'grok_video_1_5_per_sec_rate', value: '0.09', label: 'grok-video-1.5（按秒） 费率(¥/秒)' },
-    { key: 'grok_imagine_video_1_5_per_req_rate', value: '0.60', label: 'grok-imagine-video-1.5（按次） 费率(¥/次)' },
+    { key: 'grok_imagine_video_1_5_per_req_rate', value: '0.60', label: 'Grok Imagine Video 1.5 费率(¥/次)' },
     { key: 'snumom_sd_mini_per_req_rate', value: '0.60', label: 'snumom sd-mini 费率(¥/次)' },
     { key: 'grok_imagine_video_1_5_preview_rate', value: '0.70', label: 'grok-imagine-video-1.5-preview 费率(¥/次)' },
     { key: 'seedance_2_5_deal_rate', value: '1.80', label: 'seedance-2.5-deal 费率(¥/次)' },

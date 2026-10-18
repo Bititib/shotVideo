@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildSnumomWanPayload,
+  canonicalSnumomVideoModel,
   isSnumomWanChannel,
   normalizeSnumomWanTask,
   SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES,
@@ -12,19 +13,21 @@ import {
   SNUMOM_SD_MINI_MODEL,
   SNUMOM_VIDEO_MODELS,
   snumomSdMiniSecondsForResolution,
+  snumomWanBillableSeconds,
   snumomContentUrl,
 } from '../server/services/snumomWanAdapter.js';
+import { roundUpVideoDurationTenths } from '../server/services/videoDurationProbe.js';
 
 describe('snumom Wan 3.0 adapter', () => {
   it('declares the Grok per-request model and its advertised limits', () => {
-    expect(SNUMOM_GROK_IMAGINE_VIDEO_MODEL).toBe('grok-imagine-video-1.5（按次）');
+    expect(SNUMOM_GROK_IMAGINE_VIDEO_MODEL).toBe('grok-imagine-video-1.5');
     expect(SNUMOM_VIDEO_MODELS).toEqual([
       'wan3.0-video',
       'wan3.0-video-prime',
       SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
       SNUMOM_SD_MINI_MODEL,
     ]);
-    expect(SNUMOM_GROK_IMAGINE_VIDEO_SECONDS).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    expect(SNUMOM_GROK_IMAGINE_VIDEO_SECONDS).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
     expect(SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES).toBe(7);
   });
 
@@ -96,10 +99,23 @@ describe('snumom Wan 3.0 adapter', () => {
       aspectRatio: '16:9',
       images: [{ url: 'https://cdn.example.com/reference.jpg', role: 'reference_image' }],
     })).toMatchObject({
-      model: 'grok-imagine-video-1.5（按次）',
+      model: 'grok-imagine-video-1.5',
       seconds: '15',
       size: '720P',
       reference_images: [{ url: 'https://cdn.example.com/reference.jpg', role: 'reference_image' }],
     });
+    expect(canonicalSnumomVideoModel('grok-imagine-video-1.5（按次）')).toBe('grok-imagine-video-1.5');
+  });
+
+  it('adds probed reference-video duration only for Wan 3.0 video models', () => {
+    expect(snumomWanBillableSeconds('wan3.0-video', 10, 5.25)).toBe(15.25);
+    expect(snumomWanBillableSeconds('wan3.0-video-prime', 10, 3)).toBe(13);
+    expect(snumomWanBillableSeconds(SNUMOM_GROK_IMAGINE_VIDEO_MODEL, 10, 5)).toBe(10);
+  });
+
+  it('rounds every reference video up to one tenth of a second', () => {
+    expect(roundUpVideoDurationTenths(5)).toBe(5);
+    expect(roundUpVideoDurationTenths(5.001)).toBe(5.1);
+    expect(roundUpVideoDurationTenths(5.19)).toBe(5.2);
   });
 });

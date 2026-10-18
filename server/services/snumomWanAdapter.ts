@@ -1,7 +1,8 @@
 export const SNUMOM_BASE_URL = 'https://snumom.com';
 export const SNUMOM_CHANNEL_TYPE = 'snumom';
-export const SNUMOM_GROK_IMAGINE_VIDEO_MODEL = 'grok-imagine-video-1.5（按次）';
-export const SNUMOM_GROK_IMAGINE_VIDEO_SECONDS = Array.from({ length: 13 }, (_, index) => index + 3);
+export const SNUMOM_GROK_IMAGINE_VIDEO_MODEL = 'grok-imagine-video-1.5';
+export const SNUMOM_GROK_IMAGINE_VIDEO_LEGACY_MODEL = 'grok-imagine-video-1.5（按次）';
+export const SNUMOM_GROK_IMAGINE_VIDEO_SECONDS = Array.from({ length: 15 }, (_, index) => index + 1);
 export const SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES = 7;
 export const SNUMOM_SD_MINI_MODEL = 'sd-mini';
 export const SNUMOM_SD_MINI_SECONDS = [10, 15] as const;
@@ -14,6 +15,23 @@ export const SNUMOM_VIDEO_MODELS = [
   SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
   SNUMOM_SD_MINI_MODEL,
 ] as const;
+
+export function canonicalSnumomVideoModel(model: string): string {
+  return model === SNUMOM_GROK_IMAGINE_VIDEO_LEGACY_MODEL ? SNUMOM_GROK_IMAGINE_VIDEO_MODEL : model;
+}
+
+export function isSnumomWan30VideoModel(model: string): boolean {
+  return model === 'wan3.0-video' || model === 'wan3.0-video-prime';
+}
+
+export function snumomWanBillableSeconds(model: string, outputSeconds: number, referenceVideoSeconds = 0): number {
+  const output = Number(outputSeconds);
+  const references = Number(referenceVideoSeconds);
+  if (!Number.isFinite(output) || output < 0 || !Number.isFinite(references) || references < 0) {
+    throw new Error('snumom billable seconds must be non-negative finite numbers');
+  }
+  return output + (isSnumomWan30VideoModel(model) ? references : 0);
+}
 
 export function snumomSdMiniSecondsForResolution(resolution: string): 10 | 15 | null {
   const normalized = String(resolution || '').toLowerCase();
@@ -58,11 +76,13 @@ export function buildSnumomWanPayload(input: SnumomWanPayloadInput): Record<stri
   const images = (input.images || []).filter(item => item?.url);
   const videos = (input.videos || []).filter(item => item?.url);
   const audios = (input.audios || []).filter(item => item?.url);
+  const normalizedModel = canonicalSnumomVideoModel(input.model);
+  const normalizedResolution = normalizeSnumomResolution(input.resolution);
   return {
-    model: input.model,
+    model: normalizedModel,
     prompt: input.prompt.trim(),
     seconds: String(input.seconds),
-    size: normalizeSnumomResolution(input.resolution),
+    size: normalizedModel.startsWith('grok-imagine-video-1.5') && normalizedResolution === '1080P' ? '720P' : normalizedResolution,
     aspect_ratio: input.aspectRatio,
     ...(images.length ? { reference_images: images } : {}),
     ...(videos.length ? { reference_videos: videos } : {}),

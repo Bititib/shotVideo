@@ -14,6 +14,7 @@ import { env } from '../server/config/env.js';
 import { getAccessibleModelIds } from '../server/routes/v1.js';
 import { JULUN_MINIMAX_H3_MODEL } from '../server/services/julunMinimaxAdapter.js';
 import { SNUMOM_GROK_IMAGINE_VIDEO_MODEL, SNUMOM_SD_MINI_MODEL } from '../server/services/snumomWanAdapter.js';
+import { quoteVideoRequest } from '../server/services/videoQuoteService.js';
 import {
   HM_STUDIO_SEEDANCE_V20_933_MODEL,
   HM_STUDIO_SEEDANCE_V25_101010_MODEL,
@@ -164,7 +165,7 @@ describe('种子数据完整性', () => {
 
     const grokModel = db.select().from(models).where(eq(models.modelId, SNUMOM_GROK_IMAGINE_VIDEO_MODEL)).get();
     expect(grokModel).toMatchObject({ provider: 'snumom', isActive: 1 });
-    expect(grokModel?.description).toContain('3-15秒');
+    expect(grokModel?.description).toContain('1-15秒');
     expect(grokModel?.description).toContain('最多7张参考图');
 
     const sdMiniModel = db.select().from(models).where(eq(models.modelId, SNUMOM_SD_MINI_MODEL)).get();
@@ -175,6 +176,10 @@ describe('种子数据完整性', () => {
     expect(sdMiniModel?.description).toContain('不卡脸');
     expect(sdMiniModel?.description).toContain('480p支持15秒');
     expect(sdMiniModel?.description).toContain('720p仅支持10秒');
+
+    expect(quoteVideoRequest({
+      model: 'wan3.0-video', resolution: '720p', video_length: 10, reference_video_seconds: 5,
+    })).toMatchObject({ seconds: 10, referenceVideoSeconds: 5, billableSeconds: 15, cost: 2.1 });
   });
 
   it('巨轮渠道永久绑定 MiniMax H3 768p 并按 ¥0.18/秒计费', () => {

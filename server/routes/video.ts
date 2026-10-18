@@ -66,7 +66,9 @@ import {
 } from '../services/julunMinimaxAdapter.js';
 import {
   buildSnumomWanPayload,
+  canonicalSnumomVideoModel,
   isSnumomWanChannel,
+  isSnumomWan30VideoModel,
   normalizeSnumomWanTask,
   SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES,
   SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
@@ -77,8 +79,10 @@ import {
   SNUMOM_SD_MINI_MODEL,
   SNUMOM_SD_MINI_SECONDS,
   snumomSdMiniSecondsForResolution,
+  snumomWanBillableSeconds,
   snumomContentUrl,
 } from '../services/snumomWanAdapter.js';
+import { probeReferenceVideoSeconds } from '../services/videoDurationProbe.js';
 import {
   buildSudaShuiVideoPayload,
   sudaShuiVideoCreateUrl,
@@ -382,9 +386,9 @@ const DEFAULT_VIDEO_MODELS = [
   { id: 'vd-seedance-2.5-720p', name: 'Seedance 2.5 720p（VD）', description: '过真人，支持9图3视频0音频，4-30秒，按秒计费 ¥0.30/秒', maxSeconds: 30, icon: '🎬' },
   { id: 'td-seedance-2.5-720p', name: 'Seedance 2.5 720p（TD）', description: '支持4-30秒、30图10视频10音频参考，固定720p，按次计费；售价以后台统一计费设置为准', maxSeconds: 30, icon: '🎬' },
   { id: 'wan3.0th', name: 'Wan 3.0 视频大模型 (wan3.0th)', description: '按秒计费，¥0.14/秒；720p；支持4-30秒文生视频和多参考视频；最多10张图片、5个视频、5段音频公网URL，音频仅支持WAV；支持1:1、16:9、9:16、4:3、3:4', maxSeconds: 30, icon: '🌟' },
-  { id: 'wan3.0-video', name: 'Wan 3.0 Video（标准版）', description: 'snumom 标准版；支持 2-30 秒、480P/720P/1080P；最多 10 图、5 视频、5 音频参考；支持文生、首帧及首尾帧视频', maxSeconds: 30, icon: '🌊' },
-  { id: 'wan3.0-video-prime', name: 'Wan 3.0 Video Prime（高速版）', description: 'snumom 高速版；生成速度更快；支持 2-30 秒、480P/720P/1080P；最多 10 图、5 视频、5 音频参考', maxSeconds: 30, icon: '⚡' },
-  { id: SNUMOM_GROK_IMAGINE_VIDEO_MODEL, name: 'Grok Imagine Video 1.5（按次）', description: 'snumom Grok Imagine Video 1.5；支持 3-15 秒；最多 7 张参考图；按次计费 ¥0.60/次', maxSeconds: 15, icon: '✕' },
+  { id: 'wan3.0-video', name: 'Wan 3.0 Video（标准版）', description: '支持 2-30 秒、480P/720P/1080P；最多 10 图、5 视频、5 音频参考；参考视频时长计入计费秒数', maxSeconds: 30, icon: '🌊' },
+  { id: 'wan3.0-video-prime', name: 'Wan 3.0 Video Prime（高速版）', description: '生成速度更快；支持 2-30 秒、480P/720P/1080P；最多 10 图、5 视频、5 音频参考；参考视频时长计入计费秒数', maxSeconds: 30, icon: '⚡' },
+  { id: SNUMOM_GROK_IMAGINE_VIDEO_MODEL, name: 'Grok Imagine Video 1.5', description: '支持 1-15 秒、480P/720P；最多 7 张参考图；不支持参考视频或音频；按次计费 ¥0.60/次', maxSeconds: 15, icon: '✕' },
   { id: SNUMOM_SD_MINI_MODEL, name: 'Seedance 2.0 Mini', description: '支持 9 图、3 视频、3 音频参考，不卡脸；480p 支持 15 秒，720p 仅支持 10 秒；按次计费 ¥0.60/次', maxSeconds: 15, icon: 'SD' },
   { id: JULUN_MINIMAX_H3_MODEL, name: 'MiniMax H3 768p（933）', description: '巨轮 MiniMax H3；固定768p；仅支持10秒或15秒；最多9图、3视频、3音频参考；按秒计费 ¥0.18/秒', maxSeconds: 15, icon: '🔥' },
   { id: 'ld-sdas-cvk-pro-933-720p', name: 'SudaShui CVK Pro 933 (720p)', description: 'CVK 满血版，支持真人、4-15秒，支持 9图/3视频/3音频参考，固定按次计费 ¥3.800/次', maxSeconds: 15, icon: '🚀' },
@@ -742,7 +746,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     } catch (e: any) { return res.status(e.status || 400).json({ error: e.message }); }
   }
   if (await handleSpecificationGeneration(req, res, 'video')) return;
-  if (typeof req.body?.model === 'string') req.body.model = canonicalZonghengModelId(req.body.model);
+  if (typeof req.body?.model === 'string') req.body.model = canonicalSnumomVideoModel(canonicalZonghengModelId(req.body.model));
   const {
     prompt,
     model = 'nd-seedance-2.0-720p',
@@ -916,7 +920,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   }
 
   if (model === 'wan3.0-video' || model === 'wan3.0-video-prime') {
-    const wanRatios = ['1:1', '16:9', '9:16', '4:3', '3:4'];
+    const wanRatios = ['adaptive', '21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
     if (!wanRatios.includes(aspect_ratio)) return res.status(400).json({ error: `${model} 不支持比例 ${aspect_ratio}` });
     if (!['480p', '720p', '1080p'].includes(String(resolution).toLowerCase())) {
       return res.status(400).json({ error: `${model} 仅支持 480p、720p、1080p` });
@@ -926,8 +930,13 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     if (finalAudios.length > 5) return res.status(400).json({ error: `${model} 最多支持 5 段参考音频` });
   }
 
-  if (model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL && reference_images.length > SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES) {
-    return res.status(400).json({ error: `${model} 最多支持 ${SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES} 张参考图片` });
+  if (model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL) {
+    if (reference_images.length + (first_frame ? 1 : 0) > SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES) {
+      return res.status(400).json({ error: `${model} 最多支持 ${SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES} 张参考图片` });
+    }
+    if (finalVideos.length > 0 || finalAudios.length > 0) return res.status(400).json({ error: `${model} 不支持参考视频或参考音频` });
+    if (last_frame) return res.status(400).json({ error: `${model} 不支持尾帧参考` });
+    if (first_frame && reference_images.length > 0) return res.status(400).json({ error: `${model} 的首帧图不能与普通参考图混用` });
   }
 
   if (model === SNUMOM_SD_MINI_MODEL) {
@@ -1071,9 +1080,30 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     } catch (error: any) { return res.status(400).json({ error: error.message }); }
   }
 
+  let referenceVideoDurations: number[] = [];
+  let referenceVideoRawDurations: number[] = [];
+  let referenceVideoSeconds = 0;
+  if (isSnumomWanChannel(channel) && isSnumomWan30VideoModel(model) && finalVideos.length > 0) {
+    try {
+      const probed = await probeReferenceVideoSeconds(finalVideos);
+      referenceVideoRawDurations = probed.rawDurations;
+      referenceVideoDurations = probed.durations;
+      referenceVideoSeconds = probed.total;
+      if (referenceVideoDurations.some(seconds => seconds < 1 || seconds > 15) || referenceVideoSeconds > 15) {
+        return res.status(400).json({ error: 'Wan 3.0 参考视频单段须为 1-15 秒，合计不能超过 15 秒' });
+      }
+      if (Number(video_length) + referenceVideoSeconds > 30) {
+        return res.status(400).json({ error: 'Wan 3.0 输出时长与参考视频总时长合计不能超过 30 秒' });
+      }
+    } catch (error: any) {
+      return res.status(400).json({ error: `无法探测参考视频时长：${error?.message || '未知错误'}` });
+    }
+  }
+  const billableSeconds = snumomWanBillableSeconds(model, Number(video_length), referenceVideoSeconds);
+
   // Reuse exactly the same model/material checks before a batch is charged.
   if (req.path === '/validate') {
-    const quote = PricingService.quote(model, { resolution, seconds: Number(video_length), count: 1 }, false, req.userId);
+    const quote = PricingService.quote(model, { resolution, seconds: billableSeconds, count: 1 }, false, req.userId);
     if (!['per_call', 'per_second'].includes(quote.billingType || '') || !Number.isFinite(quote.cost) || quote.cost < 0) return res.status(400).json({ error: '该模型未配置有效价格' });
     return res.json({ unitCost: quote.cost, resolution, reference_images, pricingSnapshot: quote.pricingSnapshot });
   }
@@ -1206,7 +1236,8 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     'xd-seedance-2.5-720p',
     ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS,
   ].includes(model);
-  const estimatedSeconds = Number(video_length) || 6;
+  const outputSeconds = Number(video_length) || 6;
+  const estimatedSeconds = snumomWanBillableSeconds(model, outputSeconds, referenceVideoSeconds);
   const pricingUsage = { resolution, seconds: estimatedSeconds, count: 1 };
   const unifiedQuote = batchContext?.pricingSnapshot ? { ...PricingService.quoteSnapshot(batchContext.pricingSnapshot, pricingUsage), pricingSnapshot: batchContext.pricingSnapshot }
     : PricingService.quote(model, pricingUsage, false, req.userId);
@@ -1252,6 +1283,10 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
           batchAttempt: batchContext.item.attempts, batchReservedAmount: batchContext.item.unit_cost, billingStatus: 'batch_reserved' } : {}),
         resolution,
         seconds: estimatedSeconds,
+        outputSeconds,
+        referenceVideoSeconds,
+        referenceVideoRawDurations,
+        referenceVideoDurations,
         aspect_ratio,
         model,
         prompt: prompt as string,
@@ -2155,12 +2190,16 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
       }
       const job = await createResp.json() as any;
       videoId = job.id || job.task_id;
-    } else if (isSnumomWan && (isWan30 || model === SNUMOM_SD_MINI_MODEL)) {
-      sendEvent({ type: 'status', message: `正在整理并提交 snumom ${model === SNUMOM_SD_MINI_MODEL ? 'SD Mini' : 'WAN3.0'} 任务...` });
+    } else if (isSnumomWan && (isWan30 || model === SNUMOM_SD_MINI_MODEL || model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL)) {
+      const snumomModelLabel = model === SNUMOM_SD_MINI_MODEL ? 'SD Mini' : model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL ? 'Grok 1.5' : 'WAN3.0';
+      sendEvent({ type: 'status', message: `正在整理并提交 snumom ${snumomModelLabel} 任务...` });
 
-      const maxImages = model === SNUMOM_SD_MINI_MODEL ? SNUMOM_SD_MINI_MAX_IMAGES : 10;
-      const maxVideos = model === SNUMOM_SD_MINI_MODEL ? SNUMOM_SD_MINI_MAX_VIDEOS : 5;
-      const maxAudios = model === SNUMOM_SD_MINI_MODEL ? SNUMOM_SD_MINI_MAX_AUDIOS : 5;
+      const maxImages = model === SNUMOM_SD_MINI_MODEL ? SNUMOM_SD_MINI_MAX_IMAGES
+        : model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL ? SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES : 10;
+      const maxVideos = model === SNUMOM_SD_MINI_MODEL ? SNUMOM_SD_MINI_MAX_VIDEOS
+        : model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL ? 0 : 5;
+      const maxAudios = model === SNUMOM_SD_MINI_MODEL ? SNUMOM_SD_MINI_MAX_AUDIOS
+        : model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL ? 0 : 5;
       const imageUrls = (reference_images || []).slice(0, maxImages)
         .map((item: string) => convertBase64ToPublicUrl(item, 'snumom_wan3_img', req))
         .filter(Boolean);
@@ -2202,7 +2241,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
       });
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
-        refundFailedTask(`snumom ${model === SNUMOM_SD_MINI_MODEL ? 'SD Mini' : 'WAN3.0'} 提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        refundFailedTask(`snumom ${snumomModelLabel} 提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
         res.write('data: [DONE]\n\n');
         return res.end();
       }

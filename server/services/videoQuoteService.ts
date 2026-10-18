@@ -5,6 +5,7 @@ import { getModelSpecification } from './modelRoutingService.js';
 import { existingModelLimits } from './modelInputPresets.js';
 import { PricingService } from './pricingService.js';
 import { assertUserModelAccess } from './userModelAccessService.js';
+import { isSnumomWan30VideoModel, snumomWanBillableSeconds } from './snumomWanAdapter.js';
 const fail = (message: string, status = 400) => Object.assign(new Error(message), { status });
 /** Quote customer prices only. No uploads, upstream calls, reservations or task creation. */
 export function quoteVideoRequest(body: any, userId?: number) {
@@ -24,9 +25,15 @@ export function quoteVideoRequest(body: any, userId?: number) {
     if (!(d.mode === 'fixed' ? seconds === d.min : d.mode === 'options' ? d.values.includes(seconds)
       : seconds >= d.min && seconds <= d.max && Math.abs((seconds-d.min)/d.step - Math.round((seconds-d.min)/d.step)) < 1e-8)) throw fail('该模型不支持所选时长');
   }
-  const quote = PricingService.quote(model, { resolution, seconds, count: 1 }, false, userId);
+  const referenceVideoSeconds = isSnumomWan30VideoModel(model) ? Number(body.reference_video_seconds || 0) : 0;
+  if (!Number.isFinite(referenceVideoSeconds) || referenceVideoSeconds < 0 || referenceVideoSeconds > 15) {
+    throw fail('参考视频总时长无效');
+  }
+  const billableSeconds = snumomWanBillableSeconds(model, seconds, referenceVideoSeconds);
+  if (isSnumomWan30VideoModel(model) && billableSeconds > 30) throw fail('输出时长与参考视频总时长合计不能超过 30 秒');
+  const quote = PricingService.quote(model, { resolution, seconds: billableSeconds, count: 1 }, false, userId);
   if (!['per_call', 'per_second'].includes(quote.billingType || '') || !Number.isFinite(quote.cost) || quote.cost < 0) throw fail('该模型尚未配置有效视频售价');
-  return { model, resolution, seconds, cost: quote.cost, rate: quote.rate, billingType: quote.billingType };
+  return { model, resolution, seconds, referenceVideoSeconds, billableSeconds, cost: quote.cost, rate: quote.rate, billingType: quote.billingType };
 }
 /** Browser clients pin the displayed total; old API clients may omit expectedCost. */
 export function assertExpectedVideoCost(body: any, actualCost: number) {
