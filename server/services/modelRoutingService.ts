@@ -1,3 +1,4 @@
+import { isUpstreamCreditFailure, type ModelAvailability } from '../../shared/upstreamAvailability.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
 import { MJ_OVERFLOW_VIDEO_MODEL } from './videoFailoverService.js';
 import { randomUUID } from 'node:crypto';
@@ -78,16 +79,29 @@ export function saveModelSpecification(value: ModelSpecification): ModelSpecific
   sqlite.transaction(() => write(CONFIG_KEY, [...other, result]))(); return result;
 }
 export function deleteModelSpecification(modelId: string) { write(CONFIG_KEY, getModelSpecifications().filter(s => s.modelId !== modelId)); }
-export function getRouteHealth() { return read<Record<string, RouteHealth>>(HEALTH_KEY, {}); }
+export const CREDIT_COOLDOWN_MS = 60_000;
+export function getRouteHealth() {
+  const health = read<Record<string, RouteHealth>>(HEALTH_KEY, {});
+  let changed = false;
+  // Old credit locks become a bounded cooldown based on the original failure time.
+  for (const item of Object.values(health)) if (item.state === 'blocked' && isUpstreamCreditFailure(item.lastError)) {
+    item.state = 'cooldown';
+    item.retryAt = (Date.parse(item.updatedAt) || Date.now()) + CREDIT_COOLDOWN_MS;
+    changed = true;
+  }
+  if (changed) write(HEALTH_KEY, health);
+  return health;
+}
 export function routeHealthKey(route: ModelRoute, apiKeyId?: number | null) { return route.channelId + ':' + (apiKeyId || 0) + ':' + route.upstreamModel; }
 export function resetRouteHealth(key: string) { const health = getRouteHealth(); delete health[key]; write(HEALTH_KEY, health); }
 export function noteRouteResult(key: string, ok: boolean, message = '', blocked = false, generation = false) {
   const health = getRouteHealth();
   const old = health[key] || { failures: 0, successes: 0, generationFailures: 0, state: 'healthy', retryAt: 0, lastError: '', updatedAt: '' };
   const failures = ok ? 0 : old.failures + 1;
+  const credits = !ok && isUpstreamCreditFailure(message);
   health[key] = { ...old, failures, successes: old.successes + Number(ok), generationFailures: old.generationFailures + Number(generation && !ok),
-    state: old.state === 'blocked' || blocked ? 'blocked' : ok ? 'healthy' : 'cooldown', retryAt: ok ? 0 : Date.now() + Math.min(15 * 60_000, 30_000 * 2 ** Math.min(failures - 1, 5)),
-    probeUntil: 0, lastError: ok ? '' : message.replace(/sk-[\w-]+/g, '[REDACTED]').slice(0, 300), updatedAt: new Date().toISOString() };
+    state: old.state === 'blocked' || blocked && !credits ? 'blocked' : ok ? 'healthy' : 'cooldown', retryAt: ok ? 0 : Date.now() + (credits ? CREDIT_COOLDOWN_MS : Math.min(15 * 60_000, 30_000 * 2 ** Math.min(failures - 1, 5))),
+    probeUntil: 0, lastError: old.state === 'blocked' ? old.lastError : ok ? '' : message.replace(/sk-[\w-]+/g, '[REDACTED]').slice(0, 300), updatedAt: new Date().toISOString() };
   write(HEALTH_KEY, health);
 }
 export function claimRouteProbe(key: string): boolean {
@@ -117,7 +131,20 @@ export function selectModelRoutes(spec: ModelSpecification, input: RoutingInput)
   return inspectModelRoutes(spec, input).filter(item => !item.reasons.length).flatMap(item => item.candidates)
     .sort((a, b) => (a.cost ?? Infinity) - (b.cost ?? Infinity) || a.route.priority - b.route.priority || a.channel.priority - b.channel.priority || a.channel.id - b.channel.id);
 }
-export function specificationAvailable(spec: ModelSpecification) { return inspectModelRoutes(spec).some(item => !item.reasons.length); }
+export function specificationAvailability(spec: ModelSpecification): ModelAvailability {
+  const routes = inspectModelRoutes(spec);
+  if (routes.some(item => !item.reasons.length)) return { available: true };
+  // Ignore manual/configuration failures when determining the earliest eligible recovery.
+  const eligible = routes.filter(item => item.reasons.every(reason => reason === '线路故障或恢复试用中'));
+  const health = eligible.flatMap(item => item.health);
+  const timed = health.filter(h => h.state === 'cooldown') as (RouteHealth & { key: string })[];
+  if (timed.length) {
+    const next = timed.sort((a, b) => Math.max(a.retryAt, a.probeUntil || 0) - Math.max(b.retryAt, b.probeUntil || 0))[0];
+    return { available: false, unavailableReason: isUpstreamCreditFailure(next.lastError) ? 'credits' : 'cooldown', retryAt: Math.max(next.retryAt, next.probeUntil || 0) };
+  }
+  return { available: false, unavailableReason: health.some(h => h.state === 'blocked') ? 'credentials' : 'configuration' };
+}
+export function specificationAvailable(spec: ModelSpecification) { return specificationAvailability(spec).available; }
 
 
 /** Re-check operator switches and capability edits after any queue wait, without releasing a claimed probe. */

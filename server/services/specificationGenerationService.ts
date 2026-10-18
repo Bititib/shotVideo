@@ -1,3 +1,4 @@
+import { modelAvailabilityMessage } from '../../shared/upstreamAvailability.js';
 import { startSseHeartbeat } from './sseHeartbeat.js';
 import { publicGenerationError, publicGenerationEvent } from '../../shared/generationMessages.js';
 import { isBlobDrawChannel } from './blobDrawAdapter.js';
@@ -18,7 +19,7 @@ import { PricingService } from './pricingService.js';
 import { BalanceService } from './balanceService.js';
 import { TokenService } from './tokenService.js';
 import { reserveUserCharge } from './billingReservation.js';
-import { getModelSpecification, selectModelRoutes, routeStillEnabled, claimRouteProbe, noteRouteResult, type RouteCandidate } from './modelRoutingService.js';
+import { getModelSpecification, specificationAvailability, selectModelRoutes, routeStillEnabled, claimRouteProbe, noteRouteResult, type RouteCandidate } from './modelRoutingService.js';
 import { submitSpecificationVideo, pollSpecificationVideo, pollSpecificationImage, generateSpecificationImage, SpecificationUpstreamError, type SpecificationRequest } from './specificationAdapters.js';
 import { validateAndNormalizeImageReferences } from './imageReferenceValidationService.js';
 import { hmStudioQueue, hmStudioPoolKey, HmStudioQueueFullError } from './hmStudioQueueService.js';
@@ -328,7 +329,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     if (mismatch.length) throw fail(mismatch.join('；'));
     request.input.resolution = spec.limits.resolutions.find(r => r.toLowerCase() === request.input.resolution.toLowerCase()) || request.input.resolution;
     const candidates = selectModelRoutes(spec, request.input);
-    if (!candidates.length) throw fail('该规格暂时没有健康且满足参数的线路', 503);
+    if (!candidates.length) throw fail(modelAvailabilityMessage(specificationAvailability(spec)) || '该规格暂时没有健康且满足参数的线路', 503);
     const trustedOrigins = [request.publicBaseUrl, req.protocol + '://' + req.get('host')];
     const imageSources = [...request.images, ...(request.firstFrame ? [request.firstFrame] : []), ...(request.lastFrame ? [request.lastFrame] : [])];
     const normalized = await validateAndNormalizeImageReferences(imageSources, { trustedOrigins, trustedRemoteOrigins: (process.env.REFERENCE_IMAGE_REMOTE_ORIGINS || 'https://filer2.fdai.xyz').split(/[\s,]+/).filter(Boolean) });

@@ -6,7 +6,7 @@ import { legacyImageReferenceLimit } from '../../shared/imageCapabilities.js';
 import { isZonghengChannel, ZonghengSubmissionError, buildZonghengImagePayload, validateZonghengImageReferences, zonghengImageSize } from '../services/zonghengAdapter.js';
 import { generateZonghengImages } from '../services/zonghengImageService.js';
 import { handleSpecificationGeneration } from '../services/specificationGenerationService.js';
-import { getModelSpecification, specificationAvailable } from '../services/modelRoutingService.js';
+import { getModelSpecification, specificationAvailability } from '../services/modelRoutingService.js';
 import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
 import { reserveUserCharge } from '../services/billingReservation.js';
 import { canvasRequestMiddleware, recordCanvasEvent } from '../middleware/canvasRequest.js';
@@ -346,7 +346,7 @@ router.get('/models', optionalAuthMiddleware, (req: AuthRequest, res: Response) 
       description: getModelSpecification(m.id)?.imageFamily ? '输出 ' + getModelSpecification(m.id)!.limits.resolutions[0] + '；按参考图数量匹配可用线路' : preset?.description || 'AI 图片生成服务',
       routingLimits: getModelSpecification(m.id)?.limits,
       maxReferenceImages: getModelSpecification(m.id)?.limits.maxImages ?? legacyImageReferenceLimit(m.id),
-      available: getModelSpecification(m.id) ? specificationAvailable(getModelSpecification(m.id)!) : findImageChannel(m.id) !== null,
+      ...(getModelSpecification(m.id) ? specificationAvailability(getModelSpecification(m.id)!) : { available: findImageChannel(m.id) !== null }),
       rate,
       resolutionPrices: pricing?.resolution_prices || {},
     };

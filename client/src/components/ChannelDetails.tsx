@@ -1,3 +1,4 @@
+import ChannelRouteHealth from './ChannelRouteHealth';
 import type { ReactNode } from 'react';
 import { Activity, ArrowRight, CircleCheck, CircleX, Layers3, Loader2, Pencil, Radio, RefreshCw, Zap } from 'lucide-react';
 
@@ -36,6 +37,7 @@ export default function ChannelDetails({ channel, tab, onTabChange, busy, testin
       {currentFeedback && <div className={'channel-details-feedback ' + (currentFeedback.kind === 'error' ? 'is-error' : '')} role={currentFeedback.kind === 'error' ? 'alert' : 'status'}>
         {currentFeedback.kind === 'error' ? <CircleX aria-hidden="true" /> : <CircleCheck aria-hidden="true" />}<span>{currentFeedback.message}</span>
       </div>}
+      <ChannelRouteHealth channelId={channel.id} disabled={busy} />
       {modelCount === 0 && <div className="channel-details-empty">
         <div><strong>还没有关联模型</strong><p>先同步渠道模型，再配置价格和启用状态。</p></div>
         <button type="button" disabled={busy} onClick={onSync}>立即同步<ArrowRight aria-hidden="true" /></button>

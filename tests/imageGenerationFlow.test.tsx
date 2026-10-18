@@ -139,3 +139,24 @@ describe('图片生成与继续改图', () => {
     expect(generateImage).toHaveBeenCalledTimes(1);
   });
 });
+
+
+it('refreshes a cooled-down MJ model without submitting a generation or losing the draft', async () => {
+  vi.useFakeTimers();
+  try {
+    const mj = { id:MJ_MODEL_ID, name:'MJ', description:'', available:false, unavailableReason:'credits' as const, retryAt:Date.now() + 60_000, routingLimits:mjLimits() };
+    vi.mocked(getCachedImageModels).mockReturnValue([mj]);
+    vi.mocked(fetchImageModels).mockResolvedValue([mj]);
+    render(<ImageGenPage />);
+    await act(async () => {});
+    fireEvent.change(screen.getByRole('textbox'), { target:{ value:'保留我的提示词' } });
+    expect(screen.getByText(/上游积分不足，已暂停生成/)).toBeTruthy();
+    expect((screen.getByRole('button', { name:'开始生成图片' }) as HTMLButtonElement).disabled).toBe(true);
+    vi.mocked(fetchImageModels).mockResolvedValue([{ ...mj, available:true, unavailableReason:undefined, retryAt:undefined }]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_100); });
+    expect((screen.getByRole('button', { name:'开始生成图片' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('保留我的提示词');
+    expect(fetchImageModels).toHaveBeenCalledWith(true);
+    expect(generateImage).not.toHaveBeenCalled();
+  } finally { cleanup(); vi.useRealTimers(); }
+});

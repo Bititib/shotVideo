@@ -9,7 +9,7 @@ import ChannelsPage from '../client/src/pages/admin/ChannelsPage';
 
 vi.mock('../client/src/utils/polling', () => ({ startPolling: () => () => {} }));
 vi.mock('../client/src/api/admin', () => ({ adminApi: {
-  getChannels: vi.fn(), getSettings: vi.fn(), getModels: vi.fn(), getModelStatistics: vi.fn(),
+  getModelSpecifications: vi.fn().mockResolvedValue([]), getChannels: vi.fn(), getSettings: vi.fn(), getModels: vi.fn(), getModelStatistics: vi.fn(),
   getPricing: vi.fn(), syncChannelModels: vi.fn(), testChannel: vi.fn(), deleteChannel: vi.fn(),
 } }));
 const ids = ['ZH-Cseadanco2.5K', 'ZH-Xminimex-h3', 'ZH-wan-1080', 'ZH-A-SD2.0'];

@@ -1,3 +1,4 @@
+import { modelAvailabilityMessage } from '../../../shared/upstreamAvailability';
 import { publicCanvasJobMessage } from '../../../shared/generationMessages';
 import { useVideoQuote } from '../hooks/useVideoQuote';
 import type { ModelInputLimits } from '../../../shared/modelRouting';
@@ -91,13 +92,23 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
     let cancelled = false; setLoading(true); setError('');
     Promise.allSettled([fetchImageModels(), fetchVideoModels()]).then(([a, b]) => {
       if (cancelled) return;
-      if (a.status === 'fulfilled') setImages(a.value.filter(m => m.available));
+      if (a.status === 'fulfilled') setImages(a.value);
       if (b.status === 'fulfilled') setVideos(b.value.filter(m => m.available));
       if (a.status === 'rejected' || b.status === 'rejected') setError('部分模型暂时无法加载，请重试。');
       setLoading(false);
     });
     return () => { cancelled = true; };
   }, [retry, user?.id]);
+  useEffect(() => {
+    if (kind !== 'image') return;
+    let cancelled = false;
+    const refresh = () => { fetchImageModels(true).then(data => { if (!cancelled) setImages(data); }).catch(() => {}); };
+    const interval = window.setInterval(refresh, 15_000);
+    const deadline = images.find(m => m.id === model)?.retryAt;
+    const timer = deadline && deadline > Date.now() ? window.setTimeout(refresh, deadline - Date.now() + 100) : undefined;
+    window.addEventListener('focus', refresh);
+    return () => { cancelled = true; window.clearInterval(interval); window.clearTimeout(timer); window.removeEventListener('focus', refresh); };
+  }, [kind, model, user?.id, images.find(m => m.id === model)?.retryAt]);
   const models = kind === 'image' ? images : kind === 'audio' ? audios : videos.filter(m => videoMode === 'edit' ? m.id === VIDEO_EDIT_MODEL : videoMode === 'multimodal' ? Boolean(m.routingLimits ? m.routingLimits.maxVideos || m.routingLimits.maxAudios : canvasVideoReferenceLimits(m.id)) : m.id !== VIDEO_EDIT_MODEL);
   const activeModel = models.find(m => m.id === model);
   const video = kind === 'video' ? videos.find(m => m.id === model) : undefined;
@@ -107,7 +118,7 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
   const resolutions = managedLimits ? managedLimits.resolutions : kind === 'image' ? (model === 'gpt-image-2' ? ['1K', '4K'] : ['1K', '2K', '4K']) : Object.keys(video?.rates ?? { '720p': 0 });
   const durations = kind === 'video' && videoMode === 'edit' ? [10] : model === 'sd-mini' ? [snumomSdMiniSecondsForResolution(resolution)]
     : video?.allowedSeconds?.length ? video.allowedSeconds : [5, 10, 15].filter(n => !video?.maxSeconds || n <= video.maxSeconds);
-  useEffect(() => { if (!loading && !error && !models.some(m => m.id === model)) setModel(models.find(m => m.id === selected?.model)?.id || models[0]?.id || ''); }, [kind, videoMode, images, videos, audios, model, loading, error]);
+  useEffect(() => { if (!loading && !error && !models.some(m => m.id === model)) setModel(models.find(m => m.id === selected?.model)?.id || models.find(m => m.available)?.id || models[0]?.id || ''); }, [kind, videoMode, images, videos, audios, model, loading, error]);
   useEffect(() => { if (!loading && !resolutions.includes(resolution)) setResolution(resolutions[0] || (kind === 'image' ? '1K' : '720p')); }, [kind, model, resolutions.join(','), loading]);
   useEffect(() => { if (!loading && !durations.includes(seconds)) setSeconds(durations[0] || 5); }, [model, resolution, durations.join(','), loading]);
   const ratios = managedLimits ? managedLimits.ratios : kind === 'video' && videoMode === 'edit' ? ['16:9', '9:16'] : ['16:9', '9:16', '1:1', '4:3', '3:4'];
@@ -152,11 +163,12 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
       {kind === 'video' && videoMode === 'edit' && <p className="studio-hint">连接一个不超过 15 秒的原视频，可附加图片。输出固定 10 秒，原片保留。{!loading && !models.length && ' 视频编辑模型暂不可用，请检查登录状态或重试加载。'}</p>}
       {inputError && (model || !inputError.includes('请选择可用')) && <p className="studio-inline-error" role="alert">{inputError}</p>}
       {kind === 'video' && videoMode === 'frames' && <div className="studio-frame-slots"><label>首帧<select value={firstFrameId || imageRefs[0]?.id || ''} onChange={e => setFirstFrame(e.target.value)}><option value="">选择参考图</option>{imageRefs.map(n => <option key={n.id} value={n.id}>{n.title}</option>)}</select></label><label>尾帧（选填）<select value={lastFrameId} onChange={e => setLastFrame(e.target.value)}><option value="">不指定</option>{imageRefs.map(n => <option key={n.id} value={n.id}>{n.title}</option>)}</select></label>{!supportsFrames && <small>首尾帧模式请选择 Veo 或 Wan 3.0 模型。</small>}</div>}
+      {kind === 'image' && activeModel && !activeModel.available && <p className="studio-inline-error" role="status">{modelAvailabilityMessage(activeModel)}</p>}
       {error && <div className="studio-inline-error">{error}<button onClick={() => setRetry(n => n + 1)}><RefreshCw size={13} /> 重试</button></div>}
       {mentionResult.error && <p className="studio-inline-error" role="alert">{mentionResult.error}</p>}
       {missingRef && <p className="studio-inline-error">此模型需要参考图，请先选中或连接一张图片。</p>}
     </div><div className="studio-prompt-count" aria-label="提示词字数">{prompt.length} 字符</div><div className="studio-composer-tools"><select onPointerDown={() => setMenu(null)} aria-label="创作类型" value={kind} onChange={e => setKind(e.target.value as GenerationDraft['kind'])}><option value="image">图像生成</option><option value="video">视频生成</option><option value="audio">音频生成</option></select><button ref={modelTrigger} className="studio-model-trigger" aria-label="生成模型" aria-haspopup="listbox" aria-expanded={menu === 'models'} title={activeModel?.name || '选择模型'} disabled={loading || !models.length} onClick={() => {setSearch('');setMenu(menu === 'models' ? null : 'models');}}><span>{loading ? '加载模型…' : activeModel?.name || '暂无可用模型'}</span><span aria-hidden="true">⌄</span></button><button ref={paramsTrigger} className="studio-params-trigger" aria-label="生成参数" aria-expanded={menu === 'params'} onClick={() => setMenu(menu === 'params' ? null : 'params')}>{kind === 'audio' ? voice : ratio+' · '+resolution+' · '+(kind === 'video' ? seconds+' 秒' : count+' 张')} ⌄</button>
-      {menu === 'models' && <div ref={popup} className="studio-floating-menu studio-model-menu" style={popupStyle} data-canvas-ui onKeyDown={e => {if(e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return; e.preventDefault(); const options: HTMLButtonElement[]=Array.from(popup.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') || []);const index=options.indexOf(document.activeElement as HTMLButtonElement);options[(index+(e.key === 'ArrowDown' ? 1 : -1)+options.length)%options.length]?.focus();}}><input autoFocus aria-label="搜索模型" placeholder="搜索模型…" value={search} onChange={e => setSearch(e.target.value)}/><div role="listbox" aria-label="可用生成模型">{models.filter(m => (m.name+' '+m.id+' '+(m.description || '')).toLowerCase().includes(search.toLowerCase())).map(m => <button role="option" aria-label={m.name} aria-description={m.description?.trim() || '后台暂未填写模型说明'} aria-selected={model === m.id} key={m.id} onClick={() => {setModel(m.id);setMenu(null);modelTrigger.current?.focus();}}><span className="studio-model-copy"><span className="studio-model-name">{m.name}</span><span className="studio-model-description" title={m.description?.trim() || undefined}>{m.description?.trim() || '后台暂未填写模型说明'}</span></span>{model === m.id && <span className="studio-model-check" aria-hidden="true">✓</span>}</button>)}</div>{!models.some(m => (m.name+' '+m.id+' '+(m.description || '')).toLowerCase().includes(search.toLowerCase())) && <p>未找到匹配模型</p>}</div>}
+      {menu === 'models' && <div ref={popup} className="studio-floating-menu studio-model-menu" style={popupStyle} data-canvas-ui onKeyDown={e => {if(e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return; e.preventDefault(); const options: HTMLButtonElement[]=Array.from(popup.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') || []);const index=options.indexOf(document.activeElement as HTMLButtonElement);options[(index+(e.key === 'ArrowDown' ? 1 : -1)+options.length)%options.length]?.focus();}}><input autoFocus aria-label="搜索模型" placeholder="搜索模型…" value={search} onChange={e => setSearch(e.target.value)}/><div role="listbox" aria-label="可用生成模型">{models.filter(m => (m.name+' '+m.id+' '+(m.description || '')).toLowerCase().includes(search.toLowerCase())).map(m => <button role="option" aria-label={m.name} aria-description={m.description?.trim() || '后台暂未填写模型说明'} aria-selected={model === m.id} key={m.id} onClick={() => {setModel(m.id);setMenu(null);modelTrigger.current?.focus();}}><span className="studio-model-copy"><span className="studio-model-name">{m.name}{!m.available ? ' · 暂不可用' : ''}</span><span className="studio-model-description" title={m.description?.trim() || undefined}>{m.description?.trim() || '后台暂未填写模型说明'}</span></span>{model === m.id && <span className="studio-model-check" aria-hidden="true">✓</span>}</button>)}</div>{!models.some(m => (m.name+' '+m.id+' '+(m.description || '')).toLowerCase().includes(search.toLowerCase())) && <p>未找到匹配模型</p>}</div>}
       <div ref={menu === 'params' ? popup : undefined} hidden={menu !== 'params'} role="dialog" aria-label="生成参数设置" className="studio-floating-menu studio-parameter-popover" style={menu === 'params' ? popupStyle : undefined} data-canvas-ui>
       {kind !== 'audio' && <div className="studio-field-grid"><label className="studio-field">画面比例<select value={ratio} onChange={e => setRatio(e.target.value)}>{ratios.map(r => <option key={r}>{r}</option>)}</select></label><label className="studio-field">{kind === 'image' && managedLimits?.resolutions.length === 1 ? '输出分辨率（固定）' : '清晰度'}<select disabled={kind === 'image' && managedLimits?.resolutions.length === 1} value={resolution} onChange={e => setResolution(e.target.value)}>{resolutions.map(r => <option key={r}>{r}</option>)}</select></label></div>}
       {kind === 'audio' && !voices.length && <p role="status">上游尚未返回音色列表，暂时无法选择音色。</p>}{kind === 'audio' && <label className="studio-field">音色<select value={voice} onChange={e => setVoice(e.target.value)}>{voices.map(v => <option key={v}>{v}</option>)}</select></label>}

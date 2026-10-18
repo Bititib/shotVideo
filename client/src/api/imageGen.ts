@@ -1,7 +1,8 @@
+import type { ModelAvailability } from '../../../shared/upstreamAvailability';
 import { publicGenerationEvent } from '../../../shared/generationMessages';
 import type { ModelInputLimits } from '../../../shared/modelRouting';
 import { legacyImageReferenceLimit } from '../../../shared/imageCapabilities';
-export interface ImageModel {
+export interface ImageModel extends ModelAvailability {
   routingLimits?: ModelInputLimits;
   maxReferenceImages?: number;
   id: string;
@@ -90,11 +91,11 @@ function persistImageModels(data: ImageModel[], identity: string) {
 }
 
 /** 获取可用的图片模型列表；短时缓存并合并并发请求。 */
-export async function fetchImageModels(): Promise<ImageModel[]> {
+export async function fetchImageModels(force = false): Promise<ImageModel[]> {
   const token = localStorage.getItem('token');
   const cacheKey = token || '';
   const now = Date.now();
-  if (imageModelCache?.token === cacheKey && imageModelCache.expiresAt > now) {
+  if (!force && imageModelCache?.token === cacheKey && imageModelCache.expiresAt > now) {
     return imageModelCache.data;
   }
   if (imageModelRequest?.token === cacheKey) return imageModelRequest.promise;

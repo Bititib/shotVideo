@@ -70,3 +70,13 @@
   .channel-details-tabs button { gap:5px; padding-inline:5px; font-size:11px; }
   .channel-details-config { grid-template-columns:minmax(0,1fr); }
 }
+
+.channel-route-health { margin-top:16px; padding:16px; border:1px solid var(--channel-line); border-radius:14px; }
+.channel-route-health h3 { margin:0 0 8px; font-size:13px; }
+.channel-route-health p { margin:6px 0; font-size:12px; line-height:1.7; color:var(--channel-muted); }
+.channel-route-issue { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; padding-top:8px; }
+.channel-route-issue > div { flex:1 1 220px; min-width:0; }
+.channel-route-issue strong { font-size:13px; overflow-wrap:anywhere; }
+.channel-route-issue button { min-height:40px; padding:8px 14px; border:1px solid var(--channel-line); border-radius:8px; }
+.channel-route-issue button:focus-visible { outline:2px solid var(--earth-primary, #55684a); outline-offset:3px; }
+.channel-route-issue button:disabled { opacity:.5; cursor:not-allowed; }

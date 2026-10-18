@@ -1,3 +1,4 @@
+import { modelAvailabilityMessage } from '../../../../shared/upstreamAvailability';
 import { startPolling } from '../../utils/polling';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Image as ImageIcon, ArrowUpRight, Pencil, Plus, ChevronDown, SlidersHorizontal, Square, Download, RotateCcw, Loader2, AlertCircle, Monitor, Smartphone, RectangleHorizontal, X, Maximize2, Trash2 } from 'lucide-react';
@@ -247,6 +248,16 @@ export default function ImageGenPage() {
   const [models, setModels] = useState<ImageModel[]>(getCachedImageModels);
   const [selectedModel, setSelectedModel] = useState(() => models[0]?.id || '');
   const selectedImageModel = models.find(m => m.id === selectedModel);
+  // Refresh availability only; never submit or replay a generation automatically.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => { fetchImageModels(true).then(data => { if (!cancelled) setModels(data); }).catch(() => {}); };
+    const interval = window.setInterval(refresh, 15_000);
+    const deadline = selectedImageModel?.retryAt;
+    const timer = deadline && deadline > Date.now() ? window.setTimeout(refresh, deadline - Date.now() + 100) : undefined;
+    window.addEventListener('focus', refresh);
+    return () => { cancelled = true; window.clearInterval(interval); window.clearTimeout(timer); window.removeEventListener('focus', refresh); };
+  }, [selectedImageModel?.retryAt]);
   const managedLimits = selectedImageModel?.routingLimits;
   const maxReferenceImages = imageReferenceLimit(selectedImageModel);
   const [generationMode, setGenerationMode] = useState<'text' | 'image'>('text');
@@ -664,8 +675,10 @@ export default function ImageGenPage() {
           reference_images: Array.isArray(references) ? references.filter((source: unknown): source is string => typeof source === 'string' && Boolean(source)) : [],
         };
       }
-      const target = models.find(model => model.id === params!.model && model.available);
-      if (!target) throw new Error('原模型暂不可用，请选择可用模型后重新生成');
+      const nextModels = await fetchImageModels(true);
+      setModels(nextModels);
+      const target = nextModels.find(model => model.id === params!.model);
+      if (!target?.available) throw new Error(modelAvailabilityMessage(target) || '原模型暂不可用，请选择可用模型后重新生成');
       setSelectedModel(target.id);
       setPrompt(params.prompt);
       setAspectRatio(params.aspect_ratio || '1:1');
@@ -794,6 +807,7 @@ export default function ImageGenPage() {
           </section>}
           <textarea id="ig-prompt" ref={textareaRef} value={prompt} onChange={event => setPrompt(event.target.value)} onKeyDown={handleKeyDown}
             aria-label={generationMode === 'image' ? '修改要求' : '图片描述'} rows={2} placeholder={generationMode === 'image' ? '想修改哪里？' : '描述你想要的画面…'} />
+          {!selectedImageModel?.available && selectedImageModel && <p role="status" className="ig-error">{modelAvailabilityMessage(selectedImageModel)}</p>}
           {error && <div role="alert" className="ig-error"><AlertCircle size={16} /><span>{error}</span><button type="button" aria-label="关闭错误提示" onClick={() => setError(null)}><X size={14} /></button></div>}
           {actionNotice && <p className="ig-action-notice" role="status">{actionNotice}</p>}
           <div className="ig-toolbar">

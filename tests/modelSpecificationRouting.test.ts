@@ -15,7 +15,7 @@ import { models, settings, users, contents, channels, modelPricing } from '../se
 import { eq } from 'drizzle-orm';
 import { ChannelService } from '../server/services/channelService.js';
 import { defaultRoutingLimits, routingMismatches, routeRequestCost, type ModelSpecification, type RoutingInput } from '../shared/modelRouting.js';
-import { saveModelSpecification, getModelSpecification, selectModelRoutes, inspectModelRoutes, getRouteHealth, noteRouteResult, resetRouteHealth, claimRouteProbe } from '../server/services/modelRoutingService.js';
+import { saveModelSpecification, getModelSpecification, selectModelRoutes, inspectModelRoutes, getRouteHealth, noteRouteResult, resetRouteHealth, claimRouteProbe, specificationAvailability, CREDIT_COOLDOWN_MS } from '../server/services/modelRoutingService.js';
 import { getEnabledPublicModels } from '../server/services/modelCatalogService.js';
 import { handleSpecificationGeneration, specificationRequest, resumeSpecificationTasks } from '../server/services/specificationGenerationService.js';
 import { resolvePublicModelId } from '../server/services/publicModelNameService.js';
@@ -549,4 +549,55 @@ it('uses separate duration-cost associations for the same channel without assumi
   expect(selectModelRoutes(s,{...request,seconds:5}).map(r=>[r.route.id,r.cost])).toEqual([['duration-5',.3]]);
   expect(selectModelRoutes(s,{...request,seconds:10}).map(r=>[r.route.id,r.cost])).toEqual([['duration-10',.5]]);
   expect(selectModelRoutes(s,{...request,seconds:15})).toEqual([]);
+});
+
+
+describe('credit cooldown recovery', () => {
+  it('allows one retry after 60 seconds and never overrides operator switches', () => {
+    const now = Date.now(); vi.spyOn(Date, 'now').mockReturnValue(now);
+    const s = { ...spec(), routes: [route(1)] }; saveModelSpecification(s);
+    noteRouteResult('1:0:upstream-1', false, '上游提交失败 (402)：insufficient credits', true);
+    expect(getRouteHealth()['1:0:upstream-1'].state).toBe('cooldown');
+    expect(specificationAvailability(s)).toEqual({ available:false, unavailableReason:'credits', retryAt:now + CREDIT_COOLDOWN_MS });
+    expect(claimRouteProbe('1:0:upstream-1')).toBe(false);
+    vi.mocked(Date.now).mockReturnValue(now + CREDIT_COOLDOWN_MS);
+    expect(specificationAvailability(s)).toEqual({ available:true });
+    expect(claimRouteProbe('1:0:upstream-1')).toBe(true);
+    expect(claimRouteProbe('1:0:upstream-1')).toBe(false);
+    noteRouteResult('1:0:upstream-1', true);
+    expect(specificationAvailability(s)).toEqual({ available:true });
+    s.routes[0].enabled = false;
+    expect(specificationAvailability(s)).toEqual({ available:false, unavailableReason:'configuration' });
+  });
+  it('converts persisted old credit locks without extending their original deadline', () => {
+    const old = new Date(Date.now() - 120_000).toISOString();
+    db.insert(settings).values({ key:'model_specification_health_v1', value:JSON.stringify({
+      '1:0:upstream-1':{ state:'blocked', lastError:'insufficient credits', updatedAt:old, failures:1, retryAt:0 },
+      '2:0:upstream-2':{ state:'blocked', lastError:'invalid API key', updatedAt:old, failures:1, retryAt:0 },
+    }) }).run();
+    const health = getRouteHealth();
+    expect(health['1:0:upstream-1']).toMatchObject({ state:'cooldown', retryAt:Date.parse(old) + CREDIT_COOLDOWN_MS });
+    expect(claimRouteProbe('1:0:upstream-1')).toBe(true);
+    expect(claimRouteProbe('2:0:upstream-2')).toBe(false);
+    const stored = JSON.parse(db.select().from(settings).where(eq(settings.key,'model_specification_health_v1')).get()!.value);
+    expect(stored['1:0:upstream-1'].state).toBe('cooldown');
+  });
+  it.each(['上游提交失败 (401)：insufficient credits', 'invalid API key', 'permission denied', 'key expired'])('keeps credential failures locked: %s', message => {
+    noteRouteResult('1:0:upstream-1', false, message, true);
+    expect(getRouteHealth()['1:0:upstream-1'].state).toBe('blocked');
+    expect(claimRouteProbe('1:0:upstream-1')).toBe(false);
+  });
+  it('keeps a manual credential lock even if an in-flight older request reports credits or success', () => {
+    noteRouteResult('1:0:upstream-1', false, 'invalid API key', true);
+    noteRouteResult('1:0:upstream-1', false, 'insufficient credits', true);
+    expect(getRouteHealth()['1:0:upstream-1'].state).toBe('blocked');
+    noteRouteResult('1:0:upstream-1', true);
+    expect(getRouteHealth()['1:0:upstream-1'].state).toBe('blocked');
+  });
+  it('uses a healthy backup without reporting credit unavailability', () => {
+    const s = spec(); saveModelSpecification(s);
+    noteRouteResult('1:0:upstream-1', false, 'insufficient credits', true);
+    expect(specificationAvailability(s)).toEqual({ available:true });
+    expect(selectModelRoutes(s, request).map(t => t.channel.id)).toEqual([2]);
+  });
 });
