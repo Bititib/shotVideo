@@ -29,7 +29,7 @@ import { routingMismatches, type MediaKind } from '../../shared/modelRouting.js'
 import { issueUploadUrl, mediaOwnerContext } from './uploadAccess.js';
 import { isMjChannel, mjBaseUrl } from './mjAdapter.js';
 import { MJ_MODEL_ID } from '../../shared/mj.js';
-import { saveMjImageBatch, type MjImageBatch } from './mjImageResults.js';
+import { saveMjImageBatch, restoreCachedMjOriginal, type MjImageBatch } from './mjImageResults.js';
 import { resolvePublicModelId } from './publicModelNameService.js';
 import { batchContextForRequest, batchStore, markBatchSubmitting, recordBatchFailure } from './videoBatchService.js';
 
@@ -112,9 +112,10 @@ function holdForReview(id: number, message: string) {
 }
 function complete(id: number, urls: string[]) {
   const meta = metadata(id), record = db.select().from(contents).where(eq(contents.id, id)).get()!;
-  let actual = meta.batchItemId ? record.cost : Math.round((meta.reservedCost || 0) * urls.length / (meta.count || 1) * 1e6) / 1e6;
+  let actual = meta.batchItemId ? record.cost : meta.nativeImageOutputs ? meta.reservedCost || 0
+    : Math.round((meta.reservedCost || 0) * urls.length / (meta.count || 1) * 1e6) / 1e6;
   actual = finalizeReservation(meta.billingReservationId, actual);
-  patch(id, { imageUrls: record.type === 'image' ? urls : undefined, progress: 100, progresses: urls.map(() => 100),
+  patch(id, { imageUrls: record.type === 'image' ? urls : undefined, ...(meta.nativeImageOutputs ? { count: urls.length } : {}), progress: 100, progresses: urls.map(() => 100),
     completedAt: new Date().toISOString(), billingStatus: 'settled', requiresReview: false, progressText: '生成完成' }, 'completed');
   db.update(contents).set({ resultUrl: urls[0], cost: actual }).where(eq(contents.id, id)).run();
   if (record.userId) { try { logUsage(record.userId, record.type === 'video' ? 'video' : 'generate_image', undefined, Date.now() - meta.startedAt); } catch (error: any) { console.warn('[specification] usage log failed', id, error.message); } }
@@ -250,8 +251,8 @@ async function saveMjResults(id: number, channel: any, req: Request, onEvent: (d
   const persist = () => patch(id, { nativeImageBatch: batch, imageJobs: batch.jobs,
     imageUrls: batch.jobs.map(job => job.localUrl).filter(Boolean) });
   const urls = await saveMjImageBatch(batch, id, req, channel, persist,
-    (imageUrl, index) => onEvent({ type: 'image_ready', imageUrl, index, total: 4, contentId: id }));
-  if (urls.length !== 4) throw new Error('MJ 返回的图片不足 4 张，需要核实原任务');
+    (imageUrl, index) => onEvent({ type: 'image_ready', imageUrl, index, total: batch.sourceUrls.length, contentId: id }));
+  if (urls.length !== batch.sourceUrls.length) throw new Error('MJ 原图片尚未完整保存，需要核实原任务');
   patch(id, { submissionStartedAt: null });
   complete(id, urls);
   onEvent({ type: 'complete', imageUrls: urls, contentId: id });
@@ -263,12 +264,12 @@ export async function recoverMjSpecificationImages(id: number, resultUrls: unkno
   const record = db.select().from(contents).where(eq(contents.id, id)).get();
   if (!record) throw fail('任务记录不存在', 404);
   const meta = metadata(id);
-  if (record.type !== 'image' || meta.nativeImageOutputs !== 4 || meta.count !== 4) throw fail('仅支持原生四张 MJ 任务');
+  if (record.type !== 'image' || meta.nativeImageOutputs !== 4) throw fail('仅支持 MJ 原任务');
   if (record.status === 'completed' && record.resultUrl) return { status: 'completed', alreadyRecovered: true, message: '原任务已经恢复，未重复扣费' };
   if (active.has(id) || !meta.requiresReview || !['queued', 'processing', 'review'].includes(record.status)) throw fail('原任务不处于待核实状态', 409);
   const channel = ChannelService.getChannelRaw(meta.channelId, meta.channelApiKeyId);
   if (!channel || !isMjChannel(channel)) throw fail('原 MJ 渠道不存在', 409);
-  if (!Array.isArray(resultUrls) || ![1, 4].includes(resultUrls.length)) throw fail('请填写一张四宫格或四张原任务图片的下载地址');
+  if (!Array.isArray(resultUrls) || !resultUrls.length || resultUrls.length > 4) throw fail('请填写原任务实际返回的图片下载地址（1–4 个）');
   const origin = new URL(mjBaseUrl(channel.baseUrl)).origin;
   const sources = resultUrls.map(source => {
     let url: URL; try { url = new URL(source); } catch { throw fail('图片下载地址无效'); }
@@ -294,20 +295,20 @@ export async function recoverMjSpecificationImages(id: number, resultUrls: unkno
   try {
     patch(id, { nativeImageBatch: batch || { sourceUrls: sources, jobs: [] }, upstreamImageUrls: sources,
       mjRecovery: { actorId, startedAt: new Date().toISOString(), previousError: meta.error || null } });
-    // Downloads may fail; settle only after all four local images are available.
+    // Downloads may fail; settle only after every original image is available.
     const currentBatch = metadata(id).nativeImageBatch as MjImageBatch;
     await mediaOwnerContext.run(record.userId, () => saveMjImageBatch(currentBatch, id, req, channel, () => {
       patch(id, { nativeImageBatch: currentBatch, imageJobs: currentBatch.jobs });
     }, () => {}));
     const urls = currentBatch.jobs.map(job => job.localUrl).filter((url): url is string => Boolean(url));
-    if (urls.length !== 4 || urls.some(url => !url.startsWith('/api/uploads/'))) throw fail('原任务四张图片尚未完整保存，请使用相同地址重试', 502);
+    if (urls.length !== sources.length || urls.some(url => !url.startsWith('/api/uploads/'))) throw fail('原任务图片尚未完整保存，请使用相同地址重试', 502);
     sqlite.transaction(() => {
       checkReservation();
       complete(id, urls);
       patch(id, { error: null, failureReason: null, submissionStartedAt: null,
         mjRecovery: { ...metadata(id).mjRecovery, completedAt: new Date().toISOString() } });
     })();
-    return { status: 'completed', message: '原任务四张图片已恢复，使用原预扣费用结算，未重复扣费' };
+    return { status: 'completed', message: '原任务完整图片已恢复，使用原预扣费用结算，未重复扣费' };
   } finally { active.delete(id); }
 }
 
@@ -377,7 +378,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
         body[field] = [...values, data]; }
     }
     const nativeImageOutputs = kind === 'image' && modelId === MJ_MODEL_ID ? 4 : undefined;
-    if (nativeImageOutputs && body.n !== undefined && ![1, 4].includes(Number(body.n))) throw fail('MJ 每次任务固定返回 4 张图片');
+    if (nativeImageOutputs && body.n !== undefined && ![1, 4].includes(Number(body.n))) throw fail('MJ 每次仅提交一次任务，图片数量以上游实际结果为准');
     const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (spec.limits.duration.mode === 'fixed' ? spec.limits.duration.min : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'));
     const mismatch = routingMismatches(spec.limits, request.input, kind);
     if (mismatch.length) throw fail(mismatch.join('；'));
@@ -395,7 +396,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     const quote = batch?.pricingSnapshot ? { ...PricingService.quoteSnapshot(batch.pricingSnapshot, usage), pricingSnapshot: batch.pricingSnapshot }
       : PricingService.quote(modelId, usage, false, userId || null);
     if (!quote.billingType) throw fail('该规格尚未配置用户售价');
-    if (nativeImageOutputs && quote.billingType !== 'per_call') throw fail('MJ 图片任务请配置按次售价，每次返回 4 张图片');
+    if (nativeImageOutputs && quote.billingType !== 'per_call') throw fail('MJ 图片任务请配置按次售价，完整保留原结果');
     if (kind === 'video') {
       if (!['per_call', 'per_second'].includes(quote.billingType)) throw fail('视频用户售价必须按条或按秒配置');
       if (!batch) assertExpectedVideoCost(body, quote.cost);
@@ -502,7 +503,27 @@ async function recoverImages(id: number) {
   holdForReview(id, '图片原任务仍在处理中，请勿重复提交');
 }
 
+/** Repair only the identifiable old crop when its original local file still exists. */
+export function restoreLegacyMjCompletedImages(): number {
+  const rows = sqlite.prepare("SELECT id,metadata FROM contents WHERE type='image' AND status='completed' AND CASE WHEN json_valid(metadata) THEN json_array_length(metadata,'$.nativeImageBatch.sourceUrls')=1 AND json_array_length(metadata,'$.nativeImageBatch.jobs')=4 END").all() as { id: number; metadata: string }[];
+  let restored = 0;
+  for (const row of rows) {
+    const meta = JSON.parse(row.metadata), batch = meta.nativeImageBatch as MjImageBatch;
+    if (meta.nativeImageOutputs !== 4) continue;
+    const original = restoreCachedMjOriginal(batch);
+    if (!original) continue;
+    const previousImageUrls = meta.imageUrls;
+    Object.assign(meta, { nativeImageBatch: batch, imageJobs: batch.jobs, imageUrls: [original], count: 1, progresses: [100],
+      mjRecovery: { ...meta.mjRecovery, originalRestoredAt: new Date().toISOString(), previousImageUrls } });
+    sqlite.prepare('UPDATE contents SET result_url=?,metadata=? WHERE id=? AND status=\'completed\'').run(original, JSON.stringify(meta), row.id);
+    restored++;
+  }
+  if (restored) console.log('[mj-original-repair] Restored original images for ' + restored + ' tasks; billing unchanged');
+  return restored;
+}
+
 export function resumeSpecificationTasks() {
+  restoreLegacyMjCompletedImages();
   for (const row of db.select().from(contents).where(inArray(contents.status, ['processing', 'queued'])).all()) {
     let meta: any; try { meta = JSON.parse(row.metadata || '{}'); } catch { continue; }
     if (!meta.managedSpecification || active.has(row.id)) continue;

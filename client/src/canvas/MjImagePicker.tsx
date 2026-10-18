@@ -9,8 +9,8 @@ export function latestMjImages(node: CanvasNode): CanvasVersion[] {
   const versions = node.versions || [], last = versions.at(-1);
   if (!last || (last.model || node.model) !== MJ_MODEL_ID) return [];
   const batch = last.requestId ? versions.filter(version => version.requestId === last.requestId)
-    : last.contentId ? versions.filter(version => version.contentId === last.contentId) : versions.slice(-4);
-  return batch.length === 4 ? batch : [];
+    : last.contentId ? versions.filter(version => version.contentId === last.contentId) : [last];
+  return batch.length >= 1 && batch.length <= 4 ? batch : [];
 }
 
 export default function MjImagePicker({ node, versions, view, viewport, onSelect }: {
@@ -27,7 +27,7 @@ export default function MjImagePicker({ node, versions, view, viewport, onSelect
   const previewHeight = Math.min(300, Math.max(80, (side ? viewport.height : above ? top : viewport.height - top - height) - 24));
   const previewWidth = Math.min(270, previewHeight - 24, viewport.width - 24);
   const previewLeft = side ? side === 'right' ? left + width + 12 : left - previewWidth - 12
-    : clamp(left + 10 + (width - 20) / 4 * ((hovered || 0) + .5) - previewWidth / 2, 12, viewport.width - previewWidth - 12);
+    : clamp(left + 10 + (width - 20) / versions.length * ((hovered || 0) + .5) - previewWidth / 2, 12, viewport.width - previewWidth - 12);
   const previewTop = side ? clamp(top - (previewHeight - height) / 2, 12, viewport.height - previewHeight - 12)
     : above ? top - previewHeight - 12 : top + height + 12;
   const moveFocus = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -43,11 +43,11 @@ export default function MjImagePicker({ node, versions, view, viewport, onSelect
     setHovered(next);
   };
   return <>
-    <section className="studio-mj-picker" aria-label="MJ 四张候选图片" data-canvas-ui
+    <section className="studio-mj-picker" aria-label="MJ 候选图片" data-canvas-ui
       style={{ left, top, width }} onPointerDown={event => event.stopPropagation()}
       onDoubleClick={event => event.stopPropagation()} onKeyDown={event => { if (['ArrowLeft','ArrowRight','Home','End','Escape'].includes(event.key)) event.stopPropagation(); }}>
-      <header><strong>本次生成 · 4 张</strong><span>点击设为当前版本</span></header>
-      <div className="studio-mj-options" role="group" aria-label="选择当前图片">
+      <header><strong>本次生成 · {versions.length} 张</strong><span>点击设为当前版本</span></header>
+      <div className="studio-mj-options" style={{ gridTemplateColumns: `repeat(${versions.length}, minmax(0, 1fr))` }} role="group" aria-label="选择当前图片">
         {versions.map((version, index) => <button key={version.id} type="button"
           className={'studio-mj-option' + (node.src === version.src ? ' is-current' : '')}
           aria-label={`将第 ${index + 1} 张图片设为当前版本`} aria-pressed={node.src === version.src}

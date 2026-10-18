@@ -51,7 +51,7 @@ describe('图片生成与继续改图', () => {
     fireEvent.change(ratio, { target: { value: '1:8' } });
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'a tall tree' } });
     fireEvent.click(screen.getByRole('button', { name: '开始生成图片' }));
-    expect(screen.getByText('4 张 · 按次计费')).toBeTruthy();
+    expect(screen.getByText('按实际结果 · 按次计费')).toBeTruthy();
     expect(vi.mocked(generateImage).mock.calls[0][0]).toMatchObject({ model: MJ_MODEL_ID, resolution: '1K', aspect_ratio: '1:8', n: 4 });
     expect(vi.mocked(generateImage).mock.calls[0][0].quality).toBeUndefined();
   });

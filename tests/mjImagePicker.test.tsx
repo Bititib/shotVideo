@@ -16,9 +16,15 @@ const node = { ...newNode('image', { x: 250, y: 340 }), model: MJ_MODEL_ID, src:
   versions: [...versions('previous'), ...current], job: { status: 'done' as const, requestId: 'current', expectedCount: 4, message: '已完成' } };
 
 describe('floating MJ image choices', () => {
+  it.each([1,2,4])('shows the actual %i complete images without fabricating candidates', count => {
+    render(<MjImagePicker node={node} versions={current.slice(0,count)} view={{ x:0,y:0,zoom:1 }} viewport={{ width:1000,height:700 }} onSelect={vi.fn()} />);
+    expect(screen.getByText('本次生成 · ' + count + ' 张')).toBeTruthy();
+    expect(screen.getAllByRole('button')).toHaveLength(count);
+  });
   it('shows only the four results from the latest task, retaining their original order', () => {
     expect(latestMjImages(node)).toEqual(current);
-    expect(latestMjImages({ ...node, versions: [...versions('previous'), ...current.slice(0,2)] })).toEqual([]);
+    expect(latestMjImages({ ...node, versions: [...versions('previous'), ...current.slice(0,2)] })).toEqual(current.slice(0,2));
+    expect(latestMjImages({ ...node, versions: [...versions('previous'), ...current.slice(0,1)] })).toEqual(current.slice(0,1));
     expect(latestMjImages({ ...node, job: { ...node.job, status: 'running' } })).toEqual([]);
     expect(latestMjImages({ ...node, versions: current.map(v => ({ ...v, model: 'another-image-model' })) })).toEqual([]);
   });

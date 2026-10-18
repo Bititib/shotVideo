@@ -1,51 +1,48 @@
-import fs from 'node:fs/promises';
+import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
-import sharp from 'sharp';
 import type { Request } from 'express';
-import { registerUpload } from './uploadAccess.js';
 import { mjBaseUrl } from './mjAdapter.js';
 
 export type MjImageJob = { index: number; sourceUrl: string; localUrl?: string; status: 'saving' | 'completed' };
-export type MjImageBatch = { sourceUrls: string[]; gridLocalUrl?: string; jobs: MjImageJob[] };
+export type MjImageBatch = { sourceUrls: string[]; gridLocalUrl?: string; jobs: MjImageJob[]; legacyCroppedJobs?: MjImageJob[] };
 
-/** MJ's combined preview is a 2-by-2 grid, ordered left-to-right, then top-to-bottom. */
-export async function splitMjGrid(buffer: Buffer): Promise<Buffer[]> {
-  const image = await sharp(buffer).rotate().toBuffer();
-  const { width, height } = await sharp(image).metadata();
-  if (!width || !height || width < 2 || height < 2) throw new Error('MJ 四宫格图片尺寸无效');
-  const halfWidth = Math.floor(width / 2), halfHeight = Math.floor(height / 2);
-  return Promise.all([0, 1, 2, 3].map(index => {
-    const left = index % 2 ? halfWidth : 0, top = index >= 2 ? halfHeight : 0;
-    return sharp(image).extract({ left, top, width: index % 2 ? width - halfWidth : halfWidth,
-      height: index >= 2 ? height - halfHeight : halfHeight }).png().toBuffer();
-  }));
+/** Signature of the old automatic crop, not evidence that an image is a grid. */
+export function isLegacyCroppedMjBatch(batch?: MjImageBatch): boolean {
+  return Boolean(Array.isArray(batch?.sourceUrls) && batch.sourceUrls.length === 1 && Array.isArray(batch.jobs) && batch.jobs.length === 4
+    && batch.jobs.every(job => job.sourceUrl === batch.sourceUrls[0]));
 }
 
-/** Persist every source before downloads. Retrying this function never submits another generation. */
+/** Restore the original cache, retaining crop references for audit and existing projects. */
+export function restoreCachedMjOriginal(batch: MjImageBatch): string | undefined {
+  if (!isLegacyCroppedMjBatch(batch) || !batch.gridLocalUrl
+    || !/^\/api\/uploads\/[\w.-]+$/.test(batch.gridLocalUrl)
+    || !fs.existsSync(path.resolve('data/uploads', path.basename(batch.gridLocalUrl)))) return;
+  batch.legacyCroppedJobs ||= batch.jobs;
+  batch.jobs = [{ index: 0, sourceUrl: batch.sourceUrls[0], localUrl: batch.gridLocalUrl, status: 'completed' }];
+  return batch.gridLocalUrl;
+}
+
+/** One upstream URL is one intact image. Never infer a grid or synthesize extra outputs. */
 export async function saveMjImageBatch(batch: MjImageBatch, contentId: number, req: Request,
   channel: { baseUrl: string; apiKey: string }, persist: () => void,
   onReady: (url: string, index: number) => void): Promise<string[]> {
   channel = { ...channel, baseUrl: mjBaseUrl(channel.baseUrl) };
   const { localizeGeneratedImage } = await import('../routes/imageGen.js');
-  if (batch.sourceUrls.length === 1 && !batch.jobs.length) {
-    if (!batch.gridLocalUrl) {
-      batch.gridLocalUrl = await localizeGeneratedImage(batch.sourceUrls[0], 'mj_grid_' + contentId, req, channel, { relative: true });
-      persist();
-    }
-    if (!batch.gridLocalUrl.startsWith('/api/uploads/')) throw new Error('MJ 四宫格尚未保存到本站');
-    const uploadDir = path.resolve('data/uploads');
-    const buffers = await splitMjGrid(await fs.readFile(path.join(uploadDir, path.basename(batch.gridLocalUrl))));
-    const prefix = 'mj_' + contentId + '_' + randomUUID();
-    for (const [index, buffer] of buffers.entries()) {
-      const name = prefix + '_' + (index + 1) + '.png';
-      await fs.writeFile(path.join(uploadDir, name), buffer);
-      const localUrl = registerUpload('/uploads/' + name).replace(/^\/uploads\//, '/api/uploads/');
-      batch.jobs.push({ index, sourceUrl: batch.sourceUrls[0], localUrl, status: 'completed' });
+  if (isLegacyCroppedMjBatch(batch)) {
+    if (!restoreCachedMjOriginal(batch)) {
+      batch.legacyCroppedJobs ||= batch.jobs;
+      batch.jobs = [];
     }
     persist();
-  } else if (!batch.jobs.length) {
+  }
+  if (!batch.jobs.length) {
     batch.jobs = batch.sourceUrls.map((sourceUrl, index) => ({ index, sourceUrl, status: 'saving' }));
+    // Old processes could stop after caching the original but before saving crop jobs.
+    if (batch.sourceUrls.length === 1 && batch.gridLocalUrl && /^\/api\/uploads\/[\w.-]+$/.test(batch.gridLocalUrl)
+      && fs.existsSync(path.resolve('data/uploads', path.basename(batch.gridLocalUrl)))) {
+      batch.jobs[0].localUrl = batch.gridLocalUrl;
+      batch.jobs[0].status = 'completed';
+    }
     persist();
   }
   for (const job of batch.jobs) {

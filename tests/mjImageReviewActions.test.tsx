@@ -12,7 +12,7 @@ describe('MJ original result recovery', () => {
     vi.mocked(adminApi.recoverMjImages).mockResolvedValue({ status: 'completed', message: '四张图片已恢复' });
     const resolved = vi.fn(async () => {});
     render(<MjImageReviewActions id={13395} metadata={{ nativeImageOutputs: 4, requiresReview: true }} hasResult={false} onResolved={resolved} />);
-    const button = screen.getByRole('button', { name: '取回原任务的四张图片' }) as HTMLButtonElement;
+    const button = screen.getByRole('button', { name: '取回原任务完整图片' }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'https://provider.example/v1/public/image/evt-original' } });
     expect(button.disabled).toBe(true);

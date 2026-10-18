@@ -813,7 +813,7 @@ export default function ImageGenPage() {
           <div className="ig-toolbar">
             <SettingSelect label="生成模型" value={selectedModel} onChange={setSelectedModel} options={models.map(model => ({ value: model.id, label: model.name + (!model.available ? ' · 暂不可用' : imageReferenceLimit(model) === 0 ? ' · 仅文生图' : '') }))} />
             <SettingSelect label="画面比例" value={aspectRatio} onChange={setAspectRatio} options={managedLimits ? managedLimits.ratios.map(ratio => ({ value: ratio, label: ratio })) : ASPECT_RATIOS} />
-            {managedLimits?.outputsPerTask ? <div className="ig-fixed-setting"><span>每次出图</span><strong>{managedLimits.outputsPerTask} 张 · 按次计费</strong></div> : <SettingSelect label="生成数量" value={imageCount} onChange={setImageCount} options={managedLimits ? COUNT_OPTIONS.filter(option => option.value <= managedLimits.maxOutputs) : COUNT_OPTIONS} />}
+            {managedLimits?.outputsPerTask ? <div className="ig-fixed-setting"><span>每次出图</span><strong>按实际结果 · 按次计费</strong></div> : <SettingSelect label="生成数量" value={imageCount} onChange={setImageCount} options={managedLimits ? COUNT_OPTIONS.filter(option => option.value <= managedLimits.maxOutputs) : COUNT_OPTIONS} />}
             <details className="ig-advanced"><summary aria-label="画质设置" title="画质设置"><SlidersHorizontal size={17} /></summary><div className="ig-settings">
             {selectedModel === 'gpt-image-2' && !managedLimits && <SettingSelect label="输出画质" value={pidoiQuality} onChange={setPidoiQuality} options={PIDOI_QUALITY_OPTIONS} />}
             {Boolean(managedLimits?.qualities.length) && <SettingSelect label="生成质量" value={managedQuality} onChange={setManagedQuality} options={managedLimits!.qualities.map(quality => ({ value: quality, label: quality }))} />}

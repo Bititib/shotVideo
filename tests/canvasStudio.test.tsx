@@ -54,7 +54,7 @@ describe('canvas user workflows', () => {
     const board = mount({ ...newDocument(), nodes: [image, target], edges: [edge] });
     fireEvent.pointerDown(screen.getByRole('article', { name: 'MJ 候选节点' }), { button:0, pointerId:1 });
     fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'), { pointerId:1 });
-    const picker = screen.getByRole('region', { name: 'MJ 四张候选图片' });
+    const picker = screen.getByRole('region', { name: 'MJ 候选图片' });
     expect(within(picker).getAllByRole('button')).toHaveLength(4);
     expect(within(picker).getAllByRole('img').map(image => image.getAttribute('src'))).toEqual(['/current1.png','/current2.png','/current3.png','/current4.png']);
     fireEvent.click(within(picker).getByRole('button', { name: '将第 3 张图片设为当前版本' }));

@@ -36,7 +36,7 @@ export function buildMjImagePayload(input: {
   if (input.quality) throw new Error('MJ 使用 size 控制尺寸，不支持 quality');
   if (input.images.length > 6) throw new Error('MJ 最多支持 6 张参考图');
   if (![1, 4].includes(input.outputs) || input.videos.length || input.audios.length || input.firstFrame || input.lastFrame) {
-    throw new Error('MJ 每次任务固定返回 4 张图片，仅支持图片参考');
+    throw new Error('MJ 每次仅提交一次任务，结果保留完整原图，仅支持图片参考');
   }
   const payload = { model: input.model, prompt: input.prompt, size };
   if (!input.images.length) return payload;

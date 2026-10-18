@@ -14,7 +14,7 @@ export async function syncMjModels(channel: MjChannel & { id: number; name: stri
     if (available && !db.select().from(models).where(eq(models.modelId, MJ_MODEL_ID)).get()) {
       db.insert(models).values({ provider: 'mj', modelId: MJ_MODEL_ID, displayName: 'MJ · 1K',
         capabilities: '["image"]', isActive: 0,
-        description: 'MJ 图片生成；1K，每次任务返回 4 张，最多 6 张参考图。请配置按次售价后启用。' }).run();
+        description: 'MJ 图片生成；1K，完整保留上游图片，按次计费，最多 6 张参考图。请配置按次售价后启用。' }).run();
       added++;
     }
     db.update(channels).set({ supportedModels: JSON.stringify(ids),
