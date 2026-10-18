@@ -7,6 +7,7 @@ export function canonicalZonghengModelId(model: string): string {
 }
 const SEEDANCE_25_REFERENCES = { images: 30, videos: 10, audios: 10 } as const;
 export const ZONGHENG_VIDEO_MODELS = [
+  { id: 'QQsedanco2.5/720', family: 'seedance', references: SEEDANCE_25_REFERENCES, resolution: '720p', seconds: [30] },
   { id: 'Cseadanco2.5K', family: 'seedance', references: SEEDANCE_25_REFERENCES, resolution: '720p', seconds: [10, 15, 20, 25, 30] },
   { id: 'Xminimex-h3', family: 'minimax', resolution: '2k', seconds: Array.from({ length: 11 }, (_, i) => i + 5) },
   { id: 'wan-1080', family: 'wan', resolution: '1080p', seconds: [5, 10, 15, 20, 25, 30] },

@@ -25,6 +25,7 @@ import VideoPage from '../client/src/pages/analysis/VideoPage';
 import { useAuthStore } from '../client/src/stores/authStore';
 
 const entries = [
+  { id:'ZH-QQsedanco2.5/720', group:'Seedance 系列', resolution:'720p' },
   { id:'ZH-Cseadanco2.5K', group:'Seedance 系列', resolution:'720p' },
   { id:'ZH-sedanco2.0-300秒必出', group:'Seedance 系列', resolution:'720p' },
   { id:'ZH-A-SD2.0', group:'Seedance 系列', resolution:'720p' },
@@ -47,7 +48,7 @@ beforeEach(() => {
   mocks.generate.mockReturnValue(new AbortController());
   vi.stubGlobal('ResizeObserver',class {observe(){} disconnect(){} unobserve(){}});
   mocks.list.mockResolvedValue(entries.map(({id,resolution})=>({
-    id,name:id,description:'测试模型',available:true,allowedSeconds:id==='ZH-sedanco2.0-300秒必出'?[15]:[10],rates:{[resolution]:1},
+    id,name:id,description:'测试模型',available:true,allowedSeconds:id==='ZH-QQsedanco2.5/720'?[30]:id==='ZH-sedanco2.0-300秒必出'?[15]:[10],rates:{[resolution]:1},
   })));
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); useAuthStore.setState({user:null,isAuthenticated:false}); });

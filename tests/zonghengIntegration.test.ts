@@ -192,6 +192,35 @@ describe('Zongheng legacy entry points, isolated database and simulated provider
     expect(balance()).toBeCloseTo(100-rate*6,6);
   });
 
+  it.each(['/api/video/generate','/v1/videos'])('discovers QQ 720 with its slash ID, defaults to 30 seconds and charges 5 once via %s',async endpoint=>{
+    const raw='QQsedanco2.5/720',modelId='ZH-'+raw,channelId=db.select().from(channels).get()!.id;
+    upstream=async()=>Response.json({data:[{id:raw}]});await ChannelService.syncModels(channelId);
+    expect(db.select().from(models).all().find(m=>m.modelId===modelId)).toMatchObject({displayName:modelId,capabilities:'["video"]',isActive:0});
+    expect(JSON.parse(db.select().from(channels).get()!.modelMapping)[modelId]).toBe(raw);
+    const price=db.select().from(modelPricing).all().find(p=>p.modelPattern===modelId)!;
+    expect(price).toMatchObject({billingType:'per_call',inputPrice:5,outputPrice:0});expect(JSON.parse(price.extraParams)).toEqual({category:'video','720p':5});
+    sqlite.prepare('UPDATE models SET is_active=1 WHERE model_id=?').run(modelId);
+    const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
+    expect(listed.find(m=>m.id===modelId)).toMatchObject({billingType:'per_call',allowedSeconds:[30],maxSeconds:30,rates:{'720p':5},available:true});
+    const images=Array.from({length:30},(_,i)=>'https://media.invalid/i-'+i+'.jpg'),videos=Array.from({length:10},(_,i)=>'https://media.invalid/v-'+i+'.mp4'),audios=Array.from({length:10},(_,i)=>'https://media.invalid/a-'+i+'.mp3');
+    let posts=0;upstream=async(_url,init)=>{
+      if(init.method==='POST'){posts++;expect(JSON.parse(init.body)).toMatchObject({model:raw,duration:30,resolution:'720p',images,reference_videos:videos,reference_audios:audios});return Response.json({task_id:'vid_qq720'});}
+      return Response.json({status:'succeeded',video_url:'https://media.invalid/qq720.mp4'});
+    };
+    const response=await post(endpoint,{model:modelId,prompt:'固定三十秒视频',reference_images:images,reference_videos:videos,audio_urls:audios});
+    expect(response.status).toBe(endpoint==='/v1/videos'?202:200);await response.text();await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    expect(latest().cost).toBe(5);expect(balance()).toBe(95);expect(posts).toBe(1);
+  });
+  it('preserves administrator pricing and enablement when QQ 720 is synchronized again',async()=>{
+    const modelId='ZH-QQsedanco2.5/720',channelId=db.select().from(channels).get()!.id;
+    upstream=async()=>Response.json({data:[{id:'QQsedanco2.5/720'}]});await ChannelService.syncModels(channelId);
+    sqlite.prepare('UPDATE models SET is_active=1,display_name=? WHERE model_id=?').run('自定义 QQ 720',modelId);
+    sqlite.prepare('UPDATE model_pricing SET input_price=?,extra_params=? WHERE model_pattern=?').run(7,JSON.stringify({category:'video','720p':7}),modelId);
+    await ChannelService.syncModels(channelId);
+    expect(db.select().from(models).all().find(m=>m.modelId===modelId)).toMatchObject({isActive:1,displayName:'自定义 QQ 720'});
+    const prices=db.select().from(modelPricing).all().filter(p=>p.modelPattern===modelId);
+    expect(prices).toHaveLength(1);expect(prices[0]).toMatchObject({billingType:'per_call',inputPrice:7});expect(JSON.parse(prices[0].extraParams)['720p']).toBe(7);
+  });
   it.each(['/api/video/generate','/v1/videos'].flatMap(endpoint=>[5,30].map(seconds=>({endpoint,seconds}))))('discovers KK X and charges 6.5 once for $seconds seconds via $endpoint with all references',async({endpoint,seconds})=>{
     const raw='KKseadanco2.5X',modelId='ZH-'+raw;
     const channelId=db.select().from(channels).get()!.id;

@@ -61,6 +61,14 @@ describe('Zongheng public protocol', () => {
       expect(()=>buildZonghengVideoPayload({...data,[field]:[...data[field],'https://media.invalid/extra']})).toThrow('最多支持 9 张图片、0 个视频、3 段音频');
     }
   });
+  it('preserves the QQ slash ID with fixed 30 seconds and all 30/10/10 references', () => {
+    const model='QQsedanco2.5/720';
+    expect(getZonghengVideoSpec('ZH-'+model)).toMatchObject({id:model,family:'seedance',resolution:'720p',seconds:[30],references:{images:30,videos:10,audios:10}});
+    const data={...input,model,seconds:30,images:Array(30).fill('https://media.invalid/i.jpg'),videos:Array(10).fill('https://media.invalid/v.mp4'),audios:Array(10).fill('https://media.invalid/a.mp3')};
+    expect(buildZonghengVideoPayload(data)).toMatchObject({model,duration:30,resolution:'720p',images:data.images,reference_videos:data.videos,reference_audios:data.audios});
+    for(const seconds of [5,10,15,29,31]) expect(()=>buildZonghengVideoPayload({...data,seconds})).toThrow('仅支持 30 秒');
+    for(const field of ['images','videos','audios'] as const) expect(()=>buildZonghengVideoPayload({...data,[field]:[...data[field],data[field][0]]})).toThrow('最多支持 30 张图片、10 个视频、10 段音频');
+  });
   it('does not silently substitute similar-looking public model IDs', () => {
     expect(getZonghengVideoSpec('Cseadance2.5K')).toBeUndefined();
     expect(getZonghengVideoSpec('Xminimax-h3')).toBeUndefined();
