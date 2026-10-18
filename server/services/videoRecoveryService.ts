@@ -85,6 +85,39 @@ function recoveryChargeAmount(record: any, metadata: Record<string, any>): numbe
 }
 
 export class VideoRecoveryService {
+  static supplementTaskId(contentId: number, actorId: number, taskIdValue: unknown) {
+    if (!Number.isSafeInteger(contentId) || contentId <= 0) throw { status: 400, message: '记录 ID 无效' };
+    const record = db.select().from(contents).where(eq(contents.id, contentId)).get();
+    if (!record) throw { status: 404, message: '任务记录不存在' };
+    if (record.type !== 'video') throw { status: 400, message: '仅支持视频任务补录' };
+    if (!['failed', 'error', 'review'].includes(record.status)) throw { status: 409, message: '当前任务状态不允许补录' };
+
+    const taskId = typeof taskIdValue === 'string' ? taskIdValue.trim() : '';
+    if (!taskId || taskId.length > 256 || /[\x00-\x1f\x7f]/.test(taskId)) {
+      throw { status: 400, message: '请填写有效的上游任务 ID' };
+    }
+
+    const metadata = parseMetadata(record.metadata);
+    const now = new Date().toISOString();
+    const audit = Array.isArray(metadata.recoveryAudit) ? metadata.recoveryAudit : [];
+    metadata.recoveryAudit = [...audit, {
+      at: now,
+      actorId,
+      action: 'supplement_task_id',
+      previousTaskId: upstreamTaskId(metadata),
+      taskId,
+    }].slice(-20);
+    Object.assign(metadata, {
+      videoId: taskId,
+      upstreamTaskId: taskId,
+      recoveryTaskIdSupplemented: true,
+      recoverySupplementedAt: now,
+      recoverySupplementedBy: actorId,
+    });
+    db.update(contents).set({ metadata: JSON.stringify(metadata) }).where(eq(contents.id, contentId)).run();
+    return { message: '上游任务 ID 已补录', taskId };
+  }
+
   static previewRecentFailed(daysValue: unknown = 3): RecentFailedRecoveryPreview {
     const days = normalizeRecoveryDays(daysValue);
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000)

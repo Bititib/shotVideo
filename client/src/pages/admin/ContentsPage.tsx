@@ -113,6 +113,7 @@ export default function ContentsPage() {
   const [previewItem, setPreviewItem] = useState<ContentItem | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [recoveringId, setRecoveringId] = useState<number | null>(null);
+  const [recoveryTaskIdInput, setRecoveryTaskIdInput] = useState('');
   const [confirmingUnacceptedId, setConfirmingUnacceptedId] = useState<number | null>(null);
   const [bulkPreviewing, setBulkPreviewing] = useState(false);
   const [bulkRecovering, setBulkRecovering] = useState(false);
@@ -188,11 +189,14 @@ export default function ContentsPage() {
   };
 
   const openPreview = async (item: ContentItem) => {
+    setRecoveryTaskIdInput(getUpstreamTaskId(parseMeta(item.metadata)));
     setPreviewItem(item);
     setPreviewTab('video');
     setPreviewLoading(true);
     try {
-      setPreviewItem(await loadFullContent(item));
+      const full = await loadFullContent(item);
+      setPreviewItem(full);
+      setRecoveryTaskIdInput(getUpstreamTaskId(parseMeta(full.metadata)));
     } catch (error) {
       console.error('Failed to load content detail:', error);
     } finally {
@@ -221,13 +225,16 @@ export default function ContentsPage() {
     finally { setConfirmingUnacceptedId(null); }
   };
 
-  const handleRecoverUpstream = async (item: ContentItem) => {
+  const handleRecoverUpstream = async (item: ContentItem, supplementedTaskId = '') => {
     const isBatch = Boolean(parseMeta(item.metadata).batchItemId);
     if (!window.confirm(isBatch
       ? '将查询批量任务的原上游结果；成功使用原预扣费用结算，不重复扣费；确认失败按批次设置重试或退款。是否继续？'
-      : '将重新查询原上游任务；若上游已经成功，会自动恢复视频并按原退款金额补扣用户费用。是否继续？')) return;
+      : supplementedTaskId
+        ? `将补录上游任务 ID“${supplementedTaskId}”并立即查询结果；成功后按原退款金额补扣用户费用。是否继续？`
+        : '将重新查询原上游任务；若上游已经成功，会自动恢复视频并按原退款金额补扣用户费用。是否继续？')) return;
     setRecoveringId(item.id);
     try {
+      if (supplementedTaskId) await adminApi.saveContentRecoveryTaskId(item.id, supplementedTaskId);
       const result = await adminApi.recoverContentUpstream(item.id);
       if (result.status === 'processing') {
         window.alert(`上游任务仍在生成中${result.progress ? `（${result.progress}%）` : ''}，本次未扣费。`);
@@ -238,12 +245,15 @@ export default function ContentsPage() {
         return;
       }
       window.alert(result.message || '任务已恢复');
-      const refreshed = await adminApi.getContent(item.id);
-      setPreviewItem(current => current?.id === item.id ? { ...current, ...refreshed } : current);
-      await fetchContents();
     } catch (error: any) {
       window.alert(error.message || '重新获取上游结果失败');
     } finally {
+      try {
+        const refreshed = await adminApi.getContent(item.id);
+        setPreviewItem(current => current?.id === item.id ? { ...current, ...refreshed } : current);
+        setRecoveryTaskIdInput(getUpstreamTaskId(parseMeta(refreshed.metadata)));
+        await fetchContents();
+      } catch { /* Keep the last visible record; reopening the detail retries loading it. */ }
       setRecoveringId(null);
     }
   };
@@ -798,6 +808,31 @@ export default function ContentsPage() {
                     <div className="col-span-2 bg-white/[0.03] rounded-lg p-3">
                       <div className="text-zinc-500 mb-1">上游任务 / 请求 ID</div>
                       <div className="break-all font-mono text-white">{getUpstreamTaskId(parseMeta(previewItem.metadata)) || missingUpstreamId(parseMeta(previewItem.metadata))}</div>
+                      {previewItem.type === 'video'
+                        && ['failed', 'error', 'review'].includes(previewItem.status)
+                        && !getUpstreamTaskId(parseMeta(previewItem.metadata)) && (
+                          <div className="mt-3 space-y-2 rounded-lg border border-indigo-400/20 bg-indigo-500/[0.06] p-3">
+                            <div className="font-medium text-indigo-300">管理员补录与恢复</div>
+                            <p className="text-[11px] leading-relaxed text-zinc-400">从上游任务记录复制对应任务 ID。保存后系统会查询原任务，不会重新生成。</p>
+                            <input
+                              aria-label="补录上游任务 ID"
+                              value={recoveryTaskIdInput}
+                              onChange={event => setRecoveryTaskIdInput(event.target.value)}
+                              disabled={recoveringId === previewItem.id}
+                              placeholder="粘贴上游任务 ID"
+                              className="w-full rounded-lg border border-white/10 bg-black/20 p-2 text-xs text-white placeholder:text-zinc-600"
+                            />
+                            <button
+                              type="button"
+                              disabled={recoveringId === previewItem.id || !recoveryTaskIdInput.trim()}
+                              onClick={() => { void handleRecoverUpstream(previewItem, recoveryTaskIdInput.trim()); }}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-400/25 bg-indigo-500/15 px-3 py-1.5 text-xs font-medium text-indigo-300 transition-colors hover:bg-indigo-500/25 disabled:opacity-40"
+                            >
+                              {recoveringId === previewItem.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                              {recoveringId === previewItem.id ? '正在查询…' : '补录并重新获取'}
+                            </button>
+                          </div>
+                        )}
                     </div>
                     <div className="bg-white/[0.03] rounded-lg p-3">
                       <div className="text-zinc-500 mb-1">本地记录 ID</div>

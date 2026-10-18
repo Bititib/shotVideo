@@ -99,6 +99,34 @@ afterEach(() => {
 });
 
 describe('VideoRecoveryService', () => {
+  it('supplements a missing upstream task ID with an administrator audit record', () => {
+    sqlite.prepare("UPDATE contents SET metadata = '{}' WHERE id = ?").run(contentId);
+
+    expect(VideoRecoveryService.supplementTaskId(contentId, 99, ' recovered-task ')).toMatchObject({
+      taskId: 'recovered-task',
+    });
+
+    const record = db.select().from(contents).where(eq(contents.id, contentId)).get();
+    const metadata = JSON.parse(record!.metadata);
+    expect(metadata).toMatchObject({
+      videoId: 'recovered-task',
+      upstreamTaskId: 'recovered-task',
+      recoveryTaskIdSupplemented: true,
+      recoverySupplementedBy: 99,
+    });
+    expect(metadata.recoveryAudit).toContainEqual(expect.objectContaining({
+      action: 'supplement_task_id',
+      actorId: 99,
+      taskId: 'recovered-task',
+    }));
+  });
+
+  it('rejects invalid task IDs and non-failed records', () => {
+    expect(() => VideoRecoveryService.supplementTaskId(contentId, 99, '')).toThrow();
+    sqlite.prepare("UPDATE contents SET status = 'completed' WHERE id = ?").run(contentId);
+    expect(() => VideoRecoveryService.supplementTaskId(contentId, 99, 'task-id')).toThrow();
+  });
+
   it('restores a successful task and charges the refunded amount only once', async () => {
     const recovered = await VideoRecoveryService.recover(contentId);
     expect(recovered.status).toBe('completed');
