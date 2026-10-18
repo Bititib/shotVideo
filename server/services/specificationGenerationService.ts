@@ -246,15 +246,32 @@ async function runImages(id: number, candidates: RouteCandidate[], request: Spec
   if (urls.length) { complete(id, urls); onEvent({ type: 'complete', imageUrls: urls, contentId: id }); }
   else { const reason = metadata(id).failureReason || '图片生成失败'; failTask(id, reason); onEvent({ type: 'error', message: reason }); }
 }
+function assertMjReservation(id: number) {
+  const record = db.select().from(contents).where(eq(contents.id, id)).get();
+  const meta = metadata(id);
+  const reservation = sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(meta.billingReservationId) as any;
+  if (!record || !reservation || !['reserved', 'review'].includes(reservation.state) || !Number.isFinite(reservation.amount)
+    || reservation.amount !== meta.reservedCost) throw fail('原预扣费用已变更，请人工核对；本次未扣费', 409);
+  const context = JSON.parse(reservation.context);
+  if (context.contentId && context.contentId !== id || context.userId !== record.userId
+    && !(meta.tokenId && context.tokenId === meta.tokenId)) throw fail('原预扣记录不匹配', 409);
+  return record;
+}
+
 async function saveMjResults(id: number, channel: any, req: Request, onEvent: (data: any) => void) {
+  assertMjReservation(id);
   const batch = metadata(id).nativeImageBatch as MjImageBatch;
   const persist = () => patch(id, { nativeImageBatch: batch, imageJobs: batch.jobs,
     imageUrls: batch.jobs.map(job => job.localUrl).filter(Boolean) });
   const urls = await saveMjImageBatch(batch, id, req, channel, persist,
     (imageUrl, index) => onEvent({ type: 'image_ready', imageUrl, index, total: batch.sourceUrls.length, contentId: id }));
   if (urls.length !== batch.sourceUrls.length) throw new Error('MJ 原图片尚未完整保存，需要核实原任务');
-  patch(id, { submissionStartedAt: null });
-  complete(id, urls);
+  sqlite.transaction(() => {
+    // An administrator may resolve the held funds while a download is running.
+    assertMjReservation(id);
+    patch(id, { submissionStartedAt: null, error: null, failureReason: null });
+    complete(id, urls);
+  })();
   onEvent({ type: 'complete', imageUrls: urls, contentId: id });
 }
 
@@ -280,14 +297,7 @@ export async function recoverMjSpecificationImages(id: number, resultUrls: unkno
     return url.href;
   });
   if (new Set(sources).size !== sources.length) throw fail('图片下载地址不能重复');
-  const checkReservation = () => {
-    const reservation = sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(meta.billingReservationId) as any;
-    if (!reservation || !['reserved', 'review'].includes(reservation.state) || !Number.isFinite(reservation.amount)
-      || reservation.amount !== meta.reservedCost) throw fail('原预扣费用已变更，请人工核对；本次未扣费', 409);
-    const context = JSON.parse(reservation.context);
-    if (context.contentId && context.contentId !== id || context.userId !== record.userId
-      && !(meta.tokenId && context.tokenId === meta.tokenId)) throw fail('原预扣记录不匹配', 409);
-  };
+  const checkReservation = () => assertMjReservation(id);
   checkReservation();
   const batch = meta.nativeImageBatch as MjImageBatch | undefined;
   if (batch && JSON.stringify(batch.sourceUrls) !== JSON.stringify(sources)) throw fail('已记录原结果地址，请使用相同地址继续恢复', 409);
@@ -322,10 +332,13 @@ async function runMjImages(id: number, candidates: RouteCandidate[], request: Sp
     try {
       patch(id, { routingRouteId: target.route.id, routingHealthKey: target.healthKey, channelId: target.channel.id,
         channelApiKeyId: target.channel.apiKeyId, upstreamModel: target.route.upstreamModel, actualModel: target.route.executionModel,
-        actualChannel: target.channel.type });
+        actualChannel: target.channel.type, upstreamTaskId: '', upstreamTaskIds: [],
+        upstreamResponses: [{ id: '', state: 'awaiting_response' }] });
       const result = await generateSpecificationImage(target, request,
         () => patch(id, { submissionStartedAt: new Date().toISOString() }),
-        upstreamTaskId => { accepted = true; patch(id, { upstreamTaskId }); });
+        upstreamTaskId => { accepted = true; patch(id, { upstreamTaskId }); },
+        evidence => patch(id, { upstreamResponses: [evidence],
+          ...(evidence.id ? { upstreamTaskId: evidence.id, upstreamTaskIds: [evidence.id] } : {}) }));
       accepted = true;
       const sourceUrls = 'imageUrls' in result && Array.isArray(result.imageUrls) ? result.imageUrls : [result.imageUrl];
       patch(id, { nativeImageBatch: { sourceUrls, jobs: [] }, upstreamImageUrls: sourceUrls });
@@ -476,9 +489,10 @@ async function recoverImages(id: number) {
   const initial = metadata(id), jobs = initial.imageJobs as any[];
   const req = { protocol: new URL(initial.publicBaseUrl).protocol.slice(0,-1), get: () => new URL(initial.publicBaseUrl).host } as unknown as Request;
   if (initial.nativeImageBatch) {
+    const record = assertMjReservation(id);
     const channel = ChannelService.getChannelRaw(initial.channelId, initial.channelApiKeyId || null);
     if (!channel) { holdForReview(id, 'MJ 原渠道已删除，请管理员核实'); return; }
-    await saveMjResults(id, channel, req, () => {}); return;
+    await mediaOwnerContext.run(record.userId, () => saveMjResults(id, channel, req, () => {})); return;
   }
 
   const deadline = Date.now() + 20 * 60_000;
@@ -532,10 +546,22 @@ export function restoreLegacyMjCompletedImages(): number {
 
 export function resumeSpecificationTasks() {
   restoreLegacyMjCompletedImages();
-  for (const row of db.select().from(contents).where(inArray(contents.status, ['processing', 'queued'])).all()) {
+  for (const row of db.select().from(contents).where(inArray(contents.status, ['processing', 'queued', 'review'])).all()) {
     let meta: any; try { meta = JSON.parse(row.metadata || '{}'); } catch { continue; }
     if (!meta.managedSpecification || active.has(row.id)) continue;
-    if (row.type === 'image' && (meta.nativeImageBatch || meta.imageJobs?.length)) { active.add(row.id); void recoverImages(row.id).catch(() => holdForReview(row.id, '图片结果待核实')).finally(() => active.delete(row.id)); continue; }
+    const knownMjResult = row.type === 'image' && meta.nativeImageOutputs === 4
+      && Array.isArray(meta.nativeImageBatch?.sourceUrls) && meta.nativeImageBatch.sourceUrls.length > 0;
+    // Explicit review rows are resumed only when original MJ URLs are already known.
+    if (row.status === 'review' && !knownMjResult) continue;
+    if (knownMjResult) { try { assertMjReservation(row.id); } catch { continue; } }
+    if (row.type === 'image' && (meta.nativeImageBatch || meta.imageJobs?.length)) {
+      active.add(row.id);
+      void recoverImages(row.id).catch(() => {
+        if (knownMjResult) { try { assertMjReservation(row.id); } catch { return; } }
+        holdForReview(row.id, '图片结果待核实');
+      }).finally(() => active.delete(row.id));
+      continue;
+    }
     if (!meta.videoId || row.type !== 'video') {
       if (!meta.requiresReview) holdForReview(row.id, '服务重启后提交状态待核实，请勿重复提交');
       continue;

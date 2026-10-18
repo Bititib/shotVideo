@@ -15,6 +15,7 @@ import { LEGACY_MJ_MODEL_ID, MJ_MODEL_ID, MJ_SIZES } from '../shared/mj.js';
 import { mjBaseUrl } from '../server/services/mjAdapter.js';
 import { routeRequestCost } from '../shared/modelRouting.js';
 import { reserveUserCharge } from '../server/services/billingReservation.js';
+import { resolveBillingReservation } from '../server/services/billingReconciliation.js';
 import { sanitizeContentRoutingForClient } from '../server/services/contentService.js';
 import { canvasRequestStore } from '../server/middleware/canvasRequest.js';
 
@@ -79,6 +80,46 @@ describe('MJ image channel', () => {
     expect(records).toHaveLength(2);
     expect(records.every(row => JSON.parse(row.metadata).requiresReview)).toBe(true);
     expect(db.select().from(users).all()[0].balance).toBe(96);
+  });
+  it.each([
+    { status: 504, body: '<!DOCTYPE html><html>gateway timeout</html>', headers: { 'x-request-id': 'req-mj-gateway' }, id: 'req-mj-gateway' },
+    { status: 502, body: JSON.stringify({ error: { task_id: 'task-mj-original' } }), headers: {}, id: 'task-mj-original' },
+    { status: 200, body: '{interrupted-json', headers: { 'x-request-id': 'req-mj-interrupted' }, id: 'req-mj-interrupted' },
+    { status: 200, body: JSON.stringify({ data: [], task_id: 'task-mj-no-url' }), headers: {}, id: 'task-mj-no-url' },
+  ])('persists the original response identifier before review: $id', async ({ status, body, headers, id }) => {
+    enable();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status, headers })));
+    await handleSpecificationGeneration(request(), response(), 'image');
+    const record = db.select().from(contents).get()!, meta = JSON.parse(record.metadata);
+    expect(meta).toMatchObject({ requiresReview: true, billingStatus: 'review', upstreamTaskId: id,
+      upstreamTaskIds: [id], upstreamResponses: [{ id, state: 'captured', httpStatus: status }] });
+    for (const state of ['processing', 'review']) {
+      db.update(contents).set({ status: state }).where(eq(contents.id, record.id)).run();
+      resumeSpecificationTasks();
+    }
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(db.select().from(users).get()?.balance).toBe(98);
+  });
+  it('records no response without inventing a provider identifier or refunding an unknown submission', async () => {
+    enable();
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('connection interrupted'); }));
+    await handleSpecificationGeneration(request(), response(), 'image');
+    const meta = JSON.parse(db.select().from(contents).get()!.metadata);
+    expect(meta).toMatchObject({ requiresReview: true, upstreamTaskId: '', upstreamTaskIds: [],
+      upstreamResponses: [{ id: '', state: 'no_response' }], billingStatus: 'review' });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(db.select().from(users).get()?.balance).toBe(98);
+  });
+  it('refunds an explicit rejection even when it includes a request tracing header', async () => {
+    enable();
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'invalid size' }, { status: 400,
+      headers: { 'x-request-id': 'req-mj-rejected' } })));
+    await handleSpecificationGeneration(request(), response(), 'image');
+    const record = db.select().from(contents).get()!;
+    expect(record).toMatchObject({ status: 'failed', cost: 0 });
+    expect(JSON.parse(record.metadata)).toMatchObject({ upstreamTaskId: 'req-mj-rejected', billingStatus: 'refunded' });
+    expect(db.select().from(users).get()?.balance).toBe(100);
+    expect(fetch).toHaveBeenCalledOnce();
   });
   it('recovers four verified original results with the original funds and owner, then is idempotent', async () => {
     const record = await gatewayTimeout();
@@ -331,6 +372,59 @@ describe('MJ image channel', () => {
     await vi.waitFor(() => expect(db.select().from(contents).all()[0].status).toBe('completed'));
     expect(JSON.parse(db.select().from(contents).all()[0].metadata).imageUrls).toHaveLength(4);
     expect(fetch).toHaveBeenCalledOnce(); expect(db.select().from(users).all()[0].balance).toBe(98);
+  });
+  async function interruptedOriginal() {
+    enable();
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [{ url: originalResults[0] }] })));
+    vi.mocked(localizeGeneratedImage).mockRejectedValueOnce(new Error('download interrupted'));
+    await handleSpecificationGeneration(request(), response(), 'image');
+    const record = db.select().from(contents).get()!;
+    db.update(contents).set({ status: 'review' }).where(eq(contents.id, record.id)).run();
+    return { record, meta: JSON.parse(record.metadata) };
+  }
+  it('resumes an explicit review row with a known original URL, preserving ownership and clearing the stale error', async () => {
+    const { record, meta } = await interruptedOriginal();
+    vi.mocked(localizeGeneratedImage).mockImplementation(async (_url, prefix) => {
+      expect(mediaOwnerContext.getStore()).toBe(record.userId);
+      return '/api/uploads/' + prefix + '.png';
+    });
+    resumeSpecificationTasks(); resumeSpecificationTasks();
+    await vi.waitFor(() => expect(db.select().from(contents).get()?.status).toBe('completed'));
+    const completed = db.select().from(contents).get()!;
+    expect(JSON.parse(completed.metadata)).toMatchObject({ count: 1, requiresReview: false,
+      error: null, failureReason: null, billingStatus: 'settled' });
+    expect(sqlite.prepare('SELECT state,actual FROM billing_reservations WHERE id=?').get(meta.billingReservationId))
+      .toEqual({ state: 'settled', actual: 2 });
+    expect(completed.cost).toBe(2);
+    expect(localizeGeneratedImage).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(db.select().from(users).get()?.balance).toBe(98);
+  });
+  it('skips original-result recovery after the held funds have been refunded', async () => {
+    const { meta } = await interruptedOriginal();
+    resolveBillingReservation(meta.billingReservationId, 2, 0, 'confirmed provider failure');
+    resumeSpecificationTasks();
+    expect(localizeGeneratedImage).toHaveBeenCalledOnce();
+    expect(db.select().from(contents).get()).toMatchObject({ status: 'review', cost: 0 });
+    expect(db.select().from(users).get()?.balance).toBe(100);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  it('does not mark success or recharge if an administrator refunds while the original is downloading', async () => {
+    const { meta } = await interruptedOriginal();
+    vi.mocked(localizeGeneratedImage).mockImplementationOnce(async () => {
+      resolveBillingReservation(meta.billingReservationId, 2, 0, 'confirmed provider failure');
+      return '/api/uploads/original-after-refund.png';
+    });
+    resumeSpecificationTasks();
+    await vi.waitFor(() => expect(JSON.parse(db.select().from(contents).get()!.metadata).nativeImageBatch.jobs[0].localUrl)
+      .toBe('/api/uploads/original-after-refund.png'));
+    const record = db.select().from(contents).get()!;
+    expect(record).toMatchObject({ status: 'review', cost: 0 });
+    expect(JSON.parse(record.metadata)).toMatchObject({ billingStatus: 'refunded' });
+    expect(sqlite.prepare('SELECT state,actual FROM billing_reservations WHERE id=?').get(meta.billingReservationId))
+      .toEqual({ state: 'refunded', actual: 0 });
+    expect(db.select().from(users).get()?.balance).toBe(100);
+    expect(fetch).toHaveBeenCalledOnce();
   });
   it('prices a native four-image task as one call and preserves all results for API clients', async () => {
     enable();
