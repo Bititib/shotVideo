@@ -20,14 +20,14 @@ import { BalanceService } from './balanceService.js';
 import { TokenService } from './tokenService.js';
 import { reserveUserCharge } from './billingReservation.js';
 import { getModelSpecification, specificationAvailability, selectModelRoutes, routeStillEnabled, claimRouteProbe, noteRouteResult, type RouteCandidate } from './modelRoutingService.js';
-import { submitSpecificationVideo, pollSpecificationVideo, pollSpecificationImage, generateSpecificationImage, SpecificationUpstreamError, type SpecificationRequest } from './specificationAdapters.js';
+import { submitSpecificationVideo, pollSpecificationVideo, pollSpecificationImage, pollMjSpecificationImage, generateSpecificationImage, SpecificationUpstreamError, type SpecificationRequest } from './specificationAdapters.js';
 import { validateAndNormalizeImageReferences } from './imageReferenceValidationService.js';
 import { hmStudioQueue, hmStudioPoolKey, HmStudioQueueFullError } from './hmStudioQueueService.js';
 import { recordCanvasEvent } from '../middleware/canvasRequest.js';
 import { logUsage } from '../middleware/quota.js';
 import { routingMismatches, type MediaKind } from '../../shared/modelRouting.js';
 import { issueUploadUrl, mediaOwnerContext } from './uploadAccess.js';
-import { isMjChannel, mjBaseUrl } from './mjAdapter.js';
+import { isMjChannel, mjBaseUrl, canResumeMjAsync, type MjAsyncImageState } from './mjAdapter.js';
 import { MJ_MODEL_ID } from '../../shared/mj.js';
 import { saveMjImageBatch, restoreCachedMjOriginal, type MjImageBatch } from './mjImageResults.js';
 import { resolvePublicModelId } from './publicModelNameService.js';
@@ -322,6 +322,15 @@ export async function recoverMjSpecificationImages(id: number, resultUrls: unkno
   } finally { active.delete(id); }
 }
 
+function recordMjAsyncState(id: number, state: MjAsyncImageState, onEvent: (data: any) => void) {
+  patch(id, { mjAsyncImage: state, upstreamStatus: state.status,
+    ...(state.progress !== undefined ? { progress: Math.min(99, state.progress) } : {}), progressText: '图片生成中' });
+  onEvent({ type: 'progress', progress: Math.min(99, state.progress || 0), contentId: id });
+}
+function recordMjReceipt(id: number, evidence: import('./imageTaskMetadataService.js').ImageResponseEvidence) {
+  patch(id, { upstreamResponses: [evidence],
+    ...(evidence.id ? { upstreamTaskId: evidence.id, upstreamTaskIds: [evidence.id] } : {}) });
+}
 async function runMjImages(id: number, candidates: RouteCandidate[], request: SpecificationRequest, req: Request, onEvent: (data: any) => void) {
   let failureReason = 'MJ 图片生成失败';
   for (const target of candidates) {
@@ -332,13 +341,14 @@ async function runMjImages(id: number, candidates: RouteCandidate[], request: Sp
     try {
       patch(id, { routingRouteId: target.route.id, routingHealthKey: target.healthKey, channelId: target.channel.id,
         channelApiKeyId: target.channel.apiKeyId, upstreamModel: target.route.upstreamModel, actualModel: target.route.executionModel,
-        actualChannel: target.channel.type, upstreamTaskId: '', upstreamTaskIds: [],
+        actualChannel: target.channel.type, upstreamTaskId: '', upstreamTaskIds: [], mjAsyncImage: null,
         upstreamResponses: [{ id: '', state: 'awaiting_response' }] });
       const result = await generateSpecificationImage(target, request,
         () => patch(id, { submissionStartedAt: new Date().toISOString() }),
         upstreamTaskId => { accepted = true; patch(id, { upstreamTaskId }); },
-        evidence => patch(id, { upstreamResponses: [evidence],
-          ...(evidence.id ? { upstreamTaskId: evidence.id, upstreamTaskIds: [evidence.id] } : {}) }));
+        evidence => recordMjReceipt(id, evidence),
+        state => { accepted = true; recordMjAsyncState(id, state, onEvent); },
+        () => { assertMjReservation(id); });
       accepted = true;
       const sourceUrls = 'imageUrls' in result && Array.isArray(result.imageUrls) ? result.imageUrls : [result.imageUrl];
       patch(id, { nativeImageBatch: { sourceUrls, jobs: [] }, upstreamImageUrls: sourceUrls });
@@ -346,11 +356,18 @@ async function runMjImages(id: number, candidates: RouteCandidate[], request: Sp
       await saveMjResults(id, target.channel, req, onEvent);
       noteRouteResult(target.healthKey, true); return;
     } catch (error: any) {
+      // Never undo an administrator's reconciliation during a long-running query/save.
+      try { assertMjReservation(id); } catch { return; }
       const httpStatus = error instanceof SpecificationUpstreamError ? error.upstreamStatus : 0;
-      patch(id, { mjSubmissionDiagnostics: { phase, elapsedMs: Math.max(0, Date.now() - startedAt), finishedAt: new Date().toISOString(),
+      const diagnosticPhase = phase === 'submit' && metadata(id).mjAsyncImage ? 'poll' : phase;
+      patch(id, { mjSubmissionDiagnostics: { phase: diagnosticPhase, elapsedMs: Math.max(0, Date.now() - startedAt), finishedAt: new Date().toISOString(),
         ...(httpStatus ? { httpStatus } : {}),
-        reason: phase === 'save' ? 'result_save' : [502, 504, 524].includes(httpStatus) ? 'gateway_timeout'
+        reason: diagnosticPhase === 'save' ? 'result_save' : diagnosticPhase === 'poll' ? 'async_query' : [502, 504, 524].includes(httpStatus) ? 'gateway_timeout'
           : error instanceof SpecificationUpstreamError && error.uncertain ? 'response_uncertain' : 'submission_rejected' } });
+      if (accepted && error instanceof SpecificationUpstreamError && error.confirmedFailure) {
+        patch(id, { requiresReview: false, submissionStartedAt: null });
+        failTask(id, error.message); onEvent({ type: 'error', message: error.message }); return;
+      }
       if (accepted || error instanceof SpecificationUpstreamError && error.uncertain) {
         holdForReview(id, error.message || 'MJ 原任务结果待核实，请勿重复提交');
         onEvent({ type: 'error', message: 'MJ 原任务结果待核实，已保存图片保留，请勿重复提交' }); return;
@@ -495,6 +512,27 @@ async function recoverImages(id: number) {
     await mediaOwnerContext.run(record.userId, () => saveMjResults(id, channel, req, () => {})); return;
   }
 
+  if (initial.nativeImageOutputs === 4 && initial.mjAsyncImage) {
+    const record = assertMjReservation(id);
+    const channel = ChannelService.getChannelRaw(initial.channelId, initial.channelApiKeyId || null);
+    if (!channel || !isMjChannel(channel)) { holdForReview(id, 'MJ 原渠道已删除，请管理员核实'); return; }
+    try {
+      const result = await pollMjSpecificationImage(channel, initial.mjAsyncImage,
+        upstreamTaskId => patch(id, { upstreamTaskId, upstreamTaskIds: [upstreamTaskId] }),
+        evidence => recordMjReceipt(id, evidence), state => recordMjAsyncState(id, state, () => {}),
+        () => { assertMjReservation(id); });
+      patch(id, { nativeImageBatch: { sourceUrls: result.imageUrls, jobs: [] }, upstreamImageUrls: result.imageUrls });
+      await mediaOwnerContext.run(record.userId, () => saveMjResults(id, channel, req, () => {}));
+      noteRouteResult(initial.routingHealthKey, true);
+    } catch (error: any) {
+      try { assertMjReservation(id); } catch { return; }
+      if (error instanceof SpecificationUpstreamError && error.confirmedFailure) {
+        patch(id, { requiresReview: false, submissionStartedAt: null }); failTask(id, error.message);
+      } else holdForReview(id, error.message || 'MJ 原任务结果待核实');
+    }
+    return;
+  }
+
   const deadline = Date.now() + 20 * 60_000;
   while (Date.now() < deadline) {
     let pending = false;
@@ -551,13 +589,14 @@ export function resumeSpecificationTasks() {
     if (!meta.managedSpecification || active.has(row.id)) continue;
     const knownMjResult = row.type === 'image' && meta.nativeImageOutputs === 4
       && Array.isArray(meta.nativeImageBatch?.sourceUrls) && meta.nativeImageBatch.sourceUrls.length > 0;
-    // Explicit review rows are resumed only when original MJ URLs are already known.
-    if (row.status === 'review' && !knownMjResult) continue;
-    if (knownMjResult) { try { assertMjReservation(row.id); } catch { continue; } }
-    if (row.type === 'image' && (meta.nativeImageBatch || meta.imageJobs?.length)) {
+    const resumableMj = row.type === 'image' && meta.nativeImageOutputs === 4 && canResumeMjAsync(meta.mjAsyncImage);
+    // Resume only known originals or a saved live query handle, never the paid POST.
+    if (row.status === 'review' && !knownMjResult && !resumableMj) continue;
+    if (knownMjResult || resumableMj) { try { assertMjReservation(row.id); } catch { continue; } }
+    if (row.type === 'image' && (meta.nativeImageBatch || meta.imageJobs?.length || resumableMj)) {
       active.add(row.id);
       void recoverImages(row.id).catch(() => {
-        if (knownMjResult) { try { assertMjReservation(row.id); } catch { return; } }
+        if (knownMjResult || resumableMj) { try { assertMjReservation(row.id); } catch { return; } }
         holdForReview(row.id, '图片结果待核实');
       }).finally(() => active.delete(row.id));
       continue;

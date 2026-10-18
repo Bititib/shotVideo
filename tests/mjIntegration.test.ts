@@ -1,6 +1,11 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 vi.mock('../server/routes/imageGen.js', () => ({ localizeGeneratedImage: vi.fn(async (_url, prefix) => '/api/uploads/' + prefix + '.png') }));
+// Localization is mocked above; API serialization must not require those fixture files on disk.
+vi.mock('../server/services/uploadAccess.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../server/services/uploadAccess.js')>(),
+  issueUploadUrl: (url: string, base: string) => new URL(url, base).toString(),
+}));
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../server/db/index.js';
 import { channels, contents, models, modelPricing, settings, users } from '../server/db/schema.js';
@@ -33,7 +38,7 @@ beforeEach(async () => {
   channelId = ChannelService.createChannel({ name: 'MJ', type: 'mj', baseUrl: 'https://mj-provider.example/v1/', apiKey: key });
   await ChannelService.syncModels(channelId);
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 afterAll(() => sqlite.close());
 function enable() {
   db.update(models).set({ isActive: 1 }).where(eq(models.modelId, MJ_MODEL_ID)).run();
@@ -301,7 +306,7 @@ describe('MJ image channel', () => {
     const [url, init] = upstream.mock.calls[0] as any;
     expect(url).toBe('https://mj-provider.example/v1/images/generations');
     expect(init.headers).toEqual({ Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' });
-    expect(JSON.parse(init.body)).toEqual({ model: 'mj_imagine', prompt: 'a paper boat', size });
+    expect(JSON.parse(init.body)).toEqual({ model: 'mj_imagine', prompt: 'a paper boat', size, async: true });
     expect(Math.max(...size.split('x').map(Number))).toBeLessThan(1800);
     expect(start).toHaveBeenCalledOnce();
   });
@@ -317,6 +322,7 @@ describe('MJ image channel', () => {
     expect(init.headers).toEqual({ Authorization: 'Bearer ' + key });
     const form: FormData = init.body;
     expect(form.get('model')).toBe('mj_imagine'); expect(form.get('size')).toBe('1024x1024');
+    expect(form.get('async')).toBe('true');
     const files = form.getAll(count === 1 ? 'image' : 'image[]') as File[];
     expect(files).toHaveLength(count);
     for (const [index, file] of files.entries()) {
@@ -342,7 +348,7 @@ describe('MJ image channel', () => {
     expect(db.select().from(users).all()[0].balance).toBe(98);
     expect(localizeGeneratedImage).toHaveBeenCalledTimes(4);
     expect(fetch).toHaveBeenCalledOnce();
-    expect(JSON.parse((vi.mocked(fetch).mock.calls[0][1] as any).body)).toEqual({ model: 'mj_imagine', prompt: 'a paper boat', size: '1024x1024' });
+    expect(JSON.parse((vi.mocked(fetch).mock.calls[0][1] as any).body)).toEqual({ model: 'mj_imagine', prompt: 'a paper boat', size: '1024x1024', async: true });
   });
   it.each([{ resolution: '2K' }, { n: 2 }, { reference_images: Array(7).fill('data:image/png;base64,eA==') }])
     ('rejects invalid website limits before charging: %j', async body => {
@@ -558,6 +564,202 @@ describe('MJ image response receipt persistence', () => {
       expect(localizeGeneratedImage).toHaveBeenCalledOnce();
       expect(db.select().from(users).get()!.balance).toBe(98);
     });
+});
+
+describe('MJ asynchronous image lifecycle', () => {
+  const handle = 'temporary/image-handle';
+  const taskId = 'evt-permanent-log';
+  const originals = [1, 2, 3, 4].map(n => ({ url: 'https://cdn.example/original-' + n + '.png' }));
+  const done = () => Response.json({ id: handle, task_id: taskId, status: 'completed', data: originals });
+  const current = () => db.select().from(contents).get()!;
+  const meta = () => JSON.parse(current().metadata);
+  it.each([false, true].flatMap(edit => ['workbench', 'api'].map(transport => ({ edit, transport }))))
+    ('persists the handle before GET, polls progress and saves the permanent ID: $edit / $transport', async ({ edit, transport }) => {
+      enable(); vi.useFakeTimers();
+      const sharp = (await import('sharp')).default;
+      const reference = edit ? 'data:image/png;base64,' + (await sharp({ create: {
+        width: 64, height: 64, channels: 3, background: '#88aacc',
+      } }).png().toBuffer()).toString('base64') : undefined;
+      let polls = 0;
+      const upstream = vi.fn(async (url: string, init: any) => {
+        if (init.method === 'POST') {
+          expect(url).toBe('https://mj-provider.example/v1/images/' + (edit ? 'edits' : 'generations'));
+          expect(edit ? init.body.get('async') : JSON.parse(init.body).async).toBe(edit ? 'true' : true);
+          return Response.json({ id: handle, status: 'queued' }, { status: 202 });
+        }
+        expect(url).toBe('https://mj-provider.example/v1/images/' + encodeURIComponent(handle));
+        expect(init.headers.Authorization).toBe('Bearer ' + key);
+        expect(meta()).toMatchObject({ mjAsyncImage: { handle }, upstreamTaskId: '', upstreamTaskIds: [] });
+        expect(JSON.parse(sanitizeContentRoutingForClient(current()).metadata)).not.toHaveProperty('mjAsyncImage');
+        return ++polls === 1 ? Response.json({ id: handle, status: 'in_progress', progress: 42 }) : done();
+      });
+      vi.stubGlobal('fetch', upstream);
+      vi.mocked(localizeGeneratedImage).mockImplementation(async (_url, prefix) => {
+        expect(meta()).toMatchObject({ upstreamTaskId: taskId, upstreamTaskIds: [taskId], mjAsyncImage: { handle, status: 'completed' } });
+        return '/api/uploads/' + prefix + '.png';
+      });
+      const res = response();
+      const work = handleSpecificationGeneration(request(reference ? { reference_images: [reference] } : {}), res, 'image', transport === 'api' ? {
+        token: { id: 1, userId: 1 }, reserve: amount => reserveUserCharge(1, amount, 'mj_async_api'),
+      } : undefined);
+      await vi.waitFor(() => expect(meta().mjAsyncImage).toMatchObject({ status: 'in_progress', progress: 42 }));
+      await vi.advanceTimersByTimeAsync(5000); await work;
+      expect(current()).toMatchObject({ status: 'completed', cost: 2 });
+      expect(meta(), JSON.stringify({ error: meta().error, response: res.body })).toMatchObject({ billingStatus: 'settled', count: 4, upstreamTaskId: taskId });
+      expect(db.select().from(users).get()!.balance).toBe(98);
+      expect(upstream).toHaveBeenCalledTimes(3);
+      expect(upstream.mock.calls.filter(([, init]) => init.method === 'POST')).toHaveLength(1);
+      expect(localizeGeneratedImage).toHaveBeenCalledTimes(4);
+      if (transport === 'api') expect(res.body.data).toHaveLength(4);
+      else expect(res.write.mock.calls.some(([line]: [string]) => line.includes('"progress":42'))).toBe(true);
+    });
+  it('refunds an explicit async failure once while retaining both IDs and keeping the model available', async () => {
+    enable();
+    const upstream = vi.fn().mockResolvedValueOnce(Response.json({ id: handle, status: 'queued' }))
+      .mockResolvedValueOnce(Response.json({ id: handle, task_id: taskId, status: 'failed', error: { message: 'insufficient credits' } }));
+    vi.stubGlobal('fetch', upstream);
+    const res = response(); await handleSpecificationGeneration(request(), res, 'image');
+    expect(current()).toMatchObject({ status: 'failed', cost: 0 });
+    expect(meta()).toMatchObject({ requiresReview: false, billingStatus: 'refunded', upstreamTaskId: taskId, mjAsyncImage: { handle, status: 'failed' } });
+    expect(db.select().from(users).get()!.balance).toBe(100);
+    expect(specificationAvailability(getModelSpecification(MJ_MODEL_ID)!)).toEqual({ available: true });
+    expect(JSON.parse(sanitizeContentRoutingForClient(current()).metadata).error).toContain('上游积分不足');
+    resumeSpecificationTasks(); expect(upstream).toHaveBeenCalledTimes(2);
+  });
+  it.each([401, 402, 403, 404, 410])('holds an accepted task when its GET returns %i without refund, locking or resubmission', async status => {
+    enable();
+    const upstream = vi.fn().mockResolvedValueOnce(Response.json({ id: handle, status: 'queued' }))
+      .mockResolvedValueOnce(new Response('', { status }));
+    vi.stubGlobal('fetch', upstream);
+    await handleSpecificationGeneration(request(), response(), 'image');
+    expect(meta()).toMatchObject({ requiresReview: true, billingStatus: 'review', upstreamTaskId: '', mjAsyncImage: { handle, status: 'unavailable' } });
+    expect(db.select().from(users).get()!.balance).toBe(98);
+    expect(specificationAvailability(getModelSpecification(MJ_MODEL_ID)!)).toEqual({ available: true });
+    resumeSpecificationTasks(); expect(upstream).toHaveBeenCalledTimes(2);
+  });
+  async function interruptedQuery() {
+    enable(); vi.useFakeTimers();
+    const upstream = vi.fn().mockResolvedValueOnce(Response.json({ id: handle, status: 'queued' }))
+      .mockImplementation(async () => new Response('', { status: 503 }));
+    vi.stubGlobal('fetch', upstream);
+    const work = handleSpecificationGeneration(request(), response(), 'image');
+    await vi.waitFor(() => expect(upstream).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(10_000); await work;
+    expect(meta()).toMatchObject({ requiresReview: true, billingStatus: 'review', mjAsyncImage: { handle, status: 'poll_error' } });
+    return upstream;
+  }
+  it('resumes a saved handle after interruption using GET only, with original ownership and charge', async () => {
+    const upstream = await interruptedQuery();
+    db.update(contents).set({ status: 'review' }).where(eq(contents.id, current().id)).run();
+    upstream.mockImplementation(async (_url: string, init: any) => { expect(init.method).not.toBe('POST'); return done(); });
+    vi.mocked(localizeGeneratedImage).mockImplementation(async (_url, prefix) => {
+      expect(mediaOwnerContext.getStore()).toBe(1); return '/api/uploads/' + prefix + '.png';
+    });
+    resumeSpecificationTasks(); resumeSpecificationTasks();
+    await vi.waitFor(() => expect(current().status).toBe('completed'));
+    expect(upstream).toHaveBeenCalledTimes(5);
+    expect(db.select().from(users).get()!.balance).toBe(98);
+    expect(meta()).toMatchObject({ upstreamTaskId: taskId, billingStatus: 'settled', requiresReview: false, error: null });
+  });
+  it('never resumes or charges again after an administrator refunds the original reservation', async () => {
+    const upstream = await interruptedQuery();
+    resolveBillingReservation(meta().billingReservationId, 2, 0, 'verified failure');
+    resumeSpecificationTasks();
+    expect(upstream).toHaveBeenCalledTimes(4);
+    expect(localizeGeneratedImage).not.toHaveBeenCalled();
+    expect(db.select().from(users).get()!.balance).toBe(100);
+    expect(meta().billingStatus).toBe('refunded');
+  });
+  it('stops at the persisted polling deadline and never submits another task', async () => {
+    enable(); vi.useFakeTimers();
+    const upstream = vi.fn().mockResolvedValueOnce(Response.json({ id: handle, status: 'queued' }))
+      .mockImplementation(async () => {
+        vi.setSystemTime(Date.now() + 31 * 60_000);
+        return Response.json({ id: handle, status: 'in_progress' });
+      });
+    vi.stubGlobal('fetch', upstream);
+    const work = handleSpecificationGeneration(request(), response(), 'image');
+    await vi.waitFor(() => expect(upstream).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(5000); await work;
+    expect(meta()).toMatchObject({ requiresReview: true, billingStatus: 'review', mjAsyncImage: { handle, status: 'timed_out' } });
+    resumeSpecificationTasks(); expect(upstream).toHaveBeenCalledTimes(2);
+    expect(db.select().from(users).get()!.balance).toBe(98);
+  });
+  it('saves valid completed images without mislabeling a temporary ID when task_id is missing', async () => {
+    enable();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json({ id: handle, status: 'queued' }))
+      .mockResolvedValueOnce(Response.json({ id: handle, status: 'completed', data: originals })));
+    await handleSpecificationGeneration(request(), response(), 'image');
+    expect(current().status).toBe('completed');
+    expect(meta()).toMatchObject({ upstreamTaskId: '', upstreamTaskIds: [], mjAsyncImage: { handle },
+      upstreamResponses: [{ id: '', state: 'response_without_id' }] });
+  });
+  it('keeps a completed receipt but holds missing output without pretending it failed', async () => {
+    enable();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json({ id: handle, status: 'queued' }))
+      .mockResolvedValueOnce(Response.json({ id: handle, status: 'completed', task_id: taskId, data: [] })));
+    await handleSpecificationGeneration(request(), response(), 'image');
+    expect(meta()).toMatchObject({ requiresReview: true, billingStatus: 'review', upstreamTaskId: taskId });
+    expect(db.select().from(users).get()!.balance).toBe(98);
+    expect(localizeGeneratedImage).not.toHaveBeenCalled();
+  });
+  it('continues polling after one network interruption without another paid POST', async () => {
+    enable(); vi.useFakeTimers();
+    const upstream = vi.fn().mockResolvedValueOnce(Response.json({ id: handle, status: 'queued' }))
+      .mockRejectedValueOnce(new Error('network interrupted')).mockResolvedValueOnce(done());
+    vi.stubGlobal('fetch', upstream);
+    const work = handleSpecificationGeneration(request(), response(), 'image');
+    await vi.waitFor(() => expect(upstream).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(5000); await work;
+    expect(current()).toMatchObject({ status: 'completed', cost: 2 });
+    expect(upstream).toHaveBeenCalledTimes(3);
+    expect(db.select().from(users).get()!.balance).toBe(98);
+  });
+  it('retains the original source URLs when saving fails, then resumes saving without querying or generating again', async () => {
+    enable();
+    const upstream = vi.fn().mockResolvedValueOnce(Response.json({ id: handle, status: 'queued' })).mockResolvedValueOnce(done());
+    vi.stubGlobal('fetch', upstream);
+    vi.mocked(localizeGeneratedImage).mockRejectedValueOnce(new Error('download interrupted'));
+    await handleSpecificationGeneration(request(), response(), 'image');
+    expect(meta()).toMatchObject({ requiresReview: true, upstreamTaskId: taskId, mjAsyncImage: { handle },
+      nativeImageBatch: { sourceUrls: originals.map(item => item.url) } });
+    resumeSpecificationTasks();
+    await vi.waitFor(() => expect(current().status).toBe('completed'));
+    expect(upstream).toHaveBeenCalledTimes(2);
+    expect(meta().billingStatus).toBe('settled');
+    expect(db.select().from(users).get()!.balance).toBe(98);
+  });
+  it('does not overwrite a refund made while an accepted task is being queried', async () => {
+    enable();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json({ id: handle, status: 'queued' }))
+      .mockImplementation(async () => {
+        sqlite.prepare("UPDATE billing_reservations SET state='review' WHERE id=?").run(meta().billingReservationId);
+        resolveBillingReservation(meta().billingReservationId, 2, 0, 'verified failure'); return done();
+      }));
+    await handleSpecificationGeneration(request(), response(), 'image');
+    expect(current().cost).toBe(0);
+    expect(meta().billingStatus).toBe('refunded');
+    expect(localizeGeneratedImage).not.toHaveBeenCalled();
+    expect(db.select().from(users).get()!.balance).toBe(100);
+  });
+  it.each([
+    { body: { status: 'queued' }, calls: 1 },
+    { body: { id: handle, status: 'unexpected' }, calls: 1 },
+  ])('holds an invalid submit acknowledgement without a second POST: $body', async ({ body, calls }) => {
+    enable(); vi.stubGlobal('fetch', vi.fn(async () => Response.json(body)));
+    await handleSpecificationGeneration(request(), response(), 'image');
+    expect(meta()).toMatchObject({ requiresReview: true, billingStatus: 'review', upstreamTaskId: '' });
+    expect(fetch).toHaveBeenCalledTimes(calls);
+    expect(db.select().from(users).get()!.balance).toBe(98);
+  });
+  it('keeps a completed async handle separate even when a nested result also has an id', async () => {
+    enable();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json({ id: handle, data: [] }))
+      .mockResolvedValueOnce(Response.json({ id: handle, status: 'completed', result: { id: handle, data: originals } })));
+    await handleSpecificationGeneration(request(), response(), 'image');
+    expect(current().status).toBe('completed');
+    expect(meta()).toMatchObject({ upstreamTaskId: '', upstreamTaskIds: [], mjAsyncImage: { handle } });
+  });
 });
 
 describe('documented MJ HTTP 402 contract', () => {

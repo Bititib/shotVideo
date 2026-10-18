@@ -27,7 +27,7 @@ export function buildMjImagePayload(input: {
   model: string; prompt: string; resolution: string; ratio: string; images: string[];
   videos: string[]; audios: string[]; firstFrame: string; lastFrame: string;
   outputs: number; size?: string; quality?: string;
-}): Record<string, string> | FormData {
+}): Record<string, string | boolean> | FormData {
   if (input.model !== MJ_UPSTREAM_MODEL) throw new Error('MJ 渠道仅接入 mj_imagine 图片模型');
   if (input.resolution.toLowerCase() !== '1k') throw new Error('MJ 仅支持 1K');
   const size = Object.hasOwn(MJ_SIZES, input.ratio) ? MJ_SIZES[input.ratio] : '';
@@ -38,10 +38,10 @@ export function buildMjImagePayload(input: {
   if (![1, 4].includes(input.outputs) || input.videos.length || input.audios.length || input.firstFrame || input.lastFrame) {
     throw new Error('MJ 每次仅提交一次任务，结果保留完整原图，仅支持图片参考');
   }
-  const payload = { model: input.model, prompt: input.prompt, size };
+  const payload = { model: input.model, prompt: input.prompt, size, async: true };
   if (!input.images.length) return payload;
   const form = new FormData();
-  for (const [key, value] of Object.entries(payload)) form.append(key, value);
+  for (const [key, value] of Object.entries(payload)) form.append(key, String(value));
   for (const [index, source] of input.images.entries()) {
     const match = source.match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=\s]+)$/);
     if (!match) throw new Error('参考图必须先完成本站图片校验');
@@ -50,4 +50,19 @@ export function buildMjImagePayload(input: {
       new Blob([Buffer.from(match[2], 'base64')], { type: match[1] }), 'reference_' + index + '.' + ext);
   }
   return form;
+}
+
+/** A transient query handle is never the permanent evt- task/log identifier. */
+export type MjAsyncImageState = {
+  handle: string;
+  submittedAt: number;
+  deadlineAt: number;
+  status: string;
+  progress?: number;
+  lastPollAt?: number;
+};
+export const MJ_ASYNC_TIMEOUT_MS = 30 * 60_000;
+export function canResumeMjAsync(state?: MjAsyncImageState): boolean {
+  return Boolean(state?.handle && ['queued', 'in_progress', 'pending', 'processing', 'running', 'poll_error', 'completed', 'failed'].includes(state.status)
+    && Number.isFinite(state.deadlineAt) && state.deadlineAt > Date.now());
 }

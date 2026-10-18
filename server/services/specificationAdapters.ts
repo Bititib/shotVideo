@@ -1,5 +1,5 @@
 import { imageGenerationTimeout } from './imageGenerationTimeout.js';
-import { isMjChannel, mjBaseUrl, buildMjImagePayload } from './mjAdapter.js';
+import { isMjChannel, mjBaseUrl, buildMjImagePayload, MJ_ASYNC_TIMEOUT_MS, type MjAsyncImageState } from './mjAdapter.js';
 import { isAsyncVideoChannel, buildAsyncVideoPayload, asyncVideoCreateUrl, pollAsyncVideo } from './asyncVideoAdapter.js';
 import fs from 'node:fs';
 import { extractImageUpstreamTaskId, imageResponseEvidence, type ImageResponseEvidence } from './imageTaskMetadataService.js';
@@ -66,7 +66,7 @@ export function publishSpecificationAsset(source: string, baseUrl: string): stri
   return publishReferenceUrl('/uploads/' + name, baseUrl);
 }
 const apiBase = (url: string) => url.replace(/\/+$/, '').replace(/\/v1$/i, '');
-async function post(url: string, channel: any, payload: unknown, onStarting: () => void, onParsed?: (body: any, headers: Headers) => void, onResponse?: (evidence: ImageResponseEvidence) => void) {
+async function post(url: string, channel: any, payload: unknown, onStarting: () => void, onParsed?: (body: any, headers: Headers) => void, onResponse?: (evidence: ImageResponseEvidence) => void, evidenceFor = imageResponseEvidence) {
   const form = payload instanceof FormData;
   onStarting();
   let response: Response;
@@ -79,23 +79,23 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
     const notSent = ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(code);
     throw new SpecificationUpstreamError('提交连接失败，请在生成记录中核实：' + String(code || e?.message || '未知错误'), notSent, !notSent);
   }
-  onResponse?.(imageResponseEvidence(undefined, response.headers, response.status, 'headers_received'));
+  onResponse?.(evidenceFor(undefined, response.headers, response.status, 'headers_received'));
   if (!response.ok) {
     let text: string;
     try { text = await response.text(); }
     catch {
-      onResponse?.(imageResponseEvidence(undefined, response.headers, response.status, 'response_unreadable'));
+      onResponse?.(evidenceFor(undefined, response.headers, response.status, 'response_unreadable'));
       if (isMjChannel(channel) && response.status === 402) throw submissionFailure(402, '错误响应正文未完整读取', channel);
       throw new SpecificationUpstreamError('上游错误响应读取中断，请核实原请求', false, true);
     }
     let body: unknown; try { body = JSON.parse(text); } catch {}
-    onResponse?.(imageResponseEvidence(body, response.headers, response.status, 'response_without_id'));
+    onResponse?.(evidenceFor(body, response.headers, response.status, 'response_without_id'));
     throw submissionFailure(response.status, channel.apiKey ? text.split(channel.apiKey).join('[REDACTED]') : text, channel);
   }
   let result: any;
   try { result = await response.json(); }
-  catch { onResponse?.(imageResponseEvidence(undefined, response.headers, response.status, 'response_unreadable')); throw new SpecificationUpstreamError('上游已响应但结果无法解析，请勿重复提交', false, true); }
-  onResponse?.(imageResponseEvidence(result, response.headers, response.status, 'response_without_id'));
+  catch { onResponse?.(evidenceFor(undefined, response.headers, response.status, 'response_unreadable')); throw new SpecificationUpstreamError('上游已响应但结果无法解析，请勿重复提交', false, true); }
+  onResponse?.(evidenceFor(result, response.headers, response.status, 'response_without_id'));
   onParsed?.(result, response.headers);
   return result;
 }
@@ -253,7 +253,90 @@ export async function pollSpecificationVideo(channel: any, taskId: string) {
     resultUrl: String(data.url || data.video_url || data.result_url || data.output?.url || data.output?.video_url || data.metadata?.url || data.result?.url || data.result?.video_url || (Array.isArray(data.data) ? data.data[0]?.url : '') || ''),
     error: typeof data.error === 'string' ? data.error : data.error?.message || data.message || '' };
 }
-export async function generateSpecificationImage(target: RouteCandidate, request: SpecificationRequest, onStarting: () => void, onSubmitted: (id: string) => void, onResponse?: (evidence: ImageResponseEvidence) => void) {
+function mjResponseEvidence(payload: any, headers: Headers, httpStatus: number,
+  stage: 'headers_received' | 'response_without_id' | 'response_unreadable'): ImageResponseEvidence {
+  // Async id is a volatile polling handle, including on completed/failed responses.
+  // Keep compatibility with older synchronous responses that used id with data[].url.
+  if (payload && httpStatus < 400 && (payload.status || !Array.isArray(payload.data) || !payload.data.length)) {
+    const withoutHandle = (node: any) => node && typeof node === 'object' ? { ...node, id: undefined } : node;
+    const receipt = { ...withoutHandle(payload), result: withoutHandle(payload.result),
+      data: Array.isArray(payload.data) ? payload.data.map(withoutHandle) : withoutHandle(payload.data) };
+    return imageResponseEvidence(receipt, headers, httpStatus, stage);
+  }
+  return imageResponseEvidence(payload, headers, httpStatus, stage);
+}
+function mjImageResult(raw: any, taskId: string) {
+  const data = raw?.data ?? raw?.result?.data;
+  const imageUrls: string[] = Array.isArray(data) ? data.map((item: any) => item?.url).filter((url: any) => typeof url === 'string' && url.trim()) : [];
+  if (!imageUrls.length || imageUrls.length > 4 || imageUrls.length !== data.length) {
+    throw new SpecificationUpstreamError('MJ 已响应但图片结果数量异常，请核实原请求', false, true);
+  }
+  return { imageUrl: imageUrls[0], imageUrls, reportedImageUrl: imageUrls[0], taskId, raw };
+}
+const mjPendingStatuses = ['queued', 'in_progress', 'pending', 'processing', 'running'];
+/** GET-only continuation: never resubmit a paid image request, even when a handle expires. */
+export async function pollMjSpecificationImage(channel: any, initial: MjAsyncImageState,
+  onSubmitted: (id: string) => void, onResponse: ((evidence: ImageResponseEvidence) => void) | undefined,
+  onState: (state: MjAsyncImageState) => void, checkReservation: () => void = () => {}) {
+  let state = { ...initial }, errors = 0;
+  const update = (values: Partial<MjAsyncImageState>) => { state = { ...state, ...values }; onState(state); };
+  while (Date.now() < state.deadlineAt) {
+    checkReservation();
+    let response: Response, raw: any;
+    try {
+      response = await fetch(mjBaseUrl(channel.baseUrl) + '/v1/images/' + encodeURIComponent(state.handle), {
+        headers: { Authorization: 'Bearer ' + channel.apiKey }, redirect: 'error',
+        signal: AbortSignal.timeout(Math.max(1, Math.min(channel.timeout || 60_000, 60_000, state.deadlineAt - Date.now()))),
+      });
+      if (!response.ok) {
+        // These describe the query, not a confirmed failure of the accepted task.
+        if ([400, 401, 402, 403, 404, 410].includes(response.status)) {
+          update({ status: 'unavailable', lastPollAt: Date.now() });
+          throw new SpecificationUpstreamError(response.status === 404 || response.status === 410
+            ? 'MJ 原任务查询句柄已失效或不存在，请核实原任务；不会重新生成'
+            : 'MJ 原任务查询不可用 (HTTP ' + response.status + ')，请核实原任务', false, true, false, response.status);
+        }
+        throw new Error('query unavailable');
+      }
+      raw = await response.json();
+    } catch (error: any) {
+      if (error instanceof SpecificationUpstreamError) throw error;
+      update({ status: 'poll_error', lastPollAt: Date.now() });
+      if (++errors >= 3) throw new SpecificationUpstreamError('MJ 原任务查询暂时中断，请核实原任务；已保留查询句柄', false, true);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      continue;
+    }
+    checkReservation();
+    errors = 0;
+    const evidence = mjResponseEvidence(raw, response.headers, response.status, 'response_without_id');
+    onResponse?.(evidence);
+    if (evidence.id) onSubmitted(evidence.id);
+    const status = String(raw?.status || '').toLowerCase();
+    const progress = typeof raw?.progress === 'number' && Number.isFinite(raw.progress) ? Math.max(0, Math.min(99, raw.progress)) : state.progress;
+    if (status === 'completed') {
+      const result = mjImageResult(raw, evidence.id);
+      update({ status, progress: 100, lastPollAt: Date.now() });
+      return result;
+    }
+    if (status === 'failed') {
+      update({ status, lastPollAt: Date.now() });
+      const detail = String(raw?.error?.message || raw?.error || raw?.message || 'MJ 图片生成失败');
+      const safe = detail.split(channel.apiKey || '\0').join('[REDACTED]').replace(/sk-[\w-]+/g, '[REDACTED]').replace(/kmai/gi, 'MJ').slice(0, 300);
+      throw new SpecificationUpstreamError(safe, false, false, false, response.status, true);
+    }
+    if (!mjPendingStatuses.includes(status)) {
+      update({ status: 'unrecognized', lastPollAt: Date.now() });
+      throw new SpecificationUpstreamError('MJ 原任务返回未知状态，请核实原任务', false, true);
+    }
+    update({ status, progress, lastPollAt: Date.now() });
+    await new Promise(resolve => setTimeout(resolve, 5000));
+  }
+  update({ status: 'timed_out' });
+  throw new SpecificationUpstreamError('MJ 原任务查询超时，请核实原任务；不会重新生成', false, true);
+}
+
+export async function generateSpecificationImage(target: RouteCandidate, request: SpecificationRequest, onStarting: () => void, onSubmitted: (id: string) => void, onResponse?: (evidence: ImageResponseEvidence) => void,
+  onMjAsyncState: (state: MjAsyncImageState) => void = () => {}, checkMjReservation: () => void = () => {}) {
   const c = { ...target.channel, timeout: imageGenerationTimeout(target.channel) }, model = target.route.upstreamModel, i = request.input;
   let started = false;
   const trackedFetch: typeof fetch = async (url, init) => {
@@ -293,13 +376,22 @@ export async function generateSpecificationImage(target: RouteCandidate, request
     } catch (error: any) { throw new SpecificationUpstreamError(error.message, true); }
     const url = mjBaseUrl(c.baseUrl) + '/v1/images/' + (payload instanceof FormData ? 'edits' : 'generations');
     let taskId = '';
+    const submittedAt = Date.now();
     const raw = await post(url, c, payload, onStarting, (body, headers) => {
-      taskId = extractImageUpstreamTaskId(body, headers);
+      taskId = mjResponseEvidence(body, headers, 200, 'response_without_id').id;
       if (taskId) onSubmitted(taskId);
-    }, onResponse).catch((error: Error) => { error.message = error.message.replace(/kmai/gi, 'MJ'); throw error; });
-    const imageUrls: string[] = Array.isArray(raw.data) ? raw.data.map((item: any) => item?.url).filter((url: any) => typeof url === 'string' && url.trim()) : [];
-    if (!imageUrls.length || imageUrls.length > 4) throw new SpecificationUpstreamError('MJ 已响应但图片结果数量异常，请核实原请求', false, true);
-    return { imageUrl: imageUrls[0], imageUrls, reportedImageUrl: imageUrls[0], taskId, raw };
+    }, onResponse, mjResponseEvidence).catch((error: Error) => { error.message = error.message.replace(/kmai/gi, 'MJ'); throw error; });
+    const status = String(raw?.status || '').toLowerCase();
+    if (status === 'failed') {
+      const detail = String(raw?.error?.message || raw?.error || raw?.message || 'MJ 图片生成失败');
+      throw new SpecificationUpstreamError(detail.split(c.apiKey || '\0').join('[REDACTED]').replace(/kmai/gi, 'MJ').slice(0, 300), false, false, false, 200, true);
+    }
+    if (status === 'completed' || !status && Array.isArray(raw?.data) && raw.data.length) return mjImageResult(raw, taskId);
+    const handle = typeof raw?.id === 'string' ? raw.id.trim() : '';
+    if (!handle || status && !mjPendingStatuses.includes(status)) throw new SpecificationUpstreamError('MJ 未返回有效查询句柄，请核实原请求', false, true);
+    const state: MjAsyncImageState = { handle, status: status || 'queued', submittedAt, deadlineAt: submittedAt + MJ_ASYNC_TIMEOUT_MS };
+    onMjAsyncState(state); // Persist before the very first GET or any waiting.
+    return pollMjSpecificationImage(c, state, onSubmitted, onResponse, onMjAsyncState, checkMjReservation);
   }
   const options = { baseUrl: c.baseUrl, apiKey: c.apiKey, prompt: request.prompt, aspectRatio: i.ratio, resolution: i.resolution,
     referenceImages: request.images.map(s => publishSpecificationAsset(s, request.publicBaseUrl)), quality: i.quality,
