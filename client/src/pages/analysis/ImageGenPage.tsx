@@ -457,7 +457,8 @@ export default function ImageGenPage() {
     if (!managedLimits.qualities.includes(managedQuality)) setManagedQuality(managedLimits.qualities[0] || '');
     if (!managedLimits.resolutions.includes(mingFeiResolution)) setMingFeiResolution((managedLimits.resolutions[0] || '2K') as any);
     if (!managedLimits.ratios.includes(aspectRatio)) setAspectRatio(managedLimits.ratios[0] || '1:1');
-    if (imageCount > managedLimits.maxOutputs) setImageCount(managedLimits.maxOutputs);
+    if (managedLimits.outputsPerTask) setImageCount(managedLimits.outputsPerTask);
+    else if (imageCount > managedLimits.maxOutputs) setImageCount(managedLimits.maxOutputs);
   }, [selectedModel, managedLimits, mingFeiResolution, aspectRatio, imageCount, managedQuality]);
   const handleGenerate = useCallback(() => {
     if (!prompt.trim()) return;
@@ -480,7 +481,7 @@ export default function ImageGenPage() {
     const batchPrompt = prompt.trim();
     const batchModel = selectedModel;
     const batchAspectRatio = aspectRatio;
-    const batchCount = imageCount;
+    const batchCount = managedLimits?.outputsPerTask || imageCount;
     const batchQuality = managedLimits ? managedQuality || undefined : batchModel === 'gpt-image-2'
       ? pidoiQuality
       : batchModel === 'gpt-image-2-mingfei' ? mingFeiQuality : undefined;
@@ -797,8 +798,8 @@ export default function ImageGenPage() {
           {actionNotice && <p className="ig-action-notice" role="status">{actionNotice}</p>}
           <div className="ig-toolbar">
             <SettingSelect label="生成模型" value={selectedModel} onChange={setSelectedModel} options={models.map(model => ({ value: model.id, label: model.name + (!model.available ? ' · 暂不可用' : imageReferenceLimit(model) === 0 ? ' · 仅文生图' : '') }))} />
-            <SettingSelect label="画面比例" value={aspectRatio} onChange={setAspectRatio} options={managedLimits ? ASPECT_RATIOS.filter(ratio => managedLimits.ratios.includes(ratio.value)) : ASPECT_RATIOS} />
-            <SettingSelect label="生成数量" value={imageCount} onChange={setImageCount} options={managedLimits ? COUNT_OPTIONS.filter(option => option.value <= managedLimits.maxOutputs) : COUNT_OPTIONS} />
+            <SettingSelect label="画面比例" value={aspectRatio} onChange={setAspectRatio} options={managedLimits ? managedLimits.ratios.map(ratio => ({ value: ratio, label: ratio })) : ASPECT_RATIOS} />
+            {managedLimits?.outputsPerTask ? <div className="ig-fixed-setting"><span>每次出图</span><strong>{managedLimits.outputsPerTask} 张 · 按次计费</strong></div> : <SettingSelect label="生成数量" value={imageCount} onChange={setImageCount} options={managedLimits ? COUNT_OPTIONS.filter(option => option.value <= managedLimits.maxOutputs) : COUNT_OPTIONS} />}
             <details className="ig-advanced"><summary aria-label="画质设置" title="画质设置"><SlidersHorizontal size={17} /></summary><div className="ig-settings">
             {selectedModel === 'gpt-image-2' && !managedLimits && <SettingSelect label="输出画质" value={pidoiQuality} onChange={setPidoiQuality} options={PIDOI_QUALITY_OPTIONS} />}
             {Boolean(managedLimits?.qualities.length) && <SettingSelect label="生成质量" value={managedQuality} onChange={setManagedQuality} options={managedLimits!.qualities.map(quality => ({ value: quality, label: quality }))} />}
@@ -807,7 +808,7 @@ export default function ImageGenPage() {
             {selectedModel === 'gpt-image-2-mingfei' && !managedLimits && <><SettingSelect label="生成质量" value={mingFeiQuality} onChange={setMingFeiQuality} options={MINGFEI_QUALITY_OPTIONS} /><SettingSelect label="输出分辨率" value={mingFeiResolution} onChange={setMingFeiResolution} options={MINGFEI_RESOLUTION_OPTIONS} /></>}
               {!managedLimits && !['gpt-image-2','gpt-image-2-mingfei'].includes(selectedModel) && <span className="ig-default-quality">默认画质</span>}
             </div></details>
-            <div className="ig-submit-section">{displayRate !== undefined && <span className="ig-estimate" title="预计费用">¥{(Number(displayRate) * imageCount).toFixed(2)}</span>}
+            <div className="ig-submit-section">{displayRate !== undefined && <span className="ig-estimate" title="预计费用">¥{(Number(displayRate) * (managedLimits?.outputsPerTask ? 1 : imageCount)).toFixed(2)}</span>}
               <button type="submit" className="ig-submit" disabled={!canGenerate} aria-label={activeBatchCount >= MAX_CONCURRENT_BATCHES ? '已达到并发批次上限' : generationMode === 'image' ? '开始改图' : '开始生成图片'} title="Enter 生成"><ArrowUpRight size={20} /><span>生成</span></button>
             </div>
           </div>

@@ -25,6 +25,9 @@ import { recordCanvasEvent } from '../middleware/canvasRequest.js';
 import { logUsage } from '../middleware/quota.js';
 import { routingMismatches, type MediaKind } from '../../shared/modelRouting.js';
 import { issueUploadUrl } from './uploadAccess.js';
+import { isKmaiChannel } from './kmaiAdapter.js';
+import { KMAI_MJ_MODEL_ID } from '../../shared/kmai.js';
+import { saveMjImageBatch, type MjImageBatch } from './kmaiImageResults.js';
 import { resolvePublicModelId } from './publicModelNameService.js';
 import { batchContextForRequest, batchStore, markBatchSubmitting, recordBatchFailure } from './videoBatchService.js';
 
@@ -192,6 +195,7 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
   failTask(id, '没有可用且满足参数的线路'); onEvent({ type: 'error', message: '没有可用且满足参数的线路' });
 }
 async function runImages(id: number, candidates: RouteCandidate[], request: SpecificationRequest, req: Request, onEvent: (data: any) => void) {
+  if (metadata(id).nativeImageOutputs === 4) return runMjImages(id, candidates, request, req, onEvent);
   const urls: string[] = [], taskIds: string[] = [], jobs: any[] = [];
   for (let index = 0; index < request.input.outputs; index++) {
     let done = false, uncertain = false;
@@ -239,6 +243,45 @@ async function runImages(id: number, candidates: RouteCandidate[], request: Spec
   if (urls.length) { complete(id, urls); onEvent({ type: 'complete', imageUrls: urls, contentId: id }); }
   else { const reason = metadata(id).failureReason || '图片生成失败'; failTask(id, reason); onEvent({ type: 'error', message: reason }); }
 }
+async function saveMjResults(id: number, channel: any, req: Request, onEvent: (data: any) => void) {
+  const batch = metadata(id).nativeImageBatch as MjImageBatch;
+  const persist = () => patch(id, { nativeImageBatch: batch, imageJobs: batch.jobs,
+    imageUrls: batch.jobs.map(job => job.localUrl).filter(Boolean) });
+  const urls = await saveMjImageBatch(batch, id, req, channel, persist,
+    (imageUrl, index) => onEvent({ type: 'image_ready', imageUrl, index, total: 4, contentId: id }));
+  if (urls.length !== 4) throw new Error('MJ 返回的图片不足 4 张，需要核实原任务');
+  patch(id, { submissionStartedAt: null });
+  complete(id, urls);
+  onEvent({ type: 'complete', imageUrls: urls, contentId: id });
+}
+
+async function runMjImages(id: number, candidates: RouteCandidate[], request: SpecificationRequest, req: Request, onEvent: (data: any) => void) {
+  for (const target of candidates) {
+    if (!isKmaiChannel(target.channel) || !routeStillEnabled(metadata(id).requestedModel, target, request.input) || !claimRouteProbe(target.healthKey)) continue;
+    let accepted = false;
+    try {
+      patch(id, { routingRouteId: target.route.id, routingHealthKey: target.healthKey, channelId: target.channel.id,
+        channelApiKeyId: target.channel.apiKeyId, upstreamModel: target.route.upstreamModel, actualModel: target.route.executionModel,
+        actualChannel: target.channel.type });
+      const result = await generateSpecificationImage(target, request,
+        () => patch(id, { submissionStartedAt: new Date().toISOString() }),
+        upstreamTaskId => { accepted = true; patch(id, { upstreamTaskId }); });
+      accepted = true;
+      const sourceUrls = 'imageUrls' in result && Array.isArray(result.imageUrls) ? result.imageUrls : [result.imageUrl];
+      patch(id, { nativeImageBatch: { sourceUrls, jobs: [] }, upstreamImageUrls: sourceUrls });
+      await saveMjResults(id, target.channel, req, onEvent);
+      noteRouteResult(target.healthKey, true); return;
+    } catch (error: any) {
+      if (accepted || error instanceof SpecificationUpstreamError && error.uncertain) {
+        holdForReview(id, error.message || 'MJ 原任务结果待核实，请勿重复提交');
+        onEvent({ type: 'error', message: 'MJ 原任务结果待核实，已保存图片保留，请勿重复提交' }); return;
+      }
+      if (error instanceof SpecificationUpstreamError) noteRouteResult(target.healthKey, false, error.message, error.blocked);
+      if (!(error instanceof SpecificationUpstreamError && error.retrySafe)) break;
+    }
+  }
+  failTask(id, 'MJ 图片生成失败'); onEvent({ type: 'error', message: 'MJ 图片生成失败' });
+}
 type ApiContext = { token: any; reserve: (amount: number, model: string, pricingSnapshot?: PricingSnapshot) => any };
 export async function handleSpecificationGeneration(req: Request, res: Response, kind: MediaKind, apiContext?: ApiContext): Promise<boolean> {
   let suppliedId: string;
@@ -271,7 +314,9 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
         for (const key of field === 'reference_images' ? ['image_urls','image_url','images'] : field === 'reference_videos' ? ['reference_video','video_urls','video_url'] : ['audio_url','reference_audios','audios']) delete body[key];
         body[field] = [...values, data]; }
     }
-    const request = specificationRequest({ ...body, resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (spec.limits.duration.mode === 'fixed' ? spec.limits.duration.min : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'));
+    const nativeImageOutputs = kind === 'image' && modelId === KMAI_MJ_MODEL_ID ? 4 : undefined;
+    if (nativeImageOutputs && body.n !== undefined && ![1, 4].includes(Number(body.n))) throw fail('MJ 每次任务固定返回 4 张图片');
+    const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (spec.limits.duration.mode === 'fixed' ? spec.limits.duration.min : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'));
     const mismatch = routingMismatches(spec.limits, request.input, kind);
     if (mismatch.length) throw fail(mismatch.join('；'));
     request.input.resolution = spec.limits.resolutions.find(r => r.toLowerCase() === request.input.resolution.toLowerCase()) || request.input.resolution;
@@ -284,17 +329,18 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     if (request.firstFrame) request.firstFrame = normalized[request.images.length];
     if (request.lastFrame) request.lastFrame = normalized[request.images.length + Number(Boolean(request.firstFrame))];
     const batch = !apiContext && kind === 'video' ? batchContextForRequest(req as any) : null;
-    const usage = { resolution: request.input.resolution, seconds: request.input.seconds, count: request.input.outputs };
+    const usage = { resolution: request.input.resolution, seconds: request.input.seconds, count: nativeImageOutputs ? 1 : request.input.outputs };
     const quote = batch?.pricingSnapshot ? { ...PricingService.quoteSnapshot(batch.pricingSnapshot, usage), pricingSnapshot: batch.pricingSnapshot }
       : PricingService.quote(modelId, usage, false, userId || null);
     if (!quote.billingType) throw fail('该规格尚未配置用户售价');
+    if (nativeImageOutputs && quote.billingType !== 'per_call') throw fail('MJ 图片任务请配置按次售价，每次返回 4 张图片');
     if (kind === 'video') {
       if (!['per_call', 'per_second'].includes(quote.billingType)) throw fail('视频用户售价必须按条或按秒配置');
       if (!batch) assertExpectedVideoCost(body, quote.cost);
     }
     const create = () => ContentService.save({ userId, orgId: (req as any).orgId || null, type: kind, modelId,
       title: request.prompt.slice(0, 200), inputText: request.prompt, status: 'queued', cost: batch ? 0 : quote.cost,
-      metadata: { managedSpecification: true, requestedModel: modelId, model: modelId, count: request.input.outputs,
+      metadata: { managedSpecification: true, requestedModel: modelId, model: modelId, count: request.input.outputs, nativeImageOutputs,
         pricingSnapshot: quote.pricingSnapshot,
         seconds: request.input.seconds, resolution: request.input.resolution, aspect_ratio: request.input.ratio,
         reference_images: request.images, reference_videos: request.videos, audio_urls: request.audios,
@@ -357,6 +403,12 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
 async function recoverImages(id: number) {
   const initial = metadata(id), jobs = initial.imageJobs as any[];
   const req = { protocol: new URL(initial.publicBaseUrl).protocol.slice(0,-1), get: () => new URL(initial.publicBaseUrl).host } as unknown as Request;
+  if (initial.nativeImageBatch) {
+    const channel = ChannelService.getChannelRaw(initial.channelId, initial.channelApiKeyId || null);
+    if (!channel) { holdForReview(id, 'MJ 原渠道已删除，请管理员核实'); return; }
+    await saveMjResults(id, channel, req, () => {}); return;
+  }
+
   const deadline = Date.now() + 20 * 60_000;
   while (Date.now() < deadline) {
     let pending = false;
@@ -391,7 +443,7 @@ export function resumeSpecificationTasks() {
   for (const row of db.select().from(contents).where(inArray(contents.status, ['processing', 'queued'])).all()) {
     let meta: any; try { meta = JSON.parse(row.metadata || '{}'); } catch { continue; }
     if (!meta.managedSpecification || active.has(row.id)) continue;
-    if (row.type === 'image' && meta.imageJobs?.length) { active.add(row.id); void recoverImages(row.id).catch(() => holdForReview(row.id, '图片结果待核实')).finally(() => active.delete(row.id)); continue; }
+    if (row.type === 'image' && (meta.nativeImageBatch || meta.imageJobs?.length)) { active.add(row.id); void recoverImages(row.id).catch(() => holdForReview(row.id, '图片结果待核实')).finally(() => active.delete(row.id)); continue; }
     if (!meta.videoId || row.type !== 'video') {
       if (!meta.requiresReview) holdForReview(row.id, '服务重启后提交状态待核实，请勿重复提交');
       continue;

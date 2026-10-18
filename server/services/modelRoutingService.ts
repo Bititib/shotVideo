@@ -29,6 +29,7 @@ export function hiddenRouteModelIds(): Set<string> {
 }
 function validateLimits(l: ModelInputLimits) {
   if (!l || typeof l !== 'object') throw error('必须填写输入限制');
+  if (l.outputsPerTask !== undefined && (!Number.isInteger(l.outputsPerTask) || l.outputsPerTask < 1 || l.outputsPerTask > 4 || l.maxOutputs !== l.outputsPerTask)) throw error('原生图片任务的输出数量必须为 1–4，且与输出上限一致');
   for (const key of ['maxImages', 'maxVideos', 'maxAudios', 'maxOutputs', 'minImages'] as const) {
     if (!Number.isInteger(l[key]) || l[key] < 0 || l[key] > 100 || (key === 'maxOutputs' && l[key] < 1)) throw error(key + ' 必须是有效数量');
   }

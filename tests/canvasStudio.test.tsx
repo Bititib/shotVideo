@@ -13,6 +13,8 @@ import { cropBounds } from '../client/src/canvas/ImageTools';
 import { readVideoDuration } from '../client/src/canvas/videoInputs';
 import { fetchVideoModels } from '../client/src/api/video';
 import { contentApi } from '../client/src/api/content';
+import { fetchImageModels } from '../client/src/api/imageGen';
+import { KMAI_MJ_MODEL_ID, kmaiMjLimits } from '../shared/kmai';
 
 vi.mock('../client/src/api/imageGen', () => ({ fetchImageModels: vi.fn().mockResolvedValue([{ id: 'test-image', name: 'Test Image', available: true }]), downloadGeneratedImage: vi.fn() }));
 vi.mock('../client/src/api/video', () => ({ fetchVideoQuote: vi.fn(async (model, resolution, seconds) => ({ model, resolution, seconds, cost: 1, billingType: 'per_call' })), fetchVideoModels: vi.fn().mockResolvedValue([{ id: 'ad-seedance-2.5-480p', name: 'AD Multi', available: true, rates: { '480p': 1 }, allowedSeconds: [5] }, { id: 'test-video', name: 'Test Video', available: true, rates: { '720p': 1 }, allowedSeconds: [5] }, { id: 'veo-omni-flash-video-edit', name: 'Test Video Edit', available: true, rates: { '720p': 1 }, allowedSeconds: [10] }]) }));
@@ -41,6 +43,23 @@ function mount(initial = newDocument(), projects = [initial]) {
 }
 
 describe('canvas user workflows', () => {
+  it('submits one native MJ task without quality and keeps all four results in node history', async () => {
+    vi.mocked(fetchImageModels).mockResolvedValueOnce([{ id: KMAI_MJ_MODEL_ID, name: 'MJ', description: '', available: true, rate: 2, routingLimits: kmaiMjLimits() }]);
+    const generator = { ...newNode('image', { x: 0, y: 0 }, 'a paper boat'), generator: true, model: KMAI_MJ_MODEL_ID, title: 'MJ 节点' };
+    const board = mount({ ...newDocument(), nodes: [generator] });
+    fireEvent.pointerDown(screen.getByRole('article', { name: 'MJ 节点' }), { button: 0, pointerId: 1 });
+    fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'), { pointerId: 1 }); openSelectedComposer();
+    await waitFor(() => expect((screen.getByLabelText('生成数量') as HTMLSelectElement).value).toBe('4'));
+    expect((screen.getByLabelText('生成数量') as HTMLSelectElement).disabled).toBe(true);
+    expect(document.querySelector('.studio-generate-footer small')?.textContent).toContain('将预扣 ¥2 ·');
+    vi.mocked(streamGeneration).mockImplementation(async (_kind, _params, _signal, cb) => cb({ type: 'complete', imageUrls: ['/one.png','/two.png','/three.png','/four.png'] }));
+    fireEvent.click(screen.getByRole('button', { name: '生成图像', exact: true }));
+    await waitFor(() => expect(board.current().nodes[0].job?.status).toBe('done'));
+    const params = vi.mocked(streamGeneration).mock.calls[0][1];
+    expect(params).toMatchObject({ model: KMAI_MJ_MODEL_ID, n: 4, resolution: '1K' });
+    expect(params).not.toHaveProperty('quality'); expect(streamGeneration).toHaveBeenCalledOnce();
+    expect(board.current().nodes[0].versions?.map(v => v.src)).toEqual(['/one.png','/two.png','/three.png','/four.png']);
+  });
   it.each([
     {status:'review',metadata:{error:'纵横科技提交结果待核实，费用保留'}},
     {status:'processing',metadata:{requiresReview:true}},

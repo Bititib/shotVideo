@@ -547,7 +547,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
         ...(options.kind === 'video' && (options.videoMode === 'edit' || options.videoMode === 'multimodal') ? { reference_videos: capturedRefs.filter(n => n.kind === 'video' && n.src).map(n => n.src!), ...(options.videoMode === 'multimodal' ? { audio_urls: capturedRefs.filter(n => n.kind === 'audio' && n.src).map(n => n.src!) } : {}) } : {}),
         reference_images: options.kind === 'video' && (options.videoMode === 'text' || options.videoMode === 'frames') ? undefined : refs.length ? refs : undefined,
         ...(options.kind === 'video' && options.videoMode === 'frames' ? { first_frame: refs[imageRefs.findIndex(n => n.id === options.firstFrameId)], last_frame: refs[imageRefs.findIndex(n => n.id === options.lastFrameId)] } : {}),
-        ...(options.kind === 'image' ? { n: options.count || 1, quality: options.resolution === '4K' ? 'high' : options.resolution === '2K' ? 'medium' : 'low' } : { video_length: options.seconds, expectedCost: options.expectedCost }) };
+        ...(options.kind === 'image' ? { n: options.count || 1, ...(options.routingLimits && !options.routingLimits.qualities.length ? {} : { quality: options.resolution === '4K' ? 'high' : options.resolution === '2K' ? 'medium' : 'low' }) } : { video_length: options.seconds, expectedCost: options.expectedCost }) };
       await streamGeneration(options.kind, params, controller.signal, event => patch(n => applyGenerationEvent(n, event)));
       patch(n => n.job?.status === 'running' ? { ...n, job: { ...n.job, status: n.job.contentId || n.job.requestId ? 'running' : 'interrupted', message: '响应已结束，正在核实结果。可到生成记录查看。' } } : n);
     } catch (error: any) {

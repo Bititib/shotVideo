@@ -1,4 +1,5 @@
 import { imageGenerationTimeout } from './imageGenerationTimeout.js';
+import { isKmaiChannel, kmaiBaseUrl, buildKmaiMjImagePayload } from './kmaiAdapter.js';
 import { isAsyncVideoChannel, buildAsyncVideoPayload, asyncVideoCreateUrl, pollAsyncVideo } from './asyncVideoAdapter.js';
 import fs from 'node:fs';
 import { extractImageUpstreamTaskId, imageResponseEvidence, type ImageResponseEvidence } from './imageTaskMetadataService.js';
@@ -89,6 +90,7 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
 }
 export async function submitSpecificationVideo(target: RouteCandidate, request: SpecificationRequest, onStarting: (metadata?: Record<string, unknown>) => void) {
   const c = target.channel, model = target.route.upstreamModel, exec = target.route.executionModel, i = request.input;
+  if (isKmaiChannel(c)) throw new SpecificationUpstreamError('KMAI 渠道仅接入 MJ 图片模型', true);
   if (isAsyncVideoChannel(c)) {
     let payload: ReturnType<typeof buildAsyncVideoPayload>;
     try {
@@ -270,6 +272,23 @@ export async function generateSpecificationImage(target: RouteCandidate, request
       if (error instanceof FunAiApiError) throw new SpecificationUpstreamError(error.message, false, error.uncertain, false, error.status, error.confirmedFailure);
       throw new SpecificationUpstreamError(error.message || 'FunAI 图片生成失败', !started, started);
     }
+  }
+  if (isKmaiChannel(c)) {
+    let payload: ReturnType<typeof buildKmaiMjImagePayload>;
+    try {
+      payload = buildKmaiMjImagePayload({ model, prompt: request.prompt, resolution: i.resolution, ratio: i.ratio,
+        images: request.images, videos: request.videos, audios: request.audios, firstFrame: request.firstFrame,
+        lastFrame: request.lastFrame, outputs: i.outputs, size: request.body.size, quality: i.quality || request.body.quality });
+    } catch (error: any) { throw new SpecificationUpstreamError(error.message, true); }
+    const url = kmaiBaseUrl(c.baseUrl) + '/v1/images/' + (payload instanceof FormData ? 'edits' : 'generations');
+    let taskId = '';
+    const raw = await post(url, c, payload, onStarting, (body, headers) => {
+      taskId = extractImageUpstreamTaskId(body, headers);
+      if (taskId) onSubmitted(taskId);
+    }, onResponse);
+    const imageUrls: string[] = Array.isArray(raw.data) ? raw.data.map((item: any) => item?.url).filter((url: any) => typeof url === 'string' && url.trim()) : [];
+    if (!imageUrls.length || imageUrls.length > 4) throw new SpecificationUpstreamError('KMAI 已响应但图片结果数量异常，请核实原请求', false, true);
+    return { imageUrl: imageUrls[0], imageUrls, reportedImageUrl: imageUrls[0], taskId, raw };
   }
   const options = { baseUrl: c.baseUrl, apiKey: c.apiKey, prompt: request.prompt, aspectRatio: i.ratio, resolution: i.resolution,
     referenceImages: request.images.map(s => publishSpecificationAsset(s, request.publicBaseUrl)), quality: i.quality,

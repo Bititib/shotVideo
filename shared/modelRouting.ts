@@ -1,6 +1,8 @@
 export type MediaKind = 'image' | 'video';
 export type DurationRule = { mode: 'range' | 'fixed' | 'options'; min: number; max: number; step: number; values: number[] };
 export type ModelInputLimits = {
+  /** A native image task produces this many results with one upstream submission. */
+  outputsPerTask?: number;
   maxImages: number; maxVideos: number; maxAudios: number; maxOutputs: number; minImages: number;
   resolutions: string[]; ratios: string[]; duration: DurationRule;
   firstFrame: boolean; lastFrame: boolean; qualities: string[];
@@ -32,6 +34,7 @@ export function routingMismatches(l: ModelInputLimits, i: RoutingInput, kind: Me
   if (i.videos > l.maxVideos) reasons.push('视频最多 ' + l.maxVideos + ' 个');
   if (i.audios > l.maxAudios) reasons.push('音频最多 ' + l.maxAudios + ' 段');
   if (i.outputs > l.maxOutputs) reasons.push('输出最多 ' + l.maxOutputs + ' 个');
+  if (l.outputsPerTask && i.outputs !== l.outputsPerTask) reasons.push('每次任务固定返回 ' + l.outputsPerTask + ' 张图片');
   if (i.firstFrame && !l.firstFrame) reasons.push('不支持独立首帧');
   if (i.lastFrame && !l.lastFrame) reasons.push('不支持独立尾帧');
   if (l.resolutions.length && !l.resolutions.some(r => r.toLowerCase() === i.resolution.toLowerCase())) reasons.push('分辨率不匹配');
@@ -49,7 +52,8 @@ export function routeRequestCost(route: ModelRoute, input: RoutingInput): number
   if (route.costUnit === 'unknown') return null;
   const rate = Object.entries(route.resolutionCosts).find(([key]) => key.toLowerCase() === input.resolution.toLowerCase())?.[1] ?? route.cost;
   if (rate === null || !Number.isFinite(rate) || rate < 0) return null;
-  return rate * (route.costUnit === 'per_second' ? input.seconds : input.outputs);
+  const calls = route.limits.outputsPerTask ? input.outputs / route.limits.outputsPerTask : input.outputs;
+  return rate * (route.costUnit === 'per_second' ? input.seconds : route.costUnit === 'per_call' ? calls : input.outputs);
 }
 
 
