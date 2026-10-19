@@ -1,6 +1,7 @@
 import { registerUpload } from '../services/uploadAccess.js';
 import { prepareVideoForDelivery } from '../services/videoCompatibilityService.js';
 import { DEFAULT_TTS_CHARACTER_RATE } from '../../shared/tts.js';
+import { beijingDateKey, beijingDayBounds } from '../../shared/time.js';
 import { parseCopywritingOptions } from '../../shared/copywriting.js';
 import { reserveUserCharge } from '../services/billingReservation.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
@@ -472,7 +473,9 @@ router.post('/comic-drama-projects/:id/analyze-episodes',
 
     const dailyQuota = Number(req.userTier?.dailyQuota ?? -1);
     if (dailyQuota >= 0) {
-      const usage = sqlite.prepare("SELECT count(*) AS count FROM usage_logs WHERE user_id = ? AND date(created_at) = date('now')").get(req.userId!) as any;
+      const today = beijingDayBounds(beijingDateKey())!;
+      const usage = sqlite.prepare("SELECT count(*) AS count FROM usage_logs WHERE user_id = ? AND created_at >= ? AND created_at < ?")
+        .get(req.userId!, today.start, today.end) as any;
       const remaining = Math.max(0, dailyQuota - Number(usage?.count || 0));
       if (remaining < candidates.length) return res.status(429).json({
         error: `今日剩余分析次数为 ${remaining}，不足以批量分析 ${candidates.length} 集`,

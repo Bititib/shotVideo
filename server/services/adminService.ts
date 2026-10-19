@@ -3,9 +3,10 @@ import { recordPublicModelReview } from './publicModelMetadataService.js';
 import { validatePublicModelName, rememberPublicModelNames } from './publicModelNameService.js';
 import { db } from '../db/index.js';
 import { users, tiers, models, tierModelAccess, usageLogs, settings, contents, apiLogs, modelPricing, channels, channelApiKeys } from '../db/schema.js';
-import { eq, like, or, and, gte, sql, desc, count } from 'drizzle-orm';
+import { eq, like, or, and, gte, inArray, lt, sql, desc, count } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import { getHmStudioUpstreamVideoModel } from './hmStudioVideoModels.js';
+import { beijingDateKey, beijingDayBounds, recentBeijingDateKeys } from '../../shared/time.js';
 
 interface GetUsersOptions {
   page: number;
@@ -107,15 +108,15 @@ export class AdminService {
   static getDashboardStats() {
     const totalUsers = db.select({ count: sql<number>`count(*)` }).from(users).get()?.count || 0;
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = beijingDayBounds(beijingDateKey())!;
     const todayCalls = db.select({ count: sql<number>`count(*)` })
       .from(usageLogs)
-      .where(gte(usageLogs.createdAt, today))
+      .where(and(gte(usageLogs.createdAt, today.start), lt(usageLogs.createdAt, today.end)))
       .get()?.count || 0;
 
     const todayActiveUsers = db.select({ count: sql<number>`count(distinct user_id)` })
       .from(usageLogs)
-      .where(gte(usageLogs.createdAt, today))
+      .where(and(gte(usageLogs.createdAt, today.start), lt(usageLogs.createdAt, today.end)))
       .get()?.count || 0;
 
     const totalCalls = db.select({ count: sql<number>`count(*)` }).from(usageLogs).get()?.count || 0;
@@ -150,23 +151,27 @@ export class AdminService {
       .map(type => ({ type, count: usageTypeTotals[type] }));
 
     // 近7天趋势
-    const trend7Days = db.select({
-      date: sql<string>`date(created_at)`,
+    const dateKeys = recentBeijingDateKeys(7);
+    const trendStart = beijingDayBounds(dateKeys[0])!.start;
+    const trendRows = db.select({
+      date: sql<string>`date(created_at, '+8 hours')`,
       count: sql<number>`count(*)`,
     }).from(usageLogs)
-      .where(gte(usageLogs.createdAt, sql`date('now', '-6 days')`))
-      .groupBy(sql`date(created_at)`)
-      .orderBy(sql`date(created_at)`)
+      .where(gte(usageLogs.createdAt, trendStart))
+      .groupBy(sql`date(created_at, '+8 hours')`)
+      .orderBy(sql`date(created_at, '+8 hours')`)
       .all();
+    const trendCountByDate = new Map(trendRows.map(row => [row.date, Number(row.count || 0)]));
+    const trend7Days = dateKeys.map(date => ({ date, count: trendCountByDate.get(date) || 0 }));
 
     const typedTrendRows = db.select({
-      date: sql<string>`date(created_at)`,
+      date: sql<string>`date(created_at, '+8 hours')`,
       type: usageLogs.analysisType,
       count: sql<number>`count(*)`,
     }).from(usageLogs)
-      .where(gte(usageLogs.createdAt, sql`date('now', '-6 days')`))
-      .groupBy(sql`date(created_at)`, usageLogs.analysisType)
-      .orderBy(sql`date(created_at)`)
+      .where(gte(usageLogs.createdAt, trendStart))
+      .groupBy(sql`date(created_at, '+8 hours')`, usageLogs.analysisType)
+      .orderBy(sql`date(created_at, '+8 hours')`)
       .all();
     const trendByDate = new Map<string, { date: string; video: number; image: number; audio: number; analysis: number }>();
     for (const row of typedTrendRows) {
@@ -174,12 +179,9 @@ export class AdminService {
       current[dashboardUsageCategory(row.type)] += Number(row.count || 0);
       trendByDate.set(row.date, current);
     }
-    const trend7DaysByType = Array.from({ length: 7 }, (_, index) => {
-      const date = new Date();
-      date.setUTCDate(date.getUTCDate() - (6 - index));
-      const key = date.toISOString().slice(0, 10);
-      return trendByDate.get(key) || { date: key, video: 0, image: 0, audio: 0, analysis: 0 };
-    });
+    const trend7DaysByType = dateKeys.map(date =>
+      trendByDate.get(date) || { date, video: 0, image: 0, audio: 0, analysis: 0 },
+    );
 
     return {
       totalUsers,
@@ -234,14 +236,27 @@ export class AdminService {
 
     const items = query.orderBy(desc(users.createdAt)).limit(pageSize).offset(offset).all();
 
-    // 获取每个用户的今日用量
-    const today = new Date().toISOString().split('T')[0];
+    // Admin usage means video tasks created during the Beijing calendar day.
+    // Count persisted tasks directly so web/API/failure/recovery paths share one durable source of truth.
+    const beijingDayStart = sql`datetime('now', '+8 hours', 'start of day', '-8 hours')`;
+    const beijingNextDayStart = sql`datetime('now', '+8 hours', 'start of day', '+1 day', '-8 hours')`;
+    const pageUserIds = items.map(item => item.id);
+    const videoTaskCounts = pageUserIds.length > 0
+      ? db.select({ userId: contents.userId, count: sql<number>`count(*)` })
+        .from(contents)
+        .where(and(
+          inArray(contents.userId, pageUserIds),
+          eq(contents.type, 'video'),
+          gte(contents.createdAt, beijingDayStart),
+          lt(contents.createdAt, beijingNextDayStart),
+        ))
+        .groupBy(contents.userId)
+        .all()
+      : [];
+    const videoTaskCountByUser = new Map(videoTaskCounts.map(row => [row.userId, Number(row.count) || 0]));
     const usersWithUsage = items.map(u => {
-      const usage = db.select({ count: sql<number>`count(*)` })
-        .from(usageLogs)
-        .where(and(eq(usageLogs.userId, u.id), gte(usageLogs.createdAt, today)))
-        .get();
-      return { ...u, usedToday: usage?.count || 0 };
+      const videoTasksToday = videoTaskCountByUser.get(u.id) || 0;
+      return { ...u, usedToday: videoTasksToday, videoTasksToday };
     });
 
     // 总条数

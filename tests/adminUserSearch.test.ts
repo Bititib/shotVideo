@@ -2,10 +2,11 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 import { db, sqlite } from '../server/db/index.js';
-import { users, tiers } from '../server/db/schema.js';
+import { contents, users, tiers } from '../server/db/schema.js';
 import { AdminService } from '../server/services/adminService.js';
 
 beforeEach(() => {
+  db.delete(contents).run();
   db.delete(users).run();
   db.delete(tiers).run();
   db.insert(tiers).values([
@@ -60,5 +61,22 @@ describe('administrator customer search', () => {
     const result = AdminService.getUsers({ page: 1, pageSize: 15, search: '   ' });
     expect(result.items).toHaveLength(4);
     expect(result.total).toBe(4);
+  });
+
+  it('counts all video tasks from the current Beijing day instead of usage logs', () => {
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    const previousBeijingDay = String(sqlite.prepare(
+      "SELECT datetime('now', '+8 hours', 'start of day', '-8 hours', '-1 second')",
+    ).pluck().get());
+    db.insert(contents).values([
+      { userId: 1, type: 'video', title: 'completed video', status: 'completed', createdAt: now },
+      { userId: 1, type: 'video', title: 'failed video', status: 'failed', createdAt: now },
+      { userId: 1, type: 'image', title: 'image does not count', status: 'completed', createdAt: now },
+      { userId: 1, type: 'video', title: 'previous Beijing day', status: 'completed', createdAt: previousBeijingDay },
+      { userId: 2, type: 'video', title: 'other user', status: 'completed', createdAt: now },
+    ]).run();
+
+    const result = AdminService.getUsers({ page: 1, pageSize: 15, search: '张小明' });
+    expect(result.items[0]).toMatchObject({ id: 1, usedToday: 2, videoTasksToday: 2 });
   });
 });

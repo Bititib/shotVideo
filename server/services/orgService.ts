@@ -1,7 +1,8 @@
 import { db, sqlite } from '../db/index.js';
 import { organizations, orgMembers, users, tiers, usageLogs, contents } from '../db/schema.js';
-import { eq, and, gte, sql, desc, count } from 'drizzle-orm';
+import { eq, and, gte, lt, sql, desc, count } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
+import { beijingDateKey, beijingDayBounds, recentBeijingDateKeys } from '../../shared/time.js';
 
 // ============ 组织 CRUD ============
 
@@ -129,11 +130,11 @@ export class OrgService {
       .all();
 
     // 附加今日用量
-    const today = new Date().toISOString().split('T')[0];
+    const today = beijingDayBounds(beijingDateKey())!;
     return members.map(m => {
       const usage = db.select({ count: sql<number>`count(*)` })
         .from(usageLogs)
-        .where(and(eq(usageLogs.userId, m.userId), gte(usageLogs.createdAt, today)))
+        .where(and(eq(usageLogs.userId, m.userId), gte(usageLogs.createdAt, today.start), lt(usageLogs.createdAt, today.end)))
         .get();
       return { ...m, usedToday: usage?.count || 0 };
     });
@@ -229,7 +230,7 @@ export class OrgService {
     const memberIds = members.map(m => m.userId);
     if (memberIds.length === 0) return { todayCalls: 0, totalCalls: 0, totalContents: 0, memberStats: [], trend7Days: [], featureDistribution: [], costBreakdown: [] };
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = beijingDayBounds(beijingDateKey())!;
     const memberIdList = memberIds.join(',');
 
     // 按成员统计用量
@@ -238,7 +239,7 @@ export class OrgService {
         .from(users).where(eq(users.id, uid)).get();
       const todayUsage = db.select({ count: sql<number>`count(*)` })
         .from(usageLogs)
-        .where(and(eq(usageLogs.userId, uid), gte(usageLogs.createdAt, today)))
+        .where(and(eq(usageLogs.userId, uid), gte(usageLogs.createdAt, today.start), lt(usageLogs.createdAt, today.end)))
         .get()?.count || 0;
       const totalUsage = db.select({ count: sql<number>`count(*)` })
         .from(usageLogs)
@@ -258,17 +259,11 @@ export class OrgService {
 
     // 近 7 天调用趋势
     const trend7Days: { date: string; count: number }[] = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
-      const nextDate = new Date(d);
-      nextDate.setDate(nextDate.getDate() + 1);
-      const nextDateStr = nextDate.toISOString().split('T')[0];
-
+    for (const dateStr of recentBeijingDateKeys(7)) {
+      const bounds = beijingDayBounds(dateStr)!;
       const row = sqlite.prepare(
         `SELECT count(*) as cnt FROM usage_logs WHERE user_id IN (${memberIdList}) AND created_at >= ? AND created_at < ?`
-      ).get(dateStr, nextDateStr) as any;
+      ).get(bounds.start, bounds.end) as any;
       trend7Days.push({ date: dateStr, count: row?.cnt || 0 });
     }
 

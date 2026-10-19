@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 import { db, sqlite } from '../server/db/index';
 import { users, organizations, apiTokens, channels, contents } from '../server/db/schema';
 import { confirmZonghengNotAccepted, refundConfirmedZonghengVideo } from '../server/services/zonghengSubmissionResolutionService';

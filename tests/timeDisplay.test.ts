@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { beijingDayBounds, formatBeijingTime, parseUtcTimestamp } from '../shared/time';
+import { beijingDateKey, beijingDayBounds, beijingLocalInputToUtc, formatBeijingLocalInput, formatBeijingTime, parseUtcTimestamp, recentBeijingDateKeys } from '../shared/time';
 import { formatContentGenerationTime, formatVideoGenerationTime } from '../client/src/utils/videoTiming';
 
 describe('Beijing timestamps and video elapsed time', () => {
@@ -15,6 +15,20 @@ describe('Beijing timestamps and video elapsed time', () => {
   it('filters complete Beijing days with an exclusive end boundary', () => {
     expect(beijingDayBounds('2026-09-27')).toEqual({ start: '2026-09-26 16:00:00', end: '2026-09-27 16:00:00' });
     expect(beijingDayBounds('invalid')).toBeNull();
+  });
+
+  it('builds Beijing calendar keys without depending on the machine timezone', () => {
+    expect(beijingDateKey(Date.parse('2026-10-18T15:59:59Z'))).toBe('2026-10-18');
+    expect(beijingDateKey(Date.parse('2026-10-18T16:00:00Z'))).toBe('2026-10-19');
+    expect(recentBeijingDateKeys(3, Date.parse('2026-10-18T16:30:00Z'))).toEqual([
+      '2026-10-17', '2026-10-18', '2026-10-19',
+    ]);
+  });
+
+  it('round-trips Beijing datetime-local values through UTC storage', () => {
+    expect(beijingLocalInputToUtc('2026-10-19T18:30')).toBe('2026-10-19T10:30:00.000Z');
+    expect(formatBeijingLocalInput('2026-10-19T10:30:00.000Z')).toBe('2026-10-19T18:30');
+    expect(beijingLocalInputToUtc('')).toBeNull();
   });
 
   it('calculates elapsed time across mixed SQLite/ISO timestamps, ignoring old timezone-skewed duration', () => {

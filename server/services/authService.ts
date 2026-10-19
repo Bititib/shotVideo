@@ -2,9 +2,10 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { db } from '../db/index.js';
 import { users, tiers, usageLogs, organizations, orgMembers } from '../db/schema.js';
-import { eq, and, gte, sql } from 'drizzle-orm';
+import { eq, and, gte, lt, sql } from 'drizzle-orm';
 import { env } from '../config/env.js';
 import { TokenService } from './tokenService.js';
+import { beijingDateKey, beijingDayBounds } from '../../shared/time.js';
 
 interface RegisterInput {
   email: string;
@@ -110,12 +111,13 @@ export class AuthService {
     }
 
     // 今日已使用次数
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const today = beijingDayBounds(beijingDateKey())!;
     const todayUsage = db.select({ count: sql<number>`count(*)` })
       .from(usageLogs)
       .where(and(
         eq(usageLogs.userId, userId),
-        gte(usageLogs.createdAt, today)
+        gte(usageLogs.createdAt, today.start),
+        lt(usageLogs.createdAt, today.end),
       ))
       .get();
 

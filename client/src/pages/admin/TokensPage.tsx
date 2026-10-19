@@ -2,6 +2,7 @@ import { balanceInput, balanceUpdate } from '../../utils/balance';
 import React, { useEffect, useState } from 'react';
 import { adminApi } from '../../api/admin';
 import { Plus, Key, Trash2, Pencil, Copy, Power, PowerOff } from 'lucide-react';
+import { beijingLocalInputToUtc, formatBeijingLocalInput, formatBeijingTime } from '../../../../shared/time';
 
 export default function TokensPage() {
   const [data, setData] = useState<{ items: any[]; total: number }>({ items: [], total: 0 });
@@ -31,6 +32,7 @@ export default function TokensPage() {
 
   const openEdit = (t: any) => setEdit({
     ...t, isNew: false,
+    expiresAt: formatBeijingLocalInput(t.expiresAt),
     modelsText: (t.allowedModels || []).join('\n'),
     userId: t.userId || '',
   });
@@ -44,7 +46,7 @@ export default function TokensPage() {
         allowedModels,
         ...balanceUpdate(edit, true),
         rateLimit: parseInt(edit.rateLimit) || -1,
-        expiresAt: edit.expiresAt || null,
+        expiresAt: beijingLocalInputToUtc(edit.expiresAt),
         userId: edit.userId ? parseInt(edit.userId) : null,
       };
 
@@ -125,7 +127,7 @@ export default function TokensPage() {
               <span>已用: <span className="text-zinc-300">¥{t.usedAmount.toFixed(2)}</span></span>
               <span>频率限制: <span className="text-zinc-300">{t.rateLimit === -1 ? '不限' : `${t.rateLimit}/min`}</span></span>
               <span>模型: <span className="text-zinc-300">{t.allowedModels.length === 0 ? '全部' : t.allowedModels.join(', ')}</span></span>
-              {t.expiresAt && <span>过期: <span className="text-zinc-300">{t.expiresAt.slice(0, 10)}</span></span>}
+              {t.expiresAt && <span>过期（北京时间）: <span className="text-zinc-300">{formatBeijingTime(t.expiresAt)}</span></span>}
             </div>
           </div>
         ))}
@@ -204,8 +206,8 @@ export default function TokensPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-xs text-zinc-400 mb-1.5">过期时间（留空=永久）</label>
-                <input type="datetime-local" value={edit.expiresAt?.slice(0, 16) || ''} onChange={e => setEdit({ ...edit, expiresAt: e.target.value })}
+                <label className="block text-xs text-zinc-400 mb-1.5">过期时间（北京时间，留空=永久）</label>
+                <input type="datetime-local" value={edit.expiresAt || ''} onChange={e => setEdit({ ...edit, expiresAt: e.target.value })}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
               </div>
               <div>

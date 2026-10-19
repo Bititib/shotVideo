@@ -101,7 +101,7 @@ export default function UsersPage() {
       <div className="bg-white/[0.02] border border-white/5 rounded-2xl overflow-x-auto mb-6">
         <table className="w-full">
           <thead><tr className="border-b border-white/5">
-            {['ID', '邮箱', '用户名', '等级', '余额', '今日用量', '状态', '操作'].map(h => <th key={h} className="text-left text-[10px] text-zinc-500 uppercase tracking-wider px-4 py-3 font-medium">{h}</th>)}
+            {['ID', '邮箱', '用户名', '等级', '余额', '今日视频任务', '状态', '操作'].map(h => <th key={h} className="text-left text-[10px] text-zinc-500 uppercase tracking-wider px-4 py-3 font-medium">{h}</th>)}
           </tr></thead>
           <tbody>
             {loading ? (
@@ -115,7 +115,7 @@ export default function UsersPage() {
                   <td className="px-4 py-3 text-sm text-zinc-300">{u.username}</td>
                   <td className="px-4 py-3"><span className={`text-xs font-medium ${tierColors[u.tierName] || 'text-zinc-400'}`}>{u.tierName || '-'}</span></td>
                   <td className="px-4 py-3 text-xs"><span className={u.balance > 0 ? 'text-green-400' : 'text-zinc-500'}>¥{(u.balance || 0).toFixed(2)}</span></td>
-                  <td className="px-4 py-3 text-xs text-zinc-400">{u.usedToday}</td>
+                  <td className="px-4 py-3 text-xs text-zinc-400" title="北京时间今日通过网页或 API 创建的视频任务数">{u.videoTasksToday ?? u.usedToday}</td>
                   <td className="px-4 py-3">{u.isActive ? <span className="text-xs text-green-400">启用</span> : <span className="text-xs text-red-400">禁用</span>}</td>
                   <td className="px-4 py-3 flex items-center gap-2">
                     <button onClick={() => setEditUser({ ...u })} className="text-[10px] px-2.5 py-1 bg-white/5 hover:bg-white/10 rounded-lg text-zinc-300 transition-colors">编辑</button>

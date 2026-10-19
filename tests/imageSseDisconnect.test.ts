@@ -27,7 +27,10 @@ it('keeps explicit backend failure final', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => response(['data: {"type":"error","message":"失败"}\n\n'])));
   const event = vi.fn(); generateImage({ prompt: 'test' }, event);
   await vi.waitFor(() => expect(event).toHaveBeenCalledTimes(1));
-  expect(event.mock.calls[0][0]).toMatchObject({ type: 'error', message: '失败' });
+  expect(event.mock.calls[0][0]).toMatchObject({
+    type: 'error',
+    message: '生成未完成，请在生成记录查看任务状态，或联系管理员处理。',
+  });
 });
 it('silences stream events after intentional cancellation', async () => {
   let resolve!: (value: Response) => void;

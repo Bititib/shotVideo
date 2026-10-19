@@ -10,6 +10,7 @@ import { useImageDropPaste } from '../../hooks/useImageDropPaste';
 import { useAuthGuard } from '../../hooks/useAuthGuard';
 import { useAuthStore } from '../../stores/authStore';
 import { isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
+import { formatBeijingTime } from '../../../../shared/time';
 
 interface GeneratedImage {
   id: string;
@@ -779,7 +780,7 @@ export default function ImageGenPage() {
                     : <PlaceholderCard index={index} progress={batch?.progresses[index] || 0} phase={status === 'failed' ? 'failed' : batch?.phase} />}
                   <div className="ig-task-info">
                     <p className="ig-task-prompt" title={record.prompt}>{record.prompt || '未填写描述'}</p>
-                    <div className="ig-task-meta"><span>{contentId ? `任务 #${contentId}` : '本次任务'}</span><time dateTime={record.createdAt.toISOString()}>{record.createdAt.getTime() ? record.createdAt.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '时间未记录'}</time></div>
+                    <div className="ig-task-meta"><span>{contentId ? `任务 #${contentId}` : '本次任务'}</span><time dateTime={record.createdAt.toISOString()} title="北京时间">{record.createdAt.getTime() ? formatBeijingTime(record.createdAt, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '时间未记录'}</time></div>
                     <p className="ig-task-detail" title={batch?.statusMessage || record.model}>{batch && !url ? batch.statusMessage : `${models.find(model => model.id === record.model)?.name || record.model} · ${record.aspectRatio || '默认比例'}`}</p>
                   </div>
                   <div className="ig-record-actions" aria-label={`任务 ${contentId || record.id} 操作`}>

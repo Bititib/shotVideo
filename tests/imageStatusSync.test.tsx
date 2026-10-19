@@ -21,6 +21,15 @@ beforeEach(() => { vi.mocked(contentApi.getMyContents).mockResolvedValue({ items
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 const row = (status: string, metadata = {}) => ({ id: 12693, type: 'image', status, metadata,
   inputText: '测试图片', model: 'gpt-image-2', createdAt: new Date().toISOString() });
+const taskCard = () => document.querySelector<HTMLElement>('[data-task-id="12693"]');
+function expectTaskCard(status: string, label: string) {
+  const card = taskCard();
+  expect(card).toBeTruthy();
+  expect(card?.dataset.status).toBe(status);
+  expect(card?.querySelector('.ig-task-status')?.textContent).toBe(label);
+  expect(card?.querySelector('.ig-task-meta')?.textContent).toContain('任务 #12693');
+  return card!;
+}
 async function submit() {
   await act(async () => { render(<ImageGenPage />); });
   fireEvent.change(screen.getByRole('textbox'), { target: { value: '测试图片' } });
@@ -33,8 +42,8 @@ it('reconciles a live batch to failed even without an SSE terminal event', async
   await submit();
   vi.mocked(contentApi.getMyContents).mockResolvedValue({ items: [row('failed', { failureReason: '上游超时', count: 1 })] });
   await act(async () => { await mocks.poll(); });
-  expect(screen.getByText('失败 · 任务 #12693')).toBeTruthy();
-  expect(screen.getByText('上游超时')).toBeTruthy();
+  const card = expectTaskCard('failed', '失败');
+  expect(card.querySelector('.ig-task-detail')?.textContent).toBe('上游超时');
   expect(screen.queryByLabelText('图片 1 生成中')).toBeNull();
   expect(generateImage).toHaveBeenCalledTimes(1);
 });
@@ -45,14 +54,14 @@ it('fetches tracked jobs outside the first page and recovers a lost success even
   await act(async () => { await mocks.poll(); });
   expect(contentApi.getById).toHaveBeenCalledWith(12693, expect.any(AbortSignal));
   expect(screen.getByRole('img', { name: /历史图片/ })).toBeTruthy();
-  expect(screen.queryByText(/任务 #12693/)).toBeNull();
+  expectTaskCard('completed', '成功');
   expect(generateImage).toHaveBeenCalledTimes(1);
 });
 it('restores pending review without claiming the image failed or spinning', async () => {
   vi.mocked(contentApi.getMyContents).mockResolvedValue({ items: [row('processing', { requiresReview: true, error: '上游受理结果待核实' })] });
   await act(async () => { render(<ImageGenPage />); });
-  expect(screen.getByText('待核实 · 任务 #12693')).toBeTruthy();
-  expect(screen.getByText('上游受理结果待核实')).toBeTruthy();
+  const card = expectTaskCard('review', '待核实');
+  expect(card.querySelector('.ig-task-detail')?.textContent).toBe('上游受理结果待核实');
   expect(document.querySelector('.ig-batch .ig-spin')).toBeNull();
 });
 it('does not infer queueing merely from zero percent', async () => {
@@ -64,7 +73,7 @@ it('does not infer queueing merely from zero percent', async () => {
 it('explains stale processing records without inventing a final status', async () => {
   vi.mocked(contentApi.getMyContents).mockResolvedValue({ items: [{ ...row('processing'), createdAt: new Date(Date.now() - 86400000).toISOString() }] });
   await act(async () => { render(<ImageGenPage />); });
-  expect(screen.getByText('核实中 · 任务 #12693')).toBeTruthy();
+  expectTaskCard('review', '核实中');
   expect(screen.getByText(/后台尚未确认成功或失败/)).toBeTruthy();
   expect(document.querySelector('.ig-batch .ig-spin')).toBeNull();
 });
@@ -72,6 +81,6 @@ it('preserves the batch with an explicit checking state after a polling failure'
   await submit();
   vi.mocked(contentApi.getMyContents).mockRejectedValueOnce(new Error('offline'));
   await act(async () => { await expect(mocks.poll()).rejects.toThrow('offline'); });
-  expect(screen.getByText('核实中 · 任务 #12693')).toBeTruthy();
+  expectTaskCard('review', '核实中');
   expect(screen.getByText(/暂时无法读取任务状态/)).toBeTruthy();
 });

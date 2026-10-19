@@ -1,8 +1,9 @@
 import { Response, NextFunction } from 'express';
 import { db } from '../db/index.js';
 import { usageLogs } from '../db/schema.js';
-import { eq, and, gte, sql } from 'drizzle-orm';
+import { eq, and, gte, lt, sql } from 'drizzle-orm';
 import type { TierRequest } from './tier.js';
+import { beijingDateKey, beijingDayBounds } from '../../shared/time.js';
 
 /**
  * 配额检查中间件
@@ -20,12 +21,13 @@ export function quotaMiddleware(req: TierRequest, res: Response, next: NextFunct
     return next();
   }
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = beijingDayBounds(beijingDateKey())!;
   const todayUsage = db.select({ count: sql<number>`count(*)` })
     .from(usageLogs)
     .where(and(
       eq(usageLogs.userId, req.userId),
-      gte(usageLogs.createdAt, today)
+      gte(usageLogs.createdAt, today.start),
+      lt(usageLogs.createdAt, today.end),
     ))
     .get();
 
