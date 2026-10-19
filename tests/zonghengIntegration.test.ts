@@ -489,6 +489,58 @@ describe('Zongheng legacy entry points, isolated database and simulated provider
     finish=true;await response.text();await vi.waitFor(()=>expect(latest().status).toBe(finalStatus==='succeeded'?'completed':'failed'));
     expect(balance()).toBe(finalStatus==='succeeded'?98:100);expect(posts).toBe(1);
   });
+  it.each(['/api/video/generate','/v1/videos'].flatMap(endpoint => ['succeeded','failed'].flatMap(finalStatus => ['headers','body'].map(stage => ({endpoint,finalStatus,stage})))))('recovers a stuck $stage query at $endpoint, synchronizes $finalStatus and ignores late responses',async({endpoint,finalStatus,stage})=>{
+    sqlite.prepare("INSERT INTO api_tokens (id,user_id,token_key,balance) VALUES (1,1,'test',-1)").run();
+    let posts=0,queries=0,release: (value:any)=>void = () => {};
+    upstream=async(_url,init)=>{
+      if(init.method==='POST'){posts++;return Response.json({task_id:'vid_stuck'});}
+      queries++;
+      if(queries===1){
+        const stalled=new Promise<any>(resolve=>{release=resolve;});
+        return stage==='headers' ? stalled : {text:()=>stalled} as any;
+      }
+      return Response.json({status:finalStatus,video_url:'https://channel.invalid/out.mp4',error:'confirmed generation failure'});
+    };
+    const response=await post(endpoint,request);await response.text();
+    await vi.waitFor(()=>expect(latest().status).toBe(finalStatus==='succeeded'?'completed':'failed'));
+    expect(posts).toBe(1);expect(balance()).toBe(finalStatus==='succeeded'?98:100);
+    const opposite={status:finalStatus==='succeeded'?'failed':'succeeded',video_url:'https://channel.invalid/late.mp4'};
+    release(stage==='headers'?Response.json(opposite):JSON.stringify(opposite));
+    await new Promise(resolve=>nativeSetTimeout(resolve,20));
+    video.resumeAllPendingVideoTasks();video.resumeAllPendingVideoTasks();
+    expect(latest().status).toBe(finalStatus==='succeeded'?'completed':'failed');
+    expect(balance()).toBe(finalStatus==='succeeded'?98:100);expect(posts).toBe(1);
+    expect(latest().cost).toBe(finalStatus==='succeeded'?2:0);
+    if(finalStatus==='failed') expect(JSON.parse(latest().metadata).queueRefunded).toBe(true);
+  });
+  it.each(['/api/video/generate','/v1/videos'])('recovers stalled result storage at %s without another submission or charge',async endpoint=>{
+    const {downloadAndLocalizeVideo}=await import('../server/services/videoLocalizationService');
+    let release:(value:string)=>void=()=>{},posts=0;
+    vi.mocked(downloadAndLocalizeVideo).mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
+    vi.spyOn(globalThis,'setTimeout').mockImplementation(((fn:any,ms:number,...args:any[])=>nativeSetTimeout(fn,ms===360000||ms>=1000&&ms<=60000?5:ms,...args)) as any);
+    upstream=async(_url,init)=>{if(init.method==='POST'){posts++;return Response.json({task_id:'vid_storage'});}return Response.json({status:'succeeded',video_url:'https://channel.invalid/out.mp4'});};
+    await(await post(endpoint,request)).text();
+    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    release('/uploads/videos/late.mp4');await new Promise(resolve=>nativeSetTimeout(resolve,20));
+    expect(latest().resultUrl).toBe('/uploads/videos/zongheng-test.mp4');expect(balance()).toBe(98);expect(posts).toBe(1);
+  });
+  it.each(['/api/video/generate','/v1/videos'])('does not overwrite a finalized refund when an old download completes at %s',async endpoint=>{
+    sqlite.prepare("INSERT INTO api_tokens (id,user_id,token_key,balance) VALUES (1,1,'test',-1)").run();
+    const {downloadAndLocalizeVideo}=await import('../server/services/videoLocalizationService');
+    const {refundConfirmedZonghengVideo}=await import('../server/services/zonghengSubmissionResolutionService');
+    let release:(value:string)=>void=()=>{},started=false;
+    vi.mocked(downloadAndLocalizeVideo).mockImplementationOnce(()=>{started=true;return new Promise(resolve=>{release=resolve;});});
+    upstream=async(_url,init)=>Response.json(init.method==='POST'?{task_id:'vid_refund_race'}:{status:'succeeded',video_url:'https://channel.invalid/out.mp4'});
+    const response=await post(endpoint,request);
+    await vi.waitFor(()=>expect(started).toBe(true));
+    refundConfirmedZonghengVideo(latest().id,'confirmed externally');
+    release('/uploads/videos/late.mp4');
+    if(endpoint==='/v1/videos')await response.text();
+    await new Promise(resolve=>nativeSetTimeout(resolve,30));
+    refundConfirmedZonghengVideo(latest().id,'duplicate confirmation');
+    expect(latest().status).toBe('failed');expect(latest().cost).toBe(0);expect(balance()).toBe(100);
+    expect(latest().resultUrl).toBeFalsy();
+  });
   it('recovers an orphaned active marker without restarting the app or submitting again',async()=>{
     const channelId=db.select().from(channels).get()!.id;
     const id=Number(db.insert(contents).values({userId:1,type:'video',status:'processing',modelId:request.model,cost:2,metadata:JSON.stringify({videoId:'vid_orphan',channelId})}).run().lastInsertRowid);

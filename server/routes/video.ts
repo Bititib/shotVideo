@@ -1,3 +1,4 @@
+import { VideoPollTimeout, withVideoPollDeadline } from '../services/videoPollDeadline.js';
 import { refundConfirmedZonghengVideo } from '../services/zonghengSubmissionResolutionService.js';
 import { queryZonghengTask } from '../services/zonghengTaskQueryService.js';
 import { publicGenerationEvent } from '../../shared/generationMessages.js';
@@ -1118,6 +1119,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
 
+  let resumeAfterPollTimeout = false;
   const sendEvent = (data: Record<string, any>) => {
     recordCanvasEvent(req, data);
     if (!res.destroyed && !res.writableEnded) {
@@ -2608,6 +2610,10 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
 
         if (!isHaya) consecutiveTransientPollFailures = 0;
         const status = await pollResp.json() as any;
+        if (contentId !== null && db.select().from(contents).where(eq(contents.id, contentId)).get()?.status !== 'processing') {
+          if (!res.destroyed && !res.writableEnded) res.end();
+          return;
+        }
         let taskStatus = status.status;
         let progress = status.progress || 0;
         let resultUrl = '';
@@ -2786,16 +2792,25 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
           let finalVideoUrl = '';
           try {
             if (resultUrl && resultUrl.includes('llm.chre3.com')) {
-              finalVideoUrl = await localizeChre3Video(resultUrl, videoId, model);
+              finalVideoUrl = isZongheng
+                ? await withVideoPollDeadline(() => localizeChre3Video(resultUrl, videoId, model), 360_000, 'Video result storage')
+                : await localizeChre3Video(resultUrl, videoId, model);
             } else {
-              finalVideoUrl = await downloadAndLocalizeVideo(resultUrl, videoId, model, dbChannel?.id, dbChannel?.apiKeyId);
+              finalVideoUrl = isZongheng
+                ? await withVideoPollDeadline(() => downloadAndLocalizeVideo(resultUrl, videoId, model, dbChannel?.id, dbChannel?.apiKeyId), 360_000, 'Video result storage')
+                : await downloadAndLocalizeVideo(resultUrl, videoId, model, dbChannel?.id, dbChannel?.apiKeyId);
             }
           } catch (localErr: any) {
+            if (isZongheng && localErr instanceof VideoPollTimeout) throw localErr;
             console.error(`[video] VPS localization failed; task remains processing: ${localErr.message}`);
             sendEvent({ type: 'status', message: '视频已生成，正在保存到本站存储' });
             continue;
           }
 
+          if (contentId !== null && db.select().from(contents).where(eq(contents.id, contentId)).get()?.status !== 'processing') {
+            if (!res.destroyed && !res.writableEnded) res.end();
+            return;
+          }
           billUsage(finalVideoUrl, resultUrl);
           sendEvent({ type: 'complete', videoUrl: finalVideoUrl });
           if (contentId !== null) activePolls.delete(contentId);
@@ -2813,6 +2828,13 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
           return;
         }
       } catch (pollErr: any) {
+        if (isZongheng && pollErr instanceof VideoPollTimeout && contentId !== null) {
+          console.warn('[video] Poll deadline reached; handing original task to recovery:', contentId);
+          resumeAfterPollTimeout = true;
+          sendEvent({ type: 'status', message: '正在后台同步原任务结果，请勿重复提交' });
+          if (!res.destroyed && !res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
+          return;
+        }
         if (isHaya) consecutiveTransientPollFailures++;
         console.warn(`[video] 轮询异常: ${pollErr.message}`);
         // 轮询失败不立即退出，继续重试
@@ -2833,6 +2855,10 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
       if (!isHmStudio) activePolls.delete(contentId);
     }
     if (isHaya && contentId !== null) releaseHayaSubmission(contentId);
+    if (resumeAfterPollTimeout && contentId !== null) {
+      const row = db.select().from(contents).where(eq(contents.id, contentId)).get();
+      if (row?.status === 'processing') void resumePollForTask(contentId, row);
+    }
   }
 });
 
@@ -3568,6 +3594,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
 
         if (!isHaya) consecutiveTransientPollFailures = 0;
         const statusData = await pollResp.json() as any;
+        if (db.select().from(contents).where(eq(contents.id, contentId)).get()?.status !== 'processing') break;
         let taskStatus = statusData.status;
         let progress = statusData.progress || 0;
         let resultUrl = '';
@@ -3725,15 +3752,20 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           let finalVideoUrl = '';
           try {
             if (resultUrl && resultUrl.includes('llm.chre3.com')) {
-              finalVideoUrl = await localizeChre3Video(resultUrl, videoId, model);
+              finalVideoUrl = isZongheng
+                ? await withVideoPollDeadline(() => localizeChre3Video(resultUrl, videoId, model), 360_000, 'Video result storage')
+                : await localizeChre3Video(resultUrl, videoId, model);
             } else {
-              finalVideoUrl = await downloadAndLocalizeVideo(resultUrl, videoId, model, metadata.channelId, metadata.channelApiKeyId);
+              finalVideoUrl = isZongheng
+                ? await withVideoPollDeadline(() => downloadAndLocalizeVideo(resultUrl, videoId, model, metadata.channelId, metadata.channelApiKeyId), 360_000, 'Video result storage')
+                : await downloadAndLocalizeVideo(resultUrl, videoId, model, metadata.channelId, metadata.channelApiKeyId);
             }
           } catch (localErr: any) {
             console.error(`[video-recover] VPS localization failed; will retry: ${localErr.message}`);
             continue;
           }
 
+          if (db.select().from(contents).where(eq(contents.id, contentId)).get()?.status !== 'processing') break;
           const completedTime = Date.now();
           const createdTime = parseUtcTimestamp(currentRecord.createdAt);
           const durationMs = (!isNaN(createdTime) && createdTime > 0 && completedTime >= createdTime)
@@ -3780,7 +3812,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
         }
       } catch (err: any) {
         if (isHaya) consecutiveTransientPollFailures++;
-        console.warn(`[video-recover] Polling exception: ${err.message}`);
+        console.warn(`[video-recover] Polling exception for task ${contentId}: ${err.message}`);
       }
       }
     } catch (err: any) {
