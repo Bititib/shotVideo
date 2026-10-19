@@ -1,0 +1,7 @@
+// @vitest-environment jsdom
+import React from 'react';import {afterEach,it,expect,vi} from 'vitest';import {render,screen,fireEvent,waitFor,cleanup} from '@testing-library/react';
+vi.mock('../client/src/api/client',()=>({api:{get:vi.fn()}}));
+import {api} from '../client/src/api/client';import FundLedgerPage from '../client/src/pages/admin/FundLedgerPage';
+afterEach(()=>{cleanup();vi.resetAllMocks();});
+it('shows a debit of exactly one yuan as a debit, filters and never offers a balance mutation',async()=>{vi.mocked(api.get).mockResolvedValue({items:[{id:1,account_type:'user',account_id:3,account_name:'测试用户',kind:'charge',delta:-1,balance_before:2,balance_after:1,created_at:'2026-10-19 00:00:00',actor_id:null,content_id:99}],total:1,startedAt:'2026-10-19 00:00:00'});render(<FundLedgerPage/>);expect(await screen.findByText('-1.00')).toBeTruthy();expect(screen.queryByText('不限额')).toBeNull();fireEvent.change(screen.getByLabelText('账户类型'),{target:{value:'user'}});fireEvent.change(screen.getByLabelText('开始日期'),{target:{value:'2026-10-19'}});fireEvent.click(screen.getByRole('button',{name:'查询'}));await waitFor(()=>expect(vi.mocked(api.get).mock.lastCall?.[0]).toContain('from=2026-10-19'));expect(screen.queryByRole('button',{name:'充值'})).toBeNull();});
+it('shows access errors without leaking stale table rows',async()=>{vi.mocked(api.get).mockRejectedValue(new Error('需要超级管理员权限'));render(<FundLedgerPage/>);expect(await screen.findByRole('alert')).toHaveProperty('textContent','需要超级管理员权限');});

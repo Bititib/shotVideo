@@ -32,6 +32,7 @@ const TokensPage = lazy(() => import('./pages/admin/TokensPage'));
 const PricingPage = lazy(() => import('./pages/admin/PricingPage'));
 const OrgsPage = lazy(() => import('./pages/admin/OrgsPage'));
 const ContentsPage = lazy(() => import('./pages/admin/ContentsPage'));
+const FundLedgerPage = lazy(() => import('./pages/admin/FundLedgerPage'));
 const BillingReviewPage = lazy(() => import('./pages/admin/BillingReviewPage'));
 const FeedbackPage = lazy(() => import('./pages/admin/FeedbackPage'));
 const OrgLayout = lazy(() => import('./pages/org/OrgLayout'));
@@ -115,6 +116,7 @@ export default function App() {
           <Route path="orgs" element={<OrgsPage />} />
           <Route path="contents" element={<ContentsPage />} />
           <Route path="feedback" element={<FeedbackPage />} />
+          <Route path="fund-ledger" element={<FundLedgerPage />} />
           <Route path="billing-review" element={<BillingReviewPage />} />
         </Route>
 

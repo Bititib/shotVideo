@@ -1,3 +1,5 @@
+import { withFundContext } from '../db/fundLedger.js';
+import { sqlite as ledgerDb } from '../db/index.js';
 import { db } from '../db/index.js';
 import { apiTokens, users } from '../db/schema.js';
 import { eq, desc, like, and, sql } from 'drizzle-orm';
@@ -188,3 +190,12 @@ export class TokenService {
     return { valid: true, token };
   }
 }
+
+const chargeToken = TokenService.deductBalance;
+TokenService.deductBalance = function(...args: Parameters<typeof chargeToken>) {
+  return withFundContext(ledgerDb, {kind:'charge',operation:'token_charge'}, () => chargeToken.apply(this,args));
+};
+const refundToken = TokenService.refundBalance;
+TokenService.refundBalance = function(...args: Parameters<typeof refundToken>) {
+  return withFundContext(ledgerDb, {kind:'refund',operation:'token_refund'}, () => refundToken.apply(this,args));
+};

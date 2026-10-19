@@ -1,3 +1,5 @@
+import {withFundContext} from '../db/fundLedger.js';
+import {sqlite as ledgerDb} from '../db/index.js';
 import { Router } from 'express';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { isSuperAdmin } from '../middleware/admin.js';
@@ -11,6 +13,6 @@ router.use(authMiddleware, (req: AuthRequest, res, next) => {
 });
 router.get('/', (req,res,next) => { try { res.json(listBillingReservations(Number(req.query.page || 1),String(req.query.state || 'pending'))); } catch (e) { next(e); } });
 router.post('/:id/resolve', (req: AuthRequest,res,next) => {
-  try { res.json(resolveBillingReservation(req.params.id,req.userId!,req.body.actual,req.body.note)); } catch (e) { next(e); }
+  try { res.json(withFundContext(ledgerDb,{actorId:req.userId,operation:'admin_billing_resolution'},()=>resolveBillingReservation(req.params.id,req.userId!,req.body.actual,req.body.note))); } catch (e) { next(e); }
 });
 export default router;

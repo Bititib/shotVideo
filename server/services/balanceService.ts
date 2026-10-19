@@ -1,3 +1,5 @@
+import { withFundContext } from '../db/fundLedger.js';
+import { sqlite } from '../db/index.js';
 import { db } from '../db/index.js';
 import { users, organizations } from '../db/schema.js';
 import { eq, sql, and } from 'drizzle-orm';
@@ -129,3 +131,17 @@ export class BalanceService {
     return this.getBalance(userId);
   }
 }
+
+// Context is synchronous and restored within the same SQLite transaction as the balance change.
+const debitBalance = BalanceService.deductWithSource;
+BalanceService.deductWithSource = function(...args: Parameters<typeof debitBalance>) {
+  return withFundContext(sqlite, {kind:'charge',operation:args[2],contentId:args[3]?.contentId}, () => debitBalance.apply(this,args));
+};
+const refundBalance = BalanceService.refundToSource;
+BalanceService.refundToSource = function(...args: Parameters<typeof refundBalance>) {
+  return withFundContext(sqlite, {kind:'refund',operation:args[4],contentId:args[5]?.contentId}, () => refundBalance.apply(this,args));
+};
+const rechargeBalance = BalanceService.recharge;
+BalanceService.recharge = function(...args: Parameters<typeof rechargeBalance>) {
+  return withFundContext(sqlite, {kind:'recharge',operation:'recharge'}, () => rechargeBalance.apply(this,args));
+};

@@ -1,3 +1,4 @@
+import { ensureFundLedger } from './fundLedger.js';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import path from 'path';
@@ -133,5 +134,6 @@ try {
 } catch (e) {}
 
 migrateMjNaming(sqlite);
+ensureFundLedger(sqlite);
 export const db = drizzle(sqlite, { schema });
 export { sqlite };

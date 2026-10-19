@@ -1,3 +1,5 @@
+import { withFundContext } from '../db/fundLedger.js';
+import { sqlite as ledgerDb } from '../db/index.js';
 import { Router, Response } from 'express';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
@@ -23,7 +25,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 // 创建 Token
 router.post('/', async (req: AuthRequest, res: Response) => {
   try {
-    const result = TokenService.createToken(req.body);
+    const result = withFundContext(ledgerDb, {actorId:req.userId,operation:'admin_create_token'}, () => TokenService.createToken(req.body));
     res.json({ message: '创建成功', ...result });
   } catch (err: any) { res.status(err.status || 500).json({ error: err.message }); }
 });
@@ -31,7 +33,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
 // 编辑 Token
 router.put('/:id', async (req: AuthRequest, res: Response) => {
   try {
-    TokenService.updateToken(parseInt(req.params.id), req.body);
+    withFundContext(ledgerDb, {kind:'adjustment',actorId:req.userId,operation:'admin_token_balance'}, () => TokenService.updateToken(parseInt(req.params.id), req.body));
     res.json({ message: '更新成功' });
   } catch (err: any) { res.status(err.status || 500).json({ error: err.message }); }
 });

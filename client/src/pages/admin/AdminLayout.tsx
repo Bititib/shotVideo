@@ -5,6 +5,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { LayoutDashboard, Users, Star, Cpu, ArrowLeft, LogOut, Radio, Key, Coins, Building2, Film, MessageSquareWarning } from 'lucide-react';
 
 const adminNavItems = [
+  { to: '/admin/fund-ledger', icon: Coins, label: '资金流水' },
   { to: '/admin/billing-review', icon: Coins, label: '异常账单' },
   { to: '/admin', icon: LayoutDashboard, label: '仪表盘', end: true },
   { to: '/admin/channels', icon: Radio, label: '渠道管理' },
@@ -19,6 +20,7 @@ const adminNavItems = [
 ];
 
 const adminPagePreloads: Record<string, () => Promise<unknown>> = {
+  '/admin/fund-ledger': () => import('./FundLedgerPage'),
   '/admin/billing-review': () => import('./BillingReviewPage'),
   '/admin': () => import('./DashboardPage'),
   '/admin/channels': () => import('./ChannelsPage'),

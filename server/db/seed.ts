@@ -1,3 +1,4 @@
+import { ensureFundLedger } from './fundLedger.js';
 import { migratePidoiImageTimeout } from './imageTimeoutMigration.js';
 import { ensureZonghengVideoPricing } from '../services/zonghengPricingService.js';
 import { HAYA_VIDEO_MODELS } from '../../shared/hayaVideo.js';
@@ -2054,6 +2055,7 @@ export async function initDatabase() {
   }
 
   ensureZonghengVideoPricing();
+  ensureFundLedger(sqlite);
   console.log('✅ 数据库初始化完成');
 }
 

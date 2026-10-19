@@ -1,3 +1,6 @@
+import fundLedgerRoutes from './fundLedger.js';
+import { withFundContext } from '../db/fundLedger.js';
+import { sqlite as ledgerDb } from '../db/index.js';
 import modelSpecificationRoutes from './modelSpecifications.js';
 import pidoiImageAdminRoutes from './pidoiImageAdmin.js';
 import { Router, Response } from 'express';
@@ -14,6 +17,7 @@ const router = Router();
 
 // 所有管理路由都需要登录 + 管理员权限
 router.use(authMiddleware, adminMiddleware);
+router.use('/fund-ledger', fundLedgerRoutes);
 router.use('/model-specifications', modelSpecificationRoutes);
 router.use('/contents', pidoiImageAdminRoutes);
 
@@ -116,7 +120,7 @@ router.put('/users/:id', async (req: AuthRequest, res: Response) => {
   try {
     const userId = parseInt(req.params.id);
     const updates = req.body;
-    AdminService.updateUser(userId, updates);
+    withFundContext(ledgerDb, {kind:'adjustment',actorId:req.userId,operation:'admin_user_balance'}, () => AdminService.updateUser(userId, updates));
     res.json({ message: '更新成功' });
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '更新失败' });
@@ -272,7 +276,7 @@ router.post('/orgs', async (req: AuthRequest, res: Response) => {
 router.put('/orgs/:id', async (req: AuthRequest, res: Response) => {
   try {
     const orgId = parseInt(req.params.id);
-    OrgService.update(orgId, req.body);
+    withFundContext(ledgerDb, {kind:'adjustment',actorId:req.userId,operation:'admin_org_balance'}, () => OrgService.update(orgId, req.body));
     res.json({ message: '更新成功' });
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '更新失败' });

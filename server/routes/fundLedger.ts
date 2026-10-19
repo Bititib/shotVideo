@@ -1,0 +1,10 @@
+import {Router} from 'express';
+import {authMiddleware} from '../middleware/auth.js';
+import {adminMiddleware} from '../middleware/admin.js';
+import {sqlite} from '../db/index.js';
+import {ensureFundLedger} from '../db/fundLedger.js';
+import {listFundLedger} from '../services/fundLedgerQuery.js';
+const router=Router();
+router.use(authMiddleware,adminMiddleware);
+router.get('/',(req,res)=>{try{ensureFundLedger(sqlite);res.setHeader('Cache-Control','no-store');res.json(listFundLedger(sqlite,req.query));}catch(error:any){res.status(error.status||500).json({error:error.status===400?error.message:'资金流水读取失败，请稍后重试'});}});
+export default router;
