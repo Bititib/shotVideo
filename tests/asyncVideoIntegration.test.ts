@@ -29,6 +29,7 @@ const request = (body: Record<string, unknown> = {}) => ({ userId: 1, headers: {
   body: { model: modelId, prompt: '海浪拍打礁石', seconds: 10, aspect_ratio: '9:16', ...body } } as any);
 
 beforeEach(async () => {
+  if (sqlite.prepare("SELECT name FROM sqlite_master WHERE name='video_submission_receipts'").get()) sqlite.exec('DELETE FROM video_submission_receipts');
   vi.clearAllMocks();
   db.delete(contents).run(); db.delete(settings).run(); db.delete(models).run(); db.delete(channels).run(); db.delete(modelPricing).run(); db.delete(users).run();
   db.insert(users).values({ id: 1, email: 'async@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();

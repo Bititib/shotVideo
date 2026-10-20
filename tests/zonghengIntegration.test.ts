@@ -82,6 +82,7 @@ beforeAll(async()=>{
   intervalSpy.mockRestore();
 });
 beforeEach(()=>{
+  if (sqlite.prepare("SELECT name FROM sqlite_master WHERE name='video_submission_receipts'").get()) sqlite.exec('DELETE FROM video_submission_receipts');
   for(const table of ['contents','channels','models','model_pricing','users','api_tokens','api_logs','settings'])sqlite.exec('DELETE FROM '+table);
   sqlite.exec('DROP TABLE IF EXISTS billing_reservations');
   db.insert(users).values({id:1,email:'test',username:'test',passwordHash:'test',balance:100}).run();

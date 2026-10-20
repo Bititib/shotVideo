@@ -3,6 +3,7 @@ import { isZonghengChannel, zonghengTaskUrl, normalizeZonghengTask } from './zon
 import { isHayaChannel, hayaTaskUrl, normalizeHayaTask } from './hayaVideoAdapter.js';
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
+import { findVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
 import { withFundContext } from '../db/fundLedger.js';
 import { fetchVideoTaskResponse, withVideoPollDeadline } from './videoPollDeadline.js';
 import { apiTokens, contents, users, organizations } from '../db/schema.js';
@@ -263,7 +264,10 @@ export class VideoRecoveryService {
     if (record.type !== 'video') throw { status: 400, message: '只有视频任务可以重新获取' };
 
     const metadata = parseMetadata(record.metadata);
-    const videoId = upstreamTaskId(metadata);
+    const receipt = findVideoSubmissionReceipt(contentId);
+    const videoId = upstreamTaskId(metadata) || receipt?.upstreamTaskId || '';
+    if (!metadata.channelId && receipt?.channelId) metadata.channelId = receipt.channelId;
+    if (!metadata.channelApiKeyId && receipt?.channelApiKeyId) metadata.channelApiKeyId = receipt.channelApiKeyId;
     if (!videoId) throw { status: 400, message: '该记录没有保存上游任务 ID，无法重新获取' };
 
     const channel = metadata.channelId

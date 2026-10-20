@@ -16,7 +16,7 @@ import { buildWxHaidiYueVideoPayload, wxHaidiYueCreateUrl, wxHaidiYueTaskUrl, no
 import { buildMjNewApiVideoPayload, normalizeMjNewApiPrompt, isMjNewApiChannel } from './mjNewApiAdapter.js';
 import { buildLongxiaVideoPayload, longxiaVideoCreateUrl, longxiaVideoTaskUrl, normalizeLongxiaVideoTask, isLongxiaChannel } from './longxiaVideoAdapter.js';
 import { buildMiaowuVideoPayload, miaowuVideoCreateUrl, miaowuVideoTaskUrl, normalizeMiaowuVideoTask, isMiaowuChannel } from './miaowuVideoAdapter.js';
-import { buildSnumomWanPayload, normalizeSnumomWanTask, isSnumomWanChannel } from './snumomWanAdapter.js';
+import { buildSnumomWanPayload, normalizeSnumomWanTask, isSnumomWanChannel, extractSnumomTaskId } from './snumomWanAdapter.js';
 import { buildSudaShuiVideoPayload, sudaShuiVideoCreateUrl } from './sudaShuiAdapter.js';
 import { buildNewTokenVideoPayload, newTokenVideoCreateUrl, isNewTokenChannel } from './newTokenAdapter.js';
 import { buildJulunMinimaxH3Payload, isJulunMinimaxH3Model } from './julunMinimaxAdapter.js';
@@ -32,7 +32,7 @@ export type SpecificationRequest = { prompt: string; input: RoutingInput; images
 export class SpecificationUpstreamError extends Error {
   constructor(message: string, public readonly retrySafe: boolean, public readonly uncertain = false, public readonly blocked = false, public readonly upstreamStatus = 0, public readonly confirmedFailure = false) { super(message); }
 }
-export function submissionFailure(status: number, text: string, channel?: { type?: string | null }): SpecificationUpstreamError {
+export function submissionFailure(status: number, text: string, channel?: { type?: string | null }, videoSubmission = false): SpecificationUpstreamError {
   // The MJ contract defines HTTP 402 as a precharge rejection, even if a log ID is attached.
   // Classify by status, not provider wording or the presence of a diagnostic identifier.
   if (isMjChannel(channel) && status === 402) return new SpecificationUpstreamError(
@@ -43,13 +43,14 @@ export function submissionFailure(status: number, text: string, channel?: { type
   try { payload = JSON.parse(text); } catch {}
   const task = payload?.task_id || payload?.taskId || payload?.request_id || payload?.id || payload?.data?.task_id || payload?.data?.id;
   const rejected = !task && ([401, 402, 429].includes(status) || (status === 403 && /api.?key|unauthori[sz]ed|余额|quota|credit/i.test(text))
-    || (status === 503 && /unavailable|maintenance|维护|不可用|overload|capacity|busy/i.test(text)));
+    || (!videoSubmission && status === 503 && /unavailable|maintenance|维护|不可用|overload|capacity|busy/i.test(text)));
   const blocked = [401, 402].includes(status) || (status === 403 && rejected);
   if ([502, 504, 524].includes(status) && /<!doctype\s+html|<html\b/i.test(text)) {
     return new SpecificationUpstreamError('上游网关响应超时 (' + status + ')，任务可能已受理或完成；请核对原任务结果，勿重复提交', false, true, false, status);
   }
+  const uncertain = Boolean(task) || status === 408 || status >= 500 && !rejected;
   return new SpecificationUpstreamError('上游提交失败 (' + status + ')：' + text.replace(/sk-[\w-]+/g, '[REDACTED]').slice(0, 300),
-    rejected, Boolean(task) || status === 408 || status >= 500 && !rejected, blocked, status);
+    rejected, uncertain, blocked, status, !uncertain);
 }
 export function publishSpecificationAsset(source: string, baseUrl: string): string {
   if (!source.startsWith('data:')) return publishReferenceUrl(source, baseUrl);
@@ -90,7 +91,7 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
     }
     let body: unknown; try { body = JSON.parse(text); } catch {}
     onResponse?.(evidenceFor(body, response.headers, response.status, 'response_without_id'));
-    throw submissionFailure(response.status, channel.apiKey ? text.split(channel.apiKey).join('[REDACTED]') : text, channel);
+    throw submissionFailure(response.status, channel.apiKey ? text.split(channel.apiKey).join('[REDACTED]') : text, channel, channel.videoSubmission === true);
   }
   let result: any;
   try { result = await response.json(); }
@@ -100,7 +101,7 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
   return result;
 }
 export async function submitSpecificationVideo(target: RouteCandidate, request: SpecificationRequest, onStarting: (metadata?: Record<string, unknown>) => void) {
-  const c = target.channel, model = target.route.upstreamModel, exec = target.route.executionModel, i = request.input;
+  const c = { ...target.channel, videoSubmission: true }, model = target.route.upstreamModel, exec = target.route.executionModel, i = request.input;
   if (isMjChannel(c)) throw new SpecificationUpstreamError('MJ 渠道仅接入 MJ 图片模型', true);
   if (isAsyncVideoChannel(c)) {
     let payload: ReturnType<typeof buildAsyncVideoPayload>;
@@ -222,8 +223,10 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
       ...(request.firstFrame ? { first_frame: publishSpecificationAsset(request.firstFrame, request.publicBaseUrl) } : {}),
       ...(request.lastFrame ? { last_frame: publishSpecificationAsset(request.lastFrame, request.publicBaseUrl) } : {}) };
   }
-  const job = await post(url, c, payload, onStarting);
-  const id = job.request_id || job.task_id || job.id || job.data?.task_id || job.data?.id;
+  let taskHeaders: Headers | undefined;
+  const job = await post(url, c, payload, onStarting, (_body, headers) => { taskHeaders = headers; });
+  const id = isSnumomWanChannel(c) ? extractSnumomTaskId(job, taskHeaders)
+    : job.task_id || job.taskId || job.id || job.data?.task_id || job.data?.id || job.request_id;
   if (!id) throw new SpecificationUpstreamError('上游未返回任务 ID，提交结果待核实，请勿重复提交', false, true);
   return String(id);
 }

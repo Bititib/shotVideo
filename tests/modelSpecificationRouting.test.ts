@@ -46,6 +46,7 @@ beforeAll(async () => {
   for (const id of [1, 2, 3]) db.insert(channels).values({ id, name: '线路 ' + id, type: 'openai', baseUrl: 'https://provider-' + id + '.invalid' }).onConflictDoNothing().run();
 });
 beforeEach(() => {
+  if (sqlite.prepare("SELECT name FROM sqlite_master WHERE name='video_submission_receipts'").get()) sqlite.exec('DELETE FROM video_submission_receipts');
   for (const id of ['routing-public-test','routing-alias-test']) {
     db.delete(modelPricing).where(eq(modelPricing.modelPattern,id)).run();
     db.insert(modelPricing).values({modelPattern:id,billingType:'per_call',inputPrice:2,outputPrice:0,extraParams:'{}'}).run();
@@ -139,6 +140,7 @@ describe('safe submission failure classification', () => {
   it('fails over explicit unaccepted capacity/auth failures but retains uncertain submissions', () => {
     expect(adapters.submissionFailure(429, '{"error":"rate limit"}').retrySafe).toBe(true);
     expect(adapters.submissionFailure(503, 'service unavailable').retrySafe).toBe(true);
+    expect(adapters.submissionFailure(503, 'service unavailable', undefined, true)).toMatchObject({ retrySafe: false, uncertain: true });
     expect(adapters.submissionFailure(401, 'invalid API key').blocked).toBe(true);
     expect(adapters.submissionFailure(408, 'request timeout').uncertain).toBe(true);
     expect(adapters.submissionFailure(504, 'gateway timeout').uncertain).toBe(true);

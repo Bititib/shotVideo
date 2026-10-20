@@ -27,6 +27,7 @@ beforeAll(async () => {
   userId = db.select().from(users).all()[0].id;
 });
 beforeEach(() => {
+  if (sqlite.prepare("SELECT name FROM sqlite_master WHERE name='video_submission_receipts'").get()) sqlite.exec('DELETE FROM video_submission_receipts');
   db.delete(contents).run(); db.delete(channels).run(); db.delete(settings).where(eq(settings.key, 'model_specification_routes_v1')).run();
   db.delete(settings).where(eq(settings.key, 'model_specification_health_v1')).run();
   sqlite.prepare("DELETE FROM models WHERE provider='blobdraw'").run();

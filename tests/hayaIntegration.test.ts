@@ -81,6 +81,7 @@ beforeAll(async () => {
   intervalSpy.mockRestore();
 });
 beforeEach(() => {
+  if (sqlite.prepare("SELECT name FROM sqlite_master WHERE name='video_submission_receipts'").get()) sqlite.exec('DELETE FROM video_submission_receipts');
   for (const table of ['contents', 'channels', 'models', 'model_pricing', 'users', 'api_logs']) sqlite.exec('DELETE FROM ' + table);
   db.insert(users).values({ id: 1, email: 'test', username: 'test', passwordHash: 'test', balance: 100 }).run();
   for (const spec of HAYA_VIDEO_MODELS) {

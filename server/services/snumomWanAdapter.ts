@@ -100,6 +100,41 @@ export function normalizeSnumomWanTask(payload: any) {
   };
 }
 
+function snumomTaskId(value: unknown): string {
+  if (!['string', 'number'].includes(typeof value)) return '';
+  const taskId = String(value).trim();
+  return /^task_[A-Za-z0-9_-]+$/.test(taskId) ? taskId : '';
+}
+
+/** snumom documents only id/task_id as polling IDs; request_id is a trace ID. */
+export function extractSnumomTaskId(
+  payload: any,
+  headers?: Pick<Headers, 'get'> | Record<string, string | string[] | undefined> | null,
+): string {
+  const firstData = Array.isArray(payload?.data) ? payload.data[0] : payload?.data;
+  const scopes = [payload, firstData, payload?.result, payload?.output, payload?.task, payload?.response?.data]
+    .filter(value => value && typeof value === 'object');
+  for (const scope of scopes) {
+    for (const field of ['task_id', 'taskId', 'id']) {
+      const taskId = snumomTaskId(scope?.[field]);
+      if (taskId) return taskId;
+    }
+  }
+  for (const name of ['x-task-id', 'task-id']) {
+    const value = headers && typeof (headers as Pick<Headers, 'get'>).get === 'function'
+      ? (headers as Pick<Headers, 'get'>).get(name)
+      : (headers as Record<string, string | string[] | undefined> | null)?.[name];
+    const taskId = snumomTaskId(Array.isArray(value) ? value[0] : value);
+    if (taskId) return taskId;
+  }
+  const location = headers && typeof (headers as Pick<Headers, 'get'>).get === 'function'
+    ? (headers as Pick<Headers, 'get'>).get('location')
+    : (headers as Record<string, string | string[] | undefined> | null)?.location;
+  const locationValue = Array.isArray(location) ? location[0] : location;
+  const match = String(locationValue || '').match(/\/v1\/videos\/(task_[A-Za-z0-9_-]+)(?:[/?#]|$)/i);
+  return match ? match[1] : '';
+}
+
 export function snumomContentUrl(baseUrl: string, taskId: string): string {
   return `${baseUrl.replace(/\/+$/, '')}/v1/videos/${encodeURIComponent(taskId)}/content`;
 }

@@ -58,6 +58,7 @@ import {
   canonicalSnumomVideoModel,
   isSnumomWanChannel,
   isSnumomWan30VideoModel,
+  extractSnumomTaskId,
   SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES,
   SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
   SNUMOM_GROK_IMAGINE_VIDEO_SECONDS,
@@ -135,11 +136,15 @@ import { buildLongxiaVideoPayload, isLongxiaChannel, isLongxiaModel, longxiaReso
 import { prepareMiaowuPublicMediaUrls } from '../services/miaowuMediaService.js';
 import { enqueueHmStudioVideoContent, resumePollForTask, holdHayaSubmission, releaseHayaSubmission, holdZonghengSubmission, releaseZonghengSubmission } from './video.js';
 import { localizeGeneratedImage } from './imageGen.js';
-import { withVideoFailureMetadata } from '../services/videoFailureService.js';
+import { extractVideoFailureMessage, isVideoFailurePayload, withVideoFailureMetadata } from '../services/videoFailureService.js';
 import { ContentService } from '../services/contentService.js';
 import { prepareVideoForDelivery, cacheVideoForDelivery, videoDeliveryContentType } from '../services/videoCompatibilityService.js';
 import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
 import { validateVideoPrompt } from '../services/videoPromptValidation.js';
+import { extractVideoUpstreamTaskId, sanitizeUpstreamCreateResponse } from '../services/videoTaskMetadataService.js';
+import { claimVideoSubmission, acceptVideoSubmission, endVideoSubmission, releaseVideoSubmission, videoSubmissionPreparation } from '../services/videoSubmissionGuard.js';
+import { submissionFailure } from '../services/specificationAdapters.js';
+import { refundUnreservedVideo } from '../services/directVideoBillingService.js';
 
 const router = Router();
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
@@ -150,6 +155,7 @@ function persistVideoContentFailure(
   billingMetadata: Record<string, unknown> = {},
 ): void {
   const current = db.select().from(contents).where(eq(contents.id, contentId)).get();
+  if (!current || ['completed', 'failed'].includes(current.status || '')) return;
   const metadata = {
     ...withVideoFailureMetadata(current?.metadata, error),
     ...billingMetadata,
@@ -158,6 +164,32 @@ function persistVideoContentFailure(
     status: 'failed',
     cost: 0,
     metadata: JSON.stringify(metadata),
+  }).where(eq(contents.id, contentId)).run();
+}
+
+function persistVideoContentReview(
+  contentId: number,
+  reason: string,
+  reviewMetadata: Record<string, unknown> = {},
+): void {
+  const current = db.select().from(contents).where(eq(contents.id, contentId)).get();
+  if (!current || ['completed', 'failed'].includes(current.status || '')) return;
+  let metadata: Record<string, unknown> = {};
+  try { metadata = JSON.parse(current?.metadata || '{}'); } catch { }
+  db.update(contents).set({
+    status: 'review',
+    metadata: JSON.stringify({
+      ...metadata,
+      ...reviewMetadata,
+      billingStatus: 'review',
+      upstreamFundsHeld: true,
+      queueRefunded: false,
+      refundAmount: 0,
+      requiresReview: true,
+      submissionReviewReason: reason,
+      progressText: '上游已响应，任务编号待核实，请勿重复提交',
+      reviewStartedAt: new Date().toISOString(),
+    }),
   }).where(eq(contents.id, contentId)).run();
 }
 
@@ -2221,6 +2253,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       metadata: {
         source: 'api',
         resolution,
+        ...videoSubmissionPreparation(),
         pricingSnapshot: pricingQuote.pricingSnapshot,
         seconds,
         billableSeconds,
@@ -2341,10 +2374,14 @@ async function handleVideoCreation(req: Request, res: Response) {
       deduction = deductTokenOrUserBalance(token, totalCost, model);
       const job = await submitZonghengVideo(baseUrl, apiKey, { model: upstreamModel, prompt, seconds, ratio, resolution, images, videos, audios,
         firstFrame: frames[0], lastFrame: frames[1], quality: body.quality, negativePrompt: body.negative_prompt, generateAudio: body.generate_audio }, zonghengOrder(contentId!),
-        () => patchZonghengTask(contentId!, { zonghengSubmissionStarted: new Date().toISOString(), billingStatus: 'reserved',
-          billingBalanceSource: deduction?.balanceDeduction?.source, billingOrgId: deduction?.balanceDeduction?.orgId }), channel.timeout);
+        () => {
+          claimVideoSubmission(contentId!, channel.timeout || 120_000);
+          patchZonghengTask(contentId!, { zonghengSubmissionStarted: new Date().toISOString(), billingStatus: 'reserved',
+            billingBalanceSource: deduction?.balanceDeduction?.source, billingOrgId: deduction?.balanceDeduction?.orgId });
+        }, channel.timeout);
       taskId = job.taskId;
       patchZonghengTask(contentId!, { videoId: taskId, zonghengPollDelay: job.pollDelay });
+      acceptVideoSubmission(contentId!, taskId, { provider: 'zongheng', channelId: channel.id, channelApiKeyId: channel.apiKeyId });
       releaseZonghengSubmission(contentId!);
       const record = db.select().from(contents).where(eq(contents.id, contentId!)).get();
       if (record) void resumePollForTask(contentId!, record);
@@ -2353,6 +2390,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         status_url: req.protocol + '://' + req.get('host') + '/v1/videos/task_' + contentId, retry_after: job.pollDelay / 1000 });
     } catch (error: any) {
       recordZonghengSubmissionError(contentId!, error);
+      endVideoSubmission(contentId!, error instanceof ZonghengSubmissionError && error.uncertain || taskId ? 'unknown' : 'rejected');
       if (error instanceof ZonghengSubmissionError && error.uncertain || taskId) {
         reviewZonghengTask(contentId!, '纵横科技提交结果待核实，请勿重复创建任务');
         return res.status(202).json({ id: 'task_' + contentId, task_id: 'task_' + contentId, object: 'video', model,
@@ -2364,7 +2402,7 @@ async function handleVideoCreation(req: Request, res: Response) {
           queueRefunded: Boolean(deduction), refundAmount: deduction ? totalCost : 0, refundTarget: target });
       })();
       return res.status(502).json({ error: publicGenerationError(error.message) });
-    } finally { releaseZonghengSubmission(contentId!); cleanupFiles(req.files); }
+    } finally { releaseVideoSubmission(contentId!); releaseZonghengSubmission(contentId!); cleanupFiles(req.files); }
   }
   if (isHayaChannel(channel)) {
     holdHayaSubmission(contentId!);
@@ -2377,11 +2415,15 @@ async function handleVideoCreation(req: Request, res: Response) {
       const audios = await prepareHayaMedia(audio_urls, 'audio', options);
       deduction = deductTokenOrUserBalance(token, totalCost, model);
       const job = await submitHayaVideo(baseUrl, apiKey, { model: upstreamModel, prompt, seconds, ratio, resolution, images, videos, audios, metadata: body.metadata },
-        () => patchHayaTask(contentId!, { hayaSubmissionStarted: new Date().toISOString(), hayaMedia: { images, videos, audios },
-          billingStatus: 'reserved', billingBalanceSource: deduction?.balanceDeduction?.source, billingOrgId: deduction?.balanceDeduction?.orgId }),
+        () => {
+          claimVideoSubmission(contentId!, channel.timeout || 120_000);
+          patchHayaTask(contentId!, { hayaSubmissionStarted: new Date().toISOString(), hayaMedia: { images, videos, audios },
+            billingStatus: 'reserved', billingBalanceSource: deduction?.balanceDeduction?.source, billingOrgId: deduction?.balanceDeduction?.orgId });
+        },
         requestId => patchHayaTask(contentId!, { requestId }));
       submittedTaskId = job.taskId;
       patchHayaTask(contentId!, { videoId: job.taskId, requestId: job.requestId });
+      acceptVideoSubmission(contentId!, job.taskId, { provider: 'haya', channelId: channel.id, channelApiKeyId: channel.apiKeyId });
       const record = db.select().from(contents).where(eq(contents.id, contentId!)).get();
       releaseHayaSubmission(contentId!);
       if (record) void resumePollForTask(contentId!, record);
@@ -2400,7 +2442,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       persistVideoContentFailure(contentId!, error.message, { billingStatus: deduction ? 'refunded' : 'not_charged',
         queueRefunded: Boolean(deduction), refundAmount: deduction ? totalCost : 0, refundTarget: target });
       return res.status(502).json({ error: publicGenerationError(error.message) });
-    } finally { cleanupFiles(req.files); }
+    } finally { endVideoSubmission(contentId!, 'unknown'); releaseVideoSubmission(contentId!); cleanupFiles(req.files); }
   }
 
   const upstreamUrl = isHmStudio
@@ -2419,10 +2461,20 @@ async function handleVideoCreation(req: Request, res: Response) {
 
   let balanceDeducted = false;
   let billingDeduction: TokenBillingDeduction | null = null;
+  let upstreamSubmissionStarted = false;
+  let recognizedUpstreamTaskId = '';
+  const submitUpstream: typeof fetch = (url, options) => {
+    upstreamSubmissionStarted = true;
+    return fetch(url, options);
+  };
   try {
-    billingDeduction = deductTokenOrUserBalance(token, totalCost, model);
+    claimVideoSubmission(contentId!, channel.timeout || 120_000);
+    billingDeduction = sqlite.transaction(() => {
+      const receipt = deductTokenOrUserBalance(token, totalCost, model);
+      db.update(contents).set({ metadata: JSON.stringify({ ...JSON.parse(db.select().from(contents).where(eq(contents.id, contentId!)).get()?.metadata || '{}'), billingStatus: 'reserved', billingBalanceSource: receipt.balanceDeduction?.source, billingOrgId: receipt.balanceDeduction?.orgId }) }).where(eq(contents.id, contentId!)).run();
+      return receipt;
+    })();
     balanceDeducted = totalCost > 0;
-    db.update(contents).set({ metadata: JSON.stringify({ ...JSON.parse(db.select().from(contents).where(eq(contents.id, contentId!)).get()?.metadata || '{}'), billingStatus: 'reserved', billingBalanceSource: billingDeduction.balanceDeduction?.source, billingOrgId: billingDeduction.balanceDeduction?.orgId }) }).where(eq(contents.id, contentId!)).run();
     let upstreamRes;
     const { ...otherParams } = body;
     delete otherParams.model;
@@ -2461,7 +2513,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       });
       const headers: Record<string, string> = {};
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-      upstreamRes = await fetch(upstreamUrl, {
+      upstreamRes = await submitUpstream(upstreamUrl, {
         method: 'POST',
         headers,
         body: formData,
@@ -2488,13 +2540,14 @@ async function handleVideoCreation(req: Request, res: Response) {
       });
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-      upstreamRes = await fetch(upstreamUrl, {
+      upstreamRes = await submitUpstream(upstreamUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(channel.timeout || 120_000),
       });
     } else if (isJulunSd25) {
+      upstreamSubmissionStarted = true;
       upstreamRes = await submitSiYueTianOverflowPlan({
         channel,
         executionModel: SI_YUE_TIAN_PRIMARY_VIDEO_MODEL,
@@ -2509,8 +2562,8 @@ async function handleVideoCreation(req: Request, res: Response) {
       if (invalidUrls.length > 0) {
         cleanupFiles(req.files);
         const error = 'Reference materials must use publicly accessible HTTPS URLs. Check BACKEND_URL.';
-        refundTokenOrUserBalance(token, totalCost, billingDeduction); balanceDeducted = false;
-        persistVideoContentFailure(contentId, error, { billingStatus: 'refunded', queueRefunded: true, refundAmount: totalCost });
+        endVideoSubmission(contentId!, 'rejected');
+        refundUnreservedVideo(contentId!, error); balanceDeducted = false;
         return res.status(400).json({ error });
       }
 
@@ -2529,7 +2582,7 @@ async function handleVideoCreation(req: Request, res: Response) {
 
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-      upstreamRes = await fetch(upstreamUrl, {
+      upstreamRes = await submitUpstream(upstreamUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
@@ -2538,7 +2591,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     } else if (isLongxia) {
       const payload = buildLongxiaVideoPayload({ model: upstreamModel, prompt, seconds, ratio, resolution,
         imageUrls: image_urls, videoUrls: video_urls, audioUrls: audio_urls });
-      upstreamRes = await fetch(upstreamUrl, {
+      upstreamRes = await submitUpstream(upstreamUrl, {
         method: 'POST', headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload), signal: AbortSignal.timeout(channel.timeout || 120_000),
       });
@@ -2560,7 +2613,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       });
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-      upstreamRes = await fetch(upstreamUrl, {
+      upstreamRes = await submitUpstream(upstreamUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
@@ -2583,7 +2636,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       });
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-      upstreamRes = await fetch(upstreamUrl, {
+      upstreamRes = await submitUpstream(upstreamUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
@@ -2601,7 +2654,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       });
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-      upstreamRes = await fetch(upstreamUrl, {
+      upstreamRes = await submitUpstream(upstreamUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
@@ -2640,7 +2693,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       const headers: Record<string, string> = {};
       if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
-      upstreamRes = await fetch(upstreamUrl, {
+      upstreamRes = await submitUpstream(upstreamUrl, {
         method: 'POST',
         headers,
         body: formData,
@@ -2730,7 +2783,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
-      upstreamRes = await fetch(upstreamUrl, {
+      upstreamRes = await submitUpstream(upstreamUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
@@ -2790,34 +2843,69 @@ async function handleVideoCreation(req: Request, res: Response) {
           durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errText.slice(0, 500)}`, clientIp,
         }).run();
 
-        const target = refundTokenOrUserBalance(token, totalCost, billingDeduction); balanceDeducted = false;
-        persistVideoContentFailure(contentId, `HTTP ${upstreamRes.status}: ${errText}`, { billingStatus: 'refunded', queueRefunded: true, refundAmount: totalCost, refundTarget: target });
+        const rejection = submissionFailure(upstreamRes.status, errText, channel, true);
+        if (rejection.uncertain) throw rejection;
+        endVideoSubmission(contentId!, 'rejected');
+        refundUnreservedVideo(contentId!, `HTTP ${upstreamRes.status}: ${errText}`); balanceDeducted = false;
         return res.status(upstreamRes.status).json({ error: errText });
       }
     }
 
-    const responseBody = await upstreamRes.json() as any;
     const durationMs = Date.now() - startTime;
-
-
-
-    db.insert(apiLogs).values({
-      tokenId: token.id, channelId, model, upstreamModel,
-      cost: totalCost, durationMs, status: 'success', clientIp,
-    }).run();
-
-    const upstreamTaskId = responseBody.request_id || responseBody.task_id || responseBody.id;
-    if (!upstreamTaskId) {
-      const refundTarget = refundTokenOrUserBalance(token, totalCost, billingDeduction);
-      balanceDeducted = false;
-      persistVideoContentFailure(contentId, 'Upstream did not return a task ID', {
-        billingStatus: totalCost > 0 ? 'refunded' : 'not_charged',
-        queueRefunded: totalCost > 0,
-        refundAmount: totalCost,
-        refundTarget,
-        ...(totalCost > 0 ? { refundedAt: new Date().toISOString() } : {}),
+    const responseText = await upstreamRes.text();
+    let responseBody: any = null;
+    try {
+      responseBody = responseText ? JSON.parse(responseText) : null;
+    } catch {
+      const reason = 'Upstream accepted the request but returned malformed JSON without a task ID';
+      endVideoSubmission(contentId!, 'unknown');
+      db.insert(apiLogs).values({ tokenId: token.id, channelId, model, upstreamModel,
+        cost: totalCost, durationMs, status: 'review', errorMessage: reason, clientIp }).run();
+      persistVideoContentReview(contentId, reason, {
+        upstreamCreateHttpStatus: upstreamRes.status,
+        upstreamCreateResponse: sanitizeUpstreamCreateResponse(responseText),
+        upstreamRequestId: upstreamRes.headers.get('x-request-id') || undefined,
       });
-      return res.status(502).json({ error: 'Upstream did not return a task ID' });
+      return res.status(202).json({ id: `task_${contentId}`, task_id: `task_${contentId}`, object: 'video', model,
+        status: 'queued', progress: 0, requires_review: true, message: '上游已受理，任务编号待核实，请勿重复提交',
+        status_url: `${req.protocol}://${req.get('host')}/v1/videos/task_${contentId}` });
+    }
+
+    if (isSnumomWanChannel(channel) && isVideoFailurePayload(responseBody)) {
+      endVideoSubmission(contentId!, 'rejected');
+      const reason = extractVideoFailureMessage(responseBody) || 'Upstream explicitly rejected the video task';
+      refundUnreservedVideo(contentId!, reason);
+      balanceDeducted = false;
+      db.insert(apiLogs).values({ tokenId: token.id, channelId, model, upstreamModel,
+        cost: 0, durationMs, status: 'error', errorMessage: reason, clientIp }).run();
+      return res.status(502).json({ error: reason });
+    }
+
+    const upstreamTaskId = isSnumomWanChannel(channel)
+      ? extractSnumomTaskId(responseBody, upstreamRes.headers)
+      : extractVideoUpstreamTaskId(responseBody, upstreamRes.headers);
+    recognizedUpstreamTaskId = upstreamTaskId;
+    if (!upstreamTaskId) {
+      endVideoSubmission(contentId!, 'unknown');
+      const reason = 'Upstream accepted the request but did not return a recognizable task ID';
+      db.insert(apiLogs).values({ tokenId: token.id, channelId, model, upstreamModel,
+        cost: totalCost, durationMs, status: 'review', errorMessage: reason, clientIp }).run();
+      persistVideoContentReview(contentId, reason, {
+        upstreamCreateHttpStatus: upstreamRes.status,
+        upstreamCreateResponse: sanitizeUpstreamCreateResponse(responseBody),
+        upstreamRequestId: upstreamRes.headers.get('x-request-id') || undefined,
+      });
+      return res.status(202).json({ id: `task_${contentId}`, task_id: `task_${contentId}`, object: 'video', model,
+        status: 'queued', progress: 0, requires_review: true, message: '上游已受理，任务编号待核实，请勿重复提交',
+        status_url: `${req.protocol}://${req.get('host')}/v1/videos/task_${contentId}` });
+    }
+
+    {
+      acceptVideoSubmission(contentId!, upstreamTaskId, {
+        channelId: Number(channel.id) || null,
+        channelApiKeyId: Number(channel.apiKeyId) || null,
+        provider: isSnumomWanChannel(channel) ? 'snumom' : channel.type || '',
+      });
     }
 
     let persistedMeta: Record<string, any> = {};
@@ -2851,6 +2939,10 @@ async function handleVideoCreation(req: Request, res: Response) {
       billingOrgId: billingDeduction?.balanceDeduction?.orgId,
     };
     db.update(contents).set({ metadata: JSON.stringify(localMeta) }).where(eq(contents.id, contentId)).run();
+    db.insert(apiLogs).values({
+      tokenId: token.id, channelId, model, upstreamModel,
+      cost: totalCost, durationMs, status: 'success', clientIp,
+    }).run();
 
     // 开启后台轮询
     try {
@@ -2876,27 +2968,34 @@ async function handleVideoCreation(req: Request, res: Response) {
     cleanupFiles(req.files);
     const durationMs = Date.now() - startTime;
     const errorMessage = err.name === 'AbortError' ? 'upstream timeout' : err.message;
+    const submissionUncertain = contentId !== null && upstreamSubmissionStarted;
+    if (contentId !== null) endVideoSubmission(contentId, submissionUncertain ? 'unknown' : 'rejected');
     db.insert(apiLogs).values({
       tokenId: token.id, channelId, model, upstreamModel,
-      durationMs, status: 'error', errorMessage, clientIp,
+      cost: submissionUncertain ? totalCost : 0,
+      durationMs, status: submissionUncertain ? 'review' : 'error', errorMessage, clientIp,
     }).run();
 
     if (contentId !== null) {
-      if (balanceDeducted) {
-        const refundTarget = refundTokenOrUserBalance(token, totalCost, billingDeduction);
-        persistVideoContentFailure(contentId, errorMessage, {
-          billingStatus: 'refunded',
-          queueRefunded: true,
-          refundAmount: totalCost,
-          refundTarget,
-          refundedAt: new Date().toISOString(),
+      if (submissionUncertain) {
+        persistVideoContentReview(contentId, errorMessage, {
+          ...(recognizedUpstreamTaskId ? { videoId: recognizedUpstreamTaskId } : {}),
+          upstreamTransportError: sanitizeUpstreamCreateResponse(errorMessage),
         });
+        return res.status(202).json({ id: `task_${contentId}`, task_id: `task_${contentId}`, object: 'video', model,
+          status: 'queued', progress: 0, requires_review: true, message: '上游提交结果待核实，请勿重复提交',
+          status_url: `${req.protocol}://${req.get('host')}/v1/videos/task_${contentId}` });
+      }
+      if (balanceDeducted) {
+        refundUnreservedVideo(contentId, errorMessage);
       } else {
         persistVideoContentFailure(contentId, errorMessage, { billingStatus: 'not_charged' });
       }
     }
 
     res.status(502).json({ error: `Upstream error: ${errorMessage}` });
+  } finally {
+    if (contentId !== null) releaseVideoSubmission(contentId);
   }
 }
 

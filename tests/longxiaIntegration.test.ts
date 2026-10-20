@@ -135,7 +135,7 @@ describe('LongXia application integration', () => {
     expect(upstream).not.toHaveBeenCalled();
     expect(db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance).toBe(before);
   });
-  it('uses the LongXia payload on the web route and refunds a failed submission', async () => {
+  it('uses the LongXia payload and holds an uncertain 503 without refund or another submission', async () => {
     const user = db.select().from(users).where(eq(users.email, 'longxia@test.local')).get()!;
     db.update(users).set({ balance: 100 }).where(eq(users.id, user.id)).run();
     const upstream = vi.fn(async () => new Response('capacity unavailable', { status: 503 }));
@@ -147,10 +147,11 @@ describe('LongXia application integration', () => {
     const events = await response.text();
     expect(response.status, events).toBe(200);
     expect(events).toContain('"cost":14.5');
-    expect(events).toContain('生成服务暂时不可用');
+    expect(events).toContain('提交结果待核实');
+    expect(events).not.toContain('"type":"error"');
     expect(events).not.toContain('LongXia');
     expect(upstream).toHaveBeenCalledOnce();
     expect(JSON.parse((upstream.mock.calls[0] as any)[1].body)).toMatchObject({ duration: 25, size: '16:9', assets: [{ category: 'audio', url: 'https://example.com/ref.mp3' }] });
-    expect(db.select().from(users).where(eq(users.id, user.id)).get()!.balance).toBe(100);
+    expect(db.select().from(users).where(eq(users.id, user.id)).get()!.balance).toBe(85.5);
   });
 });

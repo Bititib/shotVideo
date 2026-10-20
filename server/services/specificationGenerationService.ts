@@ -32,6 +32,8 @@ import { MJ_MODEL_ID } from '../../shared/mj.js';
 import { saveMjImageBatch, restoreCachedMjOriginal, type MjImageBatch } from './mjImageResults.js';
 import { resolvePublicModelId } from './publicModelNameService.js';
 import { batchContextForRequest, batchStore, markBatchSubmitting, recordBatchFailure } from './videoBatchService.js';
+import { claimVideoSubmission, acceptVideoSubmission, endVideoSubmission, releaseVideoSubmission, videoSubmissionPending, videoSubmissionPreparation } from './videoSubmissionGuard.js';
+import { isSnumomWanChannel } from './snumomWanAdapter.js';
 
 const active = new Set<number>();
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -74,6 +76,7 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
 function patch(id: number, values: Record<string, any>, status?: string) {
   const row = db.select().from(contents).where(eq(contents.id, id)).get();
   if (!row) return;
+  if (row.type === 'video' && ['completed', 'failed'].includes(row.status || '') && status !== row.status) return;
   db.update(contents).set({ metadata: JSON.stringify({ ...JSON.parse(row.metadata || '{}'), ...values }), ...(status ? { status } : {}) }).where(eq(contents.id, id)).run();
 }
 function metadata(id: number) {
@@ -105,12 +108,21 @@ function finalizeReservation(id: string | undefined, actual: number): number {
   })();
 }
 function holdForReview(id: number, message: string) {
+  const record = db.select().from(contents).where(eq(contents.id, id)).get();
+  if (record?.type === 'video' && ['completed', 'failed'].includes(record.status || '')) return;
   const meta = metadata(id);
   if (meta.billingReservationId) sqlite.prepare("UPDATE billing_reservations SET state='review' WHERE id=? AND state='reserved'").run(meta.billingReservationId);
   patch(id, { requiresReview: true, progressText: message, error: message, billingStatus: 'review' });
   if (meta.batchItemId) recordBatchFailure(id, message, false);
 }
 function complete(id: number, urls: string[]) {
+  sqlite.transaction(() => {
+    const record = db.select().from(contents).where(eq(contents.id, id)).get();
+    if (!record || record.type === 'video' && ['completed', 'failed'].includes(record.status || '')) return;
+    completeContent(id, urls);
+  })();
+}
+function completeContent(id: number, urls: string[]) {
   const meta = metadata(id), record = db.select().from(contents).where(eq(contents.id, id)).get()!;
   let actual = meta.batchItemId ? record.cost : meta.nativeImageOutputs ? meta.reservedCost || 0
     : Math.round((meta.reservedCost || 0) * urls.length / (meta.count || 1) * 1e6) / 1e6;
@@ -121,6 +133,13 @@ function complete(id: number, urls: string[]) {
   if (record.userId) { try { logUsage(record.userId, record.type === 'video' ? 'video' : 'generate_image', undefined, Date.now() - meta.startedAt); } catch (error: any) { console.warn('[specification] usage log failed', id, error.message); } }
 }
 function failTask(id: number, message: string) {
+  sqlite.transaction(() => {
+    const record = db.select().from(contents).where(eq(contents.id, id)).get();
+    if (!record || record.type === 'video' && ['completed', 'failed'].includes(record.status || '')) return;
+    failContent(id, message);
+  })();
+}
+function failContent(id: number, message: string) {
   const meta = metadata(id);
   if (meta.batchItemId && recordBatchFailure(id, message, true)) return;
   finalizeReservation(meta.billingReservationId, 0);
@@ -130,12 +149,26 @@ function failTask(id: number, message: string) {
 }
 async function pollVideo(id: number, channel: any, taskId: string, onEvent: (data: any) => void) {
   const end = Date.now() + 2 * 60 * 60_000;
+  let queryFailures = 0;
   while (Date.now() < end) {
     let task: any;
     try { task = await pollSpecificationVideo(channel, taskId); }
-    catch { await wait(12_000); continue; }
-    patch(id, { progress: task.progress, upstreamStatus: task.status, progressText: '视频生成中' });
-    onEvent({ type: 'progress', progress: task.progress, contentId: id });
+    catch (error: any) {
+      const status = Number(error?.status) || null;
+      const message = [401, 403].includes(status || 0) ? '任务状态查询被拒绝，请联系管理员检查渠道配置'
+        : '任务状态暂时查询不到，正在重试，请勿重复提交';
+      patch(id, { progressText: message, lastQueryAt: new Date().toISOString(), lastQueryStatus: status, queryFailures: ++queryFailures });
+      onEvent({ type: 'status', message, contentId: id });
+      await wait(12_000); continue;
+    }
+    queryFailures = 0;
+    const progressKnown = task.progressKnown ?? (typeof task.progress === 'number' && Number.isFinite(task.progress));
+    const message = task.status === 'queued' ? '渠道已受理，正在排队'
+      : ['completed', 'success', 'succeeded', 'done'].includes(task.status) ? '上游已完成，正在保存结果'
+      : progressKnown ? '视频生成中' : '视频生成中，渠道暂未提供百分比';
+    patch(id, { progress: task.progress, progressKnown, upstreamStatus: task.status, progressText: message,
+      lastQueryAt: new Date().toISOString(), lastQueryStatus: 200, queryFailures: 0 });
+    onEvent({ type: 'progress', progress: task.progress, progressKnown, message, contentId: id });
     if (['failed', 'error', 'cancelled', 'canceled', 'failure'].includes(task.status)) {
       const meta = metadata(id);
       if (!/content|policy|审核|敏感|违规/i.test(task.error || '')) noteRouteResult(meta.routingHealthKey, false, task.error || '上游生成失败', false, true);
@@ -153,7 +186,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
     await wait(isFunAiChannel(channel) ? 5_000 : isBlobDrawChannel(channel) ? 10_000 : 8_000);
   }
   holdForReview(id, '任务仍待核实，保留原线路和费用，请勿重复提交');
-  onEvent({ type: 'error', message: '任务仍待核实，请在历史记录查看' });
+  onEvent({ type: 'status', message: '任务仍待核实，请在历史记录查看' });
 }
 async function runVideo(id: number, candidates: RouteCandidate[], request: SpecificationRequest, onEvent: (data: any) => void) {
   for (const target of candidates) {
@@ -165,17 +198,33 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
       patch(id, { routingRouteId: target.route.id, routingHealthKey: target.healthKey, channelId: target.channel.id,
         channelApiKeyId: target.channel.apiKeyId, upstreamModel: target.route.upstreamModel, actualModel: target.route.executionModel,
         actualChannel: target.channel.type, progressText: '正在提交生成任务' }, 'processing');
+      onEvent({ type: 'status', message: '正在提交生成任务', contentId: id });
       let taskId = '';
+      let claimed = false;
       try {
         if (!markBatchSubmitting(id)) throw fail('任务已停止', 409);
-        taskId = await submitSpecificationVideo(target, request, submissionMetadata => patch(id, { ...submissionMetadata, submissionStartedAt: new Date().toISOString() }));
-        patch(id, { videoId: taskId, upstreamTaskId: taskId, progressText: '视频生成中', requiresReview: false });
+        taskId = await submitSpecificationVideo(target, request, submissionMetadata => {
+          if (!claimed) {
+            try { claimVideoSubmission(id, target.channel.timeout || 120_000); claimed = true; }
+            catch (error: any) { throw new SpecificationUpstreamError(error.message, false, true); }
+          }
+          patch(id, { ...submissionMetadata, submissionStartedAt: new Date().toISOString() });
+        });
+        acceptVideoSubmission(id, taskId, { provider: isSnumomWanChannel(target.channel) ? 'snumom' : target.channel.type || '',
+          channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId });
+        patch(id, { videoId: taskId, upstreamTaskId: taskId, progressKnown: false, progressText: '渠道已受理，正在查询任务状态', requiresReview: false });
+        onEvent({ type: 'progress', progress: 0, progressKnown: false, message: '渠道已受理，正在查询任务状态', contentId: id });
         await pollVideo(id, target.channel, taskId, onEvent);
       } catch (e: any) {
-        if (taskId || e instanceof SpecificationUpstreamError && e.uncertain) {
-          noteRouteResult(target.healthKey, false, e.message); holdForReview(id, e.message); onEvent({ type: 'error', message: '提交结果待核实，请勿重复提交' }); return;
+        const uncertain = Boolean(taskId) || e instanceof SpecificationUpstreamError && e.uncertain
+          || claimed && !(e instanceof SpecificationUpstreamError && (e.retrySafe || e.confirmedFailure));
+        if (claimed) endVideoSubmission(id, uncertain ? 'unknown' : 'rejected');
+        if (uncertain) {
+          noteRouteResult(target.healthKey, false, e.message); holdForReview(id, e.message); onEvent({ type: 'status', message: '提交结果待核实，请勿重复提交' }); return;
         }
         throw e;
+      } finally {
+        if (claimed) releaseVideoSubmission(id);
       }
     };
     try {
@@ -447,6 +496,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     const create = () => ContentService.save({ userId, orgId: (req as any).orgId || null, type: kind, modelId,
       title: request.prompt.slice(0, 200), inputText: request.prompt, status: 'queued', cost: batch ? 0 : quote.cost,
       metadata: { managedSpecification: true, requestedModel: modelId, model: modelId, count: request.input.outputs, nativeImageOutputs,
+        ...(kind === 'video' ? videoSubmissionPreparation() : {}),
         pricingSnapshot: quote.pricingSnapshot,
         seconds: request.input.seconds, resolution: request.input.resolution, aspect_ratio: request.input.ratio,
         reference_images: request.images, reference_videos: request.videos, audio_urls: request.audios,
@@ -476,7 +526,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     active.add(id!);
     const run = async () => {
       try { if (kind === 'video') await runVideo(id!, candidates, request, emit); else await runImages(id!, candidates, request, req, emit); }
-      catch (e: any) { holdForReview(id!, e.message || '任务待核实'); emit({ type: 'error', message: '任务待核实，请勿重复提交' }); }
+      catch (e: any) { holdForReview(id!, e.message || '任务待核实'); emit({ type: kind === 'video' ? 'status' : 'error', message: '任务待核实，请勿重复提交' }); }
       finally {
         active.delete(id!);
         if (apiContext) { const record = db.select().from(contents).where(eq(contents.id, id!)).get();
@@ -592,6 +642,7 @@ export function resumeSpecificationTasks() {
   for (const row of db.select().from(contents).where(inArray(contents.status, ['processing', 'queued', 'review'])).all()) {
     let meta: any; try { meta = JSON.parse(row.metadata || '{}'); } catch { continue; }
     if (!meta.managedSpecification || active.has(row.id)) continue;
+    if (row.type === 'video' && videoSubmissionPending(row.id, meta)) continue;
     const knownMjResult = row.type === 'image' && meta.nativeImageOutputs === 4
       && Array.isArray(meta.nativeImageBatch?.sourceUrls) && meta.nativeImageBatch.sourceUrls.length > 0;
     const resumableMj = row.type === 'image' && meta.nativeImageOutputs === 4 && canResumeMjAsync(meta.mjAsyncImage);
