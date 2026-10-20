@@ -49,6 +49,19 @@ const VIDEO_FAILURE_STATUSES = new Set([
   'terminated',
 ]);
 
+/** Query failures describe the lookup, not the accepted generation task. */
+export function isVideoQueryErrorPayload(value: any): boolean {
+  if (!value || typeof value !== 'object') return true;
+  const nested = value.data && typeof value.data === 'object' ? value.data : {};
+  const httpStatus = Number(value.status_code ?? value.statusCode ?? value.http_status ?? value.httpStatus
+    ?? nested.status_code ?? nested.statusCode ?? nested.http_status ?? nested.httpStatus);
+  const code = String(value.code || value.error?.code || nested.code || '').toLowerCase();
+  return (Number.isFinite(httpStatus) && httpStatus >= 400)
+    || /fail_to_fetch|task_not_found|task_not_exist|invalid_url|not_found|service_unavailable/.test(code)
+    || ((value.success === false || nested.success === false)
+      && !['failed', 'failure', 'rejected', 'cancelled', 'canceled', 'expired', 'terminated'].includes(String(nested.status || value.status || '').toLowerCase()));
+}
+
 /** Return true for every known terminal failure state used by video providers. */
 export function isVideoFailureStatus(value: unknown): boolean {
   return VIDEO_FAILURE_STATUSES.has(String(value ?? '').trim().toLowerCase());

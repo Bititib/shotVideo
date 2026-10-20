@@ -4,12 +4,20 @@ import {
   extractVideoFailureMessage,
   formatVideoPollHttpFailure,
   isVideoFailurePayload,
+  isVideoQueryErrorPayload,
   isVideoFailureStatus,
   isTransientVideoPollHttpStatus,
   withVideoFailureMetadata,
 } from '../server/services/videoFailureService.js';
 
 describe('video failure persistence', () => {
+  it('区分任务明确失败和查询异常，查询错误不能当作生成失败', () => {
+    expect(isVideoQueryErrorPayload({ status_code: 404 })).toBe(true);
+    expect(isVideoQueryErrorPayload({ code: 'fail_to_fetch_task', status: 'failed' })).toBe(true);
+    expect(isVideoQueryErrorPayload({ success: false, message: 'gateway failed' })).toBe(true);
+    expect(isVideoQueryErrorPayload({ id: 'task_1', status: 'failed', error: 'content rejected' })).toBe(false);
+    expect(isVideoQueryErrorPayload({ status: 'in_progress', progress: 60 })).toBe(false);
+  });
   it('distinguishes an upstream capacity rejection from the local HM queue', () => {
     expect(clarifyVideoCapacityFailure('任务并发数不足', false))
       .toBe('上游渠道当前容量不足，请稍后重试（非本站并发限制）');

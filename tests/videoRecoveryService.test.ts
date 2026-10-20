@@ -1,5 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
+const poller = vi.hoisted(() => ({ resume: vi.fn().mockResolvedValue(undefined), fail: vi.fn().mockResolvedValue(undefined) }));
+vi.mock('../server/routes/video.js', () => ({ resumePollForTask: poller.resume, failHmQueuedVideo: poller.fail }));
 vi.mock('../server/db/index.js', async () => {
   const { default: Database } = await import('better-sqlite3');
   const { drizzle } = await import('drizzle-orm/better-sqlite3');
@@ -30,6 +32,7 @@ import { contents, users } from '../server/db/schema.js';
 import { eq } from 'drizzle-orm';
 import { BalanceService } from '../server/services/balanceService.js';
 import { VideoRecoveryService } from '../server/services/videoRecoveryService.js';
+import { resumePollForTask } from '../server/routes/video.js';
 
 let validVideo: Buffer;
 beforeAll(() => { validVideo = execFileSync('ffmpeg', ['-v','error','-f','lavfi','-i','color=s=16x16:r=10:d=0.2','-c:v','libx264','-pix_fmt','yuv420p','-f','mp4','-movflags','frag_keyframe+empty_moov','pipe:1']); });
@@ -42,6 +45,8 @@ let contentId = 0;
 const localizedVideoPath = path.join(process.cwd(), 'data', 'uploads', 'videos', 'video_sd2_5-haidiyue-face_upstream-task-1.mp4');
 
 beforeEach(() => {
+  vi.clearAllMocks();
+  expect(resumePollForTask).toBe(poller.resume);
   sqlite.prepare('DELETE FROM contents WHERE title = ?').run('video-recovery-test');
   sqlite.prepare('DELETE FROM channels WHERE name = ?').run(TEST_CHANNEL_NAME);
   sqlite.prepare('DELETE FROM users WHERE email = ?').run(TEST_EMAIL);
@@ -127,6 +132,114 @@ describe('VideoRecoveryService', () => {
     expect(() => VideoRecoveryService.supplementTaskId(contentId, 99, 'task-id')).toThrow();
   });
 
+  const read = () => db.select().from(contents).where(eq(contents.id, contentId)).get()!;
+  function pending() {
+    sqlite.prepare("UPDATE channels SET type='openai' WHERE id=?").run(channelId);
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: 'upstream-task-1', status: 'in_progress', progress: 60 })));
+  }
+  it('补扣和恢复原任务状态一起完成，并发点击只扣一次', async () => {
+    pending();
+    const results = await Promise.all([VideoRecoveryService.recover(contentId), VideoRecoveryService.recover(contentId)]);
+    expect(results.reduce((sum, r) => sum + (Number(r.chargedAmount) || 0), 0)).toBe(2);
+    expect(BalanceService.getBalance(userId)).toBe(8);
+    expect(read()).toMatchObject({ status: 'processing', cost: 2 });
+    expect(JSON.parse(read().metadata)).toMatchObject({ recoveryPrecharged: true, queueRefunded: false, progress: 60, videoId: 'upstream-task-1', billingStatus: 'recovery_precharged' });
+    expect(JSON.parse(read().metadata).recoveryCharges).toHaveLength(1);
+    expect(JSON.parse(read().metadata).error).toBeUndefined();
+    expect(poller.resume).toHaveBeenCalledWith(contentId, expect.objectContaining({ status: 'processing', cost: 2 }));
+    expect(vi.mocked(fetch).mock.calls.every(c => !c[1]?.method || c[1]?.method === 'GET')).toBe(true);
+  });
+  it('余额不足不改状态、不启动轮询、不扣费', async () => {
+    pending(); sqlite.prepare('UPDATE users SET balance=1 WHERE id=?').run(userId);
+    await expect(VideoRecoveryService.recover(contentId)).rejects.toMatchObject({ status: 402 });
+    expect(read().status).toBe('failed'); expect(BalanceService.getBalance(userId)).toBe(1);
+    expect(poller.resume).not.toHaveBeenCalled();
+  });
+  it('状态更新失败时回滚扣费，不能只扣钱不恢复', async () => {
+    pending();
+    sqlite.exec("CREATE TRIGGER reject_recovery BEFORE UPDATE OF status ON contents WHEN NEW.status='processing' BEGIN SELECT RAISE(ABORT,'rollback test'); END;");
+    try { await expect(VideoRecoveryService.recover(contentId)).rejects.toThrow('rollback test'); }
+    finally { sqlite.exec('DROP TRIGGER reject_recovery'); }
+    expect(BalanceService.getBalance(userId)).toBe(10); expect(read().status).toBe('failed');
+    expect(poller.resume).not.toHaveBeenCalled();
+  });
+  it.each([404, 502])('查询 HTTP %s 不补扣、不恢复', async status => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('not available', { status })));
+    await expect(VideoRecoveryService.recover(contentId)).rejects.toMatchObject({ status: 502 });
+    expect(BalanceService.getBalance(userId)).toBe(10); expect(read().status).toBe('failed');
+    expect(poller.resume).not.toHaveBeenCalled();
+  });
+  it.each([{ success: false }, { status: 'unknown' }, { status: 'in_progress', id: 'wrong-task' }, { status_code: 404, status: 'in_progress' }])('异常响应不能当作已确认生成中并补扣 %j', async payload => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(payload)));
+    await expect(VideoRecoveryService.recover(contentId)).rejects.toMatchObject({ status: 502 });
+    expect(BalanceService.getBalance(userId)).toBe(10); expect(poller.resume).not.toHaveBeenCalled();
+  });
+  it('上游明确失败不扣费', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ status: 'failed', error: 'rejected' })));
+    expect(await VideoRecoveryService.recover(contentId)).toMatchObject({ status: 'failed' });
+    expect(BalanceService.getBalance(userId)).toBe(10); expect(poller.resume).not.toHaveBeenCalled();
+  });
+  it('原退款为零时恢复不按新价格补扣', async () => {
+    const m = { ...JSON.parse(read().metadata), refundAmount: 0 };
+    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify(m), contentId);
+    expect(await VideoRecoveryService.recover(contentId)).toMatchObject({ status: 'completed', chargedAmount: 0 });
+    expect(BalanceService.getBalance(userId)).toBe(10); expect(read().cost).toBe(0);
+  });
+  it('补扣只回到原退款账户，不随用户切换组织改变', async () => {
+    pending();
+    sqlite.exec('INSERT OR REPLACE INTO organizations(id,balance) VALUES(991,10),(992,20)');
+    sqlite.prepare('UPDATE users SET org_id=992 WHERE id=?').run(userId);
+    const metadata = { ...JSON.parse(read().metadata), refundTarget: 'organization_balance', billingOrgId: 991, billingBalanceSource: 'org' };
+    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify(metadata), contentId);
+    await VideoRecoveryService.recover(contentId);
+    expect(sqlite.prepare('SELECT balance FROM organizations WHERE id=991').get()).toEqual({ balance: 8 });
+    expect(sqlite.prepare('SELECT balance FROM organizations WHERE id=992').get()).toEqual({ balance: 20 });
+    expect(BalanceService.getBalance(userId)).toBe(10);
+  });
+  it('个人原退款账户余额不足不会改扣组织账户', async () => {
+    pending(); sqlite.exec('INSERT OR REPLACE INTO organizations(id,balance) VALUES(992,20)');
+    sqlite.prepare('UPDATE users SET org_id=992,balance=1 WHERE id=?').run(userId);
+    await expect(VideoRecoveryService.recover(contentId)).rejects.toMatchObject({ status: 402 });
+    expect(sqlite.prepare('SELECT balance FROM organizations WHERE id=992').get()).toEqual({ balance: 20 });
+  });
+  it('API Token 原退款只补扣对应额度，重复点击不重复记用量', async () => {
+    pending();
+    sqlite.prepare('INSERT OR REPLACE INTO api_tokens(id,user_id,balance,used_amount) VALUES(991,?,10,0)').run(userId);
+    const m = { ...JSON.parse(read().metadata), refundTarget: 'api_token', tokenId: 991, billingSource: 'token' };
+    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify(m), contentId);
+    await VideoRecoveryService.recover(contentId); await VideoRecoveryService.recover(contentId);
+    expect(sqlite.prepare('SELECT balance,used_amount FROM api_tokens WHERE id=991').get()).toEqual({ balance: 8, used_amount: 2 });
+    expect(BalanceService.getBalance(userId)).toBe(10);
+  });
+  it('关联 Token 归属不符会回滚个人扣款', async () => {
+    pending();
+    sqlite.prepare('INSERT OR REPLACE INTO api_tokens(id,user_id,balance,used_amount) VALUES(991,99999,-1,0)').run();
+    const m = { ...JSON.parse(read().metadata), tokenId: 991 };
+    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify(m), contentId);
+    await expect(VideoRecoveryService.recover(contentId)).rejects.toMatchObject({ status: 409 });
+    expect(BalanceService.getBalance(userId)).toBe(10); expect(read().status).toBe('failed');
+  });
+  it('查询暂停但没有退款的原预扣任务，成功后不重复收费', async () => {
+    const m = { ...JSON.parse(read().metadata), queueRefunded: false, billingStatus: 'charged', recoveryPollingProtected: true };
+    sqlite.prepare("UPDATE contents SET status='review',cost=2,metadata=? WHERE id=?").run(JSON.stringify(m), contentId);
+    sqlite.prepare('UPDATE users SET balance=8 WHERE id=?').run(userId);
+    expect(await VideoRecoveryService.recover(contentId)).toMatchObject({ status: 'completed', chargedAmount: 0 });
+    expect(BalanceService.getBalance(userId)).toBe(8);
+  });
+  it('恢复后已经预扣，后来上游完成只保存，不再扣第二次', async () => {
+    const nativeMock = fetch;
+    pending(); await VideoRecoveryService.recover(contentId);
+    vi.stubGlobal('fetch', nativeMock);
+    expect(await VideoRecoveryService.recover(contentId)).toMatchObject({ status: 'completed', chargedAmount: 0 });
+    expect(BalanceService.getBalance(userId)).toBe(8);
+    expect(read()).toMatchObject({ status: 'completed', cost: 2 });
+  });
+  it('批量恢复统计包含正在生成任务的补扣金额', async () => {
+    pending();
+    const result = await VideoRecoveryService.recoverRecentFailed(3);
+    expect(result.processingCount).toBe(1); expect(result.chargedAmount).toBe(2);
+    expect(BalanceService.getBalance(userId)).toBe(8);
+  });
   it('restores a successful task and charges the refunded amount only once', async () => {
     const recovered = await VideoRecoveryService.recover(contentId);
     expect(recovered.status).toBe('completed');

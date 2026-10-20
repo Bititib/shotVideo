@@ -230,15 +230,16 @@ export default function ContentsPage() {
     const isBatch = Boolean(parseMeta(item.metadata).batchItemId);
     if (!window.confirm(isBatch
       ? '将查询批量任务的原上游结果；成功使用原预扣费用结算，不重复扣费；确认失败按批次设置重试或退款。是否继续？'
-      : supplementedTaskId
-        ? `将补录上游任务 ID“${supplementedTaskId}”并立即查询结果；成功后按原退款金额补扣用户费用。是否继续？`
-        : '将重新查询原上游任务；若上游已经成功，会自动恢复视频并按原退款金额补扣用户费用。是否继续？')) return;
+      : `${supplementedTaskId ? `将补录上游任务 ID“${supplementedTaskId}”并查询原任务。` : '将查询原上游任务。'}已扣费且未退款的任务不再扣费；已退款任务确认仍在生成或已成功后，按原退款金额补扣原账户。余额不足或查询失败不扣费；不会重新生成。是否继续？`)) return;
     setRecoveringId(item.id);
     try {
       if (supplementedTaskId) await adminApi.saveContentRecoveryTaskId(item.id, supplementedTaskId);
       const result = await adminApi.recoverContentUpstream(item.id);
       if (result.status === 'processing') {
-        window.alert(`上游任务仍在生成中${result.progress ? `（${result.progress}%）` : ''}，本次未扣费。`);
+        window.alert(`${result.message}${result.progress ? `（${result.progress}%）` : ''}`);
+        const refreshed = await adminApi.getContent(item.id);
+        setPreviewItem(current => current?.id === item.id ? { ...current, ...refreshed } : current);
+        await fetchContents();
         return;
       }
       if (result.status === 'failed') {
@@ -281,7 +282,7 @@ export default function ContentsPage() {
 
     const confirmed = window.confirm(
       `近三天共有 ${preview.failedCount} 条失败视频，其中 ${preview.eligibleCount} 条可以查询原上游。\n\n`
-      + '上游确认成功后将恢复视频，并按原退款金额补扣用户费用；处理中、仍失败或余额不足的记录不会扣费。\n\n'
+      + '上游仍在生成或已成功的任务，将按原退款金额补扣原账户并恢复；上游失败、查询异常或余额不足不扣费。\n\n'
       + '是否开始批量恢复？',
     );
     if (!confirmed) return;
@@ -292,8 +293,9 @@ export default function ContentsPage() {
       window.alert([
         '近三天失败视频处理完成：',
         `检查：${result.checkedCount || 0} 条`,
-        `成功恢复：${result.recoveredCount || 0} 条（补扣 ¥${Number(result.chargedAmount || 0).toFixed(2)}）`,
-        `仍在生成：${result.processingCount || 0} 条`,
+        `已完成恢复：${result.recoveredCount || 0} 条`,
+        `已恢复轮询：${result.processingCount || 0} 条`,
+        `本次补扣合计：¥${Number(result.chargedAmount || 0).toFixed(2)}`,
         `上游失败：${result.upstreamFailedCount || 0} 条`,
         `余额不足：${result.insufficientBalanceCount || 0} 条`,
         `重复跳过：${result.skippedCount || 0} 条`,
