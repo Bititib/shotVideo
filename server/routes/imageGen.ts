@@ -562,8 +562,9 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
   try {
     if (isPidoiImageChannel(channel)) {
       const diagnostic: ImageRequestContext = { stage: 'submit', contentId, channelId: channel.id };
+      const requestMode = pidoiImageRequestMode();
       pidoiImageActive.add(contentId);
-      persistJob({ imageProtocol: 'pidoi-async-v1', asyncStartedAt: Date.now(), pidoiImageJobs: [], publicBaseUrl: process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}` });
+      persistJob({ imageProtocol: 'pidoi-async-v1', pidoiRequestMode: requestMode, asyncStartedAt: Date.now(), pidoiImageJobs: [], publicBaseUrl: process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}` });
       sendEvent({ type: 'status', contentId, background: true, message: '图片任务已保存，正在后台生成', total: count });
       finishStream();
       // Keep the website async even when this channel only exposes OpenAI's
@@ -577,6 +578,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
             size, resolution, aspect_ratio, quality: effectiveQuality, images, response_format: 'url',
             output_format, background }, fetch, {
               referenceImages: reference_images,
+              mode: requestMode,
               onResponse: (response, payload) => captureResponse(index, response, payload, 'response_without_id'),
               onCompatibility: () => persistJob({ pidoiSubmissionProtocol: 'openai-compatible', progressText: '图片正在后台生成，请稍候' }),
             });
@@ -1203,7 +1205,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
 });
 
 export default router;
-import { isPidoiImageChannel, submitPidoiImage } from '../services/pidoiImageAdapter.js';
+import { isPidoiImageChannel, submitPidoiImage, pidoiImageRequestMode } from '../services/pidoiImageAdapter.js';
 import { pidoiTaskEvidence } from '../services/pidoiImageEvidence.js';
 import { pidoiImageActive, recoverPidoiImage } from '../services/pidoiImageWorker.js';
 import { logImageRequestFailure, type ImageRequestContext } from '../services/imageRequestDiagnostics.js';

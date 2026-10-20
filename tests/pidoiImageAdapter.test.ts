@@ -1,8 +1,48 @@
-import { afterEach, describe, it, expect, vi } from 'vitest';
-import { isPidoiImageChannel, parsePidoiImageTask, submitPidoiImage, pollPidoiImage } from '../server/services/pidoiImageAdapter';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { isPidoiImageChannel, parsePidoiImageTask, submitPidoiImage, pollPidoiImage, pidoiImageRequestMode } from '../server/services/pidoiImageAdapter';
 const channel = { baseUrl: 'https://pidoi.com/v1/', apiKey: 'test-key' };
 const response = (data: any) => new Response(JSON.stringify({ code: 'success', data }));
-afterEach(() => vi.restoreAllMocks());
+beforeEach(() => vi.stubEnv('PIDOI_IMAGE_REQUEST_MODE', 'async-first'));
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+
+describe('Pidoi 同步直连模式', () => {
+  it.each([undefined, '', 'sync', 'invalid'])('配置 %s 默认直接同步提交一次，不先探测异步', async mode => {
+    vi.stubEnv('PIDOI_IMAGE_REQUEST_MODE', mode);
+    expect(pidoiImageRequestMode()).toBe('sync');
+    const f = vi.fn().mockResolvedValue(Response.json({ data: [{ url: 'https://cdn/cat.png' }] }));
+    const onCompatibility = vi.fn();
+    expect(await submitPidoiImage(channel, { prompt: 'cat' }, f, { onCompatibility })).toMatchObject({ status: 'completed', protocol: 'openai-compatible' });
+    expect(f).toHaveBeenCalledExactlyOnceWith('https://pidoi.com/v1/images/generations', expect.objectContaining({ method: 'POST' }));
+    expect(onCompatibility).toHaveBeenCalledOnce();
+  });
+  it('同步图生图直接 edits，保留参数和多张参考图', async () => {
+    const f = vi.fn().mockResolvedValue(Response.json({ data: [{ b64_json: 'aW1hZ2U=' }] }));
+    await submitPidoiImage(channel, { quality: 'high', size: '1536x1024', n: 1 }, f, {
+      mode: 'sync', referenceImages: ['data:image/png;base64,aA==', 'data:image/png;base64,aA=='],
+    });
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(f.mock.calls[0][0]).toBe('https://pidoi.com/v1/images/edits');
+    expect(f.mock.calls[0][1].body.getAll('image[]')).toHaveLength(2);
+    expect(f.mock.calls[0][1].body.get('quality')).toBe('high');
+  });
+  it.each([404, 405, 451])('同步明确拒绝 %s 不回退其他提交入口', async status => {
+    const f = vi.fn().mockResolvedValue(new Response('Not Found', { status }));
+    await expect(submitPidoiImage(channel, {}, f, { mode: 'sync' })).rejects.toMatchObject({ confirmedFailure: true, status });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+  it('同步超时不重提，最长等待固定 15 分钟', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const f = vi.fn().mockRejectedValue(new DOMException('timeout', 'TimeoutError'));
+    await expect(submitPidoiImage({ ...channel, timeout: 86_400_000 }, {}, f, { mode: 'sync' })).rejects.toThrow('timeout');
+    expect(timeout).toHaveBeenCalledWith(900_000);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+  it('同步返回已受理任务时保留 ID，不把 HTTP 502 当生成失败', async () => {
+    const f = vi.fn().mockResolvedValue(Response.json({ error: { message: '{"task_id":"task_accepted","status":"queued"}' } }, { status: 502 }));
+    expect(await submitPidoiImage(channel, {}, f, { mode: 'sync' })).toMatchObject({ taskId: 'task_accepted', status: 'processing', protocol: 'async' });
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+});
 describe('Pidoi 异步图片协议', () => {
   it('只匹配 Pidoi 域名，不影响四月天', () => {
     expect(isPidoiImageChannel(channel)).toBe(true);

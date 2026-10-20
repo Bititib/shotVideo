@@ -1,4 +1,4 @@
-import { imageGenerationTimeout, DEFAULT_IMAGE_GENERATION_TIMEOUT_MS } from './imageGenerationTimeout.js';
+import { DEFAULT_IMAGE_GENERATION_TIMEOUT_MS } from './imageGenerationTimeout.js';
 import { extractImageUpstreamTaskId } from './imageTaskMetadataService.js';
 import { pidoiTaskEvidence } from './pidoiImageEvidence.js';
 
@@ -10,10 +10,15 @@ const apiBase = (c: Channel) => c.baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, 
 const endpoint = (c: Channel) => apiBase(c) + '/v1/image/generations';
 type PidoiImageTask = { taskId: string; status: 'processing' | 'completed' | 'failed'; progress: number; imageUrl: string; error: string; raw: any; pollPath?: string; protocol?: 'async' | 'openai-compatible' };
 type SubmitOptions = {
+  mode?: 'sync' | 'async-first';
   referenceImages?: string[];
   onResponse?: (response: Response, payload?: unknown) => void;
   onCompatibility?: () => void;
 };
+/** Snapshot this for a batch. Unknown/missing configuration safely selects one compatible POST. */
+export function pidoiImageRequestMode(): 'sync' | 'async-first' {
+  return process.env.PIDOI_IMAGE_REQUEST_MODE?.trim().toLowerCase() === 'async-first' ? 'async-first' : 'sync';
+}
 export class PidoiImageError extends Error {
   constructor(message: string, public confirmedFailure = false) { super(message); }
 }
@@ -58,7 +63,7 @@ async function readResponse(c: Channel, response: Response, options: SubmitOptio
       && (/^(?:404\s+)?(?:page\s+)?not found[.!]?$/i.test(message)
         || /cannot\s+(?:post|get)\s+\/|(?:invalid|unknown)\s+(?:url|route|endpoint)|no\s+route/i.test(message)
         || (response.status === 405 && /method not allowed/i.test(message)));
-    throw Object.assign(new PidoiImageError(`Pidoi 图片提交失败 (${response.status})${raw?.error?.message || raw?.message ? '：' + safeMessage(c, raw?.error?.message || raw?.message) : ''}`, rejected),
+    throw Object.assign(new PidoiImageError(`Pidoi 图片${submission ? '提交' : '查询'}失败 (${response.status})${raw?.error?.message || raw?.message ? '：' + safeMessage(c, raw?.error?.message || raw?.message) : ''}`, rejected),
       { status: response.status, routeUnavailable, upstreamTaskId: taskId || undefined,
         acceptedTask: submission && taskId ? { taskId, pollPath: evidence?.pollPath, status: 'processing', progress: 0, imageUrl: '', error: '', protocol: 'async', raw: {} } : undefined });
   }
@@ -112,8 +117,9 @@ async function submitCompatibleImage(c: Channel, body: Record<string, any>, fetc
     stage = 'submit';
     // Unlike the async POST this waits for the finished image. The common 120s
     // channel default must not cut off the same request API clients can finish.
+    // Bound the wait to 15 minutes even if the channel has an excessive timeout.
     const response = await fetchImpl(apiBase(c) + path, { method: 'POST', headers, body: requestBody,
-      signal: AbortSignal.timeout(Math.max(DEFAULT_IMAGE_GENERATION_TIMEOUT_MS, imageGenerationTimeout(c))), redirect: 'error' });
+      signal: AbortSignal.timeout(DEFAULT_IMAGE_GENERATION_TIMEOUT_MS), redirect: 'error' });
     const raw = await readResponse(c, response, options);
     const evidence = pidoiTaskEvidence(raw);
     if (evidence) {
@@ -132,6 +138,14 @@ async function submitCompatibleImage(c: Channel, body: Record<string, any>, fetc
 }
 
 export async function submitPidoiImage(c: Channel, body: Record<string, any>, fetchImpl = fetch, options: SubmitOptions = {}): Promise<PidoiImageTask> {
+  if ((options.mode || pidoiImageRequestMode()) === 'sync') {
+    options.onCompatibility?.();
+    try { return await submitCompatibleImage(c, body, fetchImpl, options); }
+    catch (error: any) {
+      if (error.acceptedTask) return error.acceptedTask;
+      throw error; // Never retry a synchronous POST or silently switch to async.
+    }
+  }
   try {
     const task = await request(c, '', body, fetchImpl, options);
     if (!task.taskId) throw new PidoiImageError('Pidoi 未返回任务 ID，提交结果待核对');

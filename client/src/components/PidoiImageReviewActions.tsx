@@ -35,6 +35,6 @@ export function PidoiImageReviewActions({ id, status, cost, metadata, hasResult,
       <button type="button" disabled={busy} onClick={() => void run(false)} className="rounded-lg border border-white/20 px-3 py-2 text-xs focus-visible:ring-2 disabled:opacity-50">{busy ? '处理中…' : '查询原任务'}</button>
       {canRefund && <button type="button" disabled={busy} onClick={() => void run(true)} className="rounded-lg border border-red-400/30 px-3 py-2 text-xs text-red-400 focus-visible:ring-2 disabled:opacity-50">确认失败并退款</button>}
     </div>
-    <p role="status" aria-live="polite" className="text-xs text-zinc-400">{message}</p>
+    <p role="status" aria-live="polite" className="text-xs text-zinc-400">{message || metadata.pidoiRecoveryPauseReason}</p>
   </div>;
 }

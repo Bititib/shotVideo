@@ -8,7 +8,8 @@ import { restorePidoiJobs } from './pidoiImageEvidence.js';
 
 const active = new Set<number>();
 export const pidoiImageActive = active;
-export async function recoverPidoiImage(contentId: number) {
+const RECOVERY_WINDOW_MS = 30 * 60_000;
+export async function recoverPidoiImage(contentId: number, options: { automatic?: boolean } = {}) {
   if (active.has(contentId)) return;
   active.add(contentId);
   const diagnostic: ImageRequestContext = { stage: 'persist', contentId };
@@ -17,6 +18,14 @@ export async function recoverPidoiImage(contentId: number) {
     if (!row || !['processing', 'review'].includes(row.status)) return;
     const m = JSON.parse(row.metadata || '{}');
     if (m.imageProtocol !== 'pidoi-async-v1' || m.managedSpecification) return;
+    if (options.automatic && m.pidoiRecoveryPausedAt) return;
+    // An explicit administrator recheck may resume the original task, never a POST.
+    if (!options.automatic && m.pidoiRecoveryPausedAt) {
+      delete m.pidoiRecoveryPausedAt;
+      delete m.pidoiRecoveryPauseReason;
+      delete m.pidoiRecoveryStartedAt;
+    }
+    m.pidoiRecoveryStartedAt ||= Date.now();
     const jobs = restorePidoiJobs(m);
     // Older versions classified a definite HTTP 451 rejection as an unknown
     // submission. Correct only single-image compatibility requests with matching
@@ -50,6 +59,11 @@ export async function recoverPidoiImage(contentId: number) {
     const ids = jobs.map((j: any) => j.taskId).filter(Boolean);
     if (ids.length) Object.assign(m, { upstreamTaskIds: ids, upstreamTaskId: ids[0], taskId: ids[0] });
     save();
+    if (options.automatic && Date.now() - m.pidoiRecoveryStartedAt >= RECOVERY_WINDOW_MS) {
+      const reason = '自动恢复已达 30 分钟，已暂停；请管理员查询原任务或核实后处理，未重复生成';
+      finalizeReservedContent(contentId, 'review', { ...m, pidoiRecoveryPausedAt: new Date().toISOString(), pidoiRecoveryPauseReason: reason, progressText: reason });
+      return;
+    }
     const channel = ChannelService.getChannelRaw(m.channelId, m.channelApiKeyId);
     if (!channel) throw new Error('原渠道不可用，已保留任务 ID，请管理员核对');
     for (const job of jobs) {
@@ -82,12 +96,18 @@ export async function recoverPidoiImage(contentId: number) {
         if (!result.urls.length) throw result.failures?.[0] || new Error('图片下载暂未完成，将自动重试');
         diagnostic.stage = 'persist';
         job.localUrl = result.urls[0];
+        delete m.lastRecoveryError;
+        delete m.recoveryStage;
         m.imageUrls = jobs.map((j: any) => j.localUrl).filter(Boolean);
         save();
       }
     }
     if (jobs.length !== m.count) {
-      finalizeReservedContent(contentId, 'review', { ...m, progressText: '部分提交结果未知，请核对；不会自动重新生成' });
+      const noRecoverableJobs = jobs.every((j: any) => j.localUrl || j.status === 'failed' || !j.taskId);
+      const reason = '提交结果未知且无可查询任务，请管理员核对上游后处理；不会自动重新生成';
+      finalizeReservedContent(contentId, 'review', { ...m,
+        ...(noRecoverableJobs ? { pidoiRecoveryPausedAt: new Date().toISOString(), pidoiRecoveryPauseReason: reason } : {}),
+        progressText: noRecoverableJobs ? reason : '部分提交结果未知，后台继续恢复已受理任务；不会重新生成' });
     } else if (jobs.every((j: any) => j.localUrl)) {
       finalizeReservedContent(contentId, 'completed', { ...m, progresses: jobs.map(() => 100), completedAt: new Date().toISOString(), progressText: '图片生成完成' }, m.imageUrls[0]);
     } else if (jobs.every((j: any) => j.status === 'failed')) {
@@ -113,6 +133,11 @@ export async function recoverPidoiImage(contentId: number) {
     let metadata: any;
     try { metadata = JSON.parse(latest.metadata || '{}'); } catch { return; }
     const recovery = { ...metadata, recoveryStage: diagnostic.stage, lastRecoveryError: String(error.message || '恢复失败').slice(0, 200), lastRecoveryAt: new Date().toISOString() };
+    if (diagnostic.stage === 'poll' && [404, 405].includes(error.status)) {
+      const reason = `上游查询接口返回 ${error.status}，已暂停自动查询；这不代表生成失败，请核对原任务查询地址`;
+      finalizeReservedContent(contentId, 'review', { ...recovery, pidoiRecoveryPausedAt: new Date().toISOString(), pidoiRecoveryPauseReason: reason, progressText: reason });
+      return;
+    }
     if (diagnostic.stage === 'download') {
       Object.assign(recovery, { requiresReview: false, progressText: '图片已生成，保存失败，后台正在重试下载' });
       sqlite.prepare("UPDATE contents SET status='processing',metadata=? WHERE id=? AND status IN ('processing','review')").run(JSON.stringify(recovery), contentId);
@@ -133,7 +158,7 @@ export async function resumePidoiImages() {
     // Slow status requests must not serially block every other accepted task.
     let cursor = 0;
     await Promise.all(Array.from({ length: Math.min(3, rows.length) }, async () => {
-      while (cursor < rows.length) { const row = rows[cursor++]; await recoverPidoiImage(row.id); }
+      while (cursor < rows.length) { const row = rows[cursor++]; await recoverPidoiImage(row.id, { automatic: true }); }
     }));
   } finally { scanning = false; }
 }

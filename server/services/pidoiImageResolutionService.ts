@@ -23,6 +23,7 @@ export async function recheckPidoiImage(contentId: number, adminId: number) {
   const { row, meta } = authorize(contentId, adminId);
   return { id: contentId, status: row.status, taskId: meta.upstreamTaskId || meta.taskId || '',
     message: row.status === 'completed' ? '图片已保存，已完成结算' : row.status === 'failed' ? '任务已结束，请查看退款信息'
+      : meta.pidoiRecoveryPausedAt ? meta.pidoiRecoveryPauseReason || '自动恢复已暂停，请核对原任务后处理'
       : meta.recoveryStage === 'download' ? '图片已生成，后台继续重试保存，不会重新生成'
       : meta.lastRecoveryError ? '查询暂未成功，未重新生成或退款；请核对原上游任务'
       : !meta.pidoiImageJobs?.length ? '未找到可查询任务 ID，请核对上游；确认未成功后可退款' : '已查询原任务，后台将继续跟进，不会重新生成' };

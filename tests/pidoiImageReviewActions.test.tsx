@@ -8,6 +8,11 @@ import { adminApi } from '../client/src/api/admin';
 const props={id:13186,status:'review',cost:0.22,metadata:{imageProtocol:'pidoi-async-v1'},hasResult:false,onResolved:vi.fn().mockResolvedValue(undefined)};
 beforeEach(()=>{vi.clearAllMocks();vi.spyOn(window,'confirm').mockReturnValue(true);vi.spyOn(window,'prompt').mockReturnValue('已核对上游任务，无成功图片');});
 afterEach(()=>{cleanup();vi.restoreAllMocks();});
+it('shows persisted pause reason on reopening without requiring another query',()=>{
+  render(<PidoiImageReviewActions {...props} metadata={{...props.metadata,pidoiRecoveryPauseReason:'上游查询接口返回 404，已暂停自动查询'}}/>);
+  expect(screen.getByRole('status').textContent).toContain('404，已暂停自动查询');
+  expect(adminApi.recheckPidoiImage).not.toHaveBeenCalled();
+});
 it('offers querying and explicit refund separately, refreshes resolved data',async()=>{
   vi.mocked(adminApi.recheckPidoiImage).mockResolvedValue({message:'已查询原任务'});
   render(<PidoiImageReviewActions {...props}/>);

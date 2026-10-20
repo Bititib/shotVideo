@@ -42,16 +42,89 @@ async function generate(count = 1) {
   return { res, chunks };
 }
 beforeEach(() => {
+  vi.stubEnv('PIDOI_IMAGE_REQUEST_MODE', 'async-first');
   sqlite.exec(`DELETE FROM users; DELETE FROM contents; DROP TABLE IF EXISTS billing_reservations;
     INSERT INTO users(id,balance,role,is_active) VALUES(1,100,'user',1),(9,0,'super_admin',1);`);
   vi.mocked(localizeRecoveredImages).mockResolvedValue({ urls: ['/api/uploads/result.png'], issues: [], failures: [] });
 });
 afterEach(async () => {
   await vi.waitFor(() => expect(pidoiImageActive.size).toBe(0));
-  vi.unstubAllGlobals(); vi.clearAllMocks();
+  vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.clearAllMocks();
 });
 
 describe('Pidoi 网页提交到保存和结算', () => {
+  it('默认同步直连，成功自动保存结算，不等待空任务 ID', async () => {
+    vi.stubEnv('PIDOI_IMAGE_REQUEST_MODE', undefined);
+    const f = vi.fn().mockResolvedValue(Response.json({ data: [{ url: 'https://storage.test/cat.png' }] }));
+    vi.stubGlobal('fetch', f);
+    await generate();
+    await vi.waitFor(() => expect(row().status).toBe('completed'));
+    expect(f).toHaveBeenCalledExactlyOnceWith('https://pidoi.com/v1/images/generations', expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(row().metadata)).toMatchObject({ pidoiRequestMode: 'sync', pidoiSubmissionProtocol: 'openai-compatible', billingStatus: 'settled', requiresReview: false });
+    expect(balance()).toBeCloseTo(99.78);
+  });
+  it('同步明确拒绝直接结束退款；重复扫描不重复退款', async () => {
+    vi.stubEnv('PIDOI_IMAGE_REQUEST_MODE', 'sync');
+    const f = vi.fn().mockResolvedValue(Response.json({ error: { message: 'Content rejected' } }, { status: 451 }));
+    vi.stubGlobal('fetch', f);
+    await generate();
+    await vi.waitFor(() => expect(row().status).toBe('failed'));
+    await recoverPidoiImage(row().id, { automatic: true });
+    expect(balance()).toBe(100);
+    expect(reservation().state).toBe('refunded');
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+  it('同步断线没有可查询 ID 时停止无效扫描，保留人工核实入口', async () => {
+    vi.stubEnv('PIDOI_IMAGE_REQUEST_MODE', 'sync');
+    const f = vi.fn().mockRejectedValue(new Error('connection lost'));
+    vi.stubGlobal('fetch', f);
+    await generate();
+    await vi.waitFor(() => expect(pidoiImageActive.size).toBe(0));
+    expect(row().status).toBe('review');
+    expect(JSON.parse(row().metadata).pidoiRecoveryPausedAt).toBeTruthy();
+    await recoverPidoiImage(row().id, { automatic: true });
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(balance()).toBeCloseTo(99.78);
+    expect(reservation().state).toBe('review');
+  });
+  it('查询 404 不无限轮询、不当失败退款，管理员可再次查询原任务', async () => {
+    vi.stubEnv('PIDOI_IMAGE_REQUEST_MODE', 'sync');
+    const f = vi.fn().mockResolvedValueOnce(Response.json({ id: 'task_query', status: 'queued' }))
+      .mockResolvedValueOnce(Response.json({ error: { message: 'Invalid URL' } }, { status: 404 }));
+    vi.stubGlobal('fetch', f);
+    await generate();
+    await vi.waitFor(() => expect(pidoiImageActive.size).toBe(0));
+    expect(row().status).toBe('review');
+    expect(JSON.parse(row().metadata)).toMatchObject({ upstreamTaskId: 'task_query', pidoiRecoveryPauseReason: expect.stringContaining('404') });
+    await recoverPidoiImage(row().id, { automatic: true });
+    expect(f).toHaveBeenCalledTimes(2);
+    f.mockResolvedValueOnce(Response.json({ id: 'task_query', status: 'completed', image_url: 'https://storage.test/cat.png' }));
+    expect(await recheckPidoiImage(row().id, 9)).toMatchObject({ status: 'completed' });
+    expect(f.mock.calls.map(c => c[1].method)).toEqual(['POST', 'GET', 'GET']);
+    expect(JSON.parse(row().metadata).pidoiRecoveryPausedAt).toBeUndefined();
+    expect(balance()).toBeCloseTo(99.78);
+  });
+  it.each(['poll', 'download'])('恢复 %s 最多自动跟进 30 分钟，之后明确暂停但保留结果', async stage => {
+    vi.stubEnv('PIDOI_IMAGE_REQUEST_MODE', 'sync');
+    const f = vi.fn().mockResolvedValueOnce(Response.json(stage === 'download'
+      ? { data: [{ url: 'https://storage.test/cat.png' }] } : { id: 'task_slow', status: 'queued' }))
+      .mockResolvedValue(Response.json({ id: 'task_slow', status: 'queued' }));
+    vi.stubGlobal('fetch', f);
+    if (stage === 'download') vi.mocked(localizeRecoveredImages).mockResolvedValue({ urls: [], issues: [], failures: [new Error('download timeout')] });
+    await generate();
+    await vi.waitFor(() => expect(pidoiImageActive.size).toBe(0));
+    const m = JSON.parse(row().metadata);
+    m.pidoiRecoveryStartedAt = Date.now() - 31 * 60_000;
+    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify(m), row().id);
+    f.mockClear(); vi.mocked(localizeRecoveredImages).mockClear();
+    await recoverPidoiImage(row().id, { automatic: true });
+    await recoverPidoiImage(row().id, { automatic: true });
+    expect(row().status).toBe('review');
+    expect(JSON.parse(row().metadata).pidoiRecoveryPauseReason).toContain('30 分钟');
+    if (stage === 'download') expect(JSON.parse(row().metadata).upstreamImageUrls).toEqual(['https://storage.test/cat.png']);
+    expect(f).not.toHaveBeenCalled(); expect(localizeRecoveredImages).not.toHaveBeenCalled();
+    expect(balance()).toBeCloseTo(99.78);
+  });
   it('多张图片部分明确拒绝时只结算成功部分，其余自动退款，不再留在待核实',async()=>{
     const f=vi.fn().mockResolvedValueOnce(Response.json({code:'success',data:{task_id:'task_first',status:'IN_PROGRESS'}}))
       .mockResolvedValueOnce(Response.json({error:{message:'Content rejected'}},{status:451}))
