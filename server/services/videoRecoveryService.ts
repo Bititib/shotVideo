@@ -2,11 +2,12 @@ import { isAsyncVideoChannel, asyncVideoTaskUrl, normalizeAsyncVideoTask, resolv
 import { isZonghengChannel, zonghengTaskUrl, normalizeZonghengTask } from './zonghengAdapter.js';
 import { isHayaChannel, hayaTaskUrl, normalizeHayaTask } from './hayaVideoAdapter.js';
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
-import { db } from '../db/index.js';
+import { db, sqlite } from '../db/index.js';
+import { withFundContext } from '../db/fundLedger.js';
+import { fetchVideoTaskResponse, withVideoPollDeadline } from './videoPollDeadline.js';
 import { apiTokens, contents, users, organizations } from '../db/schema.js';
 import { isBatchQueryUncertain } from './videoBatchStore.js';
 import { ChannelService } from './channelService.js';
-import { PricingService } from './pricingService.js';
 import { TokenService } from './tokenService.js';
 import { downloadAndLocalizeVideo } from './videoLocalizationService.js';
 import { hmStudioTaskUrl, isHmStudioChannel, normalizeHmStudioTask } from './hmStudioAdapter.js';
@@ -58,6 +59,18 @@ type RecentFailedRecoveryItem = {
   chargedAmount?: number;
 };
 
+// Concurrent recovery clicks share the file transfer, but settle independently
+// in the transaction below so only the first caller can charge a refund.
+const recoveryDownloads = new Map<string, Promise<string>>();
+let pollerModule: Promise<typeof import('../routes/video.js')> | undefined;
+function loadVideoPoller() {
+  // Share initialization when multiple administrators restore concurrently.
+  return pollerModule ??= import('../routes/video.js').catch(error => {
+    pollerModule = undefined;
+    throw error;
+  });
+}
+
 function parseMetadata(value: unknown): Record<string, any> {
   if (value && typeof value === 'object') return value as Record<string, any>;
   try { return JSON.parse(String(value || '{}')); } catch { return {}; }
@@ -70,6 +83,11 @@ function upstreamTaskId(metadata: Record<string, any>): string {
 /** Must run inside the same transaction as the content transition. Never move a
  * recovered charge to another balance just because the user changed organization. */
 function chargeRefundedVideo(record: any, metadata: Record<string, any>, amount: number) {
+  return withFundContext(sqlite, { kind: 'charge', contentId: record.id, operation: 'generate_video_recovery' },
+    () => chargeOriginalRefundSource(record, metadata, amount));
+}
+
+function chargeOriginalRefundSource(record: any, metadata: Record<string, any>, amount: number) {
   if (!Number.isFinite(amount) || amount < 0) throw { status: 409, message: '原退款金额无效，停止恢复' };
   const tokenId = Number(metadata.tokenId) || 0;
   const target = metadata.refundTarget || (metadata.billingSource === 'token' ? 'api_token'
@@ -107,19 +125,13 @@ function normalizeRecoveryDays(value: unknown): number {
 }
 
 function recoveryChargeAmount(record: any, metadata: Record<string, any>): number {
+  if (metadata.queueRefunded !== true && metadata.billingStatus !== 'refunded')
+    throw { status: 409, message: '缺少明确退款凭据，停止补扣；请核实原任务账务' };
   const refundedAmount = Number(metadata.refundAmount);
-  if (metadata.queueRefunded === true || metadata.billingStatus === 'refunded') {
-    if (!Number.isFinite(refundedAmount) || refundedAmount < 0) throw { status: 409, message: '缺少有效原退款金额，停止恢复' };
-    return refundedAmount; // A zero-price original must not be repriced on recovery.
-  }
-  if (Number.isFinite(refundedAmount) && refundedAmount > 0) return refundedAmount;
-  const existingCost = Number(record.cost);
-  if (Number.isFinite(existingCost) && existingCost > 0) return existingCost;
-  return PricingService.calculateUsageCost(record.modelId || metadata.model || WX_HAIDIYUE_FACE_SPLIT_MODEL, {
-    resolution: metadata.resolution || '720p',
-    seconds: Number(metadata.seconds) || 30,
-    count: 1,
-  });
+  if (metadata.refundAmount === null || metadata.refundAmount === undefined || metadata.refundAmount === ''
+    || !Number.isFinite(refundedAmount) || refundedAmount < 0)
+    throw { status: 409, message: '缺少有效原退款金额，停止恢复' };
+  return refundedAmount; // A zero-price original must not be repriced on recovery.
 }
 
 export class VideoRecoveryService {
@@ -261,7 +273,7 @@ export class VideoRecoveryService {
       throw { status: 503, message: '原任务渠道当前不可用' };
     }
 
-    const baseUrl = String(channel.baseUrl || '').replace(/\/+$/, '');
+    const baseUrl = String(channel.baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '');
     const model = String(record.modelId || metadata.model || '');
     const isHmStudio = isHmStudioChannel(channel);
     const isHaidiYue = isWxHaidiYueChannel(channel);
@@ -284,10 +296,7 @@ export class VideoRecoveryService {
           : `${baseUrl}/v1/videos/${encodeURIComponent(videoId)}`;
     const headers: Record<string, string> = {};
     if (channel.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
-    const response = await fetch(pollUrl, {
-      headers,
-      signal: AbortSignal.timeout(15_000),
-    });
+    const response = await fetchVideoTaskResponse(pollUrl, { headers });
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
       throw { status: 502, message: formatVideoPollHttpFailure(response.status, detail) };
@@ -376,7 +385,10 @@ export class VideoRecoveryService {
 
     if (normalizedStatus === 'completed' || normalizedStatus === 'success') {
       if (!resultUrl && !isZongheng && !isHmStudio && !isHaidiYue && !isMiaowu && !isLongxia && !isSudaShui) {
-        resultUrl = `${baseUrl}/v1/files/video?id=${encodeURIComponent(videoId)}`;
+        const isSiYueTian = /(^|\.)llm\.(chre3\.com|domie\.studio)$/i.test(new URL(baseUrl).hostname);
+        resultUrl = isSiYueTian
+          ? `${baseUrl}/v1/videos/${encodeURIComponent(videoId)}/content`
+          : `${baseUrl}/v1/files/video?id=${encodeURIComponent(videoId)}`;
       }
       if (!resultUrl) throw { status: 502, message: '上游任务已成功，但未返回视频地址' };
       return { ...base, status: 'completed', message: '上游任务已生成成功', upstreamResultUrl: resultUrl };
@@ -403,7 +415,7 @@ export class VideoRecoveryService {
     const batchRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
     const batchMetadata = parseMetadata(batchRecord?.metadata);
     if (batchRecord && !batchMetadata.batchItemId && batchMetadata.recoveryPollingProtected && inspection.status === 'failed') {
-      const { failHmQueuedVideo } = await import('../routes/video.js');
+      const { failHmQueuedVideo } = await loadVideoPoller();
       await failHmQueuedVideo(contentId, new Error(inspection.message), true);
       return inspection;
     }
@@ -413,7 +425,7 @@ export class VideoRecoveryService {
         throw { status: 409, message: '该任务使用独立账本，请在对应任务入口恢复' };
       // Load the poller before taking money. Charge + status change are atomic;
       // concurrent clicks re-read the paid marker inside the transaction.
-      const { resumePollForTask } = await import('../routes/video.js');
+      const { resumePollForTask } = await loadVideoPoller();
       const result = db.transaction(() => {
         const record = db.select().from(contents).where(eq(contents.id, contentId)).get();
         if (!record) throw { status: 404, message: '任务记录不存在' };
@@ -432,7 +444,7 @@ export class VideoRecoveryService {
           Object.assign(metadata, { recoveryCharged: true, recoveryChargeAmount: amount, recoveryPrecharged: true,
             refundReversedAt: at, billingStatus: 'recovery_precharged', queueRefunded: false });
         }
-        if (record.status !== 'processing' || refunded) metadata.recoveryPollingStartedAt = at;
+        if (record.status !== 'processing' || refunded || !metadata.recoveryPollingStartedAt) metadata.recoveryPollingStartedAt = at;
         Object.assign(metadata, { videoId: inspection.videoId, upstreamStatus: 'in_progress', progress: inspection.progress || 0,
           queueStatus: 'processing', requiresReview: false, recoveryPollingProtected: true,
           progressText: '已恢复原任务轮询，不会重新生成', recoveryPreviousError: metadata.error || metadata.recoveryPreviousError });
@@ -457,17 +469,17 @@ export class VideoRecoveryService {
         tickVideoBatches();
       } else if (inspection.status === 'processing') {
         db.update(contents).set({ status: 'processing' }).where(eq(contents.id, contentId)).run();
-        const { resumePollForTask } = await import('../routes/video.js');
+        const { resumePollForTask } = await loadVideoPoller();
         void resumePollForTask(contentId, { ...batchRecord, status: 'processing' });
       }
     }
     if (!batchMetadata.batchItemId && (batchMetadata.hayaSubmissionStarted || batchMetadata.zonghengSubmissionStarted) && batchRecord?.status === 'review') {
       if (inspection.status === 'failed') {
-        const { failHmQueuedVideo } = await import('../routes/video.js');
+        const { failHmQueuedVideo } = await loadVideoPoller();
         await failHmQueuedVideo(contentId, new Error(inspection.message), true);
       } else if (inspection.status === 'processing') {
         db.update(contents).set({ status: 'processing' }).where(eq(contents.id, contentId)).run();
-        const { resumePollForTask } = await import('../routes/video.js');
+        const { resumePollForTask } = await loadVideoPoller();
         void resumePollForTask(contentId, { ...batchRecord, status: 'processing' });
       }
     }
@@ -479,14 +491,24 @@ export class VideoRecoveryService {
     if (beforeDownload.status === 'completed' && beforeDownload.resultUrl) {
       return { status: 'completed', message: '该任务已经恢复，无需重复扣费', item: beforeDownload, alreadyRecovered: true };
     }
+    if (!beforeMetadata.batchItemId && (beforeMetadata.managedSpecification || beforeMetadata.billingReservationId))
+      throw { status: 409, message: '该任务使用独立账本，请在对应任务入口恢复' };
 
-    const localizedUrl = await downloadAndLocalizeVideo(
-      inspection.upstreamResultUrl,
-      inspection.videoId,
-      beforeDownload.modelId || WX_HAIDIYUE_FACE_SPLIT_MODEL,
-      inspection.channelId,
-      inspection.channelApiKeyId,
-    );
+    const downloadKey = `${contentId}:${inspection.channelId}:${inspection.videoId}`;
+    let download = recoveryDownloads.get(downloadKey);
+    if (!download) {
+      download = withVideoPollDeadline(() => downloadAndLocalizeVideo(
+        inspection.upstreamResultUrl,
+        inspection.videoId,
+        beforeDownload.modelId || WX_HAIDIYUE_FACE_SPLIT_MODEL,
+        inspection.channelId,
+        inspection.channelApiKeyId,
+      ), 360_000, 'Video result storage');
+      recoveryDownloads.set(downloadKey, download);
+    }
+    let localizedUrl: string;
+    try { localizedUrl = await download; }
+    finally { if (recoveryDownloads.get(downloadKey) === download) recoveryDownloads.delete(downloadKey); }
     if (!localizedUrl) throw { status: 502, message: '上游视频下载失败，本次未新增扣费' };
 
     if (beforeMetadata.batchItemId) {
@@ -502,11 +524,20 @@ export class VideoRecoveryService {
       if (record.status === 'completed') {
         return { status: 'completed', message: '该任务已经恢复，无需重复扣费', item: record, alreadyRecovered: true };
       }
+      if (upstreamTaskId(metadata) !== inspection.videoId || Number(metadata.channelId) !== inspection.channelId)
+        throw { status: 409, message: '原任务关联已变更，请刷新后重新核查' };
 
-      // Haya review records keep their original reservation. Recovering them must not charge twice.
-      if ((metadata.hayaSubmissionStarted || metadata.zonghengSubmissionStarted || metadata.recoveryPollingProtected) && !metadata.queueRefunded && metadata.billingStatus !== 'refunded' && record.status !== 'failed') {
+      // Ordinary website videos are prepaid before submission, even old records
+      // without billingStatus/recovery markers. Never charge these a second time.
+      if (['processing', 'queued', 'review'].includes(record.status)
+        && !metadata.queueRefunded && metadata.billingStatus !== 'refunded') {
         delete metadata.error; delete metadata.progressText; delete metadata.hayaNeedsReview; delete metadata.requiresReview;
-        Object.assign(metadata, { progress: 100, completedAt: new Date().toISOString(), billingStatus: 'charged', upstreamResultUrl: inspection.upstreamResultUrl });
+        const recoveredAt = new Date().toISOString();
+        Object.assign(metadata, { progress: 100, queueStatus: 'completed', completedAt: recoveredAt,
+          recoveredAt, localizedAt: recoveredAt, upstreamStatus: 'completed',
+          billingStatus: metadata.recoveryPrecharged ? 'charged_after_recovery' : 'charged',
+          upstreamResultUrl: inspection.upstreamResultUrl });
+        delete metadata.upstreamQueryError; delete metadata.recoveryPollPausedAt; delete metadata.failedAt;
         db.update(contents).set({ status: 'completed', resultUrl: localizedUrl, metadata: JSON.stringify(metadata) }).where(eq(contents.id, contentId)).run();
         return { status: 'completed', message: '任务已恢复，使用原预扣费用结算', chargedAmount: 0, item: db.select().from(contents).where(eq(contents.id, contentId)).get() };
       }
@@ -521,6 +552,7 @@ export class VideoRecoveryService {
       metadata.billingStatus = 'charged_after_recovery';
       metadata.queueRefunded = false;
       metadata.queueStatus = 'completed';
+      metadata.upstreamStatus = 'completed';
       metadata.progress = 100;
       metadata.completedAt = recoveredAt;
       metadata.localizedAt = recoveredAt;
@@ -528,6 +560,8 @@ export class VideoRecoveryService {
       metadata.recoveryPreviousError = metadata.error || null;
       delete metadata.error;
       delete metadata.failedAt;
+      delete metadata.progressText; delete metadata.upstreamQueryError;
+      delete metadata.requiresReview; delete metadata.recoveryPollPausedAt;
 
       db.update(contents).set({
         status: 'completed',

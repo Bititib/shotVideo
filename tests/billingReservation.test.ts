@@ -42,8 +42,8 @@ describe('manual reconciliation of interrupted billing', () => {
 beforeEach(() => {
   sqlite.exec(`DROP TABLE IF EXISTS billing_reservations;
     DROP TABLE IF EXISTS users; DROP TABLE IF EXISTS organizations; DROP TABLE IF EXISTS api_tokens;
-    CREATE TABLE users (id INTEGER PRIMARY KEY, org_id INTEGER, balance REAL, updated_at TEXT);
-    CREATE TABLE organizations (id INTEGER PRIMARY KEY, balance REAL, updated_at TEXT);
+    CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, org_id INTEGER, balance REAL, updated_at TEXT);
+    CREATE TABLE organizations (id INTEGER PRIMARY KEY, name TEXT, balance REAL, updated_at TEXT);
     CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, token_key TEXT,
       allowed_models TEXT DEFAULT '[]', balance REAL, used_amount REAL DEFAULT 0, rate_limit INTEGER DEFAULT -1,
       status INTEGER DEFAULT 1, expires_at TEXT, last_used_at TEXT, created_at TEXT);

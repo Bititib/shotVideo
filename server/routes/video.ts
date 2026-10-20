@@ -1,4 +1,4 @@
-import { VideoPollTimeout, withVideoPollDeadline } from '../services/videoPollDeadline.js';
+import { VideoPollTimeout, withVideoPollDeadline, fetchVideoTaskResponse } from '../services/videoPollDeadline.js';
 import { refundConfirmedZonghengVideo } from '../services/zonghengSubmissionResolutionService.js';
 import { queryZonghengTask } from '../services/zonghengTaskQueryService.js';
 import { publicGenerationEvent } from '../../shared/generationMessages.js';
@@ -1351,6 +1351,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
         let completedMetadata: Record<string, any> = {};
         try { completedMetadata = JSON.parse(current?.metadata || '{}'); } catch { }
         completedMetadata.progress = 100;
+        completedMetadata.upstreamStatus = 'completed';
         completedMetadata.queueStatus = 'completed';
         completedMetadata.queuePosition = 0;
         completedMetadata.completedAt = new Date().toISOString();
@@ -2594,6 +2595,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
 
         const pollResp = isZongheng
           ? await queryZonghengTask(videoId, dbChannel?.id, dbChannel?.apiKeyId, channel)
+          : protectedPolling ? await fetchVideoTaskResponse(pollUrl, { headers })
           : await fetch(pollUrl, { headers, signal: AbortSignal.timeout(15_000) });
 
         if (!pollResp.ok) {
@@ -2770,7 +2772,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
           errMsg = extractVideoFailureMessage(status) || errMsg || '视频生成失败';
         }
 
-        console.log(`[video] 轮询 (${isSudaShui ? 'SudaShui' : isSoraV4 ? 'SoraV4' : isSeedanceFast ? 'SeedanceFast' : 'Default'}): status=${taskStatus} progress=${progress}%`);
+        console.log(`[video] 轮询 (${isSudaShui ? 'SudaShui' : isSoraV4 ? 'SoraV4' : isSeedanceFast ? 'SeedanceFast' : 'Default'}): contentId=${contentId} taskId=${videoId} status=${taskStatus} progress=${progress}%`);
 
         if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'generating' || taskStatus === 'post_processing' || taskStatus === 'finalizing' || taskStatus === 'in_progress') {
           sendEvent({ type: 'progress', progress });
@@ -2826,16 +2828,16 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
           let finalVideoUrl = '';
           try {
             if (resultUrl && resultUrl.includes('llm.chre3.com')) {
-              finalVideoUrl = isZongheng
+              finalVideoUrl = isZongheng || protectedPolling
                 ? await withVideoPollDeadline(() => localizeChre3Video(resultUrl, videoId, model), 360_000, 'Video result storage')
                 : await localizeChre3Video(resultUrl, videoId, model);
             } else {
-              finalVideoUrl = isZongheng
+              finalVideoUrl = isZongheng || protectedPolling
                 ? await withVideoPollDeadline(() => downloadAndLocalizeVideo(resultUrl, videoId, model, dbChannel?.id, dbChannel?.apiKeyId), 360_000, 'Video result storage')
                 : await downloadAndLocalizeVideo(resultUrl, videoId, model, dbChannel?.id, dbChannel?.apiKeyId);
             }
           } catch (localErr: any) {
-            if (isZongheng && localErr instanceof VideoPollTimeout) throw localErr;
+            if ((isZongheng || protectedPolling) && localErr instanceof VideoPollTimeout) throw localErr;
             console.error(`[video] VPS localization failed; task remains processing: ${localErr.message}`);
             sendEvent({ type: 'status', message: '视频已生成，正在保存到本站存储' });
             continue;
@@ -2862,7 +2864,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
           return;
         }
       } catch (pollErr: any) {
-        if (isZongheng && pollErr instanceof VideoPollTimeout && contentId !== null) {
+        if ((isZongheng || protectedPolling) && pollErr instanceof VideoPollTimeout && contentId !== null) {
           console.warn('[video] Poll deadline reached; handing original task to recovery:', contentId);
           resumeAfterPollTimeout = true;
           sendEvent({ type: 'status', message: '正在后台同步原任务结果，请勿重复提交' });
@@ -2871,7 +2873,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
         }
         if (protectedPolling && contentId !== null) noteVideoQueryProblem(contentId, pollErr.message || '查询连接异常');
         if (isHaya) consecutiveTransientPollFailures++;
-        console.warn(`[video] 轮询异常: ${pollErr.message}`);
+        console.warn(`[video] 轮询异常: contentId=${contentId} taskId=${videoId} ${pollErr.message}`);
         // 轮询失败不立即退出，继续重试
       }
     }
@@ -3607,6 +3609,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
 
         const pollResp = isZongheng
           ? await queryZonghengTask(videoId, Number(metadata.channelId) || undefined, Number(metadata.channelApiKeyId) || null, channel)
+          : protectedPolling ? await fetchVideoTaskResponse(pollUrl, { headers })
           : await fetch(pollUrl, { headers, signal: AbortSignal.timeout(15_000) });
 
         if (!pollResp.ok) {
@@ -3768,7 +3771,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           errMsg = extractVideoFailureMessage(statusData) || errMsg || '视频生成失败';
         }
 
-        console.log(`[video-recover] Polling task ${contentId}: status=${taskStatus} progress=${progress}%`);
+        console.log(`[video-recover] Polling task ${contentId}: taskId=${videoId} status=${taskStatus} progress=${progress}%`);
 
         if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'generating' || taskStatus === 'post_processing' || taskStatus === 'finalizing' || taskStatus === 'in_progress') {
           try {
@@ -3807,11 +3810,11 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           let finalVideoUrl = '';
           try {
             if (resultUrl && resultUrl.includes('llm.chre3.com')) {
-              finalVideoUrl = isZongheng
+              finalVideoUrl = isZongheng || protectedPolling
                 ? await withVideoPollDeadline(() => localizeChre3Video(resultUrl, videoId, model), 360_000, 'Video result storage')
                 : await localizeChre3Video(resultUrl, videoId, model);
             } else {
-              finalVideoUrl = isZongheng
+              finalVideoUrl = isZongheng || protectedPolling
                 ? await withVideoPollDeadline(() => downloadAndLocalizeVideo(resultUrl, videoId, model, metadata.channelId, metadata.channelApiKeyId), 360_000, 'Video result storage')
                 : await downloadAndLocalizeVideo(resultUrl, videoId, model, metadata.channelId, metadata.channelApiKeyId);
             }
@@ -3840,6 +3843,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           meta = {
             ...meta,
             progress: 100,
+            upstreamStatus: taskStatus,
             queueStatus: 'completed',
             queuePosition: 0,
             upstreamResultUrl: resultUrl || (meta as any).upstreamResultUrl,

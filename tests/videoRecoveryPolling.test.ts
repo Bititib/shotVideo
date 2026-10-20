@@ -26,6 +26,7 @@ vi.mock('../server/services/videoLocalizationService.js', () => ({ downloadAndLo
 import { db, sqlite } from '../server/db/index';
 import { contents } from '../server/db/schema';
 import { protectsVideoPolling } from '../server/services/videoPollingSafety';
+import { env } from '../server/config/env';
 let video: typeof import('../server/routes/video');
 const row = () => db.select().from(contents).get()!;
 const balance = () => (sqlite.prepare('SELECT balance FROM users WHERE id=1').get() as any).balance;
@@ -34,6 +35,7 @@ beforeAll(async () => {
   try { video = await import('../server/routes/video'); } finally { interval.mockRestore(); }
 });
 beforeEach(() => {
+  env.VIDEO_TASK_POLL_TIMEOUT_MS = 20_000;
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-20T03:00:00Z'));
   sqlite.exec("DELETE FROM contents; DELETE FROM channels; DELETE FROM users; INSERT INTO users(id,balance) VALUES(1,8);");
   sqlite.prepare("INSERT INTO channels(id,name,type,base_url,api_key,status) VALUES(5,'四月天','openai','https://llm.domie.studio','test',1)").run();
@@ -87,4 +89,29 @@ it('恢复使用新的查询窗口，持续查询异常到期暂停但不退款'
   await vi.advanceTimersByTimeAsync(15_000); await task;
   expect(row().status).toBe('review'); expect(row().cost).toBe(2); expect(balance()).toBe(8);
   expect(JSON.parse(row().metadata).recoveryPollPausedAt).toBeTruthy();
+});
+it('查询响应体卡住也会超时释放，继续获取原任务成功结果', async () => {
+  env.VIDEO_TASK_POLL_TIMEOUT_MS = 60_000;
+  const f = vi.fn().mockResolvedValueOnce({
+    status: 200, statusText: 'OK', headers: new Headers(), text: () => new Promise(() => {}),
+  }).mockResolvedValueOnce(Response.json({ id: 'task_saved', status: 'completed', video_url: 'https://cdn.test/result.mp4' }));
+  vi.stubGlobal('fetch', f);
+  const task = video.resumePollForTask(13738, row());
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(row().status).toBe('processing'); expect(balance()).toBe(8);
+  expect(JSON.parse(row().metadata).upstreamQueryError).toContain('timed out');
+  await vi.advanceTimersByTimeAsync(5000); await task;
+  expect(row().status).toBe('completed'); expect(balance()).toBe(8);
+  expect(video.activePolls.has(13738)).toBe(false);
+});
+it('管理员已保存完成后，迟到的轮询进度不能覆盖成功状态', async () => {
+  let respond!: (r: Response) => void;
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { respond = resolve; })));
+  const task = video.resumePollForTask(13738, row());
+  await vi.advanceTimersByTimeAsync(5000);
+  sqlite.prepare("UPDATE contents SET status='completed',result_url='/uploads/videos/admin-recovered.mp4' WHERE id=13738").run();
+  respond(Response.json({ id: 'task_saved', status: 'in_progress', progress: 85 }));
+  await vi.advanceTimersByTimeAsync(0); await task;
+  expect(row()).toMatchObject({ status: 'completed', resultUrl: '/uploads/videos/admin-recovered.mp4' });
+  expect(balance()).toBe(8);
 });

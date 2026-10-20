@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { execFileSync } from 'node:child_process';
 const poller = vi.hoisted(() => ({ resume: vi.fn().mockResolvedValue(undefined), fail: vi.fn().mockResolvedValue(undefined) }));
 vi.mock('../server/routes/video.js', () => ({ resumePollForTask: poller.resume, failHmQueuedVideo: poller.fail }));
+vi.mock('../server/services/mediaPreviewService.js', () => ({ createMediaPreview: vi.fn().mockResolvedValue(null) }));
 vi.mock('../server/db/index.js', async () => {
   const { default: Database } = await import('better-sqlite3');
   const { drizzle } = await import('drizzle-orm/better-sqlite3');
@@ -35,7 +36,10 @@ import { VideoRecoveryService } from '../server/services/videoRecoveryService.js
 import { resumePollForTask } from '../server/routes/video.js';
 
 let validVideo: Buffer;
-beforeAll(() => { validVideo = execFileSync('ffmpeg', ['-v','error','-f','lavfi','-i','color=s=16x16:r=10:d=0.2','-c:v','libx264','-pix_fmt','yuv420p','-f','mp4','-movflags','frag_keyframe+empty_moov','pipe:1']); });
+beforeAll(async () => {
+  expect((await import('../server/routes/video.js')).resumePollForTask).toBe(poller.resume);
+  validVideo = execFileSync('ffmpeg', ['-v','error','-f','lavfi','-i','color=s=16x16:r=10:d=0.2','-c:v','libx264','-pix_fmt','yuv420p','-f','mp4','-movflags','frag_keyframe+empty_moov','pipe:1']);
+});
 afterAll(() => sqlite.close());
 const TEST_EMAIL = 'video-recovery@test.local';
 const TEST_CHANNEL_NAME = 'video-recovery-haidiyue';
@@ -46,6 +50,7 @@ const localizedVideoPath = path.join(process.cwd(), 'data', 'uploads', 'videos',
 
 beforeEach(() => {
   vi.clearAllMocks();
+  if (sqlite.prepare("SELECT 1 FROM sqlite_master WHERE name='fund_ledger'").get()) sqlite.exec('DELETE FROM fund_ledger');
   expect(resumePollForTask).toBe(poller.resume);
   sqlite.prepare('DELETE FROM contents WHERE title = ?').run('video-recovery-test');
   sqlite.prepare('DELETE FROM channels WHERE name = ?').run(TEST_CHANNEL_NAME);
@@ -226,6 +231,49 @@ describe('VideoRecoveryService', () => {
     expect(await VideoRecoveryService.recover(contentId)).toMatchObject({ status: 'completed', chargedAmount: 0 });
     expect(BalanceService.getBalance(userId)).toBe(8);
   });
+  it.each(['processing', 'review'])('普通旧视频 %s 未退款，没有计费标记也不重复扣费', async status => {
+    sqlite.prepare("UPDATE channels SET type='openai',base_url='https://llm.domie.studio' WHERE id=?").run(channelId);
+    sqlite.prepare('UPDATE contents SET status=?,cost=1.5,metadata=? WHERE id=?').run(status, JSON.stringify({
+      videoId: 'upstream-task-1', channelId, progress: 85, upstreamStatus: 'in_progress',
+    }), contentId);
+    // Even an empty wallet must not block retrieval of an already paid result.
+    sqlite.prepare('UPDATE users SET balance=0 WHERE id=?').run(userId);
+    const results = await Promise.all([VideoRecoveryService.recover(contentId), VideoRecoveryService.recover(contentId)]);
+    expect(results.every(r => !r.chargedAmount)).toBe(true);
+    expect(BalanceService.getBalance(userId)).toBe(0);
+    expect(read()).toMatchObject({ status: 'completed', cost: 1.5 });
+    expect(JSON.parse(read().metadata)).toMatchObject({
+      upstreamStatus: 'completed', progress: 100, queueStatus: 'completed', billingStatus: 'charged',
+    });
+    expect(JSON.parse(read().metadata).localizedAt).toBeTruthy();
+    expect(vi.mocked(fetch).mock.calls.every(c => !c[1]?.method || c[1].method === 'GET')).toBe(true);
+  });
+  it('普通旧视频尚在生成，恢复轮询不补扣原费用', async () => {
+    pending();
+    sqlite.prepare("UPDATE contents SET status='processing',cost=1.5,metadata=? WHERE id=?").run(JSON.stringify({
+      videoId: 'upstream-task-1', channelId, progress: 85,
+    }), contentId);
+    expect(await VideoRecoveryService.recover(contentId)).toMatchObject({ status: 'processing', chargedAmount: 0 });
+    expect(BalanceService.getBalance(userId)).toBe(10);
+    expect(read().cost).toBe(1.5);
+    expect(poller.resume).toHaveBeenCalled();
+  });
+  it('失败记录无退款凭据时，不猜测金额或重复扣费', async () => {
+    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify({
+      videoId: 'upstream-task-1', channelId,
+    }), contentId);
+    await expect(VideoRecoveryService.recover(contentId)).rejects.toMatchObject({ status: 409 });
+    expect(BalanceService.getBalance(userId)).toBe(10);
+    expect(read().status).toBe('failed');
+  });
+  it('四月天成功响应无视频地址时，使用原任务 content 地址', async () => {
+    sqlite.prepare("UPDATE channels SET type='openai',base_url='https://llm.domie.studio/v1' WHERE id=?").run(channelId);
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: 'upstream-task-1', status: 'completed', progress: 100 })));
+    expect(await VideoRecoveryService.inspect(contentId)).toMatchObject({
+      upstreamResultUrl: 'https://llm.domie.studio/v1/videos/upstream-task-1/content',
+    });
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe('https://llm.domie.studio/v1/videos/upstream-task-1');
+  });
   it('恢复后已经预扣，后来上游完成只保存，不再扣第二次', async () => {
     const nativeMock = fetch;
     pending(); await VideoRecoveryService.recover(contentId);
@@ -251,6 +299,8 @@ describe('VideoRecoveryService', () => {
     expect(record!.resultUrl).toBe('/uploads/videos/video_sd2_5-haidiyue-face_upstream-task-1.mp4');
     expect(metadata.recoveryCharged).toBe(true);
     expect(metadata.queueRefunded).toBe(false);
+    expect(sqlite.prepare("SELECT kind,delta,content_id FROM fund_ledger WHERE content_id=? AND account_type='user'").all(contentId))
+      .toEqual([{ kind: 'charge', delta: -2, content_id: contentId }]);
 
     const repeated = await VideoRecoveryService.recover(contentId);
     expect(repeated.alreadyRecovered).toBe(true);

@@ -762,23 +762,25 @@ export default function ContentsPage() {
                             )}
                           </div>
                         )}
-                        {previewItem.type === 'video'
-                          && getUpstreamTaskId(parseMeta(previewItem.metadata)) && (
-                            <button
-                              type="button"
-                              disabled={recoveringId === previewItem.id}
-                              onClick={() => { void handleRecoverUpstream(previewItem); }}
-                              className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-3 py-2 text-xs font-medium text-cyan-200 transition-colors hover:bg-cyan-500/20 disabled:cursor-wait disabled:opacity-60"
-                            >
-                              {recoveringId === previewItem.id
-                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                : <RefreshCw className="h-3.5 w-3.5" />}
-                              {recoveringId === previewItem.id ? '正在重新获取…' : '重新获取上游结果'}
-                            </button>
-                          )}
                       </div>
                     );
                   })()}
+                  {previewItem.type === 'video'
+                    && ['queued', 'processing', 'failed', 'error', 'review'].includes(previewItem.status)
+                    && getUpstreamTaskId(parseMeta(previewItem.metadata)) && (
+                      <button
+                        type="button"
+                        disabled={recoveringId === previewItem.id}
+                        aria-busy={recoveringId === previewItem.id}
+                        onClick={() => { void handleRecoverUpstream(previewItem); }}
+                        className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-3 py-2 text-xs font-medium text-cyan-200 transition-colors hover:bg-cyan-500/20 focus-visible:ring-2 focus-visible:ring-cyan-400 disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {recoveringId === previewItem.id
+                          ? <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+                          : <RefreshCw aria-hidden="true" className="h-3.5 w-3.5" />}
+                        {recoveringId === previewItem.id ? '正在重新获取…' : '重新获取上游结果'}
+                      </button>
+                    )}
                   </section>
 
                   <section className="content-detail-information" aria-label="任务信息与提示词">
