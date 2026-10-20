@@ -86,6 +86,8 @@ export async function recoverPidoiImage(contentId: number, options: { automatic?
         m.progresses[job.index] = task.progress;
       }
       m.upstreamImageUrls = jobs.map((j: any) => j.sourceUrl).filter(Boolean);
+      const fallback = m.pidoiFallbacks?.[job.index];
+      if (fallback?.taskId === job.taskId && ['completed', 'failed'].includes(job.status)) fallback.status = job.status;
       m.progressText = job.status === 'completed' ? '图片已生成，正在保存' : '上游生成中';
       save();
       if (job.sourceUrl && job.status === 'completed') {

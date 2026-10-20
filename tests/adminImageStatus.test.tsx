@@ -7,6 +7,17 @@ vi.mock('../client/src/api/admin', () => ({ adminApi: { getContents: vi.fn(), ge
 import { adminApi } from '../client/src/api/admin';
 import ContentsPage from '../client/src/pages/admin/ContentsPage';
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.restoreAllMocks(); });
+it.each([false, true])('图片详情标明同步生成与异步备用（%s）', async backup => {
+  const item = { id: 13844, userId: 1, type: 'image', title: 'test', modelId: 'gpt-image-2', status: 'completed', cost: 0.22,
+    createdAt: new Date().toISOString(), metadata: JSON.stringify({ pidoiRequestMode: 'sync',
+      pidoiFallbacks: backup ? { 0: { protocol: 'async', status: 'completed', taskId: 'task_backup' } } : {} }) };
+  vi.mocked(adminApi.getContents).mockResolvedValue({ items: [item], total: 1 });
+  render(<MemoryRouter><ContentsPage /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: '查看本地记录 13844 详情' }));
+  const dialog = screen.getByRole('dialog');
+  expect(within(dialog).getByText(backup ? '异步备用 · 已返回结果' : '同步生成')).toBeTruthy();
+  if (backup) expect(within(dialog).getByText('task_backup')).toBeTruthy();
+});
 it('恢复生成中的视频明确确认补扣，并刷新详情与列表', async () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
   const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});

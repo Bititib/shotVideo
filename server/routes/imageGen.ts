@@ -581,6 +581,13 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
               mode: requestMode,
               onResponse: (response, payload) => captureResponse(index, response, payload, 'response_without_id'),
               onCompatibility: () => persistJob({ pidoiSubmissionProtocol: 'openai-compatible', progressText: '图片正在后台生成，请稍候' }),
+              onFallback: state => {
+                const fallbacks = { ...(persistedMetadata.pidoiFallbacks || {}) };
+                if (state.status === 'submitting' && fallbacks[index]) throw new Error('备用已执行，请核对原任务');
+                fallbacks[index] = { ...fallbacks[index], ...state, updatedAt: new Date().toISOString() };
+                persistJob({ pidoiFallbacks: fallbacks, progressText: state.status === 'submitting'
+                  ? '同步接口不可用，正在使用异步备用' : '异步备用结果已记录' });
+              },
             });
           Object.assign(diagnostic, { stage: 'persist', taskId: task.taskId });
           persistedMetadata.pidoiImageJobs.push({ index, taskId: task.taskId, pollPath: task.pollPath, status: task.status, sourceUrl: task.imageUrl, protocol: task.protocol, error: task.error });

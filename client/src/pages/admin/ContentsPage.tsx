@@ -820,6 +820,17 @@ export default function ContentsPage() {
                     <div className="col-span-2 bg-white/[0.03] rounded-lg p-3">
                       <div className="text-zinc-500 mb-1">上游任务 / 请求 ID</div>
                       <div className="break-all font-mono text-white">{getUpstreamTaskId(parseMeta(previewItem.metadata)) || missingUpstreamId(parseMeta(previewItem.metadata))}</div>
+                      {previewItem.type === 'image' && (() => {
+                        const metadata = parseMeta(previewItem.metadata);
+                        const fallbacks = Object.values(metadata.pidoiFallbacks || {}) as any[];
+                        if (!fallbacks.length) return metadata.pidoiSubmissionProtocol === 'openai-compatible'
+                          || metadata.pidoiRequestMode === 'sync' ? <div className="mt-2 text-xs text-zinc-400">同步生成</div> : null;
+                        const labels: Record<string, string> = { submitting: '执行中', accepted: '生成中', completed: '已返回结果', failed: '失败', unknown: '待核对' };
+                        return <div className="mt-2 space-y-1 text-xs text-zinc-400">{fallbacks.map((fallback, index) => <div key={index}>
+                          <span>{fallback.protocol === 'async' ? '异步备用' : '同步备用'} · {labels[fallback.status] || '待核对'}</span>
+                          {fallback.taskId && <div className="break-all font-mono">{fallback.taskId}</div>}
+                        </div>)}</div>;
+                      })()}
                       {previewItem.type === 'video'
                         && ['failed', 'error', 'review'].includes(previewItem.status)
                         && !getUpstreamTaskId(parseMeta(previewItem.metadata)) && (

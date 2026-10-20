@@ -25,10 +25,33 @@ describe('Pidoi 同步直连模式', () => {
     expect(f.mock.calls[0][1].body.getAll('image[]')).toHaveLength(2);
     expect(f.mock.calls[0][1].body.get('quality')).toBe('high');
   });
-  it.each([404, 405, 451])('同步明确拒绝 %s 不回退其他提交入口', async status => {
+  it.each([400, 401, 429, 451, 502, 504])('同步参数/权限/不确定错误 %s 不回退其他提交入口', async status => {
     const f = vi.fn().mockResolvedValue(new Response('Not Found', { status }));
-    await expect(submitPidoiImage(channel, {}, f, { mode: 'sync' })).rejects.toMatchObject({ confirmedFailure: true, status });
+    await expect(submitPidoiImage(channel, {}, f, { mode: 'sync' })).rejects.toMatchObject({ confirmedFailure: status < 500, status });
     expect(f).toHaveBeenCalledTimes(1);
+  });
+  it.each([404, 405])('同步路由明确不可用 %s 后只补试一次异步', async status => {
+    const onFallback = vi.fn();
+    const f = vi.fn().mockResolvedValueOnce(new Response(status === 404 ? 'Not Found' : 'Method Not Allowed', { status }))
+      .mockImplementationOnce(async () => {
+        expect(onFallback).toHaveBeenLastCalledWith(expect.objectContaining({ protocol: 'async', status: 'submitting' }));
+        return response({ task_id: 'task_backup', status: 'IN_PROGRESS' });
+      });
+    expect(await submitPidoiImage(channel, { model: 'gpt-image-2', prompt: 'cat' }, f, { mode: 'sync', onFallback }))
+      .toMatchObject({ protocol: 'async', taskId: 'task_backup', status: 'processing' });
+    expect(f.mock.calls.map(call => call[0])).toEqual(['https://pidoi.com/v1/images/generations', 'https://pidoi.com/v1/image/generations']);
+    expect(onFallback).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'accepted', taskId: 'task_backup' }));
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+  it('备用超时不循环重发；同步路由响应带任务时不补发', async () => {
+    const onFallback = vi.fn();
+    const f = vi.fn().mockResolvedValueOnce(new Response('Not Found', { status: 404 })).mockRejectedValueOnce(new Error('timeout'));
+    await expect(submitPidoiImage(channel, {}, f, { mode: 'sync', onFallback })).rejects.toThrow('timeout');
+    expect(f).toHaveBeenCalledTimes(2);
+    expect(onFallback).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'unknown' }));
+    const accepted = vi.fn().mockResolvedValue(Response.json({ task_id: 'task_accepted', message: 'Not Found' }, { status: 404 }));
+    expect(await submitPidoiImage(channel, {}, accepted, { mode: 'sync' })).toMatchObject({ taskId: 'task_accepted' });
+    expect(accepted).toHaveBeenCalledTimes(1);
   });
   it('同步超时不重提，最长等待固定 15 分钟', async () => {
     const timeout = vi.spyOn(AbortSignal, 'timeout');

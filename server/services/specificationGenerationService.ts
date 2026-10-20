@@ -216,6 +216,11 @@ async function runImages(id: number, candidates: RouteCandidate[], request: Spec
               responses[index] = evidence;
               patch(id, { upstreamResponses: responses,
                 ...(evidence.id ? { upstreamTaskId: evidence.id, upstreamTaskIds: [...new Set([...(meta.upstreamTaskIds || []), evidence.id])] } : {}) });
+            }, undefined, undefined, state => {
+              const fallbacks = { ...(metadata(id).pidoiFallbacks || {}) };
+              if (state.status === 'submitting' && fallbacks[index]) throw new SpecificationUpstreamError('备用已执行，请核对原任务', false, true);
+              fallbacks[index] = { ...fallbacks[index], ...state, updatedAt: new Date().toISOString() };
+              patch(id, { pidoiFallbacks: fallbacks, progressText: '正在使用异步备用生成' });
             });
         };
         const result = target.channel.type === 'hmstudio' ? await hmStudioQueue.enqueue({ id: 'spec-image-' + id + '-' + index + '-' + target.route.id,

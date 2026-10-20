@@ -336,7 +336,8 @@ export async function pollMjSpecificationImage(channel: any, initial: MjAsyncIma
 }
 
 export async function generateSpecificationImage(target: RouteCandidate, request: SpecificationRequest, onStarting: () => void, onSubmitted: (id: string) => void, onResponse?: (evidence: ImageResponseEvidence) => void,
-  onMjAsyncState: (state: MjAsyncImageState) => void = () => {}, checkMjReservation: () => void = () => {}) {
+  onMjAsyncState: (state: MjAsyncImageState) => void = () => {}, checkMjReservation: () => void = () => {},
+  onPidoiFallback?: (state: import('./pidoiImageAdapter.js').PidoiFallbackState) => void) {
   const c = { ...target.channel, timeout: imageGenerationTimeout(target.channel) }, model = target.route.upstreamModel, i = request.input;
   let started = false;
   const trackedFetch: typeof fetch = async (url, init) => {
@@ -445,6 +446,7 @@ export async function generateSpecificationImage(target: RouteCandidate, request
     try {
       return await generatePidoiImage(c, { ...payload, images: options.referenceImages,
         resolution: i.resolution, aspect_ratio: i.ratio }, onSubmitted, trackedFetch, { referenceImages: request.images,
+          onFallback: onPidoiFallback,
           onResponse: (response, payload) => onResponse?.(imageResponseEvidence(payload, response.headers, response.status, 'response_without_id')) });
     } catch (e: any) {
       if (e.imageRequestStage) logImageRequestFailure({ stage: e.imageRequestStage, channelId: c.id, taskId: e.upstreamTaskId }, e);

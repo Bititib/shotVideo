@@ -53,6 +53,43 @@ afterEach(async () => {
 });
 
 describe('Pidoi 网页提交到保存和结算', () => {
+  it('同步优先不可用时在原记录中启用异步备用，只预扣一次', async () => {
+    vi.stubEnv('PIDOI_IMAGE_REQUEST_MODE', undefined);
+    const f = vi.fn().mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+      .mockResolvedValueOnce(Response.json({ code: 'success', data: { task_id: 'task_backup', status: 'IN_PROGRESS' } }))
+      .mockResolvedValueOnce(Response.json({ code: 'success', data: { task_id: 'task_backup', status: 'SUCCESS', result_url: 'https://storage.test/cat.png' } }));
+    vi.stubGlobal('fetch', f); await generate();
+    await vi.waitFor(() => expect(row().status).toBe('completed'));
+    expect(f.mock.calls.map(call => call[1].method)).toEqual(['POST', 'POST', 'GET']);
+    expect(f.mock.calls.slice(0, 2).map(call => call[0])).toEqual(['https://pidoi.com/v1/images/generations', 'https://pidoi.com/v1/image/generations']);
+    expect(JSON.parse(row().metadata).pidoiFallbacks[0]).toMatchObject({ protocol: 'async', status: 'completed', taskId: 'task_backup' });
+    expect(balance()).toBeCloseTo(99.78); expect(reservation().state).toBe('settled');
+    expect((sqlite.prepare('SELECT COUNT(*) n FROM contents').get() as any).n).toBe(1);
+    await recoverPidoiImage(row().id); expect(f).toHaveBeenCalledTimes(3); expect(balance()).toBeCloseTo(99.78);
+  });
+  it('异步备用提交超时保留核对，后续扫描不重复生成', async () => {
+    vi.stubEnv('PIDOI_IMAGE_REQUEST_MODE', undefined);
+    const f = vi.fn().mockResolvedValueOnce(new Response('Not Found', { status: 404 })).mockRejectedValueOnce(new Error('timeout'));
+    vi.stubGlobal('fetch', f); await generate();
+    await vi.waitFor(() => expect(pidoiImageActive.size).toBe(0));
+    expect(row().status).toBe('review');
+    expect(JSON.parse(row().metadata).pidoiFallbacks[0].status).toBe('unknown');
+    await recoverPidoiImage(row().id, { automatic: true });
+    expect(f).toHaveBeenCalledTimes(2); expect(reservation().state).toBe('review');
+  });
+  it('规格路由同样同步优先并记录异步备用', async () => {
+    vi.stubEnv('PIDOI_IMAGE_REQUEST_MODE', undefined);
+    const f = vi.fn().mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
+      .mockResolvedValueOnce(Response.json({ code: 'success', data: { task_id: 'task_spec_backup', status: 'SUCCESS', result_url: 'https://storage.test/cat.png' } }));
+    vi.stubGlobal('fetch', f); const fallback = vi.fn();
+    const result = await generateSpecificationImage({ channel: { id: 6, baseUrl: 'https://pidoi.com', apiKey: 'test-key' },
+      route: { executionModel: 'gpt-image-2', upstreamModel: 'gpt-image-2' } } as any,
+      { prompt: 'cat', input: { ratio: '1:1', resolution: '4K' }, images: [], videos: [], audios: [], firstFrame: '', lastFrame: '', body: {}, publicBaseUrl: 'https://local.test' } as any,
+      vi.fn(), vi.fn(), undefined, undefined, undefined, fallback);
+    expect(result.imageUrl).toBe('https://storage.test/cat.png');
+    expect(f.mock.calls.map(call => call[0])).toEqual(['https://pidoi.com/v1/images/generations', 'https://pidoi.com/v1/image/generations']);
+    expect(fallback).toHaveBeenLastCalledWith(expect.objectContaining({ protocol: 'async', status: 'completed', taskId: 'task_spec_backup' }));
+  });
   it('默认同步直连，成功自动保存结算，不等待空任务 ID', async () => {
     vi.stubEnv('PIDOI_IMAGE_REQUEST_MODE', undefined);
     const f = vi.fn().mockResolvedValue(Response.json({ data: [{ url: 'https://storage.test/cat.png' }] }));

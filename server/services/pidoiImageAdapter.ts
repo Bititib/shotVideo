@@ -1,6 +1,9 @@
+import { Agent } from 'undici';
 import { DEFAULT_IMAGE_GENERATION_TIMEOUT_MS } from './imageGenerationTimeout.js';
 import { extractImageUpstreamTaskId } from './imageTaskMetadataService.js';
 import { pidoiTaskEvidence } from './pidoiImageEvidence.js';
+
+const imageDispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
 
 export function isPidoiImageChannel(channel: { baseUrl?: string; name?: string }) {
   try { const host = new URL(channel.baseUrl || '').hostname; return host === 'pidoi.com' || host.endsWith('.pidoi.com'); } catch { return false; }
@@ -14,7 +17,9 @@ type SubmitOptions = {
   referenceImages?: string[];
   onResponse?: (response: Response, payload?: unknown) => void;
   onCompatibility?: () => void;
+  onFallback?: (state: PidoiFallbackState) => void;
 };
+export type PidoiFallbackState = { protocol: 'async' | 'openai-compatible'; status: 'submitting' | 'accepted' | 'completed' | 'failed' | 'unknown'; reason: string; taskId?: string };
 /** Snapshot this for a batch. Unknown/missing configuration safely selects one compatible POST. */
 export function pidoiImageRequestMode(): 'sync' | 'async-first' {
   return process.env.PIDOI_IMAGE_REQUEST_MODE?.trim().toLowerCase() === 'async-first' ? 'async-first' : 'sync';
@@ -91,8 +96,10 @@ async function submitCompatibleImage(c: Channel, body: Record<string, any>, fetc
   let stage = 'submit';
   try {
     const references = options.referenceImages || body.images || [];
-    const payload = { ...body };
-    delete payload.images;
+    const payload: Record<string, any> = { model: body.model, prompt: body.prompt, n: 1, response_format: 'url' };
+    for (const key of ['size', 'quality', 'output_format', 'background', 'output_compression']) {
+      if (body[key] !== undefined) payload[key] = body[key];
+    }
     let requestBody: string | FormData = JSON.stringify(payload);
     let path = '/v1/images/generations';
     const headers: Record<string, string> = { Authorization: 'Bearer ' + c.apiKey };
@@ -115,11 +122,9 @@ async function submitCompatibleImage(c: Channel, body: Record<string, any>, fetc
       requestBody = form; path = '/v1/images/edits';
     } else headers['Content-Type'] = 'application/json';
     stage = 'submit';
-    // Unlike the async POST this waits for the finished image. The common 120s
-    // channel default must not cut off the same request API clients can finish.
-    // Bound the wait to 15 minutes even if the channel has an excessive timeout.
+    // One generation deadline governs response headers and body as well.
     const response = await fetchImpl(apiBase(c) + path, { method: 'POST', headers, body: requestBody,
-      signal: AbortSignal.timeout(DEFAULT_IMAGE_GENERATION_TIMEOUT_MS), redirect: 'error' });
+      signal: AbortSignal.timeout(DEFAULT_IMAGE_GENERATION_TIMEOUT_MS), dispatcher: imageDispatcher, redirect: 'error' } as RequestInit);
     const raw = await readResponse(c, response, options);
     const evidence = pidoiTaskEvidence(raw);
     if (evidence) {
@@ -143,7 +148,24 @@ export async function submitPidoiImage(c: Channel, body: Record<string, any>, fe
     try { return await submitCompatibleImage(c, body, fetchImpl, options); }
     catch (error: any) {
       if (error.acceptedTask) return error.acceptedTask;
-      throw error; // Never retry a synchronous POST or silently switch to async.
+      // Network/timeout/5xx and input/auth errors never start another generation.
+      if (!error.routeUnavailable) throw error;
+      const state = { protocol: 'async' as const, reason: 'sync_endpoint_unavailable' };
+      // Persist before POST. An interrupted attempt must never be sent again.
+      options.onFallback?.({ ...state, status: 'submitting' });
+      try {
+        const task = await request(c, '', body, fetchImpl, options);
+        if (!task.taskId) throw new PidoiImageError('Pidoi 异步备用未返回任务 ID，提交结果待核对');
+        options.onFallback?.({ ...state, status: task.status === 'processing' ? 'accepted' : task.status, taskId: task.taskId });
+        return { ...task, protocol: 'async' };
+      } catch (backupError: any) {
+        if (backupError.acceptedTask) {
+          options.onFallback?.({ ...state, status: 'accepted', taskId: backupError.acceptedTask.taskId });
+          return backupError.acceptedTask;
+        }
+        options.onFallback?.({ ...state, status: backupError.confirmedFailure ? 'failed' : 'unknown' });
+        throw backupError; // Never cycle back to synchronous generation.
+      }
     }
   }
   try {
@@ -169,14 +191,22 @@ export async function pollPidoiImage(c: Channel, taskId: string, fetchImpl = fet
   return task;
 }
 export async function generatePidoiImage(c: Channel, body: Record<string, any>, onSubmitted: (id: string) => void, fetchImpl = fetch, options: SubmitOptions = {}) {
-  let task = await submitPidoiImage(c, body, fetchImpl, options);
+  let fallback: PidoiFallbackState | undefined;
+  const onFallback = (state: PidoiFallbackState) => { fallback = state; options.onFallback?.(state); };
+  let task = await submitPidoiImage(c, body, fetchImpl, { ...options, onFallback });
   if (task.taskId) onSubmitted(task.taskId);
   const id = task.taskId;
   const originalPollPath = task.pollPath;
   const deadline = Date.now() + 20 * 60_000;
   while (true) {
-    if (task.status === 'failed') throw new PidoiImageError(task.error || 'Pidoi 图片生成失败', true);
-    if (task.status === 'completed' && task.imageUrl) return { ...task, taskId: id, reportedImageUrl: task.imageUrl };
+    if (task.status === 'failed') {
+      if (fallback) onFallback({ ...fallback, status: 'failed', taskId: id });
+      throw new PidoiImageError(task.error || 'Pidoi 图片生成失败', true);
+    }
+    if (task.status === 'completed' && task.imageUrl) {
+      if (fallback) onFallback({ ...fallback, status: 'completed', taskId: id });
+      return { ...task, taskId: id, reportedImageUrl: task.imageUrl };
+    }
     if (Date.now() >= deadline) throw new PidoiImageError('图片仍在处理中，保留任务等待恢复');
     await new Promise(resolve => setTimeout(resolve, 5000));
     task = await pollPidoiImage(c, id, fetchImpl, task.pollPath || originalPollPath);

@@ -48,6 +48,7 @@ interface GetContentsOptions {
 }
 
 const INTERNAL_VIDEO_ROUTING_FIELDS = [
+  'pidoiFallbacks',
   'mjRecovery', 'mjSubmissionDiagnostics', 'mjAsyncImage',
   'zonghengOrderId', 'zonghengSubmissionStarted', 'zonghengPollDelay', 'zonghengSubmissionDiagnostics', 'zonghengNotAcceptedResolution',
   'actualModel',
