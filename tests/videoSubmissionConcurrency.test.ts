@@ -76,6 +76,9 @@ beforeAll(async () => {
   findVideoSubmissionReceipt(1);
 });
 beforeEach(() => {
+  for (const table of ['fund_ledger_content_links','fund_ledger']) {
+    if (sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) sqlite.exec('DELETE FROM ' + table);
+  }
   probes.video.mockReset().mockResolvedValue({ rawDurations: [5.01], durations: [5.1], total: 5.1 });
   probes.audio.mockReset().mockResolvedValue({ rawDurations: [3.01], durations: [3.1], total: 3.1 });
   for (const table of ['contents','channels','users','models','model_pricing','api_tokens','api_logs','settings','video_submission_receipts']) sqlite.exec('DELETE FROM ' + table);
@@ -181,6 +184,8 @@ it.each([
   await started.promise;
   const id = row().id, stale = { ...row(), metadata: '{}' };
   const chargedWallet = wallet(), chargedToken = tokenWallet();
+  const charges = sqlite.prepare("SELECT content_id FROM fund_ledger WHERE kind='charge'").all() as any[];
+  expect(charges.length).toBeGreaterThan(0); expect(charges.every(r => r.content_id === id)).toBe(true);
   for (let i = 0; i < 3; i++) {
     await Promise.all([
       nativeFetch(origin + '/v1/videos/task_' + id, { headers: { Authorization: 'Bearer ' + tokenKey } }).then(r => r.text()),
@@ -267,6 +272,8 @@ it.each([
   await (await post(endpoint, body)).text();
   await vi.waitFor(() => expect(row().status).toBe('failed'));
   expect(wallet()).toBe(100); expect(tokenWallet()).toBe(100);
+  const refunds = sqlite.prepare("SELECT content_id FROM fund_ledger WHERE kind='refund'").all() as any[];
+  expect(refunds.length).toBeGreaterThan(0); expect(refunds.every(r => r.content_id === row().id)).toBe(true);
   await Promise.all([video.failHmQueuedVideo(row().id, new Error('late failure'), true), video.failHmQueuedVideo(row().id, new Error('late failure'), true)]);
   expect(wallet()).toBe(100); expect(tokenWallet()).toBe(100);
 });

@@ -4,9 +4,11 @@ import { apiTokens, channels, contents, organizations, users } from '../db/schem
 import { BalanceService } from './balanceService.js';
 import { TokenService } from './tokenService.js';
 import { resolveBillingReservation } from './billingReconciliation.js';
+import { withFundContext } from '../db/fundLedger.js';
 
 /** Synchronous: callers keep the balance change and content update in one transaction. */
 function refundLegacyFunds(row: any, meta: Record<string, any>, amount: number): string {
+  return withFundContext(sqlite, { contentId: row.id, kind: 'refund' }, () => {
   const owner = db.select().from(users).where(eq(users.id, row.userId)).get();
   if (!owner) fail(409, '原扣款用户不存在，请人工核查');
   const tokenId = Number(meta.tokenId) || 0;
@@ -23,6 +25,7 @@ function refundLegacyFunds(row: any, meta: Record<string, any>, amount: number):
   BalanceService.refundToSource(row.userId, amount, source, orgId, 'generate_video_refund');
   if (token) db.update(apiTokens).set({ usedAmount: sql`MAX(0, used_amount - ${amount})` }).where(eq(apiTokens.id, tokenId)).run();
   return source === 'org' ? 'organization_balance' : 'user_balance';
+  });
 }
 
 const fail = (status: number, message: string): never => { throw Object.assign(new Error(message), { status }); };

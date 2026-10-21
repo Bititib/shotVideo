@@ -1,12 +1,13 @@
 import { sqlite } from '../db/index.js';
 import { BalanceService } from './balanceService.js';
 import { TokenService } from './tokenService.js';
+import { withFundContext } from '../db/fundLedger.js';
 
 type SettlementResult = { settled: boolean; review: boolean; actualCost: number };
 
 /** The refund and terminal record are one write transaction, even for old API tasks. */
 export function refundUnreservedVideo(contentId: number, message: string): void {
-  sqlite.transaction(() => {
+  sqlite.transaction(() => withFundContext(sqlite, { contentId, kind: 'refund' }, () => {
     const row = sqlite.prepare('SELECT * FROM contents WHERE id=?').get(contentId) as any;
     if (!row || ['failed', 'completed'].includes(row.status)) return;
     const meta = JSON.parse(row.metadata || '{}');
@@ -27,7 +28,7 @@ export function refundUnreservedVideo(contentId: number, message: string): void 
     if (meta.recoveryPrecharged) meta.recoveryCharged = false;
     Object.assign(meta, { queueStatus: 'failed', queuePosition: 0, error: message, failedAt: new Date().toISOString() });
     sqlite.prepare("UPDATE contents SET status='failed',cost=0,metadata=? WHERE id=?").run(JSON.stringify(meta), contentId);
-  }).immediate();
+  })).immediate();
 }
 
 /** Settle API-created videos that predate/use no billing reservation ledger. */
@@ -49,7 +50,7 @@ export function settleDirectVideoBilling(
 
     const difference = Math.round(Math.abs(actualCost - reserved) * 1e6) / 1e6;
     try {
-      sqlite.transaction(() => {
+      sqlite.transaction(() => withFundContext(sqlite, { contentId }, () => {
       if (actualCost < reserved && difference > 0) {
         if (metadata.billingSource === 'user') {
           BalanceService.refundToSource(row.user_id, difference, metadata.billingBalanceSource || 'user', metadata.billingOrgId,
@@ -65,7 +66,7 @@ export function settleDirectVideoBilling(
         TokenService.deductBalance(tokenId, difference);
         metadata.billingSupplementAmount = difference;
       }
-      })();
+      }))();
     } catch (error: any) {
       metadata.billingStatus = 'review';
       metadata.requiresReview = true;

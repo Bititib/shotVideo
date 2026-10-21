@@ -3,12 +3,16 @@ import jwt from 'jsonwebtoken';
 import { sqlite } from '../db/index.js';
 import { env } from '../config/env.js';
 import { BalanceService } from './balanceService.js';
+import { captureFundEntries } from '../db/fundLedger.js';
 import { VideoBatchStore } from './videoBatchStore.js';
 import type { TierRequest } from '../middleware/tier.js';
 
 export const batchStore = new VideoBatchStore(sqlite, {
-  deduct: (userId, amount) => BalanceService.deductWithSource(userId, amount, 'video_batch_prededuct'),
-  refund: (userId, amount, receipt) => { BalanceService.refundToSource(userId, amount, receipt.source, receipt.orgId, 'video_batch_refund'); },
+  deduct: (userId, amount) => {
+    const captured = captureFundEntries(sqlite, () => BalanceService.deductWithSource(userId, amount, 'video_batch_prededuct'));
+    return captured.value ? { ...captured.value, fundLedgerEntryIds: captured.entryIds } : null;
+  },
+  refund: (userId, amount, receipt, contentId) => { BalanceService.refundToSource(userId, amount, receipt.source, receipt.orgId, 'video_batch_refund', { contentId }); },
   onReleased: (item, error) => {
     if (!item.content_id) return;
     const row = sqlite.prepare('SELECT metadata,status FROM contents WHERE id=?').get(item.content_id) as any;

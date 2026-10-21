@@ -1,5 +1,5 @@
 import { sqlite } from '../db/index.js';
-import { ensureBillingReservations, reserveUserCharge } from './billingReservation.js';
+import { ensureBillingReservations, reserveUserCharge, linkReservationContent } from './billingReservation.js';
 
 /** Wallet debit, reservation and content linkage either all commit or all roll back. */
 export function reserveLegacyVideo(userId: number, amount: number, save: (charge: ReturnType<typeof reserveUserCharge>) => number, context: Record<string, unknown> = {}) {
@@ -7,7 +7,7 @@ export function reserveLegacyVideo(userId: number, amount: number, save: (charge
   return sqlite.transaction(() => {
     const charge = reserveUserCharge(userId, amount, 'generate_video', context);
     const contentId = save(charge);
-    sqlite.prepare("UPDATE billing_reservations SET context=json_set(context,'$.contentId',?) WHERE id=?").run(contentId, charge.id);
+    linkReservationContent(charge.id, contentId);
     return { contentId, charge };
   })();
 }

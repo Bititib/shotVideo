@@ -1,7 +1,8 @@
 import { sqlite } from '../db/index.js';
-import { ensureBillingReservations } from './billingReservation.js';
+import { ensureBillingReservations, reservationContentId } from './billingReservation.js';
 import { BalanceService } from './balanceService.js';
 import { TokenService } from './tokenService.js';
+import { withFundContext } from '../db/fundLedger.js';
 
 const fail = (status: number, message: string): never => { throw Object.assign(new Error(message), { status }); };
 export function listBillingReservations(page = 1, state = 'pending') {
@@ -34,6 +35,7 @@ export function resolveBillingReservation(id: string, adminId: number, actual: n
     const context = JSON.parse(row.context), receipt = JSON.parse(row.receipt);
     const difference = Math.max(0, Math.round((row.amount - actual) * 1e6) / 1e6);
     if (difference) {
+      withFundContext(sqlite, { contentId: reservationContentId(id,context), actorId: adminId, kind: 'refund' }, () => {
       const source = context.tokenId ? receipt.balanceDeduction : receipt;
       const linked = context.tokenId && ['organization_balance','user_balance'].includes(receipt.target);
       if (!context.tokenId || linked) {
@@ -46,6 +48,7 @@ export function resolveBillingReservation(id: string, adminId: number, actual: n
         if (!['api_token','organization_balance','user_balance'].includes(receipt.target)) fail(409, '无法识别原 API 扣款来源');
         TokenService.refundBalance(context.tokenId, difference);
       }
+      });
     }
     const state = actual === 0 ? 'refunded' : 'settled';
     sqlite.prepare("UPDATE billing_reservations SET actual=?,state=?,settled_at=datetime('now') WHERE id=?").run(actual,state,id);

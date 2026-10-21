@@ -11,6 +11,11 @@ export function ensureFundLedger(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS fund_ledger_account ON fund_ledger(account_type,account_id,id);
     CREATE INDEX IF NOT EXISTS fund_ledger_time ON fund_ledger(created_at,id);
     CREATE INDEX IF NOT EXISTS fund_ledger_user ON fund_ledger(user_id,account_type,id);
+    CREATE TABLE IF NOT EXISTS fund_ledger_content_links (
+      entry_id INTEGER NOT NULL REFERENCES fund_ledger(id) ON DELETE CASCADE,
+      content_id INTEGER NOT NULL, PRIMARY KEY(entry_id,content_id)
+    );
+    CREATE INDEX IF NOT EXISTS fund_ledger_content_link_task ON fund_ledger_content_links(content_id,entry_id);
     CREATE TABLE IF NOT EXISTS fund_ledger_context (id INTEGER PRIMARY KEY CHECK(id=1), kind TEXT, actor_id INTEGER, content_id INTEGER, operation TEXT);
     INSERT OR IGNORE INTO fund_ledger_context(id) VALUES(1);
     CREATE TABLE IF NOT EXISTS fund_ledger_meta (key TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -72,5 +77,32 @@ export function withFundContext<T>(db: Database.Database, context: {kind?:string
       context.kind??old.kind,context.actorId??old.actor_id,context.contentId??old.content_id,context.operation?.slice(0,120)??old.operation);
     try { return action(); }
     finally { db.prepare('UPDATE fund_ledger_context SET kind=?,actor_id=?,content_id=?,operation=? WHERE id=1').run(old.kind,old.actor_id,old.content_id,old.operation); }
+  })();
+}
+
+/** Capture exact audit IDs within this synchronous transaction, never by time/amount. */
+export function captureFundEntries<T>(db: Database.Database, action: () => T) {
+  ensureFundLedger(db);
+  return db.transaction(() => {
+    const before = (db.prepare('SELECT COALESCE(MAX(id),0) AS id FROM fund_ledger').get() as any).id;
+    const value = action();
+    const entryIds = (db.prepare("SELECT id FROM fund_ledger WHERE id>? AND kind NOT IN ('opening','initial','usage_opening','usage_initial') ORDER BY id").all(before) as Array<{id:number}>).map(r => r.id);
+    return { value, entryIds };
+  })();
+}
+
+/** Associate only IDs captured from a known billing operation; never overwrite another task. */
+export function linkFundEntries(db: Database.Database, entryIds: unknown, contentId: number, multiple = false) {
+  if (!Number.isSafeInteger(contentId) || contentId <= 0 || !Array.isArray(entryIds)) throw new Error('资金流水任务关联参数无效');
+  db.transaction(() => {
+    for (const id of new Set(entryIds)) {
+      if (!Number.isSafeInteger(id) || id <= 0) throw new Error('资金流水编号无效');
+      const row = db.prepare('SELECT content_id FROM fund_ledger WHERE id=?').get(id) as any;
+      if (!row) continue;
+      if (row.content_id != null && row.content_id !== contentId) throw new Error('资金流水已关联其他任务，停止关联');
+      if (!multiple && db.prepare('SELECT 1 FROM fund_ledger_content_links WHERE entry_id=? AND content_id!=?').get(id,contentId)) throw new Error('资金流水已关联其他任务，停止关联');
+      db.prepare('INSERT OR IGNORE INTO fund_ledger_content_links(entry_id,content_id) VALUES(?,?)').run(id,contentId);
+      if (!multiple) db.prepare('UPDATE fund_ledger SET content_id=? WHERE id=? AND content_id IS NULL').run(contentId, id);
+    }
   })();
 }

@@ -18,7 +18,8 @@ import { ChannelService } from './channelService.js';
 import { PricingService } from './pricingService.js';
 import { BalanceService } from './balanceService.js';
 import { TokenService } from './tokenService.js';
-import { reserveUserCharge } from './billingReservation.js';
+import { reserveUserCharge, linkReservationContent } from './billingReservation.js';
+import { withFundContext } from '../db/fundLedger.js';
 import { getModelSpecification, specificationAvailability, selectModelRoutes, routeStillEnabled, claimRouteProbe, noteRouteResult, type RouteCandidate } from './modelRoutingService.js';
 import { submitSpecificationVideo, pollSpecificationVideo, pollSpecificationImage, pollMjSpecificationImage, generateSpecificationImage, SpecificationUpstreamError, type SpecificationRequest } from './specificationAdapters.js';
 import { validateAndNormalizeImageReferences } from './imageReferenceValidationService.js';
@@ -84,7 +85,7 @@ function metadata(id: number) {
   return row ? JSON.parse(row.metadata || '{}') : {};
 }
 /** Idempotent finalization, including accepted tasks resumed after a process restart. */
-function finalizeReservation(id: string | undefined, actual: number): number {
+function finalizeReservation(id: string | undefined, actual: number, contentId: number): number {
   if (!id) return actual;
   return sqlite.transaction(() => {
     const row = sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(id) as any;
@@ -94,6 +95,7 @@ function finalizeReservation(id: string | undefined, actual: number): number {
     const refund = Math.max(0, Math.round((row.amount - actual) * 1e6) / 1e6);
     const receipt = JSON.parse(row.receipt), context = JSON.parse(row.context);
     if (refund > 0) {
+      withFundContext(sqlite, { contentId, kind: 'refund' }, () => {
       if (context.tokenId) {
         if (context.unlimitedToken && context.userId) {
           BalanceService.refundToSource(context.userId, refund, receipt.balanceDeduction?.source || 'user', receipt.balanceDeduction?.orgId, 'specification_refund');
@@ -102,6 +104,7 @@ function finalizeReservation(id: string | undefined, actual: number): number {
       } else {
         BalanceService.refundToSource(context.userId, refund, receipt.source, receipt.orgId, 'specification_refund');
       }
+      });
     }
     sqlite.prepare("UPDATE billing_reservations SET actual=?,state=?,settled_at=datetime('now') WHERE id=?").run(actual, actual ? 'settled' : 'refunded', id);
     return actual;
@@ -126,7 +129,7 @@ function completeContent(id: number, urls: string[]) {
   const meta = metadata(id), record = db.select().from(contents).where(eq(contents.id, id)).get()!;
   let actual = meta.batchItemId ? record.cost : meta.nativeImageOutputs ? meta.reservedCost || 0
     : Math.round((meta.reservedCost || 0) * urls.length / (meta.count || 1) * 1e6) / 1e6;
-  actual = finalizeReservation(meta.billingReservationId, actual);
+  actual = finalizeReservation(meta.billingReservationId, actual, id);
   patch(id, { imageUrls: record.type === 'image' ? urls : undefined, ...(meta.nativeImageOutputs ? { count: urls.length } : {}), progress: 100, progresses: urls.map(() => 100),
     completedAt: new Date().toISOString(), billingStatus: 'settled', requiresReview: false, progressText: '生成完成' }, 'completed');
   db.update(contents).set({ resultUrl: urls[0], cost: actual }).where(eq(contents.id, id)).run();
@@ -142,7 +145,7 @@ function failTask(id: number, message: string) {
 function failContent(id: number, message: string) {
   const meta = metadata(id);
   if (meta.batchItemId && recordBatchFailure(id, message, true)) return;
-  finalizeReservation(meta.billingReservationId, 0);
+  finalizeReservation(meta.billingReservationId, 0, id);
   patch(id, { error: message, failureReason: message, billingStatus: 'refunded', refundAmount: meta.reservedCost || 0,
     progressText: message, failedAt: new Date().toISOString() }, 'failed');
   db.update(contents).set({ cost: 0 }).where(eq(contents.id, id)).run();
@@ -508,6 +511,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
       id = batch ? batchStore.attach(batch.item.id, batch.item.attempts, userId, create) : create();
       if (!batch) {
         charge = apiContext ? apiContext.reserve(quote.cost, modelId, quote.pricingSnapshot) : reserveUserCharge(userId, quote.cost, 'specification_generate', { contentId: id, model: modelId, pricingSnapshot: quote.pricingSnapshot });
+        linkReservationContent(charge.id, id!);
         patch(id!, { billingReservationId: charge.id, reservedCost: quote.cost, billingStatus: 'reserved' });
       }
     })();

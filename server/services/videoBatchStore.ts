@@ -1,11 +1,12 @@
 import type Database from 'better-sqlite3';
 import type { VideoBatchInput } from '../../shared/videoBatch.js';
 import type { PricingSnapshot } from './pricingService.js';
+import { linkFundEntries } from '../db/fundLedger.js';
 
-type Receipt = { source: 'user' | 'org'; orgId?: number };
+type Receipt = { source: 'user' | 'org'; orgId?: number; fundLedgerEntryIds?: number[] };
 export interface BatchLedger {
   deduct(userId: number, amount: number): Receipt | null;
-  refund(userId: number, amount: number, receipt: Receipt): void;
+  refund(userId: number, amount: number, receipt: Receipt, contentId?: number): void;
   onReleased?(item: any, error: string): void;
 }
 export const BATCH_ACTIVE = ['dispatching', 'running', 'review'];
@@ -119,8 +120,10 @@ export class VideoBatchStore {
   }
   attach(id: number, attempt: number, userId: number, save: () => number): number {
     return this.sql.transaction(() => {
-      this.context(id, attempt, userId);
+      const { item } = this.context(id, attempt, userId);
       const contentId = save();
+      const entryIds = JSON.parse(item.receipt).fundLedgerEntryIds;
+      if (entryIds?.length) linkFundEntries(this.sql, entryIds, contentId, true);
       this.sql.prepare("UPDATE video_batch_items SET content_id=?,status='running' WHERE id=?").run(contentId, id);
       this.sql.prepare('UPDATE video_batch_attempts SET content_id=? WHERE item_id=? AND attempt=?').run(contentId, id, attempt);
       return contentId;
@@ -128,7 +131,7 @@ export class VideoBatchStore {
   }
   private release(i: any, status: 'failed' | 'cancelled', error: string) {
     if (i.billing_state !== 'reserved') return;
-    this.ledger.refund(i.user_id, i.unit_cost, JSON.parse(i.receipt));
+    this.ledger.refund(i.user_id, i.unit_cost, JSON.parse(i.receipt), i.content_id || undefined);
     this.sql.prepare(`UPDATE video_batch_items SET status=?,billing_state='refunded',error=?,finished_at=datetime('now') WHERE id=?`)
       .run(status, error, i.id);
     this.ledger.onReleased?.(i, error);

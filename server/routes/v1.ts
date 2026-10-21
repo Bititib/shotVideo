@@ -10,6 +10,7 @@ import { resolvePublicModelId } from '../services/publicModelNameService.js';
 import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
 import { publishReferenceUrl } from '../services/publicReferenceService.js';
 import { reserveCharge } from '../services/billingReservation.js';
+import { withFundContext } from '../db/fundLedger.js';
 import { getHayaVideoSpec, validateHayaVideoInput } from '../../shared/hayaVideo.js';
 import { isHayaChannel, submitHayaVideo, HayaSubmissionError } from '../services/hayaVideoAdapter.js';
 import { prepareHayaMedia, validateHayaMedia } from '../services/hayaMediaService.js';
@@ -331,11 +332,13 @@ function checkTokenOrUserBalance(token: any, cost: number): { sufficient: boolea
 type TokenBillingDeduction = {
   target: 'organization_balance' | 'user_balance' | 'api_token' | 'not_charged';
   balanceDeduction?: BalanceDeduction;
+  contentId?: number;
 };
 
 /** 扣除 Token 或关联用户的余额，并保留真实扣款来源供失败时原路退回。 */
-function deductTokenOrUserBalance(token: any, cost: number, model: string): TokenBillingDeduction {
-  return sqlite.transaction((): TokenBillingDeduction => {
+function deductTokenOrUserBalance(token: any, cost: number, model: string, contentId?: number): TokenBillingDeduction {
+  return withFundContext(sqlite, { contentId }, () => {
+  const receipt = sqlite.transaction((): TokenBillingDeduction => {
   if (cost <= 0) return { target: 'not_charged' };
   if (token.balance === -1) {
     if (token.userId) {
@@ -353,6 +356,8 @@ function deductTokenOrUserBalance(token: any, cost: number, model: string): Toke
   TokenService.deductBalance(token.id, cost);
   return { target: 'api_token' };
   })();
+  return { ...receipt, contentId };
+  });
 }
 
 /** Return a failed async request's pre-deducted amount to the same billing source. */
@@ -361,6 +366,7 @@ function refundTokenOrUserBalance(
   cost: number,
   deduction?: TokenBillingDeduction | null,
 ): 'organization_balance' | 'user_balance' | 'api_token' | 'not_charged' {
+  return withFundContext(sqlite, { contentId: deduction?.contentId, kind: 'refund' }, () => {
   if (cost <= 0) return 'not_charged';
   if (token.balance === -1 && token.userId) {
     const balanceDeduction = deduction?.balanceDeduction;
@@ -377,6 +383,7 @@ function refundTokenOrUserBalance(
   }
   TokenService.refundBalance(token.id, cost);
   return 'api_token';
+  });
 }
 
 /** 获取视频计费费率 */
@@ -2382,7 +2389,7 @@ async function handleVideoCreation(req: Request, res: Response) {
 
   if (isHmStudio) {
     let billingDeduction: TokenBillingDeduction;
-    try { billingDeduction = deductTokenOrUserBalance(token, totalCost, model); }
+    try { billingDeduction = deductTokenOrUserBalance(token, totalCost, model, contentId!); }
     catch (error: any) { cleanupFiles(req.files); persistVideoContentFailure(contentId!, error.message, {billingStatus:'not_charged'}); return res.status(error.status || 500).json({error:error.message}); }
     const queuedRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
     let queuedMetadata: Record<string, any> = {};
@@ -2432,7 +2439,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       const videos = await prepareZonghengMedia(video_urls, 'video', options);
       const audios = await prepareZonghengMedia(audio_urls, 'audio', options);
       const frames = await prepareZonghengMedia([body.start_frame || body.first_frame_url || body.first_frame, body.end_frame || body.end_frame_url || body.last_frame_url || body.last_frame].filter(Boolean), 'image', options);
-      deduction = deductTokenOrUserBalance(token, totalCost, model);
+      deduction = deductTokenOrUserBalance(token, totalCost, model, contentId!);
       const job = await submitZonghengVideo(baseUrl, apiKey, { model: upstreamModel, prompt, seconds, ratio, resolution, images, videos, audios,
         firstFrame: frames[0], lastFrame: frames[1], quality: body.quality, negativePrompt: body.negative_prompt, generateAudio: body.generate_audio }, zonghengOrder(contentId!),
         () => {
@@ -2474,7 +2481,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       const images = await prepareHayaMedia(image_urls, 'image', options);
       const videos = await prepareHayaMedia(video_urls, 'video', options);
       const audios = await prepareHayaMedia(audio_urls, 'audio', options);
-      deduction = deductTokenOrUserBalance(token, totalCost, model);
+      deduction = deductTokenOrUserBalance(token, totalCost, model, contentId!);
       const job = await submitHayaVideo(baseUrl, apiKey, { model: upstreamModel, prompt, seconds, ratio, resolution, images, videos, audios, metadata: body.metadata },
         () => {
           claimVideoSubmission(contentId!, channel.timeout || 120_000);
@@ -2531,7 +2538,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   try {
     claimVideoSubmission(contentId!, channel.timeout || 120_000);
     billingDeduction = sqlite.transaction(() => {
-      const receipt = deductTokenOrUserBalance(token, totalCost, model);
+      const receipt = deductTokenOrUserBalance(token, totalCost, model, contentId!);
       db.update(contents).set({ metadata: JSON.stringify({ ...JSON.parse(db.select().from(contents).where(eq(contents.id, contentId!)).get()?.metadata || '{}'), billingStatus: 'reserved', billingBalanceSource: receipt.balanceDeduction?.source, billingOrgId: receipt.balanceDeduction?.orgId }) }).where(eq(contents.id, contentId!)).run();
       return receipt;
     })();

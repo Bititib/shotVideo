@@ -1,5 +1,6 @@
 import { publicGenerationError, publicGenerationStatus } from '../../shared/generationMessages.js';
-import { db } from '../db/index.js';
+import { db, sqlite } from '../db/index.js';
+import { linkReservationContent } from './billingReservation.js';
 import { contents, users, channels } from '../db/schema.js';
 import { eq, and, desc, sql, like, or } from 'drizzle-orm';
 import { beijingDayBounds } from '../../shared/time.js';
@@ -419,6 +420,7 @@ export class ContentService {
     const persistedMetadata = input.type === 'video'
       ? materializeContentMetadataAssets(input.metadata, { ownerId: input.userId }).metadata
       : (input.metadata || {});
+    const save = () => {
     const result = db.insert(contents).values({
       userId: input.userId,
       orgId: input.orgId || null,
@@ -433,7 +435,11 @@ export class ContentService {
       status: input.status || 'completed',
     }).run();
 
-    return Number(result.lastInsertRowid);
+    const contentId = Number(result.lastInsertRowid);
+    if (persistedMetadata.billingReservationId) linkReservationContent(persistedMetadata.billingReservationId, contentId);
+    return contentId;
+    };
+    return persistedMetadata.billingReservationId ? sqlite.transaction(save)() : save();
   }
 
   /** 查询个人内容（分页） */

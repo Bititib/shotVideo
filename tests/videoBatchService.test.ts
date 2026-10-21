@@ -3,7 +3,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../server/db/index.js', async () => {
   const { default: Database } = await import('better-sqlite3');
   const sqlite = new Database(':memory:');
-  sqlite.exec(`CREATE TABLE users(id INTEGER PRIMARY KEY,role TEXT,org_id INTEGER,is_active INTEGER,balance REAL);
+  sqlite.exec(`CREATE TABLE users(id INTEGER PRIMARY KEY,role TEXT,org_id INTEGER,is_active INTEGER,balance REAL,username TEXT DEFAULT 'test');
     CREATE TABLE contents(id INTEGER PRIMARY KEY,user_id INTEGER,type TEXT DEFAULT 'video',status TEXT,cost REAL DEFAULT 0,result_url TEXT,metadata TEXT);`);
   return { sqlite };
 });
@@ -37,7 +37,7 @@ function running() {
   return batchStore.item(i.id);
 }
 beforeEach(() => {
-  sqlite.exec('DELETE FROM video_batch_commands; DELETE FROM video_batch_attempts; DELETE FROM video_batch_items; DELETE FROM video_batches; DELETE FROM contents; DELETE FROM users; INSERT INTO users VALUES(1,\'user\',NULL,1,100)');
+  sqlite.exec('DELETE FROM video_batch_commands; DELETE FROM video_batch_attempts; DELETE FROM video_batch_items; DELETE FROM video_batches; DELETE FROM contents; DELETE FROM users; INSERT INTO users(id,role,org_id,is_active,balance) VALUES(1,\'user\',NULL,1,100)');
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Unexpected outbound request'); }));
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
