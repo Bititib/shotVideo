@@ -1,4 +1,5 @@
 import { publicGenerationError, publicGenerationStatus } from '../../shared/generationMessages.js';
+import { videoReviewKind, videoReviewMessage } from '../../shared/videoReview.js';
 import { db, sqlite } from '../db/index.js';
 import { linkReservationContent } from './billingReservation.js';
 import { contents, users, channels } from '../db/schema.js';
@@ -78,7 +79,9 @@ export function sanitizeContentRoutingForClient<T extends { metadata?: string | 
 
   const state = (item as { status?: string }).status;
   const needsReview = state === 'review' || metadata.requiresReview || metadata.hayaNeedsReview;
-  const publicFailure = (value: unknown) => publicGenerationError(needsReview ? '提交结果待核实，请勿重复提交' : value);
+  const publicFailure = (value: unknown) => needsReview ? videoReviewMessage(metadata) : publicGenerationError(value);
+  const reviewKind = videoReviewKind(metadata);
+  if (reviewKind) metadata.reviewKind = reviewKind;
   for (const field of ['error', 'errorMessage', 'failureReason', 'errorDetail']) {
     if (metadata[field]) metadata[field] = publicFailure(metadata[field]);
   }

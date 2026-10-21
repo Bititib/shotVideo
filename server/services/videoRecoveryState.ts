@@ -64,7 +64,7 @@ export function reviewMissingVideoTaskId(contentId: number): void {
     if (savedVideoTaskId(metadata) || videoSubmissionPending(contentId, metadata)) return;
     const message = '上游任务编号待核实，请勿重复提交';
     const patch = {
-      missingTaskIdReview: true, requiresReview: true, queueStatus: 'review',
+      missingTaskIdReview: true, requiresReview: true, reviewKind: 'submission', queueStatus: 'review',
       progressText: message, error: message,
     };
     if (finalizeLegacyVideo(contentId, 'review', patch)) return;
@@ -75,12 +75,13 @@ export function reviewMissingVideoTaskId(contentId: number): void {
 }
 
 /** Query/transport errors must not settle a task whose upstream outcome is unknown. */
-export function reviewUncertainVideoTask(contentId: number, message: string): void {
+export function reviewUncertainVideoTask(contentId: number, message: string, kind: 'submission' | 'query' | 'settlement' | 'local' = 'submission', knownTaskId?: string): void {
   sqlite.transaction(() => {
     const record = db.select().from(contents).where(eq(contents.id, contentId)).get();
     if (!record || ['completed', 'failed'].includes(record.status || '')) return;
     const metadata = JSON.parse(record.metadata || '{}');
-    const patch = { requiresReview: true, progressText: message, error: message };
+    const patch = { requiresReview: true, reviewKind: kind, progressText: message, error: message,
+      ...(knownTaskId ? { videoId: knownTaskId, upstreamTaskId: knownTaskId } : {}) };
     if (finalizeLegacyVideo(contentId, 'review', patch)) return;
     db.update(contents).set({ status: 'review', metadata: JSON.stringify({ ...metadata, ...patch }) })
       .where(eq(contents.id, contentId)).run();

@@ -110,13 +110,24 @@ function finalizeReservation(id: string | undefined, actual: number, contentId: 
     return actual;
   })();
 }
-function holdForReview(id: number, message: string) {
+function holdForReview(id: number, message: string, reviewKind: 'submission' | 'query' | 'settlement' | 'local' = 'submission') {
   const record = db.select().from(contents).where(eq(contents.id, id)).get();
   if (record?.type === 'video' && ['completed', 'failed'].includes(record.status || '')) return;
   const meta = metadata(id);
-  if (meta.billingReservationId) sqlite.prepare("UPDATE billing_reservations SET state='review' WHERE id=? AND state='reserved'").run(meta.billingReservationId);
-  patch(id, { requiresReview: true, progressText: message, error: message, billingStatus: 'review' });
+  if (meta.billingReservationId && reviewKind !== 'query') sqlite.prepare("UPDATE billing_reservations SET state='review' WHERE id=? AND state='reserved'").run(meta.billingReservationId);
+  patch(id, { requiresReview: true, reviewKind, progressText: message, error: message,
+    ...(reviewKind !== 'query' ? { billingStatus: 'review' } : {}) }, record?.type === 'video' && reviewKind !== 'submission' ? 'review' : undefined);
   if (meta.batchItemId) recordBatchFailure(id, message, false);
+}
+function handleUnexpectedGenerationError(id: number, message: string) {
+  const record = db.select().from(contents).where(eq(contents.id, id)).get();
+  if (!record || ['completed', 'failed'].includes(record.status || '')) return;
+  if (record.type !== 'video') { holdForReview(id, message); return; }
+  const meta = metadata(id);
+  if (meta.reviewKind === 'settlement' || meta.upstreamStatus === 'completed') holdForReview(id, message, 'settlement');
+  else if (meta.videoId || meta.upstreamTaskId) holdForReview(id, message, 'query');
+  else if (meta.submissionStartedAt || meta.videoRequestStartedAt || ['unknown', 'accepted'].includes(meta.videoSubmissionState)) holdForReview(id, message, 'submission');
+  else failTask(id, message);
 }
 function complete(id: number, urls: string[]) {
   sqlite.transaction(() => {
@@ -131,22 +142,31 @@ function completeContent(id: number, urls: string[]) {
     : Math.round((meta.reservedCost || 0) * urls.length / (meta.count || 1) * 1e6) / 1e6;
   actual = finalizeReservation(meta.billingReservationId, actual, id);
   patch(id, { imageUrls: record.type === 'image' ? urls : undefined, ...(meta.nativeImageOutputs ? { count: urls.length } : {}), progress: 100, progresses: urls.map(() => 100),
-    completedAt: new Date().toISOString(), billingStatus: 'settled', requiresReview: false, progressText: '生成完成' }, 'completed');
+    completedAt: new Date().toISOString(), billingStatus: 'settled', requiresReview: false, reviewKind: null, upstreamQueryError: null, progressText: '生成完成' }, 'completed');
   db.update(contents).set({ resultUrl: urls[0], cost: actual }).where(eq(contents.id, id)).run();
   if (record.userId) { try { logUsage(record.userId, record.type === 'video' ? 'video' : 'generate_image', undefined, Date.now() - meta.startedAt); } catch (error: any) { console.warn('[specification] usage log failed', id, error.message); } }
 }
 function failTask(id: number, message: string) {
+  try {
   sqlite.transaction(() => {
     const record = db.select().from(contents).where(eq(contents.id, id)).get();
     if (!record || record.type === 'video' && ['completed', 'failed'].includes(record.status || '')) return;
     failContent(id, message);
   })();
+  } catch (error: any) {
+    const record = db.select().from(contents).where(eq(contents.id, id)).get();
+    if (record?.type === 'video') {
+      patch(id, { upstreamStatus: 'failed', refundPending: true });
+      holdForReview(id, error.message || '退款处理待核实', 'settlement');
+    }
+    throw error;
+  }
 }
 function failContent(id: number, message: string) {
   const meta = metadata(id);
   if (meta.batchItemId && recordBatchFailure(id, message, true)) return;
   finalizeReservation(meta.billingReservationId, 0, id);
-  patch(id, { error: message, failureReason: message, billingStatus: 'refunded', refundAmount: meta.reservedCost || 0,
+  patch(id, { error: message, failureReason: message, billingStatus: 'refunded', requiresReview: false, reviewKind: null, upstreamQueryError: null, refundAmount: meta.reservedCost || 0,
     progressText: message, failedAt: new Date().toISOString() }, 'failed');
   db.update(contents).set({ cost: 0 }).where(eq(contents.id, id)).run();
 }
@@ -160,11 +180,12 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       const status = Number(error?.status) || null;
       const message = [401, 403].includes(status || 0) ? '任务状态查询被拒绝，请联系管理员检查渠道配置'
         : '任务状态暂时查询不到，正在重试，请勿重复提交';
-      patch(id, { progressText: message, lastQueryAt: new Date().toISOString(), lastQueryStatus: status, queryFailures: ++queryFailures });
+      patch(id, { progressText: message, upstreamQueryError: message, lastQueryAt: new Date().toISOString(), lastQueryStatus: status, queryFailures: ++queryFailures });
       onEvent({ type: 'status', message, contentId: id });
       await wait(12_000); continue;
     }
     queryFailures = 0;
+    patch(id, { upstreamQueryError: null });
     const progressKnown = task.progressKnown ?? (typeof task.progress === 'number' && Number.isFinite(task.progress));
     const message = task.status === 'queued' ? '渠道已受理，正在排队'
       : ['completed', 'success', 'succeeded', 'done'].includes(task.status) ? '上游已完成，正在保存结果'
@@ -178,17 +199,26 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       failTask(id, task.error || '上游生成失败'); onEvent({ type: 'error', message: task.error || '上游生成失败' }); return;
     }
     if (['completed', 'success', 'succeeded', 'done'].includes(task.status) && task.resultUrl) {
+      let localized = '';
       try {
         patch(id, { upstreamResultUrl: task.resultUrl });
         const { downloadAndLocalizeVideo } = await import('./videoLocalizationService.js');
-        const url = await downloadAndLocalizeVideo(task.resultUrl, taskId, metadata(id).actualModel, channel.id, channel.apiKeyId);
-        complete(id, [url]); noteRouteResult(metadata(id).routingHealthKey, true);
-        onEvent({ type: 'complete', videoUrl: url, contentId: id }); return;
+        localized = await downloadAndLocalizeVideo(task.resultUrl, taskId, metadata(id).actualModel, channel.id, channel.apiKeyId);
       } catch (error: any) { console.warn('[specification] result save failed', id, error.message); patch(id, { progressText: '上游已完成，正在保存结果' }); }
+      if (localized) {
+        try { complete(id, [localized]); }
+        catch (error: any) {
+          db.update(contents).set({ resultUrl: localized }).where(eq(contents.id, id)).run();
+          holdForReview(id, error.message || '生成结果已保留，费用结算待核实', 'settlement');
+          onEvent({ type: 'status', message: '生成结果已保留，费用结算待核实，请勿重复提交' }); return;
+        }
+        noteRouteResult(metadata(id).routingHealthKey, true);
+        onEvent({ type: 'complete', videoUrl: localized, contentId: id }); return;
+      }
     }
     await wait(isFunAiChannel(channel) ? 5_000 : isBlobDrawChannel(channel) ? 10_000 : 8_000);
   }
-  holdForReview(id, '任务仍待核实，保留原线路和费用，请勿重复提交');
+  holdForReview(id, '原任务查询达到时限，费用保留，请核查原任务', 'query');
   onEvent({ type: 'status', message: '任务仍待核实，请在历史记录查看' });
 }
 async function runVideo(id: number, candidates: RouteCandidate[], request: SpecificationRequest, onEvent: (data: any) => void) {
@@ -204,6 +234,8 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
       onEvent({ type: 'status', message: '正在提交生成任务', contentId: id });
       let taskId = '';
       let claimed = false;
+      let dispatchPrepared = false;
+      let pollingStarted = false;
       try {
         if (!markBatchSubmitting(id)) throw fail('任务已停止', 409);
         taskId = await submitSpecificationVideo(target, request, submissionMetadata => {
@@ -212,18 +244,20 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
             catch (error: any) { throw new SpecificationUpstreamError(error.message, false, true); }
           }
           patch(id, { ...submissionMetadata, submissionStartedAt: new Date().toISOString() });
+          dispatchPrepared = true;
         });
         acceptVideoSubmission(id, taskId, { provider: isSnumomWanChannel(target.channel) ? 'snumom' : target.channel.type || '',
           channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId });
         patch(id, { videoId: taskId, upstreamTaskId: taskId, progressKnown: false, progressText: '渠道已受理，正在查询任务状态', requiresReview: false });
         onEvent({ type: 'progress', progress: 0, progressKnown: false, message: '渠道已受理，正在查询任务状态', contentId: id });
+        pollingStarted = true;
         await pollVideo(id, target.channel, taskId, onEvent);
       } catch (e: any) {
         const uncertain = Boolean(taskId) || e instanceof SpecificationUpstreamError && e.uncertain
-          || claimed && !(e instanceof SpecificationUpstreamError && (e.retrySafe || e.confirmedFailure));
+          || dispatchPrepared && !(e instanceof SpecificationUpstreamError && (e.retrySafe || e.confirmedFailure));
         if (claimed) endVideoSubmission(id, uncertain ? 'unknown' : 'rejected');
         if (uncertain) {
-          noteRouteResult(target.healthKey, false, e.message); holdForReview(id, e.message); onEvent({ type: 'status', message: '提交结果待核实，请勿重复提交' }); return;
+          noteRouteResult(target.healthKey, false, e.message); holdForReview(id, e.message, taskId ? pollingStarted ? 'query' : 'local' : 'submission'); onEvent({ type: 'status', message: taskId ? '原任务处理异常，请勿重复提交' : '提交结果待核实，请勿重复提交' }); return;
         }
         throw e;
       } finally {
@@ -530,7 +564,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     active.add(id!);
     const run = async () => {
       try { if (kind === 'video') await runVideo(id!, candidates, request, emit); else await runImages(id!, candidates, request, req, emit); }
-      catch (e: any) { holdForReview(id!, e.message || '任务待核实'); emit({ type: kind === 'video' ? 'status' : 'error', message: '任务待核实，请勿重复提交' }); }
+      catch (e: any) { handleUnexpectedGenerationError(id!, e.message || '任务处理异常'); emit({ type: kind === 'video' ? 'status' : 'error', message: '请在生成记录查看任务状态' }); }
       finally {
         active.delete(id!);
         if (apiContext) { const record = db.select().from(contents).where(eq(contents.id, id!)).get();
@@ -552,7 +586,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     }
     return true;
   } catch (e: any) {
-    if (id) holdForReview(id, e.message);
+    if (id) handleUnexpectedGenerationError(id, e.message);
     if (!res.headersSent) res.status(e.status || 500).json({ error: e.message || '生成失败' });
     else if (!res.writableEnded) res.end();
     return true;
@@ -668,6 +702,6 @@ export function resumeSpecificationTasks() {
     const channel = ChannelService.getChannelRaw(Number(meta.channelId), Number(meta.channelApiKeyId) || null);
     if (!channel) { holdForReview(row.id, '原任务渠道已删除，需要管理员核实'); continue; }
     active.add(row.id);
-    void pollVideo(row.id, channel, meta.videoId, () => {}).catch(() => holdForReview(row.id, '任务结果待核实')).finally(() => active.delete(row.id));
+    void pollVideo(row.id, channel, meta.videoId, () => {}).catch(() => handleUnexpectedGenerationError(row.id, '原任务处理异常')).finally(() => active.delete(row.id));
   }
 }

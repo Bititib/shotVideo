@@ -51,6 +51,9 @@ import { saveModelSpecification } from '../server/services/modelRoutingService';
 import { defaultRoutingLimits } from '../shared/modelRouting';
 import { VideoRecoveryService as ContentRecoveryService } from '../server/services/videoRecoveryService';
 import { resumeSpecificationTasks } from '../server/services/specificationGenerationService';
+import * as snumomAdapter from '../server/services/snumomWanAdapter';
+import { settleDirectVideoBilling } from '../server/services/directVideoBillingService';
+import { ensureBillingReservations } from '../server/services/billingReservation';
 
 const nativeFetch = globalThis.fetch, nativeTimer = globalThis.setTimeout;
 const model = 'wan3.0-video-prime';
@@ -94,11 +97,11 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 afterAll(async () => { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); sqlite.close(); });
 
-function managed() {
+function managed(targetModel = model) {
   const limits = { ...defaultRoutingLimits(), maxImages: 9, resolutions: ['720p'], ratios: ['16:9'],
     duration: { mode: 'options' as const, min: 15, max: 15, step: 1, values: [15] } };
-  saveModelSpecification({ modelId: model, enabled: true, aliases: [], kind: 'video', limits,
-    routes: [{ id: 'race-route', channelId: 1, executionModel: model, upstreamModel: model, enabled: true,
+  saveModelSpecification({ modelId: targetModel, enabled: true, aliases: [], kind: 'video', limits,
+    routes: [{ id: 'race-route', channelId: 1, executionModel: targetModel, upstreamModel: targetModel, enabled: true,
       limits, cost: 1, costUnit: 'per_call', resolutionCosts: {}, priority: 0 }] });
 }
 const body = { model, prompt: '并发提交测试', seconds: 15, video_length: 15, resolution: '720p', aspect_ratio: '16:9' };
@@ -250,7 +253,7 @@ it.each([
   const upstream = vi.fn(async (_url: any, options: any) => {
     if (options?.method === 'POST') return Response.json({ id: 'task_query_retry', request_id: 'trace_only' });
     polls++;
-    if (polls < 3) {
+    if (polls < 8) {
       expect(row().status).toBe('processing'); expect(meta().queueRefunded).not.toBe(true);
       return Response.json({ message: 'temporarily unavailable' }, { status: polls === 1 ? 404 : 503 });
     }
@@ -259,7 +262,7 @@ it.each([
   vi.stubGlobal('fetch', upstream);
   await (await post(endpoint, body)).text();
   await vi.waitFor(() => expect(row().status).toBe('completed'));
-  expect(polls).toBe(3); expect(upstream.mock.calls.filter(([, o]) => o?.method === 'POST')).toHaveLength(1);
+  expect(polls).toBe(8); expect(upstream.mock.calls.filter(([, o]) => o?.method === 'POST')).toHaveLength(1);
   expect(endpoint.startsWith('/v1') ? tokenWallet() : wallet()).toBeCloseTo(96.1);
 });
 
@@ -289,6 +292,209 @@ it.each([
   expect(meta().queueRefunded).not.toBe(true); expect(fetch).toHaveBeenCalledOnce();
   video.resumeAllPendingVideoTasks(); resumeSpecificationTasks();
   expect(fetch).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ['/v1/videos', false], ['/api/video/generate', false], ['/v1/videos', true], ['/api/video/generate', true],
+] as const)('%s managed=%s: explicit no-channel rejection refunds once, including repeated recovery reads', async (endpoint, spec) => {
+  const grok = 'grok-imagine-video-1.5';
+  db.update(channels).set({ supportedModels: JSON.stringify([grok]) }).run();
+  db.update(models).set({ modelId: grok }).run();
+  db.update(modelPricing).set({ modelPattern: grok }).run();
+  if (spec) managed(grok);
+  const rejection = { error: { message: 'No available channel for model grok-imagine-video-1.5（按次） under group default (distributor) (request id: trace_123)' }, request_id: 'trace_123' };
+  for (const status of [500, 503, 200]) {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(rejection, { status })));
+    await (await post(endpoint, { ...body, model: grok })).text();
+    await vi.waitFor(() => expect(row().status).toBe('failed'));
+    expect(wallet()).toBe(100); expect(tokenWallet()).toBe(100);
+    expect(db.select().from(apiTokens).get()!.usedAmount).toBe(0);
+    const id = row().id;
+    const refundsBefore = sqlite.prepare("SELECT COUNT(*) n FROM fund_ledger WHERE kind='refund' AND content_id=?").get(id);
+    expect((refundsBefore as any).n).toBeGreaterThan(0);
+    await Promise.all([video.failHmQueuedVideo(id, new Error('duplicate rejection'), true),
+      video.failHmQueuedVideo(id, new Error('duplicate rejection'), true), video.resumePollForTask(id, row()),
+      nativeFetch(origin + '/api/contents/' + id).then(r => r.text()),
+      nativeFetch(origin + '/v1/videos/task_' + id, { headers: { Authorization: 'Bearer ' + tokenKey } }).then(r => r.text())]);
+    video.resumeAllPendingVideoTasks(); resumeSpecificationTasks();
+    expect(wallet()).toBe(100); expect(tokenWallet()).toBe(100);
+    expect(db.select().from(apiTokens).get()!.usedAmount).toBe(0);
+    expect(sqlite.prepare("SELECT COUNT(*) n FROM fund_ledger WHERE kind='refund' AND content_id=?").get(id)).toEqual(refundsBefore);
+    expect(fetch).toHaveBeenCalledOnce();
+  }
+});
+
+it.each([
+  ['/v1/videos', false], ['/v1/videos', true],
+] as const)('%s managed=%s: no-channel refunds unlimited Token usage and personal balance only once', async (endpoint, spec) => {
+  if (spec) managed();
+  db.update(apiTokens).set({ balance: -1 }).where(eq(apiTokens.id, tokenId)).run();
+  vi.stubGlobal('fetch', vi.fn(async () => {
+    expect(wallet()).toBeCloseTo(96.1);
+    expect(db.select().from(apiTokens).get()!.usedAmount).toBeCloseTo(3.9);
+    return Response.json({ error: { message: 'No available channel for model wan3.0-video-prime under group default (distributor)' } }, { status: 503 });
+  }));
+  await (await post(endpoint, body)).text();
+  await vi.waitFor(() => expect(row().status).toBe('failed'));
+  expect(wallet()).toBe(100); expect(db.select().from(apiTokens).get()!.usedAmount).toBe(0);
+  const refunds = sqlite.prepare("SELECT id FROM fund_ledger WHERE kind='refund'").all();
+  expect(refunds).toHaveLength(2);
+  await Promise.all([video.failHmQueuedVideo(row().id, new Error('duplicate'), true), video.failHmQueuedVideo(row().id, new Error('duplicate'), true)]);
+  expect(wallet()).toBe(100); expect(db.select().from(apiTokens).get()!.usedAmount).toBe(0);
+  expect(sqlite.prepare("SELECT id FROM fund_ledger WHERE kind='refund'").all()).toEqual(refunds);
+  expect(fetch).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ['/v1/videos', false], ['/api/video/generate', false], ['/v1/videos', true], ['/api/video/generate', true],
+] as const)('%s managed=%s: no-channel wording does not bypass uncertain-response protection', async (endpoint, spec) => {
+  if (spec) managed();
+  const message = 'No available channel for model wan3.0-video-prime under group default (distributor)';
+  for (const scenario of [
+    () => Response.json({ error: { message }, task_id: 'task_known' }, { status: 503 }),
+    () => Response.json({ error: { message } }, { status: 503, headers: { 'x-task-id': 'task_known' } }),
+    () => Response.json({ error: { message } }, { status: 504 }),
+    () => new Response(JSON.stringify({ error: { message } }).slice(0, -1), { status: 500 }),
+    () => { throw new DOMException('response deadline exceeded', 'TimeoutError'); },
+  ]) {
+    vi.stubGlobal('fetch', vi.fn(async () => scenario()));
+    const before = endpoint.startsWith('/v1') ? tokenWallet() : wallet();
+    await (await post(endpoint, body)).text();
+    await vi.waitFor(() => expect(meta().requiresReview).toBe(true));
+    expect(endpoint.startsWith('/v1') ? tokenWallet() : wallet()).toBeCloseTo(before - 3.9);
+    expect(meta().queueRefunded).not.toBe(true);
+    const id = row().id;
+    await video.resumePollForTask(id, row()); video.resumeAllPendingVideoTasks(); resumeSpecificationTasks();
+    expect(endpoint.startsWith('/v1') ? tokenWallet() : wallet()).toBeCloseTo(before - 3.9);
+    expect(sqlite.prepare("SELECT id FROM fund_ledger WHERE kind='refund' AND content_id=?").all(id)).toHaveLength(0);
+    expect(fetch).toHaveBeenCalledOnce();
+  }
+});
+
+it.each([
+  ['/v1/videos', false], ['/api/video/generate', false], ['/v1/videos', true], ['/api/video/generate', true],
+] as const)('%s managed=%s: diagnostic request IDs do not turn clear rejections into review', async (endpoint, spec) => {
+  if (spec) managed();
+  for (const status of [400, 401, 402, 403, 422, 429, 200]) {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ request_id: 'diagnostic_trace', error: { message: 'invalid parameter or unauthorized' } }, { status })));
+    await (await post(endpoint, body)).text();
+    await vi.waitFor(() => expect(row().status).toBe('failed'));
+    expect(wallet()).toBe(100); expect(tokenWallet()).toBe(100);
+    expect(db.select().from(apiTokens).get()!.usedAmount).toBe(0);
+    const id = row().id;
+    const before = sqlite.prepare("SELECT id FROM fund_ledger WHERE kind='refund' AND content_id=?").all(id);
+    await Promise.all([video.failHmQueuedVideo(id, new Error('duplicate'), true), video.failHmQueuedVideo(id, new Error('duplicate'), true)]);
+    expect(sqlite.prepare("SELECT id FROM fund_ledger WHERE kind='refund' AND content_id=?").all(id)).toEqual(before);
+    expect(wallet()).toBe(100); expect(tokenWallet()).toBe(100); expect(fetch).toHaveBeenCalledOnce();
+  }
+});
+
+it.each([
+  ['/v1/videos', false], ['/api/video/generate', false], ['/v1/videos', true], ['/api/video/generate', true],
+] as const)('%s managed=%s: local payload failure before POST fails and refunds, not review', async (endpoint, spec) => {
+  if (spec) managed();
+  vi.spyOn(snumomAdapter, 'buildSnumomWanPayload').mockImplementation(() => { throw new Error('local payload construction failed'); });
+  vi.stubGlobal('fetch', vi.fn());
+  await (await post(endpoint, body)).text();
+  await vi.waitFor(() => expect(row().status).toBe('failed'));
+  expect(wallet()).toBe(100); expect(tokenWallet()).toBe(100); expect(fetch).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['/v1/videos', false], ['/api/video/generate', false], ['/v1/videos', true], ['/api/video/generate', true],
+] as const)('%s managed=%s: a proven connection-not-established error refunds, unlike a socket disconnect', async (endpoint, spec) => {
+  if (spec) managed();
+  vi.stubGlobal('fetch', vi.fn(async () => { throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } }); }));
+  await (await post(endpoint, body)).text();
+  await vi.waitFor(() => expect(row().status).toBe('failed'));
+  expect(wallet()).toBe(100); expect(tokenWallet()).toBe(100); expect(fetch).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ['/v1/videos', false], ['/api/video/generate', false], ['/v1/videos', true], ['/api/video/generate', true],
+] as const)('%s managed=%s: refund write failure rolls back funds, is settlement review, then refunds once after repair', async (endpoint, spec) => {
+  if (spec) managed();
+  sqlite.exec(`CREATE TRIGGER block_wallet_refund BEFORE UPDATE ON users WHEN NEW.balance > OLD.balance BEGIN SELECT RAISE(ABORT,'refund temporarily unavailable'); END;
+    CREATE TRIGGER block_token_refund BEFORE UPDATE ON api_tokens WHEN NEW.balance > OLD.balance BEGIN SELECT RAISE(ABORT,'refund temporarily unavailable'); END;`);
+  try {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { message: 'invalid parameter' }, request_id: 'trace_only' }, { status: 400 })));
+    await (await post(endpoint, body)).text();
+    await vi.waitFor(() => expect(meta().reviewKind).toBe('settlement'));
+    expect(meta()).toMatchObject({ upstreamStatus: 'failed', requiresReview: true });
+    expect(endpoint.startsWith('/v1') ? tokenWallet() : wallet()).toBeCloseTo(96.1);
+    expect(sqlite.prepare("SELECT id FROM fund_ledger WHERE kind='refund' AND content_id=?").all(row().id)).toHaveLength(0);
+    video.resumeAllPendingVideoTasks(); resumeSpecificationTasks();
+    expect(fetch).toHaveBeenCalledOnce();
+  } finally { sqlite.exec('DROP TRIGGER block_wallet_refund; DROP TRIGGER block_token_refund;'); }
+  // Replay the existing confirmed-failure finalizer, not a new paid submission.
+  if (!spec) {
+    await Promise.all([video.failHmQueuedVideo(row().id, new Error('confirmed rejection'), true), video.failHmQueuedVideo(row().id, new Error('duplicate rejection'), true)]);
+    expect(wallet()).toBe(100); expect(tokenWallet()).toBe(100);
+    expect(db.select().from(apiTokens).get()!.usedAmount).toBe(0);
+  }
+});
+
+it.each(['/v1/videos', '/api/video/generate'])('%s managed: generated result is retained and settlement failure never replays POST', async endpoint => {
+  managed();
+  ensureBillingReservations();
+  sqlite.exec("CREATE TRIGGER block_settle BEFORE UPDATE ON billing_reservations WHEN NEW.state='settled' BEGIN SELECT RAISE(ABORT,'settlement unavailable'); END");
+  try {
+    vi.stubGlobal('fetch', vi.fn(async (_url: any, options: any) => Response.json(options?.method === 'POST'
+      ? { id: 'task_billing_review' } : { id: 'task_billing_review', status: 'completed', metadata: { url: 'https://media.invalid/result.mp4' } })));
+    await (await post(endpoint, body)).text();
+    await vi.waitFor(() => expect(meta().reviewKind).toBe('settlement'));
+    expect(row().resultUrl).toBe('/uploads/concurrency-test.mp4');
+    expect(meta()).toMatchObject({ upstreamStatus: 'completed', requiresReview: true });
+    const before = [wallet(), tokenWallet()];
+    resumeSpecificationTasks(); await video.resumePollForTask(row().id, row());
+    expect([wallet(), tokenWallet()]).toEqual(before);
+    expect((fetch as any).mock.calls.filter(([, o]: any) => o?.method === 'POST')).toHaveLength(1);
+  } finally { sqlite.exec('DROP TRIGGER block_settle'); }
+});
+
+it('API exposes settlement review separately from generation and does not re-debit on query', async () => {
+  db.update(apiTokens).set({ balance: 1, usedAmount: 3.9 }).where(eq(apiTokens.id, tokenId)).run();
+  const id = Number(db.insert(contents).values({ userId: 1, type: 'video', modelId: model, status: 'processing', cost: 3.9,
+    metadata: JSON.stringify({ source: 'api', tokenId, billingSource: 'token', channelId: 1, videoId: 'task_settlement' }) }).run().lastInsertRowid);
+  settleDirectVideoBilling(id, 8, {}, '/uploads/settlement.mp4');
+  expect(meta()).toMatchObject({ reviewKind: 'settlement', requiresReview: true });
+  vi.stubGlobal('fetch', vi.fn());
+  const response = await nativeFetch(origin + '/v1/videos/task_' + id, { headers: { Authorization: 'Bearer ' + tokenKey } });
+  const data = await response.json();
+  expect(data).toMatchObject({ review_kind: 'settlement', billing_status: 'review', generation_status: 'completed' });
+  expect(data.message).toContain('费用结算待核实');
+  expect(tokenWallet()).toBe(1); expect(db.select().from(apiTokens).get()!.usedAmount).toBe(3.9);
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['/v1/videos', false], ['/api/video/generate', false], ['/v1/videos', true], ['/api/video/generate', true],
+] as const)('%s managed=%s: HTTP 200 lookup error is not a failed generation', async (endpoint, spec) => {
+  if (spec) managed();
+  let polls = 0;
+  vi.stubGlobal('fetch', vi.fn(async (_url: any, options: any) => {
+    if (options?.method === 'POST') return Response.json({ id: 'task_lookup_error' });
+    if (++polls < 3) return Response.json({ id: 'task_lookup_error', status: 'error', error: { code: 'task_not_found', message: 'lookup unavailable' } });
+    expect(endpoint.startsWith('/v1') ? tokenWallet() : wallet()).toBeCloseTo(96.1);
+    return Response.json({ id: 'task_lookup_error', status: 'completed', metadata: { url: 'https://media.invalid/result.mp4' } });
+  }));
+  await (await post(endpoint, body)).text();
+  await vi.waitFor(() => expect(row().status).toBe('completed'));
+  expect(polls).toBe(3);
+  expect(endpoint.startsWith('/v1') ? tokenWallet() : wallet()).toBeCloseTo(96.1);
+  expect((fetch as any).mock.calls.filter(([, o]: any) => o?.method === 'POST')).toHaveLength(1);
+});
+
+it.each([
+  ['/v1/videos', false], ['/api/video/generate', false], ['/v1/videos', true], ['/api/video/generate', true],
+] as const)('%s managed=%s: real task evidence in a 4xx rejection envelope still protects the precharge', async (endpoint, spec) => {
+  if (spec) managed();
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ task_id: 'task_maybe_started', request_id: 'trace_only', error: { message: 'invalid parameter' } }, { status: 400 })));
+  await (await post(endpoint, body)).text();
+  await vi.waitFor(() => expect(meta().requiresReview).toBe(true));
+  expect(endpoint.startsWith('/v1') ? tokenWallet() : wallet()).toBeCloseTo(96.1);
+  expect(sqlite.prepare("SELECT id FROM fund_ledger WHERE kind='refund'").all()).toHaveLength(0);
+  video.resumeAllPendingVideoTasks(); resumeSpecificationTasks(); expect(fetch).toHaveBeenCalledOnce();
 });
 
 it('after a process interruption the durable submit marker blocks resubmission; expiry only permits review', async () => {

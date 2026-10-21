@@ -13,6 +13,14 @@ import {
 } from '../server/services/contentService.js';
 
 describe('content routing privacy', () => {
+  it.each(['query', 'settlement', 'local'] as const)('preserves %s review meaning without exposing provider diagnostics', reviewKind => {
+    const result = sanitizeContentRoutingForClient({ status: 'review', metadata: {
+      reviewKind, requiresReview: true, error: 'private supplier sk-test-secret', progressText: 'private supplier https://private.invalid' } });
+    expect(result.metadata.reviewKind).toBe(reviewKind);
+    expect(result.metadata.error).not.toContain('private');
+    expect(result.metadata.progressText).not.toContain('提交结果待核实');
+    expect(result.metadata.progressText).toContain(reviewKind === 'query' ? '查询异常' : reviewKind === 'settlement' ? '结算待核实' : '本地处理异常');
+  });
   it('retains review guidance when a task has an uncertain credit-related error', () => {
     const result = sanitizeContentRoutingForClient({ status:'processing', metadata:{ requiresReview:true, fallbackFrom:'private-route',
       error:'insufficient credits', progressText:'insufficient credits', billingStatus:'review' } });

@@ -26,7 +26,7 @@ export function refundUnreservedVideo(contentId: number, message: string): void 
       Object.assign(meta, { queueRefunded: true, billingStatus: 'refunded', refundAmount: amount, refundedAt: new Date().toISOString() });
     }
     if (meta.recoveryPrecharged) meta.recoveryCharged = false;
-    Object.assign(meta, { queueStatus: 'failed', queuePosition: 0, error: message, failedAt: new Date().toISOString() });
+    Object.assign(meta, { queueStatus: 'failed', queuePosition: 0, error: message, requiresReview: false, reviewKind: null, upstreamQueryError: null, failedAt: new Date().toISOString() });
     sqlite.prepare("UPDATE contents SET status='failed',cost=0,metadata=? WHERE id=?").run(JSON.stringify(meta), contentId);
   })).immediate();
 }
@@ -69,6 +69,8 @@ export function settleDirectVideoBilling(
       }))();
     } catch (error: any) {
       metadata.billingStatus = 'review';
+      metadata.reviewKind = 'settlement';
+      metadata.upstreamStatus = 'completed';
       metadata.requiresReview = true;
       metadata.billingShortfall = actualCost > reserved ? difference : 0;
       metadata.progressText = error?.message || '实际费用结算失败，请人工核实';
@@ -79,6 +81,8 @@ export function settleDirectVideoBilling(
 
     metadata.billingStatus = 'charged';
     metadata.requiresReview = false;
+    metadata.reviewKind = null;
+    metadata.upstreamQueryError = null;
     metadata.refundAmount = actualCost < reserved ? difference : 0;
     sqlite.prepare("UPDATE contents SET status='completed',cost=?,result_url=COALESCE(?,result_url),metadata=? WHERE id=?")
       .run(actualCost, resultUrl || null, JSON.stringify(metadata), contentId);

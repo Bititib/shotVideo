@@ -1,4 +1,5 @@
 import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
+import { videoReviewKind, videoReviewLabel } from '../../../../shared/videoReview';
 import React, { useState, useEffect, useCallback } from 'react';
 import { PidoiImageReviewActions } from '../../components/PidoiImageReviewActions';
 import { MjImageReviewActions } from '../../components/MjImageReviewActions';
@@ -335,7 +336,11 @@ export default function ContentsPage() {
     return meta.requiresReview || overdue ? 'review' : item.status;
   };
 
-  const getStatusBadge = (status: string, metadata?: unknown) => {
+  const getStatusBadge = (status: string, metadata?: unknown, type?: string) => {
+    if (type === 'video' && !['completed', 'success', 'failed', 'error'].includes(status) && videoReviewKind(metadata)) {
+      const label = status === 'review' ? videoReviewLabel(metadata) : videoReviewKind(metadata) === 'query' ? '查询重试中' : videoReviewLabel(metadata);
+      return <span role="status" className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs text-amber-400">{label}</span>;
+    }
     if (status === 'processing' && parseMeta(typeof metadata === 'string' ? metadata : JSON.stringify(metadata || {})).recoveryStage === 'download') return <span className="text-xs text-amber-400">保存重试中</span>;
     const phase = videoTaskPhase(status, metadata);
     if (phase === 'awaiting_delivery' || phase === 'saving') return <span className="inline-flex rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-xs text-amber-400">{phase === 'awaiting_delivery' ? '等待交付' : '保存中'}</span>;
@@ -530,7 +535,7 @@ export default function ContentsPage() {
                         })}
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 text-sm text-zinc-400">{formatContentGenerationTime(item)}</td>
-                      <td className="px-3 py-3">{getStatusBadge(displayStatus(item), item.metadata)}</td>
+                      <td className="px-3 py-3">{getStatusBadge(displayStatus(item), item.metadata, item.type)}</td>
                       <td className="px-3 py-3">
                         <div className="text-sm font-medium text-zinc-200">{getRowChannel(item, meta, routingInfo)}</div>
                         {routingInfo?.routed && <div className="mt-0.5 text-xs text-cyan-400">已分流</div>}
@@ -634,7 +639,7 @@ export default function ContentsPage() {
             <div className="content-detail-header">
               <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
                 <h3 id="content-detail-title" className="text-sm font-medium text-white">{previewItem.type === 'video' ? '视频详情' : '内容详情'} #{previewItem.id}</h3>
-                {getStatusBadge(displayStatus(previewItem), previewItem.metadata)}
+                {getStatusBadge(displayStatus(previewItem), previewItem.metadata, previewItem.type)}
                 {previewLoading && <span className="text-[10px] text-zinc-500">正在按需加载完整素材…</span>}
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -709,7 +714,7 @@ export default function ContentsPage() {
                       <div className={`rounded-xl border p-4 ${failure.hasRecordedReason ? 'border-red-500/25 bg-red-500/10' : 'border-amber-500/25 bg-amber-500/10'}`}>
                         <div className={`mb-2 flex items-center gap-2 text-xs font-semibold ${failure.hasRecordedReason ? 'text-red-300' : 'text-amber-300'}`}>
                           <CircleAlert className="h-4 w-4" />
-                          {displayStatus(previewItem) === 'review' ? '结果待核实' : '失败原因'}
+                          {displayStatus(previewItem) === 'review' ? previewItem.type === 'video' ? videoReviewLabel(previewItem.metadata) : '结果待核实' : '失败原因'}
                         </div>
                         <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-200">
                           {displayStatus(previewItem) === 'review' && !failure.hasRecordedReason ? '后台尚未确认最终结果，请核查原上游请求，勿重复提交' : failure.message}

@@ -54,12 +54,20 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); useAuthStore.setState({user:null,isAuthenticated:false}); });
 
 describe('legacy video sidebar family grouping', () => {
+  it.each([['query', '查询异常'], ['settlement', '结算待核实']] as const)('restores %s review with a specific label without replaying generation', async (reviewKind, label) => {
+    const item = { id: 12966, status: 'review', modelId: 'ZH-kksedanco2.5', cost: 6.5, metadata: { reviewKind, requiresReview: true, prompt: 'review example' } };
+    mocks.history.mockResolvedValue({ items: [item], total: 1 }); mocks.content.mockResolvedValue(item);
+    useAuthStore.setState({ user: { id: 1 } as any, isAuthenticated: true });
+    render(<MemoryRouter><VideoPage /></MemoryRouter>);
+    expect(await screen.findByText(label)).toBeInTheDocument();
+    expect(mocks.generate).not.toHaveBeenCalled();
+  });
   it('shows a restored review task without a generating loader or a new submission', async () => {
     const item={id:12965,status:'review',modelId:'ZH-kksedanco2.5',cost:6.5,createdAt:'2026-10-16 12:27:55',metadata:{model:'ZH-kksedanco2.5',prompt:'待核实示例',seconds:30,resolution:'720p',aspect_ratio:'16:9',requiresReview:true,progressText:'纵横科技提交结果待核实'}};
     mocks.history.mockResolvedValue({items:[item],total:1});mocks.content.mockResolvedValue(item);
     useAuthStore.setState({user:{id:1} as any,isAuthenticated:true});
     render(<MemoryRouter><VideoPage/></MemoryRouter>);
-    await screen.findByText('结果待核实');
+    await screen.findByText('提交待核实');
     expect(screen.getByText('提交结果待核实，请在生成记录核实原任务，请勿重复提交。')).toBeInTheDocument();
     expect(document.body.textContent).not.toContain('纵横科技');expect(mocks.generate).not.toHaveBeenCalled();
     expect(document.querySelector('.animate-spin')).toBeNull();

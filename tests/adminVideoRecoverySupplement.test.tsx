@@ -43,6 +43,17 @@ beforeEach(() => {
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+it.each([
+  ['review', { reviewKind: 'submission', requiresReview: true }, '提交待核实'],
+  ['review', { reviewKind: 'query', requiresReview: true }, '查询异常'],
+  ['review', { reviewKind: 'settlement', requiresReview: true }, '结算待核实'],
+  ['processing', { upstreamQueryError: 'temporary lookup error' }, '查询重试中'],
+] as const)('shows %s phase %j as %s instead of a generic review badge', async (status, metadata, label) => {
+  vi.mocked(adminApi.getContents).mockResolvedValue({ items: [{ ...item, status, metadata: JSON.stringify(metadata) }], total: 1 } as any);
+  render(<MemoryRouter><ContentsPage /></MemoryRouter>);
+  expect(await screen.findByText(label)).toBeTruthy();
+});
+
 it('shows the missing-ID supplement form and saves before querying upstream', async () => {
   render(<MemoryRouter><ContentsPage /></MemoryRouter>);
   fireEvent.click(await screen.findByRole('button', { name: '查看本地记录 13360 详情' }));

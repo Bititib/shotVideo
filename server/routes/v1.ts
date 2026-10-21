@@ -145,7 +145,10 @@ import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from 
 import { validateVideoPrompt } from '../services/videoPromptValidation.js';
 import { extractVideoUpstreamTaskId, sanitizeUpstreamCreateResponse } from '../services/videoTaskMetadataService.js';
 import { claimVideoSubmission, acceptVideoSubmission, endVideoSubmission, releaseVideoSubmission, videoSubmissionPreparation } from '../services/videoSubmissionGuard.js';
-import { submissionFailure } from '../services/specificationAdapters.js';
+import { submissionFailure, SpecificationUpstreamError } from '../services/specificationAdapters.js';
+import { videoRequestNotSent, explicitVideoCreateError } from '../services/videoSubmissionErrors.js';
+import { videoReviewKind, videoReviewMessage } from '../../shared/videoReview.js';
+import { isSnumomNoChannelRejection } from '../services/snumomSubmissionRejection.js';
 import { refundUnreservedVideo } from '../services/directVideoBillingService.js';
 
 const router = Router();
@@ -188,8 +191,9 @@ function persistVideoContentReview(
       queueRefunded: false,
       refundAmount: 0,
       requiresReview: true,
+      reviewKind: reviewMetadata.reviewKind || 'submission',
       submissionReviewReason: reason,
-      progressText: '上游已响应，任务编号待核实，请勿重复提交',
+      progressText: videoReviewMessage({ reviewKind: reviewMetadata.reviewKind || 'submission' }),
       reviewStartedAt: new Date().toISOString(),
     }),
   }).where(eq(contents.id, contentId)).run();
@@ -2531,6 +2535,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   let billingDeduction: TokenBillingDeduction | null = null;
   let upstreamSubmissionStarted = false;
   let recognizedUpstreamTaskId = '';
+  let confirmedSubmissionRejection = false;
   const submitUpstream: typeof fetch = (url, options) => {
     upstreamSubmissionStarted = true;
     return fetch(url, options);
@@ -2914,8 +2919,9 @@ async function handleVideoCreation(req: Request, res: Response) {
           durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errText.slice(0, 500)}`, clientIp,
         }).run();
 
-        const rejection = submissionFailure(upstreamRes.status, errText, channel, true);
+        const rejection = submissionFailure(upstreamRes.status, errText, channel, true, upstreamRes.headers);
         if (rejection.uncertain) throw rejection;
+        confirmedSubmissionRejection = true;
         endVideoSubmission(contentId!, 'rejected');
         refundUnreservedVideo(contentId!, `HTTP ${upstreamRes.status}: ${errText}`); balanceDeducted = false;
         return res.status(upstreamRes.status).json({ error: errText });
@@ -2942,9 +2948,12 @@ async function handleVideoCreation(req: Request, res: Response) {
         status_url: `${req.protocol}://${req.get('host')}/v1/videos/task_${contentId}` });
     }
 
-    if (isSnumomWanChannel(channel) && isVideoFailurePayload(responseBody)) {
+    if (isSnumomNoChannelRejection(upstreamRes.status, responseText, channel, upstreamRes.headers)
+      || explicitVideoCreateError(responseBody, upstreamRes.headers)
+      || isSnumomWanChannel(channel) && isVideoFailurePayload(responseBody)) {
       endVideoSubmission(contentId!, 'rejected');
       const reason = extractVideoFailureMessage(responseBody) || 'Upstream explicitly rejected the video task';
+      confirmedSubmissionRejection = true;
       refundUnreservedVideo(contentId!, reason);
       balanceDeducted = false;
       db.insert(apiLogs).values({ tokenId: token.id, channelId, model, upstreamModel,
@@ -3040,7 +3049,16 @@ async function handleVideoCreation(req: Request, res: Response) {
     cleanupFiles(req.files);
     const durationMs = Date.now() - startTime;
     const errorMessage = err.name === 'AbortError' ? 'upstream timeout' : err.message;
-    const submissionUncertain = contentId !== null && upstreamSubmissionStarted;
+    if (err.code === 'VIDEO_SUBMISSION_CONFLICT') return res.status(202).json({ id: `task_${contentId}`, status: 'queued', message: '原任务已提交，请查询原任务，勿重复提交' });
+    const saved = contentId !== null ? db.select().from(contents).where(eq(contents.id, contentId)).get() : null;
+    if (saved && ['completed', 'failed'].includes(saved.status || '')) return res.status(saved.status === 'failed' ? 502 : 200).json({ id: `task_${contentId}`, status: saved.status });
+    if (contentId !== null && confirmedSubmissionRejection) {
+      persistVideoContentReview(contentId, errorMessage, { reviewKind: 'settlement', upstreamStatus: 'failed', refundPending: true });
+      return res.status(202).json({ id: `task_${contentId}`, status: 'queued', requires_review: true, review_kind: 'settlement', generation_status: 'failed', message: videoReviewMessage({ reviewKind: 'settlement', upstreamStatus: 'failed' }) });
+    }
+    const submissionUncertain = contentId !== null && (Boolean(recognizedUpstreamTaskId)
+      || upstreamSubmissionStarted && !videoRequestNotSent(err)
+        && !(err instanceof SpecificationUpstreamError && err.confirmedFailure));
     if (contentId !== null) endVideoSubmission(contentId, submissionUncertain ? 'unknown' : 'rejected');
     db.insert(apiLogs).values({
       tokenId: token.id, channelId, model, upstreamModel,
@@ -3050,6 +3068,12 @@ async function handleVideoCreation(req: Request, res: Response) {
 
     if (contentId !== null) {
       if (submissionUncertain) {
+        if (recognizedUpstreamTaskId) {
+          persistVideoContentReview(contentId, errorMessage, { videoId: recognizedUpstreamTaskId, upstreamTaskId: recognizedUpstreamTaskId, reviewKind: 'local' });
+          return res.status(202).json({ id: `task_${contentId}`, task_id: `task_${contentId}`, object: 'video', model,
+            status: 'queued', requires_review: true, review_kind: 'local', upstream_task_id: recognizedUpstreamTaskId,
+            message: videoReviewMessage({ reviewKind: 'local' }) });
+        }
         persistVideoContentReview(contentId, errorMessage, {
           ...(recognizedUpstreamTaskId ? { videoId: recognizedUpstreamTaskId } : {}),
           upstreamTransportError: sanitizeUpstreamCreateResponse(errorMessage),
@@ -3132,9 +3156,13 @@ async function handleVideoQuery(req: Request, res: Response) {
       model: record.modelId,
       status: mappedStatus,
       ...((metadata.hayaNeedsReview || metadata.requiresReview) ? { requires_review: true, message: metadata.progressText || '提交结果待核实，请勿重提' } : {}),
+      review_kind: videoReviewKind(metadata) || undefined,
+      billing_status: metadata.billingStatus || undefined,
+      generation_status: videoReviewKind(metadata) === 'settlement' ? (record.resultUrl ? 'completed' : metadata.upstreamStatus === 'failed' ? 'failed' : mappedStatus) : mappedStatus,
+      ...(videoReviewKind(metadata) ? { message: videoReviewMessage(metadata) } : {}),
       progress,
       progress_pct: progress,
-      progress_text: mappedStatus === 'completed'
+      progress_text: videoReviewKind(metadata) ? videoReviewMessage(metadata) : mappedStatus === 'completed'
         ? undefined
         : (wasInternallyRouted ? '视频生成中' : (metadata.progressText || undefined)),
       upstream_task_id: metadata.videoId || undefined,

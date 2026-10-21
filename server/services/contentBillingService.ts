@@ -38,7 +38,7 @@ export function finalizeReservedContent(
       if (!supplement) {
         sqlite.prepare("UPDATE billing_reservations SET actual=?,state='review' WHERE id=?").run(actual, reservation.id);
         sqlite.prepare("UPDATE contents SET status='review',result_url=COALESCE(?,result_url),metadata=? WHERE id=?").run(resultUrl || null,
-          JSON.stringify({ ...merged, billingStatus: 'review', requiresReview: true, billingShortfall: shortfall,
+          JSON.stringify({ ...merged, billingStatus: 'review', reviewKind: 'settlement', upstreamStatus: 'completed', requiresReview: true, billingShortfall: shortfall,
             progressText: '视频已生成，实际费用高于预扣且余额不足，请补充余额后结算' }), contentId);
         return true;
       }
@@ -48,7 +48,7 @@ export function finalizeReservedContent(
     const state = outcome === 'completed' ? 'settled' : 'refunded';
     sqlite.prepare("UPDATE billing_reservations SET actual=?,state=?,settled_at=datetime('now') WHERE id=?").run(actual, state, reservation.id);
     sqlite.prepare('UPDATE contents SET status=?,cost=?,result_url=COALESCE(?,result_url),metadata=? WHERE id=?').run(outcome, actual, resultUrl || null,
-      JSON.stringify({ ...merged, billingStatus: state, requiresReview: false, queueStatus: outcome, queuePosition: 0,
+      JSON.stringify({ ...merged, billingStatus: state, requiresReview: false, reviewKind: null, upstreamQueryError: null, queueStatus: outcome, queuePosition: 0,
         ...(supplement ? { billingSupplementAmount: Math.max(0, actual - reservation.amount), billingSupplementSource: supplement.source } : {}),
         refundAmount: refund, queueRefunded: outcome === 'failed', ...(refund > 0 ? { refundedAt: new Date().toISOString(), refundTarget: receipt.source === 'org' ? 'organization_balance' : 'user_balance' } : {}) }), contentId);
     return true;

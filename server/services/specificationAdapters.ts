@@ -27,12 +27,18 @@ import { generateSiYueTianImage, isSiYueTianImageChannel, siYueTianImageContentU
 import { publishReferenceUrl } from './publicReferenceService.js';
 import { isBlobDrawChannel, submitBlobDrawVideo, pollBlobDrawVideo, BlobDrawApiError } from './blobDrawAdapter.js';
 import { registerUpload } from './uploadAccess.js';
+import { isSnumomNoChannelRejection } from './snumomSubmissionRejection.js';
+import { videoErrorTaskId, videoRequestNotSent, explicitVideoCreateError } from './videoSubmissionErrors.js';
+import { isVideoQueryErrorPayload } from './videoFailureService.js';
 
 export type SpecificationRequest = { prompt: string; input: RoutingInput; images: string[]; videos: string[]; audios: string[]; firstFrame: string; lastFrame: string; body: Record<string, any>; publicBaseUrl: string };
 export class SpecificationUpstreamError extends Error {
   constructor(message: string, public readonly retrySafe: boolean, public readonly uncertain = false, public readonly blocked = false, public readonly upstreamStatus = 0, public readonly confirmedFailure = false) { super(message); }
 }
-export function submissionFailure(status: number, text: string, channel?: { type?: string | null }, videoSubmission = false): SpecificationUpstreamError {
+export function submissionFailure(status: number, text: string, channel?: { type?: string | null; baseUrl?: string | null }, videoSubmission = false, headers?: Pick<Headers, 'get'>): SpecificationUpstreamError {
+  if (videoSubmission && isSnumomNoChannelRejection(status, text, channel, headers)) {
+    return new SpecificationUpstreamError('上游明确拒绝：' + text.replace(/sk-[\w-]+/g, '[REDACTED]').slice(0, 500), false, false, false, status, true);
+  }
   // The MJ contract defines HTTP 402 as a precharge rejection, even if a log ID is attached.
   // Classify by status, not provider wording or the presence of a diagnostic identifier.
   if (isMjChannel(channel) && status === 402) return new SpecificationUpstreamError(
@@ -41,7 +47,8 @@ export function submissionFailure(status: number, text: string, channel?: { type
   // Only explicit rejections without a task identifier are eligible for retry.
   let payload: any;
   try { payload = JSON.parse(text); } catch {}
-  const task = payload?.task_id || payload?.taskId || payload?.request_id || payload?.id || payload?.data?.task_id || payload?.data?.id;
+  const task = videoSubmission ? videoErrorTaskId(payload, headers)
+    : payload?.task_id || payload?.taskId || payload?.request_id || payload?.id || payload?.data?.task_id || payload?.data?.id;
   const rejected = !task && ([401, 402, 429].includes(status) || (status === 403 && /api.?key|unauthori[sz]ed|余额|quota|credit/i.test(text))
     || (!videoSubmission && status === 503 && /unavailable|maintenance|维护|不可用|overload|capacity|busy/i.test(text)));
   const blocked = [401, 402].includes(status) || (status === 403 && rejected);
@@ -77,7 +84,7 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
   } catch (e: any) {
     onResponse?.({ id: '', state: 'no_response' });
     const code = e?.cause?.code || e?.code;
-    const notSent = ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(code);
+    const notSent = videoRequestNotSent(e);
     throw new SpecificationUpstreamError('提交连接失败，请在生成记录中核实：' + String(code || e?.message || '未知错误'), notSent, !notSent);
   }
   onResponse?.(evidenceFor(undefined, response.headers, response.status, 'headers_received'));
@@ -91,12 +98,16 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
     }
     let body: unknown; try { body = JSON.parse(text); } catch {}
     onResponse?.(evidenceFor(body, response.headers, response.status, 'response_without_id'));
-    throw submissionFailure(response.status, channel.apiKey ? text.split(channel.apiKey).join('[REDACTED]') : text, channel, channel.videoSubmission === true);
+    throw submissionFailure(response.status, channel.apiKey ? text.split(channel.apiKey).join('[REDACTED]') : text, channel, channel.videoSubmission === true, response.headers);
   }
   let result: any;
   try { result = await response.json(); }
   catch { onResponse?.(evidenceFor(undefined, response.headers, response.status, 'response_unreadable')); throw new SpecificationUpstreamError('上游已响应但结果无法解析，请勿重复提交', false, true); }
   onResponse?.(evidenceFor(result, response.headers, response.status, 'response_without_id'));
+  if (channel.videoSubmission && (isSnumomNoChannelRejection(response.status, JSON.stringify(result), channel, response.headers)
+    || explicitVideoCreateError(result, response.headers))) {
+    throw submissionFailure(response.status, JSON.stringify(result), channel, true, response.headers);
+  }
   onParsed?.(result, response.headers);
   return result;
 }
@@ -245,6 +256,11 @@ export async function pollSpecificationVideo(channel: any, taskId: string) {
   const response = await fetch(url, { headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error('查询任务失败 (' + response.status + ')');
   const raw = await response.json() as any;
+  if (isVideoQueryErrorPayload(raw)) throw new Error('上游任务查询响应异常，继续查询原任务');
+  if (isSnumomWanChannel(channel)) {
+    const responseTaskId = extractSnumomTaskId(raw);
+    if (responseTaskId && responseTaskId !== taskId) throw new Error('上游查询任务编号不一致，继续核实原任务');
+  }
   if (channel.type === 'hmstudio') return normalizeHmStudioTask(raw, channel.baseUrl);
   if (isHayaChannel(channel)) return normalizeHayaTask(raw, channel.baseUrl, taskId);
   if (isWxHaidiYueChannel(channel)) return normalizeWxHaidiYueTask(raw, channel.baseUrl);

@@ -1,4 +1,5 @@
 import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
+import { videoReviewLabel, videoReviewMessage } from '../../../../shared/videoReview';
 import { publicGenerationError } from '../../../../shared/generationMessages';
 import { BLOB_DRAW_BB_MODEL } from '../../../../shared/blobDrawVideo';
 import { useVideoQuote } from '../../hooks/useVideoQuote';
@@ -850,12 +851,12 @@ export default function VideoPage() {
             prompt: item.metadata?.prompt || item.inputText || item.title || '',
             status: videoTaskNeedsReview(item) ? 'review' : 'generating',
             progress: Number(item.metadata?.progress) || 0,
-            statusMessage: videoTaskNeedsReview(item) ? publicGenerationError('提交结果待核实，请勿重复提交') : item.status === 'queued'
+            statusMessage: videoTaskNeedsReview(item) ? videoReviewMessage(item.metadata) : item.status === 'queued'
               ? `HM Studio 排队中：前方 ${Math.max(0, Number(item.metadata?.queuePosition || 1) - 1)} 项`
               : (Number(item.metadata?.progress) > 0
                 ? `视频生成中 ${Number(item.metadata.progress)}%`
                 : '正在后台恢复生成...'),
-            videoUrl: null,
+            videoUrl: item.resultUrl || null,
             error: null,
             metadata: item.metadata as any,
             createdAt: item.createdAt,
@@ -1027,7 +1028,7 @@ export default function VideoPage() {
               }, 2000);
             } else if (videoTaskNeedsReview(item)) {
               abortRef.current.delete(task.id);
-              setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'review', statusMessage: publicGenerationError('提交结果待核实，请勿重复提交') } : t));
+              setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'review', videoUrl: item.resultUrl || t.videoUrl, metadata: item.metadata || {}, statusMessage: videoReviewMessage(item.metadata) } : t));
             } else if (item.status === 'failed') {
               abortRef.current.delete(task.id);
               setTasks(prev => prev.map(t => t.id === task.id ? {
@@ -1806,8 +1807,9 @@ export default function VideoPage() {
                           ) : task.status === 'review' ? (
                             <div className="flex flex-col items-center gap-2 p-4" role="status">
                               <AlertCircle className="w-8 h-8 text-amber-400/70" />
-                              <p className="text-sm text-amber-300">结果待核实</p>
+                              <p className="text-sm text-amber-300">{videoReviewLabel(task.metadata)}</p>
                               <p className="text-xs text-amber-200/80 text-center">{task.statusMessage}</p>
+                              {task.videoUrl && <button type="button" className="text-xs underline text-amber-200 focus-visible:outline focus-visible:outline-2" onClick={() => setPlayingVideo({ url: task.videoUrl!, prompt: restorePrompt(task.prompt) })}>查看已生成视频</button>}
                             </div>
                           ) : task.status === 'error' ? (
                             <div className="flex flex-col items-center gap-2 p-4">

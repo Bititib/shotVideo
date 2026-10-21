@@ -3,6 +3,9 @@ import { sqlite } from '../db/index.js';
 import { persistVideoSubmissionReceipt, findVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
 
 const submitting = new Set<number>();
+export class VideoSubmissionConflictError extends Error {
+  readonly code = 'VIDEO_SUBMISSION_CONFLICT';
+}
 export function videoSubmissionPreparation() {
   return { videoSubmissionState: 'preparing', videoSubmissionDeadline: Date.now() + 5 * 60_000 };
 }
@@ -19,7 +22,7 @@ export function claimVideoSubmission(id: number, timeoutMs = 120_000): void {
     const meta = JSON.parse(row.metadata || '{}');
     if (['videoId', 'upstreamTaskId', 'taskId', 'task_id'].some(key => meta[key]) || findVideoSubmissionReceipt(id)
       || meta.videoSubmissionState && !['preparing', 'rejected'].includes(meta.videoSubmissionState)) {
-      throw new Error('任务已提交或提交结果待核实，禁止重复提交');
+      throw new VideoSubmissionConflictError('任务已提交或提交结果待核实，禁止重复提交');
     }
     Object.assign(meta, { videoSubmissionState: 'submitting', videoSubmissionAttempt: randomUUID(),
       videoSubmissionStartedAt: new Date().toISOString(), videoSubmissionDeadline: Date.now() + Math.max(120_000, timeoutMs) + 30_000 });
@@ -57,7 +60,7 @@ export function acceptVideoSubmission(id: number, taskId: string, context: {
       channelApiKeyId: context.channelApiKeyId ?? null, provider: context.provider });
     Object.assign(meta, { videoId: taskId, upstreamTaskId: taskId, videoSubmissionState: 'accepted',
       channelId: context.channelId, channelApiKeyId: context.channelApiKeyId ?? null,
-      missingTaskIdReview: false, requiresReview: false });
+      missingTaskIdReview: false, requiresReview: false, reviewKind: null, upstreamQueryError: null });
     sqlite.prepare("UPDATE contents SET status='processing',metadata=? WHERE id=?").run(JSON.stringify(meta), id);
   }).immediate();
   submitting.delete(id);

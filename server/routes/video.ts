@@ -29,7 +29,7 @@ import { tierMiddleware, TierRequest } from '../middleware/tier.js';
 import { quotaMiddleware, logUsage } from '../middleware/quota.js';
 import { ChannelService } from '../services/channelService.js';
 import { BalanceService, type BalanceDeduction } from '../services/balanceService.js';
-import { protectsVideoPolling, noteVideoQueryProblem } from '../services/videoPollingSafety.js';
+import { protectsVideoPolling, noteVideoQueryProblem, clearVideoQueryProblem } from '../services/videoPollingSafety.js';
 import { ContentService } from '../services/contentService.js';
 import { batchContextForRequest, batchStore, recordBatchFailure, markBatchSubmitting, noteBatchQueryProblem, isBatchChannelAtCapacity } from '../services/videoBatchService.js';
 import { guardBatchSubmissionResponse, isBatchQueryUncertain } from '../services/videoBatchStore.js';
@@ -91,7 +91,9 @@ import { probeReferenceAudioSeconds, probeReferenceVideoSeconds } from '../servi
 import { reserveLegacyVideo, finalizeLegacyVideo, failLegacyVideo, markLegacyVideoSubmitting } from '../services/legacyVideoBilling.js';
 import { settleDirectVideoBilling, refundUnreservedVideo } from '../services/directVideoBillingService.js';
 import { sanitizeUpstreamCreateResponse } from '../services/videoTaskMetadataService.js';
-import { submissionFailure } from '../services/specificationAdapters.js';
+import { submissionFailure, SpecificationUpstreamError } from '../services/specificationAdapters.js';
+import { videoRequestNotSent, explicitVideoCreateError } from '../services/videoSubmissionErrors.js';
+import { isSnumomNoChannelRejection } from '../services/snumomSubmissionRejection.js';
 import { readVideoRecoveryState, reviewMissingVideoTaskId, reviewUncertainVideoTask, savedVideoTaskId } from '../services/videoRecoveryState.js';
 import { claimVideoSubmission, acceptVideoSubmission, endVideoSubmission, releaseVideoSubmission, videoSubmissionPending, videoSubmissionPreparation } from '../services/videoSubmissionGuard.js';
 import {
@@ -1429,8 +1431,28 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
 
   /** 任务失败时自动退款 */
   let failureHandled = false;
-  const refundFailedTask = (errMsg: string, confirmedUpstreamFailure = false) => {
+  let paidRequestStarted = false;
+  let videoId = '';
+  let rejectedSubmission: SpecificationUpstreamError | null = null;
+  const submitVideoRequest: typeof fetch = async (url, options) => {
+    paidRequestStarted = true;
+    rejectedSubmission = null;
+    const response = await fetch(url, options);
+    if (!response.ok) {
+      try { rejectedSubmission = submissionFailure(response.status, await response.clone().text(), channel, true, response.headers); }
+      catch { /* An unreadable response is uncertain, never a confirmed rejection. */ }
+    }
+    if (response.ok) {
+      try {
+        const body = await response.clone().json();
+        if (explicitVideoCreateError(body, response.headers)) rejectedSubmission = submissionFailure(response.status, JSON.stringify(body), channel, true, response.headers);
+      } catch { /* Leave malformed accepted responses protected. */ }
+    }
+    return response;
+  };
+  const refundFailedTask = (errMsg: string, confirmedUpstreamFailure = false, knownStage?: 'query' | 'local') => {
     if (failureHandled) return;
+    confirmedUpstreamFailure ||= rejectedSubmission?.confirmedFailure === true;
     if (!confirmedUpstreamFailure && contentId !== null) {
       const current = db.select().from(contents).where(eq(contents.id, contentId)).get();
       const metadata = JSON.parse(current?.metadata || '{}');
@@ -1450,24 +1472,26 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
       const current = db.select().from(contents).where(eq(contents.id, contentId)).get();
       const meta = JSON.parse(current?.metadata || '{}');
       if (meta.billingSubmissionStarted || ['submitting', 'unknown', 'accepted'].includes(meta.videoSubmissionState) || savedVideoTaskId(meta)) {
-        if (!recordBatchFailure(contentId, readableError, false)) reviewUncertainVideoTask(contentId, readableError);
+        if (!recordBatchFailure(contentId, readableError, false)) reviewUncertainVideoTask(contentId, readableError, videoId || savedVideoTaskId(meta) ? knownStage || 'query' : 'submission', videoId || undefined);
         activePolls.delete(contentId);
         sendEvent({ type: 'status', message: '任务结果待核实，请在生成记录查看原任务，请勿重复提交' });
         return;
       }
     }
     console.error(`[video] ❌ 生成失败: ${readableError}`);
-    sendEvent({ type: 'error', message: readableError });
+    try {
     if (contentId !== null && recordBatchFailure(contentId, readableError, confirmedUpstreamFailure)) {
       activePolls.delete(contentId);
+      sendEvent({ type: 'error', message: readableError });
       return;
     }
     if (contentId !== null && isZonghengChannel(channel) && confirmedUpstreamFailure) {
       refundConfirmedZonghengVideo(contentId, readableError);
       activePolls.delete(contentId);
+      sendEvent({ type: 'error', message: readableError });
       return;
     }
-    if (contentId !== null && failLegacyVideo(contentId, readableError, confirmedUpstreamFailure)) { activePolls.delete(contentId); return; }
+    if (contentId !== null && failLegacyVideo(contentId, readableError, confirmedUpstreamFailure)) { activePolls.delete(contentId); sendEvent({ type: 'error', message: readableError }); return; }
     if (contentId !== null) {
       activePolls.delete(contentId);
       try {
@@ -1485,7 +1509,17 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
           cost: 0,
           metadata: JSON.stringify(failedMetadata),
         }).where(eq(contents.id, contentId)).run();
-      } catch (dbErr) { console.error('[video] 失败状态更新错误:', dbErr); }
+      } catch (dbErr) { console.error('[video] 失败状态更新错误:', dbErr); throw dbErr; }
+    }
+    sendEvent({ type: 'error', message: readableError });
+    } catch (error: any) {
+      if (contentId !== null) {
+        const current = db.select().from(contents).where(eq(contents.id, contentId)).get();
+        db.update(contents).set({ metadata: JSON.stringify({ ...JSON.parse(current?.metadata || '{}'), upstreamStatus: 'failed', refundPending: true }) }).where(eq(contents.id, contentId)).run();
+        reviewUncertainVideoTask(contentId, error.message || '退款处理待核实', 'settlement');
+        activePolls.delete(contentId);
+      }
+      sendEvent({ type: 'status', message: '生成已失败，退款处理待核实；请勿重复提交。' });
     }
   };
 
@@ -1604,7 +1638,6 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   }
 
   try {
-    let videoId = '';
     if (!markBatchSubmitting(contentId)) return res.end();
     if (!markLegacyVideoSubmitting(contentId)) return res.end();
     if (contentId !== null) claimVideoSubmission(contentId, dbChannel?.timeout || 300_000);
@@ -1620,7 +1653,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
         const job = await submitZonghengVideo(baseUrl, channel.apiKey, { model: upstreamModel, prompt, seconds: Number(video_length), ratio: aspect_ratio, resolution,
           images, videos, audios, firstFrame: frames[0], lastFrame: frames[1], quality: req.body.quality,
           negativePrompt: req.body.negative_prompt, generateAudio: req.body.generate_audio }, zonghengOrder(contentId),
-          () => patchZonghengTask(contentId!, { zonghengSubmissionStarted: new Date().toISOString() }), dbChannel?.timeout);
+          () => { paidRequestStarted = true; patchZonghengTask(contentId!, { zonghengSubmissionStarted: new Date().toISOString() }); }, dbChannel?.timeout);
         videoId = job.taskId; zonghengDelay = job.pollDelay;
         patchZonghengTask(contentId, { videoId, zonghengPollDelay: job.pollDelay });
       } catch (error: any) {
@@ -1642,7 +1675,7 @@ sendEvent({ type: 'status', message: '提交结果待核实，请在历史记录
         const videos = await prepareHayaMedia(finalVideos, 'video', options);
         const audios = await prepareHayaMedia(finalAudios, 'audio', options);
         const job = await submitHayaVideo(baseUrl, channel.apiKey, { model: upstreamModel, prompt, seconds: Number(video_length), ratio: aspect_ratio, resolution, images, videos, audios },
-          () => patchHayaTask(contentId!, { hayaSubmissionStarted: new Date().toISOString(), hayaMedia: { images, videos, audios } }),
+          () => { paidRequestStarted = true; patchHayaTask(contentId!, { hayaSubmissionStarted: new Date().toISOString(), hayaMedia: { images, videos, audios } }); },
           requestId => patchHayaTask(contentId!, { requestId }));
         videoId = job.taskId;
         patchHayaTask(contentId, { videoId, requestId: job.requestId });
@@ -1690,7 +1723,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
               ? true
               : resolveWxHaidiYueFaceSplit(overflowPlan.channel, face_split),
           });
-          createResp = await fetch(wxHaidiYueCreateUrl(overflowPlan.channel.baseUrl), {
+          createResp = await submitVideoRequest(wxHaidiYueCreateUrl(overflowPlan.channel.baseUrl), {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${overflowPlan.channel.apiKey}`,
@@ -1719,7 +1752,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
             videos: [],
             audios: [],
           });
-          createResp = await fetch(`${overflowPlan.channel.baseUrl.replace(/\/+$/, '')}/v1/videos`, {
+          createResp = await submitVideoRequest(`${overflowPlan.channel.baseUrl.replace(/\/+$/, '')}/v1/videos`, {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${overflowPlan.channel.apiKey}`,
@@ -1791,7 +1824,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       const headers: Record<string, string> = {};
       if (channel.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
 
-      const createResp = await fetch(hmStudioCreateUrl(baseUrl, 'video'), {
+      const createResp = await submitVideoRequest(hmStudioCreateUrl(baseUrl, 'video'), {
         method: 'POST',
         headers,
         body: formData,
@@ -1823,7 +1856,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       });
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (channel.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
-      const createResp = await fetch(wxHaidiYueCreateUrl(baseUrl), {
+      const createResp = await submitVideoRequest(wxHaidiYueCreateUrl(baseUrl), {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
@@ -1871,7 +1904,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
       console.log(`[video] MJNewAPI 创建任务: model=${model} upstreamModel=${upstreamModel} duration=${payload.duration} resolution=${resolution} images=${imageUrls.length} videos=${videoUrls.length} audios=${audioUrls.length}`);
 
-      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+      const createResp = await submitVideoRequest(`${baseUrl}/v1/videos`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${channel.apiKey}`,
@@ -1894,7 +1927,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       sendEvent({ type: 'status', message: '正在提交 LongXia 视频任务...' });
       const payload = buildLongxiaVideoPayload({ model: upstreamModel, prompt, seconds: Number(video_length), ratio: aspect_ratio,
         resolution, imageUrls: reference_images, videoUrls: finalVideos, audioUrls: finalAudios });
-      const createResp = await fetch(longxiaVideoCreateUrl(baseUrl), {
+      const createResp = await submitVideoRequest(longxiaVideoCreateUrl(baseUrl), {
         method: 'POST', headers: { Authorization: 'Bearer ' + channel.apiKey, 'Content-Type': 'application/json' },
         body: JSON.stringify(payload), signal: AbortSignal.timeout(dbChannel?.timeout || 120_000),
       });
@@ -1923,7 +1956,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         videoUrls,
         audioUrls,
       });
-      const createResp = await fetch(miaowuVideoCreateUrl(baseUrl), {
+      const createResp = await submitVideoRequest(miaowuVideoCreateUrl(baseUrl), {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${channel.apiKey}`,
@@ -1968,7 +2001,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
       console.log(`[video] Step1 SudaShui 创建任务: model=${model} duration=${payload.duration} resolution=${resolution}`);
 
-      const createResp = await fetch(sudaShuiVideoCreateUrl(baseUrl), {
+      const createResp = await submitVideoRequest(sudaShuiVideoCreateUrl(baseUrl), {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${channel.apiKey}`,
@@ -2035,7 +2068,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
       console.log(`[video] Step1 SoraV4 创建任务: model=${model} upstreamModel=${upstreamModel} duration=${payload.duration} refs=${refImages.length} mode=${referenceMode} video=${!!videoUrl}`);
 
-      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+      const createResp = await submitVideoRequest(`${baseUrl}/v1/videos`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${channel.apiKey}`,
@@ -2077,7 +2110,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
       console.log(`[video] Step1 VeoOmni 创建任务: model=${model} aspect_ratio=${payload.aspect_ratio} refs=${imageUrls.length}`);
 
-      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+      const createResp = await submitVideoRequest(`${baseUrl}/v1/videos`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${channel.apiKey}`,
@@ -2111,7 +2144,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         images: imageUrls,
         videos: [videoUrl],
       });
-      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+      const createResp = await submitVideoRequest(`${baseUrl}/v1/videos`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${channel.apiKey}`,
@@ -2158,7 +2191,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
       console.log(`[video] Step1 Veo31 创建任务: model=${model} aspect_ratio=${payload.aspect_ratio} refs=${imageUrls.length} ff=${!!firstFrameUrl} lf=${!!lastFrameUrl}`);
 
-      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+      const createResp = await submitVideoRequest(`${baseUrl}/v1/videos`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${channel.apiKey}`,
@@ -2207,7 +2240,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
       console.log(`[video] Step1 SeedanceFast 创建任务: model=${model} duration=${payload.duration} resolution=${resolution} refs=${imageUrls.length}`);
 
-      const createResp = await fetch(`${baseUrl}/v1/video/generations`, {
+      const createResp = await submitVideoRequest(`${baseUrl}/v1/video/generations`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${channel.apiKey}`,
@@ -2248,7 +2281,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         videoUrls,
         audioUrls,
       });
-      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+      const createResp = await submitVideoRequest(`${baseUrl}/v1/videos`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2308,7 +2341,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         promptExtend: snumomPromptExtend,
         inputMedia: snumomInputMedia,
       });
-      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+      const createResp = await submitVideoRequest(`${baseUrl}/v1/videos`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2319,7 +2352,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       });
       const responseText = await createResp.text().catch(() => '');
       if (!createResp.ok) {
-        const rejection = submissionFailure(createResp.status, responseText, channel, true);
+        const rejection = submissionFailure(createResp.status, responseText, channel, true, createResp.headers);
         refundFailedTask(rejection.message, !rejection.uncertain);
         res.write('data: [DONE]\n\n');
         return res.end();
@@ -2327,7 +2360,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       let job: any;
       try { job = responseText ? JSON.parse(responseText) : null; }
       catch { job = null; }
-      if (job && isVideoFailurePayload(job)) {
+      if (isSnumomNoChannelRejection(createResp.status, responseText, channel, createResp.headers) || explicitVideoCreateError(job, createResp.headers) || job && isVideoFailurePayload(job)) {
         refundFailedTask(extractVideoFailureMessage(job) || `snumom ${snumomModelLabel} 明确拒绝了任务`, true);
         res.write('data: [DONE]\n\n');
         return res.end();
@@ -2371,7 +2404,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       const audioUrls = finalAudios.slice(0, 5)
         .map(item => convertBase64ToPublicUrl(item, 'wan3_audio', req));
 
-      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+      const createResp = await submitVideoRequest(`${baseUrl}/v1/videos`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2409,6 +2442,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         res.write('data: [DONE]\n\n');
         return res.end();
       }
+      paidRequestStarted = true;
       const createResp = await submitSiYueTianOverflowPlan(overflowPlan, {
         prompt: prompt.trim(),
         ratio: aspect_ratio,
@@ -2486,7 +2520,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
       console.log(`[video] Step1 sd2 创建任务: model=${model} upstreamModel=${upstreamModel} duration=${payload.duration} resolution=${resolution} refs=${imageUrls.length} video=${videoRefUrls.length} audio=${audioRefUrls.length}`);
 
-      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+      const createResp = await submitVideoRequest(`${baseUrl}/v1/videos`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${channel.apiKey}`,
@@ -2516,6 +2550,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
         const overflowPlan = findSiYueTianOverflowPlan(overflowInput);
         if (overflowPlan) {
+          paidRequestStarted = true;
           const fallbackResponse = await submitSiYueTianOverflowPlan(overflowPlan, {
             prompt: prompt.trim(),
             ratio: aspect_ratio,
@@ -2604,7 +2639,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
       console.log(`[video] Step1 创建任务: model=${model} seconds=${video_length} hasRef=${hasRef} refCount=${hasRef ? Math.min(reference_images.length, 5) : 0}`);
 
-      const createResp = await fetch(`${baseUrl}/v1/videos`, {
+      const createResp = await submitVideoRequest(`${baseUrl}/v1/videos`, {
         method: 'POST',
         headers,
         body: formData,
@@ -2655,7 +2690,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
     const maxTransientPollFailures = 6;
     let consecutiveTransientPollFailures = 0;
 
-    const protectedPolling = protectsVideoPolling(channel, batchContext ? { batchItemId: batchContext.item.id } : {});
+    const protectedPolling = !isHaya && !isZongheng && protectsVideoPolling(channel, { videoId, ...(batchContext ? { batchItemId: batchContext.item.id } : {}) });
     const acceptedPollingStartedAt = Date.now();
 
     const headers: Record<string, string> = {};
@@ -2747,6 +2782,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
           continue;
         }
         let taskStatus = status.status;
+        if (contentId !== null) clearVideoQueryProblem(contentId);
         let progress = status.progress || 0;
         let resultUrl = '';
         let errMsg = '';
@@ -2957,7 +2993,16 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
                 count: 1,
               })
             : null;
-          billUsage(finalVideoUrl, resultUrl, actualQuote?.cost, snumomBillingUsage || undefined);
+          try { billUsage(finalVideoUrl, resultUrl, actualQuote?.cost, snumomBillingUsage || undefined); }
+          catch (error: any) {
+            if (contentId !== null) {
+              db.update(contents).set({ resultUrl: finalVideoUrl }).where(eq(contents.id, contentId)).run();
+              reviewUncertainVideoTask(contentId, error.message || '生成结果已保留，费用结算待核实', 'settlement', videoId);
+            }
+            sendEvent({ type: 'status', message: '生成结果已保留，费用结算待核实，请勿重复提交' });
+            if (!res.destroyed && !res.writableEnded) res.end('data: [DONE]\n\n');
+            return;
+          }
           if (contentId !== null && db.select().from(contents).where(eq(contents.id, contentId)).get()?.status === 'review') {
             sendEvent({ type: 'status', message: '视频已生成，费用结算待核实，原结果已保存，请勿重复提交', contentId });
             activePolls.delete(contentId);
@@ -2996,10 +3041,18 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
   } catch (err: any) {
     console.error(`[video] 生成失败:`, err.name, err.message, err.cause?.message || '');
+    if (err.code === 'VIDEO_SUBMISSION_CONFLICT') {
+      sendEvent({ type: 'status', message: '原任务已提交，请查询原任务，勿重复提交' });
+      if (!res.destroyed && !res.writableEnded) res.end('data: [DONE]\n\n');
+      return;
+    }
     const msg = err.name === 'AbortError'
       ? '请求超时'
       : (err.cause?.message || err.message || '请求失败');
-    refundFailedTask(msg);
+    const saved = contentId !== null ? readVideoRecoveryState(contentId) : null;
+    const accepted = videoId || saved && savedVideoTaskId(JSON.parse(saved.metadata || '{}'));
+    refundFailedTask(msg, !accepted && !(err instanceof SpecificationUpstreamError && err.uncertain) && (!paidRequestStarted || videoRequestNotSent(err)
+      || err instanceof SpecificationUpstreamError && err.confirmedFailure), accepted ? 'local' : undefined);
     res.write('data: [DONE]\n\n');
     res.end();
   } finally {
@@ -3639,7 +3692,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   const isMiaowu = isMiaowuChannel(channel);
   const isHaya = isHayaChannel(channel);
   const isZongheng = isZonghengChannel(channel);
-  const protectedPolling = protectsVideoPolling(channel, metadata);
+  const protectedPolling = !isHaya && !isZongheng && protectsVideoPolling(channel, metadata);
   let zonghengDelay = Number(metadata.zonghengPollDelay) || 10_000;
 
   const headers: Record<string, string> = {};
@@ -3739,6 +3792,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           continue;
         }
         let taskStatus = statusData.status;
+        clearVideoQueryProblem(contentId);
         let progress = statusData.progress || 0;
         let resultUrl = '';
         let errMsg = '';
@@ -3960,6 +4014,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
               })
             : null;
           if (snumomBillingUsage) Object.assign(meta, { upstreamBillingUsage: snumomBillingUsage });
+          try {
           if (finalizeLegacyVideo(contentId, 'completed', meta, finalVideoUrl, 1, actualQuote?.cost)) break;
           if (actualQuote && !metadata.batchItemId) {
             const settlement = settleDirectVideoBilling(contentId, actualQuote.cost, meta, finalVideoUrl);
@@ -3971,6 +4026,10 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
             cost: metadata.batchItemId ? sql`cost` : cost,
             metadata: JSON.stringify(meta)
           }).where(eq(contents.id, contentId)).run();
+          } catch (error: any) {
+            db.update(contents).set({ resultUrl: finalVideoUrl }).where(eq(contents.id, contentId)).run();
+            reviewUncertainVideoTask(contentId, error.message || '生成结果已保留，费用结算待核实', 'settlement', videoId);
+          }
           break;
         } else if (isVideoFailureStatus(taskStatus)) {
           console.error(`[video-recover] ❌ Generating failed: ${errMsg}`);
