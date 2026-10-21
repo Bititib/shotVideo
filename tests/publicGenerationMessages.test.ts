@@ -6,12 +6,13 @@ import { publicGenerationError, publicGenerationEvent, publicCanvasJobMessage } 
 import { parseDocument } from '../shared/canvasModel';
 import { applyGenerationEvent, parseEvent } from '../client/src/canvas/generation';
 const raw = '纵横科技提交失败 (400): invalid_parameters: 视频时长不符合当前模型要求，请选择支持的时长后重试';
-const safe = '视频时长不符合当前模型要求，请选择支持的时长后重试。';
+const safe = 'invalid_parameters: 视频时长不符合当前模型要求，请选择支持的时长后重试';
 describe('public generation failure messages', () => {
   it.each(['insufficient credits', 'INSUFFICIENT_CREDITS', 'not enough credits', 'credit balance is insufficient', '积分余额不足', '上游账户余额不足'])
     ('explains upstream credit exhaustion without revealing provider diagnostics: %s', reason => {
       const result = publicGenerationError('私有供应商 https://private.invalid sk-private-key: ' + reason);
-      expect(result).toBe('上游积分不足，暂时无法生成，请联系管理员补充额度后重试。');
+      expect(result).toContain(reason);
+      expect(result).not.toMatch(/private\.invalid|sk-private-key|私有供应商|联系管理员/);
       expect(publicGenerationError(result)).toBe(result);
     });
   it('keeps uncertain submissions and unrelated insufficient-resource errors distinct', () => {
@@ -22,17 +23,19 @@ describe('public generation failure messages', () => {
   });
   it.each(['纵横科技', 'Haya', '自定义私有供应商', 'https://private.invalid?key=sk-test-secret'])('keeps an actionable duration reason without exposing %s', provider => {
     const result=publicGenerationError(provider+' 提交失败 (400): invalid_parameters: 视频时长不符合当前模型要求');
-    expect(result).toBe(safe);expect(result).not.toContain(provider);expect(publicGenerationError(result)).toBe(result);
+    expect(result).toBe('invalid_parameters: 视频时长不符合当前模型要求');expect(result).not.toContain(provider);expect(publicGenerationError(result)).toBe(result);
   });
-  it('uses a fixed fallback for unknown structured errors without leaking arbitrary provider names or keys', () => {
-    expect(publicGenerationError({message:'私有供应商Q: proprietary failure at https://secret.invalid sk-private-key',channel:'私有供应商Q'})).toBe('生成未完成，请在生成记录查看任务状态，或联系管理员处理。');
+  it('preserves unknown diagnostic text while removing provider names and keys', () => {
+    const result = publicGenerationError({message:'私有供应商Q: proprietary failure at https://secret.invalid sk-private-key',channel:'私有供应商Q'});
+    expect(result).toContain('proprietary failure');
+    expect(result).not.toMatch(/私有供应商Q|secret\.invalid|sk-private-key|联系管理员/);
     expect(publicGenerationError(null)).toBe(publicGenerationError('unknown'));
   });
   it('preserves uncertain submission guidance and maps resolution, moderation and references', () => {
     expect(publicGenerationError('Haya 提交结果待核实，禁止重复提交')).toContain('请勿重复提交');
-    expect(publicGenerationError('私有供应商 resolution invalid')).toContain('分辨率不符合');
-    expect(publicGenerationError('纵横科技参考素材数量超限')).toContain('参考素材不符合');
-    expect(publicGenerationError('私有供应商 content_policy violation')).toContain('未通过审核');
+    expect(publicGenerationError('私有供应商 resolution invalid')).toContain('resolution invalid');
+    expect(publicGenerationError('纵横科技参考素材数量超限')).toContain('参考素材数量超限');
+    expect(publicGenerationError('私有供应商 content_policy violation')).toContain('content_policy violation');
   });
   it('sanitizes new SSE errors without mutating diagnostics or losing IDs and partial results', () => {
     const event={type:'image_error',message:raw,index:2,contentId:12,imageUrl:'/uploads/partial.png'};
@@ -59,6 +62,21 @@ describe('public generation failure messages', () => {
       expect(JSON.stringify(callback.mock.calls)).not.toContain('纵横科技');
     }
   });
+  it.each(['video','image'] as const)('retains the real moderation cause in %s HTTP and SSE failures', async kind => {
+    const cause = 'task failed, code: DataInspectionFailed , message: Green net check rejected image (input)';
+    vi.stubGlobal('localStorage', {getItem:()=>null});
+    for (const streamed of [false,true]) {
+      const message = cause + '\nAuthorization: Bearer PRIVATE_CREDENTIAL';
+      const body = streamed ? 'data: '+JSON.stringify({type:'error',message})+'\n\n' : JSON.stringify({error:message});
+      vi.stubGlobal('fetch', vi.fn(async()=>new Response(body,{status:streamed?200:400})));
+      const callback = vi.fn();
+      if (kind === 'video') generateVideo({model:'test',prompt:'test'} as any,callback);
+      else generateImage({model:'test',prompt:'test'},callback);
+      await vi.waitFor(()=>expect(callback).toHaveBeenCalledWith(expect.objectContaining({type:'error',message:expect.stringContaining(cause)})));
+      expect(JSON.stringify(callback.mock.calls)).not.toContain('PRIVATE_CREDENTIAL');
+      expect(JSON.stringify(callback.mock.calls)).not.toContain('联系管理员');
+    }
+  });
   it.each([false, true])('shows explicit upstream credit guidance in the image workbench with streaming=%s', async streamed => {
     vi.stubGlobal('localStorage', { getItem: () => null });
     const raw = '上游提交失败 (402)：{"error":"insufficient credits","provider":"private-provider"}';
@@ -66,7 +84,7 @@ describe('public generation failure messages', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status:streamed ? 200 : 502 })));
     const callback = vi.fn(); generateImage({ model:'mj-imagine-1k', prompt:'test' }, callback);
     await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(expect.objectContaining({ type:'error',
-      message:'上游积分不足，暂时无法生成，请联系管理员补充额度后重试。' })));
+      message:'insufficient credits' })));
     expect(JSON.stringify(callback.mock.calls)).not.toContain('private-provider');
   });
   it('cleans historical canvas failure messages when old documents load while preserving work', () => {

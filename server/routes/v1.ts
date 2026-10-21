@@ -1,4 +1,5 @@
 import { publicGenerationError } from '../../shared/generationMessages.js';
+import { generationErrorResponse } from '../middleware/generationErrorResponse.js';
 import { getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, zonghengBaseUrl, buildZonghengVideoPayload, validateZonghengVideoAliases, buildZonghengImagePayload, validateZonghengImageReferences, zonghengImageSize, submitZonghengVideo, ZonghengSubmissionError } from '../services/zonghengAdapter.js';
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
@@ -152,6 +153,7 @@ import { isSnumomNoChannelRejection } from '../services/snumomSubmissionRejectio
 import { refundUnreservedVideo } from '../services/directVideoBillingService.js';
 
 const router = Router();
+router.use(['/videos', '/video/generations', '/images'], generationErrorResponse);
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
 
 function persistVideoContentFailure(

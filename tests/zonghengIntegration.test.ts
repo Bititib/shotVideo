@@ -582,7 +582,7 @@ describe('Zongheng legacy entry points, isolated database and simulated provider
     const detail='视频时长不符合当前模型要求，请选择支持的时长后重试';
     upstream=async()=>Response.json({error_code:'invalid_parameters',error_detail:detail},{status:400});
     const response=await post(endpoint,request),text=await response.text();
-    expect(text).toContain('视频时长不符合当前模型要求');expect(text).not.toContain('纵横科技');expect(text).not.toContain('invalid_parameters');
+    expect(text).toContain('视频时长不符合当前模型要求');expect(text).not.toContain('纵横科技');expect(text).toContain('invalid_parameters');
     expect(latest().status).toBe('failed');expect(JSON.parse(latest().metadata!).error).toContain('纵横科技提交失败');
     expect(balance()).toBe(100);expect(fetch).toHaveBeenCalledTimes(1);
   });

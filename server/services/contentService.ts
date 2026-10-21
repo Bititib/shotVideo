@@ -79,7 +79,8 @@ export function sanitizeContentRoutingForClient<T extends { metadata?: string | 
 
   const state = (item as { status?: string }).status;
   const needsReview = state === 'review' || metadata.requiresReview || metadata.hayaNeedsReview;
-  const publicFailure = (value: unknown) => needsReview ? videoReviewMessage(metadata) : publicGenerationError(value);
+  const privateNames = [metadata.channelName, metadata.actualChannel].filter((v): v is string => typeof v === 'string');
+  const publicFailure = (value: unknown) => needsReview ? videoReviewMessage(metadata) : publicGenerationError(value, privateNames);
   const reviewKind = videoReviewKind(metadata);
   if (reviewKind) metadata.reviewKind = reviewKind;
   for (const field of ['error', 'errorMessage', 'failureReason', 'errorDetail']) {

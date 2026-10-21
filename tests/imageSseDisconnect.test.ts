@@ -29,7 +29,7 @@ it('keeps explicit backend failure final', async () => {
   await vi.waitFor(() => expect(event).toHaveBeenCalledTimes(1));
   expect(event.mock.calls[0][0]).toMatchObject({
     type: 'error',
-    message: '生成未完成，请在生成记录查看任务状态，或联系管理员处理。',
+    message: '失败',
   });
 });
 it('silences stream events after intentional cancellation', async () => {

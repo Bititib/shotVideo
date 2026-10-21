@@ -2,6 +2,7 @@ import { VideoPollTimeout, withVideoPollDeadline, fetchVideoTaskResponse } from 
 import { refundConfirmedZonghengVideo } from '../services/zonghengSubmissionResolutionService.js';
 import { queryZonghengTask } from '../services/zonghengTaskQueryService.js';
 import { publicGenerationEvent } from '../../shared/generationMessages.js';
+import { generationErrorResponse } from '../middleware/generationErrorResponse.js';
 import { canonicalZonghengModelId, ZONGHENG_VIDEO_MODELS, ZONGHENG_MODEL_PREFIX, getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, buildZonghengVideoPayload, submitZonghengVideo, ZonghengSubmissionError, zonghengTaskUrl, normalizeZonghengTask, zonghengTaskMetadata } from '../services/zonghengAdapter.js';
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
@@ -177,6 +178,7 @@ import path from 'path';
 import crypto from 'crypto';
 
 const router = Router();
+router.use(['/generate', '/validate'], generationErrorResponse);
 router.use('/quote', videoQuotes);
 const VIDEO_MODELS_CACHE_TTL_MS = 15_000;
 let videoModelsResponseCache: { expiresAt: number; data: any[] } | null = null;

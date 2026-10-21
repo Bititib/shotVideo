@@ -474,7 +474,7 @@ describe('MJ image channel', () => {
       expect(meta.failureReason).toContain('insufficient credits');
       expect(meta.failureReason).not.toContain(key);
       expect(meta.error).toBe(meta.failureReason);
-      const safe = '上游积分不足，暂时无法生成，请联系管理员补充额度后重试。';
+      const safe = 'insufficient credits';
       expect(JSON.parse(sanitizeContentRoutingForClient(record).metadata)).toMatchObject({ error:safe, failureReason:safe, progressText:safe });
       if (transport === 'api') expect(res.body).toMatchObject({ status:'failed', error:safe });
       else {
@@ -509,7 +509,7 @@ describe('MJ image channel', () => {
     canvasRequestStore().claim(1, requestId, 'credit-error-parameters');
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error:'insufficient credits' }, { status:402 })));
     await handleSpecificationGeneration(request({ canvasRequestId:requestId }), response(), 'image');
-    expect(canvasRequestStore().get(1, requestId)?.message).toBe('上游积分不足，暂时无法生成，请联系管理员补充额度后重试。');
+    expect(canvasRequestStore().get(1, requestId)?.message).toBe('insufficient credits');
     expect(fetch).toHaveBeenCalledOnce();
   });
 });
@@ -623,7 +623,7 @@ describe('MJ asynchronous image lifecycle', () => {
     expect(meta()).toMatchObject({ requiresReview: false, billingStatus: 'refunded', upstreamTaskId: taskId, mjAsyncImage: { handle, status: 'failed' } });
     expect(db.select().from(users).get()!.balance).toBe(100);
     expect(specificationAvailability(getModelSpecification(MJ_MODEL_ID)!)).toEqual({ available: true });
-    expect(JSON.parse(sanitizeContentRoutingForClient(current()).metadata).error).toContain('上游积分不足');
+    expect(JSON.parse(sanitizeContentRoutingForClient(current()).metadata).error).toContain('insufficient credits');
     resumeSpecificationTasks(); expect(upstream).toHaveBeenCalledTimes(2);
   });
   it.each([401, 402, 403, 404, 410])('holds an accepted task when its GET returns %i without refund, locking or resubmission', async status => {
@@ -785,9 +785,10 @@ describe('documented MJ HTTP 402 contract', () => {
       expect(specificationAvailability(getModelSpecification(MJ_MODEL_ID)!)).toEqual({available:true});
       expect(ChannelService.getChannelRaw(channelId)?.status).toBe(1);
       expect(db.select().from(users).get()!.balance).toBe(100);
-      expect(JSON.parse(sanitizeContentRoutingForClient(record).metadata).error).toBe('上游积分不足，暂时无法生成，请联系管理员补充额度后重试。');
-      if (transport === 'api') expect(res.body.error).toContain('上游积分不足');
-      else expect(res.write.mock.calls.some(([line]:[string]) => line.includes('上游积分不足'))).toBe(true);
+      const safe = body.startsWith('{') ? 'Payment Required' : '上游积分不足 (HTTP 402)：';
+      expect(JSON.parse(sanitizeContentRoutingForClient(record).metadata).error).toBe(safe);
+      if (transport === 'api') expect(res.body.error).toBe(safe);
+      else expect(res.write.mock.calls.some(([line]:[string]) => line.includes(safe))).toBe(true);
       expect(fetch).toHaveBeenCalledOnce();
     });
   it('classifies 402 from received headers even if the body is interrupted, and retains its receipt', async () => {

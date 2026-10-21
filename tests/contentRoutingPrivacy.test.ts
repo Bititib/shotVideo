@@ -34,7 +34,7 @@ describe('content routing privacy', () => {
     const item = { status:'failed', metadata:json ? JSON.stringify(meta) : meta };
     const result = sanitizeContentRoutingForClient(item);
     const publicMeta = typeof result.metadata === 'string' ? JSON.parse(result.metadata) : result.metadata;
-    const safe = '上游积分不足，暂时无法生成，请联系管理员补充额度后重试。';
+    const safe = 'insufficient credits';
     expect(publicMeta).toMatchObject({ error:safe, failureReason:safe, progressText:safe, billingStatus:'refunded', refundAmount:0.6 });
     expect(JSON.stringify(result)).not.toContain('private-provider');
     expect(meta.failureReason).toBe(raw);
@@ -88,7 +88,7 @@ describe('content routing privacy', () => {
     const item={id:12927,status:'failed',errorMessage:raw,metadata:stringMetadata?JSON.stringify(meta):meta};
     const sanitized=sanitizeContentRoutingForClient(item);
     const result=typeof sanitized.metadata==='string'?JSON.parse(sanitized.metadata):sanitized.metadata;
-    const safe='视频时长不符合当前模型要求，请选择支持的时长后重试。';
+    const safe='invalid_parameters: 视频时长不符合当前模型要求';
     expect(sanitized.errorMessage).toBe(safe);expect(result).toMatchObject({error:safe,failureReason:safe,imageErrors:{0:safe},progressText:safe});
     expect(JSON.stringify(sanitized)).not.toContain('纵横科技');expect(meta.error).toBe(raw);expect(item.errorMessage).toBe(raw);
   });
@@ -130,7 +130,7 @@ describe('content routing privacy', () => {
       model: 'seedance_v2.5',
       reference_videos: [],
       reference_images: [remoteImage],
-      error: '任务处理超时，请在生成记录核实原任务状态，请勿重复提交。',
+      error: 'Video generation timed out after 30 minutes',
       listAssetsCompacted: true,
       omittedInlineAssetCount: 2,
       referenceAssetCounts: { images: 2, videos: 1, audios: 0 },

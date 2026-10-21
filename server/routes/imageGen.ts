@@ -1,4 +1,5 @@
 import { publicGenerationEvent } from '../../shared/generationMessages.js';
+import { generationErrorResponse } from '../middleware/generationErrorResponse.js';
 import { startSseHeartbeat } from '../services/sseHeartbeat.js';
 import { imageGenerationTimeout } from '../services/imageGenerationTimeout.js';
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
@@ -43,6 +44,7 @@ import {
 } from '../services/mingFeiImageAdapter.js';
 
 const router = Router();
+router.use('/generate', generationErrorResponse);
 
 /**
  * 将 base64 数据转换并存储为本地静态文件，返回可外网访问的公网 URL

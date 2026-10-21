@@ -104,7 +104,7 @@ describe('canvas user workflows', () => {
     const raw='纵横科技提交失败 (400): invalid_parameters: 视频时长不符合当前模型要求';
     const node={...newNode('video',{x:0,y:0}),title:'历史失败任务',model:'test-video',job:{status:'error' as const,message:raw}};
     mount({...newDocument(),nodes:[node]});
-    const safe='视频时长不符合当前模型要求，请选择支持的时长后重试。';
+    const safe='invalid_parameters: 视频时长不符合当前模型要求';
     expect(document.body.textContent).not.toContain('纵横科技');expect(screen.getByTitle(safe)).toBeTruthy();
     fireEvent.doubleClick(screen.getByRole('article',{name:node.title}));
     await waitFor(()=>expect(document.querySelector('.studio-job-detail')?.textContent).toContain(safe));
