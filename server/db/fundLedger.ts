@@ -10,6 +10,7 @@ export function ensureFundLedger(db: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS fund_ledger_account ON fund_ledger(account_type,account_id,id);
     CREATE INDEX IF NOT EXISTS fund_ledger_time ON fund_ledger(created_at,id);
+    CREATE INDEX IF NOT EXISTS fund_ledger_user ON fund_ledger(user_id,account_type,id);
     CREATE TABLE IF NOT EXISTS fund_ledger_context (id INTEGER PRIMARY KEY CHECK(id=1), kind TEXT, actor_id INTEGER, content_id INTEGER, operation TEXT);
     INSERT OR IGNORE INTO fund_ledger_context(id) VALUES(1);
     CREATE TABLE IF NOT EXISTS fund_ledger_meta (key TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -36,6 +37,29 @@ export function ensureFundLedger(db: Database.Database) {
         INSERT INTO fund_ledger(account_type,account_id,account_name,user_id,kind,delta,balance_before,balance_after,actor_id,content_id,operation)
         SELECT '${type}',NEW.id,COALESCE(NEW.${name},''),${uid},'initial',CASE WHEN NEW.balance=-1 THEN NULL ELSE NEW.balance END,
           0,NEW.balance,actor_id,content_id,operation FROM fund_ledger_context WHERE id=1;
+        END;`);
+    }
+    // Audit used_amount separately: an unlimited token has no balance movement.
+    // Snapshot existing counters honestly; never reconstruct old charges or change accounts.
+    const tokenColumns = db.prepare('PRAGMA table_info(api_tokens)').all() as Array<{name:string}>;
+    if (tokenColumns.some(column => column.name === 'used_amount')) {
+      if (!db.prepare("SELECT 1 FROM fund_ledger_meta WHERE key='token_usage_started_at'").get()) {
+        db.exec(`INSERT INTO fund_ledger(account_type,account_id,account_name,user_id,kind,delta,balance_before,balance_after)
+          SELECT 'token_usage',id,COALESCE(name,''),user_id,'usage_opening',0,used_amount,used_amount FROM api_tokens;
+          INSERT INTO fund_ledger_meta VALUES('token_usage_started_at',datetime('now'));`);
+      }
+      db.exec(`CREATE TRIGGER IF NOT EXISTS ledger_api_tokens_usage_update AFTER UPDATE OF used_amount ON api_tokens
+        WHEN NEW.used_amount != OLD.used_amount BEGIN
+        INSERT INTO fund_ledger(account_type,account_id,account_name,user_id,kind,delta,balance_before,balance_after,actor_id,content_id,operation)
+        SELECT 'token_usage',NEW.id,COALESCE(NEW.name,''),NEW.user_id,
+          COALESCE(kind,CASE WHEN NEW.used_amount>OLD.used_amount THEN 'usage_increase' ELSE 'usage_decrease' END),
+          NEW.used_amount-OLD.used_amount,OLD.used_amount,NEW.used_amount,actor_id,content_id,operation
+        FROM fund_ledger_context WHERE id=1;
+        END;
+        CREATE TRIGGER IF NOT EXISTS ledger_api_tokens_usage_insert AFTER INSERT ON api_tokens BEGIN
+        INSERT INTO fund_ledger(account_type,account_id,account_name,user_id,kind,delta,balance_before,balance_after,actor_id,content_id,operation)
+        SELECT 'token_usage',NEW.id,COALESCE(NEW.name,''),NEW.user_id,'usage_initial',0,
+          NEW.used_amount,NEW.used_amount,actor_id,content_id,operation FROM fund_ledger_context WHERE id=1;
         END;`);
     }
   })();
