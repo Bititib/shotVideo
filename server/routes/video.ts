@@ -71,6 +71,7 @@ import {
   buildSnumomWanPayload,
   canonicalSnumomVideoModel,
   extractSnumomTaskId,
+  normalizeSnumomWanInputMedia,
   isSnumomWanChannel,
   isSnumomWan30VideoModel,
   normalizeSnumomWanTask,
@@ -86,9 +87,9 @@ import {
   snumomWanBillableSeconds,
   snumomContentUrl,
 } from '../services/snumomWanAdapter.js';
-import { probeReferenceVideoSeconds } from '../services/videoDurationProbe.js';
+import { probeReferenceAudioSeconds, probeReferenceVideoSeconds } from '../services/videoDurationProbe.js';
 import { reserveLegacyVideo, finalizeLegacyVideo, failLegacyVideo, markLegacyVideoSubmitting } from '../services/legacyVideoBilling.js';
-import { refundUnreservedVideo } from '../services/directVideoBillingService.js';
+import { settleDirectVideoBilling, refundUnreservedVideo } from '../services/directVideoBillingService.js';
 import { sanitizeUpstreamCreateResponse } from '../services/videoTaskMetadataService.js';
 import { submissionFailure } from '../services/specificationAdapters.js';
 import { readVideoRecoveryState, reviewMissingVideoTaskId, reviewUncertainVideoTask, savedVideoTaskId } from '../services/videoRecoveryState.js';
@@ -757,6 +758,14 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   }
   if (await handleSpecificationGeneration(req, res, 'video')) return;
   if (typeof req.body?.model === 'string') req.body.model = canonicalSnumomVideoModel(canonicalZonghengModelId(req.body.model));
+  if (isSnumomWan30VideoModel(req.body?.model)) {
+    const durations = [req.body.video_length, req.body.seconds, req.body.duration, req.body.parameters?.duration, req.body.duration_seconds]
+      .filter(value => value !== undefined).map(Number);
+    if (durations.some(value => !Number.isFinite(value)) || new Set(durations).size > 1) {
+      return res.status(400).json({ error: '视频时长参数必须是有效数字且保持一致' });
+    }
+    if (durations.length) req.body.video_length = durations[0];
+  }
   const {
     prompt,
     model = 'nd-seedance-2.0-720p',
@@ -787,6 +796,17 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   const finalAudios: string[] = (Array.isArray(audio_urls) && audio_urls.length > 0)
     ? audio_urls
     : (audio_url ? [audio_url] : []);
+  let snumomInputMedia: Array<{ type: 'file' | 'link'; url: string }> = [];
+  let snumomPromptExtend: boolean | undefined;
+  if (model === 'wan3.0-video' || model === 'wan3.0-video-prime') {
+    try { snumomInputMedia = normalizeSnumomWanInputMedia(req.body?.input?.media); }
+    catch (error: any) { return res.status(400).json({ error: error.message }); }
+    const promptExtend = req.body?.parameters?.prompt_extend ?? req.body?.prompt_extend;
+    if (promptExtend !== undefined && typeof promptExtend !== 'boolean') {
+      return res.status(400).json({ error: 'prompt_extend 必须是布尔值' });
+    }
+    snumomPromptExtend = promptExtend;
+  }
 
   const promptValidationError = validateVideoPrompt(prompt);
   if (promptValidationError) {
@@ -931,6 +951,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
 
   if (model === 'wan3.0-video' || model === 'wan3.0-video-prime') {
     const wanRatios = ['adaptive', '21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
+    const smartDuration = model === 'wan3.0-video' && Number(video_length) === -1;
     if (!wanRatios.includes(aspect_ratio)) return res.status(400).json({ error: `${model} 不支持比例 ${aspect_ratio}` });
     if (!['480p', '720p', '1080p'].includes(String(resolution).toLowerCase())) {
       return res.status(400).json({ error: `${model} 仅支持 480p、720p、1080p` });
@@ -938,6 +959,12 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     if (reference_images.length > 10) return res.status(400).json({ error: `${model} 最多支持 10 张参考图片` });
     if (finalVideos.length > 5) return res.status(400).json({ error: `${model} 最多支持 5 个参考视频` });
     if (finalAudios.length > 5) return res.status(400).json({ error: `${model} 最多支持 5 段参考音频` });
+    if (Number(video_length) === -1 && !smartDuration) return res.status(400).json({ error: `${model} 不支持智能时长 -1` });
+    if (smartDuration && finalVideos.length === 0) return res.status(400).json({ error: 'wan3.0-video 智能时长 -1 必须提供参考视频' });
+    if (snumomInputMedia.length > 0 && (first_frame || last_frame)) return res.status(400).json({ error: '文档/网页参考不能与首帧或尾帧混用' });
+    if (reference_images.length + finalVideos.length + finalAudios.length + snumomInputMedia.length > 20) {
+      return res.status(400).json({ error: `${model} 参考素材总数最多 20 个` });
+    }
   }
 
   if (model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL) {
@@ -978,7 +1005,8 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   }
 
   // 模型时长限制校验
-  if (meta?.allowedSeconds && !meta.allowedSeconds.includes(Number(video_length))) {
+  const smartSnumomDuration = model === 'wan3.0-video' && Number(video_length) === -1;
+  if (meta?.allowedSeconds && !smartSnumomDuration && !meta.allowedSeconds.includes(Number(video_length))) {
     return res.status(400).json({ error: `模型 ${model} 只支持 ${meta.allowedSeconds.join('/')} 秒` });
   }
 
@@ -1056,8 +1084,8 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   }
 
   if (isSnumomWanChannel(dbChannel) && (first_frame || last_frame)) {
-    if (reference_images.length > 0 || finalVideos.length > 0) {
-      return res.status(400).json({ error: 'snumom 首帧/尾帧不能与普通参考图或参考视频混用' });
+    if (reference_images.length > 0 || finalVideos.length > 0 || finalAudios.length > 0 || snumomInputMedia.length > 0) {
+      return res.status(400).json({ error: 'snumom 首帧/尾帧不能与普通参考图、视频、音频或文档/网页混用' });
     }
     if (last_frame && !first_frame) {
       return res.status(400).json({ error: '使用尾帧时必须同时提供首帧' });
@@ -1093,23 +1121,39 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   let referenceVideoDurations: number[] = [];
   let referenceVideoRawDurations: number[] = [];
   let referenceVideoSeconds = 0;
+  let referenceAudioDurations: number[] = [];
+  let referenceAudioRawDurations: number[] = [];
+  let referenceAudioSeconds = 0;
+  let billingOutputSeconds = Number(video_length);
   if (isSnumomWanChannel(channel) && isSnumomWan30VideoModel(model) && finalVideos.length > 0) {
     try {
       const probed = await probeReferenceVideoSeconds(finalVideos);
       referenceVideoRawDurations = probed.rawDurations;
       referenceVideoDurations = probed.durations;
       referenceVideoSeconds = probed.total;
+      if (smartSnumomDuration) billingOutputSeconds = referenceVideoDurations[0];
       if (referenceVideoDurations.some(seconds => seconds < 1 || seconds > 15) || referenceVideoSeconds > 15) {
         return res.status(400).json({ error: 'Wan 3.0 参考视频单段须为 1-15 秒，合计不能超过 15 秒' });
       }
-      if (Number(video_length) + referenceVideoSeconds > 30) {
+      if (billingOutputSeconds + referenceVideoSeconds > 30) {
         return res.status(400).json({ error: 'Wan 3.0 输出时长与参考视频总时长合计不能超过 30 秒' });
       }
     } catch (error: any) {
       return res.status(400).json({ error: `无法探测参考视频时长：${error?.message || '未知错误'}` });
     }
   }
-  const billableSeconds = snumomWanBillableSeconds(model, Number(video_length), referenceVideoSeconds);
+  if (isSnumomWanChannel(channel) && isSnumomWan30VideoModel(model) && finalAudios.length > 0) {
+    try {
+      const probed = await probeReferenceAudioSeconds(finalAudios);
+      referenceAudioRawDurations = probed.rawDurations;
+      referenceAudioDurations = probed.durations;
+      referenceAudioSeconds = probed.total;
+      if (referenceAudioSeconds > 15) return res.status(400).json({ error: 'Wan 3.0 参考音频总时长不能超过 15 秒' });
+    } catch (error: any) {
+      return res.status(400).json({ error: `无法探测参考音频时长：${error?.message || '未知错误'}` });
+    }
+  }
+  const billableSeconds = snumomWanBillableSeconds(model, billingOutputSeconds, referenceVideoSeconds);
 
   // Reuse exactly the same model/material checks before a batch is charged.
   if (req.path === '/validate') {
@@ -1247,7 +1291,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     'xd-seedance-2.5-720p',
     ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS,
   ].includes(model);
-  const outputSeconds = Number(video_length) || 6;
+  const outputSeconds = Number.isFinite(billingOutputSeconds) && billingOutputSeconds > 0 ? billingOutputSeconds : 6;
   const estimatedSeconds = snumomWanBillableSeconds(model, outputSeconds, referenceVideoSeconds);
   const pricingUsage = { resolution, seconds: estimatedSeconds, count: 1 };
   const unifiedQuote = batchContext?.pricingSnapshot ? { ...PricingService.quoteSnapshot(batchContext.pricingSnapshot, pricingUsage), pricingSnapshot: batchContext.pricingSnapshot }
@@ -1286,11 +1330,16 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
           batchAttempt: batchContext.item.attempts, batchReservedAmount: batchContext.item.unit_cost, billingStatus: 'batch_reserved' } : {}),
         resolution,
         seconds: estimatedSeconds,
+        billableSeconds: estimatedSeconds,
         requestedSeconds: Number(video_length),
         outputSeconds,
         referenceVideoSeconds,
         referenceVideoRawDurations,
         referenceVideoDurations,
+        referenceAudioSeconds,
+        referenceAudioRawDurations,
+        referenceAudioDurations,
+        snumomInputMedia,
         aspect_ratio,
         model,
         prompt: prompt as string,
@@ -1345,9 +1394,11 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   }
 
   /** 生成成功后更新内容（已在前置预扣费，无需重复扣费） */
-  const billUsage = (finalVideoUrl: string, upstreamResultUrl?: string) => {
+  const billUsage = (finalVideoUrl: string, upstreamResultUrl?: string, actualCost?: number, upstreamBillingUsage?: unknown) => {
     const elapsed = Date.now() - startTime;
-    try { logUsage(req.userId!, 'generate_video', undefined, elapsed); } catch (error) { console.warn('[video] usage log failed', error); }
+    // Usage analytics must not prevent a successful reservation from settling.
+    try { logUsage(req.userId!, 'generate_video', undefined, elapsed); }
+    catch (error: any) { console.warn('[video] 使用统计写入失败，继续结算原预扣:', error.message); }
     if (contentId !== null) {
       try {
         const current = db.select().from(contents).where(eq(contents.id, contentId)).get();
@@ -1363,15 +1414,16 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
           ? Math.max(0, Date.parse(completedMetadata.completedAt) - submittedAt)
           : elapsed;
         if (upstreamResultUrl) completedMetadata.upstreamResultUrl = upstreamResultUrl;
+        if (upstreamBillingUsage) completedMetadata.upstreamBillingUsage = upstreamBillingUsage;
         delete completedMetadata.progressText;
-        if (finalizeLegacyVideo(contentId, 'completed', completedMetadata, finalVideoUrl)) return;
+        if (finalizeLegacyVideo(contentId, 'completed', completedMetadata, finalVideoUrl, 1, actualCost)) return;
         db.update(contents).set({
           status: 'completed',
           resultUrl: finalVideoUrl || null,
-          cost: batchContext ? sql`cost` : estimatedCost,
+          cost: batchContext ? sql`cost` : actualCost ?? estimatedCost,
           metadata: JSON.stringify(completedMetadata),
         }).where(eq(contents.id, contentId)).run();
-      } catch (e) { console.error('[content] 视频记录更新失败:', e); }
+      } catch (e) { console.error('[content] 视频记录更新失败:', e); throw e; }
     }
   };
 
@@ -2244,7 +2296,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       const payload = buildSnumomWanPayload({
         model: upstreamModel,
         prompt,
-        seconds: Number(video_length),
+        seconds: billingOutputSeconds,
         resolution,
         aspectRatio: aspect_ratio,
         images: frameImages.length > 0
@@ -2252,6 +2304,9 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
           : imageUrls.map(url => ({ url, role: 'reference_image' })),
         videos: videoUrls.map(url => ({ url })),
         audios: audioUrls.map(url => ({ url })),
+        smartDuration: smartSnumomDuration,
+        promptExtend: snumomPromptExtend,
+        inputMedia: snumomInputMedia,
       });
       const createResp = await fetch(`${baseUrl}/v1/videos`, {
         method: 'POST',
@@ -2695,6 +2750,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         let progress = status.progress || 0;
         let resultUrl = '';
         let errMsg = '';
+        let snumomBillingUsage: ReturnType<typeof normalizeSnumomWanTask>['billingUsage'] = null;
 
         if (isZongheng) {
           const normalized = normalizeZonghengTask(status);
@@ -2729,11 +2785,12 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
           resultUrl = normalized.resultUrl;
           errMsg = normalized.error || '喵呜 API 视频生成失败';
         } else if (isSnumomWan) {
-          const normalized = normalizeSnumomWanTask(status);
+          const normalized = normalizeSnumomWanTask(status, referenceVideoSeconds);
           taskStatus = normalized.status;
           progress = normalized.progress;
           resultUrl = normalized.resultUrl;
           errMsg = normalized.error || 'snumom 视频生成失败';
+          snumomBillingUsage = normalized.billingUsage;
           if ((taskStatus === 'completed' || taskStatus === 'success') && !resultUrl) {
             resultUrl = snumomContentUrl(baseUrl, videoId);
           }
@@ -2893,7 +2950,20 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
             if (!res.destroyed && !res.writableEnded) res.end();
             return;
           }
-          billUsage(finalVideoUrl, resultUrl);
+          const actualQuote = snumomBillingUsage && isSnumomWan30VideoModel(model)
+            ? PricingService.quoteSnapshot(unifiedQuote.pricingSnapshot, {
+                resolution: snumomBillingUsage.resolution || resolution,
+                seconds: snumomBillingUsage.billableSeconds,
+                count: 1,
+              })
+            : null;
+          billUsage(finalVideoUrl, resultUrl, actualQuote?.cost, snumomBillingUsage || undefined);
+          if (contentId !== null && db.select().from(contents).where(eq(contents.id, contentId)).get()?.status === 'review') {
+            sendEvent({ type: 'status', message: '视频已生成，费用结算待核实，原结果已保存，请勿重复提交', contentId });
+            activePolls.delete(contentId);
+            if (!res.destroyed && !res.writableEnded) res.end('data: [DONE]\n\n');
+            return;
+          }
           sendEvent({ type: 'complete', videoUrl: finalVideoUrl });
           if (contentId !== null) activePolls.delete(contentId);
           if (!res.destroyed && !res.writableEnded) {
@@ -3672,6 +3742,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
         let progress = statusData.progress || 0;
         let resultUrl = '';
         let errMsg = '';
+        let snumomBillingUsage: ReturnType<typeof normalizeSnumomWanTask>['billingUsage'] = null;
 
         if (isZongheng) {
           const normalized = normalizeZonghengTask(statusData);
@@ -3706,11 +3777,12 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           resultUrl = normalized.resultUrl;
           errMsg = normalized.error || '喵呜 API 视频生成失败';
         } else if (isSnumomWan) {
-          const normalized = normalizeSnumomWanTask(statusData);
+          const normalized = normalizeSnumomWanTask(statusData, Number(metadata.referenceVideoSeconds) || 0);
           taskStatus = normalized.status;
           progress = normalized.progress;
           resultUrl = normalized.resultUrl;
           errMsg = normalized.error || 'snumom 视频生成失败';
+          snumomBillingUsage = normalized.billingUsage;
           if ((taskStatus === 'completed' || taskStatus === 'success') && !resultUrl) {
             resultUrl = snumomContentUrl(baseUrl, videoId);
           }
@@ -3880,7 +3952,19 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
             delete (meta as Record<string, any>).hayaNeedsReview;
             delete (meta as Record<string, any>).error;
           }
-          if (finalizeLegacyVideo(contentId, 'completed', meta, finalVideoUrl)) break;
+          const actualQuote = snumomBillingUsage && isSnumomWan30VideoModel(model) && metadata.pricingSnapshot
+            ? PricingService.quoteSnapshot(metadata.pricingSnapshot, {
+                resolution: snumomBillingUsage.resolution || resolution,
+                seconds: snumomBillingUsage.billableSeconds,
+                count: 1,
+              })
+            : null;
+          if (snumomBillingUsage) Object.assign(meta, { upstreamBillingUsage: snumomBillingUsage });
+          if (finalizeLegacyVideo(contentId, 'completed', meta, finalVideoUrl, 1, actualQuote?.cost)) break;
+          if (actualQuote && !metadata.batchItemId) {
+            const settlement = settleDirectVideoBilling(contentId, actualQuote.cost, meta, finalVideoUrl);
+            if (settlement.settled) break;
+          }
           db.update(contents).set({
             status: 'completed',
             resultUrl: finalVideoUrl,

@@ -54,6 +54,35 @@ export interface SnumomWanPayloadInput {
   images?: Array<{ url: string; role?: 'reference_image' | 'first_frame' | 'last_frame' }>;
   videos?: Array<{ url: string; duration?: number }>;
   audios?: Array<{ url: string }>;
+  smartDuration?: boolean;
+  promptExtend?: boolean;
+  inputMedia?: Array<{ type: 'file' | 'link'; url: string }>;
+}
+
+export interface SnumomWanBillingUsage {
+  billableSeconds: number;
+  outputSeconds?: number;
+  referenceVideoSeconds?: number;
+  resolution?: '480p' | '720p' | '1080p';
+}
+
+export function normalizeSnumomWanInputMedia(value: unknown): Array<{ type: 'file' | 'link'; url: string }> {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error('input.media must be an array');
+  if (value.length > 1) throw new Error('Wan 3.0 supports at most one file or link reference');
+  return value.map(item => {
+    if (!item || typeof item !== 'object') throw new Error('input.media items must be objects');
+    const type = String((item as any).type || '').toLowerCase();
+    if (type !== 'file' && type !== 'link') throw new Error('input.media type must be file or link');
+    const url = String((item as any).url || '').trim();
+    let parsed: URL;
+    try { parsed = new URL(url); } catch { throw new Error('input.media url must be a public HTTPS URL'); }
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password
+      || parsed.hostname === 'localhost' || /^(?:127\.|10\.|192\.168\.|169\.254\.)/.test(parsed.hostname)) {
+      throw new Error('input.media url must be a public HTTP(S) URL');
+    }
+    return { type, url } as { type: 'file' | 'link'; url: string };
+  });
 }
 
 export function isSnumomWanChannel(channel: SnumomChannelLike | null | undefined): boolean {
@@ -78,25 +107,61 @@ export function buildSnumomWanPayload(input: SnumomWanPayloadInput): Record<stri
   const audios = (input.audios || []).filter(item => item?.url);
   const normalizedModel = canonicalSnumomVideoModel(input.model);
   const normalizedResolution = normalizeSnumomResolution(input.resolution);
+  const frameMode = isSnumomWan30VideoModel(normalizedModel)
+    && images.some(item => item.role === 'first_frame' || item.role === 'last_frame');
+  const parameters = {
+    ...(input.smartDuration ? { duration: -1 } : {}),
+    ...(typeof input.promptExtend === 'boolean' ? { prompt_extend: input.promptExtend } : {}),
+  };
   return {
     model: normalizedModel,
     prompt: input.prompt.trim(),
-    seconds: String(input.seconds),
+    ...(!input.smartDuration ? { seconds: String(input.seconds) } : {}),
     size: normalizedModel.startsWith('grok-imagine-video-1.5') && normalizedResolution === '1080P' ? '720P' : normalizedResolution,
-    aspect_ratio: input.aspectRatio,
+    aspect_ratio: frameMode ? 'adaptive' : input.aspectRatio,
+    ...(Object.keys(parameters).length ? { parameters } : {}),
     ...(images.length ? { reference_images: images } : {}),
     ...(videos.length ? { reference_videos: videos } : {}),
     ...(audios.length ? { reference_audios: audios } : {}),
+    ...(input.inputMedia?.length ? { input: { media: input.inputMedia } } : {}),
   };
 }
 
-export function normalizeSnumomWanTask(payload: any) {
+function finiteNonNegative(value: unknown): number | undefined {
+  if ((typeof value !== 'number' && typeof value !== 'string') || (typeof value === 'string' && !value.trim())) return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : undefined;
+}
+
+/** Read settlement data only when the upstream explicitly labels it as usage/billing data. */
+export function extractSnumomWanBillingUsage(payload: any, fallbackReferenceSeconds = 0): SnumomWanBillingUsage | null {
+  const scopes = [payload?.usage, payload?.billing, payload?.metadata?.usage, payload?.metadata?.billing]
+    .filter(value => value && typeof value === 'object');
+  for (const scope of scopes) {
+    const outputSeconds = finiteNonNegative(scope.output_seconds ?? scope.outputSeconds ?? scope.output_duration);
+    const referenceVideoSeconds = finiteNonNegative(scope.reference_video_seconds ?? scope.referenceVideoSeconds ?? scope.input_seconds);
+    const explicitTotal = finiteNonNegative(scope.billable_seconds ?? scope.billableSeconds ?? scope.total_seconds ?? scope.totalSeconds);
+    const billableSeconds = explicitTotal ?? (outputSeconds !== undefined
+      ? outputSeconds + (referenceVideoSeconds ?? finiteNonNegative(fallbackReferenceSeconds) ?? 0)
+      : undefined);
+    if (billableSeconds === undefined) continue;
+    const resolutionValue = String(scope.resolution ?? scope.actual_resolution ?? '').toLowerCase();
+    const resolution = ['480p', '720p', '1080p'].includes(resolutionValue)
+      ? resolutionValue as SnumomWanBillingUsage['resolution']
+      : undefined;
+    return { billableSeconds, outputSeconds, referenceVideoSeconds, resolution };
+  }
+  return null;
+}
+
+export function normalizeSnumomWanTask(payload: any, referenceVideoSeconds = 0) {
   return {
-    id: String(payload?.id || payload?.task_id || ''),
+    id: extractSnumomTaskId(payload),
     status: String(payload?.status || '').toLowerCase(),
     progress: Number(payload?.progress || 0),
     resultUrl: String(payload?.metadata?.url || payload?.video_url || payload?.result_url || payload?.url || ''),
     error: String(payload?.message || payload?.error?.message || payload?.error || ''),
+    billingUsage: extractSnumomWanBillingUsage(payload, referenceVideoSeconds),
   };
 }
 

@@ -4,6 +4,9 @@ import {
   canonicalSnumomVideoModel,
   isSnumomWanChannel,
   normalizeSnumomWanTask,
+  extractSnumomTaskId,
+  normalizeSnumomWanInputMedia,
+  extractSnumomWanBillingUsage,
   SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES,
   SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
   SNUMOM_GROK_IMAGINE_VIDEO_SECONDS,
@@ -19,6 +22,39 @@ import {
 import { roundUpVideoDurationTenths } from '../server/services/videoDurationProbe.js';
 
 describe('snumom Wan 3.0 adapter', () => {
+  it('passes smart duration, prompt extension and file/link parameters', () => {
+    const payload = buildSnumomWanPayload({ model: 'wan3.0-video', prompt: 'test', seconds: 5,
+      resolution: '720p', aspectRatio: '16:9', smartDuration: true, promptExtend: false,
+      videos: [{ url: 'https://example.com/ref.mp4' }],
+      inputMedia: [{ type: 'link', url: 'https://example.com/article' }] });
+    expect(payload).toMatchObject({ parameters: { duration: -1, prompt_extend: false },
+      input: { media: [{ type: 'link', url: 'https://example.com/article' }] } });
+    expect(payload).not.toHaveProperty('seconds');
+  });
+  it('validates file/link input and rejects invalid types, local URLs and multiple files', () => {
+    expect(normalizeSnumomWanInputMedia([{ type: 'file', url: 'https://example.com/a.pdf' }]))
+      .toEqual([{ type: 'file', url: 'https://example.com/a.pdf' }]);
+    expect(() => normalizeSnumomWanInputMedia([{ type: 'other', url: 'https://example.com' }])).toThrow();
+    expect(() => normalizeSnumomWanInputMedia([{ type: 'file', url: 'http://127.0.0.1/a' }])).toThrow();
+    expect(() => normalizeSnumomWanInputMedia([{ type: 'link', url: 'https://example.com' }, { type: 'link', url: 'https://example.com/b' }])).toThrow();
+  });
+  it('forces adaptive only for WAN first/last-frame requests, not Grok', () => {
+    const input = { prompt: 'test', seconds: 5, resolution: '720p', aspectRatio: '16:9',
+      images: [{ url: 'https://example.com/a.jpg', role: 'first_frame' as const }] };
+    expect(buildSnumomWanPayload({ ...input, model: 'wan3.0-video' })).toMatchObject({ aspect_ratio: 'adaptive' });
+    expect(buildSnumomWanPayload({ ...input, model: 'grok-imagine-video-1.5' })).toMatchObject({ aspect_ratio: '16:9' });
+  });
+  it('uses explicit usage only and preserves known reference seconds when omitted upstream', () => {
+    expect(extractSnumomWanBillingUsage({ metadata: { usage: { output_seconds: 10, reference_video_seconds: 5.2, resolution: '720P' } } }))
+      .toMatchObject({ billableSeconds: 15.2, resolution: '720p' });
+    expect(extractSnumomWanBillingUsage({ usage: { output_seconds: 8 } }, 5.2)).toMatchObject({ billableSeconds: 13.2 });
+    expect(extractSnumomWanBillingUsage({ usage: { billable_seconds: '12.5', output_seconds: 8 } }, 5.2))
+      .toMatchObject({ billableSeconds: 12.5 });
+    expect(extractSnumomWanBillingUsage({ progress: 30, duration: 10 })).toBeNull();
+    for (const value of [null, false, '', ' ', -1, {}, 'NaN']) {
+      expect(extractSnumomWanBillingUsage({ usage: { billable_seconds: value } })).toBeNull();
+    }
+  });
   it('declares the Grok per-request model and its advertised limits', () => {
     expect(SNUMOM_GROK_IMAGINE_VIDEO_MODEL).toBe('grok-imagine-video-1.5');
     expect(SNUMOM_VIDEO_MODELS).toEqual([
@@ -88,6 +124,13 @@ describe('snumom Wan 3.0 adapter', () => {
       id: 'task_1', status: 'completed', progress: 100, metadata: { url: 'https://oss.example.com/a.mp4' },
     })).toMatchObject({ id: 'task_1', status: 'completed', progress: 100, resultUrl: 'https://oss.example.com/a.mp4' });
     expect(snumomContentUrl('https://snumom.com/', 'task/1')).toBe('https://snumom.com/v1/videos/task%2F1/content');
+  });
+
+  it('accepts only documented snumom task IDs and never a request trace ID', () => {
+    expect(extractSnumomTaskId({ request_id: 'task_trace', id: 'task_real' })).toBe('task_real');
+    expect(extractSnumomTaskId({ request_id: 'task_trace' })).toBe('');
+    expect(extractSnumomTaskId({ task_id: 'not-a-task' })).toBe('');
+    expect(extractSnumomTaskId({}, new Headers({ location: '/v1/videos/task_location' }))).toBe('task_location');
   });
 
   it('passes the exact Grok model ID through the snumom JSON payload', () => {

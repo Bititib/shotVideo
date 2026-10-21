@@ -173,3 +173,69 @@ describe('bb-2.5-301010 integration', () => {
     expect(() => blobDrawVideoParameters(restricted, { ...input(), videos: ['a','b','c'] })).toThrow('数量');
   });
 });
+
+describe('BlobDraw mode selection with the reported model 39 configuration', () => {
+  const liveModel = { id: 39, name: 'bb-2.5-301010', type: 'video', config: {
+    video_modes: ['文生视频', '图生视频', '多模态'], video_resolutions: ['720p'],
+    video_aspect_ratios: ['16:9', '9:16', '1:1'], video_duration_mode: 'selectable',
+    video_duration_options: Array.from({ length: 27 }, (_, i) => i + 4),
+    video_reference_image_count: 30, video_reference_video_count: 10, video_reference_audio_count: 10,
+  } };
+  it.each([
+    { mode: undefined, images: [], videos: [], audios: [], expected: '文生视频' },
+    { mode: ' AUTO ', images: ['image'], videos: [], audios: [], expected: '图生视频' },
+    { mode: '自动', images: ['image1', 'image2'], videos: [], audios: [], expected: '多模态' },
+    { mode: '', images: [], videos: ['video'], audios: [], expected: '多模态' },
+    { mode: 'auto', images: [], videos: [], audios: ['audio'], expected: '多模态' },
+    { mode: '  图生视频  ', images: ['image'], videos: [], audios: [], expected: '图生视频' },
+    { mode: 'T2V', images: [], videos: [], audios: [], expected: '文生视频' },
+    { mode: 'image_to_video', images: ['image'], videos: [], audios: [], expected: '图生视频' },
+    { mode: 'MULTIMODAL', images: ['image'], videos: ['video'], audios: ['audio'], expected: '多模态' },
+  ])('selects $expected from live capabilities for mode=$mode', ({ expected, ...request }) => {
+    expect(blobDrawVideoParameters(liveModel, { ...input(), ...request, seconds: 30 })).toMatchObject({
+      model_id: 39, mode: expected, duration: 30, resolution: '720p',
+    });
+  });
+  it('accepts maximum references without changing the selected model or dropping inputs', async () => {
+    let uploaded = 0;
+    let posted: any;
+    const fetcher = vi.fn(async (url, options) => {
+      if (String(url).endsWith('/models')) return ok([liveModel]);
+      if (String(url).endsWith('/assets')) return ok({ id: ++uploaded });
+      posted = JSON.parse(options.body);
+      return ok({ id: 901 }, 202);
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const video = Buffer.concat([Buffer.from([0,0,0,20]), Buffer.from('ftypisom0000')]);
+    const request = {
+      ...input(), model: 'bb-2.5-301010', seconds: 30, mode: ' AUTO ',
+      images: Array.from({ length: 30 }, (_, i) => png(String(i))),
+      videos: Array.from({ length: 10 }, (_, i) => 'data:video/mp4;base64,' + Buffer.concat([video, Buffer.from(String(i))]).toString('base64')),
+      audios: Array.from({ length: 10 }, (_, i) => 'data:audio/mpeg;base64,' + Buffer.from('ID3audio' + i).toString('base64')),
+    };
+    await expect(submitBlobDrawVideo(channel, request, vi.fn())).resolves.toBe('901');
+    expect(posted).toMatchObject({ model_id: 39, mode: '多模态', duration: 30 });
+    expect(posted.image_asset_ids).toHaveLength(30);
+    expect(posted.video_asset_ids).toHaveLength(10);
+    expect(posted.audio_asset_ids).toHaveLength(10);
+    expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/generations'))).toHaveLength(1);
+  });
+  it.each([
+    { firstFrame: png('first'), lastFrame: undefined, expected: '不支持首帧' },
+    { firstFrame: undefined, lastFrame: png('last'), expected: '不支持尾帧' },
+    { firstFrame: png('first'), lastFrame: png('last'), expected: '不支持首尾帧' },
+  ])('explains $expected without uploading or silently treating frames as references', async ({ expected, ...frames }) => {
+    const fetcher = vi.fn(async () => ok([liveModel]));
+    vi.stubGlobal('fetch', fetcher);
+    const beforeSubmit = vi.fn();
+    await expect(submitBlobDrawVideo(channel, { ...input(), model: '39', mode: 'auto', ...frames }, beforeSubmit)).rejects.toThrow(expected);
+    expect(beforeSubmit).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it('never ignores an invalid explicit mode or invents support for a missing mode', () => {
+    expect(() => blobDrawVideoParameters(liveModel, { ...input(), mode: 'unknown' })).toThrow('指定的 mode 无效');
+    const textOnly = { ...liveModel, config: { ...liveModel.config, video_modes: ['文生视频'] } };
+    expect(() => blobDrawVideoParameters(textOnly, { ...input(), mode: 'i2v', images: ['image'] })).toThrow('支持模式：文生视频');
+    expect(() => blobDrawVideoParameters(liveModel, { ...input(), mode: '图生视频', images: ['image'], videos: ['video'] })).toThrow('视频或音频参考须使用多模态');
+  });
+});

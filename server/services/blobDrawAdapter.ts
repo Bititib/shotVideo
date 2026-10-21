@@ -71,23 +71,52 @@ export type BlobDrawVideoInput = {
   images: string[]; videos: string[]; audios: string[]; firstFrame?: string; lastFrame?: string;
   mode?: string; faceMode?: string; idempotencyKey?: string; publicBaseUrl: string;
 };
+const videoModeAliases: Record<string, string> = {
+  t2v: '文生视频', 'text-to-video': '文生视频', text_to_video: '文生视频',
+  i2v: '图生视频', 'image-to-video': '图生视频', image_to_video: '图生视频',
+  multimodal: '多模态', 'multi-modal': '多模态', multi_modal: '多模态',
+};
+function blobDrawVideoMode(model: BlobDrawModel, input: BlobDrawVideoInput, modes: string[]): string {
+  if (input.mode !== undefined && typeof input.mode !== 'string') throw new Error('BlobDraw 视频 mode 必须是字符串，或省略以自动选择');
+  const requested = input.mode?.trim() || '';
+  const automatic = !requested || ['auto', '自动'].includes(requested.toLowerCase());
+  const frameMode = input.firstFrame && input.lastFrame ? '首尾帧' : input.firstFrame ? '首帧' : input.lastFrame ? '尾帧' : '';
+  const multimodal = modes.find(m => /多模态|全能|参考/.test(m));
+  let mode: string | undefined;
+  if (!automatic) {
+    // Translate only known aliases; the value sent upstream must still come from /models.
+    const name = videoModeAliases[requested.toLowerCase()] || requested;
+    mode = modes.find(m => m === requested || m === name);
+  } else if (frameMode) {
+    mode = modes.find(m => m === frameMode);
+  } else if (input.videos.length || input.audios.length) {
+    mode = multimodal;
+  } else if (input.images.length) {
+    mode = (input.images.length > 1 ? multimodal : undefined)
+      || modes.find(m => m === '图生视频')
+      || (input.images.length === 1 ? modes.find(m => m === '首帧') : undefined)
+      || multimodal;
+  } else {
+    mode = modes.find(m => m === '文生视频') || multimodal;
+  }
+  if (!mode) {
+    const reason = automatic && frameMode
+      ? `当前模型不支持${frameMode}，请使用支持该模式的模型；普通参考图片请放入参考图区`
+      : automatic ? '当前素材组合没有可用的视频模式'
+        : '指定的 mode 无效，请使用上游支持的值，或省略 mode 以自动选择';
+    throw new Error(`BlobDraw ${reason}（模型 ID：${model.id}；支持模式：${modes.join('、')}；图片 ${input.images.length}、视频 ${input.videos.length}、音频 ${input.audios.length}、首尾帧 ${Number(Boolean(input.firstFrame)) + Number(Boolean(input.lastFrame))}）`);
+  }
+  return mode;
+}
 export function blobDrawVideoParameters(model: BlobDrawModel, input: BlobDrawVideoInput) {
   const limits = blobDrawModelLimits(model), modes = strings(model.config.video_modes);
   const frames = Number(Boolean(input.firstFrame)) + Number(Boolean(input.lastFrame));
   if (frames && (input.images.length || input.videos.length || input.audios.length)) throw new Error('BlobDraw 独立首尾帧不能与普通参考素材混用');
-  let mode = input.mode;
-  if (!mode) {
-    if (input.firstFrame && input.lastFrame) mode = '首尾帧';
-    else if (input.firstFrame) mode = '首帧';
-    else if (input.lastFrame) mode = '尾帧';
-    else if (input.videos.length || input.audios.length) mode = modes.find(m => /多模态|全能|参考/.test(m));
-    else if (input.images.length) mode = modes.includes('图生视频') ? '图生视频' : input.images.length === 1 && modes.includes('首帧') ? '首帧' : modes.find(m => /多模态|全能|参考/.test(m));
-    else mode = modes.includes('文生视频') ? '文生视频' : modes.find(m => /多模态|全能|参考/.test(m));
-  }
-  if (!mode || !modes.includes(mode)) throw new Error('BlobDraw 模型不支持当前素材对应的视频模式，请检查模型配置');
+  const mode = blobDrawVideoMode(model, input, modes);
   const images = frames || input.images.length;
   if (images > limits.maxImages || input.videos.length > limits.maxVideos || input.audios.length > limits.maxAudios) throw new Error('BlobDraw 参考素材数量超过模型上限');
   if (mode === '文生视频' && (images || input.videos.length || input.audios.length)) throw new Error('BlobDraw 文生视频模式不能携带参考素材');
+  if (['图生视频', '首帧', '尾帧', '首尾帧'].includes(mode) && (input.videos.length || input.audios.length)) throw new Error('BlobDraw 视频或音频参考须使用多模态模式，或省略 mode 以自动选择');
   if (mode === '首尾帧' && images !== 2 || ['首帧', '尾帧'].includes(mode) && images !== 1 || mode === '图生视频' && !images) throw new Error('BlobDraw 视频模式与图片数量不匹配');
   if (frames && mode !== (input.firstFrame && input.lastFrame ? '首尾帧' : input.firstFrame ? '首帧' : '尾帧')) throw new Error('BlobDraw 首尾帧与指定视频模式不一致');
   const duration = limits.duration;

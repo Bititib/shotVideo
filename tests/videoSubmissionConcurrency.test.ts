@@ -3,6 +3,14 @@ import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { eq } from 'drizzle-orm';
+const probes = vi.hoisted(() => ({
+  video: vi.fn(), audio: vi.fn(),
+}));
+vi.mock('../server/services/videoDurationProbe.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../server/services/videoDurationProbe.js')>(),
+  probeReferenceVideoSeconds: probes.video,
+  probeReferenceAudioSeconds: probes.audio,
+}));
 
 vi.mock('../server/db/index.js', async () => {
   const { default: Database } = await import('better-sqlite3');
@@ -68,6 +76,8 @@ beforeAll(async () => {
   findVideoSubmissionReceipt(1);
 });
 beforeEach(() => {
+  probes.video.mockReset().mockResolvedValue({ rawDurations: [5.01], durations: [5.1], total: 5.1 });
+  probes.audio.mockReset().mockResolvedValue({ rawDurations: [3.01], durations: [3.1], total: 3.1 });
   for (const table of ['contents','channels','users','models','model_pricing','api_tokens','api_logs','settings','video_submission_receipts']) sqlite.exec('DELETE FROM ' + table);
   sqlite.exec('DROP TABLE IF EXISTS billing_reservations');
   db.insert(users).values({ id: 1, email: 'race@test', username: 'test', passwordHash: 'test', balance: 100 }).run();
@@ -89,6 +99,72 @@ function managed() {
       limits, cost: 1, costUnit: 'per_call', resolutionCosts: {}, priority: 0 }] });
 }
 const body = { model, prompt: '并发提交测试', seconds: 15, video_length: 15, resolution: '720p', aspect_ratio: '16:9' };
+
+it.each(['/v1/videos', '/api/video/generate'])('%s: audio probing failure rejects before any debit or POST', async endpoint => {
+  probes.audio.mockRejectedValue(new Error('probe unavailable'));
+  vi.stubGlobal('fetch', vi.fn());
+  const response = await post(endpoint, { ...body, audio_urls: ['https://example.com/ref.wav'] });
+  expect(response.status).toBe(400);
+  expect(await response.text()).toContain('probe unavailable');
+  expect(wallet()).toBe(100); expect(tokenWallet()).toBe(100);
+  expect(fetch).not.toHaveBeenCalled(); expect(db.select().from(contents).all()).toHaveLength(0);
+});
+
+it.each(['/v1/videos', '/api/video/generate'])('%s: audio over the duration limit is rejected without a charge', async endpoint => {
+  probes.audio.mockResolvedValue({ rawDurations: [15.01], durations: [15.1], total: 15.1 });
+  vi.stubGlobal('fetch', vi.fn());
+  const response = await post(endpoint, { ...body, audio_urls: ['https://example.com/ref.wav'] });
+  expect(response.status).toBe(400); await response.text();
+  expect(wallet()).toBe(100); expect(tokenWallet()).toBe(100); expect(fetch).not.toHaveBeenCalled();
+});
+
+it.each(['/v1/videos', '/api/video/generate'])('%s: forwards smart-duration and input media; audio is validated but not billed', async endpoint => {
+  const standard = 'wan3.0-video';
+  db.update(channels).set({ supportedModels: JSON.stringify([standard]) }).run();
+  db.update(models).set({ modelId: standard }).run();
+  db.update(modelPricing).set({ modelPattern: standard, billingType: 'per_second', inputPrice: 1 }).run();
+  let sent: any;
+  const upstream = vi.fn(async (_url: any, options: any) => {
+    if (options?.method === 'POST') { sent = JSON.parse(options.body); return Response.json({ id: 'task_smart' }); }
+    return Response.json({ id: 'task_smart', status: 'completed', metadata: { url: 'https://media.invalid/result.mp4' } });
+  });
+  vi.stubGlobal('fetch', upstream);
+  await (await post(endpoint, { model: standard, prompt: 'smart test', resolution: '720p', aspect_ratio: '16:9',
+    parameters: { duration: -1, prompt_extend: false }, reference_videos: ['https://example.com/ref.mp4'],
+    audio_urls: ['https://example.com/ref.wav'], input: { media: [{ type: 'link', url: 'https://example.com/article' }] } })).text();
+  await vi.waitFor(() => expect(row().status).toBe('completed'));
+  expect(sent).toMatchObject({ parameters: { duration: -1, prompt_extend: false },
+    input: { media: [{ type: 'link', url: 'https://example.com/article' }] } });
+  expect(sent).not.toHaveProperty('seconds');
+  expect(meta()).toMatchObject({ referenceVideoSeconds: 5.1, referenceAudioSeconds: 3.1, billableSeconds: 10.2 });
+  expect(row().cost).toBeCloseTo(10.2);
+  expect(endpoint.startsWith('/v1') ? tokenWallet() : wallet()).toBeCloseTo(89.8);
+  expect(upstream.mock.calls.filter(([, o]) => o?.method === 'POST')).toHaveLength(1);
+});
+
+it.each([
+  ['/v1/videos', 12], ['/api/video/generate', 12],
+  ['/v1/videos', 18], ['/api/video/generate', 18],
+] as const)('%s: settles explicit upstream billable seconds %s once using the submitted price snapshot', async (endpoint, actualSeconds) => {
+  db.update(modelPricing).set({ billingType: 'per_second', inputPrice: 1 }).run();
+  const upstream = vi.fn(async (_url: any, options: any) => {
+    if (options?.method === 'POST') {
+      db.update(modelPricing).set({ inputPrice: 10 }).run();
+      return Response.json({ id: 'task_actual' });
+    }
+    return Response.json({ id: 'task_actual', status: 'completed',
+      usage: { billable_seconds: actualSeconds }, metadata: { url: 'https://media.invalid/result.mp4' } });
+  });
+  vi.stubGlobal('fetch', upstream);
+  await (await post(endpoint, body)).text();
+  await vi.waitFor(() => expect(row().status).toBe('completed'));
+  expect(row().cost).toBe(actualSeconds);
+  expect(endpoint.startsWith('/v1') ? tokenWallet() : wallet()).toBeCloseTo(100 - actualSeconds);
+  if (endpoint.startsWith('/v1')) expect(db.select().from(apiTokens).get()!.usedAmount).toBeCloseTo(actualSeconds);
+  await video.resumePollForTask(row().id, row());
+  expect(endpoint.startsWith('/v1') ? tokenWallet() : wallet()).toBeCloseTo(100 - actualSeconds);
+  expect(upstream.mock.calls.filter(([, o]) => o?.method === 'POST')).toHaveLength(1);
+});
 
 it.each([
   ['legacy API','/v1/videos',false], ['legacy website','/api/video/generate',false],

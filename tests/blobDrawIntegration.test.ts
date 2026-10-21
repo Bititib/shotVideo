@@ -114,6 +114,45 @@ describe('BlobDraw channel and managed generation integration', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(db.select().from(users).where(eq(users.id, userId)).get()?.balance).toBe(98);
   });
+  it('automatically resolves a client auto mode and saves the real upstream task ID', async () => {
+    await enable();
+    let submissions = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url, options) => {
+      if (String(url).endsWith('/models')) return ok([upstreamModel]);
+      if (String(url).endsWith('/generations')) {
+        submissions++;
+        expect(JSON.parse(options.body)).toMatchObject({ model_id: 42, mode: '文生视频' });
+        return ok({ id: 902 }, 202);
+      }
+      return ok({ id: 902, status: 'completed', output: { url: '/storage/video.mp4' } });
+    }));
+    await handleSpecificationGeneration({ userId, headers: {}, body: {
+      model: modelId, prompt: 'camera move', video_length: 5, mode: ' AUTO ',
+    }, protocol: 'https', get: () => 'app.example' } as any, response(), 'video');
+    const row = db.select().from(contents).all().at(-1)!;
+    expect(row).toMatchObject({ status: 'completed', cost: 2 });
+    expect(JSON.parse(row.metadata)).toMatchObject({ upstreamTaskId: '902', blobdrawPayload: { mode: '文生视频' } });
+    expect(submissions).toBe(1);
+    expect(db.select().from(users).where(eq(users.id, userId)).get()?.balance).toBe(98);
+  });
+  it('refunds an invalid explicit mode before generation and keeps useful failure details', async () => {
+    await enable();
+    const fetcher = vi.fn(async () => ok([upstreamModel]));
+    vi.stubGlobal('fetch', fetcher);
+    await handleSpecificationGeneration({ userId, headers: {}, body: {
+      model: modelId, prompt: 'camera move', video_length: 5, mode: 'unsupported-mode',
+    }, protocol: 'https', get: () => 'app.example' } as any, response(), 'video');
+    const row = db.select().from(contents).all().at(-1)!;
+    expect(row).toMatchObject({ status: 'failed', cost: 0 });
+    const meta = JSON.parse(row.metadata);
+    expect(meta.error).toContain('指定的 mode 无效');
+    expect(meta.error).toContain('模型 ID：42');
+    expect(meta.error).toContain('支持模式：文生视频、图生视频');
+    expect(meta.billingStatus).toBe('refunded');
+    expect(meta.upstreamTaskId).toBeUndefined();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(db.select().from(users).where(eq(users.id, userId)).get()?.balance).toBe(100);
+  });
 });
 
 

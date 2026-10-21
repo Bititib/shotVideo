@@ -59,12 +59,13 @@ import {
   isSnumomWanChannel,
   isSnumomWan30VideoModel,
   extractSnumomTaskId,
+  normalizeSnumomWanInputMedia,
   SNUMOM_GROK_IMAGINE_VIDEO_MAX_IMAGES,
   SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
   SNUMOM_GROK_IMAGINE_VIDEO_SECONDS,
   snumomWanBillableSeconds,
 } from '../services/snumomWanAdapter.js';
-import { probeReferenceVideoSeconds } from '../services/videoDurationProbe.js';
+import { probeReferenceAudioSeconds, probeReferenceVideoSeconds } from '../services/videoDurationProbe.js';
 import {
   buildSudaShuiVideoPayload,
   sudaShuiVideoCreateUrl,
@@ -1652,12 +1653,16 @@ async function handleVideoCreation(req: Request, res: Response) {
   }
 
   // Keep the website/API duration aliases consistent for the legacy video route.
-  const suppliedDurations = [body.seconds, body.duration, body.video_length].filter(value => value !== undefined).map(Number);
+  const parameterDuration = body.parameters?.duration ?? body.duration_seconds;
+  const suppliedDurations = [body.seconds, body.duration, body.video_length, parameterDuration].filter(value => value !== undefined).map(Number);
   if (suppliedDurations.some(value => !Number.isFinite(value)) || new Set(suppliedDurations).size > 1) {
     cleanupFiles(req.files);
     return res.status(400).json({ error: 'seconds, duration and video_length must agree and be valid numbers' });
   }
-  let seconds = body.seconds !== undefined ? Number(body.seconds) : body.video_length !== undefined ? Number(body.video_length) : undefined;
+  let seconds = body.seconds !== undefined ? Number(body.seconds)
+    : body.video_length !== undefined ? Number(body.video_length)
+    : parameterDuration !== undefined ? Number(parameterDuration)
+    : undefined;
   const duration = body.duration !== undefined ? Number(body.duration) : undefined;
 
   if (seconds !== undefined && duration !== undefined && seconds !== duration) {
@@ -1715,6 +1720,23 @@ async function handleVideoCreation(req: Request, res: Response) {
     if (uploadedImages.length > 0) {
       image_urls = [...image_urls, ...uploadedImages];
     }
+  }
+
+  let snumomInputMedia: Array<{ type: 'file' | 'link'; url: string }> = [];
+  let snumomPromptExtend: boolean | undefined;
+  if (model === 'wan3.0-video' || model === 'wan3.0-video-prime') {
+    try {
+      snumomInputMedia = normalizeSnumomWanInputMedia(body.input?.media);
+    } catch (error: any) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: error.message });
+    }
+    const promptExtend = body.parameters?.prompt_extend ?? body.prompt_extend;
+    if (promptExtend !== undefined && typeof promptExtend !== 'boolean') {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'prompt_extend must be a boolean' });
+    }
+    snumomPromptExtend = promptExtend;
   }
 
   // 提取视频素材别名
@@ -1895,9 +1917,11 @@ async function handleVideoCreation(req: Request, res: Response) {
 
   if (model === 'wan3.0-video' || model === 'wan3.0-video-prime') {
     const allowedRatios = ['adaptive', '21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
-    if (!Number.isInteger(seconds) || seconds < 2 || seconds > 30) {
+    const smartDuration = model === 'wan3.0-video' && seconds === -1;
+    if ((!smartDuration && (!Number.isInteger(seconds) || seconds < 2 || seconds > 30))
+      || (model === 'wan3.0-video-prime' && seconds === -1)) {
       cleanupFiles(req.files);
-      return res.status(400).json({ error: `${model} seconds must be an integer from 2 to 30` });
+      return res.status(400).json({ error: `${model} seconds must be an integer from 2 to 30${model === 'wan3.0-video' ? ', or -1 with reference videos' : ''}` });
     }
     if (!allowedRatios.includes(ratio)) {
       cleanupFiles(req.files);
@@ -1910,6 +1934,18 @@ async function handleVideoCreation(req: Request, res: Response) {
     if (image_urls.length > 10 || video_urls.length > 5 || audio_urls.length > 5) {
       cleanupFiles(req.files);
       return res.status(400).json({ error: `${model} supports at most 10 images, 5 videos, and 5 audio files` });
+    }
+    if (smartDuration && video_urls.length === 0) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'wan3.0-video smart duration -1 requires reference_videos' });
+    }
+    if (snumomInputMedia.length > 0 && (body.first_frame_url || body.last_frame_url || body.end_frame_url)) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: 'input.media cannot be mixed with first_frame or last_frame' });
+    }
+    if (image_urls.length + video_urls.length + audio_urls.length + snumomInputMedia.length > 20) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `${model} supports at most 20 reference materials in total` });
     }
   }
 
@@ -2205,17 +2241,23 @@ async function handleVideoCreation(req: Request, res: Response) {
   let referenceVideoDurations: number[] = [];
   let referenceVideoRawDurations: number[] = [];
   let referenceVideoSeconds = 0;
+  let referenceAudioDurations: number[] = [];
+  let referenceAudioRawDurations: number[] = [];
+  let referenceAudioSeconds = 0;
+  let billingOutputSeconds = seconds;
+  const smartSnumomDuration = model === 'wan3.0-video' && seconds === -1;
   if (isSnumomWanChannel(channel) && isSnumomWan30VideoModel(model) && video_urls.length > 0) {
     try {
       const probed = await probeReferenceVideoSeconds(video_urls);
       referenceVideoRawDurations = probed.rawDurations;
       referenceVideoDurations = probed.durations;
       referenceVideoSeconds = probed.total;
+      if (smartSnumomDuration) billingOutputSeconds = referenceVideoDurations[0];
       if (referenceVideoDurations.some(value => value < 1 || value > 15) || referenceVideoSeconds > 15) {
         cleanupFiles(req.files);
         return res.status(400).json({ error: 'Wan 3.0 reference videos must be 1-15 seconds each and at most 15 seconds total' });
       }
-      if (seconds + referenceVideoSeconds > 30) {
+      if (billingOutputSeconds + referenceVideoSeconds > 30) {
         cleanupFiles(req.files);
         return res.status(400).json({ error: 'Wan 3.0 output plus reference video duration must not exceed 30 seconds' });
       }
@@ -2224,7 +2266,22 @@ async function handleVideoCreation(req: Request, res: Response) {
       return res.status(400).json({ error: `Unable to probe reference video duration: ${error?.message || 'unknown error'}` });
     }
   }
-  const billableSeconds = snumomWanBillableSeconds(model, seconds, referenceVideoSeconds);
+  if (isSnumomWanChannel(channel) && isSnumomWan30VideoModel(model) && audio_urls.length > 0) {
+    try {
+      const probed = await probeReferenceAudioSeconds(audio_urls);
+      referenceAudioRawDurations = probed.rawDurations;
+      referenceAudioDurations = probed.durations;
+      referenceAudioSeconds = probed.total;
+      if (referenceAudioSeconds > 15) {
+        cleanupFiles(req.files);
+        return res.status(400).json({ error: 'Wan 3.0 reference audio duration must not exceed 15 seconds total' });
+      }
+    } catch (error: any) {
+      cleanupFiles(req.files);
+      return res.status(400).json({ error: `Unable to probe reference audio duration: ${error?.message || 'unknown error'}` });
+    }
+  }
+  const billableSeconds = snumomWanBillableSeconds(model, billingOutputSeconds, referenceVideoSeconds);
   const pricingQuote = PricingService.quote(model, { resolution, seconds: billableSeconds, count: 1 }, false, token.userId ?? null);
   if (!pricingQuote.billingType) {
     cleanupFiles(req.files);
@@ -2255,11 +2312,15 @@ async function handleVideoCreation(req: Request, res: Response) {
         resolution,
         ...videoSubmissionPreparation(),
         pricingSnapshot: pricingQuote.pricingSnapshot,
-        seconds,
+        seconds: billingOutputSeconds,
+        requestedSeconds: seconds,
         billableSeconds,
         referenceVideoSeconds,
         referenceVideoRawDurations,
         referenceVideoDurations,
+        referenceAudioSeconds,
+        referenceAudioRawDurations,
+        referenceAudioDurations,
         aspect_ratio: ratio,
         model,
         prompt,
@@ -2715,9 +2776,9 @@ async function handleVideoCreation(req: Request, res: Response) {
         const firstFrame = typeof body.first_frame_url === 'string' ? body.first_frame_url : '';
         const lastFrameValue = body.end_frame_url || body.last_frame_url;
         const lastFrame = typeof lastFrameValue === 'string' ? lastFrameValue : '';
-        if ((firstFrame || lastFrame) && (image_urls.length > 0 || video_urls.length > 0)) {
+        if ((firstFrame || lastFrame) && (image_urls.length > 0 || video_urls.length > 0 || audio_urls.length > 0 || snumomInputMedia.length > 0)) {
           cleanupFiles(req.files);
-          return res.status(400).json({ error: 'snumom first/last frames cannot be mixed with reference images or videos' });
+          return res.status(400).json({ error: 'snumom first/last frames cannot be mixed with reference images, videos, audio, file, or link input' });
         }
         if (lastFrame && !firstFrame) {
           cleanupFiles(req.files);
@@ -2729,7 +2790,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         payload = buildSnumomWanPayload({
           model: upstreamModel,
           prompt,
-          seconds,
+          seconds: billingOutputSeconds,
           resolution,
           aspectRatio: ratio,
           images: frameImages.length > 0
@@ -2737,6 +2798,9 @@ async function handleVideoCreation(req: Request, res: Response) {
             : image_urls.map(url => ({ url, role: 'reference_image' })),
           videos: video_urls.map(url => ({ url })),
           audios: audio_urls.map(url => ({ url })),
+          smartDuration: smartSnumomDuration,
+          promptExtend: snumomPromptExtend,
+          inputMedia: snumomInputMedia,
         });
       } else if (isSudaShuiModel) {
         const referenceBase = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
@@ -2917,7 +2981,8 @@ async function handleVideoCreation(req: Request, res: Response) {
       ...persistedMeta,
       model,
       prompt,
-      seconds,
+      seconds: billingOutputSeconds,
+      requestedSeconds: seconds,
       ratio,
       resolution,
       image_urls: persistedMeta.image_urls || image_urls,
