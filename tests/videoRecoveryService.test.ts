@@ -32,6 +32,8 @@ import { db, sqlite } from '../server/db/index.js';
 import { contents, users } from '../server/db/schema.js';
 import { eq } from 'drizzle-orm';
 import { BalanceService } from '../server/services/balanceService.js';
+import { ensureBillingReservations, reserveUserCharge } from '../server/services/billingReservation.js';
+import { finalizeReservedContent } from '../server/services/contentBillingService.js';
 import { VideoRecoveryService } from '../server/services/videoRecoveryService.js';
 import { resumePollForTask } from '../server/routes/video.js';
 
@@ -257,6 +259,55 @@ describe('VideoRecoveryService', () => {
     expect(BalanceService.getBalance(userId)).toBe(10);
     expect(read().cost).toBe(1.5);
     expect(poller.resume).toHaveBeenCalled();
+  });
+  it('独立预扣账本的视频仍在生成时恢复原轮询，不重复扣费', async () => {
+    ensureBillingReservations();
+    const charge = reserveUserCharge(userId, 2, 'generate_video', { contentId });
+    sqlite.prepare("UPDATE channels SET type='openai' WHERE id=?").run(channelId);
+    sqlite.prepare('UPDATE contents SET status=?,cost=?,metadata=? WHERE id=?').run('processing', 2, JSON.stringify({
+      videoId: 'upstream-task-1', channelId, billingReservationId: charge.id, billingStatus: 'reserved', queueRefunded: false,
+    }), contentId);
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: 'upstream-task-1', status: 'in_progress', progress: 60 })));
+
+    expect(await VideoRecoveryService.recover(contentId)).toMatchObject({ status: 'processing', chargedAmount: 0 });
+    expect(BalanceService.getBalance(userId)).toBe(8);
+    expect(sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(charge.id)).toEqual({ state: 'reserved' });
+    expect(read()).toMatchObject({ status: 'processing', cost: 2 });
+    expect(poller.resume).toHaveBeenCalledWith(contentId, expect.objectContaining({ status: 'processing' }));
+  });
+  it('independent reservation settles once when recovery fetches the completed result', async () => {
+    ensureBillingReservations();
+    const charge = reserveUserCharge(userId, 2, 'generate_video', { contentId });
+    sqlite.prepare("UPDATE channels SET type='openai' WHERE id=?").run(channelId);
+    sqlite.prepare('UPDATE contents SET status=?,cost=?,metadata=? WHERE id=?').run('processing', 2, JSON.stringify({
+      videoId: 'upstream-task-1', channelId, billingReservationId: charge.id, billingStatus: 'reserved', queueRefunded: false,
+    }), contentId);
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => String(input).includes('upstream-task-1')
+      ? Response.json({ id: 'upstream-task-1', status: 'completed', video_url: 'https://recovery-upstream.test/media/recovered.mp4' })
+      : new Response(validVideo, { status: 200, headers: { 'Content-Type': 'video/mp4' } })));
+
+    expect(await VideoRecoveryService.recover(contentId)).toMatchObject({ status: 'completed', chargedAmount: 0 });
+    expect(BalanceService.getBalance(userId)).toBe(8);
+    expect(sqlite.prepare('SELECT state,actual FROM billing_reservations WHERE id=?').get(charge.id)).toEqual({ state: 'settled', actual: 2 });
+    expect(read()).toMatchObject({ status: 'completed', cost: 2 });
+    expect(await VideoRecoveryService.recover(contentId)).toMatchObject({ status: 'completed', alreadyRecovered: true });
+    expect(BalanceService.getBalance(userId)).toBe(8);
+  });
+  it('explicit upstream failure refunds an independent reservation through the video failure handler', async () => {
+    ensureBillingReservations();
+    const charge = reserveUserCharge(userId, 2, 'generate_video', { contentId });
+    sqlite.prepare("UPDATE channels SET type='openai' WHERE id=?").run(channelId);
+    sqlite.prepare('UPDATE contents SET status=?,cost=?,metadata=? WHERE id=?').run('processing', 2, JSON.stringify({
+      videoId: 'upstream-task-1', channelId, billingReservationId: charge.id, billingStatus: 'reserved', queueRefunded: false,
+    }), contentId);
+    poller.fail.mockImplementation(async id => { finalizeReservedContent(id, 'failed', { error: 'upstream rejected' }); });
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: 'upstream-task-1', status: 'failed', error: 'upstream rejected' })));
+
+    expect(await VideoRecoveryService.recover(contentId)).toMatchObject({ status: 'failed' });
+    expect(poller.fail).toHaveBeenCalledWith(contentId, expect.any(Error), true);
+    expect(sqlite.prepare('SELECT state,actual FROM billing_reservations WHERE id=?').get(charge.id)).toEqual({ state: 'refunded', actual: 0 });
+    expect(BalanceService.getBalance(userId)).toBe(10);
+    expect(read()).toMatchObject({ status: 'failed', cost: 0 });
   });
   it('失败记录无退款凭据时，不猜测金额或重复扣费', async () => {
     sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify({

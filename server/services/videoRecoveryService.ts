@@ -3,7 +3,6 @@ import { isZonghengChannel, zonghengTaskUrl, normalizeZonghengTask } from './zon
 import { isHayaChannel, hayaTaskUrl, normalizeHayaTask } from './hayaVideoAdapter.js';
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
-import { findVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
 import { withFundContext } from '../db/fundLedger.js';
 import { fetchVideoTaskResponse, withVideoPollDeadline } from './videoPollDeadline.js';
 import { apiTokens, contents, users, organizations } from '../db/schema.js';
@@ -264,10 +263,7 @@ export class VideoRecoveryService {
     if (record.type !== 'video') throw { status: 400, message: '只有视频任务可以重新获取' };
 
     const metadata = parseMetadata(record.metadata);
-    const receipt = findVideoSubmissionReceipt(contentId);
-    const videoId = upstreamTaskId(metadata) || receipt?.upstreamTaskId || '';
-    if (!metadata.channelId && receipt?.channelId) metadata.channelId = receipt.channelId;
-    if (!metadata.channelApiKeyId && receipt?.channelApiKeyId) metadata.channelApiKeyId = receipt.channelApiKeyId;
+    const videoId = upstreamTaskId(metadata);
     if (!videoId) throw { status: 400, message: '该记录没有保存上游任务 ID，无法重新获取' };
 
     const channel = metadata.channelId
@@ -425,8 +421,19 @@ export class VideoRecoveryService {
     }
     if (batchRecord && !batchMetadata.batchItemId && inspection.status === 'processing') {
       const taskChannel = ChannelService.getChannelRaw(inspection.channelId, inspection.channelApiKeyId);
-      if (batchMetadata.managedSpecification || batchMetadata.billingReservationId || (taskChannel && isAsyncVideoChannel(taskChannel)))
+      if (batchMetadata.managedSpecification || (taskChannel && isAsyncVideoChannel(taskChannel)))
         throw { status: 409, message: '该任务使用独立账本，请在对应任务入口恢复' };
+      if (batchMetadata.billingReservationId) {
+        const reservation = sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(batchMetadata.billingReservationId) as any;
+        const context = reservation ? parseMetadata(reservation.context) : {};
+        if (!reservation || !['reserved', 'review'].includes(reservation.state)
+          || context.contentId && Number(context.contentId) !== contentId
+          || context.userId != null && Number(context.userId) !== Number(batchRecord.userId)
+          || Math.abs(Number(reservation.amount) - Number(batchRecord.cost)) > 0.000001
+          || batchMetadata.queueRefunded || batchMetadata.billingStatus === 'refunded') {
+          throw { status: 409, message: '原预扣账本状态或归属不匹配，请到异常账单核查' };
+        }
+      }
       // Load the poller before taking money. Charge + status change are atomic;
       // concurrent clicks re-read the paid marker inside the transaction.
       const { resumePollForTask } = await loadVideoPoller();
@@ -436,6 +443,17 @@ export class VideoRecoveryService {
         const metadata = parseMetadata(record.metadata);
         if (upstreamTaskId(metadata) !== inspection.videoId || Number(metadata.channelId) !== inspection.channelId)
           throw { status: 409, message: '原任务关联已变更，请刷新后重新核查' };
+        if (metadata.billingReservationId) {
+          const reservation = sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(metadata.billingReservationId) as any;
+          const context = reservation ? parseMetadata(reservation.context) : {};
+          if (!reservation || !['reserved', 'review'].includes(reservation.state)
+            || context.contentId && Number(context.contentId) !== contentId
+            || context.userId != null && Number(context.userId) !== Number(record.userId)
+            || Math.abs(Number(reservation.amount) - Number(record.cost)) > 0.000001
+            || metadata.queueRefunded || metadata.billingStatus === 'refunded') {
+            throw { status: 409, message: '原预扣账本状态或归属不匹配，请到异常账单核查' };
+          }
+        }
         if (record.status === 'completed') return { record, chargedAmount: 0, alreadyRecovered: true };
         const refunded = metadata.queueRefunded === true || metadata.billingStatus === 'refunded';
         if (['failed', 'error'].includes(record.status) && !refunded)
@@ -477,6 +495,11 @@ export class VideoRecoveryService {
         void resumePollForTask(contentId, { ...batchRecord, status: 'processing' });
       }
     }
+    if (batchRecord && !batchMetadata.batchItemId && batchMetadata.billingReservationId && inspection.status === 'failed') {
+      const { failHmQueuedVideo } = await loadVideoPoller();
+      await failHmQueuedVideo(contentId, new Error(inspection.message || '上游任务生成失败'), true);
+      return inspection;
+    }
     if (!batchMetadata.batchItemId && (batchMetadata.hayaSubmissionStarted || batchMetadata.zonghengSubmissionStarted) && batchRecord?.status === 'review') {
       if (inspection.status === 'failed') {
         const { failHmQueuedVideo } = await loadVideoPoller();
@@ -495,7 +518,7 @@ export class VideoRecoveryService {
     if (beforeDownload.status === 'completed' && beforeDownload.resultUrl) {
       return { status: 'completed', message: '该任务已经恢复，无需重复扣费', item: beforeDownload, alreadyRecovered: true };
     }
-    if (!beforeMetadata.batchItemId && (beforeMetadata.managedSpecification || beforeMetadata.billingReservationId))
+    if (!beforeMetadata.batchItemId && beforeMetadata.managedSpecification)
       throw { status: 409, message: '该任务使用独立账本，请在对应任务入口恢复' };
 
     const downloadKey = `${contentId}:${inspection.channelId}:${inspection.videoId}`;
@@ -519,6 +542,25 @@ export class VideoRecoveryService {
       const { settleRecoveredBatch } = await import('./videoBatchService.js');
       settleRecoveredBatch(contentId, localizedUrl);
       return { status: 'completed', message: '批量任务已恢复，使用原预扣费用结算，未重复扣费', chargedAmount: 0 };
+    }
+
+    if (beforeMetadata.billingReservationId) {
+      const reservation = sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(beforeMetadata.billingReservationId) as any;
+      const context = reservation ? parseMetadata(reservation.context) : {};
+      if (!reservation || !['reserved', 'review'].includes(reservation.state)
+        || context.contentId && Number(context.contentId) !== contentId
+        || context.userId != null && Number(context.userId) !== Number(beforeDownload.userId)
+        || Math.abs(Number(reservation.amount) - Number(beforeDownload.cost)) > 0.000001) {
+        throw { status: 409, message: '原预扣账本状态或归属不匹配，请到异常账单核查' };
+      }
+      const { finalizeReservedContent } = await import('./contentBillingService.js');
+      const completedAt = new Date().toISOString();
+      finalizeReservedContent(contentId, 'completed', {
+        progress: 100, upstreamStatus: 'completed', upstreamResultUrl: inspection.upstreamResultUrl,
+        queueStatus: 'completed', completedAt, localizedAt: completedAt,
+      }, localizedUrl);
+      return { status: 'completed', message: '任务已恢复，使用原预扣费用结算，未重复扣费', chargedAmount: 0,
+        item: db.select().from(contents).where(eq(contents.id, contentId)).get() };
     }
 
     return db.transaction(() => {
