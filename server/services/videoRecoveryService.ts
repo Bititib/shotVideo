@@ -3,6 +3,7 @@ import { isZonghengChannel, zonghengTaskUrl, normalizeZonghengTask } from './zon
 import { isHayaChannel, hayaTaskUrl, normalizeHayaTask } from './hayaVideoAdapter.js';
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
+import { findVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
 import { withFundContext } from '../db/fundLedger.js';
 import { fetchVideoTaskResponse, withVideoPollDeadline } from './videoPollDeadline.js';
 import { apiTokens, contents, users, organizations } from '../db/schema.js';
@@ -263,7 +264,10 @@ export class VideoRecoveryService {
     if (record.type !== 'video') throw { status: 400, message: '只有视频任务可以重新获取' };
 
     const metadata = parseMetadata(record.metadata);
-    const videoId = upstreamTaskId(metadata);
+    const receipt = findVideoSubmissionReceipt(contentId);
+    const videoId = upstreamTaskId(metadata) || receipt?.upstreamTaskId || '';
+    if (!metadata.channelId && receipt?.channelId) metadata.channelId = receipt.channelId;
+    if (!metadata.channelApiKeyId && receipt?.channelApiKeyId) metadata.channelApiKeyId = receipt.channelApiKeyId;
     if (!videoId) throw { status: 400, message: '该记录没有保存上游任务 ID，无法重新获取' };
 
     const channel = metadata.channelId
@@ -480,6 +484,11 @@ export class VideoRecoveryService {
         message: result.record.status === 'completed' ? '任务已完成，未重复扣费' : result.chargedAmount > 0
           ? `已补扣 ¥${result.chargedAmount.toFixed(2)}，恢复原任务轮询` : '原任务已恢复轮询，未重复扣费', item: result.record };
     }
+    if (batchRecord && !batchMetadata.batchItemId && batchMetadata.billingReservationId && inspection.status === 'failed') {
+      const { failHmQueuedVideo } = await loadVideoPoller();
+      await failHmQueuedVideo(contentId, new Error(inspection.message || '上游任务生成失败'), true);
+      return inspection;
+    }
     if (batchRecord && batchMetadata.batchItemId && inspection.status !== 'completed') {
       const { batchStore, recordBatchFailure, tickVideoBatches } = await import('./videoBatchService.js');
       const item = batchStore.item(Number(batchMetadata.batchItemId));
@@ -494,11 +503,6 @@ export class VideoRecoveryService {
         const { resumePollForTask } = await loadVideoPoller();
         void resumePollForTask(contentId, { ...batchRecord, status: 'processing' });
       }
-    }
-    if (batchRecord && !batchMetadata.batchItemId && batchMetadata.billingReservationId && inspection.status === 'failed') {
-      const { failHmQueuedVideo } = await loadVideoPoller();
-      await failHmQueuedVideo(contentId, new Error(inspection.message || '上游任务生成失败'), true);
-      return inspection;
     }
     if (!batchMetadata.batchItemId && (batchMetadata.hayaSubmissionStarted || batchMetadata.zonghengSubmissionStarted) && batchRecord?.status === 'review') {
       if (inspection.status === 'failed') {

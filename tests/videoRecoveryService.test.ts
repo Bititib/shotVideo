@@ -275,7 +275,7 @@ describe('VideoRecoveryService', () => {
     expect(read()).toMatchObject({ status: 'processing', cost: 2 });
     expect(poller.resume).toHaveBeenCalledWith(contentId, expect.objectContaining({ status: 'processing' }));
   });
-  it('independent reservation settles once when recovery fetches the completed result', async () => {
+  it('独立预扣账本的任务成功恢复后只结算一次', async () => {
     ensureBillingReservations();
     const charge = reserveUserCharge(userId, 2, 'generate_video', { contentId });
     sqlite.prepare("UPDATE channels SET type='openai' WHERE id=?").run(channelId);
@@ -293,7 +293,7 @@ describe('VideoRecoveryService', () => {
     expect(await VideoRecoveryService.recover(contentId)).toMatchObject({ status: 'completed', alreadyRecovered: true });
     expect(BalanceService.getBalance(userId)).toBe(8);
   });
-  it('explicit upstream failure refunds an independent reservation through the video failure handler', async () => {
+  it('独立预扣账本任务上游明确失败时退款', async () => {
     ensureBillingReservations();
     const charge = reserveUserCharge(userId, 2, 'generate_video', { contentId });
     sqlite.prepare("UPDATE channels SET type='openai' WHERE id=?").run(channelId);
