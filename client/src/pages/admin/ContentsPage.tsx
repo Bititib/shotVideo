@@ -212,18 +212,15 @@ export default function ContentsPage() {
   };
 
   const handleConfirmNotAccepted = async (item: ContentItem) => {
-    if (!window.confirm(`确认已在上游核对记录 #${item.id}，该订单未创建任务、未产生上游费用？将标记失败并把 ¥${Number(item.cost).toFixed(2)} 退回原扣款来源。`)) return;
-    const note = window.prompt('请填写核对依据，例如上游业务订单号、核对时间及未接单的确认结果：');
-    if (note === null) return;
-    if (note.trim().length < 6 || note.length > 500) { window.alert('请填写 6–500 字的核对依据'); return; }
+    if (!window.confirm(`确认记录 #${item.id} 的上游已明确拒绝或未接单？将标记失败并把 ¥${Number(item.cost).toFixed(2)} 退回原扣款来源。若上游实际已接单，请先补录并查询原任务。`)) return;
     setConfirmingUnacceptedId(item.id);
     try {
-      const result = await adminApi.confirmContentNotAccepted(item.id, note.trim());
+      const result = await adminApi.failReviewedContentAndRefund(item.id);
       const refreshed = await adminApi.getContent(item.id);
       setPreviewItem(current => current?.id === item.id ? { ...current, ...refreshed } : current);
       await fetchContents();
-      window.alert(result.alreadyResolved ? '该记录已处理，未重复退款' : `已标记失败，已退回 ¥${result.refundedAmount.toFixed(2)}`);
-    } catch (error: any) { window.alert(error.message || '确认未接单退款失败'); }
+      window.alert(result.alreadyResolved ? '该记录已处理，未重复退款' : `已标记失败，已退回 ¥${Number(result.refundedAmount).toFixed(2)}`);
+    } catch (error: any) { window.alert(error.message || '标记失败并退款失败'); }
     finally { setConfirmingUnacceptedId(null); }
   };
 
@@ -392,6 +389,19 @@ export default function ContentsPage() {
 
     if (typeof value !== 'string' && typeof value !== 'number') return '';
     return String(value).trim();
+  };
+
+  const canFailReviewedVideoAndRefund = (item: ContentItem) => {
+    const metadata = parseMeta(item.metadata);
+    const taskIds = [metadata.upstreamTaskIds, metadata.recoveryTaskIds]
+      .flatMap(value => Array.isArray(value) ? value : []);
+    const resultUrls = [item.resultUrl, metadata.upstreamResultUrl, ...(Array.isArray(metadata.recoverySourceUrls) ? metadata.recoverySourceUrls : [])];
+    return item.type === 'video' && item.status === 'review'
+      && videoReviewKind(metadata) === 'submission'
+      && !getUpstreamTaskId(metadata) && taskIds.length === 0
+      && !resultUrls.some(url => typeof url === 'string' && url.trim())
+      && !metadata.batchItemId && !metadata.managedSpecification
+      && !metadata.queueRefunded && !['refunded', 'settled'].includes(metadata.billingStatus);
   };
 
   const missingUpstreamId = (meta: Record<string, any>) => {
@@ -719,14 +729,11 @@ export default function ContentsPage() {
                         <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-zinc-200">
                           {displayStatus(previewItem) === 'review' && !failure.hasRecordedReason ? '后台尚未确认最终结果，请核查原上游请求，勿重复提交' : failure.message}
                         </pre>
-                        {previewItem.type === 'video' && previewItem.status === 'review'
-                          && previewItem.modelId?.startsWith('ZH-') && !getUpstreamTaskId(parseMeta(previewItem.metadata))
-                          && !parseMeta(previewItem.metadata).batchItemId && !previewItem.resultUrl?.trim()
-                          && !parseMeta(previewItem.metadata).upstreamResultUrl && (
+                        {canFailReviewedVideoAndRefund(previewItem) && (
                             <button type="button" disabled={confirmingUnacceptedId === previewItem.id}
                               onClick={() => { void handleConfirmNotAccepted(previewItem); }}
                               className="mt-3 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200 disabled:opacity-50">
-                              {confirmingUnacceptedId === previewItem.id ? '正在处理退款…' : '确认未接单并退款'}
+                              {confirmingUnacceptedId === previewItem.id ? '正在处理退款…' : '一键失败并退款'}
                             </button>
                           )}
                         {failure.failedAt && (

@@ -358,6 +358,13 @@ router.post('/contents/:id/confirm-not-accepted', async (req: AuthRequest, res: 
   } catch (err: any) { res.status(err.status || 500).json({error:err.message || '确认未接单退款失败'}); }
 });
 
+router.post('/contents/:id/fail-and-refund', async (req: AuthRequest, res: Response) => {
+  try {
+    const { confirmReviewedVideoFailureAndRefund } = await import('../services/zonghengSubmissionResolutionService.js');
+    res.json(confirmReviewedVideoFailureAndRefund(Number(req.params.id), req.userId!, req.body?.confirmedFailureRefund));
+  } catch (err: any) { res.status(err.status || 500).json({ error: err.message || '标记失败并退款失败' }); }
+});
+
 router.post('/contents/:id/recover-upstream', async (req: AuthRequest, res: Response) => {
   try {
     const { VideoRecoveryService } = await import('../services/videoRecoveryService.js');
