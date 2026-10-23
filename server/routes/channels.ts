@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import { BlobDrawApiError } from '../services/blobDrawAdapter.js';
+import { HussApiError } from '../services/hussVideoAdapter.js';
 import { FunAiApiError } from '../services/funAiAdapter.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
@@ -85,6 +86,11 @@ function channelOperationError(res: Response, error: any) {
       : error.status === 403
         ? 'BlobDraw 上游拒绝访问，请检查 API Key 的读取权限和模型授权。'
         : error.message;
+    return res.status(502).json({ error: message, code: 'UPSTREAM_ERROR', upstreamStatus: error.status });
+  }
+  if (error instanceof HussApiError) {
+    const message = error.status === 401 ? 'HUSS 上游 API Key 校验失败，请检查渠道中填写的 API Key。'
+      : error.status === 403 ? 'HUSS 上游拒绝访问，请检查 API Key 的模型授权。' : error.message;
     return res.status(502).json({ error: message, code: 'UPSTREAM_ERROR', upstreamStatus: error.status });
   }
   return res.status(error.status || 500).json({ error: error.message });

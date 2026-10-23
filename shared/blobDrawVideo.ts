@@ -3,8 +3,9 @@ import type { ModelInputLimits } from './modelRouting.js';
 // Initial capability draft from the user-supplied BlobDraw model card.
 // Authenticated /models remains authoritative for actual submissions.
 export const BLOB_DRAW_BB_MODEL = 'bb-2.5-301010';
+export const HUSS_BB_MODEL = 'bb-seedance2.5-301010';
 export function blobDrawKnownModelId(name: string | undefined): string | null {
-  return name?.trim() === BLOB_DRAW_BB_MODEL ? BLOB_DRAW_BB_MODEL : null;
+  return [BLOB_DRAW_BB_MODEL, HUSS_BB_MODEL].includes(name?.trim() || '') ? BLOB_DRAW_BB_MODEL : null;
 }
 export function blobDrawBbModelLimits(): ModelInputLimits {
   return {

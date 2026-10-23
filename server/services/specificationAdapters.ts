@@ -26,6 +26,7 @@ import { generateMingFeiImage, isMingFeiImageChannel, mingFeiImageContentUrl } f
 import { generateSiYueTianImage, isSiYueTianImageChannel, siYueTianImageContentUrl } from './siYueTianImageAdapter.js';
 import { publishReferenceUrl } from './publicReferenceService.js';
 import { isBlobDrawChannel, submitBlobDrawVideo, pollBlobDrawVideo, BlobDrawApiError } from './blobDrawAdapter.js';
+import { isHussChannel, submitHussVideo, pollHussVideo, HussApiError } from './hussVideoAdapter.js';
 import { registerUpload } from './uploadAccess.js';
 import { isSnumomNoChannelRejection } from './snumomSubmissionRejection.js';
 import { videoErrorTaskId, videoRequestNotSent, explicitVideoCreateError } from './videoSubmissionErrors.js';
@@ -150,6 +151,14 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
       throw error;
     }
   }
+  if (isHussChannel(c)) {
+    try {
+      return await submitHussVideo(c, { model, prompt: request.prompt, seconds: i.seconds, ratio: i.ratio, resolution: i.resolution, images: request.images, videos: request.videos, audios: request.audios, firstFrame: request.firstFrame, lastFrame: request.lastFrame, publicBaseUrl: request.publicBaseUrl }, payload => onStarting({ hussIdempotencyKey: payload.idempotency_key, hussPayload: payload }));
+    } catch (error: any) {
+      if (error instanceof HussApiError) throw new SpecificationUpstreamError(error.message, !error.uncertain && [401, 402, 429].includes(error.status), error.uncertain, [401, 402, 403].includes(error.status), error.status);
+      throw new SpecificationUpstreamError(error.message || 'HUSS 视频提交失败', true);
+    }
+  }
   const base = apiBase(c.baseUrl);
   const unsupported = (message: string): never => { throw new SpecificationUpstreamError(message, true); };
   if ((request.firstFrame || request.lastFrame) && c.type !== 'hmstudio' && !isSnumomWanChannel(c) && !(isNewTokenChannel(c) && exec === 'veo-3-1') && !/^sora-v4-/.test(exec)) unsupported('此线路协议不支持独立首尾帧');
@@ -244,6 +253,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
 export async function pollSpecificationVideo(channel: any, taskId: string) {
   if (isAsyncVideoChannel(channel)) return pollAsyncVideo(channel, taskId);
   if (isFunAiChannel(channel)) return pollFunAiTask(channel, taskId);
+  if (isHussChannel(channel)) return pollHussVideo(channel, taskId);
   if (isBlobDrawChannel(channel)) return pollBlobDrawVideo(channel, taskId);
   const base = apiBase(channel.baseUrl);
   const url = channel.type === 'hmstudio' ? hmStudioTaskUrl(channel.baseUrl, taskId)
