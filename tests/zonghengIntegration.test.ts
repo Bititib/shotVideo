@@ -62,7 +62,8 @@ vi.mock('../server/services/videoLocalizationService.js', () => ({ downloadAndLo
 import { db, sqlite } from '../server/db/index';
 import { channels, models, modelPricing, users, contents } from '../server/db/schema';
 import { ChannelService } from '../server/services/channelService';
-import { VideoRecoveryService } from '../server/services/videoRecoveryService';
+import { findVideoSubmissionReceipt } from '../server/services/videoSubmissionReceiptService';
+import { VideoRecoveryService as ContentRecoveryService } from '../server/services/videoRecoveryService';
 let video: typeof import('../server/routes/video');
 let server: Server, origin: string;
 const nativeFetch=globalThis.fetch, nativeSetTimeout=globalThis.setTimeout;
@@ -82,7 +83,7 @@ beforeAll(async()=>{
   intervalSpy.mockRestore();
 });
 beforeEach(()=>{
-  if (sqlite.prepare("SELECT name FROM sqlite_master WHERE name='video_submission_receipts'").get()) sqlite.exec('DELETE FROM video_submission_receipts');
+  findVideoSubmissionReceipt(1); sqlite.exec('DELETE FROM video_submission_receipts');
   for(const table of ['contents','channels','models','model_pricing','users','api_tokens','api_logs','settings'])sqlite.exec('DELETE FROM '+table);
   sqlite.exec('DROP TABLE IF EXISTS billing_reservations');
   db.insert(users).values({id:1,email:'test',username:'test',passwordHash:'test',balance:100}).run();
@@ -119,532 +120,132 @@ function installConfirmedVideos() {
   const channel=db.select().from(channels).get()!;
   ChannelService.updateChannel(channel.id,{supportedModels:ids,modelMapping:Object.fromEntries(ZONGHENG_VIDEO_MODELS.map(spec=>['ZH-'+spec.id,spec.id]))});
 }
-describe('Zongheng legacy entry points, isolated database and simulated provider',()=>{
-  it('accepts legacy cached website and API model IDs after prefix migration',async()=>{
-    const oldId='zongheng-Cseadanco2.5K';
-    db.insert(models).values({modelId:oldId,displayName:oldId,provider:'zongheng',capabilities:'["video"]'}).run();
-    db.insert(modelPricing).values({modelPattern:oldId,billingType:'per_call',inputPrice:3}).run();
-    ChannelService.updateChannel(db.select().from(channels).get()!.id,{supportedModels:[oldId],modelMapping:{[oldId]:'Cseadanco2.5K'}});
-    migrateZonghengModelPrefix();
-    for(const endpoint of ['/api/video/generate','/v1/videos']){
-      upstream=async(_url,init)=>{
-        if(init.method==='POST'){expect(JSON.parse(init.body)).toMatchObject({model:'Cseadanco2.5K',duration:10,resolution:'720p'});return Response.json({task_id:'vid_migrated'});}
-        return Response.json({status:'succeeded',video_url:'https://media.invalid/done.mp4'});
-      };
-      const response=await post(endpoint,{model:oldId,prompt:'产品视频'});expect(response.status).toBe(endpoint.startsWith('/api/')?200:202);await response.text();
-      await vi.waitFor(()=>expect(latest().status).toBe('completed'));
-    }
-    expect(balance()).toBe(94);
-  });
-  it('resumes an old-prefix task after migration on its original channel without a second charge',async()=>{
-    const oldId='zongheng-Cseadanco2.5K',channelId=db.select().from(channels).get()!.id;
-    db.insert(models).values({modelId:oldId,displayName:oldId,provider:'zongheng',capabilities:'["video"]'}).run();
-    db.insert(modelPricing).values({modelPattern:oldId,billingType:'per_call',inputPrice:3}).run();
-    ChannelService.updateChannel(channelId,{supportedModels:[oldId],modelMapping:{[oldId]:'Cseadanco2.5K'}});
-    db.insert(contents).values({userId:1,type:'video',status:'processing',modelId:oldId,cost:3,metadata:JSON.stringify({channelId,videoId:'vid_legacy',seconds:10,resolution:'720p',zonghengSubmissionStarted:'before restart'})}).run();
-    migrateZonghengModelPrefix();
-    upstream=async(url,init)=>{expect(init.method).not.toBe('POST');expect(url).toBe('https://channel.invalid/v1/tasks/vid_legacy');return Response.json({status:'succeeded',video_url:'https://media.invalid/done.mp4'});};
-    const record=latest();await video.resumePollForTask(record.id,record);
-    expect(latest()).toMatchObject({status:'completed',modelId:oldId,cost:3});expect(balance()).toBe(100);expect(fetch).toHaveBeenCalledTimes(1);
-  });
-  it('classifies all confirmed IDs as video and repairs old text entries without changing their enabled state',async()=>{
-    db.insert(models).values({modelId:'ZH-Cseadanco2.5K',displayName:'保留名称',provider:'zongheng',capabilities:'["text"]',isActive:0}).run();
-    upstream=async()=>Response.json({data:ZONGHENG_VIDEO_MODELS.map(spec=>({id:spec.id}))});
-    await ChannelService.syncModels(db.select().from(channels).get()!.id);
-    for(const spec of ZONGHENG_VIDEO_MODELS){
-      expect(db.select().from(models).all().find(m=>m.modelId==='ZH-'+spec.id)).toMatchObject({capabilities:'["video"]',isActive:0});
-    }
-    expect(db.select().from(models).all().find(m=>m.modelId==='ZH-Cseadanco2.5K')?.displayName).toBe('保留名称');
-    expect(JSON.parse(db.select().from(channels).get()!.modelMapping)).toEqual(Object.fromEntries(ZONGHENG_VIDEO_MODELS.map(spec=>['ZH-'+spec.id,spec.id])));
-  });
-
-  it('uses ZH IDs as default display names even when upstream supplies a different label',async()=>{
-    upstream=async()=>Response.json({data:[{id:'LLseadanco2.51',display_name:'上游展示名称'},{id:'custom-model',name:'另一个上游名称'}]});
-    await ChannelService.syncModels(db.select().from(channels).get()!.id);
-    for(const id of ['LLseadanco2.51','custom-model']){
-      expect(db.select().from(models).all().find(m=>m.modelId==='ZH-'+id)).toMatchObject({displayName:'ZH-'+id,isActive:0});
-    }
-    expect(JSON.parse(db.select().from(channels).get()!.modelMapping)).toEqual({'ZH-LLseadanco2.51':'LLseadanco2.51','ZH-custom-model':'custom-model'});
-  });
-
-  it.each([
-    {id:'TTsedanco2.5-480',resolution:'480p',rate:0.35},
-    {id:'TTseadanco2.5-720',resolution:'720p',rate:0.5},
-  ])('lists and bills the configured per-second TT model $id at its exact resolution',async({id,resolution,rate})=>{
+describe('V6K cutover using the existing Zongheng billing and recovery paths', () => {
+  it.each(ZONGHENG_VIDEO_MODELS)('retains the exact $id model and existing price through both new-protocol entry points', async spec => {
     installConfirmedVideos();
-    const modelId='ZH-'+id;
-    sqlite.prepare('UPDATE model_pricing SET billing_type=?,input_price=? WHERE model_pattern=?').run('per_second',rate,modelId);
-    const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
-    expect(listed.find(m=>m.id===modelId)).toMatchObject({
-      available:true,billingType:'per_second',allowedSeconds:Array.from({length:26},(_,i)=>i+5),maxSeconds:30,rates:{[resolution]:rate},
-    });
-    expect(Object.keys(listed.find(m=>m.id===modelId).rates)).toEqual([resolution]);
-    upstream=async(_url,init)=>{
-      if(init.method==='POST'){
-        expect(JSON.parse(init.body)).toMatchObject({model:id,duration:6,resolution});
-        return Response.json({task_id:'vid_tt'});
-      }
-      return Response.json({status:'succeeded',video_url:'https://media.invalid/tt.mp4'});
-    };
-    const response=await post('/v1/videos',{model:modelId,prompt:'产品视频',video_length:6,resolution});
-    expect(response.status).toBe(202);
-    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
-    expect(latest().cost).toBeCloseTo(rate*6,6);
-    expect(balance()).toBeCloseTo(100-rate*6,6);
-  });
-
-  it.each(['/api/video/generate','/v1/videos'])('discovers QQ 720 with its slash ID, defaults to 30 seconds and charges 5 once via %s',async endpoint=>{
-    const raw='QQsedanco2.5/720',modelId='ZH-'+raw,channelId=db.select().from(channels).get()!.id;
-    upstream=async()=>Response.json({data:[{id:raw}]});await ChannelService.syncModels(channelId);
-    expect(db.select().from(models).all().find(m=>m.modelId===modelId)).toMatchObject({displayName:modelId,capabilities:'["video"]',isActive:0});
-    expect(JSON.parse(db.select().from(channels).get()!.modelMapping)[modelId]).toBe(raw);
-    const price=db.select().from(modelPricing).all().find(p=>p.modelPattern===modelId)!;
-    expect(price).toMatchObject({billingType:'per_call',inputPrice:5,outputPrice:0});expect(JSON.parse(price.extraParams)).toEqual({category:'video','720p':5});
-    sqlite.prepare('UPDATE models SET is_active=1 WHERE model_id=?').run(modelId);
-    const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
-    expect(listed.find(m=>m.id===modelId)).toMatchObject({billingType:'per_call',allowedSeconds:[30],maxSeconds:30,rates:{'720p':5},available:true});
-    const images=Array.from({length:30},(_,i)=>'https://media.invalid/i-'+i+'.jpg'),videos=Array.from({length:10},(_,i)=>'https://media.invalid/v-'+i+'.mp4'),audios=Array.from({length:10},(_,i)=>'https://media.invalid/a-'+i+'.mp3');
-    let posts=0;upstream=async(_url,init)=>{
-      if(init.method==='POST'){posts++;expect(JSON.parse(init.body)).toMatchObject({model:raw,duration:30,resolution:'720p',images,reference_videos:videos,reference_audios:audios});return Response.json({task_id:'vid_qq720'});}
-      return Response.json({status:'succeeded',video_url:'https://media.invalid/qq720.mp4'});
-    };
-    const response=await post(endpoint,{model:modelId,prompt:'固定三十秒视频',reference_images:images,reference_videos:videos,audio_urls:audios});
-    expect(response.status).toBe(endpoint==='/v1/videos'?202:200);await response.text();await vi.waitFor(()=>expect(latest().status).toBe('completed'));
-    expect(latest().cost).toBe(5);expect(balance()).toBe(95);expect(posts).toBe(1);
-  });
-  it('preserves administrator pricing and enablement when QQ 720 is synchronized again',async()=>{
-    const modelId='ZH-QQsedanco2.5/720',channelId=db.select().from(channels).get()!.id;
-    upstream=async()=>Response.json({data:[{id:'QQsedanco2.5/720'}]});await ChannelService.syncModels(channelId);
-    sqlite.prepare('UPDATE models SET is_active=1,display_name=? WHERE model_id=?').run('自定义 QQ 720',modelId);
-    sqlite.prepare('UPDATE model_pricing SET input_price=?,extra_params=? WHERE model_pattern=?').run(7,JSON.stringify({category:'video','720p':7}),modelId);
-    await ChannelService.syncModels(channelId);
-    expect(db.select().from(models).all().find(m=>m.modelId===modelId)).toMatchObject({isActive:1,displayName:'自定义 QQ 720'});
-    const prices=db.select().from(modelPricing).all().filter(p=>p.modelPattern===modelId);
-    expect(prices).toHaveLength(1);expect(prices[0]).toMatchObject({billingType:'per_call',inputPrice:7});expect(JSON.parse(prices[0].extraParams)['720p']).toBe(7);
-  });
-  it.each(['/api/video/generate','/v1/videos'].flatMap(endpoint=>[5,30].map(seconds=>({endpoint,seconds}))))('discovers KK X and charges 6.5 once for $seconds seconds via $endpoint with all references',async({endpoint,seconds})=>{
-    const raw='KKseadanco2.5X',modelId='ZH-'+raw;
-    const channelId=db.select().from(channels).get()!.id;
-    upstream=async()=>Response.json({data:[{id:raw}]});
-    await ChannelService.syncModels(channelId);
-    expect(db.select().from(models).all().find(m=>m.modelId===modelId)).toMatchObject({displayName:modelId,capabilities:'["video"]',isActive:0});
-    expect(JSON.parse(db.select().from(channels).get()!.modelMapping)[modelId]).toBe(raw);
-    const price=db.select().from(modelPricing).all().find(p=>p.modelPattern===modelId)!;
-    expect(price).toMatchObject({billingType:'per_call',inputPrice:6.5,outputPrice:0});
-    expect(JSON.parse(price.extraParams)).toEqual({category:'video','720p':6.5});
-    sqlite.prepare('UPDATE models SET is_active=1 WHERE model_id=?').run(modelId);
-    const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
-    expect(listed.find(m=>m.id===modelId)).toMatchObject({billingType:'per_call',allowedSeconds:Array.from({length:26},(_,i)=>i+5),maxSeconds:30,rates:{'720p':6.5},available:true});
-    const images=Array.from({length:30},(_,i)=>'https://media.invalid/i-'+i+'.jpg');
-    const videos=Array.from({length:10},(_,i)=>'https://media.invalid/v-'+i+'.mp4');
-    const audios=Array.from({length:10},(_,i)=>'https://media.invalid/a-'+i+'.mp3');
-    upstream=async(_url,init)=>{
-      if(init.method==='POST'){
-        expect(JSON.parse(init.body)).toMatchObject({model:raw,duration:seconds,resolution:'720p',images,reference_videos:videos,reference_audios:audios});
-        return Response.json({task_id:'vid_kkx'});
-      }
-      return Response.json({status:'succeeded',video_url:'https://media.invalid/kkx.mp4'});
-    };
-    const response=await post(endpoint,{model:modelId,prompt:'产品视频',video_length:seconds,resolution:'720p',reference_images:images,reference_videos:videos,audio_urls:audios});
-    expect(response.status).toBe(endpoint==='/v1/videos'?202:200);await response.text();
-    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
-    expect(latest().cost).toBe(6.5);expect(balance()).toBe(93.5);
-  });
-  it('preserves administrator pricing and enablement when KK X is synchronized again',async()=>{
-    const modelId='ZH-KKseadanco2.5X',channelId=db.select().from(channels).get()!.id;
-    upstream=async()=>Response.json({data:[{id:'KKseadanco2.5X'}]});
-    await ChannelService.syncModels(channelId);
-    sqlite.prepare('UPDATE models SET is_active=1,display_name=? WHERE model_id=?').run('自定义 KK X',modelId);
-    sqlite.prepare('UPDATE model_pricing SET input_price=?,extra_params=? WHERE model_pattern=?').run(7,JSON.stringify({category:'video','720p':7}),modelId);
-    await ChannelService.syncModels(channelId);
-    expect(db.select().from(models).all().find(m=>m.modelId===modelId)).toMatchObject({isActive:1,displayName:'自定义 KK X'});
-    const prices=db.select().from(modelPricing).all().filter(p=>p.modelPattern===modelId);
-    expect(prices).toHaveLength(1);expect(prices[0]).toMatchObject({billingType:'per_call',inputPrice:7});expect(JSON.parse(prices[0].extraParams)['720p']).toBe(7);
-  });
-
-  it('repairs an enabled MMseadanco2.5-PRO entry and preserves its per-call price and exact upstream ID',async()=>{
-    const modelId='ZH-MMseadanco2.5-PRO';
-    db.insert(models).values({modelId,displayName:'自定义 PRO 名称',provider:'zongheng',capabilities:'["text"]',isActive:1}).run();
-    db.insert(modelPricing).values({modelPattern:modelId,billingType:'per_call',inputPrice:3,extraParams:'{"720p":4}'}).run();
-    const channelId=db.select().from(channels).get()!.id;
-    upstream=async()=>Response.json({data:[{id:'MMseadanco2.5-PRO'}]});
-    await ChannelService.syncModels(channelId);
-    expect(db.select().from(models).all().find(m=>m.modelId===modelId)).toMatchObject({
-      displayName:'自定义 PRO 名称',capabilities:'["video"]',isActive:1,
-    });
-    expect(JSON.parse(db.select().from(channels).get()!.modelMapping)[modelId]).toBe('MMseadanco2.5-PRO');
-    const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
-    expect(listed.find(m=>m.id===modelId)).toMatchObject({
-      billingType:'per_call',allowedSeconds:Array.from({length:26},(_,i)=>i+5),maxSeconds:30,rates:{'720p':4},available:true,
-    });
-    expect(Object.keys(listed.find(m=>m.id===modelId).rates)).toEqual(['720p']);
-    upstream=async(_url,init)=>{
-      if(init.method==='POST'){
-        expect(JSON.parse(init.body)).toMatchObject({model:'MMseadanco2.5-PRO',duration:30,resolution:'720p'});
-        return Response.json({task_id:'vid_mm_pro'});
-      }
-      return Response.json({status:'succeeded',video_url:'https://media.invalid/mm-pro.mp4'});
-    };
-    const response=await post('/v1/videos',{model:modelId,prompt:'产品视频',video_length:30,resolution:'720p'});
-    expect(response.status).toBe(202);
-    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
-    expect(latest().cost).toBe(4);
-    expect(balance()).toBe(96);
-  });
-
-  it('automatically prices newly discovered MM PRO videos at 4 each without enabling them',async()=>{
-    upstream=async()=>Response.json({data:[{id:'MMseadanco2.5-PRO'}]});
-    await ChannelService.syncModels(db.select().from(channels).get()!.id);
-    const modelId='ZH-MMseadanco2.5-PRO';
-    expect(db.select().from(models).all().find(m=>m.modelId===modelId)).toMatchObject({capabilities:'["video"]',isActive:0});
-    const price=db.select().from(modelPricing).all().find(p=>p.modelPattern===modelId)!;
-    expect(price).toMatchObject({billingType:'per_call',inputPrice:4,outputPrice:0});
-    expect(JSON.parse(price.extraParams)).toEqual({category:'video','720p':4});
-    sqlite.prepare('UPDATE models SET is_active=1 WHERE model_id=?').run(modelId);
-    const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
-    expect(listed.find(m=>m.id===modelId)).toMatchObject({billingType:'per_call',rates:{'720p':4}});
-    upstream=async(_url,init)=>{
-      if(init.method==='POST'){
-        expect(JSON.parse(init.body)).toMatchObject({model:'MMseadanco2.5-PRO',duration:5,resolution:'720p'});
-        return Response.json({task_id:'vid_mm_default_price'});
-      }
-      return Response.json({status:'succeeded',video_url:'https://media.invalid/mm-default.mp4'});
-    };
-    const response=await post('/v1/videos',{model:modelId,prompt:'产品视频',video_length:5,resolution:'720p'});
-    expect(response.status).toBe(202);
-    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
-    expect(latest().cost).toBe(4);
-    expect(balance()).toBe(96);
-  });
-
-  it.each(['/api/video/generate','/v1/videos'])('passes all 30 images, 10 videos and 10 audios through %s without truncation',async endpoint=>{
-    installConfirmedVideos();
-    const images=Array.from({length:30},(_,i)=>'https://media.invalid/i-'+i+'.jpg');
-    const videos=Array.from({length:10},(_,i)=>'https://media.invalid/v-'+i+'.mp4');
-    const audios=Array.from({length:10},(_,i)=>'https://media.invalid/a-'+i+'.mp3');
-    const body={model:'ZH-MMseadanco2.5-PRO',prompt:'多素材视频',video_length:10,resolution:'720p',reference_images:images,reference_videos:videos,audio_urls:audios};
-    const validation=await post('/api/video/validate',body);
-    expect(validation.status).toBe(200);expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();
-    upstream=async(_url,init)=>{
-      if(init.method==='POST'){
-        expect(JSON.parse(init.body)).toMatchObject({model:'MMseadanco2.5-PRO',images,reference_videos:videos,reference_audios:audios});
-        return Response.json({task_id:'vid_all_references'});
-      }
-      return Response.json({status:'succeeded',video_url:'https://media.invalid/all.mp4'});
-    };
-    const response=await post(endpoint,body);
-    expect(response.status).toBe(endpoint==='/v1/videos'?202:200);
-    await response.text();
-    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
-    expect(balance()).toBe(98);
-  });
-  it.each([{field:'reference_images',count:31,ext:'jpg'},{field:'reference_videos',count:11,ext:'mp4'},{field:'audio_urls',count:11,ext:'mp3'}])('rejects excess $field before charging or uploading in every legacy entry point',async({field,count,ext})=>{
-    installConfirmedVideos();
-    for(const endpoint of ['/api/video/validate','/api/video/generate','/v1/videos']){
-      const response=await post(endpoint,{model:'ZH-MMseadanco2.5-PRO',prompt:'素材超限测试',video_length:10,resolution:'720p',[field]:Array.from({length:count},(_,i)=>'https://media.invalid/'+i+'.'+ext)});
-      expect(response.status).toBe(400);
-      expect((await response.json() as any).error).toContain('最多支持 30 张图片、10 个视频、10 段音频');
-    }
-    expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();expect(db.select().from(contents).all()).toHaveLength(0);
-  });
-
-  it.each(['/api/video/generate','/v1/videos'])('discovers and submits the Unicode Seedance 2.0 model via %s at 2.5 per video',async endpoint=>{
-    const modelId='ZH-sedanco2.0-300秒必出',raw='sedanco2.0-300秒必出';
-    upstream=async()=>Response.json({data:[{id:raw}]});
-    await ChannelService.syncModels(db.select().from(channels).get()!.id);
-    expect(db.select().from(models).all().find(m=>m.modelId===modelId)).toMatchObject({displayName:modelId,capabilities:'["video"]',isActive:0});
-    const price=db.select().from(modelPricing).all().find(p=>p.modelPattern===modelId)!;
-    expect(price).toMatchObject({billingType:'per_call',inputPrice:2.5,outputPrice:0});
-    expect(JSON.parse(price.extraParams)).toEqual({category:'video','720p':2.5});
-    sqlite.prepare('UPDATE models SET is_active=1 WHERE model_id=?').run(modelId);
-    const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
-    expect(listed.find(m=>m.id===modelId)).toMatchObject({allowedSeconds:[15],maxSeconds:15,rates:{'720p':2.5},billingType:'per_call',available:true});
-    const images=Array.from({length:9},(_,i)=>'https://media.invalid/i-'+i+'.jpg');
-    const audios=Array.from({length:3},(_,i)=>'https://media.invalid/a-'+i+'.mp3');
-    upstream=async(_url,init)=>{
-      if(init.method==='POST'){
-        expect(JSON.parse(init.body)).toMatchObject({model:raw,duration:15,resolution:'720p',images,reference_audios:audios});
-        expect(JSON.parse(init.body)).not.toHaveProperty('reference_videos');
-        return Response.json({task_id:'vid_sedanco20'});
-      }
-      return Response.json({status:'succeeded',video_url:'https://media.invalid/sedanco20.mp4'});
-    };
-    const response=await post(endpoint,{model:modelId,prompt:'15秒产品视频',reference_images:images,audio_urls:audios});
-    expect(response.status).toBe(endpoint==='/v1/videos'?202:200);
-    await response.text();
-    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
-    expect(latest().cost).toBe(2.5);expect(balance()).toBe(97.5);
-  });
-  it.each([{field:'reference_images',count:10},{field:'reference_videos',count:1},{field:'audio_urls',count:4}])('rejects excess $field for fixed Seedance 2.0 before submission or charging',async({field,count})=>{
-    installConfirmedVideos();
-    for(const endpoint of ['/api/video/validate','/api/video/generate','/v1/videos']){
-      const response=await post(endpoint,{model:'ZH-sedanco2.0-300秒必出',prompt:'超限测试',video_length:15,resolution:'720p',[field]:Array(count).fill('https://media.invalid/source')});
-      expect(response.status).toBe(400);expect((await response.json() as any).error).toContain('最多支持 9 张图片、0 个视频、3 段音频');
-    }
-    expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();expect(db.select().from(contents).all()).toHaveLength(0);
-  });
-  it('lists exact legacy durations and one resolution for each confirmed video model',async()=>{
-    installConfirmedVideos();
-    const listed=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
-    for(const spec of ZONGHENG_VIDEO_MODELS){
-      expect(listed.find(m=>m.id==='ZH-'+spec.id)).toMatchObject({allowedSeconds:spec.seconds,maxSeconds:spec.seconds[spec.seconds.length-1],rates:{[spec.resolution]:2},series:'zongheng',available:true});
-      expect(Object.keys(listed.find(m=>m.id==='ZH-'+spec.id).rates)).toEqual([spec.resolution]);
-      expect(listed.find(m=>m.id==='ZH-'+spec.id).routingLimits).toBeUndefined();
-    }
-  });
-  it.each(ZONGHENG_VIDEO_MODELS)('uses mapped $id with valid defaults in website and API generation',async spec=>{
-    installConfirmedVideos();
-    for(const endpoint of ['/api/video/generate','/v1/videos']){
-      upstream=async(_url,init)=>{
-        if(init.method==='POST'){expect(JSON.parse(init.body)).toMatchObject({model:spec.id,duration:spec.seconds[0],resolution:spec.resolution});return Response.json({task_id:'vid_confirmed'});}
-        return Response.json({status:'succeeded',video_url:'https://media.invalid/done.mp4'});
-      };
-      const response=await post(endpoint,{model:'ZH-'+spec.id,prompt:'产品视频'});
-      expect(response.status).toBe(endpoint.startsWith('/api/')?200:202);await response.text();
-      await vi.waitFor(()=>expect(latest().status).toBe('completed'));
-    }
-    expect(balance()).toBe(96);
-  });
-  it('honors API video_length and canonicalizes 2K for matching the legacy price',async()=>{
-    installConfirmedVideos();
-    sqlite.prepare('UPDATE model_pricing SET extra_params=? WHERE model_pattern=?').run(JSON.stringify({'2k':3}),'ZH-Xminimex-h3');
-    upstream=async(_url,init)=>{
-      if(init.method==='POST'){expect(JSON.parse(init.body)).toMatchObject({model:'Xminimex-h3',duration:13,resolution:'2k'});return Response.json({task_id:'vid_2k'});}
-      return Response.json({status:'succeeded',video_url:'https://media.invalid/done.mp4'});
-    };
-    const response=await post('/v1/videos',{model:'ZH-Xminimex-h3',prompt:'产品视频',video_length:13,resolution:'2K'});
-    expect(response.status).toBe(202);await vi.waitFor(()=>expect(latest().status).toBe('completed'));expect(balance()).toBe(97);
-  });
-  it('rejects conflicting API duration aliases without submission or charge',async()=>{
-    installConfirmedVideos();
-    const response=await post('/v1/videos',{model:'ZH-wan-1080',prompt:'产品视频',seconds:5,video_length:30});
-    expect(response.status).toBe(400);expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();
-  });
-  it.each(ZONGHENG_VIDEO_MODELS)('rejects invalid $id duration and resolution before charging in all legacy entry points',async spec=>{
-    installConfirmedVideos();
-    for(const endpoint of ['/api/video/validate','/api/video/generate','/v1/videos']){
-      for(const fields of [{video_length:spec.seconds[0]-1,seconds:spec.seconds[0]-1,resolution:spec.resolution},{video_length:spec.seconds[0],seconds:spec.seconds[0],resolution:spec.resolution === '480p' ? '1080p' : '480p'}]){
-        const response=await post(endpoint,{model:'ZH-'+spec.id,prompt:'产品视频',...fields});
-        expect(response.status).toBe(400);
-      }
-    }
-    expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();
-  });
-  it('discovers namespaced disabled models and preserves provider public IDs',async()=>{
-    upstream=async url=>{expect(url).toBe('https://channel.invalid/v1/models');return Response.json({data:[{id:'gpt-image-2',type:'image'},{id:'custom-model',type:'video'},{id:'gpt-public'}]});};
-    const result=await ChannelService.syncModels(db.select().from(channels).get()!.id);
-    expect(result.models).toEqual(['ZH-gpt-image-2','ZH-custom-model','ZH-gpt-public']);
-    expect(db.select().from(models).all().find(m=>m.modelId==='ZH-custom-model')).toMatchObject({isActive:0,capabilities:'["video"]'});
-    expect(JSON.parse(db.select().from(channels).get()!.modelMapping)['ZH-custom-model']).toBe('custom-model');
-  });
-  it('blocks newly synced disabled models in website and API paths before charging',async()=>{
-    db.update(models).set({isActive:0}).run();
-    for(const endpoint of ['/api/video/generate','/v1/videos']){
-      const response=await post(endpoint,request);expect([404,503]).toContain(response.status);
-    }
-    expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();
-  });
-  it('validates batch input without submission or charge',async()=>{
-    const result=await post('/api/video/validate',request);
-    expect(result.status).toBe(200);expect(await result.json()).toMatchObject({unitCost:2});expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();
-  });
-  it('completes SSE generation, survives query 503 and charges once',async()=>{
-    let submissions=0,queries=0;
-    upstream=async(url,init)=>{
-      if(init.method==='POST'){submissions++;expect(JSON.parse(init.body)).toMatchObject({model:'video-public',duration:6,ratio:'16:9'});expect(init.headers['Idempotency-Key']).toBeTruthy();expect(JSON.parse(latest().metadata).zonghengSubmissionStarted).toBeTruthy();return Response.json({task_id:'vid_sse',next_poll_seconds:3});}
-      expect(url).toBe('https://channel.invalid/v1/tasks/vid_sse');if(++queries===1)return new Response('busy',{status:503});
-      return Response.json({status:'succeeded',video_url:'https://media.invalid/done.mp4'});
-    };
-    expect(await(await post('/api/video/generate',request)).text()).toContain('"type":"complete"');
-    expect(latest().status).toBe('completed');expect(balance()).toBe(98);expect(submissions).toBe(1);expect(queries).toBe(2);
-    expect(JSON.parse(latest().metadata).managedSpecification).toBeUndefined();
-  });
-  it('uploads local frame bytes before creating the video and preserves all platform options',async()=>{
-    let uploads=0;
-    upstream=async(url,init)=>{
-      if(url.endsWith('/v1/media')){expect(init.body).toBeInstanceOf(FormData);return Response.json({success:true,data:[{url:'https://channel.invalid/media/'+(++uploads)+'.png'}]});}
-      if(init.method==='POST'){expect(JSON.parse(init.body)).toMatchObject({start_frame:'https://channel.invalid/media/1.png',end_frame:'https://channel.invalid/media/2.png',generate_audio:false,negative_prompt:'模糊',quality:'standard'});return Response.json({task_id:'vid_frames'});}
-      return Response.json({status:'succeeded',url:'https://media.invalid/done.mp4'});
-    };
-    const response=await post('/v1/videos',{...request,seconds:6,start_frame:reference,end_frame:reference,generate_audio:false,negative_prompt:'模糊',quality:'standard'});
-    expect(response.status).toBe(202);await vi.waitFor(()=>expect(latest().status).toBe('completed'));expect(uploads).toBe(2);expect(balance()).toBe(98);
-  });
-  it.each(['/api/video/generate','/v1/videos'].flatMap(endpoint=>['ENOTFOUND','EAI_AGAIN','ECONNREFUSED','UND_ERR_CONNECT_TIMEOUT'].map(code=>({endpoint,code}))))('refunds a proven unsent request once at $endpoint for $code',async({endpoint,code})=>{
-    upstream=async()=>{throw new TypeError('fetch failed',{cause:{code}});};
-    const response=await post(endpoint,request);await response.text();
-    expect(latest()).toMatchObject({status:'failed',cost:0});expect(balance()).toBe(100);
-    expect(JSON.parse(latest().metadata!).zonghengSubmissionDiagnostics).toMatchObject({requestNotSent:true,networkCode:code});
-    video.resumeAllPendingVideoTasks();expect(balance()).toBe(100);expect(fetch).toHaveBeenCalledTimes(1);
-  });
-  it.each(['/api/video/generate','/v1/videos'].flatMap(endpoint=>['succeeded','failed'].map(finalStatus=>({endpoint,finalStatus}))))('waits through mirroring then synchronizes $finalStatus at $endpoint without resubmission',async({endpoint,finalStatus})=>{
-    let finish=false,posts=0;
-    upstream=async(_url,init)=>{
-      if(init.method==='POST'){posts++;return Response.json({task_id:'vid_delivery'});}
-      expect(init.cache).toBe('no-store');expect(init.headers['Cache-Control']).toContain('no-cache');
-      return Response.json(finish?{status:finalStatus,video_url:finalStatus==='succeeded'?'https://media.invalid/ready.mp4':null,error_detail:'交付失败'}:{status:'processing',progress:99,completed_at:'2026-10-16 13:35:20',delivery_pending:true,delivery_status:'mirroring',video_url:null,next_poll_seconds:1});
-    };
-    db.insert((await import('../server/db/schema')).apiTokens).values({id:1,userId:1,name:'test',tokenKey:'test',balance:-1}).run();
-    const response=await post(endpoint,request);
-    await vi.waitFor(()=>expect(JSON.parse(latest().metadata!)).toMatchObject({upstreamGenerated:true,upstreamDeliveryPending:true,progressText:'视频已生成，正在等待结果交付'}));
-    expect(latest().status).toBe('processing');expect(latest().resultUrl).toBeFalsy();expect(balance()).toBe(98);
-    finish=true;await response.text();await vi.waitFor(()=>expect(latest().status).toBe(finalStatus==='succeeded'?'completed':'failed'));
-    expect(balance()).toBe(finalStatus==='succeeded'?98:100);expect(posts).toBe(1);
-  });
-  it.each(['/api/video/generate','/v1/videos'].flatMap(endpoint => ['succeeded','failed'].flatMap(finalStatus => ['headers','body'].map(stage => ({endpoint,finalStatus,stage})))))('recovers a stuck $stage query at $endpoint, synchronizes $finalStatus and ignores late responses',async({endpoint,finalStatus,stage})=>{
     sqlite.prepare("INSERT INTO api_tokens (id,user_id,token_key,balance) VALUES (1,1,'test',-1)").run();
-    let posts=0,queries=0,release: (value:any)=>void = () => {};
-    upstream=async(_url,init)=>{
-      if(init.method==='POST'){posts++;return Response.json({task_id:'vid_stuck'});}
-      queries++;
-      if(queries===1){
-        const stalled=new Promise<any>(resolve=>{release=resolve;});
-        return stage==='headers' ? stalled : {text:()=>stalled} as any;
-      }
-      return Response.json({status:finalStatus,video_url:'https://channel.invalid/out.mp4',error:'confirmed generation failure'});
+    let posts = 0;
+    upstream = async (url, init) => {
+      expect(url).toBe('https://channel.invalid/v1/videos'); expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body)).toMatchObject({ model: spec.id, seconds: spec.seconds[0], resolution: spec.resolution });
+      posts++; return Response.json({ id: 'catalog_' + posts, status: 'completed' });
     };
-    const response=await post(endpoint,request);await response.text();
-    await vi.waitFor(()=>expect(latest().status).toBe(finalStatus==='succeeded'?'completed':'failed'));
-    expect(posts).toBe(1);expect(balance()).toBe(finalStatus==='succeeded'?98:100);
-    const opposite={status:finalStatus==='succeeded'?'failed':'succeeded',video_url:'https://channel.invalid/late.mp4'};
-    release(stage==='headers'?Response.json(opposite):JSON.stringify(opposite));
-    await new Promise(resolve=>nativeSetTimeout(resolve,20));
-    video.resumeAllPendingVideoTasks();video.resumeAllPendingVideoTasks();
-    expect(latest().status).toBe(finalStatus==='succeeded'?'completed':'failed');
-    expect(balance()).toBe(finalStatus==='succeeded'?98:100);expect(posts).toBe(1);
-    expect(latest().cost).toBe(finalStatus==='succeeded'?2:0);
-    if(finalStatus==='failed') expect(JSON.parse(latest().metadata).queueRefunded).toBe(true);
+    for (const endpoint of ['/api/video/generate', '/v1/videos']) {
+      await (await post(endpoint, { model: 'ZH-' + spec.id, prompt: '场景' })).text();
+      await vi.waitFor(() => expect(latest().status).toBe('completed'));
+      expect(latest().cost).toBe(2);
+    }
+    expect(posts).toBe(2); expect(balance()).toBe(96);
   });
-  it.each(['/api/video/generate','/v1/videos'])('recovers stalled result storage at %s without another submission or charge',async endpoint=>{
-    const {downloadAndLocalizeVideo}=await import('../server/services/videoLocalizationService');
-    let release:(value:string)=>void=()=>{},posts=0;
-    vi.mocked(downloadAndLocalizeVideo).mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
-    vi.spyOn(globalThis,'setTimeout').mockImplementation(((fn:any,ms:number,...args:any[])=>nativeSetTimeout(fn,ms===360000||ms>=1000&&ms<=60000?5:ms,...args)) as any);
-    upstream=async(_url,init)=>{if(init.method==='POST'){posts++;return Response.json({task_id:'vid_storage'});}return Response.json({status:'succeeded',video_url:'https://channel.invalid/out.mp4'});};
-    await(await post(endpoint,request)).text();
-    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
-    release('/uploads/videos/late.mp4');await new Promise(resolve=>nativeSetTimeout(resolve,20));
-    expect(latest().resultUrl).toBe('/uploads/videos/zongheng-test.mp4');expect(balance()).toBe(98);expect(posts).toBe(1);
-  });
-  it.each(['/api/video/generate','/v1/videos'])('does not overwrite a finalized refund when an old download completes at %s',async endpoint=>{
+  function enableV6k() {
+    const old = db.select().from(channels).get()!;
+    ChannelService.updateChannel(old.id, { status: 0 });
+    const id = ChannelService.createChannel({ name: '纵横 V6K', type: 'zongheng-v6k', baseUrl: 'https://www.v6k.top', apiKey: 'v6k-key',
+      supportedModels: ['ZH-video-public'], modelMapping: { 'ZH-video-public': 'video-public' } });
+    expect(db.select().from(channels).all().find(c => c.id === id)?.type).toBe('zongheng-v6k');
     sqlite.prepare("INSERT INTO api_tokens (id,user_id,token_key,balance) VALUES (1,1,'test',-1)").run();
-    const {downloadAndLocalizeVideo}=await import('../server/services/videoLocalizationService');
-    const {refundConfirmedZonghengVideo}=await import('../server/services/zonghengSubmissionResolutionService');
-    let release:(value:string)=>void=()=>{},started=false;
-    vi.mocked(downloadAndLocalizeVideo).mockImplementationOnce(()=>{started=true;return new Promise(resolve=>{release=resolve;});});
-    upstream=async(_url,init)=>Response.json(init.method==='POST'?{task_id:'vid_refund_race'}:{status:'succeeded',video_url:'https://channel.invalid/out.mp4'});
-    const response=await post(endpoint,request);
-    await vi.waitFor(()=>expect(started).toBe(true));
-    refundConfirmedZonghengVideo(latest().id,'confirmed externally');
-    release('/uploads/videos/late.mp4');
-    if(endpoint==='/v1/videos')await response.text();
-    await new Promise(resolve=>nativeSetTimeout(resolve,30));
-    refundConfirmedZonghengVideo(latest().id,'duplicate confirmation');
-    expect(latest().status).toBe('failed');expect(latest().cost).toBe(0);expect(balance()).toBe(100);
-    expect(latest().resultUrl).toBeFalsy();
-  });
-  it('recovers an orphaned active marker without restarting the app or submitting again',async()=>{
-    const channelId=db.select().from(channels).get()!.id;
-    const id=Number(db.insert(contents).values({userId:1,type:'video',status:'processing',modelId:request.model,cost:2,metadata:JSON.stringify({videoId:'vid_orphan',channelId})}).run().lastInsertRowid);
-    video.activePolls.add(id);upstream=async(_url,init)=>{expect(init.method).not.toBe('POST');return Response.json({status:'succeeded',video_url:'https://media.invalid/orphan.mp4'});};
-    video.resumeAllPendingVideoTasks();await vi.waitFor(()=>expect(db.select().from(contents).all().find(r=>r.id===id)?.status).toBe('completed'));
-  });
-  it.each(['/api/video/generate','/v1/videos'])('refreshes the original channel configuration while polling %s',async endpoint=>{
-    let posts=0,changed=false;
-    upstream=async(url,init)=>{
-      if(init.method==='POST'){posts++;return Response.json({task_id:'vid_original_channel',next_poll_seconds:1});}
-      if(!changed)return Response.json({status:'processing',progress:51,next_poll_seconds:1});
-      expect(url).toBe('https://updated.invalid/v1/tasks/vid_original_channel');expect(init.headers.Authorization).toBe('Bearer updated-key');
-      return Response.json({status:'succeeded',video_url:'https://media.invalid/updated.mp4'});
+    return { old, id };
+  }
+  it.each(['/api/video/generate', '/v1/videos'])('submits once and synchronizes queued/processing/completed with no URL at %s', async endpoint => {
+    const { id } = enableV6k(); let posts = 0, queries = 0;
+    const { downloadAndLocalizeVideo } = await import('../server/services/videoLocalizationService');
+    vi.mocked(downloadAndLocalizeVideo).mockClear();
+    upstream = async (url, init) => {
+      expect(init.headers.Authorization).toBe('Bearer v6k-key');
+      if (init.method === 'POST') {
+        posts++; expect(url).toBe('https://www.v6k.top/v1/videos');
+        expect(JSON.parse(init.body)).toMatchObject({ model: 'video-public', seconds: 6, videos: ['https://media.invalid/r.mp4'], audios: ['https://media.invalid/r.mp3'] });
+        expect(JSON.parse(init.body)).not.toHaveProperty('duration');
+        return Response.json({ id: 'v6k_task', status: 'queued', progress: 0 });
+      }
+      expect(url).toBe('https://www.v6k.top/v1/videos/v6k_task');
+      return Response.json({ id: 'v6k_task', status: ++queries === 1 ? 'in_progress' : 'completed', progress: 100 });
     };
-    const response=await post(endpoint,request);await vi.waitFor(()=>expect(JSON.parse(latest().metadata!).progress).toBe(51));
-    ChannelService.updateChannel(db.select().from(channels).get()!.id,{baseUrl:'https://updated.invalid',apiKey:'updated-key'});changed=true;
-    await response.text();await vi.waitFor(()=>expect(latest().status).toBe('completed'));expect(balance()).toBe(98);expect(posts).toBe(1);
+    const response = await post(endpoint, { ...request, seconds: 6, reference_videos: ['https://media.invalid/r.mp4'], audio_urls: ['https://media.invalid/r.mp3'] });
+    await response.text(); await vi.waitFor(() => expect(latest().status).toBe('completed'));
+    expect(balance()).toBe(98); expect(posts).toBe(1);
+    expect(JSON.parse(latest().metadata!)).toMatchObject({ videoId: 'v6k_task', channelId: id, zonghengProtocol: 'v6k', zonghengBaseUrl: 'https://www.v6k.top' });
+    expect(vi.mocked(downloadAndLocalizeVideo).mock.calls.some(args => args[0] === 'https://www.v6k.top/v1/videos/v6k_task/content' && args[3] === id)).toBe(true);
+    await video.resumePollForTask(latest().id, latest()); expect(balance()).toBe(98); expect(posts).toBe(1);
   });
-  it('retries only result download when local saving fails, with no refund or new generation',async()=>{
-    const {downloadAndLocalizeVideo}=await import('../server/services/videoLocalizationService');
-    vi.mocked(downloadAndLocalizeVideo).mockRejectedValueOnce(new Error('temporary storage failure'));
-    let posts=0,gets=0;
-    upstream=async(_url,init)=>{if(init.method==='POST'){posts++;return Response.json({task_id:'vid_save'});}gets++;return Response.json({status:'succeeded',video_url:'https://media.invalid/save.mp4'});};
-    const response=await post('/api/video/generate',request);await response.text();
-    expect(latest()).toMatchObject({status:'completed',resultUrl:'/uploads/videos/zongheng-test.mp4',cost:2});expect(balance()).toBe(98);expect(posts).toBe(1);expect(gets).toBe(2);
-  });
-  it('automatically refunds persisted proof of non-submission after an interrupted finalization',()=>{
-    sqlite.exec('UPDATE users SET balance=98 WHERE id=1');
-    db.insert(contents).values({userId:1,type:'video',status:'processing',modelId:request.model,cost:2,metadata:JSON.stringify({channelId:db.select().from(channels).get()!.id,zonghengSubmissionStarted:'before restart',zonghengSubmissionDiagnostics:{requestNotSent:true,reason:'network_error',networkCode:'ENOTFOUND'}})}).run();
-    video.resumeAllPendingVideoTasks();video.resumeAllPendingVideoTasks();expect(latest()).toMatchObject({status:'failed',cost:0});expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();
-  });
-  it.each(['/api/video/generate','/v1/videos'])('retains uncertain submissions at %s without refund or resubmission',async endpoint=>{
-    upstream=async()=>{throw new DOMException('private provider timeout','TimeoutError');};await(await post(endpoint,request)).text();expect(latest().status).toBe('review');expect(balance()).toBe(98);expect(fetch).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(latest().metadata!).zonghengSubmissionDiagnostics).toMatchObject({reason:'timeout',elapsedMs:expect.any(Number),recordedAt:expect.any(String)});
-    video.resumeAllPendingVideoTasks();expect(fetch).toHaveBeenCalledTimes(1);
-  });
-  it.each(['/api/video/generate','/v1/videos'])('hides provider identity in rejection responses at %s while retaining diagnostics and refunding once',async endpoint=>{
-    const detail='视频时长不符合当前模型要求，请选择支持的时长后重试';
-    upstream=async()=>Response.json({error_code:'invalid_parameters',error_detail:detail},{status:400});
-    const response=await post(endpoint,request),text=await response.text();
-    expect(text).toContain('视频时长不符合当前模型要求');expect(text).not.toContain('纵横科技');expect(text).toContain('invalid_parameters');
-    expect(latest().status).toBe('failed');expect(JSON.parse(latest().metadata!).error).toContain('纵横科技提交失败');
-    expect(balance()).toBe(100);expect(fetch).toHaveBeenCalledTimes(1);
-  });
-  it.each(['/api/video/generate','/v1/videos'])('refunds confirmed rejection at %s',async endpoint=>{
-    upstream=async()=>Response.json({error:{message:'余额不足'}},{status:402});await(await post(endpoint,request)).text();expect(latest().status).toBe('failed');expect(balance()).toBe(100);expect(fetch).toHaveBeenCalledTimes(1);
-  });
-  it('returns a local API task, handles processing and preserves original channel after restart',async()=>{
-    let queries=0;
-    upstream=async(url,init)=>init.method==='POST'?Response.json({task_id:'vid_api',next_poll_seconds:2}):Response.json(++queries===1?{status:'processing',next_poll_seconds:3}:{status:'succeeded',result_url:'https://media.invalid/result.mp4'});
-    const response=await post('/v1/videos',{...request,reference_videos:['https://media.invalid/ref.mp4'],reference_audios:['https://media.invalid/ref.wav']});
-    expect(response.status).toBe(202);expect(await response.json()).toMatchObject({task_id:'task_'+latest().id,retry_after:2});
-    await vi.waitFor(()=>expect(latest().status).toBe('completed'));expect(balance()).toBe(98);expect(queries).toBe(2);
-    const posts=vi.mocked(fetch).mock.calls.filter(([,init])=>init?.method==='POST');expect(posts).toHaveLength(1);expect(JSON.parse(posts[0][1]!.body as string)).toMatchObject({reference_videos:['https://media.invalid/ref.mp4'],reference_audios:['https://media.invalid/ref.wav']});
-  });
-  it('moves interrupted POST without an ID to review, never refunds or replays it',()=>{
-    db.insert(contents).values({userId:1,type:'video',status:'processing',modelId:request.model,cost:2,metadata:JSON.stringify({channelId:db.select().from(channels).get()!.id,zonghengSubmissionStarted:'before restart'})}).run();
-    video.resumeAllPendingVideoTasks();expect(latest().status).toBe('review');expect(fetch).not.toHaveBeenCalled();expect(balance()).toBe(100);
-  });
-  it('recovers a reviewed video using its existing charge',async()=>{
-    db.insert(contents).values({userId:1,type:'video',status:'review',modelId:request.model,cost:2,metadata:JSON.stringify({channelId:db.select().from(channels).get()!.id,videoId:'vid_recover',zonghengSubmissionStarted:'today',requiresReview:true})}).run();
-    upstream=async url=>{expect(url).toBe('https://channel.invalid/v1/tasks/vid_recover');return Response.json({status:'succeeded',video_url:'https://media.invalid/done.mp4'});};
-    expect(await VideoRecoveryService.recover(latest().id)).toMatchObject({status:'completed',chargedAmount:0});expect(balance()).toBe(100);
-  });
-  it('generates and saves website images with the mapped public model, no provider key on downloads',async()=>{
-    upstream=async(url,init)=>{
-      if(init.method==='POST'){expect(JSON.parse(init.body)).toEqual({model:'image-public',prompt:'产品图',size:'2048x2048',n:2,aspect_ratio:'1:1'});return Response.json({data:[{url:'https://channel.invalid/image1.png'},{url:'https://channel.invalid/image2.png'}]});}
-      expect(init.headers?.Authorization).toBeUndefined();return new Response(png,{headers:{'Content-Type':'image/png'}});
+  it.each(['/api/video/generate', '/v1/videos'].flatMap(endpoint => ['completed', 'failed'].map(status => ({ endpoint, status }))))('settles an immediate $status response at $endpoint without a second request', async ({ endpoint, status }) => {
+    enableV6k(); let posts = 0;
+    upstream = async (_url, init) => {
+      expect(init.method).toBe('POST'); posts++;
+      return Response.json({ id: 'v6k_immediate', status, error: status === 'failed' ? { code: 'video_generation_failed', message: 'confirmed failure' } : undefined });
     };
-    const response=await post('/api/image-gen/generate',{model:'ZH-image-public',prompt:'产品图',n:2,resolution:'2K'});
-    expect(await response.text()).toContain('"type":"complete"');expect(latest().status).toBe('completed');expect(balance()).toBe(96);expect(JSON.parse(latest().metadata).imageUrls).toHaveLength(2);
+    await (await post(endpoint, { ...request, seconds: 6 })).text();
+    await vi.waitFor(() => expect(latest().status).toBe(status));
+    expect(JSON.parse(latest().metadata!).videoId).toBe('v6k_immediate');
+    expect(balance()).toBe(status === 'completed' ? 98 : 100); expect(posts).toBe(1);
+    await video.resumePollForTask(latest().id, latest());
+    expect(balance()).toBe(status === 'completed' ? 98 : 100); expect(posts).toBe(1);
   });
-  it('generates API images, localizes them and settles partial output by actual count',async()=>{
-    upstream=async(_url,init)=>init.method==='POST'?Response.json({data:[{url:'https://channel.invalid/image.png'}]}):new Response(png,{headers:{'Content-Type':'image/png'}});
-    const response=await post('/v1/images/generations',{model:'ZH-image-public',prompt:'产品图',n:2});
-    expect(response.status).toBe(200);const data=await response.json() as any;expect(data.data[0].url).toContain('/api/uploads/zongheng_api_');expect(latest().status).toBe('completed');expect(balance()).toBe(98);
+  it('retains an old order without querying the retired API, resubmitting or refunding', async () => {
+    const { old } = enableV6k();
+    const id = Number(db.insert(contents).values({ userId: 1, type: 'video', status: 'processing', modelId: request.model, cost: 2,
+      metadata: JSON.stringify({ videoId: 'vid_old', channelId: old.id, zonghengProtocol: 'legacy' }) }).run().lastInsertRowid);
+    await video.resumePollForTask(id, latest());
+    expect(latest()).toMatchObject({ status: 'review', cost: 2 });
+    expect(JSON.parse(latest().metadata!).videoId).toBe('vid_old'); expect(fetch).not.toHaveBeenCalled(); expect(balance()).toBe(100);
+    await expect(ContentRecoveryService.inspect(id)).rejects.toMatchObject({ status: 409 });
+    expect(fetch).not.toHaveBeenCalled();
   });
-  it('uses output_resolution for API image size and legacy resolution pricing',async()=>{
-    sqlite.prepare('UPDATE model_pricing SET extra_params=? WHERE model_pattern=?').run(JSON.stringify({'2K':5}),'ZH-image-public');
-    upstream=async(_url,init)=>{
-      if(init.method==='POST'){expect(JSON.parse(init.body).size).toBe('2048x2048');return Response.json({data:[{url:'https://channel.invalid/image.png'}]});}
-      return new Response(png,{headers:{'Content-Type':'image/png'}});
+  it.each(['completed', 'failed'])('continues the original task after a temporary query error and settles %s once', async status => {
+    enableV6k(); let posts = 0, queries = 0;
+    upstream = async (_url, init) => {
+      if (init.method === 'POST') { posts++; return Response.json({ id: 'v6k_retry', status: 'queued' }); }
+      if (++queries === 1) return Response.json({ error: { message: 'rate limited' } }, { status: 429, headers: { 'Retry-After': '1' } });
+      return Response.json({ id: 'v6k_retry', status, error: status === 'failed' ? { message: 'confirmed failure' } : undefined });
     };
-    const response=await post('/v1/images/generations',{model:'ZH-image-public',prompt:'产品图',output_resolution:'2K'});
-    expect(response.status).toBe(200);expect(balance()).toBe(95);
+    await (await post('/v1/videos', { ...request, seconds: 6 })).text();
+    await vi.waitFor(() => expect(latest().status).toBe(status));
+    expect(posts).toBe(1); expect(queries).toBe(2); expect(balance()).toBe(status === 'failed' ? 100 : 98);
+    await video.resumePollForTask(latest().id, latest());
+    expect(balance()).toBe(status === 'failed' ? 100 : 98); expect(posts).toBe(1);
   });
-  it.each(['/api/image-gen/generate','/v1/images/generations'])('rejects undocumented mask aliases at %s before charging',async endpoint=>{
-    const response=await post(endpoint,{model:'ZH-image-public',prompt:'产品图',mask:reference});
-    expect(response.status).toBe(400);expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();
-  });
-  it.each(['/api/image-gen/generate','/v1/images/generations'])('keeps uncertain image charges at %s for review',async endpoint=>{
-    upstream=async()=>{throw Error('timeout');};await(await post(endpoint,{model:'ZH-image-public',prompt:'产品图'})).text();expect(latest().status).toBe('review');expect(balance()).toBe(98);expect(fetch).toHaveBeenCalledTimes(1);
-    expect((sqlite.prepare('SELECT state FROM billing_reservations').get() as any).state).toBe('review');
-  });
-  it.each(['/api/image-gen/generate','/v1/images/generations'])('rejects undocumented reference images at %s before charging',async endpoint=>{
-    const response=await post(endpoint,{model:'ZH-image-public',prompt:'产品图',reference_images:[reference]});expect(response.status).toBe(400);expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();
-  });
-  it.each([false,true])('forwards GPT requests with stream=%s through the existing legacy proxy',async stream=>{
-    upstream=async(url,init)=>{
-      expect(url).toBe('https://channel.invalid/v1/chat/completions');expect(JSON.parse(init.body)).toMatchObject({model:'gpt-public',stream});
-      const result={model:'gpt-public',choices:[{message:{role:'assistant',content:'hello'}}],usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15}};
-      return stream?new Response('data: '+JSON.stringify(result)+'\n\ndata: [DONE]\n\n',{headers:{'Content-Type':'text/event-stream'}}):Response.json(result);
+  it('retries V6K result storage without creating another task or refunding a success', async () => {
+    enableV6k(); let posts = 0, queries = 0;
+    const { downloadAndLocalizeVideo } = await import('../server/services/videoLocalizationService');
+    vi.mocked(downloadAndLocalizeVideo).mockRejectedValueOnce(new Error('temporary save failure'));
+    upstream = async (_url, init) => {
+      if (init.method === 'POST') { posts++; return Response.json({ id: 'save_retry', status: 'queued' }); }
+      queries++; return Response.json({ id: 'save_retry', status: 'completed' });
     };
-    const response=await post('/v1/chat/completions',{model:'ZH-gpt-public',messages:[{role:'user',content:'hello'}],stream});expect(response.status).toBe(200);expect(await response.text()).toContain('hello');expect(balance()).toBeCloseTo(99.99998,6);
+    await (await post('/api/video/generate', { ...request, seconds: 6 })).text();
+    expect(latest().status).toBe('completed'); expect(balance()).toBe(98); expect(posts).toBe(1); expect(queries).toBe(2);
+  });
+  it('inspects a V6K task using its content endpoint instead of requiring a public URL', async () => {
+    const { id: channelId } = enableV6k();
+    const id = Number(db.insert(contents).values({ userId: 1, type: 'video', status: 'processing', modelId: request.model, cost: 2,
+      metadata: JSON.stringify({ videoId: 'new_task', channelId, zonghengProtocol: 'v6k', zonghengBaseUrl: 'https://www.v6k.top' }) }).run().lastInsertRowid);
+    upstream = async url => { expect(url).toBe('https://www.v6k.top/v1/videos/new_task'); return Response.json({ id: 'new_task', status: 'completed' }); };
+    expect(await ContentRecoveryService.inspect(id)).toMatchObject({ status: 'completed', upstreamResultUrl: 'https://www.v6k.top/v1/videos/new_task/content' });
+    expect(balance()).toBe(100);
+  });
+  it.each(['/api/video/generate', '/v1/videos'].flatMap(endpoint => [200, 400, 401, 402, 403, 404, 422, 429].map(status => ({ endpoint, status }))))('marks an explicit HTTP $status rejection failed, not review, at $endpoint', async ({ endpoint, status }) => {
+    enableV6k(); let posts = 0;
+    upstream = async (_url, init) => {
+      expect(init.method).toBe('POST'); posts++;
+      return Response.json({ error: { code: 'invalid_parameters', type: 'new_api_error', message: 'unsupported duration' },
+        code: 'invalid_parameters', message: 'unsupported duration', data: null, request_id: 'trace_only' },
+        { status, headers: { 'x-request-id': 'trace_only' } });
+    };
+    await (await post(endpoint, { ...request, seconds: 6 })).text();
+    expect(latest()).toMatchObject({ status: 'failed', cost: 0 });
+    const metadata = JSON.parse(latest().metadata!);
+    expect(metadata.requiresReview).not.toBe(true);
+    expect(metadata.error).toContain('unsupported duration');
+    expect(balance()).toBe(100); expect(posts).toBe(1);
+    await video.resumePollForTask(latest().id, latest());
+    expect(balance()).toBe(100); expect(posts).toBe(1);
+  });
+  it.each(['/api/video/generate', '/v1/videos'])('does not resubmit or refund an uncertain 504 at %s', async endpoint => {
+    enableV6k(); let posts = 0;
+    upstream = async () => { posts++; return new Response('<html>gateway timeout</html>', { status: 504 }); };
+    await (await post(endpoint, { ...request, seconds: 6 })).text();
+    expect(latest().status).toBe('review'); expect(balance()).toBe(98);
+    await video.resumePollForTask(latest().id, latest());
+    expect(posts).toBe(1); expect(balance()).toBe(98);
   });
 });

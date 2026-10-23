@@ -1,8 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { zonghengBaseUrl, zonghengError } from './zonghengAdapter.js';
+import { publishReferenceBytes } from './publicReferenceService.js';
+import type { ZonghengProtocol } from './zonghengProtocol.js';
 export type ZonghengMediaKind = 'image' | 'video' | 'audio';
-export interface ZonghengMediaOptions { baseUrl: string; apiKey: string; publicBaseUrl: string; uploadsRoot?: string; timeout?: number }
+export interface ZonghengMediaOptions { baseUrl: string; apiKey: string; publicBaseUrl: string; uploadsRoot?: string; timeout?: number; protocol?: ZonghengProtocol }
 const MAX_BYTES = 25 * 1024 * 1024;
 const types: Record<string, string> = { '.jpg':'image/jpeg','.jpeg':'image/jpeg','.png':'image/png','.webp':'image/webp','.gif':'image/gif', '.mp4':'video/mp4','.webm':'video/webm', '.mp3':'audio/mpeg','.wav':'audio/wav','.ogg':'audio/ogg','.flac':'audio/flac' };
 function publicUrl(source: string) {
@@ -43,18 +44,13 @@ async function readMedia(source: string, kind: ZonghengMediaKind, options: Zongh
 export async function validateZonghengMedia(sources: string[], kind: ZonghengMediaKind, options: ZonghengMediaOptions) {
   for (const source of sources) await readMedia(source, kind, options);
 }
-/** Upload at submission time; do not cache provider URLs, which expire after three days. */
+/** Publish references as stable public links for the unified video API. */
 export async function prepareZonghengMedia(sources: string[], kind: ZonghengMediaKind, options: ZonghengMediaOptions): Promise<string[]> {
   const urls: string[] = [];
   for (const source of sources) {
     const media = await readMedia(source, kind, options);
     if (media.url) { urls.push(media.url); continue; }
-    const form = new FormData(); form.append('file', new Blob([new Uint8Array(media.bytes!)], { type: media.mime }), media.filename);
-    const response = await fetch(zonghengBaseUrl(options.baseUrl) + '/v1/media', { method: 'POST', headers: { Authorization: 'Bearer ' + options.apiKey }, body: form,
-      signal: AbortSignal.timeout(options.timeout || 120_000), redirect: 'error' });
-    const payload = await response.json() as any;
-    if (!response.ok || payload.success === false || !payload.data?.[0]?.url) throw new Error('纵横科技素材上传失败：' + zonghengError(payload));
-    urls.push(publicUrl(payload.data[0].url));
+    urls.push(publicUrl(publishReferenceBytes(media.bytes!, media.mime!, options.publicBaseUrl)));
   }
   return urls;
 }

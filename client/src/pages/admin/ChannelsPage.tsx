@@ -255,7 +255,7 @@ export default function ChannelsPage() {
     try {
       const result = await adminApi.syncChannelModels(ch.id);
       const message = `同步完成：上游 ${result.count} 个模型，新增 ${result.added} 个模型配置`
-        + (result.count === 0 ? '。请检查渠道 Key 的模型授权。' : ['zongheng', 'funai', 'mj'].includes(ch.type) ? '。新模型默认停用，请配置价格后启用。' : '。');
+        + (result.count === 0 ? '。请检查渠道 Key 的模型授权。' : ['zongheng', 'zongheng-v6k', 'funai', 'mj'].includes(ch.type) ? '。新模型默认停用，请配置价格后启用。' : '。');
       setNotice(message);
       setChannelFeedback({ channelId: ch.id, kind: 'success', message });
       await loadChannels();
@@ -503,13 +503,13 @@ export default function ChannelsPage() {
                       apiKeys: e.target.value === 'hmstudio' && (!edit.apiKeys || edit.apiKeys.length === 0)
                         ? [newHmKey()]
                         : edit.apiKeys,
-                      maxRetries: ['funai', 'async-video', 'mj', 'huss'].includes(e.target.value) ? 0 : edit.maxRetries,
+                      maxRetries: ['zongheng-v6k', 'funai', 'async-video', 'mj', 'huss'].includes(e.target.value) ? 0 : edit.maxRetries,
                       baseUrl: e.target.value === 'async-video' && !edit.baseUrl
                         ? ASYNC_VIDEO_BASE_URL
                         : e.target.value === 'funai' && !edit.baseUrl
                         ? FUNAI_BASE_URL
-                        : e.target.value === 'zongheng' && !edit.baseUrl
-                        ? 'https://cnd-coo-new.pages.dev'
+                        : e.target.value === 'zongheng-v6k' && !edit.baseUrl
+                        ? 'https://www.v6k.top'
                         : e.target.value === 'hmstudio' && !edit.baseUrl
                         ? HM_STUDIO_BASE_URL
                         : e.target.value === 'blobdraw' && !edit.baseUrl
@@ -529,7 +529,7 @@ export default function ChannelsPage() {
                           : edit.baseUrl,
                     })}
                       className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
-                      <option value="zongheng">纵横科技（视频／图片／GPT）</option>
+                      <option value="zongheng-v6k">纵横科技 V6K（统一视频接口）</option>
                       <option value="funai">FunAI（图片／视频生成）</option>
                       <option value="mj">MJ（图片）</option>
                       <option value="openai">OpenAI 兼容（Chat 代理）</option>
@@ -565,7 +565,7 @@ export default function ChannelsPage() {
               {edit.type === 'huss' && <p className="text-xs leading-5 text-zinc-400">使用 HUSS API Key。同步后会将 bb-seedance2.5-301010 接入既有 bb-2.5-301010 公共模型；支持 10–30 秒、720p、三种画幅及图/视频/音频参考。</p>}
               {edit.type === 'mj' && <p className="text-xs leading-5 text-zinc-400">保存密钥后同步 MJ 图片模型，配置按次售价后启用。支持 1K、最多 6 张参考图；一次任务返回 4 张图片，仅收一次费用，结果自动保存到素材库。</p>}
               {edit.type === 'funai' && <p className="text-xs leading-5 text-zinc-400">保存密钥后同步图片与视频模型。新模型默认停用，配置售价后启用；图片按 1K、2K、4K 分别建立入口。生成结果不确定时保留原任务，避免重复扣费。</p>}
-              {edit.type === 'zongheng' && <p className="text-xs leading-5 text-zinc-400">同步模型会创建带 ZH- 前缀的停用入口；请核对模型能力、配置价格后启用。视频参考素材提交时上传，图片暂仅支持文生图。</p>}
+              {edit.type === 'zongheng-v6k' && <p className="text-xs leading-5 text-zinc-400">填写 V6K 站点令牌并同步模型。视频支持公网图片、视频和音频参考，生成结果自动保存到本站；旧视频协议已停用。</p>}
               {edit.type === 'wx-haidiyue' && (
                 <section aria-labelledby="haidi-face-split-title" className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3.5 sm:p-4">
                   <div className="flex items-center justify-between gap-4">

@@ -128,7 +128,6 @@ export const adminApi = {
   recheckContentUpstream(id: number) { return api.post<any>(`/admin/contents/${id}/recheck-upstream`); },
   confirmContentNotAccepted(id: number, note: string) { return api.post<{id:number;status:string;refundedAmount:number;alreadyResolved:boolean}>(`/admin/contents/${id}/confirm-not-accepted`, {confirmedNotAccepted:true,note}); },
   failReviewedContentAndRefund(id: number) { return api.post<{id:number;status:string;refundedAmount:number;refundTarget?:string;alreadyResolved:boolean}>(`/admin/contents/${id}/fail-and-refund`, {confirmedFailureRefund:true}); },
-  failReviewedContentAndRefund(id: number) { return api.post<{id:number;status:string;refundedAmount:number;refundTarget?:string;alreadyResolved:boolean}>(`/admin/contents/${id}/fail-and-refund`, {confirmedFailureRefund:true}); },
   recoverContentUpstream(id: number) { return api.post<any>(`/admin/contents/${id}/recover-upstream`); },
   saveContentRecoveryTaskId(id: number, taskId: string) { return api.put<{message:string;taskId:string}>(`/admin/contents/${id}/recovery-task-id`, { taskId }); },
 

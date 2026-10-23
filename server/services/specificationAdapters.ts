@@ -1,3 +1,6 @@
+import { isZonghengChannel, submitZonghengVideo, normalizeZonghengTask, zonghengTaskUrl, ZonghengSubmissionError } from './zonghengAdapter.js';
+import { zonghengProtocol, zonghengProtocolSnapshot } from './zonghengProtocol.js';
+import { prepareZonghengMedia } from './zonghengMediaService.js';
 import { imageGenerationTimeout } from './imageGenerationTimeout.js';
 import { isMjChannel, mjBaseUrl, buildMjImagePayload, MJ_ASYNC_TIMEOUT_MS, type MjAsyncImageState } from './mjAdapter.js';
 import { isAsyncVideoChannel, buildAsyncVideoPayload, asyncVideoCreateUrl, pollAsyncVideo } from './asyncVideoAdapter.js';
@@ -114,6 +117,29 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
 }
 export async function submitSpecificationVideo(target: RouteCandidate, request: SpecificationRequest, onStarting: (metadata?: Record<string, unknown>) => void) {
   const c = { ...target.channel, videoSubmission: true }, model = target.route.upstreamModel, exec = target.route.executionModel, i = request.input;
+  if (isZonghengChannel(c)) {
+    let acceptedTaskId = '';
+    try {
+      const protocol = zonghengProtocol(c), snapshot = zonghengProtocolSnapshot(c);
+      const options = { ...c, publicBaseUrl: request.publicBaseUrl, protocol };
+      const images = await prepareZonghengMedia(request.images, 'image', options);
+      const videos = await prepareZonghengMedia(request.videos, 'video', options);
+      const audios = await prepareZonghengMedia(request.audios, 'audio', options);
+      const frames = await prepareZonghengMedia([request.firstFrame, request.lastFrame].filter(Boolean), 'image', options);
+      const job = await submitZonghengVideo(c.baseUrl, c.apiKey, { model, prompt: request.prompt, seconds: i.seconds,
+        ratio: i.ratio, resolution: i.resolution, images, videos, audios, firstFrame: frames[0], lastFrame: frames[1],
+        quality: request.body.quality, negativePrompt: request.body.negative_prompt, generateAudio: request.body.generate_audio }, randomUUID(),
+        () => onStarting(snapshot), c.timeout, protocol);
+      acceptedTaskId = job.taskId;
+      onStarting({ ...snapshot, videoId: job.taskId, zonghengInitialTask: job.initialTask });
+      return job.taskId;
+    } catch (error: any) {
+      if (acceptedTaskId) throw new SpecificationUpstreamError(error.message, false, true);
+      if (error instanceof SpecificationUpstreamError) throw error;
+      if (error instanceof ZonghengSubmissionError) throw new SpecificationUpstreamError(error.message, false, error.uncertain, false, error.diagnostics?.httpStatus || 0, !error.uncertain);
+      throw new SpecificationUpstreamError(error.message, true);
+    }
+  }
   if (isMjChannel(c)) throw new SpecificationUpstreamError('MJ 渠道仅接入 MJ 图片模型', true);
   if (isAsyncVideoChannel(c)) {
     let payload: ReturnType<typeof buildAsyncVideoPayload>;
@@ -251,6 +277,11 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   return String(id);
 }
 export async function pollSpecificationVideo(channel: any, taskId: string) {
+  if (isZonghengChannel(channel)) {
+    const response = await fetch(zonghengTaskUrl(channel.baseUrl, taskId), { headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(30_000), redirect: 'error' });
+    if (!response.ok) throw Object.assign(new Error('任务查询暂时不可用'), { status: response.status });
+    return normalizeZonghengTask(await response.json(), channel.baseUrl, 'v6k', taskId);
+  }
   if (isAsyncVideoChannel(channel)) return pollAsyncVideo(channel, taskId);
   if (isFunAiChannel(channel)) return pollFunAiTask(channel, taskId);
   if (isHussChannel(channel)) return pollHussVideo(channel, taskId);

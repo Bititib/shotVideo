@@ -1,3 +1,5 @@
+import { isZonghengChannel, normalizeZonghengTask } from './zonghengAdapter.js';
+import { zonghengProtocol, zonghengTaskChannel, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE, v6kQueryRetryDelay } from './zonghengProtocol.js';
 import { modelAvailabilityMessage } from '../../shared/upstreamAvailability.js';
 import { startSseHeartbeat } from './sseHeartbeat.js';
 import { publicGenerationError, publicGenerationEvent } from '../../shared/generationMessages.js';
@@ -171,18 +173,24 @@ function failContent(id: number, message: string) {
   db.update(contents).set({ cost: 0 }).where(eq(contents.id, id)).run();
 }
 async function pollVideo(id: number, channel: any, taskId: string, onEvent: (data: any) => void) {
+  if (isZonghengChannel(channel) && isRetiredZonghengTask(metadata(id))) { holdForReview(id, RETIRED_ZONGHENG_MESSAGE, 'query'); return; }
+  if (isZonghengChannel(channel)) channel = zonghengTaskChannel(channel, metadata(id));
   const end = Date.now() + 2 * 60 * 60_000;
   let queryFailures = 0;
   while (Date.now() < end) {
     let task: any;
-    try { task = await pollSpecificationVideo(channel, taskId); }
+    try {
+      const initial = metadata(id).zonghengInitialTask;
+      if (isZonghengChannel(channel) && initial) { task = normalizeZonghengTask(initial, channel.baseUrl, 'v6k', taskId); patch(id, { zonghengInitialTask: undefined }); }
+      else task = await pollSpecificationVideo(channel, taskId);
+    }
     catch (error: any) {
       const status = Number(error?.status) || null;
       const message = [401, 403].includes(status || 0) ? '任务状态查询被拒绝，请联系管理员检查渠道配置'
         : '任务状态暂时查询不到，正在重试，请勿重复提交';
       patch(id, { progressText: message, upstreamQueryError: message, lastQueryAt: new Date().toISOString(), lastQueryStatus: status, queryFailures: ++queryFailures });
       onEvent({ type: 'status', message, contentId: id });
-      await wait(12_000); continue;
+      await wait(isZonghengChannel(channel) ? v6kQueryRetryDelay(queryFailures) : 12_000); continue;
     }
     queryFailures = 0;
     patch(id, { upstreamQueryError: null });
@@ -216,7 +224,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         onEvent({ type: 'complete', videoUrl: localized, contentId: id }); return;
       }
     }
-    await wait(isFunAiChannel(channel) ? 5_000 : isBlobDrawChannel(channel) ? 10_000 : 8_000);
+    await wait(isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : isBlobDrawChannel(channel) ? 10_000 : 8_000);
   }
   holdForReview(id, '原任务查询达到时限，费用保留，请核查原任务', 'query');
   onEvent({ type: 'status', message: '任务仍待核实，请在历史记录查看' });

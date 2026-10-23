@@ -1,3 +1,4 @@
+import { zonghengProtocol, zonghengProtocolSnapshot, zonghengTaskChannel, v6kQueryRetryDelay, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE } from '../services/zonghengProtocol.js';
 import { VideoPollTimeout, withVideoPollDeadline, fetchVideoTaskResponse } from '../services/videoPollDeadline.js';
 import { refundConfirmedZonghengVideo } from '../services/zonghengSubmissionResolutionService.js';
 import { queryZonghengTask } from '../services/zonghengTaskQueryService.js';
@@ -1103,7 +1104,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     try {
       buildZonghengVideoPayload({ model: upstreamModel, prompt, seconds: Number(video_length), ratio: aspect_ratio, resolution,
         images: reference_images, videos: finalVideos, audios: finalAudios, firstFrame: first_frame, lastFrame: last_frame,
-        quality: req.body.quality, negativePrompt: req.body.negative_prompt, generateAudio: req.body.generate_audio });
+        quality: req.body.quality, negativePrompt: req.body.negative_prompt, generateAudio: req.body.generate_audio }, zonghengProtocol(channel));
       const options = { baseUrl: channel.baseUrl, apiKey: channel.apiKey, publicBaseUrl: process.env.BACKEND_URL || req.protocol + '://' + req.get('host') };
       await validateZonghengMedia([...reference_images, first_frame, last_frame].filter(Boolean), 'image', options);
       await validateZonghengMedia(finalVideos, 'video', options);
@@ -1553,7 +1554,10 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   const isMiaowu = isMiaowuChannel(channel);
   const isHaya = isHayaChannel(channel);
   const isZongheng = isZonghengChannel(channel);
-  let zonghengDelay = 10_000;
+  const zonghengApiProtocol = zonghengProtocol(channel);
+  const zonghengSnapshot = isZongheng ? zonghengProtocolSnapshot(channel) : {};
+  let zonghengInitialTask: any;
+  let zonghengDelay = 20_000;
   const isVeoOmni = model === 'veo-omni-flash';
   const isVeoOmniEdit = model === 'veo-omni-flash-video-edit';
   const isVeo31 = model === 'veo-3-1';
@@ -1656,9 +1660,10 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
         const job = await submitZonghengVideo(baseUrl, channel.apiKey, { model: upstreamModel, prompt, seconds: Number(video_length), ratio: aspect_ratio, resolution,
           images, videos, audios, firstFrame: frames[0], lastFrame: frames[1], quality: req.body.quality,
           negativePrompt: req.body.negative_prompt, generateAudio: req.body.generate_audio }, zonghengOrder(contentId),
-          () => { paidRequestStarted = true; patchZonghengTask(contentId!, { zonghengSubmissionStarted: new Date().toISOString() }); }, dbChannel?.timeout);
+          () => { paidRequestStarted = true; patchZonghengTask(contentId!, { ...zonghengSnapshot, zonghengSubmissionStarted: new Date().toISOString() }); }, dbChannel?.timeout, zonghengApiProtocol);
+        zonghengInitialTask = job.initialTask;
         videoId = job.taskId; zonghengDelay = job.pollDelay;
-        patchZonghengTask(contentId, { videoId, zonghengPollDelay: job.pollDelay });
+        patchZonghengTask(contentId, { ...zonghengSnapshot, videoId, zonghengPollDelay: job.pollDelay, zonghengInitialTask: job.initialTask });
       } catch (error: any) {
         recordZonghengSubmissionError(contentId, error);
         if (error instanceof ZonghengSubmissionError && error.uncertain || videoId) {
@@ -2706,7 +2711,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         if (!res.destroyed && !res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
         return;
       }
-      await new Promise(r => setTimeout(r, isZongheng ? zonghengDelay : isHaya ? hayaPollDelay(consecutiveTransientPollFailures) : pollInterval));
+      if (!zonghengInitialTask) await new Promise(r => setTimeout(r, isZongheng ? zonghengDelay : isHaya ? hayaPollDelay(consecutiveTransientPollFailures) : pollInterval));
 
       // 检查客户端是否断开仅进行日志记录，不终止后台轮询以完成计费和数据库更新
       if (res.writableEnded || res.destroyed) {
@@ -2731,8 +2736,8 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
           pollUrl = `${baseUrl}/v1/video/generations/${videoId}`;
         }
 
-        const pollResp = isZongheng
-          ? await queryZonghengTask(videoId, dbChannel?.id, dbChannel?.apiKeyId, channel)
+        const pollResp = isZongheng && zonghengInitialTask ? globalThis.Response.json(zonghengInitialTask) : isZongheng
+          ? await queryZonghengTask(videoId, dbChannel?.id, dbChannel?.apiKeyId, channel, zonghengSnapshot)
           : protectedPolling ? await fetchVideoTaskResponse(pollUrl, { headers })
           : await fetch(pollUrl, { headers, signal: AbortSignal.timeout(15_000) });
 
@@ -2746,6 +2751,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
           }
           if (isHaya || isZongheng) {
             consecutiveTransientPollFailures++;
+            if (isZongheng) zonghengDelay = v6kQueryRetryDelay(consecutiveTransientPollFailures, pollResp.headers.get('retry-after'));
             if (contentId !== null) (isZongheng ? patchZonghengTask : patchHayaTask)(contentId, { progressText: '查询暂时不可用，继续查询原任务，不会重复生成' });
             continue;
           }
@@ -2775,6 +2781,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
         if (!isHaya) consecutiveTransientPollFailures = 0;
         const status = await pollResp.json() as any;
+        if (zonghengInitialTask) { zonghengInitialTask = undefined; if (contentId !== null) patchZonghengTask(contentId, { zonghengInitialTask: undefined }); }
         if (contentId !== null && db.select().from(contents).where(eq(contents.id, contentId)).get()?.status !== 'processing') {
           if (!res.destroyed && !res.writableEnded) res.end();
           return;
@@ -2792,7 +2799,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         let snumomBillingUsage: ReturnType<typeof normalizeSnumomWanTask>['billingUsage'] = null;
 
         if (isZongheng) {
-          const normalized = normalizeZonghengTask(status);
+          const normalized = normalizeZonghengTask(status, baseUrl, zonghengApiProtocol, videoId);
           taskStatus = normalized.status; progress = normalized.progress; resultUrl = normalized.resultUrl; errMsg = normalized.error;
           zonghengDelay = normalized.pollDelay;
         } else if (isHaya) {
@@ -2918,7 +2925,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
         if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'generating' || taskStatus === 'post_processing' || taskStatus === 'finalizing' || taskStatus === 'in_progress') {
           sendEvent({ type: 'progress', progress });
-          const hmProgressText = isZongheng ? normalizeZonghengTask(status).progressText : isHmStudio ? normalizeHmStudioTask(status, baseUrl).progressText : '';
+          const hmProgressText = isZongheng ? normalizeZonghengTask(status, baseUrl, zonghengApiProtocol, videoId).progressText : isHmStudio ? normalizeHmStudioTask(status, baseUrl).progressText : '';
           sendEvent({ type: 'status', message: hmProgressText || `视频生成中 ${progress}%` });
           // 将实时进度写入数据库，以便前端刷新页面后恢复时能读取
           if (contentId !== null) {
@@ -2929,7 +2936,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
                 meta.progress = progress;
                 meta.upstreamStatus = taskStatus;
                 if (protectedPolling) { delete meta.upstreamQueryError; meta.progressText = `视频生成中 ${progress}%`; }
-                if (isZongheng) Object.assign(meta, zonghengTaskMetadata(status));
+                if (isZongheng) Object.assign(meta, zonghengTaskMetadata(status, baseUrl, zonghengApiProtocol, videoId));
                 if (hmProgressText) meta.progressText = hmProgressText;
                 db.update(contents).set({ metadata: JSON.stringify(meta) }).where(eq(contents.id, contentId)).run();
               }
@@ -2961,7 +2968,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
           if (contentId !== null) {
             const row = db.select().from(contents).where(eq(contents.id, contentId)).get();
             const metadata = JSON.parse(row?.metadata || '{}');
-            db.update(contents).set({ metadata: JSON.stringify({ ...metadata, ...(isZongheng ? zonghengTaskMetadata(status) : {}), progress: 100, upstreamStatus: taskStatus, upstreamResultUrl: resultUrl, progressText: '视频已生成，正在保存到本站存储' }) }).where(eq(contents.id, contentId)).run();
+            db.update(contents).set({ metadata: JSON.stringify({ ...metadata, ...(isZongheng ? zonghengTaskMetadata(status, baseUrl, zonghengApiProtocol, videoId) : {}), progress: 100, upstreamStatus: taskStatus, upstreamResultUrl: resultUrl, progressText: '视频已生成，正在保存到本站存储' }) }).where(eq(contents.id, contentId)).run();
           }
           sendEvent({ type: 'progress', progress: 100 });
           sendEvent({ type: 'status', message: '视频已生成，正在保存到本站存储' });
@@ -3574,9 +3581,13 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
     return Promise.resolve();
   }
 
-  const originalChannel = metadata.channelId
+  const configuredChannel = metadata.channelId
     ? ChannelService.getChannelRaw(Number(metadata.channelId), Number(metadata.channelApiKeyId) || null)
     : null;
+  if (configuredChannel && isZonghengChannel(configuredChannel) && isRetiredZonghengTask(metadata)) {
+    activePolls.delete(contentId); reviewZonghengTask(contentId, RETIRED_ZONGHENG_MESSAGE); return Promise.resolve();
+  }
+  const originalChannel = configuredChannel && isZonghengChannel(configuredChannel) ? zonghengTaskChannel(configuredChannel, metadata) : configuredChannel;
   const fallbackChannel = findVideoChannel(model);
   const channel = originalChannel ? {
     id: originalChannel.id,
@@ -3705,7 +3716,9 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   const isHaya = isHayaChannel(channel);
   const isZongheng = isZonghengChannel(channel);
   const protectedPolling = !isHaya && !isZongheng && protectsVideoPolling(channel, metadata);
-  let zonghengDelay = Number(metadata.zonghengPollDelay) || 10_000;
+  const zonghengApiProtocol = zonghengProtocol(channel, metadata);
+  let zonghengInitialTask = metadata.zonghengInitialTask;
+  let zonghengDelay = Number(metadata.zonghengPollDelay) || 20_000;
 
   const headers: Record<string, string> = {};
   if (channel.apiKey) headers['Authorization'] = `Bearer ${channel.apiKey}`;
@@ -3740,7 +3753,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
         break;
       }
 
-      await new Promise(r => setTimeout(r, isZongheng ? zonghengDelay : isHaya ? hayaPollDelay(consecutiveTransientPollFailures) : pollInterval));
+      if (!zonghengInitialTask) await new Promise(r => setTimeout(r, isZongheng ? zonghengDelay : isHaya ? hayaPollDelay(consecutiveTransientPollFailures) : pollInterval));
 
       try {
         hasPolledUpstream = true;
@@ -3761,8 +3774,8 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           pollUrl = `${baseUrl}/v1/video/generations/${videoId}`;
         }
 
-        const pollResp = isZongheng
-          ? await queryZonghengTask(videoId, Number(metadata.channelId) || undefined, Number(metadata.channelApiKeyId) || null, channel)
+        const pollResp = isZongheng && zonghengInitialTask ? globalThis.Response.json(zonghengInitialTask) : isZongheng
+          ? await queryZonghengTask(videoId, Number(metadata.channelId) || undefined, Number(metadata.channelApiKeyId) || null, channel, metadata)
           : protectedPolling ? await fetchVideoTaskResponse(pollUrl, { headers })
           : await fetch(pollUrl, { headers, signal: AbortSignal.timeout(15_000) });
 
@@ -3776,6 +3789,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           }
           if (isHaya || isZongheng) {
             consecutiveTransientPollFailures++;
+            if (isZongheng) zonghengDelay = v6kQueryRetryDelay(consecutiveTransientPollFailures, pollResp.headers.get('retry-after'));
             if (contentId !== null) (isZongheng ? patchZonghengTask : patchHayaTask)(contentId, { progressText: '查询暂时不可用，继续查询原任务，不会重复生成' });
             continue;
           }
@@ -3797,6 +3811,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
 
         if (!isHaya) consecutiveTransientPollFailures = 0;
         const statusData = await pollResp.json() as any;
+        if (zonghengInitialTask) { zonghengInitialTask = undefined; if (contentId !== null) patchZonghengTask(contentId, { zonghengInitialTask: undefined }); }
         if (db.select().from(contents).where(eq(contents.id, contentId)).get()?.status !== 'processing') break;
         if (protectedPolling && (isVideoQueryErrorPayload(statusData)
           || ((statusData.task_id || statusData.id) && String(statusData.task_id || statusData.id) !== videoId))) {
@@ -3811,7 +3826,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
         let snumomBillingUsage: ReturnType<typeof normalizeSnumomWanTask>['billingUsage'] = null;
 
         if (isZongheng) {
-          const normalized = normalizeZonghengTask(statusData);
+          const normalized = normalizeZonghengTask(statusData, baseUrl, zonghengApiProtocol, videoId);
           taskStatus = normalized.status; progress = normalized.progress; resultUrl = normalized.resultUrl; errMsg = normalized.error;
           zonghengDelay = normalized.pollDelay;
         } else if (isHaya) {
@@ -3937,7 +3952,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
             meta.progress = progress;
             meta.upstreamStatus = taskStatus;
             if (protectedPolling) { delete meta.upstreamQueryError; meta.progressText = `视频生成中 ${progress}%`; }
-            if (isZongheng) Object.assign(meta, zonghengTaskMetadata(statusData));
+            if (isZongheng) Object.assign(meta, zonghengTaskMetadata(statusData, baseUrl, zonghengApiProtocol, videoId));
             if (isHmStudio) {
               const progressText = normalizeHmStudioTask(statusData, baseUrl).progressText;
               if (progressText) meta.progressText = progressText;
@@ -3964,7 +3979,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           console.log(`[video-recover] ✅ Generating completed: ${resultUrl}`);
           const latest = db.select().from(contents).where(eq(contents.id, contentId)).get();
           const savingMetadata = JSON.parse(latest?.metadata || '{}');
-          db.update(contents).set({ metadata: JSON.stringify({ ...savingMetadata, ...(isZongheng ? zonghengTaskMetadata(statusData) : {}), progress: 100, upstreamStatus: taskStatus, upstreamResultUrl: resultUrl, progressText: '视频已生成，正在保存到本站存储' }) }).where(eq(contents.id, contentId)).run();
+          db.update(contents).set({ metadata: JSON.stringify({ ...savingMetadata, ...(isZongheng ? zonghengTaskMetadata(statusData, baseUrl, zonghengApiProtocol, videoId) : {}), progress: 100, upstreamStatus: taskStatus, upstreamResultUrl: resultUrl, progressText: '视频已生成，正在保存到本站存储' }) }).where(eq(contents.id, contentId)).run();
           let finalVideoUrl = '';
           try {
             if (resultUrl && resultUrl.includes('llm.chre3.com')) {

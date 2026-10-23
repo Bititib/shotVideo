@@ -1,3 +1,4 @@
+import { zonghengProtocol, zonghengProtocolSnapshot } from '../services/zonghengProtocol.js';
 import { publicGenerationError } from '../../shared/generationMessages.js';
 import { generationErrorResponse } from '../middleware/generationErrorResponse.js';
 import { getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
@@ -2205,7 +2206,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       const firstFrame = body.start_frame || body.first_frame_url || body.first_frame || '';
       const lastFrame = body.end_frame || body.end_frame_url || body.last_frame_url || body.last_frame || '';
       buildZonghengVideoPayload({ model: upstreamModel, prompt, seconds, ratio, resolution, images: image_urls, videos: video_urls, audios: audio_urls,
-        firstFrame, lastFrame, quality: body.quality, negativePrompt: body.negative_prompt, generateAudio: body.generate_audio });
+        firstFrame, lastFrame, quality: body.quality, negativePrompt: body.negative_prompt, generateAudio: body.generate_audio }, zonghengProtocol(channel));
       const options = { baseUrl, apiKey, publicBaseUrl: process.env.BACKEND_URL || req.protocol + '://' + req.get('host') };
       await validateZonghengMedia([...image_urls, firstFrame, lastFrame].filter(Boolean), 'image', options);
       await validateZonghengMedia(video_urls, 'video', options); await validateZonghengMedia(audio_urls, 'audio', options);
@@ -2450,11 +2451,11 @@ async function handleVideoCreation(req: Request, res: Response) {
         firstFrame: frames[0], lastFrame: frames[1], quality: body.quality, negativePrompt: body.negative_prompt, generateAudio: body.generate_audio }, zonghengOrder(contentId!),
         () => {
           claimVideoSubmission(contentId!, channel.timeout || 120_000);
-          patchZonghengTask(contentId!, { zonghengSubmissionStarted: new Date().toISOString(), billingStatus: 'reserved',
+          patchZonghengTask(contentId!, { ...zonghengProtocolSnapshot(channel), zonghengSubmissionStarted: new Date().toISOString(), billingStatus: 'reserved',
             billingBalanceSource: deduction?.balanceDeduction?.source, billingOrgId: deduction?.balanceDeduction?.orgId });
-        }, channel.timeout);
+        }, channel.timeout, zonghengProtocol(channel));
       taskId = job.taskId;
-      patchZonghengTask(contentId!, { videoId: taskId, zonghengPollDelay: job.pollDelay });
+      patchZonghengTask(contentId!, { ...zonghengProtocolSnapshot(channel), videoId: taskId, zonghengPollDelay: job.pollDelay, zonghengInitialTask: job.initialTask });
       acceptVideoSubmission(contentId!, taskId, { provider: 'zongheng', channelId: channel.id, channelApiKeyId: channel.apiKeyId });
       releaseZonghengSubmission(contentId!);
       const record = db.select().from(contents).where(eq(contents.id, contentId!)).get();

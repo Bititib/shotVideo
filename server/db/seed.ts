@@ -1,3 +1,4 @@
+import { migrateZonghengToV6k } from '../services/zonghengV6kMigration.js';
 import { ensureFundLedger } from './fundLedger.js';
 import { migratePidoiImageTimeout } from './imageTimeoutMigration.js';
 import { ensureZonghengVideoPricing } from '../services/zonghengPricingService.js';
@@ -2054,6 +2055,7 @@ export async function initDatabase() {
     console.error('⚠️ 清理旧拆分渠道出错:', err.message);
   }
 
+  migrateZonghengToV6k(sqlite);
   ensureZonghengVideoPricing();
   ensureFundLedger(sqlite);
   console.log('✅ 数据库初始化完成');

@@ -1,3 +1,4 @@
+import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
 import { isMjChannel, normalizeMjBaseUrl, fetchMjModels } from './mjAdapter.js';
 import { isAsyncVideoChannel, asyncVideoBaseUrl, fetchAsyncVideoModels } from './asyncVideoAdapter.js';
 import { ensureZonghengVideoPricing } from './zonghengPricingService.js';
@@ -397,7 +398,7 @@ export class ChannelService {
       : [...MIAOWU_DEFAULT_VIDEO_MODELS];
     const result = db.insert(channels).values({
       name: isWxHaidiYue ? WX_HAIDIYUE_CHANNEL_NAME : name,
-      type: isMjChannel({ type }) ? 'mj' : isFunAiChannel({ type, baseUrl }) ? 'funai' : isHussChannel({ type, baseUrl }) ? HUSS_CHANNEL_TYPE : isBlobDrawChannel({ type, baseUrl }) ? 'blobdraw' : isZonghengChannel({ type, baseUrl }) ? 'zongheng' : isHaya ? 'haya' : type || 'openai',
+      type: isMjChannel({ type }) ? 'mj' : isFunAiChannel({ type, baseUrl }) ? 'funai' : isHussChannel({ type, baseUrl }) ? HUSS_CHANNEL_TYPE : isBlobDrawChannel({ type, baseUrl }) ? 'blobdraw' : isZonghengChannel({ type, baseUrl }) ? V6K_CHANNEL_TYPE : isHaya ? 'haya' : type || 'openai',
       baseUrl: isMjChannel({ type }) ? normalizeMjBaseUrl(baseUrl) : isAsyncVideoChannel({ type }) ? asyncVideoBaseUrl(baseUrl) : isFunAiChannel({ type, baseUrl }) ? funAiBaseUrl(baseUrl) : isHussChannel({ type, baseUrl }) ? hussApiBase(baseUrl) : isBlobDrawChannel({ type, baseUrl }) ? blobDrawApiBase(baseUrl) : isZonghengChannel({ type, baseUrl }) ? zonghengBaseUrl(baseUrl) : baseUrl,
       apiKey: type === 'hmstudio' ? '' : (apiKey || ''),
       modelMapping: JSON.stringify(isHaya ? (modelMapping && Object.keys(modelMapping).length ? modelMapping : Object.fromEntries(HAYA_MODEL_IDS.map(id => [id, id]))) : isWxHaidiYue
@@ -454,7 +455,7 @@ export class ChannelService {
     }
 
     if (isZonghengChannel({ type: nextType, baseUrl: data.baseUrl ?? channel.baseUrl })) {
-      data = { ...data, type: 'zongheng', baseUrl: zonghengBaseUrl(data.baseUrl ?? channel.baseUrl) };
+      data = { ...data, type: V6K_CHANNEL_TYPE, baseUrl: zonghengBaseUrl(data.baseUrl ?? channel.baseUrl) };
     }
     if (isBlobDrawChannel({ type: nextType, baseUrl: data.baseUrl ?? channel.baseUrl })) {
       data = { ...data, type: 'blobdraw', baseUrl: blobDrawApiBase(data.baseUrl ?? channel.baseUrl) };
@@ -655,7 +656,7 @@ export class ChannelService {
             : 'text';
       return { modelId: isZonghengChannel(channel) ? ZONGHENG_MODEL_PREFIX + modelId : modelId,
         displayName: isZonghengChannel(channel) ? ZONGHENG_MODEL_PREFIX + modelId : displayName || modelId, capability };
-    }).filter((item: any) => item.modelId && (!isHayaChannel(channel) || HAYA_MODEL_IDS.includes(item.modelId)));
+    }).filter((item: any) => item.modelId && (!isHayaChannel(channel) || HAYA_MODEL_IDS.includes(item.modelId)) && (channel.type !== V6K_CHANNEL_TYPE || item.capability === 'video'));
 
     const unique = [...new Map(normalized.map((item: any) => [item.modelId, item])).values()] as Array<{
       modelId: string; displayName: string; capability: string;

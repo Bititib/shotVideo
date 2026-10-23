@@ -602,3 +602,24 @@ describe('automatic failures never suspend routing', () => {
     expect(selectModelRoutes(s, request).map(t => t.channel.id)).toEqual([1, 2]);
   });
 });
+
+describe('V6K sales-route protocol adapter', () => {
+  const target = () => ({ route: { ...route(1), upstreamModel: 'TTsedanco2.5-480' }, channel: { ...channel(1), type: 'zongheng-v6k', baseUrl: 'https://www.v6k.top' }, cost: 2, healthKey: 'v6k-test' });
+  const input = () => specificationRequest({ prompt: '场景', seconds: 30, resolution: '480p', ratio: '16:9' }, 'video', 'https://our.invalid');
+  it('keeps an immediate terminal response and uses the new query path', async () => {
+    const fetcher = vi.fn(async (_url: any, init: any) => init.method === 'POST'
+      ? Response.json({ id: 'spec_v6k', status: 'completed' }) : Response.json({ id: 'spec_v6k', status: 'completed' }));
+    vi.stubGlobal('fetch', fetcher);
+    const starting = vi.fn();
+    expect(await adapters.submitSpecificationVideo(target() as any, input(), starting)).toBe('spec_v6k');
+    expect(starting).toHaveBeenLastCalledWith(expect.objectContaining({ zonghengProtocol: 'v6k', videoId: 'spec_v6k', zonghengInitialTask: { id: 'spec_v6k', status: 'completed' } }));
+    expect(await adapters.pollSpecificationVideo(target().channel, 'spec_v6k')).toMatchObject({ status: 'completed', resultUrl: 'https://www.v6k.top/v1/videos/spec_v6k/content' });
+    expect(fetcher.mock.calls[1][0]).toBe('https://www.v6k.top/v1/videos/spec_v6k');
+  });
+  it('does not classify a local persistence failure after acceptance as safe to resubmit', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: 'accepted', status: 'queued' })));
+    const starting = vi.fn().mockImplementationOnce(() => {}).mockImplementationOnce(() => { throw new Error('database unavailable'); });
+    await expect(adapters.submitSpecificationVideo(target() as any, input(), starting)).rejects.toMatchObject({ retrySafe: false, uncertain: true });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+});

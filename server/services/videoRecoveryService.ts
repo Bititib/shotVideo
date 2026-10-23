@@ -1,3 +1,4 @@
+import { zonghengProtocol, zonghengTaskChannel, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE } from './zonghengProtocol.js';
 import { isAsyncVideoChannel, asyncVideoTaskUrl, normalizeAsyncVideoTask, resolveAsyncVideoUrl } from './asyncVideoAdapter.js';
 import { isZonghengChannel, zonghengTaskUrl, normalizeZonghengTask } from './zonghengAdapter.js';
 import { isHayaChannel, hayaTaskUrl, normalizeHayaTask } from './hayaVideoAdapter.js';
@@ -270,9 +271,11 @@ export class VideoRecoveryService {
     if (!metadata.channelApiKeyId && receipt?.channelApiKeyId) metadata.channelApiKeyId = receipt.channelApiKeyId;
     if (!videoId) throw { status: 400, message: '该记录没有保存上游任务 ID，无法重新获取' };
 
-    const channel = metadata.channelId
+    const configuredChannel = metadata.channelId
       ? ChannelService.getChannelRaw(Number(metadata.channelId), Number(metadata.channelApiKeyId) || null)
       : ChannelService.findChannelForModel(record.modelId || metadata.model || '');
+    if (configuredChannel && isZonghengChannel(configuredChannel) && isRetiredZonghengTask(metadata)) throw { status: 409, message: RETIRED_ZONGHENG_MESSAGE };
+    const channel = configuredChannel && isZonghengChannel(configuredChannel) ? zonghengTaskChannel(configuredChannel, metadata) : configuredChannel;
     if (!channel) {
       throw { status: 503, message: '原任务渠道当前不可用' };
     }
@@ -319,7 +322,7 @@ export class VideoRecoveryService {
       normalizedStatus = task.status; progress = task.progress; error = task.error;
       if (task.status === 'completed') resultUrl = await resolveAsyncVideoUrl(channel, videoId);
     } else if (isZongheng) {
-      const task = normalizeZonghengTask(payload);
+      const task = normalizeZonghengTask(payload, baseUrl, zonghengProtocol(channel), videoId);
       normalizedStatus = task.status; progress = task.progress; resultUrl = task.resultUrl; error = task.error;
     } else if (isHaya) {
       const task = normalizeHayaTask(payload, baseUrl, videoId);

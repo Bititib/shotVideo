@@ -50,6 +50,7 @@ interface GetContentsOptions {
 }
 
 const INTERNAL_VIDEO_ROUTING_FIELDS = [
+  'zonghengProtocol', 'zonghengBaseUrl', 'zonghengInitialTask', 'zonghengLegacyTask',
   'videoSubmissionState', 'videoSubmissionDeadline', 'videoSubmissionStartedAt', 'videoSubmissionAttempt', 'submissionReceiptRecovered', 'missingTaskIdReview',
   'pidoiFallbacks',
   'mjRecovery', 'mjSubmissionDiagnostics', 'mjAsyncImage',

@@ -1,20 +1,22 @@
 import { normalizeZonghengVideoResolution, validateZonghengVideoSpec, validateZonghengVideoReferences } from '../../shared/zonghengVideo.js';
+import { sanitizedGenerationReason } from '../../shared/generationErrorPrivacy.js';
+import { V6K_BASE_URL, V6K_CHANNEL_TYPE, retiredZonghengBase, type ZonghengProtocol } from './zonghengProtocol.js';
 export { ZONGHENG_MODEL_PREFIX } from '../../shared/zonghengVideo.js';
-// Zongheng public API, used only by the legacy channel routes.
-export const ZONGHENG_BASE_URL = 'https://cnd-coo-new.pages.dev';
+// Only the V6K unified video API is supported.
+export const ZONGHENG_BASE_URL = V6K_BASE_URL;
 export function isZonghengChannel(c: { type?: string | null; baseUrl?: string | null } | null | undefined): boolean {
-  if (c?.type === 'zongheng') return true;
+  if (c?.type === 'zongheng' || c?.type === V6K_CHANNEL_TYPE) return true;
   try { return new URL(c?.baseUrl || '').hostname === new URL(ZONGHENG_BASE_URL).hostname; } catch { return false; }
 }
-export const zonghengBaseUrl = (base: string) => base.replace(/\/+$/, '').replace(/\/v1$/i, '');
-export const zonghengTaskUrl = (base: string, id: string) => `${zonghengBaseUrl(base)}/v1/tasks/${encodeURIComponent(id)}`;
-export const zonghengPollDelay = (value: unknown) => {
-  const seconds = Number(value);
-  return Number.isFinite(seconds) && seconds > 0 ? Math.max(1000, Math.min(60_000, seconds * 1000)) : 10_000;
+export const zonghengBaseUrl = (base: string) => {
+  if (retiredZonghengBase(base)) throw new Error('旧视频接口已停用，请配置 V6K 地址和令牌');
+  return base.replace(/\/+$/, '').replace(/\/v1$/i, '');
 };
+export const zonghengTaskUrl = (base: string, id: string, _protocol: ZonghengProtocol = 'v6k') => `${zonghengBaseUrl(base)}/v1/videos/${encodeURIComponent(id)}`;
 export function zonghengError(payload: any): string {
-  const detail = payload?.error_detail || payload?.error?.message || (typeof payload?.error === 'string' ? payload.error : '') || payload?.message;
-  return [payload?.error_code, typeof detail === 'string' ? detail : ''].filter(Boolean).join(': ').replace(/sk-[\w-]+/g, '[REDACTED]').slice(0, 500) || '纵横科技请求失败';
+  const code = payload?.error_code ?? payload?.error?.code ?? payload?.code;
+  const detail = payload?.error_detail || payload?.error?.message || (typeof payload?.error === 'string' ? payload.error : '') || payload?.message || '';
+  return sanitizedGenerationReason([code, detail].filter(Boolean).join(': ')).slice(0, 500) || '生成服务请求失败';
 }
 export interface ZonghengSubmissionDiagnostics {
   reason: 'http_error' | 'invalid_task_response' | 'invalid_json' | 'timeout' | 'network_error';
@@ -28,7 +30,7 @@ export interface ZonghengVideoInput {
   images: string[]; videos: string[]; audios: string[]; firstFrame?: string; lastFrame?: string;
   quality?: string; negativePrompt?: string; generateAudio?: boolean;
 }
-export function buildZonghengVideoPayload(i: ZonghengVideoInput) {
+export function buildZonghengVideoPayload(i: ZonghengVideoInput, _protocol: ZonghengProtocol = 'v6k') {
   if (!i.model || !i.prompt?.trim()) throw new Error('模型和视频描述不能为空');
   if (!Number.isFinite(i.seconds) || i.seconds <= 0) throw new Error('视频时长必须大于零');
   if (typeof i.ratio !== 'string' || typeof i.resolution !== 'string' || !i.ratio || !i.resolution) throw new Error('比例和分辨率必须是有效文本');
@@ -39,12 +41,12 @@ export function buildZonghengVideoPayload(i: ZonghengVideoInput) {
   validateZonghengVideoSpec(i.model, i.seconds, i.resolution);
   validateZonghengVideoReferences(i.model, { images: i.images.length, videos: i.videos.length, audios: i.audios.length });
   const resolution = normalizeZonghengVideoResolution(i.model, i.resolution) || i.resolution;
-  return { model: i.model, prompt: i.prompt.trim(), duration: i.seconds, ratio: i.ratio, resolution,
-    ...(i.images.length ? { images: i.images } : {}), ...(i.videos.length ? { reference_videos: i.videos } : {}),
-    ...(i.audios.length ? { reference_audios: i.audios } : {}), ...(i.firstFrame ? { start_frame: i.firstFrame } : {}),
-    ...(i.lastFrame ? { end_frame: i.lastFrame } : {}), ...(i.quality ? { quality: i.quality } : {}),
-    ...(i.negativePrompt ? { negative_prompt: i.negativePrompt } : {}),
-    ...(i.generateAudio !== undefined ? { generate_audio: i.generateAudio } : {}) };
+  if (i.firstFrame || i.lastFrame || i.quality !== undefined || i.negativePrompt !== undefined || i.generateAudio !== undefined)
+    throw new Error('当前接口尚未确认首尾帧、质量、负面提示词或音频开关参数，请使用普通参考素材');
+  if (!Number.isSafeInteger(i.seconds)) throw new Error('视频时长必须为整数秒');
+  return { model: i.model, prompt: i.prompt.trim(), seconds: i.seconds, ratio: i.ratio, resolution,
+    ...(i.images.length ? { images: i.images } : {}), ...(i.videos.length ? { videos: i.videos } : {}),
+    ...(i.audios.length ? { audios: i.audios } : {}) };
 }
 /** Reject ambiguous or malformed references rather than silently dropping a supplied field. */
 export function validateZonghengVideoAliases(body: Record<string, any>) {
@@ -64,25 +66,22 @@ export function validateZonghengVideoAliases(body: Record<string, any>) {
   }
   if (body.n !== undefined && Number(body.n) !== 1) throw new Error('每次只能创建一条视频');
 }
-export function normalizeZonghengTask(p: any) {
-  if (!['processing', 'succeeded', 'failed'].includes(p?.status)) throw new Error('纵横科技查询未返回有效任务状态');
-  const awaitingDelivery = p.status === 'processing' && p.delivery_pending === true
-    && p.delivery_status === 'mirroring' && typeof p.completed_at === 'string' && Boolean(p.completed_at.trim());
-  return { status: p.status === 'succeeded' ? 'completed' : p.status,
-    progress: p.status === 'succeeded' ? 100 : Math.max(0, Math.min(99, Number(p.progress) || 0)),
-    resultUrl: p.status === 'succeeded' ? String(p.video_url || p.url || p.result_url || '') : '',
-    upstreamGenerated: p.status === 'succeeded' || awaitingDelivery,
-    deliveryPending: awaitingDelivery,
-    deliveryStatus: awaitingDelivery ? 'mirroring' : p.status === 'succeeded' ? 'ready' : '',
-    generationCompletedAt: typeof p.completed_at === 'string' ? p.completed_at : '',
-    progressText: awaitingDelivery ? '视频已生成，正在等待结果交付' : '',
-    error: p.status === 'failed' ? zonghengError(p) : '', pollDelay: zonghengPollDelay(p.next_poll_seconds) };
+export function normalizeZonghengTask(p: any, base = V6K_BASE_URL, protocol: ZonghengProtocol = 'v6k', taskId = '') {
+  if (!['queued', 'in_progress', 'completed', 'failed'].includes(p?.status)) throw new Error('视频查询未返回有效任务状态');
+  const id = typeof p.id === 'string' ? p.id.trim() : '';
+  if (!id || taskId && id !== taskId) throw new Error('视频查询返回的任务 ID 缺失或不一致');
+  const completed = p.status === 'completed';
+  return { status: completed ? 'completed' : p.status === 'failed' ? 'failed' : 'processing',
+    progress: completed ? 100 : Math.max(0, Math.min(99, Number(p.progress) || 0)),
+    resultUrl: completed ? zonghengTaskUrl(base, id, protocol) + '/content' : '',
+    upstreamGenerated: completed, deliveryPending: false, deliveryStatus: completed ? 'ready' : '',
+    generationCompletedAt: typeof p.completed_at === 'number' && Number.isFinite(p.completed_at) ? new Date(p.completed_at * 1000).toISOString() : '',
+    progressText: '', error: p.status === 'failed' ? zonghengError(p) : '', pollDelay: 20_000 };
 }
-export function zonghengTaskMetadata(payload: any) {
-  const task = normalizeZonghengTask(payload);
+export function zonghengTaskMetadata(payload: any, base = V6K_BASE_URL, protocol: ZonghengProtocol = 'v6k', taskId = '') {
+  const task = normalizeZonghengTask(payload, base, protocol, taskId);
   return { upstreamGenerated: task.upstreamGenerated, upstreamDeliveryPending: task.deliveryPending,
-    upstreamDeliveryStatus: task.deliveryStatus, upstreamGenerationCompletedAt: task.generationCompletedAt || undefined,
-    progressText: task.progressText || undefined };
+    upstreamDeliveryStatus: task.deliveryStatus, upstreamGenerationCompletedAt: task.generationCompletedAt || undefined, progressText: task.progressText || undefined };
 }
 /** Only connection establishment errors prove that this POST was never sent.
  * Generic aborts, socket resets, and response-body failures remain uncertain.
@@ -101,33 +100,41 @@ export function zonghengRequestNotSent(error: unknown, httpStatus?: number): boo
   return check(error);
 }
 export async function submitZonghengVideo(base: string, apiKey: string, input: ZonghengVideoInput, idempotencyKey: string,
-  beforeSubmit: () => void, timeout = 120_000) {
-  const body = JSON.stringify(buildZonghengVideoPayload(input));
+  beforeSubmit: () => void, timeout = 120_000, protocol: ZonghengProtocol = 'v6k') {
+  const body = JSON.stringify(buildZonghengVideoPayload(input, protocol));
+  const url = zonghengBaseUrl(base) + '/v1/videos';
   if (!idempotencyKey) throw new Error('缺少业务订单号，停止提交');
   beforeSubmit();
-  const startedAt = Date.now();
-  let httpStatus: number | undefined;
+  const startedAt = Date.now(); let httpStatus: number | undefined;
   try {
-    const response = await fetch(`${zonghengBaseUrl(base)}/v1/videos`, { method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+    const response = await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
       body, signal: AbortSignal.timeout(timeout), redirect: 'error' });
     httpStatus = response.status;
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new ZonghengSubmissionError(`纵横科技提交失败 (${response.status})：${zonghengError(payload)}`, Boolean(payload.task_id) || response.status === 408 || response.status >= 500, { reason: 'http_error', httpStatus, elapsedMs: Date.now() - startedAt });
+    const text = await response.text(); let job: any;
+    try { job = JSON.parse(text); }
+    catch { throw new ZonghengSubmissionError('生成服务响应无法确认，请勿重复提交', response.ok || response.status === 408 || response.status >= 500,
+      { reason: response.ok ? 'invalid_json' : 'http_error', httpStatus, elapsedMs: Date.now() - startedAt }); }
+    if (!response.ok) throw new ZonghengSubmissionError(zonghengError(job).split(apiKey).join('[REDACTED]'),
+      Boolean(job?.id || job?.task_id) || response.status === 408 || response.status >= 500,
+      { reason: 'http_error', httpStatus, elapsedMs: Date.now() - startedAt });
+    const accepted = typeof job?.id === 'string' && job.id.trim() && ['queued','in_progress','completed','failed'].includes(job.status);
+    if (!accepted) {
+      const explicitError = Boolean(job?.error) || job?.success === false
+        || job?.code !== undefined && ![0,200,'0','200','success','ok'].includes(job.code);
+      throw new ZonghengSubmissionError(explicitError ? zonghengError(job).split(apiKey).join('[REDACTED]') : '未返回有效任务 ID 或状态，请核实原订单', !explicitError,
+        { reason: explicitError ? 'http_error' : 'invalid_task_response', httpStatus, elapsedMs: Date.now() - startedAt });
     }
-    const job = await response.json() as any;
-    if (typeof job.task_id !== 'string' || !job.task_id || job.success === false) throw new ZonghengSubmissionError('纵横科技提交结果待核实，未返回有效任务 ID', true, { reason: 'invalid_task_response', httpStatus, elapsedMs: Date.now() - startedAt });
-    return { taskId: job.task_id, pollDelay: zonghengPollDelay(job.next_poll_seconds) };
+    const taskId = job.id.trim();
+    const initialTask = ['completed','failed'].includes(job.status) ? { id: taskId, status: job.status, progress: job.progress, completed_at: job.completed_at,
+      error: job.error ? { code: job.error.code, message: job.error.message } : undefined } : undefined;
+    return { taskId, pollDelay: 20_000, initialTask };
   } catch (error: any) {
     if (error instanceof ZonghengSubmissionError) throw error;
-    const knownCodes = ['UND_ERR_CONNECT_TIMEOUT', 'ENOTFOUND', 'ECONNRESET', 'ECONNREFUSED', 'EAI_AGAIN', 'ETIMEDOUT'];
     const code = String(error?.cause?.code || error?.code || '');
-    const reason = ['TimeoutError', 'AbortError'].includes(error?.name) || ['UND_ERR_CONNECT_TIMEOUT', 'ETIMEDOUT'].includes(code)
-      ? 'timeout' : error instanceof SyntaxError ? 'invalid_json' : 'network_error';
+    const reason = ['TimeoutError','AbortError'].includes(error?.name) ? 'timeout' : 'network_error';
     const requestNotSent = zonghengRequestNotSent(error, httpStatus);
-    throw new ZonghengSubmissionError(requestNotSent ? '连接生成服务失败，请求未发送' : '纵横科技提交结果待核实，请勿重复创建任务', !requestNotSent,
-      { reason, httpStatus, elapsedMs: Date.now() - startedAt, requestNotSent, ...(knownCodes.includes(code) ? { networkCode: code } : {}) });
+    throw new ZonghengSubmissionError(requestNotSent ? '连接生成服务失败，请求未发送' : '提交结果待核实，请勿重复创建任务', !requestNotSent,
+      { reason, httpStatus, elapsedMs: Date.now() - startedAt, requestNotSent, networkCode: code || undefined });
   }
 }
 export function zonghengImageSize(ratio: string, resolution: string): string {
