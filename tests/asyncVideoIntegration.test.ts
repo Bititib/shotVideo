@@ -12,7 +12,7 @@ import { VideoRecoveryService } from '../server/services/videoRecoveryService.js
 import { downloadAndLocalizeVideo } from '../server/services/videoLocalizationService.js';
 import { fetchAsyncVideoModels } from '../server/services/asyncVideoAdapter.js';
 import { ensureVxLeSeedanceModel } from '../server/services/asyncVideoCatalogService.js';
-import { VX_LE_SEEDANCE_MODEL, asyncVideoPublicModelId } from '../shared/asyncVideo.js';
+import { VX_LE_SEEDANCE_MODEL, LEGACY_VX_LE_SEEDANCE_MODEL, asyncVideoPublicModelId } from '../shared/asyncVideo.js';
 import * as referenceValidation from '../server/services/imageReferenceValidationService.js';
 
 const key = 'private-async-video-key';
@@ -151,7 +151,7 @@ describe('documented async video channel', () => {
     ensureVxLeSeedanceModel(channel);
     expect(fetch).not.toHaveBeenCalled();
     expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.supportedModels)).toEqual([previousModel, modelId]);
-    expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping)[modelId]).toBe('b_seedance_v2.0');
+    expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping)[modelId]).toBe('2.0B');
     expect(db.select().from(models).where(eq(models.modelId, modelId)).all()).toHaveLength(1);
     const spec = getModelSpecification(modelId)!;
     expect(spec.limits).toMatchObject({ maxImages: 9, maxVideos: 0, maxAudios: 0, duration: { mode: 'fixed', min: 15, max: 15 } });
@@ -168,6 +168,35 @@ describe('documented async video channel', () => {
     expect(getModelSpecification(modelId)).toMatchObject({ enabled: false, limits: { maxImages: 9, maxVideos: 0, maxAudios: 0, duration: { mode: 'fixed', min: 15, max: 15 } },
       routes: [{ enabled: false, cost: 1.5, costUnit: 'per_call', limits: { maxImages: 9, duration: { mode: 'fixed', min: 15, max: 15 } } }] });
   });
+  it('corrects legacy bindings to 2.0B without replacing model IDs, prices or manual switches', async () => {
+    const channel = ChannelService.getChannelRaw(channelId)!;
+    const legacyId = asyncVideoPublicModelId(channelId, LEGACY_VX_LE_SEEDANCE_MODEL);
+    db.insert(models).values({ provider: 'async-video', modelId: legacyId,
+      displayName: channel.name + ' · ' + LEGACY_VX_LE_SEEDANCE_MODEL, capabilities: '["video"]', isActive: 1 }).run();
+    const legacyRowId = db.select().from(models).where(eq(models.modelId, legacyId)).get()!.id;
+    db.insert(modelPricing).values({ modelPattern: legacyId, billingType: 'per_call', inputPrice: 3, outputPrice: 0 }).run();
+    const template = getModelSpecification(modelId)!;
+    saveModelSpecification({ ...template, modelId: legacyId, enabled: false,
+      routes: [{ ...template.routes[0], id: 'legacy-vx', executionModel: legacyId, upstreamModel: LEGACY_VX_LE_SEEDANCE_MODEL,
+        enabled: false, cost: 1.5, costUnit: 'per_call' }] });
+    ChannelService.updateChannel(channelId, { status: 0, supportedModels: [modelId, legacyId],
+      modelMapping: { [modelId]: 'seedance-video', [legacyId]: LEGACY_VX_LE_SEEDANCE_MODEL } });
+
+    expect(ensureVxLeSeedanceModel(channel)).toMatchObject({ added: 0, models: [legacyId] });
+    expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.supportedModels)).toEqual([modelId, legacyId]);
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [{ name: '2.0B', ratio: '9:16,16:9', seconds: '5,10,15' }] })));
+    expect(await ChannelService.syncModels(channelId)).toMatchObject({ added: 0, models: [legacyId] });
+    expect(ChannelService.getChannelRaw(channelId)?.status).toBe(0);
+    expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping)[legacyId]).toBe('2.0B');
+    expect(db.select().from(models).where(eq(models.modelId, legacyId)).get()).toMatchObject({
+      id: legacyRowId, displayName: channel.name + ' · 2.0B', isActive: 1 });
+    expect(db.select().from(models).where(eq(models.modelId, asyncVideoPublicModelId(channelId, '2.0B'))).get()).toBeUndefined();
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, legacyId)).get()?.inputPrice).toBe(3);
+    expect(getModelSpecification(legacyId)).toMatchObject({ enabled: false,
+      limits: { maxImages: 9, maxVideos: 0, maxAudios: 0 },
+      routes: [{ id: 'legacy-vx', executionModel: legacyId, upstreamModel: '2.0B', enabled: false, cost: 1.5, costUnit: 'per_call',
+        limits: { maxImages: 9, maxVideos: 0, maxAudios: 0 } }] });
+  });
   it('forwards all nine image references and defaults an omitted duration to 15 seconds', async () => {
     registerVxModel(); enable();
     const images = Array.from({ length: 9 }, (_, i) => 'https://images.example/ref-' + i + '.png');
@@ -179,7 +208,7 @@ describe('documented async video channel', () => {
       const res = response(); await handleSpecificationGeneration(request({ seconds: undefined, reference_images: images }), res, 'video');
       expect(db.select().from(contents).all().at(-1), JSON.stringify(res.body)).toMatchObject({ status: 'completed', cost: 2 });
       const payload = JSON.parse((upstream.mock.calls[0] as any)[1].body);
-      expect(payload).toEqual({ model: VX_LE_SEEDANCE_MODEL, prompt: '海浪拍打礁石', seconds: 15, aspect_ratio: '9:16', reference_images: images });
+      expect(payload).toEqual({ model: '2.0B', prompt: '海浪拍打礁石', seconds: 15, aspect_ratio: '9:16', reference_images: images });
       expect(payload.reference_images).toHaveLength(9);
     } finally { validate.mockRestore(); }
   });

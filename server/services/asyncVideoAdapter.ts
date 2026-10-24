@@ -18,8 +18,8 @@ export function buildAsyncVideoPayload(input: {
   }
   if (!Number.isInteger(input.seconds) || input.seconds <= 0) throw new Error('视频时长必须为正整数');
   if (input.model === VX_LE_SEEDANCE_MODEL) {
-    if (input.seconds !== 15) throw new Error('b_seedance_v2.0 固定生成 15 秒视频');
-    if (input.images.length > 9) throw new Error('b_seedance_v2.0 最多支持 9 张参考图');
+    if (input.seconds !== 15) throw new Error(`${VX_LE_SEEDANCE_MODEL} 固定生成 15 秒视频`);
+    if (input.images.length > 9) throw new Error(`${VX_LE_SEEDANCE_MODEL} 最多支持 9 张参考图`);
   }
   for (const source of input.images) {
     const url = new URL(source);

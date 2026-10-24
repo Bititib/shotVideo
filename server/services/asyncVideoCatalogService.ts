@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { channels, models } from '../db/schema.js';
 import { fetchAsyncVideoModels, type AsyncVideoChannel, type AsyncVideoModel } from './asyncVideoAdapter.js';
-import { VX_LE_SEEDANCE_MODEL, asyncVideoConfirmedLimits, asyncVideoPublicModelId } from '../../shared/asyncVideo.js';
+import { VX_LE_SEEDANCE_MODEL, LEGACY_VX_LE_SEEDANCE_MODEL, asyncVideoConfirmedLimits, asyncVideoPublicModelId } from '../../shared/asyncVideo.js';
 import { getModelSpecification, saveModelSpecification } from './modelRoutingService.js';
 
 type CatalogChannel = AsyncVideoChannel & { id: number; name: string; priority: number };
@@ -17,9 +17,13 @@ export async function syncAsyncVideoModels(channel: CatalogChannel) {
 }
 
 function registerAsyncVideoModels(channel: CatalogChannel, upstream: AsyncVideoModel[], replace: boolean) {
-  const entries = upstream.map(model => ({ ...model, modelId: asyncVideoPublicModelId(channel.id, model.name) }));
   let added = 0;
-  sqlite.transaction(() => {
+  return sqlite.transaction(() => {
+    const legacyModelId = asyncVideoPublicModelId(channel.id, LEGACY_VX_LE_SEEDANCE_MODEL);
+    const legacyModel = db.select().from(models).where(eq(models.modelId, legacyModelId)).get();
+    // Keep the existing public ID so saved access rules, prices and tasks retain their bindings.
+    const entries = upstream.map(model => ({ ...model, modelId: model.name === VX_LE_SEEDANCE_MODEL && legacyModel
+      ? legacyModelId : asyncVideoPublicModelId(channel.id, model.name) }));
     for (const entry of entries) {
       if (!db.select().from(models).where(eq(models.modelId, entry.modelId)).get()) {
         db.insert(models).values({ provider: 'async-video', modelId: entry.modelId, displayName: channel.name + ' · ' + entry.name,
@@ -28,6 +32,11 @@ function registerAsyncVideoModels(channel: CatalogChannel, upstream: AsyncVideoM
             : '异步视频接口；分辨率由上游决定；参考图数量默认限制为 1，可在模型路由中调整。请配置售价后启用。',
           capabilities: '["video"]', isActive: 0 }).run();
         added++;
+      }
+      if (entry.name === VX_LE_SEEDANCE_MODEL && entry.modelId === legacyModelId
+        && legacyModel?.displayName.endsWith(' · ' + LEGACY_VX_LE_SEEDANCE_MODEL)) {
+        db.update(models).set({ displayName: legacyModel.displayName.slice(0, -LEGACY_VX_LE_SEEDANCE_MODEL.length) + VX_LE_SEEDANCE_MODEL })
+          .where(eq(models.modelId, entry.modelId)).run();
       }
     }
     const savedChannel = db.select().from(channels).where(eq(channels.id, channel.id)).get();
@@ -43,7 +52,8 @@ function registerAsyncVideoModels(channel: CatalogChannel, upstream: AsyncVideoM
         if (entry.name === VX_LE_SEEDANCE_MODEL) {
           saveModelSpecification({ ...existing, limits: asyncVideoConfirmedLimits(entry.name, existing.limits),
             routes: existing.routes.map(route => route.channelId === channel.id && route.executionModel === entry.modelId
-              ? { ...route, limits: asyncVideoConfirmedLimits(entry.name, route.limits) } : route) });
+              ? { ...route, upstreamModel: route.upstreamModel === LEGACY_VX_LE_SEEDANCE_MODEL ? VX_LE_SEEDANCE_MODEL : route.upstreamModel,
+                limits: asyncVideoConfirmedLimits(entry.name, route.limits) } : route) });
         }
         continue;
       }
@@ -53,6 +63,6 @@ function registerAsyncVideoModels(channel: CatalogChannel, upstream: AsyncVideoM
       saveModelSpecification(existing ? { ...existing, routes: [...existing.routes, route] }
         : { modelId: entry.modelId, kind: 'video', enabled: true, aliases: [], limits: entry.limits, routes: [route] });
     }
+    return { count: entries.length, added, models: entries.map(e => e.modelId) };
   })();
-  return { count: entries.length, added, models: entries.map(e => e.modelId) };
 }

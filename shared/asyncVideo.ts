@@ -2,7 +2,8 @@ import { defaultRoutingLimits, type ModelInputLimits } from './modelRouting.js';
 
 export const ASYNC_VIDEO_CHANNEL_TYPE = 'async-video';
 export const ASYNC_VIDEO_BASE_URL = 'http://38.76.169.75:8080';
-export const VX_LE_SEEDANCE_MODEL = 'b_seedance_v2.0';
+export const VX_LE_SEEDANCE_MODEL = '2.0B';
+export const LEGACY_VX_LE_SEEDANCE_MODEL = 'b_seedance_v2.0';
 
 /** Confirmed by the channel owner; overrides generic discovery defaults. */
 export function asyncVideoConfirmedLimits(name: string, limits: ModelInputLimits = defaultRoutingLimits()): ModelInputLimits {
