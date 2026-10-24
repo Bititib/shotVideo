@@ -65,7 +65,7 @@ describe('Miaowu video adapter', () => {
     expect(normalizeMiaowuVideoTask(
       { status: 'failed', progress: '100%', error: { code: 'task_failed', message: 'generation failed' } },
       'https://api.miaowuai.store', 'task_123',
-    )).toMatchObject({ status: 'failed', progress: 100, error: 'generation failed' });
+    )).toMatchObject({ status: 'failed', progress: 100, error: expect.stringContaining('task_failed: generation failed') });
   });
 
   it('enforces the Seedance 2.5 Deal capability limits', () => {

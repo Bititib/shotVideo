@@ -107,7 +107,7 @@ describe('wx-海底月 sd2.5 adapter', () => {
       status: 'failed',
       error: { code: 'VIDEO_NOT_STARTED', message: 'not started' },
     }, 'https://example.test/v1')).toMatchObject({
-      status: 'failed', error: 'not started', errorCode: 'VIDEO_NOT_STARTED',
+      status: 'failed', error: expect.stringContaining('VIDEO_NOT_STARTED: not started'), errorCode: 'VIDEO_NOT_STARTED',
     });
   });
 

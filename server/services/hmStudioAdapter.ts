@@ -267,11 +267,10 @@ export async function waitForHmStudioTask(options: {
       signal: AbortSignal.timeout(20_000),
     });
     if (!response.ok) {
-      const detail = await response.text().catch(() => '');
-      throw new Error(`HM Studio task query failed (${response.status}): ${detail.slice(0, 300)}`);
+      throw new Error(await responseDiagnostic('HM Studio', '任务查询 task_id=' + options.taskId, response, options.apiKey));
     }
 
-    const task = normalizeHmStudioTask(await response.json(), options.baseUrl);
+    const task = normalizeHmStudioTask(await diagnosticJson('HM Studio', '任务查询 task_id=' + options.taskId, response, options.apiKey), options.baseUrl);
     options.onProgress?.(task);
     if (task.status === 'success' || task.status === 'completed') {
       if (!task.resultUrl) throw new Error('HM Studio task succeeded without a result URL');
@@ -285,4 +284,4 @@ export async function waitForHmStudioTask(options: {
 
   throw new Error('HM Studio task polling timed out');
 }
-import { upstreamDiagnostic } from './upstreamDiagnostic.js';
+import { upstreamDiagnostic, responseDiagnostic, diagnosticJson } from './upstreamDiagnostic.js';

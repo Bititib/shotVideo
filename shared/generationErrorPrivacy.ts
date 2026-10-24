@@ -53,9 +53,9 @@ function extract(value: unknown, depth = 0): string {
   const obj = value as Record<string, unknown>;
   const parts: string[] = [];
   for (const key of ['code', 'error_code']) {
-    if (typeof obj[key] === 'string' && /^[\w.-]{1,100}$/.test(obj[key] as string)) parts.push(obj[key] as string);
+    if (typeof obj[key] === 'number' || typeof obj[key] === 'string' && /^[\w.-]{1,100}$/.test(obj[key] as string)) parts.push(String(obj[key]));
   }
-  for (const key of ['error', 'message', 'error_message', 'error_msg', 'error_detail', 'detail', 'reason', 'failure_reason', 'errors']) {
+  for (const key of ['error', 'message', 'error_message', 'error_msg', 'error_detail', 'detail', 'reason', 'failure_reason', 'fail_reason', 'errors']) {
     const detail = extract(obj[key], depth + 1);
     if (detail && !parts.includes(detail)) parts.push(detail);
   }

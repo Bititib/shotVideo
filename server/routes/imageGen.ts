@@ -901,11 +901,11 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
             let errorPayload: unknown; try { errorPayload = JSON.parse(errText); } catch {}
             upstreamTaskIds[index] = captureResponse(index, upstream, errorPayload, 'response_without_id');
             logImageRequestFailure({ ...diagnostic, taskId: upstreamTaskIds[index] }, { status: upstream.status });
-            sendEvent({ type: 'image_error', index, message: `请求 #${index + 1} 失败 (${upstream.status})` });
+            sendEvent({ type: 'image_error', index, message: upstreamDiagnostic(channel.type, '图片编辑请求 #' + (index + 1), errorPayload || errText, channel.apiKey, upstream.status, upstream.headers.get('x-request-id') || undefined) });
             return;
           }
 
-          const result = await upstream.json() as any;
+          const result = await diagnosticJson(channel.type, '图片生成响应', upstream, channel.apiKey);
           const taskId = captureResponse(index, upstream, result, 'response_without_id');
           diagnostic.taskId = taskId;
           diagnostic.stage = 'persist';
@@ -930,11 +930,11 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
             upstreamImageUrls[index] = imageUrl;
             sendEvent({ type: 'image_ready', imageUrl: localizedUrl, index, total: count });
           } else {
-            sendEvent({ type: 'image_error', index, message: `图片 #${index + 1} 未返回结果` });
+            sendEvent({ type: 'image_error', index, message: upstreamDiagnostic(channel.type, '图片编辑未返回结果 #' + (index + 1), result, channel.apiKey, upstream.status, upstream.headers.get('x-request-id') || undefined) });
           }
         } catch (err: any) {
           clearTimeout(timer);
-          const msg = err.name === 'AbortError' ? '超时' : (err.message || '请求失败');
+          const msg = transportDiagnostic(channel.type, '图片请求', err, channel.apiKey);
           upstreamTaskIds[index] = captureResponse(index);
           logImageRequestFailure({ ...diagnostic, taskId: upstreamTaskIds[index] }, err);
           sendEvent({ type: 'image_error', index, message: `图片 #${index + 1}: ${msg}` });
@@ -1006,22 +1006,16 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
               let errorPayload: unknown; try { errorPayload = JSON.parse(errText); } catch {}
               upstreamTaskIds[index] = captureResponse(index, upstream, errorPayload, 'response_without_id');
               logImageRequestFailure({ ...diagnostic, taskId: upstreamTaskIds[index] }, { status: upstream.status });
-              let upstreamMessage = '';
-              try {
-                const parsed = JSON.parse(errText);
-                upstreamMessage = String(parsed?.error?.message || parsed?.message || '').trim();
-              } catch { /* upstream may return plain text */ }
-              if (!upstreamMessage && errText && !/<html[\s>]/i.test(errText)) upstreamMessage = errText.trim();
-              const safeMessage = upstreamMessage.replace(/sk-[A-Za-z0-9_-]+/g, '[REDACTED]').slice(0, 160);
+              const safeMessage = upstreamDiagnostic(channel.type, '图片生成请求 #' + (index + 1), errorPayload || errText, channel.apiKey, upstream.status, upstream.headers.get('x-request-id') || undefined);
               sendEvent({
                 type: 'image_error',
                 index,
-                message: `请求 #${index + 1} 失败 (${upstream.status})${safeMessage ? `：${safeMessage}` : ''}`,
+                message: safeMessage,
               });
               return;
             }
 
-            const result = await upstream.json() as any;
+            const result = await diagnosticJson(channel.type, '图片生成响应', upstream, channel.apiKey);
             const taskId = captureResponse(index, upstream, result, 'response_without_id');
             diagnostic.taskId = taskId;
             diagnostic.stage = 'persist';
@@ -1052,11 +1046,11 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
                upstreamImageUrls[index] = imageUrl;
                sendEvent({ type: 'image_ready', imageUrl: localizedUrl, index, total: count });
             } else {
-              sendEvent({ type: 'image_error', index, message: `图片 #${index + 1} 未返回结果` });
+              sendEvent({ type: 'image_error', index, message: upstreamDiagnostic(channel.type, '图片生成未返回结果 #' + (index + 1), result, channel.apiKey, upstream.status, upstream.headers.get('x-request-id') || undefined) });
             }
           } catch (err: any) {
             clearTimeout(timer);
-            const msg = err.name === 'AbortError' ? '超时' : (err.message || '请求失败');
+            const msg = transportDiagnostic(channel.type, '图片请求', err, channel.apiKey);
             upstreamTaskIds[index] = captureResponse(index);
             logImageRequestFailure({ ...diagnostic, taskId: upstreamTaskIds[index] }, err);
             sendEvent({ type: 'image_error', index, message: `图片 #${index + 1}: ${msg}` });
@@ -1113,7 +1107,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
               signal: controller.signal,
             });
             if (!upstream.ok) {
-              sendEvent({ type: 'image_error', index, message: `请求 #${index + 1} 失败 (${upstream.status})` });
+              sendEvent({ type: 'image_error', index, message: await responseDiagnostic(channel.type, '图片流请求 #' + (index + 1), upstream, channel.apiKey) });
               return;
             }
 
@@ -1138,6 +1132,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
 
                 try {
                   const data = JSON.parse(line.slice(6));
+                  if (data.error) throw new Error(upstreamDiagnostic(channel.type, '图片流事件 #' + (index + 1), data, channel.apiKey, upstream.status));
                   const delta = data.choices?.[0]?.delta || {};
                   const msg = data.choices?.[0]?.message || {};
 
@@ -1169,7 +1164,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
                       if (imageUrl.startsWith('/')) imageUrl = baseUrl + imageUrl;
                     }
                   }
-                } catch { /* ignore parse errors */ }
+                } catch (error: any) { throw new Error(transportDiagnostic(channel.type, '图片流响应解析', error, channel.apiKey)); }
               }
             }
 
@@ -1184,7 +1179,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
             }
           } catch (err: any) {
             clearTimeout(timer);
-            const msg = err.name === 'AbortError' ? '超时' : (err.message || '请求失败');
+            const msg = transportDiagnostic(channel.type, '图片请求', err, channel.apiKey);
             sendEvent({ type: 'image_error', index, message: `图片 #${index + 1}: ${msg}` });
           } finally {
             clearTimeout(timer);
@@ -1206,7 +1201,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
       }
     }
   } catch (err: any) {
-    const msg = err.name === 'AbortError' ? '图片生成超时' : (err.message || '请求失败');
+    const msg = transportDiagnostic(channel.type, '图片请求', err, channel.apiKey);
     persistFailure(msg);
     sendEvent({ type: 'error', message: msg });
     finishStream();
@@ -1218,3 +1213,4 @@ import { isPidoiImageChannel, submitPidoiImage, pidoiImageRequestMode } from '..
 import { pidoiTaskEvidence } from '../services/pidoiImageEvidence.js';
 import { pidoiImageActive, recoverPidoiImage } from '../services/pidoiImageWorker.js';
 import { logImageRequestFailure, type ImageRequestContext } from '../services/imageRequestDiagnostics.js';
+import { upstreamDiagnostic, responseDiagnostic, transportDiagnostic, diagnosticJson } from '../services/upstreamDiagnostic.js';

@@ -20,7 +20,7 @@ describe('video failure persistence', () => {
   });
   it('distinguishes an upstream capacity rejection from the local HM queue', () => {
     expect(clarifyVideoCapacityFailure('任务并发数不足', false))
-      .toBe('上游渠道当前容量不足，请稍后重试（非本站并发限制）');
+      .toBe('任务并发数不足；上游渠道当前容量不足，请稍后重试（非本站并发限制）');
     expect(clarifyVideoCapacityFailure('任务并发数不足', true)).toBe('任务并发数不足');
   });
 
@@ -34,9 +34,9 @@ describe('video failure persistence', () => {
         }),
       }),
     });
-    expect(extractVideoFailureMessage(body)).toBe('生成服务暂时不可用，请稍后重试');
+    expect(extractVideoFailureMessage(body)).toBe('fail_to_fetch_task: SERVICE_UNAVAILABLE: 生成服务暂时不可用，请稍后重试');
     expect(extractVideoFailureMessage(`创建视频任务失败 (400): ${body}`))
-      .toBe('生成服务暂时不可用，请稍后重试');
+      .toBe('fail_to_fetch_task: SERVICE_UNAVAILABLE: 生成服务暂时不可用，请稍后重试');
   });
 
   it('preserves task metadata while recording the reason and timestamp', () => {

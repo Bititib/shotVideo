@@ -40,12 +40,12 @@ export class SpecificationUpstreamError extends Error {
 }
 export function submissionFailure(status: number, text: string, channel?: { type?: string | null; baseUrl?: string | null }, videoSubmission = false, headers?: Pick<Headers, 'get'>): SpecificationUpstreamError {
   if (videoSubmission && isSnumomNoChannelRejection(status, text, channel, headers)) {
-    return new SpecificationUpstreamError('上游明确拒绝：' + text.replace(/sk-[\w-]+/g, '[REDACTED]').slice(0, 500), false, false, false, status, true);
+    return new SpecificationUpstreamError(upstreamDiagnostic('snumom', '上游明确拒绝', text, '', status, headers?.get('x-request-id') || undefined), false, false, false, status, true);
   }
   // The MJ contract defines HTTP 402 as a precharge rejection, even if a log ID is attached.
   // Classify by status, not provider wording or the presence of a diagnostic identifier.
   if (isMjChannel(channel) && status === 402) return new SpecificationUpstreamError(
-    '上游积分不足 (HTTP 402)：' + text.replace(/sk-[\w-]+/g, '[REDACTED]').slice(0, 300), true, false, false, status, true);
+    upstreamDiagnostic('MJ', '上游积分不足 (HTTP 402)', text, '', status, headers?.get('x-request-id') || undefined), true, false, false, status, true);
   // A gateway timeout/server error can happen AFTER the provider created a job.
   // Only explicit rejections without a task identifier are eligible for retry.
   let payload: any;
@@ -56,10 +56,10 @@ export function submissionFailure(status: number, text: string, channel?: { type
     || (!videoSubmission && status === 503 && /unavailable|maintenance|维护|不可用|overload|capacity|busy/i.test(text)));
   const blocked = [401, 402].includes(status) || (status === 403 && rejected);
   if ([502, 504, 524].includes(status) && /<!doctype\s+html|<html\b/i.test(text)) {
-    return new SpecificationUpstreamError('上游网关响应超时 (' + status + ')，任务可能已受理或完成；请核对原任务结果，勿重复提交', false, true, false, status);
+    return new SpecificationUpstreamError(upstreamDiagnostic(channel?.type || 'OpenAI-compatible', '上游网关响应超时，任务可能已受理或完成；请勿重复提交', text, '', status, headers?.get('x-request-id') || undefined), false, true, false, status);
   }
   const uncertain = Boolean(task) || status === 408 || status >= 500 && !rejected;
-  return new SpecificationUpstreamError('上游提交失败 (' + status + ')：' + text.replace(/sk-[\w-]+/g, '[REDACTED]').slice(0, 300),
+  return new SpecificationUpstreamError(upstreamDiagnostic(channel?.type || 'OpenAI-compatible', '提交', text, '', status, headers?.get('x-request-id') || undefined),
     rejected, uncertain, blocked, status, !uncertain);
 }
 export function publishSpecificationAsset(source: string, baseUrl: string): string {
@@ -88,24 +88,24 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
     onResponse?.({ id: '', state: 'no_response' });
     const code = e?.cause?.code || e?.code;
     const notSent = videoRequestNotSent(e);
-    throw new SpecificationUpstreamError('提交连接失败，请在生成记录中核实：' + String(code || e?.message || '未知错误'), notSent, !notSent);
+    throw new SpecificationUpstreamError(transportDiagnostic(channel.type || 'OpenAI-compatible', '提交连接；请核实原请求', e, channel.apiKey), notSent, !notSent);
   }
   onResponse?.(evidenceFor(undefined, response.headers, response.status, 'headers_received'));
   if (!response.ok) {
     let text: string;
     try { text = await response.text(); }
-    catch {
+    catch (error: any) {
       onResponse?.(evidenceFor(undefined, response.headers, response.status, 'response_unreadable'));
-      if (isMjChannel(channel) && response.status === 402) throw submissionFailure(402, '错误响应正文未完整读取', channel);
-      throw new SpecificationUpstreamError('上游错误响应读取中断，请核实原请求', false, true);
+      if (isMjChannel(channel) && response.status === 402) throw submissionFailure(402, '错误响应正文未完整读取', channel, false, response.headers);
+      throw new SpecificationUpstreamError(upstreamDiagnostic(channel.type || 'OpenAI-compatible', '上游错误响应读取中断，请核实原请求', { message: error.message, code: error.cause?.code }, channel.apiKey, response.status, response.headers.get('x-request-id') || undefined), false, true);
     }
     let body: unknown; try { body = JSON.parse(text); } catch {}
     onResponse?.(evidenceFor(body, response.headers, response.status, 'response_without_id'));
     throw submissionFailure(response.status, channel.apiKey ? text.split(channel.apiKey).join('[REDACTED]') : text, channel, channel.videoSubmission === true, response.headers);
   }
   let result: any;
-  try { result = await response.json(); }
-  catch { onResponse?.(evidenceFor(undefined, response.headers, response.status, 'response_unreadable')); throw new SpecificationUpstreamError('上游已响应但结果无法解析，请勿重复提交', false, true); }
+  try { result = await diagnosticJson(channel.type || 'OpenAI-compatible', '提交响应；请勿重复提交', response, channel.apiKey); }
+  catch (error: any) { onResponse?.(evidenceFor(undefined, response.headers, response.status, 'response_unreadable')); throw new SpecificationUpstreamError(error.message, false, true); }
   onResponse?.(evidenceFor(result, response.headers, response.status, 'response_without_id'));
   if (channel.videoSubmission && (isSnumomNoChannelRejection(response.status, JSON.stringify(result), channel, response.headers)
     || explicitVideoCreateError(result, response.headers))) {
@@ -259,14 +259,14 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   const job = await post(url, c, payload, onStarting, (_body, headers) => { taskHeaders = headers; });
   const id = isSnumomWanChannel(c) ? extractSnumomTaskId(job, taskHeaders)
     : job.task_id || job.taskId || job.id || job.data?.task_id || job.data?.id || job.request_id;
-  if (!id) throw new SpecificationUpstreamError('上游未返回任务 ID，提交结果待核实，请勿重复提交', false, true);
+  if (!id) throw new SpecificationUpstreamError(upstreamDiagnostic(c.type || 'OpenAI-compatible', '上游未返回任务 ID，提交结果待核实，请勿重复提交', job, c.apiKey, undefined, taskHeaders?.get('x-request-id') || undefined), false, true);
   return String(id);
 }
 export async function pollSpecificationVideo(channel: any, taskId: string) {
   if (isZonghengChannel(channel)) {
     const response = await fetch(zonghengTaskUrl(channel.baseUrl, taskId), { headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(30_000), redirect: 'error' });
-    if (!response.ok) throw Object.assign(new Error('任务查询暂时不可用'), { status: response.status });
-    return normalizeZonghengTask(await response.json(), channel.baseUrl, 'v6k', taskId);
+    if (!response.ok) throw Object.assign(new Error(await responseDiagnostic('V6K', '任务查询 task_id=' + taskId, response, channel.apiKey)), { status: response.status });
+    return normalizeZonghengTask(await diagnosticJson('V6K', '任务查询 task_id=' + taskId, response, channel.apiKey), channel.baseUrl, 'v6k', taskId);
   }
   if (isAsyncVideoChannel(channel)) return pollAsyncVideo(channel, taskId);
   if (isFunAiChannel(channel)) return pollFunAiTask(channel, taskId);
@@ -281,8 +281,8 @@ export async function pollSpecificationVideo(channel: any, taskId: string) {
     : base + '/v1/videos/' + encodeURIComponent(taskId);
   const response = await fetch(url, { headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(await responseDiagnostic(channel.type || 'custom', '视频查询 task_id=' + taskId, response, channel.apiKey));
-  const raw = await response.json() as any;
-  if (isVideoQueryErrorPayload(raw)) throw new Error('上游任务查询响应异常，继续查询原任务');
+  const raw = await diagnosticJson(channel.type || 'OpenAI-compatible', '视频查询 task_id=' + taskId, response, channel.apiKey);
+  if (isVideoQueryErrorPayload(raw)) throw new Error(upstreamDiagnostic(channel.type || 'OpenAI-compatible', '视频查询异常 task_id=' + taskId, raw, channel.apiKey, response.status));
   if (isSnumomWanChannel(channel)) {
     const responseTaskId = extractSnumomTaskId(raw);
     if (responseTaskId && responseTaskId !== taskId) throw new Error('上游查询任务编号不一致，继续核实原任务');
@@ -296,7 +296,7 @@ export async function pollSpecificationVideo(channel: any, taskId: string) {
   const data = raw.data && !Array.isArray(raw.data) ? raw.data : raw;
   return { status: String(data.status || raw.status || '').toLowerCase(), progress: Number(data.progress || data.progress_pct || 0),
     resultUrl: String(data.url || data.video_url || data.result_url || data.output?.url || data.output?.video_url || data.metadata?.url || data.result?.url || data.result?.video_url || (Array.isArray(data.data) ? data.data[0]?.url : '') || ''),
-    error: typeof data.error === 'string' ? data.error : data.error?.message || data.message || '' };
+    error: data.error || data.message || data.error_code || data.code ? upstreamDiagnostic(channel.type || 'OpenAI-compatible', '任务 task_id=' + taskId, data, channel.apiKey, response.status, response.headers.get('x-request-id') || undefined) : '' };
 }
 function mjResponseEvidence(payload: any, headers: Headers, httpStatus: number,
   stage: 'headers_received' | 'response_without_id' | 'response_unreadable'): ImageResponseEvidence {
@@ -337,17 +337,15 @@ export async function pollMjSpecificationImage(channel: any, initial: MjAsyncIma
         // These describe the query, not a confirmed failure of the accepted task.
         if ([400, 401, 402, 403, 404, 410].includes(response.status)) {
           update({ status: 'unavailable', lastPollAt: Date.now() });
-          throw new SpecificationUpstreamError(response.status === 404 || response.status === 410
-            ? 'MJ 原任务查询句柄已失效或不存在，请核实原任务；不会重新生成'
-            : 'MJ 原任务查询不可用 (HTTP ' + response.status + ')，请核实原任务', false, true, false, response.status);
+          throw new SpecificationUpstreamError(await responseDiagnostic('MJ', '原任务查询 handle=' + state.handle + '；请核实原任务', response, channel.apiKey), false, true, false, response.status);
         }
-        throw new Error('query unavailable');
+        throw new Error(await responseDiagnostic('MJ', '原任务查询 handle=' + state.handle, response, channel.apiKey));
       }
       raw = await response.json();
     } catch (error: any) {
       if (error instanceof SpecificationUpstreamError) throw error;
       update({ status: 'poll_error', lastPollAt: Date.now() });
-      if (++errors >= 3) throw new SpecificationUpstreamError('MJ 原任务查询暂时中断，请核实原任务；已保留查询句柄', false, true);
+      if (++errors >= 3) throw new SpecificationUpstreamError(transportDiagnostic('MJ', '原任务查询中断 handle=' + state.handle + '；请核实原任务', error, channel.apiKey), false, true);
       await new Promise(resolve => setTimeout(resolve, 5000));
       continue;
     }
@@ -366,12 +364,12 @@ export async function pollMjSpecificationImage(channel: any, initial: MjAsyncIma
     if (status === 'failed') {
       update({ status, lastPollAt: Date.now() });
       const detail = String(raw?.error?.message || raw?.error || raw?.message || 'MJ 图片生成失败');
-      const safe = detail.split(channel.apiKey || '\0').join('[REDACTED]').replace(/sk-[\w-]+/g, '[REDACTED]').replace(/kmai/gi, 'MJ').slice(0, 300);
+      const safe = upstreamDiagnostic('MJ', '任务失败 handle=' + state.handle, raw, channel.apiKey, response.status);
       throw new SpecificationUpstreamError(safe, false, false, false, response.status, true);
     }
     if (!mjPendingStatuses.includes(status)) {
       update({ status: 'unrecognized', lastPollAt: Date.now() });
-      throw new SpecificationUpstreamError('MJ 原任务返回未知状态，请核实原任务', false, true);
+      throw new SpecificationUpstreamError(upstreamDiagnostic('MJ', '原任务未知状态 ' + status + '；请核实原任务', raw, channel.apiKey, response.status), false, true);
     }
     update({ status, progress, lastPollAt: Date.now() });
     await new Promise(resolve => setTimeout(resolve, 5000));
@@ -393,15 +391,15 @@ export async function generateSpecificationImage(target: RouteCandidate, request
     catch (e: any) {
       if (!started || isPidoiImageChannel(c)) throw e;
       const notSent = ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN'].includes(e?.cause?.code || e?.code);
-      throw new SpecificationUpstreamError('图片提交连接失败', notSent, !notSent);
+      throw new SpecificationUpstreamError(transportDiagnostic(c.type || 'OpenAI-compatible', '图片提交连接失败', e, c.apiKey), notSent, !notSent);
     }
     if (init?.method?.toUpperCase() === 'POST' && !response.ok && !isPidoiImageChannel(c)) {
       const text = await response.text();
-      throw submissionFailure(response.status, c.apiKey ? text.split(c.apiKey).join('[REDACTED]') : text);
+      throw submissionFailure(response.status, c.apiKey ? text.split(c.apiKey).join('[REDACTED]') : text, c, false, response.headers);
     }
     if (!isFunAiChannel(c) && init?.method?.toUpperCase() !== 'POST' && response.ok && /json/.test(response.headers.get('content-type') || '')) {
       const task = await response.clone().json().catch(() => null) as any;
-      if (task?.status === 'failed') throw new SpecificationUpstreamError('上游图片生成失败：' + String(task.error?.message || task.error || task.message || '生成失败'), false, false, false, 0, true);
+      if (task?.status === 'failed') throw new SpecificationUpstreamError(upstreamDiagnostic(c.type || 'OpenAI-compatible', '图片任务失败', task, c.apiKey, response.status), false, false, false, 0, true);
     }
     return response;
   };
@@ -430,7 +428,7 @@ export async function generateSpecificationImage(target: RouteCandidate, request
     const status = String(raw?.status || '').toLowerCase();
     if (status === 'failed') {
       const detail = String(raw?.error?.message || raw?.error || raw?.message || 'MJ 图片生成失败');
-      throw new SpecificationUpstreamError(detail.split(c.apiKey || '\0').join('[REDACTED]').replace(/kmai/gi, 'MJ').slice(0, 300), false, false, false, 200, true);
+      throw new SpecificationUpstreamError(upstreamDiagnostic('MJ', '图片提交失败', raw, c.apiKey, 200), false, false, false, 200, true);
     }
     if (status === 'completed' || !status && Array.isArray(raw?.data) && raw.data.length) return mjImageResult(raw, taskId);
     const handle = typeof raw?.id === 'string' ? raw.id.trim() : '';
@@ -457,8 +455,8 @@ export async function generateSpecificationImage(target: RouteCandidate, request
     const deadline = Date.now() + 20 * 60_000;
     while (Date.now() < deadline) {
       const response = await trackedFetch(hmStudioTaskUrl(c.baseUrl, id), { headers: { Authorization: 'Bearer ' + c.apiKey } });
-      if (!response.ok) throw new SpecificationUpstreamError('图片任务查询暂不可用', false, true);
-      const raw = await response.json(), result = normalizeHmStudioTask(raw, c.baseUrl);
+      if (!response.ok) throw new SpecificationUpstreamError(await responseDiagnostic('HM Studio', '图片任务查询', response, c.apiKey), false, true);
+      const raw = await diagnosticJson('HM Studio', '图片查询 task_id=' + id, response, c.apiKey), result = normalizeHmStudioTask(raw, c.baseUrl);
       if (['failed','error','cancelled'].includes(result.status)) throw new SpecificationUpstreamError(result.error || '图片生成失败', false, false, false, 0, true);
       if (['completed','success','succeeded','done'].includes(result.status) && result.resultUrl) return { imageUrl: result.resultUrl, reportedImageUrl: result.resultUrl, taskId: id, raw };
       await new Promise(resolve => setTimeout(resolve, 5000));
@@ -472,13 +470,23 @@ export async function generateSpecificationImage(target: RouteCandidate, request
     try {
       const text = await response.text();
       if (/event-stream/.test(response.headers.get('content-type') || '')) {
-        for (const line of text.split('\n')) { if (!line.startsWith('data:') || line.includes('[DONE]')) continue; try { const part = JSON.parse(line.slice(5)); const message = part.choices?.[0]?.delta || part.choices?.[0]?.message; if (typeof message?.content === 'string') content += message.content; } catch {} }
-      } else { const json = JSON.parse(text); content = json.data?.[0]?.url || json.choices?.[0]?.message?.content || ''; }
+        for (const line of text.split('\n')) {
+          if (!line.startsWith('data:') || line.includes('[DONE]')) continue;
+          const part = JSON.parse(line.slice(5));
+          if (part.error) throw new Error(upstreamDiagnostic(c.type || 'OpenAI-compatible', '图片流事件', part, c.apiKey, response.status));
+          const message = part.choices?.[0]?.delta || part.choices?.[0]?.message;
+          if (typeof message?.content === 'string') content += message.content;
+        }
+      } else {
+        const json = JSON.parse(text);
+        if (json.error) throw new Error(upstreamDiagnostic(c.type || 'OpenAI-compatible', '图片响应', json, c.apiKey, response.status));
+        content = json.data?.[0]?.url || json.choices?.[0]?.message?.content || '';
+      }
       const source = content.match(/!\[[^\]]*\]\(([^)]+)\)/)?.[1] || content.match(/(?:https?:\/\/|data:image\/)[^\s"'<>]+/)?.[0] || content.match(/\/v1\/files\/image[^\s"'<>]*/)?.[0];
       if (!source) throw new Error('未返回图片');
       const imageUrl = source.startsWith('/') ? base + source : source;
       return { imageUrl, reportedImageUrl: imageUrl, taskId: '', raw: {} };
-    } catch { throw new SpecificationUpstreamError('图片提交或结果待核实', false, true); }
+    } catch (error: any) { throw new SpecificationUpstreamError(transportDiagnostic(c.type || 'OpenAI-compatible', '流式图片结果待核实，请勿重复提交', error, c.apiKey), false, true); }
   }
   let payload: any = { model, prompt: request.prompt, n: 1, size: request.body.size || imageSize(i.ratio), response_format: 'url' };
   if (target.route.executionModel === 'gpt-image-2') {
@@ -536,11 +544,11 @@ export async function pollSpecificationImage(channel: any, taskId: string) {
   const url = hm ? hmStudioTaskUrl(channel.baseUrl, taskId) : mf ? base + '/v1/videos/' + encodeURIComponent(taskId) : base + '/v1/images/generations/' + encodeURIComponent(taskId);
   const response = await fetch(url, { headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(30_000), redirect: 'error' });
   if (!response.ok) throw new Error(await responseDiagnostic(channel.type || 'custom', '图片查询 task_id=' + taskId, response, channel.apiKey));
-  const task = await response.json() as any;
+  const task = await diagnosticJson(channel.type || (mf ? 'MingFei' : sy ? '四月天' : 'HM Studio'), '图片查询 task_id=' + taskId, response, channel.apiKey);
   if (hm) { const result = normalizeHmStudioTask(task, channel.baseUrl); return { status: ['success','succeeded','done'].includes(result.status) ? 'completed' : result.status, imageUrl: result.resultUrl, error: result.error }; }
   const status = String(task.status || '').toLowerCase();
-  return { status: status === 'succeeded' ? 'completed' : status, imageUrl: ['completed','succeeded'].includes(status) ? (mf ? mingFeiImageContentUrl(channel.baseUrl, taskId) : siYueTianImageContentUrl(taskId)) : '', error: typeof task.error === 'string' ? task.error : task.error?.message || task.message || '' };
+  return { status: status === 'succeeded' ? 'completed' : status, imageUrl: ['completed','succeeded'].includes(status) ? (mf ? mingFeiImageContentUrl(channel.baseUrl, taskId) : siYueTianImageContentUrl(taskId)) : '', error: ['failed', 'error', 'cancelled'].includes(status) ? upstreamDiagnostic(mf ? 'MingFei' : '四月天', '图片任务失败 task_id=' + taskId, task, channel.apiKey, response.status) : '' };
 }
 import { isPidoiImageChannel, generatePidoiImage, pollPidoiImage, PidoiImageError } from './pidoiImageAdapter.js';
 import { logImageRequestFailure } from './imageRequestDiagnostics.js';
-import { responseDiagnostic } from './upstreamDiagnostic.js';
+import { responseDiagnostic, upstreamDiagnostic, transportDiagnostic, diagnosticJson } from './upstreamDiagnostic.js';

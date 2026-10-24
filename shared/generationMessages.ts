@@ -21,21 +21,24 @@ const messages = {
 export function publicGenerationError(value: unknown, privateNames: readonly string[] = []): string {
   const text = typeof value === 'string' ? value : value && typeof value === 'object' && 'message' in value ? String(value.message) : '';
   if (Object.values(messages).includes(text)) return text;
+  if (Object.values(messages).some(message => text.endsWith('；' + message))) return sanitizedGenerationReason(text, privateNames);
   if (text.startsWith('[HUSS ')) return sanitizedGenerationReason(text, privateNames);
   if (text.startsWith('[上游诊断 ')) return sanitizedGenerationReason(text, privateNames);
   if (/^(请先登录|请登录后重试)[。！!]?$/.test(text)) return '请先登录';
-  if (/请求未发送|连接生成服务失败/i.test(text)) return messages.submission;
-  if (/退款处理待核实/i.test(text)) return messages.refundReview;
-  if (/结算待核实|费用结算失败|实际费用.*余额不足/i.test(text)) return messages.settlement;
-  if (/查询.*(?:异常|不可用|暂停|不到|重试|被拒绝|时限)/i.test(text)) return messages.query;
-  if (/本地处理异常/i.test(text)) return messages.local;
-  if (/待核实|结果不确定|uncertain|请勿重复|禁止重复/i.test(text)) return messages.review;
+  // Guidance supplements the actual cause; it must never replace it.
+  const reason = sanitizedGenerationReason(value, privateNames);
+  if (/查询.*(?:异常|不可用|暂停|不到|重试|被拒绝|时限)/i.test(text)) return reason + '；' + messages.query;
+  if (/待核实|结果不确定|uncertain|请勿重复|禁止重复/i.test(text)) return reason + '；' + messages.review;
+  if (/请求未发送|连接生成服务失败/i.test(text)) return reason + '；' + messages.submission;
+  if (/费用结算失败|实际费用.*余额不足/i.test(text)) return reason + '；' + messages.settlement;
+  if (/本地处理异常/i.test(text)) return reason + '；' + messages.local;
   return sanitizedGenerationReason(value, privateNames);
 }
 export function publicGenerationStatus(value: unknown): string {
   if (typeof value !== 'string' || !value) return '';
+  if (value.startsWith('[上游诊断 ') || value.startsWith('[HUSS ')) return sanitizedGenerationReason(value);
   if (/退款处理待核实|结算待核实|查询.*(?:异常|不可用|暂停|不到|重试|被拒绝|时限)|本地处理异常/i.test(value)) return publicGenerationError(value);
-  if (/待核实|请勿重复|禁止重复/i.test(value)) return messages.review;
+  if (/待核实|请勿重复|禁止重复/i.test(value)) return publicGenerationError(value);
   // Only approved status templates can carry through; arbitrary names/URLs never do.
   if (['视频生成中', '图片生成中', '视频已生成，正在保存到本站存储', '视频已生成，正在等待结果交付', '图片生成完成', '图片生成失败', '正在提交视频生成任务...', '正在提交任务，等待生成结果...', '正在上传参考素材...', '已完成', '已提交过此任务，正在恢复结果，请勿重复提交'].includes(value)) return value;
   if (/^(?:视频生成中|图片生成中) ?\d{1,3}%$/.test(value)) return value;

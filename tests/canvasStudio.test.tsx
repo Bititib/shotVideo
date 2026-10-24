@@ -95,7 +95,7 @@ describe('canvas user workflows', () => {
     vi.mocked(contentApi.getById).mockResolvedValueOnce(result);
     const node={...newNode('video',{x:0,y:0}),title:'待核实视频任务',job:{status:'running' as const,contentId:12965,message:'生成中',progress:51}};
     const board=mount({...newDocument(),nodes:[node]});
-    await waitFor(()=>expect(board.current().nodes[0].job).toMatchObject({status:'interrupted',contentId:12965,message:'提交结果待核实，请在生成记录核实原任务，请勿重复提交。'}));
+    await waitFor(()=>expect(board.current().nodes[0].job).toMatchObject({status:'interrupted',contentId:12965,message:expect.stringContaining('提交结果待核实，请在生成记录核实原任务，请勿重复提交。')}));
     expect(board.current().nodes[0].src).toBeUndefined();expect(streamGeneration).not.toHaveBeenCalled();
     expect(screen.getByRole('article',{name:node.title}).querySelector('.studio-spin')).toBeNull();
     expect(document.body.textContent).not.toContain('纵横科技');

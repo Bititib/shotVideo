@@ -265,7 +265,7 @@ describe('HM Studio adapter', () => {
     });
     expect(normalizeHmStudioTask({ data: { status: 'failed', fail_reason: 'upstream rejected' } }, 'https://example.test')).toMatchObject({
       status: 'failed',
-      error: 'upstream rejected',
+      error: expect.stringContaining('upstream rejected'),
     });
   });
 

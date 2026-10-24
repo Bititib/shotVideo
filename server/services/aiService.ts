@@ -238,11 +238,10 @@ export class AIService {
     });
 
     if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Gemini API 呼叫失败: ${res.status} ${res.statusText} - ${text}`);
+      throw new Error(await responseDiagnostic('Gemini', '内容生成', res, apiKey));
     }
 
-    return await res.json();
+    return await diagnosticJson('Gemini', '内容生成响应', res, apiKey);
   }
 
   /** 通用短视频分析 */
@@ -364,7 +363,7 @@ export class AIService {
 
       const candidate = response.candidates?.[0];
       const text = (candidate?.content?.parts || []).filter((part: any) => !part.thought && typeof part.text === 'string').map((part: any) => part.text).join('').trim();
-      if (!text) throw new Error('上游未返回文案内容，素材可能被拦截，请更换素材或模型后重试。');
+      if (!text) throw new Error(upstreamDiagnostic('Gemini', '未返回文案内容', { error: response.error, reason: response.promptFeedback?.blockReason, detail: candidate?.finishReason, message: candidate?.finishMessage }));
       if (candidate?.finishReason === 'MAX_TOKENS') throw new Error('上游返回的文案不完整，请减少素材或更换模型后重试。');
       try {
         const result = JSON.parse(text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, ''));
@@ -469,21 +468,17 @@ export class AIService {
     });
 
     if (!res.ok) {
-      const errText = await res.text();
-      if (res.status === 429) {
-        throw new Error('AI 图像生成频率超限，请稍后再试');
-      }
-      throw new Error(`图像生成接口调用失败: ${res.status} - ${errText}`);
+      throw new Error(await responseDiagnostic('Gemini', '图片生成', res, apiKey));
     }
 
-    const response = await res.json() as any;
+    const response = await diagnosticJson('Gemini', '图片生成响应', res, apiKey);
 
     for (const part of response.candidates?.[0]?.content?.parts || []) {
       if (part.inlineData) {
         return { imageBase64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'image/png' };
       }
     }
-    throw new Error('图像生成失败：未返回图片数据');
+    throw new Error(upstreamDiagnostic('Gemini', '未返回图片数据', { error: response.error, reason: response.promptFeedback?.blockReason, detail: response.candidates?.map((candidate: any) => ({ reason: candidate.finishReason, message: candidate.finishMessage, detail: candidate.safetyRatings?.filter((rating: any) => rating.blocked).map((rating: any) => ({ reason: rating.category })) })) }, apiKey));
   }
 
   static getTtsVoiceCatalog() {
@@ -520,11 +515,10 @@ export class AIService {
     });
 
     if (!res.ok) {
-      const errText = await res.text();
-      throw Object.assign(new Error(`TTS 接口调用失败: ${res.status} - ${errText}`), { upstreamStatus: res.status });
+      throw Object.assign(new Error(await responseDiagnostic('Gemini TTS', '语音生成', res, apiKey)), { upstreamStatus: res.status });
     }
 
-    const response = await res.json();
+    const response = await diagnosticJson('Gemini TTS', '语音生成响应', res, apiKey);
 
     for (const part of response.candidates?.[0]?.content?.parts || []) {
       if (part.inlineData) {
@@ -542,7 +536,7 @@ export class AIService {
         return { audioBase64: rawBase64, mimeType: rawMime || 'audio/wav' };
       }
     }
-    throw new Error('语音合成失败：未返回音频数据');
+    throw new Error(upstreamDiagnostic('Gemini TTS', '语音合成失败：未返回音频数据', { error: response.error, reason: response.promptFeedback?.blockReason, detail: response.candidates?.map((c: any) => ({ reason: c.finishReason, message: c.finishMessage })) }, apiKey));
   }
 
   /** 将原始 PCM base64 封装为 WAV base64（添加 44 字节 WAV header） */
@@ -599,8 +593,7 @@ export class AIService {
     });
 
     if (!startRes.ok) {
-      const text = await startRes.text();
-      throw new Error(`启动文件上传失败: ${startRes.status} ${startRes.statusText} - ${text}`);
+      throw new Error(await responseDiagnostic('Gemini', '启动文件上传失败', startRes, apiKey));
     }
 
     const uploadUrl = startRes.headers.get('x-goog-upload-url') || startRes.headers.get('location');
@@ -622,11 +615,10 @@ export class AIService {
     });
 
     if (!uploadRes.ok) {
-      const text = await uploadRes.text();
-      throw new Error(`上传文件数据失败: ${uploadRes.status} ${uploadRes.statusText} - ${text}`);
+      throw new Error(await responseDiagnostic('Gemini', '上传文件数据失败', uploadRes, apiKey));
     }
 
-    const fileInfo = await uploadRes.json() as any;
+    const fileInfo = await diagnosticJson('Gemini', '文件上传响应', uploadRes, apiKey);
     const fileName = fileInfo.file?.name || fileInfo.name;
     const fileUri = fileInfo.file?.uri || fileInfo.uri;
 
@@ -649,15 +641,15 @@ export class AIService {
             }
           });
           if (statusRes.ok) {
-            const statusInfo = await statusRes.json() as any;
+            const statusInfo = await diagnosticJson('Gemini', '文件状态查询', statusRes, apiKey);
             state = statusInfo.state;
             if (state === 'FAILED') {
-              throw new Error('文件在 Gemini 端处理失败。');
+              throw new Error(upstreamDiagnostic('Gemini', '文件在 Gemini 端处理失败', { error: statusInfo.error, message: statusInfo.message, reason: statusInfo.state }, apiKey));
             }
             pollErrors = 0; // 重置错误计数
           } else {
             pollErrors++;
-            console.warn(`[uploadAndWait] 文件状态查询失败 (${pollErrors}/3): ${statusRes.status}`);
+            console.warn(await responseDiagnostic('Gemini', '文件状态查询失败 (' + pollErrors + '/3)', statusRes, apiKey));
             if (pollErrors >= 3) {
               // 代理端可能不支持文件状态查询，直接跳过轮询
               console.warn('[uploadAndWait] 跳过文件状态轮询，直接使用文件');
@@ -698,3 +690,4 @@ export class AIService {
     }
   }
 }
+import { upstreamDiagnostic, responseDiagnostic, diagnosticJson } from './upstreamDiagnostic.js';

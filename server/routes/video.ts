@@ -1799,7 +1799,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
         const detail = await createResp.text().catch(() => '');
         if (!isHmStudioConcurrencyError(createResp.status, detail)) {
-          refundFailedTask(`备用线路提交失败 (${createResp.status}): ${detail.slice(0, 300)}`);
+          refundFailedTask(upstreamDiagnostic(String(model), '视频提交', detail, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
           res.write('data: [DONE]\n\n');
           return res.end();
         }
@@ -1840,7 +1840,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       });
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
-        refundFailedTask(`HM Studio 提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        refundFailedTask(upstreamDiagnostic(String(model), '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1873,7 +1873,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] wx-海底月提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
-        refundFailedTask('视频任务提交失败，请稍后重试');
+        refundFailedTask(upstreamDiagnostic('wx-海底月', '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1924,7 +1924,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
-        refundFailedTask(`视频任务提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        refundFailedTask(upstreamDiagnostic(String(model), '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1941,7 +1941,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       });
       if (!createResp.ok) {
         const detail = await createResp.text().catch(() => '');
-        refundFailedTask('LongXia 提交失败 (' + createResp.status + '): ' + detail.slice(0, 300));
+        refundFailedTask(upstreamDiagnostic(String(model), '视频提交', detail, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -1975,7 +1975,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       });
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
-        refundFailedTask(`喵呜 API 视频任务提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        refundFailedTask(upstreamDiagnostic(String(model), '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -2022,7 +2022,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] SudaShui 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
+        refundFailedTask(upstreamDiagnostic(String(model), '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -2089,7 +2089,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] SoraV4 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
+        refundFailedTask(upstreamDiagnostic(String(model), '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -2131,7 +2131,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] Veo Omni Flash 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
+        refundFailedTask(upstreamDiagnostic(String(model), '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -2163,7 +2163,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       });
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
-        refundFailedTask(`创建视频编辑任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
+        refundFailedTask(upstreamDiagnostic(String(model), '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -2212,7 +2212,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] Veo 3-1 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
+        refundFailedTask(upstreamDiagnostic(String(model), '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -2262,7 +2262,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] Seedance 2.0 Fast 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
+        refundFailedTask(upstreamDiagnostic(String(model), '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -2300,7 +2300,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       });
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
-        refundFailedTask(`巨轮 MiniMax H3 提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        refundFailedTask(upstreamDiagnostic(String(model), '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -2433,7 +2433,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
       if (!createResp.ok) {
         const errText = await createResp.text();
-        refundFailedTask(`WAN3.0 提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        refundFailedTask(upstreamDiagnostic(String(model), '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -2461,7 +2461,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         if (isHmStudioConcurrencyError(createResp.status, errText)) {
           ChannelService.disableExecutionTarget(channel, errText);
         }
-        refundFailedTask(`Julun sd2.5 提交失败 (${createResp.status}): ${errText.slice(0, 300)}`);
+        refundFailedTask(upstreamDiagnostic(String(model), '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -2546,7 +2546,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         guardBatchSubmissionResponse(Boolean(batchContext), createResp);
         if (!canOverflowSiYueTian) {
           console.error(`[video] sd2 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-          refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
+          refundFailedTask(upstreamDiagnostic(String(model), '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
           res.write('data: [DONE]\n\n');
           return res.end();
         }
@@ -2596,7 +2596,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
             if (isHmStudioConcurrencyError(fallbackResponse.status, fallbackDetail)) {
               ChannelService.disableExecutionTarget(overflowPlan.channel, fallbackDetail);
             }
-            refundFailedTask(`Julun sd2.5 提交失败 (${fallbackResponse.status}): ${fallbackDetail.slice(0, 300)}`);
+            refundFailedTask(upstreamDiagnostic(String(model), '视频提交', fallbackDetail, channel?.apiKey || '', fallbackResponse.status, fallbackResponse.headers.get('x-request-id') || undefined));
             res.write('data: [DONE]\n\n');
             return res.end();
           }
@@ -2657,7 +2657,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
         console.error(`[video] 创建任务失败: ${createResp.status} ${errText.slice(0, 300)}`);
-        refundFailedTask(`创建视频任务失败 (${createResp.status}): ${errText.slice(0, 1000)}`);
+        refundFailedTask(upstreamDiagnostic(String(model), '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
       }
@@ -3056,9 +3056,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       if (!res.destroyed && !res.writableEnded) res.end('data: [DONE]\n\n');
       return;
     }
-    const msg = err.name === 'AbortError'
-      ? '请求超时'
-      : (err.cause?.message || err.message || '请求失败');
+    const msg = transportDiagnostic(String(model), '视频生成请求', err);
     const saved = contentId !== null ? readVideoRecoveryState(contentId) : null;
     const accepted = videoId || saved && savedVideoTaskId(JSON.parse(saved.metadata || '{}'));
     refundFailedTask(msg, !accepted && !(err instanceof SpecificationUpstreamError && err.uncertain) && (!paidRequestStarted || videoRequestNotSent(err)
@@ -4148,3 +4146,4 @@ export function resumeAllPendingVideoTasks() {
 }
 
 export default router;
+import { upstreamDiagnostic, transportDiagnostic } from '../services/upstreamDiagnostic.js';

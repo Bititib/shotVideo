@@ -134,15 +134,12 @@ function abortError(message: string): Error {
   return error;
 }
 
-function upstreamError(body: any, fallback: string): Error {
-  const message = body?.error?.message || body?.error || body?.message || fallback;
-  return new Error(typeof message === 'string' ? message : fallback);
+function upstreamError(body: any, fallback: string, secret: string, response?: Response): Error {
+  return new Error(upstreamDiagnostic('四月天', fallback, body, secret, response?.status, response?.headers.get('x-request-id') || undefined));
 }
 
-async function readJson(response: Response): Promise<any> {
-  const text = await response.text();
-  if (!text) return {};
-  try { return JSON.parse(text); } catch { throw new Error(`四月天返回了无效 JSON: ${text.slice(0, 200)}`); }
+async function readJson(response: Response, secret: string): Promise<any> {
+  return diagnosticJson('四月天', '图片响应', response, secret);
 }
 
 async function runOnce(input: SiYueTianImageInput): Promise<SiYueTianImageResult> {
@@ -180,14 +177,14 @@ async function runOnce(input: SiYueTianImageInput): Promise<SiYueTianImageResult
     body: JSON.stringify(payload),
     signal: input.signal,
   });
-  const submitBody = await readJson(submitted);
+  const submitBody = await readJson(submitted, input.apiKey);
   if (!submitted.ok || submitBody?.error) {
-    throw upstreamError(submitBody, `四月天图片任务提交失败 (HTTP ${submitted.status})`);
+    throw upstreamError(submitBody, `四月天图片任务提交失败 (HTTP ${submitted.status})`, input.apiKey, submitted);
   }
 
   const taskId = String(submitBody.task_id || submitBody.taskId || submitBody.id || '');
   const taskPath = String(submitBody.task_url || (taskId ? `/v1/images/generations/${encodeURIComponent(taskId)}` : ''));
-  if (!taskId || !taskPath) throw new Error('四月天图片接口未返回任务 ID');
+  if (!taskId || !taskPath) throw upstreamError(submitBody, '四月天图片接口未返回任务 ID', input.apiKey, submitted);
   input.onSubmitted?.(taskId);
 
   const taskUrl = new URL(taskPath, `${baseUrl}/`).toString();
@@ -198,9 +195,9 @@ async function runOnce(input: SiYueTianImageInput): Promise<SiYueTianImageResult
   while (Date.now() <= deadline) {
     if (input.signal?.aborted) throw abortError('图片生成已取消');
     const response = await fetchImpl(taskUrl, { headers: { Authorization: `Bearer ${input.apiKey}` }, signal: input.signal });
-    const task = await readJson(response);
+    const task = await readJson(response, input.apiKey);
     if (!response.ok || task?.error && !task?.status) {
-      const error = upstreamError(task, `四月天图片任务查询失败 (HTTP ${response.status})`);
+      const error = upstreamError(task, `四月天图片任务查询失败 (HTTP ${response.status})`, input.apiKey, response);
       if (isRetryableSiYueTianImageFailure(error)) {
         input.onRetry?.(0, 0, pollIntervalMs, error.message);
         await sleep(pollIntervalMs);
@@ -221,7 +218,7 @@ async function runOnce(input: SiYueTianImageInput): Promise<SiYueTianImageResult
         raw: task,
       };
     }
-    if (status === 'failed') throw upstreamError(task, '四月天图片生成失败');
+    if (status === 'failed') throw upstreamError(task, '四月天 图片生成失败 task_id=' + taskId, input.apiKey, response);
     await sleep(pollIntervalMs);
   }
   throw abortError(`四月天图片生成超时（${Math.ceil(timeoutMs / 1000)} 秒）`);
@@ -245,3 +242,4 @@ export async function generateSiYueTianImage(input: SiYueTianImageInput): Promis
   }
   throw lastError;
 }
+import { upstreamDiagnostic, responseDiagnostic, transportDiagnostic, diagnosticJson } from './upstreamDiagnostic.js';

@@ -34,14 +34,14 @@ async function getJson(channel: AsyncVideoChannel, url: string, fetchImpl: typeo
     signal: AbortSignal.timeout(channel.timeout || 30_000), redirect: 'error' });
   // Do not expose provider response bodies, which may contain credentials or signed URLs.
   if (!response.ok) throw new Error(await responseDiagnostic('Vx-乐', '查询', response, channel.apiKey));
-  return response.json();
+  return diagnosticJson('Vx-乐', '查询', response, channel.apiKey);
 }
 
 export function normalizeAsyncVideoTask(raw: any) {
   const status = String(raw?.status || '').toLowerCase();
-  if (!['pending', 'processing', 'completed', 'failed'].includes(status)) throw new Error('异步视频返回了未知任务状态');
+  if (!['pending', 'processing', 'completed', 'failed'].includes(status)) throw new Error(upstreamDiagnostic('Vx-乐', '异步视频返回了未知任务状态 ' + status, raw));
   return { status, progress: status === 'completed' ? 100 : 0, resultUrl: '',
-    error: typeof raw.error === 'string' ? raw.error : raw.error?.message || raw.error_message || '' };
+    error: status === 'failed' ? upstreamDiagnostic('Vx-乐', '任务失败', { error: raw.error, error_message: raw.error_message, error_code: raw.error_code }) : '' };
 }
 
 /** Always resolve with the API key: signed resolver links expire after five minutes. */
@@ -82,4 +82,4 @@ export async function fetchAsyncVideoModels(channel: AsyncVideoChannel, fetchImp
   if (new Set(entries.map((model: AsyncVideoModel) => model.name)).size !== entries.length) throw new Error('异步视频模型名称重复');
   return entries;
 }
-import { responseDiagnostic } from './upstreamDiagnostic.js';
+import { responseDiagnostic, upstreamDiagnostic, diagnosticJson } from './upstreamDiagnostic.js';

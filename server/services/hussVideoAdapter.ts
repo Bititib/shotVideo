@@ -69,12 +69,12 @@ export async function submitHussVideo(channel: HussChannel, input: HussVideoInpu
   const { key, payload } = hussVideoParameters(input); const publish = (items: string[]) => items.map(item => publishReferenceUrl(item, input.publicBaseUrl));
   const request = { ...payload, ...(input.images.length ? { reference_images: publish(input.images) } : {}), ...(input.videos.length ? { videos: publish(input.videos) } : {}), ...(input.audios.length ? { audios: publish(input.audios) } : {}) };
   beforeSubmit({ ...request, idempotency_key: key }); const result = await hussRequest(channel, '/videos', request, key); const id = result?.id ?? result?.data?.id;
-  if ((typeof id !== 'string' && typeof id !== 'number') || !String(id).trim()) throw new HussApiError('HUSS 未返回任务编号，提交结果待核实', 202, true); return String(id);
+  if ((typeof id !== 'string' && typeof id !== 'number') || !String(id).trim()) throw new HussApiError(hussFailure('未返回任务编号，提交结果待核实', result, 202, undefined, channel.apiKey), 202, true); return String(id);
 }
 export function normalizeHussTask(raw: any, baseUrl: string) {
   const data = raw?.data && typeof raw.data === 'object' ? raw.data : raw; const original = String(data?.status || '').toLowerCase();
   const status = ({ queued: 'queued', pending: 'queued', processing: 'running', in_progress: 'running', running: 'running', completed: 'completed', succeeded: 'completed', success: 'completed', failed: 'failed', rejected: 'failed', cancelled: 'cancelled', canceled: 'cancelled' } as Record<string, string>)[original];
-  if (!status) throw new Error('HUSS 任务响应未包含有效状态'); const rawUrl = data?.url || data?.output?.url || data?.output?.video_url || data?.video_url || '';
+  if (!status) throw new Error(hussFailure('任务响应未包含有效状态 ' + original, data)); const rawUrl = data?.url || data?.output?.url || data?.output?.video_url || data?.video_url || '';
   const url = rawUrl ? new URL(rawUrl, hussApiBase(baseUrl) + '/') : null; if (url && (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)) throw new Error('HUSS 视频结果地址无效');
   return { status, progress: Math.max(0, Math.min(100, Number(data?.progress) || (status === 'completed' ? 100 : 0))), resultUrl: status === 'completed' ? url?.href || '' : '', error: typeof data?.error === 'string' ? data.error : data?.error?.message || data?.message || '', errorCode: data?.error?.code || data?.error_code || '' };
 }

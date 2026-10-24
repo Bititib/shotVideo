@@ -156,7 +156,7 @@ describe('四月天异步图片适配器', () => {
     });
     expect(fetchImpl).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledWith(10_000);
-    expect(retries).toEqual([[2, 3, 10_000, 'system cpu overloaded (current: 98.9%, threshold: 90%)']]);
+    expect(retries).toEqual([[2, 3, 10_000, expect.stringContaining('system cpu overloaded (current: 98.9%, threshold: 90%)')]]);
     expect(isRetryableSiYueTianImageFailure(new Error('HTTP 429'))).toBe(true);
     expect(isRetryableSiYueTianImageFailure(new Error('Invalid token'))).toBe(false);
   });

@@ -16,7 +16,7 @@ export const zonghengTaskUrl = (base: string, id: string, _protocol: ZonghengPro
 export function zonghengError(payload: any): string {
   const code = payload?.error_code ?? payload?.error?.code ?? payload?.code;
   const detail = payload?.error_detail || payload?.error?.message || (typeof payload?.error === 'string' ? payload.error : '') || payload?.message || '';
-  return sanitizedGenerationReason([code, detail].filter(Boolean).join(': ')).slice(0, 500) || '生成服务请求失败';
+  return sanitizedGenerationReason([code, detail].filter(value => value !== undefined && value !== '').join(': ')) || '生成服务未提供失败原因';
 }
 export interface ZonghengSubmissionDiagnostics {
   reason: 'http_error' | 'invalid_task_response' | 'invalid_json' | 'timeout' | 'network_error';
@@ -113,9 +113,9 @@ export async function submitZonghengVideo(base: string, apiKey: string, input: Z
     httpStatus = response.status;
     const text = await response.text(); let job: any;
     try { job = JSON.parse(text); }
-    catch { throw new ZonghengSubmissionError('生成服务响应无法确认，请勿重复提交', response.ok || response.status === 408 || response.status >= 500,
+    catch { throw new ZonghengSubmissionError(upstreamDiagnostic('V6K', '提交 非 JSON 响应；请勿重复提交', text, apiKey, response.status, response.headers.get('x-request-id') || undefined), response.ok || response.status === 408 || response.status >= 500,
       { reason: response.ok ? 'invalid_json' : 'http_error', httpStatus, elapsedMs: Date.now() - startedAt }); }
-    if (!response.ok) throw new ZonghengSubmissionError(zonghengError(job).split(apiKey).join('[REDACTED]'),
+    if (!response.ok) throw new ZonghengSubmissionError(upstreamDiagnostic('V6K', '提交', { error_code: job?.error_code ?? job?.error?.code ?? job?.code, error_detail: job?.error_detail, error: job?.error, message: job?.message }, apiKey, response.status, response.headers.get('x-request-id') || undefined),
       Boolean(job?.id || job?.task_id) || response.status === 408 || response.status >= 500,
       { reason: 'http_error', httpStatus, elapsedMs: Date.now() - startedAt });
     const accepted = typeof job?.id === 'string' && job.id.trim() && ['queued','in_progress','completed','failed'].includes(job.status);
@@ -134,7 +134,7 @@ export async function submitZonghengVideo(base: string, apiKey: string, input: Z
     const code = String(error?.cause?.code || error?.code || '');
     const reason = ['TimeoutError','AbortError'].includes(error?.name) ? 'timeout' : 'network_error';
     const requestNotSent = zonghengRequestNotSent(error, httpStatus);
-    throw new ZonghengSubmissionError(requestNotSent ? '连接生成服务失败，请求未发送' : '提交结果待核实，请勿重复创建任务', !requestNotSent,
+    throw new ZonghengSubmissionError(transportDiagnostic('V6K', requestNotSent ? '连接失败，请求未发送' : '提交结果待核实，请勿重复创建任务', error, apiKey), !requestNotSent,
       { reason, httpStatus, elapsedMs: Date.now() - startedAt, requestNotSent, networkCode: code || undefined });
   }
 }
@@ -159,3 +159,4 @@ export function buildZonghengImagePayload(i: { model: string; prompt: string; si
   return { model: i.model, prompt: i.prompt.trim(), size: i.size, n: i.n,
     ...(i.aspectRatio ? { aspect_ratio: i.aspectRatio } : {}), ...(i.quality ? { quality: i.quality } : {}) };
 }
+import { upstreamDiagnostic, transportDiagnostic } from './upstreamDiagnostic.js';

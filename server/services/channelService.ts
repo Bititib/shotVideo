@@ -566,7 +566,7 @@ export class ChannelService {
       const durationMs = Date.now() - start;
       const result = response.ok
         ? { success: true, message: `success:${durationMs}ms`, durationMs }
-        : { success: false, message: `fail:HTTP ${response.status}`, durationMs };
+        : { success: false, message: await responseDiagnostic(channel.type, '测试连接', response, channel.apiKey), durationMs };
       db.update(channels).set({
         lastTestAt: new Date().toISOString(),
         lastTestResult: result.message,
@@ -574,7 +574,7 @@ export class ChannelService {
       return result;
     } catch (error: any) {
       const durationMs = Date.now() - start;
-      const message = error.name === 'AbortError' ? 'fail:timeout' : `fail:${error.message}`;
+      const message = transportDiagnostic(channel.type, '测试连接', error, channel.apiKey);
       db.update(channels).set({
         lastTestAt: new Date().toISOString(),
         lastTestResult: message,
@@ -629,11 +629,11 @@ export class ChannelService {
       signal: AbortSignal.timeout(channel.timeout || 30_000),
     });
     if (!response.ok) {
-      const detail = await response.text().catch(() => '');
-      throw { status: response.status, message: `拉取模型失败: HTTP ${response.status} ${detail.slice(0, 300)}` };
+      throw { status: 502, upstreamStatus: response.status, message: await responseDiagnostic(channel.type, '同步模型', response, channel.apiKey) };
     }
 
-    const payload = await response.json() as any;
+    const payload = await diagnosticJson(channel.type, '同步模型响应', response, channel.apiKey);
+    if (payload?.error) throw { status: 502, upstreamStatus: response.status, message: upstreamDiagnostic(channel.type, '同步模型', payload, channel.apiKey, response.status) };
     const rawModels = Array.isArray(payload) ? payload
       : Array.isArray(payload.data) ? payload.data
       : Array.isArray(payload.models) ? payload.models
@@ -686,3 +686,4 @@ export class ChannelService {
     return { count: modelIds.length, added, models: modelIds };
   }
 }
+import { upstreamDiagnostic, responseDiagnostic, transportDiagnostic, diagnosticJson } from './upstreamDiagnostic.js';

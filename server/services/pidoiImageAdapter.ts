@@ -37,18 +37,14 @@ export function parsePidoiImageTask(raw: any): PidoiImageTask {
       : ['queued', 'pending', 'in_progress', 'processing', 'running'].includes(state) ? 'processing' : undefined;
     if (status) return { ...evidence, status, progress: Math.max(0, Math.min(100, parseFloat(data.progress) || 0)),
       imageUrl: status === 'completed' ? String(data.result_url || data.image_url || data.result?.image_url || data.metadata?.url || '') : '',
-      error: String(data.fail_reason || data.error?.message || data.error || ''), raw };
+      error: status === 'failed' ? upstreamDiagnostic('Pidoi', '图片任务失败', { error: data.error, fail_reason: data.fail_reason, error_code: data.error_code }) : '', raw };
   }
-  if (raw?.code !== 'success' || !raw.data) throw new PidoiImageError(raw?.message || 'Pidoi 图片任务查询失败');
+  if (raw?.code !== 'success' || !raw.data) throw new PidoiImageError(upstreamDiagnostic('Pidoi', '图片任务查询失败', raw));
   const data = raw.data;
   const status = data.status === 'SUCCESS' ? 'completed' : data.status === 'FAILURE' ? 'failed' : 'processing';
   if (!['SUCCESS', 'FAILURE', 'IN_PROGRESS'].includes(data.status)) throw new PidoiImageError('Pidoi 返回未知任务状态');
   return { taskId: String(data.task_id || ''), pollPath: evidence?.pollPath, status, progress: Math.max(0, Math.min(100, parseFloat(data.progress) || 0)),
-    imageUrl: status === 'completed' ? String(data.result_url || '') : '', error: String(data.fail_reason || ''), raw };
-}
-function safeMessage(c: Channel, message: unknown) {
-  const text = String(message || '');
-  return (c.apiKey ? text.split(c.apiKey).join('[REDACTED]') : text).replace(/sk-[\w-]+/g, '[REDACTED]').slice(0, 200);
+    imageUrl: status === 'completed' ? String(data.result_url || '') : '', error: status === 'failed' ? upstreamDiagnostic('Pidoi', '图片任务失败', { fail_reason: data.fail_reason, error: data.error, error_code: data.error_code }) : '', raw };
 }
 
 async function readResponse(c: Channel, response: Response, options: SubmitOptions = {}, submission = true) {
@@ -68,11 +64,11 @@ async function readResponse(c: Channel, response: Response, options: SubmitOptio
       && (/^(?:404\s+)?(?:page\s+)?not found[.!]?$/i.test(message)
         || /cannot\s+(?:post|get)\s+\/|(?:invalid|unknown)\s+(?:url|route|endpoint)|no\s+route/i.test(message)
         || (response.status === 405 && /method not allowed/i.test(message)));
-    throw Object.assign(new PidoiImageError(`Pidoi 图片${submission ? '提交' : '查询'}失败 (${response.status})${raw?.error?.message || raw?.message ? '：' + safeMessage(c, raw?.error?.message || raw?.message) : ''}`, rejected),
+    throw Object.assign(new PidoiImageError(upstreamDiagnostic('Pidoi', submission ? '图片提交' : '图片查询', raw || text, c.apiKey, response.status, response.headers.get('x-request-id') || undefined), rejected),
       { status: response.status, routeUnavailable, upstreamTaskId: taskId || undefined,
         acceptedTask: submission && taskId ? { taskId, pollPath: evidence?.pollPath, status: 'processing', progress: 0, imageUrl: '', error: '', protocol: 'async', raw: {} } : undefined });
   }
-  if (!raw) throw new PidoiImageError('Pidoi 响应不是有效 JSON，提交结果待核对');
+  if (!raw) throw new PidoiImageError(upstreamDiagnostic('Pidoi', '非 JSON 响应；提交结果待核对', text, c.apiKey, response.status));
   return raw;
 }
 
@@ -212,3 +208,4 @@ export async function generatePidoiImage(c: Channel, body: Record<string, any>, 
     task = await pollPidoiImage(c, id, fetchImpl, task.pollPath || originalPollPath);
   }
 }
+import { upstreamDiagnostic } from './upstreamDiagnostic.js';

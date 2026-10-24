@@ -22,7 +22,7 @@ export function shouldSendHayaAuthorization(url: string, baseUrl: string): boole
 export function normalizeHayaTask(payload: any, baseUrl: string, taskId: string) {
   const status = String(payload.status || '');
   // Do not interpret a transient error envelope as a terminal task failure.
-  if (!['queued', 'in_progress', 'completed', 'failed'].includes(status)) throw new Error('Haya 查询响应未包含有效任务状态');
+  if (!['queued', 'in_progress', 'completed', 'failed'].includes(status)) throw new Error(upstreamDiagnostic('Haya', '查询响应未包含有效任务状态 task_id=' + taskId, payload));
   const code = String(payload.error?.code || '');
   const message = String(payload.error?.message || '');
   return {
@@ -62,11 +62,12 @@ export async function submitHayaVideo(baseUrl: string, apiKey: string, input: Ha
     onRequestId(requestId);
     if (!response.ok) {
       const uncertain = response.status === 408 || response.status >= 500;
-      throw new HayaSubmissionError(`Haya 创建视频任务失败 (${response.status}): ${(await response.text()).slice(0, 500)}`, uncertain, requestId);
+      throw new HayaSubmissionError(await responseDiagnostic('Haya', '创建视频任务', response, apiKey), uncertain, requestId);
     }
-    return { taskId: hayaTaskId(await response.json()), requestId };
+    return { taskId: hayaTaskId(await diagnosticJson('Haya', '视频提交响应', response, apiKey)), requestId };
   } catch (error: any) {
     if (error instanceof HayaSubmissionError) throw error;
-    throw new HayaSubmissionError('Haya 提交结果待核实，请勿重复创建任务', true, requestId);
+    throw new HayaSubmissionError(transportDiagnostic('Haya', '提交结果待核实，请勿重复创建任务', error, apiKey), true, requestId);
   }
 }
+import { responseDiagnostic, transportDiagnostic, upstreamDiagnostic, diagnosticJson } from './upstreamDiagnostic.js';

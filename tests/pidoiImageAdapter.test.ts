@@ -84,7 +84,7 @@ describe('Pidoi 异步图片协议', () => {
     expect(f).toHaveBeenCalledWith('https://pidoi.com/v1/image/generations/task_abc', expect.objectContaining({ method: 'GET' }));
   });
   it('外层 success 不等于任务成功', () => {
-    expect(parsePidoiImageTask({ code: 'success', data: { status: 'FAILURE', fail_reason: '审核失败' } })).toMatchObject({ status: 'failed', error: '审核失败' });
+    expect(parsePidoiImageTask({ code: 'success', data: { status: 'FAILURE', fail_reason: '审核失败' } })).toMatchObject({ status: 'failed', error: expect.stringContaining('审核失败') });
     expect(() => parsePidoiImageTask({ code: 'task_not_exist', message: '任务不存在', data: null })).toThrow('任务不存在');
   });
   it('提交超时不重试，缺失 ID 不伪造任务', async () => {

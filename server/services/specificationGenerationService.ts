@@ -185,8 +185,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
     }
     catch (error: any) {
       const status = Number(error?.status) || null;
-      const message = [401, 403].includes(status || 0) ? '任务状态查询被拒绝，请联系管理员检查渠道配置'
-        : '任务状态暂时查询不到，正在重试，请勿重复提交';
+      const message = transportDiagnostic(channel.type || 'OpenAI-compatible', '任务查询 task_id=' + taskId + '；正在重试，请勿重复提交', error, channel.apiKey);
       patch(id, { progressText: message, upstreamQueryError: message, lastQueryAt: new Date().toISOString(), lastQueryStatus: status, queryFailures: ++queryFailures });
       onEvent({ type: 'status', message, contentId: id });
       await wait(isZonghengChannel(channel) ? v6kQueryRetryDelay(queryFailures) : 12_000); continue;
@@ -225,8 +224,9 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
     }
     await wait(isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : 8_000);
   }
-  holdForReview(id, '原任务查询达到时限，费用保留，请核查原任务', 'query');
-  onEvent({ type: 'status', message: '任务仍待核实，请在历史记录查看' });
+  const reviewMessage = (metadata(id).upstreamQueryError || '') + '；原任务查询达到时限，费用保留，请核查原任务，请勿重复提交';
+  holdForReview(id, reviewMessage, 'query');
+  onEvent({ type: 'status', message: reviewMessage });
 }
 async function runVideo(id: number, candidates: RouteCandidate[], request: SpecificationRequest, onEvent: (data: any) => void) {
   for (const target of candidates) {
@@ -264,7 +264,8 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
           || dispatchPrepared && !(e instanceof SpecificationUpstreamError && (e.retrySafe || e.confirmedFailure));
         if (claimed) endVideoSubmission(id, uncertain ? 'unknown' : 'rejected');
         if (uncertain) {
-          noteRouteResult(target.healthKey, false, e.message); holdForReview(id, e.message, taskId ? pollingStarted ? 'query' : 'local' : 'submission'); onEvent({ type: 'status', message: taskId ? '原任务处理异常，请勿重复提交' : '提交结果待核实，请勿重复提交' }); return;
+          const message = e.message + '；' + (taskId ? '原任务处理异常，请勿重复提交' : '提交结果待核实，请勿重复提交');
+          noteRouteResult(target.healthKey, false, e.message); holdForReview(id, message, taskId ? pollingStarted ? 'query' : 'local' : 'submission'); onEvent({ type: 'status', message }); return;
         }
         throw e;
       } finally {
@@ -338,8 +339,8 @@ async function runImages(id: number, candidates: RouteCandidate[], request: Spec
         patch(id, { routingAttempts: [...attempts, { routeId: target.route.id, index, reason: e.message }], submissionStartedAt: null });
       }
     }
-    if (uncertain) { onEvent({ type: 'error', message: '部分图片任务待核实，已生成的图片保留，请勿重提' }); return; }
-    if (!done) onEvent({ type: 'image_error', index, message: '当前图片没有可用线路或生成失败' });
+    if (uncertain) { onEvent({ type: 'error', message: (metadata(id).error || '') + '；部分图片任务待核实，已生成的图片保留，请勿重复提交' }); return; }
+    if (!done) onEvent({ type: 'image_error', index, message: metadata(id).failureReason || '当前图片没有可用线路或生成失败' });
   }
   if (urls.length) { complete(id, urls); onEvent({ type: 'complete', imageUrls: urls, contentId: id }); }
   else { const reason = metadata(id).failureReason || '图片生成失败'; failTask(id, reason); onEvent({ type: 'error', message: reason }); }
@@ -587,7 +588,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
       await run();
       if (apiContext) {
         const row = db.select().from(contents).where(eq(contents.id, id!)).get()!, meta = JSON.parse(row.metadata);
-        if (row.status !== 'completed') res.status(meta.requiresReview ? 202 : 502).json({ id: 'task_' + id, status: row.status, requires_review: Boolean(meta.requiresReview), error: publicGenerationError(meta.requiresReview ? '提交结果待核实，请勿重复提交' : meta.error || '生成失败') });
+        if (row.status !== 'completed') res.status(meta.requiresReview ? 202 : 502).json({ id: 'task_' + id, status: row.status, requires_review: Boolean(meta.requiresReview), error: publicGenerationError((meta.error || meta.upstreamQueryError || '生成失败') + (meta.requiresReview ? '；提交结果待核实，请勿重复提交' : '')) });
         else res.json({ created: Math.floor(Date.now() / 1000), data: meta.imageUrls.map((url: string) => (request.body.response_format === 'b64_json' ? { b64_json: fs.readFileSync(path.join('data/uploads', path.basename(url))).toString('base64') } : { url: issueUploadUrl(url, request.publicBaseUrl) })) });
       } else if (!res.writableEnded && !res.destroyed) res.end('data: [DONE]\n\n');
     }
@@ -643,20 +644,24 @@ async function recoverImages(id: number) {
       try {
         if (!job.sourceUrl) {
           const result = await pollSpecificationImage(channel, job.taskId);
-          if (result.status === 'failed') { job.status = 'failed'; noteRouteResult(job.healthKey, false, result.error || '图片生成失败', false, true); continue; }
+          if (result.status === 'failed') { job.status = 'failed'; job.error = result.error || '图片生成失败'; noteRouteResult(job.healthKey, false, job.error, false, true); continue; }
           if (result.status !== 'completed' || !result.imageUrl) { pending = true; continue; }
           job.sourceUrl = result.imageUrl; patch(id, { imageJobs: jobs });
         }
         const { localizeGeneratedImage } = await import('../routes/imageGen.js');
         job.localUrl = await localizeGeneratedImage(job.sourceUrl, 'spec_image_' + id + '_' + job.index, req, channel, { relative: true });
         job.status = 'completed'; noteRouteResult(job.healthKey, true);
-      } catch { pending = true; }
+      } catch (error: any) {
+        pending = true;
+        const message = transportDiagnostic(channel.type || 'OpenAI-compatible', '图片恢复查询或保存 task_id=' + job.taskId + '；请勿重复提交', error, channel.apiKey);
+        job.queryError = message; patch(id, { upstreamQueryError: message, progressText: message });
+      }
     }
     const urls = jobs.filter(j => j.status === 'completed').sort((a,b) => a.index - b.index).map(j => j.localUrl);
     patch(id, { imageJobs: jobs, imageUrls: urls });
     if (!pending) {
       if (initial.submissionStartedAt && !jobs.some(j => j.index === initial.imageSubmissionIndex)) { holdForReview(id, '有一张图片的提交结果仍待核实，请勿重提'); return; }
-      if (urls.length) complete(id, urls); else failTask(id, '图片生成失败'); return;
+      if (urls.length) complete(id, urls); else failTask(id, jobs.map(j => j.error).filter(Boolean).join('；') || '图片生成失败'); return;
     }
     await wait(8000);
   }
@@ -696,9 +701,9 @@ export function resumeSpecificationTasks() {
     if (knownMjResult || resumableMj) { try { assertMjReservation(row.id); } catch { continue; } }
     if (row.type === 'image' && (meta.nativeImageBatch || meta.imageJobs?.length || resumableMj)) {
       active.add(row.id);
-      void recoverImages(row.id).catch(() => {
+      void recoverImages(row.id).catch((error: any) => {
         if (knownMjResult || resumableMj) { try { assertMjReservation(row.id); } catch { return; } }
-        holdForReview(row.id, '图片结果待核实');
+        holdForReview(row.id, transportDiagnostic('图片原渠道', '图片结果待核实，请勿重复提交', error));
       }).finally(() => active.delete(row.id));
       continue;
     }
@@ -709,6 +714,7 @@ export function resumeSpecificationTasks() {
     const channel = ChannelService.getChannelRaw(Number(meta.channelId), Number(meta.channelApiKeyId) || null);
     if (!channel) { holdForReview(row.id, '原任务渠道已删除，需要管理员核实'); continue; }
     active.add(row.id);
-    void pollVideo(row.id, channel, meta.videoId, () => {}).catch(() => handleUnexpectedGenerationError(row.id, '原任务处理异常')).finally(() => active.delete(row.id));
+    void pollVideo(row.id, channel, meta.videoId, () => {}).catch((error: any) => handleUnexpectedGenerationError(row.id, transportDiagnostic(channel.type, '原任务处理异常', error, channel.apiKey))).finally(() => active.delete(row.id));
   }
 }
+import { transportDiagnostic } from './upstreamDiagnostic.js';

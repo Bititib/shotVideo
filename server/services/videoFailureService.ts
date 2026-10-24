@@ -23,6 +23,8 @@ export function extractVideoFailureMessage(value: unknown, depth = 0): string {
 
   const record = value as Record<string, unknown>;
   const candidates = [
+    record.code,
+    record.error_code,
     record.error,
     record.err_code,
     record.failure_reason,
@@ -30,11 +32,13 @@ export function extractVideoFailureMessage(value: unknown, depth = 0): string {
     record.message,
     record.detail,
   ];
+  const details: string[] = [];
   for (const candidate of candidates) {
     const message = extractVideoFailureMessage(candidate, depth + 1);
-    if (message) return message;
+    if (message && !details.includes(message)) details.push(message);
   }
-  try { return JSON.stringify(value); } catch { return ''; }
+  if (details.length) return details.join(': ');
+  return sanitizedGenerationReason(value);
 }
 
 const VIDEO_FAILURE_STATUSES = new Set([
@@ -118,9 +122,10 @@ export function clarifyVideoCapacityFailure(message: string, hmStudioTask: boole
   if (hmStudioTask) return message;
   const capacityPattern = /(任务)?并发(数|量|额度|限制)?不足|concurrency.{0,30}(insufficient|limit|exceeded|full)/i;
   return capacityPattern.test(message)
-    ? '上游渠道当前容量不足，请稍后重试（非本站并发限制）'
+    ? message + '；上游渠道当前容量不足，请稍后重试（非本站并发限制）'
     : message;
 }
+import { sanitizedGenerationReason } from '../../shared/generationErrorPrivacy.js';
 
 export function withVideoFailureMetadata(
   metadata: unknown,

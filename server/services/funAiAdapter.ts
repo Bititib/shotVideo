@@ -32,8 +32,9 @@ export async function fetchFunAiModels(channel: FunAiChannel) {
   const response = await fetch(funAiBaseUrl(channel.baseUrl) + '/v1/models', {
     headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(channel.timeout || 30_000), redirect: 'error',
   });
-  const payload = await response.json().catch(() => null) as any;
-  if (!response.ok || payload?.error) throw new FunAiApiError('FunAI 模型查询失败：' + safeMessage(payload?.error?.message || payload?.error || 'HTTP ' + response.status, channel), response.status);
+  if (!response.ok) throw new FunAiApiError(await responseDiagnostic('FunAI', '模型查询', response, channel.apiKey), response.status);
+  const payload = await diagnosticJson('FunAI', '模型查询', response, channel.apiKey);
+  if (payload?.error) throw new FunAiApiError(upstreamDiagnostic('FunAI', '模型查询', payload, channel.apiKey, response.status), response.status);
   const entries = Array.isArray(payload) ? payload : payload?.data;
   if (!Array.isArray(entries) || entries.some(item => typeof item !== 'string' && (typeof item?.id !== 'string' || !item.id.trim()))) throw new FunAiApiError('FunAI 模型列表格式无效', 502);
   return [...new Set<string>(entries.map(item => (typeof item === 'string' ? item : item.id).trim()))].filter(Boolean);
@@ -113,14 +114,14 @@ export function normalizeFunAiTask(raw: any, channel: FunAiChannel, id: string, 
     resultUrl = url.href;
   }
   return { status: status === 'in_progress' ? 'processing' : status, progress: Math.min(100, Math.max(0, Number(raw.progress) || 0)),
-    resultUrl: status === 'completed' ? resultUrl : '', error: raw.error ? safeMessage(raw.error?.message || raw.error, channel) : '' };
+    resultUrl: status === 'completed' ? resultUrl : '', error: raw.error ? upstreamDiagnostic('FunAI', '任务 task_id=' + id, { error: raw.error, error_code: raw.error_code }, channel.apiKey) : '' };
 }
 export async function pollFunAiTask(channel: FunAiChannel, id: string, fetchImpl: typeof fetch = fetch, kind: 'image' | 'video' = 'video') {
   const response = await fetchImpl(funAiTaskUrl(channel.baseUrl, id), {
     headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(30_000), redirect: 'error',
   });
   if (!response.ok) throw new FunAiApiError(await responseDiagnostic('FunAI', '任务查询 task_id=' + id, response, channel.apiKey), response.status, true);
-  return normalizeFunAiTask(await response.json(), channel, id, kind);
+  return normalizeFunAiTask(await diagnosticJson('FunAI', '任务查询 task_id=' + id, response, channel.apiKey), channel, id, kind);
 }
 
 function blockedAddress(address: string) {
@@ -208,7 +209,7 @@ export async function generateFunAiImage(channel: FunAiChannel, model: string, r
   });
   if (!response.ok) throw new FunAiApiError(await responseDiagnostic('FunAI', '图片提交', response, channel.apiKey), response.status, response.status >= 500);
   let raw: any;
-  try { raw = await response.json(); } catch { throw new FunAiApiError('FunAI 图片提交响应无法解析，请勿重复提交', 502, true); }
+  try { raw = await diagnosticJson('FunAI', '图片提交响应；请勿重复提交', response, channel.apiKey); } catch (error: any) { throw new FunAiApiError(error.message, 502, true); }
   if (gemini) {
     const image = raw?.candidates?.[0]?.content?.parts?.find((part: any) => part.inlineData?.data)?.inlineData;
     if (!image) throw new FunAiApiError('Gemini 未返回图片，请核实原请求', 502, true);
@@ -222,9 +223,9 @@ export async function generateFunAiImage(channel: FunAiChannel, model: string, r
   while (Date.now() < deadline) {
     let task: ReturnType<typeof normalizeFunAiTask>;
     try { task = await pollFunAiTask(channel, id, fetchImpl, 'image'); failures = 0; }
-    catch (error) {
+    catch (error: any) {
       if (error instanceof FunAiApiError && ![429, 500, 502, 503].includes(error.status)) throw error;
-      if (++failures > 5) throw new FunAiApiError('FunAI 图片查询暂不可用，保留原任务继续查询', 502, true);
+      if (++failures > 5) throw new FunAiApiError(transportDiagnostic('FunAI', '图片查询；保留原任务继续查询', error, channel.apiKey), 502, true);
       await wait(Math.min(30_000, 1000 * 2 ** failures) + Math.random() * 500); continue;
     }
     if (['failed', 'cancelled'].includes(task.status)) throw new FunAiApiError(task.error || 'FunAI 图片生成失败', 0, false, true);
@@ -233,4 +234,4 @@ export async function generateFunAiImage(channel: FunAiChannel, model: string, r
   }
   throw new FunAiApiError('FunAI 图片原任务仍在处理中', 0, true);
 }
-import { responseDiagnostic } from './upstreamDiagnostic.js';
+import { responseDiagnostic, upstreamDiagnostic, diagnosticJson, transportDiagnostic } from './upstreamDiagnostic.js';

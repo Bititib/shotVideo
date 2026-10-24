@@ -2,12 +2,24 @@ import { sanitizedGenerationReason } from '../../shared/generationErrorPrivacy.j
 
 // Presentation only: adapters retain their own status/retry/billing semantics.
 export function upstreamDiagnostic(provider: string, stage: string, payload: unknown, secret = '', httpStatus?: number, requestId?: string) {
-  const p = payload as any;
+  let p = payload as any;
+  if (typeof p === 'string') { try { p = JSON.parse(p); } catch {} }
   const code = p?.error?.code ?? p?.error_code ?? p?.code;
-  const id = requestId || p?.request_id || p?.requestId;
+  const id = requestId || p?.request_id || p?.requestId || p?.error?.request_id || p?.data?.request_id;
   const detail = sanitizedGenerationReason(payload);
   const text = `[上游诊断 ${provider} ${stage}]${httpStatus ? ' HTTP ' + httpStatus : ''}${code !== undefined ? ' code=' + String(code) : ''}${id ? ' request_id=' + String(id) : ''}：${detail}`;
   return sanitizedGenerationReason(secret ? text.split(secret).join('[密钥已隐藏]') : text);
+}
+
+export function transportDiagnostic(provider: string, stage: string, error: any, secret = '') {
+  return upstreamDiagnostic(provider, stage, { code: error?.cause?.code || error?.code || error?.name,
+    message: error?.message || String(error), detail: error?.cause?.message }, secret);
+}
+
+export async function diagnosticJson(provider: string, stage: string, response: Response, secret = '') {
+  try { return await response.json(); }
+  catch (error: any) { throw new Error(upstreamDiagnostic(provider, stage + ' 响应读取失败或非 JSON 响应，无法解析', { code: error?.cause?.code || error?.name, message: '响应正文无法解析或未完整读取' }, secret, response.status,
+    response.headers.get('x-request-id') || response.headers.get('request-id') || undefined)); }
 }
 
 export async function responseDiagnostic(provider: string, stage: string, response: Response, secret = '') {

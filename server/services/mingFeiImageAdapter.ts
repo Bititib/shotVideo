@@ -53,15 +53,12 @@ function abortError(message: string): Error {
   return error;
 }
 
-function upstreamError(body: any, fallback: string): Error {
-  const message = body?.error?.message || body?.error || body?.message || fallback;
-  return new Error(typeof message === 'string' ? message : fallback);
+function upstreamError(body: any, fallback: string, secret: string, response?: Response): Error {
+  return new Error(upstreamDiagnostic('MingFei', fallback, body, secret, response?.status, response?.headers.get('x-request-id') || undefined));
 }
 
-async function readJson(response: Response): Promise<any> {
-  const text = await response.text();
-  if (!text) return {};
-  try { return JSON.parse(text); } catch { throw new Error(`MingFei 返回了无效 JSON: ${text.slice(0, 200)}`); }
+async function readJson(response: Response, secret: string): Promise<any> {
+  return diagnosticJson('MingFei', '图片响应', response, secret);
 }
 
 /**
@@ -93,13 +90,13 @@ export async function generateMingFeiImage(input: MingFeiImageInput): Promise<Mi
     body: JSON.stringify(payload),
     signal: input.signal,
   });
-  const submitBody = await readJson(submitted);
+  const submitBody = await readJson(submitted, input.apiKey);
   if (!submitted.ok || submitBody?.error) {
-    throw upstreamError(submitBody, `MingFei 图片任务提交失败 (HTTP ${submitted.status})`);
+    throw upstreamError(submitBody, `MingFei 图片任务提交失败 (HTTP ${submitted.status})`, input.apiKey, submitted);
   }
 
   const taskId = String(submitBody.id || submitBody.task_id || submitBody.taskId || '');
-  if (!taskId) throw new Error('MingFei 图片接口未返回任务 ID');
+  if (!taskId) throw upstreamError(submitBody, 'MingFei 图片接口未返回任务 ID', input.apiKey, submitted);
   input.onSubmitted?.(taskId);
 
   const taskUrl = `${baseUrl}/v1/videos/${encodeURIComponent(taskId)}`;
@@ -113,9 +110,9 @@ export async function generateMingFeiImage(input: MingFeiImageInput): Promise<Mi
       headers: { Authorization: `Bearer ${input.apiKey}` },
       signal: input.signal,
     });
-    const task = await readJson(response);
+    const task = await readJson(response, input.apiKey);
     if (!response.ok || task?.error && !task?.status) {
-      throw upstreamError(task, `MingFei 图片任务查询失败 (HTTP ${response.status})`);
+      throw upstreamError(task, `MingFei 图片任务查询失败 (HTTP ${response.status})`, input.apiKey, response);
     }
 
     const status = String(task.status || '').toLowerCase();
@@ -130,9 +127,10 @@ export async function generateMingFeiImage(input: MingFeiImageInput): Promise<Mi
         raw: task,
       };
     }
-    if (status === 'failed') throw upstreamError(task, 'MingFei 图片生成失败');
+    if (status === 'failed') throw upstreamError(task, 'MingFei 图片生成失败 task_id=' + taskId, input.apiKey, response);
     await sleep(pollIntervalMs);
   }
 
   throw abortError(`MingFei 图片生成超时（${Math.ceil(timeoutMs / 1000)} 秒）`);
 }
+import { upstreamDiagnostic, diagnosticJson, transportDiagnostic } from './upstreamDiagnostic.js';

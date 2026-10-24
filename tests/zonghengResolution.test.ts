@@ -83,6 +83,6 @@ describe('public video phases',()=>{
     expect(videoTaskPhase('completed',meta)).toBe('completed');expect(videoTaskPhase('failed',meta)).toBe('failed');expect(videoTaskPhase('review',meta)).toBe('review');
     expect(videoTaskPhase('processing','{bad')).toBe('processing');
     expect(publicGenerationStatus('视频已生成，正在等待结果交付')).toBe('视频已生成，正在等待结果交付');
-    expect(publicGenerationError('连接生成服务失败，请求未发送')).toBe('任务未提交成功，请稍后重试。');
+    expect(publicGenerationError('连接生成服务失败，请求未发送')).toBe('连接生成服务失败，请求未发送；任务未提交成功，请稍后重试。');
   });
 });

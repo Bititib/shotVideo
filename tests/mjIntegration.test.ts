@@ -474,7 +474,7 @@ describe('MJ image channel', () => {
       expect(meta.failureReason).toContain('insufficient credits');
       expect(meta.failureReason).not.toContain(key);
       expect(meta.error).toBe(meta.failureReason);
-      const safe = 'insufficient credits';
+      const safe = expect.stringContaining('insufficient credits');
       expect(JSON.parse(sanitizeContentRoutingForClient(record).metadata)).toMatchObject({ error:safe, failureReason:safe, progressText:safe });
       if (transport === 'api') expect(res.body).toMatchObject({ status:'failed', error:safe });
       else {
@@ -509,7 +509,7 @@ describe('MJ image channel', () => {
     canvasRequestStore().claim(1, requestId, 'credit-error-parameters');
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error:'insufficient credits' }, { status:402 })));
     await handleSpecificationGeneration(request({ canvasRequestId:requestId }), response(), 'image');
-    expect(canvasRequestStore().get(1, requestId)?.message).toBe('insufficient credits');
+    expect(canvasRequestStore().get(1, requestId)?.message).toContain('insufficient credits');
     expect(fetch).toHaveBeenCalledOnce();
   });
 });
@@ -785,9 +785,9 @@ describe('documented MJ HTTP 402 contract', () => {
       expect(specificationAvailability(getModelSpecification(MJ_MODEL_ID)!)).toEqual({available:true});
       expect(ChannelService.getChannelRaw(channelId)?.status).toBe(1);
       expect(db.select().from(users).get()!.balance).toBe(100);
-      const safe = body.startsWith('{') ? 'Payment Required' : '上游积分不足 (HTTP 402)：';
-      expect(JSON.parse(sanitizeContentRoutingForClient(record).metadata).error).toBe(safe);
-      if (transport === 'api') expect(res.body.error).toBe(safe);
+      const safe = body.startsWith('{') ? 'Payment Required' : '上游积分不足 (HTTP 402)';
+      expect(JSON.parse(sanitizeContentRoutingForClient(record).metadata).error).toContain(safe);
+      if (transport === 'api') expect(res.body.error).toContain(safe);
       else expect(res.write.mock.calls.some(([line]:[string]) => line.includes(safe))).toBe(true);
       expect(fetch).toHaveBeenCalledOnce();
     });

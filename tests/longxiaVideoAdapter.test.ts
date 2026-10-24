@@ -65,7 +65,7 @@ describe('LongXia video contract', () => {
       status: 'completed', progress: 100, resultUrl: 'https://media.longxiaai.store/result.mp4',
     });
     expect(normalizeLongxiaVideoTask({ status: 'cancelled' })).toMatchObject({ status: 'failed', error: 'LongXia 任务已取消' });
-    expect(normalizeLongxiaVideoTask({ status: 'failed', error: { code: 'invalid_media', message: 'invalid MP3' } })).toMatchObject({ status: 'failed', error: 'invalid MP3' });
+    expect(normalizeLongxiaVideoTask({ status: 'failed', error: { code: 'invalid_media', message: 'invalid MP3' } })).toMatchObject({ status: 'failed', error: expect.stringContaining('invalid_media: invalid MP3') });
     expect(normalizeLongxiaVideoTask({ status: 'completed', data: [] }).resultUrl).toBe('');
   });
 });

@@ -13,11 +13,13 @@ import {
 } from '../server/services/contentService.js';
 
 describe('content routing privacy', () => {
-  it.each(['query', 'settlement', 'local'] as const)('preserves %s review meaning without exposing provider diagnostics', reviewKind => {
+  it.each(['query', 'settlement', 'local'] as const)('preserves %s review cause without exposing credentials or private channel names', reviewKind => {
     const result = sanitizeContentRoutingForClient({ status: 'review', metadata: {
-      reviewKind, requiresReview: true, error: 'private supplier sk-test-secret', progressText: 'private supplier https://private.invalid' } });
+      reviewKind, requiresReview: true, channelName: 'private supplier', error: 'private supplier QUOTA_17 sk-test-secret', progressText: 'private supplier https://private.invalid' } });
     expect(result.metadata.reviewKind).toBe(reviewKind);
     expect(result.metadata.error).not.toContain('private');
+    expect(result.metadata.error).toContain('QUOTA_17');
+    expect(result.metadata.error).not.toContain('sk-test-secret');
     expect(result.metadata.progressText).not.toContain('提交结果待核实');
     expect(result.metadata.progressText).toContain(reviewKind === 'query' ? '查询异常' : reviewKind === 'settlement' ? '结算待核实' : '本地处理异常');
   });
@@ -25,8 +27,8 @@ describe('content routing privacy', () => {
     const result = sanitizeContentRoutingForClient({ status:'processing', metadata:{ requiresReview:true, fallbackFrom:'private-route',
       error:'insufficient credits', progressText:'insufficient credits', billingStatus:'review' } });
     expect(result.metadata).toMatchObject({ requiresReview:true, billingStatus:'review',
-      error:'提交结果待核实，请在生成记录核实原任务，请勿重复提交。',
-      progressText:'提交结果待核实，请在生成记录核实原任务，请勿重复提交。' });
+      error:'insufficient credits；提交结果待核实，请在生成记录核实原任务，请勿重复提交。',
+      progressText:'insufficient credits；提交结果待核实，请在生成记录核实原任务，请勿重复提交。' });
   });
   it.each([false, true])('explains upstream credit failures in history without exposing admin diagnostics (JSON=%s)', json => {
     const raw = '上游提交失败 (402)：{"error":"insufficient credits","provider":"private-provider"}';

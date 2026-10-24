@@ -21,7 +21,7 @@ it('keeps accepted 502 submissions and follows only their validated GET status p
     .mockResolvedValueOnce(Response.json({id:'task_saved',status:'failed',error:{message:'Rejected'}}));
   const task=await submitPidoiImage(channel,{prompt:'cat'},fetcher);
   expect(task).toMatchObject({taskId:'task_saved',status:'processing',pollPath:'/v1/images/generations/task_saved'});
-  expect(await pollPidoiImage(channel,task.taskId,fetcher,task.pollPath)).toMatchObject({status:'failed',error:'Rejected'});
+  expect(await pollPidoiImage(channel,task.taskId,fetcher,task.pollPath)).toMatchObject({status:'failed',error:expect.stringContaining('Rejected')});
   expect(fetcher.mock.calls.map(c=>c[1].method)).toEqual(['POST','GET']);
 });
 it('restores missing jobs without treating request traces as pollable tasks or duplicating slots', () => {
