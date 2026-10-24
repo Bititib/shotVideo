@@ -4,9 +4,9 @@
 
 # Run and deploy your AI Studio app
 
-## 模型与渠道开发准则
+## Codex 渠道接入编码准则
 
-新增模型、渠道或修改提交、查询、恢复和计费逻辑前，必须遵守 [模型与渠道接入准则](docs/model-channel-integration-standard.md)，并填写 [接入验收记录](docs/model-channel-integration-template.md)。仓库代理开发要求见 [AGENTS.md](AGENTS.md)。
+Codex 接入模型、渠道或修改提交、查询、恢复和计费代码时，必须执行 [编码准则](docs/model-channel-integration-standard.md)。指令入口为 [AGENTS.md](AGENTS.md)；[开发记录模板](docs/model-channel-integration-template.md) 由 Codex 按需填写，不要求用户执行验收流程。
 
 This contains everything you need to run your app locally.
 
