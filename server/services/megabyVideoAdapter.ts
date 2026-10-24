@@ -2,6 +2,7 @@ import { MEGABY_CHANNEL_TYPE, MEGABY_VIDEO_MODELS, megabyVideoLimits } from '../
 import { upstreamDiagnostic, transportDiagnostic } from './upstreamDiagnostic.js';
 import { probeVideoDurationSeconds, probeAudioDurationSeconds } from './videoDurationProbe.js';
 export class MegabyApiError extends Error {
+  get status() { return this.upstreamStatus; }
   constructor(message: string, public code: string, public upstreamStatus = 0, public uncertain = false, public confirmedFailure = false) { super(message); }
 }
 const parseMegabyError = (raw: any) => ({ code: typeof raw?.error?.code === 'string' ? raw.error.code : '', message: typeof raw?.error?.message === 'string' ? raw.error.message : typeof raw?.error === 'string' ? raw.error : typeof raw?.message === 'string' ? raw.message : '' });

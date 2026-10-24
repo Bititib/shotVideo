@@ -281,6 +281,12 @@ export class VideoRecoveryService {
       throw { status: 503, message: '原任务渠道当前不可用' };
     }
 
+    const completedReceipt = metadata.megabyCompletedReceipt;
+    if (isMegabyChannel(channel) && completedReceipt?.taskId === videoId && completedReceipt.resultUrl) {
+      const task = normalizeMegabyTask({ status: 'completed', video_url: completedReceipt.resultUrl }, channel.baseUrl, videoId);
+      return { status: 'completed', message: '原任务已完成，继续保存原结果', progress: 100,
+        upstreamResultUrl: task.resultUrl, videoId, channelId: channel.id, channelApiKeyId: Number(channel.apiKeyId) || null };
+    }
     const baseUrl = String(channel.baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '');
     const model = String(record.modelId || metadata.model || '');
     const isHmStudio = isHmStudioChannel(channel);

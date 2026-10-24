@@ -182,12 +182,17 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
   while (Date.now() < end) {
     let task: any;
     try {
-      const megabyInitial = metadata(id).megabyInitialTask;
-      if (isMegabyChannel(channel) && megabyInitial) { task = normalizeMegabyTask(megabyInitial, channel.baseUrl, taskId, channel.apiKey); patch(id, { megabyInitialTask: undefined }); }
-      else {
-        const initial = metadata(id).zonghengInitialTask;
-        if (isZonghengChannel(channel) && initial) { task = normalizeZonghengTask(initial, channel.baseUrl, 'v6k', taskId); patch(id, { zonghengInitialTask: undefined }); }
-        else task = await pollSpecificationVideo(channel, taskId);
+      const completedReceipt = metadata(id).megabyCompletedReceipt;
+      if (isMegabyChannel(channel) && completedReceipt?.taskId === taskId && completedReceipt.resultUrl) {
+        task = { status: 'completed', progress: 100, resultUrl: completedReceipt.resultUrl };
+      } else {
+        const megabyInitial = metadata(id).megabyInitialTask;
+        if (isMegabyChannel(channel) && megabyInitial) { task = normalizeMegabyTask(megabyInitial, channel.baseUrl, taskId, channel.apiKey); patch(id, { megabyInitialTask: undefined }); }
+        else {
+          const initial = metadata(id).zonghengInitialTask;
+          if (isZonghengChannel(channel) && initial) { task = normalizeZonghengTask(initial, channel.baseUrl, 'v6k', taskId); patch(id, { zonghengInitialTask: undefined }); }
+          else task = await pollSpecificationVideo(channel, taskId);
+        }
       }
     }
     catch (error: any) {
@@ -214,12 +219,17 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
     if (['completed', 'success', 'succeeded', 'done'].includes(task.status) && task.resultUrl) {
       let localized = '';
       try {
-        patch(id, { upstreamResultUrl: task.resultUrl });
+        patch(id, { upstreamResultUrl: task.resultUrl,
+          ...(isMegabyChannel(channel) ? { megabyCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}) });
         const { downloadAndLocalizeVideo } = await import('./videoLocalizationService.js');
         localized = await downloadAndLocalizeVideo(task.resultUrl, taskId, metadata(id).actualModel, channel.id, channel.apiKeyId);
-      } catch (error: any) { console.warn('[specification] result save failed', id, error.message); patch(id, { progressText: '上游已完成，正在保存结果' }); }
+      } catch (error: any) {
+        console.warn('[specification] result save failed', id, error.message);
+        const detail = transportDiagnostic(channel.type, '上游已完成，结果保存失败；正在重试保存', error, channel.apiKey);
+        patch(id, isMegabyChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
+      }
       if (localized) {
-        try { complete(id, [localized]); }
+        try { complete(id, [localized]); if (isMegabyChannel(channel)) patch(id, { resultSaveError: null }); }
         catch (error: any) {
           db.update(contents).set({ resultUrl: localized }).where(eq(contents.id, id)).run();
           holdForReview(id, error.message || '生成结果已保留，费用结算待核实', 'settlement');

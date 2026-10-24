@@ -191,3 +191,54 @@ describe('Megaby channel integration', () => {
     expect(JSON.parse((vi.mocked(fetch).mock.calls[0][1] as any).body).referenceImages).toEqual(images);
   });
 });
+
+it('keeps a completed Megaby receipt when the first result download fails', async () => {
+  enable(); vi.useFakeTimers();
+  try {
+    vi.mocked(downloadAndLocalizeVideo).mockRejectedValueOnce(new Error('storage temporarily unavailable'));
+    vi.stubGlobal('fetch', vi.fn(async (_url: any, init: any) => Response.json(init?.method === 'POST'
+      ? { task_id: 'completed-job', status: 'completed', video_url: 'https://cdn.example/saved.mp4' }
+      : { task_id: 'completed-job', status: 'failed', error: { code: 'expired_task', message: '上游记录已过期' } })));
+    const pending = handleSpecificationGeneration(request(), response(), 'video');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(downloadAndLocalizeVideo).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(8100);
+    await pending;
+    const record = db.select().from(contents).all().at(-1)!;
+    expect(record.status).toBe('completed');
+    expect(db.select().from(users).all()[0].balance).toBe(98);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(downloadAndLocalizeVideo).toHaveBeenCalledTimes(2);
+  } finally { vi.useRealTimers(); }
+});
+
+it('restores a persisted completed receipt without querying or submitting again', async () => {
+  const id = Number(db.insert(contents).values({ userId: 1, type: 'video', modelId, title: 'saved completion', status: 'processing',
+    metadata: JSON.stringify({ managedSpecification: true, channelId, videoId: 'saved-job', actualModel: modelId, requestedModel: modelId,
+      megabyCompletedReceipt: { taskId: 'saved-job', resultUrl: 'https://cdn.example/complete.mp4' } }),
+  }).run().lastInsertRowid);
+  const upstream = vi.fn(() => { throw new Error('must not query completed task'); }); vi.stubGlobal('fetch', upstream);
+  expect(await VideoRecoveryService.inspect(id)).toMatchObject({ status: 'completed', upstreamResultUrl: 'https://cdn.example/complete.mp4' });
+  resumeSpecificationTasks();
+  await vi.waitFor(() => expect(db.select().from(contents).where(eq(contents.id, id)).get()?.status).toBe('completed'));
+  expect(upstream).not.toHaveBeenCalled();
+  expect(downloadAndLocalizeVideo).toHaveBeenCalledWith('https://cdn.example/complete.mp4', 'saved-job', modelId, channelId, null);
+});
+
+it('preserves the HTTP status of a temporary Megaby query failure', async () => {
+  enable(); vi.useFakeTimers();
+  try {
+    const upstream = vi.fn()
+      .mockResolvedValueOnce(Response.json({ task_id: 'query-job' }))
+      .mockResolvedValueOnce(Response.json({ error: { code: 'server_error', message: '查询暂不可用' } }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ task_id: 'query-job', status: 'completed' }));
+    vi.stubGlobal('fetch', upstream);
+    const pending = handleSpecificationGeneration(request(), response(), 'video');
+    await vi.advanceTimersByTimeAsync(100);
+    const record = db.select().from(contents).all().at(-1)!;
+    expect(JSON.parse(record.metadata)).toMatchObject({ lastQueryStatus: 503 });
+    await vi.advanceTimersByTimeAsync(12100); await pending;
+    expect(db.select().from(contents).where(eq(contents.id, record.id)).get()?.status).toBe('completed');
+    expect(upstream.mock.calls.filter(call => call[1]?.method === 'POST')).toHaveLength(1);
+  } finally { vi.useRealTimers(); }
+});
