@@ -14,66 +14,38 @@ describe('Zongheng public protocol', () => {
     expect(getZonghengVideoSpec('ZH-' + spec.id)).toBe(spec);
     expect(getZonghengVideoSpec('zongheng-' + spec.id)).toBe(spec);
     for (const seconds of spec.seconds) {
-      expect(buildZonghengVideoPayload({...input, model:spec.id, seconds, resolution:spec.resolution.toUpperCase(), videos:'references' in spec && spec.references.videos===0 ? [] : input.videos})).toMatchObject({model:spec.id, seconds:seconds, resolution:spec.resolution});
+      expect(buildZonghengVideoPayload({...input, model:spec.id, seconds, resolution:spec.resolution.toUpperCase(), videos:spec.references.videos ? input.videos : [],audios:spec.references.audios ? input.audios : []})).toMatchObject({model:spec.id, seconds:seconds, resolution:spec.resolution});
     }
     for (const seconds of [spec.seconds[0] - 1, spec.seconds[spec.seconds.length - 1] + 1]) {
       expect(() => buildZonghengVideoPayload({...input,model:spec.id,seconds,resolution:spec.resolution})).toThrow('仅支持');
     }
     expect(() => buildZonghengVideoPayload({...input,model:spec.id,seconds:spec.seconds[0],resolution:spec.resolution === '480p' ? '1080p' : '480p'})).toThrow(spec.resolution);
   });
-  it.each([{id:'kksedanco2.5',first:5,count:26},{id:'LLseadanco2.51',first:6,count:25},{id:'MMseadanco2.5-PRO',first:5,count:26},{id:'KKseadanco2.5X',first:5,count:26}])('keeps the user-confirmed 720p duration range for $id', ({id,first,count}) => {
-    const spec = getZonghengVideoSpec('ZH-' + id)!;
-    expect(spec).toMatchObject({id,resolution:'720p'});
-    expect(spec.seconds[0]).toBe(first);
-    expect(spec.seconds[spec.seconds.length - 1]).toBe(30);
-    expect(spec.seconds).toHaveLength(count);
+  it.each(['QQsedanco2.5/720', 'kksedanco2.5', 'LLseadanco2.51', 'TTsedanco2.5-480', 'KKseadanco2.5X', 'MMseadanco2.5-PRO'])('removes retired-site specifications for %s', id => {
+    expect(getZonghengVideoSpec(id)).toBeUndefined();
   });
-
-  it.each([
-    {id:'TTsedanco2.5-480',resolution:'480p'},
-    {id:'TTseadanco2.5-720',resolution:'720p'},
-  ])('keeps the exact TT model ID and its 5–30 second resolution profile for $id', ({id,resolution}) => {
-    const spec = getZonghengVideoSpec('ZH-' + id)!;
-    expect(spec).toMatchObject({id,family:'seedance',resolution});
-    expect(spec.seconds).toEqual(Array.from({length:26},(_,i)=>i+5));
-  });
-
-  it.each(["Cseadanco2.5K","kksedanco2.5","LLseadanco2.51","TTsedanco2.5-480","TTseadanco2.5-720","MMseadanco2.5-PRO","KKseadanco2.5X"])('preserves 30 image, 10 video and 10 audio references for %s and rejects overflow', model => {
-    const spec = getZonghengVideoSpec(model)!;
-    const images = Array.from({length:30},(_,i)=>'https://media.invalid/i-'+i+'.jpg');
-    const videos = Array.from({length:10},(_,i)=>'https://media.invalid/v-'+i+'.mp4');
-    const audios = Array.from({length:10},(_,i)=>'https://media.invalid/a-'+i+'.mp3');
-    const data = {...input,model,seconds:20,resolution:spec.resolution,images,videos,audios};
-    expect(buildZonghengVideoPayload(data)).toMatchObject({images,videos:videos,audios:audios});
-    for(const field of ['images','videos','audios'] as const){
-      expect(()=>buildZonghengVideoPayload({...data,[field]:[...data[field],data[field][0]]})).toThrow('最多支持 30 张图片、10 个视频、10 段音频');
-    }
-  });
-
-  it('keeps the 300-second label separate from the fixed 15-second output and enforces 9 images / 3 audios', () => {
-    const model='sedanco2.0-300秒必出';
-    expect(getZonghengVideoSpec('ZH-'+model)).toMatchObject({family:'seedance',resolution:'720p',seconds:[15],references:{images:9,videos:0,audios:3}});
-    const data={...input,model,seconds:15,images:Array(9).fill('https://media.invalid/i.jpg'),videos:[],audios:Array(3).fill('https://media.invalid/a.mp3')};
-    expect(buildZonghengVideoPayload(data)).toMatchObject({model,seconds:15,images:data.images,audios:data.audios});
-    expect(buildZonghengVideoPayload(data)).not.toHaveProperty('videos');
-    for(const seconds of [5,10,14,16,30,300]) expect(()=>buildZonghengVideoPayload({...data,seconds})).toThrow('仅支持 15 秒');
+  it.each(ZONGHENG_VIDEO_MODELS)('enforces the new-site reference counts for $id', spec => {
+    const data = {...input,model:spec.id,seconds:spec.seconds[0],resolution:spec.resolution,
+      images:Array(spec.references.images).fill('https://media.invalid/i.jpg'),
+      videos:Array(spec.references.videos).fill('https://media.invalid/v.mp4'),
+      audios:Array(spec.references.audios).fill('https://media.invalid/a.mp3')};
+    expect(buildZonghengVideoPayload(data).model).toBe(spec.id);
     for(const field of ['images','videos','audios'] as const) {
-      expect(()=>buildZonghengVideoPayload({...data,[field]:[...data[field],'https://media.invalid/extra']})).toThrow('最多支持 9 张图片、0 个视频、3 段音频');
+      expect(()=>buildZonghengVideoPayload({...data,[field]:[...data[field],'https://media.invalid/extra']})).toThrow('最多支持');
     }
   });
-  it('preserves the QQ slash ID with fixed 30 seconds and all 30/10/10 references', () => {
-    const model='QQsedanco2.5/720';
-    expect(getZonghengVideoSpec('ZH-'+model)).toMatchObject({id:model,family:'seedance',resolution:'720p',seconds:[30],references:{images:30,videos:10,audios:10}});
-    const data={...input,model,seconds:30,images:Array(30).fill('https://media.invalid/i.jpg'),videos:Array(10).fill('https://media.invalid/v.mp4'),audios:Array(10).fill('https://media.invalid/a.mp3')};
-    expect(buildZonghengVideoPayload(data)).toMatchObject({model,seconds:30,resolution:'720p',images:data.images,videos:data.videos,audios:data.audios});
-    for(const seconds of [5,10,15,29,31]) expect(()=>buildZonghengVideoPayload({...data,seconds})).toThrow('仅支持 30 秒');
-    for(const field of ['images','videos','audios'] as const) expect(()=>buildZonghengVideoPayload({...data,[field]:[...data[field],data[field][0]]})).toThrow('最多支持 30 张图片、10 个视频、10 段音频');
+  it('keeps exact new-site IDs, including spaces and slashes, without substituting old spellings', () => {
+    expect(getZonghengVideoSpec('TTseadanco2.5-480')).toMatchObject({resolution:'480p'});
+    expect(getZonghengVideoSpec('TTseadanco 2.0 Fast/720')).toMatchObject({resolution:'720p'});
+    expect(getZonghengVideoSpec('dola2.0')?.seconds).toEqual([15]);
+    expect(getZonghengVideoSpec('dola2.5')?.seconds).toEqual([5,10,15]);
+    expect(getZonghengVideoSpec('TTsedanco2.5-480')).toBeUndefined();
+    expect(getZonghengVideoSpec('TTseadanco2.0 Fast/720')).toBeUndefined();
   });
-  it('does not silently substitute similar-looking public model IDs', () => {
-    expect(getZonghengVideoSpec('Cseadance2.5K')).toBeUndefined();
-    expect(getZonghengVideoSpec('Xminimax-h3')).toBeUndefined();
-    expect(getZonghengVideoSpec('kkseedance2.5')).toBeUndefined();
-    expect(getZonghengVideoSpec('LLseadanco2.52')).toBeUndefined();
+  it('rejects unsupported Grok ratios before submission', () => {
+    const data={...input,model:'grok-imagine-1.5',videos:[],audios:[],ratio:'4:3'};
+    expect(()=>buildZonghengVideoPayload(data)).toThrow('仅支持比例');
+    expect(buildZonghengVideoPayload({...data,ratio:'1:1'}).ratio).toBe('1:1');
   });
   it('refund certainty uses connection evidence, not error text or a generic timeout', () => {
     expect(zonghengRequestNotSent(new TypeError('fetch failed',{cause:{code:'ENOTFOUND'}}))).toBe(true);

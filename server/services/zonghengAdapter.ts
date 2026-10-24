@@ -1,4 +1,4 @@
-import { normalizeZonghengVideoResolution, validateZonghengVideoSpec, validateZonghengVideoReferences } from '../../shared/zonghengVideo.js';
+import { normalizeZonghengVideoResolution, validateZonghengVideoSpec, validateZonghengVideoReferences, validateZonghengVideoRatio } from '../../shared/zonghengVideo.js';
 import { sanitizedGenerationReason } from '../../shared/generationErrorPrivacy.js';
 import { V6K_BASE_URL, V6K_CHANNEL_TYPE, retiredZonghengBase, type ZonghengProtocol } from './zonghengProtocol.js';
 export { ZONGHENG_MODEL_PREFIX } from '../../shared/zonghengVideo.js';
@@ -40,6 +40,7 @@ export function buildZonghengVideoPayload(i: ZonghengVideoInput, _protocol: Zong
   if (i.generateAudio !== undefined && typeof i.generateAudio !== 'boolean') throw new Error('generate_audio 必须为布尔值');
   validateZonghengVideoSpec(i.model, i.seconds, i.resolution);
   validateZonghengVideoReferences(i.model, { images: i.images.length, videos: i.videos.length, audios: i.audios.length });
+  validateZonghengVideoRatio(i.model, i.ratio);
   const resolution = normalizeZonghengVideoResolution(i.model, i.resolution) || i.resolution;
   if (i.firstFrame || i.lastFrame || i.quality !== undefined || i.negativePrompt !== undefined || i.generateAudio !== undefined)
     throw new Error('当前接口尚未确认首尾帧、质量、负面提示词或音频开关参数，请使用普通参考素材');

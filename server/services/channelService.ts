@@ -1,8 +1,8 @@
 import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
 import { isMjChannel, normalizeMjBaseUrl, fetchMjModels } from './mjAdapter.js';
 import { isAsyncVideoChannel, asyncVideoBaseUrl, fetchAsyncVideoModels } from './asyncVideoAdapter.js';
-import { ensureZonghengVideoPricing } from './zonghengPricingService.js';
-import { canonicalZonghengModelId, getZonghengVideoSpec } from '../../shared/zonghengVideo.js';
+import { syncV6kVideoModels } from './v6kCatalogService.js';
+import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { isFunAiChannel, funAiBaseUrl, fetchFunAiModels } from './funAiAdapter.js';
 import { isZonghengChannel, zonghengBaseUrl, ZONGHENG_MODEL_PREFIX } from './zonghengAdapter.js';
 import { isBlobDrawChannel, blobDrawApiBase, fetchBlobDrawModels } from './blobDrawAdapter.js';
@@ -586,6 +586,8 @@ export class ChannelService {
     if (!channel) throw { status: 404, message: '渠道不存在' };
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
 
+    if (isZonghengChannel(channel)) return syncV6kVideoModels(channel);
+
     if (isMjChannel(channel)) {
       const { syncMjModels } = await import('./mjCatalogService.js');
       return syncMjModels(channel);
@@ -620,7 +622,7 @@ export class ChannelService {
       return { count: WX_HAIDIYUE_MODELS.length, added: 0, models: [...WX_HAIDIYUE_MODELS] };
     }
 
-    const url = isZonghengChannel(channel) ? zonghengBaseUrl(channel.baseUrl) + '/v1/models' : isHayaChannel(channel) ? hayaApiBaseUrl(channel.baseUrl) + '/v1/models' : isLongxiaChannel(channel)
+    const url = isHayaChannel(channel) ? hayaApiBaseUrl(channel.baseUrl) + '/v1/models' : isLongxiaChannel(channel)
         ? longxiaApiBaseUrl(channel.baseUrl) + '/v1/models'
         : isMiaowuChannel(channel)
       ? miaowuVideoModelListUrl(channel.baseUrl)
@@ -644,8 +646,7 @@ export class ChannelService {
       if (!modelId) return { modelId: '', displayName: '', capability: 'text' };
       const displayName = String(typeof item === 'string' ? item : item.display_name || item.name || modelId).trim();
       const explicitType = String(typeof item === 'object' ? item.type || item.category || '' : '').toLowerCase();
-      const knownZonghengVideo = isZonghengChannel(channel) && Boolean(getZonghengVideoSpec(modelId));
-      const capability = knownZonghengVideo ? 'video' : explicitType.includes('tts') || /tts|speech/i.test(modelId)
+      const capability = explicitType.includes('tts') || /tts|speech/i.test(modelId)
         ? 'tts'
         : explicitType.includes('lip') || /lip-sync/i.test(modelId)
         ? 'lip_sync'
@@ -654,9 +655,8 @@ export class ChannelService {
           : explicitType.includes('image') || /image|jimeng|banana/i.test(modelId)
             ? 'image'
             : 'text';
-      return { modelId: isZonghengChannel(channel) ? ZONGHENG_MODEL_PREFIX + modelId : modelId,
-        displayName: isZonghengChannel(channel) ? ZONGHENG_MODEL_PREFIX + modelId : displayName || modelId, capability };
-    }).filter((item: any) => item.modelId && (!isHayaChannel(channel) || HAYA_MODEL_IDS.includes(item.modelId)) && (channel.type !== V6K_CHANNEL_TYPE || item.capability === 'video'));
+      return { modelId, displayName: displayName || modelId, capability };
+    }).filter((item: any) => item.modelId && (!isHayaChannel(channel) || HAYA_MODEL_IDS.includes(item.modelId)));
 
     const unique = [...new Map(normalized.map((item: any) => [item.modelId, item])).values()] as Array<{
       modelId: string; displayName: string; capability: string;
@@ -674,16 +674,13 @@ export class ChannelService {
           isActive: 0,
         }).run();
         added++;
-      } else if (isZonghengChannel(channel) && getZonghengVideoSpec(item.modelId) && existing.capabilities !== JSON.stringify(['video'])) {
-        db.update(models).set({ capabilities: JSON.stringify(['video']) }).where(eq(models.id, existing.id)).run();
       } else if (item.capability === 'tts' && existing.capabilities !== JSON.stringify(['tts'])) {
         db.update(models).set({ capabilities: JSON.stringify(['tts']) }).where(eq(models.id, existing.id)).run();
       }
     }
 
-    if (isZonghengChannel(channel)) ensureZonghengVideoPricing();
     const modelIds = unique.map(item => item.modelId);
-    const mapping = Object.fromEntries(modelIds.map(modelId => [modelId, isZonghengChannel(channel) ? modelId.slice(ZONGHENG_MODEL_PREFIX.length) : modelId]));
+    const mapping = Object.fromEntries(modelIds.map(modelId => [modelId, modelId]));
     db.update(channels).set({
       supportedModels: JSON.stringify(modelIds),
       modelMapping: JSON.stringify(mapping),

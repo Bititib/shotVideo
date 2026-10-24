@@ -190,7 +190,7 @@ const GROUP_ORDER = [
 const getModelGroup = (modelId: string) => {
   if (modelId === BLOB_DRAW_BB_MODEL) return 'Seedance 系列';
   const zongheng = getZonghengVideoSpec(modelId);
-  if (zongheng) return { seedance: 'Seedance 系列', minimax: 'MiniMax 系列', wan: 'Wan 系列' }[zongheng.family];
+  if (zongheng) return ({ seedance: 'Seedance 系列', grok: 'Grok 系列' } as Record<string, string>)[zongheng.family] || '其他模型';
   if (getHayaVideoSpec(modelId)) return 'Haya AI';
   const id = modelId.toLowerCase();
   if (isHmStudioVideoModel(modelId)) return 'HM 系列';

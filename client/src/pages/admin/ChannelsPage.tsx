@@ -565,7 +565,7 @@ export default function ChannelsPage() {
               {edit.type === 'huss' && <p className="text-xs leading-5 text-zinc-400">使用 HUSS API Key。同步后会将 bb-seedance2.5-301010 接入既有 bb-2.5-301010 公共模型；支持 10–30 秒、720p、三种画幅及图/视频/音频参考。</p>}
               {edit.type === 'mj' && <p className="text-xs leading-5 text-zinc-400">保存密钥后同步 MJ 图片模型，配置按次售价后启用。支持 1K、最多 6 张参考图；一次任务返回 4 张图片，仅收一次费用，结果自动保存到素材库。</p>}
               {edit.type === 'funai' && <p className="text-xs leading-5 text-zinc-400">保存密钥后同步图片与视频模型。新模型默认停用，配置售价后启用；图片按 1K、2K、4K 分别建立入口。生成结果不确定时保留原任务，避免重复扣费。</p>}
-              {edit.type === 'zongheng-v6k' && <p className="text-xs leading-5 text-zinc-400">填写 V6K 站点令牌并同步模型。视频支持公网图片、视频和音频参考，生成结果自动保存到本站；旧视频协议已停用。</p>}
+              {edit.type === 'zongheng-v6k' && <p className="text-xs leading-5 text-zinc-400">填写 V6K 新站令牌并同步当前可用视频模型。新模型默认停用，请核对时长、清晰度及参考素材限制，并配置本站售价后启用；不导入旧站型号和旧站售价。</p>}
               {edit.type === 'wx-haidiyue' && (
                 <section aria-labelledby="haidi-face-split-title" className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] p-3.5 sm:p-4">
                   <div className="flex items-center justify-between gap-4">

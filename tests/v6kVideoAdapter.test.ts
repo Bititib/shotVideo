@@ -7,7 +7,7 @@ import { prepareZonghengMedia } from '../server/services/zonghengMediaService';
 import { zonghengProtocolSnapshot, zonghengTaskChannel, v6kQueryRetryDelay } from '../server/services/zonghengProtocol';
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
-const input = { model: 'TTsedanco2.5-480', prompt: '镜头描述', seconds: 30, ratio: '16:9', resolution: '480p',
+const input = { model: 'TTseadanco2.5-480', prompt: '镜头描述', seconds: 30, ratio: '16:9', resolution: '480p',
   images: ['https://media.example/1.jpg'], videos: ['https://media.example/2.mp4'], audios: ['https://media.example/3.mp3'] };
 describe('V6K unified video protocol', () => {
   it('backs off temporary query failures and honors Retry-After', () => {
@@ -16,7 +16,7 @@ describe('V6K unified video protocol', () => {
     expect(v6kQueryRetryDelay(10)).toBe(120_000);
     expect(v6kQueryRetryDelay(1, '180')).toBe(180_000);
   });
-  it('translates the documented fields without changing the legacy payload', () => {
+  it('sends only the documented new-site fields', () => {
     expect(buildZonghengVideoPayload(input, 'v6k')).toEqual({ model: input.model, prompt: input.prompt, seconds: 30, ratio: '16:9', resolution: '480p', images: input.images, videos: input.videos, audios: input.audios });
     expect(buildZonghengVideoPayload(input)).toEqual(buildZonghengVideoPayload(input, 'v6k')); 
     expect(() => buildZonghengVideoPayload({ ...input, firstFrame: 'https://media.example/frame.jpg', images: [] }, 'v6k')).toThrow('尚未确认');
