@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { isSnumomNoChannelRejection } from '../server/services/snumomSubmissionRejection';
+import { isSnumomNoChannelRejection, isSnumomSubmissionRejection } from '../server/services/snumomSubmissionRejection';
 
 const channel = { type: 'snumom' };
 const message = 'No available channel for model grok-imagine-video-1.5（按次） under group default (distributor) (request id: trace_123)';
@@ -33,4 +33,14 @@ it('does not match generic errors, HTML, truncated JSON, echoed prompts or other
     expect(isSnumomNoChannelRejection(503, text, channel)).toBe(false);
   }
   expect(isSnumomNoChannelRejection(500, JSON.stringify(error), { type: 'other' })).toBe(false);
+});
+
+it('recognizes documented build_request_failed only for snumom and without receipt evidence', () => {
+  const text = JSON.stringify({ code: 'build_request_failed', message: 'reference_videos are not allowed', data: null });
+  expect(isSnumomSubmissionRejection(500, text, channel)).toBe(true);
+  expect(isSnumomSubmissionRejection(500, text, { type: 'huss' })).toBe(false);
+  expect(isSnumomSubmissionRejection(504, text, channel)).toBe(false);
+  for (const evidence of [{ task_id: 'task_1' }, { data: { id: 'task_1' } }, { status: 'in_progress' }])
+    expect(isSnumomSubmissionRejection(500, JSON.stringify({ ...JSON.parse(text), ...evidence }), channel)).toBe(false);
+  expect(isSnumomSubmissionRejection(500, text, channel, new Headers({ 'x-task-id': 'task_1' }))).toBe(false);
 });

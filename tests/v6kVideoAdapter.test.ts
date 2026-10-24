@@ -10,6 +10,22 @@ afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 const input = { model: 'TTseadanco2.5-480', prompt: '镜头描述', seconds: 30, ratio: '16:9', resolution: '480p',
   images: ['https://media.example/1.jpg'], videos: ['https://media.example/2.mp4'], audios: ['https://media.example/3.mp3'] };
 describe('V6K unified video protocol', () => {
+  it.each([
+    [400, { error: { message: 'refused' } }, {}, false],
+    [400, { error: { message: 'conflicting' }, data: { id: 'task_original' } }, {}, true],
+    [400, { error: { message: 'conflicting' } }, { 'x-task-id': 'task_original' }, true],
+    [200, { id: 'task_original', status: 'unknown', error: { message: 'conflicting' } }, {}, true],
+  ])('classifies documented rejection without discarding receipt evidence: %s %j', async (status, body, headers, uncertain) => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(body, { status: status as number, headers: headers as any })));
+    await expect(submitZonghengVideo('https://www.v6k.top', 'key', input, 'order', () => {})).rejects.toMatchObject({ uncertain });
+  });
+  it('keeps an immediately failed task for terminal processing without another POST', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: 'task_failed', status: 'failed', error: { code: 'video_generation_failed', message: 'generation refused' } })));
+    const receipt = await submitZonghengVideo('https://www.v6k.top', 'key', input, 'order', () => {});
+    expect(receipt.initialTask).toMatchObject({ status: 'failed', error: { message: 'generation refused' } });
+    expect(normalizeZonghengTask(receipt.initialTask)).toMatchObject({ status: 'failed', error: expect.stringContaining('generation refused') });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it('backs off temporary query failures and honors Retry-After', () => {
     expect(v6kQueryRetryDelay(1)).toBe(20_000);
     expect(v6kQueryRetryDelay(2)).toBe(40_000);

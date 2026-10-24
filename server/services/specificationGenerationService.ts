@@ -1,3 +1,4 @@
+import { isHussChannel, recoverHussSubmission } from './hussVideoAdapter.js';
 import { publicApiModelId } from '../../shared/funAi.js';
 import { isZonghengChannel, normalizeZonghengTask } from './zonghengAdapter.js';
 import { zonghengProtocol, zonghengTaskChannel, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE, v6kQueryRetryDelay } from './zonghengProtocol.js';
@@ -688,12 +689,45 @@ export function restoreLegacyMjCompletedImages(): number {
   return restored;
 }
 
+async function resumeHussReceipt(id: number, channel: any, key: string) {
+  const receipt = await recoverHussSubmission(channel, key);
+  const row = db.select().from(contents).where(eq(contents.id, id)).get();
+  if (!row || !['queued','processing','review'].includes(row.status)) return;
+  const meta = metadata(id);
+  if (meta.videoId || meta.hussIdempotencyKey !== key) return;
+  if (receipt.state === 'accepted') {
+    acceptVideoSubmission(id, receipt.taskId, { provider: 'huss', channelId: channel.id, channelApiKeyId: channel.apiKeyId });
+    patch(id, { error: null, progressText: '已从 HUSS 原提交回执找回任务，正在查询结果' });
+    await pollVideo(id, channel, receipt.taskId, () => {});
+  } else if (receipt.state === 'rejected') {
+    endVideoSubmission(id, 'rejected');
+    failTask(id, receipt.error);
+  } else if (receipt.state === 'pending') {
+    patch(id, { requiresReview: false, reviewKind: null, error: null, progressText: 'HUSS 原提交仍在处理，正在自动核对回执，请勿重复提交' }, 'processing');
+  } else {
+    holdForReview(id, receipt.error);
+  }
+}
+
 export function resumeSpecificationTasks() {
   restoreLegacyMjCompletedImages();
   for (const row of db.select().from(contents).where(inArray(contents.status, ['processing', 'queued', 'review'])).all()) {
     let meta: any; try { meta = JSON.parse(row.metadata || '{}'); } catch { continue; }
     if (!meta.managedSpecification || active.has(row.id)) continue;
     if (row.type === 'video' && videoSubmissionPending(row.id, meta)) continue;
+    if (row.type === 'video' && !meta.videoId && meta.hussIdempotencyKey && !meta.billingShortfall
+      && (!meta.reviewKind || meta.reviewKind === 'submission')) {
+      const channel = ChannelService.getChannelRaw(Number(meta.channelId), Number(meta.channelApiKeyId) || null);
+      if (channel && isHussChannel(channel)) {
+        if (Date.now() < Number(meta.hussReceiptRetryAt || 0)) continue;
+        active.add(row.id);
+        patch(row.id, { hussReceiptRetryAt: Date.now() + 60_000 });
+        void resumeHussReceipt(row.id, channel, meta.hussIdempotencyKey)
+          .catch((error: any) => holdForReview(row.id, transportDiagnostic('HUSS', '原提交回执查询失败；保留原编号稍后重查', error, channel.apiKey)))
+          .finally(() => active.delete(row.id));
+        continue;
+      }
+    }
     const knownMjResult = row.type === 'image' && meta.nativeImageOutputs === 4
       && Array.isArray(meta.nativeImageBatch?.sourceUrls) && meta.nativeImageBatch.sourceUrls.length > 0;
     const resumableMj = row.type === 'image' && meta.nativeImageOutputs === 4 && canResumeMjAsync(meta.mjAsyncImage);

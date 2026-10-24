@@ -151,7 +151,7 @@ import { claimVideoSubmission, acceptVideoSubmission, endVideoSubmission, releas
 import { submissionFailure, SpecificationUpstreamError } from '../services/specificationAdapters.js';
 import { videoRequestNotSent, explicitVideoCreateError } from '../services/videoSubmissionErrors.js';
 import { videoReviewKind, videoReviewMessage } from '../../shared/videoReview.js';
-import { isSnumomNoChannelRejection } from '../services/snumomSubmissionRejection.js';
+import { isSnumomSubmissionRejection } from '../services/snumomSubmissionRejection.js';
 import { refundUnreservedVideo } from '../services/directVideoBillingService.js';
 
 const router = Router();
@@ -2952,7 +2952,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         status_url: `${req.protocol}://${req.get('host')}/v1/videos/task_${contentId}` });
     }
 
-    if (isSnumomNoChannelRejection(upstreamRes.status, responseText, channel, upstreamRes.headers)
+    if (isSnumomSubmissionRejection(upstreamRes.status, responseText, channel, upstreamRes.headers)
       || explicitVideoCreateError(responseBody, upstreamRes.headers)
       || isSnumomWanChannel(channel) && isVideoFailurePayload(responseBody)) {
       endVideoSubmission(contentId!, 'rejected');

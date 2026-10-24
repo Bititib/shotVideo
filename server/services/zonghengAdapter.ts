@@ -1,3 +1,4 @@
+import { videoErrorTaskId } from './videoSubmissionErrors.js';
 import { normalizeZonghengVideoResolution, validateZonghengVideoSpec, validateZonghengVideoReferences, validateZonghengVideoRatio } from '../../shared/zonghengVideo.js';
 import { sanitizedGenerationReason } from '../../shared/generationErrorPrivacy.js';
 import { V6K_BASE_URL, V6K_CHANNEL_TYPE, retiredZonghengBase, type ZonghengProtocol } from './zonghengProtocol.js';
@@ -116,12 +117,12 @@ export async function submitZonghengVideo(base: string, apiKey: string, input: Z
     catch { throw new ZonghengSubmissionError(upstreamDiagnostic('V6K', '提交 非 JSON 响应；请勿重复提交', text, apiKey, response.status, response.headers.get('x-request-id') || undefined), response.ok || response.status === 408 || response.status >= 500,
       { reason: response.ok ? 'invalid_json' : 'http_error', httpStatus, elapsedMs: Date.now() - startedAt }); }
     if (!response.ok) throw new ZonghengSubmissionError(upstreamDiagnostic('V6K', '提交', { error_code: job?.error_code ?? job?.error?.code ?? job?.code, error_detail: job?.error_detail, error: job?.error, message: job?.message }, apiKey, response.status, response.headers.get('x-request-id') || undefined),
-      Boolean(job?.id || job?.task_id) || response.status === 408 || response.status >= 500,
+      Boolean(videoErrorTaskId(job, response.headers)) || response.status === 408 || response.status >= 500,
       { reason: 'http_error', httpStatus, elapsedMs: Date.now() - startedAt });
     const accepted = typeof job?.id === 'string' && job.id.trim() && ['queued','in_progress','completed','failed'].includes(job.status);
     if (!accepted) {
-      const explicitError = Boolean(job?.error) || job?.success === false
-        || job?.code !== undefined && ![0,200,'0','200','success','ok'].includes(job.code);
+      const explicitError = !videoErrorTaskId(job, response.headers) && !['queued','in_progress','completed'].includes(job?.status) && (Boolean(job?.error) || job?.success === false
+        || job?.code !== undefined && ![0,200,'0','200','success','ok'].includes(job.code));
       throw new ZonghengSubmissionError(explicitError ? zonghengError(job).split(apiKey).join('[REDACTED]') : '未返回有效任务 ID 或状态，请核实原订单', !explicitError,
         { reason: explicitError ? 'http_error' : 'invalid_task_response', httpStatus, elapsedMs: Date.now() - startedAt });
     }

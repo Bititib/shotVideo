@@ -222,6 +222,33 @@ describe('managed image execution and single reservation', () => {
 describe('managed video execution', () => {
   const req = () => ({ body: { model: 'routing-public-test', prompt: 'test', video_length: 15 }, headers: {}, protocol: 'https', get: () => 'app.invalid', userId } as any);
   const setup = () => { saveModelSpecification(spec()); sqlite.prepare("INSERT INTO model_pricing(model_pattern,billing_type,input_price,output_price,extra_params) SELECT ?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM model_pricing WHERE model_pattern=?)").run('routing-public-test', 'per_call', 2, 0, '{}', 'routing-public-test'); };
+  it.each(['accepted', 'rejected', 'processing'])('recovers HUSS review via original receipt %s without another submission', async state => {
+    setup();
+    const submit = vi.spyOn(adapters, 'submitSpecificationVideo').mockImplementation(async (_target, _request, beforeSubmit) => {
+      beforeSubmit({ hussIdempotencyKey: 'original-request-key' });
+      throw new adapters.SpecificationUpstreamError('response lost', false, true);
+    });
+    await handleSpecificationGeneration(req(), response(), 'video');
+    const row = db.select().from(contents).all().at(-1)!;
+    db.update(contents).set({ status: 'review' }).where(eq(contents.id, row.id)).run();
+    vi.mocked(ChannelService.getChannelRaw).mockReturnValue({ ...channel(1), type: 'huss', baseUrl: 'https://www.huss.top' } as any);
+    const fetcher = vi.fn(async () => Response.json({ status: state, ...(state === 'accepted' ? { task_id: 'original-task' } : {}), error: state === 'rejected' ? { code: 'ASSET_FAILED', message: 'reference download failed' } : undefined }));
+    vi.stubGlobal('fetch', fetcher);
+    const poll = vi.spyOn(adapters, 'pollSpecificationVideo').mockResolvedValue({ status: 'failed', progress: 100, resultUrl: '', error: 'original task failed' } as any);
+    resumeSpecificationTasks(); resumeSpecificationTasks();
+    await vi.waitFor(() => {
+      const current = db.select().from(contents).where(eq(contents.id, row.id)).get()!;
+      if (state === 'processing') expect(JSON.parse(current.metadata).progressText).toContain('HUSS 原提交仍在处理');
+      else expect(current.status).toBe('failed');
+    });
+    resumeSpecificationTasks();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    if (state === 'processing') expect(JSON.parse(db.select().from(contents).where(eq(contents.id, row.id)).get()!.metadata).requiresReview).toBe(false);
+    expect(fetcher.mock.calls[0][0]).toBe('https://www.huss.top/v1/videos/submissions');
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(poll).toHaveBeenCalledTimes(state === 'accepted' ? 1 : 0);
+    expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(state === 'processing' ? 98 : 100);
+  });
   it('fails over a definite rejection and pins polling and billing to the accepted route', async () => {
     setup();
     const submit = vi.spyOn(adapters, 'submitSpecificationVideo').mockRejectedValueOnce(new adapters.SpecificationUpstreamError('capacity', true)).mockResolvedValueOnce('accepted-2');

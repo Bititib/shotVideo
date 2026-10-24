@@ -97,7 +97,7 @@ import { sanitizeUpstreamCreateResponse } from '../services/videoTaskMetadataSer
 import { submissionFailure, SpecificationUpstreamError } from '../services/specificationAdapters.js';
 import { HmSubmissionError, classifyHmSubmission, readHmSubmission, hmSubmissionTransportError } from '../services/hmStudioSubmission.js';
 import { videoRequestNotSent, explicitVideoCreateError } from '../services/videoSubmissionErrors.js';
-import { isSnumomNoChannelRejection } from '../services/snumomSubmissionRejection.js';
+import { isSnumomSubmissionRejection } from '../services/snumomSubmissionRejection.js';
 import { readVideoRecoveryState, reviewMissingVideoTaskId, reviewUncertainVideoTask, savedVideoTaskId } from '../services/videoRecoveryState.js';
 import { claimVideoSubmission, acceptVideoSubmission, endVideoSubmission, releaseVideoSubmission, videoSubmissionPending, videoSubmissionPreparation } from '../services/videoSubmissionGuard.js';
 import {
@@ -2369,7 +2369,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       let job: any;
       try { job = responseText ? JSON.parse(responseText) : null; }
       catch { job = null; }
-      if (isSnumomNoChannelRejection(createResp.status, responseText, channel, createResp.headers) || explicitVideoCreateError(job, createResp.headers) || job && isVideoFailurePayload(job)) {
+      if (isSnumomSubmissionRejection(createResp.status, responseText, channel, createResp.headers) || explicitVideoCreateError(job, createResp.headers) || job && isVideoFailurePayload(job)) {
         refundFailedTask(extractVideoFailureMessage(job) || `snumom ${snumomModelLabel} 明确拒绝了任务`, true);
         res.write('data: [DONE]\n\n');
         return res.end();

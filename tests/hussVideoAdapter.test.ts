@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { publicGenerationError } from '../shared/generationMessages.js';
-import { HUSS_BB_MODEL, fetchHussVideoModels, hussApiBase, hussVideoParameters, isHussChannel, normalizeHussTask, pollHussVideo, submitHussVideo } from '../server/services/hussVideoAdapter.js';
+import { HUSS_BB_MODEL, fetchHussVideoModels, hussApiBase, hussVideoParameters, isHussChannel, normalizeHussTask, recoverHussSubmission, pollHussVideo, submitHussVideo } from '../server/services/hussVideoAdapter.js';
 
 const channel = { type: 'huss', baseUrl: 'https://www.huss.top', apiKey: 'huss-test-key', publicBaseUrl: 'https://app.example' };
 const request = () => ({ model: HUSS_BB_MODEL, prompt: 'slow camera move', seconds: 30, ratio: '16:9', resolution: '720p', images: [], videos: [], audios: [], publicBaseUrl: 'https://app.example' });
@@ -8,9 +8,28 @@ const ok = (body: unknown, status = 200) => Response.json(body, { status });
 afterEach(() => vi.unstubAllGlobals());
 
 describe('HUSS BB Seedance protocol', () => {
+  it('recovers a lost submission response with a GET using the saved key, never a second POST', async () => {
+    const fetcher = vi.fn().mockRejectedValueOnce(new Error('socket reset')).mockResolvedValueOnce(ok({ status: 'accepted', task_id: 'task_recovered' }));
+    vi.stubGlobal('fetch', fetcher);
+    await expect(submitHussVideo(channel, { ...request(), idempotencyKey: 'saved-key' }, vi.fn())).resolves.toBe('task_recovered');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[1]).toEqual(['https://www.huss.top/v1/videos/submissions', expect.objectContaining({ method: 'GET', headers: expect.objectContaining({ 'Idempotency-Key': 'saved-key' }) })]);
+  });
+  it.each(['rejected', 'not_submitted'])('ends explicit %s receipts without losing the provider error', async status => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(ok({ error: 'old gateway error' }, 500)).mockResolvedValueOnce(ok({ status, terminal: true, submission_uncertain: false, error: { message: 'reference download failed', code: 'ASSET_FAILED' } })));
+    await expect(submitHussVideo(channel, request(), vi.fn())).rejects.toMatchObject({ uncertain: false, message: expect.stringContaining('reference download failed') });
+  });
+  it.each(['processing', 'submission_uncertain', 'unrecognized'])('does not refund or resubmit receipt state %s', async status => {
+    vi.stubGlobal('fetch', vi.fn(async () => ok({ status, billing_status: 'refund_flow_recorded' })));
+    expect((await recoverHussSubmission(channel, 'saved-key')).state).toBe(status === 'processing' ? 'pending' : 'unknown');
+  });
+  it('recognizes failed task with an error object as a terminal task, not a query failure', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ok({ id: 'task_123', status: 'failed', error: { code: 'ASSET_FAILED', message: '素材下载失败' } })));
+    await expect(pollHussVideo(channel, 'task_123')).resolves.toMatchObject({ status: 'failed', error: expect.stringContaining('素材下载失败') });
+  });
   it.each([{}, { task_id: 'task_known' }])('retains HUSS task receipt evidence on HTTP rejection %j', async receipt => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...receipt, error: 'invalid input' }, { status: 400 })));
-    await expect(submitHussVideo(channel, request(), vi.fn())).rejects.toMatchObject({ uncertain: Boolean((receipt as any).task_id) });
+    await expect(submitHussVideo(channel, request(), vi.fn())).rejects.toMatchObject({ uncertain: true });
   });
   it('preserves HTTP status, provider code, request ID and exact reason without exposing the key', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { code: 'QUOTA_EXHAUSTED', message: '余额 0，所需 6；huss-test-key' } }, { status: 403, headers: { 'x-request-id': 'req-42' } })));
@@ -52,4 +71,15 @@ describe('HUSS BB Seedance protocol', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ok({ status: 'in_progress', progress: 30 })));
     await expect(pollHussVideo(channel, 'task_123')).resolves.toMatchObject({ status: 'running', progress: 30 });
   });
+});
+
+it('does not treat a conflicting rejection receipt as proof of failure', async () => {
+  for (const receipt of [
+    { status: 'rejected', task_id: 'task_existing' },
+    { status: 'rejected', submission_uncertain: true },
+    { status: 'not_submitted', error: { code: 'idempotency_conflict', message: 'same key different body' } },
+  ]) {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(receipt)));
+    expect((await recoverHussSubmission(channel, 'saved-key')).state).toBe('unknown');
+  }
 });

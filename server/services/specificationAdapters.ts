@@ -30,7 +30,7 @@ import { generateSiYueTianImage, isSiYueTianImageChannel, siYueTianImageContentU
 import { publishReferenceUrl } from './publicReferenceService.js';
 import { isHussChannel, submitHussVideo, pollHussVideo, HussApiError } from './hussVideoAdapter.js';
 import { registerUpload } from './uploadAccess.js';
-import { isSnumomNoChannelRejection } from './snumomSubmissionRejection.js';
+import { isSnumomSubmissionRejection } from './snumomSubmissionRejection.js';
 import { videoErrorTaskId, videoRequestNotSent, explicitVideoCreateError } from './videoSubmissionErrors.js';
 import { isVideoQueryErrorPayload } from './videoFailureService.js';
 import { classifyHmSubmission } from './hmStudioSubmission.js';
@@ -47,7 +47,7 @@ export function submissionFailure(status: number, text: string, channel?: { type
     return new SpecificationUpstreamError(upstreamDiagnostic('HM Studio', '提交', body, '', status, headers?.get('x-request-id') || undefined),
       false, !rejected, false, status, rejected);
   }
-  if (videoSubmission && isSnumomNoChannelRejection(status, text, channel, headers)) {
+  if (videoSubmission && isSnumomSubmissionRejection(status, text, channel, headers)) {
     return new SpecificationUpstreamError(upstreamDiagnostic('snumom', '上游明确拒绝', text, '', status, headers?.get('x-request-id') || undefined), false, false, false, status, true);
   }
   // The MJ contract defines HTTP 402 as a precharge rejection, even if a log ID is attached.
@@ -117,7 +117,7 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
   onResponse?.(evidenceFor(result, response.headers, response.status, 'response_without_id'));
   if (channel.type === 'hmstudio' && classifyHmSubmission(response.status, result, response.headers).outcome !== 'accepted')
     throw submissionFailure(response.status, JSON.stringify(result), channel, channel.videoSubmission === true, response.headers);
-  if (channel.videoSubmission && (isSnumomNoChannelRejection(response.status, JSON.stringify(result), channel, response.headers)
+  if (channel.videoSubmission && (isSnumomSubmissionRejection(response.status, JSON.stringify(result), channel, response.headers)
     || explicitVideoCreateError(result, response.headers))) {
     throw submissionFailure(response.status, JSON.stringify(result), channel, true, response.headers);
   }

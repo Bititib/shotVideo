@@ -42,10 +42,16 @@ async function hussRequest(channel: HussChannel, endpoint: string, body?: unknow
   let text: string;
   try { text = await response.text(); } catch (error: any) { throw new HussApiError(hussFailure(endpoint + ' 读取响应', error?.message, response.status, requestId, channel.apiKey), response.status, generation); }
   let payload: any; try { payload = JSON.parse(text); } catch { throw new HussApiError(hussFailure(endpoint + ' 非 JSON 响应', text || '上游返回空响应', response.status, requestId, channel.apiKey), response.status, generation); }
+  // A successfully queried failed task/receipt is business state, not a query error.
+  const state = payload?.data?.status || payload?.status;
+  if (response.ok && !generation && endpoint.startsWith('/videos/') &&
+    ['queued','processing','accepted','not_submitted','rejected','submission_uncertain','failed','cancelled','canceled','completed','in_progress','running','success','succeeded'].includes(state)) return payload;
+  if (generation && ['rejected','not_submitted'].includes(state) && payload.submission_uncertain !== true && !videoErrorTaskId(payload, response.headers))
+    throw new HussApiError(hussFailure(endpoint, payload, response.status, requestId, channel.apiKey), response.status, false);
   const failure = payload?.error || payload?.code && payload.code !== 0;
   if (!response.ok || failure) {
     throw new HussApiError(hussFailure(endpoint, payload, response.status, requestId, channel.apiKey), response.status || 502,
-      generation && (Boolean(videoErrorTaskId(payload, response.headers)) || response.status === 408 || response.status >= 500));
+      generation && (Boolean(videoErrorTaskId(payload, response.headers)) || response.status === 400 || response.status === 409 || response.status === 408 || response.status >= 500 || state === 'submission_uncertain'));
   }
   return payload;
 }
@@ -69,7 +75,18 @@ export function hussVideoParameters(input: HussVideoInput) {
 export async function submitHussVideo(channel: HussChannel, input: HussVideoInput, beforeSubmit: (payload: Record<string, unknown>) => void) {
   const { key, payload } = hussVideoParameters(input); const publish = (items: string[]) => items.map(item => publishReferenceUrl(item, input.publicBaseUrl));
   const request = { ...payload, ...(input.images.length ? { reference_images: publish(input.images) } : {}), ...(input.videos.length ? { videos: publish(input.videos) } : {}), ...(input.audios.length ? { audios: publish(input.audios) } : {}) };
-  beforeSubmit({ ...request, idempotency_key: key }); const result = await hussRequest(channel, '/videos', request, key); const id = result?.id ?? result?.data?.id;
+  beforeSubmit({ ...request, idempotency_key: key });
+  let result: any;
+  try { result = await hussRequest(channel, '/videos', request, key); }
+  catch (error) {
+    if (!(error instanceof HussApiError) || !error.uncertain) throw error;
+    let receipt: Awaited<ReturnType<typeof recoverHussSubmission>>;
+    try { receipt = await recoverHussSubmission(channel, key); } catch { throw error; }
+    if (receipt.state === 'accepted') return receipt.taskId;
+    if (receipt.state === 'rejected') throw new HussApiError(receipt.error, error.status, false);
+    throw error;
+  }
+  const id = result?.id ?? result?.data?.id;
   if ((typeof id !== 'string' && typeof id !== 'number') || !String(id).trim()) throw new HussApiError(hussFailure('未返回任务编号，提交结果待核实', result, 202, undefined, channel.apiKey), 202, true); return String(id);
 }
 export function normalizeHussTask(raw: any, baseUrl: string) {
@@ -84,4 +101,16 @@ export async function pollHussVideo(channel: HussChannel, taskId: string) {
   const task = normalizeHussTask(raw, channel.baseUrl);
   if (['failed', 'cancelled'].includes(task.status)) task.error = hussFailure('任务 ' + taskId + ' ' + task.status, raw?.data || raw, undefined, undefined, channel.apiKey);
   return task;
+}
+
+/** Read-only lookup of the original synchronous submission; never repeats a paid POST. */
+export async function recoverHussSubmission(channel: HussChannel, key: string) {
+  if (!/^[A-Za-z0-9._:-]{1,128}$/.test(key)) throw new Error('HUSS 原提交编号无效');
+  const raw = await hussRequest(channel, '/videos/submissions', undefined, key);
+  const receipt = raw?.data && typeof raw.data === 'object' ? raw.data : raw;
+  if (receipt?.status === 'accepted' && typeof receipt.task_id === 'string' && receipt.task_id.trim())
+    return { state: 'accepted' as const, taskId: receipt.task_id.trim(), error: '' };
+  if (['rejected', 'not_submitted'].includes(receipt?.status) && !receipt.task_id && receipt.submission_uncertain !== true && (receipt.error?.code || receipt.code) !== 'idempotency_conflict')
+    return { state: 'rejected' as const, taskId: '', error: hussFailure('原提交回执 ' + receipt.status, receipt, undefined, undefined, channel.apiKey) };
+  return { state: receipt?.status === 'processing' ? 'pending' as const : 'unknown' as const, taskId: '', error: hussFailure('原提交回执', receipt, undefined, undefined, channel.apiKey) };
 }

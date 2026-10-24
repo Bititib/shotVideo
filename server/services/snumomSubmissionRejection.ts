@@ -23,3 +23,14 @@ export function isSnumomNoChannelRejection(status: number, text: string,
   if (hasEvidence(body) || ['x-task-id', 'task-id', 'location'].some(key => headers?.get(key))) return false;
   return true;
 }
+
+/** snumom Wan docs: request conversion failed before generation, prepaid amount returned. */
+export function isSnumomSubmissionRejection(status: number, text: string,
+  channel?: { type?: string | null; baseUrl?: string | null }, headers?: Pick<Headers, 'get'>): boolean {
+  if (isSnumomNoChannelRejection(status, text, channel, headers)) return true;
+  if (!isSnumomWanChannel(channel) || status !== 500) return false;
+  let body: any; try { body = JSON.parse(text); } catch { return false; }
+  if (!body || body.code !== 'build_request_failed' || typeof body.message !== 'string' || !body.message.trim()) return false;
+  if (body.data != null || body.id || body.task_id || body.taskId || body.status || body.output || body.url || body.metadata) return false;
+  return !['x-task-id', 'task-id', 'location'].some(key => headers?.get(key));
+}
