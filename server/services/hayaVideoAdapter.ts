@@ -61,13 +61,15 @@ export async function submitHayaVideo(baseUrl: string, apiKey: string, input: Ha
     requestId = response.headers.get('x-request-id') || response.headers.get('request-id') || '';
     onRequestId(requestId);
     if (!response.ok) {
-      const uncertain = response.status === 408 || response.status >= 500;
+      const body = await response.clone().json().catch(() => null);
+      const uncertain = Boolean(videoErrorTaskId(body, response.headers)) || response.status === 408 || response.status >= 500;
       throw new HayaSubmissionError(await responseDiagnostic('Haya', '创建视频任务', response, apiKey), uncertain, requestId);
     }
     return { taskId: hayaTaskId(await diagnosticJson('Haya', '视频提交响应', response, apiKey)), requestId };
   } catch (error: any) {
     if (error instanceof HayaSubmissionError) throw error;
-    throw new HayaSubmissionError(transportDiagnostic('Haya', '提交结果待核实，请勿重复创建任务', error, apiKey), true, requestId);
+    throw new HayaSubmissionError(transportDiagnostic('Haya', '提交连接或响应异常', error, apiKey), !videoRequestNotSent(error), requestId);
   }
 }
 import { responseDiagnostic, transportDiagnostic, upstreamDiagnostic, diagnosticJson } from './upstreamDiagnostic.js';
+import { videoErrorTaskId, videoRequestNotSent } from './videoSubmissionErrors.js';

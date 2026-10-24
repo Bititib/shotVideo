@@ -207,7 +207,12 @@ export async function generateFunAiImage(channel: FunAiChannel, model: string, r
     method: 'POST', headers: { Authorization: 'Bearer ' + channel.apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify(payload), signal: AbortSignal.timeout(channel.timeout || 120_000), redirect: 'error',
   });
-  if (!response.ok) throw new FunAiApiError(await responseDiagnostic('FunAI', '图片提交', response, channel.apiKey), response.status, response.status >= 500);
+  if (!response.ok) {
+    const body = await response.clone().json().catch(() => null);
+    const uncertain = Boolean(body?.id || body?.task_id || body?.data?.id || response.headers.get('x-task-id'))
+      || response.status === 408 || response.status >= 500;
+    throw new FunAiApiError(await responseDiagnostic('FunAI', '图片提交', response, channel.apiKey), response.status, uncertain, !uncertain);
+  }
   let raw: any;
   try { raw = await diagnosticJson('FunAI', '图片提交响应；请勿重复提交', response, channel.apiKey); } catch (error: any) { throw new FunAiApiError(error.message, 502, true); }
   if (gemini) {

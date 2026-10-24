@@ -50,6 +50,14 @@ describe('Haya protocol and catalog', () => {
     expect(await submitHayaVideo('https://hayaai.fun/v1', 'key', input, () => { order.push('save'); })).toEqual({ taskId: 'task_public', requestId: 'req-1' });
     expect(order).toEqual(['save', 'POST']);
   });
+  it('retains an explicit receipt even on a rejection HTTP status', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ task_id: 'task_known', error: 'lookup failed' }, { status: 400 })));
+    await expect(submitHayaVideo('https://hayaai.fun', 'key', input, () => {})).rejects.toMatchObject({ uncertain: true });
+  });
+  it('does not hold funds for DNS failure before a request was sent', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw Object.assign(new Error('fetch failed'), { cause: { code: 'ENOTFOUND' } }); }));
+    await expect(submitHayaVideo('https://hayaai.fun', 'key', input, () => {})).rejects.toMatchObject({ uncertain: false });
+  });
   it.each([400, 401, 402, 403, 429, 408, 500, 502, 503, 504])('classifies HTTP %s without retrying creation', async status => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('error', { status })));
     await expect(submitHayaVideo('https://hayaai.fun', 'key', input, () => {})).rejects.toMatchObject({ uncertain: status === 408 || status >= 500 });

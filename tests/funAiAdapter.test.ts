@@ -88,6 +88,12 @@ describe('FunAI documented protocol', () => {
     expect(fetcher.mock.calls.filter(call => call[1].method === 'POST')).toHaveLength(1);
     expect(fetcher.mock.calls[1][0]).toBe(channel.baseUrl + '/v1/videos/image%2Ftask');
   });
+  it.each([400, 408, 503])('classifies image submission HTTP %s independently of polling', async status => {
+    const fetcher = vi.fn(async () => Response.json({ error: 'request rejected or timed out' }, { status }));
+    await expect(generateFunAiImage(channel, 'gpt-image-2', request('gpt-image-2'), fetcher, vi.fn()))
+      .rejects.toMatchObject({ uncertain: status !== 400, confirmedFailure: status === 400 });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
   it('does not recreate an accepted GPT image after a confirmed task failure', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ id: 'accepted' }))
       .mockResolvedValueOnce(Response.json({ status: 'failed', error: { message: 'policy rejection' } }));

@@ -33,12 +33,20 @@ import { registerUpload } from './uploadAccess.js';
 import { isSnumomNoChannelRejection } from './snumomSubmissionRejection.js';
 import { videoErrorTaskId, videoRequestNotSent, explicitVideoCreateError } from './videoSubmissionErrors.js';
 import { isVideoQueryErrorPayload } from './videoFailureService.js';
+import { classifyHmSubmission } from './hmStudioSubmission.js';
 
 export type SpecificationRequest = { prompt: string; input: RoutingInput; images: string[]; videos: string[]; audios: string[]; firstFrame: string; lastFrame: string; body: Record<string, any>; publicBaseUrl: string };
 export class SpecificationUpstreamError extends Error {
   constructor(message: string, public readonly retrySafe: boolean, public readonly uncertain = false, public readonly blocked = false, public readonly upstreamStatus = 0, public readonly confirmedFailure = false) { super(message); }
 }
 export function submissionFailure(status: number, text: string, channel?: { type?: string | null; baseUrl?: string | null }, videoSubmission = false, headers?: Pick<Headers, 'get'>): SpecificationUpstreamError {
+  if (channel?.type === 'hmstudio') {
+    let body: any; try { body = JSON.parse(text); } catch { body = text; }
+    const decision = classifyHmSubmission(status, body, headers || new Headers());
+    const rejected = decision.outcome === 'rejected';
+    return new SpecificationUpstreamError(upstreamDiagnostic('HM Studio', '提交', body, '', status, headers?.get('x-request-id') || undefined),
+      false, !rejected, false, status, rejected);
+  }
   if (videoSubmission && isSnumomNoChannelRejection(status, text, channel, headers)) {
     return new SpecificationUpstreamError(upstreamDiagnostic('snumom', '上游明确拒绝', text, '', status, headers?.get('x-request-id') || undefined), false, false, false, status, true);
   }
@@ -107,6 +115,8 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
   try { result = await diagnosticJson(channel.type || 'OpenAI-compatible', '提交响应；请勿重复提交', response, channel.apiKey); }
   catch (error: any) { onResponse?.(evidenceFor(undefined, response.headers, response.status, 'response_unreadable')); throw new SpecificationUpstreamError(error.message, false, true); }
   onResponse?.(evidenceFor(result, response.headers, response.status, 'response_without_id'));
+  if (channel.type === 'hmstudio' && classifyHmSubmission(response.status, result, response.headers).outcome !== 'accepted')
+    throw submissionFailure(response.status, JSON.stringify(result), channel, channel.videoSubmission === true, response.headers);
   if (channel.videoSubmission && (isSnumomNoChannelRejection(response.status, JSON.stringify(result), channel, response.headers)
     || explicitVideoCreateError(result, response.headers))) {
     throw submissionFailure(response.status, JSON.stringify(result), channel, true, response.headers);
@@ -167,7 +177,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
     try {
       return await submitHussVideo(c, { model, prompt: request.prompt, seconds: i.seconds, ratio: i.ratio, resolution: i.resolution, images: request.images, videos: request.videos, audios: request.audios, firstFrame: request.firstFrame, lastFrame: request.lastFrame, publicBaseUrl: request.publicBaseUrl }, payload => onStarting({ hussIdempotencyKey: payload.idempotency_key, hussPayload: payload }));
     } catch (error: any) {
-      if (error instanceof HussApiError) throw new SpecificationUpstreamError(error.message, !error.uncertain && [401, 402, 429].includes(error.status), error.uncertain, [401, 402, 403].includes(error.status), error.status);
+      if (error instanceof HussApiError) throw new SpecificationUpstreamError(error.message, !error.uncertain && [401, 402, 429].includes(error.status), error.uncertain, [401, 402, 403].includes(error.status), error.status, !error.uncertain);
       throw new SpecificationUpstreamError(error.message || 'HUSS 视频提交失败', true);
     }
   }
@@ -257,6 +267,11 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   }
   let taskHeaders: Headers | undefined;
   const job = await post(url, c, payload, onStarting, (_body, headers) => { taskHeaders = headers; });
+  if (c.type === 'hmstudio') {
+    const decision = classifyHmSubmission(200, job, taskHeaders || new Headers());
+    if (decision.outcome !== 'accepted') throw submissionFailure(200, JSON.stringify(job), c, true, taskHeaders);
+    return decision.taskId;
+  }
   const id = isSnumomWanChannel(c) ? extractSnumomTaskId(job, taskHeaders)
     : job.task_id || job.taskId || job.id || job.data?.task_id || job.data?.id || job.request_id;
   if (!id) throw new SpecificationUpstreamError(upstreamDiagnostic(c.type || 'OpenAI-compatible', '上游未返回任务 ID，提交结果待核实，请勿重复提交', job, c.apiKey, undefined, taskHeaders?.get('x-request-id') || undefined), false, true);

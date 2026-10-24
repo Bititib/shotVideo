@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { videoErrorTaskId, videoRequestNotSent } from './videoSubmissionErrors.js';
 import { publishReferenceUrl } from './publicReferenceService.js';
 import type { ModelInputLimits } from '../../shared/modelRouting.js';
 import { sanitizedGenerationReason } from '../../shared/generationErrorPrivacy.js';
@@ -36,7 +37,7 @@ async function hussRequest(channel: HussChannel, endpoint: string, body?: unknow
     response = await fetch(hussApiBase(channel.baseUrl) + '/v1' + endpoint, { method: generation ? 'POST' : 'GET',
       headers: { Authorization: 'Bearer ' + channel.apiKey, ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}), ...(generation ? { 'Content-Type': 'application/json' } : {}) },
       ...(generation ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(channel.timeout || (generation ? 900_000 : 60_000)), redirect: 'error' });
-  } catch (error: any) { throw new HussApiError(hussFailure(endpoint + ' 连接', { code: error?.cause?.code || error?.code || error?.name, message: error?.message, detail: error?.cause?.message }, undefined, undefined, channel.apiKey) + (generation ? '；提交结果待核实，请勿重复生成' : ''), 0, generation); }
+  } catch (error: any) { throw new HussApiError(hussFailure(endpoint + ' 连接', { code: error?.cause?.code || error?.code || error?.name, message: error?.message, detail: error?.cause?.message }, undefined, undefined, channel.apiKey) + (generation && !videoRequestNotSent(error) ? '；提交结果待核实，请勿重复生成' : ''), 0, generation && !videoRequestNotSent(error)); }
   const requestId = response.headers.get('x-request-id') || response.headers.get('request-id') || undefined;
   let text: string;
   try { text = await response.text(); } catch (error: any) { throw new HussApiError(hussFailure(endpoint + ' 读取响应', error?.message, response.status, requestId, channel.apiKey), response.status, generation); }
@@ -44,7 +45,7 @@ async function hussRequest(channel: HussChannel, endpoint: string, body?: unknow
   const failure = payload?.error || payload?.code && payload.code !== 0;
   if (!response.ok || failure) {
     throw new HussApiError(hussFailure(endpoint, payload, response.status, requestId, channel.apiKey), response.status || 502,
-      generation && (Boolean(payload?.id || payload?.data?.id) || response.status === 408 || response.status >= 500));
+      generation && (Boolean(videoErrorTaskId(payload, response.headers)) || response.status === 408 || response.status >= 500));
   }
   return payload;
 }

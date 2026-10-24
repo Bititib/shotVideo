@@ -95,6 +95,7 @@ import { reserveLegacyVideo, finalizeLegacyVideo, failLegacyVideo, markLegacyVid
 import { settleDirectVideoBilling, refundUnreservedVideo } from '../services/directVideoBillingService.js';
 import { sanitizeUpstreamCreateResponse } from '../services/videoTaskMetadataService.js';
 import { submissionFailure, SpecificationUpstreamError } from '../services/specificationAdapters.js';
+import { HmSubmissionError, classifyHmSubmission, readHmSubmission, hmSubmissionTransportError } from '../services/hmStudioSubmission.js';
 import { videoRequestNotSent, explicitVideoCreateError } from '../services/videoSubmissionErrors.js';
 import { isSnumomNoChannelRejection } from '../services/snumomSubmissionRejection.js';
 import { readVideoRecoveryState, reviewMissingVideoTaskId, reviewUncertainVideoTask, savedVideoTaskId } from '../services/videoRecoveryState.js';
@@ -1798,13 +1799,13 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         }
 
         const detail = await createResp.text().catch(() => '');
-        if (!isHmStudioConcurrencyError(createResp.status, detail)) {
+        rejectedSubmission = submissionFailure(createResp.status, detail, overflowPlan.channel, true, createResp.headers);
+        if (!rejectedSubmission.confirmedFailure || !isHmStudioConcurrencyError(createResp.status, detail)) {
           refundFailedTask(upstreamDiagnostic(String(model), '视频提交', detail, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
           res.write('data: [DONE]\n\n');
           return res.end();
         }
-        ChannelService.disableExecutionTarget(overflowPlan.channel, detail);
-        sendEvent({ type: 'status', message: '当前备用线路已饱和并自动停止，正在尝试下一条线路...' });
+        sendEvent({ type: 'status', message: '当前备用线路暂时满载，正在尝试下一条线路...' });
         overflowPlan = findHmStudioOverflowPlan(overflowInput, attemptedFallbackIds);
       }
 
@@ -2458,9 +2459,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       });
       if (!createResp.ok) {
         const errText = await createResp.text().catch(() => '');
-        if (isHmStudioConcurrencyError(createResp.status, errText)) {
-          ChannelService.disableExecutionTarget(channel, errText);
-        }
+        rejectedSubmission = submissionFailure(createResp.status, errText, channel, true, createResp.headers);
         refundFailedTask(upstreamDiagnostic(String(model), '视频提交', errText, channel?.apiKey || '', createResp.status, createResp.headers.get('x-request-id') || undefined));
         res.write('data: [DONE]\n\n');
         return res.end();
@@ -2542,6 +2541,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         const errText = await createResp.text().catch(() => '');
         const canOverflowSiYueTian = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL
           && isSiYueTianChannel(channel)
+          && rejectedSubmission?.confirmedFailure === true
           && isHmStudioConcurrencyError(createResp.status, errText);
         guardBatchSubmissionResponse(Boolean(batchContext), createResp);
         if (!canOverflowSiYueTian) {
@@ -2551,14 +2551,14 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
           return res.end();
         }
 
-        ChannelService.disableExecutionTarget(channel, errText);
         failoverFrom = 'siyuetian';
         failoverReason = 'siyuetian_upstream_concurrency';
-        sendEvent({ type: 'status', message: '四月天上游已饱和并自动停止，正在尝试备用线路...' });
+        sendEvent({ type: 'status', message: '四月天上游暂时满载，正在尝试备用线路...' });
 
         const overflowPlan = findSiYueTianOverflowPlan(overflowInput);
         if (overflowPlan) {
           paidRequestStarted = true;
+          rejectedSubmission = null;
           const fallbackResponse = await submitSiYueTianOverflowPlan(overflowPlan, {
             prompt: prompt.trim(),
             ratio: aspect_ratio,
@@ -2593,9 +2593,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
             }
           } else {
             const fallbackDetail = await fallbackResponse.text().catch(() => '');
-            if (isHmStudioConcurrencyError(fallbackResponse.status, fallbackDetail)) {
-              ChannelService.disableExecutionTarget(overflowPlan.channel, fallbackDetail);
-            }
+            rejectedSubmission = submissionFailure(fallbackResponse.status, fallbackDetail, overflowPlan.channel, true, fallbackResponse.headers);
             refundFailedTask(upstreamDiagnostic(String(model), '视频提交', fallbackDetail, channel?.apiKey || '', fallbackResponse.status, fallbackResponse.headers.get('x-request-id') || undefined));
             res.write('data: [DONE]\n\n');
             return res.end();
@@ -3361,26 +3359,28 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
           });
           const headers: Record<string, string> = {};
           if (selectedHmChannel.apiKey) headers.Authorization = `Bearer ${selectedHmChannel.apiKey}`;
-          response = await fetch(hmStudioCreateUrl(selectedHmChannel.baseUrl, 'video'), {
+          try { response = await fetch(hmStudioCreateUrl(selectedHmChannel.baseUrl, 'video'), {
             method: 'POST',
             headers,
             body: formData,
             signal: AbortSignal.timeout(selectedHmChannel.timeout || 120_000),
-          });
-          guardBatchSubmissionResponse(Boolean(latestMeta.batchItemId), response);
+          }); } catch (error: any) { throw hmSubmissionTransportError(error, selectedHmChannel.apiKey); }
           if (response.ok) break;
 
           const detail = await response.text().catch(() => '');
-          if (!isHmStudioConcurrencyError(response.status, detail)) {
-            throw new Error(`HM Studio 提交失败 (${response.status}): ${detail.slice(0, 300)}`);
+          let hmBody: any; try { hmBody = JSON.parse(detail); } catch { hmBody = detail; }
+          const hmDecision = classifyHmSubmission(response.status, hmBody, response.headers);
+          if (hmDecision.outcome !== 'rejected' || !isHmStudioConcurrencyError(response.status, detail)) {
+            await readHmSubmission(new globalThis.Response(detail, { status: response.status, headers: response.headers }), selectedHmChannel.apiKey);
           }
-          ChannelService.disableExecutionTarget(selectedHmChannel, detail);
-          const nextHmChannel = ChannelService.findChannelForModel(model);
+          // Temporary capacity is not an administrator disabling this channel/key.
+          const nextHmChannel = ChannelService.findChannelsForModel(model)
+            .find(candidate => isHmStudioChannel(candidate) && !attemptedHmPools.has(hmStudioPoolKey(candidate)));
           if (nextHmChannel && isHmStudioChannel(nextHmChannel) && !attemptedHmPools.has(hmStudioPoolKey(nextHmChannel))) {
             selectedHmChannel = nextHmChannel;
             latestMeta.channelId = nextHmChannel.id;
             latestMeta.channelApiKeyId = nextHmChannel.apiKeyId;
-            latestMeta.progressText = '当前 HM Key 已自动停止，正在尝试下一个 Key';
+            latestMeta.progressText = '当前 HM Key 暂时满载，正在尝试下一个 Key';
             db.update(contents).set({ metadata: JSON.stringify(latestMeta) }).where(eq(contents.id, contentId)).run();
             continue;
           }
@@ -3452,12 +3452,12 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
             guardBatchSubmissionResponse(Boolean(latestMeta.batchItemId), fallbackResponse);
             if (!fallbackResponse.ok) {
               const fallbackDetail = await fallbackResponse.text().catch(() => '');
-              if (isHmStudioConcurrencyError(fallbackResponse.status, fallbackDetail)) {
-                ChannelService.disableExecutionTarget(fallbackChannel, fallbackDetail);
+              const rejection = submissionFailure(fallbackResponse.status, fallbackDetail, fallbackChannel, true, fallbackResponse.headers);
+              if (rejection.confirmedFailure && isHmStudioConcurrencyError(fallbackResponse.status, fallbackDetail)) {
                 overflowPlan = findHmStudioOverflowPlan(overflowRequest, attemptedFallbackIds);
                 continue;
               }
-              throw new Error(`备用线路提交失败 (${fallbackResponse.status}): ${fallbackDetail.slice(0, 300)}`);
+              throw rejection;
             }
 
             const fallbackResult = await fallbackResponse.json() as any;
@@ -3484,12 +3484,10 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
             if (fallbackRecord) void resumePollForTask(contentId, fallbackRecord);
             return;
           }
-          throw new Error('所有兼容视频线路当前均不可用，请在后台启动线路后重试');
+          throw new HmSubmissionError(upstreamDiagnostic('HM Studio', '提交被拒绝，当前没有可用备用线路', hmBody, selectedHmChannel.apiKey, response.status), 'rejected', response.status);
         }
 
-        const payload = await response.json() as any;
-        const videoId = payload.task_id || payload.id;
-        if (!videoId) throw new Error('HM Studio 未返回任务 ID');
+        const { taskId: videoId } = await readHmSubmission(response, selectedHmChannel.apiKey);
 
         latestMeta.videoId = videoId;
         latestMeta.channelId = selectedHmChannel.id;
@@ -3505,8 +3503,10 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
         acceptVideoSubmission(contentId, String(videoId), { provider: selectedHmChannel.type || '', channelId: Number(selectedHmChannel.id) || null, channelApiKeyId: Number(selectedHmChannel.apiKeyId) || null });
         if (updatedRecord) await resumePollForTask(contentId, updatedRecord);
       } catch (error) {
-        endVideoSubmission(contentId, 'unknown');
-        await failHmQueuedVideo(contentId, error);
+        const rejected = error instanceof HmSubmissionError && error.outcome === 'rejected'
+          || error instanceof SpecificationUpstreamError && error.confirmedFailure;
+        endVideoSubmission(contentId, rejected ? 'rejected' : 'unknown');
+        await failHmQueuedVideo(contentId, error, rejected);
         throw error;
       } finally { releaseVideoSubmission(contentId); }
     },

@@ -8,6 +8,10 @@ const ok = (body: unknown, status = 200) => Response.json(body, { status });
 afterEach(() => vi.unstubAllGlobals());
 
 describe('HUSS BB Seedance protocol', () => {
+  it.each([{}, { task_id: 'task_known' }])('retains HUSS task receipt evidence on HTTP rejection %j', async receipt => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...receipt, error: 'invalid input' }, { status: 400 })));
+    await expect(submitHussVideo(channel, request(), vi.fn())).rejects.toMatchObject({ uncertain: Boolean((receipt as any).task_id) });
+  });
   it('preserves HTTP status, provider code, request ID and exact reason without exposing the key', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { code: 'QUOTA_EXHAUSTED', message: '余额 0，所需 6；huss-test-key' } }, { status: 403, headers: { 'x-request-id': 'req-42' } })));
     try { await fetchHussVideoModels(channel); throw new Error('expected rejection'); } catch (error: any) {

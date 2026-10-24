@@ -25,12 +25,42 @@ import { db, sqlite } from '../server/db/index';
 import { contents, users, channels } from '../server/db/schema';
 import { hmStudioQueue } from '../server/services/hmStudioQueueService';
 import { BalanceService } from '../server/services/balanceService';
+import { reserveLegacyVideo } from '../server/services/legacyVideoBilling.js';
+import { eq } from 'drizzle-orm';
 let video: typeof import('../server/routes/video');
 beforeAll(async()=>{
   const intervals=vi.spyOn(globalThis,'setInterval').mockImplementation(()=>({unref(){}}) as any);
   try { video=await import('../server/routes/video'); } finally { intervals.mockRestore(); }
 });
 afterAll(()=>sqlite.close());
+let sequence = 20;
+it.each([400, 401, 402, 422, 429, 503])('HM queue HTTP %s rejection closes the actual reserved order and refunds once', async status => {
+  const id = ++sequence;
+  db.insert(users).values({ id, email: id + '@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
+  db.insert(channels).values({ id, name: 'HM test', type: 'hmstudio', baseUrl: 'https://hm.test', apiKey: 'test', supportedModels: '["seedance_v2.5"]', status: 1 }).run();
+  const { contentId } = reserveLegacyVideo(id, 2, charge => {
+    db.insert(contents).values({ id, userId: id, type: 'video', modelId: 'seedance_v2.5', status: 'queued', cost: 2,
+      metadata: JSON.stringify({ channelId: id, prompt: 'test', resolution: '720p', seconds: 6,
+        billingReservationId: charge.id, videoSubmissionState: 'preparing' }) }).run();
+    return id;
+  });
+  const reason = status === 503 ? '临时修复' : status === 429 ? '当前有 3 个任务正在生成中，请等待完成后再提交' : '参数或账户不符合要求';
+  const fetcher = vi.fn(async () => Response.json({ error: reason, ...(status === 429 ? { code: 'GENERATING_LIMIT' } : {}) }, { status }));
+  vi.stubGlobal('fetch', fetcher);
+  try {
+    video.enqueueHmStudioVideoContent(contentId);
+    await vi.waitFor(() => expect(db.select().from(contents).where(eq(contents.id, id)).get()?.status).toBe('failed'));
+    expect(db.select().from(users).where(eq(users.id, id)).get()?.balance).toBe(100);
+    const meta = JSON.parse(db.select().from(contents).where(eq(contents.id, id)).get()!.metadata);
+    expect(meta).toMatchObject({ requiresReview: false, billingStatus: 'refunded', videoSubmissionState: 'rejected' });
+    expect(meta.error).toContain(reason);
+    await video.failHmQueuedVideo(id, new Error('duplicate'), true);
+    await video.resumePollForTask(id, db.select().from(contents).where(eq(contents.id, id)).get());
+    expect(db.select().from(users).where(eq(users.id, id)).get()?.balance).toBe(100);
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(db.select().from(channels).where(eq(channels.id, id)).get()?.status).toBe(1);
+  } finally { vi.unstubAllGlobals(); }
+});
 
 it('does not fail or refund an HM job while its create request is still waiting for a task ID',async()=>{
   db.insert(users).values({id:1,email:'race@test',username:'race',passwordHash:'test',balance:8}).run();
