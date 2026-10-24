@@ -1,6 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { publishReferenceUrl } from './publicReferenceService.js';
 import type { ModelInputLimits } from '../../shared/modelRouting.js';
+import { sanitizedGenerationReason } from '../../shared/generationErrorPrivacy.js';
+
+export function hussFailure(stage: string, payload: any, status?: number, requestId?: string, secret = '') {
+  const code = payload?.error?.code ?? payload?.error_code ?? payload?.code;
+  const details = (code !== undefined ? 'code=' + String(code) + ' ' : '') + sanitizedGenerationReason(payload);
+  const id = requestId || payload?.request_id || payload?.requestId || payload?.error?.request_id;
+  const text = `[HUSS ${stage}]${status ? ' HTTP ' + status : ''}${id ? ' request_id=' + String(id) : ''}：${details}`;
+  return sanitizedGenerationReason(secret ? text.split(secret).join('[密钥已隐藏]') : text);
+}
 
 export const HUSS_CHANNEL_TYPE = 'huss';
 export const HUSS_BASE_URL = 'https://www.huss.top';
@@ -27,12 +36,14 @@ async function hussRequest(channel: HussChannel, endpoint: string, body?: unknow
     response = await fetch(hussApiBase(channel.baseUrl) + '/v1' + endpoint, { method: generation ? 'POST' : 'GET',
       headers: { Authorization: 'Bearer ' + channel.apiKey, ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}), ...(generation ? { 'Content-Type': 'application/json' } : {}) },
       ...(generation ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(channel.timeout || (generation ? 900_000 : 60_000)), redirect: 'error' });
-  } catch { throw new HussApiError('HUSS 连接失败' + (generation ? '，提交结果待核实，请勿重复生成' : ''), 0, generation); }
-  let payload: any; try { payload = await response.json(); } catch { throw new HussApiError('HUSS 响应无法解析', response.status, generation); }
+  } catch (error: any) { throw new HussApiError(hussFailure(endpoint + ' 连接', { code: error?.cause?.code || error?.code || error?.name, message: error?.message, detail: error?.cause?.message }, undefined, undefined, channel.apiKey) + (generation ? '；提交结果待核实，请勿重复生成' : ''), 0, generation); }
+  const requestId = response.headers.get('x-request-id') || response.headers.get('request-id') || undefined;
+  let text: string;
+  try { text = await response.text(); } catch (error: any) { throw new HussApiError(hussFailure(endpoint + ' 读取响应', error?.message, response.status, requestId, channel.apiKey), response.status, generation); }
+  let payload: any; try { payload = JSON.parse(text); } catch { throw new HussApiError(hussFailure(endpoint + ' 非 JSON 响应', text || '上游返回空响应', response.status, requestId, channel.apiKey), response.status, generation); }
   const failure = payload?.error || payload?.code && payload.code !== 0;
   if (!response.ok || failure) {
-    const detail = String(payload?.error?.message || payload?.error || payload?.message || '接口暂不可用');
-    throw new HussApiError('HUSS 请求失败：' + (channel.apiKey ? detail.split(channel.apiKey).join('[REDACTED]') : detail).slice(0, 300), response.status || 502,
+    throw new HussApiError(hussFailure(endpoint, payload, response.status, requestId, channel.apiKey), response.status || 502,
       generation && (Boolean(payload?.id || payload?.data?.id) || response.status === 408 || response.status >= 500));
   }
   return payload;
@@ -67,4 +78,9 @@ export function normalizeHussTask(raw: any, baseUrl: string) {
   const url = rawUrl ? new URL(rawUrl, hussApiBase(baseUrl) + '/') : null; if (url && (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)) throw new Error('HUSS 视频结果地址无效');
   return { status, progress: Math.max(0, Math.min(100, Number(data?.progress) || (status === 'completed' ? 100 : 0))), resultUrl: status === 'completed' ? url?.href || '' : '', error: typeof data?.error === 'string' ? data.error : data?.error?.message || data?.message || '', errorCode: data?.error?.code || data?.error_code || '' };
 }
-export async function pollHussVideo(channel: HussChannel, taskId: string) { return normalizeHussTask(await hussRequest(channel, '/videos/' + encodeURIComponent(taskId)), channel.baseUrl); }
+export async function pollHussVideo(channel: HussChannel, taskId: string) {
+  const raw = await hussRequest(channel, '/videos/' + encodeURIComponent(taskId));
+  const task = normalizeHussTask(raw, channel.baseUrl);
+  if (['failed', 'cancelled'].includes(task.status)) task.error = hussFailure('任务 ' + taskId + ' ' + task.status, raw?.data || raw, undefined, undefined, channel.apiKey);
+  return task;
+}
