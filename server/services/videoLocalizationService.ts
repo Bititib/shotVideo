@@ -1,3 +1,4 @@
+import { isMegabyChannel, megabyContentUrl, fetchMegabyVideoContent, readMegabyJson } from './megabyVideoAdapter.js';
 import { zonghengTaskUrl } from './zonghengAdapter.js';
 import { isAsyncVideoChannel, resolveAsyncVideoUrl } from './asyncVideoAdapter.js';
 import { isFunAiChannel, shouldSendFunAiAuthorization, funAiTaskUrl } from './funAiAdapter.js';
@@ -46,7 +47,7 @@ export async function downloadAndLocalizeVideo(
   const channel = exactChannel || ChannelService.findChannelForModel(model);
   const authenticatedV6kContent = channel && isZonghengChannel(channel) && url === zonghengTaskUrl(channel.baseUrl, videoId) + '/content';
   const headers: Record<string, string> = {};
-  const maySendAuthorization = isAsyncVideoChannel(channel) ? false : isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isZonghengChannel(channel) ? Boolean(authenticatedV6kContent) : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
+  const maySendAuthorization = isMegabyChannel(channel) ? false : isAsyncVideoChannel(channel) ? false : isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isZonghengChannel(channel) ? Boolean(authenticatedV6kContent) : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
     ? shouldSendHmStudioAuthorization(url, channel.baseUrl)
     : isWxHaidiYueChannel(channel)
       ? shouldSendWxHaidiYueAuthorization(url, channel.baseUrl)
@@ -67,7 +68,9 @@ export async function downloadAndLocalizeVideo(
     }
   }
 
-  let response = await fetch(url, { headers, signal: AbortSignal.timeout(300_000), ...(authenticatedV6kContent ? { redirect: 'error' as const } : {}) });
+  let response = isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000), ...(authenticatedV6kContent ? { redirect: 'error' as const } : {}) });
+  if (isMegabyChannel(channel) && [401, 403, 404].includes(response.status) && url !== megabyContentUrl(channel.baseUrl, videoId)) response = await fetchMegabyVideoContent(channel, megabyContentUrl(channel.baseUrl, videoId), videoId);
+  if (!response.ok && isMegabyChannel(channel)) await readMegabyJson(channel, response, 'query');
   if (isAsyncVideoChannel(channel) && [401, 403, 404].includes(response.status)) {
     const freshUrl = await resolveAsyncVideoUrl(channel, videoId);
     response = await fetch(freshUrl, { signal: AbortSignal.timeout(300_000), redirect: 'error' });

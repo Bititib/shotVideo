@@ -1,3 +1,4 @@
+import { MegabyApiError } from '../services/megabyVideoAdapter.js';
 import { Router, Response } from 'express';
 import { HussApiError } from '../services/hussVideoAdapter.js';
 import { FunAiApiError } from '../services/funAiAdapter.js';
@@ -76,6 +77,7 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
 
 // Upstream authentication is independent of the administrator's website session.
 function channelOperationError(res: Response, error: any) {
+  if (error instanceof MegabyApiError) return res.status(502).json({ error: error.message, code: error.code, upstreamStatus: error.upstreamStatus });
   if (error instanceof FunAiApiError) {
     return res.status(502).json({ error: error.message, code: 'UPSTREAM_ERROR', upstreamStatus: error.status });
   }

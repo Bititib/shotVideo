@@ -1,3 +1,4 @@
+import { isMegabyChannel, megabyBaseUrl, fetchMegabyVideoModels } from './megabyVideoAdapter.js';
 import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
 import { isMjChannel, normalizeMjBaseUrl, fetchMjModels } from './mjAdapter.js';
 import { isAsyncVideoChannel, asyncVideoBaseUrl, fetchAsyncVideoModels } from './asyncVideoAdapter.js';
@@ -402,8 +403,8 @@ export class ChannelService {
       : [...MIAOWU_DEFAULT_VIDEO_MODELS];
     const result = db.insert(channels).values({
       name: isWxHaidiYue ? WX_HAIDIYUE_CHANNEL_NAME : name,
-      type: isMjChannel({ type }) ? 'mj' : isFunAiChannel({ type, baseUrl }) ? 'funai' : isHussChannel({ type, baseUrl }) ? HUSS_CHANNEL_TYPE : isZonghengChannel({ type, baseUrl }) ? V6K_CHANNEL_TYPE : isHaya ? 'haya' : type || 'openai',
-      baseUrl: isMjChannel({ type }) ? normalizeMjBaseUrl(baseUrl) : isAsyncVideoChannel({ type }) ? asyncVideoBaseUrl(baseUrl) : isFunAiChannel({ type, baseUrl }) ? funAiBaseUrl(baseUrl) : isHussChannel({ type, baseUrl }) ? hussApiBase(baseUrl) : isZonghengChannel({ type, baseUrl }) ? zonghengBaseUrl(baseUrl) : baseUrl,
+      type: isMegabyChannel({ type, baseUrl }) ? 'megaby' : isMjChannel({ type }) ? 'mj' : isFunAiChannel({ type, baseUrl }) ? 'funai' : isHussChannel({ type, baseUrl }) ? HUSS_CHANNEL_TYPE : isZonghengChannel({ type, baseUrl }) ? V6K_CHANNEL_TYPE : isHaya ? 'haya' : type || 'openai',
+      baseUrl: isMegabyChannel({ type, baseUrl }) ? megabyBaseUrl(baseUrl) : isMjChannel({ type }) ? normalizeMjBaseUrl(baseUrl) : isAsyncVideoChannel({ type }) ? asyncVideoBaseUrl(baseUrl) : isFunAiChannel({ type, baseUrl }) ? funAiBaseUrl(baseUrl) : isHussChannel({ type, baseUrl }) ? hussApiBase(baseUrl) : isZonghengChannel({ type, baseUrl }) ? zonghengBaseUrl(baseUrl) : baseUrl,
       apiKey: type === 'hmstudio' ? '' : (apiKey || ''),
       modelMapping: JSON.stringify(isHaya ? (modelMapping && Object.keys(modelMapping).length ? modelMapping : Object.fromEntries(HAYA_MODEL_IDS.map(id => [id, id]))) : isWxHaidiYue
         ? Object.fromEntries(WX_HAIDIYUE_MODELS.map(modelId => [modelId, modelId]))
@@ -416,7 +417,7 @@ export class ChannelService {
       priority: priority ?? 0,
       weight: weight ?? 1,
       concurrencyLimit: DEFAULT_HM_CONCURRENCY,
-      maxRetries: isHussChannel({ type, baseUrl }) || isMjChannel({ type }) || isAsyncVideoChannel({ type }) || isHaya || isFunAiChannel({ type, baseUrl }) ? 0 : maxRetries ?? 3,
+      maxRetries: isMegabyChannel({ type, baseUrl }) || isHussChannel({ type, baseUrl }) || isMjChannel({ type }) || isAsyncVideoChannel({ type }) || isHaya || isFunAiChannel({ type, baseUrl }) ? 0 : maxRetries ?? 3,
       timeout: timeout ?? 120000,
       faceSplitEnabled: isWxHaidiYue
         ? (data.faceSplitEnabled === 0 || data.faceSplitEnabled === false ? 0 : 1)
@@ -443,6 +444,9 @@ export class ChannelService {
     if (!channel) throw { status: 404, message: '渠道不存在' };
     if (data.type === 'blobdraw') data = { ...data, type: HUSS_CHANNEL_TYPE, baseUrl: 'https://www.huss.top', apiKey: '', maxRetries: 0 };
     const nextType = data.type ?? channel.type;
+    if (isMegabyChannel({ type: nextType, baseUrl: data.baseUrl ?? channel.baseUrl })) {
+      data = { ...data, type: 'megaby', baseUrl: megabyBaseUrl(data.baseUrl ?? channel.baseUrl), maxRetries: 0 };
+    }
 
     if (isMjChannel({ type: nextType })) {
       data = { ...data, type: 'mj', baseUrl: normalizeMjBaseUrl(data.baseUrl ?? channel.baseUrl), maxRetries: 0 };
@@ -537,8 +541,10 @@ export class ChannelService {
 
     const start = Date.now();
     try {
-      if (isMjChannel(channel) || isAsyncVideoChannel(channel) || isHussChannel(channel) || isFunAiChannel(channel)) {
-        if (isMjChannel(channel)) {
+      if (isMegabyChannel(channel) || isMjChannel(channel) || isAsyncVideoChannel(channel) || isHussChannel(channel) || isFunAiChannel(channel)) {
+        if (isMegabyChannel(channel)) {
+          if (!(await fetchMegabyVideoModels(channel)).length) throw new Error('该 Key 未开放 Megaby 视频模型，请检查模型授权');
+        } else if (isMjChannel(channel)) {
           if (!(await fetchMjModels(channel)).length) throw new Error('该 Key 未提供 mj_imagine 模型，请检查模型授权');
         } else if (isAsyncVideoChannel(channel)) await fetchAsyncVideoModels(channel);
         else if (isFunAiChannel(channel)) await fetchFunAiModels(channel); else await fetchHussVideoModels(channel);
@@ -589,6 +595,11 @@ export class ChannelService {
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
 
     if (isZonghengChannel(channel)) return syncV6kVideoModels(channel);
+
+    if (isMegabyChannel(channel)) {
+      const { syncMegabyModels } = await import('./megabyCatalogService.js');
+      return syncMegabyModels(channel);
+    }
 
     if (isMjChannel(channel)) {
       const { syncMjModels } = await import('./mjCatalogService.js');

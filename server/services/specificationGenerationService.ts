@@ -1,3 +1,4 @@
+import { isMegabyChannel, normalizeMegabyTask, validateMegabyVideoInput, validateMegabyReferenceDurations } from './megabyVideoAdapter.js';
 import { isHussChannel, recoverHussSubmission } from './hussVideoAdapter.js';
 import { publicApiModelId } from '../../shared/funAi.js';
 import { isZonghengChannel, normalizeZonghengTask } from './zonghengAdapter.js';
@@ -181,9 +182,13 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
   while (Date.now() < end) {
     let task: any;
     try {
-      const initial = metadata(id).zonghengInitialTask;
-      if (isZonghengChannel(channel) && initial) { task = normalizeZonghengTask(initial, channel.baseUrl, 'v6k', taskId); patch(id, { zonghengInitialTask: undefined }); }
-      else task = await pollSpecificationVideo(channel, taskId);
+      const megabyInitial = metadata(id).megabyInitialTask;
+      if (isMegabyChannel(channel) && megabyInitial) { task = normalizeMegabyTask(megabyInitial, channel.baseUrl, taskId, channel.apiKey); patch(id, { megabyInitialTask: undefined }); }
+      else {
+        const initial = metadata(id).zonghengInitialTask;
+        if (isZonghengChannel(channel) && initial) { task = normalizeZonghengTask(initial, channel.baseUrl, 'v6k', taskId); patch(id, { zonghengInitialTask: undefined }); }
+        else task = await pollSpecificationVideo(channel, taskId);
+      }
     }
     catch (error: any) {
       const status = Number(error?.status) || null;
@@ -518,12 +523,21 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     }
     const nativeImageOutputs = kind === 'image' && modelId === MJ_MODEL_ID ? 4 : undefined;
     if (nativeImageOutputs && body.n !== undefined && ![1, 4].includes(Number(body.n))) throw fail('MJ 每次仅提交一次任务，图片数量以上游实际结果为准');
-    const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (spec.limits.duration.mode === 'fixed' ? spec.limits.duration.min : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'));
+    const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (model.provider === 'megaby' ? 5 : spec.limits.duration.mode === 'fixed' ? spec.limits.duration.min : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'));
     const mismatch = routingMismatches(spec.limits, request.input, kind);
     if (mismatch.length) throw fail(mismatch.join('；'));
     request.input.resolution = spec.limits.resolutions.find(r => r.toLowerCase() === request.input.resolution.toLowerCase()) || request.input.resolution;
     const candidates = selectModelRoutes(spec, request.input);
     if (!candidates.length) throw fail(modelAvailabilityMessage(specificationAvailability(spec)) || '该规格暂时没有满足参数的可用线路', 503);
+    if (kind === 'video' && candidates.every(target => isMegabyChannel(target.channel))) {
+      try {
+        if (body.first_image !== undefined || body.last_image !== undefined) throw new Error('Megaby 暂不支持独立首尾帧');
+        for (const target of candidates) validateMegabyVideoInput({ ...request, model: target.route.upstreamModel,
+          seconds: request.input.seconds, ratio: request.input.ratio, resolution: request.input.resolution });
+        await validateMegabyReferenceDurations(request.videos, request.audios);
+      }
+      catch (error: any) { throw fail(error.message); }
+    }
     const trustedOrigins = [request.publicBaseUrl, req.protocol + '://' + req.get('host')];
     const imageSources = [...request.images, ...(request.firstFrame ? [request.firstFrame] : []), ...(request.lastFrame ? [request.lastFrame] : [])];
     const normalized = await validateAndNormalizeImageReferences(imageSources, { trustedOrigins, trustedRemoteOrigins: (process.env.REFERENCE_IMAGE_REMOTE_ORIGINS || 'https://filer2.fdai.xyz').split(/[\s,]+/).filter(Boolean) });

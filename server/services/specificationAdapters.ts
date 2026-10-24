@@ -1,3 +1,4 @@
+import { isMegabyChannel, buildMegabyVideoPayload, submitMegabyVideo, pollMegabyVideo, validateMegabyReferenceDurations, MegabyApiError } from './megabyVideoAdapter.js';
 import { isZonghengChannel, submitZonghengVideo, normalizeZonghengTask, zonghengTaskUrl, ZonghengSubmissionError } from './zonghengAdapter.js';
 import { zonghengProtocol, zonghengProtocolSnapshot } from './zonghengProtocol.js';
 import { prepareZonghengMedia } from './zonghengMediaService.js';
@@ -149,6 +150,21 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
       throw new SpecificationUpstreamError(error.message, true);
     }
   }
+  if (isMegabyChannel(c)) {
+    let payload: ReturnType<typeof buildMegabyVideoPayload>;
+    try {
+      if (request.body.first_image !== undefined || request.body.last_image !== undefined) throw new Error('Megaby 暂不支持独立首尾帧');
+      const refs = (sources: string[]) => sources.map(source => publishSpecificationAsset(source, request.publicBaseUrl));
+      payload = buildMegabyVideoPayload({ ...request, model, seconds: i.seconds, ratio: i.ratio, resolution: i.resolution,
+        images: refs(request.images), videos: refs(request.videos), audios: refs(request.audios) });
+      await validateMegabyReferenceDurations(request.videos, request.audios);
+    } catch (error: any) { throw new SpecificationUpstreamError(error.message, true); }
+    try { return await submitMegabyVideo(c, payload, onStarting); }
+    catch (error: any) {
+      if (error instanceof MegabyApiError) throw new SpecificationUpstreamError(error.message, false, error.uncertain, false, error.upstreamStatus, error.confirmedFailure);
+      throw error;
+    }
+  }
   if (isMjChannel(c)) throw new SpecificationUpstreamError('MJ 渠道仅接入 MJ 图片模型', true);
   if (isAsyncVideoChannel(c)) {
     let payload: ReturnType<typeof buildAsyncVideoPayload>;
@@ -283,6 +299,7 @@ export async function pollSpecificationVideo(channel: any, taskId: string) {
     if (!response.ok) throw Object.assign(new Error(await responseDiagnostic('V6K', '任务查询 task_id=' + taskId, response, channel.apiKey)), { status: response.status });
     return normalizeZonghengTask(await diagnosticJson('V6K', '任务查询 task_id=' + taskId, response, channel.apiKey), channel.baseUrl, 'v6k', taskId);
   }
+  if (isMegabyChannel(channel)) return pollMegabyVideo(channel, taskId);
   if (isAsyncVideoChannel(channel)) return pollAsyncVideo(channel, taskId);
   if (isFunAiChannel(channel)) return pollFunAiTask(channel, taskId);
   if (isHussChannel(channel)) return pollHussVideo(channel, taskId);

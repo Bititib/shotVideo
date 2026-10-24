@@ -1,3 +1,4 @@
+import { isMegabyChannel, megabyTaskUrl, normalizeMegabyTask, readMegabyJson } from './megabyVideoAdapter.js';
 import { zonghengProtocol, zonghengTaskChannel, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE } from './zonghengProtocol.js';
 import { isAsyncVideoChannel, asyncVideoTaskUrl, normalizeAsyncVideoTask, resolveAsyncVideoUrl } from './asyncVideoAdapter.js';
 import { isZonghengChannel, zonghengTaskUrl, normalizeZonghengTask } from './zonghengAdapter.js';
@@ -290,7 +291,7 @@ export class VideoRecoveryService {
     const isZongheng = isZonghengChannel(channel);
     const isMiaowu = isMiaowuChannel(channel);
     const isSudaShui = /sudashuiapi\.com/i.test(baseUrl) || metadata.actualChannel === 'sudashui';
-    const pollUrl = isAsyncVideoChannel(channel) ? asyncVideoTaskUrl(baseUrl, videoId) : isZongheng ? zonghengTaskUrl(baseUrl, videoId) : isHaya ? hayaTaskUrl(baseUrl, videoId) : isHmStudio
+    const pollUrl = isMegabyChannel(channel) ? megabyTaskUrl(baseUrl, videoId) : isAsyncVideoChannel(channel) ? asyncVideoTaskUrl(baseUrl, videoId) : isZongheng ? zonghengTaskUrl(baseUrl, videoId) : isHaya ? hayaTaskUrl(baseUrl, videoId) : isHmStudio
       ? hmStudioTaskUrl(baseUrl, videoId)
       : isHaidiYue
         ? wxHaidiYueTaskUrl(baseUrl, videoId)
@@ -304,12 +305,13 @@ export class VideoRecoveryService {
     const headers: Record<string, string> = {};
     if (channel.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
     const response = await fetchVideoTaskResponse(pollUrl, { headers });
+    if (!response.ok && isMegabyChannel(channel)) await readMegabyJson(channel, response, 'query');
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
       throw { status: 502, message: formatVideoPollHttpFailure(response.status, detail) };
     }
 
-    const payload = await response.json() as any;
+    const payload = isMegabyChannel(channel) ? await readMegabyJson(channel, response, 'query') : await response.json() as any;
     if (isVideoQueryErrorPayload(payload)) throw { status: 502, message: '上游查询异常，未确认任务状态，未恢复或补扣' };
     const returnedId = payload?.task_id || payload?.id || payload?.data?.task_id || payload?.data?.id;
     if (returnedId && String(returnedId) !== videoId) throw { status: 502, message: '上游返回任务 ID 不一致，未恢复或补扣' };
@@ -317,7 +319,10 @@ export class VideoRecoveryService {
     let progress = 0;
     let resultUrl = '';
     let error = '';
-    if (isAsyncVideoChannel(channel)) {
+    if (isMegabyChannel(channel)) {
+      const task = normalizeMegabyTask(payload, channel.baseUrl, videoId, channel.apiKey);
+      normalizedStatus = task.status; progress = task.progress; resultUrl = task.resultUrl; error = task.error;
+    } else if (isAsyncVideoChannel(channel)) {
       const task = normalizeAsyncVideoTask(payload);
       normalizedStatus = task.status; progress = task.progress; error = task.error;
       if (task.status === 'completed') resultUrl = await resolveAsyncVideoUrl(channel, videoId);

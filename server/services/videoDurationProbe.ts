@@ -13,6 +13,7 @@ const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
 const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
 const cache = new Map<string, Promise<number>>();
 type MediaKind = 'video' | 'audio';
+type MediaProbeOptions = { allowHttp?: boolean; maxBytes?: number };
 
 function blockedAddress(address: string): boolean {
   if (isIP(address) === 4) {
@@ -24,20 +25,21 @@ function blockedAddress(address: string): boolean {
   return ip === '::' || ip === '::1' || ip.startsWith('::ffff:') || /^(fc|fd|fe[89ab]|ff)/.test(ip);
 }
 
-async function assertPublicHttps(url: URL, kind: MediaKind) {
+async function assertPublicMediaUrl(url: URL, kind: MediaKind, allowHttp = false) {
   const host = url.hostname.replace(/^\[|\]$/g, '');
-  if (url.protocol !== 'https:' || url.username || url.password || host === 'localhost' || /\.(local|localhost)$/i.test(host)) {
-    throw new Error(`参考${kind === 'video' ? '视频' : '音频'}须为本站上传文件或公网 HTTPS 直链`);
+  if (!(url.protocol === 'https:' || allowHttp && url.protocol === 'http:') || url.username || url.password || host === 'localhost' || /\.(local|localhost)$/i.test(host)) {
+    throw new Error(`参考${kind === 'video' ? '视频' : '音频'}须为本站上传文件或公网 ${allowHttp ? 'HTTP/HTTPS' : 'HTTPS'} 直链`);
   }
   const addresses = isIP(host) ? [{ address: host }] : await lookup(host, { all: true, verbatim: true });
   if (!addresses.length || addresses.some(item => blockedAddress(item.address))) throw new Error(`参考${kind === 'video' ? '视频' : '音频'}地址不能指向内网`);
 }
 
-async function downloadRemote(source: string, target: string, kind: MediaKind, maxBytes: number) {
+async function downloadRemote(source: string, target: string, kind: MediaKind, maxBytes: number, allowHttp = false) {
   const label = kind === 'video' ? '视频' : '音频';
+  const maxSize = `${maxBytes / (1024 * 1024)}MB`;
   let url = new URL(source);
   for (let redirects = 0; redirects <= 3; redirects++) {
-    await assertPublicHttps(url, kind);
+    await assertPublicMediaUrl(url, kind, allowHttp);
     const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(60_000) });
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('location');
@@ -47,7 +49,7 @@ async function downloadRemote(source: string, target: string, kind: MediaKind, m
     }
     if (!response.ok || !response.body) throw new Error(`参考${label}读取失败 (${response.status})`);
     const declared = Number(response.headers.get('content-length') || 0);
-    if (declared > maxBytes) throw new Error(`参考${label}不能超过 ${kind === 'video' ? '100MB' : '15MB'}`);
+    if (declared > maxBytes) throw new Error(`参考${label}不能超过 ${maxSize}`);
     const handle = await fs.open(target, 'wx');
     let size = 0;
     try {
@@ -57,7 +59,7 @@ async function downloadRemote(source: string, target: string, kind: MediaKind, m
           const { done, value } = await reader.read();
           if (done) break;
           size += value.length;
-          if (size > maxBytes) throw new Error(`参考${label}不能超过 ${kind === 'video' ? '100MB' : '15MB'}`);
+          if (size > maxBytes) throw new Error(`参考${label}不能超过 ${maxSize}`);
           await handle.write(value);
         }
       } finally {
@@ -72,15 +74,16 @@ async function downloadRemote(source: string, target: string, kind: MediaKind, m
   throw new Error(`参考${label}重定向次数过多`);
 }
 
-async function materialize(source: string, target: string, kind: MediaKind, maxBytes: number): Promise<{ file: string; temporary: boolean }> {
+async function materialize(source: string, target: string, kind: MediaKind, maxBytes: number, allowHttp = false): Promise<{ file: string; temporary: boolean }> {
   const label = kind === 'video' ? '视频' : '音频';
+  const maxSize = `${maxBytes / (1024 * 1024)}MB`;
   if (source.startsWith('data:')) {
     const match = new RegExp(`^data:${kind}\\/[^;,]+;base64,([A-Za-z0-9+/=\\s]+)$`).exec(source);
     if (!match || match[1].replace(/\s/g, '').length > Math.ceil(maxBytes / 3) * 4) {
-      throw new Error(`参考${label}格式无效或超过 ${kind === 'video' ? '100MB' : '15MB'}`);
+      throw new Error(`参考${label}格式无效或超过 ${maxSize}`);
     }
     const bytes = Buffer.from(match[1], 'base64');
-    if (!bytes.length || bytes.length > maxBytes) throw new Error(`参考${label}为空或超过 ${kind === 'video' ? '100MB' : '15MB'}`);
+    if (!bytes.length || bytes.length > maxBytes) throw new Error(`参考${label}为空或超过 ${maxSize}`);
     await fs.writeFile(target, bytes, { flag: 'wx' });
     return { file: target, temporary: true };
   }
@@ -92,12 +95,12 @@ async function materialize(source: string, target: string, kind: MediaKind, maxB
     const candidate = await fs.realpath(path.resolve(root, relative));
     if (!candidate.startsWith(root + path.sep)) throw new Error(`参考${label}路径无效`);
     const stat = await fs.stat(candidate);
-    if (!stat.isFile() || !stat.size || stat.size > maxBytes) throw new Error(`参考${label}为空或超过 ${kind === 'video' ? '100MB' : '15MB'}`);
+    if (!stat.isFile() || !stat.size || stat.size > maxBytes) throw new Error(`参考${label}为空或超过 ${maxSize}`);
     return { file: candidate, temporary: false };
   }
 
   try {
-    await downloadRemote(source, target, kind, maxBytes);
+    await downloadRemote(source, target, kind, maxBytes, allowHttp);
     return { file: target, temporary: true };
   } catch (error) {
     await fs.rm(target, { force: true }).catch(() => undefined);
@@ -105,11 +108,11 @@ async function materialize(source: string, target: string, kind: MediaKind, maxB
   }
 }
 
-async function uncachedProbe(source: string, kind: MediaKind): Promise<number> {
+async function uncachedProbe(source: string, kind: MediaKind, options: MediaProbeOptions = {}): Promise<number> {
   const target = path.join(os.tmpdir(), `${kind}-duration-${crypto.randomUUID()}.bin`);
   let materialized: { file: string; temporary: boolean } | undefined;
   try {
-    materialized = await materialize(source, target, kind, kind === 'video' ? MAX_VIDEO_BYTES : MAX_AUDIO_BYTES);
+    materialized = await materialize(source, target, kind, options.maxBytes ?? (kind === 'video' ? MAX_VIDEO_BYTES : MAX_AUDIO_BYTES), options.allowHttp);
     const { stdout } = await run('ffprobe', ['-v', 'error', '-select_streams', kind === 'video' ? 'v:0' : 'a:0', '-show_entries',
       'format=duration:stream=duration', '-of', 'json', materialized.file], { timeout: 30_000, maxBuffer: 1024 * 1024, windowsHide: true });
     const info = JSON.parse(stdout);
@@ -122,12 +125,12 @@ async function uncachedProbe(source: string, kind: MediaKind): Promise<number> {
   }
 }
 
-export async function probeVideoDurationSeconds(source: string): Promise<number> {
+export async function probeVideoDurationSeconds(source: string, options: MediaProbeOptions = {}): Promise<number> {
   if (!source || typeof source !== 'string') throw new Error('参考视频地址无效');
-  const key = `video:${crypto.createHash('sha256').update(source).digest('hex')}`;
+  const key = `video:${Boolean(options.allowHttp)}:${options.maxBytes ?? MAX_VIDEO_BYTES}:${crypto.createHash('sha256').update(source).digest('hex')}`;
   let pending = cache.get(key);
   if (!pending) {
-    pending = uncachedProbe(source, 'video');
+    pending = uncachedProbe(source, 'video', options);
     if (cache.size >= 200) cache.delete(cache.keys().next().value!);
     cache.set(key, pending);
     pending.catch(() => cache.delete(key));
@@ -135,12 +138,12 @@ export async function probeVideoDurationSeconds(source: string): Promise<number>
   return pending;
 }
 
-export async function probeAudioDurationSeconds(source: string): Promise<number> {
+export async function probeAudioDurationSeconds(source: string, options: MediaProbeOptions = {}): Promise<number> {
   if (!source || typeof source !== 'string') throw new Error('参考音频地址无效');
-  const key = `audio:${crypto.createHash('sha256').update(source).digest('hex')}`;
+  const key = `audio:${Boolean(options.allowHttp)}:${options.maxBytes ?? MAX_AUDIO_BYTES}:${crypto.createHash('sha256').update(source).digest('hex')}`;
   let pending = cache.get(key);
   if (!pending) {
-    pending = uncachedProbe(source, 'audio');
+    pending = uncachedProbe(source, 'audio', options);
     if (cache.size >= 200) cache.delete(cache.keys().next().value!);
     cache.set(key, pending);
     pending.catch(() => cache.delete(key));
@@ -154,13 +157,13 @@ export function roundUpVideoDurationTenths(seconds: number): number {
 }
 
 export async function probeReferenceVideoSeconds(sources: string[]): Promise<{ rawDurations: number[]; durations: number[]; total: number }> {
-  const rawDurations = await Promise.all(sources.map(probeVideoDurationSeconds));
+  const rawDurations = await Promise.all(sources.map(source => probeVideoDurationSeconds(source)));
   const durations = rawDurations.map(roundUpVideoDurationTenths);
   return { rawDurations, durations, total: Math.round(durations.reduce((sum, seconds) => sum + seconds, 0) * 10) / 10 };
 }
 
 export async function probeReferenceAudioSeconds(sources: string[]): Promise<{ rawDurations: number[]; durations: number[]; total: number }> {
-  const rawDurations = await Promise.all(sources.map(probeAudioDurationSeconds));
+  const rawDurations = await Promise.all(sources.map(source => probeAudioDurationSeconds(source)));
   const durations = rawDurations.map(roundUpVideoDurationTenths);
   return { rawDurations, durations, total: Math.round(durations.reduce((sum, seconds) => sum + seconds, 0) * 10) / 10 };
 }

@@ -1,3 +1,4 @@
+import { MEGABY_BASE_URL, MEGABY_CHANNEL_TYPE } from '../../shared/megabyVideo.js';
 import { migrateZonghengToV6k } from '../services/zonghengV6kMigration.js';
 import { ensureFundLedger } from './fundLedger.js';
 import { migratePidoiImageTimeout } from './imageTimeoutMigration.js';
@@ -1995,6 +1996,15 @@ export async function initDatabase() {
     if (miaowuChannels.length > 0) console.log('🔄 已校准喵呜渠道并绑定 Seedance 2.5 模型');
   } catch (err: any) {
     console.error('⚠️ 校准喵呜渠道模型绑定出错:', err.message);
+  }
+
+  // Register documented models once, without guessing credentials or prices.
+  if (!db.select().from(channels).where(eq(channels.type, MEGABY_CHANNEL_TYPE)).get()) {
+    const id = Number(db.insert(channels).values({ name: 'Megaby 视频渠道', type: MEGABY_CHANNEL_TYPE,
+      baseUrl: MEGABY_BASE_URL, apiKey: '', status: 0, maxRetries: 0, supportedModels: '[]', modelMapping: '{}',
+    }).run().lastInsertRowid);
+    const { ensureMegabyModels } = await import('../services/megabyCatalogService.js');
+    ensureMegabyModels(db.select().from(channels).where(eq(channels.id, id)).get()!);
   }
 
   // Seed the supplied endpoint once; preserve administrator configuration on restart.

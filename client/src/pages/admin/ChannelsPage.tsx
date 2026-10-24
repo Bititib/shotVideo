@@ -1,3 +1,4 @@
+import { MEGABY_BASE_URL } from '../../../../shared/megabyVideo';
 import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import AdminCollection from '../../components/AdminCollection';
 import ChannelListItem from '../../components/ChannelListItem';
@@ -254,7 +255,7 @@ export default function ChannelsPage() {
     try {
       const result = await adminApi.syncChannelModels(ch.id);
       const message = `同步完成：上游 ${result.count} 个模型，新增 ${result.added} 个模型配置`
-        + (result.count === 0 ? '。请检查渠道 Key 的模型授权。' : ['zongheng', 'zongheng-v6k', 'funai', 'mj'].includes(ch.type) ? '。新模型默认停用，请配置价格后启用。' : '。');
+        + (result.count === 0 ? '。请检查渠道 Key 的模型授权。' : ['zongheng', 'zongheng-v6k', 'funai', 'mj', 'megaby'].includes(ch.type) ? '。新模型默认停用，请配置价格后启用。' : '。');
       setNotice(message);
       setChannelFeedback({ channelId: ch.id, kind: 'success', message });
       await loadChannels();
@@ -502,8 +503,8 @@ export default function ChannelsPage() {
                       apiKeys: e.target.value === 'hmstudio' && (!edit.apiKeys || edit.apiKeys.length === 0)
                         ? [newHmKey()]
                         : edit.apiKeys,
-                      maxRetries: ['zongheng-v6k', 'funai', 'async-video', 'mj', 'huss'].includes(e.target.value) ? 0 : edit.maxRetries,
-                      baseUrl: e.target.value === 'async-video' && !edit.baseUrl
+                      maxRetries: ['zongheng-v6k', 'funai', 'megaby', 'async-video', 'mj', 'huss'].includes(e.target.value) ? 0 : edit.maxRetries,
+                      baseUrl: e.target.value === 'megaby' && !edit.baseUrl ? MEGABY_BASE_URL : e.target.value === 'async-video' && !edit.baseUrl
                         ? ASYNC_VIDEO_BASE_URL
                         : e.target.value === 'funai' && !edit.baseUrl
                         ? FUNAI_BASE_URL
@@ -538,6 +539,7 @@ export default function ChannelsPage() {
                       <option value="haya">Haya AI（素材上传／视频异步任务）</option>
                       <option value="miaowu">喵呜 API（视频异步任务）</option>
                       <option value="huss">HUSS（BB Seedance 视频生成）</option>
+                      <option value="megaby">Megaby（视频生成）</option>
                       <option value="mingfei">MingFei（GPT Image 2 异步任务）</option>
                       <option value="gemini">Gemini（分析服务）</option>
                       <option value="grok2api">Grok2API（视频/图片生成）</option>

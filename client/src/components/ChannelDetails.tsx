@@ -10,7 +10,7 @@ export default function ChannelDetails({ channel, tab, onTabChange, busy, testin
   onEdit: () => void; onTest: () => void; onSync: () => void; children: ReactNode;
 }) {
   const modelCount = channel.supportedModels?.length || 0;
-  const provider = channel.type === 'mj' ? 'MJ' : channel.type === 'async-video' ? 'Vx-乐2.0fast' : channel.type === 'funai' ? 'FunAI' : ['zongheng', 'zongheng-v6k'].includes(channel.type) ? '纵横科技 V6K' : channel.type === 'hmstudio' ? 'HM Studio' : channel.type;
+  const provider = channel.type === 'megaby' ? 'Megaby' : channel.type === 'mj' ? 'MJ' : channel.type === 'async-video' ? 'Vx-乐2.0fast' : channel.type === 'funai' ? 'FunAI' : ['zongheng', 'zongheng-v6k'].includes(channel.type) ? '纵横科技 V6K' : channel.type === 'hmstudio' ? 'HM Studio' : channel.type;
   const currentFeedback = feedback?.channelId === channel.id ? feedback : null;
   return (
     <div className="channel-details">
