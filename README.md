@@ -4,6 +4,10 @@
 
 # Run and deploy your AI Studio app
 
+## 模型与渠道开发准则
+
+新增模型、渠道或修改提交、查询、恢复和计费逻辑前，必须遵守 [模型与渠道接入准则](docs/model-channel-integration-standard.md)，并填写 [接入验收记录](docs/model-channel-integration-template.md)。仓库代理开发要求见 [AGENTS.md](AGENTS.md)。
+
 This contains everything you need to run your app locally.
 
 View your app in AI Studio: https://ai.studio/apps/780544a4-ac97-4dd5-aa02-df0863dc58d1
