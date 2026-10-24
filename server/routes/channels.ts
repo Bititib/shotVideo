@@ -1,5 +1,4 @@
 import { Router, Response } from 'express';
-import { BlobDrawApiError } from '../services/blobDrawAdapter.js';
 import { HussApiError } from '../services/hussVideoAdapter.js';
 import { FunAiApiError } from '../services/funAiAdapter.js';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
@@ -79,14 +78,6 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
 function channelOperationError(res: Response, error: any) {
   if (error instanceof FunAiApiError) {
     return res.status(502).json({ error: error.message, code: 'UPSTREAM_ERROR', upstreamStatus: error.status });
-  }
-  if (error instanceof BlobDrawApiError) {
-    const message = error.status === 401
-      ? 'BlobDraw 上游 API Key 校验失败，请检查渠道中填写的开放 API 密钥。'
-      : error.status === 403
-        ? 'BlobDraw 上游拒绝访问，请检查 API Key 的读取权限和模型授权。'
-        : error.message;
-    return res.status(502).json({ error: message, code: 'UPSTREAM_ERROR', upstreamStatus: error.status });
   }
   if (error instanceof HussApiError) {
     const message = error.status === 401 ? 'HUSS 上游 API Key 校验失败，请检查渠道中填写的 API Key。'

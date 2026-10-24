@@ -5,7 +5,6 @@ import { syncV6kVideoModels } from './v6kCatalogService.js';
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { isFunAiChannel, funAiBaseUrl, fetchFunAiModels } from './funAiAdapter.js';
 import { isZonghengChannel, zonghengBaseUrl, ZONGHENG_MODEL_PREFIX } from './zonghengAdapter.js';
-import { isBlobDrawChannel, blobDrawApiBase, fetchBlobDrawModels } from './blobDrawAdapter.js';
 import { HUSS_CHANNEL_TYPE, hussApiBase, isHussChannel, fetchHussVideoModels } from './hussVideoAdapter.js';
 import { HAYA_MODEL_IDS } from '../../shared/hayaVideo.js';
 import { isHayaChannel, hayaApiBaseUrl } from './hayaVideoAdapter.js';
@@ -383,7 +382,12 @@ export class ChannelService {
   }
 
   static createChannel(data: any) {
-    const { name, type, baseUrl, apiKey, modelMapping, supportedModels, priority, weight, maxRetries, timeout } = data;
+    let { name, type, baseUrl, apiKey, modelMapping, supportedModels, priority, weight, maxRetries, timeout } = data;
+    if (type === 'blobdraw') {
+      type = HUSS_CHANNEL_TYPE;
+      baseUrl = 'https://www.huss.top';
+      apiKey = '';
+    }
     if (!name || (!baseUrl && !isMjChannel({ type }))) throw { status: 400, message: '渠道名称和 Base URL 不能为空' };
 
     const isWxHaidiYue = type === WX_HAIDIYUE_CHANNEL_TYPE;
@@ -398,8 +402,8 @@ export class ChannelService {
       : [...MIAOWU_DEFAULT_VIDEO_MODELS];
     const result = db.insert(channels).values({
       name: isWxHaidiYue ? WX_HAIDIYUE_CHANNEL_NAME : name,
-      type: isMjChannel({ type }) ? 'mj' : isFunAiChannel({ type, baseUrl }) ? 'funai' : isHussChannel({ type, baseUrl }) ? HUSS_CHANNEL_TYPE : isBlobDrawChannel({ type, baseUrl }) ? 'blobdraw' : isZonghengChannel({ type, baseUrl }) ? V6K_CHANNEL_TYPE : isHaya ? 'haya' : type || 'openai',
-      baseUrl: isMjChannel({ type }) ? normalizeMjBaseUrl(baseUrl) : isAsyncVideoChannel({ type }) ? asyncVideoBaseUrl(baseUrl) : isFunAiChannel({ type, baseUrl }) ? funAiBaseUrl(baseUrl) : isHussChannel({ type, baseUrl }) ? hussApiBase(baseUrl) : isBlobDrawChannel({ type, baseUrl }) ? blobDrawApiBase(baseUrl) : isZonghengChannel({ type, baseUrl }) ? zonghengBaseUrl(baseUrl) : baseUrl,
+      type: isMjChannel({ type }) ? 'mj' : isFunAiChannel({ type, baseUrl }) ? 'funai' : isHussChannel({ type, baseUrl }) ? HUSS_CHANNEL_TYPE : isZonghengChannel({ type, baseUrl }) ? V6K_CHANNEL_TYPE : isHaya ? 'haya' : type || 'openai',
+      baseUrl: isMjChannel({ type }) ? normalizeMjBaseUrl(baseUrl) : isAsyncVideoChannel({ type }) ? asyncVideoBaseUrl(baseUrl) : isFunAiChannel({ type, baseUrl }) ? funAiBaseUrl(baseUrl) : isHussChannel({ type, baseUrl }) ? hussApiBase(baseUrl) : isZonghengChannel({ type, baseUrl }) ? zonghengBaseUrl(baseUrl) : baseUrl,
       apiKey: type === 'hmstudio' ? '' : (apiKey || ''),
       modelMapping: JSON.stringify(isHaya ? (modelMapping && Object.keys(modelMapping).length ? modelMapping : Object.fromEntries(HAYA_MODEL_IDS.map(id => [id, id]))) : isWxHaidiYue
         ? Object.fromEntries(WX_HAIDIYUE_MODELS.map(modelId => [modelId, modelId]))
@@ -437,6 +441,7 @@ export class ChannelService {
   static updateChannel(id: number, data: any) {
     const channel = db.select().from(channels).where(eq(channels.id, id)).get();
     if (!channel) throw { status: 404, message: '渠道不存在' };
+    if (data.type === 'blobdraw') data = { ...data, type: HUSS_CHANNEL_TYPE, baseUrl: 'https://www.huss.top', apiKey: '', maxRetries: 0 };
     const nextType = data.type ?? channel.type;
 
     if (isMjChannel({ type: nextType })) {
@@ -456,9 +461,6 @@ export class ChannelService {
 
     if (isZonghengChannel({ type: nextType, baseUrl: data.baseUrl ?? channel.baseUrl })) {
       data = { ...data, type: V6K_CHANNEL_TYPE, baseUrl: zonghengBaseUrl(data.baseUrl ?? channel.baseUrl) };
-    }
-    if (isBlobDrawChannel({ type: nextType, baseUrl: data.baseUrl ?? channel.baseUrl })) {
-      data = { ...data, type: 'blobdraw', baseUrl: blobDrawApiBase(data.baseUrl ?? channel.baseUrl) };
     }
     const updates: Record<string, any> = {};
     if (data.name !== undefined) updates.name = data.name;
@@ -535,11 +537,11 @@ export class ChannelService {
 
     const start = Date.now();
     try {
-      if (isMjChannel(channel) || isAsyncVideoChannel(channel) || isBlobDrawChannel(channel) || isHussChannel(channel) || isFunAiChannel(channel)) {
+      if (isMjChannel(channel) || isAsyncVideoChannel(channel) || isHussChannel(channel) || isFunAiChannel(channel)) {
         if (isMjChannel(channel)) {
           if (!(await fetchMjModels(channel)).length) throw new Error('该 Key 未提供 mj_imagine 模型，请检查模型授权');
         } else if (isAsyncVideoChannel(channel)) await fetchAsyncVideoModels(channel);
-        else if (isFunAiChannel(channel)) await fetchFunAiModels(channel); else if (isHussChannel(channel)) await fetchHussVideoModels(channel); else await fetchBlobDrawModels(channel);
+        else if (isFunAiChannel(channel)) await fetchFunAiModels(channel); else await fetchHussVideoModels(channel);
         const durationMs = Date.now() - start;
         const result = { success: true, message: 'success:' + durationMs + 'ms', durationMs };
         db.update(channels).set({ lastTestAt: new Date().toISOString(), lastTestResult: result.message }).where(eq(channels.id, id)).run();
@@ -605,11 +607,6 @@ export class ChannelService {
     if (isHussChannel(channel)) {
       const { syncHussModels } = await import('./hussCatalogService.js');
       return syncHussModels(channel);
-    }
-
-    if (isBlobDrawChannel(channel)) {
-      const { syncBlobDrawModels } = await import('./blobDrawCatalogService.js');
-      return syncBlobDrawModels(channel);
     }
 
     // 该渠道只暴露本站独立的海底月模型，不允许“同步模型”加入其他上游模型。

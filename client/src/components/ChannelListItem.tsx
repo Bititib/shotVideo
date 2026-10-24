@@ -16,7 +16,7 @@ export default function ChannelListItem({ channel: ch, syncing, testing, pending
     <div className="channel-list-identity">
       <span className="channel-list-icon" aria-hidden="true"><Radio /></span>
       <div><button type="button" className="channel-list-name" aria-label={`查看${ch.name}详情`} onClick={onOpen}>{ch.name}</button>
-        <div className="channel-list-meta"><span>{ch.type === 'mj' ? 'MJ' : ch.type === 'async-video' ? 'Vx-乐2.0fast' : ch.type === 'hmstudio' ? 'HM Studio' : ch.type === 'openai' ? 'OpenAI' : ch.type === 'blobdraw' ? 'BlobDraw' : ch.type}</span><span>#{ch.id}</span></div>
+        <div className="channel-list-meta"><span>{ch.type === 'mj' ? 'MJ' : ch.type === 'async-video' ? 'Vx-乐2.0fast' : ch.type === 'hmstudio' ? 'HM Studio' : ch.type === 'openai' ? 'OpenAI' : ch.type === 'huss' ? 'HUSS' : ch.type}</span><span>#{ch.id}</span></div>
       </div>
     </div>
     <button type="button" role="switch" aria-label={`${ch.name}渠道状态`} aria-checked={Boolean(ch.status)} disabled={pending} onClick={onToggle} className="channel-list-status">

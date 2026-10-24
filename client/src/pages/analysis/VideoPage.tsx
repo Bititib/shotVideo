@@ -1,7 +1,7 @@
 import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
 import { videoReviewLabel, videoReviewMessage } from '../../../../shared/videoReview';
 import { publicGenerationError } from '../../../../shared/generationMessages';
-import { BLOB_DRAW_BB_MODEL } from '../../../../shared/blobDrawVideo';
+import { HUSS_BB_PUBLIC_MODEL } from '../../../../shared/hussBbVideo';
 import { useVideoQuote } from '../../hooks/useVideoQuote';
 import { routingMismatches } from '../../../../shared/modelRouting';
 import { startPolling } from '../../utils/polling';
@@ -188,7 +188,7 @@ const GROUP_ORDER = [
 ];
 
 const getModelGroup = (modelId: string) => {
-  if (modelId === BLOB_DRAW_BB_MODEL) return 'Seedance 系列';
+  if (modelId === HUSS_BB_PUBLIC_MODEL) return 'Seedance 系列';
   const zongheng = getZonghengVideoSpec(modelId);
   if (zongheng) return ({ seedance: 'Seedance 系列', grok: 'Grok 系列' } as Record<string, string>)[zongheng.family] || '其他模型';
   if (getHayaVideoSpec(modelId)) return 'Haya AI';

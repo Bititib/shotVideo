@@ -3,7 +3,6 @@ import { zonghengProtocol, zonghengTaskChannel, isRetiredZonghengTask, RETIRED_Z
 import { modelAvailabilityMessage } from '../../shared/upstreamAvailability.js';
 import { startSseHeartbeat } from './sseHeartbeat.js';
 import { publicGenerationError, publicGenerationEvent } from '../../shared/generationMessages.js';
-import { isBlobDrawChannel } from './blobDrawAdapter.js';
 import { isFunAiChannel } from './funAiAdapter.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
 import { assertExpectedVideoCost } from './videoQuoteService.js';
@@ -224,7 +223,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         onEvent({ type: 'complete', videoUrl: localized, contentId: id }); return;
       }
     }
-    await wait(isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : isBlobDrawChannel(channel) ? 10_000 : 8_000);
+    await wait(isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : 8_000);
   }
   holdForReview(id, '原任务查询达到时限，费用保留，请核查原任务', 'query');
   onEvent({ type: 'status', message: '任务仍待核实，请在历史记录查看' });

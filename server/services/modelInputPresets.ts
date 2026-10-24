@@ -1,4 +1,4 @@
-import { BLOB_DRAW_BB_MODEL, blobDrawBbModelLimits } from '../../shared/blobDrawVideo.js';
+import { HUSS_BB_PUBLIC_MODEL, hussBbModelLimits } from '../../shared/hussBbVideo.js';
 import { defaultRoutingLimits, type ModelInputLimits } from '../../shared/modelRouting.js';
 import { getHmStudioAdditionalVideoModel } from '../../shared/hmStudioVideo.js';
 import { getHayaVideoSpec } from '../../shared/hayaVideo.js';
@@ -15,7 +15,7 @@ export function existingModelLimits(id: string, kind: 'image' | 'video'): ModelI
     const textOnly = ['gpt-image-2.5-flare', 'nano-banana-2.1', 'nano-banana-2-lite'].includes(id);
     return { ...l, maxImages: textOnly ? 0 : id === 'gpt-image-2-mingfei' ? 16 : 10, maxOutputs: 4, resolutions: id === 'gpt-image-2' ? ['1K','4K'] : ['1K','2K','4K'], ratios: ['1:1','16:9','9:16','4:3','3:4','3:2','2:3'] };
   }
-  if (id === BLOB_DRAW_BB_MODEL) return blobDrawBbModelLimits();
+  if (id === HUSS_BB_PUBLIC_MODEL) return hussBbModelLimits();
   const hm = getHmStudioAdditionalVideoModel(id);
   if (hm) return { ...video(hm.maxImages, hm.maxVideos, hm.maxAudios, hm.resolution, hm.minSeconds, hm.maxSeconds), resolutions: [...(hm.resolutions || [hm.resolution])], firstFrame: hm.supportsDedicatedFrames, lastFrame: hm.supportsDedicatedFrames };
   if (id === 'seedance_v2.5') return { ...video(10,0,0,'720p'), firstFrame: true, lastFrame: true };

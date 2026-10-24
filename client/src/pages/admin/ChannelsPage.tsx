@@ -17,7 +17,6 @@ import { ASYNC_VIDEO_BASE_URL } from '../../../../shared/asyncVideo';
 
 const HM_STUDIO_BASE_URL = 'https://dnyovzpgyokm.sealosbja.site';
 const HAYA_BASE_URL = 'https://hayaai.fun';
-const BLOB_DRAW_BASE_URL = 'https://www.iblob.cc/api/v1';
 const HUSS_BASE_URL = 'https://www.huss.top';
 const MIAOWU_BASE_URL = 'https://api.miaowuai.store';
 
@@ -512,8 +511,6 @@ export default function ChannelsPage() {
                         ? 'https://www.v6k.top'
                         : e.target.value === 'hmstudio' && !edit.baseUrl
                         ? HM_STUDIO_BASE_URL
-                        : e.target.value === 'blobdraw' && !edit.baseUrl
-                          ? BLOB_DRAW_BASE_URL
                         : e.target.value === 'huss' && !edit.baseUrl
                           ? HUSS_BASE_URL
                         : e.target.value === 'haya' && !edit.baseUrl
@@ -540,7 +537,6 @@ export default function ChannelsPage() {
                       <option value="async-video">Vx-乐2.0fast（视频生成）</option>
                       <option value="haya">Haya AI（素材上传／视频异步任务）</option>
                       <option value="miaowu">喵呜 API（视频异步任务）</option>
-                      <option value="blobdraw">BlobDraw（视频生成）</option>
                       <option value="huss">HUSS（BB Seedance 视频生成）</option>
                       <option value="mingfei">MingFei（GPT Image 2 异步任务）</option>
                       <option value="gemini">Gemini（分析服务）</option>
@@ -561,7 +557,6 @@ export default function ChannelsPage() {
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
                 </div>
               )}
-              {edit.type === 'blobdraw' && <p className="text-xs leading-5 text-zinc-400">保存密钥后点击“同步模型”。视频模型和参考素材上限将自动导入；配置用户售价后在模型管理中启用。密钥需要读取和生成两项权限。</p>}
               {edit.type === 'huss' && <p className="text-xs leading-5 text-zinc-400">使用 HUSS API Key。同步后会将 bb-seedance2.5-301010 接入既有 bb-2.5-301010 公共模型；支持 10–30 秒、720p、三种画幅及图/视频/音频参考。</p>}
               {edit.type === 'mj' && <p className="text-xs leading-5 text-zinc-400">保存密钥后同步 MJ 图片模型，配置按次售价后启用。支持 1K、最多 6 张参考图；一次任务返回 4 张图片，仅收一次费用，结果自动保存到素材库。</p>}
               {edit.type === 'funai' && <p className="text-xs leading-5 text-zinc-400">保存密钥后同步图片与视频模型。新模型默认停用，配置售价后启用；图片按 1K、2K、4K 分别建立入口。生成结果不确定时保留原任务，避免重复扣费。</p>}

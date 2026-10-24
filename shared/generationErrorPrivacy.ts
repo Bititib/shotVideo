@@ -1,6 +1,6 @@
 /** Display-only projection. Never use this text to decide task or billing state. */
 const FALLBACK = '生成服务返回异常，暂未提供可展示的失败原因。';
-const PROVIDERS = /纵横科技|私有供应商[\w\u4e00-\u9fff]*|\b(?:snumom|blobdraw|hmstudio|haya|longxia)\b/gi;
+const PROVIDERS = /纵横科技|私有供应商[\w\u4e00-\u9fff]*|\b(?:snumom|hmstudio|haya|longxia)\b/gi;
 
 function redact(text: string, privateNames: readonly string[]): string {
   let result = text

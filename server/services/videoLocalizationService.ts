@@ -1,6 +1,5 @@
 import { zonghengTaskUrl } from './zonghengAdapter.js';
 import { isAsyncVideoChannel, resolveAsyncVideoUrl } from './asyncVideoAdapter.js';
-import { isBlobDrawChannel } from './blobDrawAdapter.js';
 import { isFunAiChannel, shouldSendFunAiAuthorization, funAiTaskUrl } from './funAiAdapter.js';
 import { isZonghengChannel } from './zonghengAdapter.js';
 import { isHayaChannel, shouldSendHayaAuthorization, hayaTaskUrl } from './hayaVideoAdapter.js';
@@ -47,7 +46,7 @@ export async function downloadAndLocalizeVideo(
   const channel = exactChannel || ChannelService.findChannelForModel(model);
   const authenticatedV6kContent = channel && isZonghengChannel(channel) && url === zonghengTaskUrl(channel.baseUrl, videoId) + '/content';
   const headers: Record<string, string> = {};
-  const maySendAuthorization = isAsyncVideoChannel(channel) ? false : isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isBlobDrawChannel(channel) ? false : isZonghengChannel(channel) ? Boolean(authenticatedV6kContent) : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
+  const maySendAuthorization = isAsyncVideoChannel(channel) ? false : isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isZonghengChannel(channel) ? Boolean(authenticatedV6kContent) : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
     ? shouldSendHmStudioAuthorization(url, channel.baseUrl)
     : isWxHaidiYueChannel(channel)
       ? shouldSendWxHaidiYueAuthorization(url, channel.baseUrl)

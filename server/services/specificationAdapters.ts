@@ -28,7 +28,6 @@ import { prepareHayaMedia } from './hayaMediaService.js';
 import { generateMingFeiImage, isMingFeiImageChannel, mingFeiImageContentUrl } from './mingFeiImageAdapter.js';
 import { generateSiYueTianImage, isSiYueTianImageChannel, siYueTianImageContentUrl } from './siYueTianImageAdapter.js';
 import { publishReferenceUrl } from './publicReferenceService.js';
-import { isBlobDrawChannel, submitBlobDrawVideo, pollBlobDrawVideo, BlobDrawApiError } from './blobDrawAdapter.js';
 import { isHussChannel, submitHussVideo, pollHussVideo, HussApiError } from './hussVideoAdapter.js';
 import { registerUpload } from './uploadAccess.js';
 import { isSnumomNoChannelRejection } from './snumomSubmissionRejection.js';
@@ -164,19 +163,6 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
     if (!['string','number'].includes(typeof job?.id) || !String(job.id).trim()) throw new SpecificationUpstreamError('FunAI 未返回任务 ID，请核实原请求', false, true);
     return String(job.id);
   }
-  if (isBlobDrawChannel(c)) {
-    try {
-      return await submitBlobDrawVideo(c, { model, prompt: request.prompt, seconds: i.seconds, ratio: i.ratio, resolution: i.resolution,
-        images: request.images, videos: request.videos, audios: request.audios, firstFrame: request.firstFrame, lastFrame: request.lastFrame,
-        mode: request.body.blobdraw_mode || request.body.mode,
-        faceMode: request.body.face_mode ?? (request.body.face_enabled === undefined ? undefined : request.body.face_enabled ? 'portrait' : 'native'),
-        publicBaseUrl: request.publicBaseUrl }, payload => onStarting({ blobdrawIdempotencyKey: payload.idempotency_key, blobdrawPayload: payload }));
-    } catch (error: any) {
-      if (error instanceof BlobDrawApiError) throw new SpecificationUpstreamError(error.message,
-        !error.uncertain && [401,402,429].includes(error.status), error.uncertain, [401,402,403].includes(error.status), error.status);
-      throw error;
-    }
-  }
   if (isHussChannel(c)) {
     try {
       return await submitHussVideo(c, { model, prompt: request.prompt, seconds: i.seconds, ratio: i.ratio, resolution: i.resolution, images: request.images, videos: request.videos, audios: request.audios, firstFrame: request.firstFrame, lastFrame: request.lastFrame, publicBaseUrl: request.publicBaseUrl }, payload => onStarting({ hussIdempotencyKey: payload.idempotency_key, hussPayload: payload }));
@@ -285,7 +271,6 @@ export async function pollSpecificationVideo(channel: any, taskId: string) {
   if (isAsyncVideoChannel(channel)) return pollAsyncVideo(channel, taskId);
   if (isFunAiChannel(channel)) return pollFunAiTask(channel, taskId);
   if (isHussChannel(channel)) return pollHussVideo(channel, taskId);
-  if (isBlobDrawChannel(channel)) return pollBlobDrawVideo(channel, taskId);
   const base = apiBase(channel.baseUrl);
   const url = channel.type === 'hmstudio' ? hmStudioTaskUrl(channel.baseUrl, taskId)
     : isHayaChannel(channel) ? hayaTaskUrl(channel.baseUrl, taskId)
