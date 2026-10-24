@@ -1,3 +1,4 @@
+import { publicApiModelId } from '../../shared/funAi.js';
 import { isZonghengChannel, normalizeZonghengTask } from './zonghengAdapter.js';
 import { zonghengProtocol, zonghengTaskChannel, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE, v6kQueryRetryDelay } from './zonghengProtocol.js';
 import { modelAvailabilityMessage } from '../../shared/upstreamAvailability.js';
@@ -582,7 +583,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     };
     if (apiContext && kind === 'video') {
       void run();
-      res.json({ id: 'task_' + id, task_id: 'task_' + id, object: 'video', model: modelId, status: 'queued', progress: 0,
+      res.json({ id: 'task_' + id, task_id: 'task_' + id, object: 'video', model: publicApiModelId(modelId), status: 'queued', progress: 0,
         status_url: req.protocol + '://' + req.get('host') + '/v1/videos/task_' + id });
     } else {
       await run();

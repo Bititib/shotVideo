@@ -68,3 +68,8 @@ export function funAiModelLimits(model: string): ModelInputLimits {
   }
   return result;
 }
+
+/** Public API name; internal routing and billing IDs remain unchanged. */
+export function publicApiModelId(modelId: string): string {
+  return modelId.startsWith(FUNAI_MODEL_PREFIX) ? modelId.slice(FUNAI_MODEL_PREFIX.length) : modelId;
+}

@@ -15,6 +15,7 @@ import developerRouter from '../server/routes/developer.js';
 import { getDeveloperModels } from '../server/services/developerModelService.js';
 import { getAccessibleModelIds } from '../server/services/modelAccessService.js';
 import { defaultRoutingLimits } from '../shared/modelRouting.js';
+import { resolvePublicModelId } from '../server/services/publicModelNameService.js';
 import { AdminService } from '../server/services/adminService.js';
 
 let server: Server;
@@ -48,6 +49,23 @@ afterAll(async () => {
 });
 
 describe('developer model catalog authorization and public data', () => {
+  it.each(['veo-3.1', 'veo-3.1-lite', 'nano-banana2-2k'])('publishes %s without the channel prefix while retaining internal routing', id => {
+    const internal = 'funai-' + id;
+    db.insert(models).values({ modelId: internal, displayName: internal, capabilities: '["video"]' }).run();
+    db.insert(modelPricing).values({ modelPattern: internal, billingType: 'per_call', inputPrice: .3 }).run();
+    TokenService.updateToken(keyId, { allowedModels: [internal] });
+    expect(getDeveloperModels(1, keyId).items).toMatchObject([{ id, name: id, canonicalId: id, pricing: { unit_price: .3 } }]);
+    expect(resolvePublicModelId(id)).toBe(internal);
+    expect(resolvePublicModelId(internal)).toBe(internal);
+    expect(getAccessibleModelIds({ allowedModels: [internal], userId: 1 })).toContain(internal);
+  });
+  it('does not redirect an existing model to FunAI or change internal permission', () => {
+    db.insert(models).values({ modelId: 'funai-catalog-video', displayName: 'FunAI video', capabilities: '["video"]' }).run();
+    expect(resolvePublicModelId('catalog-video')).toBe('catalog-video');
+    expect(resolvePublicModelId('funai-catalog-video')).toBe('funai-catalog-video');
+    expect(getDeveloperModels(1, keyId).items.filter(m => m.id === 'catalog-video')).toHaveLength(1);
+    expect(getAccessibleModelIds({ allowedModels: ['funai-catalog-video'], userId: 1 })).toContain('funai-catalog-video');
+  });
   it('requires website login and rejects disabled accounts', async () => {
     expect((await fetch(`${baseUrl}/api/developer/models?tokenId=${keyId}`)).status).toBe(401);
     db.update(users).set({ isActive: 0 }).where(eq(users.id, 1)).run();

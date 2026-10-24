@@ -34,7 +34,7 @@ vi.mock('../server/services/hmStudioOverflowChannelService.js', () => ({
 }));
 
 import { db, sqlite } from '../server/db/index.js';
-import { models, settings } from '../server/db/schema.js';
+import { models, settings, modelPricing } from '../server/db/schema.js';
 import { eq } from 'drizzle-orm';
 import { initDatabase } from '../server/db/seed.js';
 import { getEnabledPublicModels } from '../server/services/modelCatalogService.js';
@@ -82,6 +82,35 @@ afterAll(async () => {
 });
 
 describe('admin-owned model catalog', () => {
+  it('publishes prefix-free FunAI IDs consistently in discovery and pricing', async () => {
+    const internal = 'funai-veo-3.1-lite';
+    db.insert(models).values({ modelId: internal, displayName: internal, capabilities: '["video"]' }).run();
+    db.insert(modelPricing).values({ modelPattern: internal, billingType: 'per_call', inputPrice: .3 }).run();
+    const validate = vi.spyOn(TokenService, 'validateToken').mockReturnValue({ valid: true, token: { allowedModels: [internal], balance: 1000000 } } as any);
+    try {
+      const headers = { Authorization: 'Bearer test' };
+      const list = await (await fetch(baseUrl + '/v1/models', { headers })).json();
+      expect(list.data).toMatchObject([{ id: 'veo-3.1-lite', name: 'veo-3.1-lite', canonical_id: 'veo-3.1-lite' }]);
+      const prices = await (await fetch(baseUrl + '/v1/pricing', { headers })).json();
+      expect(prices.data).toMatchObject([{ model: 'veo-3.1-lite', unit_price: .3 }]);
+      for (const id of ['veo-3.1-lite']) {
+        const response = await fetch(baseUrl + '/v1/pricing/' + id, { headers });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ model: 'veo-3.1-lite', unit_price: .3 });
+      }
+      const oldPrice = await fetch(baseUrl + '/v1/pricing/' + internal, { headers });
+      expect(oldPrice.status).toBe(400);
+      for (const endpoint of ['/v1/videos', '/v1/videos/generations', '/v1/images/generations', '/v1/chat/completions']) {
+        const rejected = await fetch(baseUrl + endpoint, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: internal, prompt: 'test' }) });
+        expect(rejected.status, endpoint).toBe(400);
+        expect(JSON.stringify(await rejected.json())).toContain('veo-3.1-lite');
+      }
+    } finally {
+      validate.mockRestore();
+      db.delete(modelPricing).where(eq(modelPricing.modelPattern, internal)).run();
+      db.delete(models).where(eq(models.modelId, internal)).run();
+    }
+  });
   it('preserves edited names, descriptions and disabled state across restart and legacy migration', () => {
     for (const id of editedModelIds) {
       expect(db.select().from(models).where(eq(models.modelId, id)).get()).toMatchObject({

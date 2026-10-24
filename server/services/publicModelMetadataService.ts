@@ -1,3 +1,4 @@
+import { publicApiModelId } from '../../shared/funAi.js';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { settings } from '../db/schema.js';
@@ -36,5 +37,5 @@ export function publicApiModelMetadata(model: Pick<PublicModel, 'modelId' | 'des
     description = description.replace(new RegExp(escaped, 'gi'), '');
   }
   description = description.replace(/^[\s·；;,，:：-]+|[\s·；;,，:：-]+$/g, '').replace(/ {2,}/g, ' ');
-  return { id: model.modelId, name: model.modelId, description };
+  return { id: publicApiModelId(model.modelId), name: publicApiModelId(model.modelId), description };
 }

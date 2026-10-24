@@ -1,3 +1,4 @@
+import { FUNAI_MODEL_PREFIX } from '../../shared/funAi.js';
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { normalizeMjModelId } from '../../shared/mj.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
@@ -25,7 +26,11 @@ export function resolvePublicModelId(value: string, input: { resolution?: unknow
   value = normalizeMjModelId(value);
   const rows = db.select().from(models).all();
   const oldAlias = aliases()[value];
-  const matches = rows.filter(row => row.modelId === value || row.modelId === canonicalZonghengModelId(value) || row.displayName === value || row.id === oldAlias);
+  let matches = rows.filter(row => row.modelId === value || row.modelId === canonicalZonghengModelId(value) || row.displayName === value || row.id === oldAlias);
+  // Existing names own their namespace; only resolve an unclaimed public name.
+  if (!matches.length && !value.startsWith(FUNAI_MODEL_PREFIX)) {
+    matches = rows.filter(row => row.modelId === FUNAI_MODEL_PREFIX + value);
+  }
   if (matches.length > 1) throw new PublicModelNameError(`模型名称“${value}”存在冲突，请管理员设置唯一名称`);
   const id = matches[0]?.modelId || value;
   const specs = getModelSpecifications();
@@ -75,4 +80,12 @@ export function rememberPublicModelNames(model: Model, database = db) {
   }
   database.insert(settings).values({ key: ALIAS_KEY, value: JSON.stringify(saved), label: 'API 模型历史名称映射' })
     .onConflictDoUpdate({ target: settings.key, set: { value: JSON.stringify(saved) } }).run();
+}
+
+/** External API input only: downstream services still use stored routing IDs. */
+export function resolveApiModelId(value: string, input: Parameters<typeof resolvePublicModelId>[1] = {}): string {
+  if (value.startsWith(FUNAI_MODEL_PREFIX)) {
+    throw Object.assign(new PublicModelNameError('模型 ID 已停用，请使用不带 funai- 前缀的模型 ID：' + value.slice(FUNAI_MODEL_PREFIX.length)), { status: 400 });
+  }
+  return resolvePublicModelId(value, input);
 }

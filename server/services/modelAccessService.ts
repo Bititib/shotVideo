@@ -1,3 +1,5 @@
+import { publicApiModelId } from '../../shared/funAi.js';
+import { resolvePublicModelId } from './publicModelNameService.js';
 import { ChannelService } from './channelService.js';
 import { filterUserModels } from './userModelAccessService.js';
 import { getEnabledPublicModels } from './modelCatalogService.js';
@@ -14,7 +16,7 @@ export function filterRoutableModels(modelIds: string[], activeChannels: Array<{
 }
 
 /** Shared discovery policy for external API clients and the developer catalog. */
-export function getAccessibleModels(token: { allowedModels: string[]; userId?: number | null }) {
+export function getAccessibleModels(token: { allowedModels: string[]; userId?: number | null }, includeLegacy = false) {
   const registeredModels = filterUserModels(token.userId, getEnabledPublicModels());
   const activeChannels = ChannelService.getActiveChannels().filter(channel => Boolean(channel.apiKey?.trim()));
   const specs = getModelSpecifications();
@@ -26,6 +28,11 @@ export function getAccessibleModels(token: { allowedModels: string[]; userId?: n
   const reviewed = reviewedPublicModelIds();
   return registeredModels.filter(model => isReviewedPublicModel(model, reviewed))
     .filter(model => {
+      const publicId = publicApiModelId(model.modelId);
+      if (includeLegacy || publicId === model.modelId) return true;
+      try { return resolvePublicModelId(publicId) === model.modelId; } catch { return false; }
+    })
+    .filter(model => {
       const spec = specMap.get(model.modelId);
       return spec ? inspectModelRoutes(spec, undefined, activeChannels).some(route => !route.reasons.length) : routable.has(model.modelId);
     })
@@ -34,9 +41,9 @@ export function getAccessibleModels(token: { allowedModels: string[]; userId?: n
 }
 
 export function getAccessibleModelIds(token: { allowedModels: string[]; userId?: number | null }): string[] {
-  return getAccessibleModels(token).map(model => model.modelId);
+  return getAccessibleModels(token, true).map(model => model.modelId);
 }
 
 export function callableModelId(model: { modelId: string }): string {
-  return model.modelId;
+  return publicApiModelId(model.modelId);
 }

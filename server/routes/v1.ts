@@ -1,3 +1,4 @@
+import { publicApiModelId } from '../../shared/funAi.js';
 import { zonghengProtocol, zonghengProtocolSnapshot } from '../services/zonghengProtocol.js';
 import { publicGenerationError } from '../../shared/generationMessages.js';
 import { generationErrorResponse } from '../middleware/generationErrorResponse.js';
@@ -8,7 +9,7 @@ import { patchZonghengTask, reviewZonghengTask, zonghengOrder, recordZonghengSub
 import { generateZonghengImages } from '../services/zonghengImageService.js';
 import { handleSpecificationGeneration } from '../services/specificationGenerationService.js';
 import { getModelSpecifications, getModelSpecification } from '../services/modelRoutingService.js';
-import { resolvePublicModelId } from '../services/publicModelNameService.js';
+import { resolveApiModelId } from '../services/publicModelNameService.js';
 import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
 import { publishReferenceUrl } from '../services/publicReferenceService.js';
 import { reserveCharge } from '../services/billingReservation.js';
@@ -605,7 +606,7 @@ function normalizeApiModel(req: Request, res: Response): boolean {
     return false;
   }
   try {
-    req.body.model = resolvePublicModelId(req.body.model, req.body);
+    req.body.model = resolveApiModelId(req.body.model, req.body);
     return true;
   } catch (error: any) {
     cleanupFiles(req.files);
@@ -629,8 +630,8 @@ router.get('/models', (req: Request, res: Response) => {
     object: 'list',
     data: modelList.map(model => ({
       id: callableModelId(model),
-      name: model.modelId,
-      canonical_id: model.modelId,
+      name: callableModelId(model),
+      canonical_id: callableModelId(model),
       object: 'model',
       created: Math.floor(Date.now() / 1000),
       owned_by: 'system',
@@ -647,11 +648,11 @@ router.get('/pricing', (req: Request, res: Response) => {
   const { valid, error, token } = TokenService.validateToken(tokenKey);
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
-  const modelList = getAccessibleModelIds(token);
+  const modelList = getAccessibleModels(token).map(model => model.modelId);
   res.json({
     object: 'list',
     currency: 'CNY',
-    data: PricingService.getPublicPricingForModels(modelList, token.userId ?? null).map(row => ({ ...row, display_name: row.model, canonical_id: row.model })),
+    data: PricingService.getPublicPricingForModels(modelList, token.userId ?? null).map(row => ({ ...row, model: publicApiModelId(row.model), display_name: publicApiModelId(row.model), canonical_id: publicApiModelId(row.model) })),
   });
 });
 
@@ -664,7 +665,7 @@ router.get('/pricing/:model', (req: Request, res: Response) => {
   const { valid, error, token } = TokenService.validateToken(tokenKey);
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
-  const modelId = resolvePublicModelId(req.params.model);
+  const modelId = resolveApiModelId(req.params.model);
   const accessibleModels = getAccessibleModelIds(token);
   if (!accessibleModels.includes(modelId)) {
     return res.status(404).json({
@@ -679,7 +680,7 @@ router.get('/pricing/:model', (req: Request, res: Response) => {
     });
   }
 
-  res.json({ ...pricing, display_name: pricing.model, canonical_id: pricing.model });
+  res.json({ ...pricing, model: publicApiModelId(pricing.model), display_name: publicApiModelId(pricing.model), canonical_id: publicApiModelId(pricing.model) });
 });
 
 /** GET /v1/billing/balance — 余额查询 */
@@ -3042,7 +3043,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       id: `task_${contentId}`,
       task_id: `task_${contentId}`,
       object: 'video',
-      model: model,
+      model: publicApiModelId(model),
       status: 'queued',
       progress: 0,
       status_url: `${req.protocol}://${req.get('host')}/v1/videos/task_${contentId}`,
@@ -3156,7 +3157,7 @@ async function handleVideoQuery(req: Request, res: Response) {
       id: `task_${record.id}`,
       task_id: `task_${record.id}`,
       object: 'video',
-      model: record.modelId,
+      model: publicApiModelId(record.modelId),
       status: mappedStatus,
       ...((metadata.hayaNeedsReview || metadata.requiresReview) ? { requires_review: true, message: metadata.progressText || '提交结果待核实，请勿重提' } : {}),
       review_kind: videoReviewKind(metadata) || undefined,
