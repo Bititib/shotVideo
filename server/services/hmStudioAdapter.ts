@@ -245,7 +245,7 @@ export function normalizeHmStudioTask(raw: any, baseUrl: string): NormalizedHmSt
       : parseProgress(payload.progress_pct ?? raw?.progress_pct ?? payload.progress ?? raw?.progress),
     progressText: String(payload.progress_text || raw?.progress_text || ''),
     resultUrl,
-    error,
+    error: error ? upstreamDiagnostic('HM Studio', '任务失败', { error: errorValue, error_code: payload.error_code ?? raw?.error_code }) : '',
   };
 }
 
@@ -285,3 +285,4 @@ export async function waitForHmStudioTask(options: {
 
   throw new Error('HM Studio task polling timed out');
 }
+import { upstreamDiagnostic } from './upstreamDiagnostic.js';

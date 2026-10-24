@@ -119,7 +119,7 @@ export async function pollFunAiTask(channel: FunAiChannel, id: string, fetchImpl
   const response = await fetchImpl(funAiTaskUrl(channel.baseUrl, id), {
     headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(30_000), redirect: 'error',
   });
-  if (!response.ok) throw new FunAiApiError('FunAI 任务查询失败 (HTTP ' + response.status + ')', response.status, true);
+  if (!response.ok) throw new FunAiApiError(await responseDiagnostic('FunAI', '任务查询 task_id=' + id, response, channel.apiKey), response.status, true);
   return normalizeFunAiTask(await response.json(), channel, id, kind);
 }
 
@@ -206,7 +206,7 @@ export async function generateFunAiImage(channel: FunAiChannel, model: string, r
     method: 'POST', headers: { Authorization: 'Bearer ' + channel.apiKey, 'Content-Type': 'application/json' },
     body: JSON.stringify(payload), signal: AbortSignal.timeout(channel.timeout || 120_000), redirect: 'error',
   });
-  if (!response.ok) throw new FunAiApiError('FunAI 图片提交失败 (HTTP ' + response.status + ')', response.status, response.status >= 500);
+  if (!response.ok) throw new FunAiApiError(await responseDiagnostic('FunAI', '图片提交', response, channel.apiKey), response.status, response.status >= 500);
   let raw: any;
   try { raw = await response.json(); } catch { throw new FunAiApiError('FunAI 图片提交响应无法解析，请勿重复提交', 502, true); }
   if (gemini) {
@@ -233,3 +233,4 @@ export async function generateFunAiImage(channel: FunAiChannel, model: string, r
   }
   throw new FunAiApiError('FunAI 图片原任务仍在处理中', 0, true);
 }
+import { responseDiagnostic } from './upstreamDiagnostic.js';

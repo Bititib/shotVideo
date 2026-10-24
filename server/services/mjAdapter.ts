@@ -14,7 +14,7 @@ export async function fetchMjModels(channel: MjChannel): Promise<string[]> {
     headers: { Authorization: 'Bearer ' + channel.apiKey },
     signal: AbortSignal.timeout(channel.timeout || 30_000), redirect: 'error',
   });
-  if (!response.ok) throw new Error('读取 MJ 模型失败 (HTTP ' + response.status + ')');
+  if (!response.ok) throw new Error(await responseDiagnostic('MJ', '模型查询', response, channel.apiKey));
   const payload = await response.json() as any;
   const entries = Array.isArray(payload) ? payload : payload?.data;
   if (!Array.isArray(entries)) throw new Error('MJ 模型列表格式无效');
@@ -66,3 +66,4 @@ export function canResumeMjAsync(state?: MjAsyncImageState): boolean {
   return Boolean(state?.handle && ['queued', 'in_progress', 'pending', 'processing', 'running', 'poll_error', 'completed', 'failed'].includes(state.status)
     && Number.isFinite(state.deadlineAt) && state.deadlineAt > Date.now());
 }
+import { responseDiagnostic } from './upstreamDiagnostic.js';

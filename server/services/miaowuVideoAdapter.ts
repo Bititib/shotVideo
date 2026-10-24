@@ -175,6 +175,7 @@ export function normalizeMiaowuVideoTask(
     status,
     progress,
     resultUrl,
-    error: errorMessage(payload.error) || errorMessage(payload.failure_reason),
+  error: payload.error || payload.failure_reason ? upstreamDiagnostic('喵呜', '任务失败', { error: payload.error, failure_reason: payload.failure_reason, error_code: payload.error_code }) : '',
   };
 }
+import { upstreamDiagnostic } from './upstreamDiagnostic.js';

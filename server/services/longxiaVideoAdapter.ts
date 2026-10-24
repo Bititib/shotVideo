@@ -93,7 +93,7 @@ export function buildLongxiaVideoPayload(input: LongxiaVideoInput) {
 
 export function normalizeLongxiaVideoTask(payload: Record<string, any>) {
   const rawStatus = String(payload.status || '').toLowerCase();
-  const error = typeof payload.error === 'string' ? payload.error : payload.error?.message || payload.error?.code || '';
+  const error = payload.error ? upstreamDiagnostic('LongXia', '任务失败', { error: payload.error, error_code: payload.error_code }) : '';
   const resultUrl = Array.isArray(payload.data) ? String(payload.data.find((item: any) => item?.url)?.url || '') : '';
   return {
     status: ['cancelled', 'canceled'].includes(rawStatus) ? 'failed' : rawStatus,
@@ -102,3 +102,4 @@ export function normalizeLongxiaVideoTask(payload: Record<string, any>) {
     error: error || (['cancelled', 'canceled'].includes(rawStatus) ? 'LongXia 任务已取消' : ''),
   };
 }
+import { upstreamDiagnostic } from './upstreamDiagnostic.js';

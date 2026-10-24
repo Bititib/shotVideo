@@ -143,7 +143,7 @@ export function normalizeWxHaidiYueTask(raw: any, baseUrl: string): NormalizedWx
     status: status === 'done' ? 'completed' : status,
     progress: status === 'done' ? 100 : 0,
     resultUrl: resolveResultUrl(raw?.video?.url || raw?.video_url || raw?.url, baseUrl),
-    error,
+    error: error ? upstreamDiagnostic('wx-海底月', '任务失败', { error: errorValue, error_code: errorCode }) : '',
     errorCode,
   };
 }
@@ -156,3 +156,4 @@ export function shouldSendWxHaidiYueAuthorization(targetUrl: string, baseUrl: st
     return false;
   }
 }
+import { upstreamDiagnostic } from './upstreamDiagnostic.js';

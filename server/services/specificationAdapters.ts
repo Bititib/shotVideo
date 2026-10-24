@@ -280,7 +280,7 @@ export async function pollSpecificationVideo(channel: any, taskId: string) {
     : /sudashuiapi\.com/i.test(base) || channel.type === 'sudashui' ? base + '/v1/video/generations/' + encodeURIComponent(taskId)
     : base + '/v1/videos/' + encodeURIComponent(taskId);
   const response = await fetch(url, { headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(30_000) });
-  if (!response.ok) throw new Error('查询任务失败 (' + response.status + ')');
+  if (!response.ok) throw new Error(await responseDiagnostic(channel.type || 'custom', '视频查询 task_id=' + taskId, response, channel.apiKey));
   const raw = await response.json() as any;
   if (isVideoQueryErrorPayload(raw)) throw new Error('上游任务查询响应异常，继续查询原任务');
   if (isSnumomWanChannel(channel)) {
@@ -535,7 +535,7 @@ export async function pollSpecificationImage(channel: any, taskId: string) {
   if (!hm && !mf && !sy) throw new Error('此线路没有异步图片查询协议');
   const url = hm ? hmStudioTaskUrl(channel.baseUrl, taskId) : mf ? base + '/v1/videos/' + encodeURIComponent(taskId) : base + '/v1/images/generations/' + encodeURIComponent(taskId);
   const response = await fetch(url, { headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(30_000), redirect: 'error' });
-  if (!response.ok) throw new Error('图片任务查询失败 (' + response.status + ')');
+  if (!response.ok) throw new Error(await responseDiagnostic(channel.type || 'custom', '图片查询 task_id=' + taskId, response, channel.apiKey));
   const task = await response.json() as any;
   if (hm) { const result = normalizeHmStudioTask(task, channel.baseUrl); return { status: ['success','succeeded','done'].includes(result.status) ? 'completed' : result.status, imageUrl: result.resultUrl, error: result.error }; }
   const status = String(task.status || '').toLowerCase();
@@ -543,3 +543,4 @@ export async function pollSpecificationImage(channel: any, taskId: string) {
 }
 import { isPidoiImageChannel, generatePidoiImage, pollPidoiImage, PidoiImageError } from './pidoiImageAdapter.js';
 import { logImageRequestFailure } from './imageRequestDiagnostics.js';
+import { responseDiagnostic } from './upstreamDiagnostic.js';

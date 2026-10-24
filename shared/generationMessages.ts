@@ -22,6 +22,7 @@ export function publicGenerationError(value: unknown, privateNames: readonly str
   const text = typeof value === 'string' ? value : value && typeof value === 'object' && 'message' in value ? String(value.message) : '';
   if (Object.values(messages).includes(text)) return text;
   if (text.startsWith('[HUSS ')) return sanitizedGenerationReason(text, privateNames);
+  if (text.startsWith('[上游诊断 ')) return sanitizedGenerationReason(text, privateNames);
   if (/^(请先登录|请登录后重试)[。！!]?$/.test(text)) return '请先登录';
   if (/请求未发送|连接生成服务失败/i.test(text)) return messages.submission;
   if (/退款处理待核实/i.test(text)) return messages.refundReview;

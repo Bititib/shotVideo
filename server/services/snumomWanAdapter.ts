@@ -160,7 +160,7 @@ export function normalizeSnumomWanTask(payload: any, referenceVideoSeconds = 0) 
     status: String(payload?.status || '').toLowerCase(),
     progress: Number(payload?.progress || 0),
     resultUrl: String(payload?.metadata?.url || payload?.video_url || payload?.result_url || payload?.url || ''),
-    error: String(payload?.message || payload?.error?.message || payload?.error || ''),
+  error: payload?.error || payload?.message ? upstreamDiagnostic('snumom', '任务失败', { error: payload.error, message: payload.message, error_code: payload.error_code }) : '',
     billingUsage: extractSnumomWanBillingUsage(payload, referenceVideoSeconds),
   };
 }
@@ -203,3 +203,4 @@ export function extractSnumomTaskId(
 export function snumomContentUrl(baseUrl: string, taskId: string): string {
   return `${baseUrl.replace(/\/+$/, '')}/v1/videos/${encodeURIComponent(taskId)}/content`;
 }
+import { upstreamDiagnostic } from './upstreamDiagnostic.js';

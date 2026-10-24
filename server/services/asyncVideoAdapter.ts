@@ -33,7 +33,7 @@ async function getJson(channel: AsyncVideoChannel, url: string, fetchImpl: typeo
   const response = await fetchImpl(url, { headers: { Authorization: 'Bearer ' + channel.apiKey },
     signal: AbortSignal.timeout(channel.timeout || 30_000), redirect: 'error' });
   // Do not expose provider response bodies, which may contain credentials or signed URLs.
-  if (!response.ok) throw new Error('异步视频查询失败 (HTTP ' + response.status + ')');
+  if (!response.ok) throw new Error(await responseDiagnostic('Vx-乐', '查询', response, channel.apiKey));
   return response.json();
 }
 
@@ -82,3 +82,4 @@ export async function fetchAsyncVideoModels(channel: AsyncVideoChannel, fetchImp
   if (new Set(entries.map((model: AsyncVideoModel) => model.name)).size !== entries.length) throw new Error('异步视频模型名称重复');
   return entries;
 }
+import { responseDiagnostic } from './upstreamDiagnostic.js';
