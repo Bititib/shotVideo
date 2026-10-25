@@ -19,7 +19,14 @@ export const HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP: Readonly<Record<string, string>
 };
 
 export function getHmStudioUpstreamVideoModel(modelId: string): string {
-  return HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP[modelId] || modelId;
+  return Object.hasOwn(HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP, modelId)
+    ? HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP[modelId] : modelId;
+}
+
+// Only confirmed HM mappings belong here; never infer an unknown model's capabilities.
+export function getHmStudioPublicVideoModel(modelId: string): string {
+  return Object.entries(HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP)
+    .find(([, upstream]) => upstream === modelId)?.[0] || modelId;
 }
 
 export type HmStudioVideoModelSpec = {

@@ -1,3 +1,5 @@
+import { getHmStudioAdditionalVideoModel, getHmStudioPublicVideoModel } from '../../../shared/hmStudioVideo';
+
 const WAN_RESOLUTIONS = ['480p', '720p', '1080p'];
 const MINGFEI_RESOLUTIONS = ['1K', '2K', '4K'];
 
@@ -19,11 +21,13 @@ export function pricingResolutionFields(
   extraParams: Record<string, unknown> = {},
 ): { keys: string[]; values: Record<string, string | number>; otherText: string } {
   const existingKeys = Object.keys(extraParams).filter(isResolutionPriceKey);
+  const hmSpec = getHmStudioAdditionalVideoModel(getHmStudioPublicVideoModel(modelPattern));
   const keys = sortResolutionKeys(Array.from(new Set([
     ...(modelPattern === 'wan3.0-video' || modelPattern === 'wan3.0-video-prime' ? WAN_RESOLUTIONS : []),
     ...(modelPattern === 'gpt-image-2-mingfei' ? MINGFEI_RESOLUTIONS : []),
+    ...(hmSpec?.resolutions || (hmSpec ? [hmSpec.resolution] : [])),
     ...existingKeys,
-  ])));
+  ].map(key => existingKeys.find(existing => existing.toLowerCase() === key.toLowerCase()) || key))));
   const values: Record<string, string | number> = Object.fromEntries(keys.map(key => {
     const value = extraParams[key];
     return [key, typeof value === 'number' || typeof value === 'string' ? value : ''];

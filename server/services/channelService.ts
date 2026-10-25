@@ -600,7 +600,7 @@ export class ChannelService {
     }
   }
 
-  static async syncModels(id: number): Promise<{ count: number; added: number; models: string[] }> {
+  static async syncModels(id: number): Promise<{ count: number; added: number; models: string[]; warnings?: string[] }> {
     const channel = this.getChannelRaw(id);
     if (!channel) throw { status: 404, message: '渠道不存在' };
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
@@ -657,9 +657,17 @@ export class ChannelService {
     const payload = await diagnosticJson(channel.type, '同步模型响应', response, channel.apiKey);
     if (payload?.error) throw { status: 502, upstreamStatus: response.status, message: upstreamDiagnostic(channel.type, '同步模型', payload, channel.apiKey, response.status) };
     const rawModels = Array.isArray(payload) ? payload
-      : Array.isArray(payload.data) ? payload.data
-      : Array.isArray(payload.models) ? payload.models
+      : Array.isArray(payload?.data) ? payload.data
+      : Array.isArray(payload?.models) ? payload.models
       : [];
+    if (channel.type === 'hmstudio') {
+      // Do not replace the current catalog on an unrecognized upstream response.
+      if (!Array.isArray(payload) && !Array.isArray(payload?.data) && !Array.isArray(payload?.models)) {
+        throw { status: 502, message: 'HM Studio 同步模型响应缺少模型列表，原配置未修改' };
+      }
+      const { registerHmStudioCatalog } = await import('./hmStudioCatalogService.js');
+      return registerHmStudioCatalog(channel, rawModels);
+    }
     const normalized = rawModels.map((item: any) => {
       const modelId = String(typeof item === 'string' ? item : item.id || item.model || item.model_id || '').trim();
       if (!modelId) return { modelId: '', displayName: '', capability: 'text' };

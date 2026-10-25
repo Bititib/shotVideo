@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -30,12 +30,14 @@ vi.mock('../server/services/videoBatchService.js', async importOriginal => ({
 import { initDatabase } from '../server/db/seed.js';
 import { db, sqlite } from '../server/db/index.js';
 import { env } from '../server/config/env.js';
-import { apiTokens, channels, contents, modelPricing, models, users } from '../server/db/schema.js';
+import { apiTokens, channels, contents, modelPricing, models, tierModelAccess, userModelPricing, users } from '../server/db/schema.js';
 import { PricingService } from '../server/services/pricingService.js';
 import { TokenService } from '../server/services/tokenService.js';
 import videoRouter from '../server/routes/video.js';
 import apiRouter from '../server/routes/v1.js';
 import batchRouter from '../server/routes/videoBatches.js';
+import channelRouter from '../server/routes/channels.js';
+import pricingRouter from '../server/routes/pricing.js';
 
 const cases = [
   { id: 'SD2.0FAST803', rates: { '720p': 1.1, '1080p': 1.3, '2k': 1.5 }, images: 8, videos: 0, audios: 3, maxSeconds: 15 },
@@ -63,6 +65,7 @@ beforeAll(async () => {
   tokenKey = token.tokenKey; tokenId = token.id;
   const app = express(); app.use(express.json());
   app.use('/api/video', videoRouter); app.use('/v1', apiRouter); app.use('/api/video-batches', batchRouter);
+  app.use('/api/admin/channels', channelRouter); app.use('/api/admin/pricing', pricingRouter);
   server = app.listen(0, '127.0.0.1');
   await new Promise<void>(resolve => server.on('listening', resolve));
   env.PORT = (server.address() as AddressInfo).port;
@@ -72,6 +75,7 @@ beforeAll(async () => {
     throw new Error('Unexpected external request');
   }));
 });
+
 afterAll(async () => {
   vi.unstubAllGlobals();
   if (server) { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
@@ -225,5 +229,132 @@ describe('HM new catalog integration (in-memory database, no upstream generation
     expect(await readStatus()).toMatchObject({ state: 'unavailable', reason: 'consecutive_failures' });
     for (let i = 0; i < 20; i++) db.insert(contents).values({ userId, type: 'video', modelId, status: 'completed', resultUrl: '/video.mp4' }).run();
     expect(await readStatus()).toMatchObject({ state: 'healthy', reason: 'recent_successes' });
+  });
+});
+
+describe('HM administrator sync → pricing → real quote workflow', () => {
+  let channelId: number;
+  let responseBody: any;
+  let previousFetch: typeof fetch;
+  beforeEach(() => {
+    sqlite.exec('SAVEPOINT hm_catalog_sync');
+    channelId = db.select().from(channels).where(eq(channels.type, 'hmstudio')).get()!.id;
+    responseBody = { data: [{ id: '30-10-10', price: 4 }, { id: 'SD2.0FAST803' },
+      { id: 'SD2.0MINI503' }, { id: 'MINIMAX-H3-2.5采样' }, { id: 'sd2.5-301010' }] };
+    previousFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async (url: any, options: any) => {
+      if (String(url).startsWith(origin + '/')) return nativeFetch(url, options);
+      expect(String(url)).toMatch(/\/v1\/models$/);
+      return Response.json(responseBody);
+    }));
+  });
+  afterEach(() => {
+    vi.stubGlobal('fetch', previousFetch);
+    sqlite.exec('ROLLBACK TO hm_catalog_sync; RELEASE hm_catalog_sync');
+  });
+  const sync = () => post(`/api/admin/channels/${channelId}/sync-models`, {});
+  const readPrice = async (id: string) => (await (await nativeFetch(
+    origin + '/api/admin/pricing?modelId=' + encodeURIComponent(id),
+    { headers: { Authorization: 'Bearer ' + userJwt } },
+  )).json() as any[])[0];
+  it('normalizes upstream IDs on the actual sync endpoint and saves both prices through the admin endpoint', async () => {
+    db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'sd2.5-301010')).run();
+    db.delete(models).where(eq(models.modelId, 'sd2.5-301010')).run();
+    const result = await sync();
+    expect(result.status).toBe(200);
+    expect(await result.json()).toMatchObject({ count: 4, added: 1,
+      models: ['sd2.5-301010', 'SD2.0FAST803', 'SD2.0MINI503', 'seedance_v2.5'] });
+    expect(db.select().from(models).where(eq(models.modelId, '30-10-10')).get()).toBeUndefined();
+    const nova = db.select().from(models).where(eq(models.modelId, 'sd2.5-301010')).get()!;
+    expect(nova).toMatchObject({ isActive: 0, capabilities: '["video"]' });
+    const channel = db.select().from(channels).where(eq(channels.id, channelId)).get()!;
+    expect(JSON.parse(channel.modelMapping!)).toMatchObject({ 'sd2.5-301010': '30-10-10', 'seedance_v2.5': 'MINIMAX-H3-2.5采样' });
+    const price = await readPrice('sd2.5-301010');
+    expect(price).toMatchObject({ inputPrice: 7, category: 'video', extraParams: { '720p': 7, '1080p': 12 } });
+    const saved = await nativeFetch(origin + '/api/admin/pricing/' + price.id, {
+      method: 'PUT', headers: { Authorization: 'Bearer ' + userJwt, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modelPattern: 'sd2.5-301010', billingType: 'per_call', inputPrice: 8,
+        outputPrice: 0, extraParams: { category: 'video', '720p': 8, '1080p': 13 } }),
+    });
+    expect(saved.status).toBe(200);
+    db.update(models).set({ isActive: 1 }).where(eq(models.id, nova.id)).run();
+    for (const [resolution, cost] of [['720p', 8], ['1080p', 13]] as const) {
+      const quote = await post('/api/video/validate', { model: 'sd2.5-301010', prompt: '测试', resolution, video_length: 30 });
+      expect(quote.status).toBe(200);
+      expect(await quote.json()).toMatchObject({ unitCost: cost });
+    }
+    expect((await sync()).status).toBe(200);
+    expect(await readPrice('sd2.5-301010')).toMatchObject({ inputPrice: 8, extraParams: { '720p': 8, '1080p': 13 }, modelActive: true });
+    // A model imported through sync must reach the same nova adapter and reservation path.
+    const sent: FormData[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: any, options: any) => {
+      if (String(url).startsWith(origin + '/')) return nativeFetch(url, options);
+      sent.push(options.body);
+      return Response.json({ error: '测试：渠道明确拒绝' }, { status: 400 });
+    }));
+    const balanceBefore = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance;
+    const submitted = await post('/v1/videos', { model: 'sd2.5-301010', prompt: '同步后生成测试', resolution: '1080p', seconds: 30 }, true);
+    expect(submitted.status).toBe(202);
+    await submitted.text();
+    await vi.waitFor(() => {
+      const row = db.select().from(contents).all().at(-1)!;
+      expect(row.status).toBe('failed');
+      expect(JSON.parse(row.metadata!)).toMatchObject({ billingStatus: 'refunded', refundAmount: 13 });
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].get('model')).toBe('30-10-10');
+    expect(sent[0].get('channel')).toBe('nova');
+    expect(db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance).toBe(balanceBefore);
+  });
+  it('retains both legacy and canonical administrator prices, permissions and history on conflicts', async () => {
+    const old = db.insert(models).values({ modelId: '30-10-10', displayName: '旧名称', provider: 'hmstudio', isActive: 1 }).returning().get();
+    db.insert(modelPricing).values({ modelPattern: '30-10-10', inputPrice: 20, extraParams: '{"1080p":25}' }).run();
+    const permission = db.insert(tierModelAccess).values({ tierId: 1, modelId: old.id }).returning().get();
+    const userPrice = db.insert(userModelPricing).values({ userId, modelId: old.id,
+      billingType: 'per_call', inputPrice: 18, outputPrice: 0, updatedBy: userId }).returning().get();
+    const history = db.insert(contents).values({ userId, type: 'video', modelId: '30-10-10',
+      status: 'completed', cost: 20, resultUrl: '/old-video.mp4' }).returning().get();
+    const canonicalBefore = await readPrice('sd2.5-301010');
+    const result = await (await sync()).json() as any;
+    expect(result.warnings.join(' ')).toContain('两份价格均未覆盖');
+    expect(result.models).not.toContain('30-10-10');
+    expect(db.select().from(models).where(eq(models.id, old.id)).get()).toEqual(old);
+    expect(await readPrice('30-10-10')).toMatchObject({ inputPrice: 20, extraParams: { '1080p': 25 } });
+    expect(await readPrice('sd2.5-301010')).toEqual(canonicalBefore);
+    expect(db.select().from(tierModelAccess).where(eq(tierModelAccess.id, permission.id)).get()).toEqual(permission);
+    expect(db.select().from(userModelPricing).where(eq(userModelPricing.id, userPrice.id)).get()).toEqual(userPrice);
+    expect(db.select().from(contents).where(eq(contents.id, history.id)).get()).toEqual(history);
+  });
+  it('copies a legacy retail rule only when the canonical rule is absent and preserves its fallback', async () => {
+    db.insert(models).values({ modelId: '30-10-10', displayName: '旧名称', provider: 'hmstudio', isActive: 0 }).run();
+    db.insert(modelPricing).values({ modelPattern: '30-10-10', inputPrice: 9, extraParams: '{"category":"video"}' }).run();
+    db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'sd2.5-301010')).run();
+    expect((await sync()).status).toBe(200);
+    expect(await readPrice('sd2.5-301010')).toMatchObject({ inputPrice: 9, extraParams: { category: 'video' } });
+    expect(PricingService.quote('sd2.5-301010', { resolution: '1080p' }, false).cost).toBe(9);
+    expect(await readPrice('30-10-10')).toMatchObject({ inputPrice: 9 });
+  });
+  it.each([null, {}, { data: [null] }, { data: [{ id: 'new-model' }, {}] }])('rejects malformed catalogs without replacing existing bindings: %j', async body => {
+    responseBody = body;
+    const before = db.select().from(channels).where(eq(channels.id, channelId)).get();
+    expect((await sync()).status).toBe(502);
+    expect(db.select().from(channels).where(eq(channels.id, channelId)).get()).toEqual(before);
+    expect(db.select().from(models).where(eq(models.modelId, 'new-model')).get()).toBeUndefined();
+  });
+  it('rolls back the entire sync on a known public ID owned by another provider', async () => {
+    responseBody = { data: ['new-hm-model', '30-10-10'] };
+    db.update(models).set({ provider: 'another-provider' }).where(eq(models.modelId, 'sd2.5-301010')).run();
+    const before = db.select().from(channels).where(eq(channels.id, channelId)).get();
+    expect((await sync()).status).toBe(409);
+    expect(db.select().from(models).where(eq(models.modelId, 'new-hm-model')).get()).toBeUndefined();
+    expect(db.select().from(channels).where(eq(channels.id, channelId)).get()).toEqual(before);
+  });
+  it('does not apply HM aliases or retail pricing to another provider', async () => {
+    const other = db.insert(channels).values({ name: 'Other', type: 'openai', baseUrl: 'https://example.test', apiKey: 'test', supportedModels: '[]' }).returning().get();
+    responseBody = { data: ['30-10-10'] };
+    const response = await post(`/api/admin/channels/${other.id}/sync-models`, {});
+    expect(await response.json()).toMatchObject({ models: ['30-10-10'] });
+    expect(db.select().from(models).where(eq(models.modelId, '30-10-10')).get()?.provider).toBe('openai');
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, '30-10-10')).get()).toBeUndefined();
   });
 });

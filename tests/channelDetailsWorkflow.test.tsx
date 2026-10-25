@@ -10,7 +10,7 @@ import ChannelsPage from '../client/src/pages/admin/ChannelsPage';
 vi.mock('../client/src/utils/polling', () => ({ startPolling: () => () => {} }));
 vi.mock('../client/src/api/admin', () => ({ adminApi: {
   getModelSpecifications: vi.fn().mockResolvedValue([]), getChannels: vi.fn(), getSettings: vi.fn(), getModels: vi.fn(), getModelStatistics: vi.fn(),
-  getPricing: vi.fn(), syncChannelModels: vi.fn(), testChannel: vi.fn(), deleteChannel: vi.fn(),
+  getPricing: vi.fn(), updatePricing: vi.fn(), syncChannelModels: vi.fn(), testChannel: vi.fn(), deleteChannel: vi.fn(),
 } }));
 const ids = ['ZH-Cseadanco2.5K', 'ZH-Xminimex-h3', 'ZH-wan-1080', 'ZH-A-SD2.0'];
 const base = { id: 9, name: '纵横渠道', type: 'zongheng', status: 1, baseUrl: 'https://example.invalid',
@@ -35,6 +35,39 @@ const open = async () => {
 };
 
 describe('channel details and model sync workflow', () => {
+  it('opens HM synced nova pricing with independent resolution inputs and preserves blank fallback values', async () => {
+    const id = 'sd2.5-301010';
+    vi.mocked(adminApi.getChannels).mockImplementation(async () => [{ ...base, name: 'HM Studio', type: 'hmstudio',
+      supportedModels: synced ? [id] : [], modelMapping: synced ? { [id]: '30-10-10' } : {} }]);
+    vi.mocked(adminApi.getModels).mockImplementation(async () => synced ? [{ id: 200, modelId: id,
+      displayName: id, provider: 'hmstudio', capabilities: ['video'], isActive: 0 }] : []);
+    vi.mocked(adminApi.syncChannelModels).mockImplementation(async () => {
+      synced = true;
+      return { count: 1, added: 1, warnings: ['旧记录 30-10-10 已保留，请核对价格。'] };
+    });
+    vi.mocked(adminApi.getPricing).mockResolvedValue([{ id: 100, modelPattern: id, displayName: id,
+      category: 'video', billingType: 'per_call', inputPrice: 9, outputPrice: 0,
+      extraParams: { category: 'video' }, modelActive: false, configured: true, inherited: false }]);
+    vi.mocked(adminApi.updatePricing).mockResolvedValue({});
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: '同步模型' }));
+    const drawer = await screen.findByRole('dialog');
+    expect(await within(drawer).findByText(/旧记录 30-10-10 已保留/)).toBeVisible();
+    fireEvent.click(await within(drawer).findByRole('button', { name: '管理价格' }));
+    const pricingDrawer = await screen.findByRole('dialog', { name: 'sd2.5-301010 · 价格详情' });
+    fireEvent.click(await within(pricingDrawer).findByRole('button', { name: '编辑', exact: true }));
+    const price720 = await screen.findByLabelText('720p 单价');
+    const price1080 = screen.getByLabelText('1080p 单价');
+    expect(price720).toHaveValue(null);
+    expect(price1080).toHaveValue(null);
+    fireEvent.change(price720, { target: { value: '7' } });
+    fireEvent.change(price1080, { target: { value: '12' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存并立即生效' }));
+    await waitFor(() => expect(adminApi.updatePricing).toHaveBeenCalledExactlyOnceWith(100, {
+      modelPattern: id, billingType: 'per_call', inputPrice: 9, outputPrice: 0,
+      extraParams: { category: 'video', '720p': 7, '1080p': 12 },
+    }));
+  });
   const openDelete = async () => {
     const summary = await screen.findByLabelText('纵横渠道更多操作');
     fireEvent.click(summary);

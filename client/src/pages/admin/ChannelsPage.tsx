@@ -255,7 +255,8 @@ export default function ChannelsPage() {
     try {
       const result = await adminApi.syncChannelModels(ch.id);
       const message = `同步完成：上游 ${result.count} 个模型，新增 ${result.added} 个模型配置`
-        + (result.count === 0 ? '。请检查渠道 Key 的模型授权。' : ['zongheng', 'zongheng-v6k', 'funai', 'mj', 'megaby'].includes(ch.type) ? '。新模型默认停用，请配置价格后启用。' : '。');
+        + (result.count === 0 ? '。请检查渠道 Key 的模型授权。' : ['zongheng', 'zongheng-v6k', 'funai', 'mj', 'megaby', 'hmstudio'].includes(ch.type) ? '。新模型默认停用，请配置价格后启用。' : '。')
+        + (Array.isArray(result.warnings) ? result.warnings.map((warning: string) => ` ${warning}`).join('') : '');
       setNotice(message);
       setChannelFeedback({ channelId: ch.id, kind: 'success', message });
       await loadChannels();

@@ -41,4 +41,18 @@ describe('pricing resolution fields', () => {
       otherText: 'quality: 2',
     });
   });
+
+  it.each(['sd2.5-301010', '30-10-10'])('exposes nova resolutions even for an empty %s rule without inventing prices', model => {
+    expect(pricingResolutionFields(model, { category: 'video' })).toEqual({
+      keys: ['720p', '1080p'], values: { '720p': '', '1080p': '' }, otherText: '',
+    });
+  });
+
+  it('preserves custom and case-insensitive HM resolution prices without duplicate controls', () => {
+    expect(pricingResolutionFields('sd2.5-301010', { '720P': 0, '1080p': 13, quality: 2 })).toEqual({
+      keys: ['720P', '1080p'], values: { '720P': 0, '1080p': 13 }, otherText: 'quality: 2',
+    });
+    expect(pricingResolutionFields('SD2.0FAST803').keys).toEqual(['720p', '1080p', '2k']);
+    expect(pricingResolutionFields('SD2.0MINI503').keys).toEqual(['720p']);
+  });
 });
