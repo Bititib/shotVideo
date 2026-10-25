@@ -100,6 +100,7 @@ import { videoRequestNotSent, explicitVideoCreateError } from '../services/video
 import { isSnumomSubmissionRejection } from '../services/snumomSubmissionRejection.js';
 import { readVideoRecoveryState, reviewMissingVideoTaskId, reviewUncertainVideoTask, savedVideoTaskId } from '../services/videoRecoveryState.js';
 import { claimVideoSubmission, acceptVideoSubmission, endVideoSubmission, releaseVideoSubmission, videoSubmissionPending, videoSubmissionPreparation } from '../services/videoSubmissionGuard.js';
+import { canCancelVideoContent } from '../services/videoCancellationEligibility.js';
 import {
   buildSudaShuiVideoPayload,
   sudaShuiVideoCreateUrl,
@@ -1180,7 +1181,9 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   res.flushHeaders();
 
   let resumeAfterPollTimeout = false;
+  let contentId: number | null = null;
   const sendEvent = (data: Record<string, any>) => {
+    if (contentId !== null) data = { ...data, canCancel: canCancelVideoContent(db.select().from(contents).where(eq(contents.id, contentId)).get()) };
     recordCanvasEvent(req, data);
     if (!res.destroyed && !res.writableEnded) {
       res.write(`data: ${JSON.stringify(publicGenerationEvent(data))}\n\n`);
@@ -1318,7 +1321,6 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   let billingReservationId: string | undefined;
 
   // 插入初始的 'processing' 内容记录，确保刷新页面时正在生成中的记录不会丢失
-  let contentId: number | null = null;
   try {
     const saveContent = () => ContentService.save({
       userId: req.userId!,

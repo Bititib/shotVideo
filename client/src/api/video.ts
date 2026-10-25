@@ -57,6 +57,7 @@ export interface VideoSSEEvent {
   running?: number;
   concurrencyLimit?: number;
   queued?: number;
+  canCancel?: boolean;
 }
 
 const MODEL_CACHE_TTL_MS = 30_000;
@@ -113,7 +114,7 @@ export async function fetchVideoModels(): Promise<VideoModel[]> {
   return promise;
 }
 
-/** 发起视频生成（SSE 流式），返回 AbortController 可用于取消 */
+/** 发起视频生成（SSE 流式）；AbortController 只断开进度连接，取消任务须经服务器确认。 */
 export function generateVideo(
   params: VideoGenerateParams,
   onEvent: (event: VideoSSEEvent) => void,

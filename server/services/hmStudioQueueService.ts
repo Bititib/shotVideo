@@ -68,6 +68,25 @@ export class HmStudioQueueService {
     return this.jobs.has(jobId);
   }
 
+  /** Call only after the durable order cancellation and refund have committed. */
+  cancelPending(jobId: string): boolean {
+    if (this.active.has(jobId)) return false;
+    const job = this.jobs.get(jobId);
+    if (!job) return false;
+    const pending = this.pendingByUser.get(job.userKey) || [];
+    const index = pending.indexOf(job);
+    if (index < 0) return false;
+    pending.splice(index, 1);
+    if (!pending.length) {
+      this.pendingByUser.delete(job.userKey);
+      this.userOrder = this.userOrder.filter(key => key !== job.userKey);
+    }
+    this.jobs.delete(jobId);
+    job.resolve(undefined);
+    this.notifyAll();
+    return true;
+  }
+
   enqueue<T>(options: {
     id: string;
     userKey: string | number;

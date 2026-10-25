@@ -9,6 +9,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { registerUpload } from './uploadAccess.js';
+import { canCancelVideoContent, assertVideoContentDeletable } from './videoCancellationEligibility.js';
 
 export interface SaveContentInput {
   userId: number;
@@ -107,6 +108,7 @@ export function sanitizeContentRoutingForClient<T extends { metadata?: string | 
 
   return {
     ...publicItem,
+    ...((item as any).type === 'video' ? { canCancel: canCancelVideoContent(item as any) } : {}),
     metadata: typeof item.metadata === 'string' ? JSON.stringify(metadata) : metadata,
   };
 }
@@ -568,6 +570,8 @@ export class ContentService {
     if (!item) throw { status: 404, message: '内容不存在' };
     if (item.userId !== userId) throw { status: 403, message: '无权删除此内容' };
 
+    assertVideoContentDeletable(item);
+
     db.delete(contents).where(eq(contents.id, contentId)).run();
   }
 
@@ -576,6 +580,8 @@ export class ContentService {
     const item = db.select().from(contents).where(eq(contents.id, contentId)).get();
     if (!item) throw { status: 404, message: '内容不存在' };
     if (item.orgId !== orgId) throw { status: 403, message: '无权删除此内容' };
+
+    assertVideoContentDeletable(item);
 
     db.delete(contents).where(eq(contents.id, contentId)).run();
   }

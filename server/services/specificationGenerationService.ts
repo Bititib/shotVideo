@@ -39,6 +39,7 @@ import { resolvePublicModelId } from './publicModelNameService.js';
 import { batchContextForRequest, batchStore, markBatchSubmitting, recordBatchFailure } from './videoBatchService.js';
 import { claimVideoSubmission, acceptVideoSubmission, endVideoSubmission, releaseVideoSubmission, videoSubmissionPending, videoSubmissionPreparation } from './videoSubmissionGuard.js';
 import { isSnumomWanChannel } from './snumomWanAdapter.js';
+import { canCancelVideoContent } from './videoCancellationEligibility.js';
 
 const active = new Set<number>();
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -166,6 +167,8 @@ function failTask(id: number, message: string) {
     throw error;
   }
 }
+export { failTask as finalizeFailedSpecificationTask };
+
 function failContent(id: number, message: string) {
   const meta = metadata(id);
   if (meta.batchItemId && recordBatchFailure(id, message, true)) return;
@@ -251,6 +254,8 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
     const stillEnabled = () => routeStillEnabled(metadata(id).requestedModel, target, request.input);
     if (!stillEnabled() || !claimRouteProbe(target.healthKey)) continue;
     const attempt = async () => {
+      const current = db.select().from(contents).where(eq(contents.id, id)).get();
+      if (!current || ['completed', 'failed'].includes(current.status || '')) return;
       if (!stillEnabled()) throw new SpecificationUpstreamError('线路已手动禁用', true);
       patch(id, { routingRouteId: target.route.id, routingHealthKey: target.healthKey, channelId: target.channel.id,
         channelApiKeyId: target.channel.apiKeyId, upstreamModel: target.route.upstreamModel, actualModel: target.route.executionModel,
@@ -585,7 +590,8 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     })();
     const emit = (data: any) => {
       if (apiContext) return;
-      const event = publicGenerationEvent(data);
+      const current = db.select().from(contents).where(eq(contents.id, id!)).get();
+      const event = publicGenerationEvent({ ...data, ...(kind === 'video' ? { canCancel: canCancelVideoContent(current) } : {}) });
       recordCanvasEvent(req, event);
       if (!res.writableEnded && !res.destroyed) res.write('data: ' + JSON.stringify(event) + '\n\n');
     };

@@ -8,6 +8,7 @@ import { eq } from 'drizzle-orm';
 import { isProductDetailCopy } from '../../shared/copywriting.js';
 import { activePolls, enqueueHmStudioVideoContent, resumePollForTask } from './video.js';
 import { ChannelService } from '../services/channelService.js';
+import { cancelVideoContent } from '../services/videoCancellationService.js';
 import { localizeGeneratedImage } from './imageGen.js';
 import {
   isSiYueTianImageChannel,
@@ -266,7 +267,17 @@ router.post('/:id/recover-image', async (req: AuthRequest, res: Response) => {
   }
 });
 
-/** DELETE /api/contents/:id — 删除内容 */
+/** POST /api/contents/:id/cancel — 原子取消尚未发送的任务并退回预扣。 */
+router.post('/:id/cancel', (req: AuthRequest, res: Response) => {
+  try {
+    cancelVideoContent(Number(req.params.id), req.userId!);
+    res.json({ message: '任务已取消，未提交上游的预扣费用已退回' });
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '取消任务失败' });
+  }
+});
+
+/** DELETE /api/contents/:id — 删除已结束的内容 */
 router.delete('/:id', (req: AuthRequest, res: Response) => {
   try {
     const contentId = parseInt(req.params.id);

@@ -36,6 +36,7 @@ import { findUnreadableImageIndexes, isSupportedImageFile, MOBILE_IMAGE_ACCEPT, 
 
 interface VideoTask {
   id: string;
+  canCancel?: boolean;
   prompt: string;
   status: 'generating' | 'review' | 'complete' | 'error';
   progress: number;
@@ -582,6 +583,7 @@ export default function VideoPage() {
   const firstFrameInputRef = useRef<HTMLInputElement>(null);
   const lastFrameInputRef = useRef<HTMLInputElement>(null);
   const [tasks, setTasks] = useState<VideoTask[]>([]);
+  const [cancellingIds, setCancellingIds] = useState<Set<number>>(new Set());
   const [feedbackTask, setFeedbackTask] = useState<VideoTask | null>(null);
   const [feedbackDescription, setFeedbackDescription] = useState('');
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
@@ -850,6 +852,7 @@ export default function VideoPage() {
           .filter((item: any) => item.status === 'processing' || item.status === 'queued' || item.status === 'review')
           .map((item: any) => ({
             id: `db_${item.id}`,
+            canCancel: item.canCancel === true,
             prompt: item.metadata?.prompt || item.inputText || item.title || '',
             status: videoTaskNeedsReview(item) ? 'review' : 'generating',
             progress: Number(item.metadata?.progress) || 0,
@@ -1048,6 +1051,7 @@ export default function VideoPage() {
               setTasks(prev => prev.map(t => t.id === task.id && (t.status === 'generating' || t.status === 'review') ? {
                 ...t,
                 status: 'generating',
+                canCancel: item.canCancel === true,
                 metadata: {...t.metadata,...meta},
                 progress: p,
                 statusMessage: item.status === 'review' ? (meta.progressText || '结果待核实，请勿重复提交') : item.status === 'queued'
@@ -1549,6 +1553,8 @@ export default function VideoPage() {
         // 如果已经被主动取消，忽略后续所有事件以防竞态将 ID 改为 db_ 后台轮询
         if (!abortRef.current.has(taskId)) return;
 
+        if (typeof event.canCancel === 'boolean') updateTask({ canCancel: event.canCancel });
+
         switch (event.type) {
           case 'content_id':
             updateTask({ dbId: event.contentId });
@@ -1618,10 +1624,23 @@ export default function VideoPage() {
     setTasks(prev => prev.filter(t => t.id !== taskId));
   };
 
-  const handleCancel = (taskId: string) => {
-    abortRef.current.get(taskId)?.abort();
-    abortRef.current.delete(taskId);
-    handleRemove(taskId);
+  const handleCancel = async (taskId: string) => {
+    const task = tasks.find(t => t.id === taskId);
+    const dbId = task && videoTaskDatabaseId(task);
+    if (!task?.canCancel || !dbId || cancellingIds.has(dbId)) return;
+    setCancellingIds(prev => new Set(prev).add(dbId));
+    try {
+      await contentApi.cancelVideo(dbId);
+      abortRef.current.get(taskId)?.abort();
+      abortRef.current.delete(taskId);
+      setTasks(prev => prev.filter(t => videoTaskDatabaseId(t) !== dbId));
+      useAuthStore.getState().fetchProfile().catch(() => { });
+    } catch (err: any) {
+      setError(err.message || '取消失败，请刷新任务状态');
+      setTasks(prev => prev.map(t => videoTaskDatabaseId(t) === dbId ? { ...t, canCancel: false } : t));
+    } finally {
+      setCancellingIds(prev => { const next = new Set(prev); next.delete(dbId); return next; });
+    }
   };
 
   const handleSubmitFeedback = async () => {
@@ -1831,9 +1850,9 @@ export default function VideoPage() {
                           <div className="flex items-center justify-between pt-3 border-t border-[#e4d2bd]">
                             <span className="text-[10px] font-medium text-[#9a7259]">{task.metadata.resolution} · {task.metadata.seconds}秒 · {task.metadata.aspect_ratio}</span>
                             {task.status === 'generating' ? (
-                              <button onClick={() => handleCancel(task.id)} className="text-[10px] text-red-400/70 hover:text-red-400 transition-colors flex items-center gap-1">
-                                <Square className="w-2.5 h-2.5" /> 取消
-                              </button>
+                              task.canCancel && videoTaskDatabaseId(task) ? <button disabled={cancellingIds.has(videoTaskDatabaseId(task)!)} onClick={() => handleCancel(task.id)} className="text-[10px] text-red-400/70 hover:text-red-400 transition-colors flex items-center gap-1 disabled:opacity-50">
+                                <Square className="w-2.5 h-2.5" /> {cancellingIds.has(videoTaskDatabaseId(task)!) ? '取消中...' : '取消'}
+                              </button> : null
                             ) : task.status === 'complete' && task.videoUrl ? (
                               <div className="flex items-center gap-2">
                                 <button type="button" onClick={() => handleApplyHistory(task)}

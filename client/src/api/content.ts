@@ -49,6 +49,9 @@ export const contentApi = {
   /** 图片地址失效时，根据上游任务 ID 重新获取并保存到本站。 */
   recoverImage(id: number) { return api.post<any>(`/contents/${id}/recover-image`); },
 
-  /** 删除内容 */
+  /** 取消尚未提交上游的视频任务并退回预扣。 */
+  cancelVideo(id: number) { return api.post<any>(`/contents/${id}/cancel`); },
+
+  /** 删除已结束的内容 */
   delete(id: number) { return api.delete<any>(`/contents/${id}`); },
 };
