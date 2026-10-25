@@ -43,8 +43,6 @@ import { calculateSuccessRate, isWithinRecentDays } from '../services/successRat
 import { calculateVideoModelStatus } from '../services/videoModelStatusService.js';
 import {
   buildHmStudioVideoPayload,
-  validateHmStudioVideoPrompt,
-  HmStudioPromptError,
   hmStudioCreateUrl,
   hmStudioTaskUrl,
   isHmStudioChannel,
@@ -1099,8 +1097,6 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   try {
     const requestOrigin = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
     if (isHmStudioChannel(channel)) {
-      validateHmStudioVideoPrompt({ model: upstreamModel, prompt, imageSources: reference_images,
-        videoSources: finalVideos, audioSources: finalAudios, firstFrame: first_frame, lastFrame: last_frame });
       const count = reference_images.length;
       const prepared = await prepareHmReferenceImages([
         ...reference_images, ...(first_frame ? [first_frame] : []), ...(last_frame ? [last_frame] : []),
@@ -3520,7 +3516,7 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
         acceptVideoSubmission(contentId, String(videoId), { provider: selectedHmChannel.type || '', channelId: Number(selectedHmChannel.id) || null, channelApiKeyId: Number(selectedHmChannel.apiKeyId) || null });
         if (updatedRecord) await resumePollForTask(contentId, updatedRecord);
       } catch (error) {
-        const rejected = error instanceof HmStudioPromptError || error instanceof HmSubmissionError && error.outcome === 'rejected'
+        const rejected = error instanceof HmSubmissionError && error.outcome === 'rejected'
           || error instanceof SpecificationUpstreamError && error.confirmedFailure;
         endVideoSubmission(contentId, rejected ? 'rejected' : 'unknown');
         await failHmQueuedVideo(contentId, error, rejected);

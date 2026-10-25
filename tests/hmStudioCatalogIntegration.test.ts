@@ -101,12 +101,12 @@ afterAll(async () => {
 });
 
 describe('HM new catalog integration (in-memory database, no upstream generation)', () => {
-  it('does not apply the HM prompt limit to non-HM routes in a mixed specification', async () => {
+  it('retains HM and non-HM candidates for a long prompt in a mixed specification', async () => {
     const hm = { channel:{type:'hmstudio'},route:{upstreamModel:'30-10-10'} };
     const other = { channel:{type:'other'},route:{upstreamModel:'other'} };
     const candidates = [hm,other] as any[];
     await prepareSpecificationReferenceImages({prompt:'字'.repeat(8001),images:[],videos:[],audios:[],publicBaseUrl:origin} as any,candidates,[origin]);
-    expect(candidates).toEqual([other]);
+    expect(candidates).toEqual([hm,other]);
   });
   it('registers nova disabled without exposing the upstream ID and rejects orders before charging', async () => {
     const nova = db.select().from(models).where(eq(models.modelId, 'sd2.5-301010')).get()!;
@@ -240,12 +240,9 @@ describe('HM new catalog integration (in-memory database, no upstream generation
       }
     } finally { vi.stubGlobal('fetch', previousFetch); }
   });
-  it('rejects 8001 characters before web/API/batch reservation and sends 7936 unchanged as JSON', async () => {
+  it('sends long prompts through web/API JSON and refunds only on upstream rejection', async () => {
     const beforeUser = db.select().from(users).where(eq(users.id, userId)).get()!.balance;
     const beforeToken = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance;
-    const count = db.select().from(contents).all().length;
-    const reservations = sqlite.prepare('SELECT count(*) AS n FROM billing_reservations').get();
-    const batches = sqlite.prepare('SELECT count(*) AS n FROM video_batches').get();
     const previousFetch = globalThis.fetch;
     const sent: any[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: any, options: any) => {
@@ -255,31 +252,20 @@ describe('HM new catalog integration (in-memory database, no upstream generation
       return Response.json({ error: '测试明确拒绝' }, { status: 400 });
     }));
     try {
-      for (const api of [false, true]) {
-        const response = await post(api ? '/v1/videos' : '/api/video/generate', {
-          model:'sd2.5-301010', prompt:'字'.repeat(8001), seconds:4, video_length:4, resolution:'720p'
-        }, api);
-        expect(response.status).toBe(400); expect(await response.text()).toContain('8001');
-      }
-      const input = batchInput('sd2.5-301010','720p');
-      input.creatives.push({prompt:'字'.repeat(8001),count:1,reference_images:[]});
-      const badBatch = await post('/api/video-batches', {...input,requestKey:crypto.randomUUID(),expectedUnitCost:7});
-      expect(badBatch.status).toBe(400); expect(await badBatch.text()).toContain('创意 2');
-      expect(sent).toHaveLength(0);
-      expect(db.select().from(contents).all()).toHaveLength(count);
-      expect(sqlite.prepare('SELECT count(*) AS n FROM billing_reservations').get()).toEqual(reservations);
-      expect(sqlite.prepare('SELECT count(*) AS n FROM video_batches').get()).toEqual(batches);
-      expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBe(beforeUser);
-      expect(db.select().from(apiTokens).where(eq(apiTokens.id,tokenId)).get()!.balance).toBe(beforeToken);
-      const prompt = '字'.repeat(7800) + '\n字'.repeat(68);
-      for (const api of [false,true]) {
+      for (const prompt of ['字'.repeat(7800) + '\n字'.repeat(68), '字'.repeat(8001), '字'.repeat(12000)]) for (const api of [false,true]) {
         const response = await post(api ? '/v1/videos' : '/api/video/generate', {model:'sd2.5-301010',prompt,seconds:4,video_length:4,resolution:'720p'},api);
         expect(response.status).toBeLessThan(300); await response.text();
         await vi.waitFor(() => expect(db.select().from(contents).all().at(-1)!.status).toBe('failed'));
         expect(sent.at(-1).prompt).toBe(prompt);
-        expect(sent.at(-1).prompt.length).toBe(7936);
+        expect(sent.at(-1).prompt.length).toBe(prompt.length);
+        expect(JSON.parse(db.select().from(contents).all().at(-1)!.metadata!).error).toContain('测试明确拒绝');
       }
-      expect(sent).toHaveLength(2);
+      expect(sent).toHaveLength(6);
+      const input = batchInput('sd2.5-301010', '720p');
+      input.creatives[0].prompt = '字'.repeat(12000);
+      const batchQuote = await post('/api/video-batches/quote', input);
+      expect(batchQuote.status).toBe(200);
+      expect(await batchQuote.json()).toMatchObject({unitCost:7});
       expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBe(beforeUser);
       expect(db.select().from(apiTokens).where(eq(apiTokens.id,tokenId)).get()!.balance).toBe(beforeToken);
     } finally { vi.stubGlobal('fetch',previousFetch); }
@@ -385,10 +371,6 @@ describe('HM new catalog integration (in-memory database, no upstream generation
     vi.mocked(downloadPublicReferenceImage).mockRejectedValue(new Error('图片下载失败（HTTP 404）'));
     try {
       for (const api of [false, true]) {
-        const response = await post(api ? '/v1/videos' : '/api/video/generate', {model:modelId,prompt:'字'.repeat(8001),seconds:4,video_length:4,resolution:'720p'},api);
-        expect(response.status).toBe(400); expect(await response.text()).toContain('8001');
-      }
-      for (const api of [false, true]) {
         const response = await post(api ? '/v1/videos' : '/api/video/generate', { model: modelId, prompt: '商品', seconds: 4, video_length: 4, resolution: '720p', reference_images: ['https://external.example/missing.png'] }, api);
         expect(response.status).toBe(400); expect(await response.text()).toContain('HTTP 404');
       }
@@ -409,10 +391,11 @@ describe('HM new catalog integration (in-memory database, no upstream generation
       }));
       try {
         for (const api of [false, true]) {
-          const response = await post(api ? '/v1/videos' : '/api/video/generate', { model: modelId, prompt: '商品', seconds: 4, video_length: 4, resolution: '720p', reference_images: ['https://external.example/valid.png'] }, api);
+          const response = await post(api ? '/v1/videos' : '/api/video/generate', { model: modelId, prompt: '字'.repeat(12000), seconds: 4, video_length: 4, resolution: '720p', reference_images: ['https://external.example/valid.png'] }, api);
           expect(response.status).toBeLessThan(300); await response.text();
           await vi.waitFor(() => expect(db.select().from(contents).all().at(-1)!.status).toBe('failed'));
           const refs = sent.at(-1).materials;
+          expect(sent.at(-1).prompt).toBe('字'.repeat(12000));
           expect(refs[0].url).toMatch(/\/reference-assets\/.*\.png$/);
           expect(JSON.parse(db.select().from(contents).all().at(-1)!.metadata!).reference_images).toEqual([refs[0].url]);
         }

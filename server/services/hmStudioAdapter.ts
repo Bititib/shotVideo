@@ -134,10 +134,6 @@ function appendOmniReferences(
 
 type HmPromptOptions = Pick<HmStudioVideoOptions, 'model' | 'prompt' | 'functionMode' | 'imageSources' | 'videoSources' | 'audioSources' | 'firstFrame' | 'lastFrame'>;
 
-export class HmStudioPromptError extends Error {
-  readonly status = 400;
-}
-
 function hmVideoMode(options: HmPromptOptions): string {
   const isNova = options.model === HM_STUDIO_NOVA_MODEL || options.model === HM_STUDIO_NOVA_UPSTREAM_MODEL;
   const images = (options.imageSources || []).filter(Boolean);
@@ -159,18 +155,16 @@ function hmVideoMode(options: HmPromptOptions): string {
   return functionMode;
 }
 
-/** Validate the actual prompt field, not JSON bytes or multipart CRLF expansion. */
-export function validateHmStudioVideoPrompt(options: HmPromptOptions): string {
+/** Preserve existing marker formatting; prompt limits are decided by HM. */
+function formatHmStudioVideoPrompt(options: HmPromptOptions): string {
   const raw = options.prompt.trim();
   const prompt = hmVideoMode(options) === 'omni_reference' ? replaceReferenceMarkers(raw) : raw;
-  const length = Array.from(prompt).length;
-  if (length > 8000) throw new HmStudioPromptError(`HM 视频提示词为 ${length} 个字符，超过上限 8000（含空格和换行）；请缩短后提交`);
   return prompt;
 }
 
 /** Shared field construction. Never serialize this form for video submission. */
 export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData {
-  const prompt = validateHmStudioVideoPrompt(options);
+  const prompt = formatHmStudioVideoPrompt(options);
   const functionMode = hmVideoMode(options);
   const isNova = options.model === HM_STUDIO_NOVA_MODEL || options.model === HM_STUDIO_NOVA_UPSTREAM_MODEL;
   const images = (options.imageSources || []).filter(Boolean);

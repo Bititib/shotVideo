@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildHmStudioVideoPayload, validateHmStudioVideoPrompt } from '../server/services/hmStudioAdapter.js';
+import { buildHmStudioVideoPayload } from '../server/services/hmStudioAdapter.js';
 
 const base = { model: '30-10-10', prompt: 'test', duration: 30, ratio: '16:9', resolution: '1080p' };
 describe('HM video JSON protocol', () => {
@@ -12,14 +12,13 @@ describe('HM video JSON protocol', () => {
     expect(result.prompt).toBe(prompt);
     expect(result).toMatchObject({ model: '30-10-10', channel: 'nova', duration: 30, face: true, video_resolution: '1080p' });
   });
-  it('accepts exactly 8000 Unicode characters, rejects 8001, never truncates', () => {
-    const prompt = '😀'.repeat(8000);
+  it.each([8000, 8001, 12000])('preserves %s Unicode characters without a local HM limit', length => {
+    const prompt = '😀'.repeat(length);
     expect(buildHmStudioVideoPayload({ ...base, prompt }).prompt).toBe(prompt);
-    expect(() => buildHmStudioVideoPayload({ ...base, prompt: prompt + '字' })).toThrow('8001');
   });
-  it('validates after reference replacement, not before it', () => {
+  it('retains reference replacement without a length restriction', () => {
     const prompt = '字'.repeat(7993) + '[ref_1.jpg]';
-    expect(validateHmStudioVideoPrompt({ ...base, prompt, imageSources: ['https://example.com/a.jpg'] })).toBe('字'.repeat(7993) + '@Image1');
+    expect(buildHmStudioVideoPayload({ ...base, prompt, imageSources: ['https://example.com/a.jpg'] }).prompt).toBe('字'.repeat(7993) + '@Image1');
   });
   it('retains all 50 material names and URL ordering as an array and legacy face=true', () => {
     const payload = buildHmStudioVideoPayload({ ...base, prompt: '[ref_30] [ref_video_10] [ref_audio_10]', face: false,

@@ -384,10 +384,11 @@ describe('managed adapter protocol boundaries', () => {
     expect(payload.model).toBe('MINIMAX-H3-2.5采样');expect(payload.function_mode).toBe('omni_reference');
     expect(payload.materials.map((m:any)=>m.url)).toEqual(['https://assets.invalid/a.png','https://assets.invalid/b.png']);
   });
-  it('rejects HM over-limit prompts before submission callbacks instead of truncating', async () => {
-    const send=vi.fn(), started=vi.fn(); vi.stubGlobal('fetch',send);
-    await expect(adapters.submitSpecificationVideo(target('hmstudio','seedance_v2.5'),input({prompt:'字'.repeat(8001)}),started)).rejects.toThrow('8001');
-    expect(send).not.toHaveBeenCalled(); expect(started).not.toHaveBeenCalled();
+  it('accepts an upstream task ID for a prompt above 8000 without truncating', async () => {
+    const send=vi.fn().mockResolvedValue(json({task_id:'hm-long-accepted'},202)), started=vi.fn(); vi.stubGlobal('fetch',send);
+    await expect(adapters.submitSpecificationVideo(target('hmstudio','seedance_v2.5'),input({prompt:'字'.repeat(12000)}),started)).resolves.toBe('hm-long-accepted');
+    expect(JSON.parse(send.mock.calls[0][1].body).prompt).toBe('字'.repeat(12000));
+    expect(send).toHaveBeenCalledOnce(); expect(started).toHaveBeenCalledOnce();
   });
   it('maps nova sales routes and preserves 30 images, 10 videos and 10 audios', async () => {
     const send = vi.fn().mockResolvedValue(json({ task_id: 'nova-accepted' }, 202)); vi.stubGlobal('fetch', send);

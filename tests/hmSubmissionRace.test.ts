@@ -99,7 +99,7 @@ it.each([400, 401, 402, 422, 429, 503])('HM queue HTTP %s rejection closes the a
   } finally { vi.unstubAllGlobals(); }
 });
 
-it('rejects an old over-limit queued prompt locally and refunds its reservation exactly once', async () => {
+it('sends a long queued prompt to HM and refunds an explicit upstream rejection exactly once', async () => {
   const id = ++sequence;
   db.insert(users).values({ id, email:id+'@test.invalid', username:'test', passwordHash:'test', balance:100 }).run();
   db.insert(channels).values({ id, name:'HM old queue',type:'hmstudio',baseUrl:'https://hm.test',apiKey:'test',
@@ -110,18 +110,21 @@ it('rejects an old over-limit queued prompt locally and refunds its reservation 
         billingReservationId:charge.id,videoSubmissionState:'preparing'})}).run();
     return id;
   });
-  const fetcher = vi.fn(async () => { throw new Error('Must not send'); });
+  const fetcher = vi.fn(async (_url: any, options: any) => {
+    expect(JSON.parse(options.body).prompt).toBe('字'.repeat(8001));
+    return Response.json({error:'测试上游拒绝长提示词'}, {status:400});
+  });
   vi.stubGlobal('fetch',fetcher);
   try {
     video.enqueueHmStudioVideoContent(id);
     await vi.waitFor(() => expect(db.select().from(contents).where(eq(contents.id,id)).get()?.status).toBe('failed'));
     const row = db.select().from(contents).where(eq(contents.id,id)).get()!;
     expect(JSON.parse(row.metadata!)).toMatchObject({billingStatus:'refunded',requiresReview:false,videoSubmissionState:'rejected'});
-    expect(JSON.parse(row.metadata!).error).toContain('8001');
+    expect(JSON.parse(row.metadata!).error).toContain('测试上游拒绝长提示词');
     await video.failHmQueuedVideo(id,new Error('duplicate'),true);
     await video.resumePollForTask(id,row);
     expect(db.select().from(users).where(eq(users.id,id)).get()?.balance).toBe(100);
-    expect(fetcher).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledOnce();
   } finally { vi.unstubAllGlobals(); }
 });
 

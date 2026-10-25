@@ -28,7 +28,7 @@ import { getModelSpecification, specificationAvailability, selectModelRoutes, ro
 import { submitSpecificationVideo, pollSpecificationVideo, pollSpecificationImage, pollMjSpecificationImage, generateSpecificationImage, SpecificationUpstreamError, type SpecificationRequest } from './specificationAdapters.js';
 import { validateAndNormalizeImageReferences } from './imageReferenceValidationService.js';
 import { prepareHmReferenceImages } from './hmStudioReferenceService.js';
-import { isHmStudioChannel, validateHmStudioVideoPrompt, HmStudioPromptError } from './hmStudioAdapter.js';
+import { isHmStudioChannel } from './hmStudioAdapter.js';
 import { hmStudioQueue, hmStudioPoolKey, HmStudioQueueFullError } from './hmStudioQueueService.js';
 import { recordCanvasEvent } from '../middleware/canvasRequest.js';
 import { logUsage } from '../middleware/quota.js';
@@ -82,23 +82,6 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
       firstFrame: Boolean(firstFrame), lastFrame: Boolean(lastFrame), quality: body.quality } };
 }
 export async function prepareSpecificationReferenceImages(request: SpecificationRequest, candidates: RouteCandidate[], trustedOrigins: string[]) {
-  let promptError: HmStudioPromptError | undefined;
-  // A mixed specification must not inherit HM's limit on its non-HM routes.
-  for (let index = candidates.length - 1; index >= 0; index--) {
-    const target = candidates[index];
-    if (!isHmStudioChannel(target.channel)) continue;
-    try {
-      validateHmStudioVideoPrompt({ model: target.route.upstreamModel, prompt: request.prompt,
-        functionMode: request.images.length || request.videos.length || request.audios.length ? 'omni_reference' : undefined,
-        imageSources: request.images, videoSources: request.videos, audioSources: request.audios,
-        firstFrame: request.firstFrame, lastFrame: request.lastFrame });
-    } catch (error) {
-      if (!(error instanceof HmStudioPromptError)) throw error;
-      promptError = error;
-      candidates.splice(index, 1);
-    }
-  }
-  if (promptError && !candidates.length) throw promptError;
   const count = request.images.length;
   const sources = [...request.images, ...(request.firstFrame ? [request.firstFrame] : []), ...(request.lastFrame ? [request.lastFrame] : [])];
   const normalized = candidates.some(target => isHmStudioChannel(target.channel))
