@@ -29,6 +29,24 @@ export function hussApiBase(baseUrl: string) {
   const p = url.pathname.replace(/\/+$/, ''); url.pathname = /\/v1$/i.test(p) ? p.slice(0, -3) || '/' : p || '/';
   return url.href.replace(/\/$/, '');
 }
+
+/** Official read-only content endpoint. Never forward the API key on redirects. */
+export async function fetchHussVideoContent(channel: HussChannel, taskId: string): Promise<Response> {
+  let url = hussApiBase(channel.baseUrl) + '/v1/videos/' + encodeURIComponent(taskId) + '/content';
+  const signal = AbortSignal.timeout(300_000);
+  for (let hop = 0; hop <= 5; hop++) {
+    const response = await fetch(url, { method: 'GET', redirect: 'manual', signal,
+      headers: hop === 0 ? { Authorization: 'Bearer ' + channel.apiKey } : {} });
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+    const location = response.headers.get('location');
+    await response.body?.cancel();
+    if (!location || hop === 5) throw new Error('HUSS 原任务下载入口重定向缺少地址或次数超限');
+    const next = new URL(location, url);
+    if (next.protocol !== 'https:' || next.username || next.password) throw new Error('HUSS 原任务下载入口返回无效重定向地址');
+    url = next.href;
+  }
+  throw new Error('HUSS 原任务下载未返回响应');
+}
 export class HussApiError extends Error { constructor(message: string, readonly status: number, readonly uncertain = false) { super(message); } }
 async function hussRequest(channel: HussChannel, endpoint: string, body?: unknown, idempotencyKey?: string) {
   const generation = body !== undefined;

@@ -30,3 +30,31 @@ it('preserves the observed HUSS TOS expiry error including timing and request ID
   expect(error.message).not.toContain('signature=private'); expect(error.message).not.toContain('huss-secret');
   expect(fs.renameSync).not.toHaveBeenCalled();
 });
+it('falls back to original /content on expired signed download, strips credentials on every redirect, and saves once', async () => {
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(Response.json({ Code: 'AccessDenied', Message: 'Request has expired' }, { status: 403 }))
+    .mockResolvedValueOnce(new Response(null, { status: 307, headers: { Location: 'https://www.huss.top/media/fresh?signature=keep%2Bexact' } }))
+    .mockResolvedValueOnce(new Response(null, { status: 307, headers: { Location: 'https://storage.example/final?signature=new' } }))
+    .mockResolvedValueOnce(new Response(Buffer.from('0000ftypmp420000'), { headers: { 'Content-Type': 'video/mp4' } })));
+  expect(await downloadAndLocalizeVideo('https://www.huss.top/media/old?signature=old', 'task_original', 'bb-2.5-301010', 1)).toContain('/uploads/videos/');
+  const calls = vi.mocked(fetch).mock.calls;
+  expect(calls[1]).toEqual(['https://www.huss.top/v1/videos/task_original/content', expect.objectContaining({ method: 'GET', redirect: 'manual', headers: { Authorization: 'Bearer huss-secret' } })]);
+  expect(calls[2]).toEqual(['https://www.huss.top/media/fresh?signature=keep%2Bexact', expect.objectContaining({ headers: {} })]);
+  expect(calls[3][1]?.headers).toEqual({}); expect(calls).toHaveLength(4); expect(fs.renameSync).toHaveBeenCalledOnce();
+});
+it('retains detailed failure when official fallback also fails, without unbounded retries', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ Code: 'AccessDenied', Message: 'Request has expired' }, { status: 403 })));
+  await expect(downloadAndLocalizeVideo('https://www.huss.top/media/old', 'task_original', 'bb-2.5-301010', 1)).rejects.toThrow('/content');
+  expect(fetch).toHaveBeenCalledTimes(2); expect(fs.renameSync).not.toHaveBeenCalled();
+});
+it('does not treat content storage-pending as a finished video', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response(null, { status: 403 }))
+    .mockResolvedValueOnce(Response.json({ status: 'storage_pending', message: 'storage pending' }, { status: 202 })));
+  await expect(downloadAndLocalizeVideo('https://www.huss.top/media/old', 'task_original', 'bb-2.5-301010', 1)).rejects.toThrow('继续查询原任务');
+  expect(fs.renameSync).not.toHaveBeenCalled();
+});
+it('does not use fallback to extend an expired file retention period', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: 'file expired' }, { status: 410 })));
+  await expect(downloadAndLocalizeVideo('https://www.huss.top/media/old', 'task_original', 'bb-2.5-301010', 1)).rejects.toThrow('410');
+  expect(fetch).toHaveBeenCalledOnce();
+});

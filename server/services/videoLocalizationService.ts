@@ -1,5 +1,5 @@
 import { responseDiagnostic, upstreamDiagnostic } from './upstreamDiagnostic.js';
-import { isHussChannel } from './hussVideoAdapter.js';
+import { isHussChannel, fetchHussVideoContent } from './hussVideoAdapter.js';
 import { isMegabyChannel, megabyContentUrl, fetchMegabyVideoContent, readMegabyJson } from './megabyVideoAdapter.js';
 import { zonghengTaskUrl } from './zonghengAdapter.js';
 import { isAsyncVideoChannel, resolveAsyncVideoUrl } from './asyncVideoAdapter.js';
@@ -71,6 +71,14 @@ export async function downloadAndLocalizeVideo(
   }
 
   let response = isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000), ...(authenticatedV6kContent ? { redirect: 'error' as const } : {}) });
+  // HUSS documents /content as an alternative to the signed media URL.
+  // One read-only fallback per save attempt; never recreate the generation.
+  let hussContentFallback = false;
+  if (isHussChannel(channel) && [401, 403, 404].includes(response.status)) {
+    await response.body?.cancel();
+    hussContentFallback = true;
+    response = await fetchHussVideoContent(channel, videoId);
+  }
   if (isMegabyChannel(channel) && [401, 403, 404].includes(response.status) && url !== megabyContentUrl(channel.baseUrl, videoId)) response = await fetchMegabyVideoContent(channel, megabyContentUrl(channel.baseUrl, videoId), videoId);
   if (!response.ok && isMegabyChannel(channel)) await readMegabyJson(channel, response, 'query');
   if (isAsyncVideoChannel(channel) && [401, 403, 404].includes(response.status)) {
@@ -89,6 +97,7 @@ export async function downloadAndLocalizeVideo(
     });
   }
   if (!response.ok && isHussChannel(channel)) {
+    const stage = hussContentFallback ? '原任务 /content 回退下载' : '结果下载';
     // HUSS redirects media downloads to TOS, whose errors use capitalized fields.
     // This is a download diagnostic, never evidence of a failed generation.
     const payload = await response.clone().json().catch(() => null);
@@ -96,11 +105,14 @@ export async function downloadAndLocalizeVideo(
       const timing = ['ExpiresSeconds', 'Expires', 'ServerTime'].filter(key =>
         typeof payload[key] === 'string' || typeof payload[key] === 'number')
         .map(key => `${key}=${payload[key]}`).join('; ');
-      throw new Error(upstreamDiagnostic('HUSS/TOS', '结果下载', {
+      throw new Error(upstreamDiagnostic('HUSS/TOS', stage, {
         code: payload.Code, message: payload.Message + (timing ? '; ' + timing : ''),
       }, channel.apiKey, response.status, payload.RequestId));
     }
-    throw new Error(await responseDiagnostic('HUSS', '结果下载', response, channel.apiKey));
+    throw new Error(await responseDiagnostic('HUSS', stage, response, channel.apiKey));
+  }
+  if (isHussChannel(channel) && response.status === 202) {
+    throw new Error(await responseDiagnostic('HUSS', '原任务下载仍在准备，继续查询原任务', response, channel.apiKey));
   }
   if (!response.ok) throw new Error(`Failed to fetch video from upstream: ${response.status} ${response.statusText}`);
 
