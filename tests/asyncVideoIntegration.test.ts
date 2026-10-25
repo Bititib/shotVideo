@@ -46,12 +46,59 @@ function enable() {
 
 describe('documented async video channel', () => {
   it('discovers by name, retains advertised constraints and imports disabled models without assumed prices', async () => {
-    expect(await ChannelService.testChannel(channelId)).toMatchObject({ success: true });
+    expect(await ChannelService.testChannel(channelId)).toMatchObject({ success: true, message: expect.stringContaining('seedance-video') });
     expect(ChannelService.getChannelRaw(channelId)).toMatchObject({ baseUrl: 'http://provider.invalid:8080', maxRetries: 0 });
     expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping)[modelId]).toBe('seedance-video');
     expect(db.select().from(models).where(eq(models.modelId, modelId)).get()).toMatchObject({ isActive: 0, capabilities: '["video"]' });
     expect(getModelSpecification(modelId)).toMatchObject({ limits: { duration: { values: [5,10,15] }, ratios: ['9:16','16:9','1:1'], resolutions: ['default'], maxVideos: 0, maxAudios: 0 } });
     expect(db.select().from(modelPricing).all()).toEqual([]);
+  });
+  it.each([{ ratio: 'auto', seconds: '15' }, { ratio: '16:9', seconds: '5-15' }])('reports actual catalog names and invalid fields without changing bindings: %j', async advertised => {
+    enable();
+    const before = ChannelService.getChannelRaw(channelId)!;
+    const spec = getModelSpecification(modelId);
+    const upstream = vi.fn(async () => Response.json({ data: [
+      { name: 'another-model', ...advertised }, { name: '2.0B', ratio: '9:16', seconds: '15' },
+    ] }));
+    vi.stubGlobal('fetch', upstream);
+    const result = await ChannelService.testChannel(channelId);
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('模型目录解析');
+    expect(result.message).toContain('another-model');
+    expect(result.message).toContain('2.0B');
+    expect(result.message).toContain('ratio=' + JSON.stringify(advertised.ratio));
+    expect(result.message).toContain('seconds=' + JSON.stringify(advertised.seconds));
+    expect(ChannelService.getChannelRaw(channelId)).toMatchObject({ supportedModels: before.supportedModels,
+      modelMapping: before.modelMapping, status: before.status, lastTestResult: result.message });
+    expect(getModelSpecification(modelId)).toEqual(spec);
+    expect(db.select().from(modelPricing).all()[0].inputPrice).toBe(2);
+    expect(db.select().from(users).all()[0].balance).toBe(100);
+    expect(db.select().from(contents).all()).toEqual([]);
+    expect(upstream).toHaveBeenCalledOnce();
+    expect(upstream.mock.calls[0][0]).toBe('http://provider.invalid:8080/v1/models');
+  });
+  it('reports a configured name absent from the live directory instead of treating connectivity as model availability', async () => {
+    ChannelService.updateChannel(channelId, { modelMapping: { [modelId]: '2.0B' } });
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [
+      { id: 17, name: 'actual-api-name', ratio: '9:16', seconds: '15' },
+    ] })));
+    const result = await ChannelService.testChannel(channelId);
+    expect(result).toMatchObject({ success: false });
+    expect(result.message).toContain('当前映射未在目录中列出=["2.0B"]');
+    expect(result.message).toContain('actual-api-name');
+    expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping)[modelId]).toBe('2.0B');
+    expect(db.select().from(contents).all()).toEqual([]);
+  });
+  it('redacts the credential and omits unrelated provider fields in invalid catalog diagnostics', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [
+      { name: '2.0B', ratio: key, seconds: '15', api_key: key, prompt: 'private-reference-text' },
+    ] })));
+    const result = await ChannelService.testChannel(channelId);
+    expect(result.success).toBe(false);
+    expect(result.message).toContain('2.0B');
+    expect(result.message).toContain('密钥已隐藏');
+    expect(result.message).not.toContain(key);
+    expect(result.message).not.toContain('private-reference-text');
   });
   it('preserves administrator prices, custom limits and switches across resync', async () => {
     enable();

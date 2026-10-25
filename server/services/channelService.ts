@@ -1,7 +1,7 @@
 import { isMegabyChannel, megabyBaseUrl, fetchMegabyVideoModels } from './megabyVideoAdapter.js';
 import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
 import { isMjChannel, normalizeMjBaseUrl, fetchMjModels } from './mjAdapter.js';
-import { isAsyncVideoChannel, asyncVideoBaseUrl, fetchAsyncVideoModels } from './asyncVideoAdapter.js';
+import { isAsyncVideoChannel, asyncVideoBaseUrl, fetchAsyncVideoModels, AsyncVideoCatalogError } from './asyncVideoAdapter.js';
 import { syncV6kVideoModels } from './v6kCatalogService.js';
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { isFunAiChannel, funAiBaseUrl, fetchFunAiModels } from './funAiAdapter.js';
@@ -542,14 +542,24 @@ export class ChannelService {
     const start = Date.now();
     try {
       if (isMegabyChannel(channel) || isMjChannel(channel) || isAsyncVideoChannel(channel) || isHussChannel(channel) || isFunAiChannel(channel)) {
+        let catalogSummary = '';
         if (isMegabyChannel(channel)) {
           if (!(await fetchMegabyVideoModels(channel)).length) throw new Error('该 Key 未开放 Megaby 视频模型，请检查模型授权');
         } else if (isMjChannel(channel)) {
           if (!(await fetchMjModels(channel)).length) throw new Error('该 Key 未提供 mj_imagine 模型，请检查模型授权');
-        } else if (isAsyncVideoChannel(channel)) await fetchAsyncVideoModels(channel);
+        } else if (isAsyncVideoChannel(channel)) {
+          const discovered = await fetchAsyncVideoModels(channel);
+          const names = discovered.map(model => model.name);
+          const configured = [...new Set(Object.values(parseJsonObject(channel.modelMapping)))];
+          const missing = configured.filter(name => !names.includes(name));
+          catalogSummary = upstreamDiagnostic('Vx-乐', '模型目录核对', { message:
+            '上游返回 name（共 ' + names.length + ' 个，最多展示前 20 个）=' + JSON.stringify(names.slice(0, 20))
+            + (missing.length ? '；当前映射未在目录中列出=' + JSON.stringify(missing) : '') }, channel.apiKey);
+          if (!names.length || missing.length) throw new AsyncVideoCatalogError(catalogSummary);
+        }
         else if (isFunAiChannel(channel)) await fetchFunAiModels(channel); else await fetchHussVideoModels(channel);
         const durationMs = Date.now() - start;
-        const result = { success: true, message: 'success:' + durationMs + 'ms', durationMs };
+        const result = { success: true, message: 'success:' + durationMs + 'ms' + (catalogSummary ? '；' + catalogSummary : ''), durationMs };
         db.update(channels).set({ lastTestAt: new Date().toISOString(), lastTestResult: result.message }).where(eq(channels.id, id)).run();
         return result;
       }
@@ -580,7 +590,8 @@ export class ChannelService {
       return result;
     } catch (error: any) {
       const durationMs = Date.now() - start;
-      const message = transportDiagnostic(channel.type, '测试连接', error, channel.apiKey);
+      const message = isAsyncVideoChannel(channel) && error instanceof AsyncVideoCatalogError
+        ? error.message : transportDiagnostic(channel.type, '测试连接', error, channel.apiKey);
       db.update(channels).set({
         lastTestAt: new Date().toISOString(),
         lastTestResult: message,

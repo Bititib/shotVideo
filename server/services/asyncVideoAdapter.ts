@@ -60,16 +60,29 @@ export async function pollAsyncVideo(channel: AsyncVideoChannel, id: string, fet
 }
 
 export type AsyncVideoModel = { name: string; limits: ModelInputLimits };
+export class AsyncVideoCatalogError extends Error {}
+
 export async function fetchAsyncVideoModels(channel: AsyncVideoChannel, fetchImpl: typeof fetch = fetch): Promise<AsyncVideoModel[]> {
   const raw = await getJson(channel, asyncVideoBaseUrl(channel.baseUrl) + '/v1/models', fetchImpl);
-  if (!Array.isArray(raw?.data)) throw new Error('异步视频模型列表格式无效');
+  if (!Array.isArray(raw?.data)) throw new AsyncVideoCatalogError(upstreamDiagnostic('Vx-乐', '模型目录解析',
+    { message: '异步视频模型列表格式无效：data 必须为数组' }, channel.apiKey));
+  const names = raw.data.map((model: any) => model?.name).filter((name: unknown): name is string => typeof name === 'string');
+  const field = (value: unknown, depth = 0): string => {
+    if (value === undefined) return '未返回';
+    if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) return JSON.stringify(value).slice(0, 200);
+    if (Array.isArray(value)) return depth >= 2 ? '嵌套数组' : '[' + value.slice(0, 20).map(item => field(item, depth + 1)).join(',') + ']';
+    return '对象（协议要求逗号分隔的字符串）';
+  };
+  const invalid = (reason: string, model?: any) => new AsyncVideoCatalogError(upstreamDiagnostic('Vx-乐', '模型目录解析',
+    { message: reason + (model ? '；异常条目 name=' + field(model.name) + '，ratio=' + field(model.ratio) + '，seconds=' + field(model.seconds) : '')
+      + '；目录返回 name（共 ' + names.length + ' 个，最多展示前 20 个）=' + field(names.slice(0, 20)) }, channel.apiKey));
   const entries = raw.data.map((model: any) => {
     // `id` is the numeric database ID; generation requires `name`.
-    if (typeof model?.name !== 'string' || !model.name.trim()) throw new Error('异步视频模型缺少名称');
+    if (typeof model?.name !== 'string' || !model.name.trim()) throw invalid('异步视频模型缺少名称', model);
     const ratios = String(model.ratio || '9:16,16:9,1:1').split(',').map(v => v.trim());
     const seconds = String(model.seconds || '5,10,15').split(',').map(v => Number(v.trim()));
     if (!ratios.length || ratios.some(v => !/^\d+:\d+$/.test(v)) || !seconds.length || seconds.some(v => !Number.isInteger(v) || v <= 0 || v > 3600)) {
-      throw new Error('异步视频模型比例或时长配置无效');
+      throw invalid('异步视频模型比例或时长配置无效', model);
     }
     const values = [...new Set(seconds)].sort((a, b) => a - b);
     const limits: ModelInputLimits = { ...defaultRoutingLimits(),
@@ -79,7 +92,7 @@ export async function fetchAsyncVideoModels(channel: AsyncVideoChannel, fetchImp
       duration: { mode: 'options', min: values[0], max: values[values.length - 1], step: 1, values } };
     return { name: model.name.trim(), limits: asyncVideoConfirmedLimits(model.name.trim(), limits) };
   });
-  if (new Set(entries.map((model: AsyncVideoModel) => model.name)).size !== entries.length) throw new Error('异步视频模型名称重复');
+  if (new Set(entries.map((model: AsyncVideoModel) => model.name)).size !== entries.length) throw invalid('异步视频模型名称重复');
   return entries;
 }
 import { responseDiagnostic, upstreamDiagnostic, diagnosticJson } from './upstreamDiagnostic.js';
