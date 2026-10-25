@@ -385,9 +385,10 @@ export class ChannelService {
   static createChannel(data: any) {
     let { name, type, baseUrl, apiKey, modelMapping, supportedModels, priority, weight, maxRetries, timeout } = data;
     if (type === 'blobdraw') {
+      const alreadyHuss = isHussChannel({ baseUrl });
       type = HUSS_CHANNEL_TYPE;
       baseUrl = 'https://www.huss.top';
-      apiKey = '';
+      if (!alreadyHuss) apiKey = '';
     }
     if (!name || (!baseUrl && !isMjChannel({ type }))) throw { status: 400, message: '渠道名称和 Base URL 不能为空' };
 
@@ -442,7 +443,8 @@ export class ChannelService {
   static updateChannel(id: number, data: any) {
     const channel = db.select().from(channels).where(eq(channels.id, id)).get();
     if (!channel) throw { status: 404, message: '渠道不存在' };
-    if (data.type === 'blobdraw') data = { ...data, type: HUSS_CHANNEL_TYPE, baseUrl: 'https://www.huss.top', apiKey: '', maxRetries: 0 };
+    if (data.type === 'blobdraw') data = { ...data, type: HUSS_CHANNEL_TYPE, baseUrl: 'https://www.huss.top',
+      ...(isHussChannel({ baseUrl: data.baseUrl ?? channel.baseUrl }) ? {} : { apiKey: '' }), maxRetries: 0 };
     const nextType = data.type ?? channel.type;
     if (isMegabyChannel({ type: nextType, baseUrl: data.baseUrl ?? channel.baseUrl })) {
       data = { ...data, type: 'megaby', baseUrl: megabyBaseUrl(data.baseUrl ?? channel.baseUrl), maxRetries: 0 };
