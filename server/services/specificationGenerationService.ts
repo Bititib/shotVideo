@@ -208,7 +208,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
     queryFailures = 0;
     patch(id, { upstreamQueryError: null });
     const progressKnown = task.progressKnown ?? (typeof task.progress === 'number' && Number.isFinite(task.progress));
-    const message = task.status === 'queued' ? '渠道已受理，正在排队'
+    const message = isHussChannel(channel) && task.storagePending ? 'HUSS 已生成，正在保存成品；继续查询原任务' : task.status === 'queued' ? '渠道已受理，正在排队'
       : ['completed', 'success', 'succeeded', 'done'].includes(task.status) ? '上游已完成，正在保存结果'
       : progressKnown ? '视频生成中' : '视频生成中，渠道暂未提供百分比';
     patch(id, { progress: task.progress, progressKnown, upstreamStatus: task.status, progressText: message,
@@ -229,7 +229,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       } catch (error: any) {
         console.warn('[specification] result save failed', id, error.message);
         const detail = transportDiagnostic(channel.type, '上游已完成，结果保存失败；正在重试保存', error, channel.apiKey);
-        patch(id, isMegabyChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
+        patch(id, isMegabyChannel(channel) || isHussChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
       }
       if (localized) {
         try { complete(id, [localized]); if (isMegabyChannel(channel)) patch(id, { resultSaveError: null }); }
@@ -783,3 +783,39 @@ export function resumeSpecificationTasks() {
   }
 }
 import { transportDiagnostic } from './upstreamDiagnostic.js';
+
+/** Resume the original specification executor and reservation; never create a new paid task. */
+export function recoverSpecificationVideo(id: number) {
+  const row = db.select().from(contents).where(eq(contents.id, id)).get();
+  if (!row || row.type !== 'video') throw fail('视频任务不存在', 404);
+  const meta = metadata(id);
+  if (!meta.managedSpecification || meta.batchItemId) throw fail('该记录不属于单条规格视频任务', 409);
+  if (row.status === 'completed') return { status: 'completed', message: '任务已完成，未重复扣费', item: row, chargedAmount: 0 };
+  if (active.has(id)) return { status: 'processing', message: '原任务正在查询或保存结果，未重复启动', chargedAmount: 0 };
+  if (['failed', 'cancelled', 'canceled'].includes(row.status) || meta.billingStatus === 'refunded' || meta.queueRefunded)
+    throw fail('该任务已结束或退款，不能按原预扣自动恢复，请先核查账单', 409);
+  const reservation = meta.billingReservationId
+    ? sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(meta.billingReservationId) as any : null;
+  const context = reservation ? JSON.parse(reservation.context || '{}') : {};
+  if (!reservation || !['reserved', 'review'].includes(reservation.state)
+    || Number(context.contentId) !== id || Number(context.userId) !== Number(row.userId)
+    || (context.tokenId || meta.tokenId) && Number(context.tokenId) !== Number(meta.tokenId)
+    || !Number.isFinite(Number(meta.reservedCost)) || Math.abs(Number(reservation.amount) - Number(meta.reservedCost)) > 0.000001
+    || Math.abs(Number(reservation.amount) - Number(row.cost)) > 0.000001)
+    throw fail('原预扣账本状态、金额或归属不匹配，未恢复也未扣费', 409);
+  const channel = ChannelService.getChannelRaw(Number(meta.channelId), Number(meta.channelApiKeyId) || null);
+  if (!channel) throw fail('原任务渠道不可用，未重新生成', 409);
+  const taskId = String(meta.videoId || meta.upstreamTaskId || '').trim();
+  if (!taskId && !(isHussChannel(channel) && meta.hussIdempotencyKey)) throw fail('缺少原任务 ID，请先补录；不会重新提交生成', 409);
+  if (videoSubmissionPending(id, meta)) return { status: 'processing', message: '原提交仍在执行，请等待保存任务编号', chargedAmount: 0 };
+  active.add(id);
+  try {
+    patch(id, { ...(taskId ? { videoId: taskId } : {}), requiresReview: false, reviewKind: null,
+      error: null, failureReason: null, upstreamQueryError: null, recoveryPreviousError: meta.error || meta.recoveryPreviousError,
+      progressText: '正在恢复原任务查询，未重新生成或扣费', recoveryRequestedAt: new Date().toISOString() }, 'processing');
+    const pending = taskId ? pollVideo(id, channel, taskId, () => {}) : resumeHussReceipt(id, channel, meta.hussIdempotencyKey);
+    void pending.catch((error: any) => handleUnexpectedGenerationError(id, transportDiagnostic(channel.type, '原任务恢复', error, channel.apiKey)))
+      .finally(() => active.delete(id));
+  } catch (error) { active.delete(id); throw error; }
+  return { status: 'processing', message: '已恢复原任务查询和结果保存，未重新生成或扣费', chargedAmount: 0 };
+}

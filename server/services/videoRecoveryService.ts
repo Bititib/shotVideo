@@ -429,6 +429,13 @@ export class VideoRecoveryService {
   }
 
   static async recover(contentId: number) {
+    const original = db.select().from(contents).where(eq(contents.id, contentId)).get();
+    const originalMeta = parseMetadata(original?.metadata);
+    // Dispatch BEFORE the legacy inspector: provider protocol and ledger belong to the original executor.
+    if (originalMeta.managedSpecification && !originalMeta.batchItemId) {
+      const { recoverSpecificationVideo } = await import('./specificationGenerationService.js');
+      return recoverSpecificationVideo(contentId);
+    }
     const inspection = await this.inspect(contentId);
     const batchRecord = db.select().from(contents).where(eq(contents.id, contentId)).get();
     const batchMetadata = parseMetadata(batchRecord?.metadata);

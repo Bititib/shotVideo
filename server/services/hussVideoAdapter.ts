@@ -89,16 +89,20 @@ export async function submitHussVideo(channel: HussChannel, input: HussVideoInpu
   const id = result?.id ?? result?.data?.id;
   if ((typeof id !== 'string' && typeof id !== 'number') || !String(id).trim()) throw new HussApiError(hussFailure('未返回任务编号，提交结果待核实', result, 202, undefined, channel.apiKey), 202, true); return String(id);
 }
-export function normalizeHussTask(raw: any, baseUrl: string) {
+export function normalizeHussTask(raw: any, baseUrl: string, taskId?: string) {
   const data = raw?.data && typeof raw.data === 'object' ? raw.data : raw; const original = String(data?.status || '').toLowerCase();
-  const status = ({ queued: 'queued', pending: 'queued', processing: 'running', in_progress: 'running', running: 'running', completed: 'completed', succeeded: 'completed', success: 'completed', failed: 'failed', rejected: 'failed', cancelled: 'cancelled', canceled: 'cancelled' } as Record<string, string>)[original];
+  if (taskId && [data?.id, data?.task_id].some(id => id != null && String(id) !== taskId)) throw new Error('HUSS 返回的任务编号不一致，继续核查原任务');
+  let status = ({ queued: 'queued', pending: 'queued', processing: 'running', in_progress: 'running', running: 'running', completed: 'completed', succeeded: 'completed', success: 'completed', failed: 'failed', rejected: 'failed', cancelled: 'cancelled', canceled: 'cancelled' } as Record<string, string>)[original];
   if (!status) throw new Error(hussFailure('任务响应未包含有效状态 ' + original, data)); const rawUrl = data?.url || data?.output?.url || data?.output?.video_url || data?.video_url || '';
+  const storagePending = status === 'completed' && data?.storage_status === 'pending';
+  if (storagePending) status = 'running';
+  if (status === 'completed' && !rawUrl) throw new Error(hussFailure('任务已完成但缺少成品地址，继续查询原任务', data));
   const url = rawUrl ? new URL(rawUrl, hussApiBase(baseUrl) + '/') : null; if (url && (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)) throw new Error('HUSS 视频结果地址无效');
-  return { status, progress: Math.max(0, Math.min(100, Number(data?.progress) || (status === 'completed' ? 100 : 0))), resultUrl: status === 'completed' ? url?.href || '' : '', error: typeof data?.error === 'string' ? data.error : data?.error?.message || data?.message || '', errorCode: data?.error?.code || data?.error_code || '' };
+  return { status, storagePending, progress: Math.max(0, Math.min(100, Number(data?.progress) || (status === 'completed' ? 100 : 0))), resultUrl: status === 'completed' ? url?.href || '' : '', error: typeof data?.error === 'string' ? data.error : data?.error?.message || data?.message || '', errorCode: data?.error?.code || data?.error_code || '' };
 }
 export async function pollHussVideo(channel: HussChannel, taskId: string) {
   const raw = await hussRequest(channel, '/videos/' + encodeURIComponent(taskId));
-  const task = normalizeHussTask(raw, channel.baseUrl);
+  const task = normalizeHussTask(raw, channel.baseUrl, taskId);
   if (['failed', 'cancelled'].includes(task.status)) task.error = hussFailure('任务 ' + taskId + ' ' + task.status, raw?.data || raw, undefined, undefined, channel.apiKey);
   return task;
 }
