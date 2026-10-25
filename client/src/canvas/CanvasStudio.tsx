@@ -654,7 +654,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
   const miniScale = Math.min(148 / Math.max(miniBounds.width, 1), 78 / Math.max(miniBounds.height, 1));
   const visibleNodes = doc.nodes.filter(n => intersects(n, screenToWorld({ x: -400, y: -400 }, doc.view), screenToWorld({ x: size.width + 400, y: size.height + 400 }, doc.view)) || selected.includes(n.id));
   const mjImages = active ? latestMjImages(active) : [];
-  const composerWidth = Math.min(550, Math.max(240, size.width - 24));
+  const composerWidth = Math.min(760, Math.max(240, size.width - 24));
   const nodeLeft = active ? active.x * doc.view.zoom + doc.view.x : 0;
   const nodeRight = active ? nodeLeft + active.width * doc.view.zoom : 0;
   const belowNode = active ? (active.y + active.height) * doc.view.zoom + doc.view.y + 16 : size.height - 530;
@@ -666,14 +666,17 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
   const composerTop = active ? belowNode : Math.max(70, size.height - composerHeight - 90);
   const focusActive = () => {
     if (!active) return;
-    const available = Math.max(100, size.height - (panel ? composerHeight : 0) - 190);
+    const panelHeight = composerElement.current?.getBoundingClientRect().height || composerHeight;
+    const available = Math.max(100, size.height - (panel ? panelHeight : 0) - 190);
     const zoom = Math.min(1, available / active.height, (size.width - 60) / active.width);
     update({...docRef.current, view:{zoom, x:(size.width-active.width*zoom)/2-active.x*zoom, y:80-active.y*zoom}});
   };
   useEffect(() => {
     if (!panel || !active) return;
     // Reframe only when opening/selecting a node, not while the user pans or drags it.
-    if (composerTop + composerHeight > size.height - 90 || active.y * doc.view.zoom + doc.view.y < 70
+    // Read the mounted panel before ResizeObserver has delivered its first measurement.
+    const panelHeight = composerElement.current?.getBoundingClientRect().height || composerHeight;
+    if (composerTop + panelHeight > size.height - 90 || active.y * doc.view.zoom + doc.view.y < 70
       || composerLeft < 12 || composerLeft + composerWidth > size.width - 12) focusActive();
   }, [panel, active?.id]);
   const contextNode = doc.nodes.find(n => n.id === context?.nodeId);
