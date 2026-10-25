@@ -16,11 +16,11 @@ import { contentApi } from '../client/src/api/content';
 import { fetchImageModels } from '../client/src/api/imageGen';
 import { MJ_MODEL_ID, mjLimits } from '../shared/mj';
 
-vi.mock('../client/src/api/imageGen', () => ({ fetchImageModels: vi.fn().mockResolvedValue([{ id: 'test-image', name: 'Test Image', available: true }]), downloadGeneratedImage: vi.fn() }));
-vi.mock('../client/src/api/video', () => ({ fetchVideoQuote: vi.fn(async (model, resolution, seconds) => ({ model, resolution, seconds, cost: 1, billingType: 'per_call' })), fetchVideoModels: vi.fn().mockResolvedValue([{ id: 'ad-seedance-2.5-480p', name: 'AD Multi', available: true, rates: { '480p': 1 }, allowedSeconds: [5] }, { id: 'test-video', name: 'Test Video', available: true, rates: { '720p': 1 }, allowedSeconds: [5] }, { id: 'veo-omni-flash-video-edit', name: 'Test Video Edit', available: true, rates: { '720p': 1 }, allowedSeconds: [10] }]) }));
+vi.mock('../client/src/api/imageGen', () => ({ getCachedImageModels: () => [], fetchImageModels: vi.fn().mockResolvedValue([{ id: 'test-image', name: 'Test Image', available: true }]), downloadGeneratedImage: vi.fn() }));
+vi.mock('../client/src/api/video', () => ({ getCachedVideoModels: () => [], fetchVideoQuote: vi.fn(async (model, resolution, seconds) => ({ model, resolution, seconds, cost: 1, billingType: 'per_call' })), fetchVideoModels: vi.fn().mockResolvedValue([{ id: 'ad-seedance-2.5-480p', name: 'AD Multi', available: true, rates: { '480p': 1 }, allowedSeconds: [5] }, { id: 'test-video', name: 'Test Video', available: true, rates: { '720p': 1 }, allowedSeconds: [5] }, { id: 'veo-omni-flash-video-edit', name: 'Test Video Edit', available: true, rates: { '720p': 1 }, allowedSeconds: [10] }]) }));
 vi.mock('../client/src/canvas/videoInputs', async importOriginal => ({ ...await importOriginal<any>(), readVideoDuration: vi.fn().mockResolvedValue(8) }));
 vi.mock('../client/src/api/content', () => ({ contentApi: { getById: vi.fn().mockResolvedValue({ status: 'processing' }) } }));
-vi.mock('../client/src/api/analysis', () => ({ analysisApi: { getTtsModels: vi.fn().mockResolvedValue([{ modelId: 'test-tts', displayName: 'Test Voice', voices: ['Zephyr'] }]), generateTts: vi.fn().mockResolvedValue({ mimeType: 'audio/wav', audioBase64: 'aGVsbG8=' }) } }));
+vi.mock('../client/src/api/analysis', () => ({ getCachedTtsModels: () => [], analysisApi: { getTtsModels: vi.fn().mockResolvedValue([{ modelId: 'test-tts', displayName: 'Test Voice', voices: ['Zephyr'] }]), generateTts: vi.fn().mockResolvedValue({ mimeType: 'audio/wav', audioBase64: 'aGVsbG8=' }) } }));
 vi.mock('../client/src/canvas/generation', async importOriginal => ({ ...await importOriginal<any>(), referenceDataUrl: vi.fn().mockResolvedValue('data:image/png;base64,aGVsbG8='), streamGeneration: vi.fn() }));
 
 beforeEach(() => {

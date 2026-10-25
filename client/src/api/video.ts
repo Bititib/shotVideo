@@ -1,4 +1,5 @@
 import { publicGenerationEvent } from '../../../shared/generationMessages';
+import { requestModelList, isGenerationModel } from './modelListRequest';
 import type { ModelInputLimits } from '../../../shared/modelRouting';
 import type { VideoModelStatus } from '../../../shared/videoModelStatus';
 
@@ -88,21 +89,17 @@ function persistVideoModels(data: VideoModel[], identity: string) {
 }
 
 /** 获取可用的视频模型列表；短时缓存并合并并发请求，避免页面切换/聚焦时重复下载。 */
-export async function fetchVideoModels(): Promise<VideoModel[]> {
+export async function fetchVideoModels(force = false): Promise<VideoModel[]> {
   const token = localStorage.getItem('token');
   const cacheKey = token || '';
   const now = Date.now();
-  if (videoModelCache?.token === cacheKey && videoModelCache.expiresAt > now) {
+  if (!force && videoModelCache?.token === cacheKey && videoModelCache.expiresAt > now) {
     return videoModelCache.data;
   }
   if (videoModelRequest?.token === cacheKey) return videoModelRequest.promise;
 
-  const headers: Record<string, string> = {};
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const promise = fetch('/api/video/models', { headers })
-    .then(async (res) => {
-      if (!res.ok) throw new Error('获取模型列表失败');
-      const data = await res.json() as VideoModel[];
+  const promise = requestModelList<VideoModel>('/api/video/models', token, isGenerationModel)
+    .then((data) => {
       videoModelCache = { token: cacheKey, expiresAt: Date.now() + MODEL_CACHE_TTL_MS, data };
       if ((localStorage.getItem('token') || '') === cacheKey) persistVideoModels(data, cacheKey);
       return data;

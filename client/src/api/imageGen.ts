@@ -1,4 +1,5 @@
 import type { ModelAvailability } from '../../../shared/upstreamAvailability';
+import { requestModelList, isGenerationModel } from './modelListRequest';
 import { publicGenerationEvent } from '../../../shared/generationMessages';
 import type { ModelInputLimits } from '../../../shared/modelRouting';
 import { legacyImageReferenceLimit } from '../../../shared/imageCapabilities';
@@ -100,12 +101,8 @@ export async function fetchImageModels(force = false): Promise<ImageModel[]> {
   }
   if (imageModelRequest?.token === cacheKey) return imageModelRequest.promise;
 
-  const headers: Record<string, string> = {};
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const promise = fetch('/api/image-gen/models', { headers })
-    .then(async (res) => {
-      if (!res.ok) throw new Error('获取模型列表失败');
-      const data = await res.json() as ImageModel[];
+  const promise = requestModelList<ImageModel>('/api/image-gen/models', token, isGenerationModel)
+    .then((data) => {
       imageModelCache = { token: cacheKey, expiresAt: Date.now() + MODEL_CACHE_TTL_MS, data };
       if ((localStorage.getItem('token') || '') === cacheKey) persistImageModels(data, cacheKey);
       return data;

@@ -9,16 +9,17 @@ import type { CSSProperties } from 'react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUpRight, Video, Sparkles, X, RefreshCw, Paperclip } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { fetchImageModels, type ImageModel } from '../api/imageGen';
-import { fetchVideoModels, type VideoModel } from '../api/video';
+import type { ImageModel } from '../api/imageGen';
+import type { VideoModel } from '../api/video';
+import { useCanvasModels, type CanvasModel } from './useCanvasModels';
 import { snumomSdMiniSecondsForResolution } from '../utils/videoModelCapabilities';
 import { useAuthStore } from '../stores/authStore';
-import { analysisApi } from '../api/analysis';
 import { canvasVideoReferenceLimits } from '../../../shared/canvasVideoReferences';
 import { VIDEO_EDIT_MODEL, videoInputError } from './videoInputs';
 import type { CanvasDocument, CanvasNode, GenerationDraft } from './model';
 
 export type GenerateOptions = GenerationDraft & { inputPrompt?: string; expectedCost?: number; routingLimits?: ModelInputLimits };
+const EMPTY_MODELS: CanvasModel[] = [];
 type Props = { document?: CanvasDocument; projects?: CanvasDocument[]; onMentionReference?: (node: CanvasNode, draft: GenerationDraft, start: number, end: number) => {prompt: string; caret: number; bindings: ReferenceBindings} | {error: string} | undefined; onPickReferences?: (kind: GenerationDraft['kind']) => void; onFocus?: () => void; onReorderReference?: (id: string, direction: number) => void; onUploadReferences?: (kind: GenerationDraft['kind']) => void; onDropReferences?: (kind: GenerationDraft['kind'], files: File[]) => void; importing?: boolean; key?: string; draft?: GenerationDraft; onDraft?: (draft: GenerationDraft) => void; references: CanvasNode[]; selected?: CanvasNode; busy: boolean; onClose: () => void; onGenerate: (options: GenerateOptions) => void; onConnect: () => void; onRemoveReference?: (id: string) => void };
 export default function GeneratorPanel({ document: canvasDocument, projects, onMentionReference, onPickReferences, onFocus, onReorderReference, draft, onDraft, references, selected, busy, onClose, onGenerate, onRemoveReference, onUploadReferences, onDropReferences, importing }: Props) {
   const [menu, setMenu] = useState<'models' | 'params' | null>(null);
@@ -52,9 +53,10 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
   const bindings = bindReferences(savedBindings, references);
   useEffect(() => { if(JSON.stringify(bindings) !== JSON.stringify(savedBindings)) setBindings(bindings); }, [JSON.stringify(bindings)]);
   const [model, setModel] = useState(draft?.model ?? selected?.model ?? '');
-  const [images, setImages] = useState<ImageModel[]>([]);
-  const [videos, setVideos] = useState<VideoModel[]>([]);
-  const [audios, setAudios] = useState<(ImageModel & { voices?: string[] })[]>([]);
+  const { models: catalog, loading, refreshing, error, refresh } = useCanvasModels(kind, user?.id, model);
+  const images = kind === 'image' ? catalog : EMPTY_MODELS;
+  const videos = kind === 'video' ? catalog : EMPTY_MODELS;
+  const audios = kind === 'audio' ? catalog : EMPTY_MODELS;
   const [count, setCount] = useState(draft?.count || 1);
   const [videoMode, setVideoMode] = useState<NonNullable<GenerationDraft['videoMode']>>(draft?.videoMode || (selected?.kind === 'video' && selected.src && !selected.generator ? 'edit' : 'reference'));
   const referenceSignature = references.map(n => n.id + ':' + n.kind).join('|');
@@ -75,40 +77,10 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
   useEffect(() => {
     if (kind === 'audio') setVoice(current => voices.includes(current) ? current : (voices[0] || ''));
   }, [kind, voices]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [retry, setRetry] = useState(0);
   const [ratio, setRatio] = useState(draft?.ratio ?? selected?.ratio ?? '16:9');
   const [resolution, setResolution] = useState(draft?.resolution ?? selected?.settings?.resolution ?? (selected?.kind === 'video' ? '720p' : '1K'));
   const [seconds, setSeconds] = useState(draft?.seconds ?? selected?.settings?.seconds ?? 5);
   useEffect(() => { onDraft?.({ kind, prompt, model, ratio, resolution, seconds, count, videoMode, firstFrameId, lastFrameId, voice, referenceBindings: bindings }); }, [kind, prompt, model, ratio, resolution, seconds, count, videoMode, firstFrameId, lastFrameId, voice, JSON.stringify(bindings)]);
-  useEffect(() => {
-    if (kind !== 'audio') return;
-    let cancelled = false;
-    analysisApi.getTtsModels().then(data => { if (!cancelled) setAudios(data.map(m => ({ id: m.modelId, name: m.displayName, description: m.description || '', available: true, rate: m.rate, voices: m.voices }))); }).catch(() => { if (!cancelled) setError('音频模型加载失败，请登录或重试。'); });
-    return () => { cancelled = true; };
-  }, [kind, user?.id, retry]);
-  useEffect(() => {
-    let cancelled = false; setLoading(true); setError('');
-    Promise.allSettled([fetchImageModels(), fetchVideoModels()]).then(([a, b]) => {
-      if (cancelled) return;
-      if (a.status === 'fulfilled') setImages(a.value);
-      if (b.status === 'fulfilled') setVideos(b.value.filter(m => m.available));
-      if (a.status === 'rejected' || b.status === 'rejected') setError('部分模型暂时无法加载，请重试。');
-      setLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [retry, user?.id]);
-  useEffect(() => {
-    if (kind !== 'image') return;
-    let cancelled = false;
-    const refresh = () => { fetchImageModels(true).then(data => { if (!cancelled) setImages(data); }).catch(() => {}); };
-    const interval = window.setInterval(refresh, 15_000);
-    const deadline = images.find(m => m.id === model)?.retryAt;
-    const timer = deadline && deadline > Date.now() ? window.setTimeout(refresh, deadline - Date.now() + 100) : undefined;
-    window.addEventListener('focus', refresh);
-    return () => { cancelled = true; window.clearInterval(interval); window.clearTimeout(timer); window.removeEventListener('focus', refresh); };
-  }, [kind, model, user?.id, images.find(m => m.id === model)?.retryAt]);
   const models = kind === 'image' ? images : kind === 'audio' ? audios : videos.filter(m => videoMode === 'edit' ? m.id === VIDEO_EDIT_MODEL : videoMode === 'multimodal' ? Boolean(m.routingLimits ? m.routingLimits.maxVideos || m.routingLimits.maxAudios : canvasVideoReferenceLimits(m.id)) : m.id !== VIDEO_EDIT_MODEL);
   const activeModel = models.find(m => m.id === model);
   const video = kind === 'video' ? videos.find(m => m.id === model) : undefined;
@@ -118,7 +90,7 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
   const resolutions = managedLimits ? managedLimits.resolutions : kind === 'image' ? (model === 'gpt-image-2' ? ['1K', '4K'] : ['1K', '2K', '4K']) : Object.keys(video?.rates ?? { '720p': 0 });
   const durations = kind === 'video' && videoMode === 'edit' ? [10] : model === 'sd-mini' ? [snumomSdMiniSecondsForResolution(resolution)]
     : video?.allowedSeconds?.length ? video.allowedSeconds : [5, 10, 15].filter(n => !video?.maxSeconds || n <= video.maxSeconds);
-  useEffect(() => { if (!loading && !error && !models.some(m => m.id === model)) setModel(models.find(m => m.id === selected?.model)?.id || models.find(m => m.available)?.id || models[0]?.id || ''); }, [kind, videoMode, images, videos, audios, model, loading, error]);
+  useEffect(() => { if (!loading && !models.some(m => m.id === model)) setModel(models.find(m => m.id === selected?.model)?.id || models.find(m => m.available)?.id || models[0]?.id || ''); }, [kind, videoMode, images, videos, audios, model, loading]);
   useEffect(() => { if (!loading && !resolutions.includes(resolution)) setResolution(resolutions[0] || (kind === 'image' ? '1K' : '720p')); }, [kind, model, resolutions.join(','), loading]);
   useEffect(() => { if (!loading && !durations.includes(seconds)) setSeconds(durations[0] || 5); }, [model, resolution, durations.join(','), loading]);
   const ratios = managedLimits ? managedLimits.ratios : kind === 'video' && videoMode === 'edit' ? ['16:9', '9:16'] : ['16:9', '9:16', '1:1', '4:3', '3:4'];
@@ -164,7 +136,7 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
       {inputError && (model || !inputError.includes('请选择可用')) && <p className="studio-inline-error" role="alert">{inputError}</p>}
       {kind === 'video' && videoMode === 'frames' && <div className="studio-frame-slots"><label>首帧<select value={firstFrameId || imageRefs[0]?.id || ''} onChange={e => setFirstFrame(e.target.value)}><option value="">选择参考图</option>{imageRefs.map(n => <option key={n.id} value={n.id}>{n.title}</option>)}</select></label><label>尾帧（选填）<select value={lastFrameId} onChange={e => setLastFrame(e.target.value)}><option value="">不指定</option>{imageRefs.map(n => <option key={n.id} value={n.id}>{n.title}</option>)}</select></label>{!supportsFrames && <small>首尾帧模式请选择 Veo 或 Wan 3.0 模型。</small>}</div>}
       {kind === 'image' && activeModel && !activeModel.available && <p className="studio-inline-error" role="status">{modelAvailabilityMessage(activeModel)}</p>}
-      {error && <div className="studio-inline-error">{error}<button onClick={() => setRetry(n => n + 1)}><RefreshCw size={13} /> 重试</button></div>}
+      {error && <div className="studio-inline-error" role="alert">{error}<button disabled={refreshing} onClick={refresh}><RefreshCw size={13} /> 重试</button></div>}
       {mentionResult.error && <p className="studio-inline-error" role="alert">{mentionResult.error}</p>}
       {missingRef && <p className="studio-inline-error">此模型需要参考图，请先选中或连接一张图片。</p>}
     </div><div className="studio-prompt-count" aria-label="提示词字数">{prompt.length} 字符</div><div className="studio-composer-tools"><select onPointerDown={() => setMenu(null)} aria-label="创作类型" value={kind} onChange={e => setKind(e.target.value as GenerationDraft['kind'])}><option value="image">图像生成</option><option value="video">视频生成</option><option value="audio">音频生成</option></select><button ref={modelTrigger} className="studio-model-trigger" aria-label="生成模型" aria-haspopup="listbox" aria-expanded={menu === 'models'} title={activeModel?.name || '选择模型'} disabled={loading || !models.length} onClick={() => {setSearch('');setMenu(menu === 'models' ? null : 'models');}}><span>{loading ? '加载模型…' : activeModel?.name || '暂无可用模型'}</span><span aria-hidden="true">⌄</span></button><button ref={paramsTrigger} className="studio-params-trigger" aria-label="生成参数" aria-expanded={menu === 'params'} onClick={() => setMenu(menu === 'params' ? null : 'params')}>{kind === 'audio' ? voice : ratio+' · '+resolution+' · '+(kind === 'video' ? seconds+' 秒' : count+' 张')} ⌄</button>

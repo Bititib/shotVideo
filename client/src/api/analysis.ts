@@ -1,5 +1,6 @@
 import type { TtsVoice } from '../../../shared/tts';
 import { api } from './client';
+import { requestModelList } from './modelListRequest';
 
 export type AnalysisModel = { modelId: string; displayName: string };
 export type StudioVoice = { voiceId: string; displayName: string; type: 'cloned' | 'prebuilt'; state: string; createdAt?: string };
@@ -108,10 +109,11 @@ export const analysisApi = {
       return Promise.resolve(ttsModelCache.data);
     }
     if (ttsModelRequest?.token === token) return ttsModelRequest.promise;
-    const promise = api.get<TtsModel[]>('/analysis/tts-models')
+    const promise = requestModelList<TtsModel>('/api/analysis/tts-models', token,
+      item => Boolean(item && typeof item.modelId === 'string' && typeof item.displayName === 'string'))
       .then((data) => {
         ttsModelCache = { token, expiresAt: Date.now() + MODEL_CACHE_TTL_MS, data };
-        persistModels(TTS_MODEL_CACHE_KEY, token, data);
+        if ((localStorage.getItem('token') || '') === token) persistModels(TTS_MODEL_CACHE_KEY, token, data);
         return data;
       })
       .finally(() => {
