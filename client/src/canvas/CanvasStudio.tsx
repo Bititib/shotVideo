@@ -646,7 +646,14 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     try {
       if (node.src.startsWith('/api/media/')) await downloadGeneratedImage(node.src, /\.[a-z0-9]{2,5}$/i.test(node.title) ? node.title : `${node.title}.${node.kind==='image'?'png':node.kind==='video'?'mp4':'wav'}`);
       else if (node.kind === 'image') await downloadGeneratedImage(node.src, `${node.title}.png`);
-      else { const a = document.createElement('a'); a.href = node.src; a.download = `${node.title}.${node.kind === 'audio' ? /audio\/(mpeg|mp3)/.test(node.src) ? 'mp3' : /audio\/ogg/.test(node.src) ? 'ogg' : /audio\/webm/.test(node.src) ? 'webm' : 'wav' : 'mp4'}`; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.click(); }
+      else {
+        const a = document.createElement('a');
+        a.download = `${node.title}.${node.kind === 'audio' ? /audio\/(mpeg|mp3)/.test(node.src) ? 'mp3' : /audio\/ogg/.test(node.src) ? 'ogg' : /audio\/webm/.test(node.src) ? 'webm' : 'wav' : 'mp4'}`;
+        // Use the same attachment endpoint as the video page: cross-origin download attributes are ignored by browsers.
+        a.href = node.kind === 'video' && !/^(data:|blob:)/.test(node.src)
+          ? `/api/video/download?url=${encodeURIComponent(node.src)}&filename=${encodeURIComponent(a.download)}` : node.src;
+        a.target = '_blank'; a.rel = 'noopener noreferrer'; a.click();
+      }
     } catch (error: any) { setNotice(error.message || '下载失败，请重试'); }
   };
   const groups = [...new Set(doc.nodes.map(n => n.group).filter(Boolean))].map(id => ({ id, nodes: doc.nodes.filter(n => n.group === id) }));
@@ -736,7 +743,9 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
                   : <button className="studio-node-empty" onPointerDown={e => begin(e, [node.id])} onClick={e => { if (e.detail === 0) { setSelected([node.id]); setPanel(false); } }}>{node.job?.status === 'running' ? node.job.message === '视频已生成，正在等待结果交付' ? <CheckCircle2 size={28} /> : <Loader2 size={28} className="studio-spin" /> : <Icon size={30} />}<strong>{node.job ? node.job.status === 'running' ? (node.job.message === '视频已生成，正在等待结果交付' ? '已生成，等待交付' : node.job.message === '视频已生成，正在保存到本站存储' ? '正在保存结果' : '正在创作中') : node.job.status === 'error' ? '生成未完成' : '请核实任务结果' : node.kind === 'image' ? '下一张好作品，从这里开始' : node.kind === 'audio' ? '让文字拥有声音' : '让画面动起来'}</strong><span>{publicCanvasJobMessage(node.job) || '连接参考素材，双击节点开始创作'}</span></button>}
               {node.job && <div className="studio-node-job" role="status" title={publicCanvasJobMessage(node.job)}><span>{publicCanvasJobMessage(node.job)}</span>{node.job.status === 'running' && <progress aria-label="生成进度" max={100} value={node.job.progress == null ? undefined : Math.min(100, Math.max(0,node.job.progress))}/>}</div>}
               {node.kind !== 'text' && <button className="studio-node-pick" disabled={node.job?.status === 'running'} onPointerDown={e=>e.stopPropagation()} onClick={()=>{setSelected([node.id]);openAssets(node.id,'fill');}}>从素材库选择{node.src ? ' / 替换' : ' / 上传'}</button>}
-              <footer><span>{node.kind === 'text' ? `${node.text.length} 字` : node.src ? '素材已就绪' : node.job?.progress != null ? `${Math.round(node.job.progress)}%` : '等待创作'}</span>{node.job?.status === 'done' ? <CheckCircle2 size={12} /> : <span>{node.ratio || (node.kind === 'text' ? 'NOTE' : 'CREATIVE')}</span>}</footer>
+              <footer className={node.src && node.kind !== 'text' ? 'has-download' : undefined}><span>{node.kind === 'text' ? `${node.text.length} 字` : node.src ? '素材已就绪' : node.job?.progress != null ? `${Math.round(node.job.progress)}%` : '等待创作'}</span>{node.src && node.kind !== 'text'
+                ? <button className="studio-node-download" aria-label={`下载${node.kind === 'video' ? '视频' : node.kind === 'image' ? '图片' : '音频'} ${node.title}`} title="下载当前素材" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); void downloadNode(node); }}><Download size={14}/><span>下载{node.kind === 'video' ? '视频' : node.kind === 'image' ? '图片' : '音频'}</span></button>
+                : node.job?.status === 'done' ? <CheckCircle2 size={12} /> : <span>{node.ratio || (node.kind === 'text' ? 'NOTE' : 'CREATIVE')}</span>}</footer>
               <button className={`studio-port port-out ${connecting === node.id || linkPreview ? 'ready' : ''} ${linkPreview?.target === node.id ? linkPreview.valid ? 'link-valid' : 'link-invalid' : ''}`} aria-label={`从 ${node.title} 连接`} title="按住拖拽连接到下一步，也可点击连线" onPointerDown={e => beginLink(e, node, 'out')} onClick={e => { e.stopPropagation(); if (suppressPortClick.current && e.detail !== 0) { suppressPortClick.current = false; return; } connect(node.id); }} />
               {isSelected && <button className="studio-resize" aria-label="调整素材大小" title="拖动调整大小" onPointerDown={e => begin(e, [node.id], true)} />}
             </article>; })}

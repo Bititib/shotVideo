@@ -13,7 +13,7 @@ import { cropBounds } from '../client/src/canvas/ImageTools';
 import { readVideoDuration } from '../client/src/canvas/videoInputs';
 import { fetchVideoModels } from '../client/src/api/video';
 import { contentApi } from '../client/src/api/content';
-import { fetchImageModels } from '../client/src/api/imageGen';
+import { fetchImageModels, downloadGeneratedImage } from '../client/src/api/imageGen';
 import { MJ_MODEL_ID, mjLimits } from '../shared/mj';
 
 vi.mock('../client/src/api/imageGen', () => ({ getCachedImageModels: () => [], fetchImageModels: vi.fn().mockResolvedValue([{ id: 'test-image', name: 'Test Image', available: true }]), downloadGeneratedImage: vi.fn() }));
@@ -43,6 +43,35 @@ function mount(initial = newDocument(), projects = [initial]) {
 }
 
 describe('canvas user workflows', () => {
+  it('downloads a video directly from an unselected node through the existing attachment endpoint', async () => {
+    const node = {...newNode('video',{x:100,y:100}),title:'生成视频',src:'https://media.example.test/result.mp4?signature=test'};
+    const board=mount({...newDocument(),nodes:[node]});
+    let href='';
+    const click=vi.spyOn(HTMLAnchorElement.prototype,'click').mockImplementation(function(){href=this.href;});
+    try {
+      const button=within(screen.getByRole('article',{name:node.title})).getByRole('button',{name:'下载视频 生成视频'});
+      fireEvent.pointerDown(button,{button:0,pointerId:1});fireEvent.pointerUp(button,{pointerId:1});fireEvent.click(button);
+      const url=new URL(href);
+      expect(url.pathname).toBe('/api/video/download');expect(url.searchParams.get('url')).toBe(node.src);expect(url.searchParams.get('filename')).toBe('生成视频.mp4');
+      expect(click).toHaveBeenCalledTimes(1);expect(screen.queryByLabelText('创作面板')).toBeNull();
+      expect(screen.queryByRole('toolbar',{name:'所选素材操作'})).toBeNull();expect(board.current().nodes[0]).toMatchObject({x:100,y:100});
+      expect(streamGeneration).not.toHaveBeenCalled();
+    } finally {click.mockRestore();}
+    await act(async()=>{});
+  });
+  it.each([['image','图片','png'],['video','视频','mp4'],['audio','音频','wav']] as const)('downloads private %s media from its own node using the authenticated helper', async (kind,label,extension) => {
+    const node={...newNode(kind,{x:100,y:100}),title:'当前结果',src:'/api/media/private-result'};
+    mount({...newDocument(),nodes:[node]});
+    fireEvent.click(within(screen.getByRole('article',{name:node.title})).getByRole('button',{name:`下载${label} 当前结果`}));
+    expect(downloadGeneratedImage).toHaveBeenCalledWith(node.src,`当前结果.${extension}`);
+    expect(streamGeneration).not.toHaveBeenCalled();await act(async()=>{});
+  });
+  it('keeps unfinished nodes without a result free of download buttons', async () => {
+    const node={...newNode('video',{x:100,y:100}),title:'等待结果',job:{status:'running' as const,requestId:'waiting',message:'正在生成',progress:30}};
+    mount({...newDocument(),nodes:[node]});
+    expect(within(screen.getByRole('article',{name:node.title})).queryByRole('button',{name:/下载/})).toBeNull();
+    await act(async()=>{});
+  });
   it('selects an MJ candidate above the node, preserves all versions and connections, and can undo the choice', async () => {
     const versions = ['old','current'].flatMap(requestId => [1,2,3,4].map(index => ({ id: requestId + index,
       src: '/' + requestId + index + '.png', model: MJ_MODEL_ID, prompt: 'a paper boat',
