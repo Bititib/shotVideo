@@ -132,8 +132,13 @@ function appendOmniReferences(
   if (materials.length > 0) form.append('materials', JSON.stringify(materials));
 }
 
-/** Build the multipart request expected by HM Studio's compatible video API. */
-export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData {
+type HmPromptOptions = Pick<HmStudioVideoOptions, 'model' | 'prompt' | 'functionMode' | 'imageSources' | 'videoSources' | 'audioSources' | 'firstFrame' | 'lastFrame'>;
+
+export class HmStudioPromptError extends Error {
+  readonly status = 400;
+}
+
+function hmVideoMode(options: HmPromptOptions): string {
   const isNova = options.model === HM_STUDIO_NOVA_MODEL || options.model === HM_STUDIO_NOVA_UPSTREAM_MODEL;
   const images = (options.imageSources || []).filter(Boolean);
   const videos = (options.videoSources || []).filter(Boolean);
@@ -151,9 +156,30 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
     }
   }
 
+  return functionMode;
+}
+
+/** Validate the actual prompt field, not JSON bytes or multipart CRLF expansion. */
+export function validateHmStudioVideoPrompt(options: HmPromptOptions): string {
+  const raw = options.prompt.trim();
+  const prompt = hmVideoMode(options) === 'omni_reference' ? replaceReferenceMarkers(raw) : raw;
+  const length = Array.from(prompt).length;
+  if (length > 8000) throw new HmStudioPromptError(`HM 视频提示词为 ${length} 个字符，超过上限 8000（含空格和换行）；请缩短后提交`);
+  return prompt;
+}
+
+/** Shared field construction. Never serialize this form for video submission. */
+export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData {
+  const prompt = validateHmStudioVideoPrompt(options);
+  const functionMode = hmVideoMode(options);
+  const isNova = options.model === HM_STUDIO_NOVA_MODEL || options.model === HM_STUDIO_NOVA_UPSTREAM_MODEL;
+  const images = (options.imageSources || []).filter(Boolean);
+  const videos = (options.videoSources || []).filter(Boolean);
+  const audios = (options.audioSources || []).filter(Boolean);
+  const explicitFrames = [options.firstFrame, options.lastFrame].filter(Boolean) as string[];
   const form = new FormData();
   form.append('model', isNova ? HM_STUDIO_NOVA_UPSTREAM_MODEL : options.model);
-  form.append('prompt', functionMode === 'omni_reference' ? replaceReferenceMarkers(options.prompt) : options.prompt);
+  form.append('prompt', prompt);
   form.append('duration', String(options.duration));
   form.append('ratio', options.ratio);
   form.append('video_resolution', options.resolution);
@@ -187,6 +213,18 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
   }
 
   return form;
+}
+
+/** URL-only HM video JSON protocol; preserve legacy upstream face processing. */
+export function buildHmStudioVideoPayload(options: HmStudioVideoOptions): Record<string, unknown> {
+  const fields = Object.fromEntries(buildHmStudioVideoForm(options).entries()) as Record<string, string>;
+  return {
+    ...fields,
+    duration: options.duration,
+    face: HM_STUDIO_UPSTREAM_FACE_ENABLED,
+    ...(fields.materials ? { materials: JSON.parse(fields.materials) } : {}),
+    ...(fields.multi_frames ? { multi_frames: JSON.parse(fields.multi_frames) } : {}),
+  };
 }
 
 /** Build the multipart request expected by HM Studio's compatible image API. */

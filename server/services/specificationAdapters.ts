@@ -12,7 +12,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { RouteCandidate } from './modelRoutingService.js';
 import type { RoutingInput } from '../../shared/modelRouting.js';
-import { buildHmStudioVideoForm, buildHmStudioImageForm, hmStudioCreateUrl, hmStudioTaskUrl, normalizeHmStudioTask } from './hmStudioAdapter.js';
+import { buildHmStudioVideoPayload, buildHmStudioImageForm, hmStudioCreateUrl, hmStudioTaskUrl, normalizeHmStudioTask } from './hmStudioAdapter.js';
 import { validateHayaVideoInput } from '../../shared/hayaVideo.js';
 import { buildSiYueTianSeedance25VideoPayload, getSiYueTianC2Model, getSiYueTianSeedance25VideoSpec } from './siYueTianVideoModels.js';
 import { getHmStudioUpstreamVideoModel, HM_STUDIO_NOVA_MODEL, HM_STUDIO_NOVA_UPSTREAM_MODEL, validateHmStudioAdditionalVideoInput } from '../../shared/hmStudioVideo.js';
@@ -212,7 +212,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
       if (error) unsupported(error);
     }
     if ((request.firstFrame || request.lastFrame) && (request.images.length || request.videos.length || request.audios.length)) unsupported('HM 独立首尾帧不能与普通参考素材混用');
-    payload = buildHmStudioVideoForm({ model: getHmStudioUpstreamVideoModel(model), prompt: request.prompt, duration: i.seconds,
+    payload = buildHmStudioVideoPayload({ model: getHmStudioUpstreamVideoModel(model), prompt: request.prompt, duration: i.seconds,
       ratio: i.ratio, resolution: i.resolution, functionMode: request.images.length || request.videos.length || request.audios.length ? 'omni_reference' : undefined, imageSources: request.images, videoSources: request.videos, audioSources: request.audios,
       firstFrame: request.firstFrame, lastFrame: request.lastFrame, localMediaBaseUrl: request.publicBaseUrl, face: true });
     url = hmStudioCreateUrl(c.baseUrl, 'video');

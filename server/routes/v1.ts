@@ -38,7 +38,8 @@ import crypto from 'crypto';
 import { env } from '../config/env.js';
 import {
   buildHmStudioImageForm,
-  buildHmStudioVideoForm,
+  validateHmStudioVideoPrompt,
+  buildHmStudioVideoPayload,
   hmStudioCreateUrl,
   hmStudioTaskUrl,
   isHmStudioChannel,
@@ -2288,6 +2289,8 @@ async function handleVideoCreation(req: Request, res: Response) {
     if (isHmStudioChannel(channel)) {
       const first = body.first_frame_url || body.first_frame || '';
       const last = body.end_frame_url || body.last_frame_url || body.last_frame || '';
+      validateHmStudioVideoPrompt({ model: upstreamModel, prompt, imageSources: image_urls,
+        videoSources: video_urls, audioSources: audio_urls, firstFrame: first, lastFrame: last, functionMode: body.function_mode });
       const count = image_urls.length;
       const prepared = await prepareHmReferenceImages([...image_urls, ...(first ? [first] : []), ...(last ? [last] : [])],
         process.env.BACKEND_URL || requestOrigin, [requestOrigin]);
@@ -2580,7 +2583,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     delete otherParams.face_processing;
 
     if (isHmStudio) {
-      const formData = buildHmStudioVideoForm({
+      const payload = buildHmStudioVideoPayload({
         localMediaBaseUrl: process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`,
         model: upstreamModel,
         prompt,
@@ -2596,12 +2599,12 @@ async function handleVideoCreation(req: Request, res: Response) {
         upstreamChannel: body.channel,
         face: true,
       });
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
       upstreamRes = await submitUpstream(upstreamUrl, {
         method: 'POST',
         headers,
-        body: formData,
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(channel.timeout || 120_000),
       });
     } else if (isWxHaidiYue) {

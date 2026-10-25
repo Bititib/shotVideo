@@ -55,13 +55,15 @@ it.each(['720p', '1080p'])('actual HM queue overrides a stale lumen channel for 
     await vi.waitFor(() => expect(db.select().from(contents).where(eq(contents.id, id)).get()?.status).toBe('failed'));
     const [url, options] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://hm.test/v1/videos/generations');
-    const form = options.body as FormData;
-    expect(form.getAll('channel')).toEqual(['nova']);
-    expect(form.get('model')).toBe('30-10-10');
-    expect(form.get('video_resolution')).toBe(resolution);
-    expect(form.get('duration')).toBe('30');
-    expect(form.get('function_mode')).toBe('omni_reference');
-    expect(JSON.parse(String(form.get('materials')))).toHaveLength(50);
+    expect(new Headers(options.headers).get('content-type')).toBe('application/json');
+    const payload = JSON.parse(String(options.body));
+    expect(payload.channel).toBe('nova');
+    expect(payload.model).toBe('30-10-10');
+    expect(payload.video_resolution).toBe(resolution);
+    expect(payload.duration).toBe(30);
+    expect(payload.face).toBe(true);
+    expect(payload.function_mode).toBe('omni_reference');
+    expect(payload.materials).toHaveLength(50);
     expect(db.select().from(users).where(eq(users.id, id)).get()?.balance).toBe(100);
     await video.failHmQueuedVideo(id, new Error('duplicate'), true);
     await video.resumePollForTask(id, db.select().from(contents).where(eq(contents.id, id)).get());
@@ -94,6 +96,32 @@ it.each([400, 401, 402, 422, 429, 503])('HM queue HTTP %s rejection closes the a
     expect(db.select().from(users).where(eq(users.id, id)).get()?.balance).toBe(100);
     expect(fetcher).toHaveBeenCalledOnce();
     expect(db.select().from(channels).where(eq(channels.id, id)).get()?.status).toBe(1);
+  } finally { vi.unstubAllGlobals(); }
+});
+
+it('rejects an old over-limit queued prompt locally and refunds its reservation exactly once', async () => {
+  const id = ++sequence;
+  db.insert(users).values({ id, email:id+'@test.invalid', username:'test', passwordHash:'test', balance:100 }).run();
+  db.insert(channels).values({ id, name:'HM old queue',type:'hmstudio',baseUrl:'https://hm.test',apiKey:'test',
+    supportedModels:'["sd2.5-301010"]',modelMapping:'{"sd2.5-301010":"30-10-10"}',status:1 }).run();
+  reserveLegacyVideo(id,7,charge => {
+    db.insert(contents).values({id,userId:id,type:'video',modelId:'sd2.5-301010',status:'queued',cost:7,
+      metadata:JSON.stringify({channelId:id,prompt:'字'.repeat(8001),resolution:'720p',seconds:4,
+        billingReservationId:charge.id,videoSubmissionState:'preparing'})}).run();
+    return id;
+  });
+  const fetcher = vi.fn(async () => { throw new Error('Must not send'); });
+  vi.stubGlobal('fetch',fetcher);
+  try {
+    video.enqueueHmStudioVideoContent(id);
+    await vi.waitFor(() => expect(db.select().from(contents).where(eq(contents.id,id)).get()?.status).toBe('failed'));
+    const row = db.select().from(contents).where(eq(contents.id,id)).get()!;
+    expect(JSON.parse(row.metadata!)).toMatchObject({billingStatus:'refunded',requiresReview:false,videoSubmissionState:'rejected'});
+    expect(JSON.parse(row.metadata!).error).toContain('8001');
+    await video.failHmQueuedVideo(id,new Error('duplicate'),true);
+    await video.resumePollForTask(id,row);
+    expect(db.select().from(users).where(eq(users.id,id)).get()?.balance).toBe(100);
+    expect(fetcher).not.toHaveBeenCalled();
   } finally { vi.unstubAllGlobals(); }
 });
 

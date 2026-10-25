@@ -42,7 +42,9 @@ import { hmStudioPoolKey, hmStudioQueue, type HmStudioQueueSnapshot } from '../s
 import { calculateSuccessRate, isWithinRecentDays } from '../services/successRateService.js';
 import { calculateVideoModelStatus } from '../services/videoModelStatusService.js';
 import {
-  buildHmStudioVideoForm,
+  buildHmStudioVideoPayload,
+  validateHmStudioVideoPrompt,
+  HmStudioPromptError,
   hmStudioCreateUrl,
   hmStudioTaskUrl,
   isHmStudioChannel,
@@ -1097,6 +1099,8 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   try {
     const requestOrigin = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
     if (isHmStudioChannel(channel)) {
+      validateHmStudioVideoPrompt({ model: upstreamModel, prompt, imageSources: reference_images,
+        videoSources: finalVideos, audioSources: finalAudios, firstFrame: first_frame, lastFrame: last_frame });
       const count = reference_images.length;
       const prepared = await prepareHmReferenceImages([
         ...reference_images, ...(first_frame ? [first_frame] : []), ...(last_frame ? [last_frame] : []),
@@ -1829,7 +1833,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
       }
     } else if (isHmStudio) {
       sendEvent({ type: 'status', message: '正在整理素材并提交 HM Studio 任务...' });
-      const formData = buildHmStudioVideoForm({
+      const payload = buildHmStudioVideoPayload({
         localMediaBaseUrl: process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`,
         model: upstreamModel,
         prompt: prompt.trim(),
@@ -1843,13 +1847,13 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         lastFrame: last_frame,
         face: true,
       });
-      const headers: Record<string, string> = {};
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (channel.apiKey) headers.Authorization = `Bearer ${channel.apiKey}`;
 
       const createResp = await submitVideoRequest(hmStudioCreateUrl(baseUrl, 'video'), {
         method: 'POST',
         headers,
-        body: formData,
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(dbChannel?.timeout || 120_000),
       });
       if (!createResp.ok) {
@@ -3354,7 +3358,7 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
               : (selectedHmChannel.modelMapping || {});
           } catch { }
           selectedHmUpstreamModel = selectedMapping[model] || model;
-          const formData = buildHmStudioVideoForm({
+          const payload = buildHmStudioVideoPayload({
             model: selectedHmUpstreamModel,
             prompt: String(latestMeta.prompt || latest.inputText || '').trim(),
             duration: Number(latestMeta.seconds) || 6,
@@ -3370,12 +3374,12 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
             upstreamChannel: latestMeta.upstream_channel,
             face: true,
           });
-          const headers: Record<string, string> = {};
+          const headers: Record<string, string> = { 'Content-Type': 'application/json' };
           if (selectedHmChannel.apiKey) headers.Authorization = `Bearer ${selectedHmChannel.apiKey}`;
           try { response = await fetch(hmStudioCreateUrl(selectedHmChannel.baseUrl, 'video'), {
             method: 'POST',
             headers,
-            body: formData,
+            body: JSON.stringify(payload),
             signal: AbortSignal.timeout(selectedHmChannel.timeout || 120_000),
           }); } catch (error: any) { throw hmSubmissionTransportError(error, selectedHmChannel.apiKey); }
           if (response.ok) break;
@@ -3516,7 +3520,7 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
         acceptVideoSubmission(contentId, String(videoId), { provider: selectedHmChannel.type || '', channelId: Number(selectedHmChannel.id) || null, channelApiKeyId: Number(selectedHmChannel.apiKeyId) || null });
         if (updatedRecord) await resumePollForTask(contentId, updatedRecord);
       } catch (error) {
-        const rejected = error instanceof HmSubmissionError && error.outcome === 'rejected'
+        const rejected = error instanceof HmStudioPromptError || error instanceof HmSubmissionError && error.outcome === 'rejected'
           || error instanceof SpecificationUpstreamError && error.confirmedFailure;
         endVideoSubmission(contentId, rejected ? 'rejected' : 'unknown');
         await failHmQueuedVideo(contentId, error, rejected);

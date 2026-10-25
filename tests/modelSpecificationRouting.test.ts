@@ -374,15 +374,20 @@ describe('managed adapter protocol boundaries', () => {
     const payload=JSON.parse(send.mock.calls[0][1].body);
     expect(payload.image_refs).toEqual(request.images);expect(payload.audio_refs).toEqual(request.audios);expect(payload.duration).toBe(15);
   });
-  it('uses the native HM protocol without truncating a 12000-character prompt or references', async () => {
+  it('uses HM JSON without truncating a valid long prompt or references', async () => {
     const send=vi.fn().mockResolvedValue(json({id:'hm-accepted'}));vi.stubGlobal('fetch',send);
-    const prompt = '分镜'.repeat(6000) + '必须保留的结尾';
+    const prompt = '分镜'.repeat(3900) + '\n必须保留的结尾';
     await adapters.submitSpecificationVideo(target('hmstudio','seedance_v2.5'),input({prompt,reference_images:['https://assets.invalid/a.png','https://assets.invalid/b.png']}),vi.fn());
-    const form=send.mock.calls[0][1].body as FormData;
-    expect(form.get('prompt')).toBe(prompt);
-    expect(form.get('model')).toBe('MINIMAX-H3-2.5采样');expect(form.get('function_mode')).toBe('omni_reference');
-    expect(String(form.get('materials'))).toContain('https://assets.invalid/a.png');
-    expect(String(form.get('materials'))).toContain('https://assets.invalid/b.png');
+    const payload=JSON.parse(send.mock.calls[0][1].body);
+    expect(new Headers(send.mock.calls[0][1].headers).get('content-type')).toBe('application/json');
+    expect(payload.prompt).toBe(prompt);
+    expect(payload.model).toBe('MINIMAX-H3-2.5采样');expect(payload.function_mode).toBe('omni_reference');
+    expect(payload.materials.map((m:any)=>m.url)).toEqual(['https://assets.invalid/a.png','https://assets.invalid/b.png']);
+  });
+  it('rejects HM over-limit prompts before submission callbacks instead of truncating', async () => {
+    const send=vi.fn(), started=vi.fn(); vi.stubGlobal('fetch',send);
+    await expect(adapters.submitSpecificationVideo(target('hmstudio','seedance_v2.5'),input({prompt:'字'.repeat(8001)}),started)).rejects.toThrow('8001');
+    expect(send).not.toHaveBeenCalled(); expect(started).not.toHaveBeenCalled();
   });
   it('maps nova sales routes and preserves 30 images, 10 videos and 10 audios', async () => {
     const send = vi.fn().mockResolvedValue(json({ task_id: 'nova-accepted' }, 202)); vi.stubGlobal('fetch', send);
@@ -390,12 +395,12 @@ describe('managed adapter protocol boundaries', () => {
       reference_images: Array(30).fill('https://assets.invalid/a.png'),
       reference_videos: Array(10).fill('https://assets.invalid/a.mp4'), audio_urls: Array(10).fill('https://assets.invalid/a.mp3') });
     expect(await adapters.submitSpecificationVideo(target('hmstudio', 'sd2.5-301010'), request, vi.fn())).toBe('nova-accepted');
-    const form = send.mock.calls[0][1].body as FormData;
-    expect(form.get('model')).toBe('30-10-10');
-    expect(form.getAll('channel')).toEqual(['nova']);
-    expect(form.get('video_resolution')).toBe('1080p');
-    expect(form.get('duration')).toBe('30');
-    expect(JSON.parse(String(form.get('materials')))).toHaveLength(50);
+    const payload = JSON.parse(send.mock.calls[0][1].body);
+    expect(payload.model).toBe('30-10-10');
+    expect(payload.channel).toBe('nova');
+    expect(payload.video_resolution).toBe('1080p');
+    expect(payload.duration).toBe(30);
+    expect(payload.materials).toHaveLength(50);
     expect(existingModelLimits('sd2.5-301010', 'video')).toMatchObject({ maxImages: 30, maxVideos: 10, maxAudios: 10,
       resolutions: ['720p', '1080p'], duration: { min: 4, max: 30 } });
     send.mockClear();

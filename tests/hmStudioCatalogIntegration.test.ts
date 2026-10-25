@@ -14,6 +14,7 @@ import { publicReferences } from '../server/middleware/publicReferences.js';
 import { saveModelSpecification } from '../server/services/modelRoutingService.js';
 import { defaultRoutingLimits } from '../shared/modelRouting.js';
 import { batchStore } from '../server/services/videoBatchService.js';
+import { prepareSpecificationReferenceImages } from '../server/services/specificationGenerationService.js';
 
 vi.mock('fs', async importOriginal => {
   const actual = await importOriginal<typeof import('fs')>();
@@ -100,6 +101,13 @@ afterAll(async () => {
 });
 
 describe('HM new catalog integration (in-memory database, no upstream generation)', () => {
+  it('does not apply the HM prompt limit to non-HM routes in a mixed specification', async () => {
+    const hm = { channel:{type:'hmstudio'},route:{upstreamModel:'30-10-10'} };
+    const other = { channel:{type:'other'},route:{upstreamModel:'other'} };
+    const candidates = [hm,other] as any[];
+    await prepareSpecificationReferenceImages({prompt:'字'.repeat(8001),images:[],videos:[],audios:[],publicBaseUrl:origin} as any,candidates,[origin]);
+    expect(candidates).toEqual([other]);
+  });
   it('registers nova disabled without exposing the upstream ID and rejects orders before charging', async () => {
     const nova = db.select().from(models).where(eq(models.modelId, 'sd2.5-301010')).get()!;
     expect(nova).toMatchObject({ provider: 'hmstudio', displayName: 'sd2.5-301010', isActive: 0 });
@@ -188,10 +196,11 @@ describe('HM new catalog integration (in-memory database, no upstream generation
   });
   it('submits enabled nova through real web/API entry points with resolution-specific reservations', async () => {
     const previousFetch = globalThis.fetch;
-    const sent: FormData[] = [];
+    const sent: any[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: any, options: any) => {
       if (String(url).startsWith(origin + '/')) return nativeFetch(url, options);
-      sent.push(options.body as FormData);
+      expect(new Headers(options.headers).get('content-type')).toBe('application/json');
+      sent.push(JSON.parse(options.body));
       return Response.json({ error: '测试：渠道明确拒绝' }, { status: 400 });
     }));
     try {
@@ -214,10 +223,12 @@ describe('HM new catalog integration (in-memory database, no upstream generation
           expect(row).toMatchObject({ modelId: 'sd2.5-301010', status: 'failed', cost: 0 });
           expect(JSON.parse(row.metadata!)).toMatchObject({ billingStatus: 'refunded', refundAmount: price });
         });
-        expect(sent.at(-1)!.get('model')).toBe('30-10-10');
-        expect(sent.at(-1)!.get('channel')).toBe('nova');
-        expect(JSON.parse(String(sent.at(-1)!.get('materials')))).toHaveLength(50);
-        const submittedImages = JSON.parse(String(sent.at(-1)!.get('materials'))).filter((v: any) => v.type === 'image');
+        expect(sent.at(-1).model).toBe('30-10-10');
+        expect(sent.at(-1).channel).toBe('nova');
+        expect(sent.at(-1).materials).toHaveLength(50);
+        expect(sent.at(-1).face).toBe(true);
+        expect(sent.at(-1).duration).toBe(seconds);
+        const submittedImages = sent.at(-1).materials.filter((v: any) => v.type === 'image');
         expect(submittedImages.every((v: any) => v.url.startsWith(origin + '/reference-assets/'))).toBe(true);
         const record = db.select().from(contents).all().at(-1)!;
         expect(JSON.parse(record.metadata!).reference_images).toEqual(submittedImages.map((v: any) => v.url));
@@ -228,6 +239,50 @@ describe('HM new catalog integration (in-memory database, no upstream generation
         expect(db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance).toBe(beforeToken);
       }
     } finally { vi.stubGlobal('fetch', previousFetch); }
+  });
+  it('rejects 8001 characters before web/API/batch reservation and sends 7936 unchanged as JSON', async () => {
+    const beforeUser = db.select().from(users).where(eq(users.id, userId)).get()!.balance;
+    const beforeToken = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance;
+    const count = db.select().from(contents).all().length;
+    const reservations = sqlite.prepare('SELECT count(*) AS n FROM billing_reservations').get();
+    const batches = sqlite.prepare('SELECT count(*) AS n FROM video_batches').get();
+    const previousFetch = globalThis.fetch;
+    const sent: any[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: any, options: any) => {
+      if (String(url).startsWith(origin + '/')) return nativeFetch(url, options);
+      expect(new Headers(options.headers).get('content-type')).toBe('application/json');
+      sent.push(JSON.parse(options.body));
+      return Response.json({ error: '测试明确拒绝' }, { status: 400 });
+    }));
+    try {
+      for (const api of [false, true]) {
+        const response = await post(api ? '/v1/videos' : '/api/video/generate', {
+          model:'sd2.5-301010', prompt:'字'.repeat(8001), seconds:4, video_length:4, resolution:'720p'
+        }, api);
+        expect(response.status).toBe(400); expect(await response.text()).toContain('8001');
+      }
+      const input = batchInput('sd2.5-301010','720p');
+      input.creatives.push({prompt:'字'.repeat(8001),count:1,reference_images:[]});
+      const badBatch = await post('/api/video-batches', {...input,requestKey:crypto.randomUUID(),expectedUnitCost:7});
+      expect(badBatch.status).toBe(400); expect(await badBatch.text()).toContain('创意 2');
+      expect(sent).toHaveLength(0);
+      expect(db.select().from(contents).all()).toHaveLength(count);
+      expect(sqlite.prepare('SELECT count(*) AS n FROM billing_reservations').get()).toEqual(reservations);
+      expect(sqlite.prepare('SELECT count(*) AS n FROM video_batches').get()).toEqual(batches);
+      expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBe(beforeUser);
+      expect(db.select().from(apiTokens).where(eq(apiTokens.id,tokenId)).get()!.balance).toBe(beforeToken);
+      const prompt = '字'.repeat(7800) + '\n字'.repeat(68);
+      for (const api of [false,true]) {
+        const response = await post(api ? '/v1/videos' : '/api/video/generate', {model:'sd2.5-301010',prompt,seconds:4,video_length:4,resolution:'720p'},api);
+        expect(response.status).toBeLessThan(300); await response.text();
+        await vi.waitFor(() => expect(db.select().from(contents).all().at(-1)!.status).toBe('failed'));
+        expect(sent.at(-1).prompt).toBe(prompt);
+        expect(sent.at(-1).prompt.length).toBe(7936);
+      }
+      expect(sent).toHaveLength(2);
+      expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBe(beforeUser);
+      expect(db.select().from(apiTokens).where(eq(apiTokens.id,tokenId)).get()!.balance).toBe(beforeToken);
+    } finally { vi.stubGlobal('fetch',previousFetch); }
   });
   it.each(['图片下载失败（HTTP 404）', '图片下载超时', '<html>not an image</html>'])('blocks web/API and entire batch before any charge or generation: %s', async failure => {
     const beforeUser = db.select().from(users).where(eq(users.id, userId)).get()!.balance;
@@ -330,6 +385,10 @@ describe('HM new catalog integration (in-memory database, no upstream generation
     vi.mocked(downloadPublicReferenceImage).mockRejectedValue(new Error('图片下载失败（HTTP 404）'));
     try {
       for (const api of [false, true]) {
+        const response = await post(api ? '/v1/videos' : '/api/video/generate', {model:modelId,prompt:'字'.repeat(8001),seconds:4,video_length:4,resolution:'720p'},api);
+        expect(response.status).toBe(400); expect(await response.text()).toContain('8001');
+      }
+      for (const api of [false, true]) {
         const response = await post(api ? '/v1/videos' : '/api/video/generate', { model: modelId, prompt: '商品', seconds: 4, video_length: 4, resolution: '720p', reference_images: ['https://external.example/missing.png'] }, api);
         expect(response.status).toBe(400); expect(await response.text()).toContain('HTTP 404');
       }
@@ -341,10 +400,11 @@ describe('HM new catalog integration (in-memory database, no upstream generation
       expect(db.select().from(contents).all()).toHaveLength(count);
       vi.mocked(downloadPublicReferenceImage).mockResolvedValue(referencePng);
       const previousFetch = globalThis.fetch;
-      const sent: FormData[] = [];
+      const sent: any[] = [];
       vi.stubGlobal('fetch', vi.fn(async (url: any, options: any) => {
         if (String(url).startsWith(origin + '/')) return nativeFetch(url, options);
-        sent.push(options.body as FormData);
+        expect(new Headers(options.headers).get('content-type')).toBe('application/json');
+        sent.push(JSON.parse(options.body));
         return Response.json({ error: '测试明确拒绝' }, { status: 400 });
       }));
       try {
@@ -352,7 +412,7 @@ describe('HM new catalog integration (in-memory database, no upstream generation
           const response = await post(api ? '/v1/videos' : '/api/video/generate', { model: modelId, prompt: '商品', seconds: 4, video_length: 4, resolution: '720p', reference_images: ['https://external.example/valid.png'] }, api);
           expect(response.status).toBeLessThan(300); await response.text();
           await vi.waitFor(() => expect(db.select().from(contents).all().at(-1)!.status).toBe('failed'));
-          const refs = JSON.parse(String(sent.at(-1)!.get('materials')));
+          const refs = sent.at(-1).materials;
           expect(refs[0].url).toMatch(/\/reference-assets\/.*\.png$/);
           expect(JSON.parse(db.select().from(contents).all().at(-1)!.metadata!).reference_images).toEqual([refs[0].url]);
         }
@@ -446,10 +506,11 @@ describe('HM administrator sync → pricing → real quote workflow', () => {
     expect((await sync()).status).toBe(200);
     expect(await readPrice('sd2.5-301010')).toMatchObject({ inputPrice: 8, extraParams: { '720p': 8, '1080p': 13 }, modelActive: true });
     // A model imported through sync must reach the same nova adapter and reservation path.
-    const sent: FormData[] = [];
+    const sent: any[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: any, options: any) => {
       if (String(url).startsWith(origin + '/')) return nativeFetch(url, options);
-      sent.push(options.body);
+      expect(new Headers(options.headers).get('content-type')).toBe('application/json');
+      sent.push(JSON.parse(options.body));
       return Response.json({ error: '测试：渠道明确拒绝' }, { status: 400 });
     }));
     const balanceBefore = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance;
@@ -462,8 +523,8 @@ describe('HM administrator sync → pricing → real quote workflow', () => {
       expect(JSON.parse(row.metadata!)).toMatchObject({ billingStatus: 'refunded', refundAmount: 13 });
     });
     expect(sent).toHaveLength(1);
-    expect(sent[0].get('model')).toBe('30-10-10');
-    expect(sent[0].get('channel')).toBe('nova');
+    expect(sent[0].model).toBe('30-10-10');
+    expect(sent[0].channel).toBe('nova');
     expect(db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance).toBe(balanceBefore);
   });
   it('retains both legacy and canonical administrator prices, permissions and history on conflicts', async () => {
