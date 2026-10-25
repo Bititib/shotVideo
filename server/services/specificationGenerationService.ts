@@ -147,7 +147,8 @@ function completeContent(id: number, urls: string[]) {
     : Math.round((meta.reservedCost || 0) * urls.length / (meta.count || 1) * 1e6) / 1e6;
   actual = finalizeReservation(meta.billingReservationId, actual, id);
   patch(id, { imageUrls: record.type === 'image' ? urls : undefined, ...(meta.nativeImageOutputs ? { count: urls.length } : {}), progress: 100, progresses: urls.map(() => 100),
-    completedAt: new Date().toISOString(), billingStatus: 'settled', requiresReview: false, reviewKind: null, upstreamQueryError: null, progressText: '生成完成' }, 'completed');
+    completedAt: new Date().toISOString(), billingStatus: 'settled', requiresReview: false, reviewKind: null, upstreamQueryError: null,
+    resultSaveError: null, progressText: '生成完成' }, 'completed');
   db.update(contents).set({ resultUrl: urls[0], cost: actual }).where(eq(contents.id, id)).run();
   if (record.userId) { try { logUsage(record.userId, record.type === 'video' ? 'video' : 'generate_image', undefined, Date.now() - meta.startedAt); } catch (error: any) { console.warn('[specification] usage log failed', id, error.message); } }
 }

@@ -65,3 +65,11 @@ it.each(['ownership','amount','refunded','missing_id'])('rejects unsafe recovery
   await expect(VideoRecoveryService.recover(id)).rejects.toMatchObject({ status: 409 });
   expect(fetch).not.toHaveBeenCalled(); expect(balance()).toBe(94);
 });
+it('clears a previous download error only after original task save and settlement succeed', async () => {
+  change({ resultSaveError: 'HUSS/TOS HTTP 403 AccessDenied: Request has expired' });
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: 'task_original', status: 'completed', url: 'https://cdn.example/result.mp4' })));
+  await VideoRecoveryService.recover(id);
+  await vi.waitFor(() => expect(saved().status).toBe('completed'));
+  expect(JSON.parse(saved().metadata).resultSaveError).toBeNull();
+  expect(balance()).toBe(94); expect(saved().cost).toBe(6);
+});

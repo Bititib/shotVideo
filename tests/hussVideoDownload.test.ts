@@ -21,3 +21,12 @@ it('preserves the upstream download reason without exposing the key', async () =
     .rejects.toThrow('signature_expired');
   expect(fs.renameSync).not.toHaveBeenCalled();
 });
+it('preserves the observed HUSS TOS expiry error including timing and request ID', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ Code: 'AccessDenied', Message: 'Request has expired', RequestId: 'tos-request-1', ExpiresSeconds: 60, Expires: '2026-10-25T07:03:58Z', ServerTime: '2026-10-25T07:04:03Z' }, { status: 403 })));
+  const error = await downloadAndLocalizeVideo('https://www.huss.top/media/example?signature=private', 'task_original', 'bb-2.5-301010', 1).catch(error => error);
+  expect(error.message).toContain('HTTP 403'); expect(error.message).toContain('AccessDenied');
+  expect(error.message).toContain('Request has expired'); expect(error.message).toContain('ExpiresSeconds=60');
+  expect(error.message).toContain('2026-10-25T07:04:03Z'); expect(error.message).toContain('tos-request-1');
+  expect(error.message).not.toContain('signature=private'); expect(error.message).not.toContain('huss-secret');
+  expect(fs.renameSync).not.toHaveBeenCalled();
+});

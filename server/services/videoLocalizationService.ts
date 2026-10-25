@@ -1,4 +1,4 @@
-import { responseDiagnostic } from './upstreamDiagnostic.js';
+import { responseDiagnostic, upstreamDiagnostic } from './upstreamDiagnostic.js';
 import { isHussChannel } from './hussVideoAdapter.js';
 import { isMegabyChannel, megabyContentUrl, fetchMegabyVideoContent, readMegabyJson } from './megabyVideoAdapter.js';
 import { zonghengTaskUrl } from './zonghengAdapter.js';
@@ -88,7 +88,20 @@ export async function downloadAndLocalizeVideo(
       headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(300_000), redirect: 'error',
     });
   }
-  if (!response.ok && isHussChannel(channel)) throw new Error(await responseDiagnostic('HUSS', '结果下载', response, channel.apiKey));
+  if (!response.ok && isHussChannel(channel)) {
+    // HUSS redirects media downloads to TOS, whose errors use capitalized fields.
+    // This is a download diagnostic, never evidence of a failed generation.
+    const payload = await response.clone().json().catch(() => null);
+    if (typeof payload?.Code === 'string' && typeof payload?.Message === 'string') {
+      const timing = ['ExpiresSeconds', 'Expires', 'ServerTime'].filter(key =>
+        typeof payload[key] === 'string' || typeof payload[key] === 'number')
+        .map(key => `${key}=${payload[key]}`).join('; ');
+      throw new Error(upstreamDiagnostic('HUSS/TOS', '结果下载', {
+        code: payload.Code, message: payload.Message + (timing ? '; ' + timing : ''),
+      }, channel.apiKey, response.status, payload.RequestId));
+    }
+    throw new Error(await responseDiagnostic('HUSS', '结果下载', response, channel.apiKey));
+  }
   if (!response.ok) throw new Error(`Failed to fetch video from upstream: ${response.status} ${response.statusText}`);
 
   const buffer = Buffer.from(await response.arrayBuffer());
