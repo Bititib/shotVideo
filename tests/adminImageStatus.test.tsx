@@ -86,3 +86,17 @@ it('Pidoi 保存重试不被浏览器计时误标为审核，并提供处理入�
   await screen.findByRole('button',{name:'查询原任务'});
   expect(screen.queryByRole('button',{name:'确认失败并退款'})).toBeNull();
 });
+
+it.each(['upstreamQueryError', 'resultSaveError'])('生成中视频展示实际诊断 %s 而不隐藏为生成中', async field => {
+  const detail = field === 'upstreamQueryError' ? 'HUSS 查询 HTTP 401：令牌无效' : 'HUSS 结果下载 HTTP 403：签名已过期';
+  const item = { id: 14453, userId: 1, type: 'video', title: 'original', modelId: 'bb-2.5-301010', status: 'processing', cost: 6,
+    createdAt: new Date().toISOString(), metadata: JSON.stringify({ videoId: 'task_original', [field]: detail, lastQueryAt: '2026-10-25T06:00:00Z', lastQueryStatus: 401 }) };
+  vi.mocked(adminApi.getContents).mockResolvedValue({ items: [item], total: 1 });
+  vi.mocked(adminApi.getContent).mockResolvedValue(item);
+  render(<MemoryRouter><ContentsPage /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: '查看本地记录 14453 详情' }));
+  const diagnostics = await screen.findByRole('region', { name: '原任务查询与保存状态' });
+  expect(within(diagnostics).getByText(detail)).toBeTruthy();
+  expect(within(diagnostics).getByText('查询 HTTP 状态：401')).toBeTruthy();
+  expect(adminApi.recoverContentUpstream).not.toHaveBeenCalled();
+});

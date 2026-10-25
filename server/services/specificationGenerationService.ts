@@ -791,7 +791,8 @@ export function recoverSpecificationVideo(id: number) {
   const meta = metadata(id);
   if (!meta.managedSpecification || meta.batchItemId) throw fail('该记录不属于单条规格视频任务', 409);
   if (row.status === 'completed') return { status: 'completed', message: '任务已完成，未重复扣费', item: row, chargedAmount: 0 };
-  if (active.has(id)) return { status: 'processing', message: '原任务正在查询或保存结果，未重复启动', chargedAmount: 0 };
+  if (active.has(id)) return { status: 'processing', message: '原任务正在查询或保存结果，未重复启动' +
+    (meta.upstreamQueryError || meta.resultSaveError || meta.progressText ? '\n' + (meta.upstreamQueryError || meta.resultSaveError || meta.progressText) : ''), chargedAmount: 0 };
   if (['failed', 'cancelled', 'canceled'].includes(row.status) || meta.billingStatus === 'refunded' || meta.queueRefunded)
     throw fail('该任务已结束或退款，不能按原预扣自动恢复，请先核查账单', 409);
   const reservation = meta.billingReservationId

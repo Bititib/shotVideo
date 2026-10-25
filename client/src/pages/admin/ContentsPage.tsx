@@ -703,6 +703,20 @@ export default function ContentsPage() {
                     <span>{['failed', 'error'].includes(previewItem.status) ? '本次生成未获得结果' : '生成结果暂未就绪'}</span>
                   </div>}
 
+                  {previewItem.type === 'video' && ['queued', 'processing'].includes(displayStatus(previewItem)) && (() => {
+                    const meta = parseMeta(previewItem.metadata);
+                    const details = [...new Set([meta.progressText, meta.upstreamQueryError, meta.resultSaveError]
+                      .filter((value): value is string => typeof value === 'string' && !!value.trim()))];
+                    return <section aria-label="原任务查询与保存状态" className="rounded-xl border p-4 text-xs">
+                      <div className="mb-2 font-semibold">原任务查询与保存状态</div>
+                      {details.length ? details.map(detail => <p key={detail} className="whitespace-pre-wrap break-words">{detail}</p>)
+                        : <p>尚未记录查询进展；“生成中”仅为本地状态，不能确认上游仍在生成。</p>}
+                      {meta.lastQueryAt && <p className="mt-2">最近查询（北京时间）：{formatBeijingTime(meta.lastQueryAt)}</p>}
+                      {meta.lastQueryStatus != null && <p>查询 HTTP 状态：{meta.lastQueryStatus}</p>}
+                      {meta.upstreamStatus && <p>最近成功读取的上游状态：{meta.upstreamStatus}</p>}
+                    </section>;
+                  })()}
+
                   {previewItem.type === 'image' && <MjImageReviewActions key={'mj-' + previewItem.id}
                     id={previewItem.id} metadata={parseMeta(previewItem.metadata)} hasResult={Boolean(previewItem.resultUrl)}
                     onResolved={async () => {
