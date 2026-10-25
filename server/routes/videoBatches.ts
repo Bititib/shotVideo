@@ -94,6 +94,12 @@ async function preflight(req: TierRequest, input: VideoBatchInput) {
     if (unitCost >= 0 && unitCost !== result.unitCost) throw new Error('价格正在调整，请重新预估');
     unitCost = result.unitCost;
     pricingSnapshot = result.pricingSnapshot;
+    // Store preflight's published images before reservation, not temporary URLs.
+    if (Array.isArray(result.reference_images)) {
+      if (result.reference_images.length !== creatives[index].reference_images.length
+        || result.reference_images.some((value: unknown) => typeof value !== 'string')) throw new Error('参考图片校验结果不完整');
+      creatives[index].reference_images = result.reference_images;
+    }
   }
   const total = input.creatives.reduce((n, c) => n + c.count, 0);
   return { unitCost, total, totalCost: Math.round(unitCost * total * 1e6) / 1e6, pricingSnapshot };
@@ -131,10 +137,31 @@ router.post('/:id/stop-retries', handle((req, res) => {
   batchStore.stopRetries(Number(req.params.id), req.userId!);
   res.json(batchStore.detail(Number(req.params.id), req.userId!));
 }));
-router.post('/:id/retry-failed', tierMiddleware('video'), quotaMiddleware, handle((req, res) => {
+router.post('/:id/retry-failed', tierMiddleware('video'), quotaMiddleware, handle(async (req, res) => {
   const key = req.body?.requestKey;
   if (typeof key !== 'string' || !/^[\w-]{16,100}$/.test(key)) throw new Error('缺少有效操作标识');
-  batchStore.retryFailed(Number(req.params.id), req.userId!, key);
+  const batchId = Number(req.params.id);
+  const batch = batchStore.batch(batchId, req.userId!);
+  const previous = sqlite.prepare('SELECT batch_id FROM video_batch_commands WHERE user_id=? AND request_key=?').get(req.userId!, key) as any;
+  if (previous) {
+    if (previous.batch_id !== batchId) throw new Error('操作标识已用于其他批次');
+    return res.json(batchStore.detail(batchId, req.userId!));
+  }
+  const input = JSON.parse(batch.payload) as VideoBatchInput;
+  const model = sqlite.prepare('SELECT * FROM models WHERE model_id=?').get(input.model) as any;
+  const spec = getModelSpecification(input.model);
+  const hasHm = model?.provider === 'hmstudio' || spec?.routes.some(route =>
+    (sqlite.prepare('SELECT type FROM channels WHERE id=?').get(route.channelId) as any)?.type === 'hmstudio');
+  let prepared: { expectedPayload: string; images: Record<number, string[]> } | undefined;
+  if (hasHm) {
+    const failed = sqlite.prepare("SELECT DISTINCT creative_index FROM video_batch_items WHERE batch_id=? AND status='failed' AND billing_state='refunded'").all(batchId) as { creative_index: number }[];
+    if (failed.length) {
+      const selected = { ...input, creatives: failed.map(item => ({ ...input.creatives[item.creative_index] })) };
+      await preflight(req, selected);
+      prepared = { expectedPayload: batch.payload, images: Object.fromEntries(failed.map((item, index) => [item.creative_index, selected.creatives[index].reference_images])) };
+    }
+  }
+  batchStore.retryFailed(batchId, req.userId!, key, prepared);
   res.json(batchStore.detail(Number(req.params.id), req.userId!));
   tickVideoBatches();
 }));

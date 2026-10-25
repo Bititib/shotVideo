@@ -27,6 +27,8 @@ import { withFundContext } from '../db/fundLedger.js';
 import { getModelSpecification, specificationAvailability, selectModelRoutes, routeStillEnabled, claimRouteProbe, noteRouteResult, type RouteCandidate } from './modelRoutingService.js';
 import { submitSpecificationVideo, pollSpecificationVideo, pollSpecificationImage, pollMjSpecificationImage, generateSpecificationImage, SpecificationUpstreamError, type SpecificationRequest } from './specificationAdapters.js';
 import { validateAndNormalizeImageReferences } from './imageReferenceValidationService.js';
+import { prepareHmReferenceImages } from './hmStudioReferenceService.js';
+import { isHmStudioChannel } from './hmStudioAdapter.js';
 import { hmStudioQueue, hmStudioPoolKey, HmStudioQueueFullError } from './hmStudioQueueService.js';
 import { recordCanvasEvent } from '../middleware/canvasRequest.js';
 import { logUsage } from '../middleware/quota.js';
@@ -78,6 +80,17 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
     input: { images: images.length, videos: videos.length, audios: audios.length, outputs, seconds,
       resolution: String(body.output_resolution || body.resolution || (kind === 'image' ? '2K' : '720p')), ratio,
       firstFrame: Boolean(firstFrame), lastFrame: Boolean(lastFrame), quality: body.quality } };
+}
+export async function prepareSpecificationReferenceImages(request: SpecificationRequest, candidates: RouteCandidate[], trustedOrigins: string[]) {
+  const count = request.images.length;
+  const sources = [...request.images, ...(request.firstFrame ? [request.firstFrame] : []), ...(request.lastFrame ? [request.lastFrame] : [])];
+  const normalized = candidates.some(target => isHmStudioChannel(target.channel))
+    ? await prepareHmReferenceImages(sources, request.publicBaseUrl, trustedOrigins)
+    : await validateAndNormalizeImageReferences(sources, { trustedOrigins,
+      trustedRemoteOrigins: (process.env.REFERENCE_IMAGE_REMOTE_ORIGINS || 'https://filer2.fdai.xyz').split(/[\s,]+/).filter(Boolean) });
+  request.images = normalized.slice(0, count);
+  if (request.lastFrame) request.lastFrame = normalized[count + Number(Boolean(request.firstFrame))];
+  if (request.firstFrame) request.firstFrame = normalized[count];
 }
 function patch(id: number, values: Record<string, any>, status?: string) {
   const row = db.select().from(contents).where(eq(contents.id, id)).get();
@@ -555,11 +568,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
       catch (error: any) { throw fail(error.message); }
     }
     const trustedOrigins = [request.publicBaseUrl, req.protocol + '://' + req.get('host')];
-    const imageSources = [...request.images, ...(request.firstFrame ? [request.firstFrame] : []), ...(request.lastFrame ? [request.lastFrame] : [])];
-    const normalized = await validateAndNormalizeImageReferences(imageSources, { trustedOrigins, trustedRemoteOrigins: (process.env.REFERENCE_IMAGE_REMOTE_ORIGINS || 'https://filer2.fdai.xyz').split(/[\s,]+/).filter(Boolean) });
-    request.images = normalized.slice(0, request.images.length);
-    if (request.firstFrame) request.firstFrame = normalized[request.images.length];
-    if (request.lastFrame) request.lastFrame = normalized[request.images.length + Number(Boolean(request.firstFrame))];
+    await prepareSpecificationReferenceImages(request, kind === 'video' ? candidates : [], trustedOrigins);
     const batch = !apiContext && kind === 'video' ? batchContextForRequest(req as any) : null;
     const usage = { resolution: request.input.resolution, seconds: request.input.seconds, count: nativeImageOutputs ? 1 : request.input.outputs };
     const quote = batch?.pricingSnapshot ? { ...PricingService.quoteSnapshot(batch.pricingSnapshot, usage), pricingSnapshot: batch.pricingSnapshot }

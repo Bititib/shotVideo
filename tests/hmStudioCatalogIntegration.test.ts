@@ -4,6 +4,16 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { eq } from 'drizzle-orm';
 import jwt from 'jsonwebtoken';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import sharp from 'sharp';
+vi.mock('../server/services/publicImageDownload.js', () => ({ downloadPublicReferenceImage: vi.fn() }));
+import { downloadPublicReferenceImage } from '../server/services/publicImageDownload.js';
+import { publicReferences } from '../server/middleware/publicReferences.js';
+import { saveModelSpecification } from '../server/services/modelRoutingService.js';
+import { defaultRoutingLimits } from '../shared/modelRouting.js';
+import { batchStore } from '../server/services/videoBatchService.js';
 
 vi.mock('fs', async importOriginal => {
   const actual = await importOriginal<typeof import('fs')>();
@@ -30,7 +40,7 @@ vi.mock('../server/services/videoBatchService.js', async importOriginal => ({
 import { initDatabase } from '../server/db/seed.js';
 import { db, sqlite } from '../server/db/index.js';
 import { env } from '../server/config/env.js';
-import { apiTokens, channels, contents, modelPricing, models, tierModelAccess, userModelPricing, users } from '../server/db/schema.js';
+import { apiTokens, channels, contents, modelPricing, models, settings, tierModelAccess, userModelPricing, users } from '../server/db/schema.js';
 import { PricingService } from '../server/services/pricingService.js';
 import { TokenService } from '../server/services/tokenService.js';
 import videoRouter from '../server/routes/video.js';
@@ -46,15 +56,20 @@ const cases = [
   { id: 'sd2.5-301010', rates: { '720p': 7, '1080p': 12 }, images: 30, videos: 10, audios: 10, maxSeconds: 30 },
 ];
 const nativeFetch = globalThis.fetch;
+const referenceDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-preflight-integration-'));
+let referencePng: Buffer;
 let server: Server, origin: string, userId: number, userJwt: string, tokenKey: string, tokenId: number;
 async function post(path: string, body: any, api = false) {
   return nativeFetch(origin + path, { method: 'POST', headers: {
     Authorization: 'Bearer ' + (api ? tokenKey : userJwt), 'Content-Type': 'application/json',
   }, body: JSON.stringify(body) });
 }
-const batchInput = (model: string, resolution: string) => ({ model, resolution, aspect_ratio: '9:16', video_length: 15,
+const batchInput = (model: string, resolution: string) => ({ name: 'test batch', model, resolution, aspect_ratio: '9:16', video_length: 15,
   autoRetry: true, maxRetries: 2, creatives: [{ prompt: '商品展示', count: 20, reference_images: [] }] });
 beforeAll(async () => {
+  vi.stubEnv('PUBLIC_REFERENCE_DIR', referenceDirectory);
+  referencePng = await sharp({ create: { width: 3, height: 2, channels: 3, background: '#123456' } }).png().toBuffer();
+  vi.mocked(downloadPublicReferenceImage).mockResolvedValue(referencePng);
   vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('Unexpected external request'); }));
   await initDatabase();
   const user = db.select().from(users).where(eq(users.email, 'hm@test.local')).get()!;
@@ -64,6 +79,7 @@ beforeAll(async () => {
   const token = TokenService.createToken({ name: 'HM test', balance: 100 });
   tokenKey = token.tokenKey; tokenId = token.id;
   const app = express(); app.use(express.json());
+  app.use('/reference-assets', publicReferences());
   app.use('/api/video', videoRouter); app.use('/v1', apiRouter); app.use('/api/video-batches', batchRouter);
   app.use('/api/admin/channels', channelRouter); app.use('/api/admin/pricing', pricingRouter);
   server = app.listen(0, '127.0.0.1');
@@ -80,6 +96,7 @@ afterAll(async () => {
   vi.unstubAllGlobals();
   if (server) { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
   sqlite.close();
+  vi.unstubAllEnvs(); fs.rmSync(referenceDirectory, { recursive: true, force: true });
 });
 
 describe('HM new catalog integration (in-memory database, no upstream generation)', () => {
@@ -200,10 +217,153 @@ describe('HM new catalog integration (in-memory database, no upstream generation
         expect(sent.at(-1)!.get('model')).toBe('30-10-10');
         expect(sent.at(-1)!.get('channel')).toBe('nova');
         expect(JSON.parse(String(sent.at(-1)!.get('materials')))).toHaveLength(50);
+        const submittedImages = JSON.parse(String(sent.at(-1)!.get('materials'))).filter((v: any) => v.type === 'image');
+        expect(submittedImages.every((v: any) => v.url.startsWith(origin + '/reference-assets/'))).toBe(true);
+        const record = db.select().from(contents).all().at(-1)!;
+        expect(JSON.parse(record.metadata!).reference_images).toEqual(submittedImages.map((v: any) => v.url));
+        const publicResponse = await nativeFetch(submittedImages[0].url);
+        expect(publicResponse.status).toBe(200);
+        expect(Buffer.from(await publicResponse.arrayBuffer())).toEqual(referencePng);
         expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(beforeUser);
         expect(db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance).toBe(beforeToken);
       }
     } finally { vi.stubGlobal('fetch', previousFetch); }
+  });
+  it.each(['图片下载失败（HTTP 404）', '图片下载超时', '<html>not an image</html>'])('blocks web/API and entire batch before any charge or generation: %s', async failure => {
+    const beforeUser = db.select().from(users).where(eq(users.id, userId)).get()!.balance;
+    const beforeToken = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance;
+    const beforeContents = db.select().from(contents).all().length;
+    const reservations = sqlite.prepare('SELECT count(*) AS n FROM billing_reservations').get();
+    const batches = sqlite.prepare('SELECT count(*) AS n FROM video_batches').get();
+    const fetchCalls = vi.mocked(fetch).mock.calls.length;
+    vi.mocked(downloadPublicReferenceImage).mockImplementation(async () => {
+      expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(beforeUser);
+      expect(db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance).toBe(beforeToken);
+      expect(db.select().from(contents).all()).toHaveLength(beforeContents);
+      if (failure.startsWith('<')) return Buffer.from(failure);
+      throw new Error(failure);
+    });
+    try {
+      for (const api of [false, true]) {
+        const response = await post(api ? '/v1/videos' : '/api/video/generate', { model: 'sd2.5-301010', prompt: '商品', seconds: 4, video_length: 4, resolution: '720p', reference_images: ['https://f.juicey.dev/f/bad.png?signature=hidden'] }, api);
+        expect(response.status).toBe(400);
+        const text = await response.text(); expect(text).toContain('参考图 1'); expect(text).not.toContain('hidden');
+      }
+      const input = batchInput('sd2.5-301010', '720p');
+      input.creatives = [{ prompt: 'valid no image', count: 2, reference_images: [] }, { prompt: 'bad image', count: 20, reference_images: ['https://f.juicey.dev/f/bad.png'] }];
+      const response = await post('/api/video-batches', { ...input, requestKey: crypto.randomUUID(), expectedUnitCost: 7 });
+      expect(response.status).toBe(400); expect(await response.text()).toContain('创意 2');
+      expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(beforeUser);
+      expect(db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance).toBe(beforeToken);
+      expect(db.select().from(contents).all()).toHaveLength(beforeContents);
+      expect(sqlite.prepare('SELECT count(*) AS n FROM billing_reservations').get()).toEqual(reservations);
+      expect(sqlite.prepare('SELECT count(*) AS n FROM video_batches').get()).toEqual(batches);
+      expect(vi.mocked(fetch).mock.calls.slice(fetchCalls).every(([url]) => String(url).startsWith(origin + '/'))).toBe(true);
+    } finally { vi.mocked(downloadPublicReferenceImage).mockResolvedValue(referencePng); }
+  });
+  it('persists batch preflight images and a later dispatch does not re-download the expired source', async () => {
+    const input = batchInput('sd2.5-301010', '720p');
+    input.creatives[0].reference_images = ['https://f.juicey.dev/f/temporary.png'];
+    const before = db.select().from(users).where(eq(users.id, userId)).get()!.balance;
+    const calls = vi.mocked(downloadPublicReferenceImage).mock.calls.length;
+    const response = await post('/api/video-batches', { ...input, requestKey: crypto.randomUUID(), expectedUnitCost: 7 });
+    expect(response.status).toBe(200);
+    const batch = await response.json() as any;
+    const payload = JSON.parse((sqlite.prepare('SELECT payload FROM video_batches WHERE id=?').get(batch.id) as any).payload);
+    const images = payload.creatives[0].reference_images;
+    expect(images[0]).toMatch(/\/reference-assets\/.*\.png$/);
+    expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(before - 140);
+    vi.mocked(downloadPublicReferenceImage).mockRejectedValue(new Error('expired'));
+    try {
+      const item = batchStore.claim(batch.items[0].id)!;
+      const context = batchStore.context(item.id, item.attempts, userId);
+      expect(context.body.reference_images).toEqual(images);
+      const check = await post('/api/video/validate', context.body);
+      expect(check.status).toBe(200);
+      expect((await check.json() as any).reference_images).toEqual(images);
+      expect(vi.mocked(downloadPublicReferenceImage).mock.calls.length).toBe(calls + 1);
+      batchStore.fail(item.id, 'test cleanup', true, true);
+      await post(`/api/video-batches/${batch.id}/cancel-pending`, {});
+    } finally { vi.mocked(downloadPublicReferenceImage).mockResolvedValue(referencePng); }
+  });
+  it('preflights manually retried HM batches before new charges, then persists images and charges once', async () => {
+    const input = batchInput('sd2.5-301010', '720p'); input.autoRetry = false;
+    input.creatives = [{ prompt: 'legacy batch', count: 2, reference_images: ['https://f.juicey.dev/f/legacy.png'] }];
+    const before = db.select().from(users).where(eq(users.id, userId)).get()!.balance;
+    const id = batchStore.create(userId, crypto.randomUUID(), input, 7, origin);
+    for (const item of batchStore.detail(id, userId).items) {
+      batchStore.claim(item.id); batchStore.fail(item.id, 'explicit rejection', true, true);
+    }
+    expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(before);
+    vi.mocked(downloadPublicReferenceImage).mockRejectedValue(new Error('图片下载失败（HTTP 404）'));
+    try {
+      const response = await post(`/api/video-batches/${id}/retry-failed`, { requestKey: crypto.randomUUID() });
+      expect(response.status).toBe(400); expect(await response.text()).toContain('HTTP 404');
+      expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(before);
+      expect(batchStore.detail(id, userId).items.every(i => i.billing_state === 'refunded')).toBe(true);
+      vi.mocked(downloadPublicReferenceImage).mockResolvedValue(referencePng);
+      const requestKey = crypto.randomUUID();
+      const responses = await Promise.all([post(`/api/video-batches/${id}/retry-failed`, { requestKey }), post(`/api/video-batches/${id}/retry-failed`, { requestKey })]);
+      expect(responses.map(r => r.status)).toEqual([200, 200]);
+      expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(before - 14);
+      const payload = JSON.parse((sqlite.prepare('SELECT payload FROM video_batches WHERE id=?').get(id) as any).payload);
+      expect(payload.creatives[0].reference_images[0]).toMatch(/\/reference-assets\/.*\.png$/);
+      // An already applied command stays idempotent even if downloads later fail.
+      vi.mocked(downloadPublicReferenceImage).mockRejectedValue(new Error('expired'));
+      expect((await post(`/api/video-batches/${id}/retry-failed`, { requestKey })).status).toBe(200);
+      expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(before - 14);
+      await post(`/api/video-batches/${id}/cancel-pending`, {});
+    } finally { vi.mocked(downloadPublicReferenceImage).mockResolvedValue(referencePng); }
+  });
+  it('blocks HM specification web/API/batch paths before charging and sends durable images after success', async () => {
+    const channel = db.select().from(channels).where(eq(channels.type, 'hmstudio')).get()!;
+    const modelId = 'hm-reference-spec-test';
+    const old = db.select().from(settings).where(eq(settings.key, 'model_specification_routes_v1')).get();
+    db.insert(models).values({ modelId, displayName: modelId, provider: 'routing', capabilities: '["video"]', isActive: 1 }).run();
+    db.insert(modelPricing).values({ modelPattern: modelId, billingType: 'per_call', inputPrice: 7 }).run();
+    const limits = { ...defaultRoutingLimits(), maxImages: 30 };
+    saveModelSpecification({ modelId, kind: 'video', enabled: true, aliases: [], limits, routes: [{ id: 'hm-ref', channelId: channel.id,
+      executionModel: 'sd2.5-301010', upstreamModel: '30-10-10', enabled: true, limits, cost: 4, costUnit: 'per_call', resolutionCosts: {}, priority: 0 }] });
+    const before = db.select().from(users).where(eq(users.id, userId)).get()!.balance;
+    const tokenBefore = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance;
+    const count = db.select().from(contents).all().length;
+    vi.mocked(downloadPublicReferenceImage).mockRejectedValue(new Error('图片下载失败（HTTP 404）'));
+    try {
+      for (const api of [false, true]) {
+        const response = await post(api ? '/v1/videos' : '/api/video/generate', { model: modelId, prompt: '商品', seconds: 4, video_length: 4, resolution: '720p', reference_images: ['https://external.example/missing.png'] }, api);
+        expect(response.status).toBe(400); expect(await response.text()).toContain('HTTP 404');
+      }
+      const input = batchInput(modelId, '720p'); input.creatives[0].reference_images = ['https://external.example/missing.png'];
+      const response = await post('/api/video-batches', { ...input, requestKey: crypto.randomUUID(), expectedUnitCost: 7 });
+      expect(response.status).toBe(400); expect(await response.text()).toContain('HTTP 404');
+      expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(before);
+      expect(db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance).toBe(tokenBefore);
+      expect(db.select().from(contents).all()).toHaveLength(count);
+      vi.mocked(downloadPublicReferenceImage).mockResolvedValue(referencePng);
+      const previousFetch = globalThis.fetch;
+      const sent: FormData[] = [];
+      vi.stubGlobal('fetch', vi.fn(async (url: any, options: any) => {
+        if (String(url).startsWith(origin + '/')) return nativeFetch(url, options);
+        sent.push(options.body as FormData);
+        return Response.json({ error: '测试明确拒绝' }, { status: 400 });
+      }));
+      try {
+        for (const api of [false, true]) {
+          const response = await post(api ? '/v1/videos' : '/api/video/generate', { model: modelId, prompt: '商品', seconds: 4, video_length: 4, resolution: '720p', reference_images: ['https://external.example/valid.png'] }, api);
+          expect(response.status).toBeLessThan(300); await response.text();
+          await vi.waitFor(() => expect(db.select().from(contents).all().at(-1)!.status).toBe('failed'));
+          const refs = JSON.parse(String(sent.at(-1)!.get('materials')));
+          expect(refs[0].url).toMatch(/\/reference-assets\/.*\.png$/);
+          expect(JSON.parse(db.select().from(contents).all().at(-1)!.metadata!).reference_images).toEqual([refs[0].url]);
+        }
+        expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(before);
+        expect(db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance).toBe(tokenBefore);
+      } finally { vi.stubGlobal('fetch', previousFetch); }
+    } finally {
+      vi.mocked(downloadPublicReferenceImage).mockResolvedValue(referencePng);
+      if (old) db.update(settings).set({ value: old.value }).where(eq(settings.key, old.key)).run();
+      else db.delete(settings).where(eq(settings.key, 'model_specification_routes_v1')).run();
+    }
   });
   it('preserves administrator price overrides across startup', async () => {
     db.update(modelPricing).set({ inputPrice: 2, extraParams: JSON.stringify({ category: 'video', '720p': 2, '1080p': 3, '2k': 4 }) })

@@ -11,12 +11,13 @@ import { patchZonghengTask, reviewZonghengTask, zonghengOrder, recordZonghengSub
 import videoQuotes from './videoQuotes.js';
 import { assertExpectedVideoCost } from '../services/videoQuoteService.js';
 import { resolvePublicModelId } from '../services/publicModelNameService.js';
-import { handleSpecificationGeneration, resumeSpecificationTasks } from '../services/specificationGenerationService.js';
+import { handleSpecificationGeneration, resumeSpecificationTasks, prepareSpecificationReferenceImages } from '../services/specificationGenerationService.js';
 import { getModelSpecification, specificationAvailable, selectModelRoutes } from '../services/modelRoutingService.js';
 import { specificationRequest } from '../services/specificationGenerationService.js';
 import { protectVideoSource } from '../middleware/uploadAccess.js';
 import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
 import { publishReferenceUrl } from '../services/publicReferenceService.js';
+import { prepareHmReferenceImages } from '../services/hmStudioReferenceService.js';
 import { canvasRequestMiddleware, recordCanvasEvent } from '../middleware/canvasRequest.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { HAYA_SECONDS, HAYA_VIDEO_MODELS, getHayaVideoSpec, validateHayaVideoInput } from '../../shared/hayaVideo.js';
@@ -169,7 +170,7 @@ import { prepareMiaowuPublicMediaUrls } from '../services/miaowuMediaService.js'
 import { downloadAndLocalizeVideo } from '../services/videoLocalizationService.js';
 import { prepareVideoForDelivery, cacheVideoForDelivery, videoDeliveryContentType, videoDeliveryExtension } from '../services/videoCompatibilityService.js';
 import { resolveBatchArchiveFile } from '../services/videoBatchArchive.js';
-import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
+import { validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
 import { validateVideoPrompt } from '../services/videoPromptValidation.js';
 import { parseUtcTimestamp } from '../../shared/time.js';
 export { downloadAndLocalizeVideo } from '../services/videoLocalizationService.js';
@@ -759,9 +760,14 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   if (req.path === '/validate' && getModelSpecification(resolvePublicModelId(req.body?.model || ''))) {
     try { const spec = getModelSpecification(resolvePublicModelId(req.body.model))!;
       const body = { ...req.body, resolution: req.body.resolution || spec.limits.resolutions[0], video_length: req.body.video_length ?? req.body.seconds ?? req.body.duration ?? (spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) };
-      const input = specificationRequest(body, 'video', '').input; const candidates = selectModelRoutes(spec, input); const quote = PricingService.quote(spec.modelId, { resolution: input.resolution, seconds: input.seconds, count: 1 }, false, req.userId);
+      const origin = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
+      const request = specificationRequest(body, 'video', origin), input = request.input;
+      const candidates = selectModelRoutes(spec, input); const quote = PricingService.quote(spec.modelId, { resolution: input.resolution, seconds: input.seconds, count: 1 }, false, req.userId);
       if (!quote.billingType) throw Object.assign(new Error('该规格尚未配置用户售价'), { status: 400 });
-      return res.status(candidates.length ? 200 : 503).json(candidates.length ? { valid: true, unitCost: quote.cost, pricingSnapshot: quote.pricingSnapshot } : { error: '没有匹配线路' });
+      if (candidates.some(target => isHmStudioChannel(target.channel))) await prepareSpecificationReferenceImages(request, candidates, [origin]);
+      return res.status(candidates.length ? 200 : 503).json(candidates.length ? { valid: true, unitCost: quote.cost,
+        reference_images: request.images, first_frame: request.firstFrame, last_frame: request.lastFrame,
+        pricingSnapshot: quote.pricingSnapshot } : { error: '没有匹配线路' });
     } catch (e: any) { return res.status(e.status || 400).json({ error: e.message }); }
   }
   if (await handleSpecificationGeneration(req, res, 'video')) return;
@@ -785,8 +791,8 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     reference_video = '',    // 旧单值兼容字段
     audio_urls = [],         // 新多音频数组字段
     audio_url = '',          // 旧单值兼容字段
-    first_frame = '',        // Base64 首帧图片
-    last_frame = '',         // Base64 尾帧图片
+    first_frame: rawFirstFrame = '',
+    last_frame: rawLastFrame = '',
     face,                    // HM Studio 旧版兼容字段
     face_processing,         // 旧版兼容字段；HM 本站处理全局关闭，上游 face 始终开启
     face_split,              // 海底月参考图人脸拆分（仅实际路由到海底月时发送）
@@ -795,6 +801,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     compliance_mode,         // 合规素材风格
   } = req.body;
   let reference_images: string[] = Array.isArray(rawReferenceImages) ? rawReferenceImages : [];
+  let first_frame = rawFirstFrame, last_frame = rawLastFrame;
   const resolution = normalizeZonghengVideoResolution(model, requestedResolution) || normalizeHmStudioVideoResolution(model, requestedResolution) || requestedResolution || getHayaVideoSpec(model)?.resolution || (isLongxiaModel(model) ? longxiaResolution(model) : undefined) || (isJulunMinimaxH3Model(model) ? JULUN_MINIMAX_H3_RESOLUTION : '720p');
 
   // 向后兼容：合并旧单值字段到新数组
@@ -1018,22 +1025,6 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     return res.status(400).json({ error: `模型 ${model} 只支持 ${meta.allowedSeconds.join('/')} 秒` });
   }
 
-  // 强制参考图校验
-  try {
-    const requestOrigin = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
-    reference_images = await validateAndNormalizeImageReferences(reference_images, {
-      trustedOrigins: [requestOrigin, process.env.BACKEND_URL || ''],
-      trustedRemoteOrigins: (process.env.REFERENCE_IMAGE_REMOTE_ORIGINS || 'https://filer2.fdai.xyz')
-        .split(/[\s,]+/)
-        .filter(Boolean),
-    });
-  } catch (error: any) {
-    const message = error instanceof InvalidImageReferenceError
-      ? error.message
-      : `参考图校验失败：${error?.message || '未知错误'}`;
-    return res.status(400).json({ error: message });
-  }
-
   const hasRef = Array.isArray(reference_images) && reference_images.length > 0;
   if (meta?.requireRef && !hasRef) {
     return res.status(400).json({ error: `模型 ${model} 必须提供参考图` });
@@ -1102,6 +1093,26 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
 
 
 
+  // Finish HM image preparation before any reservation/task/queue creation.
+  try {
+    const requestOrigin = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+    if (isHmStudioChannel(channel)) {
+      const count = reference_images.length;
+      const prepared = await prepareHmReferenceImages([
+        ...reference_images, ...(first_frame ? [first_frame] : []), ...(last_frame ? [last_frame] : []),
+      ], process.env.BACKEND_URL || requestOrigin, [requestOrigin]);
+      reference_images = prepared.slice(0, count);
+      if (last_frame) last_frame = prepared[count + Number(Boolean(first_frame))];
+      if (first_frame) first_frame = prepared[count];
+    } else {
+      reference_images = await validateAndNormalizeImageReferences(reference_images, {
+        trustedOrigins: [requestOrigin, process.env.BACKEND_URL || ''],
+        trustedRemoteOrigins: (process.env.REFERENCE_IMAGE_REMOTE_ORIGINS || 'https://filer2.fdai.xyz').split(/[\s,]+/).filter(Boolean),
+      });
+    }
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
+  }
   if (isZonghengChannel(channel)) {
     try {
       buildZonghengVideoPayload({ model: upstreamModel, prompt, seconds: Number(video_length), ratio: aspect_ratio, resolution,
@@ -1167,7 +1178,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   if (req.path === '/validate') {
     const quote = PricingService.quote(model, { resolution, seconds: billableSeconds, count: 1 }, false, req.userId);
     if (!['per_call', 'per_second'].includes(quote.billingType || '') || !Number.isFinite(quote.cost) || quote.cost < 0) return res.status(400).json({ error: '该模型未配置有效价格' });
-    return res.json({ unitCost: quote.cost, resolution, reference_images, pricingSnapshot: quote.pricingSnapshot });
+    return res.json({ unitCost: quote.cost, resolution, reference_images, first_frame, last_frame, pricingSnapshot: quote.pricingSnapshot });
   }
   if (batchContext && isBatchChannelAtCapacity(channel)) {
     return res.status(429).json({ code: 'BATCH_CAPACITY', error: '渠道正在忙，任务保持排队，不重新扣费' });

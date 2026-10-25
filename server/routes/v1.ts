@@ -144,7 +144,8 @@ import { localizeGeneratedImage } from './imageGen.js';
 import { extractVideoFailureMessage, isVideoFailurePayload, withVideoFailureMetadata } from '../services/videoFailureService.js';
 import { ContentService } from '../services/contentService.js';
 import { prepareVideoForDelivery, cacheVideoForDelivery, videoDeliveryContentType } from '../services/videoCompatibilityService.js';
-import { InvalidImageReferenceError, validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
+import { validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
+import { prepareHmReferenceImages } from '../services/hmStudioReferenceService.js';
 import { validateVideoPrompt } from '../services/videoPromptValidation.js';
 import { extractVideoUpstreamTaskId, sanitizeUpstreamCreateResponse } from '../services/videoTaskMetadataService.js';
 import { claimVideoSubmission, acceptVideoSubmission, endVideoSubmission, releaseVideoSubmission, videoSubmissionPreparation } from '../services/videoSubmissionGuard.js';
@@ -2113,26 +2114,6 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
   }
 
-  // API clients commonly upload to a temporary file host and submit the
-  // resulting URLs. Copy trusted temporary images after request-size checks
-  // but before billing and queueing, so an HM task never depends on an
-  // expiring upload URL.
-  try {
-    const requestOrigin = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
-    image_urls = await validateAndNormalizeImageReferences(image_urls, {
-      trustedOrigins: [requestOrigin, process.env.BACKEND_URL || ''],
-      trustedRemoteOrigins: (process.env.REFERENCE_IMAGE_REMOTE_ORIGINS || 'https://filer2.fdai.xyz')
-        .split(/[\s,]+/)
-        .filter(Boolean),
-    });
-  } catch (error: any) {
-    cleanupFiles(req.files);
-    const message = error instanceof InvalidImageReferenceError
-      ? error.message
-      : `Reference image validation failed: ${error?.message || 'unknown error'}`;
-    return res.status(400).json({ error: message });
-  }
-
   const siYueTianInput = {
     requestedModel: model,
     resolution,
@@ -2301,6 +2282,27 @@ async function handleVideoCreation(req: Request, res: Response) {
       cleanupFiles(req.files);
       return res.status(400).json({ error: `Unable to probe reference audio duration: ${error?.message || 'unknown error'}` });
     }
+  }
+  try {
+    const requestOrigin = `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+    if (isHmStudioChannel(channel)) {
+      const first = body.first_frame_url || body.first_frame || '';
+      const last = body.end_frame_url || body.last_frame_url || body.last_frame || '';
+      const count = image_urls.length;
+      const prepared = await prepareHmReferenceImages([...image_urls, ...(first ? [first] : []), ...(last ? [last] : [])],
+        process.env.BACKEND_URL || requestOrigin, [requestOrigin]);
+      image_urls = prepared.slice(0, count);
+      if (first) body.first_frame_url = prepared[count];
+      if (last) body.end_frame_url = prepared[count + Number(Boolean(first))];
+    } else {
+      image_urls = await validateAndNormalizeImageReferences(image_urls, {
+        trustedOrigins: [requestOrigin, process.env.BACKEND_URL || ''],
+        trustedRemoteOrigins: (process.env.REFERENCE_IMAGE_REMOTE_ORIGINS || 'https://filer2.fdai.xyz').split(/[\s,]+/).filter(Boolean),
+      });
+    }
+  } catch (error: any) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: error.message });
   }
   const billableSeconds = snumomWanBillableSeconds(model, billingOutputSeconds, referenceVideoSeconds);
   const pricingQuote = PricingService.quote(model, { resolution, seconds: billableSeconds, count: 1 }, false, token.userId ?? null);

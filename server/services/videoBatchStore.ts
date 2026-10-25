@@ -177,9 +177,9 @@ export class VideoBatchStore {
       waiting.forEach(i => this.release(i, 'failed', '已关闭自动重试'));
     }).immediate();
   }
-  retryFailed(batchId: number, userId: number, requestKey: string) {
+  retryFailed(batchId: number, userId: number, requestKey: string, prepared?: { expectedPayload: string; images: Record<number, string[]> }) {
     return this.sql.transaction(() => {
-      this.batch(batchId, userId);
+      const batch = this.batch(batchId, userId);
       const previous = this.sql.prepare('SELECT * FROM video_batch_commands WHERE user_id=? AND request_key=?').get(userId, requestKey) as any;
       if (previous) {
         if (previous.batch_id !== batchId) throw new Error('操作标识已用于其他批次');
@@ -187,6 +187,12 @@ export class VideoBatchStore {
       }
       const failed = this.sql.prepare("SELECT * FROM video_batch_items WHERE batch_id=? AND status='failed' AND billing_state='refunded'").all(batchId) as any[];
       if (!failed.length) return 0;
+      if (prepared) {
+        if (batch.payload !== prepared.expectedPayload || failed.some(i => !prepared.images[i.creative_index])) throw new Error('批次已变化，请重新检查素材后重试，本次未扣费');
+        const payload = JSON.parse(batch.payload);
+        for (const [index, images] of Object.entries(prepared.images)) payload.creatives[Number(index)].reference_images = images;
+        this.sql.prepare('UPDATE video_batches SET payload=? WHERE id=?').run(JSON.stringify(payload), batchId);
+      }
       const amount = Math.round(failed.reduce((n, i) => n + i.unit_cost, 0) * 1e6) / 1e6;
       const receipt = this.ledger.deduct(userId, amount);
       if (!receipt) throw new Error('余额不足，无法重新预扣失败任务费用');
