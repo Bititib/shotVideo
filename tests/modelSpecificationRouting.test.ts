@@ -384,6 +384,26 @@ describe('managed adapter protocol boundaries', () => {
     expect(String(form.get('materials'))).toContain('https://assets.invalid/a.png');
     expect(String(form.get('materials'))).toContain('https://assets.invalid/b.png');
   });
+  it('maps nova sales routes and preserves 30 images, 10 videos and 10 audios', async () => {
+    const send = vi.fn().mockResolvedValue(json({ task_id: 'nova-accepted' }, 202)); vi.stubGlobal('fetch', send);
+    const request = input({ video_length: 30, resolution: '1080p',
+      reference_images: Array(30).fill('https://assets.invalid/a.png'),
+      reference_videos: Array(10).fill('https://assets.invalid/a.mp4'), audio_urls: Array(10).fill('https://assets.invalid/a.mp3') });
+    expect(await adapters.submitSpecificationVideo(target('hmstudio', 'sd2.5-301010'), request, vi.fn())).toBe('nova-accepted');
+    const form = send.mock.calls[0][1].body as FormData;
+    expect(form.get('model')).toBe('30-10-10');
+    expect(form.getAll('channel')).toEqual(['nova']);
+    expect(form.get('video_resolution')).toBe('1080p');
+    expect(form.get('duration')).toBe('30');
+    expect(JSON.parse(String(form.get('materials')))).toHaveLength(50);
+    expect(existingModelLimits('sd2.5-301010', 'video')).toMatchObject({ maxImages: 30, maxVideos: 10, maxAudios: 10,
+      resolutions: ['720p', '1080p'], duration: { min: 4, max: 30 } });
+    send.mockClear();
+    for (const patch of [{ video_length: 31 }, { resolution: '2k' }, { reference_images: Array(31).fill('https://assets.invalid/a.png') }]) {
+      await expect(adapters.submitSpecificationVideo(target('hmstudio', 'sd2.5-301010'), input(patch), vi.fn())).rejects.toMatchObject({ retrySafe: true });
+    }
+    expect(send).not.toHaveBeenCalled();
+  });
   it('rejects unsupported reference/frame combinations before sending a request', async () => {
     const send=vi.fn();vi.stubGlobal('fetch',send);
     await expect(adapters.submitSpecificationVideo(target('hmstudio','seedance_v2.5'),input({reference_images:['https://assets.invalid/a.png'],first_frame:'https://assets.invalid/frame.png'}),vi.fn())).rejects.toMatchObject({retrySafe:true});

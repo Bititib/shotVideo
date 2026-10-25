@@ -15,7 +15,7 @@ import type { RoutingInput } from '../../shared/modelRouting.js';
 import { buildHmStudioVideoForm, buildHmStudioImageForm, hmStudioCreateUrl, hmStudioTaskUrl, normalizeHmStudioTask } from './hmStudioAdapter.js';
 import { validateHayaVideoInput } from '../../shared/hayaVideo.js';
 import { buildSiYueTianSeedance25VideoPayload, getSiYueTianC2Model, getSiYueTianSeedance25VideoSpec } from './siYueTianVideoModels.js';
-import { getHmStudioUpstreamVideoModel } from '../../shared/hmStudioVideo.js';
+import { getHmStudioUpstreamVideoModel, HM_STUDIO_NOVA_MODEL, HM_STUDIO_NOVA_UPSTREAM_MODEL, validateHmStudioAdditionalVideoInput } from '../../shared/hmStudioVideo.js';
 import { buildWxHaidiYueVideoPayload, wxHaidiYueCreateUrl, wxHaidiYueTaskUrl, normalizeWxHaidiYueTask, isWxHaidiYueChannel } from './wxHaidiYueAdapter.js';
 import { buildMjNewApiVideoPayload, normalizeMjNewApiPrompt, isMjNewApiChannel } from './mjNewApiAdapter.js';
 import { buildLongxiaVideoPayload, longxiaVideoCreateUrl, longxiaVideoTaskUrl, normalizeLongxiaVideoTask, isLongxiaChannel } from './longxiaVideoAdapter.js';
@@ -203,6 +203,14 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   const refs = (items: string[]) => items.map(item => publishSpecificationAsset(item, request.publicBaseUrl));
   let payload: any, url = base + '/v1/videos';
   if (c.type === 'hmstudio') {
+    if (exec === HM_STUDIO_NOVA_MODEL || model === HM_STUDIO_NOVA_UPSTREAM_MODEL || model === HM_STUDIO_NOVA_MODEL) {
+      const error = validateHmStudioAdditionalVideoInput(HM_STUDIO_NOVA_MODEL, {
+        seconds: i.seconds, resolution: i.resolution, imageCount: request.images.length,
+        videoCount: request.videos.length, audioCount: request.audios.length,
+        hasFirstFrame: Boolean(request.firstFrame), hasLastFrame: Boolean(request.lastFrame),
+      });
+      if (error) unsupported(error);
+    }
     if ((request.firstFrame || request.lastFrame) && (request.images.length || request.videos.length || request.audios.length)) unsupported('HM 独立首尾帧不能与普通参考素材混用');
     payload = buildHmStudioVideoForm({ model: getHmStudioUpstreamVideoModel(model), prompt: request.prompt, duration: i.seconds,
       ratio: i.ratio, resolution: i.resolution, functionMode: request.images.length || request.videos.length || request.audios.length ? 'omni_reference' : undefined, imageSources: request.images, videoSources: request.videos, audioSources: request.audios,

@@ -1646,6 +1646,12 @@ async function handleVideoCreation(req: Request, res: Response) {
 
   if (typeof req.body?.model === 'string') req.body.model = canonicalSnumomVideoModel(req.body.model);
   if (!normalizeApiModel(req, res)) return;
+  // Discovery hides disabled models; direct video submissions must honor that same switch.
+  const registeredVideoModel = db.select().from(models).where(eq(models.modelId, String(req.body?.model || ''))).get();
+  if (registeredVideoModel?.isActive === 0) {
+    cleanupFiles(req.files);
+    return res.status(404).json({ error: '视频模型未开放' });
+  }
   if (await handleSpecificationGeneration(req, res, 'video', { token, reserve: (amount, id, snapshot) => reserveApiCharge(token, amount, id, snapshot) })) return;
   const body = req.body || {};
 

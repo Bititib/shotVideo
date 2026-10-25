@@ -86,6 +86,8 @@ const SI_YUE_TIAN_SEEDANCE_25_MODELS = new Set([
   'seedance-2.5-1080p',
 ]);
 const isHmStudioVideoModel = (modelId: string) => HM_STUDIO_VIDEO_MODEL_IDS.has(modelId);
+const supportsHmDedicatedFrames = (modelId: string) => isHmStudioVideoModel(modelId)
+  && getHmStudioAdditionalVideoModel(modelId)?.supportsDedicatedFrames !== false;
 const VIDEO_HISTORY_PAGE_SIZE = 6;
 function getVideoPlayUrl(url: string | null) {
   if (!url) return '';
@@ -1184,7 +1186,7 @@ export default function VideoPage() {
       setReferenceAudioNames([]);
     }
     const supportsFirstLast = isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1'
-      || isWan30Model(selectedModel) || isHmStudioVideoModel(selectedModel);
+      || isWan30Model(selectedModel) || supportsHmDedicatedFrames(selectedModel);
     if (!supportsFirstLast) {
       setFirstFrame(null);
       setLastFrame(null);
@@ -2046,7 +2048,7 @@ export default function VideoPage() {
                         : 'snumom WAN3.0 支持 10 图 · 5 视频 · 5 段 MP3/WAV 音频，支持首帧与首尾帧模式'}
                     </span>
                   )}
-                  {(currentModel?.routingLimits ? currentModel.routingLimits.firstFrame || currentModel.routingLimits.lastFrame : isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1' || isHmStudioVideoModel(selectedModel) || selectedModel === 'wan3.0-video' || selectedModel === 'wan3.0-video-prime') && (
+                  {(currentModel?.routingLimits ? currentModel.routingLimits.firstFrame || currentModel.routingLimits.lastFrame : isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1' || supportsHmDedicatedFrames(selectedModel) || selectedModel === 'wan3.0-video' || selectedModel === 'wan3.0-video-prime') && (
                     <>
                       <button onClick={() => firstFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-emerald-400" /> 首帧 {firstFrame ? '(已上传)' : ''}

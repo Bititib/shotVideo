@@ -1,5 +1,5 @@
 import { publishReferenceUrl } from './publicReferenceService.js';
-import { HM_STUDIO_FAST803_MODEL, HM_STUDIO_FAST813_MODEL, HM_STUDIO_MINI503_MODEL } from '../../shared/hmStudioVideo.js';
+import { HM_STUDIO_FAST803_MODEL, HM_STUDIO_FAST813_MODEL, HM_STUDIO_MINI503_MODEL, HM_STUDIO_NOVA_MODEL, HM_STUDIO_NOVA_UPSTREAM_MODEL } from '../../shared/hmStudioVideo.js';
 
 export const HM_STUDIO_CHANNEL_TYPE = 'hmstudio';
 export const HM_STUDIO_UPSTREAM_FACE_ENABLED = true;
@@ -105,7 +105,8 @@ function replaceReferenceMarkers(prompt: string): string {
 }
 
 function supportsHmStudioOmniReference(model: string): boolean {
-  return /SD2\.0(?:Fast)?/i.test(model)
+  return model === HM_STUDIO_NOVA_UPSTREAM_MODEL || model === HM_STUDIO_NOVA_MODEL
+    || /SD2\.0(?:Fast)?/i.test(model)
     || /^seedance_v2\.(?:0|5)(?:[-\u2014]\d+)?$/i.test(model)
     || /^MINIMAX-H3-(?:BF16|INF8)(?:-\d+)?$/i.test(model)
     || /^MINIMAX-H3-2\.(?:0|5)采样(?:-\d+)?$/i.test(model);
@@ -133,6 +134,7 @@ function appendOmniReferences(
 
 /** Build the multipart request expected by HM Studio's compatible video API. */
 export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData {
+  const isNova = options.model === HM_STUDIO_NOVA_MODEL || options.model === HM_STUDIO_NOVA_UPSTREAM_MODEL;
   const images = (options.imageSources || []).filter(Boolean);
   const videos = (options.videoSources || []).filter(Boolean);
   const audios = (options.audioSources || []).filter(Boolean);
@@ -140,7 +142,9 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
 
   let functionMode = options.functionMode || '';
   if (!functionMode) {
-    if (videos.length > 0 || audios.length > 0 || images.length > 2) {
+    if (isNova && (images.length || videos.length || audios.length)) {
+      functionMode = 'omni_reference';
+    } else if (videos.length > 0 || audios.length > 0 || images.length > 2) {
       functionMode = supportsHmStudioOmniReference(options.model) ? 'omni_reference' : 'multi_frame';
     } else if (explicitFrames.length > 0 || images.length > 0) {
       functionMode = 'first_last_frames';
@@ -148,7 +152,7 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
   }
 
   const form = new FormData();
-  form.append('model', options.model);
+  form.append('model', isNova ? HM_STUDIO_NOVA_UPSTREAM_MODEL : options.model);
   form.append('prompt', functionMode === 'omni_reference' ? replaceReferenceMarkers(options.prompt) : options.prompt);
   form.append('duration', String(options.duration));
   form.append('ratio', options.ratio);
@@ -157,11 +161,13 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
   // at the adapter boundary so web, API, retry and recovery paths cannot drift.
   form.append('face', String(HM_STUDIO_UPSTREAM_FACE_ENABLED));
   if (functionMode) form.append('function_mode', functionMode);
-  // FAST/MINI are only available in HM's lumen pool, not its default pool.
+  // FAST/MINI require lumen; 30-10-10 requires nova, never HM's default pool.
   // Enforce this at the shared submission boundary (web/API/batch/retries),
   // including old queued payloads that explicitly persisted a default channel.
-  const upstreamChannel = HM_STUDIO_LUMEN_VIDEO_MODELS.has(options.model.trim().toUpperCase())
-    ? 'lumen' : options.upstreamChannel;
+  const upstreamChannel = isNova
+    ? 'nova'
+    : HM_STUDIO_LUMEN_VIDEO_MODELS.has(options.model.trim().toUpperCase())
+      ? 'lumen' : options.upstreamChannel;
   if (upstreamChannel) form.append('channel', upstreamChannel);
 
   if (functionMode === 'omni_reference') {

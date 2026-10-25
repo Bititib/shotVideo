@@ -4,6 +4,8 @@ export const HM_STUDIO_SEEDANCE_V25_301010_MODEL = 'seedance_v2.5-301010';
 export const HM_STUDIO_FAST803_MODEL = 'SD2.0FAST803';
 export const HM_STUDIO_FAST813_MODEL = 'SD2.0FAST813';
 export const HM_STUDIO_MINI503_MODEL = 'SD2.0MINI503';
+export const HM_STUDIO_NOVA_MODEL = 'sd2.5-301010';
+export const HM_STUDIO_NOVA_UPSTREAM_MODEL = '30-10-10';
 
 export const HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP: Readonly<Record<string, string>> = {
   'seedance_v2.5': 'MINIMAX-H3-2.5采样',
@@ -13,6 +15,7 @@ export const HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP: Readonly<Record<string, string>
   [HM_STUDIO_FAST803_MODEL]: HM_STUDIO_FAST803_MODEL,
   [HM_STUDIO_FAST813_MODEL]: HM_STUDIO_FAST813_MODEL,
   [HM_STUDIO_MINI503_MODEL]: HM_STUDIO_MINI503_MODEL,
+  [HM_STUDIO_NOVA_MODEL]: HM_STUDIO_NOVA_UPSTREAM_MODEL,
 };
 
 export function getHmStudioUpstreamVideoModel(modelId: string): string {
@@ -34,9 +37,22 @@ export type HmStudioVideoModelSpec = {
   defaultPrice: number;
   faceRestricted?: true;
   supportsDedicatedFrames: boolean;
+  defaultEnabled?: boolean;
 };
 
 export const HM_STUDIO_ADDITIONAL_VIDEO_MODELS: readonly HmStudioVideoModelSpec[] = [
+  {
+    id: HM_STUDIO_NOVA_MODEL,
+    displayName: 'sd2.5-301010',
+    description: '720p/1080p；支持4-30秒；最多30张图片、10个视频、10段音频参考；按分辨率按次计费',
+    minSeconds: 4, maxSeconds: 30, resolution: '720p',
+    resolutions: ['720p', '1080p'],
+    resolutionPrices: { '720p': 7, '1080p': 12 },
+    maxImages: 30, maxVideos: 10, maxAudios: 10,
+    defaultPrice: 7, defaultEnabled: false,
+    // Only ordinary references are confirmed for nova; dedicated frame mode is not advertised.
+    supportsDedicatedFrames: false,
+  },
   {
     id: HM_STUDIO_FAST803_MODEL,
     displayName: 'HM-Seedance V2.0 Fast 803',

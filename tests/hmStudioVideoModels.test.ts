@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { canvasVideoReferenceLimits } from '../shared/canvasVideoReferences';
 import {
   getHmStudioAdditionalVideoModel,
   HM_STUDIO_SEEDANCE_V20_933_MODEL,
@@ -13,6 +14,23 @@ import {
 } from '../server/services/hmStudioVideoModels.js';
 
 describe('HM Studio additional video models', () => {
+  it('defines nova public identity, resolution retail prices and confirmed limits', () => {
+    const id = 'sd2.5-301010';
+    expect(getHmStudioUpstreamVideoModel(id)).toBe('30-10-10');
+    expect(canvasVideoReferenceLimits(id)).toEqual({ images: 30, videos: 10, audios: 10 });
+    expect(getHmStudioAdditionalVideoModel(id)).toMatchObject({ defaultEnabled: false,
+      resolutionPrices: { '720p': 7, '1080p': 12 }, maxImages: 30, maxVideos: 10, maxAudios: 10 });
+    for (const resolution of ['720p', '1080p']) {
+      for (const seconds of [4, 15, 30]) {
+        const input = { resolution, seconds, imageCount: 30, videoCount: 10, audioCount: 10 };
+        expect(validateHmStudioAdditionalVideoInput(id, input)).toBeNull();
+        for (const patch of [{ seconds: 3 }, { seconds: 31 }, { seconds: 4.5 }, { resolution: '2k' },
+          { imageCount: 31 }, { videoCount: 11 }, { audioCount: 11 }, { hasFirstFrame: true }]) {
+          expect(validateHmStudioAdditionalVideoInput(id, { ...input, ...patch })).not.toBeNull();
+        }
+      }
+    }
+  });
   it.each([
     [HM_STUDIO_FAST803_MODEL, 8, 0, 3, { '720p': 1.1, '1080p': 1.3, '2k': 1.5 }],
     [HM_STUDIO_FAST813_MODEL, 8, 1, 3, { '720p': 1.3, '1080p': 1.5, '2k': 1.7 }],

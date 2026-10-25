@@ -218,6 +218,31 @@ describe('canvas user workflows', () => {
     expect(params.reference_videos || []).toEqual(videos.map(n=>n.src));
     expect(params.audio_urls || []).toEqual(audios.map(n=>n.src));
   });
+  it('submits the complete nova reference set using its public model ID', async () => {
+    const refs = [
+      ...Array.from({ length: 30 }, (_, i) => ({ ...newNode('image', { x: 0, y: 0 }), src: '/nova-image-' + i + '.png' })),
+      ...Array.from({ length: 10 }, (_, i) => ({ ...newNode('video', { x: 0, y: 0 }), src: '/nova-video-' + i + '.mp4' })),
+      ...Array.from({ length: 10 }, (_, i) => ({ ...newNode('audio', { x: 0, y: 0 }), src: '/nova-audio-' + i + '.mp3' })),
+    ];
+    const target = { ...newNode('video', { x: 500, y: 0 }), generator: true, title: 'nova 素材目标' };
+    vi.mocked(fetchVideoModels).mockResolvedValueOnce([{ id: 'sd2.5-301010', name: 'sd2.5-301010', description: '',
+      available: true, rates: { '720p': 7, '1080p': 12 }, allowedSeconds: [4, 30] }]);
+    const board = mount({ ...newDocument(), nodes: [...refs, target], edges: refs.map(n => ({ id: n.id, from: n.id, to: target.id })) });
+    fireEvent.pointerDown(screen.getByRole('article', { name: target.title }), { button: 0, pointerId: 1 });
+    fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'), { pointerId: 1 }); openSelectedComposer();
+    await waitFor(() => expect(screen.getByText('sd2.5-301010', { exact: true })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('你想创作什么？'), { target: { value: '保留所有参考素材' } });
+    vi.mocked(streamGeneration).mockImplementation(async (_kind, _params, _signal, cb) => cb({ type: 'complete', videoUrl: '/nova-result.mp4' }));
+    const submit = screen.getByRole('button', { name: '生成视频', exact: true });
+    await waitFor(() => expect((submit as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(submit);
+    await waitFor(() => expect(board.current().nodes.find(n => n.id === target.id)?.job?.status).toBe('done'));
+    const params = vi.mocked(streamGeneration).mock.calls[0][1];
+    expect(params.model).toBe('sd2.5-301010');
+    expect(params.reference_images).toHaveLength(30);
+    expect(params.reference_videos).toHaveLength(10);
+    expect(params.audio_urls).toHaveLength(10);
+  });
   it('sends connected images, video and audio to multimodal generation', async () => {
     const image = { ...newNode('image', { x: 0, y: 0 }), src: '/image.png' };
     const video = { ...newNode('video', { x: 0, y: 300 }), src: '/motion.mp4' };

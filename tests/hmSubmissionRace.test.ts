@@ -34,6 +34,41 @@ beforeAll(async()=>{
 });
 afterAll(()=>sqlite.close());
 let sequence = 20;
+it.each(['720p', '1080p'])('actual HM queue overrides a stale lumen channel for nova at %s', async resolution => {
+  const id = ++sequence;
+  db.insert(users).values({ id, email: id + '@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
+  db.insert(channels).values({ id, name: 'HM nova test', type: 'hmstudio', baseUrl: 'https://hm.test', apiKey: 'test',
+    supportedModels: '["sd2.5-301010"]', modelMapping: '{"sd2.5-301010":"30-10-10"}', status: 1 }).run();
+  const { contentId } = reserveLegacyVideo(id, 2, charge => {
+    db.insert(contents).values({ id, userId: id, type: 'video', modelId: 'sd2.5-301010', status: 'queued', cost: 2,
+      metadata: JSON.stringify({ channelId: id, prompt: 'test', resolution, seconds: 30, upstream_channel: 'lumen',
+        reference_images: Array(30).fill('https://example.test/image.jpg'),
+        reference_videos: Array(10).fill('https://example.test/video.mp4'), audio_urls: Array(10).fill('https://example.test/audio.mp3'),
+        billingReservationId: charge.id, videoSubmissionState: 'preparing' }) }).run();
+    return id;
+  });
+  // Existing HM rejection contract, not a paid nova probe or evidence of nova capability limits.
+  const fetcher = vi.fn(async () => Response.json({ error: '该渠道不支持模型：30-10-10' }, { status: 400 }));
+  vi.stubGlobal('fetch', fetcher);
+  try {
+    video.enqueueHmStudioVideoContent(contentId);
+    await vi.waitFor(() => expect(db.select().from(contents).where(eq(contents.id, id)).get()?.status).toBe('failed'));
+    const [url, options] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe('https://hm.test/v1/videos/generations');
+    const form = options.body as FormData;
+    expect(form.getAll('channel')).toEqual(['nova']);
+    expect(form.get('model')).toBe('30-10-10');
+    expect(form.get('video_resolution')).toBe(resolution);
+    expect(form.get('duration')).toBe('30');
+    expect(form.get('function_mode')).toBe('omni_reference');
+    expect(JSON.parse(String(form.get('materials')))).toHaveLength(50);
+    expect(db.select().from(users).where(eq(users.id, id)).get()?.balance).toBe(100);
+    await video.failHmQueuedVideo(id, new Error('duplicate'), true);
+    await video.resumePollForTask(id, db.select().from(contents).where(eq(contents.id, id)).get());
+    expect(db.select().from(users).where(eq(users.id, id)).get()?.balance).toBe(100);
+    expect(fetcher).toHaveBeenCalledOnce();
+  } finally { vi.unstubAllGlobals(); }
+});
 it.each([400, 401, 402, 422, 429, 503])('HM queue HTTP %s rejection closes the actual reserved order and refunds once', async status => {
   const id = ++sequence;
   db.insert(users).values({ id, email: id + '@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
@@ -59,6 +94,31 @@ it.each([400, 401, 402, 422, 429, 503])('HM queue HTTP %s rejection closes the a
     expect(db.select().from(users).where(eq(users.id, id)).get()?.balance).toBe(100);
     expect(fetcher).toHaveBeenCalledOnce();
     expect(db.select().from(channels).where(eq(channels.id, id)).get()?.status).toBe(1);
+  } finally { vi.unstubAllGlobals(); }
+});
+
+it('keeps an uncertain nova submission reserved and never resubmits it during recovery', async () => {
+  const id = ++sequence;
+  db.insert(users).values({ id, email: id + '@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
+  db.insert(channels).values({ id, name: 'HM nova unknown', type: 'hmstudio', baseUrl: 'https://hm.test', apiKey: 'test',
+    supportedModels: '["sd2.5-301010"]', modelMapping: '{"sd2.5-301010":"30-10-10"}', status: 1 }).run();
+  reserveLegacyVideo(id, 7, charge => {
+    db.insert(contents).values({ id, userId: id, type: 'video', modelId: 'sd2.5-301010', status: 'queued', cost: 7,
+      metadata: JSON.stringify({ channelId: id, prompt: 'test', resolution: '720p', seconds: 4,
+        billingReservationId: charge.id, videoSubmissionState: 'preparing' }) }).run();
+    return id;
+  });
+  const fetcher = vi.fn(async () => { throw Object.assign(new Error('response timed out'), { name: 'TimeoutError' }); });
+  vi.stubGlobal('fetch', fetcher);
+  try {
+    video.enqueueHmStudioVideoContent(id);
+    await vi.waitFor(() => expect(db.select().from(contents).where(eq(contents.id, id)).get()?.status).toBe('review'));
+    for (let i = 0; i < 2; i++) await video.resumePollForTask(id, db.select().from(contents).where(eq(contents.id, id)).get());
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(db.select().from(users).where(eq(users.id, id)).get()?.balance).toBe(93);
+    const row = db.select().from(contents).where(eq(contents.id, id)).get()!;
+    expect(row.status).toBe('review');
+    expect(JSON.parse(row.metadata!)).toMatchObject({ videoSubmissionState: 'unknown' });
   } finally { vi.unstubAllGlobals(); }
 });
 

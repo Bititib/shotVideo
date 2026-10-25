@@ -233,7 +233,7 @@ export async function syncModelsFromAPI() {
       displayName: model.displayName,
       description: model.description,
       capabilities: JSON.stringify(['video']),
-      isActive: 1,
+      isActive: model.defaultEnabled === false ? 0 : 1,
     })),
     { provider: 'julun', modelId: 'wan3.0th', displayName: 'Wan 3.0 视频大模型 (wan3.0th)', description: '按秒计费，¥0.14/秒；720p；支持4-30秒文生视频和多参考视频；最多10张图片、5个视频、5段音频公网URL，音频仅支持WAV；支持1:1、16:9、9:16、4:3、3:4', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'julun', modelId: JULUN_MINIMAX_H3_MODEL, displayName: 'MiniMax H3 768p（933）', description: '巨轮 MiniMax H3；固定768p；仅支持10秒或15秒；最多9图、3视频、3音频参考；按秒计费 ¥0.18/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
