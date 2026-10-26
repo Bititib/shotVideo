@@ -7,6 +7,7 @@ import { TokenService } from './tokenService.js';
 import { resolveBillingReservation } from './billingReconciliation.js';
 import { withFundContext } from '../db/fundLedger.js';
 import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
+import { videoReviewKind } from '../../shared/videoReview.js';
 import { findVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
 import { assertNoTaskIdVerification } from './videoRecoveryAction.js';
 
@@ -51,7 +52,7 @@ function confirmNotAccepted(contentId: number, adminId: number, confirmed: unkno
     if (row.type !== 'video' || row.status !== 'review') fail(409, '仅可处理待核实的视频任务');
     const channel = meta.channelId ? db.select().from(channels).where(eq(channels.id, Number(meta.channelId))).get() : null;
     if (zonghengOnly && !isZonghengChannel(channel) && meta.actualChannel !== 'zongheng') fail(409, '该入口仅处理纵横渠道的待核实任务');
-    if (!zonghengOnly && meta.reviewKind !== 'submission' && meta.missingTaskIdReview !== true) fail(409, '仅可处理提交待核实且未取得上游任务 ID 的视频');
+    if (!zonghengOnly && videoReviewKind(meta) !== 'submission') fail(409, '仅可处理提交待核实且未取得上游任务 ID 的视频');
     if (meta.batchItemId || meta.managedSpecification) fail(409, '请通过对应批次或销售路由处理该记录');
     const taskIds = [meta.videoId, meta.taskId, meta.task_id, meta.upstreamTaskId, meta.upstream_task_id, meta.requestId, meta.request_id,
       ...(Array.isArray(meta.upstreamTaskIds) ? meta.upstreamTaskIds : []), ...(Array.isArray(meta.recoveryTaskIds) ? meta.recoveryTaskIds : [])];
