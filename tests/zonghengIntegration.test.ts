@@ -248,4 +248,26 @@ describe('V6K cutover using the existing Zongheng billing and recovery paths', (
     await video.resumePollForTask(latest().id, latest());
     expect(posts).toBe(1); expect(balance()).toBe(98);
   });
+  it.each(['/api/video/generate', '/v1/videos'])('preserves a 503 diagnostic and exits the submitting state without generating or settling twice at %s', async endpoint => {
+    enableV6k(); let posts = 0;
+    upstream = async () => {
+      posts++;
+      return Response.json({ error: { code: 'provider_specific_503', message: '原始具体原因 v6k-key https://secret.invalid/file?signature=private' } },
+        { status: 503, headers: { 'x-request-id': 'trace_503' } });
+    };
+    const reply = await (await post(endpoint, { ...request, seconds: 6 })).text();
+    expect(reply).toContain('provider_specific_503');
+    expect(reply).not.toContain('v6k-key'); expect(reply).not.toContain('V6K');
+    expect(latest().status).toBe('review'); expect(balance()).toBe(98);
+    const meta = JSON.parse(latest().metadata!);
+    expect(meta.videoSubmissionState).toBe('unknown');
+    expect(meta.error).toContain('provider_specific_503');
+    expect(meta.error).toContain('原始具体原因');
+    expect(meta.error).not.toContain('secret.invalid');
+    expect(meta.zonghengSubmissionDiagnostics).toMatchObject({ httpStatus: 503, reason: 'http_error' });
+    expect(meta.zonghengSubmissionDiagnostics.message).toContain('trace_503');
+    expect(JSON.stringify(meta.zonghengSubmissionDiagnostics)).not.toContain('signature=private');
+    await video.resumePollForTask(latest().id, latest());
+    expect(posts).toBe(1); expect(balance()).toBe(98);
+  });
 });

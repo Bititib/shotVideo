@@ -1,5 +1,6 @@
 import { upstreamDiagnostic, transportDiagnostic } from './upstreamDiagnostic.js';
 import { videoErrorTaskId, videoRequestNotSent } from './videoSubmissionErrors.js';
+import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
 
 export type HmSubmissionOutcome = 'accepted' | 'rejected' | 'unknown';
 export class HmSubmissionError extends Error {
@@ -14,7 +15,7 @@ export function classifyHmSubmission(status: number, body: any, headers: Pick<He
     .includes(String(body?.status || body?.data?.status || '').toLowerCase());
   const error = body?.error || body?.detail || body?.success === false
     || ['failed', 'error', 'rejected'].includes(String(body?.status || '').toLowerCase());
-  if (status >= 200 && status < 300 && taskId && !error)
+  if (status >= 200 && status < 300 && taskId && !isTaskIdPlaceholder(taskId) && !error)
     return { outcome: 'accepted' as const, taskId: String(taskId) };
   // A receipt or accepted state conflicts with rejection. Preserve the original.
   if (evidence || acceptedState) return { outcome: 'unknown' as const, taskId: '' };

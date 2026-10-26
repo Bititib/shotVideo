@@ -1,4 +1,6 @@
 import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
+import { isTaskIdPlaceholder } from '../../../../shared/upstreamTaskId';
+import { canWithdrawTaskSupplement } from '../../../../shared/videoTaskSupplement';
 import { videoReviewKind, videoReviewLabel } from '../../../../shared/videoReview';
 import React, { useState, useEffect, useCallback } from 'react';
 import { PidoiImageReviewActions } from '../../components/PidoiImageReviewActions';
@@ -258,6 +260,21 @@ export default function ContentsPage() {
     }
   };
 
+  const handleWithdrawSupplement = async (item: ContentItem) => {
+    const taskId = getUpstreamTaskId(parseMeta(item.metadata));
+    if (!window.confirm(`撤销记录 #${item.id} 未核实的手工补录编号？这不会取消上游任务或退款。撤销后可以重新补录；只有确认上游未接单，才能执行失败退款。`)) return;
+    setRecoveringId(item.id);
+    try {
+      const result = await adminApi.withdrawContentRecoveryTaskId(item.id, taskId);
+      const refreshed = await adminApi.getContent(item.id);
+      setPreviewItem(current => current?.id === item.id ? {...current,...refreshed} : current);
+      setRecoveryTaskIdInput('');
+      await fetchContents();
+      window.alert(result.message);
+    } catch (error: any) { window.alert(error.message || '撤销补录失败'); }
+    finally { setRecoveringId(null); }
+  };
+
   const handleRecoverRecentFailed = async () => {
     let preview: any;
     setBulkPreviewing(true);
@@ -378,23 +395,16 @@ export default function ContentsPage() {
   };
 
   const getUpstreamTaskId = (meta: Record<string, any>) => {
-    const value = meta.upstreamTaskId
-      || meta.upstream_task_id
-      || meta.videoId
-      || meta.requestId
-      || meta.request_id
-      || meta.taskId
-      || meta.task_id
-      || meta.upstreamTaskIds?.find((id: unknown) => typeof id === 'string' && id.trim());
-
-    if (typeof value !== 'string' && typeof value !== 'number') return '';
-    return String(value).trim();
+    return [meta.upstreamTaskId, meta.upstream_task_id, meta.videoId, meta.requestId,
+      meta.request_id, meta.taskId, meta.task_id, ...(Array.isArray(meta.upstreamTaskIds) ? meta.upstreamTaskIds : [])]
+      .map(value => typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '')
+      .find(value => value && !isTaskIdPlaceholder(value)) || '';
   };
 
   const canFailReviewedVideoAndRefund = (item: ContentItem) => {
     const metadata = parseMeta(item.metadata);
     const taskIds = [metadata.upstreamTaskIds, metadata.recoveryTaskIds]
-      .flatMap(value => Array.isArray(value) ? value : []);
+      .flatMap(value => Array.isArray(value) ? value : []).filter(value => !isTaskIdPlaceholder(value));
     const resultUrls = [item.resultUrl, metadata.upstreamResultUrl, ...(Array.isArray(metadata.recoverySourceUrls) ? metadata.recoverySourceUrls : [])];
     return item.type === 'video' && item.status === 'review'
       && videoReviewKind(metadata) === 'submission'
@@ -744,7 +754,7 @@ export default function ContentsPage() {
                           {displayStatus(previewItem) === 'review' && !failure.hasRecordedReason ? '后台尚未确认最终结果，请核查原上游请求，勿重复提交' : failure.message}
                         </pre>
                         {canFailReviewedVideoAndRefund(previewItem) && (
-                            <button type="button" disabled={confirmingUnacceptedId === previewItem.id}
+                            <button type="button" disabled={confirmingUnacceptedId === previewItem.id || recoveringId === previewItem.id}
                               onClick={() => { void handleConfirmNotAccepted(previewItem); }}
                               className="mt-3 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200 disabled:opacity-50">
                               {confirmingUnacceptedId === previewItem.id ? '正在处理退款…' : '一键失败并退款'}
@@ -796,7 +806,7 @@ export default function ContentsPage() {
                     && getUpstreamTaskId(parseMeta(previewItem.metadata)) && (
                       <button
                         type="button"
-                        disabled={recoveringId === previewItem.id}
+                        disabled={recoveringId === previewItem.id || confirmingUnacceptedId === previewItem.id}
                         aria-busy={recoveringId === previewItem.id}
                         onClick={() => { void handleRecoverUpstream(previewItem); }}
                         className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-3 py-2 text-xs font-medium text-cyan-200 transition-colors hover:bg-cyan-500/20 focus-visible:ring-2 focus-visible:ring-cyan-400 disabled:cursor-wait disabled:opacity-60"
@@ -846,6 +856,13 @@ export default function ContentsPage() {
                     <div className="col-span-2 bg-white/[0.03] rounded-lg p-3">
                       <div className="text-zinc-500 mb-1">上游任务 / 请求 ID</div>
                       <div className="break-all font-mono text-white">{getUpstreamTaskId(parseMeta(previewItem.metadata)) || missingUpstreamId(parseMeta(previewItem.metadata))}</div>
+                      {canWithdrawTaskSupplement(previewItem, parseMeta(previewItem.metadata)) && (
+                        <button type="button" disabled={recoveringId === previewItem.id || confirmingUnacceptedId === previewItem.id}
+                          onClick={() => { void handleWithdrawSupplement(previewItem); }}
+                          className="mt-2 rounded-lg border border-amber-400/30 px-3 py-2 text-xs text-amber-500 disabled:opacity-40">
+                          撤销未核实补录
+                        </button>
+                      )}
                       {previewItem.type === 'image' && (() => {
                         const metadata = parseMeta(previewItem.metadata);
                         const fallbacks = Object.values(metadata.pidoiFallbacks || {}) as any[];
@@ -862,7 +879,7 @@ export default function ContentsPage() {
                         && !getUpstreamTaskId(parseMeta(previewItem.metadata)) && (
                           <div className="mt-3 space-y-2 rounded-lg border border-indigo-400/20 bg-indigo-500/[0.06] p-3">
                             <div className="font-medium text-indigo-300">管理员补录与恢复</div>
-                            <p className="text-[11px] leading-relaxed text-zinc-400">从上游任务记录复制对应任务 ID。保存后系统会查询原任务，不会重新生成。</p>
+                            <p className="text-[11px] leading-relaxed text-zinc-400">从上游任务记录复制对应任务 ID。系统先查询核验，成功后才保存编号；查询失败不写入、不扣费，不会重新生成。</p>
                             <input
                               aria-label="补录上游任务 ID"
                               value={recoveryTaskIdInput}
@@ -873,7 +890,7 @@ export default function ContentsPage() {
                             />
                             <button
                               type="button"
-                              disabled={recoveringId === previewItem.id || !recoveryTaskIdInput.trim()}
+                              disabled={recoveringId === previewItem.id || confirmingUnacceptedId === previewItem.id || !recoveryTaskIdInput.trim() || isTaskIdPlaceholder(recoveryTaskIdInput)}
                               onClick={() => { void handleRecoverUpstream(previewItem, recoveryTaskIdInput.trim()); }}
                               className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-400/25 bg-indigo-500/15 px-3 py-1.5 text-xs font-medium text-indigo-300 transition-colors hover:bg-indigo-500/25 disabled:opacity-40"
                             >

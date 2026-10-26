@@ -240,6 +240,29 @@ describe('HM new catalog integration (in-memory database, no upstream generation
       }
     } finally { vi.stubGlobal('fetch', previousFetch); }
   });
+  it('closes and refunds web/API orders when HM audio preparation fails before fetch', async () => {
+    const previousFetch = globalThis.fetch;
+    const send = vi.fn(); vi.stubGlobal('fetch', send);
+    try {
+    for (const api of [false, true]) {
+      const balance = () => api ? db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance : db.select().from(users).where(eq(users.id, userId)).get()!.balance;
+      const before = balance();
+      const response = await post(api ? '/v1/videos' : '/api/video/generate', {
+        model: 'sd2.5-301010', prompt: 'test', seconds: 4, video_length: 4, resolution: '720p',
+        audio_urls: ['data:audio/mpeg;base64,YmFk'],
+      }, api);
+      await response.text();
+      await vi.waitFor(() => {
+        const row = db.select().from(contents).all().at(-1)!;
+        expect(row).toMatchObject({ status: 'failed', cost: 0 });
+        expect(JSON.parse(row.metadata!)).toMatchObject({ billingStatus: 'refunded', requiresReview: false });
+        expect(JSON.parse(row.metadata!).error).toContain('未发送上游');
+      });
+      expect(balance()).toBe(before);
+    }
+    expect(send).not.toHaveBeenCalled();
+    } finally { vi.stubGlobal('fetch', previousFetch); }
+  });
   it('sends long prompts through web/API JSON and refunds only on upstream rejection', async () => {
     const beforeUser = db.select().from(users).where(eq(users.id, userId)).get()!.balance;
     const beforeToken = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance;

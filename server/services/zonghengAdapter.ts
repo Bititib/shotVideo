@@ -1,4 +1,5 @@
 import { videoErrorTaskId } from './videoSubmissionErrors.js';
+import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
 import { normalizeZonghengVideoResolution, validateZonghengVideoSpec, validateZonghengVideoReferences, validateZonghengVideoRatio } from '../../shared/zonghengVideo.js';
 import { sanitizedGenerationReason } from '../../shared/generationErrorPrivacy.js';
 import { V6K_BASE_URL, V6K_CHANNEL_TYPE, retiredZonghengBase, type ZonghengProtocol } from './zonghengProtocol.js';
@@ -13,7 +14,10 @@ export const zonghengBaseUrl = (base: string) => {
   if (retiredZonghengBase(base)) throw new Error('旧视频接口已停用，请配置 V6K 地址和令牌');
   return base.replace(/\/+$/, '').replace(/\/v1$/i, '');
 };
-export const zonghengTaskUrl = (base: string, id: string, _protocol: ZonghengProtocol = 'v6k') => `${zonghengBaseUrl(base)}/v1/videos/${encodeURIComponent(id)}`;
+export const zonghengTaskUrl = (base: string, id: string, _protocol: ZonghengProtocol = 'v6k') => {
+  if (isTaskIdPlaceholder(id)) throw new Error('界面提示文字不是有效上游任务 ID，请核对原提交记录');
+  return `${zonghengBaseUrl(base)}/v1/videos/${encodeURIComponent(id)}`;
+};
 export function zonghengError(payload: any): string {
   const code = payload?.error_code ?? payload?.error?.code ?? payload?.code;
   const detail = payload?.error_detail || payload?.error?.message || (typeof payload?.error === 'string' ? payload.error : '') || payload?.message || '';

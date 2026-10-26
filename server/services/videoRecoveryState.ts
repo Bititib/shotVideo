@@ -4,12 +4,13 @@ import { contents } from '../db/schema.js';
 import { findVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
 import { finalizeLegacyVideo } from './legacyVideoBilling.js';
 import { videoSubmissionPending } from './videoSubmissionGuard.js';
+import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
 
 /** Metadata task IDs only: a request/trace ID is not necessarily a polling ID. */
 export function savedVideoTaskId(metadata: Record<string, any>): string {
   for (const key of ['videoId', 'upstreamTaskId', 'taskId', 'task_id']) {
     const value = metadata[key];
-    if ((typeof value === 'string' || typeof value === 'number') && String(value).trim()) {
+    if ((typeof value === 'string' || typeof value === 'number') && String(value).trim() && !isTaskIdPlaceholder(value)) {
       return String(value).trim();
     }
   }
@@ -62,7 +63,7 @@ export function reviewMissingVideoTaskId(contentId: number): void {
     if (!record || !['processing', 'review'].includes(record.status || '')) return;
     const metadata = JSON.parse(record.metadata || '{}');
     if (savedVideoTaskId(metadata) || videoSubmissionPending(contentId, metadata)) return;
-    const message = '上游任务编号待核实，请勿重复提交';
+    const message = metadata.error || '上游任务编号待核实，请勿重复提交';
     const patch = {
       missingTaskIdReview: true, requiresReview: true, reviewKind: 'submission', queueStatus: 'review',
       progressText: message, error: message,

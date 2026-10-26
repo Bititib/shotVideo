@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 import { db, sqlite } from '../server/db/index';
 import { users, organizations, apiTokens, channels, contents } from '../server/db/schema';
-import { confirmZonghengNotAccepted, refundConfirmedZonghengVideo } from '../server/services/zonghengSubmissionResolutionService';
+import { confirmReviewedVideoFailureAndRefund, confirmZonghengNotAccepted, refundConfirmedZonghengVideo } from '../server/services/zonghengSubmissionResolutionService';
+import { findVideoSubmissionReceipt, persistVideoSubmissionReceipt } from '../server/services/videoSubmissionReceiptService';
 import { reserveUserCharge } from '../server/services/billingReservation';
 import { videoTaskPhase } from '../shared/videoTaskPhase';
 import { sanitizeContentRoutingForClient } from '../server/services/contentService';
@@ -16,6 +17,8 @@ function add(meta:Record<string,any>={},patch:Record<string,any>={}) {
     metadata:JSON.stringify({channelId:21,billingSource:'user',billingBalanceSource:'user',zonghengSubmissionStarted:'today',...meta}),...patch}).run();
 }
 beforeEach(()=>{
+  findVideoSubmissionReceipt(12965);
+  sqlite.exec('DELETE FROM video_submission_receipts');
   for(const table of ['contents','users','organizations','api_tokens','channels'])sqlite.exec('DELETE FROM '+table);
   sqlite.exec('DROP TABLE IF EXISTS billing_reservations; DROP TABLE IF EXISTS billing_resolution_audit; DROP TRIGGER IF EXISTS reject_failure;');
   db.insert(users).values({id:1,email:'test',username:'test',passwordHash:'test',balance:93.5}).run();
@@ -75,6 +78,32 @@ describe('confirmed Zongheng non-acceptance refunds',()=>{
     add({billingBalanceSource:'org',billingOrgId:99});expect(()=>confirmZonghengNotAccepted(12965,9,true,note)).toThrow('组织不存在');expect(balance()).toBe(93.5);
   });
 });
+describe('HM placeholder task IDs and confirmed refunds', () => {
+  function addHm() {
+    add({actualChannel:'hmstudio',reviewKind:'submission',billingStatus:'review',videoSubmissionState:'unknown',
+      videoId:'未取得上游任务 ID',upstreamTaskId:'未取得上游任务 ID',error:'HTTP 502：提交结果待核实'},
+      {modelId:'sd2.5-301010'});
+    sqlite.exec("UPDATE channels SET type='hmstudio' WHERE id=21");
+  }
+  it('requires confirmation and refunds a reviewed placeholder-ID order exactly once', () => {
+    addHm();
+    expect(() => confirmReviewedVideoFailureAndRefund(12965,9,false)).toThrow('核对');
+    expect(balance()).toBe(93.5);
+    expect(confirmReviewedVideoFailureAndRefund(12965,9,true)).toMatchObject({refundedAmount:6.5,alreadyResolved:false});
+    expect(confirmReviewedVideoFailureAndRefund(12965,9,true).alreadyResolved).toBe(true);
+    expect(row()).toMatchObject({status:'failed',cost:0});
+    expect(balance()).toBe(100);
+    expect(JSON.parse(row().metadata)).toMatchObject({billingStatus:'refunded',error:'HTTP 502：提交结果待核实'});
+  });
+  it('blocks a refund when an independent real receipt exists despite placeholder metadata', () => {
+    addHm();
+    persistVideoSubmissionReceipt({contentId:12965,upstreamTaskId:'hm-real-task-12965',channelId:21,channelApiKeyId:1,provider:'hmstudio'});
+    expect(() => confirmReviewedVideoFailureAndRefund(12965,9,true)).toThrow('已有任务 ID');
+    expect(row()).toMatchObject({status:'review',cost:6.5});
+    expect(balance()).toBe(93.5);
+  });
+});
+
 describe('public video phases',()=>{
   it('distinguishes generated-but-undelivered videos, local saving, final results, and review',()=>{
     const meta={upstreamGenerated:true,upstreamDeliveryPending:true};

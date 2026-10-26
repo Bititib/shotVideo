@@ -390,6 +390,12 @@ describe('managed adapter protocol boundaries', () => {
     expect(JSON.parse(send.mock.calls[0][1].body).prompt).toBe('字'.repeat(12000));
     expect(send).toHaveBeenCalledOnce(); expect(started).toHaveBeenCalledOnce();
   });
+  it('does not mark HM as sent when local audio preparation fails', async () => {
+    const send = vi.fn(), started = vi.fn(); vi.stubGlobal('fetch', send);
+    await expect(adapters.submitSpecificationVideo(target('hmstudio','sd2.5-301010'), input({audio_urls:['data:audio/mpeg;base64,YmFk']}), started))
+      .rejects.toMatchObject({ outcome: 'rejected', message: expect.stringContaining('未发送上游') });
+    expect(send).not.toHaveBeenCalled(); expect(started).not.toHaveBeenCalled();
+  });
   it('maps nova sales routes and preserves 30 images, 10 videos and 10 audios', async () => {
     const send = vi.fn().mockResolvedValue(json({ task_id: 'nova-accepted' }, 202)); vi.stubGlobal('fetch', send);
     const request = input({ video_length: 30, resolution: '1080p',

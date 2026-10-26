@@ -2,7 +2,7 @@ import { zonghengProtocol, zonghengProtocolSnapshot, zonghengTaskChannel, v6kQue
 import { VideoPollTimeout, withVideoPollDeadline, fetchVideoTaskResponse } from '../services/videoPollDeadline.js';
 import { refundConfirmedZonghengVideo } from '../services/zonghengSubmissionResolutionService.js';
 import { queryZonghengTask } from '../services/zonghengTaskQueryService.js';
-import { publicGenerationEvent } from '../../shared/generationMessages.js';
+import { publicGenerationEvent, publicGenerationError } from '../../shared/generationMessages.js';
 import { generationErrorResponse } from '../middleware/generationErrorResponse.js';
 import { canonicalZonghengModelId, ZONGHENG_VIDEO_MODELS, ZONGHENG_MODEL_PREFIX, getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, buildZonghengVideoPayload, submitZonghengVideo, ZonghengSubmissionError, zonghengTaskUrl, normalizeZonghengTask, zonghengTaskMetadata } from '../services/zonghengAdapter.js';
@@ -1680,9 +1680,10 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
         patchZonghengTask(contentId, { ...zonghengSnapshot, videoId, zonghengPollDelay: job.pollDelay, zonghengInitialTask: job.initialTask });
       } catch (error: any) {
         recordZonghengSubmissionError(contentId, error);
+        endVideoSubmission(contentId, error instanceof ZonghengSubmissionError && error.uncertain || videoId ? 'unknown' : 'rejected');
         if (error instanceof ZonghengSubmissionError && error.uncertain || videoId) {
-          reviewZonghengTask(contentId, '纵横科技提交结果待核实，费用保留，请勿重复提交');
-sendEvent({ type: 'status', message: '提交结果待核实，请在历史记录核实原任务，请勿重复提交' });
+          reviewZonghengTask(contentId, error.message || '提交结果待核实，上游未提供具体原因');
+          sendEvent({ type: 'status', message: publicGenerationError(error.message, ['V6K']) + '；提交结果待核实，请勿重复提交' });
         } else refundFailedTask(error.message, true);
         if (!res.destroyed && !res.writableEnded) res.end('data: [DONE]\n\n');
         return;
@@ -3518,6 +3519,12 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
       } catch (error) {
         const rejected = error instanceof HmSubmissionError && error.outcome === 'rejected'
           || error instanceof SpecificationUpstreamError && error.confirmedFailure;
+        // Detached queue jobs persist failures but their rejected completion may
+        // have no HTTP caller. Keep a bounded, redacted task-specific log too.
+        console.warn('[hm-video-task]', JSON.stringify({
+          contentId, at: new Date().toISOString(), outcome: rejected ? 'rejected' : 'unknown',
+          diagnostic: transportDiagnostic('HM Studio', '队列任务异常', error, channel.apiKey || ''),
+        }));
         endVideoSubmission(contentId, rejected ? 'rejected' : 'unknown');
         await failHmQueuedVideo(contentId, error, rejected);
         throw error;
@@ -3555,7 +3562,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   if (hmStudioQueue.has(`video:${contentId}`)) {
     let pendingMeta: Record<string, any> = {};
     try { pendingMeta = typeof record.metadata === 'string' ? JSON.parse(record.metadata) : record.metadata || {}; } catch { }
-    if (!pendingMeta.videoId) return Promise.resolve();
+    if (!savedVideoTaskId(pendingMeta)) return Promise.resolve();
   }
   if (activePolls.has(contentId)) {
     const existingPromise = activePollPromises.get(contentId);
@@ -3576,7 +3583,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   let metadata: any = {};
   try {
     metadata = typeof record.metadata === 'string' ? JSON.parse(record.metadata) : (record.metadata || {});
-    videoId = metadata.videoId || '';
+    videoId = savedVideoTaskId(metadata);
   } catch (e) {
     console.error(`[video-recover] Parse metadata failed for task ${contentId}:`, e);
   }

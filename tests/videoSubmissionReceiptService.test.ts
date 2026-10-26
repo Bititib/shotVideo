@@ -26,6 +26,7 @@ describe('durable video submission receipts', () => {
   });
 
   it('rejects request IDs and other non-polling identifiers', () => {
+    expect(() => persistVideoSubmissionReceipt({contentId:987654,upstreamTaskId:'未取得上游任务ID',channelId:9,channelApiKeyId:null,provider:'hmstudio'})).toThrow('任务 ID 无效');
     expect(() => persistVideoSubmissionReceipt({
       contentId: 987654,
       upstreamTaskId: 'request-123',

@@ -1,3 +1,5 @@
+import { sanitizedGenerationReason } from '../../../shared/generationErrorPrivacy';
+
 export type ContentFailureInfo = {
   message: string;
   failedAt?: string;
@@ -52,12 +54,35 @@ function errorText(value: unknown, depth = 0): string {
 
 export function getContentFailureInfo(metadata: unknown, resultText?: unknown): ContentFailureInfo {
   const meta = parseMetadata(metadata);
+  // Older V6K orders saved transport evidence without an error string. Display
+  // that evidence; it must never decide whether to refund or retry a generation.
+  const diagnostic = meta.zonghengSubmissionDiagnostics;
+  let submissionReason = '';
+  if (diagnostic && typeof diagnostic === 'object') {
+    if (typeof diagnostic.message === 'string' && diagnostic.message.trim()) submissionReason = sanitizedGenerationReason(diagnostic.message);
+    else {
+      const reasons: Record<string, string> = {
+        http_error: '视频提交接口返回异常，原始错误正文未保存',
+        timeout: '视频提交等待响应超时，受理结果尚未确认',
+        network_error: '视频提交发生网络异常，受理结果尚未确认',
+        invalid_json: '视频提交响应无法解析为 JSON',
+        invalid_task_response: '视频提交响应未包含可识别的任务 ID 或状态',
+      };
+      submissionReason = reasons[diagnostic.reason] || '';
+      if (submissionReason) {
+        if (Number.isInteger(diagnostic.httpStatus) && diagnostic.httpStatus >= 100 && diagnostic.httpStatus <= 599) submissionReason += `；HTTP ${diagnostic.httpStatus}`;
+        if (typeof diagnostic.networkCode === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(diagnostic.networkCode)) submissionReason += `；${diagnostic.networkCode}`;
+        if (typeof diagnostic.elapsedMs === 'number' && Number.isFinite(diagnostic.elapsedMs) && diagnostic.elapsedMs >= 0) submissionReason += `；耗时 ${(diagnostic.elapsedMs / 1000).toFixed(2)} 秒`;
+      }
+    }
+  }
   const candidates = [
     meta.error,
     meta.errorMessage,
     meta.failureReason,
     meta.failure_reason,
     meta.fail_reason,
+    submissionReason,
     resultText,
   ];
   const message = candidates.map(errorText).find(Boolean);

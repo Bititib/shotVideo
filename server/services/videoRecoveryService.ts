@@ -1,4 +1,7 @@
 import { isMegabyChannel, megabyTaskUrl, normalizeMegabyTask, readMegabyJson } from './megabyVideoAdapter.js';
+import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
+import { canWithdrawTaskSupplement } from '../../shared/videoTaskSupplement.js';
+import { assertNoTaskIdVerification, beginTaskIdVerification } from './videoRecoveryAction.js';
 import { zonghengProtocol, zonghengTaskChannel, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE } from './zonghengProtocol.js';
 import { isAsyncVideoChannel, asyncVideoTaskUrl, normalizeAsyncVideoTask, resolveAsyncVideoUrl } from './asyncVideoAdapter.js';
 import { isZonghengChannel, zonghengTaskUrl, normalizeZonghengTask } from './zonghengAdapter.js';
@@ -80,7 +83,9 @@ function parseMetadata(value: unknown): Record<string, any> {
 }
 
 function upstreamTaskId(metadata: Record<string, any>): string {
-  return String(metadata.videoId || metadata.upstreamTaskId || metadata.requestId || metadata.request_id || metadata.taskId || metadata.task_id || '').trim();
+  return [metadata.videoId, metadata.upstreamTaskId, metadata.upstream_task_id, metadata.requestId, metadata.request_id, metadata.taskId, metadata.task_id]
+    .map(value => typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '')
+    .find(value => value && !isTaskIdPlaceholder(value)) || '';
 }
 
 /** Must run inside the same transaction as the content transition. Never move a
@@ -138,7 +143,7 @@ function recoveryChargeAmount(record: any, metadata: Record<string, any>): numbe
 }
 
 export class VideoRecoveryService {
-  static supplementTaskId(contentId: number, actorId: number, taskIdValue: unknown) {
+  static async supplementTaskId(contentId: number, actorId: number, taskIdValue: unknown) {
     if (!Number.isSafeInteger(contentId) || contentId <= 0) throw { status: 400, message: '记录 ID 无效' };
     const record = db.select().from(contents).where(eq(contents.id, contentId)).get();
     if (!record) throw { status: 404, message: '任务记录不存在' };
@@ -146,29 +151,52 @@ export class VideoRecoveryService {
     if (!['failed', 'error', 'review'].includes(record.status)) throw { status: 409, message: '当前任务状态不允许补录' };
 
     const taskId = typeof taskIdValue === 'string' ? taskIdValue.trim() : '';
-    if (!taskId || taskId.length > 256 || /[\x00-\x1f\x7f]/.test(taskId)) {
+    if (!taskId || isTaskIdPlaceholder(taskId) || taskId.length > 256 || /[\s\x00-\x1f\x7f]/.test(taskId)) {
       throw { status: 400, message: '请填写有效的上游任务 ID' };
     }
 
     const metadata = parseMetadata(record.metadata);
-    const now = new Date().toISOString();
-    const audit = Array.isArray(metadata.recoveryAudit) ? metadata.recoveryAudit : [];
-    metadata.recoveryAudit = [...audit, {
-      at: now,
-      actorId,
-      action: 'supplement_task_id',
-      previousTaskId: upstreamTaskId(metadata),
-      taskId,
-    }].slice(-20);
-    Object.assign(metadata, {
-      videoId: taskId,
-      upstreamTaskId: taskId,
-      recoveryTaskIdSupplemented: true,
-      recoverySupplementedAt: now,
-      recoverySupplementedBy: actorId,
-    });
-    db.update(contents).set({ metadata: JSON.stringify(metadata) }).where(eq(contents.id, contentId)).run();
-    return { message: '上游任务 ID 已补录', taskId };
+    if (upstreamTaskId(metadata) || findVideoSubmissionReceipt(contentId)) throw { status: 409, message: '已有任务编号，请查询原任务；填错的未核实补录需先撤销' };
+    if (!metadata.channelId || metadata.batchItemId || metadata.managedSpecification)
+      throw { status: 409, message: '缺少原渠道或任务使用独立恢复流程，不能在此补录' };
+    // Query using the original channel/key without writing the candidate or touching funds.
+    const release = beginTaskIdVerification(contentId);
+    try {
+      await this.inspect(contentId, taskId);
+      return sqlite.transaction(() => {
+        const current = db.select().from(contents).where(eq(contents.id, contentId)).get();
+        if (!current || current.metadata !== record.metadata || current.status !== record.status || current.cost !== record.cost || findVideoSubmissionReceipt(contentId))
+          throw { status: 409, message: '核验期间任务已变化，请刷新后重新核查' };
+        const now = new Date().toISOString();
+        const audit = Array.isArray(metadata.recoveryAudit) ? metadata.recoveryAudit : [];
+        metadata.recoveryAudit = [...audit, {
+          at: now, actorId, action: 'supplement_task_id', previousTaskId: upstreamTaskId(metadata), taskId,
+        }].slice(-20);
+        Object.assign(metadata, {
+          videoId: taskId, upstreamTaskId: taskId, recoveryTaskIdSupplemented: true,
+          recoverySupplementedAt: now, recoverySupplementedBy: actorId, recoveryTaskIdVerifiedAt: now,
+        });
+        db.update(contents).set({ metadata: JSON.stringify(metadata) }).where(eq(contents.id, contentId)).run();
+        return { message: '上游任务 ID 已核验并补录', taskId };
+      })();
+    } finally { release(); }
+  }
+
+  static withdrawTaskId(contentId: number, actorId: number, expectedTaskId: unknown) {
+    assertNoTaskIdVerification(contentId);
+    return sqlite.transaction(() => {
+      const record = db.select().from(contents).where(eq(contents.id, contentId)).get();
+      if (!record) throw { status: 404, message: '任务记录不存在' };
+      const meta = parseMetadata(record.metadata);
+      if (!canWithdrawTaskSupplement(record, meta) || findVideoSubmissionReceipt(contentId)
+        || typeof expectedTaskId !== 'string' || upstreamTaskId(meta) !== expectedTaskId)
+        throw { status: 409, message: '只能撤销未核实的手工补录；已有回执或任务变化时请先核查' };
+      for (const key of ['videoId','upstreamTaskId','upstream_task_id','taskId','task_id','requestId','request_id','upstreamTaskIds','recoveryTaskIds']) delete meta[key];
+      meta.recoveryTaskIdSupplemented = false;
+      meta.recoveryAudit = [...meta.recoveryAudit, {action:'withdraw_unverified_task_id',at:new Date().toISOString(),actorId,taskId:expectedTaskId}].slice(-20);
+      db.update(contents).set({metadata:JSON.stringify(meta)}).where(eq(contents.id,contentId)).run();
+      return {message:'已撤销未核实补录，费用未变更；退款仍需确认上游未接单'};
+    })();
   }
 
   static previewRecentFailed(daysValue: unknown = 3): RecentFailedRecoveryPreview {
@@ -260,14 +288,14 @@ export class VideoRecoveryService {
     };
   }
 
-  static async inspect(contentId: number): Promise<RecoveryInspection> {
+  static async inspect(contentId: number, candidateTaskId?: string): Promise<RecoveryInspection> {
     const record = db.select().from(contents).where(eq(contents.id, contentId)).get();
     if (!record) throw { status: 404, message: '任务记录不存在' };
     if (record.type !== 'video') throw { status: 400, message: '只有视频任务可以重新获取' };
 
     const metadata = parseMetadata(record.metadata);
     const receipt = findVideoSubmissionReceipt(contentId);
-    const videoId = upstreamTaskId(metadata) || receipt?.upstreamTaskId || '';
+    const videoId = candidateTaskId || upstreamTaskId(metadata) || receipt?.upstreamTaskId || '';
     if (!metadata.channelId && receipt?.channelId) metadata.channelId = receipt.channelId;
     if (!metadata.channelApiKeyId && receipt?.channelApiKeyId) metadata.channelApiKeyId = receipt.channelApiKeyId;
     if (!videoId) throw { status: 400, message: '该记录没有保存上游任务 ID，无法重新获取' };
@@ -400,6 +428,19 @@ export class VideoRecoveryService {
       channelId: Number(channel.id),
       channelApiKeyId: Number(channel.apiKeyId) || null,
     };
+    const verified = (result: RecoveryInspection): RecoveryInspection => {
+      if (!candidateTaskId && metadata.recoveryTaskIdSupplemented) {
+        sqlite.transaction(() => {
+          const current = db.select().from(contents).where(eq(contents.id,contentId)).get();
+          const meta = parseMetadata(current?.metadata);
+          if (!current || upstreamTaskId(meta) !== videoId || current.status !== record.status)
+            throw {status:409,message:'查询期间任务关联或状态已变化，请刷新后重新核查'};
+          meta.recoveryTaskIdVerifiedAt = new Date().toISOString();
+          db.update(contents).set({metadata:JSON.stringify(meta)}).where(eq(contents.id,contentId)).run();
+        })();
+      }
+      return result;
+    };
 
     if (normalizedStatus === 'completed' || normalizedStatus === 'success') {
       if (!resultUrl && !isZongheng && !isHmStudio && !isHaidiYue && !isMiaowu && !isLongxia && !isSudaShui) {
@@ -408,27 +449,30 @@ export class VideoRecoveryService {
           ? `${baseUrl}/v1/videos/${encodeURIComponent(videoId)}/content`
           : `${baseUrl}/v1/files/video?id=${encodeURIComponent(videoId)}`;
       }
-      if (!resultUrl) throw { status: 502, message: '上游任务已成功，但未返回视频地址' };
-      return { ...base, status: 'completed', message: '上游任务已生成成功', upstreamResultUrl: resultUrl };
+      // A completed task proves the manually supplied ID exists even if delivery
+      // is incomplete. Save that evidence; subsequent recovery still requires URL.
+      if (!resultUrl && !candidateTaskId) throw { status: 502, message: '上游任务已成功，但未返回视频地址' };
+      return verified({ ...base, status: 'completed', message: '上游任务已生成成功', upstreamResultUrl: resultUrl });
     }
     if (isVideoFailureStatus(normalizedStatus)) {
-      return {
+      return verified({
         ...base,
         status: 'failed',
         message: (isHaya ? error : extractVideoFailureMessage(payload)) || error || '上游任务生成失败',
-      };
+      });
     }
     if (!['processing', 'queued', 'pending', 'submitted', 'generating', 'post_processing', 'finalizing', 'in_progress', 'running'].includes(normalizedStatus))
       throw { status: 502, message: '上游返回未知任务状态，未恢复或补扣' };
-    return {
+    return verified({
       ...base,
       status: 'processing',
       message: '上游任务仍在生成中，请稍后重新获取',
       progress: Number(progress) || 0,
-    };
+    });
   }
 
   static async recover(contentId: number) {
+    assertNoTaskIdVerification(contentId);
     const original = db.select().from(contents).where(eq(contents.id, contentId)).get();
     const originalMeta = parseMetadata(original?.metadata);
     // Dispatch BEFORE the legacy inspector: provider protocol and ledger belong to the original executor.
