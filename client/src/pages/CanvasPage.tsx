@@ -35,7 +35,7 @@ function CanvasWorkspace({ owner }: { owner: string; key?: string }) {
         dirty.current = false;
         if (mounted.current) setStatus(signedIn ? '本地已保存 · 正在同步…' : '已保存到此浏览器');
       }
-      if (!signedIn || syncing.current || !latest.current?.cloudPending) return;
+      if (!mounted.current || !signedIn || syncing.current || !latest.current?.cloudPending) return;
       syncing.current = true;
       const cloudSnapshot = latest.current;
       const cloudVersion = version.current;
@@ -85,6 +85,9 @@ function CanvasWorkspace({ owner }: { owner: string; key?: string }) {
   const change = (next: Workspace) => {
     next = { ...next, cloudPending: signedIn };
     latest.current = next; dirty.current = true; version.current++;
+    // Child cleanup can deliver a final animation-frame update after our cleanup.
+    // Persist it now; a new debounce may never run after navigation.
+    if (!mounted.current) { flush(); return; }
     setWorkspace(next); setStatus('正在保存…');
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(flush, 600);

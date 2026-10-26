@@ -51,6 +51,44 @@ function controlledFrames() {
 }
 
 describe('canvas interaction scheduling', () => {
+  it.each(['request','content'])('keeps an arriving generation result identified by %s while a drag frame is pending and movement continues', async identity => {
+    controlledFrames();
+    let complete!: (value: any) => void;
+    vi.mocked(contentApi.getById).mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+    const node = {...newNode('video',{x:0,y:0}),title:'拖动中完成',job:{status:'running' as const,contentId:777,requestId:identity === 'request' ? 'drag-result' : undefined}};
+    const board = mount({...newDocument(),nodes:[node],view:{x:0,y:0,zoom:1}});
+    const stage = screen.getByLabelText('无限画布编辑区');
+    fireEvent.pointerDown(screen.getByRole('article',{name:node.title}),{button:0,pointerId:1,clientX:0,clientY:0});
+    fireEvent.pointerMove(stage,{pointerId:1,clientX:70,clientY:40});
+    await act(async () => { complete({status:'completed',resultUrl:'/completed-during-drag.mp4'}); });
+    expect(board.current().nodes[0]).toMatchObject({x:70,y:40,src:'/completed-during-drag.mp4',job:{status:'done'}});
+    fireEvent.pointerMove(stage,{pointerId:1,clientX:90,clientY:60});
+    fireEvent.pointerUp(stage,{pointerId:1});
+    expect(board.current().nodes[0]).toMatchObject({x:90,y:60,src:'/completed-during-drag.mp4',job:{status:'done'}});
+    expect(screen.getByRole('button',{name:'下载视频 拖动中完成'})).toBeTruthy();
+    fireEvent.click(screen.getByRole('button',{name:'撤销',exact:true}));
+    expect(board.current().nodes[0]).toMatchObject({x:0,y:0,src:'/completed-during-drag.mp4',job:{status:'done'}});
+    fireEvent.click(screen.getByRole('button',{name:'重做',exact:true}));
+    expect(board.current().nodes[0]).toMatchObject({x:90,y:60,src:'/completed-during-drag.mp4',job:{status:'done'}});
+    expect(streamGeneration).not.toHaveBeenCalled();
+  });
+
+  it('does not revive a failed task when undoing a movement made during generation', async () => {
+    controlledFrames();
+    let complete!: (value: any) => void;
+    vi.mocked(contentApi.getById).mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+    const node = {...newNode('video',{x:0,y:0}),job:{status:'running' as const,contentId:778,requestId:'failed-drag'}};
+    const board = mount({...newDocument(),nodes:[node],view:{x:0,y:0,zoom:1}});
+    const stage = screen.getByLabelText('无限画布编辑区');
+    fireEvent.pointerDown(screen.getByRole('article'),{button:0,pointerId:1,clientX:0,clientY:0});
+    fireEvent.pointerMove(stage,{pointerId:1,clientX:70,clientY:40});
+    await act(async () => { complete({status:'failed',errorMessage:'素材下载失败'}); });
+    fireEvent.pointerUp(stage,{pointerId:1});
+    fireEvent.click(screen.getByRole('button',{name:'撤销',exact:true}));
+    expect(board.current().nodes[0]).toMatchObject({x:0,y:0,job:{status:'error',message:'素材下载失败'}});
+    expect(streamGeneration).not.toHaveBeenCalled();
+  });
+
   it('coalesces movement, flushes the last position on release and keeps one undo step', () => {
     const frame = controlledFrames();
     const a = {...newNode('image', {x:0,y:0}), title:'拖动图片', src:'/a.png'};

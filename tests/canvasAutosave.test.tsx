@@ -23,6 +23,18 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); });
 describe('canvas autosave under concurrent edits', () => {
+  it('finishes local saving without starting a new cloud request after leaving the page', async () => {
+    const mounted = render(<CanvasPage />);
+    await act(async () => {});
+    let release!: () => void;
+    vi.mocked(saveWorkspace).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    fireEvent.click(screen.getByRole('button',{name:'编辑'}));
+    await act(async () => { await vi.advanceTimersByTimeAsync(600); });
+    mounted.unmount();
+    await act(async () => { release(); });
+    expect(saveCloudWorkspace).not.toHaveBeenCalled();
+    expect(vi.mocked(saveWorkspace).mock.calls.at(-1)![1].projects[0].nodes[0].text).toBe('原文改');
+  });
   it('saves newer edits after an in-flight cloud write using the returned revision', async () => {
     let release!: (value: { revision: number }) => void;
     vi.mocked(saveCloudWorkspace).mockImplementationOnce(() => new Promise(resolve => { release = resolve; })).mockResolvedValueOnce({ revision: 3 });

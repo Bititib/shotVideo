@@ -14,6 +14,42 @@ const props = { value: '', onChange: vi.fn(), placeholder: '提示词', referenc
 function mention() { fireEvent.change(screen.getByPlaceholderText('提示词'), { target: { value: '@', selectionStart: 1 } }); }
 
 describe('canvas reference candidate selection', () => {
+  it('does not inspect media for ordinary typing and reuses eligibility while filtering an open menu', () => {
+    let reads = 0;
+    const counted = {...image, get src() { reads++; return image.src; }};
+    const document = {...newDocument(), nodes:[counted]};
+    render(<ReferencePrompt {...props} document={document}/>);
+    const input = screen.getByPlaceholderText('提示词');
+    for(const value of ['普通输入','长提示词'.repeat(5000),'添加结尾']) fireEvent.change(input,{target:{value,selectionStart:value.length}});
+    expect(reads).toBe(0);
+    mention();
+    expect(screen.getByRole('option',{name:/角色图/})).toBeTruthy();
+    const inspected = reads; expect(inspected).toBeGreaterThan(0);
+    fireEvent.change(input,{target:{value:'@角色',selectionStart:3}});
+    expect(screen.getByRole('option',{name:/角色图/})).toBeTruthy();
+    fireEvent.change(input,{target:{value:'@不存在',selectionStart:4}});
+    expect(screen.queryByRole('option',{name:/角色图/})).toBeNull();
+    expect(reads).toBe(inspected);
+  });
+
+  it('refreshes cycle and readiness checks while the menu stays open without losing existing references', () => {
+    const target = {...newNode('video',{x:0,y:0}),generator:true};
+    const bridge = newNode('text',{x:0,y:0});
+    const document = {...newDocument(),nodes:[target,image,video,audio,bridge],edges:[
+      {id:'in',from:image.id,to:target.id},
+      {id:'out',from:target.id,to:bridge.id},
+      {id:'descendant',from:bridge.id,to:video.id},
+    ]};
+    const view = render(<ReferencePrompt {...props} references={[image]} document={document} target={target}/>);
+    mention();
+    expect(screen.getByRole('option',{name:/角色图/})).toBeTruthy();
+    expect(screen.queryByRole('option',{name:/动作视频/})).toBeNull();
+    expect(screen.getByRole('option',{name:/背景音频/})).toBeTruthy();
+    view.rerender(<ReferencePrompt {...props} references={[image]} document={{...document,edges:document.edges.slice(0,1),nodes:document.nodes.map(n=>n.id===audio.id?{...n,job:{status:'running'}}:n)}} target={target}/>);
+    expect(screen.getByRole('option',{name:/动作视频/})).toBeTruthy();
+    expect(screen.queryByRole('option',{name:/背景音频/})).toBeNull();
+    expect(screen.getByRole('option',{name:/角色图/})).toBeTruthy();
+  });
   it('keeps the mention list inside a short viewport when a tall prompt is clipped by its panel', () => {
     vi.stubGlobal('innerHeight', 360);
     render(<div style={{ overflowY: 'auto' }} data-testid="prompt-scroll"><ReferencePrompt {...props} document={{ ...newDocument(), nodes: [image] }} /></div>);

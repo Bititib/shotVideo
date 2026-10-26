@@ -92,7 +92,10 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
   const controllers = useRef(new Map<string, AbortController>());
   const guard = useAuthGuard();
   const [size, setSize] = useState({ width: 1000, height: 700 });
-  const selection = doc.nodes.filter(n => selected.includes(n.id));
+  const selection = useMemo(() => {
+    const ids = new Set(selected);
+    return doc.nodes.filter(n => ids.has(n.id));
+  }, [doc.nodes, selected]);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const active = selection.length === 1 ? selection[0] : undefined;
@@ -139,8 +142,9 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
   useEffect(() => {
     const flush = () => flushInteraction();
     window.addEventListener('pagehide', flush, true);
+    window.addEventListener('beforeunload', flush, true);
     document.addEventListener('visibilitychange', flush, true);
-    return () => { flushInteraction(false); window.removeEventListener('pagehide', flush, true); document.removeEventListener('visibilitychange', flush, true); };
+    return () => { flushInteraction(false); window.removeEventListener('pagehide', flush, true); window.removeEventListener('beforeunload', flush, true); document.removeEventListener('visibilitychange', flush, true); };
   }, []);
   const record = (snapshot: Snapshot = docRef.current) => {
     const next = checkpoint(historyRef.current, { nodes: snapshot.nodes, edges: snapshot.edges });
@@ -164,8 +168,22 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
   const undo = (direction: 'undo' | 'redo') => {
     if (running) { setNotice('生成过程中可以继续编辑；任务完成后可撤销或重做。'); return; }
     const result = stepHistory(historyRef.current, docRef.current, direction);
+    const latestNodes = new Map<string, CanvasNode>(docRef.current.nodes.map(node => [node.id, node]));
+    const nodes = result.snapshot.nodes.map(node => {
+      const latest = latestNodes.get(node.id);
+      const savedJob = node.job, latestJob = latest?.job;
+      const sameJob = savedJob?.requestId || latestJob?.requestId
+        ? Boolean(savedJob?.requestId && savedJob.requestId === latestJob?.requestId)
+        : Boolean(savedJob?.contentId && savedJob.contentId === latestJob?.contentId);
+      // Undo layout changes, not a receipt that arrived after that layout snapshot.
+      // Completed version selections still use their own undo history normally.
+      if (sameJob && (savedJob?.status === 'running' || savedJob?.status === 'interrupted') && (latestJob?.status === 'done' || latestJob?.status === 'error')) {
+        return {...node, src: latest.src, versions: latest.versions, job: latestJob};
+      }
+      return node;
+    });
     historyRef.current = result.history; setHistory(result.history);
-    update({ ...docRef.current, ...result.snapshot }); setSelected([]);
+    update({ ...docRef.current, ...result.snapshot, nodes }); setSelected([]);
   };
   const localPoint = (clientX: number, clientY: number): Point => {
     const rect = surface.current!.getBoundingClientRect(); return { x: clientX - rect.left, y: clientY - rect.top };
@@ -541,9 +559,11 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     gesture.current = null; setMarquee(null);
   };
 
-  const references = active && (!active.src || active.generator) && active.kind !== 'text'
-    ? doc.edges.filter(e => e.to === active.id).map(e => doc.nodes.find(n => n.id === e.from)).filter((n): n is CanvasNode => Boolean(n))
-    : selection.filter(n => n.src);
+  const references = useMemo(() => {
+    if (!active || active.src && !active.generator || active.kind === 'text') return selection.filter(n => n.src);
+    const byId = new Map(doc.nodes.map(n => [n.id, n]));
+    return doc.edges.filter(e => e.to === active.id).map(e => byId.get(e.from)).filter((n): n is CanvasNode => Boolean(n));
+  }, [active, doc.nodes, doc.edges, selection]);
   const generate = async (options: GenerateOptions) => {
     if (!guard()) return;
     if (!options.model || !options.prompt.trim()) { setNotice('请先填写提示词并选择模型。'); return; }
