@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { canConnect, type CanvasDocument, type CanvasNode } from './model';
 import { referenceKinds, referenceLabel, type ReferenceBindings } from './referenceMentions';
 import { connectionError } from './videoInputs';
+import type { CSSProperties } from 'react';
 
 type Props = {
   value: string; onChange: (value: string) => void; placeholder: string;
@@ -12,12 +13,55 @@ type Props = {
 };
 export default function ReferencePrompt(props: Props) {
   const input = useRef<HTMLTextAreaElement>(null);
+  const editor = useRef<HTMLDivElement>(null);
+  const expandButton = useRef<HTMLButtonElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [fontSize, setFontSize] = useState(() => {
+    try { const saved = Number(localStorage.getItem('canvas-prompt-font-size')); return [16,18,20].includes(saved) ? saved : 18; }
+    catch { return 18; }
+  });
+  const [findText, setFindText] = useState('');
+  const [findMessage, setFindMessage] = useState('');
   const menuPointer = useRef(false);
   const [query, setQuery] = useState<{start: number; end: number; text: string} | null>(null);
   const [scope, setScope] = useState('canvas');
   const [pickError, setPickError] = useState('');
   const [index, setIndex] = useState(0);
   const [position, setPosition] = useState({left: 12, top: 12, width: 340, maxHeight: 320, transform: 'none'});
+  useLayoutEffect(() => {
+    if (!expanded || !editor.current) return;
+    // Keep the original textarea mounted, including its native undo stack and selection.
+    const siblings: { element: HTMLElement; inert: boolean }[] = [];
+    let child: HTMLElement = editor.current;
+    while (child.parentElement) {
+      for (const sibling of Array.from(child.parentElement.children)) {
+        if (sibling !== child && sibling instanceof HTMLElement && !sibling.classList.contains('studio-mention-menu')) {
+          siblings.push({element:sibling,inert:sibling.inert}); sibling.inert=true;
+        }
+      }
+      child=child.parentElement;
+      if (child === document.body) break;
+    }
+    input.current?.focus({preventScroll:true});
+    return () => { for (const {element,inert} of siblings) element.inert=inert; };
+  }, [expanded]);
+  const collapse = () => { setExpanded(false); setQuery(null); requestAnimationFrame(()=>expandButton.current?.focus({preventScroll:true})); };
+  const findNext = () => {
+    if (!findText || !input.current) return;
+    const from=input.current.selectionEnd;
+    let match=props.value.indexOf(findText,from);
+    if (match < 0) match=props.value.indexOf(findText);
+    if (match < 0) {setFindMessage('未找到匹配内容');return;}
+    input.current.focus(); input.current.setSelectionRange(match,match+findText.length);
+    // setSelectionRange alone does not scroll a textarea to an off-screen match.
+    const textarea=input.current, style=getComputedStyle(textarea), mirror=document.createElement('div');
+    Object.assign(mirror.style,{position:'fixed',left:'-100000px',top:'0',visibility:'hidden',boxSizing:'border-box',width:`${textarea.clientWidth}px`,whiteSpace:'pre-wrap',overflowWrap:'break-word'});
+    for(const property of ['fontFamily','fontSize','fontWeight','fontStyle','lineHeight','letterSpacing','wordSpacing','paddingTop','paddingRight','paddingBottom','paddingLeft','textIndent','tabSize','wordBreak'] as const) mirror.style[property]=style[property];
+    mirror.textContent=props.value.slice(0,match);
+    const marker=document.createElement('span');marker.textContent=findText[0];mirror.append(marker);document.body.append(mirror);
+    textarea.scrollTop=Math.max(0,marker.offsetTop-textarea.clientHeight/3);mirror.remove();
+    setFindMessage(`已选中第 ${match+1} 字起的匹配内容`);
+  };
   useLayoutEffect(() => {
     if (!query || !input.current) return;
     const textarea = input.current;
@@ -110,7 +154,25 @@ export default function ReferencePrompt(props: Props) {
     setQuery(null);
     requestAnimationFrame(() => {input.current?.focus(); input.current?.setSelectionRange(caret,caret);});
   };
-  return <>
+  return <div ref={editor} className={`studio-prompt-editor${expanded ? ' is-expanded' : ''}`} role={expanded ? 'dialog' : undefined} aria-modal={expanded ? true : undefined} aria-label={expanded ? '长文提示词编辑器' : undefined}
+    style={{'--prompt-font-size':`${fontSize}px`} as CSSProperties}
+    onKeyDown={event=>{
+      if (!expanded) return;
+      event.stopPropagation();
+      if(event.key==='Escape' && !event.nativeEvent.isComposing) {event.preventDefault();collapse();}
+      if(event.key==='Tab') {
+        const elements: HTMLElement[]=Array.from(editor.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input,select,textarea')||[]);
+        const first=elements[0],last=elements[elements.length-1];
+        if(event.shiftKey && document.activeElement===first){event.preventDefault();last?.focus();}
+        else if(!event.shiftKey && document.activeElement===last){event.preventDefault();first?.focus();}
+      }
+    }}>
+    <div className="studio-prompt-editor-tools">
+      {expanded && <strong>编辑提示词</strong>}
+      <label>字号<select aria-label="提示词字号" value={fontSize} onChange={event=>{const size=Number(event.target.value);setFontSize(size);try{localStorage.setItem('canvas-prompt-font-size',String(size));}catch{}}}>{[16,18,20].map(size=><option key={size} value={size}>{size}px</option>)}</select></label>
+      {expanded ? <button type="button" onClick={collapse}>完成编辑</button> : <button type="button" ref={expandButton} onClick={()=>{setQuery(null);setExpanded(true);}}>展开编辑</button>}
+    </div>
+    {expanded && <div className="studio-prompt-find"><input aria-label="查找提示词内容" placeholder="查找文字或镜头编号" value={findText} onChange={event=>{setFindText(event.target.value);setFindMessage('');}} onKeyDown={event=>{if(event.key==='Enter'&&!event.nativeEvent.isComposing){event.preventDefault();findNext();}}}/><button type="button" disabled={!findText} onClick={findNext}>查找下一处</button><span role="status">{findMessage}</span></div>}
     <textarea ref={input} id="canvas-prompt" className="studio-prompt" value={props.value}
       aria-autocomplete="list" aria-controls={query ? 'reference-mention-list' : undefined}
       aria-activedescendant={query && nodes[activeIndex] ? `reference-mention-${activeIndex}` : undefined}
@@ -126,12 +188,12 @@ export default function ReferencePrompt(props: Props) {
         if (e.key === 'ArrowUp') setIndex((activeIndex-1+nodes.length) % Math.max(1,nodes.length));
         if (e.key === 'Enter' && nodes[activeIndex]) pick(nodes[activeIndex]);
       }} placeholder={props.placeholder}/>
-    {props.kind !== 'audio' && <button className="studio-mention-trigger" onClick={() => {
+    <div className="studio-prompt-editor-bottom">{props.kind !== 'audio' && <button className="studio-mention-trigger" onClick={() => {
       const caret=input.current?.selectionStart ?? props.value.length;
       const value=props.value.slice(0,caret)+'@'+props.value.slice(caret);
       props.onChange(value);input.current?.focus();inspect(value,caret+1);
       requestAnimationFrame(()=>input.current?.setSelectionRange(caret+1,caret+1));
-    }}>@ 引用素材</button>}
+    }}>@ 引用素材</button>}{expanded && <span>{props.value.length.toLocaleString('zh-CN')} 字符 · 编辑同步到画布草稿</span>}</div>
     {query && createPortal(<div className="studio-mention-menu" data-canvas-ui data-theme={input.current?.closest('[data-theme]')?.getAttribute('data-theme') || 'mood'} style={{position:'fixed',...position}}
       onPointerDown={e => {menuPointer.current=true; e.stopPropagation();}}
       onPointerUp={e => {menuPointer.current=false; e.stopPropagation();}}
@@ -150,5 +212,5 @@ export default function ReferencePrompt(props: Props) {
       {pickError && <p role="alert">{pickError}</p>}
       <footer>选中后自动连接为参考；输入 @ 后可继续搜索名称。</footer>
     </div>, document.body)}
-  </>;
+  </div>;
 }

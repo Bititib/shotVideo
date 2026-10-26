@@ -225,7 +225,7 @@
 .studio-node-first .studio-video-modes{margin:0 0 8px;gap:4px}
 .studio-node-first .studio-video-modes button{padding:4px 8px;font-size:10px}
 .studio-prompt-label{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
-.studio-node-first .studio-inspector .studio-prompt{min-height:140px!important;height:220px;max-height:420px;padding:10px 2px;border:0!important;background:transparent!important;box-shadow:none;resize:vertical;font-size:14px!important;line-height:1.8}
+.studio-node-first .studio-inspector .studio-prompt{min-height:160px!important;height:320px;max-height:520px;padding:12px 4px;border:0!important;background:transparent!important;box-shadow:none;resize:vertical;font-size:var(--prompt-font-size,18px)!important;line-height:1.85}
 .studio-attachments{display:flex;align-items:flex-start;flex-wrap:wrap;gap:6px;min-height:28px}
 .studio-attach-button,.studio-attachment{display:flex;align-items:center;gap:5px;border:1px solid #8883;border-radius:7px;padding:5px 7px;font-size:11px}
 .studio-attachment{max-width:100%;padding:4px 6px}
@@ -263,7 +263,24 @@
 @media(max-width:600px){.studio-node-first .studio-rail{left:8px}.studio-node-first .studio-zoom{gap:1px;padding:6px}.studio-zoom hr{margin:0 2px}.studio-node-first .studio-zoom button{min-width:25px}.studio-composer-tools>select{flex-basis:auto}.studio-composer-tools>select[aria-label="生成模型"]{max-width:125px}.studio-node-first .studio-generate-footer small{display:none}}
 
 .studio-dark.studio-node-first .studio-composer-anchor .studio-inspector{background:#141517!important}
-@media(max-width:600px){.studio-node-first .studio-composer-anchor{z-index:13}.studio-node-first .studio-inspector .studio-prompt{height:180px;max-height:360px;font-size:16px!important}.studio-node-first .studio-inspector-scroll{max-height:clamp(120px,calc(100dvh - 300px),360px)}}
+@media(max-width:600px){.studio-node-first .studio-composer-anchor{z-index:13}.studio-node-first .studio-inspector .studio-prompt{height:240px;max-height:360px}.studio-node-first .studio-inspector-scroll{max-height:clamp(120px,calc(100dvh - 300px),360px)}}
+
+/* Long prompts use a dedicated editing surface, independent of references and canvas zoom. */
+.studio-prompt-editor{min-width:0}
+.studio-prompt-editor-tools{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:6px 0;font-size:12px}
+.studio-prompt-editor-tools strong{margin-right:auto;font-size:16px}
+.studio-prompt-editor-tools label{display:flex;align-items:center;gap:6px}
+.studio-prompt-editor-tools select{font-size:13px!important;padding:4px;border:1px solid var(--s-border,#8885);border-radius:6px}
+.studio-prompt-editor-tools button,.studio-prompt-find button{min-height:32px;padding:5px 10px;border:1px solid var(--s-border,#8885);border-radius:7px;background:#889b791a;white-space:nowrap}
+.studio-prompt-editor-bottom{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-shrink:0;font-size:12px;color:var(--s-muted,#858d80)}
+.studio-node-first .studio-composer-anchor:has(.studio-prompt-editor.is-expanded){z-index:1000}
+.studio-prompt-editor.is-expanded{position:fixed;inset:24px;margin:auto;width:min(1280px,calc(100vw - 48px));height:calc(100dvh - 48px);box-sizing:border-box;z-index:1000;display:flex;flex-direction:column;gap:12px;padding:20px 24px;border:1px solid var(--s-border,#c9cebf);border-radius:16px;background:var(--s-surface,#fffefa);color:var(--s-text,#30382d);box-shadow:0 0 0 100vmax #0009}
+.studio-dark .studio-prompt-editor.is-expanded{background:#141517;border-color:#444750;color:#e2e4e9}
+.studio-node-first .studio-inspector .studio-prompt-editor.is-expanded .studio-prompt{flex:1;min-height:0!important;height:auto;max-height:none;resize:none;padding:18px 20px;line-height:1.9;border:1px solid #8885!important;background:#88808a08!important;border-radius:10px;scrollbar-width:auto}
+.studio-prompt-find{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;flex-shrink:0}
+.studio-prompt-find input{flex:1;min-width:120px;max-width:360px;height:36px;padding:6px 10px;border:1px solid #8885;border-radius:7px;font-size:14px!important}
+.studio-prompt-find [role=status]{color:var(--s-muted,#858d80)}
+@media(max-width:600px){.studio-prompt-editor.is-expanded{inset:8px;width:calc(100vw - 16px);height:calc(100dvh - 16px);padding:12px;gap:8px}.studio-prompt-editor-tools{gap:8px}.studio-prompt-editor-tools strong{font-size:14px}.studio-prompt-editor-bottom{align-items:flex-start;flex-direction:column;gap:4px}.studio-node-first .studio-inspector .studio-prompt-editor.is-expanded .studio-prompt{padding:12px}.studio-prompt-find [role=status]{flex-basis:100%}}
 
 .studio-context{max-height:calc(100% - 24px);overflow-y:auto}.studio-context-title{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.studio-dark .studio-context .studio-context-danger{color:#ed9494!important}
 

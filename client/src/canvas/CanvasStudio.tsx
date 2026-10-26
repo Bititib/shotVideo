@@ -661,7 +661,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
   const miniScale = Math.min(148 / Math.max(miniBounds.width, 1), 78 / Math.max(miniBounds.height, 1));
   const visibleNodes = doc.nodes.filter(n => intersects(n, screenToWorld({ x: -400, y: -400 }, doc.view), screenToWorld({ x: size.width + 400, y: size.height + 400 }, doc.view)) || selected.includes(n.id));
   const mjImages = active ? latestMjImages(active) : [];
-  const composerWidth = Math.min(760, Math.max(240, size.width - 24));
+  const composerWidth = Math.min(900, Math.max(240, size.width - 24));
   const nodeLeft = active ? active.x * doc.view.zoom + doc.view.x : 0;
   const nodeRight = active ? nodeLeft + active.width * doc.view.zoom : 0;
   const belowNode = active ? (active.y + active.height) * doc.view.zoom + doc.view.y + 16 : size.height - 530;

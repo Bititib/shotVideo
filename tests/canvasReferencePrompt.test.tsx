@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import ReferencePrompt from '../client/src/canvas/ReferencePrompt';
 import { newDocument, newNode } from '../client/src/canvas/model';
 import { resolveReferenceMentions } from '../client/src/canvas/referenceMentions';
@@ -53,7 +53,7 @@ describe('canvas reference candidate selection', () => {
   it('finds unconnected image, video and audio inputs without switching scopes', () => {
     render(<ReferencePrompt {...props} document={{ ...newDocument(), nodes: [image, video, audio] }} />);
     mention();
-    expect(screen.getAllByRole('option')).toHaveLength(3);
+    expect(within(screen.getByRole('listbox')).getAllByRole('option')).toHaveLength(3);
     expect(screen.getByRole('option', { name: /角色图/ })).toBeTruthy();
     expect(screen.getByRole('option', { name: /动作视频/ })).toBeTruthy();
     expect(screen.getByRole('option', { name: /背景音频/ })).toBeTruthy();
@@ -61,7 +61,7 @@ describe('canvas reference candidate selection', () => {
   it('keeps image generation limited to compatible media and supports search by media kind', () => {
     render(<ReferencePrompt {...props} kind="image" document={{ ...newDocument(), nodes: [image, video, audio] }} />);
     fireEvent.change(screen.getByPlaceholderText('提示词'), { target: { value: '@图片', selectionStart: 3 } });
-    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(within(screen.getByRole('listbox')).getAllByRole('option')).toHaveLength(1);
     expect(screen.getByRole('option', { name: /角色图/ })).toBeTruthy();
   });
   it('excludes the actual generator, unfinished media and links that would form a cycle', () => {
@@ -70,7 +70,7 @@ describe('canvas reference candidate selection', () => {
     const document = { ...newDocument(), nodes: [target, image, video, pending], edges: [{ id: 'downstream', from: target.id, to: video.id }] };
     render(<ReferencePrompt {...props} document={document} target={target} />);
     mention();
-    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(within(screen.getByRole('listbox')).getAllByRole('option')).toHaveLength(1);
     expect(screen.getByRole('option', { name: /角色图/ })).toBeTruthy();
   });
   it('does not insert while composing and keeps keyboard selection valid after candidates change', () => {
