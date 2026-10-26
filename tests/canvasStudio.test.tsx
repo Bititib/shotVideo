@@ -89,6 +89,54 @@ describe('uploaded media and undo history', () => {
 });
 
 describe('canvas interaction scheduling', () => {
+  it('keeps bulk-selected offscreen cards unmounted while still moving the complete selection', () => {
+    controlledFrames();
+    const nodes=Array.from({length:20},(_,i)=>({...newNode('image',{x:i*600,y:0}),title:'大画布节点'+i}));
+    const board=mount({...newDocument(),nodes,view:{x:0,y:0,zoom:1}});
+    const visible=document.querySelectorAll('.studio-node').length;
+    expect(visible).toBeLessThan(nodes.length);
+    fireEvent.keyDown(window,{key:'a',ctrlKey:true});
+    expect(screen.getByText('20 项已选')).toBeTruthy();
+    expect(document.querySelectorAll('.studio-node')).toHaveLength(visible);
+    fireEvent.pointerDown(screen.getByRole('article',{name:nodes[0].title}),{button:0,pointerId:1,clientX:0,clientY:0});
+    fireEvent.pointerMove(screen.getByLabelText('无限画布编辑区'),{pointerId:1,clientX:60,clientY:30});
+    fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'),{pointerId:1});
+    expect(board.current().nodes.at(-1)).toMatchObject({x:nodes.at(-1)!.x+60,y:30});
+    fireEvent.click(screen.getByRole('button',{name:'撤销',exact:true}));
+    expect(board.current().nodes.at(-1)).toMatchObject({x:nodes.at(-1)!.x,y:0});
+  });
+
+  it('does not publish or autosave identical background progress responses', async () => {
+    vi.useFakeTimers();
+    try {
+      const node={...newNode('video',{x:0,y:0}),job:{status:'running' as const,contentId:123,progress:35,message:'上游仍在处理 · 35%，正在持续查询结果'}};
+      vi.mocked(contentApi.getById).mockResolvedValueOnce({status:'processing',metadata:{progress:35}}).mockResolvedValueOnce({status:'processing',metadata:{progress:35}}).mockResolvedValueOnce({status:'processing',metadata:{progress:50}});
+      const board=mount({...newDocument(),nodes:[node]});
+      await act(async()=>{});
+      await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
+      expect(board.onChange).not.toHaveBeenCalled();
+      await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
+      expect(board.onChange).toHaveBeenCalledTimes(1);
+      expect(board.current().nodes[0].job?.progress).toBe(50);
+    } finally {vi.useRealTimers();}
+  });
+
+  it('loads a private image thumbnail with original fallback and defers video streams until playback', async () => {
+    const photo={...newNode('image',{x:0,y:0}),title:'高清图',src:'/api/media/large-image'};
+    const video={...newNode('video',{x:400,y:0}),title:'视频预览',src:'/api/media/movie'};
+    mount({...newDocument(),nodes:[photo,video]});
+    const image=screen.getByAltText(photo.title);
+    expect(image.getAttribute('src')).toBe('/api/media/large-image?preview=image');
+    fireEvent.error(image);
+    expect(image.getAttribute('src')).toBe(photo.src);
+    const player=screen.getByRole('article',{name:video.title}).querySelector('video')!;
+    expect(player.getAttribute('preload')).toBe('none');
+    expect(player.getAttribute('poster')).toBe('/api/media/movie?preview=poster');
+    fireEvent.click(screen.getByRole('button',{name:'下载图片 高清图'}));
+    expect(downloadGeneratedImage).toHaveBeenCalledWith(photo.src,'高清图.png');
+    await act(async()=>{});
+  });
+
   it.each(['request','content'])('keeps an arriving generation result identified by %s while a drag frame is pending and movement continues', async identity => {
     controlledFrames();
     let complete!: (value: any) => void;

@@ -18,6 +18,7 @@ import { startPolling } from '../utils/polling';
 import GeneratorPanel from './GeneratorPanel';
 import CanvasNodeCard, { type CanvasNodeActions } from './CanvasNodeCard';
 import CanvasConnections from './CanvasConnections';
+import CanvasMinimapNodes from './CanvasMinimapNodes';
 import MjImagePicker, { latestMjImages } from './MjImagePicker';
 
 import ImageTools from './ImageTools';
@@ -702,7 +703,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
           editNode(node.id, { job: { ...current.job, status: 'interrupted', message: publicGenerationError('提交结果待核实，请勿重复提交') } });
         }
         else {
-          const pending = applyPendingGeneration({...current, job: {...current.job, status:'running'}}, data);
+          const pending = applyPendingGeneration(current.job.status === 'running' ? current : {...current, job: {...current.job, status:'running'}}, data);
           if (pending !== current) editNode(node.id, pending);
         }
       }
@@ -760,9 +761,9 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
   const miniBounds = useMemo(() => bounds(doc.nodes), [doc.nodes]);
   const miniScale = Math.min(148 / Math.max(miniBounds.width, 1), 78 / Math.max(miniBounds.height, 1));
   const visibleNodes = useMemo(() => {
-    const a = screenToWorld({ x: -400, y: -400 }, doc.view), b = screenToWorld({ x: size.width + 400, y: size.height + 400 }, doc.view);
-    const selectedIds = new Set(selected);
-    return doc.nodes.filter(n => intersects(n, a, b) || selectedIds.has(n.id));
+    const a = screenToWorld({ x: -128, y: -128 }, doc.view), b = screenToWorld({ x: size.width + 128, y: size.height + 128 }, doc.view);
+    // Retain the single active editor, not every offscreen card in a bulk selection.
+    return doc.nodes.filter(n => intersects(n, a, b) || selected.length === 1 && n.id === selected[0]);
   }, [doc.nodes, doc.view, size, selected]);
   const mjImages = active ? latestMjImages(active) : [];
   const composerWidth = Math.min(900, Math.max(240, size.width - 24));
@@ -825,7 +826,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
           onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void importFiles(Array.from(event.dataTransfer.files), screenToWorld(localPoint(event.clientX, event.clientY), doc.view)); }}>
           <div className="studio-world" style={{ transform: `translate(${doc.view.x}px, ${doc.view.y}px) scale(${doc.view.zoom})` }}>
             {groups.map(g => { const b = g.bounds; return <div key={g.id} className="studio-group" style={{ left: b.x - 20, top: b.y - 45, width: b.width + 40, height: b.height + 65 }}><button onPointerDown={e => begin(e, g.nodes.map(n => n.id))}><Frame size={13} /> 素材分组 · {g.nodes.length} 项</button></div>; })}
-            <svg className="studio-connections" aria-label="素材关联线" style={{ opacity: showConnections || linkPreview ? 1 : 0 }}><CanvasConnections nodes={doc.nodes} edges={doc.edges} />{linkPreview && <path className={`studio-link-preview ${linkPreview.target && !linkPreview.valid ? 'invalid' : ''}`} data-testid="connection-preview" d={`M${linkPreview.from.x},${linkPreview.from.y} C${linkPreview.from.x + 80},${linkPreview.from.y} ${linkPreview.to.x - 80},${linkPreview.to.y} ${linkPreview.to.x},${linkPreview.to.y}`} />}</svg>
+            <CanvasConnections nodes={doc.nodes} edges={doc.edges} view={doc.view} viewport={size} visible={showConnections || Boolean(linkPreview)} color={dark ? '#777e98' : '#899775'}/><svg className="studio-connections" aria-label="正在连接素材">{linkPreview && <path className={`studio-link-preview ${linkPreview.target && !linkPreview.valid ? 'invalid' : ''}`} data-testid="connection-preview" d={`M${linkPreview.from.x},${linkPreview.from.y} C${linkPreview.from.x + 80},${linkPreview.from.y} ${linkPreview.to.x - 80},${linkPreview.to.y} ${linkPreview.to.x},${linkPreview.to.y}`} />}</svg>
             {visibleNodes.map(node => <CanvasNodeCard key={node.id} node={node} isSelected={selected.includes(node.id)}
               incomingReady={Boolean(connecting || linkPreview)} outgoingReady={connecting === node.id || Boolean(linkPreview)}
               linkState={linkPreview?.target === node.id ? linkPreview.valid ? 'valid' : 'invalid' : ''} actions={nodeActions} />)}
@@ -861,7 +862,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
           {!context.link && <button role="menuitem" onClick={() => { fit(); setContext(null); }}><Maximize size={15} /> 查看全部素材</button>}<button role="menuitem" onClick={() => setContext(null)}><X size={15} /> 关闭菜单</button></>}</div>}
         <div className="studio-bottom-left"><span className="studio-board-count"><span /> {doc.nodes.length} 个素材{running && ' · 正在生成'}</span><span className="studio-key-hint"><kbd>空格</kbd> 拖动画布 <kbd>F</kbd> 查看全部</span></div>
         <div className="studio-navigation">
-          {!!doc.nodes.length && <div className="studio-minimap" title="点击定位画布" onPointerDown={e => { const r = e.currentTarget.getBoundingClientRect(); const x = (e.clientX - r.left - 10) / miniScale + miniBounds.x, y = (e.clientY - r.top - 10) / miniScale + miniBounds.y; update({ ...docRef.current, view: { ...docRef.current.view, x: size.width / 2 - x * doc.view.zoom, y: size.height / 2 - y * doc.view.zoom } }); }}><svg viewBox="0 0 168 98" aria-label="画布缩略图">{doc.nodes.map(n => <rect key={n.id} x={10 + (n.x - miniBounds.x) * miniScale} y={10 + (n.y - miniBounds.y) * miniScale} width={n.width * miniScale} height={n.height * miniScale} rx="2" className={selected.includes(n.id) ? 'selected' : n.kind} />)}<rect className="viewport" x={10 + (-doc.view.x / doc.view.zoom - miniBounds.x) * miniScale} y={10 + (-doc.view.y / doc.view.zoom - miniBounds.y) * miniScale} width={size.width / doc.view.zoom * miniScale} height={size.height / doc.view.zoom * miniScale} /></svg></div>}
+          {!!doc.nodes.length && <div className="studio-minimap" title="点击定位画布" onPointerDown={e => { const r = e.currentTarget.getBoundingClientRect(); const x = (e.clientX - r.left - 10) / miniScale + miniBounds.x, y = (e.clientY - r.top - 10) / miniScale + miniBounds.y; update({ ...docRef.current, view: { ...docRef.current.view, x: size.width / 2 - x * doc.view.zoom, y: size.height / 2 - y * doc.view.zoom } }); }}><svg viewBox="0 0 168 98" aria-label="画布缩略图"><CanvasMinimapNodes nodes={doc.nodes} selected={selected} origin={miniBounds} scale={miniScale} /><rect className="viewport" x={10 + (-doc.view.x / doc.view.zoom - miniBounds.x) * miniScale} y={10 + (-doc.view.y / doc.view.zoom - miniBounds.y) * miniScale} width={size.width / doc.view.zoom * miniScale} height={size.height / doc.view.zoom * miniScale} /></svg></div>}
           <div className="studio-zoom" role="toolbar" aria-label="画布视图工具">        <button className={mode === 'select' ? 'active' : ''} onClick={() => setMode('select')} aria-label="选择工具" title="选择 / 框选 V"><MousePointer2 size={19} /></button>
         <button className={mode === 'hand' ? 'active' : ''} onClick={() => setMode('hand')} aria-label="平移工具" title="平移 H · 按住空格"><Hand size={19} /></button><hr />
 <button onClick={() => update({ ...doc, view: zoomAround(doc.view, { x: size.width / 2, y: size.height / 2 }, 1 / 1.2) })} aria-label="缩小画布"><Minus size={15} /></button><button onClick={() => update({ ...doc, view: zoomAround(doc.view, { x: size.width / 2, y: size.height / 2 }, 1 / doc.view.zoom) })} title="恢复 100%">{Math.round(doc.view.zoom * 100)}%</button><button onClick={() => update({ ...doc, view: zoomAround(doc.view, { x: size.width / 2, y: size.height / 2 }, 1.2) })} aria-label="放大画布"><Plus size={15} /></button><button onClick={() => fit()} aria-label="查看全部素材" title="适应画布 F"><Maximize size={15} /></button><hr/><button aria-label={showConnections ? '隐藏连线' : '显示连线'} title="显示 / 隐藏连线" onClick={() => setShowConnections(v => !v)}>{showConnections ? <Eye size={16}/> : <EyeOff size={16}/>}</button><button aria-label={dark ? '浅色画布' : '深色画布'} title={dark ? '切换到灵感浅色 · 鼠尾草绿 / 暖沙 / 奶油米' : '切换到经典黑色'} onClick={() => { const next = !dark; setDark(next); localStorage.setItem('canvas-theme', next ? 'dark' : 'light'); }}>{dark ? <Sun size={16}/> : <Moon size={16}/>}</button><hr/><button className="studio-icon" disabled={!history.past.length || running} onClick={() => undo('undo')} aria-label="撤销" title="撤销 Ctrl / ⌘ Z"><Undo2 size={17} /></button><button className="studio-icon" disabled={!history.future.length || running} onClick={() => undo('redo')} aria-label="重做" title="重做 Ctrl / ⌘ Shift Z"><Redo2 size={17} /></button></div>

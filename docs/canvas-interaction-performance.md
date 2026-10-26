@@ -99,6 +99,8 @@ Chrome 浏览器实际 IndexedDB 检查：持续 60 次修改、每次间隔 100
 
 记录：`data/canvas-history-before.json`、`data/canvas-history-after.json`、`data/canvas-history-review-tests.json`、`data/canvas-history-build.log`。
 
+> 后续已完成整轮压力与功能验收，最终实现、对比数据和复测入口见 [无限画布性能整体验收](canvas-performance-acceptance.md)。以下各轮数字为当时记录，不是最终验收统计。
+
 ## 第七轮检查：素材选择与部分导入失败
 
 - 素材选择器在“生成资产”“本地上传”页也会遍历当前画布的节点、检查素材并复制候选；搜索每次输入还会重复构建相同候选。改为仅在本项目/跨项目列表可见时计算，候选与搜索过滤分别缓存；来源、节点就绪状态、目标类型变化仍重新计算。用带访问计数的素材回归，修改前隐藏页发生读取，修改后为零，搜索不重复读取源节点；同时验证选择传回完整来源信息。

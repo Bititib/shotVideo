@@ -1,3 +1,4 @@
+import { ImageThumbnail } from '../components/MediaPreview';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { type CanvasDocument, type CanvasNode } from './model';
@@ -233,7 +234,7 @@ export default function ReferencePrompt(props: Props) {
       <div role="listbox" id="reference-mention-list" aria-label="可引用素材">{nodes.map((node,i) => <button key={(node.origin?.projectId ?? '')+node.id}
         role="option" id={`reference-mention-${i}`} aria-selected={i===activeIndex}
         onMouseDown={e => {if(e.button===0) {e.preventDefault(); pick(node);}}} onClick={()=>pick(node)}>
-        {node.kind==='image' ? <img src={node.src} alt="" loading="lazy" decoding="async"/> : <span className="studio-mention-media">{node.kind==='video'?'▶':'♫'}</span>}
+        {node.kind==='image' ? <ImageThumbnail src={node.src!} alt="" loading="lazy" decoding="async"/> : <span className="studio-mention-media">{node.kind==='video'?'▶':'♫'}</span>}
         <span><strong>{referenceLabel(props.bindings,node.id) ? '@'+referenceLabel(props.bindings,node.id)+' · ' : ''}{node.title}</strong><small>{node.origin?.title || '已连接到当前节点'}</small></span>
       </button>)}</div>
       {!nodes.length && <p>{query.text ? '没有匹配素材，试试其他名称。' : '暂无可用素材，请切换来源或先上传素材。'}</p>}
