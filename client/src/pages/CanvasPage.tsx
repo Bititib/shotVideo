@@ -3,7 +3,7 @@ import { useAuthStore } from '../stores/authStore';
 import { loadWorkspace, saveWorkspace } from '../canvas/storage';
 import { uid, type CanvasDocument, type Workspace } from '../canvas/model';
 import CanvasStudio from '../canvas/CanvasStudio';
-import { fetchCloudWorkspace, reconcileWorkspace, saveCloudWorkspace } from '../canvas/sync';
+import { fetchCloudWorkspace, mergeUploadedMedia, reconcileWorkspace, saveCloudWorkspace } from '../canvas/sync';
 import './CanvasPage.css';
 
 export default function CanvasPage() {
@@ -20,38 +20,60 @@ function CanvasWorkspace({ owner }: { owner: string; key?: string }) {
   const latest = useRef<Workspace | null>(null);
   const dirty = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const maxWaitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(true);
   const version = useRef(0);
   const [retry, setRetry] = useState(0);
   const syncing = useRef(false);
+  const cloudController = useRef<AbortController | null>(null);
   const signedIn = owner !== 'guest';
   const flush = () => {
-    if (timer.current) clearTimeout(timer.current);
+    if (timer.current !== null) clearTimeout(timer.current);
+    if (maxWaitTimer.current !== null) clearTimeout(maxWaitTimer.current);
+    timer.current = null; maxWaitTimer.current = null;
     if (!latest.current || (!dirty.current && !latest.current.cloudPending)) return;
     const savingVersion = version.current;
     const snapshot = latest.current;
     void saveWorkspace(owner, snapshot).then(async () => {
       if (version.current === savingVersion) {
         dirty.current = false;
-        if (mounted.current) setStatus(signedIn ? '本地已保存 · 正在同步…' : '已保存到此浏览器');
+        if (mounted.current) setStatus(signedIn ? latest.current?.cloudPending ? '本地已保存 · 正在同步…' : '已同步到账户' : '已保存到此浏览器');
       }
       if (!mounted.current || !signedIn || syncing.current || !latest.current?.cloudPending) return;
       syncing.current = true;
+      const controller = new AbortController();
+      cloudController.current = controller;
       const cloudSnapshot = latest.current;
       const cloudVersion = version.current;
+      let acknowledged = false;
       try {
-        const result = await saveCloudWorkspace(cloudSnapshot);
-        const current = latest.current!;
+        const result = await saveCloudWorkspace(cloudSnapshot, controller.signal);
+        const current = mergeUploadedMedia(latest.current!, cloudSnapshot, result.workspace);
         const pending = version.current !== cloudVersion;
-        latest.current = { ...(pending ? current : result.workspace || current), cloudRevision: result.revision, cloudPending: pending };
+        latest.current = { ...current, cloudRevision: result.revision, cloudPending: pending };
+        // Publish substitutions before waiting for disk, so further edits use durable URLs.
+        if (mounted.current) setWorkspace(latest.current);
+        const acknowledgementVersion = version.current;
         await saveWorkspace(owner, latest.current);
-        if (mounted.current) { setWorkspace(latest.current); setStatus(pending ? '本地已保存 · 正在同步…' : '已同步到账户'); }
-        if (pending && mounted.current) timer.current = setTimeout(flush, 600);
+        if (version.current === acknowledgementVersion) dirty.current = false;
+        acknowledged = true;
+        if (mounted.current) setStatus(dirty.current ? '正在保存…' : latest.current.cloudPending ? '本地已保存 · 正在同步…' : '已同步到账户');
       } catch (error: any) {
         if (mounted.current) setStatus(`本地已保存 · ${error.message || '同步失败，请重试'}`);
-      } finally { syncing.current = false; }
+      } finally {
+        syncing.current = false;
+        if (cloudController.current === controller) cloudController.current = null;
+        // New edits can also arrive during the acknowledgement's local write.
+        if (acknowledged && mounted.current && latest.current?.cloudPending) scheduleFlush();
+      }
     }).catch(() => { if (mounted.current) setStatus('保存失败 · 请导出备份'); });
   };
+  function scheduleFlush() {
+    if (timer.current !== null) clearTimeout(timer.current);
+    timer.current = setTimeout(flush, 600);
+    // Keep the trailing save while bounding how long uninterrupted edits stay only in memory.
+    if (maxWaitTimer.current === null) maxWaitTimer.current = setTimeout(flush, 5000);
+  }
   useEffect(() => {
     mounted.current = true;
     let cancelled = false;
@@ -78,7 +100,7 @@ function CanvasWorkspace({ owner }: { owner: string; key?: string }) {
     window.addEventListener('beforeunload', beforeunload);
     document.addEventListener('visibilitychange', hidden);
     return () => {
-      cancelled = true; mounted.current = false; flush();
+      cancelled = true; mounted.current = false; cloudController.current?.abort(); flush();
       window.removeEventListener('online', pagehide); window.removeEventListener('pagehide', pagehide); window.removeEventListener('beforeunload', beforeunload); document.removeEventListener('visibilitychange', hidden);
     };
   }, [owner, retry]);
@@ -89,8 +111,7 @@ function CanvasWorkspace({ owner }: { owner: string; key?: string }) {
     // Persist it now; a new debounce may never run after navigation.
     if (!mounted.current) { flush(); return; }
     setWorkspace(next); setStatus('正在保存…');
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(flush, 600);
+    scheduleFlush();
   };
   const update = (doc: CanvasDocument) => {
     const current = latest.current;

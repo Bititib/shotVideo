@@ -23,6 +23,81 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); });
 describe('canvas autosave under concurrent edits', () => {
+  it('cancels the in-flight cloud sync when the workspace unmounts', async () => {
+    vi.mocked(saveCloudWorkspace).mockImplementation(() => new Promise(()=>{}));
+    let mounted!: ReturnType<typeof render>;
+    await act(async () => {mounted=render(<CanvasPage/>);});
+    fireEvent.click(screen.getByRole('button',{name:'编辑'}));
+    await act(async () => {await vi.advanceTimersByTimeAsync(600);});
+    const signal=vi.mocked(saveCloudWorkspace).mock.calls[0][1]!;
+    expect(signal.aborted).toBe(false);
+    mounted.unmount();
+    expect(signal.aborted).toBe(true);
+    await act(async()=>{});
+  });
+  it('settles the saved indicator when edits arrived during the first local write but were included in cloud saving', async () => {
+    vi.mocked(saveCloudWorkspace).mockResolvedValue({revision:2});
+    await act(async () => {render(<CanvasPage/>);});
+    let releaseLocal!: () => void;
+    vi.mocked(saveWorkspace).mockImplementationOnce(() => new Promise(resolve => {releaseLocal=resolve;}));
+    fireEvent.click(screen.getByRole('button',{name:'编辑'}));
+    await act(async () => {await vi.advanceTimersByTimeAsync(600);});
+    fireEvent.click(screen.getByRole('button',{name:'编辑'}));
+    await act(async () => {releaseLocal();});
+    expect(screen.getByText('已同步到账户')).toBeTruthy();
+    await act(async () => {await vi.advanceTimersByTimeAsync(6000);});
+    expect(screen.getByText('已同步到账户')).toBeTruthy();
+    expect(saveCloudWorkspace).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(saveWorkspace).mock.calls.at(-1)![1].projects[0].nodes[0].text).toBe('原文改改');
+  });
+  it('writes a local checkpoint during uninterrupted editing instead of waiting forever for a pause', async () => {
+    useAuthStore.setState({user:null});
+    await act(async () => { render(<CanvasPage/>); });
+    for(let i=0;i<20;i++) {
+      fireEvent.click(screen.getByRole('button',{name:'编辑'}));
+      await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    }
+    expect(saveWorkspace).toHaveBeenCalled();
+    expect(vi.mocked(saveWorkspace).mock.calls.at(-1)![1].projects[0].nodes[0].text.length).toBeGreaterThan(12);
+  });
+
+  it('retains uploaded media URLs when newer edits arrive during cloud upload', async () => {
+    const src='data:image/png;base64,YWJj';
+    workspace.projects[0].nodes[0]={...newNode('image',{x:0,y:0},'原文'),src,versions:[{id:'v1',src,prompt:'旧提示词',createdAt:0}]};
+    let release!: (value: any) => void;
+    vi.mocked(saveCloudWorkspace).mockImplementationOnce(() => new Promise(resolve => {release=resolve;})).mockResolvedValueOnce({revision:3});
+    await act(async () => {render(<CanvasPage/>);});
+    fireEvent.click(screen.getByRole('button',{name:'编辑'}));
+    await act(async () => {await vi.advanceTimersByTimeAsync(600);});
+    const sent=structuredClone(vi.mocked(saveCloudWorkspace).mock.calls[0][0]);
+    sent.projects[0].nodes[0].src='/api/media/durable';
+    sent.projects[0].nodes[0].versions![0].src='/api/media/durable';
+    fireEvent.click(screen.getByRole('button',{name:'编辑'}));
+    await act(async () => {release({revision:2,workspace:sent});});
+    await act(async () => {await vi.advanceTimersByTimeAsync(600);});
+    const next=vi.mocked(saveCloudWorkspace).mock.calls[1][0];
+    expect(next.projects[0].nodes[0]).toMatchObject({text:'原文改改',src:'/api/media/durable',versions:[{src:'/api/media/durable'}]});
+    expect(next.cloudRevision).toBe(2);
+  });
+
+  it('schedules newer edits arriving while the cloud acknowledgement is being saved locally', async () => {
+    let releaseCloud!: (value: any) => void;
+    vi.mocked(saveCloudWorkspace).mockImplementationOnce(() => new Promise(resolve => {releaseCloud=resolve;})).mockResolvedValueOnce({revision:3});
+    await act(async () => {render(<CanvasPage/>);});
+    fireEvent.click(screen.getByRole('button',{name:'编辑'}));
+    await act(async () => {await vi.advanceTimersByTimeAsync(600);});
+    let releaseLocal!: () => void;
+    vi.mocked(saveWorkspace).mockImplementationOnce(() => new Promise(resolve => {releaseLocal=resolve;}));
+    await act(async () => {releaseCloud({revision:2});});
+    fireEvent.click(screen.getByRole('button',{name:'编辑'}));
+    await act(async () => {await vi.advanceTimersByTimeAsync(600);});
+    await act(async () => {releaseLocal();});
+    expect(screen.queryByText('已同步到账户')).toBeNull();
+    await act(async () => {await vi.advanceTimersByTimeAsync(600);});
+    expect(saveCloudWorkspace).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(saveCloudWorkspace).mock.calls[1][0].projects[0].nodes[0].text).toBe('原文改改');
+    expect(screen.getByText('已同步到账户')).toBeTruthy();
+  });
   it('finishes local saving without starting a new cloud request after leaving the page', async () => {
     const mounted = render(<CanvasPage />);
     await act(async () => {});
