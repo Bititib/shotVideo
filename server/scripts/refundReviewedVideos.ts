@@ -26,6 +26,9 @@ try {
     const { sqlite } = await import('../db/index.js');
     try {
       const { confirmReviewedVideoFailureAndRefund } = await import('../services/zonghengSubmissionResolutionService.js');
+      const backupPath = `${planPath}.backup-${Date.now()}.db`;
+      await sqlite.backup(backupPath);
+      console.log(JSON.stringify({backup:backupPath,message:'数据库已备份，开始逐笔核对处理'}));
       const report = applyReviewedVideoRefunds(sqlite,plan,adminId,true,confirmReviewedVideoFailureAndRefund);
       console.table(report.results);
       const reportPath = `${planPath}.result-${Date.now()}.json`;
