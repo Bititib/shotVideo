@@ -7,7 +7,7 @@ import ReferencePrompt from './ReferencePrompt';
 import { bindReferences, referenceLabel, insertReference, resolveReferenceMentions, type ReferenceBindings } from './referenceMentions';
 import type { CSSProperties } from 'react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Video, Sparkles, X, RefreshCw, Paperclip } from 'lucide-react';
+import { ArrowUpRight, Video, Sparkles, X, RefreshCw, Paperclip, Crosshair } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { ImageModel } from '../api/imageGen';
 import type { VideoModel } from '../api/video';
@@ -110,10 +110,11 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
   const videoPrice = videoQuote.quote?.cost;
   const estimatedCost = kind === 'image' && imagePrice != null ? imagePrice * (managedLimits?.outputsPerTask ? 1 : count) : kind === 'audio' && activeModel?.rate != null ? activeModel.rate * combined.length : videoPrice;
   return <aside className="studio-inspector" aria-label="创作面板">
-    <header className="studio-compact-header">{onFocus && <button className="studio-focus-node" onClick={onFocus}>聚焦节点</button>}<button className="studio-icon" onClick={onClose} aria-label="收起创作面板"><X size={16}/></button></header><div className="studio-inspector-scroll">
-      {kind === 'video' && <div className="studio-video-modes">{([['text', '文生视频'], ['reference', '图片参考'], ['multimodal', '多模态参考'], ['frames', '首尾帧'], ['edit', '视频编辑']] as const).map(([id, label]) => <button key={id} className={videoMode === id ? 'active' : ''} onClick={() => setVideoMode(id)}>{label}</button>)}</div>}
+    <div className="studio-inspector-scroll">
       <div className="studio-prompt-label"><label htmlFor="canvas-prompt">你想创作什么？</label></div>
       <ReferencePrompt value={prompt} onChange={setPrompt} references={references} bindings={bindings} document={canvasDocument} projects={projects} target={selected} kind={kind}
+        toolbar={kind === 'video' ? <div className="studio-video-modes">{([['multimodal', '多模态参考'], ['reference', '图片参考'], ['frames', '首尾帧'], ['edit', '视频编辑'], ['text', '文生视频']] as const).map(([id, label]) => <button key={id} aria-pressed={videoMode === id} className={videoMode === id ? 'active' : ''} onClick={() => setVideoMode(id)}>{label}</button>)}</div> : <span>{kind === 'image' ? '图像创作' : '音频创作'}</span>}
+        panelActions={<>{onFocus && <button type="button" className="studio-prompt-panel-action" onClick={onFocus} aria-label="聚焦节点" title="聚焦节点"><Crosshair size={15}/></button>}<button type="button" className="studio-prompt-panel-action" onClick={onClose} aria-label="收起创作面板" title="收起创作面板"><X size={16}/></button></>}
         onPick={(source,start,end) => {
           let result;
           if (references.some(n => n.id === source.id)) {

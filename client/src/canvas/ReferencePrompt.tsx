@@ -3,13 +3,16 @@ import { createPortal } from 'react-dom';
 import { canConnect, type CanvasDocument, type CanvasNode } from './model';
 import { referenceKinds, referenceLabel, type ReferenceBindings } from './referenceMentions';
 import { connectionError } from './videoInputs';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
+import { Maximize2 } from 'lucide-react';
 
 type Props = {
   value: string; onChange: (value: string) => void; placeholder: string;
   references: CanvasNode[]; bindings: ReferenceBindings; document?: CanvasDocument;
   projects?: CanvasDocument[]; target?: CanvasNode; kind: 'image' | 'video' | 'audio';
   onPick: (node: CanvasNode, start: number, end: number) => number | {error: string} | undefined;
+  toolbar?: ReactNode;
+  panelActions?: ReactNode;
 };
 export default function ReferencePrompt(props: Props) {
   const input = useRef<HTMLTextAreaElement>(null);
@@ -168,9 +171,8 @@ export default function ReferencePrompt(props: Props) {
       }
     }}>
     <div className="studio-prompt-editor-tools">
-      {expanded && <strong>编辑提示词</strong>}
-      <label>字号<select aria-label="提示词字号" value={fontSize} onChange={event=>{const size=Number(event.target.value);setFontSize(size);try{localStorage.setItem('canvas-prompt-font-size',String(size));}catch{}}}>{[16,18,20].map(size=><option key={size} value={size}>{size}px</option>)}</select></label>
-      {expanded ? <button type="button" onClick={collapse}>完成编辑</button> : <button type="button" ref={expandButton} onClick={()=>{setQuery(null);setExpanded(true);}}>展开编辑</button>}
+      {expanded ? <><strong>编辑提示词</strong><label>字号<select aria-label="提示词字号" value={fontSize} onChange={event=>{const size=Number(event.target.value);setFontSize(size);try{localStorage.setItem('canvas-prompt-font-size',String(size));}catch{}}}>{[16,18,20].map(size=><option key={size} value={size}>{size}px</option>)}</select></label></> : <div className="studio-prompt-mode-strip">{props.toolbar}</div>}
+      {expanded ? <button type="button" onClick={collapse}>完成编辑</button> : <><button type="button" className="studio-prompt-expand" aria-label="展开编辑" title="展开长文编辑" ref={expandButton} onClick={()=>{setQuery(null);setExpanded(true);}}><Maximize2 size={17}/></button>{props.panelActions}</>}
     </div>
     {expanded && <div className="studio-prompt-find"><input aria-label="查找提示词内容" placeholder="查找文字或镜头编号" value={findText} onChange={event=>{setFindText(event.target.value);setFindMessage('');}} onKeyDown={event=>{if(event.key==='Enter'&&!event.nativeEvent.isComposing){event.preventDefault();findNext();}}}/><button type="button" disabled={!findText} onClick={findNext}>查找下一处</button><span role="status">{findMessage}</span></div>}
     <textarea ref={input} id="canvas-prompt" className="studio-prompt" value={props.value}
@@ -193,7 +195,7 @@ export default function ReferencePrompt(props: Props) {
       const value=props.value.slice(0,caret)+'@'+props.value.slice(caret);
       props.onChange(value);input.current?.focus();inspect(value,caret+1);
       requestAnimationFrame(()=>input.current?.setSelectionRange(caret+1,caret+1));
-    }}>@ 引用素材</button>}{expanded && <span>{props.value.length.toLocaleString('zh-CN')} 字符 · 编辑同步到画布草稿</span>}</div>
+    }}>@ 引用素材</button>}{expanded && <span className="studio-prompt-editor-count">{props.value.length.toLocaleString('zh-CN')} 字符 · 编辑同步到画布草稿</span>}</div>
     {query && createPortal(<div className="studio-mention-menu" data-canvas-ui data-theme={input.current?.closest('[data-theme]')?.getAttribute('data-theme') || 'mood'} style={{position:'fixed',...position}}
       onPointerDown={e => {menuPointer.current=true; e.stopPropagation();}}
       onPointerUp={e => {menuPointer.current=false; e.stopPropagation();}}

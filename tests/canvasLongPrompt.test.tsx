@@ -19,10 +19,10 @@ it('edits over 20,000 characters without truncation, and preserves the same text
 });
 it('persists font size and keeps background controls inert only while expanded',()=>{
   const view=render(<Editor/>);const background=screen.getByRole('button',{name:'背景操作'});
-  fireEvent.change(screen.getByLabelText('提示词字号'),{target:{value:'20'}});expect(localStorage.getItem('canvas-prompt-font-size')).toBe('20');
   fireEvent.click(screen.getByRole('button',{name:'展开编辑'}));expect(background.inert).toBe(true);
+  fireEvent.change(screen.getByLabelText('提示词字号'),{target:{value:'20'}});expect(localStorage.getItem('canvas-prompt-font-size')).toBe('20');
   fireEvent.keyDown(screen.getByPlaceholderText('长文输入'),{key:'Escape'});expect(background.inert).not.toBe(true);expect(screen.queryByRole('dialog')).toBeNull();
-  view.unmount();render(<Editor/>);expect((screen.getByLabelText('提示词字号') as HTMLSelectElement).value).toBe('20');
+  view.unmount();render(<Editor/>);fireEvent.click(screen.getByRole('button',{name:'展开编辑'}));expect((screen.getByLabelText('提示词字号') as HTMLSelectElement).value).toBe('20');
 });
 it('searches and cycles through long text without changing it',()=>{
   render(<Editor/>);fireEvent.click(screen.getByRole('button',{name:'展开编辑'}));
