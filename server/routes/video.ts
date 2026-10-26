@@ -3519,6 +3519,12 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
       } catch (error) {
         const rejected = error instanceof HmSubmissionError && error.outcome === 'rejected'
           || error instanceof SpecificationUpstreamError && error.confirmedFailure;
+        // Detached queue jobs persist failures but their rejected completion may
+        // have no HTTP caller. Keep a bounded, redacted task-specific log too.
+        console.warn('[hm-video-task]', JSON.stringify({
+          contentId, at: new Date().toISOString(), outcome: rejected ? 'rejected' : 'unknown',
+          diagnostic: transportDiagnostic('HM Studio', '队列任务异常', error, channel.apiKey || ''),
+        }));
         endVideoSubmission(contentId, rejected ? 'rejected' : 'unknown');
         await failHmQueuedVideo(contentId, error, rejected);
         throw error;
@@ -3556,7 +3562,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   if (hmStudioQueue.has(`video:${contentId}`)) {
     let pendingMeta: Record<string, any> = {};
     try { pendingMeta = typeof record.metadata === 'string' ? JSON.parse(record.metadata) : record.metadata || {}; } catch { }
-    if (!pendingMeta.videoId) return Promise.resolve();
+    if (!savedVideoTaskId(pendingMeta)) return Promise.resolve();
   }
   if (activePolls.has(contentId)) {
     const existingPromise = activePollPromises.get(contentId);
@@ -3577,7 +3583,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
   let metadata: any = {};
   try {
     metadata = typeof record.metadata === 'string' ? JSON.parse(record.metadata) : (record.metadata || {});
-    videoId = metadata.videoId || '';
+    videoId = savedVideoTaskId(metadata);
   } catch (e) {
     console.error(`[video-recover] Parse metadata failed for task ${contentId}:`, e);
   }

@@ -3,6 +3,9 @@ import { classifyHmSubmission, readHmSubmission, hmSubmissionTransportError } fr
 import { submissionFailure } from '../server/services/specificationAdapters.js';
 
 describe('HM independent submission outcomes', () => {
+  it('does not accept display text as an upstream generation ID', () => {
+    expect(classifyHmSubmission(202, {task_id:'未取得上游任务 ID'}, new Headers()).outcome).toBe('unknown');
+  });
   it('uses HM documented 202 receipt, 429 GENERATING_LIMIT and 503 busy envelopes', () => {
     expect(classifyHmSubmission(202, { task_id: 'cgt-123' }, new Headers())).toMatchObject({ outcome: 'accepted', taskId: 'cgt-123' });
     expect(classifyHmSubmission(429, { code: 'GENERATING_LIMIT', error: '当前有 3 个任务正在生成中，请等待完成后再提交' }, new Headers()).outcome).toBe('rejected');

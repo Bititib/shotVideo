@@ -1,4 +1,7 @@
 import { publishReferenceUrl } from './publicReferenceService.js';
+import { HmSubmissionError } from './hmStudioSubmission.js';
+import { transportDiagnostic } from './upstreamDiagnostic.js';
+import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
 import { HM_STUDIO_FAST803_MODEL, HM_STUDIO_FAST813_MODEL, HM_STUDIO_MINI503_MODEL, HM_STUDIO_NOVA_MODEL, HM_STUDIO_NOVA_UPSTREAM_MODEL } from '../../shared/hmStudioVideo.js';
 
 export const HM_STUDIO_CHANNEL_TYPE = 'hmstudio';
@@ -67,6 +70,7 @@ export function hmStudioCreateUrl(baseUrl: string, kind: 'image' | 'video'): str
 }
 
 export function hmStudioTaskUrl(baseUrl: string, taskId: string): string {
+  if (isTaskIdPlaceholder(taskId)) throw new Error('界面提示文字不是有效上游任务 ID');
   return `${baseUrl.replace(/\/+$/, '')}/v1/tasks/${encodeURIComponent(taskId)}`;
 }
 
@@ -211,14 +215,20 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
 
 /** URL-only HM video JSON protocol; preserve legacy upstream face processing. */
 export function buildHmStudioVideoPayload(options: HmStudioVideoOptions): Record<string, unknown> {
-  const fields = Object.fromEntries(buildHmStudioVideoForm(options).entries()) as Record<string, string>;
-  return {
-    ...fields,
-    duration: options.duration,
-    face: HM_STUDIO_UPSTREAM_FACE_ENABLED,
-    ...(fields.materials ? { materials: JSON.parse(fields.materials) } : {}),
-    ...(fields.multi_frames ? { multi_frames: JSON.parse(fields.multi_frames) } : {}),
-  };
+  // This entire block is local preparation. A queue may already hold a submission
+  // lock, but no paid request can have been sent by this payload builder.
+  try {
+    const fields = Object.fromEntries(buildHmStudioVideoForm(options).entries()) as Record<string, string>;
+    return {
+      ...fields,
+      duration: options.duration,
+      face: HM_STUDIO_UPSTREAM_FACE_ENABLED,
+      ...(fields.materials ? { materials: JSON.parse(fields.materials) } : {}),
+      ...(fields.multi_frames ? { multi_frames: JSON.parse(fields.multi_frames) } : {}),
+    };
+  } catch (error) {
+    throw new HmSubmissionError(transportDiagnostic('HM Studio', '本地准备失败，未发送上游', error), 'rejected');
+  }
 }
 
 /** Build the multipart request expected by HM Studio's compatible image API. */

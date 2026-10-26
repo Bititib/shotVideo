@@ -130,6 +130,7 @@ export const adminApi = {
   failReviewedContentAndRefund(id: number) { return api.post<{id:number;status:string;refundedAmount:number;refundTarget?:string;alreadyResolved:boolean}>(`/admin/contents/${id}/fail-and-refund`, {confirmedFailureRefund:true}); },
   recoverContentUpstream(id: number) { return api.post<any>(`/admin/contents/${id}/recover-upstream`); },
   saveContentRecoveryTaskId(id: number, taskId: string) { return api.put<{message:string;taskId:string}>(`/admin/contents/${id}/recovery-task-id`, { taskId }); },
+  withdrawContentRecoveryTaskId(id: number, taskId: string) { return api.post<{message:string}>(`/admin/contents/${id}/withdraw-recovery-task-id`, { taskId }); },
 
   // 模型故障反馈
   getFeedback(params: { page?: number; pageSize?: number; status?: string; modelId?: string; search?: string } = {}) {

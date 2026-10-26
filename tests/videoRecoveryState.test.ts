@@ -54,6 +54,24 @@ afterEach(() => {
 });
 
 describe('recovery reads durable IDs without falsely failing or refunding', () => {
+  it('ignores historical HM placeholder IDs without polling, resubmitting or changing funds', async () => {
+    sqlite.exec("UPDATE channels SET type='hmstudio' WHERE id=1");
+    const id = seed({ videoId: '未取得上游任务 ID', upstreamTaskId: '未取得上游任务 ID',
+      videoSubmissionState: 'unknown', error: 'HTTP 502: no receipt', billingStatus: 'review' }, 'review');
+    const send = vi.fn(); vi.stubGlobal('fetch', send);
+    await video.resumePollForTask(id, row());
+    expect(send).not.toHaveBeenCalled();
+    expect(row()).toMatchObject({status:'review', cost:3.9}); expect(balance()).toBe(10);
+    expect(JSON.parse(row().metadata!)).toMatchObject({ error:'HTTP 502: no receipt', missingTaskIdReview:true, videoSubmissionState:'unknown' });
+    expect(() => claimVideoSubmission(id)).toThrow('禁止重复提交');
+  });
+  it('recovers a real receipt hidden behind a placeholder', () => {
+    const id = seed({ videoId:'未取得上游任务 ID', upstreamTaskId:'未取得上游任务ID', missingTaskIdReview:true }, 'review');
+    persistVideoSubmissionReceipt({contentId:id,upstreamTaskId:'task_real',channelId:1,channelApiKeyId:null,provider:'snumom'});
+    expect(readVideoRecoveryState(id)?.status).toBe('processing');
+    expect(JSON.parse(row().metadata!)).toMatchObject({videoId:'task_real',upstreamTaskId:'task_real',submissionReceiptRecovered:true});
+    expect(balance()).toBe(10);
+  });
   it('does not restart an unrelated billing review merely because a submission receipt exists', () => {
     const id = seed({ billingShortfall: 2, requiresReview: true }, 'review');
     persistVideoSubmissionReceipt({ contentId: id, upstreamTaskId: 'task_receipt', channelId: 1, channelApiKeyId: null, provider: 'snumom' });

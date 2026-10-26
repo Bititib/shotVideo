@@ -377,13 +377,20 @@ router.post('/contents/:id/recover-upstream', async (req: AuthRequest, res: Resp
 router.put('/contents/:id/recovery-task-id', async (req: AuthRequest, res: Response) => {
   try {
     const { VideoRecoveryService } = await import('../services/videoRecoveryService.js');
-    res.json(VideoRecoveryService.supplementTaskId(Number(req.params.id), req.userId!, req.body?.taskId));
+    res.json(await VideoRecoveryService.supplementTaskId(Number(req.params.id), req.userId!, req.body?.taskId));
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '补录上游任务 ID 失败' });
   }
 });
 
 // ============ 模型故障反馈 ============
+router.post('/contents/:id/withdraw-recovery-task-id', async (req: AuthRequest, res: Response) => {
+  try {
+    const { VideoRecoveryService } = await import('../services/videoRecoveryService.js');
+    res.json(VideoRecoveryService.withdrawTaskId(Number(req.params.id), req.userId!, req.body?.taskId));
+  } catch (err: any) { res.status(err.status || 500).json({error:err.message || '撤销补录失败'}); }
+});
+
 router.get('/feedback', (req: AuthRequest, res: Response) => {
   try {
     const { page = '1', pageSize = '20', status, modelId, search } = req.query;

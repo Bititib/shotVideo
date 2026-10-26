@@ -1,4 +1,5 @@
 import { sqlite } from '../db/index.js';
+import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
 
 export type VideoSubmissionReceipt = {
   contentId: number;
@@ -31,7 +32,7 @@ function ensureTable() {
  */
 export function persistVideoSubmissionReceipt(receipt: VideoSubmissionReceipt): void {
   if (!Number.isSafeInteger(receipt.contentId) || receipt.contentId <= 0) throw new Error('本地内容 ID 无效');
-  if (!receipt.upstreamTaskId || receipt.upstreamTaskId.length > 512 || /[\s\x00-\x1f]/.test(receipt.upstreamTaskId)
+  if (!receipt.upstreamTaskId || isTaskIdPlaceholder(receipt.upstreamTaskId) || receipt.upstreamTaskId.length > 512 || /[\s\x00-\x1f]/.test(receipt.upstreamTaskId)
     || receipt.provider === 'snumom' && !/^task_[A-Za-z0-9_-]+$/.test(receipt.upstreamTaskId)) throw new Error('上游任务 ID 无效');
   ensureTable();
   const existing = sqlite.prepare('SELECT upstream_task_id FROM video_submission_receipts WHERE content_id=?').get(receipt.contentId) as any;
@@ -56,7 +57,7 @@ export function findVideoSubmissionReceipt(contentId: number): VideoSubmissionRe
     SELECT content_id, upstream_task_id, channel_id, channel_api_key_id, provider
     FROM video_submission_receipts WHERE content_id=?
   `).get(contentId) as any;
-  return row ? {
+  return row && !isTaskIdPlaceholder(row.upstream_task_id) ? {
     contentId: Number(row.content_id),
     upstreamTaskId: String(row.upstream_task_id),
     channelId: row.channel_id === null ? null : Number(row.channel_id),

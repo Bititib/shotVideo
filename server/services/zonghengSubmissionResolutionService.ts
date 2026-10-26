@@ -6,6 +6,9 @@ import { BalanceService } from './balanceService.js';
 import { TokenService } from './tokenService.js';
 import { resolveBillingReservation } from './billingReconciliation.js';
 import { withFundContext } from '../db/fundLedger.js';
+import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
+import { findVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
+import { assertNoTaskIdVerification } from './videoRecoveryAction.js';
 
 /** Synchronous: callers keep the balance change and content update in one transaction. */
 function refundLegacyFunds(row: any, meta: Record<string, any>, amount: number): string {
@@ -32,6 +35,7 @@ function refundLegacyFunds(row: any, meta: Record<string, any>, amount: number):
 const fail = (status: number, message: string): never => { throw Object.assign(new Error(message), { status }); };
 /** Administrator-confirmed non-acceptance; no provider POST and exactly one refund. */
 function confirmNotAccepted(contentId: number, adminId: number, confirmed: unknown, note: unknown, zonghengOnly: boolean) {
+  assertNoTaskIdVerification(contentId);
   if (!Number.isSafeInteger(contentId) || contentId <= 0 || !Number.isSafeInteger(adminId) || adminId <= 0) fail(400, '记录或操作人无效');
   if (confirmed !== true || typeof note !== 'string' || note.trim().length < 6 || note.length > 500) fail(400, '请先核对上游未接单，并填写核对依据');
   const resolutionNote = String(note).trim();
@@ -52,7 +56,8 @@ function confirmNotAccepted(contentId: number, adminId: number, confirmed: unkno
     const taskIds = [meta.videoId, meta.taskId, meta.task_id, meta.upstreamTaskId, meta.upstream_task_id, meta.requestId, meta.request_id,
       ...(Array.isArray(meta.upstreamTaskIds) ? meta.upstreamTaskIds : []), ...(Array.isArray(meta.recoveryTaskIds) ? meta.recoveryTaskIds : [])];
     const resultUrls = [row.resultUrl, meta.upstreamResultUrl, ...(Array.isArray(meta.recoverySourceUrls) ? meta.recoverySourceUrls : [])];
-    if (taskIds.some(id => typeof id === 'string' ? id.trim() : Boolean(id)) || resultUrls.some(url => typeof url === 'string' && url.trim())) fail(409, '记录已有任务 ID 或结果，请先查询原任务');
+    if (taskIds.some(id => typeof id === 'string' ? id.trim() && !isTaskIdPlaceholder(id) : Boolean(id))
+      || findVideoSubmissionReceipt(contentId) || resultUrls.some(url => typeof url === 'string' && url.trim())) fail(409, '记录已有任务 ID 或结果，请先查询原任务');
     if (meta.queueRefunded || ['refunded','settled'].includes(meta.billingStatus)) fail(409, '记录已结算，请刷新核查');
     const amount = Number(row.cost);
     if (!Number.isFinite(amount) || amount < 0 || Math.abs(amount * 1e6 - Math.round(amount * 1e6)) > 0.0001) fail(409, '预扣金额异常，请人工核查');

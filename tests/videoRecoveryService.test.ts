@@ -35,6 +35,8 @@ import { BalanceService } from '../server/services/balanceService.js';
 import { ensureBillingReservations, reserveUserCharge } from '../server/services/billingReservation.js';
 import { finalizeReservedContent } from '../server/services/contentBillingService.js';
 import { VideoRecoveryService } from '../server/services/videoRecoveryService.js';
+import { persistVideoSubmissionReceipt } from '../server/services/videoSubmissionReceiptService.js';
+import { confirmReviewedVideoFailureAndRefund } from '../server/services/zonghengSubmissionResolutionService.js';
 import { resumePollForTask } from '../server/routes/video.js';
 
 let validVideo: Buffer;
@@ -111,9 +113,9 @@ afterEach(() => {
 });
 
 describe('VideoRecoveryService', () => {
-  it('rejects display placeholders instead of saving them as an accepted task ID', () => {
+  it('rejects display placeholders instead of saving them as an accepted task ID', async () => {
     const before = db.select().from(contents).where(eq(contents.id, contentId)).get();
-    expect(() => VideoRecoveryService.supplementTaskId(contentId, 99, '未取得上游任务 ID')).toThrow('有效的上游任务 ID');
+    await expect(VideoRecoveryService.supplementTaskId(contentId, 99, '未取得上游任务 ID')).rejects.toMatchObject({status:400});
     expect(db.select().from(contents).where(eq(contents.id, contentId)).get()).toEqual(before);
   });
   it('does not query a historical placeholder or change funds while inspecting it', async () => {
@@ -124,10 +126,11 @@ describe('VideoRecoveryService', () => {
     expect(fetcher).not.toHaveBeenCalled();
     expect(sqlite.prepare('SELECT balance FROM users WHERE id=?').get(userId)).toEqual(before);
   });
-  it('supplements a missing upstream task ID with an administrator audit record', () => {
-    sqlite.prepare("UPDATE contents SET metadata = '{}' WHERE id = ?").run(contentId);
+  it('supplements a missing upstream task ID with an administrator audit record', async () => {
+    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify({channelId}),contentId);
+    vi.stubGlobal('fetch',vi.fn(async()=>Response.json({id:'recovered-task',status:'processing'})));
 
-    expect(VideoRecoveryService.supplementTaskId(contentId, 99, ' recovered-task ')).toMatchObject({
+    expect(await VideoRecoveryService.supplementTaskId(contentId, 99, ' recovered-task ')).toMatchObject({
       taskId: 'recovered-task',
     });
 
@@ -146,10 +149,90 @@ describe('VideoRecoveryService', () => {
     }));
   });
 
-  it('rejects invalid task IDs and non-failed records', () => {
-    expect(() => VideoRecoveryService.supplementTaskId(contentId, 99, '')).toThrow();
+  it('rejects invalid task IDs and non-failed records', async () => {
+    await expect(VideoRecoveryService.supplementTaskId(contentId, 99, '')).rejects.toMatchObject({status:400});
     sqlite.prepare("UPDATE contents SET status = 'completed' WHERE id = ?").run(contentId);
-    expect(() => VideoRecoveryService.supplementTaskId(contentId, 99, 'task-id')).toThrow();
+    await expect(VideoRecoveryService.supplementTaskId(contentId, 99, 'task-id')).rejects.toMatchObject({status:409});
+  });
+
+  function reviewedSupplement(added = false) {
+    const meta = {channelId,billingStatus:'review',reviewKind:'submission',billingSource:'user',billingBalanceSource:'user',error:'HTTP 502',
+      ...(added ? {videoId:'mistyped-id',upstreamTaskId:'mistyped-id',recoveryTaskIdSupplemented:true,
+        recoveryAudit:[{action:'supplement_task_id',taskId:'mistyped-id',previousTaskId:'',actorId:99}]} : {})};
+    sqlite.prepare('UPDATE contents SET status=?,cost=?,metadata=? WHERE id=?').run('review',2,JSON.stringify(meta),contentId);
+  }
+  it.each([404,502])('a failed verification (%s) leaves no ID and keeps confirmed refund available', async status => {
+    reviewedSupplement();
+    const before = read();
+    vi.stubGlobal('fetch',vi.fn(async()=>new Response('query failed',{status})));
+    await expect(VideoRecoveryService.supplementTaskId(contentId,99,'mistyped-id')).rejects.toMatchObject({status:502});
+    expect(read()).toEqual(before);
+    expect(BalanceService.getBalance(userId)).toBe(10);
+    expect(confirmReviewedVideoFailureAndRefund(contentId,99,true)).toMatchObject({refundedAmount:2});
+    confirmReviewedVideoFailureAndRefund(contentId,99,true);
+    expect(BalanceService.getBalance(userId)).toBe(12);
+  });
+  it('withdraws only an unverified historical addition and leaves the original error and charge intact', () => {
+    reviewedSupplement(true);
+    expect(VideoRecoveryService.withdrawTaskId(contentId,99,'mistyped-id').message).toContain('费用未变更');
+    expect(read()).toMatchObject({status:'review',cost:2});
+    expect(JSON.parse(read().metadata)).toMatchObject({error:'HTTP 502',recoveryTaskIdSupplemented:false});
+    expect(JSON.parse(read().metadata)).not.toHaveProperty('videoId');
+    expect(BalanceService.getBalance(userId)).toBe(10);
+    confirmReviewedVideoFailureAndRefund(contentId,99,true);
+    expect(BalanceService.getBalance(userId)).toBe(12);
+  });
+  it('will not withdraw a real receipt or a verified addition', async () => {
+    reviewedSupplement(true);
+    persistVideoSubmissionReceipt({contentId,channelId,channelApiKeyId:null,upstreamTaskId:'real-receipt',provider:'hmstudio'});
+    expect(()=>VideoRecoveryService.withdrawTaskId(contentId,99,'mistyped-id')).toThrow();
+    sqlite.prepare('DELETE FROM video_submission_receipts WHERE content_id=?').run(contentId);
+    vi.stubGlobal('fetch',vi.fn(async()=>Response.json({id:'mistyped-id',status:'processing'})));
+    await VideoRecoveryService.inspect(contentId);
+    expect(()=>VideoRecoveryService.withdrawTaskId(contentId,99,'mistyped-id')).toThrow();
+    expect(BalanceService.getBalance(userId)).toBe(10);
+  });
+  it.each([
+    {recoveryPollingStartedAt:'2026-10-26T09:00:00Z'},
+    {upstream_task_id:'another-real-id'},
+    {recoveryAudit:[{action:'supplement_task_id',taskId:'mistyped-id',previousTaskId:'original-real-id'}]},
+  ])('will not withdraw a task with earlier accepted-task evidence: %j', patch => {
+    reviewedSupplement(true);
+    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify({...JSON.parse(read().metadata),...patch}),contentId);
+    const before = read();
+    expect(()=>VideoRecoveryService.withdrawTaskId(contentId,99,'mistyped-id')).toThrow();
+    expect(read()).toEqual(before);
+    expect(BalanceService.getBalance(userId)).toBe(10);
+  });
+  it('prevents concurrent refund or supplement while verification is in flight', async () => {
+    reviewedSupplement();
+    let resolve!: (response:Response)=>void;
+    vi.stubGlobal('fetch',vi.fn(()=>new Promise<Response>(r=>{resolve=r;})));
+    const saving = VideoRecoveryService.supplementTaskId(contentId,99,'real-task');
+    await vi.waitFor(()=>expect(resolve).toBeTypeOf('function'));
+    expect(()=>confirmReviewedVideoFailureAndRefund(contentId,99,true)).toThrow('正在核验');
+    await expect(VideoRecoveryService.supplementTaskId(contentId,99,'other')).rejects.toMatchObject({status:409});
+    resolve(Response.json({id:'real-task',status:'processing'}));
+    await expect(saving).resolves.toMatchObject({taskId:'real-task'});
+    expect(read()).toMatchObject({status:'review',cost:2});
+    expect(JSON.parse(read().metadata)).toHaveProperty('videoId','real-task');
+    expect(BalanceService.getBalance(userId)).toBe(10);
+  });
+  it('cannot overwrite an existing task ID or independent receipt', async () => {
+    await expect(VideoRecoveryService.supplementTaskId(contentId,99,'other')).rejects.toMatchObject({status:409});
+    reviewedSupplement();
+    persistVideoSubmissionReceipt({contentId,channelId,channelApiKeyId:null,upstreamTaskId:'real-receipt',provider:'hmstudio'});
+    await expect(VideoRecoveryService.supplementTaskId(contentId,99,'other')).rejects.toMatchObject({status:409});
+    sqlite.prepare('DELETE FROM video_submission_receipts WHERE content_id=?').run(contentId);
+  });
+  it('preserves verified completed-task evidence even when the result URL is still missing', async () => {
+    reviewedSupplement();
+    vi.stubGlobal('fetch',vi.fn(async()=>Response.json({id:'real-task',status:'completed'})));
+    await expect(VideoRecoveryService.supplementTaskId(contentId,99,'real-task')).resolves.toMatchObject({taskId:'real-task'});
+    await expect(VideoRecoveryService.recover(contentId)).rejects.toMatchObject({status:502});
+    expect(()=>VideoRecoveryService.withdrawTaskId(contentId,99,'real-task')).toThrow();
+    expect(()=>confirmReviewedVideoFailureAndRefund(contentId,99,true)).toThrow();
+    expect(BalanceService.getBalance(userId)).toBe(10);
   });
 
   const read = () => db.select().from(contents).where(eq(contents.id, contentId)).get()!;

@@ -34,6 +34,34 @@ beforeAll(async()=>{
 });
 afterAll(()=>sqlite.close());
 let sequence = 20;
+it.each(['invalid-local-audio', 'invalid-local-video'])('refunds a proven local HM preparation failure without sending: %s', async kind => {
+  const id = ++sequence;
+  db.insert(users).values({ id, email: id + '@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
+  db.insert(channels).values({ id, name: 'HM preparation', type: 'hmstudio', baseUrl: 'https://hm.test', apiKey: 'test',
+    supportedModels: '["sd2.5-301010"]', modelMapping: '{"sd2.5-301010":"30-10-10"}', status: 1 }).run();
+  reserveLegacyVideo(id, 7, charge => {
+    db.insert(contents).values({ id, userId: id, type: 'video', modelId: 'sd2.5-301010', status: 'queued', cost: 7,
+      metadata: JSON.stringify({ channelId: id, prompt: 'test', resolution: '720p', seconds: 30,
+        publicBaseUrl: 'https://public.test',
+        ...(kind === 'invalid-local-audio' ? { audio_urls: ['/not-an-upload/audio.mp3'] } : { reference_videos: ['/not-an-upload/video.mp4'] }),
+        billingReservationId: charge.id, videoSubmissionState: 'preparing' }) }).run();
+    return id;
+  });
+  const fetcher = vi.fn();
+  vi.stubGlobal('fetch', fetcher);
+  try {
+    video.enqueueHmStudioVideoContent(id);
+    await vi.waitFor(() => expect(db.select().from(contents).where(eq(contents.id, id)).get()?.status).toBe('failed'));
+    const row = db.select().from(contents).where(eq(contents.id, id)).get()!;
+    expect(JSON.parse(row.metadata!)).toMatchObject({ billingStatus: 'refunded', requiresReview: false, videoSubmissionState: 'rejected' });
+    expect(JSON.parse(row.metadata!).error).toContain('未发送上游');
+    expect(JSON.parse(row.metadata!).error).toContain('参考素材路径不安全');
+    await video.failHmQueuedVideo(id, new Error('duplicate'), true);
+    await video.resumePollForTask(id, row);
+    expect(db.select().from(users).where(eq(users.id, id)).get()?.balance).toBe(100);
+    expect(fetcher).not.toHaveBeenCalled();
+  } finally { vi.unstubAllGlobals(); }
+});
 it.each(['720p', '1080p'])('actual HM queue overrides a stale lumen channel for nova at %s', async resolution => {
   const id = ++sequence;
   db.insert(users).values({ id, email: id + '@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
@@ -128,7 +156,9 @@ it('sends a long queued prompt to HM and refunds an explicit upstream rejection 
   } finally { vi.unstubAllGlobals(); }
 });
 
-it('keeps an uncertain nova submission reserved and never resubmits it during recovery', async () => {
+it.each(['timeout', '502', 'reset', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ERR_INVALID_URL'])('settles HM %s according to delivery evidence and never resubmits during recovery', async failure => {
+  const notSent = ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ERR_INVALID_URL'].includes(failure);
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const id = ++sequence;
   db.insert(users).values({ id, email: id + '@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
   db.insert(channels).values({ id, name: 'HM nova unknown', type: 'hmstudio', baseUrl: 'https://hm.test', apiKey: 'test',
@@ -139,18 +169,30 @@ it('keeps an uncertain nova submission reserved and never resubmits it during re
         billingReservationId: charge.id, videoSubmissionState: 'preparing' }) }).run();
     return id;
   });
-  const fetcher = vi.fn(async () => { throw Object.assign(new Error('response timed out'), { name: 'TimeoutError' }); });
+  const fetcher = vi.fn(async () => {
+    if (notSent) throw Object.assign(new Error('fetch failed'), { cause: { code: failure } });
+    if (failure === '502') return new Response('<html><title>502 Bad Gateway</title></html>', { status: 502 });
+    if (failure === 'reset') throw Object.assign(new Error('fetch failed'), { cause: { code: 'ECONNRESET' } });
+    throw Object.assign(new Error('response timed out'), { name: 'TimeoutError' });
+  });
   vi.stubGlobal('fetch', fetcher);
   try {
     video.enqueueHmStudioVideoContent(id);
-    await vi.waitFor(() => expect(db.select().from(contents).where(eq(contents.id, id)).get()?.status).toBe('review'));
+    await vi.waitFor(() => expect(db.select().from(contents).where(eq(contents.id, id)).get()?.status).toBe(notSent ? 'failed' : 'review'));
     for (let i = 0; i < 2; i++) await video.resumePollForTask(id, db.select().from(contents).where(eq(contents.id, id)).get());
+    if (notSent) await video.failHmQueuedVideo(id, new Error('duplicate'), true);
     expect(fetcher).toHaveBeenCalledOnce();
-    expect(db.select().from(users).where(eq(users.id, id)).get()?.balance).toBe(93);
+    expect(db.select().from(users).where(eq(users.id, id)).get()?.balance).toBe(notSent ? 100 : 93);
     const row = db.select().from(contents).where(eq(contents.id, id)).get()!;
-    expect(row.status).toBe('review');
-    expect(JSON.parse(row.metadata!)).toMatchObject({ videoSubmissionState: 'unknown' });
-  } finally { vi.unstubAllGlobals(); }
+    expect(row.status).toBe(notSent ? 'failed' : 'review');
+    expect(JSON.parse(row.metadata!)).toMatchObject({ videoSubmissionState: notSent ? 'rejected' : 'unknown' });
+    if (notSent) expect(JSON.parse(row.metadata!)).toMatchObject({ billingStatus: 'refunded', requiresReview: false });
+    const diagnostic = warning.mock.calls.find(([tag, value]) => tag === '[hm-video-task]' && JSON.parse(String(value)).contentId === id);
+    expect(diagnostic).toBeDefined();
+    expect(JSON.parse(String(diagnostic![1]))).toMatchObject({ contentId: id, outcome: notSent ? 'rejected' : 'unknown' });
+    if (failure === '502') expect(String(diagnostic![1])).toContain('HTTP 502');
+    expect(String(diagnostic![1])).not.toMatch(/<html>|Bearer |https:\/\//);
+  } finally { warning.mockRestore(); vi.unstubAllGlobals(); }
 });
 
 it('does not fail or refund an HM job while its create request is still waiting for a task ID',async()=>{
