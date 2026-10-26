@@ -79,6 +79,20 @@ describe('confirmed Zongheng non-acceptance refunds',()=>{
   });
 });
 describe('HM placeholder task IDs and confirmed refunds', () => {
+  it('refunds a historical submission review without an explicit reviewKind, as offered by the admin UI', () => {
+    add({actualChannel:'hmstudio',requiresReview:true,billingStatus:'review',videoSubmissionState:'unknown'}, {modelId:'sd2.5-301010'});
+    expect(confirmReviewedVideoFailureAndRefund(12965,9,true)).toMatchObject({refundedAmount:6.5,alreadyResolved:false});
+    expect(balance()).toBe(100);
+    expect(row()).toMatchObject({status:'failed',cost:0});
+    expect(confirmReviewedVideoFailureAndRefund(12965,9,true).alreadyResolved).toBe(true);
+    expect(balance()).toBe(100);
+  });
+  it.each([{reviewKind:'query'}, {reviewKind:'settlement'}, {reviewKind:'local'}, {upstreamQueryError:'query timed out'}, {upstreamStatus:'completed'}])('does not treat another review phase as an unaccepted submission: %j', patch => {
+    add({requiresReview:true,billingStatus:'review',missingTaskIdReview:true,...patch});
+    expect(()=>confirmReviewedVideoFailureAndRefund(12965,9,true)).toThrow('仅可处理提交待核实');
+    expect(balance()).toBe(93.5);
+    expect(row()).toMatchObject({status:'review',cost:6.5});
+  });
   function addHm() {
     add({actualChannel:'hmstudio',reviewKind:'submission',billingStatus:'review',videoSubmissionState:'unknown',
       videoId:'未取得上游任务 ID',upstreamTaskId:'未取得上游任务 ID',error:'HTTP 502：提交结果待核实'},
