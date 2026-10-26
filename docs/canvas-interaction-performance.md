@@ -70,3 +70,22 @@ Chrome 浏览器实际 IndexedDB 检查：持续 60 次修改、每次间隔 100
 新增 3 项连线语义回归：千节点逆序链恢复及非法边过滤、15,000 边深路径、分支汇合图的接收顺序。模型/同步/服务端画布接口相关 27 项通过；完整扩展到 12 组测试为 **178 通过、6 项既有失败**。类型检查、生产构建及桌面/笔记本/手机三种尺寸的长文编辑浏览器检查通过。
 
 本轮记录：`data/canvas-graph-benchmark.ts`、`data/canvas-load-review-final-tests.json`、`data/canvas-thumbnail-before.log`、`data/canvas-thumbnail-after.log`、`data/canvas-load-review-long-preview.log`。以上耗时来自本地合成样本，并非线上端到端加载时间；高清图片/视频实际网络及解码压力仍需用户设备或生产观察验证。
+
+## 第五轮检查：存储失败与旧模型测试核对
+
+### 已复现并修复
+
+- 云端保存返回成功后，本地写入新修订号/素材地址失败，旧 catch 仍显示“本地已保存”，也未保留本地脏标记。现在明确显示“本地保存失败”，保留待写入状态；重试只补本地写入，不无故再次提交已确认的云端版本。如果此时还有新的未同步编辑，仍会保存并同步这些新编辑。
+- 访客模式的保存重试按钮原先被 signedIn 条件屏蔽，点击无效。现在访客也可以重试本地保存，且不会发出云端请求。按钮提示统一为“点击重试保存”。
+
+两处错误均先新增测试复现失败，再完成修复。另补充本地确认失败期间新增编辑的场景，避免局部重试漏掉真正未同步的内容。
+
+### 六项既有失败的准确原因
+
+核对 `docs/v6k-zongheng-cutover.md`、`shared/zonghengVideo.ts`、`tests/zonghengAdapter.test.ts` 及迁移提交 `719dc6a` 后确认：原画布测试使用了已被迁移明确移除的 `ZH-MMseadanco2.5-PRO`、`ZH-TTsedanco2.5-480`、`ZH-sedanco2.0-300秒必出`。这些测试假定旧目录仍有原能力，与现有切换规则冲突。
+
+本轮将全素材提交测试改用现有 V6K 720p 型号，将规格边界测试改用现有的 TT 2.5 / XX 2.0 型号；仍检查完整素材数量、超限拒绝及传给生成入口的完整参数，没有删掉这些断言。同时新增三项旧型号不自动获得 V6K 多模态能力的检查。**未恢复旧型号、改动生产模型目录、规格、定价或生成适配器**。这解决的是过期测试样本，不代表验证了旧站或新站的真实付费生成。
+
+最终本轮 **12 组画布相关测试、190 项全部通过**，TypeScript 检查和生产构建通过。Chrome 中模拟 IndexedDB 一次写入失败，实测显示失败、点击访客保存重试、刷新恢复完整内容均通过。
+
+记录：`data/canvas-storage-failure-before.json`、`data/canvas-guest-retry-before.json`、`data/canvas-final-audit-tests.json`、`data/canvas-save-retry-preview.log`。这是画布相关验证范围，不是整个仓库测试全量通过；尚未推送或部署，真实设备上的高清媒体网络/解码压力仍待验证。

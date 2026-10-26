@@ -386,12 +386,12 @@ describe('canvas user workflows', () => {
     const audios=mode==='reference'?[]:Array.from({length:10},(_,i)=>({...newNode('audio',{x:0,y:0}),src:'/voice-'+i+'.mp3'}));
     const refs=[...images,...videos,...audios];
     const target={...newNode('video',{x:500,y:0}),generator:true,title:'ZH 完整素材目标'};
-    vi.mocked(fetchVideoModels).mockResolvedValueOnce([{id:'ZH-MMseadanco2.5-PRO',name:'ZH PRO',description:'',available:true,rates:{'720p':4},allowedSeconds:[10]}]);
+    vi.mocked(fetchVideoModels).mockResolvedValueOnce([{id:'ZH-TTseadanco2.5-720',name:'V6K 720p',description:'',available:true,rates:{'720p':4},allowedSeconds:[10]}]);
     const board=mount({...newDocument(),nodes:[...refs,target],edges:refs.map(n=>({id:n.id,from:n.id,to:target.id}))});
     fireEvent.pointerDown(screen.getByRole('article',{name:target.title}),{button:0,pointerId:1});
     fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'),{pointerId:1});
     openSelectedComposer();
-    await waitFor(()=>expect(screen.getByText('ZH PRO',{exact:true})).toBeTruthy());
+    await waitFor(()=>expect(screen.getByText('V6K 720p',{exact:true})).toBeTruthy());
     fireEvent.change(screen.getByLabelText('你想创作什么？'),{target:{value:'保留所有参考素材'}});
     vi.mocked(streamGeneration).mockImplementation(async(_kind,_params,_signal,cb)=>cb({type:'complete',videoUrl:'/zh-result.mp4'}));
     const submit=screen.getByRole('button',{name:'生成视频',exact:true});
@@ -399,7 +399,7 @@ describe('canvas user workflows', () => {
     fireEvent.click(submit);
     await waitFor(()=>expect(board.current().nodes.find(n=>n.id===target.id)?.job?.status).toBe('done'));
     const params=vi.mocked(streamGeneration).mock.calls[0][1];
-    expect(params.model).toBe('ZH-MMseadanco2.5-PRO');
+    expect(params.model).toBe('ZH-TTseadanco2.5-720');
     expect(params.reference_images || []).toHaveLength(images.length);
     expect(params.reference_videos || []).toEqual(videos.map(n=>n.src));
     expect(params.audio_urls || []).toEqual(audios.map(n=>n.src));

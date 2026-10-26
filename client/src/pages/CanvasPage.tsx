@@ -46,11 +46,13 @@ function CanvasWorkspace({ owner }: { owner: string; key?: string }) {
       const cloudSnapshot = latest.current;
       const cloudVersion = version.current;
       let acknowledged = false;
+      let cloudSaved = false;
       try {
         const result = await saveCloudWorkspace(cloudSnapshot, controller.signal);
         const current = mergeUploadedMedia(latest.current!, cloudSnapshot, result.workspace);
         const pending = version.current !== cloudVersion;
         latest.current = { ...current, cloudRevision: result.revision, cloudPending: pending };
+        cloudSaved = true;
         // Publish substitutions before waiting for disk, so further edits use durable URLs.
         if (mounted.current) setWorkspace(latest.current);
         const acknowledgementVersion = version.current;
@@ -59,7 +61,11 @@ function CanvasWorkspace({ owner }: { owner: string; key?: string }) {
         acknowledged = true;
         if (mounted.current) setStatus(dirty.current ? '正在保存…' : latest.current.cloudPending ? '本地已保存 · 正在同步…' : '已同步到账户');
       } catch (error: any) {
-        if (mounted.current) setStatus(`本地已保存 · ${error.message || '同步失败，请重试'}`);
+        if (cloudSaved) {
+          // The new revision/media references still need a durable local copy.
+          dirty.current = true;
+          if (mounted.current) setStatus(`本地保存失败 · ${error.message || '请重试或导出备份'}`);
+        } else if (mounted.current) setStatus(`本地已保存 · ${error.message || '同步失败，请重试'}`);
       } finally {
         syncing.current = false;
         if (cloudController.current === controller) cloudController.current = null;
@@ -117,9 +123,17 @@ function CanvasWorkspace({ owner }: { owner: string; key?: string }) {
     const current = latest.current;
     if (current) change({ ...current, projects: current.projects.map(p => p.id === doc.id ? doc : p) });
   };
+  const retrySave = () => {
+    if (!latest.current) return;
+    // A failed local acknowledgement needs only a local retry. New unsynced
+    // edits already carry cloudPending; an explicit idle sync still contacts the cloud.
+    if (signedIn && !dirty.current) latest.current = {...latest.current, cloudPending:true};
+    dirty.current = true;
+    flush();
+  };
   if (!workspace) return <main className="studio-loading"><p role="status">{error || '正在打开创作空间…'}</p>{error && <button onClick={() => setRetry(n => n + 1)}>重新读取</button>}<a href="/">返回首页</a></main>;
   const doc = workspace.projects.find(p => p.id === workspace.activeId) ?? workspace.projects[0];
-  return <CanvasStudio key={doc.id} initial={doc} projects={workspace.projects} status={status} onChange={update} onPersist={() => saveWorkspace(owner, latest.current!)} onSync={() => { if (signedIn) { latest.current = { ...latest.current!, cloudPending: true }; dirty.current = true; flush(); } }}
+  return <CanvasStudio key={doc.id} initial={doc} projects={workspace.projects} status={status} onChange={update} onPersist={() => saveWorkspace(owner, latest.current!)} onSync={retrySave}
     onImportGuest={signedIn ? async () => {
       try {
         const guest = await loadWorkspace('guest');

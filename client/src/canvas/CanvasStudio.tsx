@@ -761,7 +761,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
       <Link to="/" className="studio-logo" aria-label="返回首页"><BrandMark /></Link>
       <div className="studio-header-divider" />
       <button className="studio-project-trigger" onClick={() => setProjectMenu(v => !v)} aria-expanded={projectMenu}><span><small>灵序 AI / 无限画布</small><strong>{doc.title}</strong></span><ChevronDown size={15} /></button>
-      <button className={`studio-save ${status.includes('失败') ? 'is-error' : ''}`} onClick={onSync} title={status + ' · 点击重试同步'}><span />{status}</button>
+      <button className={`studio-save ${status.includes('失败') ? 'is-error' : ''}`} onClick={onSync} title={status + ' · 点击重试保存'}><span />{status}</button>
       <div className="studio-header-actions"><span className="studio-header-divider" /><button className="studio-export" aria-label="导出画布" onClick={exportBackup}><Download size={15} /><span>导出画布</span></button><button className={`studio-create-toggle ${panel ? 'active' : ''}`} onClick={() => setPanel(v => !v)}><Sparkles size={16} /> 创作</button></div>
     </header>
     <div className="studio-body">

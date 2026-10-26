@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { newNode, parseDocument, newDocument } from '../client/src/canvas/model';
 import { readVideoDuration, connectionError, videoInputError, VIDEO_EDIT_MODEL } from '../client/src/canvas/videoInputs';
+import { canvasVideoReferenceLimits } from '../shared/canvasVideoReferences';
 const options = { kind: 'video' as const, videoMode: 'edit' as const, model: VIDEO_EDIT_MODEL, ratio: '16:9', seconds: 10 };
 const video = { ...newNode('video', { x: 0, y: 0 }), src: '/original.mp4' };
 afterEach(() => vi.restoreAllMocks());
@@ -10,14 +11,15 @@ describe('canvas video editing constraints', () => {
   it('uses Seedance 2.0 limits of 9 images and 3 audios without enabling video references',()=>{
     const image={...newNode('image',{x:0,y:0}),src:'/image.jpg'};
     const audio={...newNode('audio',{x:0,y:0}),src:'/voice.mp3'};
-    const multi={...options,model:'ZH-sedanco2.0-300秒必出',seconds:15,videoMode:'multimodal' as const};
+    const multi={...options,model:'ZH-XXsedanco2.0',seconds:15,videoMode:'multimodal' as const};
     const refs=[...Array(9).fill(image),...Array(3).fill(audio)];
     expect(videoInputError(multi,refs)).toBe('');
     for(const extra of [image,video,audio])expect(videoInputError(multi,[...refs,extra])).toContain('最多支持 9 张图片、0 个视频、3 段音频');
   });
 
 
-  it.each(['ZH-MMseadanco2.5-PRO','ZH-TTsedanco2.5-480','ZH-TTseadanco2.5-720'])('accepts full ZH reference sets for %s in canvas and rejects each excess', model => {
+  // V6K cutover deliberately removed the old MM and TTsedanco spellings.
+  it.each(['ZH-TTseadanco2.5-480YT','ZH-TTseadanco2.5-480','ZH-TTseadanco2.5-720'])('accepts full ZH reference sets for %s in canvas and rejects each excess', model => {
     const image={...newNode('image',{x:0,y:0}),src:'/photo.jpg'};
     const audio={...newNode('audio',{x:0,y:0}),src:'/voice.mp3'};
     const multi={...options,model,videoMode:'multimodal' as const};
@@ -27,6 +29,11 @@ describe('canvas video editing constraints', () => {
     expect(videoInputError({...multi,videoMode:'reference'},Array(30).fill(image))).toBe('');
     expect(videoInputError({...multi,videoMode:'reference'},Array(31).fill(image))).toContain('最多支持');
     expect(videoInputError(multi,[video,audio])).toBe('');
+  });
+
+  it.each(['ZH-MMseadanco2.5-PRO','ZH-TTsedanco2.5-480','ZH-sedanco2.0-300秒必出'])('does not silently infer V6K multimodal capability for retired %s',model=>{
+    expect(canvasVideoReferenceLimits(model)).toBeUndefined();
+    expect(videoInputError({...options,model,videoMode:'multimodal'},[video])).toBe('请选择支持视频 / 音频参考的模型。');
   });
 
   it('allows Fast C2 video and audio references with its own channel limits', () => {
