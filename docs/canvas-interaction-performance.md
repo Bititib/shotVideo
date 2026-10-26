@@ -89,3 +89,12 @@ Chrome 浏览器实际 IndexedDB 检查：持续 60 次修改、每次间隔 100
 最终本轮 **12 组画布相关测试、190 项全部通过**，TypeScript 检查和生产构建通过。Chrome 中模拟 IndexedDB 一次写入失败，实测显示失败、点击访客保存重试、刷新恢复完整内容均通过。
 
 记录：`data/canvas-storage-failure-before.json`、`data/canvas-guest-retry-before.json`、`data/canvas-final-audit-tests.json`、`data/canvas-save-retry-preview.log`。这是画布相关验证范围，不是整个仓库测试全量通过；尚未推送或部署，真实设备上的高清媒体网络/解码压力仍待验证。
+
+## 第六轮检查：上传确认与撤销历史
+
+- 已复现：素材上传确认只替换当前文档的 data URL，没有处理撤销/重做历史，以及尚未完成的拖动、文字编辑快照。此后撤销或重做会重新带回内联素材字节，下一次同步又进入上传流程，增加请求和大数据存储开销。
+- 修复：沿用已确认的 data URL → 私有素材地址映射，更新当前文档、past/future、拖动起始文档及文字编辑起始快照中的源地址和素材版本。未涉及的节点、数组保留对象引用；相同节点和数组在一次迁移中复用结果，不复制历史中的布局或文字到当前文档，也不增加撤销步骤。
+- 新增 4 项实际 CanvasStudio 交互回归，覆盖上传确认发生在已有撤销记录、已有重做记录、按下但未拖动、文字编辑未失焦期间。修改前四项均失败，修复后同时验证私有素材地址保留、位置/文字仍正常撤销重做。
+- 12 组画布相关测试 **194 项全部通过**，TypeScript 检查和生产构建通过（构建仍有既有的大包提示）。本轮是本地交互回归与构建验证，未进行生产上传或真实设备性能验证；尚未推送或部署。
+
+记录：`data/canvas-history-before.json`、`data/canvas-history-after.json`、`data/canvas-history-review-tests.json`、`data/canvas-history-build.log`。

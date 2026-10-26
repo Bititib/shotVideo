@@ -50,6 +50,44 @@ function controlledFrames() {
   return () => act(() => { const callbacks = [...pending.values()]; pending.clear(); callbacks.forEach(callback => callback(16)); });
 }
 
+describe('uploaded media and undo history', () => {
+  it.each(['past', 'future', 'pending drag', 'pending text'] as const)('retains uploaded URLs in %s snapshots without changing the edit being undone', mode => {
+    controlledFrames();
+    const raw = 'data:image/png;base64,aGVsbG8=';
+    const photo = {...newNode('image',{x:0,y:0}),title:'上传图片',src:raw,versions:[{id:'uploaded-version',src:raw,prompt:'图片提示',createdAt:1}]};
+    const note = {...newNode('text',{x:400,y:0}),text:'原始文字'};
+    const initial = {...newDocument(),nodes:[photo,note],view:{x:0,y:0,zoom:1}};
+    let current = initial;
+    const onChange = vi.fn((next: CanvasDocument) => { current = next as typeof initial; });
+    const props = {projects:[initial],status:'已保存',onChange,onCreate:vi.fn(),onSwitch:vi.fn()};
+    const board = render(<MemoryRouter><CanvasStudio {...props} initial={initial}/></MemoryRouter>);
+    const stage = screen.getByLabelText('无限画布编辑区');
+    const move = () => {
+      fireEvent.pointerMove(stage,{pointerId:1,clientX:60,clientY:30});
+      fireEvent.pointerUp(stage,{pointerId:1});
+    };
+    if (mode === 'pending text') {
+      fireEvent.focus(screen.getByLabelText('卡片文字'));
+      fireEvent.change(screen.getByLabelText('卡片文字'),{target:{value:'编辑后的文字'}});
+    } else {
+      fireEvent.pointerDown(screen.getByRole('article',{name:photo.title}),{button:0,pointerId:1,clientX:0,clientY:0});
+      if (mode !== 'pending drag') move();
+      if (mode === 'future') fireEvent.click(screen.getByRole('button',{name:'撤销',exact:true}));
+    }
+    const uploaded = {...current,nodes:current.nodes.map(node => node.id === photo.id ? {...node,src:'/api/media/uploaded',versions:photo.versions.map(v=>({...v,src:'/api/media/uploaded'}))} : node)};
+    board.rerender(<MemoryRouter><CanvasStudio {...props} initial={uploaded}/></MemoryRouter>);
+    if (mode === 'pending drag') move();
+    if (mode === 'pending text') fireEvent.blur(screen.getByLabelText('卡片文字'));
+    const direction = mode === 'future' ? '重做' : '撤销';
+    fireEvent.click(screen.getByRole('button',{name:direction,exact:true}));
+    expect(current.nodes[0]).toMatchObject({src:'/api/media/uploaded',versions:[{src:'/api/media/uploaded'}],x:mode === 'future' ? 60 : 0});
+    expect(current.nodes[1].text).toBe('原始文字');
+    fireEvent.click(screen.getByRole('button',{name:mode === 'future' ? '撤销' : '重做',exact:true}));
+    expect(current.nodes[0]).toMatchObject({src:'/api/media/uploaded',versions:[{src:'/api/media/uploaded'}]});
+    expect(current.nodes[1].text).toBe(mode === 'pending text' ? '编辑后的文字' : '原始文字');
+  });
+});
+
 describe('canvas interaction scheduling', () => {
   it.each(['request','content'])('keeps an arriving generation result identified by %s while a drag frame is pending and movement continues', async identity => {
     controlledFrames();

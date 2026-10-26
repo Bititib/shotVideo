@@ -116,7 +116,39 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     }
     previousInitial.current=initial;
     if (!replacements.size) return;
-    const current={...docRef.current,nodes:docRef.current.nodes.map(node=>({...node,src:replacements.get(node.src)||node.src,versions:node.versions?.map(v=>({...v,src:replacements.get(v.src)||v.src}))}))};
+    // Upload acknowledgement changes storage addresses, not an undoable user edit.
+    // Patch every retained snapshot so undo/redo cannot bring the inline bytes back.
+    const migratedNodes = new Map<CanvasNode, CanvasNode>();
+    const migrateNode = (node: CanvasNode): CanvasNode => {
+      const cached = migratedNodes.get(node);
+      if (cached) return cached;
+      const src = replacements.get(node.src) || node.src;
+      let versions = node.versions;
+      if (versions?.some(v => replacements.has(v.src))) versions = versions.map(v => replacements.has(v.src) ? {...v, src: replacements.get(v.src)!} : v);
+      const result = src === node.src && versions === node.versions ? node : {...node, src, versions};
+      migratedNodes.set(node, result);
+      return result;
+    };
+    const migratedArrays = new Map<CanvasNode[], CanvasNode[]>();
+    const migrateSnapshot = <T extends Snapshot,>(snapshot: T): T => {
+      let nodes = migratedArrays.get(snapshot.nodes);
+      if (!nodes) {
+        const next = snapshot.nodes.map(migrateNode);
+        nodes = next.every((node, i) => node === snapshot.nodes[i]) ? snapshot.nodes : next;
+        migratedArrays.set(snapshot.nodes, nodes);
+      }
+      return nodes === snapshot.nodes ? snapshot : {...snapshot, nodes};
+    };
+    const past = historyRef.current.past.map(migrateSnapshot), future = historyRef.current.future.map(migrateSnapshot);
+    if (past.some((s, i) => s !== historyRef.current.past[i]) || future.some((s, i) => s !== historyRef.current.future[i])) {
+      historyRef.current = {past, future}; setHistory(historyRef.current);
+    }
+    if (gesture.current) {
+      gesture.current.doc = migrateSnapshot(gesture.current.doc);
+      gesture.current.originals = new Map([...gesture.current.originals].map(([id, node]) => [id, migrateNode(node)]));
+    }
+    if (textStart.current) textStart.current = migrateSnapshot(textStart.current);
+    const current = migrateSnapshot(docRef.current);
     docRef.current=current;setDoc(current);
   },[initial]);
 
