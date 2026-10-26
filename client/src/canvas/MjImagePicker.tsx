@@ -1,3 +1,4 @@
+import { ImageThumbnail } from '../components/MediaPreview';
 import { useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Check } from 'lucide-react';
@@ -54,7 +55,7 @@ export default function MjImagePicker({ node, versions, view, viewport, onSelect
           onPointerEnter={() => setHovered(index)} onPointerLeave={() => setHovered(null)}
           onFocus={() => setHovered(index)} onBlur={() => setHovered(null)}
           onKeyDown={event => moveFocus(event, index)} onClick={() => onSelect(version)}>
-          <img src={version.src} alt={`MJ 候选图片 ${index + 1}`} draggable={false} />
+          <ImageThumbnail src={version.src} alt={`MJ 候选图片 ${index + 1}`} draggable={false} />
           <span className="studio-mj-number">{index + 1}</span>
           {node.src === version.src && <span className="studio-mj-current"><Check size={12} aria-hidden="true" />当前</span>}
         </button>)}
@@ -62,7 +63,7 @@ export default function MjImagePicker({ node, versions, view, viewport, onSelect
     </section>
     {hovered !== null && versions[hovered] && <figure className="studio-mj-hover-preview" data-canvas-ui
       style={{ left: previewLeft, top: previewTop, width: previewWidth, height: previewHeight }}>
-      <img src={versions[hovered].src} alt={`第 ${hovered + 1} 张图片放大预览`} draggable={false} />
+      <ImageThumbnail src={versions[hovered].src} alt={`第 ${hovered + 1} 张图片放大预览`} draggable={false} />
       <figcaption>第 {hovered + 1} 张<span>{node.src === versions[hovered].src ? '当前版本' : '点击缩略图选用'}</span></figcaption>
     </figure>}
   </>;

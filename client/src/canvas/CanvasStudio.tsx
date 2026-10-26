@@ -1,10 +1,10 @@
-import { publicCanvasJobMessage, publicGenerationError } from '../../../shared/generationMessages';
+import { publicGenerationError } from '../../../shared/generationMessages';
 import { bindReferences, referenceLabel, insertReference } from './referenceMentions';
 import BrandMark from '../components/BrandMark';
 import ProjectLibrary from './ProjectLibrary';
 import AssetPicker from './AssetPicker';
 import { connectionError } from './videoInputs';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, ArrowUpRight, Check, ChevronDown, Copy, Download, FolderOpen, Frame, Hand, HelpCircle, Image as ImageIcon, LayoutGrid, Link2, Maximize, Minus, MousePointer2, PanelRightClose, Plus, Redo2, Search, Sparkles, Trash2, Type, Undo2, Upload, Video, X, Layers3, Loader2, CheckCircle2, Music2, Eye, EyeOff, Sun, Moon } from 'lucide-react';
@@ -16,6 +16,9 @@ import { downloadGeneratedImage } from '../api/imageGen';
 import { normalizeImageFile, isSupportedImageFile } from '../utils/imageNormalization';
 import { startPolling } from '../utils/polling';
 import GeneratorPanel from './GeneratorPanel';
+import CanvasNodeCard, { type CanvasNodeActions } from './CanvasNodeCard';
+import CanvasConnections from './CanvasConnections';
+import CanvasMinimapNodes from './CanvasMinimapNodes';
 import MjImagePicker, { latestMjImages } from './MjImagePicker';
 
 import ImageTools from './ImageTools';
@@ -29,7 +32,7 @@ import type { CanvasDocument, CanvasNode, CanvasVersion, History, NodeKind, Poin
 import { formatBeijingTime } from '../../../shared/time';
 
 type Props = { key?: string; initial: CanvasDocument; projects: CanvasDocument[]; status: string; onSync?: () => void; onImportGuest?: () => Promise<void>; onPersist?: () => Promise<void>; onChange: (doc: CanvasDocument) => void; onSwitch: (id: string) => void; onCreate: (doc: CanvasDocument) => void };
-type Gesture = { kind: 'pan' | 'move' | 'box' | 'resize'; pointer: number; start: Point; last: Point; doc: CanvasDocument; ids: string[]; additive: boolean; checkpointed: boolean };
+type Gesture = { kind: 'pan' | 'move' | 'box' | 'resize'; pointer: number; start: Point; last: Point; doc: CanvasDocument; originals: Map<string, CanvasNode>; additive: boolean; checkpointed: boolean };
 const isEditing = (target: EventTarget | null) => target instanceof HTMLElement && Boolean(target.closest('input,textarea,select,[contenteditable="true"]'));
 const iconFor = (kind: NodeKind) => kind === 'image' ? ImageIcon : kind === 'video' ? Video : kind === 'audio' ? Music2 : Type;
 const playable = (src: string) => src.startsWith('data:') || src.startsWith('blob:') ? src : `/api/video/play?url=${encodeURIComponent(src)}`;
@@ -90,7 +93,10 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
   const controllers = useRef(new Map<string, AbortController>());
   const guard = useAuthGuard();
   const [size, setSize] = useState({ width: 1000, height: 700 });
-  const selection = doc.nodes.filter(n => selected.includes(n.id));
+  const selection = useMemo(() => {
+    const ids = new Set(selected);
+    return doc.nodes.filter(n => ids.has(n.id));
+  }, [doc.nodes, selected]);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const active = selection.length === 1 ? selection[0] : undefined;
@@ -98,9 +104,11 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
 
   const previousInitial = useRef(initial);
   useEffect(() => {
+    if (initial.nodes === previousInitial.current.nodes) { previousInitial.current = initial; return; }
     const replacements = new Map<string,string>();
+    const previousNodes = new Map<string, CanvasNode>(previousInitial.current.nodes.map(n => [n.id, n]));
     for (const node of initial.nodes) {
-      const old = previousInitial.current.nodes.find(n => n.id === node.id);
+      const old = previousNodes.get(node.id);
       if (old?.src?.startsWith('data:') && node.src?.startsWith('/api/media/')) replacements.set(old.src,node.src);
       for (const version of node.versions || []) {
         const oldVersion=old?.versions?.find(v=>v.id===version.id);
@@ -109,14 +117,68 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     }
     previousInitial.current=initial;
     if (!replacements.size) return;
-    const current={...docRef.current,nodes:docRef.current.nodes.map(node=>({...node,src:replacements.get(node.src)||node.src,versions:node.versions?.map(v=>({...v,src:replacements.get(v.src)||v.src}))}))};
+    // Upload acknowledgement changes storage addresses, not an undoable user edit.
+    // Patch every retained snapshot so undo/redo cannot bring the inline bytes back.
+    const migratedNodes = new Map<CanvasNode, CanvasNode>();
+    const migrateNode = (node: CanvasNode): CanvasNode => {
+      const cached = migratedNodes.get(node);
+      if (cached) return cached;
+      const src = replacements.get(node.src) || node.src;
+      let versions = node.versions;
+      if (versions?.some(v => replacements.has(v.src))) versions = versions.map(v => replacements.has(v.src) ? {...v, src: replacements.get(v.src)!} : v);
+      const result = src === node.src && versions === node.versions ? node : {...node, src, versions};
+      migratedNodes.set(node, result);
+      return result;
+    };
+    const migratedArrays = new Map<CanvasNode[], CanvasNode[]>();
+    const migrateSnapshot = <T extends Snapshot,>(snapshot: T): T => {
+      let nodes = migratedArrays.get(snapshot.nodes);
+      if (!nodes) {
+        const next = snapshot.nodes.map(migrateNode);
+        nodes = next.every((node, i) => node === snapshot.nodes[i]) ? snapshot.nodes : next;
+        migratedArrays.set(snapshot.nodes, nodes);
+      }
+      return nodes === snapshot.nodes ? snapshot : {...snapshot, nodes};
+    };
+    const past = historyRef.current.past.map(migrateSnapshot), future = historyRef.current.future.map(migrateSnapshot);
+    if (past.some((s, i) => s !== historyRef.current.past[i]) || future.some((s, i) => s !== historyRef.current.future[i])) {
+      historyRef.current = {past, future}; setHistory(historyRef.current);
+    }
+    if (gesture.current) {
+      gesture.current.doc = migrateSnapshot(gesture.current.doc);
+      gesture.current.originals = new Map([...gesture.current.originals].map(([id, node]) => [id, migrateNode(node)]));
+    }
+    if (textStart.current) textStart.current = migrateSnapshot(textStart.current);
+    const current = migrateSnapshot(docRef.current);
     docRef.current=current;setDoc(current);
   },[initial]);
 
-  const update = (next: CanvasDocument) => {
-    const result = { ...next, updatedAt: Date.now() };
-    docRef.current = result; setDoc(result); onChange(result);
+  const interactionFrame = useRef<number | null>(null);
+  const changeHandler = useRef(onChange);
+  changeHandler.current = onChange;
+  const flushInteraction = (paint = true) => {
+    if (interactionFrame.current === null) return;
+    cancelAnimationFrame(interactionFrame.current); interactionFrame.current = null;
+    if (paint) setDoc(docRef.current);
+    changeHandler.current(docRef.current);
   };
+  const update = (next: CanvasDocument) => {
+    if (interactionFrame.current !== null) { cancelAnimationFrame(interactionFrame.current); interactionFrame.current = null; }
+    const result = { ...next, updatedAt: Date.now() };
+    docRef.current = result; setDoc(result); changeHandler.current(result);
+  };
+  const updateInteraction = (next: CanvasDocument) => {
+    // Keep deltas cumulative immediately, but publish at most once per display frame.
+    docRef.current = { ...next, updatedAt: Date.now() };
+    if (interactionFrame.current === null) interactionFrame.current = requestAnimationFrame(() => flushInteraction());
+  };
+  useEffect(() => {
+    const flush = () => flushInteraction();
+    window.addEventListener('pagehide', flush, true);
+    window.addEventListener('beforeunload', flush, true);
+    document.addEventListener('visibilitychange', flush, true);
+    return () => { flushInteraction(false); window.removeEventListener('pagehide', flush, true); window.removeEventListener('beforeunload', flush, true); document.removeEventListener('visibilitychange', flush, true); };
+  }, []);
   const record = (snapshot: Snapshot = docRef.current) => {
     const next = checkpoint(historyRef.current, { nodes: snapshot.nodes, edges: snapshot.edges });
     historyRef.current = next; setHistory(next);
@@ -139,8 +201,22 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
   const undo = (direction: 'undo' | 'redo') => {
     if (running) { setNotice('生成过程中可以继续编辑；任务完成后可撤销或重做。'); return; }
     const result = stepHistory(historyRef.current, docRef.current, direction);
+    const latestNodes = new Map<string, CanvasNode>(docRef.current.nodes.map(node => [node.id, node]));
+    const nodes = result.snapshot.nodes.map(node => {
+      const latest = latestNodes.get(node.id);
+      const savedJob = node.job, latestJob = latest?.job;
+      const sameJob = savedJob?.requestId || latestJob?.requestId
+        ? Boolean(savedJob?.requestId && savedJob.requestId === latestJob?.requestId)
+        : Boolean(savedJob?.contentId && savedJob.contentId === latestJob?.contentId);
+      // Undo layout changes, not a receipt that arrived after that layout snapshot.
+      // Completed version selections still use their own undo history normally.
+      if (sameJob && (savedJob?.status === 'running' || savedJob?.status === 'interrupted') && (latestJob?.status === 'done' || latestJob?.status === 'error')) {
+        return {...node, src: latest.src, versions: latest.versions, job: latestJob};
+      }
+      return node;
+    });
     historyRef.current = result.history; setHistory(result.history);
-    update({ ...docRef.current, ...result.snapshot }); setSelected([]);
+    update({ ...docRef.current, ...result.snapshot, nodes }); setSelected([]);
   };
   const localPoint = (clientX: number, clientY: number): Point => {
     const rect = surface.current!.getBoundingClientRect(); return { x: clientX - rect.left, y: clientY - rect.top };
@@ -274,8 +350,8 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
       event.preventDefault();
       const d = docRef.current, point = localPoint(event.clientX, event.clientY);
       if (event.ctrlKey || event.metaKey || event.deltaMode !== 0 || Math.abs(event.deltaY) >= 50 && !event.deltaX) {
-        update({ ...d, view: zoomAround(d.view, point, Math.exp(-event.deltaY * (event.deltaMode ? .04 : .002))) });
-      } else update({ ...d, view: { ...d.view, x: d.view.x - (event.shiftKey ? event.deltaY : event.deltaX), y: d.view.y - (event.shiftKey ? 0 : event.deltaY) } });
+        updateInteraction({ ...d, view: zoomAround(d.view, point, Math.exp(-event.deltaY * (event.deltaMode ? .04 : .002))) });
+      } else updateInteraction({ ...d, view: { ...d.view, x: d.view.x - (event.shiftKey ? event.deltaY : event.deltaX), y: d.view.y - (event.shiftKey ? 0 : event.deltaY) } });
     };
     element.addEventListener('wheel', wheel, { passive: false });
     return () => { mounted.current = false; resize.disconnect(); element.removeEventListener('wheel', wheel); controllers.current.forEach(c => c.abort()); };
@@ -302,15 +378,20 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     if (!mounted.current) return;
     if (folder) imported.forEach(n=>{n.assetFolder=folder;});
     const keepFocus = selectedRef.current.join(',') === selectionAtStart;
-    if (imported.length && fill && targetId) { applyAssets(imported.slice(0,1), {id:targetId,mode:'fill'}, keepFocus);setImporting(false);return; }
-    if (imported.length && targetId) { applyAssets(imported,{id:targetId,mode:'reference'}, keepFocus);setImporting(false);return; }
-    if (imported.length) {
+    if (imported.length && fill && targetId) applyAssets(imported.slice(0,1), {id:targetId,mode:'fill'}, keepFocus);
+    else if (imported.length && targetId) applyAssets(imported,{id:targetId,mode:'reference'}, keepFocus);
+    else if (imported.length) {
       const targetExists = targetId && docRef.current.nodes.some(n => n.id === targetId);
       commit(d => ({ ...d, nodes: [...d.nodes, ...imported], edges: targetExists ? [...d.edges, ...imported.map(n => ({ id: uid(), from: n.id, to: targetId! }))] : d.edges }));
       setSelected(targetExists ? [targetId!] : imported.map(n => n.id));
       if (targetExists) setPanel(true);
     }
-    setNotice(failures.length ? `${failures.length} 个文件未能导入。支持常见图片（20 MB 内）、MP4 / WebM 视频与 MP3 / WAV / OGG 音频（40 MB 内）。` : `已导入 ${imported.length} 个素材${files.length > 20 ? '，每次最多导入 20 个' : ''}`);
+    if (!targetId || !imported.length) setNotice(`已导入 ${imported.length} 个素材`);
+    const issues = [
+      failures.length ? `${failures.length} 个文件未能导入（${failures.join('、')}）。支持常见图片（20 MB 内）、MP4 / WebM 视频与 MP3 / WAV / OGG 音频（40 MB 内）。` : '',
+      files.length > 20 ? `每次最多导入 20 个文件，另有 ${files.length - 20} 个尚未处理。` : '',
+    ].filter(Boolean);
+    if (issues.length) setNotice(message => `${message}；${issues.join(' ')}`);
     setImporting(false);
   };
   const applyAssets = (assets: CanvasNode[], intent = assetIntent, focus = true) => {
@@ -376,7 +457,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
       else if (!mod && key === '/') { event.preventDefault(); setPanel(true); document.getElementById('canvas-prompt')?.focus(); }
     };
     const up = (event: KeyboardEvent) => { if (event.code === 'Space') setSpace(false); };
-    const blur = () => { suppressPortClick.current = true; cancelLink(); setSpace(false); gesture.current = null; pinch.current = null; touches.current.clear(); setMarquee(null); };
+    const blur = () => { flushInteraction(); suppressPortClick.current = true; cancelLink(); setSpace(false); gesture.current = null; pinch.current = null; touches.current.clear(); setMarquee(null); };
     const paste = (event: ClipboardEvent) => {
       if (isEditing(event.target) || actions.current.projectMenu || actions.current.help || actions.current.preview) return;
       const files = Array.from(event.clipboardData?.files ?? []);
@@ -428,7 +509,9 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
       moving = ids.every(id => selected.includes(id)) ? selected : ids;
       setSelected(moving);
     } else if (!pan && !event.shiftKey) setSelected([]);
-    gesture.current = { kind: pan ? 'pan' : resize ? 'resize' : ids ? 'move' : 'box', pointer: event.pointerId, start: point, last: point, doc: docRef.current, ids: moving, additive: event.shiftKey, checkpointed: false };
+    const movingIds = new Set(moving);
+    const originals = new Map(docRef.current.nodes.filter(n => movingIds.has(n.id)).map(n => [n.id, n]));
+    gesture.current = { kind: pan ? 'pan' : resize ? 'resize' : ids ? 'move' : 'box', pointer: event.pointerId, start: point, last: point, doc: docRef.current, originals, additive: event.shiftKey, checkpointed: false };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const move = (event: ReactPointerEvent) => {
@@ -456,7 +539,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     if (pinch.current && touches.current.size === 2) {
       const [a, b] = [...touches.current.values()], p = pinch.current;
       const zoom = clamp(p.zoom * Math.hypot(a.x - b.x, a.y - b.y) / p.distance, .15, 2.5);
-      update({ ...docRef.current, view: { zoom, x: (a.x + b.x) / 2 - p.anchor.x * zoom, y: (a.y + b.y) / 2 - p.anchor.y * zoom } }); return;
+      updateInteraction({ ...docRef.current, view: { zoom, x: (a.x + b.x) / 2 - p.anchor.x * zoom, y: (a.y + b.y) / 2 - p.anchor.y * zoom } }); return;
     }
     const g = gesture.current; if (!g || g.pointer !== event.pointerId) return;
     const point = localPoint(event.clientX, event.clientY), dx = point.x - g.start.x, dy = point.y - g.start.y;
@@ -464,16 +547,17 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     if (!g.checkpointed) { if (g.kind === 'move' || g.kind === 'resize') record(g.doc); g.checkpointed = true; }
     g.last = point;
     const d = docRef.current;
-    if (g.kind === 'pan') update({ ...d, view: { ...g.doc.view, x: g.doc.view.x + dx, y: g.doc.view.y + dy } });
+    if (g.kind === 'pan') updateInteraction({ ...d, view: { ...g.doc.view, x: g.doc.view.x + dx, y: g.doc.view.y + dy } });
     else if (g.kind === 'box') setMarquee({ a: g.start, b: point });
-    else update({ ...d, nodes: d.nodes.map(n => {
-      if (!g.ids.includes(n.id)) return n;
-      const original = g.doc.nodes.find(o => o.id === n.id)!;
+    else updateInteraction({ ...d, nodes: d.nodes.map(n => {
+      const original = g.originals.get(n.id);
+      if (!original) return n;
       return g.kind === 'resize' ? { ...n, width: clamp(original.width + dx / d.view.zoom, 220, 1000), height: clamp(original.height + dy / d.view.zoom, 160, 1000) }
         : { ...n, x: snap ? Math.round((original.x + dx / d.view.zoom) / 24) * 24 : original.x + dx / d.view.zoom, y: snap ? Math.round((original.y + dy / d.view.zoom) / 24) * 24 : original.y + dy / d.view.zoom };
     }) });
   };
   const end = (event?: ReactPointerEvent) => {
+    flushInteraction();
     const drag = linkDrag.current;
     if (drag) {
       if (event && event.pointerId !== drag.pointer) return;
@@ -513,9 +597,11 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     gesture.current = null; setMarquee(null);
   };
 
-  const references = active && (!active.src || active.generator) && active.kind !== 'text'
-    ? doc.edges.filter(e => e.to === active.id).map(e => doc.nodes.find(n => n.id === e.from)).filter((n): n is CanvasNode => Boolean(n))
-    : selection.filter(n => n.src);
+  const references = useMemo(() => {
+    if (!active || active.src && !active.generator || active.kind === 'text') return selection.filter(n => n.src);
+    const byId = new Map(doc.nodes.map(n => [n.id, n]));
+    return doc.edges.filter(e => e.to === active.id).map(e => byId.get(e.from)).filter((n): n is CanvasNode => Boolean(n));
+  }, [active, doc.nodes, doc.edges, selection]);
   const generate = async (options: GenerateOptions) => {
     if (!guard()) return;
     if (!options.model || !options.prompt.trim()) { setNotice('请先填写提示词并选择模型。'); return; }
@@ -617,7 +703,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
           editNode(node.id, { job: { ...current.job, status: 'interrupted', message: publicGenerationError('提交结果待核实，请勿重复提交') } });
         }
         else {
-          const pending = applyPendingGeneration({...current, job: {...current.job, status:'running'}}, data);
+          const pending = applyPendingGeneration(current.job.status === 'running' ? current : {...current, job: {...current.job, status:'running'}}, data);
           if (pending !== current) editNode(node.id, pending);
         }
       }
@@ -656,10 +742,29 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
       }
     } catch (error: any) { setNotice(error.message || '下载失败，请重试'); }
   };
-  const groups = [...new Set(doc.nodes.map(n => n.group).filter(Boolean))].map(id => ({ id, nodes: doc.nodes.filter(n => n.group === id) }));
-  const miniBounds = bounds(doc.nodes);
+  const nodeActions = useRef<CanvasNodeActions>(null!);
+  nodeActions.current = {
+    begin, beginLink, editNode, downloadNode,
+    select: (id, open) => { setSelected([id]); setPanel(open); },
+    context: (event, node) => { event.stopPropagation(); if (isEditing(event.target)) return; event.preventDefault(); setSelected([node.id]); setContext({ ...localPoint(event.clientX, event.clientY), nodeId: node.id }); },
+    connectClick: (event, id) => { event.stopPropagation(); if (suppressPortClick.current && event.detail !== 0) { suppressPortClick.current = false; return; } connect(id); },
+    startEdit: () => { textStart.current = docRef.current; },
+    finishEdit: () => { if (textStart.current && textStart.current.nodes !== docRef.current.nodes) record(textStart.current); textStart.current = null; },
+    textPointerDown: (event, id) => { if (space || mode === 'hand') begin(event); else { event.stopPropagation(); setSelected([id]); } },
+    pick: id => { setSelected([id]); openAssets(id, 'fill'); },
+  };
+  const groups = useMemo(() => {
+    const grouped = new Map<string, CanvasNode[]>();
+    for (const node of doc.nodes) if (node.group) { const group = grouped.get(node.group) || []; group.push(node); grouped.set(node.group, group); }
+    return [...grouped].map(([id, nodes]) => ({ id, nodes, bounds: bounds(nodes) }));
+  }, [doc.nodes]);
+  const miniBounds = useMemo(() => bounds(doc.nodes), [doc.nodes]);
   const miniScale = Math.min(148 / Math.max(miniBounds.width, 1), 78 / Math.max(miniBounds.height, 1));
-  const visibleNodes = doc.nodes.filter(n => intersects(n, screenToWorld({ x: -400, y: -400 }, doc.view), screenToWorld({ x: size.width + 400, y: size.height + 400 }, doc.view)) || selected.includes(n.id));
+  const visibleNodes = useMemo(() => {
+    const a = screenToWorld({ x: -128, y: -128 }, doc.view), b = screenToWorld({ x: size.width + 128, y: size.height + 128 }, doc.view);
+    // Retain the single active editor, not every offscreen card in a bulk selection.
+    return doc.nodes.filter(n => intersects(n, a, b) || selected.length === 1 && n.id === selected[0]);
+  }, [doc.nodes, doc.view, size, selected]);
   const mjImages = active ? latestMjImages(active) : [];
   const composerWidth = Math.min(900, Math.max(240, size.width - 24));
   const nodeLeft = active ? active.x * doc.view.zoom + doc.view.x : 0;
@@ -694,7 +799,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
       <Link to="/" className="studio-logo" aria-label="返回首页"><BrandMark /></Link>
       <div className="studio-header-divider" />
       <button className="studio-project-trigger" onClick={() => setProjectMenu(v => !v)} aria-expanded={projectMenu}><span><small>灵序 AI / 无限画布</small><strong>{doc.title}</strong></span><ChevronDown size={15} /></button>
-      <button className={`studio-save ${status.includes('失败') ? 'is-error' : ''}`} onClick={onSync} title={status + ' · 点击重试同步'}><span />{status}</button>
+      <button className={`studio-save ${status.includes('失败') ? 'is-error' : ''}`} onClick={onSync} title={status + ' · 点击重试保存'}><span />{status}</button>
       <div className="studio-header-actions"><span className="studio-header-divider" /><button className="studio-export" aria-label="导出画布" onClick={exportBackup}><Download size={15} /><span>导出画布</span></button><button className={`studio-create-toggle ${panel ? 'active' : ''}`} onClick={() => setPanel(v => !v)}><Sparkles size={16} /> 创作</button></div>
     </header>
     <div className="studio-body">
@@ -720,35 +825,11 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
 
           onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); void importFiles(Array.from(event.dataTransfer.files), screenToWorld(localPoint(event.clientX, event.clientY), doc.view)); }}>
           <div className="studio-world" style={{ transform: `translate(${doc.view.x}px, ${doc.view.y}px) scale(${doc.view.zoom})` }}>
-            {groups.map(g => { const b = bounds(g.nodes); return <div key={g.id} className="studio-group" style={{ left: b.x - 20, top: b.y - 45, width: b.width + 40, height: b.height + 65 }}><button onPointerDown={e => begin(e, g.nodes.map(n => n.id))}><Frame size={13} /> 素材分组 · {g.nodes.length} 项</button></div>; })}
-            <svg className="studio-connections" aria-label="素材关联线" style={{ opacity: showConnections || linkPreview ? 1 : 0 }}>{doc.edges.map(edge => {
-              const a = doc.nodes.find(n => n.id === edge.from), b = doc.nodes.find(n => n.id === edge.to); if (!a || !b) return null;
-              const x = a.x + a.width, y = a.y + a.height / 2, ex = b.x, ey = b.y + b.height / 2, bend = Math.max(80, Math.abs(ex - x) * .5);
-              return <path key={edge.id} d={`M${x},${y} C${x + bend},${y} ${ex - bend},${ey} ${ex},${ey}`} />;
-            })}{linkPreview && <path className={`studio-link-preview ${linkPreview.target && !linkPreview.valid ? 'invalid' : ''}`} data-testid="connection-preview" d={`M${linkPreview.from.x},${linkPreview.from.y} C${linkPreview.from.x + 80},${linkPreview.from.y} ${linkPreview.to.x - 80},${linkPreview.to.y} ${linkPreview.to.x},${linkPreview.to.y}`} />}</svg>
-            {visibleNodes.map(node => { const Icon = iconFor(node.kind); const isSelected = selected.includes(node.id); return <article key={node.id} className={`studio-node kind-${node.kind} ${isSelected ? 'is-selected' : ''}`}
-              style={{ left: node.x, top: node.y, width: node.width, height: node.height }} aria-label={node.title}
-              onPointerDown={event => begin(event, [node.id])}
-              onDoubleClick={event => {
-                const target = event.target as HTMLElement;
-                if (node.kind === 'text' || target.closest('input,textarea,select,video,audio,button:not(.studio-node-empty)')) return;
-                event.preventDefault(); event.stopPropagation();
-                setSelected([node.id]); setPanel(true);
-              }}
-              onContextMenu={event => { event.stopPropagation(); if (isEditing(event.target)) return; event.preventDefault(); setSelected([node.id]); setContext({ ...localPoint(event.clientX, event.clientY), nodeId: node.id }); }}>
-              <button className={`studio-port port-in ${connecting || linkPreview ? 'ready' : ''} ${linkPreview?.target === node.id ? linkPreview.valid ? 'link-valid' : 'link-invalid' : ''}`} aria-label={`连接到 ${node.title}`} title="按住拖拽连接参考素材，也可点击连线" onPointerDown={e => beginLink(e, node, 'in')} onClick={e => { e.stopPropagation(); if (suppressPortClick.current && e.detail !== 0) { suppressPortClick.current = false; return; } connect(node.id); }} />
-              <header><span className="studio-node-icon"><Icon size={14} /></span><input aria-label="素材名称" value={node.title} maxLength={120} onPointerDown={e => e.stopPropagation()} onFocus={() => { textStart.current = docRef.current; setPanel(false); setSelected([node.id]); }} onChange={e => editNode(node.id, { title: e.target.value })} onBlur={() => { if (textStart.current && textStart.current.nodes !== docRef.current.nodes) record(textStart.current); textStart.current = null; }} /><span className="studio-node-grip">⠿</span></header>
-              {node.kind === 'text' ? <textarea aria-label="卡片文字" placeholder="写下想法、提示词或分镜…" value={node.text} maxLength={50000} onPointerDown={e => { if (space || mode === 'hand') begin(e); else { e.stopPropagation(); setSelected([node.id]); } }} onFocus={() => { textStart.current = docRef.current; }} onChange={e => editNode(node.id, { text: e.target.value })} onBlur={() => { if (textStart.current && textStart.current.nodes !== docRef.current.nodes) record(textStart.current); textStart.current = null; }} />
-                : node.src ? <div className="studio-media">{node.kind === 'image' ? <img src={node.src} alt={node.title} draggable={false} loading="lazy" /> : node.kind === 'audio' ? <audio src={node.src} controls onPointerDown={e => e.stopPropagation()} /> : <video src={playable(node.src)} controls preload="metadata" onPointerDown={e => e.stopPropagation()} />}</div>
-                  : <button className="studio-node-empty" onPointerDown={e => begin(e, [node.id])} onClick={e => { if (e.detail === 0) { setSelected([node.id]); setPanel(false); } }}>{node.job?.status === 'running' ? node.job.message === '视频已生成，正在等待结果交付' ? <CheckCircle2 size={28} /> : <Loader2 size={28} className="studio-spin" /> : <Icon size={30} />}<strong>{node.job ? node.job.status === 'running' ? (node.job.message === '视频已生成，正在等待结果交付' ? '已生成，等待交付' : node.job.message === '视频已生成，正在保存到本站存储' ? '正在保存结果' : '正在创作中') : node.job.status === 'error' ? '生成未完成' : '请核实任务结果' : node.kind === 'image' ? '下一张好作品，从这里开始' : node.kind === 'audio' ? '让文字拥有声音' : '让画面动起来'}</strong><span>{publicCanvasJobMessage(node.job) || '连接参考素材，双击节点开始创作'}</span></button>}
-              {node.job && <div className="studio-node-job" role="status" title={publicCanvasJobMessage(node.job)}><span>{publicCanvasJobMessage(node.job)}</span>{node.job.status === 'running' && <progress aria-label="生成进度" max={100} value={node.job.progress == null ? undefined : Math.min(100, Math.max(0,node.job.progress))}/>}</div>}
-              {node.kind !== 'text' && <button className="studio-node-pick" disabled={node.job?.status === 'running'} onPointerDown={e=>e.stopPropagation()} onClick={()=>{setSelected([node.id]);openAssets(node.id,'fill');}}>从素材库选择{node.src ? ' / 替换' : ' / 上传'}</button>}
-              <footer className={node.src && node.kind !== 'text' ? 'has-download' : undefined}><span>{node.kind === 'text' ? `${node.text.length} 字` : node.src ? '素材已就绪' : node.job?.progress != null ? `${Math.round(node.job.progress)}%` : '等待创作'}</span>{node.src && node.kind !== 'text'
-                ? <button className="studio-node-download" aria-label={`下载${node.kind === 'video' ? '视频' : node.kind === 'image' ? '图片' : '音频'} ${node.title}`} title="下载当前素材" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); void downloadNode(node); }}><Download size={14}/><span>下载{node.kind === 'video' ? '视频' : node.kind === 'image' ? '图片' : '音频'}</span></button>
-                : node.job?.status === 'done' ? <CheckCircle2 size={12} /> : <span>{node.ratio || (node.kind === 'text' ? 'NOTE' : 'CREATIVE')}</span>}</footer>
-              <button className={`studio-port port-out ${connecting === node.id || linkPreview ? 'ready' : ''} ${linkPreview?.target === node.id ? linkPreview.valid ? 'link-valid' : 'link-invalid' : ''}`} aria-label={`从 ${node.title} 连接`} title="按住拖拽连接到下一步，也可点击连线" onPointerDown={e => beginLink(e, node, 'out')} onClick={e => { e.stopPropagation(); if (suppressPortClick.current && e.detail !== 0) { suppressPortClick.current = false; return; } connect(node.id); }} />
-              {isSelected && <button className="studio-resize" aria-label="调整素材大小" title="拖动调整大小" onPointerDown={e => begin(e, [node.id], true)} />}
-            </article>; })}
+            {groups.map(g => { const b = g.bounds; return <div key={g.id} className="studio-group" style={{ left: b.x - 20, top: b.y - 45, width: b.width + 40, height: b.height + 65 }}><button onPointerDown={e => begin(e, g.nodes.map(n => n.id))}><Frame size={13} /> 素材分组 · {g.nodes.length} 项</button></div>; })}
+            <CanvasConnections nodes={doc.nodes} edges={doc.edges} view={doc.view} viewport={size} visible={showConnections || Boolean(linkPreview)} color={dark ? '#777e98' : '#899775'}/><svg className="studio-connections" aria-label="正在连接素材">{linkPreview && <path className={`studio-link-preview ${linkPreview.target && !linkPreview.valid ? 'invalid' : ''}`} data-testid="connection-preview" d={`M${linkPreview.from.x},${linkPreview.from.y} C${linkPreview.from.x + 80},${linkPreview.from.y} ${linkPreview.to.x - 80},${linkPreview.to.y} ${linkPreview.to.x},${linkPreview.to.y}`} />}</svg>
+            {visibleNodes.map(node => <CanvasNodeCard key={node.id} node={node} isSelected={selected.includes(node.id)}
+              incomingReady={Boolean(connecting || linkPreview)} outgoingReady={connecting === node.id || Boolean(linkPreview)}
+              linkState={linkPreview?.target === node.id ? linkPreview.valid ? 'valid' : 'invalid' : ''} actions={nodeActions} />)}
           </div>
           {!doc.nodes.length && <div className="studio-welcome" data-canvas-ui onPointerDown={e => e.stopPropagation()}><span className="studio-welcome-mark"><BrandMark size={56} /></span><p className="studio-eyebrow">A LITTLE SPACE. ENDLESS POSSIBILITIES.</p><h1>给灵感，一点自由。</h1><p>想法、参考图和新的作品，在这里自然连接。</p><div className="studio-start-actions"><button onClick={() => fileInput.current?.click()}><Plus size={17} /> 导入第一份素材</button><button onClick={() => add('text')}><Type size={16} /> 记下一个想法</button></div><div className="studio-start-label"><span /> 或者，从一个创作起点开始 <span /></div><div className="studio-template-grid"><button onClick={() => useTemplate('story')}><span className="template-symbol story">01 / 02 / 03</span><strong>短片分镜</strong><small>从故事到镜头，让叙事连贯</small><ArrowUpRight size={15} /></button><button onClick={() => useTemplate('product')}><span className="template-symbol product"><Frame size={27} /><Sparkles size={15} /></span><strong>产品视觉</strong><small>整理卖点，找到品牌的表达</small><ArrowUpRight size={15} /></button><button onClick={() => useTemplate('mood')}><span className="template-symbol mood"><i /><i /><i /></span><strong>灵感情绪板</strong><small>收集色彩、质感与视觉参考</small><ArrowUpRight size={15} /></button></div><p className="studio-welcome-tip">拖入文件或直接粘贴 · 点击左侧「添加文字」记录想法</p></div>}
           {marquee && <div className="studio-marquee" style={{ left: Math.min(marquee.a.x, marquee.b.x), top: Math.min(marquee.a.y, marquee.b.y), width: Math.abs(marquee.a.x - marquee.b.x), height: Math.abs(marquee.a.y - marquee.b.y) }} />}
@@ -781,7 +862,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
           {!context.link && <button role="menuitem" onClick={() => { fit(); setContext(null); }}><Maximize size={15} /> 查看全部素材</button>}<button role="menuitem" onClick={() => setContext(null)}><X size={15} /> 关闭菜单</button></>}</div>}
         <div className="studio-bottom-left"><span className="studio-board-count"><span /> {doc.nodes.length} 个素材{running && ' · 正在生成'}</span><span className="studio-key-hint"><kbd>空格</kbd> 拖动画布 <kbd>F</kbd> 查看全部</span></div>
         <div className="studio-navigation">
-          {!!doc.nodes.length && <div className="studio-minimap" title="点击定位画布" onPointerDown={e => { const r = e.currentTarget.getBoundingClientRect(); const x = (e.clientX - r.left - 10) / miniScale + miniBounds.x, y = (e.clientY - r.top - 10) / miniScale + miniBounds.y; update({ ...docRef.current, view: { ...docRef.current.view, x: size.width / 2 - x * doc.view.zoom, y: size.height / 2 - y * doc.view.zoom } }); }}><svg viewBox="0 0 168 98" aria-label="画布缩略图">{doc.nodes.map(n => <rect key={n.id} x={10 + (n.x - miniBounds.x) * miniScale} y={10 + (n.y - miniBounds.y) * miniScale} width={n.width * miniScale} height={n.height * miniScale} rx="2" className={selected.includes(n.id) ? 'selected' : n.kind} />)}<rect className="viewport" x={10 + (-doc.view.x / doc.view.zoom - miniBounds.x) * miniScale} y={10 + (-doc.view.y / doc.view.zoom - miniBounds.y) * miniScale} width={size.width / doc.view.zoom * miniScale} height={size.height / doc.view.zoom * miniScale} /></svg></div>}
+          {!!doc.nodes.length && <div className="studio-minimap" title="点击定位画布" onPointerDown={e => { const r = e.currentTarget.getBoundingClientRect(); const x = (e.clientX - r.left - 10) / miniScale + miniBounds.x, y = (e.clientY - r.top - 10) / miniScale + miniBounds.y; update({ ...docRef.current, view: { ...docRef.current.view, x: size.width / 2 - x * doc.view.zoom, y: size.height / 2 - y * doc.view.zoom } }); }}><svg viewBox="0 0 168 98" aria-label="画布缩略图"><CanvasMinimapNodes nodes={doc.nodes} selected={selected} origin={miniBounds} scale={miniScale} /><rect className="viewport" x={10 + (-doc.view.x / doc.view.zoom - miniBounds.x) * miniScale} y={10 + (-doc.view.y / doc.view.zoom - miniBounds.y) * miniScale} width={size.width / doc.view.zoom * miniScale} height={size.height / doc.view.zoom * miniScale} /></svg></div>}
           <div className="studio-zoom" role="toolbar" aria-label="画布视图工具">        <button className={mode === 'select' ? 'active' : ''} onClick={() => setMode('select')} aria-label="选择工具" title="选择 / 框选 V"><MousePointer2 size={19} /></button>
         <button className={mode === 'hand' ? 'active' : ''} onClick={() => setMode('hand')} aria-label="平移工具" title="平移 H · 按住空格"><Hand size={19} /></button><hr />
 <button onClick={() => update({ ...doc, view: zoomAround(doc.view, { x: size.width / 2, y: size.height / 2 }, 1 / 1.2) })} aria-label="缩小画布"><Minus size={15} /></button><button onClick={() => update({ ...doc, view: zoomAround(doc.view, { x: size.width / 2, y: size.height / 2 }, 1 / doc.view.zoom) })} title="恢复 100%">{Math.round(doc.view.zoom * 100)}%</button><button onClick={() => update({ ...doc, view: zoomAround(doc.view, { x: size.width / 2, y: size.height / 2 }, 1.2) })} aria-label="放大画布"><Plus size={15} /></button><button onClick={() => fit()} aria-label="查看全部素材" title="适应画布 F"><Maximize size={15} /></button><hr/><button aria-label={showConnections ? '隐藏连线' : '显示连线'} title="显示 / 隐藏连线" onClick={() => setShowConnections(v => !v)}>{showConnections ? <Eye size={16}/> : <EyeOff size={16}/>}</button><button aria-label={dark ? '浅色画布' : '深色画布'} title={dark ? '切换到灵感浅色 · 鼠尾草绿 / 暖沙 / 奶油米' : '切换到经典黑色'} onClick={() => { const next = !dark; setDark(next); localStorage.setItem('canvas-theme', next ? 'dark' : 'light'); }}>{dark ? <Sun size={16}/> : <Moon size={16}/>}</button><hr/><button className="studio-icon" disabled={!history.past.length || running} onClick={() => undo('undo')} aria-label="撤销" title="撤销 Ctrl / ⌘ Z"><Undo2 size={17} /></button><button className="studio-icon" disabled={!history.future.length || running} onClick={() => undo('redo')} aria-label="重做" title="重做 Ctrl / ⌘ Shift Z"><Redo2 size={17} /></button></div>

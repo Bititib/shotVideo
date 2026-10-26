@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ImageThumbnail } from '../components/MediaPreview';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { canConnect, type CanvasDocument, type CanvasNode } from './model';
+import { type CanvasDocument, type CanvasNode } from './model';
 import { referenceKinds, referenceLabel, type ReferenceBindings } from './referenceMentions';
 import { connectionError } from './videoInputs';
 import type { CSSProperties, ReactNode } from 'react';
@@ -133,22 +134,48 @@ export default function ReferencePrompt(props: Props) {
     if (!match || props.kind === 'audio') {setQuery(null); return;}
     setQuery({start: caret - match[0].length, end: caret, text: match[1]}); setIndex(0);
   };
-  const local = props.document?.nodes ?? props.references;
-  // Existing media is an input to a NEW generation; only a generator/empty node is the actual target.
-  const target = props.target && (props.target.generator || !props.target.src) ? props.target : undefined;
-  const seen = new Set<string>();
-  const canvasCandidates = [...props.references, ...local].filter(node => {
-    if (seen.has(node.id)) return false;
-    seen.add(node.id); return true;
-  });
-  const candidates = scope === 'upstream' ? props.references : scope === 'projects'
-    ? (props.projects ?? []).filter(p => p.id !== props.document?.id).flatMap(p => p.nodes.map(n => ({...n, origin: {projectId:p.id, nodeId:n.id, title:p.title}})))
-    : canvasCandidates.map(n => props.document ? {...n, origin: {projectId:props.document.id, nodeId:n.id, title:props.document.title}} : n);
-  const nodes = candidates.filter(n => (scope === 'projects' || n.id !== target?.id) && n.kind !== 'text' && n.src && n.job?.status !== 'running'
-    && !connectionError(n, {...target, kind:props.kind} as CanvasNode)
-    && (scope === 'projects' || !target || !props.document || props.references.some(reference => reference.id === n.id) || canConnect(props.document.edges, n.id, target.id))
-    && ((referenceLabel(props.bindings,n.id) ?? '')+' '+referenceKinds[n.kind]+' '+n.title+' '+(n.origin?.title ?? '')).toLowerCase().includes(query?.text.toLowerCase() ?? ''));
+  const candidates = useMemo(() => {
+    // Normal typing must not scan all projects or traverse the connection graph.
+    if (!query) return [];
+    const local = props.document?.nodes ?? props.references;
+    // Existing media is an input to a NEW generation; only a generator/empty node is the actual target.
+    const target = props.target && (props.target.generator || !props.target.src) ? props.target : undefined;
+    const connected = new Set(props.references.map(node => node.id));
+    const blocked = new Set<string>();
+    if (scope !== 'projects' && target && props.document) {
+      const outgoing = new Map<string, string[]>();
+      for (const edge of props.document.edges) {
+        const next = outgoing.get(edge.from) || [];
+        next.push(edge.to); outgoing.set(edge.from, next);
+        if (edge.to === target.id) blocked.add(edge.from);
+      }
+      const visited = new Set<string>(), pending = [target.id];
+      while (pending.length) {
+        const id = pending.pop()!;
+        if (visited.has(id)) continue;
+        visited.add(id); blocked.add(id);
+        for (const next of outgoing.get(id) || []) pending.push(next);
+      }
+    }
+    const seen = new Set<string>();
+    const canvasCandidates = [...props.references, ...local].filter(node => {
+      if (seen.has(node.id)) return false;
+      seen.add(node.id); return true;
+    });
+    const source = scope === 'upstream' ? props.references : scope === 'projects'
+      ? (props.projects ?? []).filter(p => p.id !== props.document?.id).flatMap(p => p.nodes.map(n => ({...n, origin: {projectId:p.id, nodeId:n.id, title:p.title}})))
+      : canvasCandidates.map(n => props.document ? {...n, origin: {projectId:props.document.id, nodeId:n.id, title:props.document.title}} : n);
+    return source.filter(n => (scope === 'projects' || n.id !== target?.id) && n.kind !== 'text' && n.src && n.job?.status !== 'running'
+      && !connectionError(n, {...target, kind:props.kind} as CanvasNode)
+      && (scope === 'projects' || !target || !props.document || connected.has(n.id) || !blocked.has(n.id)));
+  }, [Boolean(query), scope, props.references, props.document?.nodes, props.document?.edges, props.document?.id, props.document?.title, scope === 'projects' ? props.projects : undefined, props.target, props.kind]);
+  const search = query?.text.toLowerCase() ?? '';
+  const nodes = candidates.filter(n => ((referenceLabel(props.bindings,n.id) ?? '')+' '+referenceKinds[n.kind]+' '+n.title+' '+(n.origin?.title ?? '')).toLowerCase().includes(search));
   const activeIndex = Math.min(index, Math.max(0, nodes.length - 1));
+  const activeNode = nodes[activeIndex];
+  useLayoutEffect(() => {
+    if (query && activeNode) document.getElementById(`reference-mention-${activeIndex}`)?.scrollIntoView?.({block:'nearest'});
+  }, [Boolean(query), activeIndex, activeNode?.id, activeNode?.origin?.projectId, scope, search]);
   const pick = (node: CanvasNode) => {
     if (!query) return;
     const caret = props.onPick(node, query.start, query.end);
@@ -207,7 +234,7 @@ export default function ReferencePrompt(props: Props) {
       <div role="listbox" id="reference-mention-list" aria-label="可引用素材">{nodes.map((node,i) => <button key={(node.origin?.projectId ?? '')+node.id}
         role="option" id={`reference-mention-${i}`} aria-selected={i===activeIndex}
         onMouseDown={e => {if(e.button===0) {e.preventDefault(); pick(node);}}} onClick={()=>pick(node)}>
-        {node.kind==='image' ? <img src={node.src} alt=""/> : <span className="studio-mention-media">{node.kind==='video'?'▶':'♫'}</span>}
+        {node.kind==='image' ? <ImageThumbnail src={node.src!} alt="" loading="lazy" decoding="async"/> : <span className="studio-mention-media">{node.kind==='video'?'▶':'♫'}</span>}
         <span><strong>{referenceLabel(props.bindings,node.id) ? '@'+referenceLabel(props.bindings,node.id)+' · ' : ''}{node.title}</strong><small>{node.origin?.title || '已连接到当前节点'}</small></span>
       </button>)}</div>
       {!nodes.length && <p>{query.text ? '没有匹配素材，试试其他名称。' : '暂无可用素材，请切换来源或先上传素材。'}</p>}

@@ -53,16 +53,28 @@ export function arrange(nodes: CanvasNode[], ids: string[]): CanvasNode[] {
     return i < 0 ? n : { ...n, x: b.x + (i % columns) * cellW, y: b.y + Math.floor(i / columns) * cellH };
   });
 }
-export function canConnect(edges: Edge[], from: string, to: string): boolean {
-  if (from === to || edges.some(e => e.from === from && e.to === to)) return false;
+type ConnectionIndex = Map<string, Set<string>>;
+function indexConnection(index: ConnectionIndex, from: string, to: string) {
+  const targets = index.get(from) ?? new Set<string>();
+  targets.add(to); index.set(from, targets);
+}
+function canConnectIndexed(index: ConnectionIndex, from: string, to: string): boolean {
+  if (from === to || index.get(from)?.has(to)) return false;
   const visited = new Set<string>();
-  const visit = (id: string): boolean => {
-    if (id === from) return true;
-    if (visited.has(id)) return false;
+  const pending = [to];
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (id === from) return false;
+    if (visited.has(id)) continue;
     visited.add(id);
-    return edges.filter(e => e.from === id).some(e => visit(e.to));
-  };
-  return !visit(to);
+    for (const target of index.get(id) ?? []) pending.push(target);
+  }
+  return true;
+}
+export function canConnect(edges: Edge[], from: string, to: string): boolean {
+  const index: ConnectionIndex = new Map();
+  for (const edge of edges) indexConnection(index, edge.from, edge.to);
+  return canConnectIndexed(index, from, to);
 }
 export function duplicateSelection(doc: Snapshot, ids: string[]): { snapshot: Snapshot; ids: string[] } {
   const mapping = new Map(ids.map(id => [id, uid()]));
@@ -125,8 +137,14 @@ export function parseDocument(raw: any): CanvasDocument {
     };
   });
   const edges: Edge[] = [];
+  // Reuse accepted connections while validating a backup, rather than rescanning
+  // every edge at every step of every reachability walk.
+  const connectionIndex: ConnectionIndex = new Map();
   for (const e of Array.isArray(raw.edges) ? raw.edges : []) {
-    if (ids.has(e.from) && ids.has(e.to) && canConnect(edges, e.from, e.to)) edges.push({ id: typeof e.id === 'string' ? e.id : uid(), from: e.from, to: e.to });
+    if (ids.has(e.from) && ids.has(e.to) && canConnectIndexed(connectionIndex, e.from, e.to)) {
+      edges.push({ id: typeof e.id === 'string' ? e.id : uid(), from: e.from, to: e.to });
+      indexConnection(connectionIndex, e.from, e.to);
+    }
   }
   const v = raw.view;
   const drafts: Record<string, GenerationDraft> = Object.create(null);

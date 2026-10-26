@@ -63,6 +63,29 @@ describe('canvas editing invariants', () => {
 });
 
 describe('canvas backup compatibility', () => {
+  it('restores a long reverse-ordered chain and drops only duplicate, cyclic and dangling references', () => {
+    const nodes=Array.from({length:1000},(_,i)=>({...newNode('text',{x:i*350,y:0}),id:String(i)}));
+    const chain=nodes.slice(1).map((node,i)=>({id:'e'+i,from:String(i),to:node.id})).reverse();
+    const raw={...newDocument(),nodes,edges:[...chain,
+      {id:'duplicate',from:'0',to:'1'}, {id:'cycle',from:'999',to:'0'},
+      {id:'self',from:'700',to:'700'}, {id:'missing',from:'missing',to:'0'},
+      {id:'branch',from:'1',to:'999'}]};
+    const restored=parseDocument(raw);
+    expect(restored.nodes).toHaveLength(1000);
+    expect(restored.edges).toEqual([...chain,{id:'branch',from:'1',to:'999'}]);
+    expect(raw.edges).toHaveLength(1004);
+  });
+  it('checks deep paths iteratively without accepting a cycle or rejecting a parallel branch', () => {
+    const edges=Array.from({length:15000},(_,i)=>({id:'e'+i,from:String(i),to:String(i+1)}));
+    expect(canConnect(edges,'15000','0')).toBe(false);
+    expect(canConnect(edges,'outside','0')).toBe(true);
+    expect(canConnect(edges,'0','15000')).toBe(true);
+  });
+  it('preserves accepted edge order in branching and converging graphs', () => {
+    const nodes=['a','b','c','d','e'].map(id=>({...newNode('text',{x:0,y:0}),id}));
+    const edges=[['a','b'],['a','c'],['b','d'],['c','d'],['d','a'],['d','e'],['e','b'],['b','d'],['a','e']].map(([from,to],i)=>({id:String(i),from,to}));
+    expect(parseDocument({...newDocument(),nodes,edges}).edges.map(e=>e.id)).toEqual(['0','1','2','3','5','8']);
+  });
   it('migrates the original canvas without losing text, images or positions', () => {
     const doc = parseDocument({ items: [{ id: 'old', x: -120, y: 37, text: '旧照片', image: 'data:image/png;base64,iVBORw==' }], view: { x: 80, y: -30, zoom: .8 } });
     expect(doc.nodes[0]).toMatchObject({ id: 'old', kind: 'image', x: -120, y: 37, text: '旧照片', src: 'data:image/png;base64,iVBORw==' });
