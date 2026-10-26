@@ -43,6 +43,7 @@ describe('V6K unified video protocol', () => {
     expect(normalizeZonghengTask({ id: 'task_1', status: 'failed', error: { message: '任务失败' } }, '', 'v6k', 'task_1')).toMatchObject({ status: 'failed', error: '任务失败' });
     expect(() => normalizeZonghengTask({ id: 'other', status: 'completed' }, '', 'v6k', 'task_1')).toThrow('不一致');
     expect(zonghengTaskUrl('https://old.example/v1', 'vid_old')).toBe('https://old.example/v1/videos/vid_old');
+    expect(() => zonghengTaskUrl('https://www.v6k.top', '未取得上游任务 ID')).toThrow('界面提示文字不是有效上游任务 ID');
   });
   it.each(['queued', 'completed', 'failed'])('preserves a task ID even when submission immediately returns %s', async status => {
     const fetcher = vi.fn(async (_url: any, init: any) => {

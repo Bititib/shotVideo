@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { db } from '../db/index.js';
 import { contents } from '../db/schema.js';
 import { recordBatchFailure } from './videoBatchService.js';
+import { sanitizedGenerationReason } from '../../shared/generationErrorPrivacy.js';
 export function patchZonghengTask(id: number, patch: Record<string, unknown>) {
   const row = db.select().from(contents).where(eq(contents.id, id)).get();
   if (!row) throw new Error('纵横科技本地任务不存在，停止提交');
@@ -16,17 +17,20 @@ export function zonghengOrder(id: number): string {
   patchZonghengTask(id, { zonghengOrderId: key }); return key;
 }
 export function reviewZonghengTask(id: number, message: string) {
-  if (recordBatchFailure(id, message, false)) return;
+  const reason = sanitizedGenerationReason(message);
+  if (recordBatchFailure(id, reason, false)) return;
   const row = db.select().from(contents).where(eq(contents.id,id)).get();
   if (!row || row.status === 'completed') return;
-  db.update(contents).set({ status: 'review', metadata: JSON.stringify({ ...JSON.parse(row.metadata || '{}'), requiresReview: true, progressText: message }) }).where(eq(contents.id,id)).run();
+  db.update(contents).set({ status: 'review', metadata: JSON.stringify({ ...JSON.parse(row.metadata || '{}'), requiresReview: true,
+    error: reason, progressText: reason }) }).where(eq(contents.id,id)).run();
 }
 
 /** Record submission evidence for administrators without response bodies or credentials. */
 export function recordZonghengSubmissionError(id: number, error: unknown) {
   if (!(error instanceof ZonghengSubmissionError) || !error.diagnostics) return;
   try {
-    patchZonghengTask(id, { zonghengSubmissionDiagnostics: { ...error.diagnostics, recordedAt: new Date().toISOString() } });
+    patchZonghengTask(id, { zonghengSubmissionDiagnostics: { ...error.diagnostics,
+      message: sanitizedGenerationReason(error.message), recordedAt: new Date().toISOString() } });
   } catch { console.warn('[video-submit] Could not persist submission diagnostics for task', id); }
   console.warn('[video-submit]', JSON.stringify({ contentId: id, ...error.diagnostics }));
 }

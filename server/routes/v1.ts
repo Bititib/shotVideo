@@ -2476,9 +2476,10 @@ async function handleVideoCreation(req: Request, res: Response) {
       recordZonghengSubmissionError(contentId!, error);
       endVideoSubmission(contentId!, error instanceof ZonghengSubmissionError && error.uncertain || taskId ? 'unknown' : 'rejected');
       if (error instanceof ZonghengSubmissionError && error.uncertain || taskId) {
-        reviewZonghengTask(contentId!, '纵横科技提交结果待核实，请勿重复创建任务');
+        reviewZonghengTask(contentId!, error.message || '提交结果待核实，上游未提供具体原因');
         return res.status(202).json({ id: 'task_' + contentId, task_id: 'task_' + contentId, object: 'video', model,
-          status: 'queued', progress: 0, requires_review: true, message: '提交结果待核实，请勿重提' });
+          status: 'queued', progress: 0, requires_review: true,
+          message: publicGenerationError(error.message, ['V6K']) + '；提交结果待核实，请勿重复提交' });
       }
       sqlite.transaction(() => {
         const target = deduction ? refundTokenOrUserBalance(token, totalCost, deduction) : 'not_charged';

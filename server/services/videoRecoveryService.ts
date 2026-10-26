@@ -1,4 +1,5 @@
 import { isMegabyChannel, megabyTaskUrl, normalizeMegabyTask, readMegabyJson } from './megabyVideoAdapter.js';
+import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
 import { zonghengProtocol, zonghengTaskChannel, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE } from './zonghengProtocol.js';
 import { isAsyncVideoChannel, asyncVideoTaskUrl, normalizeAsyncVideoTask, resolveAsyncVideoUrl } from './asyncVideoAdapter.js';
 import { isZonghengChannel, zonghengTaskUrl, normalizeZonghengTask } from './zonghengAdapter.js';
@@ -80,7 +81,9 @@ function parseMetadata(value: unknown): Record<string, any> {
 }
 
 function upstreamTaskId(metadata: Record<string, any>): string {
-  return String(metadata.videoId || metadata.upstreamTaskId || metadata.requestId || metadata.request_id || metadata.taskId || metadata.task_id || '').trim();
+  return [metadata.videoId, metadata.upstreamTaskId, metadata.requestId, metadata.request_id, metadata.taskId, metadata.task_id]
+    .map(value => typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '')
+    .find(value => value && !isTaskIdPlaceholder(value)) || '';
 }
 
 /** Must run inside the same transaction as the content transition. Never move a
@@ -146,7 +149,7 @@ export class VideoRecoveryService {
     if (!['failed', 'error', 'review'].includes(record.status)) throw { status: 409, message: '当前任务状态不允许补录' };
 
     const taskId = typeof taskIdValue === 'string' ? taskIdValue.trim() : '';
-    if (!taskId || taskId.length > 256 || /[\x00-\x1f\x7f]/.test(taskId)) {
+    if (!taskId || isTaskIdPlaceholder(taskId) || taskId.length > 256 || /[\x00-\x1f\x7f]/.test(taskId)) {
       throw { status: 400, message: '请填写有效的上游任务 ID' };
     }
 

@@ -111,6 +111,19 @@ afterEach(() => {
 });
 
 describe('VideoRecoveryService', () => {
+  it('rejects display placeholders instead of saving them as an accepted task ID', () => {
+    const before = db.select().from(contents).where(eq(contents.id, contentId)).get();
+    expect(() => VideoRecoveryService.supplementTaskId(contentId, 99, '未取得上游任务 ID')).toThrow('有效的上游任务 ID');
+    expect(db.select().from(contents).where(eq(contents.id, contentId)).get()).toEqual(before);
+  });
+  it('does not query a historical placeholder or change funds while inspecting it', async () => {
+    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify({ channelId, videoId: '未取得上游任务 ID' }), contentId);
+    const fetcher = vi.fn(); vi.stubGlobal('fetch', fetcher);
+    const before = sqlite.prepare('SELECT balance FROM users WHERE id=?').get(userId);
+    await expect(VideoRecoveryService.inspect(contentId)).rejects.toMatchObject({ status: 400 });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(sqlite.prepare('SELECT balance FROM users WHERE id=?').get(userId)).toEqual(before);
+  });
   it('supplements a missing upstream task ID with an administrator audit record', () => {
     sqlite.prepare("UPDATE contents SET metadata = '{}' WHERE id = ?").run(contentId);
 
