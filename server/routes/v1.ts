@@ -14,7 +14,7 @@ import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../servi
 import { publishReferenceUrl } from '../services/publicReferenceService.js';
 import { reserveCharge } from '../services/billingReservation.js';
 import { withFundContext } from '../db/fundLedger.js';
-import { getHayaVideoSpec, validateHayaVideoInput } from '../../shared/hayaVideo.js';
+import { getHayaVideoSpec, HAYA_XG_SEEDANCE_20_MODEL, validateHayaVideoInput } from '../../shared/hayaVideo.js';
 import { isHayaChannel, submitHayaVideo, HayaSubmissionError } from '../services/hayaVideoAdapter.js';
 import { prepareHayaMedia, validateHayaMedia } from '../services/hayaMediaService.js';
 import { patchHayaTask, reviewHayaTask } from '../services/hayaTaskService.js';
@@ -1653,6 +1653,30 @@ async function handleVideoCreation(req: Request, res: Response) {
     cleanupFiles(req.files);
     return res.status(404).json({ error: '视频模型未开放' });
   }
+  if (req.body.model === HAYA_XG_SEEDANCE_20_MODEL) {
+    const input = req.body;
+    if (input.metadata?.content !== undefined) {
+      cleanupFiles(req.files); return res.status(400).json({ error: '此模型的参考素材不能放在 metadata.content' });
+    }
+    if (input.content !== undefined) {
+      const aliases = ['reference_images', 'image_urls', 'Ingredients_images', 'images', 'image_refs',
+        'reference_videos', 'video_urls', 'video_url', 'videos', 'video_refs', 'reference_audios', 'audio_urls', 'audios', 'audio_refs'];
+      if (!Array.isArray(input.content) || aliases.some(key => input[key] !== undefined) || (Array.isArray(req.files) && req.files.length)) {
+        cleanupFiles(req.files); return res.status(400).json({ error: 'content 必须是数组，且不能与其他参考素材参数混用' });
+      }
+      const images: string[] = [], audios: string[] = [];
+      for (const item of input.content) {
+        const url = item?.type === 'image_url' ? item.image_url?.url : item?.type === 'audio_url' ? item.audio_url?.url : undefined;
+        if (typeof url !== 'string' || !url.trim()) {
+          cleanupFiles(req.files); return res.status(400).json({ error: '此模型 content 仅支持 image_url 和 audio_url，并须提供有效 url' });
+        }
+        (item.type === 'image_url' ? images : audios).push(url);
+      }
+      input.reference_images = images; input.audio_urls = audios;
+      delete input.content;
+    }
+    if ([input.seconds, input.duration, input.video_length, input.parameters?.duration].every(value => value === undefined)) input.seconds = 5;
+  }
   if (await handleSpecificationGeneration(req, res, 'video', { token, reserve: (amount, id, snapshot) => reserveApiCharge(token, amount, id, snapshot) })) return;
   const body = req.body || {};
 
@@ -1692,7 +1716,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     return res.status(400).json({ error: 'seconds and duration must be equal when both are provided' });
   }
   if (seconds === undefined) {
-    seconds = duration !== undefined ? duration : getZonghengVideoSpec(model)?.seconds[0] || 6;
+    seconds = duration !== undefined ? duration : model === HAYA_XG_SEEDANCE_20_MODEL ? 5 : getZonghengVideoSpec(model)?.seconds[0] || 6;
   }
 
   const ratio = body.ratio || body.aspect_ratio || '16:9';
@@ -2227,7 +2251,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   if (isHayaChannel(channel)) {
     const error = validateHayaVideoInput(upstreamModel, { seconds, resolution, ratio, imageCount: image_urls.length,
       videoCount: video_urls.length, audioCount: audio_urls.length, firstFrame: body.first_frame_url || body.first_frame,
-      lastFrame: body.end_frame_url || body.last_frame_url || body.last_frame });
+      lastFrame: body.end_frame_url || body.last_frame_url || body.last_frame, metadata: body.metadata });
     if (error) { cleanupFiles(req.files); return res.status(400).json({ error }); }
     if (body.size) { cleanupFiles(req.files); return res.status(400).json({ error: 'Haya 模型请使用 ratio 和 resolution，不要同时传 size' }); }
     if (body.metadata !== undefined && (!body.metadata || typeof body.metadata !== 'object' || Array.isArray(body.metadata))) {

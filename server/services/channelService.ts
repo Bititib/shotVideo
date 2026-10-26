@@ -7,10 +7,10 @@ import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { isFunAiChannel, funAiBaseUrl, fetchFunAiModels } from './funAiAdapter.js';
 import { isZonghengChannel, zonghengBaseUrl, ZONGHENG_MODEL_PREFIX } from './zonghengAdapter.js';
 import { HUSS_CHANNEL_TYPE, hussApiBase, isHussChannel, fetchHussVideoModels } from './hussVideoAdapter.js';
-import { HAYA_MODEL_IDS } from '../../shared/hayaVideo.js';
+import { HAYA_MODEL_IDS, HAYA_XG_SEEDANCE_20_MODEL, getHayaVideoSpec, hayaPublicModelId, hayaUpstreamModelId } from '../../shared/hayaVideo.js';
 import { isHayaChannel, hayaApiBaseUrl } from './hayaVideoAdapter.js';
 import { db } from '../db/index.js';
-import { channelApiKeys, channels, models } from '../db/schema.js';
+import { channelApiKeys, channels, models, modelPricing } from '../db/schema.js';
 import { and, desc, eq } from 'drizzle-orm';
 import { hmStudioPoolConfig, hmStudioPoolKey, hmStudioQueue } from './hmStudioQueueService.js';
 import {
@@ -407,7 +407,7 @@ export class ChannelService {
       type: isMegabyChannel({ type, baseUrl }) ? 'megaby' : isMjChannel({ type }) ? 'mj' : isFunAiChannel({ type, baseUrl }) ? 'funai' : isHussChannel({ type, baseUrl }) ? HUSS_CHANNEL_TYPE : isZonghengChannel({ type, baseUrl }) ? V6K_CHANNEL_TYPE : isHaya ? 'haya' : type || 'openai',
       baseUrl: isMegabyChannel({ type, baseUrl }) ? megabyBaseUrl(baseUrl) : isMjChannel({ type }) ? normalizeMjBaseUrl(baseUrl) : isAsyncVideoChannel({ type }) ? asyncVideoBaseUrl(baseUrl) : isFunAiChannel({ type, baseUrl }) ? funAiBaseUrl(baseUrl) : isHussChannel({ type, baseUrl }) ? hussApiBase(baseUrl) : isZonghengChannel({ type, baseUrl }) ? zonghengBaseUrl(baseUrl) : baseUrl,
       apiKey: type === 'hmstudio' ? '' : (apiKey || ''),
-      modelMapping: JSON.stringify(isHaya ? (modelMapping && Object.keys(modelMapping).length ? modelMapping : Object.fromEntries(HAYA_MODEL_IDS.map(id => [id, id]))) : isWxHaidiYue
+      modelMapping: JSON.stringify(isHaya ? (modelMapping && Object.keys(modelMapping).length ? modelMapping : Object.fromEntries(HAYA_MODEL_IDS.map(id => [id, hayaUpstreamModelId(id)]))) : isWxHaidiYue
         ? Object.fromEntries(WX_HAIDIYUE_MODELS.map(modelId => [modelId, modelId]))
         : isLongxia ? (modelMapping && Object.keys(modelMapping).length ? modelMapping : Object.fromEntries(LONGXIA_MODELS.map(id => [id, id])))
         : isMiaowu ? miaowuMapping : (modelMapping || {})),
@@ -514,7 +514,7 @@ export class ChannelService {
       // Empty supportedModels is intentional after discovery returns no available models.
       if (data.supportedModels === undefined && channel.type !== 'haya' && parseJsonArray(channel.supportedModels).length === 0) {
         updates.supportedModels = JSON.stringify(HAYA_MODEL_IDS);
-        updates.modelMapping = JSON.stringify(Object.fromEntries(HAYA_MODEL_IDS.map(id => [id, id])));
+        updates.modelMapping = JSON.stringify(Object.fromEntries(HAYA_MODEL_IDS.map(id => [id, hayaUpstreamModelId(id)])));
       }
     }
     updates.updatedAt = new Date().toISOString();
@@ -671,9 +671,11 @@ export class ChannelService {
       return registerHmStudioCatalog(channel, rawModels);
     }
     const normalized = rawModels.map((item: any) => {
-      const modelId = String(typeof item === 'string' ? item : item.id || item.model || item.model_id || '').trim();
+      const rawModelId = String(typeof item === 'string' ? item : item.id || item.model || item.model_id || '').trim();
+      const modelId = isHayaChannel(channel) ? hayaPublicModelId(rawModelId) : rawModelId;
       if (!modelId) return { modelId: '', displayName: '', capability: 'text' };
-      const displayName = String(typeof item === 'string' ? item : item.display_name || item.name || modelId).trim();
+      const displayName = isHayaChannel(channel) && modelId === HAYA_XG_SEEDANCE_20_MODEL ? modelId
+        : String(typeof item === 'string' ? item : item.display_name || item.name || modelId).trim();
       const explicitType = String(typeof item === 'object' ? item.type || item.category || '' : '').toLowerCase();
       const capability = explicitType.includes('tts') || /tts|speech/i.test(modelId)
         ? 'tts'
@@ -692,6 +694,12 @@ export class ChannelService {
     }>;
     let added = 0;
     for (const item of unique) {
+      if (isHayaChannel(channel) && item.modelId === HAYA_XG_SEEDANCE_20_MODEL
+        && !db.select().from(modelPricing).where(eq(modelPricing.modelPattern, item.modelId)).get()) {
+        const spec = getHayaVideoSpec(item.modelId)!;
+        db.insert(modelPricing).values({ modelPattern: item.modelId, billingType: spec.billingType, inputPrice: spec.price,
+          extraParams: JSON.stringify({ category: 'video' }) }).run();
+      }
       const existing = db.select().from(models).where(eq(models.modelId, item.modelId)).get();
       if (!existing) {
         db.insert(models).values({
@@ -709,7 +717,7 @@ export class ChannelService {
     }
 
     const modelIds = unique.map(item => item.modelId);
-    const mapping = Object.fromEntries(modelIds.map(modelId => [modelId, modelId]));
+    const mapping = Object.fromEntries(modelIds.map(modelId => [modelId, isHayaChannel(channel) ? hayaUpstreamModelId(modelId) : modelId]));
     db.update(channels).set({
       supportedModels: JSON.stringify(modelIds),
       modelMapping: JSON.stringify(mapping),

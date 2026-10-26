@@ -20,7 +20,8 @@ import { publishReferenceUrl } from '../services/publicReferenceService.js';
 import { prepareHmReferenceImages } from '../services/hmStudioReferenceService.js';
 import { canvasRequestMiddleware, recordCanvasEvent } from '../middleware/canvasRequest.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
-import { HAYA_SECONDS, HAYA_VIDEO_MODELS, getHayaVideoSpec, validateHayaVideoInput } from '../../shared/hayaVideo.js';
+import { hayaVideoSeconds, HAYA_VIDEO_MODELS, HAYA_XG_SEEDANCE_20_MODEL, getHayaVideoSpec, validateHayaVideoInput } from '../../shared/hayaVideo.js';
+import { existingModelLimits } from '../services/modelInputPresets.js';
 import { isHayaChannel, hayaTaskUrl, normalizeHayaTask, hayaPollDelay, submitHayaVideo, HayaSubmissionError } from '../services/hayaVideoAdapter.js';
 import { prepareHayaMedia, validateHayaMedia } from '../services/hayaMediaService.js';
 import { patchHayaTask, reviewHayaTask } from '../services/hayaTaskService.js';
@@ -328,7 +329,7 @@ interface ModelMeta {
 const MODEL_META: Record<string, ModelMeta> = {
   ...Object.fromEntries(ZONGHENG_VIDEO_MODELS.map(spec => [ZONGHENG_MODEL_PREFIX + spec.id, { series: 'zongheng', allowedSeconds: [...spec.seconds], requireRef: false }])),
   ...Object.fromEntries(SI_YUE_TIAN_C2_MODELS.map(spec => [spec.id, { series: 'siyuetian-c2', allowedSeconds: Array.from({ length: spec.maxSeconds - spec.minSeconds + 1 }, (_, i) => i + spec.minSeconds), requireRef: false }])),
-  ...Object.fromEntries(HAYA_VIDEO_MODELS.map(spec => [spec.id, { series: 'haya', allowedSeconds: HAYA_SECONDS, requireRef: false }])),
+  ...Object.fromEntries(HAYA_VIDEO_MODELS.map(spec => [spec.id, { series: 'haya', allowedSeconds: hayaVideoSeconds(spec.id), requireRef: false }])),
   ...Object.fromEntries(SI_YUE_TIAN_SEEDANCE_25_VIDEO_SPECS.map(spec => [spec.id, {
     series: `siyuetian-seedance-2.5-${spec.resolution}`,
     allowedSeconds: Array.from({ length: 27 }, (_, index) => index + 4),
@@ -719,7 +720,7 @@ router.get('/models', optionalAuthMiddleware, (req: AuthRequest, res: Response) 
       description: m.description || preset?.description || 'AI 视频生成服务',
       available,
       modelStatus: calculateVideoModelStatus(recentRowsByModel.get(m.id) || [], available),
-      routingLimits: managedSpec?.limits,
+      routingLimits: managedSpec?.limits ?? (m.id === HAYA_XG_SEEDANCE_20_MODEL ? existingModelLimits(m.id, 'video') : undefined),
       maxSeconds: managedSpec?.limits.duration.max ?? preset?.maxSeconds,
       allowedSeconds: managedSpec ? managedSpec.limits.duration.mode === 'fixed' ? [managedSpec.limits.duration.min] : managedSpec.limits.duration.mode === 'options' ? managedSpec.limits.duration.values : Array.from({ length: Math.floor((managedSpec.limits.duration.max - managedSpec.limits.duration.min) / managedSpec.limits.duration.step) + 1 }, (_, index) => managedSpec.limits.duration.min + index * managedSpec.limits.duration.step) : meta?.allowedSeconds || null,
       requireRef: meta?.requireRef || false,

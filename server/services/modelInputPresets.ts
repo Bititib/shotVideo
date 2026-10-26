@@ -1,7 +1,7 @@
 import { HUSS_BB_PUBLIC_MODEL, hussBbModelLimits } from '../../shared/hussBbVideo.js';
 import { defaultRoutingLimits, type ModelInputLimits } from '../../shared/modelRouting.js';
 import { getHmStudioAdditionalVideoModel } from '../../shared/hmStudioVideo.js';
-import { getHayaVideoSpec } from '../../shared/hayaVideo.js';
+import { getHayaVideoSpec, hayaVideoSeconds, HAYA_XG_SEEDANCE_20_MODEL, HAYA_XG_RATIOS } from '../../shared/hayaVideo.js';
 import { isLongxiaModel, longxiaResolution, LONGXIA_RATIOS } from '../../shared/longxiaVideo.js';
 import { getSiYueTianC2Model, getSiYueTianSeedance25VideoSpec } from './siYueTianVideoModels.js';
 
@@ -21,7 +21,12 @@ export function existingModelLimits(id: string, kind: 'image' | 'video'): ModelI
   if (id === 'seedance_v2.5') return { ...video(10,0,0,'720p'), firstFrame: true, lastFrame: true };
   const c2 = getSiYueTianC2Model(id); if (c2) return video(c2.images,c2.videos,c2.audios,c2.resolution,c2.minSeconds,c2.maxSeconds);
   const sy = getSiYueTianSeedance25VideoSpec(id); if (sy) return video(30,0,10,sy.resolution);
-  const haya = getHayaVideoSpec(id); if (haya?.confirmedMediaLimits) return video(haya.maxImages,haya.maxVideos,haya.maxAudios,haya.resolution);
+  const haya = getHayaVideoSpec(id);
+  if (haya?.confirmedMediaLimits) {
+    const seconds = hayaVideoSeconds(id);
+    return { ...video(haya.maxImages,haya.maxVideos,haya.maxAudios,haya.resolution,seconds[0],seconds.at(-1)!),
+      ...(id === HAYA_XG_SEEDANCE_20_MODEL ? { ratios: [...HAYA_XG_RATIOS] } : {}) };
+  }
   if (isLongxiaModel(id)) return { ...video(30,0,10,longxiaResolution(id),4,25), ratios: [...LONGXIA_RATIOS] };
   if (id === 'sd2.5' || id === '2.5-s') return { ...video(id === 'sd2.5' ? 9 : 30, id === 'sd2.5' ? 0 : 10, id === 'sd2.5' ? 0 : 10, '720p'), duration: { mode: 'fixed', min: 30, max: 30, step: 1, values: [] } };
   if (/^(?:ad|vd|td|xd|nd|cd)-seedance-2\.[05]-(480p|720p)$/.test(id)) {
