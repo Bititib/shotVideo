@@ -42,6 +42,125 @@ function mount(initial = newDocument(), projects = [initial]) {
   return { current: () => current, onChange };
 }
 
+function controlledFrames() {
+  let id = 0;
+  const pending = new Map<number, FrameRequestCallback>();
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { pending.set(++id, callback); return id; });
+  vi.stubGlobal('cancelAnimationFrame', (key: number) => pending.delete(key));
+  return () => act(() => { const callbacks = [...pending.values()]; pending.clear(); callbacks.forEach(callback => callback(16)); });
+}
+
+describe('canvas interaction scheduling', () => {
+  it('coalesces movement, flushes the last position on release and keeps one undo step', () => {
+    const frame = controlledFrames();
+    const a = {...newNode('image', {x:0,y:0}), title:'拖动图片', src:'/a.png'};
+    const b = {...newNode('video', {x:400,y:0}), title:'固定视频', src:'/b.mp4'};
+    const board = mount({...newDocument(), nodes:[a,b], edges:[{id:'edge',from:a.id,to:b.id}], view:{x:0,y:0,zoom:.5}});
+    const stage = screen.getByLabelText('无限画布编辑区');
+    const video = screen.getByRole('article',{name:b.title}).querySelector('video');
+    fireEvent.pointerDown(screen.getByRole('article',{name:a.title}),{button:0,pointerId:1,clientX:10,clientY:10});
+    for(let x=20;x<=80;x+=10) fireEvent.pointerMove(stage,{pointerId:1,clientX:x,clientY:30});
+    expect(board.onChange).not.toHaveBeenCalled();
+    frame();
+    expect(board.onChange).toHaveBeenCalledTimes(1);
+    expect(board.current().nodes[0]).toMatchObject({x:140,y:40});
+    expect(screen.getByLabelText('素材关联线').querySelector('path')?.getAttribute('d')).toContain(`M${140+a.width},`);
+    fireEvent.pointerMove(stage,{pointerId:1,clientX:110,clientY:40});
+    fireEvent.pointerUp(stage,{pointerId:1});
+    expect(board.onChange).toHaveBeenCalledTimes(2);
+    expect(board.current().nodes[0]).toMatchObject({x:200,y:60});
+    frame(); expect(board.onChange).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('article',{name:b.title}).querySelector('video')).toBe(video);
+    fireEvent.click(screen.getByRole('button',{name:'撤销',exact:true}));
+    expect(board.current().nodes[0]).toMatchObject({x:0,y:0});
+    fireEvent.click(screen.getByRole('button',{name:'重做',exact:true}));
+    expect(board.current().nodes[0]).toMatchObject({x:200,y:60});
+  });
+
+  it('accumulates wheel deltas in a frame and saves pending movement before pagehide', () => {
+    const frame = controlledFrames();
+    const board = mount({...newDocument(),view:{x:0,y:0,zoom:1}});
+    const stage = screen.getByLabelText('无限画布编辑区');
+    for(let i=0;i<12;i++) fireEvent.wheel(stage,{deltaX:3,deltaY:4,deltaMode:0});
+    expect(board.onChange).not.toHaveBeenCalled(); frame();
+    expect(board.onChange).toHaveBeenCalledTimes(1);
+    expect(board.current().view).toEqual({x:-36,y:-48,zoom:1});
+    fireEvent.wheel(stage,{deltaX:3,deltaY:4,deltaMode:0});
+    fireEvent(window,new Event('pagehide'));
+    expect(board.current().view).toEqual({x:-39,y:-52,zoom:1});
+    frame(); expect(board.onChange).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains an unfinished move when an immediate edit supersedes its scheduled frame', () => {
+    const frame = controlledFrames();
+    const node = newNode('text',{x:0,y:0});
+    const board = mount({...newDocument(),nodes:[node],view:{x:0,y:0,zoom:1}});
+    const stage = screen.getByLabelText('无限画布编辑区');
+    fireEvent.pointerDown(screen.getByRole('article'),{button:0,pointerId:1,clientX:0,clientY:0});
+    fireEvent.pointerMove(stage,{pointerId:1,clientX:70,clientY:40});
+    fireEvent.change(screen.getByLabelText('卡片文字'),{target:{value:'移动后仍保留文字'}});
+    frame(); fireEvent.pointerUp(stage,{pointerId:1});
+    expect(board.onChange).toHaveBeenCalledTimes(1);
+    expect(board.current().nodes[0]).toMatchObject({x:70,y:40,text:'移动后仍保留文字'});
+  });
+
+  it('keeps the zoom anchor and all wheel deltas while leaving editor scrolling alone', () => {
+    const frame = controlledFrames();
+    const node = newNode('text',{x:0,y:0});
+    const board = mount({...newDocument(),nodes:[node],view:{x:0,y:0,zoom:1}});
+    const stage = screen.getByLabelText('无限画布编辑区');
+    for(let i=0;i<5;i++) fireEvent.wheel(stage,{ctrlKey:true,deltaY:-20,clientX:200,clientY:150});
+    fireEvent.wheel(screen.getByLabelText('卡片文字'),{deltaY:100});
+    frame();
+    const view = board.current().view;
+    expect(view.zoom).toBeCloseTo(Math.exp(.2));
+    expect((200-view.x)/view.zoom).toBeCloseTo(200);
+    expect((150-view.y)/view.zoom).toBeCloseTo(150);
+    expect(board.onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves the final resize in world coordinates and can undo it', () => {
+    controlledFrames();
+    const node = newNode('image',{x:0,y:0});
+    const board = mount({...newDocument(),nodes:[node],view:{x:0,y:0,zoom:.5}});
+    const stage = screen.getByLabelText('无限画布编辑区');
+    fireEvent.pointerDown(screen.getByRole('article'),{button:0,pointerId:1});
+    fireEvent.pointerUp(stage,{pointerId:1});
+    fireEvent.pointerDown(screen.getByLabelText('调整素材大小'),{button:0,pointerId:2,clientX:100,clientY:100});
+    fireEvent.pointerMove(stage,{pointerId:2,clientX:140,clientY:120});
+    fireEvent.pointerUp(stage,{pointerId:2});
+    expect(board.current().nodes[0]).toMatchObject({width:node.width+80,height:node.height+40});
+    fireEvent.click(screen.getByRole('button',{name:'撤销',exact:true}));
+    expect(board.current().nodes[0]).toMatchObject({width:node.width,height:node.height});
+  });
+
+  it.each(['pointerCancel','lostPointerCapture','blur','unmount'] as const)('flushes pending movement on %s', finish => {
+    const frame = controlledFrames();
+    const board = mount({...newDocument(),view:{x:0,y:0,zoom:1}});
+    const stage = screen.getByLabelText('无限画布编辑区');
+    fireEvent.pointerDown(stage,{button:1,pointerId:1,clientX:0,clientY:0});
+    fireEvent.pointerMove(stage,{pointerId:1,clientX:70,clientY:40});
+    if(finish === 'unmount') cleanup();
+    else if(finish === 'blur') fireEvent.blur(window);
+    else fireEvent[finish](stage,{pointerId:1});
+    expect(board.current().view).toEqual({x:70,y:40,zoom:1});
+    expect(board.onChange).toHaveBeenCalledTimes(1);
+    frame(); expect(board.onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the latest hand mode for a memoized text card', () => {
+    controlledFrames();
+    const node = newNode('text',{x:0,y:0});
+    const board = mount({...newDocument(),nodes:[node],view:{x:0,y:0,zoom:1}});
+    fireEvent.keyDown(window,{key:'h'});
+    fireEvent.pointerDown(screen.getByLabelText('卡片文字'),{button:0,pointerId:1,clientX:10,clientY:10});
+    fireEvent.pointerMove(screen.getByLabelText('无限画布编辑区'),{pointerId:1,clientX:80,clientY:50});
+    fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'),{pointerId:1});
+    expect(board.current().view).toEqual({x:70,y:40,zoom:1});
+    expect(board.current().nodes[0]).toMatchObject({x:0,y:0});
+  });
+});
+
 describe('canvas user workflows', () => {
   it('downloads a video directly from an unselected node through the existing attachment endpoint', async () => {
     const node = {...newNode('video',{x:100,y:100}),title:'生成视频',src:'https://media.example.test/result.mp4?signature=test'};
