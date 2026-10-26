@@ -171,6 +171,10 @@ export default function ReferencePrompt(props: Props) {
   const search = query?.text.toLowerCase() ?? '';
   const nodes = candidates.filter(n => ((referenceLabel(props.bindings,n.id) ?? '')+' '+referenceKinds[n.kind]+' '+n.title+' '+(n.origin?.title ?? '')).toLowerCase().includes(search));
   const activeIndex = Math.min(index, Math.max(0, nodes.length - 1));
+  const activeNode = nodes[activeIndex];
+  useLayoutEffect(() => {
+    if (query && activeNode) document.getElementById(`reference-mention-${activeIndex}`)?.scrollIntoView?.({block:'nearest'});
+  }, [Boolean(query), activeIndex, activeNode?.id, activeNode?.origin?.projectId, scope, search]);
   const pick = (node: CanvasNode) => {
     if (!query) return;
     const caret = props.onPick(node, query.start, query.end);
@@ -229,7 +233,7 @@ export default function ReferencePrompt(props: Props) {
       <div role="listbox" id="reference-mention-list" aria-label="可引用素材">{nodes.map((node,i) => <button key={(node.origin?.projectId ?? '')+node.id}
         role="option" id={`reference-mention-${i}`} aria-selected={i===activeIndex}
         onMouseDown={e => {if(e.button===0) {e.preventDefault(); pick(node);}}} onClick={()=>pick(node)}>
-        {node.kind==='image' ? <img src={node.src} alt=""/> : <span className="studio-mention-media">{node.kind==='video'?'▶':'♫'}</span>}
+        {node.kind==='image' ? <img src={node.src} alt="" loading="lazy" decoding="async"/> : <span className="studio-mention-media">{node.kind==='video'?'▶':'♫'}</span>}
         <span><strong>{referenceLabel(props.bindings,node.id) ? '@'+referenceLabel(props.bindings,node.id)+' · ' : ''}{node.title}</strong><small>{node.origin?.title || '已连接到当前节点'}</small></span>
       </button>)}</div>
       {!nodes.length && <p>{query.text ? '没有匹配素材，试试其他名称。' : '暂无可用素材，请切换来源或先上传素材。'}</p>}
