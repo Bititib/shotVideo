@@ -377,15 +377,20 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     if (!mounted.current) return;
     if (folder) imported.forEach(n=>{n.assetFolder=folder;});
     const keepFocus = selectedRef.current.join(',') === selectionAtStart;
-    if (imported.length && fill && targetId) { applyAssets(imported.slice(0,1), {id:targetId,mode:'fill'}, keepFocus);setImporting(false);return; }
-    if (imported.length && targetId) { applyAssets(imported,{id:targetId,mode:'reference'}, keepFocus);setImporting(false);return; }
-    if (imported.length) {
+    if (imported.length && fill && targetId) applyAssets(imported.slice(0,1), {id:targetId,mode:'fill'}, keepFocus);
+    else if (imported.length && targetId) applyAssets(imported,{id:targetId,mode:'reference'}, keepFocus);
+    else if (imported.length) {
       const targetExists = targetId && docRef.current.nodes.some(n => n.id === targetId);
       commit(d => ({ ...d, nodes: [...d.nodes, ...imported], edges: targetExists ? [...d.edges, ...imported.map(n => ({ id: uid(), from: n.id, to: targetId! }))] : d.edges }));
       setSelected(targetExists ? [targetId!] : imported.map(n => n.id));
       if (targetExists) setPanel(true);
     }
-    setNotice(failures.length ? `${failures.length} 个文件未能导入。支持常见图片（20 MB 内）、MP4 / WebM 视频与 MP3 / WAV / OGG 音频（40 MB 内）。` : `已导入 ${imported.length} 个素材${files.length > 20 ? '，每次最多导入 20 个' : ''}`);
+    if (!targetId || !imported.length) setNotice(`已导入 ${imported.length} 个素材`);
+    const issues = [
+      failures.length ? `${failures.length} 个文件未能导入（${failures.join('、')}）。支持常见图片（20 MB 内）、MP4 / WebM 视频与 MP3 / WAV / OGG 音频（40 MB 内）。` : '',
+      files.length > 20 ? `每次最多导入 20 个文件，另有 ${files.length - 20} 个尚未处理。` : '',
+    ].filter(Boolean);
+    if (issues.length) setNotice(message => `${message}；${issues.join(' ')}`);
     setImporting(false);
   };
   const applyAssets = (assets: CanvasNode[], intent = assetIntent, focus = true) => {

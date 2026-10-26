@@ -401,6 +401,17 @@ describe('canvas user workflows', () => {
     expect(board.current().nodes[0]).toMatchObject({ kind: 'audio', x: (240-initial.view.x)/initial.view.zoom, y: (180-initial.view.y)/initial.view.zoom });
     expect(streamGeneration).not.toHaveBeenCalled();
   });
+  it('reports failed reference files even when other files were successfully attached', async () => {
+    const target = {...newNode('video',{x:400,y:0}),generator:true,title:'部分导入目标'};
+    const board = mount({...newDocument(),nodes:[target]});
+    fireEvent.doubleClick(screen.getByRole('article',{name:target.title}));
+    fireEvent.click(screen.getByRole('button',{name:'上传参考图片 / 视频 / 音频'}));
+    fireEvent.change(screen.getByLabelText('上传节点参考素材'),{target:{files:[new File(['audio'],'voice.wav',{type:'audio/wav'}),new File(['bad'],'invalid.txt',{type:'text/plain'})]}});
+    await waitFor(() => expect(board.current().nodes).toHaveLength(2));
+    expect(board.current().edges[0]).toMatchObject({from:board.current().nodes[1].id,to:target.id});
+    expect(screen.getByText(/1 个文件未能导入/).textContent).toContain('invalid.txt');
+    expect(streamGeneration).not.toHaveBeenCalled();
+  });
   it('uploads video and audio directly into a selected node and removes references without deleting files', async () => {
     const target = { ...newNode('video', { x: 400, y: 0 }), generator: true, title: '目标' };
     const board = mount({ ...newDocument(), nodes: [target] });

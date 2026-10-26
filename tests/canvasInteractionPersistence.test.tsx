@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import CanvasPage from '../client/src/pages/CanvasPage';
 import { newDocument, newNode, type Workspace } from '../client/src/canvas/model';
@@ -45,4 +45,19 @@ it.each(['pagehide','beforeunload','unmount'])('persists the pending final viewp
   const saved = vi.mocked(saveWorkspace).mock.calls.at(-1)!;
   expect(saved[0]).toBe('guest');
   expect(saved[1].projects[0].view).toEqual({x:100,y:50,zoom:1});
+});
+
+it('keeps a pending viewport in its original project when switching and editing another project', async () => {
+  workspace.projects[0].title = '画布一';
+  const second = {...newDocument('画布二'),nodes:[newNode('text',{x:0,y:0},'第二份')],view:{x:0,y:0,zoom:1}};
+  workspace.projects.push(second);
+  await openWithPendingPan();
+  fireEvent.click(screen.getByRole('button',{name:/灵序 AI.*画布一/}));
+  fireEvent.click(within(screen.getByRole('dialog',{name:'画布项目'})).getByRole('button',{name:/画布二/}));
+  fireEvent.change(screen.getByLabelText('卡片文字'),{target:{value:'第二份已修改'}});
+  await act(async () => {await vi.advanceTimersByTimeAsync(600);});
+  const saved = vi.mocked(saveWorkspace).mock.calls.at(-1)![1];
+  expect(saved.activeId).toBe(second.id);
+  expect(saved.projects[0].view).toEqual({x:100,y:50,zoom:1});
+  expect(saved.projects[1]).toMatchObject({view:{x:0,y:0,zoom:1},nodes:[{text:'第二份已修改'}]});
 });

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import AssetBrowser from './AssetBrowser';
 import { connectionError } from './videoInputs';
 import type { CanvasDocument, CanvasNode } from './model';
@@ -10,8 +10,13 @@ export default function AssetPicker({document, projects, target, mode, onClose, 
   const input=useRef<HTMLInputElement>(null);
   const usable=(n:CanvasNode)=>n.job?.status !== 'running' && (n.kind === 'text' ? Boolean(n.text.trim()) : Boolean(n.src));
   const eligible=(n:CanvasNode)=>usable(n) && (!target || (mode === 'fill' ? n.kind === target.kind : !connectionError(n,target)));
-  const source=tab === 'projects' ? projects.filter(p=>p.id !== document.id) : [document];
-  const nodes=source.flatMap(p=>p.nodes.filter(n=>n.id !== target?.id && eligible(n)).map(n=>({...n,origin:{projectId:p.id,nodeId:n.id,title:p.title}}))).filter(n=>(n.title+' '+n.text+' '+n.origin.title).toLowerCase().includes(search.toLowerCase()));
+  const candidates = useMemo(() => {
+    if (tab !== 'canvas' && tab !== 'projects') return [];
+    const source = tab === 'projects' ? projects.filter(p=>p.id !== document.id) : [document];
+    return source.flatMap(p=>p.nodes.filter(n=>n.id !== target?.id && eligible(n)).map(n=>({...n,origin:{projectId:p.id,nodeId:n.id,title:p.title}})));
+  }, [tab, document.id, document.title, document.nodes, tab === 'projects' ? projects : null, target, mode]);
+  const query = search.toLowerCase();
+  const nodes = useMemo(() => candidates.filter(n=>(n.title+' '+n.text+' '+n.origin.title).toLowerCase().includes(query)), [candidates, query]);
   const action=mode === 'fill' ? '填入节点' : mode === 'reference' ? '引用为参考' : '加入画布';
   return <section className="studio-asset-browser studio-asset-picker" role="dialog" aria-modal="true" aria-label="选择素材"><header><div><h2>{mode === 'fill' ? '选择节点内容' : '引用素材'}</h2><p>{target ? `用于「${target.title}」 · ${mode === 'fill' ? '填入同类型素材，保留节点连线' : '连接素材作为生成参考'}` : '复用画布素材与生成作品'}</p></div><button aria-label="关闭素材选择" onClick={onClose}>✕</button></header>
     <nav className="studio-asset-tabs" aria-label="素材来源">{[['canvas','本项目素材'],['projects','跨项目素材'],['history','生成资产'],['upload','本地上传']].map(([id,label])=><button key={id} aria-pressed={tab===id} onClick={()=>setTab(id)}>{label}</button>)}</nav>
