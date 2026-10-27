@@ -4,7 +4,7 @@ import { refundConfirmedZonghengVideo } from '../services/zonghengSubmissionReso
 import { queryZonghengTask } from '../services/zonghengTaskQueryService.js';
 import { publicGenerationEvent, publicGenerationError } from '../../shared/generationMessages.js';
 import { generationErrorResponse } from '../middleware/generationErrorResponse.js';
-import { canonicalZonghengModelId, ZONGHENG_VIDEO_MODELS, ZONGHENG_MODEL_PREFIX, getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
+import { canonicalZonghengModelId, ZONGHENG_VIDEO_MODELS, zonghengPublicModelId, getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, buildZonghengVideoPayload, submitZonghengVideo, ZonghengSubmissionError, zonghengTaskUrl, normalizeZonghengTask, zonghengTaskMetadata } from '../services/zonghengAdapter.js';
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
 import { patchZonghengTask, reviewZonghengTask, zonghengOrder, recordZonghengSubmissionError } from '../services/zonghengTaskService.js';
@@ -327,7 +327,7 @@ interface ModelMeta {
   requireRef: boolean;               // 是否必须传参考图
 }
 const MODEL_META: Record<string, ModelMeta> = {
-  ...Object.fromEntries(ZONGHENG_VIDEO_MODELS.map(spec => [ZONGHENG_MODEL_PREFIX + spec.id, { series: 'zongheng', allowedSeconds: [...spec.seconds], requireRef: false }])),
+  ...Object.fromEntries(ZONGHENG_VIDEO_MODELS.map(spec => [zonghengPublicModelId(spec.id), { series: 'zongheng', allowedSeconds: [...spec.seconds], requireRef: false }])),
   ...Object.fromEntries(SI_YUE_TIAN_C2_MODELS.map(spec => [spec.id, { series: 'siyuetian-c2', allowedSeconds: Array.from({ length: spec.maxSeconds - spec.minSeconds + 1 }, (_, i) => i + spec.minSeconds), requireRef: false }])),
   ...Object.fromEntries(HAYA_VIDEO_MODELS.map(spec => [spec.id, { series: 'haya', allowedSeconds: hayaVideoSeconds(spec.id), requireRef: false }])),
   ...Object.fromEntries(SI_YUE_TIAN_SEEDANCE_25_VIDEO_SPECS.map(spec => [spec.id, {
@@ -385,7 +385,7 @@ const MODEL_META: Record<string, ModelMeta> = {
 };
 
 const DEFAULT_VIDEO_MODELS = [
-  ...ZONGHENG_VIDEO_MODELS.map(spec => ({ id: ZONGHENG_MODEL_PREFIX + spec.id, name: '纵横科技 · ' + spec.id, description: spec.resolution + '；' + spec.seconds.join('、') + '秒', maxSeconds: spec.seconds[spec.seconds.length - 1], icon: '🎬' })),
+  ...ZONGHENG_VIDEO_MODELS.map(spec => ({ id: zonghengPublicModelId(spec.id), name: '纵横科技 · ' + spec.id, description: spec.resolution + '；' + spec.seconds.join('、') + '秒', maxSeconds: spec.seconds[spec.seconds.length - 1], icon: '🎬' })),
   ...SI_YUE_TIAN_C2_MODELS.map(spec => ({ id: spec.id, name: `${spec.name} · 四月天`, description: `最多${spec.images}图、${spec.videos}视频、${spec.audios}音频；按次计费`, maxSeconds: spec.maxSeconds, icon: '🎬' })),
   ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_SPECS.map(spec => ({
     id: spec.id,

@@ -3,6 +3,7 @@ import { migrateZonghengToV6k } from '../services/zonghengV6kMigration.js';
 import { ensureFundLedger } from './fundLedger.js';
 import { migratePidoiImageTimeout } from './imageTimeoutMigration.js';
 import { migrateV6kCatalog } from '../services/v6kCatalogMigration.js';
+import { ensureV6kTttModel } from '../services/v6kTttModel.js';
 import { HAYA_VIDEO_MODELS, HAYA_XG_SEEDANCE_20_MODEL, hayaVideoSeconds } from '../../shared/hayaVideo.js';
 import { ASYNC_VIDEO_BASE_URL, ASYNC_VIDEO_CHANNEL_TYPE } from '../../shared/asyncVideo.js';
 import { LONGXIA_MODELS, LONGXIA_BASE_URL, isLongxiaChannel, longxiaRate, longxiaResolution } from '../services/longxiaVideoAdapter.js';
@@ -2067,6 +2068,7 @@ export async function initDatabase() {
 
   migrateZonghengToV6k(sqlite);
   migrateV6kCatalog(sqlite);
+  ensureV6kTttModel(sqlite);
   ensureFundLedger(sqlite);
   console.log('✅ 数据库初始化完成');
 }

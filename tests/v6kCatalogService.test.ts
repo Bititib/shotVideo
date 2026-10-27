@@ -18,6 +18,13 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 describe('V6K authenticated model synchronization', () => {
+  it('keeps the new TTT ID unprefixed and mapped exactly without granting unauthorized models', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: any) => String(url).endsWith('/v1/models')
+      ? Response.json({ data: ['TTTseadanco2.5/720'] }) : Response.json({ data: [] })));
+    expect(await syncV6kVideoModels(channel)).toMatchObject({ models: ['TTTseadanco2.5/720'], added: 1 });
+    expect(sqlite.prepare('SELECT model_id,is_active,description FROM models').get()).toEqual({ model_id: 'TTTseadanco2.5/720', is_active: 0, description: '30图10音10视/480P/5-30秒/全天稳定10分钟出片' });
+    expect(JSON.parse((sqlite.prepare('SELECT model_mapping FROM channels').get() as any).model_mapping)).toEqual({ 'TTTseadanco2.5/720': 'TTTseadanco2.5/720' });
+  });
   it('imports exact authorized video IDs, classifies opaque names from the public square and never copies upstream prices', async () => {
     const fetcher = vi.fn(async (url: any, options: any) => {
       if (String(url).endsWith('/v1/models')) {

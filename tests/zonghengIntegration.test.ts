@@ -121,6 +121,26 @@ function installConfirmedVideos() {
   ChannelService.updateChannel(channel.id,{supportedModels:ids,modelMapping:Object.fromEntries(ZONGHENG_VIDEO_MODELS.map(spec=>['ZH-'+spec.id,spec.id]))});
 }
 describe('V6K cutover using the existing Zongheng billing and recovery paths', () => {
+  it.each(['/api/video/generate', '/v1/videos'])('charges TTTseadanco2.5/720 exactly 6.5 per task at both 5 and 30 seconds at %s', async endpoint => {
+    const model = 'TTTseadanco2.5/720';
+    db.insert(models).values({ modelId: model, displayName: model, provider: 'zongheng-v6k', capabilities: '["video"]', isActive: 1 }).run();
+    db.insert(modelPricing).values({ modelPattern: model, billingType: 'per_call', inputPrice: 6.5 }).run();
+    const c = db.select().from(channels).get()!;
+    ChannelService.updateChannel(c.id, { type: 'zongheng-v6k', supportedModels: [model], modelMapping: { [model]: model } });
+    sqlite.prepare("INSERT INTO api_tokens (id,user_id,token_key,balance) VALUES (1,1,'test',-1)").run();
+    let posts = 0;
+    upstream = async (_url, init) => {
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body)).toMatchObject({ model, resolution: '480p', seconds: posts === 0 ? 5 : 30 });
+      return Response.json({ id: 'ttt_' + ++posts, status: 'completed' });
+    };
+    for (const seconds of [5,30]) {
+      await (await post(endpoint, { model, prompt: '场景', seconds, video_length: seconds, resolution: '480p' })).text();
+      await vi.waitFor(() => expect(latest().status).toBe('completed'));
+      expect(latest().cost).toBe(6.5);
+    }
+    expect(posts).toBe(2); expect(balance()).toBe(87);
+  });
   it.each(ZONGHENG_VIDEO_MODELS)('retains the exact $id model and existing price through both new-protocol entry points', async spec => {
     installConfirmedVideos();
     sqlite.prepare("INSERT INTO api_tokens (id,user_id,token_key,balance) VALUES (1,1,'test',-1)").run();

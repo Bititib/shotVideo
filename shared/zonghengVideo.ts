@@ -1,6 +1,12 @@
 /** V6K model-square specifications checked on 2026-10-24. No retired-site models or prices. */
 export const ZONGHENG_MODEL_PREFIX = 'ZH-';
 export const LEGACY_ZONGHENG_MODEL_PREFIX = 'zongheng-';
+/** Exact new-site ID checked against the model square on 2026-10-27. */
+export const V6K_TTT_720_MODEL = 'TTTseadanco2.5/720';
+export const V6K_TTT_720_DESCRIPTION = '30图10音10视/480P/5-30秒/全天稳定10分钟出片';
+export function zonghengPublicModelId(upstreamId: string): string {
+  return upstreamId === V6K_TTT_720_MODEL ? upstreamId : ZONGHENG_MODEL_PREFIX + upstreamId;
+}
 /** Preserve old API/canvas IDs while publishing the new namespace. */
 export function canonicalZonghengModelId(model: string): string {
   return model.startsWith(LEGACY_ZONGHENG_MODEL_PREFIX) ? ZONGHENG_MODEL_PREFIX + model.slice(LEGACY_ZONGHENG_MODEL_PREFIX.length) : model;
@@ -9,6 +15,8 @@ const SEEDANCE_25_REFERENCES = { images: 30, videos: 10, audios: 10 } as const;
 const SEEDANCE_20_REFERENCES = { images: 9, videos: 3, audios: 3 } as const;
 const seconds = (min: number, max: number) => Array.from({ length: max - min + 1 }, (_, i) => min + i);
 export const ZONGHENG_VIDEO_MODELS = [
+  // User-confirmed override (2026-10-27): the ID contains /720, but use 480p.
+  { id: V6K_TTT_720_MODEL, family: 'seedance', references: { images: 30, videos: 10, audios: 10 }, resolution: '480p', seconds: seconds(5, 30) },
   ...['TTseadanco2.5-480', 'TTseadanco2.5-480YT'].map(id => ({ id, family: 'seedance', references: SEEDANCE_25_REFERENCES, resolution: '480p', seconds: seconds(5, 30) })),
   ...['TTseadanco2.5-720', 'TTseadanco2.5-720YT', 'TTseadanco2.5AT', 'JJsedanco2.54', 'JJseadanco2.52'].map(id => ({ id, family: 'seedance', references: SEEDANCE_25_REFERENCES, resolution: '720p', seconds: seconds(5, 30) })),
   ...['TTseadanco2.5-1080', 'TTseadanco2.5-1080YT'].map(id => ({ id, family: 'seedance', references: SEEDANCE_25_REFERENCES, resolution: '1080p', seconds: seconds(5, 30) })),

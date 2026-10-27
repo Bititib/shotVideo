@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { channels, models } from '../db/schema.js';
-import { getZonghengVideoSpec, ZONGHENG_MODEL_PREFIX } from '../../shared/zonghengVideo.js';
+import { getZonghengVideoSpec, zonghengPublicModelId, V6K_TTT_720_MODEL, V6K_TTT_720_DESCRIPTION } from '../../shared/zonghengVideo.js';
 import { zonghengBaseUrl } from './zonghengAdapter.js';
 import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
 
@@ -34,8 +34,8 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
       ...(Array.isArray(detail?.supported_endpoint_types) ? detail.supported_endpoint_types : [])];
     const kind = String(entry?.type || entry?.category || detail?.display_category || '').toLowerCase();
     if (!spec && !endpoints.includes('openai-video') && kind !== 'video') continue;
-    const publicId = ZONGHENG_MODEL_PREFIX + id;
-    const description = spec ? `${spec.resolution}；${spec.seconds.join('、')}秒；最多${spec.references.images}图、${spec.references.videos}视频、${spec.references.audios}音频`
+    const publicId = zonghengPublicModelId(id);
+    const description = id === V6K_TTT_720_MODEL ? V6K_TTT_720_DESCRIPTION : spec ? `${spec.resolution}；${spec.seconds.join('、')}秒；最多${spec.references.images}图、${spec.references.videos}视频、${spec.references.audios}音频`
       : String(detail?.description || '新站视频模型；请先核对模型详情并配置规格与售价');
     imported.set(publicId, { id: publicId, upstream: id, description });
   }
