@@ -1,4 +1,10 @@
 import { beforeEach, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 import { sqlite } from '../server/db/index.js';
 import { previewReviewedVideoRefunds, applyReviewedVideoRefunds } from '../server/services/reviewedVideoRefundPlan.js';
@@ -54,3 +60,25 @@ it('requires an active administrator and explicit confirmation; rejects duplicat
   expect(()=>applyReviewedVideoRefunds(sqlite,plan,1,true,confirmReviewedVideoFailureAndRefund)).toThrow('管理员');
   expect(()=>apply({...plan,items:[...plan.items,...plan.items]})).toThrow('清单格式');expect(balance()).toBe(80);
 });
+
+it('runs the actual CLI withdrawal, fresh preview and refund against an isolated on-disk database', async()=>{
+  add(1,{videoId:'未取得上游任务 ID',upstreamTaskId:'未取得上游任务 ID',recoveryTaskIdSupplemented:true,
+    recoveryAudit:[{action:'supplement_task_id',taskId:'未取得上游任务 ID',previousTaskId:'',actorId:9}]});
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'review-refund-cli-'));
+  fs.mkdirSync(path.join(root,'data'));
+  try {
+    await sqlite.backup(path.join(root,'data','app.db'));
+    const script=path.resolve('server/scripts/refundReviewedVideos.ts');
+    const loader=pathToFileURL(createRequire(path.resolve('package.json')).resolve('tsx')).href;
+    const run=(...args:string[])=>execFileSync(process.execPath,['--import',loader,script,...args],
+      {cwd:root,env:{...process.env,NODE_ENV:'production'},encoding:'utf8',timeout:30000});
+    expect(run('--withdraw-unverified=1','--admin-id=9')).toContain('"outcome":"withdrawn"');
+    expect(run('--plan=data/plan.json')).toContain('"candidateCount":1');
+    expect(run('--plan=data/plan.json','--apply','--admin-id=9','--confirm-not-accepted')).toContain('"refundedAmount":7');
+    expect(run('--plan=data/plan.json','--apply','--admin-id=9','--confirm-not-accepted')).toContain('"refundedAmount":0');
+    expect(fs.readdirSync(path.join(root,'data')).some(name=>name.startsWith('withdraw-supplement-backup-'))).toBe(true);
+  } finally {
+    if (path.resolve(root).startsWith(path.resolve(os.tmpdir()) + path.sep + 'review-refund-cli-'))
+      fs.rmSync(root,{recursive:true,force:true});
+  }
+},60000);

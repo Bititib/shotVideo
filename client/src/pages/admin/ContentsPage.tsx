@@ -261,7 +261,9 @@ export default function ContentsPage() {
   };
 
   const handleWithdrawSupplement = async (item: ContentItem) => {
-    const taskId = getUpstreamTaskId(parseMeta(item.metadata));
+    const meta = parseMeta(item.metadata);
+    const audit = Array.isArray(meta.recoveryAudit) ? [...meta.recoveryAudit].reverse().find(a=>a?.action === 'supplement_task_id') : null;
+    const taskId = getUpstreamTaskId(meta) || String(audit?.taskId || '');
     if (!window.confirm(`撤销记录 #${item.id} 未核实的手工补录编号？这不会取消上游任务或退款。撤销后可以重新补录；只有确认上游未接单，才能执行失败退款。`)) return;
     setRecoveringId(item.id);
     try {

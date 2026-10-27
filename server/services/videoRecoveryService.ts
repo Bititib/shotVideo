@@ -188,8 +188,11 @@ export class VideoRecoveryService {
       const record = db.select().from(contents).where(eq(contents.id, contentId)).get();
       if (!record) throw { status: 404, message: '任务记录不存在' };
       const meta = parseMetadata(record.metadata);
+      const lastSupplement = Array.isArray(meta.recoveryAudit)
+        ? [...meta.recoveryAudit].reverse().find(a => a?.action === 'supplement_task_id') : null;
+      const recordedTaskId = upstreamTaskId(meta) || String(lastSupplement?.taskId || '');
       if (!canWithdrawTaskSupplement(record, meta) || findVideoSubmissionReceipt(contentId)
-        || typeof expectedTaskId !== 'string' || upstreamTaskId(meta) !== expectedTaskId)
+        || typeof expectedTaskId !== 'string' || recordedTaskId !== expectedTaskId)
         throw { status: 409, message: '只能撤销未核实的手工补录；已有回执或任务变化时请先核查' };
       for (const key of ['videoId','upstreamTaskId','upstream_task_id','taskId','task_id','requestId','request_id','upstreamTaskIds','recoveryTaskIds']) delete meta[key];
       meta.recoveryTaskIdSupplemented = false;

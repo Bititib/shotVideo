@@ -7,9 +7,36 @@ const args = process.argv.slice(2);
 const apply = args.includes('--apply');
 const planPath = path.resolve(args.find(a=>a.startsWith('--plan='))?.slice(7) || 'data/review-refund-plan.json');
 const adminId = Number(args.find(a=>a.startsWith('--admin-id='))?.slice(11));
+const withdrawArg = args.find(a=>a.startsWith('--withdraw-unverified='));
 
 try {
-  if (!apply) {
+  if (withdrawArg) {
+    if (apply) throw new Error('撤销补录与退款分开执行；撤销后重新生成清单');
+    const value = withdrawArg.slice('--withdraw-unverified='.length);
+    if (!/^[1-9]\d*(,[1-9]\d*)*$/.test(value)) throw new Error('请提供要撤销补录的订单编号，如 --withdraw-unverified=14386,14486');
+    const ids = [...new Set(value.split(',').map(Number))];
+    if (ids.length > 100 || ids.some(id=>!Number.isSafeInteger(id))) throw new Error('撤销订单编号无效或超过 100 条');
+    const { sqlite } = await import('../db/index.js');
+    try {
+      const admin = sqlite.prepare('SELECT role,is_active FROM users WHERE id=?').get(adminId) as any;
+      if (admin?.role !== 'super_admin' || admin.is_active !== 1) throw new Error('请填写有效的超级管理员 ID');
+      const { VideoRecoveryService } = await import('../services/videoRecoveryService.js');
+      const backupPath = path.resolve(`data/withdraw-supplement-backup-${Date.now()}.db`);
+      await sqlite.backup(backupPath);
+      console.log(JSON.stringify({backup:backupPath,message:'仅撤销指定订单的错误手工补录，不退款、不取消上游任务'}));
+      for (const id of ids) {
+        try {
+          const result = sqlite.transaction(()=>{
+            const row = sqlite.prepare('SELECT metadata FROM contents WHERE id=?').get(id) as any;
+            const meta = JSON.parse(row?.metadata || '{}');
+            const audit = Array.isArray(meta.recoveryAudit) ? [...meta.recoveryAudit].reverse().find(a=>a?.action==='supplement_task_id') : null;
+            return VideoRecoveryService.withdrawTaskId(id,adminId,String(audit?.taskId || ''));
+          }).immediate();
+          console.log(JSON.stringify({id,outcome:'withdrawn',message:result.message}));
+        } catch (error:any) { process.exitCode=2; console.log(JSON.stringify({id,outcome:'blocked',reason:error.message})); }
+      }
+    } finally { sqlite.close(); }
+  } else if (!apply) {
     const database = new Database(path.resolve('data/app.db'),{readonly:true,fileMustExist:true});
     try {
       const plan = previewReviewedVideoRefunds(database);

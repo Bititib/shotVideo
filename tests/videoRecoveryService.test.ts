@@ -182,6 +182,18 @@ describe('VideoRecoveryService', () => {
     confirmReviewedVideoFailureAndRefund(contentId,99,true);
     expect(BalanceService.getBalance(userId)).toBe(12);
   });
+  it('can withdraw an audited historical placeholder that the older supplement form saved as an ID', () => {
+    reviewedSupplement(true);
+    const meta = JSON.parse(read().metadata);
+    const placeholder = '未取得上游任务 ID';
+    meta.videoId = meta.upstreamTaskId = meta.recoveryAudit[0].taskId = placeholder;
+    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify(meta),contentId);
+    VideoRecoveryService.withdrawTaskId(contentId,99,placeholder);
+    expect(JSON.parse(read().metadata)).not.toHaveProperty('videoId');
+    expect(BalanceService.getBalance(userId)).toBe(10);
+    confirmReviewedVideoFailureAndRefund(contentId,99,true);
+    expect(BalanceService.getBalance(userId)).toBe(12);
+  });
   it('will not withdraw a real receipt or a verified addition', async () => {
     reviewedSupplement(true);
     persistVideoSubmissionReceipt({contentId,channelId,channelApiKeyId:null,upstreamTaskId:'real-receipt',provider:'hmstudio'});

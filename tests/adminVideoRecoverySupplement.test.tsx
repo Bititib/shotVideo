@@ -97,10 +97,10 @@ it('does not start recovery when candidate verification fails and leaves the inp
   expect(within(dialog).getByLabelText('补录上游任务 ID')).toBeTruthy();
 });
 
-it('withdraws an old unverified manual ID, then exposes supplement and confirmed refund without charging', async () => {
+it.each(['wrong-id','未取得上游任务 ID'])('withdraws an old unverified manual ID %s, then exposes supplement and confirmed refund without charging', async taskId => {
   const meta = {reviewKind:'submission',billingStatus:'review',requiresReview:true,
-    videoId:'wrong-id',upstreamTaskId:'wrong-id',recoveryTaskIdSupplemented:true,
-    recoveryAudit:[{action:'supplement_task_id',taskId:'wrong-id',previousTaskId:''}]};
+    videoId:taskId,upstreamTaskId:taskId,recoveryTaskIdSupplemented:true,
+    recoveryAudit:[{action:'supplement_task_id',taskId,previousTaskId:''}]};
   const broken = {...item,status:'review',cost:7,metadata:JSON.stringify(meta)};
   vi.mocked(adminApi.getContents).mockResolvedValue({items:[broken],total:1} as any);
   vi.mocked(adminApi.getContent).mockResolvedValue(broken as any);
@@ -111,10 +111,10 @@ it('withdraws an old unverified manual ID, then exposes supplement and confirmed
   render(<MemoryRouter><ContentsPage /></MemoryRouter>);
   fireEvent.click(await screen.findByRole('button',{name:'查看本地记录 13360 详情'}));
   const dialog = await screen.findByRole('dialog');
-  expect(within(dialog).queryByRole('button',{name:'一键失败并退款'})).toBeNull();
+  if (taskId === 'wrong-id') expect(within(dialog).queryByRole('button',{name:'一键失败并退款'})).toBeNull();
   fireEvent.click(within(dialog).getByRole('button',{name:'撤销未核实补录'}));
   await waitFor(()=>expect(within(dialog).getByRole('button',{name:'一键失败并退款'})).toBeTruthy());
-  expect(adminApi.withdrawContentRecoveryTaskId).toHaveBeenCalledWith(13360,'wrong-id');
+  expect(adminApi.withdrawContentRecoveryTaskId).toHaveBeenCalledWith(13360,taskId);
   expect(within(dialog).getByLabelText('补录上游任务 ID')).toBeTruthy();
   expect(adminApi.recoverContentUpstream).not.toHaveBeenCalled();
 });

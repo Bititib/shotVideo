@@ -6,7 +6,7 @@ export function canWithdrawTaskSupplement(record: { type: string; status: string
   const previous = audit?.previousTaskId;
   const ids = [meta.videoId, meta.upstreamTaskId, meta.upstream_task_id, meta.taskId, meta.task_id, meta.requestId, meta.request_id,
     ...(Array.isArray(meta.upstreamTaskIds) ? meta.upstreamTaskIds : []), ...(Array.isArray(meta.recoveryTaskIds) ? meta.recoveryTaskIds : [])]
-    .filter(id => id && !isTaskIdPlaceholder(id));
+    .filter(id => typeof id === 'string' ? id.trim() : Boolean(id));
   return record.type === 'video' && ['review', 'failed', 'error'].includes(record.status)
     && meta.recoveryTaskIdSupplemented === true && Boolean(audit?.taskId)
     && (!previous || isTaskIdPlaceholder(previous))
