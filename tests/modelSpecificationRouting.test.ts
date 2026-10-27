@@ -1,5 +1,6 @@
 import { quoteVideoRequest, assertExpectedVideoCost } from '../server/services/videoQuoteService.js';
 import { PricingService } from '../server/services/pricingService.js';
+import { HAYA_XG_SEEDANCE_20_MODEL, HAYA_XG_SEEDANCE_20_UPSTREAM_MODEL } from '../shared/hayaVideo';
 import { beforeAll, beforeEach, afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../server/db/index.js', async () => {
   const { default: Database } = await import('better-sqlite3');
@@ -220,6 +221,41 @@ describe('managed image execution and single reservation', () => {
 
 
 describe('managed video execution', () => {
+  it.each(['completed', 'rejected', 'unknown', 'request-id-only'])('uses the Haya model protocol in real specification execution: %s', async outcome => {
+    const id = HAYA_XG_SEEDANCE_20_MODEL;
+    db.insert(models).values({ modelId: id, displayName: id, provider: 'haya', capabilities: '["video"]', isActive: 1 })
+      .onConflictDoUpdate({ target: models.modelId, set: { isActive: 1 } }).run();
+    const l = existingModelLimits(id, 'video')!;
+    const c = { ...channel(1), type: 'haya', baseUrl: 'https://hayaai.fun', supportedModels: [id] };
+    vi.mocked(ChannelService.getActiveChannels).mockReturnValue([c]);
+    vi.mocked(ChannelService.getChannelRaw).mockReturnValue(c as any);
+    const s = { ...spec(), aliases: [], limits: l, routes: [{ ...route(1), executionModel: id, upstreamModel: HAYA_XG_SEEDANCE_20_UPSTREAM_MODEL, limits: l }] };
+    saveModelSpecification(s);
+    let submissions = 0;
+    const fetcher = vi.fn(async (_url: string, init: any) => {
+      if (init.method === 'POST') {
+        submissions++;
+        expect(JSON.parse(init.body)).toMatchObject({ model: HAYA_XG_SEEDANCE_20_UPSTREAM_MODEL, seconds: '15', content: [{ type: 'audio_url', audio_url: { url: 'https://media.example/a.mp3' } }] });
+        if (outcome === 'unknown') throw new Error('network timeout');
+        if (outcome === 'rejected') return Response.json({ error: { code: 'invalid_input', message: '参考素材无效' } }, { status: 400 });
+        if (outcome === 'request-id-only') return Response.json({ request_id: 'task_not_a_generation_id' });
+        return Response.json({ id: 'task_xg_spec' });
+      }
+      const row = db.select().from(contents).all().at(-1)!;
+      expect(JSON.parse(row.metadata).videoId).toBe('task_xg_spec');
+      return Response.json({ status: 'completed', metadata: { url: 'https://media.example/done.mp4' } });
+    });
+    vi.stubGlobal('fetch', fetcher);
+    await handleSpecificationGeneration({ body: { model: s.modelId, prompt: 'test', video_length: 15, audio_urls: ['https://media.example/a.mp3'] },
+      headers: {}, protocol: 'https', get: () => 'app.invalid', userId } as any, response(), 'video');
+    const expected = outcome === 'rejected' ? 'failed' : outcome === 'completed' ? 'completed' : 'processing';
+    await vi.waitFor(() => expect(db.select().from(contents).all().at(-1)!.status).toBe(expected));
+    if (expected === 'processing') expect(JSON.parse(db.select().from(contents).all().at(-1)!.metadata)).toMatchObject({ requiresReview: true, reviewKind: 'submission' });
+    resumeSpecificationTasks(); resumeSpecificationTasks();
+    expect(submissions).toBe(1);
+    expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(outcome === 'rejected' ? 100 : 98);
+    if (outcome === 'rejected') expect(JSON.parse(db.select().from(contents).all().at(-1)!.metadata).error).toContain('invalid_input');
+  });
   const req = () => ({ body: { model: 'routing-public-test', prompt: 'test', video_length: 15 }, headers: {}, protocol: 'https', get: () => 'app.invalid', userId } as any);
   const setup = () => { saveModelSpecification(spec()); sqlite.prepare("INSERT INTO model_pricing(model_pattern,billing_type,input_price,output_price,extra_params) SELECT ?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM model_pricing WHERE model_pattern=?)").run('routing-public-test', 'per_call', 2, 0, '{}', 'routing-public-test'); };
   it.each(['accepted', 'rejected', 'processing'])('recovers HUSS review via original receipt %s without another submission', async state => {

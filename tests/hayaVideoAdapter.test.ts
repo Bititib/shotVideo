@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { HAYA_MODEL_IDS, HAYA_VIDEO_MODELS, validateHayaVideoInput } from '../shared/hayaVideo';
+import { HAYA_MODEL_IDS, HAYA_VIDEO_MODELS, HAYA_XG_SEEDANCE_20_MODEL, HAYA_XG_SEEDANCE_20_UPSTREAM_MODEL, validateHayaVideoInput } from '../shared/hayaVideo';
 import { buildHayaVideoPayload, hayaPollDelay, hayaTaskId, hayaTaskUrl, isHayaChannel, normalizeHayaTask, shouldSendHayaAuthorization, submitHayaVideo } from '../server/services/hayaVideoAdapter';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -7,12 +7,23 @@ const input = { model: HAYA_MODEL_IDS[0], prompt: ' 测试 ', seconds: 15, ratio
   images: ['https://media.example/a.png'], videos: [], audios: ['https://media.example/b.wav'] };
 
 describe('Haya protocol and catalog', () => {
-  it('preserves all seven exact IDs and applies the requested markup and billing units', () => {
+  it('preserves exact IDs and applies the requested markup and billing units', () => {
     expect(HAYA_MODEL_IDS).toEqual(['bz-seedance2.5-720p', 'F-seedance-2.5-480p', 'F-seedance-2.5-720p',
-      'XG-seedance-2.5-720', 'y-seedance-2.5-1080p', 'y-seedance-2.5-480p', 'y-seedance-2.5-720p']);
+      'XG-seedance-2.5-720', 'y-seedance-2.5-1080p', 'y-seedance-2.5-480p', 'y-seedance-2.5-720p', 'Seedance-2.0-720']);
     expect(HAYA_VIDEO_MODELS.map(m => [m.price, m.billingType])).toEqual([
-      [6.5, 'per_call'], [5, 'per_call'], [5, 'per_call'], [0.5, 'per_second'], [13, 'per_call'], [5, 'per_call'], [7, 'per_call'],
+      [6.5, 'per_call'], [5, 'per_call'], [5, 'per_call'], [0.5, 'per_second'], [13, 'per_call'], [5, 'per_call'], [7, 'per_call'], [4, 'per_call'],
     ]);
+  });
+  it('uses the XG 2.0 API contract, not the conflicting marketing card or legacy Haya payload', () => {
+    const current = { ...input, model: HAYA_XG_SEEDANCE_20_MODEL };
+    expect(buildHayaVideoPayload(current)).toEqual({ model: HAYA_XG_SEEDANCE_20_UPSTREAM_MODEL, prompt: '测试', seconds: '15', ratio: '9:16', resolution: '720p',
+      content: [{ type: 'image_url', image_url: { url: input.images[0] } }, { type: 'audio_url', audio_url: { url: input.audios[0] } }] });
+    for (const patch of [{ seconds: 4 }, { seconds: 16 }, { seconds: 5.5 }, { ratio: '3:2' }, { resolution: '1080p' },
+      { images: Array(10).fill(input.images[0]) }, { audios: Array(4).fill(input.audios[0]) }, { videos: ['https://media.example/v.mp4'] },
+      { metadata: { content: [] } }]) expect(() => buildHayaVideoPayload({ ...current, ...patch })).toThrow();
+    expect(buildHayaVideoPayload({ ...current, seconds: 5, images: Array(9).fill(input.images[0]), audios: Array(3).fill(input.audios[0]) }).content).toHaveLength(12);
+    expect(buildHayaVideoPayload({ ...current, seconds: 5, images: [], audios: [] })).toMatchObject({ seconds: '5', content: [] });
+    expect(buildHayaVideoPayload(input)).toMatchObject({ seconds: 15, images: input.images, audios: input.audios });
   });
   it('validates resolution, integer duration, Y no-video limits and dedicated frames', () => {
     const values = { seconds: 4, ratio: '9:16', resolution: '1080p', imageCount: 30, videoCount: 0, audioCount: 10 };

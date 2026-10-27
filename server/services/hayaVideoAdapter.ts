@@ -1,4 +1,4 @@
-import { HAYA_BASE_URL } from '../../shared/hayaVideo.js';
+import { HAYA_BASE_URL, HAYA_XG_SEEDANCE_20_MODEL, hayaPublicModelId, hayaUpstreamModelId, validateHayaVideoInput } from '../../shared/hayaVideo.js';
 
 export function isHayaChannel(channel: { type?: string | null; baseUrl?: string | null } | null | undefined): boolean {
   if (channel?.type === 'haya') return true;
@@ -39,6 +39,14 @@ export interface HayaVideoInput {
   images: string[]; videos: string[]; audios: string[]; metadata?: Record<string, unknown>;
 }
 export function buildHayaVideoPayload(input: HayaVideoInput) {
+  if (hayaPublicModelId(input.model) === HAYA_XG_SEEDANCE_20_MODEL) {
+    const error = validateHayaVideoInput(input.model, { ...input, imageCount: input.images.length, videoCount: input.videos.length, audioCount: input.audios.length });
+    if (error) throw new Error(error);
+    return { model: hayaUpstreamModelId(input.model), prompt: input.prompt.trim(), seconds: String(input.seconds), ratio: input.ratio, resolution: input.resolution,
+      content: [...input.images.map(url => ({ type: 'image_url', image_url: { url } })),
+        ...input.audios.map(url => ({ type: 'audio_url', audio_url: { url } }))],
+      ...(input.metadata ? { metadata: input.metadata } : {}) };
+  }
   return { model: input.model, prompt: input.prompt.trim(), seconds: input.seconds, ratio: input.ratio, resolution: input.resolution,
     ...(input.images.length ? { images: input.images } : {}), ...(input.videos.length ? { videos: input.videos } : {}),
     ...(input.audios.length ? { audios: input.audios } : {}), ...(input.metadata ? { metadata: input.metadata } : {}) };

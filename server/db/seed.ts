@@ -3,7 +3,7 @@ import { migrateZonghengToV6k } from '../services/zonghengV6kMigration.js';
 import { ensureFundLedger } from './fundLedger.js';
 import { migratePidoiImageTimeout } from './imageTimeoutMigration.js';
 import { migrateV6kCatalog } from '../services/v6kCatalogMigration.js';
-import { HAYA_VIDEO_MODELS } from '../../shared/hayaVideo.js';
+import { HAYA_VIDEO_MODELS, HAYA_XG_SEEDANCE_20_MODEL, hayaVideoSeconds } from '../../shared/hayaVideo.js';
 import { ASYNC_VIDEO_BASE_URL, ASYNC_VIDEO_CHANNEL_TYPE } from '../../shared/asyncVideo.js';
 import { LONGXIA_MODELS, LONGXIA_BASE_URL, isLongxiaChannel, longxiaRate, longxiaResolution } from '../services/longxiaVideoAdapter.js';
 import { db, sqlite } from './index.js';
@@ -202,10 +202,10 @@ export async function syncModelsFromAPI() {
   // 强制追加静态模型 (图片/音频/视频 等)
   allVerified.push(
     ...HAYA_VIDEO_MODELS.map(spec => ({ provider: 'haya', modelId: spec.id, displayName: spec.id,
-      description: 'Haya AI；' + spec.resolution + '；本站支持4–30秒；' + (spec.confirmedMediaLimits
+      description: 'Haya AI；' + spec.resolution + '；本站支持' + hayaVideoSeconds(spec.id)[0] + '–' + hayaVideoSeconds(spec.id).at(-1) + '秒；' + (spec.confirmedMediaLimits
         ? '最多' + spec.maxImages + '张图片、' + spec.maxVideos + '个视频、' + spec.maxAudios + '段音频参考'
         : '素材支持范围以模型详情为准') + '；' + (spec.billingType === 'per_second' ? '按秒计费' : '按次计费'),
-      capabilities: JSON.stringify(['video']), isActive: 1 })),
+      capabilities: JSON.stringify(['video']), isActive: spec.id === HAYA_XG_SEEDANCE_20_MODEL ? 0 : 1 })),
     { provider: 'pidoi', modelId: 'gpt-image-2', displayName: 'gpt-image-2 · Pidoi 原生 4K', description: 'Pidoi 原生 4K 文生图/图生图', capabilities: JSON.stringify(['image']) },
     { provider: 'siyuetian', modelId: 'gpt-image-2-siyuetian', displayName: 'gpt-image-2 · 四月天', description: '四月天 GPT Image 2 异步文生图/图生图', capabilities: JSON.stringify(['image']) },
     { provider: 'mingfei', modelId: MINGFEI_IMAGE_MODEL, displayName: 'gpt-image-2 · MingFei', description: 'MingFei GPT Image 2 异步文生图/图生图', capabilities: JSON.stringify(['image']) },

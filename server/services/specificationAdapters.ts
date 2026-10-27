@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import type { RouteCandidate } from './modelRoutingService.js';
 import type { RoutingInput } from '../../shared/modelRouting.js';
 import { buildHmStudioVideoPayload, buildHmStudioImageForm, hmStudioCreateUrl, hmStudioTaskUrl, normalizeHmStudioTask } from './hmStudioAdapter.js';
-import { validateHayaVideoInput } from '../../shared/hayaVideo.js';
+import { HAYA_XG_SEEDANCE_20_MODEL, hayaPublicModelId, validateHayaVideoInput } from '../../shared/hayaVideo.js';
 import { buildSiYueTianSeedance25VideoPayload, getSiYueTianC2Model, getSiYueTianSeedance25VideoSpec } from './siYueTianVideoModels.js';
 import { getHmStudioUpstreamVideoModel, HM_STUDIO_NOVA_MODEL, HM_STUDIO_NOVA_UPSTREAM_MODEL, validateHmStudioAdditionalVideoInput } from '../../shared/hmStudioVideo.js';
 import { buildWxHaidiYueVideoPayload, wxHaidiYueCreateUrl, wxHaidiYueTaskUrl, normalizeWxHaidiYueTask, isWxHaidiYueChannel } from './wxHaidiYueAdapter.js';
@@ -24,7 +24,7 @@ import { buildSnumomWanPayload, normalizeSnumomWanTask, isSnumomWanChannel, extr
 import { buildSudaShuiVideoPayload, sudaShuiVideoCreateUrl } from './sudaShuiAdapter.js';
 import { buildNewTokenVideoPayload, newTokenVideoCreateUrl, isNewTokenChannel } from './newTokenAdapter.js';
 import { buildJulunMinimaxH3Payload, isJulunMinimaxH3Model } from './julunMinimaxAdapter.js';
-import { buildHayaVideoPayload, hayaApiBaseUrl, hayaTaskUrl, normalizeHayaTask, isHayaChannel } from './hayaVideoAdapter.js';
+import { submitHayaVideo, HayaSubmissionError, hayaTaskUrl, normalizeHayaTask, isHayaChannel } from './hayaVideoAdapter.js';
 import { prepareHayaMedia } from './hayaMediaService.js';
 import { generateMingFeiImage, isMingFeiImageChannel, mingFeiImageContentUrl } from './mingFeiImageAdapter.js';
 import { generateSiYueTianImage, isSiYueTianImageChannel, siYueTianImageContentUrl } from './siYueTianImageAdapter.js';
@@ -217,13 +217,21 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
       firstFrame: request.firstFrame, lastFrame: request.lastFrame, localMediaBaseUrl: request.publicBaseUrl, face: true });
     url = hmStudioCreateUrl(c.baseUrl, 'video');
   } else if (isHayaChannel(c)) {
-    const validation = validateHayaVideoInput(exec, { seconds: i.seconds, resolution: i.resolution, ratio: i.ratio, imageCount: i.images, videoCount: i.videos, audioCount: i.audios, firstFrame: request.firstFrame, lastFrame: request.lastFrame });
+    if (hayaPublicModelId(model) === HAYA_XG_SEEDANCE_20_MODEL && request.body.content !== undefined) unsupported('此规格入口请使用 reference_images 和 audio_urls 传递素材');
+    const validation = validateHayaVideoInput(model, { seconds: i.seconds, resolution: i.resolution, ratio: i.ratio, imageCount: request.images.length, videoCount: request.videos.length, audioCount: request.audios.length, firstFrame: request.firstFrame, lastFrame: request.lastFrame, metadata: request.body.metadata });
     if (validation) unsupported(validation);
     const options = { baseUrl: c.baseUrl, apiKey: c.apiKey, publicBaseUrl: request.publicBaseUrl };
-    payload = buildHayaVideoPayload({ model, prompt: request.prompt, seconds: i.seconds, ratio: i.ratio, resolution: i.resolution,
+    const input = { model, prompt: request.prompt, seconds: i.seconds, ratio: i.ratio, resolution: i.resolution,
       images: await prepareHayaMedia(request.images, 'image', options), videos: await prepareHayaMedia(request.videos, 'video', options),
-      audios: await prepareHayaMedia(request.audios, 'audio', options) });
-    url = hayaApiBaseUrl(c.baseUrl) + '/v1/videos';
+      audios: await prepareHayaMedia(request.audios, 'audio', options) };
+    try {
+      const job = await submitHayaVideo(c.baseUrl, c.apiKey, input, onStarting,
+        requestId => { if (requestId) onStarting({ requestId }); });
+      return job.taskId;
+    } catch (error) {
+      if (error instanceof HayaSubmissionError) throw new SpecificationUpstreamError(error.message, false, error.uncertain, false, 0, !error.uncertain);
+      throw error;
+    }
   } else if (isWxHaidiYueChannel(c)) {
     if (request.firstFrame || request.lastFrame) throw new Error('此线路不支持独立首尾帧');
     payload = buildWxHaidiYueVideoPayload({ model, prompt: request.prompt, duration: i.seconds, aspectRatio: i.ratio,

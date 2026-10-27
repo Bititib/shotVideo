@@ -57,7 +57,12 @@ vi.mock('../server/services/videoLocalizationService.js', () => ({ downloadAndLo
 
 import { db, sqlite } from '../server/db/index';
 import { channels, models, modelPricing, users, contents } from '../server/db/schema';
-import { HAYA_VIDEO_MODELS, HAYA_MODEL_IDS } from '../shared/hayaVideo';
+import { HAYA_VIDEO_MODELS, HAYA_MODEL_IDS, HAYA_XG_SEEDANCE_20_MODEL as xg, HAYA_XG_SEEDANCE_20_UPSTREAM_MODEL as upstreamXg, hayaVideoSeconds } from '../shared/hayaVideo';
+import { eq } from 'drizzle-orm';
+import { quoteVideoRequest } from '../server/services/videoQuoteService';
+import { existingModelLimits } from '../server/services/modelInputPresets';
+import { canvasVideoReferenceLimits } from '../shared/canvasVideoReferences';
+import { batchStore, tickVideoBatches } from '../server/services/videoBatchService';
 import { ChannelService } from '../server/services/channelService';
 import { VideoRecoveryService } from '../server/services/videoRecoveryService';
 import { PricingService } from '../server/services/pricingService';
@@ -81,6 +86,7 @@ beforeAll(async () => {
   intervalSpy.mockRestore();
 });
 beforeEach(() => {
+  for (const table of ['video_batch_commands', 'video_batch_attempts', 'video_batch_items', 'video_batches']) sqlite.exec('DELETE FROM ' + table);
   if (sqlite.prepare("SELECT name FROM sqlite_master WHERE name='video_submission_receipts'").get()) sqlite.exec('DELETE FROM video_submission_receipts');
   for (const table of ['contents', 'channels', 'models', 'model_pricing', 'users', 'api_logs']) sqlite.exec('DELETE FROM ' + table);
   db.insert(users).values({ id: 1, email: 'test', username: 'test', passwordHash: 'test', balance: 100 }).run();
@@ -177,22 +183,120 @@ describe('Haya in both application entry points (isolated in-memory database)', 
     expect(rows.find(m => m.modelId === 'gemini-3.8-flash-tts')).toMatchObject({ capabilities: '["tts"]', isActive: 0, displayName: 'Custom name' });
     expect(rows.find(m => m.modelId === 'new-tts')?.capabilities).toBe('["tts"]');
   });
-  it('seeds all seven models even when unrelated upstream discovery is unavailable', async () => {
+  it('seeds all models even when unrelated discovery is unavailable, with the new model disabled', async () => {
     sqlite.exec('DELETE FROM models');
     const { syncModelsFromAPI } = await import('../server/db/seed');
     await syncModelsFromAPI();
     expect(db.select().from(models).all().filter(m => m.provider === 'haya').map(m => m.modelId)).toEqual(HAYA_MODEL_IDS);
     expect(db.select().from(models).all().filter(m => m.modelId.includes('tts'))).toEqual([]);
     await syncModelsFromAPI();
-    expect(db.select().from(models).all().filter(m => m.provider === 'haya')).toHaveLength(7);
+    expect(db.select().from(models).all().filter(m => m.provider === 'haya')).toHaveLength(8);
+    expect(db.select().from(models).where(eq(models.modelId, xg)).get()).toMatchObject({ isActive: 0 });
+    db.update(models).set({ isActive: 1, displayName: '管理员命名' }).where(eq(models.modelId, xg)).run();
+    db.update(modelPricing).set({ inputPrice: 8 }).where(eq(modelPricing.modelPattern, xg)).run();
+    await syncModelsFromAPI();
+    expect(db.select().from(models).where(eq(models.modelId, xg)).get()).toMatchObject({ isActive: 1, displayName: '管理员命名' });
+    expect(PricingService.quote(xg, { seconds: 15 }, false).cost).toBe(8);
   });
   it('lists the exact resolution, duration and price for every model', async () => {
     const listed = await (await nativeFetch(origin + '/api/video/models')).json() as any[];
-    expect(listed).toHaveLength(7);
+    expect(listed).toHaveLength(8);
     for (const spec of HAYA_VIDEO_MODELS) {
       expect(listed.find(m => m.id === spec.id)).toMatchObject({ rates: { [spec.resolution]: spec.price }, billingType: spec.billingType,
-        allowedSeconds: Array.from({ length: 27 }, (_, i) => i + 4) });
+        allowedSeconds: hayaVideoSeconds(spec.id) });
     }
+  });
+  it('syncs the new upstream ID disabled, initializes ¥4 per call and preserves administrator settings', async () => {
+    db.delete(models).where(eq(models.modelId, xg)).run();
+    db.delete(modelPricing).where(eq(modelPricing.modelPattern, xg)).run();
+    upstream = async () => Response.json({ data: [{ id: upstreamXg, name: upstreamXg }] });
+    const id = db.select().from(channels).get()!.id;
+    expect(await ChannelService.syncModels(id)).toMatchObject({ models: [xg], added: 1 });
+    expect(db.select().from(models).where(eq(models.modelId, xg)).get()).toMatchObject({ modelId: 'Seedance-2.0-720', displayName: 'Seedance-2.0-720', isActive: 0 });
+    expect(db.select().from(models).where(eq(models.modelId, upstreamXg)).get()).toBeUndefined();
+    expect(PricingService.quote(xg, { seconds: 15 }, false)).toMatchObject({ cost: 4, billingType: 'per_call' });
+    expect(JSON.parse(ChannelService.getChannelRaw(id)!.modelMapping)[xg]).toBe(upstreamXg);
+    db.update(models).set({ isActive: 1 }).where(eq(models.modelId, xg)).run();
+    db.update(modelPricing).set({ inputPrice: 6 }).where(eq(modelPricing.modelPattern, xg)).run();
+    await ChannelService.syncModels(id);
+    expect(db.select().from(models).where(eq(models.modelId, xg)).get()?.isActive).toBe(1);
+    expect(PricingService.quote(xg, { seconds: 5 }, false).cost).toBe(6);
+  });
+  it('exposes matching web/canvas/routing limits and quotes the same price for 5 and 15 seconds', async () => {
+    const limits = existingModelLimits(xg, 'video');
+    expect(limits).toMatchObject({ maxImages: 9, maxVideos: 0, maxAudios: 3, resolutions: ['720p'], duration: { min: 5, max: 15 } });
+    expect(canvasVideoReferenceLimits(xg)).toEqual({ images: 9, videos: 0, audios: 3 });
+    const listed = await (await nativeFetch(origin + '/api/video/models')).json() as any[];
+    expect(listed.find(m => m.id === xg)).toMatchObject({ routingLimits: limits, rates: { '720p': 4 }, allowedSeconds: hayaVideoSeconds(xg) });
+    for (const seconds of [5, 15]) expect(quoteVideoRequest({ model: xg, resolution: '720p', seconds }, 1)).toMatchObject({ cost: 4, billingType: 'per_call' });
+    for (const seconds of [4, 16]) expect(() => quoteVideoRequest({ model: xg, resolution: '720p', seconds }, 1)).toThrow();
+  });
+  it.each(['/api/video/generate', '/api/video/validate', '/v1/videos'])('rejects unsupported XG input before billing at %s', async endpoint => {
+    for (const patch of [{ seconds: 4, video_length: 4 }, { seconds: 16, video_length: 16 }, { resolution: '1080p' },
+      { aspect_ratio: '3:2' }, { reference_videos: ['https://media.example/ref.mp4'] }, { reference_images: Array(10).fill('https://media.example/ref.png') },
+      { audio_urls: Array(4).fill('https://media.example/ref.mp3') }]) {
+      expect((await post(endpoint, { ...body, model: xg, ...patch })).status).toBe(400);
+      expect(balance()).toBe(100); expect(db.select().from(contents).all()).toHaveLength(0); expect(fetch).not.toHaveBeenCalled();
+    }
+  });
+  it.each(['/api/video/generate', '/v1/videos'])('submits XG with string duration and root content, persists ID and charges once at %s', async endpoint => {
+    let submissions = 0;
+    upstream = async (_url, init) => {
+      if (init.method === 'POST') {
+        submissions++;
+        expect(JSON.parse(init.body)).toEqual({ model: upstreamXg, prompt: body.prompt, seconds: '15', ratio: '16:9', resolution: '720p',
+          content: [{ type: 'audio_url', audio_url: { url: 'https://media.example/ref.mp3?signature=a%2Fb' } }] });
+        expect(latest().status).toBe('processing'); expect(balance()).toBe(96);
+        return Response.json({ id: 'task_xg' });
+      }
+      expect(JSON.parse(latest().metadata).videoId).toBe('task_xg');
+      return Response.json({ status: 'completed', metadata: { url: 'https://media.example/result.mp4' } });
+    };
+    await (await post(endpoint, { ...body, model: xg, seconds: 15, video_length: 15, audio_urls: ['https://media.example/ref.mp3?signature=a%2Fb'] })).text();
+    await vi.waitFor(() => expect(latest().status).toBe('completed'));
+    expect(balance()).toBe(96); expect(submissions).toBe(1);
+  });
+  it('accepts root content and defaults to 5 seconds in the public API, rejects conflicting material fields', async () => {
+    upstream = async (_url, init) => {
+      if (init.method === 'POST') {
+        expect(JSON.parse(init.body)).toMatchObject({ seconds: '5', content: [{ type: 'audio_url', audio_url: { url: 'https://media.example/a.mp3' } }] });
+        return Response.json({ id: 'task_content' });
+      }
+      return Response.json({ status: 'completed', metadata: { url: 'https://media.example/done.mp4' } });
+    };
+    const content = [{ type: 'audio_url', audio_url: { url: 'https://media.example/a.mp3' } }];
+    for (const patch of [{ content, audio_urls: ['https://media.example/b.mp3'] }, { metadata: { content } },
+      { content: [{ type: 'video_url', video_url: { url: 'https://media.example/v.mp4' } }] }]) {
+      expect((await post('/v1/videos', { model: xg, prompt: body.prompt, ...patch })).status).toBe(400);
+      expect(fetch).not.toHaveBeenCalled(); expect(balance()).toBe(100);
+    }
+    expect((await post('/v1/videos', { model: xg, prompt: body.prompt, content })).status).toBe(202);
+    await vi.waitFor(() => expect(latest().status).toBe('completed'));
+    expect(balance()).toBe(96);
+  });
+  it.each(['completed', 'rejected', 'unknown'])('runs XG through the real batch dispatcher and settles %s once', async outcome => {
+    let submissions = 0;
+    upstream = async (url, init) => {
+      if (url.startsWith('http://127.0.0.1:9876/')) return nativeFetch(url.replace('http://127.0.0.1:9876', origin), init);
+      if (init.method === 'POST') {
+        submissions++;
+        expect(JSON.parse(init.body)).toMatchObject({ model: upstreamXg, seconds: '15', content: [] });
+        if (outcome === 'unknown') throw new Error('network timeout');
+        if (outcome === 'rejected') return Response.json({ error: { code: 'insufficient_quota', message: '余额不足' } }, { status: 402 });
+        return Response.json({ id: 'task_batch_xg' });
+      }
+      return Response.json({ status: 'completed', metadata: { url: 'https://media.example/done.mp4' } });
+    };
+    const id = batchStore.create(1, 'haya-xg-' + outcome, { name: 'XG batch', model: xg, resolution: '720p', video_length: 15, aspect_ratio: '16:9',
+      autoRetry: true, maxRetries: 2, creatives: [{ prompt: body.prompt, count: 1, reference_images: [], reference_videos: [], audio_urls: [] }] }, 4, 'https://site.example');
+    expect(balance()).toBe(96);
+    await tickVideoBatches();
+    await vi.waitFor(() => expect(latest()?.status).toBe(outcome === 'rejected' ? 'failed' : outcome === 'unknown' ? 'review' : 'completed'));
+    await tickVideoBatches(); await tickVideoBatches();
+    const item = batchStore.detail(id, 1).items[0];
+    expect(item.billing_state).toBe(outcome === 'rejected' ? 'refunded' : outcome === 'unknown' ? 'reserved' : 'charged');
+    expect(balance()).toBe(outcome === 'rejected' ? 100 : 96);
+    expect(submissions).toBe(1);
   });
   it('registers channel defaults, quotes markup, and discovers only the requested live models', async () => {
     expect(ChannelService.findChannelForModel(HAYA_MODEL_IDS[0])?.type).toBe('haya');
