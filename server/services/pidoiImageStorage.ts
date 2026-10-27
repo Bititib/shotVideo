@@ -3,14 +3,16 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { readValidatedImage } from './wxHaidiYueImageService.js';
 import { registerUpload } from './uploadAccess.js';
+import { downloadPidoiContent, type PidoiResultAuth } from './pidoiImageResult.js';
 
-/** Signed Pidoi result links are downloaded without API credentials. */
-export async function localizeRecoveredImages(sources: { url: string; channelId: number; channelApiKeyId: number | null }[], contentId: number, ownerId: number, publicBaseUrl: string) {
+/** CDN/signed links receive no credentials; only a validated provider content endpoint may use auth. */
+export async function localizeRecoveredImages(sources: { url: string; channelId: number; channelApiKeyId: number | null; auth?: PidoiResultAuth }[], contentId: number, ownerId: number, publicBaseUrl: string) {
   const urls: string[] = [], issues: string[] = [], failures: unknown[] = [];
   const uploadsRoot = path.resolve('data/uploads');
   for (const source of sources) {
     try {
-      const image = await readValidatedImage(source.url, { uploadsRoot, publicBaseUrl, timeoutMs: 60_000 });
+      const input = source.auth ? 'data:image/png;base64,' + (await downloadPidoiContent(source.url, source.auth)).toString('base64') : source.url;
+      const image = await readValidatedImage(input, { uploadsRoot, publicBaseUrl, timeoutMs: 60_000 });
       const hash = createHash('sha256').update(image.buffer).digest('hex').slice(0, 32);
       const filename = `recovered_image_${contentId}_${hash}.${image.extension}`;
       await fs.mkdir(uploadsRoot, { recursive: true });

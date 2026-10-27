@@ -27,7 +27,8 @@ import router from '../server/routes/imageGen.js';
 import { localizeRecoveredImages } from '../server/services/pidoiImageStorage.js';
 import { recoverPidoiImage, pidoiImageActive } from '../server/services/pidoiImageWorker.js';
 import { generateSpecificationImage } from '../server/services/specificationAdapters.js';
-import { confirmPidoiImageFailure, recheckPidoiImage } from '../server/services/pidoiImageResolutionService.js';
+import { confirmPidoiImageFailure, recheckPidoiImage, supplementPidoiImageResults, supplementPidoiImageTask } from '../server/services/pidoiImageResolutionService.js';
+import adminRouter from '../server/routes/pidoiImageAdmin.js';
 
 function row() { return sqlite.prepare('SELECT * FROM contents ORDER BY id DESC LIMIT 1').get() as any; }
 function balance() { return (sqlite.prepare('SELECT balance FROM users WHERE id=1').get() as any).balance; }
@@ -209,6 +210,186 @@ describe('Pidoi 网页提交到保存和结算', () => {
     await generate(); await vi.waitFor(()=>expect(pidoiImageActive.size).toBe(0));
     return row().id;
   }
+  const manualTaskId = '202610270216552661065508268d9d6IpacyOdT';
+  const originalTaskResponse = (status = 'SUCCESS', taskId = manualTaskId) => Response.json({code:'success',data:{task_id:taskId,status,
+    result_url:status==='SUCCESS'?'https://cdn.test/original.png':'',fail_reason:status==='FAILURE'?'upstream rejected image':''}});
+  it('上游明确要求核查时保存已验证编号并暂停，不能假装仍自动生成',async()=>{
+    const id=await unknownSubmission();
+    const f=vi.fn().mockResolvedValue(Response.json({code:'success',message:'任务执行中断，需要管理员核查结果',data:{task_id:manualTaskId,status:'IN_PROGRESS',recovery_required:true}}));
+    vi.stubGlobal('fetch',f);
+    const result=await supplementPidoiImageTask(id,9,manualTaskId);
+    expect(result.status).toBe('review');expect(result.message).toContain('任务执行中断');
+    expect(JSON.parse(row().metadata).upstreamTaskId).toBe(manualTaskId);
+    await recoverPidoiImage(id,{automatic:true});expect(f).toHaveBeenCalledTimes(1);expect(balance()).toBeCloseTo(99.78);
+  });
+  it('原任务返回站内鉴权下载地址时，将原身份限定交给图片保存器',async()=>{
+    const id=await unknownSubmission();
+    const source=`/v1/image/generations/${manualTaskId}/content?index=0`;
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({code:'success',data:{task_id:manualTaskId,status:'SUCCESS',result_url:source}})));
+    await supplementPidoiImageTask(id,9,manualTaskId);
+    expect(localizeRecoveredImages).toHaveBeenCalledExactlyOnceWith([expect.objectContaining({url:source,auth:{baseUrl:'https://pidoi.com',apiKey:'test-key',taskId:manualTaskId}})],id,1,expect.any(String));
+    expect(row().status).toBe('completed');expect(balance()).toBeCloseTo(99.78);expect(row().metadata).not.toContain('test-key');
+  });
+  it('后台补录无 task_ 前缀的真实任务 ID，通过原渠道只读查询后保存图片并沿用预扣', async()=>{
+    vi.stubEnv('PIDOI_IMAGE_REQUEST_MODE','sync');
+    const id = await unknownSubmission();
+    const f = vi.fn().mockResolvedValue(originalTaskResponse()); vi.stubGlobal('fetch',f);
+    const layer=adminRouter.stack.find((layer:any)=>layer.route?.path==='/:id/image-supplement-task') as any;
+    const res:any={setHeader:vi.fn(),json:vi.fn(),status:vi.fn().mockReturnThis()};
+    await layer.route.stack.at(-1).handle({userId:9,params:{id},body:{taskId:manualTaskId}},res);
+    expect(res.status).not.toHaveBeenCalled(); expect(res.json).toHaveBeenCalledWith(expect.objectContaining({status:'completed'}));
+    expect(row()).toMatchObject({status:'completed',cost:0.22,result_url:'/api/uploads/result.png'});
+    expect(JSON.parse(row().metadata)).toMatchObject({upstreamTaskId:manualTaskId,pidoiTaskSupplement:{adminId:9,taskId:manualTaskId,verifiedStatus:'completed'}});
+    expect(reservation()).toMatchObject({state:'settled',actual:0.22}); expect(balance()).toBeCloseTo(99.78);
+    expect(f).toHaveBeenCalledExactlyOnceWith(`https://pidoi.com/v1/image/generations/${manualTaskId}`,expect.objectContaining({method:'GET',headers:expect.objectContaining({Authorization:'Bearer test-key'})}));
+    await supplementPidoiImageTask(id,9,manualTaskId); await recoverPidoiImage(id);
+    expect(f).toHaveBeenCalledTimes(1); expect(localizeRecoveredImages).toHaveBeenCalledTimes(1); expect(balance()).toBeCloseTo(99.78);
+  });
+  it.each([401,403,404,502])('查询 HTTP %s 不污染原任务编号或锁住退款，随后可更正再恢复',async http=>{
+    const id=await unknownSubmission(), before=row();
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({error:{message:'Invalid token'}},{status:http})));
+    const layer=adminRouter.stack.find((layer:any)=>layer.route?.path==='/:id/image-supplement-task') as any;
+    const res:any={setHeader:vi.fn(),json:vi.fn(),status:vi.fn().mockReturnThis()};
+    await layer.route.stack.at(-1).handle({userId:9,params:{id},body:{taskId:manualTaskId}},res);
+    expect(res.status).toHaveBeenCalledWith(502); // not a local session-expired response
+    expect(res.json.mock.calls[0][0].error).toContain(`HTTP ${http}`);
+    expect(res.json.mock.calls[0][0].error).toContain('Invalid token');
+    expect(res.json.mock.calls[0][0].error).not.toContain('test-key');
+    expect(row()).toEqual(before); expect(reservation().state).toBe('review'); expect(balance()).toBeCloseTo(99.78);
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(originalTaskResponse()));
+    await supplementPidoiImageTask(id,9,manualTaskId); expect(row().status).toBe('completed'); expect(balance()).toBeCloseTo(99.78);
+  });
+  it('补录查询失败后仍能通过原有确认失败入口退款，重复退款不会多退',async()=>{
+    const id=await unknownSubmission();
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({error:{message:'Invalid token'}},{status:401})));
+    await expect(supplementPidoiImageTask(id,9,manualTaskId)).rejects.toThrow('Invalid token');
+    confirmPidoiImageFailure(id,9,true,'管理员另行核对上游，确认没有交付图片');
+    expect(row()).toMatchObject({status:'failed',cost:0});expect(balance()).toBe(100);
+    confirmPidoiImageFailure(id,9,true,'重复点击同一笔退款确认'); expect(balance()).toBe(100);
+  });
+  it('核实成功后下载失败保留原回执，重启恢复直接下载、不再查询或扣费',async()=>{
+    const id=await unknownSubmission();
+    const f=vi.fn().mockResolvedValue(originalTaskResponse());vi.stubGlobal('fetch',f);
+    vi.mocked(localizeRecoveredImages).mockResolvedValueOnce({urls:[],issues:['暂不可用'],failures:[new Error('HTTP 503')]});
+    expect(await supplementPidoiImageTask(id,9,manualTaskId)).toMatchObject({status:'processing'});
+    expect(JSON.parse(row().metadata)).toMatchObject({upstreamTaskId:manualTaskId,pidoiImageJobs:[{sourceUrl:'https://cdn.test/original.png',status:'completed'}]});
+    expect(balance()).toBeCloseTo(99.78);expect(reservation().state).toBe('review');
+    expect(()=>confirmPidoiImageFailure(id,9,true,'已知成功图片不能退款')).toThrow();
+    await recoverPidoiImage(id,{automatic:true});
+    expect(row().status).toBe('completed');expect(f).toHaveBeenCalledTimes(1);expect(balance()).toBeCloseTo(99.78);
+  });
+  it('查到进行中的任务，保存核实后的 ID 并由后台继续查原任务',async()=>{
+    const id=await unknownSubmission();
+    const f=vi.fn().mockResolvedValueOnce(originalTaskResponse('IN_PROGRESS')).mockResolvedValueOnce(originalTaskResponse());vi.stubGlobal('fetch',f);
+    await supplementPidoiImageTask(id,9,manualTaskId);expect(row().status).toBe('processing');expect(f).toHaveBeenCalledTimes(1);
+    await recoverPidoiImage(id,{automatic:true});expect(row().status).toBe('completed');expect(balance()).toBeCloseTo(99.78);
+    expect(f.mock.calls.every(call=>call[1].method==='GET')).toBe(true);
+  });
+  it('核实到原任务明确失败，按原账本退款一次',async()=>{
+    const id=await unknownSubmission();
+    const f=vi.fn().mockResolvedValue(originalTaskResponse('FAILURE'));vi.stubGlobal('fetch',f);
+    await supplementPidoiImageTask(id,9,manualTaskId);
+    expect(row()).toMatchObject({status:'failed',cost:0});expect(reservation().state).toBe('refunded');expect(balance()).toBe(100);
+    await expect(supplementPidoiImageTask(id,9,manualTaskId)).rejects.toThrow();
+    await recoverPidoiImage(id);expect(balance()).toBe(100);expect(f).toHaveBeenCalledTimes(1);
+  });
+  it.each(['different_task',''])('响应 ID 不一致或缺失不能绑定或恢复：%s',async returnedId=>{
+    const id=await unknownSubmission(),before=row();
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(originalTaskResponse('SUCCESS',returnedId)));
+    await expect(supplementPidoiImageTask(id,9,manualTaskId)).rejects.toThrow();
+    expect(row()).toEqual(before);expect(balance()).toBeCloseTo(99.78);expect(localizeRecoveredImages).not.toHaveBeenCalled();
+  });
+  it('任务补录查询期间阻止并发退款和补录，禁止占用其他订单的任务',async()=>{
+    const id=await unknownSubmission(); let finish!:(value:Response)=>void;
+    vi.stubGlobal('fetch',vi.fn().mockReturnValue(new Promise(resolve=>{finish=resolve;})));
+    const first=supplementPidoiImageTask(id,9,manualTaskId);
+    await expect(supplementPidoiImageTask(id,9,manualTaskId)).rejects.toThrow('正在提交');
+    expect(()=>confirmPidoiImageFailure(id,9,true,'仍在查询时不能退款')).toThrow('正在提交或恢复');
+    sqlite.prepare("INSERT INTO contents(user_id,type,status,metadata) VALUES(1,'image','completed',?)").run(JSON.stringify({channelId:6,upstreamTaskId:manualTaskId}));
+    finish(originalTaskResponse()); await expect(first).rejects.toThrow('已关联订单');
+    expect((sqlite.prepare('SELECT status FROM contents WHERE id=?').get(id) as any).status).toBe('review');expect(balance()).toBeCloseTo(99.78);
+  });
+  it('同步结果丢失后通过后台补录原图片，原预扣结算且刷新、重复补录均不重复扣费', async () => {
+    vi.stubEnv('PIDOI_IMAGE_REQUEST_MODE', 'sync');
+    const id = await unknownSubmission();
+    const networkCalls = vi.mocked(fetch).mock.calls.length;
+    const layer = adminRouter.stack.find((layer: any) => layer.route?.path === '/:id/image-supplement-result') as any;
+    const response: any = { setHeader: vi.fn(), json: vi.fn(), status: vi.fn().mockReturnThis() };
+    await layer.route.stack.at(-1).handle({ userId: 9, params: { id }, body: { urls: ['https://cdn.test/original.png'] } }, response);
+    expect(response.status).not.toHaveBeenCalled();
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed', alreadyResolved: false }));
+    expect(row()).toMatchObject({ status: 'completed', cost: 0.22, result_url: '/api/uploads/result.png' });
+    expect(reservation()).toMatchObject({ state: 'settled', actual: 0.22, amount: 0.22 });
+    expect(balance()).toBeCloseTo(99.78);
+    expect(JSON.parse(row().metadata)).toMatchObject({ imageUrls: ['/api/uploads/result.png'], requiresReview: false,
+      pidoiResultSupplement: { adminId: 9, amount: 0.22, count: 1 } });
+    expect(await supplementPidoiImageResults(id, 9, ['https://cdn.test/original.png'])).toMatchObject({ alreadyResolved: true });
+    await recoverPidoiImage(id);
+    expect(balance()).toBeCloseTo(99.78); expect(fetch).toHaveBeenCalledTimes(networkCalls);
+    expect(localizeRecoveredImages).toHaveBeenCalledExactlyOnceWith([{url:'https://cdn.test/original.png',channelId:0,channelApiKeyId:null}], id, 1, expect.any(String));
+    expect(() => confirmPidoiImageFailure(id, 9, true, '不能再次退回已完成任务费用')).toThrow();
+  });
+  it('补录下载失败保持原预扣与状态，明确展示 HTTP 原因并隐藏签名链接', async () => {
+    const id = await unknownSubmission(); const before = row();
+    vi.mocked(localizeRecoveredImages).mockResolvedValue({ urls: [], issues: ['图片保存暂不可用'], failures: [new Error('HTTP 404 https://cdn.test/a?signature=secret-value')] });
+    const error = await supplementPidoiImageResults(id, 9, ['https://cdn.test/a']).catch(error => error);
+    expect(error.status).toBe(422); expect(error.message).toContain('404'); expect(error.message).not.toContain('secret-value');
+    expect(row()).toEqual(before); expect(balance()).toBeCloseTo(99.78); expect(reservation().state).toBe('review');
+  });
+  it('补录保存与原账本结算必须原子完成，写订单失败时回滚', async () => {
+    const id = await unknownSubmission();
+    sqlite.exec("CREATE TRIGGER reject_success BEFORE UPDATE OF status ON contents WHEN NEW.status='completed' BEGIN SELECT RAISE(ABORT,'test persist failure'); END;");
+    try { await expect(supplementPidoiImageResults(id, 9, ['https://cdn.test/a'])).rejects.toThrow('test persist failure'); }
+    finally { sqlite.exec('DROP TRIGGER reject_success'); }
+    expect(reservation().state).toBe('review'); expect(row().status).toBe('review'); expect(balance()).toBeCloseTo(99.78);
+    expect(JSON.parse(row().metadata).pidoiResultSupplement).toBeUndefined();
+  });
+  it('下载期间并发补录、退款与恢复不会重复处理；下载后再次核对账本', async () => {
+    const id = await unknownSubmission();
+    let finish!: (value: any) => void;
+    vi.mocked(localizeRecoveredImages).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const pending = supplementPidoiImageResults(id, 9, ['https://cdn.test/a']);
+    await expect(supplementPidoiImageResults(id, 9, ['https://cdn.test/a'])).rejects.toThrow('正在提交');
+    expect(() => confirmPidoiImageFailure(id, 9, true, '下载中不能退回原始预扣')).toThrow('正在提交或恢复');
+    const calls = vi.mocked(fetch).mock.calls.length; await recoverPidoiImage(id); expect(fetch).toHaveBeenCalledTimes(calls);
+    // Simulate reconciliation in another process; completion must not overwrite it.
+    sqlite.prepare("UPDATE billing_reservations SET state='refunded' WHERE id=?").run(reservation().id);
+    finish({urls:['/api/uploads/a.png'],issues:[],failures:[]});
+    await expect(pending).rejects.toThrow('已退款');
+    expect(row().status).toBe('review'); expect(reservation().state).toBe('refunded'); expect(pidoiImageActive.size).toBe(0);
+  });
+  it('已经退款的订单不能通过补录再次扣费', async () => {
+    const id = await unknownSubmission(); confirmPidoiImageFailure(id, 9, true, '已核实失败，先退回原预扣');
+    await expect(supplementPidoiImageResults(id, 9, ['https://cdn.test/a'])).rejects.toThrow();
+    expect(balance()).toBe(100); expect(localizeRecoveredImages).not.toHaveBeenCalled(); expect(row().status).toBe('failed');
+  });
+  it('补录沿用原组织预扣，用户更换组织也不再扣个人或新组织余额', async () => {
+    sqlite.exec('DELETE FROM organizations; INSERT INTO organizations(id,balance) VALUES(21,10),(22,20); UPDATE users SET org_id=21 WHERE id=1;');
+    const id = await unknownSubmission(); sqlite.exec('UPDATE users SET org_id=22 WHERE id=1;');
+    await supplementPidoiImageResults(id, 9, ['https://cdn.test/a']);
+    expect(balance()).toBe(100); expect((sqlite.prepare('SELECT balance FROM organizations WHERE id=21').get() as any).balance).toBeCloseTo(9.78);
+    expect((sqlite.prepare('SELECT balance FROM organizations WHERE id=22').get() as any).balance).toBe(20);
+    expect(reservation().state).toBe('settled');
+  });
+  it('补录拒绝越权、不合法链接、数量不符及账本归属不符', async () => {
+    const id = await unknownSubmission();
+    await expect(supplementPidoiImageResults(id, 1, ['https://cdn.test/a'])).rejects.toThrow('超级管理员');
+    for (const urls of [[], ['https://cdn.test/a', 'https://cdn.test/b'], ['file:///etc/passwd'], ['https://user:password@cdn.test/a'], ['bad url']])
+      await expect(supplementPidoiImageResults(id, 9, urls)).rejects.toThrow();
+    sqlite.prepare('UPDATE billing_reservations SET context=? WHERE id=?').run(JSON.stringify({userId:2,contentId:id}), reservation().id);
+    await expect(supplementPidoiImageResults(id, 9, ['https://cdn.test/a'])).rejects.toThrow('归属不一致');
+    expect(localizeRecoveredImages).not.toHaveBeenCalled(); expect(balance()).toBeCloseTo(99.78);
+  });
+  it('多图订单未保存完整数量不能按全额恢复成功', async () => {
+    vi.stubGlobal('fetch',vi.fn().mockRejectedValue(new Error('connection lost')));
+    await generate(2); await vi.waitFor(()=>expect(pidoiImageActive.size).toBe(0));
+    const id = row().id;
+    await expect(supplementPidoiImageResults(id, 9, ['https://cdn.test/a', 'https://cdn.test/b'])).rejects.toThrow('保存图片数量不足');
+    expect(row().status).toBe('review'); expect(balance()).toBeCloseTo(99.56);
+    vi.mocked(localizeRecoveredImages).mockResolvedValue({urls:['/api/uploads/a.png','/api/uploads/b.png'],issues:[],failures:[]});
+    await supplementPidoiImageResults(id, 9, ['https://cdn.test/a', 'https://cdn.test/b']);
+    expect(row()).toMatchObject({status:'completed',cost:0.44}); expect(balance()).toBeCloseTo(99.56);
+  });
   it('管理员核实退款与任务终止原子完成，重复操作和后台扫描均不再退款',async()=>{
     const id=await unknownSubmission();
     const result=confirmPidoiImageFailure(id,9,true,'已核对上游记录，未产生任何图片');

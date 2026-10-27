@@ -122,6 +122,10 @@ export const adminApi = {
   getContent(id: number) { return api.get<any>(`/admin/contents/${id}`); },
   recoverMjImages(id: number, resultUrls: string[]) { return api.post<{status:string;message:string}>(`/admin/contents/${id}/recover-mj-images`, { resultUrls, confirmedOriginalResult: true }); },
   recheckPidoiImage(id: number) { return api.post<{message:string}>(`/admin/contents/${id}/image-recheck`); },
+  supplementPidoiImageTask(id: number, taskId: string) { return api.post<{message:string}>(`/admin/contents/${id}/image-supplement-task`, {taskId}); },
+  supplementPidoiImageResults(id: number, urls: string[]) {
+    return mutate(() => client.post<{message:string;alreadyResolved:boolean}>(`/admin/contents/${id}/image-supplement-result`, {urls}, {timeoutMs:660000}));
+  },
   confirmPidoiImageFailure(id: number, note: string) { return api.post<{refundedAmount:number;alreadyResolved:boolean}>(`/admin/contents/${id}/image-confirm-failure`, {confirmedFailure:true,note}); },
   previewRecentFailedVideoRecovery(days = 3) { return api.get<any>(`/admin/contents/recovery/preview?days=${days}`); },
   recoverRecentFailedVideos(days = 3) { return api.post<any>('/admin/contents/recovery/run', { days }); },

@@ -54,7 +54,7 @@ afterAll(async()=>{await new Promise<void>(resolve=>server.close(()=>resolve()))
 
 describe('production release safety',()=>{
   it('protects image recheck and refund endpoints from anonymous users and forged admin roles', async()=>{
-    for (const action of ['image-recheck','image-confirm-failure']) {
+    for (const action of ['image-recheck','image-confirm-failure','image-supplement-result','image-supplement-task']) {
       const endpoint=`${base}/api/admin/contents/99999/${action}`;
       const body=JSON.stringify({confirmedFailure:true,note:'核实未成功，申请全额退款'});
       expect((await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body})).status).toBe(401);

@@ -6,9 +6,33 @@ export function PidoiImageReviewActions({ id, status, cost, metadata, hasResult,
 }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [showSupplement, setShowSupplement] = useState(false);
+  const [links, setLinks] = useState('');
+  const [showTaskSupplement, setShowTaskSupplement] = useState(false);
+  const [taskId, setTaskId] = useState('');
   if (metadata.imageProtocol !== 'pidoi-async-v1' || metadata.managedSpecification || !['review', 'processing'].includes(status)) return null;
   const canRefund = status === 'review' && !hasResult && !metadata.imageUrls?.length && !metadata.upstreamImageUrls?.length
     && !metadata.pidoiImageJobs?.some((job: any) => job.sourceUrl || job.localUrl || job.status === 'completed');
+  const supplementTask = async () => {
+    if (busy || !taskId.trim()) return;
+    setBusy(true); setMessage('正在核对上游原任务…');
+    try {
+      setMessage((await adminApi.supplementPidoiImageTask(id, taskId.trim())).message);
+      await onResolved();
+    } catch (error: any) { setMessage(error.message || '任务查询未通过，未绑定编号'); }
+    finally { setBusy(false); }
+  };
+  const supplement = async () => {
+    if (busy) return;
+    const urls = links.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    if (urls.length !== Number(metadata.count ?? 1)) { setMessage(`请填写全部 ${metadata.count ?? 1} 张图片链接，每行一条`); return; }
+    setBusy(true); setMessage('正在下载并保存图片，请稍候…');
+    try {
+      setMessage((await adminApi.supplementPidoiImageResults(id, urls)).message);
+      await onResolved();
+    } catch (error: any) { setMessage(error.message || '图片补录失败'); }
+    finally { setBusy(false); }
+  };
   const run = async (refund: boolean) => {
     if (busy) return;
     let note = '';
@@ -34,7 +58,21 @@ export function PidoiImageReviewActions({ id, status, cost, metadata, hasResult,
     <div className="flex flex-wrap gap-2">
       <button type="button" disabled={busy} onClick={() => void run(false)} className="rounded-lg border border-white/20 px-3 py-2 text-xs focus-visible:ring-2 disabled:opacity-50">{busy ? '处理中…' : '查询原任务'}</button>
       {canRefund && <button type="button" disabled={busy} onClick={() => void run(true)} className="rounded-lg border border-red-400/30 px-3 py-2 text-xs text-red-400 focus-visible:ring-2 disabled:opacity-50">确认失败并退款</button>}
+      {canRefund && !metadata.batchItemId && <button type="button" disabled={busy} onClick={() => setShowSupplement(!showSupplement)} className="rounded-lg border border-white/20 px-3 py-2 text-xs focus-visible:ring-2 disabled:opacity-50">补录成功图片</button>}
+      {canRefund && !metadata.batchItemId && Number(metadata.count ?? 1) === 1 && <button type="button" disabled={busy} onClick={() => setShowTaskSupplement(!showTaskSupplement)} className="rounded-lg border border-white/20 px-3 py-2 text-xs focus-visible:ring-2 disabled:opacity-50">补录上游任务 ID</button>}
     </div>
+    {canRefund && showTaskSupplement && <div className="space-y-2 border-t border-white/10 pt-2">
+      <label htmlFor={`pidoi-task-id-${id}`} className="block text-xs">本订单的上游任务 ID</label>
+      <input id={`pidoi-task-id-${id}`} value={taskId} disabled={busy} onChange={event => setTaskId(event.target.value)} className="w-full rounded-lg border border-white/20 bg-transparent p-2 text-xs" />
+      <p className="text-xs text-zinc-400">请核对编号属于本订单。查到成功结果后保存原图片，沿用原 ¥{cost.toFixed(2)} 预扣；原任务明确失败则退款。查询报错不绑定编号，仍可更正或核实后退款。</p>
+      <button type="button" disabled={busy || !taskId.trim()} onClick={() => void supplementTask()} className="rounded-lg border border-white/20 px-3 py-2 text-xs focus-visible:ring-2 disabled:opacity-50">{busy ? '正在查询…' : '查询原任务并恢复'}</button>
+    </div>}
+    {canRefund && showSupplement && <div className="space-y-2 border-t border-white/10 pt-2">
+      <label htmlFor={`pidoi-result-links-${id}`} className="block text-xs">原订单成功图片链接（每行一条，共 {metadata.count ?? 1} 张）</label>
+      <textarea id={`pidoi-result-links-${id}`} rows={3} value={links} disabled={busy} onChange={event => setLinks(event.target.value)} placeholder="https://…" className="w-full rounded-lg border border-white/20 bg-transparent p-2 text-xs" />
+      <p className="text-xs text-zinc-400">请核对图片属于本订单，填写可直接下载的 HTTPS 链接。全部保存成功后恢复订单，沿用原 ¥{cost.toFixed(2)} 预扣，不会重新生成或重复扣费。</p>
+      <button type="button" disabled={busy || !links.trim()} onClick={() => void supplement()} className="rounded-lg border border-white/20 px-3 py-2 text-xs focus-visible:ring-2 disabled:opacity-50">{busy ? '正在保存…' : '保存图片并恢复成功'}</button>
+    </div>}
     <p role="status" aria-live="polite" className="text-xs text-zinc-400">{message || metadata.pidoiRecoveryPauseReason}</p>
   </div>;
 }

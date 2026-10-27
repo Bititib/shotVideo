@@ -3,11 +3,38 @@ import React from 'react';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { beforeEach, afterEach, it, expect, vi } from 'vitest';
 import { PidoiImageReviewActions } from '../client/src/components/PidoiImageReviewActions';
-vi.mock('../client/src/api/admin',()=>({adminApi:{recheckPidoiImage:vi.fn(),confirmPidoiImageFailure:vi.fn()}}));
+vi.mock('../client/src/api/admin',()=>({adminApi:{recheckPidoiImage:vi.fn(),confirmPidoiImageFailure:vi.fn(),supplementPidoiImageResults:vi.fn(),supplementPidoiImageTask:vi.fn()}}));
 import { adminApi } from '../client/src/api/admin';
 const props={id:13186,status:'review',cost:0.22,metadata:{imageProtocol:'pidoi-async-v1'},hasResult:false,onResolved:vi.fn().mockResolvedValue(undefined)};
 beforeEach(()=>{vi.clearAllMocks();vi.spyOn(window,'confirm').mockReturnValue(true);vi.spyOn(window,'prompt').mockReturnValue('已核对上游任务，无成功图片');});
 afterEach(()=>{cleanup();vi.restoreAllMocks();});
+it('补录任务 ID 查询鉴权失败后仍能修改重查，退款按钮保持可用',async()=>{
+  vi.mocked(adminApi.supplementPidoiImageTask).mockRejectedValueOnce(new Error('HTTP 401 Invalid token，未绑定该编号'))
+    .mockResolvedValueOnce({message:'原图片已保存，未重复扣费'});
+  render(<PidoiImageReviewActions {...props}/>);
+  fireEvent.click(screen.getByRole('button',{name:'补录上游任务 ID'}));
+  const field=screen.getByLabelText('本订单的上游任务 ID');
+  fireEvent.change(field,{target:{value:'202610270216552661065508268d9d6IpacyOdT'}});
+  fireEvent.click(screen.getByRole('button',{name:'查询原任务并恢复'}));
+  await screen.findByText('HTTP 401 Invalid token，未绑定该编号');
+  expect((screen.getByRole('button',{name:'确认失败并退款'}) as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.change(field,{target:{value:'corrected-task'}});
+  fireEvent.click(screen.getByRole('button',{name:'查询原任务并恢复'}));
+  await screen.findByText('原图片已保存，未重复扣费');
+  expect(adminApi.supplementPidoiImageTask).toHaveBeenLastCalledWith(props.id,'corrected-task');
+  expect(props.onResolved).toHaveBeenCalledOnce();expect(adminApi.confirmPidoiImageFailure).not.toHaveBeenCalled();
+});
+it('补录原图片链接后刷新订单，不触发退款和重新查询', async()=>{
+  vi.mocked(adminApi.supplementPidoiImageResults).mockResolvedValue({message:'图片已保存，未重复扣费',alreadyResolved:false});
+  render(<PidoiImageReviewActions {...props}/>);
+  fireEvent.click(screen.getByRole('button',{name:'补录成功图片'}));
+  fireEvent.change(screen.getByLabelText(/原订单成功图片链接/),{target:{value:' https://cdn.test/a.png\n'}});
+  fireEvent.click(screen.getByRole('button',{name:'保存图片并恢复成功'}));
+  await screen.findByText('图片已保存，未重复扣费');
+  expect(adminApi.supplementPidoiImageResults).toHaveBeenCalledExactlyOnceWith(props.id,['https://cdn.test/a.png']);
+  expect(adminApi.recheckPidoiImage).not.toHaveBeenCalled(); expect(adminApi.confirmPidoiImageFailure).not.toHaveBeenCalled();
+  expect(props.onResolved).toHaveBeenCalledOnce();
+});
 it('shows persisted pause reason on reopening without requiring another query',()=>{
   render(<PidoiImageReviewActions {...props} metadata={{...props.metadata,pidoiRecoveryPauseReason:'上游查询接口返回 404，已暂停自动查询'}}/>);
   expect(screen.getByRole('status').textContent).toContain('404，已暂停自动查询');

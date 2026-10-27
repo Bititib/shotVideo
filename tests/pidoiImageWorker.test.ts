@@ -13,6 +13,12 @@ beforeEach(() => {
   mocks.localize.mockResolvedValue({ urls: ['/api/uploads/result.png'], issues: [] });
 });
 describe('Pidoi 原任务恢复', () => {
+  it('轮询收到 recovery_required 时保留原账本核查，不重提不退款',async()=>{
+    mocks.poll.mockResolvedValue({status:'processing',progress:50,raw:{message:'任务执行中断，需要管理员核查结果',data:{recovery_required:true}}});
+    await recoverPidoiImage(12);
+    expect(mocks.finalize).toHaveBeenCalledWith(12,'review',expect.objectContaining({pidoiRecoveryPausedAt:expect.any(String),pidoiRecoveryPauseReason:expect.stringContaining('任务执行中断')}));
+    expect(mocks.localize).not.toHaveBeenCalled();
+  });
   it('已拿到图片但状态回退不能误退款，仍尝试保存已有结果',async()=>{
     const meta=JSON.parse(mocks.row.metadata);
     Object.assign(meta.pidoiImageJobs[0],{status:'completed',sourceUrl:'https://cdn/already-generated.png'});

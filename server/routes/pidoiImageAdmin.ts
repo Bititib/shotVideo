@@ -1,9 +1,19 @@
 import { Router } from 'express';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
-import { confirmPidoiImageFailure, recheckPidoiImage } from '../services/pidoiImageResolutionService.js';
+import { confirmPidoiImageFailure, recheckPidoiImage, supplementPidoiImageResults, supplementPidoiImageTask } from '../services/pidoiImageResolutionService.js';
 const router = Router();
 router.use(authMiddleware, adminMiddleware);
+router.post('/:id/image-supplement-task', async (req: AuthRequest, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.json(await supplementPidoiImageTask(Number(req.params.id), req.userId!, req.body?.taskId)); }
+  catch (error: any) { res.status(error.status || 500).json({ error: error.message || '任务 ID 补录失败' }); }
+});
+router.post('/:id/image-supplement-result', async (req: AuthRequest, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.json(await supplementPidoiImageResults(Number(req.params.id), req.userId!, req.body?.urls)); }
+  catch (error: any) { res.status(error.status || 500).json({ error: error.message || '图片补录失败' }); }
+});
 router.post('/:id/image-recheck', async (req: AuthRequest, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try { res.json(await recheckPidoiImage(Number(req.params.id), req.userId!)); }

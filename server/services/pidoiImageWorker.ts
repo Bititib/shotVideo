@@ -5,6 +5,8 @@ import { pollPidoiImage } from './pidoiImageAdapter.js';
 import { finalizeReservedContent } from './contentBillingService.js';
 import { localizeRecoveredImages } from './pidoiImageStorage.js';
 import { restorePidoiJobs } from './pidoiImageEvidence.js';
+import { pidoiContentUrl } from './pidoiImageResult.js';
+import { upstreamDiagnostic } from './upstreamDiagnostic.js';
 
 const active = new Set<number>();
 export const pidoiImageActive = active;
@@ -68,10 +70,17 @@ export async function recoverPidoiImage(contentId: number, options: { automatic?
     if (!channel) throw new Error('原渠道不可用，已保留任务 ID，请管理员核对');
     for (const job of jobs) {
       if (job.localUrl || job.status === 'failed') continue;
-      if (job.protocol !== 'openai-compatible' || !job.sourceUrl || job.status !== 'completed') {
+      // A persisted successful receipt already contains the original result. Retry its
+      // download directly, including administrator-verified asynchronous task receipts.
+      if (!job.sourceUrl || job.status !== 'completed') {
         if (!job.taskId) continue; // Unknown submissions cannot be queried or resubmitted.
         Object.assign(diagnostic, { stage: 'poll', taskId: job.taskId, index: job.index });
         const task = job.pollPath ? await pollPidoiImage(channel, job.taskId, fetch, job.pollPath) : await pollPidoiImage(channel, job.taskId);
+        if (task.status === 'processing' && task.raw?.data?.recovery_required === true) {
+          const reason = upstreamDiagnostic('Pidoi', '上游要求核查原任务结果', { message: task.raw.message || 'recovery_required=true：上游要求管理员核查结果' });
+          finalizeReservedContent(contentId, 'review', { ...m, pidoiRecoveryPausedAt: new Date().toISOString(), pidoiRecoveryPauseReason: reason, progressText: reason });
+          return;
+        }
         delete m.lastRecoveryError;
         delete m.recoveryStage;
         diagnostic.stage = 'persist';
@@ -94,7 +103,9 @@ export async function recoverPidoiImage(contentId: number, options: { automatic?
         Object.assign(diagnostic, { taskId: job.taskId, index: job.index });
         diagnostic.stage = 'download';
         // Signed Pidoi storage URLs must never receive the channel API key.
-        const result = await localizeRecoveredImages([{ url: job.sourceUrl, channelId: 0, channelApiKeyId: null }], contentId, row.user_id, m.publicBaseUrl);
+        const auth = pidoiContentUrl(job.sourceUrl, channel.baseUrl, job.taskId)
+          ? { baseUrl: channel.baseUrl, apiKey: channel.apiKey, taskId: job.taskId } : undefined;
+        const result = await localizeRecoveredImages([{ url: job.sourceUrl, channelId: 0, channelApiKeyId: null, ...(auth ? { auth } : {}) }], contentId, row.user_id, m.publicBaseUrl);
         if (!result.urls.length) throw result.failures?.[0] || new Error('图片下载暂未完成，将自动重试');
         diagnostic.stage = 'persist';
         job.localUrl = result.urls[0];
