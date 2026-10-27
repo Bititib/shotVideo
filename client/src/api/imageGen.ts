@@ -159,15 +159,23 @@ export function generateImage(
   const token = localStorage.getItem('token');
 
   let terminal = false;
+  let backgroundHandoff = false;
   let contentId: number | undefined;
   const emit = (event: ImageSSEEvent) => {
     if (controller.signal.aborted || terminal) return;
     contentId = event.contentId || contentId;
+    // A background event confirms that the request was durably stored and that
+    // database polling has taken ownership. The server intentionally closes the
+    // SSE stream after this handoff, so that close is not a lost result.
+    if (event.background && contentId) backgroundHandoff = true;
     if (event.type === 'complete' || event.type === 'error') terminal = true;
     onEvent(publicGenerationEvent({ ...event, contentId }));
   };
-  const disconnected = () => emit({ type: 'disconnected', contentId,
-    message: '实时连接已断开，正在核实后台结果，请勿重复提交' });
+  const disconnected = () => {
+    if (backgroundHandoff) return;
+    emit({ type: 'disconnected', contentId,
+      message: '实时连接已断开，正在核实后台结果，请勿重复提交' });
+  };
   fetch('/api/image-gen/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },

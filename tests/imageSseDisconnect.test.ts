@@ -23,6 +23,17 @@ it.each([false, true])('signals lost completion without claiming failure (networ
   expect(event.mock.calls[1][0]).toMatchObject({ type: 'disconnected', contentId: 12 });
   expect(event.mock.calls.some(([value]) => value.type === 'error')).toBe(false);
 });
+it.each([false, true])('does not report a persisted background handoff as disconnected (network error=%s)', async failure => {
+  vi.stubGlobal('fetch', vi.fn(async () => response([
+    'data: {"type":"status","contentId":12,"background":true,"message":"\u56fe\u7247\u4efb\u52a1\u5df2\u4fdd\u5b58\uff0c\u6b63\u5728\u540e\u53f0\u751f\u6210"}\n\n',
+    'data: [DONE]\n\n',
+  ], failure)));
+  const event = vi.fn(); generateImage({ prompt: 'test' }, event);
+  await vi.waitFor(() => expect(event).toHaveBeenCalledTimes(1));
+  await new Promise(done => setTimeout(done, 10));
+  expect(event.mock.calls[0][0]).toMatchObject({ type: 'status', contentId: 12, background: true });
+  expect(event.mock.calls.some(([value]) => value.type === 'disconnected')).toBe(false);
+});
 it('keeps explicit backend failure final', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => response(['data: {"type":"error","message":"失败"}\n\n'])));
   const event = vi.fn(); generateImage({ prompt: 'test' }, event);
