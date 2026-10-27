@@ -5,8 +5,15 @@ import { pidoiTaskEvidence } from './pidoiImageEvidence.js';
 
 const imageDispatcher = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
 
+export const PIDOI_IMAGE_MODEL = 'gpt-image-2';
+
 export function isPidoiImageChannel(channel: { baseUrl?: string; name?: string }) {
   try { const host = new URL(channel.baseUrl || '').hostname; return host === 'pidoi.com' || host.endsWith('.pidoi.com'); } catch { return false; }
+}
+
+/** The seeded image-only channel must not be replaced by Pidoi's general video catalog. */
+export function isDedicatedPidoiImageChannel(channel: { baseUrl?: string; name?: string }) {
+  return isPidoiImageChannel(channel) && String(channel.name || '').includes('图片');
 }
 type Channel = { baseUrl: string; apiKey: string; timeout?: unknown };
 const apiBase = (c: Channel) => c.baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, '');

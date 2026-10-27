@@ -21,6 +21,7 @@ import {
 } from './wxHaidiYueAdapter.js';
 import { isLongxiaChannel, LONGXIA_MODELS, longxiaApiBaseUrl } from './longxiaVideoAdapter.js';
 import { isMiaowuChannel, MIAOWU_DEFAULT_VIDEO_MODELS, miaowuVideoModelListUrl } from './miaowuVideoAdapter.js';
+import { isDedicatedPidoiImageChannel, PIDOI_IMAGE_MODEL } from './pidoiImageAdapter.js';
 
 const DEFAULT_HM_CONCURRENCY = (() => {
   const parsed = Number.parseInt(process.env.HM_STUDIO_CONCURRENCY || '10', 10);
@@ -606,6 +607,23 @@ export class ChannelService {
     const channel = this.getChannelRaw(id);
     if (!channel) throw { status: 404, message: '渠道不存在' };
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
+
+    // Pidoi's /v1/models endpoint is a general catalog and currently returns video
+    // products for the same account. This channel is deliberately image-only; a
+    // generic replacement would remove gpt-image-2 and disable image generation.
+    if (isDedicatedPidoiImageChannel(channel)) {
+      db.update(channels).set({
+        supportedModels: JSON.stringify([PIDOI_IMAGE_MODEL]),
+        modelMapping: JSON.stringify({ [PIDOI_IMAGE_MODEL]: PIDOI_IMAGE_MODEL }),
+        updatedAt: new Date().toISOString(),
+      }).where(eq(channels.id, id)).run();
+      return {
+        count: 1,
+        added: 0,
+        models: [PIDOI_IMAGE_MODEL],
+        warnings: ['Pidoi 图片渠道是独立图片线路，已保留 gpt-image-2，未导入通用视频模型。'],
+      };
+    }
 
     if (isZonghengChannel(channel)) return syncV6kVideoModels(channel);
 
