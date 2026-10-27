@@ -25,6 +25,7 @@ import specificationRoutes from '../server/routes/modelSpecifications.js';
 import express from 'express';
 import { suggestedModelSpecifications, existingModelLimits } from '../server/services/modelSpecificationPresets.js';
 import * as adapters from '../server/services/specificationAdapters.js';
+import { findVideoSubmissionReceipt } from '../server/services/videoSubmissionReceiptService';
 
 let userId: number;
 const limits = () => ({ ...defaultRoutingLimits(), maxImages: 9 });
@@ -221,6 +222,79 @@ describe('managed image execution and single reservation', () => {
 
 
 describe('managed video execution', () => {
+  it('continues a long-running V6K unknown task in the next recovery cycle without requiring manual review', async () => {
+    const l = { ...limits(), resolutions: ['480p'] }, c = { ...channel(1), type: 'zongheng-v6k', baseUrl: 'https://www.v6k.top' };
+    vi.mocked(ChannelService.getActiveChannels).mockReturnValue([c]);
+    vi.mocked(ChannelService.getChannelRaw).mockReturnValue(c as any);
+    const s = { ...spec(), aliases: [], limits: l, routes: [{ ...route(1), upstreamModel: 'TTseadanco2.5-480', limits: l }] };
+    saveModelSpecification(s);
+    const nativeTimer = globalThis.setTimeout;
+    const timer = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: any, ms: number, ...args: any[]) => nativeTimer(fn, ms >= 1000 && ms <= 300000 ? 5 : ms, ...args)) as any);
+    let clock = Date.now(), posts = 0, queries = 0;
+    const time = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    vi.stubGlobal('fetch', vi.fn(async (_url: any, init: any) => {
+      if (init.method === 'POST') { posts++; return Response.json({ id: 'long_original', status: 'unknown' }); }
+      if (++queries === 1) { clock += 2 * 60 * 60_000 + 1; return Response.json({ id: 'long_original', status: 'unknown' }); }
+      return Response.json({ id: 'long_original', status: 'completed' });
+    }));
+    try {
+      await handleSpecificationGeneration({ body: { model: s.modelId, prompt: 'test', seconds: 6, resolution: '480p' }, headers: {}, protocol: 'https', get: () => 'app.invalid', userId } as any, response(), 'video');
+      const row = db.select().from(contents).all().at(-1)!;
+      expect(row.status).toBe('processing'); expect(JSON.parse(row.metadata).requiresReview).not.toBe(true);
+      resumeSpecificationTasks(); expect(queries).toBe(1);
+      clock += 120_000; resumeSpecificationTasks(); resumeSpecificationTasks();
+      await vi.waitFor(() => expect(db.select().from(contents).all().at(-1)!.status).toBe('completed'));
+      expect(posts).toBe(1); expect(queries).toBe(2);
+      expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(98);
+    } finally { time.mockRestore(); timer.mockRestore(); }
+  });
+  it.each(['completed', 'failed', 'rejected', 'uncertain-no-id'])('handles V6K unknown receipts in actual specification execution without failover or duplicate money movement: %s', async outcome => {
+    const l = { ...limits(), resolutions: ['480p'] };
+    const c = { ...channel(1), type: 'zongheng-v6k', baseUrl: 'https://www.v6k.top', timeout: 120_000 };
+    vi.mocked(ChannelService.getActiveChannels).mockReturnValue([c, channel(2)]);
+    vi.mocked(ChannelService.getChannelRaw).mockReturnValue(c as any);
+    const s = { ...spec(), aliases: [], limits: l, routes: [{ ...route(1), upstreamModel: 'TTseadanco2.5-480', limits: l }, { ...route(2), limits: l }] };
+    saveModelSpecification(s);
+    const nativeTimer = globalThis.setTimeout;
+    const timer = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: any, ms: number, ...args: any[]) => nativeTimer(fn, ms >= 1000 && ms <= 300000 ? 5 : ms, ...args)) as any);
+    let posts = 0, queries = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: any, init: any) => {
+      const row = db.select().from(contents).all().at(-1)!;
+      const meta = JSON.parse(row.metadata);
+      if (init.method === 'POST') {
+        posts++; expect(url).toBe('https://www.v6k.top/v1/videos');
+        expect(meta.zonghengOrderId).toBe(init.headers['Idempotency-Key']);
+        expect(meta.videoSubmissionState).toBe('submitting');
+        if (outcome === 'rejected') return Response.json({ error: { code: 'invalid_parameters', message: 'confirmed refused' } }, { status: 400 });
+        if (outcome === 'uncertain-no-id') return new Response('gateway timeout', { status: 504 });
+        return Response.json({ id: 'spec_original', status: 'unknown' }, { status: 503 });
+      }
+      expect(url).toBe('https://www.v6k.top/v1/videos/spec_original');
+      expect(findVideoSubmissionReceipt(row.id)).toMatchObject({ upstreamTaskId: 'spec_original', channelId: 1 });
+      expect(meta).toMatchObject({ videoId: 'spec_original', videoSubmissionState: 'accepted' });
+      expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(98);
+      if (++queries === 1) return Response.json({ error: { message: 'query later' } }, { status: 429, headers: { 'Retry-After': '75' } });
+      if (queries === 2) throw new TypeError('temporary disconnect');
+      if (queries === 3) return new Response('invalid body', { headers: { 'Retry-After': '90' } });
+      if (queries === 4) return Response.json({ id: 'spec_original', status: 'unknown' });
+      expect(meta).toMatchObject({ upstreamStatus: 'unknown', progressKnown: false });
+      return Response.json({ id: 'spec_original', status: outcome, error: outcome === 'failed' ? { message: 'confirmed failed' } : undefined });
+    }));
+    await handleSpecificationGeneration({ body: { model: s.modelId, prompt: 'test', seconds: 6, resolution: '480p' }, headers: {}, protocol: 'https', get: () => 'app.invalid', userId } as any, response(), 'video');
+    await vi.waitFor(() => {
+      const row = db.select().from(contents).all().at(-1)!;
+      if (outcome === 'uncertain-no-id') expect(JSON.parse(row.metadata).requiresReview).toBe(true);
+      else expect(row.status).toBe(outcome === 'rejected' ? 'failed' : outcome);
+    });
+    const row = db.select().from(contents).all().at(-1)!, meta = JSON.parse(row.metadata);
+    expect(posts).toBe(1);
+    expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(['failed','rejected'].includes(outcome) ? 100 : 98);
+    expect(sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(meta.billingReservationId)).toMatchObject({ state: outcome === 'completed' ? 'settled' : outcome === 'uncertain-no-id' ? 'review' : 'refunded' });
+    if (outcome === 'completed' || outcome === 'failed') expect(timer.mock.calls.map(call => call[1])).toEqual(expect.arrayContaining([75_000,40_000,90_000,20_000]));
+    resumeSpecificationTasks(); resumeSpecificationTasks();
+    expect(posts).toBe(1); expect(queries).toBe(outcome === 'rejected' || outcome === 'uncertain-no-id' ? 0 : 5);
+    timer.mockRestore();
+  });
   it.each(['completed', 'rejected', 'unknown', 'request-id-only'])('uses the Haya model protocol in real specification execution: %s', async outcome => {
     const id = HAYA_XG_SEEDANCE_20_MODEL;
     db.insert(models).values({ modelId: id, displayName: id, provider: 'haya', capabilities: '["video"]', isActive: 1 })

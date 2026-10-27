@@ -63,6 +63,7 @@ import { db, sqlite } from '../server/db/index';
 import { channels, models, modelPricing, users, contents } from '../server/db/schema';
 import { ChannelService } from '../server/services/channelService';
 import { findVideoSubmissionReceipt } from '../server/services/videoSubmissionReceiptService';
+import { acceptVideoSubmission, claimVideoSubmission } from '../server/services/videoSubmissionGuard';
 import { VideoRecoveryService as ContentRecoveryService } from '../server/services/videoRecoveryService';
 let video: typeof import('../server/routes/video');
 let server: Server, origin: string;
@@ -96,7 +97,7 @@ beforeEach(()=>{
     modelMapping:{'ZH-video-public':'video-public','ZH-image-public':'image-public','ZH-gpt-public':'gpt-public'}});
   upstream=async()=>{throw Error('Unexpected upstream');};
   vi.stubGlobal('fetch',vi.fn((url,init)=>upstream(String(url),init||{})));
-  vi.spyOn(globalThis,'setTimeout').mockImplementation(((fn:any,ms:number,...args:any[])=>nativeSetTimeout(fn,ms>=1000&&ms<=60000?5:ms,...args)) as any);
+  vi.spyOn(globalThis,'setTimeout').mockImplementation(((fn:any,ms:number,...args:any[])=>nativeSetTimeout(fn,ms>=1000&&ms<=300000?5:ms,...args)) as any);
 });
 afterEach(()=>{
   for(const row of db.select().from(contents).all()){
@@ -166,6 +167,73 @@ describe('V6K cutover using the existing Zongheng billing and recovery paths', (
     sqlite.prepare("INSERT INTO api_tokens (id,user_id,token_key,balance) VALUES (1,1,'test',-1)").run();
     return { old, id };
   }
+  it.each(['/api/video/generate', '/v1/videos'].flatMap(endpoint => ['completed', 'failed'].map(status => ({ endpoint, status }))))('keeps an unknown receipt and settles $status once at $endpoint through repeated query faults', async ({ endpoint, status }) => {
+    const { id: channelId } = enableV6k(); let posts = 0, queries = 0;
+    upstream = async (_url, init) => {
+      if (init.method === 'POST') {
+        posts++;
+        expect(JSON.parse(latest().metadata!).zonghengOrderId).toBe(init.headers['Idempotency-Key']);
+        return Response.json({ id: '00012345678901234567890', status: 'unknown', error: { message: 'not failed' } }, { status: 503 });
+      }
+      expect(findVideoSubmissionReceipt(latest().id)).toMatchObject({ upstreamTaskId: '00012345678901234567890', channelId });
+      expect(JSON.parse(latest().metadata!)).toMatchObject({ videoId: '00012345678901234567890', videoSubmissionState: 'accepted' });
+      expect(() => claimVideoSubmission(latest().id)).toThrow('禁止重复提交');
+      expect(balance()).toBe(98);
+      queries++;
+      if (queries === 1) return Response.json({ error: { code: 'temporary_limit', message: 'query later' } }, { status: 429, headers: { 'Retry-After': '75' } });
+      if (queries === 2) return new Promise<Response>(() => {}); // Transport ignores AbortSignal; the hard deadline must recover.
+      if (queries === 3) return new Response('<html>temporarily unavailable</html>', { headers: { 'Retry-After': '90' } });
+      if (queries === 4) return Response.json({ id: '00012345678901234567890', status: 'unknown' });
+      expect(JSON.parse(latest().metadata!)).toMatchObject({ upstreamStatus: 'unknown', progressKnown: false });
+      return Response.json({ id: '00012345678901234567890', status, error: status === 'failed' ? { code: 'generation_rejected', message: 'confirmed failed' } : undefined });
+    };
+    await (await post(endpoint, { ...request, seconds: 6 })).text();
+    await vi.waitFor(() => expect(latest().status).toBe(status));
+    expect(posts).toBe(1); expect(queries).toBe(5);
+    const delays = vi.mocked(setTimeout).mock.calls.map(call => call[1]);
+    expect(delays).toEqual(expect.arrayContaining([75_000,40_000,90_000,20_000]));
+    const finalBalance = status === 'failed' ? 100 : 98;
+    expect(balance()).toBe(finalBalance);
+    await Promise.all([video.resumePollForTask(latest().id, latest()), video.resumePollForTask(latest().id, latest())]);
+    expect(balance()).toBe(finalBalance); expect(posts).toBe(1); expect(queries).toBe(5);
+  });
+  it.each(['completed', 'failed'])('recovers an old accepted unknown receipt after a restart, without POST or duplicate settlement: %s', async status => {
+    const { id: channelId } = enableV6k();
+    sqlite.prepare('UPDATE users SET balance=98 WHERE id=1').run();
+    const id = Number(db.insert(contents).values({ userId: 1, type: 'video', status: 'processing', modelId: request.model, cost: 2,
+      metadata: JSON.stringify({ channelId, zonghengProtocol: 'v6k', zonghengBaseUrl: 'https://www.v6k.top', upstreamStatus: 'unknown', billingStatus: 'reserved', billingBalanceSource: 'user' }) }).run().lastInsertRowid);
+    acceptVideoSubmission(id, 'restart_original', { provider: 'zongheng', channelId });
+    // Simulate a stale metadata copy; recovery must retain the durable receipt.
+    const stale = JSON.parse(latest().metadata!); delete stale.videoId; delete stale.upstreamTaskId;
+    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify(stale), id);
+    let queries = 0;
+    upstream = async (url, init) => {
+      expect(init.method).not.toBe('POST'); expect(url).toBe('https://www.v6k.top/v1/videos/restart_original');
+      return Response.json({ id: 'restart_original', status: ++queries === 1 ? 'unknown' : status, error: status === 'failed' ? { message: 'confirmed failed' } : undefined });
+    };
+    video.resumeAllPendingVideoTasks(); video.resumeAllPendingVideoTasks();
+    await vi.waitFor(() => expect(latest().status).toBe(status));
+    expect(queries).toBe(2); expect(balance()).toBe(status === 'failed' ? 100 : 98);
+    video.resumeAllPendingVideoTasks();
+    await video.resumePollForTask(id, latest());
+    expect(queries).toBe(2); expect(balance()).toBe(status === 'failed' ? 100 : 98);
+  });
+  it.each(['/api/video/generate', '/v1/videos'])('retains the durable receipt if accepting content metadata fails at %s', async endpoint => {
+    enableV6k(); let posts = 0;
+    upstream = async (_url, init) => {
+      expect(init.method).toBe('POST'); posts++;
+      sqlite.exec(`CREATE TRIGGER fail_accept BEFORE UPDATE OF metadata ON contents
+        WHEN json_extract(NEW.metadata,'$.videoSubmissionState')='accepted'
+        BEGIN SELECT RAISE(ABORT,'simulated metadata write failure'); END`);
+      return Response.json({ id: 'saved_despite_metadata_failure', status: 'unknown' });
+    };
+    try {
+      await (await post(endpoint, { ...request, seconds: 6 })).text();
+      expect(latest().status).toBe('review');
+      expect(findVideoSubmissionReceipt(latest().id)).toMatchObject({ upstreamTaskId: 'saved_despite_metadata_failure' });
+      expect(balance()).toBe(98); expect(posts).toBe(1);
+    } finally { sqlite.exec('DROP TRIGGER IF EXISTS fail_accept'); }
+  });
   it.each(['/api/video/generate', '/v1/videos'])('submits once and synchronizes queued/processing/completed with no URL at %s', async endpoint => {
     const { id } = enableV6k(); let posts = 0, queries = 0;
     const { downloadAndLocalizeVideo } = await import('../server/services/videoLocalizationService');

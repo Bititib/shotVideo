@@ -1,7 +1,8 @@
 import { isMegabyChannel, buildMegabyVideoPayload, submitMegabyVideo, pollMegabyVideo, validateMegabyReferenceDurations, MegabyApiError } from './megabyVideoAdapter.js';
-import { isZonghengChannel, submitZonghengVideo, normalizeZonghengTask, zonghengTaskUrl, ZonghengSubmissionError } from './zonghengAdapter.js';
+import { isZonghengChannel, submitZonghengVideo, normalizeZonghengTask, readZonghengTaskResponse, zonghengTaskUrl, ZonghengSubmissionError } from './zonghengAdapter.js';
 import { zonghengProtocol, zonghengProtocolSnapshot } from './zonghengProtocol.js';
 import { prepareZonghengMedia } from './zonghengMediaService.js';
+import { fetchVideoTaskResponse } from './videoPollDeadline.js';
 import { imageGenerationTimeout } from './imageGenerationTimeout.js';
 import { isMjChannel, mjBaseUrl, buildMjImagePayload, MJ_ASYNC_TIMEOUT_MS, type MjAsyncImageState } from './mjAdapter.js';
 import { isAsyncVideoChannel, buildAsyncVideoPayload, asyncVideoCreateUrl, pollAsyncVideo } from './asyncVideoAdapter.js';
@@ -130,7 +131,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   if (isZonghengChannel(c)) {
     let acceptedTaskId = '';
     try {
-      const protocol = zonghengProtocol(c), snapshot = zonghengProtocolSnapshot(c);
+      const protocol = zonghengProtocol(c), snapshot = zonghengProtocolSnapshot(c), orderId = randomUUID();
       const options = { ...c, publicBaseUrl: request.publicBaseUrl, protocol };
       const images = await prepareZonghengMedia(request.images, 'image', options);
       const videos = await prepareZonghengMedia(request.videos, 'video', options);
@@ -138,10 +139,13 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
       const frames = await prepareZonghengMedia([request.firstFrame, request.lastFrame].filter(Boolean), 'image', options);
       const job = await submitZonghengVideo(c.baseUrl, c.apiKey, { model, prompt: request.prompt, seconds: i.seconds,
         ratio: i.ratio, resolution: i.resolution, images, videos, audios, firstFrame: frames[0], lastFrame: frames[1],
-        quality: request.body.quality, negativePrompt: request.body.negative_prompt, generateAudio: request.body.generate_audio }, randomUUID(),
-        () => onStarting(snapshot), c.timeout, protocol);
-      acceptedTaskId = job.taskId;
-      onStarting({ ...snapshot, videoId: job.taskId, zonghengInitialTask: job.initialTask });
+        quality: request.body.quality, negativePrompt: request.body.negative_prompt, generateAudio: request.body.generate_audio }, orderId,
+        () => onStarting({ ...snapshot, zonghengOrderId: orderId }), c.timeout, protocol, taskId => {
+          acceptedTaskId = taskId;
+          onStarting({ ...snapshot, videoId: taskId });
+        });
+      onStarting({ ...snapshot, videoId: job.taskId, zonghengInitialTask: job.initialTask,
+        ...(job.warning ? { zonghengSubmissionDiagnostics: { ...job.warning.diagnostics, message: job.warning.message, recordedAt: new Date().toISOString() } } : {}) });
       return job.taskId;
     } catch (error: any) {
       if (acceptedTaskId) throw new SpecificationUpstreamError(error.message, false, true);
@@ -311,9 +315,8 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
 }
 export async function pollSpecificationVideo(channel: any, taskId: string) {
   if (isZonghengChannel(channel)) {
-    const response = await fetch(zonghengTaskUrl(channel.baseUrl, taskId), { headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(30_000), redirect: 'error' });
-    if (!response.ok) throw Object.assign(new Error(await responseDiagnostic('V6K', '任务查询 task_id=' + taskId, response, channel.apiKey)), { status: response.status });
-    return normalizeZonghengTask(await diagnosticJson('V6K', '任务查询 task_id=' + taskId, response, channel.apiKey), channel.baseUrl, 'v6k', taskId);
+    const response = await fetchVideoTaskResponse(zonghengTaskUrl(channel.baseUrl, taskId), { headers: { Authorization: 'Bearer ' + channel.apiKey, 'Cache-Control': 'no-cache, no-store' }, cache: 'no-store', redirect: 'error' });
+    return normalizeZonghengTask(await readZonghengTaskResponse(response, channel.baseUrl, taskId, channel.apiKey), channel.baseUrl, 'v6k', taskId);
   }
   if (isMegabyChannel(channel)) return pollMegabyVideo(channel, taskId);
   if (isAsyncVideoChannel(channel)) return pollAsyncVideo(channel, taskId);

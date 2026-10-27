@@ -2,6 +2,7 @@ import { isMegabyChannel, normalizeMegabyTask, validateMegabyVideoInput, validat
 import { isHussChannel, recoverHussSubmission } from './hussVideoAdapter.js';
 import { publicApiModelId } from '../../shared/funAi.js';
 import { isZonghengChannel, normalizeZonghengTask } from './zonghengAdapter.js';
+import { acceptZonghengVideoReceipt } from './zonghengTaskService.js';
 import { zonghengProtocol, zonghengTaskChannel, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE, v6kQueryRetryDelay } from './zonghengProtocol.js';
 import { modelAvailabilityMessage } from '../../shared/upstreamAvailability.js';
 import { startSseHeartbeat } from './sseHeartbeat.js';
@@ -194,6 +195,7 @@ function failContent(id: number, message: string) {
 async function pollVideo(id: number, channel: any, taskId: string, onEvent: (data: any) => void) {
   if (isZonghengChannel(channel) && isRetiredZonghengTask(metadata(id))) { holdForReview(id, RETIRED_ZONGHENG_MESSAGE, 'query'); return; }
   if (isZonghengChannel(channel)) channel = zonghengTaskChannel(channel, metadata(id));
+  if (isZonghengChannel(channel)) patch(id, { v6kQueryResumeAt: null });
   const end = Date.now() + 2 * 60 * 60_000;
   let queryFailures = 0;
   while (Date.now() < end) {
@@ -217,15 +219,15 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       const message = transportDiagnostic(channel.type || 'OpenAI-compatible', '任务查询 task_id=' + taskId + '；正在重试，请勿重复提交', error, channel.apiKey);
       patch(id, { progressText: message, upstreamQueryError: message, lastQueryAt: new Date().toISOString(), lastQueryStatus: status, queryFailures: ++queryFailures });
       onEvent({ type: 'status', message, contentId: id });
-      await wait(isZonghengChannel(channel) ? v6kQueryRetryDelay(queryFailures) : 12_000); continue;
+      await wait(isZonghengChannel(channel) ? v6kQueryRetryDelay(queryFailures, error?.retryAfter) : 12_000); continue;
     }
     queryFailures = 0;
     patch(id, { upstreamQueryError: null });
     const progressKnown = task.progressKnown ?? (typeof task.progress === 'number' && Number.isFinite(task.progress));
-    const message = isHussChannel(channel) && task.storagePending ? 'HUSS 已生成，正在保存成品；继续查询原任务' : task.status === 'queued' ? '渠道已受理，正在排队'
+    const message = isZonghengChannel(channel) && task.progressText ? task.progressText : isHussChannel(channel) && task.storagePending ? 'HUSS 已生成，正在保存成品；继续查询原任务' : task.status === 'queued' ? '渠道已受理，正在排队'
       : ['completed', 'success', 'succeeded', 'done'].includes(task.status) ? '上游已完成，正在保存结果'
       : progressKnown ? '视频生成中' : '视频生成中，渠道暂未提供百分比';
-    patch(id, { progress: task.progress, progressKnown, upstreamStatus: task.status, progressText: message,
+    patch(id, { progress: task.progress, progressKnown, upstreamStatus: isZonghengChannel(channel) ? task.upstreamStatus || task.status : task.status, progressText: message,
       lastQueryAt: new Date().toISOString(), lastQueryStatus: 200, queryFailures: 0 });
     onEvent({ type: 'progress', progress: task.progress, progressKnown, message, contentId: id });
     if (['failed', 'error', 'cancelled', 'canceled', 'failure'].includes(task.status)) {
@@ -258,6 +260,11 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
     }
     await wait(isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : 8_000);
   }
+  if (isZonghengChannel(channel)) {
+    const message = '原任务尚未结束，将在后台继续查询，请勿重复提交';
+    patch(id, { progressText: message, v6kQueryResumeAt: Date.now() + v6kQueryRetryDelay(Math.max(1, queryFailures)) });
+    onEvent({ type: 'status', message }); return;
+  }
   const reviewMessage = (metadata(id).upstreamQueryError || '') + '；原任务查询达到时限，费用保留，请核查原任务，请勿重复提交';
   holdForReview(id, reviewMessage, 'query');
   onEvent({ type: 'status', message: reviewMessage });
@@ -285,6 +292,10 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
           if (!claimed) {
             try { claimVideoSubmission(id, target.channel.timeout || 120_000); claimed = true; }
             catch (error: any) { throw new SpecificationUpstreamError(error.message, false, true); }
+          }
+          if (isZonghengChannel(target.channel) && typeof submissionMetadata?.videoId === 'string') {
+            taskId = submissionMetadata.videoId;
+            acceptZonghengVideoReceipt(id, taskId, { channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId });
           }
           patch(id, { ...submissionMetadata, submissionStartedAt: new Date().toISOString() });
           dispatchPrepared = true;
@@ -754,6 +765,7 @@ export function resumeSpecificationTasks() {
   for (const row of db.select().from(contents).where(inArray(contents.status, ['processing', 'queued', 'review'])).all()) {
     let meta: any; try { meta = JSON.parse(row.metadata || '{}'); } catch { continue; }
     if (!meta.managedSpecification || active.has(row.id)) continue;
+    if (meta.zonghengProtocol === 'v6k' && Number(meta.v6kQueryResumeAt) > Date.now()) continue;
     if (row.type === 'video' && videoSubmissionPending(row.id, meta)) continue;
     if (row.type === 'video' && !meta.videoId && meta.hussIdempotencyKey && !meta.billingShortfall
       && (!meta.reviewKind || meta.reviewKind === 'submission')) {

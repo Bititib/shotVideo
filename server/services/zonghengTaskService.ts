@@ -5,6 +5,13 @@ import { db } from '../db/index.js';
 import { contents } from '../db/schema.js';
 import { recordBatchFailure } from './videoBatchService.js';
 import { sanitizedGenerationReason } from '../../shared/generationErrorPrivacy.js';
+import { persistVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
+import { acceptVideoSubmission } from './videoSubmissionGuard.js';
+/** Keep the original receipt even if a subsequent content-metadata write fails. */
+export function acceptZonghengVideoReceipt(contentId: number, taskId: string, context: { channelId: number | null; channelApiKeyId?: number | null }) {
+  persistVideoSubmissionReceipt({ contentId, upstreamTaskId: taskId, provider: 'zongheng', channelId: context.channelId, channelApiKeyId: context.channelApiKeyId ?? null });
+  acceptVideoSubmission(contentId, taskId, { provider: 'zongheng', ...context });
+}
 export function patchZonghengTask(id: number, patch: Record<string, unknown>) {
   const row = db.select().from(contents).where(eq(contents.id, id)).get();
   if (!row) throw new Error('纵横科技本地任务不存在，停止提交');

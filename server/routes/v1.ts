@@ -5,7 +5,7 @@ import { generationErrorResponse } from '../middleware/generationErrorResponse.j
 import { getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, zonghengBaseUrl, buildZonghengVideoPayload, validateZonghengVideoAliases, buildZonghengImagePayload, validateZonghengImageReferences, zonghengImageSize, submitZonghengVideo, ZonghengSubmissionError } from '../services/zonghengAdapter.js';
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
-import { patchZonghengTask, reviewZonghengTask, zonghengOrder, recordZonghengSubmissionError } from '../services/zonghengTaskService.js';
+import { patchZonghengTask, reviewZonghengTask, zonghengOrder, recordZonghengSubmissionError, acceptZonghengVideoReceipt } from '../services/zonghengTaskService.js';
 import { generateZonghengImages } from '../services/zonghengImageService.js';
 import { handleSpecificationGeneration } from '../services/specificationGenerationService.js';
 import { getModelSpecifications, getModelSpecification } from '../services/modelRoutingService.js';
@@ -2486,7 +2486,11 @@ async function handleVideoCreation(req: Request, res: Response) {
           claimVideoSubmission(contentId!, channel.timeout || 120_000);
           patchZonghengTask(contentId!, { ...zonghengProtocolSnapshot(channel), zonghengSubmissionStarted: new Date().toISOString(), billingStatus: 'reserved',
             billingBalanceSource: deduction?.balanceDeduction?.source, billingOrgId: deduction?.balanceDeduction?.orgId });
-        }, channel.timeout, zonghengProtocol(channel));
+        }, channel.timeout, zonghengProtocol(channel), id => {
+          taskId = id;
+          acceptZonghengVideoReceipt(contentId!, id, { channelId: channel.id, channelApiKeyId: channel.apiKeyId });
+        });
+      if (job.warning) recordZonghengSubmissionError(contentId!, job.warning);
       taskId = job.taskId;
       patchZonghengTask(contentId!, { ...zonghengProtocolSnapshot(channel), videoId: taskId, zonghengPollDelay: job.pollDelay, zonghengInitialTask: job.initialTask });
       acceptVideoSubmission(contentId!, taskId, { provider: 'zongheng', channelId: channel.id, channelApiKeyId: channel.apiKeyId });

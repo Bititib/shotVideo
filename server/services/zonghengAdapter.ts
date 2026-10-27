@@ -24,11 +24,16 @@ export function zonghengError(payload: any): string {
   return sanitizedGenerationReason([code, detail].filter(value => value !== undefined && value !== '').join(': ')) || '生成服务未提供失败原因';
 }
 export interface ZonghengSubmissionDiagnostics {
-  reason: 'http_error' | 'invalid_task_response' | 'invalid_json' | 'timeout' | 'network_error';
+  reason: 'http_error' | 'invalid_task_response' | 'invalid_json' | 'timeout' | 'network_error' | 'receipt_persistence_error';
   httpStatus?: number; elapsedMs: number; networkCode?: string; requestNotSent?: boolean;
 }
 export class ZonghengSubmissionError extends Error {
   constructor(message: string, readonly uncertain: boolean, readonly diagnostics?: ZonghengSubmissionDiagnostics) { super(message); }
+}
+/** V6K documents a string task ID, never a numeric or trace/request ID. */
+function v6kTaskId(payload: any): string {
+  const id = typeof payload?.id === 'string' ? payload.id.trim() : '';
+  return id && !isTaskIdPlaceholder(id) && id.length <= 512 && !/[\s\x00-\x1f]/.test(id) ? id : '';
 }
 export interface ZonghengVideoInput {
   model: string; prompt: string; seconds: number; ratio: string; resolution: string;
@@ -73,21 +78,34 @@ export function validateZonghengVideoAliases(body: Record<string, any>) {
   if (body.n !== undefined && Number(body.n) !== 1) throw new Error('每次只能创建一条视频');
 }
 export function normalizeZonghengTask(p: any, base = V6K_BASE_URL, protocol: ZonghengProtocol = 'v6k', taskId = '') {
-  if (!['queued', 'in_progress', 'completed', 'failed'].includes(p?.status)) throw new Error('视频查询未返回有效任务状态');
-  const id = typeof p.id === 'string' ? p.id.trim() : '';
+  if (!['queued', 'in_progress', 'completed', 'failed', 'unknown'].includes(p?.status)) throw new Error('视频查询未返回有效任务状态');
+  const id = v6kTaskId(p);
   if (!id || taskId && id !== taskId) throw new Error('视频查询返回的任务 ID 缺失或不一致');
   const completed = p.status === 'completed';
-  return { status: completed ? 'completed' : p.status === 'failed' ? 'failed' : 'processing',
+  return { status: completed ? 'completed' : p.status === 'failed' ? 'failed' : p.status === 'unknown' ? 'unknown' : 'processing',
+    upstreamStatus: p.status, progressKnown: p.status !== 'unknown',
     progress: completed ? 100 : Math.max(0, Math.min(99, Number(p.progress) || 0)),
     resultUrl: completed ? zonghengTaskUrl(base, id, protocol) + '/content' : '',
     upstreamGenerated: completed, deliveryPending: false, deliveryStatus: completed ? 'ready' : '',
     generationCompletedAt: typeof p.completed_at === 'number' && Number.isFinite(p.completed_at) ? new Date(p.completed_at * 1000).toISOString() : '',
-    progressText: '', error: p.status === 'failed' ? zonghengError(p) : '', pollDelay: 20_000 };
+    progressText: p.status === 'unknown' ? '上游任务状态暂未确定，继续查询原任务' : '', error: p.status === 'failed' ? zonghengError(p) : '', pollDelay: 20_000 };
 }
 export function zonghengTaskMetadata(payload: any, base = V6K_BASE_URL, protocol: ZonghengProtocol = 'v6k', taskId = '') {
   const task = normalizeZonghengTask(payload, base, protocol, taskId);
-  return { upstreamGenerated: task.upstreamGenerated, upstreamDeliveryPending: task.deliveryPending,
+  return { upstreamStatus: task.upstreamStatus, progressKnown: task.progressKnown, upstreamQueryError: null, queryFailures: 0,
+    upstreamGenerated: task.upstreamGenerated, upstreamDeliveryPending: task.deliveryPending,
     upstreamDeliveryStatus: task.deliveryStatus, upstreamGenerationCompletedAt: task.generationCompletedAt || undefined, progressText: task.progressText || undefined };
+}
+/** Keep HTTP hints on malformed/unknown responses as well as HTTP failures. */
+export async function readZonghengTaskResponse(response: Response, base: string, taskId: string, apiKey: string) {
+  try {
+    if (!response.ok) throw new Error(await responseDiagnostic('V6K', '任务查询 task_id=' + taskId, response, apiKey));
+    const payload = await diagnosticJson('V6K', '任务查询 task_id=' + taskId, response, apiKey);
+    normalizeZonghengTask(payload, base, 'v6k', taskId);
+    return payload;
+  } catch (error) {
+    throw Object.assign(error as Error, { status: response.status, retryAfter: response.headers.get('retry-after') });
+  }
 }
 /** Only connection establishment errors prove that this POST was never sent.
  * Generic aborts, socket resets, and response-body failures remain uncertain.
@@ -106,7 +124,7 @@ export function zonghengRequestNotSent(error: unknown, httpStatus?: number): boo
   return check(error);
 }
 export async function submitZonghengVideo(base: string, apiKey: string, input: ZonghengVideoInput, idempotencyKey: string,
-  beforeSubmit: () => void, timeout = 120_000, protocol: ZonghengProtocol = 'v6k') {
+  beforeSubmit: () => void, timeout = 120_000, protocol: ZonghengProtocol = 'v6k', onAccepted?: (taskId: string) => void) {
   const body = JSON.stringify(buildZonghengVideoPayload(input, protocol));
   const url = zonghengBaseUrl(base) + '/v1/videos';
   if (!idempotencyKey) throw new Error('缺少业务订单号，停止提交');
@@ -120,20 +138,29 @@ export async function submitZonghengVideo(base: string, apiKey: string, input: Z
     try { job = JSON.parse(text); }
     catch { throw new ZonghengSubmissionError(upstreamDiagnostic('V6K', '提交 非 JSON 响应；请勿重复提交', text, apiKey, response.status, response.headers.get('x-request-id') || undefined), response.ok || response.status === 408 || response.status >= 500,
       { reason: response.ok ? 'invalid_json' : 'http_error', httpStatus, elapsedMs: Date.now() - startedAt }); }
+    // Save the receipt before interpreting HTTP/status/error fields. An existing
+    // task must be queried even when the response contains conflicting evidence.
+    const taskId = v6kTaskId(job);
+    if (taskId) {
+      try { onAccepted?.(taskId); }
+      catch (error) {
+        throw new ZonghengSubmissionError(transportDiagnostic('V6K', '已取得任务 ID，保存回执异常；禁止重新提交', error, apiKey), true,
+          { reason: 'receipt_persistence_error', httpStatus, elapsedMs: Date.now() - startedAt });
+      }
+      const initialTask = response.ok && ['completed','failed'].includes(job.status) ? { id: taskId, status: job.status, progress: job.progress, completed_at: job.completed_at,
+        error: job.status === 'failed' ? { message: apiKey ? zonghengError(job).split(apiKey).join('[密钥已隐藏]') : zonghengError(job) } : undefined } : undefined;
+      const warning = !response.ok || !['queued','in_progress','completed','failed','unknown'].includes(job.status)
+        ? new ZonghengSubmissionError(upstreamDiagnostic('V6K', '已保存任务 ID，继续查询原任务', job, apiKey, response.status, response.headers.get('x-request-id') || undefined), true,
+          { reason: response.ok ? 'invalid_task_response' : 'http_error', httpStatus, elapsedMs: Date.now() - startedAt }) : undefined;
+      return { taskId, pollDelay: 20_000, initialTask, warning };
+    }
     if (!response.ok) throw new ZonghengSubmissionError(upstreamDiagnostic('V6K', '提交', { error_code: job?.error_code ?? job?.error?.code ?? job?.code, error_detail: job?.error_detail, error: job?.error, message: job?.message }, apiKey, response.status, response.headers.get('x-request-id') || undefined),
       Boolean(videoErrorTaskId(job, response.headers)) || response.status === 408 || response.status >= 500,
       { reason: 'http_error', httpStatus, elapsedMs: Date.now() - startedAt });
-    const accepted = typeof job?.id === 'string' && job.id.trim() && ['queued','in_progress','completed','failed'].includes(job.status);
-    if (!accepted) {
-      const explicitError = !videoErrorTaskId(job, response.headers) && !['queued','in_progress','completed'].includes(job?.status) && (Boolean(job?.error) || job?.success === false
-        || job?.code !== undefined && ![0,200,'0','200','success','ok'].includes(job.code));
-      throw new ZonghengSubmissionError(explicitError ? zonghengError(job).split(apiKey).join('[REDACTED]') : '未返回有效任务 ID 或状态，请核实原订单', !explicitError,
-        { reason: explicitError ? 'http_error' : 'invalid_task_response', httpStatus, elapsedMs: Date.now() - startedAt });
-    }
-    const taskId = job.id.trim();
-    const initialTask = ['completed','failed'].includes(job.status) ? { id: taskId, status: job.status, progress: job.progress, completed_at: job.completed_at,
-      error: job.error ? { code: job.error.code, message: job.error.message } : undefined } : undefined;
-    return { taskId, pollDelay: 20_000, initialTask };
+    const explicitError = !videoErrorTaskId(job, response.headers) && !['queued','in_progress','completed','unknown'].includes(job?.status) && (Boolean(job?.error) || job?.success === false
+      || job?.code !== undefined && ![0,200,'0','200','success','ok'].includes(job.code));
+    throw new ZonghengSubmissionError(explicitError ? zonghengError(job).split(apiKey).join('[REDACTED]') : '未返回有效任务 ID 或状态，请核实原订单', !explicitError,
+      { reason: explicitError ? 'http_error' : 'invalid_task_response', httpStatus, elapsedMs: Date.now() - startedAt });
   } catch (error: any) {
     if (error instanceof ZonghengSubmissionError) throw error;
     const code = String(error?.cause?.code || error?.code || '');
@@ -164,4 +191,4 @@ export function buildZonghengImagePayload(i: { model: string; prompt: string; si
   return { model: i.model, prompt: i.prompt.trim(), size: i.size, n: i.n,
     ...(i.aspectRatio ? { aspect_ratio: i.aspectRatio } : {}), ...(i.quality ? { quality: i.quality } : {}) };
 }
-import { upstreamDiagnostic, transportDiagnostic } from './upstreamDiagnostic.js';
+import { upstreamDiagnostic, transportDiagnostic, responseDiagnostic, diagnosticJson } from './upstreamDiagnostic.js';

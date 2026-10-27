@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { buildZonghengVideoPayload, normalizeZonghengTask, submitZonghengVideo, ZonghengSubmissionError, zonghengTaskUrl } from '../server/services/zonghengAdapter';
+import { buildZonghengVideoPayload, normalizeZonghengTask, submitZonghengVideo, readZonghengTaskResponse, zonghengTaskUrl } from '../server/services/zonghengAdapter';
 import { prepareZonghengMedia } from '../server/services/zonghengMediaService';
 import { zonghengProtocolSnapshot, zonghengTaskChannel, v6kQueryRetryDelay } from '../server/services/zonghengProtocol';
 
@@ -14,15 +14,35 @@ describe('V6K unified video protocol', () => {
     [400, { error: { message: 'refused' } }, {}, false],
     [400, { error: { message: 'conflicting' }, data: { id: 'task_original' } }, {}, true],
     [400, { error: { message: 'conflicting' } }, { 'x-task-id': 'task_original' }, true],
-    [200, { id: 'task_original', status: 'unknown', error: { message: 'conflicting' } }, {}, true],
   ])('classifies documented rejection without discarding receipt evidence: %s %j', async (status, body, headers, uncertain) => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(body, { status: status as number, headers: headers as any })));
     await expect(submitZonghengVideo('https://www.v6k.top', 'key', input, 'order', () => {})).rejects.toMatchObject({ uncertain });
   });
+  it.each([
+    [200, 'unknown'], [503, 'unknown'], [400, 'failed'], [200, 'future_status'], [200, undefined],
+  ])('persists a valid receipt before inspecting HTTP %s / status %s', async (status, state) => {
+    const save = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: '00012345678901234567890', status: state, error: { message: 'conflicting evidence' } }, { status: status as number })));
+    const job = await submitZonghengVideo('https://www.v6k.top', 'key', input, 'order', () => {}, 1000, 'v6k', save);
+    expect(save).toHaveBeenCalledExactlyOnceWith('00012345678901234567890');
+    expect(job.taskId).toBe('00012345678901234567890');
+    expect(job.initialTask).toBeUndefined();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it('does not call a receipt persistence failure safe to resubmit', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: 'accepted', status: 'unknown' })));
+    await expect(submitZonghengVideo('https://www.v6k.top', 'key', input, 'order', () => {}, 1000, 'v6k', () => { throw new Error('storage failed'); }))
+      .rejects.toMatchObject({ uncertain: true });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it.each([429, 503, 200])('preserves Retry-After on HTTP %s errors or malformed task responses', async status => {
+    const response = Response.json({ error: { code: 'query_unavailable', message: 'try original later' } }, { status, headers: { 'Retry-After': '180' } });
+    await expect(readZonghengTaskResponse(response, 'https://www.v6k.top', 'task_1', 'key')).rejects.toMatchObject({ status, retryAfter: '180' });
+  });
   it('keeps an immediately failed task for terminal processing without another POST', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: 'task_failed', status: 'failed', error: { code: 'video_generation_failed', message: 'generation refused' } })));
     const receipt = await submitZonghengVideo('https://www.v6k.top', 'key', input, 'order', () => {});
-    expect(receipt.initialTask).toMatchObject({ status: 'failed', error: { message: 'generation refused' } });
+    expect(receipt.initialTask).toMatchObject({ status: 'failed', error: { message: expect.stringContaining('generation refused') } });
     expect(normalizeZonghengTask(receipt.initialTask)).toMatchObject({ status: 'failed', error: expect.stringContaining('generation refused') });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
@@ -37,10 +57,11 @@ describe('V6K unified video protocol', () => {
     expect(buildZonghengVideoPayload(input)).toEqual(buildZonghengVideoPayload(input, 'v6k')); 
     expect(() => buildZonghengVideoPayload({ ...input, firstFrame: 'https://media.example/frame.jpg', images: [] }, 'v6k')).toThrow('尚未确认');
   });
-  it('maps all four states and constructs the authenticated download endpoint', () => {
+  it('maps all five states and constructs the authenticated download endpoint', () => {
     for (const status of ['queued', 'in_progress']) expect(normalizeZonghengTask({ id: 'task_1', status }, 'https://www.v6k.top', 'v6k', 'task_1')).toMatchObject({ status: 'processing', pollDelay: 20_000 });
     expect(normalizeZonghengTask({ id: 'task_1', status: 'completed', completed_at: 1790467800 }, 'https://www.v6k.top', 'v6k', 'task_1')).toMatchObject({ status: 'completed', progress: 100, resultUrl: 'https://www.v6k.top/v1/videos/task_1/content', upstreamGenerated: true });
     expect(normalizeZonghengTask({ id: 'task_1', status: 'failed', error: { message: '任务失败' } }, '', 'v6k', 'task_1')).toMatchObject({ status: 'failed', error: '任务失败' });
+    expect(normalizeZonghengTask({ id: 'task_1', status: 'unknown', error: { message: 'not a terminal failure' } }, '', 'v6k', 'task_1')).toMatchObject({ status: 'unknown', upstreamStatus: 'unknown', progressKnown: false, error: '', resultUrl: '' });
     expect(() => normalizeZonghengTask({ id: 'other', status: 'completed' }, '', 'v6k', 'task_1')).toThrow('不一致');
     expect(zonghengTaskUrl('https://old.example/v1', 'vid_old')).toBe('https://old.example/v1/videos/vid_old');
     expect(() => zonghengTaskUrl('https://www.v6k.top', '未取得上游任务 ID')).toThrow('界面提示文字不是有效上游任务 ID');
@@ -57,7 +78,7 @@ describe('V6K unified video protocol', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it('keeps a 504 or missing ID uncertain and never retries the POST', async () => {
-    for (const response of [new Response('<html>timeout</html>', { status: 504 }), Response.json({ status: 'queued' })]) {
+    for (const response of [new Response('<html>timeout</html>', { status: 504 }), Response.json({ status: 'queued' }), Response.json({ status: 'unknown', error: { message: 'not confirmed' } })]) {
       const fetcher = vi.fn(async () => response); vi.stubGlobal('fetch', fetcher);
       await expect(submitZonghengVideo('https://www.v6k.top', 'key', input, 'order', () => {}, 1000, 'v6k')).rejects.toMatchObject({ uncertain: true });
       expect(fetcher).toHaveBeenCalledTimes(1);

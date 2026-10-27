@@ -5,9 +5,9 @@ import { queryZonghengTask } from '../services/zonghengTaskQueryService.js';
 import { publicGenerationEvent, publicGenerationError } from '../../shared/generationMessages.js';
 import { generationErrorResponse } from '../middleware/generationErrorResponse.js';
 import { canonicalZonghengModelId, ZONGHENG_VIDEO_MODELS, zonghengPublicModelId, getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
-import { isZonghengChannel, buildZonghengVideoPayload, submitZonghengVideo, ZonghengSubmissionError, zonghengTaskUrl, normalizeZonghengTask, zonghengTaskMetadata } from '../services/zonghengAdapter.js';
+import { isZonghengChannel, buildZonghengVideoPayload, submitZonghengVideo, ZonghengSubmissionError, zonghengTaskUrl, normalizeZonghengTask, readZonghengTaskResponse, zonghengTaskMetadata } from '../services/zonghengAdapter.js';
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
-import { patchZonghengTask, reviewZonghengTask, zonghengOrder, recordZonghengSubmissionError } from '../services/zonghengTaskService.js';
+import { patchZonghengTask, reviewZonghengTask, zonghengOrder, recordZonghengSubmissionError, acceptZonghengVideoReceipt } from '../services/zonghengTaskService.js';
 import videoQuotes from './videoQuotes.js';
 import { assertExpectedVideoCost } from '../services/videoQuoteService.js';
 import { resolvePublicModelId } from '../services/publicModelNameService.js';
@@ -1675,7 +1675,9 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
         const job = await submitZonghengVideo(baseUrl, channel.apiKey, { model: upstreamModel, prompt, seconds: Number(video_length), ratio: aspect_ratio, resolution,
           images, videos, audios, firstFrame: frames[0], lastFrame: frames[1], quality: req.body.quality,
           negativePrompt: req.body.negative_prompt, generateAudio: req.body.generate_audio }, zonghengOrder(contentId),
-          () => { paidRequestStarted = true; patchZonghengTask(contentId!, { ...zonghengSnapshot, zonghengSubmissionStarted: new Date().toISOString() }); }, dbChannel?.timeout, zonghengApiProtocol);
+          () => { paidRequestStarted = true; patchZonghengTask(contentId!, { ...zonghengSnapshot, zonghengSubmissionStarted: new Date().toISOString() }); }, dbChannel?.timeout, zonghengApiProtocol,
+          id => { videoId = id; acceptZonghengVideoReceipt(contentId!, id, { channelId: dbChannel?.id || null, channelApiKeyId: dbChannel?.apiKeyId }); });
+        if (job.warning) recordZonghengSubmissionError(contentId, job.warning);
         zonghengInitialTask = job.initialTask;
         videoId = job.taskId; zonghengDelay = job.pollDelay;
         patchZonghengTask(contentId, { ...zonghengSnapshot, videoId, zonghengPollDelay: job.pollDelay, zonghengInitialTask: job.initialTask });
@@ -2754,7 +2756,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
           : protectedPolling ? await fetchVideoTaskResponse(pollUrl, { headers })
           : await fetch(pollUrl, { headers, signal: AbortSignal.timeout(15_000) });
 
-        if (!pollResp.ok) {
+        if (!pollResp.ok && !isZongheng) {
           const detail = await pollResp.text().catch(() => '');
           const failureMessage = formatVideoPollHttpFailure(pollResp.status, detail);
           if (isSnumomWan && ++consecutiveTransientPollFailures < maxTransientPollFailures) continue;
@@ -2762,10 +2764,9 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
             if (contentId !== null) noteVideoQueryProblem(contentId, failureMessage);
             continue;
           }
-          if (isHaya || isZongheng) {
+          if (isHaya) {
             consecutiveTransientPollFailures++;
-            if (isZongheng) zonghengDelay = v6kQueryRetryDelay(consecutiveTransientPollFailures, pollResp.headers.get('retry-after'));
-            if (contentId !== null) (isZongheng ? patchZonghengTask : patchHayaTask)(contentId, { progressText: '查询暂时不可用，继续查询原任务，不会重复生成' });
+            if (contentId !== null) patchHayaTask(contentId, { progressText: '查询暂时不可用，继续查询原任务，不会重复生成' });
             continue;
           }
           if (batchContext && contentId) {
@@ -2792,8 +2793,8 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
           return;
         }
 
-        if (!isHaya) consecutiveTransientPollFailures = 0;
-        const status = await pollResp.json() as any;
+        if (!isHaya && !isZongheng) consecutiveTransientPollFailures = 0;
+        const status = isZongheng ? await readZonghengTaskResponse(pollResp, baseUrl, videoId, channel.apiKey) : await pollResp.json() as any;
         if (zonghengInitialTask) { zonghengInitialTask = undefined; if (contentId !== null) patchZonghengTask(contentId, { zonghengInitialTask: undefined }); }
         if (contentId !== null && db.select().from(contents).where(eq(contents.id, contentId)).get()?.status !== 'processing') {
           if (!res.destroyed && !res.writableEnded) res.end();
@@ -2815,6 +2816,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
           const normalized = normalizeZonghengTask(status, baseUrl, zonghengApiProtocol, videoId);
           taskStatus = normalized.status; progress = normalized.progress; resultUrl = normalized.resultUrl; errMsg = normalized.error;
           zonghengDelay = normalized.pollDelay;
+          consecutiveTransientPollFailures = 0;
         } else if (isHaya) {
           const normalized = normalizeHayaTask(status, baseUrl, videoId);
           consecutiveTransientPollFailures = 0;
@@ -2936,7 +2938,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
 
         console.log(`[video] 轮询 (${isSudaShui ? 'SudaShui' : isSoraV4 ? 'SoraV4' : isSeedanceFast ? 'SeedanceFast' : 'Default'}): contentId=${contentId} taskId=${videoId} status=${taskStatus} progress=${progress}%`);
 
-        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'generating' || taskStatus === 'post_processing' || taskStatus === 'finalizing' || taskStatus === 'in_progress') {
+        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'generating' || taskStatus === 'post_processing' || taskStatus === 'finalizing' || taskStatus === 'in_progress' || isZongheng && taskStatus === 'unknown') {
           sendEvent({ type: 'progress', progress });
           const hmProgressText = isZongheng ? normalizeZonghengTask(status, baseUrl, zonghengApiProtocol, videoId).progressText : isHmStudio ? normalizeHmStudioTask(status, baseUrl).progressText : '';
           sendEvent({ type: 'status', message: hmProgressText || `视频生成中 ${progress}%` });
@@ -3048,7 +3050,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
           return;
         }
       } catch (pollErr: any) {
-        if ((isZongheng || protectedPolling) && pollErr instanceof VideoPollTimeout && contentId !== null) {
+        if (protectedPolling && pollErr instanceof VideoPollTimeout && contentId !== null) {
           console.warn('[video] Poll deadline reached; handing original task to recovery:', contentId);
           resumeAfterPollTimeout = true;
           sendEvent({ type: 'status', message: '正在后台同步原任务结果，请勿重复提交' });
@@ -3057,6 +3059,10 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         }
         if (protectedPolling && contentId !== null) noteVideoQueryProblem(contentId, pollErr.message || '查询连接异常');
         if (isHaya) consecutiveTransientPollFailures++;
+        if (isZongheng) {
+          zonghengDelay = v6kQueryRetryDelay(++consecutiveTransientPollFailures, pollErr.retryAfter);
+          if (contentId !== null) patchZonghengTask(contentId, { upstreamQueryError: transportDiagnostic('V6K', '查询原任务', pollErr, channel.apiKey), queryFailures: consecutiveTransientPollFailures });
+        }
         console.warn(`[video] 轮询异常: contentId=${contentId} taskId=${videoId} ${pollErr.message}`);
         // 轮询失败不立即退出，继续重试
       }
@@ -3798,7 +3804,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           : protectedPolling ? await fetchVideoTaskResponse(pollUrl, { headers })
           : await fetch(pollUrl, { headers, signal: AbortSignal.timeout(15_000) });
 
-        if (!pollResp.ok) {
+        if (!pollResp.ok && !isZongheng) {
           const detail = await pollResp.text().catch(() => '');
           const failureMessage = formatVideoPollHttpFailure(pollResp.status, detail);
           if (isSnumomWan && ++consecutiveTransientPollFailures < maxTransientPollFailures) continue;
@@ -3806,10 +3812,9 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
             noteVideoQueryProblem(contentId, failureMessage);
             continue;
           }
-          if (isHaya || isZongheng) {
+          if (isHaya) {
             consecutiveTransientPollFailures++;
-            if (isZongheng) zonghengDelay = v6kQueryRetryDelay(consecutiveTransientPollFailures, pollResp.headers.get('retry-after'));
-            if (contentId !== null) (isZongheng ? patchZonghengTask : patchHayaTask)(contentId, { progressText: '查询暂时不可用，继续查询原任务，不会重复生成' });
+            if (contentId !== null) patchHayaTask(contentId, { progressText: '查询暂时不可用，继续查询原任务，不会重复生成' });
             continue;
           }
           if (metadata.batchItemId) {
@@ -3828,8 +3833,8 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           break;
         }
 
-        if (!isHaya) consecutiveTransientPollFailures = 0;
-        const statusData = await pollResp.json() as any;
+        if (!isHaya && !isZongheng) consecutiveTransientPollFailures = 0;
+        const statusData = isZongheng ? await readZonghengTaskResponse(pollResp, baseUrl, videoId, channel.apiKey) : await pollResp.json() as any;
         if (zonghengInitialTask) { zonghengInitialTask = undefined; if (contentId !== null) patchZonghengTask(contentId, { zonghengInitialTask: undefined }); }
         if (db.select().from(contents).where(eq(contents.id, contentId)).get()?.status !== 'processing') break;
         if (protectedPolling && (isVideoQueryErrorPayload(statusData)
@@ -3848,6 +3853,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
           const normalized = normalizeZonghengTask(statusData, baseUrl, zonghengApiProtocol, videoId);
           taskStatus = normalized.status; progress = normalized.progress; resultUrl = normalized.resultUrl; errMsg = normalized.error;
           zonghengDelay = normalized.pollDelay;
+          consecutiveTransientPollFailures = 0;
         } else if (isHaya) {
           const normalized = normalizeHayaTask(statusData, baseUrl, videoId);
           consecutiveTransientPollFailures = 0;
@@ -3965,7 +3971,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
 
         console.log(`[video-recover] Polling task ${contentId}: taskId=${videoId} status=${taskStatus} progress=${progress}%`);
 
-        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'generating' || taskStatus === 'post_processing' || taskStatus === 'finalizing' || taskStatus === 'in_progress') {
+        if (taskStatus === 'processing' || taskStatus === 'queued' || taskStatus === 'pending' || taskStatus === 'submitted' || taskStatus === 'generating' || taskStatus === 'post_processing' || taskStatus === 'finalizing' || taskStatus === 'in_progress' || isZongheng && taskStatus === 'unknown') {
           try {
             const meta = JSON.parse(currentRecord.metadata || '{}');
             meta.progress = progress;
@@ -4087,6 +4093,10 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
       } catch (err: any) {
         if (protectedPolling) noteVideoQueryProblem(contentId, err.message || '查询连接异常');
         if (isHaya) consecutiveTransientPollFailures++;
+        if (isZongheng) {
+          zonghengDelay = v6kQueryRetryDelay(++consecutiveTransientPollFailures, err.retryAfter);
+          patchZonghengTask(contentId, { upstreamQueryError: transportDiagnostic('V6K', '查询原任务', err, channel.apiKey), queryFailures: consecutiveTransientPollFailures });
+        }
         console.warn(`[video-recover] Polling exception for task ${contentId}: ${err.message}`);
       }
       }
