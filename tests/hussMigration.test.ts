@@ -50,3 +50,18 @@ it('keeps an explicitly supplied HUSS key when an older admin form still sends b
   ChannelService.updateChannel(1, { type: 'blobdraw', baseUrl: 'https://www.huss.top', apiKey: 'replacement-huss-key' });
   expect(channel()).toMatchObject({ type: 'huss', apiKey: 'replacement-huss-key', maxRetries: 0 });
 });
+
+it('syncs HSS independently and preserves administrator pricing and enablement', async () => {
+  const modelId = 'hss-2.5-301010';
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [{ id: modelId }] })));
+  await syncHussModels(channel());
+  expect(db.select().from(models).where(eq(models.modelId, modelId)).get()).toMatchObject({ isActive: 0 });
+  expect(getModelSpecification(modelId)?.limits).toMatchObject({ resolutions: ['720p'], duration: { min: 4, max: 30 }, maxImages: 30 });
+  db.update(models).set({ isActive: 1 }).where(eq(models.modelId, modelId)).run();
+  db.insert(modelPricing).values({ modelPattern: modelId, inputPrice: 8.8 }).run();
+  await syncHussModels(channel());
+  expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, modelId)).get()).toMatchObject({ inputPrice: 8.8 });
+  expect(db.select().from(models).where(eq(models.modelId, modelId)).get()).toMatchObject({ isActive: 1 });
+  expect(getModelSpecification(modelId)?.routes).toHaveLength(1);
+  expect(JSON.parse(channel().modelMapping)).toEqual({ [modelId]: modelId });
+});

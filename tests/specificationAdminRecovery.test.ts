@@ -73,3 +73,45 @@ it('clears a previous download error only after original task save and settlemen
   expect(JSON.parse(saved().metadata).resultSaveError).toBeNull();
   expect(balance()).toBe(94); expect(saved().cost).toBe(6);
 });
+
+it('recovers HSS missing ID through the original payload once, persists ID before polling and settles once', async () => {
+  const snapshot = { model: 'hss-2.5-301010', prompt: 'original', duration: 4, ratio: '21:9', resolution: '720p', idempotency_key: 'persisted-key' };
+  change({ videoId: '', upstreamModel: snapshot.model, actualModel: snapshot.model, reviewKind: 'submission', hussIdempotencyKey: 'persisted-key', hussPayload: snapshot });
+  vi.stubGlobal('fetch', vi.fn(async (url, init: any) => {
+    if (init.method === 'POST') {
+      expect(url).toBe('https://www.huss.top/v1/videos');
+      expect(init.headers['Idempotency-Key']).toBe('persisted-key');
+      expect(JSON.parse(init.body)).toEqual({ model: snapshot.model, prompt: 'original', duration: 4, ratio: '21:9', resolution: '720p' });
+      return Response.json({ id: 'video_original', status: 'queued' });
+    }
+    expect(url).toBe('https://www.huss.top/v1/videos/video_original');
+    expect(JSON.parse(saved().metadata).upstreamTaskId).toBe('video_original');
+    return Response.json({ id: 'video_original', status: 'completed', url: 'https://cdn.example/result.mp4' });
+  }));
+  await Promise.all([VideoRecoveryService.recover(id), VideoRecoveryService.recover(id)]);
+  await vi.waitFor(() => expect(saved().status).toBe('completed'));
+  expect(fetch).toHaveBeenCalledTimes(2); expect(balance()).toBe(94);
+  expect(await VideoRecoveryService.recover(id)).toMatchObject({ chargedAmount: 0, status: 'completed' });
+});
+it('HSS failed task ends with detailed reason and a single refund', async () => {
+  change({ videoId: 'video_failed', actualModel: 'hss-2.5-301010' });
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: 'video_failed', status: 'failed', phase: 'not_submitted', error: { code: 'QUEUE_EXPIRED', message: 'queue expired before submission' } })));
+  await Promise.all([VideoRecoveryService.recover(id), VideoRecoveryService.recover(id)]);
+  await vi.waitFor(() => expect(saved().status).toBe('failed'));
+  expect(balance()).toBe(100); expect(JSON.parse(saved().metadata).error).toContain('QUEUE_EXPIRED');
+  expect(fetch).toHaveBeenCalledOnce();
+});
+
+it('HSS temporary query unavailability honors Retry-After without refund or POST', async () => {
+  vi.useFakeTimers();
+  change({ videoId: 'video_original', actualModel: 'hss-2.5-301010' });
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json({ error: { code: 'auth_unavailable', message: '受理检查暂时不可用' } }, { status: 503, headers: { 'Retry-After': '90' } }))
+    .mockResolvedValueOnce(Response.json({ id: 'video_original', status: 'completed', url: 'https://cdn.example/result.mp4' })));
+  await VideoRecoveryService.recover(id); await vi.advanceTimersByTimeAsync(100);
+  expect(JSON.parse(saved().metadata).upstreamQueryError).toContain('auth_unavailable');
+  expect(balance()).toBe(94); expect(fetch).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(89000); expect(fetch).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1000); expect(saved().status).toBe('completed');
+  expect(vi.mocked(fetch).mock.calls.every(call => call[1]?.method === 'GET')).toBe(true);
+  expect(balance()).toBe(94);
+});

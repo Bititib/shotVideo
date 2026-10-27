@@ -219,12 +219,12 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       const message = transportDiagnostic(channel.type || 'OpenAI-compatible', '任务查询 task_id=' + taskId + '；正在重试，请勿重复提交', error, channel.apiKey);
       patch(id, { progressText: message, upstreamQueryError: message, lastQueryAt: new Date().toISOString(), lastQueryStatus: status, queryFailures: ++queryFailures });
       onEvent({ type: 'status', message, contentId: id });
-      await wait(isZonghengChannel(channel) ? v6kQueryRetryDelay(queryFailures, error?.retryAfter) : 12_000); continue;
+      await wait(isZonghengChannel(channel) ? v6kQueryRetryDelay(queryFailures, error?.retryAfter) : isHussChannel(channel) ? Math.max(12_000, Number(error?.retryAfterMs) || 0) : 12_000); continue;
     }
     queryFailures = 0;
     patch(id, { upstreamQueryError: null });
     const progressKnown = task.progressKnown ?? (typeof task.progress === 'number' && Number.isFinite(task.progress));
-    const message = isZonghengChannel(channel) && task.progressText ? task.progressText : isHussChannel(channel) && task.storagePending ? 'HUSS 已生成，正在保存成品；继续查询原任务' : task.status === 'queued' ? '渠道已受理，正在排队'
+    const message = (isZonghengChannel(channel) || isHussChannel(channel)) && task.progressText ? task.progressText : isHussChannel(channel) && task.storagePending ? 'HUSS 已生成，正在保存成品；继续查询原任务' : task.status === 'queued' ? '渠道已受理，正在排队'
       : ['completed', 'success', 'succeeded', 'done'].includes(task.status) ? '上游已完成，正在保存结果'
       : progressKnown ? '视频生成中' : '视频生成中，渠道暂未提供百分比';
     patch(id, { progress: task.progress, progressKnown, upstreamStatus: isZonghengChannel(channel) ? task.upstreamStatus || task.status : task.status, progressText: message,
@@ -258,7 +258,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         onEvent({ type: 'complete', videoUrl: localized, contentId: id }); return;
       }
     }
-    await wait(isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : 8_000);
+    await wait(isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : isHussChannel(channel) && taskId.startsWith('video_') ? 12_000 : 8_000);
   }
   if (isZonghengChannel(channel)) {
     const message = '原任务尚未结束，将在后台继续查询，请勿重复提交';
@@ -741,7 +741,14 @@ export function restoreLegacyMjCompletedImages(): number {
 }
 
 async function resumeHussReceipt(id: number, channel: any, key: string) {
-  const receipt = await recoverHussSubmission(channel, key);
+  const before = metadata(id);
+  if ([before.upstreamModel, before.actualModel, before.requestedModel].includes('hss-2.5-301010') && before.hussPayload?.model !== 'hss-2.5-301010') throw new Error('HUSS 异步原请求快照缺失，未发送请求');
+  let receipt;
+  try { receipt = await recoverHussSubmission(channel, key, before.hussPayload); }
+  catch (error: any) {
+    patch(id, { hussReceiptRetryAt: Date.now() + Math.max(60_000, Number(error?.retryAfterMs) || 0) });
+    throw error;
+  }
   const row = db.select().from(contents).where(eq(contents.id, id)).get();
   if (!row || !['queued','processing','review'].includes(row.status)) return;
   const meta = metadata(id);

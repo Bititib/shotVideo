@@ -814,3 +814,64 @@ describe('V6K sales-route protocol adapter', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('HSS actual managed submission and recovery', () => {
+  const model = 'hss-2.5-301010';
+  function setupHss() {
+    const l = existingModelLimits(model, 'video')!;
+    db.insert(models).values({ modelId: model, provider: 'huss', displayName: model, capabilities: '["video"]', isActive: 1 }).onConflictDoNothing().run();
+    db.delete(modelPricing).where(eq(modelPricing.modelPattern, model)).run();
+    db.insert(modelPricing).values({ modelPattern: model, billingType: 'per_call', inputPrice: 6, outputPrice: 0, extraParams: '{}' }).run();
+    const c = { ...channel(1), type: 'huss', baseUrl: 'https://www.huss.top', supportedModels: [model] };
+    vi.mocked(ChannelService.getActiveChannels).mockReturnValue([c]);
+    vi.mocked(ChannelService.getChannelRaw).mockReturnValue(c as any);
+    saveModelSpecification({ modelId: model, kind: 'video', enabled: true, aliases: [], limits: l,
+      routes: [{ ...route(1), executionModel: model, upstreamModel: model, limits: l }] });
+    return { body: { model, prompt: 'original scene', seconds: 4, ratio: '21:9', resolution: '720p' }, headers: {}, protocol: 'https', get: () => 'app.invalid', userId } as any;
+  }
+  const last = () => db.select().from(contents).all().at(-1)!;
+  it('saves the ID before polling, downloads, and settles one charge', async () => {
+    const req = setupHss();
+    vi.stubGlobal('fetch', vi.fn(async (_url, init: any) => {
+      if (init.method === 'POST') {
+        expect(JSON.parse(last().metadata).hussIdempotencyKey).toBe(init.headers['Idempotency-Key']);
+        expect(JSON.parse(init.body)).toMatchObject({ model, duration: 4, ratio: '21:9' });
+        return Response.json({ id: 'video_hss_test', status: 'queued' }, { status: 202 });
+      }
+      expect(JSON.parse(last().metadata).videoId).toBe('video_hss_test');
+      return Response.json({ id: 'video_hss_test', status: 'completed', url: 'https://cdn.invalid/test.mp4' });
+    }));
+    await handleSpecificationGeneration(req, response(), 'video');
+    await vi.waitFor(() => expect(last().status).toBe('completed'));
+    expect(last().cost).toBe(6); expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(94);
+    resumeSpecificationTasks(); expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it('ends explicit parameter rejection, refunds once, and never queries an absent ID', async () => {
+    const req = setupHss();
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { code: 'invalid_duration', message: 'duration rejected by provider' } }, { status: 400 })));
+    await handleSpecificationGeneration(req, response(), 'video');
+    await vi.waitFor(() => expect(last().status).toBe('failed'));
+    expect(JSON.parse(last().metadata)).toMatchObject({ requiresReview: false, billingStatus: 'refunded', error: expect.stringContaining('invalid_duration') });
+    expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(100);
+    resumeSpecificationTasks(); expect(fetch).toHaveBeenCalledOnce();
+  });
+  it('restart recovery replays only the persisted HSS request and never calls BB submissions', async () => {
+    const req = setupHss(); let originalBody = '', originalKey = '';
+    vi.stubGlobal('fetch', vi.fn(async (_url, init: any) => { originalBody = init.body; originalKey = init.headers['Idempotency-Key']; throw new Error('socket reset'); }));
+    await handleSpecificationGeneration(req, response(), 'video');
+    await vi.waitFor(() => expect(JSON.parse(last().metadata).requiresReview).toBe(true));
+    expect(fetch).toHaveBeenCalledOnce();
+    vi.stubGlobal('fetch', vi.fn(async (url, init: any) => {
+      if (init.method === 'POST') {
+        expect(url).toBe('https://www.huss.top/v1/videos'); expect(init.body).toBe(originalBody); expect(init.headers['Idempotency-Key']).toBe(originalKey);
+        return Response.json({ id: 'video_restart', status: 'queued' });
+      }
+      expect(url).toBe('https://www.huss.top/v1/videos/video_restart');
+      return Response.json({ id: 'video_restart', status: 'completed', url: 'https://cdn.invalid/result.mp4' });
+    }));
+    resumeSpecificationTasks(); resumeSpecificationTasks();
+    await vi.waitFor(() => expect(last().status).toBe('completed'));
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(94);
+  });
+});

@@ -1,4 +1,4 @@
-import { HUSS_BB_PUBLIC_MODEL, hussBbModelLimits } from '../../shared/hussBbVideo.js';
+import { HUSS_BB_PUBLIC_MODEL, hussBbModelLimits, HUSS_HSS_MODEL, hussHssModelLimits } from '../../shared/hussBbVideo.js';
 import { V6K_TTT_720_MODEL } from '../../shared/zonghengVideo.js';
 import { defaultRoutingLimits, type ModelInputLimits } from '../../shared/modelRouting.js';
 import { getHmStudioAdditionalVideoModel } from '../../shared/hmStudioVideo.js';
@@ -16,6 +16,7 @@ export function existingModelLimits(id: string, kind: 'image' | 'video'): ModelI
     const textOnly = ['gpt-image-2.5-flare', 'nano-banana-2.1', 'nano-banana-2-lite'].includes(id);
     return { ...l, maxImages: textOnly ? 0 : id === 'gpt-image-2-mingfei' ? 16 : 10, maxOutputs: 4, resolutions: id === 'gpt-image-2' ? ['1K','4K'] : ['1K','2K','4K'], ratios: ['1:1','16:9','9:16','4:3','3:4','3:2','2:3'] };
   }
+  if (id === HUSS_HSS_MODEL) return hussHssModelLimits();
   if (id === HUSS_BB_PUBLIC_MODEL) return hussBbModelLimits();
   if (id === V6K_TTT_720_MODEL) return video(30,10,10,'720p',5,30);
   const hm = getHmStudioAdditionalVideoModel(id);

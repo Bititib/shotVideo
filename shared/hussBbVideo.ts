@@ -15,3 +15,10 @@ export function hussBbModelLimits(): ModelInputLimits {
     firstFrame: false, lastFrame: false, qualities: [],
   };
 }
+
+// User explicitly keeps this upstream product ID as the public identity.
+export const HUSS_HSS_MODEL = 'hss-2.5-301010';
+export function hussHssModelLimits(): ModelInputLimits {
+  return { ...hussBbModelLimits(), ratios: ['21:9','16:9','4:3','1:1','3:4','9:16'],
+    duration: { mode: 'range', min: 4, max: 30, step: 1, values: [] } };
+}
