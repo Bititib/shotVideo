@@ -1664,15 +1664,15 @@ async function handleVideoCreation(req: Request, res: Response) {
       if (!Array.isArray(input.content) || aliases.some(key => input[key] !== undefined) || (Array.isArray(req.files) && req.files.length)) {
         cleanupFiles(req.files); return res.status(400).json({ error: 'content 必须是数组，且不能与其他参考素材参数混用' });
       }
-      const images: string[] = [], audios: string[] = [];
+      const images: string[] = [], videos: string[] = [], audios: string[] = [];
       for (const item of input.content) {
-        const url = item?.type === 'image_url' ? item.image_url?.url : item?.type === 'audio_url' ? item.audio_url?.url : undefined;
+        const url = item?.type === 'image_url' ? item.image_url?.url : item?.type === 'video_url' ? item.video_url?.url : item?.type === 'audio_url' ? item.audio_url?.url : undefined;
         if (typeof url !== 'string' || !url.trim()) {
-          cleanupFiles(req.files); return res.status(400).json({ error: '此模型 content 仅支持 image_url 和 audio_url，并须提供有效 url' });
+          cleanupFiles(req.files); return res.status(400).json({ error: '此模型 content 仅支持 image_url、video_url 和 audio_url，并须提供有效 url' });
         }
-        (item.type === 'image_url' ? images : audios).push(url);
+        (item.type === 'image_url' ? images : item.type === 'video_url' ? videos : audios).push(url);
       }
-      input.reference_images = images; input.audio_urls = audios;
+      input.reference_images = images; input.reference_videos = videos; input.audio_urls = audios;
       delete input.content;
     }
     if ([input.seconds, input.duration, input.video_length, input.parameters?.duration].every(value => value === undefined)) input.seconds = 5;

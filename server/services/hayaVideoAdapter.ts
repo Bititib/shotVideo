@@ -44,6 +44,7 @@ export function buildHayaVideoPayload(input: HayaVideoInput) {
     if (error) throw new Error(error);
     return { model: hayaUpstreamModelId(input.model), prompt: input.prompt.trim(), seconds: String(input.seconds), ratio: input.ratio, resolution: input.resolution,
       content: [...input.images.map(url => ({ type: 'image_url', image_url: { url } })),
+        ...input.videos.map(url => ({ type: 'video_url', video_url: { url } })),
         ...input.audios.map(url => ({ type: 'audio_url', audio_url: { url } }))],
       ...(input.metadata ? { metadata: input.metadata } : {}) };
   }

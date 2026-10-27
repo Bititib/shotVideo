@@ -14,15 +14,15 @@ describe('Haya protocol and catalog', () => {
       [6.5, 'per_call'], [5, 'per_call'], [5, 'per_call'], [0.5, 'per_second'], [13, 'per_call'], [5, 'per_call'], [7, 'per_call'], [4, 'per_call'],
     ]);
   });
-  it('uses the XG 2.0 API contract, not the conflicting marketing card or legacy Haya payload', () => {
-    const current = { ...input, model: HAYA_XG_SEEDANCE_20_MODEL };
+  it('sends all three reference types in root content and enforces the confirmed 9/3/3 limits', () => {
+    const current = { ...input, model: HAYA_XG_SEEDANCE_20_MODEL, videos: ['https://media.example/v.mp4?signature=a%2Fb'] };
     expect(buildHayaVideoPayload(current)).toEqual({ model: HAYA_XG_SEEDANCE_20_UPSTREAM_MODEL, prompt: '测试', seconds: '15', ratio: '9:16', resolution: '720p',
-      content: [{ type: 'image_url', image_url: { url: input.images[0] } }, { type: 'audio_url', audio_url: { url: input.audios[0] } }] });
+      content: [{ type: 'image_url', image_url: { url: input.images[0] } }, { type: 'video_url', video_url: { url: current.videos[0] } }, { type: 'audio_url', audio_url: { url: input.audios[0] } }] });
     for (const patch of [{ seconds: 4 }, { seconds: 16 }, { seconds: 5.5 }, { ratio: '3:2' }, { resolution: '1080p' },
-      { images: Array(10).fill(input.images[0]) }, { audios: Array(4).fill(input.audios[0]) }, { videos: ['https://media.example/v.mp4'] },
+      { images: Array(10).fill(input.images[0]) }, { audios: Array(4).fill(input.audios[0]) }, { videos: Array(4).fill(current.videos[0]) },
       { metadata: { content: [] } }]) expect(() => buildHayaVideoPayload({ ...current, ...patch })).toThrow();
-    expect(buildHayaVideoPayload({ ...current, seconds: 5, images: Array(9).fill(input.images[0]), audios: Array(3).fill(input.audios[0]) }).content).toHaveLength(12);
-    expect(buildHayaVideoPayload({ ...current, seconds: 5, images: [], audios: [] })).toMatchObject({ seconds: '5', content: [] });
+    expect(buildHayaVideoPayload({ ...current, seconds: 5, images: Array(9).fill(input.images[0]), videos: Array(3).fill(current.videos[0]), audios: Array(3).fill(input.audios[0]) }).content).toHaveLength(15);
+    expect(buildHayaVideoPayload({ ...current, seconds: 5, images: [], videos: [], audios: [] })).toMatchObject({ seconds: '5', content: [] });
     expect(buildHayaVideoPayload(input)).toMatchObject({ seconds: 15, images: input.images, audios: input.audios });
   });
   it('validates resolution, integer duration, Y no-video limits and dedicated frames', () => {

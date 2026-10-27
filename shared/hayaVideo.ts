@@ -19,8 +19,8 @@ export const HAYA_VIDEO_MODELS = [
   { id: 'y-seedance-2.5-1080p', resolution: '1080p', price: 13, billingType: 'per_call', maxImages: 30, maxVideos: 0, maxAudios: 10, confirmedMediaLimits: true },
   { id: 'y-seedance-2.5-480p', resolution: '480p', price: 5, billingType: 'per_call', maxImages: 30, maxVideos: 0, maxAudios: 10, confirmedMediaLimits: true },
   { id: 'y-seedance-2.5-720p', resolution: '720p', price: 7, billingType: 'per_call', maxImages: 30, maxVideos: 0, maxAudios: 10, confirmedMediaLimits: true },
-  // The model's API tab overrides its stale marketing card (4–15s, video references).
-  { id: HAYA_XG_SEEDANCE_20_MODEL, resolution: '720p', price: 4, billingType: 'per_call', maxImages: 9, maxVideos: 0, maxAudios: 3, confirmedMediaLimits: true },
+  // Media counts confirmed by the user; the API tab's no-video note conflicts with the model card.
+  { id: HAYA_XG_SEEDANCE_20_MODEL, resolution: '720p', price: 4, billingType: 'per_call', maxImages: 9, maxVideos: 3, maxAudios: 3, confirmedMediaLimits: true },
 ] as const;
 
 export const HAYA_MODEL_IDS: readonly string[] = HAYA_VIDEO_MODELS.map(spec => spec.id);
@@ -41,7 +41,7 @@ export function validateHayaVideoInput(model: string, input: {
   if (!seconds.includes(input.seconds)) return `${model} 支持 ${seconds[0]}–${seconds.at(-1)} 秒整数时长`;
   if (model === HAYA_XG_SEEDANCE_20_MODEL) {
     if (!(HAYA_XG_RATIOS as readonly string[]).includes(input.ratio)) return `${model} 支持比例 ${HAYA_XG_RATIOS.join('、')}`;
-    if (input.metadata?.content !== undefined) return '此模型的参考素材不能放在 metadata.content，请使用参考图片和音频参数';
+    if (input.metadata?.content !== undefined) return '此模型的参考素材不能放在 metadata.content，请使用参考图片、视频和音频参数';
   }
   if (input.resolution !== spec.resolution) return `${model} 仅支持 ${spec.resolution}`;
   if (!/^\d+:\d+$/.test(input.ratio) || input.ratio.split(':').some(n => Number(n) <= 0)) return '视频比例格式不正确';

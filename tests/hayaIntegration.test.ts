@@ -105,6 +105,16 @@ async function post(endpoint: string, body: any) {
   return nativeFetch(origin + endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test' }, body: JSON.stringify(body) });
 }
 const body = { model: HAYA_MODEL_IDS[0], prompt: '电影感产品展示', video_length: 6, resolution: '720p', aspect_ratio: '16:9' };
+const seedanceReferences = {
+  reference_images: Array.from({ length: 9 }, (_, i) => `https://media.example/image-${i}.png?signature=a%2Fb`),
+  reference_videos: Array.from({ length: 3 }, (_, i) => `https://media.example/video-${i}.mp4?signature=a%2Fb`),
+  audio_urls: Array.from({ length: 3 }, (_, i) => `https://media.example/audio-${i}.mp3?signature=a%2Fb`),
+};
+const seedanceContent = [
+  ...seedanceReferences.reference_images.map(url => ({ type: 'image_url', image_url: { url } })),
+  ...seedanceReferences.reference_videos.map(url => ({ type: 'video_url', video_url: { url } })),
+  ...seedanceReferences.audio_urls.map(url => ({ type: 'audio_url', audio_url: { url } })),
+];
 
 describe('Haya in both application entry points (isolated in-memory database)', () => {
   it('prefers H.264 in the content API and falls back to valid HEVC on conversion failure without charging', async () => {
@@ -224,8 +234,8 @@ describe('Haya in both application entry points (isolated in-memory database)', 
   });
   it('exposes matching web/canvas/routing limits and quotes the same price for 5 and 15 seconds', async () => {
     const limits = existingModelLimits(xg, 'video');
-    expect(limits).toMatchObject({ maxImages: 9, maxVideos: 0, maxAudios: 3, resolutions: ['720p'], duration: { min: 5, max: 15 } });
-    expect(canvasVideoReferenceLimits(xg)).toEqual({ images: 9, videos: 0, audios: 3 });
+    expect(limits).toMatchObject({ maxImages: 9, maxVideos: 3, maxAudios: 3, resolutions: ['720p'], duration: { min: 5, max: 15 } });
+    expect(canvasVideoReferenceLimits(xg)).toEqual({ images: 9, videos: 3, audios: 3 });
     const listed = await (await nativeFetch(origin + '/api/video/models')).json() as any[];
     expect(listed.find(m => m.id === xg)).toMatchObject({ routingLimits: limits, rates: { '720p': 4 }, allowedSeconds: hayaVideoSeconds(xg) });
     for (const seconds of [5, 15]) expect(quoteVideoRequest({ model: xg, resolution: '720p', seconds }, 1)).toMatchObject({ cost: 4, billingType: 'per_call' });
@@ -233,7 +243,7 @@ describe('Haya in both application entry points (isolated in-memory database)', 
   });
   it.each(['/api/video/generate', '/api/video/validate', '/v1/videos'])('rejects unsupported XG input before billing at %s', async endpoint => {
     for (const patch of [{ seconds: 4, video_length: 4 }, { seconds: 16, video_length: 16 }, { resolution: '1080p' },
-      { aspect_ratio: '3:2' }, { reference_videos: ['https://media.example/ref.mp4'] }, { reference_images: Array(10).fill('https://media.example/ref.png') },
+      { aspect_ratio: '3:2' }, { reference_videos: Array(4).fill('https://media.example/ref.mp4') }, { reference_images: Array(10).fill('https://media.example/ref.png') },
       { audio_urls: Array(4).fill('https://media.example/ref.mp3') }]) {
       expect((await post(endpoint, { ...body, model: xg, ...patch })).status).toBe(400);
       expect(balance()).toBe(100); expect(db.select().from(contents).all()).toHaveLength(0); expect(fetch).not.toHaveBeenCalled();
@@ -245,28 +255,30 @@ describe('Haya in both application entry points (isolated in-memory database)', 
       if (init.method === 'POST') {
         submissions++;
         expect(JSON.parse(init.body)).toEqual({ model: upstreamXg, prompt: body.prompt, seconds: '15', ratio: '16:9', resolution: '720p',
-          content: [{ type: 'audio_url', audio_url: { url: 'https://media.example/ref.mp3?signature=a%2Fb' } }] });
+          content: seedanceContent });
         expect(latest().status).toBe('processing'); expect(balance()).toBe(96);
         return Response.json({ id: 'task_xg' });
       }
       expect(JSON.parse(latest().metadata).videoId).toBe('task_xg');
       return Response.json({ status: 'completed', metadata: { url: 'https://media.example/result.mp4' } });
     };
-    await (await post(endpoint, { ...body, model: xg, seconds: 15, video_length: 15, audio_urls: ['https://media.example/ref.mp3?signature=a%2Fb'] })).text();
+    await (await post(endpoint, { ...body, model: xg, seconds: 15, video_length: 15, ...seedanceReferences })).text();
     await vi.waitFor(() => expect(latest().status).toBe('completed'));
     expect(balance()).toBe(96); expect(submissions).toBe(1);
   });
   it('accepts root content and defaults to 5 seconds in the public API, rejects conflicting material fields', async () => {
     upstream = async (_url, init) => {
       if (init.method === 'POST') {
-        expect(JSON.parse(init.body)).toMatchObject({ seconds: '5', content: [{ type: 'audio_url', audio_url: { url: 'https://media.example/a.mp3' } }] });
+        expect(JSON.parse(init.body)).toMatchObject({ seconds: '5', content: seedanceContent });
         return Response.json({ id: 'task_content' });
       }
       return Response.json({ status: 'completed', metadata: { url: 'https://media.example/done.mp4' } });
     };
-    const content = [{ type: 'audio_url', audio_url: { url: 'https://media.example/a.mp3' } }];
+    const content = seedanceContent;
     for (const patch of [{ content, audio_urls: ['https://media.example/b.mp3'] }, { metadata: { content } },
-      { content: [{ type: 'video_url', video_url: { url: 'https://media.example/v.mp4' } }] }]) {
+      { content: [{ type: 'file_url', file_url: { url: 'https://media.example/v.mp4' } }] },
+      { content: [{ type: 'video_url', video_url: { url: '' } }] },
+      { content: [...content, { type: 'video_url', video_url: { url: 'https://media.example/extra.mp4' } }] }]) {
       expect((await post('/v1/videos', { model: xg, prompt: body.prompt, ...patch })).status).toBe(400);
       expect(fetch).not.toHaveBeenCalled(); expect(balance()).toBe(100);
     }
@@ -280,7 +292,7 @@ describe('Haya in both application entry points (isolated in-memory database)', 
       if (url.startsWith('http://127.0.0.1:9876/')) return nativeFetch(url.replace('http://127.0.0.1:9876', origin), init);
       if (init.method === 'POST') {
         submissions++;
-        expect(JSON.parse(init.body)).toMatchObject({ model: upstreamXg, seconds: '15', content: [] });
+        expect(JSON.parse(init.body)).toMatchObject({ model: upstreamXg, seconds: '15', content: seedanceContent });
         if (outcome === 'unknown') throw new Error('network timeout');
         if (outcome === 'rejected') return Response.json({ error: { code: 'insufficient_quota', message: '余额不足' } }, { status: 402 });
         return Response.json({ id: 'task_batch_xg' });
@@ -288,7 +300,7 @@ describe('Haya in both application entry points (isolated in-memory database)', 
       return Response.json({ status: 'completed', metadata: { url: 'https://media.example/done.mp4' } });
     };
     const id = batchStore.create(1, 'haya-xg-' + outcome, { name: 'XG batch', model: xg, resolution: '720p', video_length: 15, aspect_ratio: '16:9',
-      autoRetry: true, maxRetries: 2, creatives: [{ prompt: body.prompt, count: 1, reference_images: [], reference_videos: [], audio_urls: [] }] }, 4, 'https://site.example');
+      autoRetry: true, maxRetries: 2, creatives: [{ prompt: body.prompt, count: 1, ...seedanceReferences }] }, 4, 'https://site.example');
     expect(balance()).toBe(96);
     await tickVideoBatches();
     await vi.waitFor(() => expect(latest()?.status).toBe(outcome === 'rejected' ? 'failed' : outcome === 'unknown' ? 'review' : 'completed'));

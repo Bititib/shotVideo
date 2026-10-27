@@ -235,7 +235,9 @@ describe('managed video execution', () => {
     const fetcher = vi.fn(async (_url: string, init: any) => {
       if (init.method === 'POST') {
         submissions++;
-        expect(JSON.parse(init.body)).toMatchObject({ model: HAYA_XG_SEEDANCE_20_UPSTREAM_MODEL, seconds: '15', content: [{ type: 'audio_url', audio_url: { url: 'https://media.example/a.mp3' } }] });
+        expect(JSON.parse(init.body)).toMatchObject({ model: HAYA_XG_SEEDANCE_20_UPSTREAM_MODEL, seconds: '15', content: [
+          ...Array.from({ length: 3 }, (_, i) => ({ type: 'video_url', video_url: { url: `https://media.example/v${i}.mp4?signature=a%2Fb` } })),
+          { type: 'audio_url', audio_url: { url: 'https://media.example/a.mp3' } }] });
         if (outcome === 'unknown') throw new Error('network timeout');
         if (outcome === 'rejected') return Response.json({ error: { code: 'invalid_input', message: '参考素材无效' } }, { status: 400 });
         if (outcome === 'request-id-only') return Response.json({ request_id: 'task_not_a_generation_id' });
@@ -246,7 +248,8 @@ describe('managed video execution', () => {
       return Response.json({ status: 'completed', metadata: { url: 'https://media.example/done.mp4' } });
     });
     vi.stubGlobal('fetch', fetcher);
-    await handleSpecificationGeneration({ body: { model: s.modelId, prompt: 'test', video_length: 15, audio_urls: ['https://media.example/a.mp3'] },
+    await handleSpecificationGeneration({ body: { model: s.modelId, prompt: 'test', video_length: 15,
+      reference_videos: Array.from({ length: 3 }, (_, i) => `https://media.example/v${i}.mp4?signature=a%2Fb`), audio_urls: ['https://media.example/a.mp3'] },
       headers: {}, protocol: 'https', get: () => 'app.invalid', userId } as any, response(), 'video');
     const expected = outcome === 'rejected' ? 'failed' : outcome === 'completed' ? 'completed' : 'processing';
     await vi.waitFor(() => expect(db.select().from(contents).all().at(-1)!.status).toBe(expected));

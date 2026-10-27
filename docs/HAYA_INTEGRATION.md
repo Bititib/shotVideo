@@ -36,18 +36,20 @@
 - 当前七款发送 `seconds`、`ratio`、`resolution`。首尾帧专用字段未在通用协议定义，明确拒绝；对外 API 拒绝同时传 `size`，避免尺寸冲突。
 - 对外 API 支持通过 `metadata` 对象传递模型公开扩展参数。
 
-## Seedance-2.0-720（2026-10-26）
+## Seedance-2.0-720（2026-10-27 更新）
 
 证据：用户提供的模型卡片，以及当日读取的 [Haya 模型广场](https://hayaai.fun/pricing) → 搜索精确型号 → 详情 → API。`openai` 与 `openai-video` 页签显示相同的型号专属示例。
 
-卡片写 4–15 秒、9图/3视频/3音频、全比例、¥3/次；但该型号 API 说明明确要求 5–15 秒、不支持视频参考、六种比例，示例文字还保留 ¥2.8/次。实现采用明确的 API 参数约束，保留这项来源冲突，不承诺卡片能力。本站初始售价由用户另行确认 **¥4/次**，不依赖上游文字推算或动态改价。
+卡片写 4–15 秒、9图/3视频/3音频、全比例、¥3/次；但该型号 API 页签写 5–15 秒、不支持视频参考、六种比例，示例文字还保留 ¥2.8/次。2026-10-27 用户提供《hayaai-通用接入文档-最新版》（正文日期 2026-10-25），并明确确认此接口支持该型号的 9图/3视频/3音频。按此确认修正视频上限和生成参数，不再沿用网页的禁用视频限制；时长和比例仍按专属 API 页签。本站初始售价由用户另行确认 **¥4/次**，不依赖上游文字推算或动态改价。
+
+证据边界：通用文档明确 `/v1/files` 上传和 `/v1/videos` 提交流程，但未列出该型号的视频字段。实现沿用该型号根级 `content` 的素材结构，为视频加入 `video_url` 项；这是基于用户确认和现有素材结构的实现选择，并非通用文档中已有该型号的成功请求示例。已用模拟上游核对实际发送内容，尚未通过真实付费调用验证上游接受及参考效果。现有素材服务继续提供公网直链，外部已上传的签名 URL 原样保留。
 
 - 按用户要求，对外 ID 和默认显示名称为 `Seedance-2.0-720`，不带 `XG-`。内部仍映射到精确上游 ID `XG-Seedance-2.0-720`，保留大小写。初始化、渠道默认映射和上游模型同步均使用此映射，不将上游前缀重新导入公开目录；旧 `XG-seedance-2.5-720` 不替换、不改价。此前带前缀的新型号版本仅在隔离目录开发，未部署，不涉及生产历史模型迁移。
 - 固定 720p，5–15 秒整数；对外 API 未传时长时默认 5 秒，上游 `seconds` 使用字符串。
 - 比例：16:9、9:16、1:1、4:3、3:4、21:9。
-- 最多 9 张参考图、3 段参考音频；视频、独立首尾帧、不支持的比例和时长在提交/扣费前报错，不截断素材或改时长。
-- 上游素材为根级 `content` 中的 `{type:"image_url",image_url:{url}}` 和 `{type:"audio_url",audio_url:{url}}`，不得发送旧型号的根级 `images`/`audios`，也不得使用 `metadata.content`。
-- 本站 API 继续支持 `reference_images`/`audio_urls` 等已有参数并转换成上游格式；也支持上述根级 `content`，但不允许两种形式混用。未识别的 content 类型明确报错。
+- 最多 9 张参考图、3 个参考视频、3 段参考音频，可同时提供；超出各类上限、独立首尾帧、不支持的比例和时长在提交/扣费前报错，不截断素材或改时长。
+- 上游素材为根级 `content` 中的 `{type:"image_url",image_url:{url}}`、`{type:"video_url",video_url:{url}}` 和 `{type:"audio_url",audio_url:{url}}`，不得发送旧型号的根级 `images`/`videos`/`audios`，也不得使用 `metadata.content`。
+- 本站 API 继续支持 `reference_images`/`reference_videos`/`audio_urls` 等已有参数并转换成上游格式；也支持上述根级 `content`，但不允许两种形式混用。未识别的 content 类型明确报错。
 - 官方示例使用 `https://hayaai.cc/v1/videos`；本站保留管理员配置的 Haya Base URL，不自动更换已有地址。尚未进行真实付费调用确认。
 
 上游请求示例（`seconds` 是字符串）：
@@ -57,12 +59,13 @@
 ```json
 {
   "model": "XG-Seedance-2.0-720",
-  "prompt": "根据参考图和音频生成视频",
+  "prompt": "根据参考图、视频和音频生成视频",
   "seconds": "15",
   "resolution": "720p",
   "ratio": "9:16",
   "content": [
     {"type": "image_url", "image_url": {"url": "https://example.com/reference.png"}},
+    {"type": "video_url", "video_url": {"url": "https://example.com/reference.mp4"}},
     {"type": "audio_url", "audio_url": {"url": "https://example.com/reference.mp3"}}
   ]
 }
@@ -75,7 +78,8 @@
 - 规格路由：`specificationAdapters.submitSpecificationVideo` 改为使用 Haya 独立提交逻辑，不再将通用 `request_id` 当作任务 ID；`specificationGenerationService` 持久化原任务并结算。明确拒绝传递到退款路径，未知受理不切线路、不重发。
 - 模型列表、报价、开发者模型参数、画布和规格预设共用型号限制。新模型初始化和同步默认停用；管理员改价/启用后再次初始化或同步保持原值。
 - 模拟测试覆盖网站/API 成功、参数拒绝、批量成功与拒绝退款一次、批量提交未知保留资金且不重发，以及实际规格服务的相同边界和仅有 request_id 的响应。旧 Haya 和其他路由回归一并运行。
-- 验证结果：11 个测试文件、242 项测试通过；TypeScript 检查通过；Vite 生产构建通过（使用隔离目录内的临时路径解决 Windows 临时文件权限问题，存在既有大资源包提示）。基线为 GitHub main `5724a0b`，开发目录 `scratch/haya-xg-seedance-2-720`，未覆盖旧工作区。
+- 2026-10-27 视频参考回归：网站/API 别名参数、API 根级 content 和真实批量调度均同时传入 9图/3视频/3音频，断言全部 15 项及签名参数到达上游请求；规格执行覆盖 3 个视频。4 个视频在提交/扣费前拒绝，Y 型号禁用视频的规则保持不变。
+- 本次验证结果：13 个测试文件、282 项测试通过；TypeScript 检查通过；Vite 生产构建通过（使用隔离目录内的临时路径解决 Windows 临时文件权限问题，存在既有大资源包提示）。本次基线为 GitHub main `6484661`，开发目录 `scratch/haya-xg-seedance-2-720`，未覆盖旧工作区。
 - 未验证范围：真实上游任务、线上启用、部署，以及所有历史 Haya 错误码/状态的完备性；此次不宣称修复所有 Haya 待核实情况。
 
 ## 状态和费用
