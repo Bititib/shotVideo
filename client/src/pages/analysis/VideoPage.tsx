@@ -7,7 +7,7 @@ import { routingMismatches } from '../../../../shared/modelRouting';
 import { startPolling } from '../../utils/polling';
 import { videoTaskNeedsReview, shouldPollVideoTask, videoTaskDatabaseId } from '../../utils/videoTaskSync';
 import { getZonghengVideoSpec, getZonghengVideoReferenceLimits } from '../../../../shared/zonghengVideo';
-import { getHayaVideoSpec } from '../../../../shared/hayaVideo';
+import { getHayaVideoSpec, HAYA_XG_SEEDANCE_20_MODEL } from '../../../../shared/hayaVideo';
 import { getHmStudioAdditionalVideoModel, HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS } from '../../../../shared/hmStudioVideo';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
@@ -191,7 +191,7 @@ const GROUP_ORDER = [
 ];
 
 const getModelGroup = (modelId: string) => {
-  if (modelId === HUSS_BB_PUBLIC_MODEL) return 'Seedance 系列';
+  if (modelId === HUSS_BB_PUBLIC_MODEL || modelId === HAYA_XG_SEEDANCE_20_MODEL) return 'Seedance 系列';
   const zongheng = getZonghengVideoSpec(modelId);
   if (zongheng) return ({ seedance: 'Seedance 系列', grok: 'Grok 系列' } as Record<string, string>)[zongheng.family] || '其他模型';
   if (getHayaVideoSpec(modelId)) return 'Haya AI';
