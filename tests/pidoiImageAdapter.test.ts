@@ -30,6 +30,21 @@ describe('Pidoi 同步直连模式', () => {
     await expect(submitPidoiImage(channel, {}, f, { mode: 'sync' })).rejects.toMatchObject({ confirmedFailure: status < 500, status });
     expect(f).toHaveBeenCalledTimes(1);
   });
+  it('HTTP 503 model_not_found 是明确未受理，其他 503 仍保留待核实', async () => {
+    const rejected = vi.fn().mockResolvedValue(Response.json({ error: {
+      code: 'model_not_found', message: 'No available channel for model gpt-image-2 under group default',
+    } }, { status: 503 }));
+    await expect(submitPidoiImage(channel, {}, rejected, { mode: 'sync' })).rejects.toMatchObject({
+      status: 503, upstreamCode: 'model_not_found', confirmedFailure: true,
+    });
+    expect(rejected).toHaveBeenCalledTimes(1);
+
+    const unknown = vi.fn().mockResolvedValue(Response.json({ error: { code: 'service_unavailable', message: 'temporarily unavailable' } }, { status: 503 }));
+    await expect(submitPidoiImage(channel, {}, unknown, { mode: 'sync' })).rejects.toMatchObject({
+      status: 503, upstreamCode: 'service_unavailable', confirmedFailure: false,
+    });
+    expect(unknown).toHaveBeenCalledTimes(1);
+  });
   it.each([404, 405])('同步路由明确不可用 %s 后只补试一次异步', async status => {
     const onFallback = vi.fn();
     const f = vi.fn().mockResolvedValueOnce(new Response(status === 404 ? 'Not Found' : 'Method Not Allowed', { status }))

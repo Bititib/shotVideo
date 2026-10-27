@@ -551,7 +551,7 @@ export async function generateSpecificationImage(target: RouteCandidate, request
           onResponse: (response, payload) => onResponse?.(imageResponseEvidence(payload, response.headers, response.status, 'response_without_id')) });
     } catch (e: any) {
       if (e.imageRequestStage) logImageRequestFailure({ stage: e.imageRequestStage, channelId: c.id, taskId: e.upstreamTaskId }, e);
-      throw new SpecificationUpstreamError(e.message, false, !e.confirmedFailure, false, 0, e instanceof PidoiImageError && e.confirmedFailure);
+      throw new SpecificationUpstreamError(e.message, false, !e.confirmedFailure, false, Number(e.status) || 0, e instanceof PidoiImageError && e.confirmedFailure);
     }
   }
   let url = base + '/v1/images/generations';

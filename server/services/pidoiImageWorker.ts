@@ -29,25 +29,30 @@ export async function recoverPidoiImage(contentId: number, options: { automatic?
     }
     m.pidoiRecoveryStartedAt ||= Date.now();
     const jobs = restorePidoiJobs(m);
-    // Older versions classified a definite HTTP 451 rejection as an unknown
-    // submission. Correct only single-image compatibility requests with matching
-    // response evidence and no accepted jobs/results. Finalization uses the
-    // reservation ledger transaction, so repeated scans cannot refund twice.
+    // Older versions classified definite HTTP 451 and Pidoi's structured
+    // HTTP 503 model_not_found rejections as unknown submissions. Correct only
+    // single-image compatibility requests with matching response evidence and no
+    // accepted jobs/results. Finalization uses the reservation ledger transaction,
+    // so repeated scans cannot refund twice.
+    const legacyFailureCode = String(m.submissionFailure?.upstreamCode || '').toLowerCase()
+      || (/\bcode=model_not_found\b/i.test(String(m.submissionFailure?.message || '')) ? 'model_not_found' : '');
+    const correctionReason = m.submissionFailure?.httpStatus === 451 ? 'http_451_rejection'
+      : m.submissionFailure?.httpStatus === 503 && legacyFailureCode === 'model_not_found' ? 'pidoi_model_not_found_rejection' : '';
     if (row.status === 'review' && m.billingStatus === 'review'
       && m.pidoiSubmissionProtocol === 'openai-compatible' && m.count === 1
-      && m.submissionFailure?.stage === 'submit' && m.submissionFailure.httpStatus === 451
+      && m.submissionFailure?.stage === 'submit' && correctionReason
       && Array.isArray(m.upstreamResponses) && m.upstreamResponses.length === 1
-      && m.upstreamResponses[0]?.httpStatus === 451 && m.upstreamResponses[0]?.state === 'response_without_id'
+      && m.upstreamResponses[0]?.httpStatus === m.submissionFailure.httpStatus && m.upstreamResponses[0]?.state === 'response_without_id'
       && !m.upstreamResponses[0]?.id
       && Array.isArray(m.pidoiImageJobs) && m.pidoiImageJobs.length === 0
       && !m.taskId && !m.upstreamTaskId && !m.requestId && !m.request_id
       && !m.task_id && !m.upstream_task_id && !m.upstreamTaskIds?.length
       && !jobs.length && !row.result_url && !m.imageUrls?.length && !m.upstreamImageUrls?.length) {
-      const message = m.submissionFailure.message || '上游拒绝图片请求（HTTP 451）';
+      const message = m.submissionFailure.message || `上游拒绝图片请求（HTTP ${m.submissionFailure.httpStatus}）`;
       finalizeReservedContent(contentId, 'failed', {
-        submissionFailure: { ...m.submissionFailure, confirmedFailure: true },
+        submissionFailure: { ...m.submissionFailure, upstreamCode: legacyFailureCode || undefined, confirmedFailure: true },
         failureReason: message, progressText: message, failedAt: new Date().toISOString(),
-        failureClassificationCorrection: { from: 'review', reason: 'http_451_rejection', at: new Date().toISOString() },
+        failureClassificationCorrection: { from: 'review', reason: correctionReason, at: new Date().toISOString() },
       });
       return;
     }

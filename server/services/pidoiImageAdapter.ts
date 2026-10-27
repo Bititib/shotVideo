@@ -32,7 +32,11 @@ export function pidoiImageRequestMode(): 'sync' | 'async-first' {
   return process.env.PIDOI_IMAGE_REQUEST_MODE?.trim().toLowerCase() === 'async-first' ? 'async-first' : 'sync';
 }
 export class PidoiImageError extends Error {
-  constructor(message: string, public confirmedFailure = false) { super(message); }
+  constructor(message: string, public confirmedFailure = false, public upstreamCode = '') { super(message); }
+}
+function pidoiErrorCode(raw: any): string {
+  const value = raw?.error?.code ?? raw?.error_code ?? raw?.code;
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 export function parsePidoiImageTask(raw: any): PidoiImageTask {
   const evidence = pidoiTaskEvidence(raw);
@@ -65,13 +69,18 @@ async function readResponse(c: Channel, response: Response, options: SubmitOptio
     const evidence = pidoiTaskEvidence(raw || text);
     const headerId = response.headers.get('x-task-id') || '';
     const taskId = evidence?.taskId || (/^[A-Za-z0-9_-]{1,200}$/.test(headerId) ? headerId : '');
-    const rejected = submission && !taskId && [400, 401, 402, 403, 404, 405, 413, 415, 422, 429, 451].includes(response.status);
+    const upstreamCode = pidoiErrorCode(raw);
+    const rejected = submission && !taskId && ([400, 401, 402, 403, 404, 405, 413, 415, 422, 429, 451].includes(response.status)
+      // Pidoi uses HTTP 503 for this business-level routing rejection. Its
+      // structured code confirms that no task was accepted; unrelated 5xx
+      // responses remain uncertain and must not be refunded automatically.
+      || response.status === 503 && upstreamCode === 'model_not_found');
     const message = String(raw?.error?.message || raw?.message || text).trim();
     const routeUnavailable = rejected && [404, 405].includes(response.status)
       && (/^(?:404\s+)?(?:page\s+)?not found[.!]?$/i.test(message)
         || /cannot\s+(?:post|get)\s+\/|(?:invalid|unknown)\s+(?:url|route|endpoint)|no\s+route/i.test(message)
         || (response.status === 405 && /method not allowed/i.test(message)));
-    throw Object.assign(new PidoiImageError(upstreamDiagnostic('Pidoi', submission ? '图片提交' : '图片查询', raw || text, c.apiKey, response.status, response.headers.get('x-request-id') || undefined), rejected),
+    throw Object.assign(new PidoiImageError(upstreamDiagnostic('Pidoi', submission ? '图片提交' : '图片查询', raw || text, c.apiKey, response.status, response.headers.get('x-request-id') || undefined), rejected, upstreamCode),
       { status: response.status, routeUnavailable, upstreamTaskId: taskId || undefined,
         acceptedTask: submission && taskId ? { taskId, pollPath: evidence?.pollPath, status: 'processing', progress: 0, imageUrl: '', error: '', protocol: 'async', raw: {} } : undefined });
   }

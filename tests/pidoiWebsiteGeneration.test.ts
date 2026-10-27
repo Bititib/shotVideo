@@ -472,6 +472,24 @@ describe('Pidoi 网页提交到保存和结算', () => {
     expect(localizeRecoveredImages).not.toHaveBeenCalled();
   });
 
+  it('Pidoi 503 model_not_found 直接失败且只退款一次，不得进入待核实或重提', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ error: {
+      code: 'model_not_found', message: 'No available channel for model gpt-image-2 under group default',
+    } }, { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await generate();
+    await vi.waitFor(() => expect(row().status).toBe('failed'));
+    expect(JSON.parse(row().metadata)).toMatchObject({ billingStatus: 'refunded', requiresReview: false,
+      submissionFailure: { httpStatus: 503, upstreamCode: 'model_not_found', confirmedFailure: true,
+        message: expect.stringContaining('No available channel for model gpt-image-2') } });
+    expect(reservation().state).toBe('refunded');
+    expect(balance()).toBe(100);
+    await recoverPidoiImage(row().id, { automatic: true });
+    await recoverPidoiImage(row().id, { automatic: true });
+    expect(balance()).toBe(100);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('兼容入口返回 403 后同样退款，不再尝试第三次提交', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response('Not Found', { status: 404 }))
       .mockResolvedValueOnce(Response.json({ error: { message: 'Invalid token' } }, { status: 403 }));
@@ -533,6 +551,24 @@ describe('Pidoi 网页提交到保存和结算', () => {
     expect(row()).toMatchObject({ status: 'failed', cost: 0 });
     expect(JSON.parse(row().metadata)).toMatchObject({ billingStatus: 'refunded', requiresReview: false,
       submissionFailure: { confirmedFailure: true }, failureClassificationCorrection: { reason: 'http_451_rejection' } });
+    expect(reservation().state).toBe('refunded');
+    expect(balance()).toBe(100);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(localizeRecoveredImages).not.toHaveBeenCalled();
+  });
+
+  it('旧版误判的 503 model_not_found 待核实任务自动修正并幂等退款', async () => {
+    const id = await legacy451({
+      upstreamResponses: [{ id: '', httpStatus: 503, state: 'response_without_id' }],
+      submissionFailure: { stage: 'submit', index: 0, httpStatus: 503, confirmedFailure: false,
+        message: '[上游诊断 Pidoi 图片提交] HTTP 503 code=model_not_found：No available channel for model gpt-image-2' },
+    });
+    await Promise.all([recoverPidoiImage(id), recoverPidoiImage(id)]);
+    await recoverPidoiImage(id);
+    expect(row()).toMatchObject({ status: 'failed', cost: 0 });
+    expect(JSON.parse(row().metadata)).toMatchObject({ billingStatus: 'refunded', requiresReview: false,
+      submissionFailure: { upstreamCode: 'model_not_found', confirmedFailure: true },
+      failureClassificationCorrection: { reason: 'pidoi_model_not_found_rejection' } });
     expect(reservation().state).toBe('refunded');
     expect(balance()).toBe(100);
     expect(fetch).not.toHaveBeenCalled();

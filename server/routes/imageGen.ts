@@ -524,7 +524,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
   const persistFailure = (message: string) => { reservation.cancel(); db.update(contents).set({cost:0}).where(eq(contents.id,contentId)).run(); persistJob({
     progressText: message,
     failureReason: message,
-    failedAt: new Date().toISOString(), billingStatus: 'refunded', refundAmount: estimatedCost,
+    failedAt: new Date().toISOString(), billingStatus: 'refunded', refundAmount: estimatedCost, requiresReview: false,
   }, 'failed'); };
 
   /** 生成完成后统一计费 + 保存内容 */
@@ -603,7 +603,7 @@ router.post('/generate', authMiddleware, canvasRequestMiddleware, tierMiddleware
         const message = String(e?.message || '图片提交失败');
         const confirmedFailure = e.confirmedFailure === true && diagnostic.stage === 'submit';
         persistJob({ submissionFailure: { stage: diagnostic.stage, index: diagnostic.index, httpStatus: e.status,
-          taskId: e.upstreamTaskId, confirmedFailure, message, at: new Date().toISOString() } });
+          upstreamCode: e.upstreamCode, taskId: e.upstreamTaskId, confirmedFailure, message, at: new Date().toISOString() } });
         if (confirmedFailure && !persistedMetadata.pidoiImageJobs.length) persistFailure(message);
         else if (confirmedFailure) {
           // The remaining sequential POSTs were never sent. Mark only these slots
