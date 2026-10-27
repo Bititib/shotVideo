@@ -182,17 +182,20 @@ describe('VideoRecoveryService', () => {
     confirmReviewedVideoFailureAndRefund(contentId,99,true);
     expect(BalanceService.getBalance(userId)).toBe(12);
   });
-  it('can withdraw an audited historical placeholder that the older supplement form saved as an ID', () => {
+  it.each([2.5,7])('can withdraw the reported historical placeholder with unknown status and refund %s once after confirmation', amount => {
     reviewedSupplement(true);
     const meta = JSON.parse(read().metadata);
     const placeholder = '未取得上游任务 ID';
     meta.videoId = meta.upstreamTaskId = meta.recoveryAudit[0].taskId = placeholder;
-    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify(meta),contentId);
+    meta.upstreamStatus = 'unknown';
+    meta.videoSubmissionState = 'unknown';
+    sqlite.prepare('UPDATE contents SET metadata=?,cost=? WHERE id=?').run(JSON.stringify(meta),amount,contentId);
     VideoRecoveryService.withdrawTaskId(contentId,99,placeholder);
     expect(JSON.parse(read().metadata)).not.toHaveProperty('videoId');
     expect(BalanceService.getBalance(userId)).toBe(10);
     confirmReviewedVideoFailureAndRefund(contentId,99,true);
-    expect(BalanceService.getBalance(userId)).toBe(12);
+    confirmReviewedVideoFailureAndRefund(contentId,99,true);
+    expect(BalanceService.getBalance(userId)).toBe(10+amount);
   });
   it('will not withdraw a real receipt or a verified addition', async () => {
     reviewedSupplement(true);
@@ -205,6 +208,10 @@ describe('VideoRecoveryService', () => {
     expect(BalanceService.getBalance(userId)).toBe(10);
   });
   it.each([
+    {upstreamStatus:'processing'},
+    {upstreamStatus:'queued'},
+    {upstreamStatus:'completed'},
+    {upstreamStatus:'failed'},
     {recoveryPollingStartedAt:'2026-10-26T09:00:00Z'},
     {upstream_task_id:'another-real-id'},
     {recoveryAudit:[{action:'supplement_task_id',taskId:'mistyped-id',previousTaskId:'original-real-id'}]},

@@ -12,7 +12,10 @@ export function canWithdrawTaskSupplement(record: { type: string; status: string
     && (!previous || isTaskIdPlaceholder(previous))
     && ids.length > 0 && ids.every(id => id === audit.taskId)
     && !meta.recoveryTaskIdVerifiedAt && !meta.recoveryPollingStartedAt && !meta.recoveryPollingProtected
-    && !meta.recoveryCharged && !meta.recoveredAt && !meta.upstreamStatus && !meta.upstreamGenerated
+    && !meta.recoveryCharged && !meta.recoveredAt
+    // The literal unknown marker is not evidence that this manually added ID
+    // was ever verified. Keep all actual task states and receipt guards intact.
+    && (!meta.upstreamStatus || meta.upstreamStatus === 'unknown') && !meta.upstreamGenerated
     && !record.resultUrl && !meta.upstreamResultUrl && !meta.recoverySourceUrls?.length
     && !meta.batchItemId && !meta.managedSpecification;
 }

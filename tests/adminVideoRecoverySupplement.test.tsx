@@ -99,7 +99,7 @@ it('does not start recovery when candidate verification fails and leaves the inp
 
 it.each(['wrong-id','未取得上游任务 ID'])('withdraws an old unverified manual ID %s, then exposes supplement and confirmed refund without charging', async taskId => {
   const meta = {reviewKind:'submission',billingStatus:'review',requiresReview:true,
-    videoId:taskId,upstreamTaskId:taskId,recoveryTaskIdSupplemented:true,
+    videoId:taskId,upstreamTaskId:taskId,recoveryTaskIdSupplemented:true,upstreamStatus:'unknown',
     recoveryAudit:[{action:'supplement_task_id',taskId,previousTaskId:''}]};
   const broken = {...item,status:'review',cost:7,metadata:JSON.stringify(meta)};
   vi.mocked(adminApi.getContents).mockResolvedValue({items:[broken],total:1} as any);

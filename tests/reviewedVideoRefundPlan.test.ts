@@ -62,7 +62,7 @@ it('requires an active administrator and explicit confirmation; rejects duplicat
 });
 
 it('runs the actual CLI withdrawal, fresh preview and refund against an isolated on-disk database', async()=>{
-  add(1,{videoId:'未取得上游任务 ID',upstreamTaskId:'未取得上游任务 ID',recoveryTaskIdSupplemented:true,
+  add(1,{videoId:'未取得上游任务 ID',upstreamTaskId:'未取得上游任务 ID',recoveryTaskIdSupplemented:true,upstreamStatus:'unknown',
     recoveryAudit:[{action:'supplement_task_id',taskId:'未取得上游任务 ID',previousTaskId:'',actorId:9}]});
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'review-refund-cli-'));
   fs.mkdirSync(path.join(root,'data'));
