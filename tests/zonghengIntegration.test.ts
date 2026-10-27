@@ -132,11 +132,17 @@ describe('V6K cutover using the existing Zongheng billing and recovery paths', (
     let posts = 0;
     upstream = async (_url, init) => {
       expect(init.method).toBe('POST');
-      expect(JSON.parse(init.body)).toMatchObject({ model, resolution: '480p', seconds: posts === 0 ? 5 : 30 });
+      expect(JSON.parse(init.body)).toMatchObject({ model, resolution: '720p', seconds: posts === 0 ? 5 : 30 });
       return Response.json({ id: 'ttt_' + ++posts, status: 'completed' });
     };
+    const catalog = await (await nativeFetch(origin + '/api/video/models')).json() as any[];
+    expect(catalog.find(item => item.id === model)).toMatchObject({ rates: { '720p': 6.5 }, billingType: 'per_call', available: true });
+    expect(catalog.find(item => item.id === model).rates).not.toHaveProperty('480p');
+    const rejected = await (await post(endpoint, { model, prompt: '场景', seconds: 30, video_length: 30, resolution: '480p' })).text();
+    expect(rejected).toContain('720p'); expect(posts).toBe(0); expect(balance()).toBe(100);
+    expect(db.select().from(contents).all()).toHaveLength(0);
     for (const seconds of [5,30]) {
-      await (await post(endpoint, { model, prompt: '场景', seconds, video_length: seconds, resolution: '480p' })).text();
+      await (await post(endpoint, { model, prompt: '场景', seconds, video_length: seconds, ...(seconds === 5 ? { resolution: '720P' } : {}) })).text();
       await vi.waitFor(() => expect(latest().status).toBe('completed'));
       expect(latest().cost).toBe(6.5);
     }

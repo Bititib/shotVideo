@@ -222,6 +222,25 @@ describe('managed image execution and single reservation', () => {
 
 
 describe('managed video execution', () => {
+  it('submits TTTseadanco2.5/720 through its actual sales route at 720p and charges 6.5 once', async () => {
+    const model = 'TTTseadanco2.5/720', l = existingModelLimits(model, 'video')!;
+    db.update(models).set({ isActive: 1 }).where(eq(models.modelId, model)).run();
+    const c = { ...channel(1), type: 'zongheng-v6k', baseUrl: 'https://www.v6k.top', supportedModels: [model] };
+    vi.mocked(ChannelService.getActiveChannels).mockReturnValue([c]);
+    vi.mocked(ChannelService.getChannelRaw).mockReturnValue(c as any);
+    saveModelSpecification({ modelId: model, kind: 'video', enabled: true, aliases: [], limits: l,
+      routes: [{ ...route(1), executionModel: model, upstreamModel: model, limits: l }] });
+    const fetcher = vi.fn(async (_url: any, init: any) => {
+      expect(init.method).toBe('POST'); expect(JSON.parse(init.body)).toMatchObject({ model, resolution: '720p', seconds: 30 });
+      return Response.json({ id: 'ttt_sale', status: 'completed' });
+    });
+    vi.stubGlobal('fetch', fetcher);
+    await handleSpecificationGeneration({ body: { model, prompt: '场景', seconds: 30 }, headers: {}, protocol: 'https', get: () => 'app.invalid', userId } as any, response(), 'video');
+    await vi.waitFor(() => expect(db.select().from(contents).all().at(-1)!.status).toBe('completed'));
+    expect(db.select().from(contents).all().at(-1)!.cost).toBe(6.5);
+    expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(93.5);
+    resumeSpecificationTasks(); expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it('continues a long-running V6K unknown task in the next recovery cycle without requiring manual review', async () => {
     const l = { ...limits(), resolutions: ['480p'] }, c = { ...channel(1), type: 'zongheng-v6k', baseUrl: 'https://www.v6k.top' };
     vi.mocked(ChannelService.getActiveChannels).mockReturnValue([c]);
