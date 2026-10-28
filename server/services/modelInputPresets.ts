@@ -20,7 +20,7 @@ export function existingModelLimits(id: string, kind: 'image' | 'video'): ModelI
   if (id === HUSS_BB_PUBLIC_MODEL) return hussBbModelLimits();
   if (id === V6K_TTT_720_MODEL) return video(30,10,10,'720p',5,30);
   const hm = getHmStudioAdditionalVideoModel(id);
-  if (hm) return { ...video(hm.maxImages, hm.maxVideos, hm.maxAudios, hm.resolution, hm.minSeconds, hm.maxSeconds), resolutions: [...(hm.resolutions || [hm.resolution])], firstFrame: hm.supportsDedicatedFrames, lastFrame: hm.supportsDedicatedFrames };
+  if (hm) return { ...video(hm.maxImages, hm.maxVideos, hm.maxAudios, hm.resolution, hm.minSeconds, hm.maxSeconds), resolutions: [...(hm.resolutions || [hm.resolution])], firstFrame: hm.supportsDedicatedFrames, lastFrame: hm.supportsDedicatedFrames, ...(hm.ratios ? { ratios: [...hm.ratios] } : {}) };
   if (id === 'seedance_v2.5') return { ...video(10,0,0,'720p'), firstFrame: true, lastFrame: true };
   const c2 = getSiYueTianC2Model(id); if (c2) return video(c2.images,c2.videos,c2.audios,c2.resolution,c2.minSeconds,c2.maxSeconds);
   const sy = getSiYueTianSeedance25VideoSpec(id); if (sy) return video(30,0,10,sy.resolution);

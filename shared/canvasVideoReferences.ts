@@ -1,7 +1,7 @@
 import { getZonghengVideoReferenceLimits } from './zonghengVideo';
 import { getHayaVideoSpec, HAYA_XG_SEEDANCE_20_MODEL } from './hayaVideo';
 import { getSiYueTianC2Model } from './siYueTianVideoC2';
-import { getHmStudioAdditionalVideoModel, HM_STUDIO_NOVA_MODEL } from './hmStudioVideo';
+import { getHmStudioAdditionalVideoModel, isHmStudioNovaVideoModel } from './hmStudioVideo';
 
 // Explicitly supported by the existing video route/adapters. Unknown models
 // remain usable in other modes; never infer multimodal support from a name.
@@ -11,7 +11,7 @@ export function canvasVideoReferenceLimits(model: string): VideoReferenceLimits 
     const spec = getHayaVideoSpec(model)!;
     return { images: spec.maxImages, videos: spec.maxVideos, audios: spec.maxAudios };
   }
-  if (model === HM_STUDIO_NOVA_MODEL) {
+  if (isHmStudioNovaVideoModel(model)) {
     const spec = getHmStudioAdditionalVideoModel(model)!;
     return { images: spec.maxImages, videos: spec.maxVideos, audios: spec.maxAudios };
   }

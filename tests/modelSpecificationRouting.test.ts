@@ -545,6 +545,15 @@ describe('managed adapter protocol boundaries', () => {
       .rejects.toMatchObject({ outcome: 'rejected', message: expect.stringContaining('未发送上游') });
     expect(send).not.toHaveBeenCalled(); expect(started).not.toHaveBeenCalled();
   });
+  it('routes new H3 specifications to nova and rejects old nova limits before sending',async()=>{
+    const send=vi.fn().mockResolvedValue(json({task_id:'h3-accepted'},202));vi.stubGlobal('fetch',send);
+    expect(await adapters.submitSpecificationVideo(target('hmstudio','MiniMax-H3'),input({video_length:15,resolution:'2k',reference_images:Array(9).fill('https://assets.invalid/a.png'),reference_videos:Array(3).fill('https://assets.invalid/v.mp4'),audio_urls:Array(3).fill('https://assets.invalid/a.mp3')}),vi.fn())).toBe('h3-accepted');
+    expect(JSON.parse(send.mock.calls[0][1].body)).toMatchObject({model:'MINIMAXH3 9-3-3',channel:'nova',video_resolution:'2k',duration:15});
+    expect(existingModelLimits('MiniMax-H3','video')).toMatchObject({maxImages:9,maxVideos:3,maxAudios:3,resolutions:['720p','2k'],duration:{min:4,max:15},firstFrame:true});
+    send.mockClear();
+    for(const patch of [{video_length:30},{resolution:'1080p'},{reference_images:Array(10).fill('https://assets.invalid/a.png')}]) await expect(adapters.submitSpecificationVideo(target('hmstudio','MiniMax-H3'),input(patch),vi.fn())).rejects.toMatchObject({retrySafe:true});
+    expect(send).not.toHaveBeenCalled();
+  });
   it('maps nova sales routes and preserves 30 images, 10 videos and 10 audios', async () => {
     const send = vi.fn().mockResolvedValue(json({ task_id: 'nova-accepted' }, 202)); vi.stubGlobal('fetch', send);
     const request = input({ video_length: 30, resolution: '1080p',

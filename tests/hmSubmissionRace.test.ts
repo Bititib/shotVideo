@@ -21,6 +21,10 @@ vi.mock('../server/db/index.js', async () => {
   }
   return { sqlite, db: drizzle(sqlite, { schema }) };
 });
+vi.mock('../server/services/videoLocalizationService.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../server/services/videoLocalizationService.js')>(),
+  downloadAndLocalizeVideo: vi.fn(async () => '/uploads/videos/h3-test.mp4'),
+}));
 import { db, sqlite } from '../server/db/index';
 import { contents, users, channels } from '../server/db/schema';
 import { hmStudioQueue } from '../server/services/hmStudioQueueService';
@@ -216,3 +220,53 @@ it('does not fail or refund an HM job while its create request is still waiting 
     expect(hmStudioQueue.has('video:1')).toBe(true);
   } finally { release();await job.completion;refund.mockRestore(); }
 });
+
+it.each(['rejected','unknown'])('new H3 queue preserves once-only settlement and recovery after %s',async outcome=>{
+  const id=++sequence;
+  db.insert(users).values({id,email:id+'@test.invalid',username:'test',passwordHash:'test',balance:100}).run();
+  db.insert(channels).values({id,name:'H3 nova',type:'hmstudio',baseUrl:'https://hm.test',apiKey:'test',supportedModels:'["MiniMax-H3"]',modelMapping:'{"MiniMax-H3":"MINIMAXH3 9-3-3"}',status:1}).run();
+  reserveLegacyVideo(id,2.2,charge=>{
+    db.insert(contents).values({id,userId:id,type:'video',modelId:'MiniMax-H3',status:'queued',cost:2.2,metadata:JSON.stringify({channelId:id,prompt:'test',resolution:'2k',seconds:15,upstream_channel:'lumen',billingReservationId:charge.id,videoSubmissionState:'preparing'})}).run();return id;
+  });
+  const fetcher=vi.fn(async (_url:any,options:any)=>{
+    expect(JSON.parse(options.body)).toMatchObject({channel:'nova',model:'MINIMAXH3 9-3-3',duration:15,video_resolution:'2k'});
+    return outcome==='rejected'?Response.json({error:'模型明确拒绝'},{status:400}):new Response('<html>502</html>',{status:502});
+  });vi.stubGlobal('fetch',fetcher);
+  try{
+    video.enqueueHmStudioVideoContent(id);
+    await vi.waitFor(()=>expect(db.select().from(contents).where(eq(contents.id,id)).get()?.status).toBe(outcome==='rejected'?'failed':'review'));
+    for(let i=0;i<2;i++) await video.resumePollForTask(id,db.select().from(contents).where(eq(contents.id,id)).get());
+    if(outcome==='rejected') await video.failHmQueuedVideo(id,new Error('duplicate'),true);
+    expect(db.select().from(users).where(eq(users.id,id)).get()?.balance).toBeCloseTo(outcome==='rejected'?100:97.8);
+    expect(fetcher).toHaveBeenCalledOnce();
+  }finally{vi.unstubAllGlobals();}
+});
+
+it('persists new H3 receipt before polling and settles once after a temporary query failure',async()=>{
+  const id=++sequence, taskId='abecab12-3456-4789-9234-123456789abc';
+  db.insert(users).values({id,email:id+'@test.invalid',username:'test',passwordHash:'test',balance:100}).run();
+  db.insert(channels).values({id,name:'H3 accepted',type:'hmstudio',baseUrl:'https://hm.test',apiKey:'test',supportedModels:'["MiniMax-H3"]',modelMapping:'{"MiniMax-H3":"MINIMAXH3 9-3-3"}',status:1}).run();
+  reserveLegacyVideo(id,1.5,charge=>{
+    db.insert(contents).values({id,userId:id,type:'video',modelId:'MiniMax-H3',status:'queued',cost:1.5,metadata:JSON.stringify({channelId:id,prompt:'test',resolution:'720p',seconds:4,billingReservationId:charge.id,videoSubmissionState:'preparing'})}).run();return id;
+  });
+  let gets=0;
+  const fetcher=vi.fn(async (url:any,options:any)=>{
+    if(options?.method==='POST') return Response.json({task_id:taskId,status:'pending'},{status:202});
+    expect(String(url)).toBe('https://hm.test/v1/tasks/'+taskId);
+    const row=db.select().from(contents).where(eq(contents.id,id)).get()!;
+    expect(JSON.parse(row.metadata!).videoId).toBe(taskId);
+    expect(db.select().from(users).where(eq(users.id,id)).get()?.balance).toBe(98.5);
+    if(++gets===1) return Response.json({error:'暂时无法查询'},{status:503});
+    return Response.json({task_id:taskId,status:'success',result_urls:['https://cdn.test/h3.mp4']});
+  });vi.stubGlobal('fetch',fetcher);
+  try{
+    video.enqueueHmStudioVideoContent(id);
+    await vi.waitFor(()=>expect(db.select().from(contents).where(eq(contents.id,id)).get()?.status).toBe('completed'),{timeout:15000});
+    const row=db.select().from(contents).where(eq(contents.id,id)).get()!;
+    expect(row).toMatchObject({cost:1.5,resultUrl:'/uploads/videos/h3-test.mp4'});
+    await video.resumePollForTask(id,row);
+    expect(db.select().from(users).where(eq(users.id,id)).get()?.balance).toBe(98.5);
+    expect(fetcher.mock.calls.filter(([,options])=>options?.method==='POST')).toHaveLength(1);
+    expect(gets).toBe(2);
+  }finally{vi.unstubAllGlobals();}
+},20000);

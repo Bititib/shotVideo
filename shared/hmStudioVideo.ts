@@ -6,6 +6,8 @@ export const HM_STUDIO_FAST813_MODEL = 'SD2.0FAST813';
 export const HM_STUDIO_MINI503_MODEL = 'SD2.0MINI503';
 export const HM_STUDIO_NOVA_MODEL = 'sd2.5-301010';
 export const HM_STUDIO_NOVA_UPSTREAM_MODEL = '30-10-10';
+export const HM_STUDIO_MINIMAX_H3_MODEL = 'MiniMax-H3';
+export const HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL = 'MINIMAXH3 9-3-3';
 
 export const HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP: Readonly<Record<string, string>> = {
   'seedance_v2.5': 'MINIMAX-H3-2.5采样',
@@ -16,6 +18,7 @@ export const HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP: Readonly<Record<string, string>
   [HM_STUDIO_FAST813_MODEL]: HM_STUDIO_FAST813_MODEL,
   [HM_STUDIO_MINI503_MODEL]: HM_STUDIO_MINI503_MODEL,
   [HM_STUDIO_NOVA_MODEL]: HM_STUDIO_NOVA_UPSTREAM_MODEL,
+  [HM_STUDIO_MINIMAX_H3_MODEL]: HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL,
 };
 
 export function getHmStudioUpstreamVideoModel(modelId: string): string {
@@ -29,6 +32,11 @@ export function getHmStudioPublicVideoModel(modelId: string): string {
     .find(([, upstream]) => upstream === modelId)?.[0] || modelId;
 }
 
+export function isHmStudioNovaVideoModel(modelId: string): boolean {
+  const upstream = getHmStudioUpstreamVideoModel(modelId);
+  return upstream === HM_STUDIO_NOVA_UPSTREAM_MODEL || upstream === HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL;
+}
+
 export type HmStudioVideoModelSpec = {
   id: string;
   displayName: string;
@@ -37,6 +45,7 @@ export type HmStudioVideoModelSpec = {
   maxSeconds: number;
   resolution: '720p';
   resolutions?: readonly string[];
+  ratios?: readonly string[];
   resolutionPrices?: Readonly<Record<string, number>>;
   maxImages: number;
   maxVideos: number;
@@ -48,6 +57,17 @@ export type HmStudioVideoModelSpec = {
 };
 
 export const HM_STUDIO_ADDITIONAL_VIDEO_MODELS: readonly HmStudioVideoModelSpec[] = [
+  {
+    id: HM_STUDIO_MINIMAX_H3_MODEL,
+    displayName: 'MiniMax-H3 933',
+    description: '720p/2K；支持4-15秒；最多9张图片、3个视频、3段音频参考；支持首尾帧和混合素材；按分辨率按次计费',
+    minSeconds: 4, maxSeconds: 15, resolution: '720p',
+    resolutions: ['720p', '2k'],
+    ratios: ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'],
+    resolutionPrices: { '720p': 1.5, '2k': 2.2 },
+    maxImages: 9, maxVideos: 3, maxAudios: 3,
+    defaultPrice: 1.5, defaultEnabled: false, supportsDedicatedFrames: true,
+  },
   {
     id: HM_STUDIO_NOVA_MODEL,
     displayName: 'sd2.5-301010',
@@ -146,6 +166,7 @@ export function normalizeHmStudioVideoResolution(modelId: string, resolution: un
 export function validateHmStudioAdditionalVideoInput(modelId: string, input: {
   seconds: number;
   resolution: string;
+  ratio?: string;
   imageCount: number;
   videoCount: number;
   audioCount: number;
@@ -157,9 +178,16 @@ export function validateHmStudioAdditionalVideoInput(modelId: string, input: {
   if (!Number.isInteger(input.seconds) || input.seconds < spec.minSeconds || input.seconds > spec.maxSeconds) {
     return `${modelId} 仅支持 ${spec.minSeconds}-${spec.maxSeconds} 秒的整数时长`;
   }
+  if (spec.ratios && input.ratio && !spec.ratios.includes(input.ratio)) {
+    return `${modelId} 仅支持 ${spec.ratios.join('、')} 比例`;
+  }
   const resolutions = spec.resolutions || [spec.resolution];
   if (!resolutions.includes(input.resolution.toLowerCase())) {
     return `${modelId} 仅支持 ${resolutions.join('/')}`;
+  }
+  if (modelId === HM_STUDIO_MINIMAX_H3_MODEL && (input.hasFirstFrame || input.hasLastFrame)
+    && (input.imageCount || input.videoCount || input.audioCount)) {
+    return 'MiniMax-H3 首尾帧不能与普通参考素材混用';
   }
   const imageCount = input.imageCount + Number(Boolean(input.hasFirstFrame)) + Number(Boolean(input.hasLastFrame));
   if (imageCount > spec.maxImages || input.videoCount > spec.maxVideos || input.audioCount > spec.maxAudios) {

@@ -51,6 +51,7 @@ import channelRouter from '../server/routes/channels.js';
 import pricingRouter from '../server/routes/pricing.js';
 
 const cases = [
+  { id: 'MiniMax-H3', rates: { '720p': 1.5, '2k': 2.2 }, images: 9, videos: 3, audios: 3, maxSeconds: 15 },
   { id: 'SD2.0FAST803', rates: { '720p': 1.1, '1080p': 1.3, '2k': 1.5 }, images: 8, videos: 0, audios: 3, maxSeconds: 15 },
   { id: 'SD2.0FAST813', rates: { '720p': 1.3, '1080p': 1.5, '2k': 1.7 }, images: 8, videos: 1, audios: 3, maxSeconds: 15 },
   { id: 'SD2.0MINI503', rates: { '720p': 0.9 }, images: 5, videos: 0, audios: 3, maxSeconds: 15 },
@@ -108,6 +109,16 @@ describe('HM new catalog integration (in-memory database, no upstream generation
     await prepareSpecificationReferenceImages({prompt:'字'.repeat(8001),images:[],videos:[],audios:[],publicBaseUrl:origin} as any,candidates,[origin]);
     expect(candidates).toEqual([hm,other]);
   });
+  it('registers MiniMax-H3 disabled and prevents prepayment until enabled', async () => {
+    const m = db.select().from(models).where(eq(models.modelId, 'MiniMax-H3')).get()!;
+    expect(m).toMatchObject({ provider: 'hmstudio', isActive: 0, displayName: 'MiniMax-H3 933' });
+    const before = db.select().from(users).where(eq(users.id, userId)).get()!.balance;
+    for (const api of [false, true]) {
+      expect((await post(api ? '/v1/videos' : '/api/video/generate', { model: 'MiniMax-H3', prompt: 'test', seconds: 4, video_length: 4, resolution: '720p' }, api)).status).toBeGreaterThanOrEqual(400);
+    }
+    expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(before);
+    db.update(models).set({isActive:1}).where(eq(models.modelId,'MiniMax-H3')).run();
+  });
   it('registers nova disabled without exposing the upstream ID and rejects orders before charging', async () => {
     const nova = db.select().from(models).where(eq(models.modelId, 'sd2.5-301010')).get()!;
     expect(nova).toMatchObject({ provider: 'hmstudio', displayName: 'sd2.5-301010', isActive: 0 });
@@ -136,7 +147,7 @@ describe('HM new catalog integration (in-memory database, no upstream generation
     expect(apiList.data.map((m: any) => m.id)).toContain('sd2.5-301010');
     expect(apiList.data.map((m: any) => m.id)).not.toContain('30-10-10');
     for (const { id, rates, maxSeconds } of cases) {
-      expect(mapping[id]).toBe(id === 'sd2.5-301010' ? '30-10-10' : id);
+      expect(mapping[id]).toBe(id === 'sd2.5-301010' ? '30-10-10' : id === 'MiniMax-H3' ? 'MINIMAXH3 9-3-3' : id);
       expect(JSON.parse(channel.supportedModels!)).toContain(id);
       expect(db.select().from(models).where(eq(models.modelId, id)).get()?.provider).toBe('hmstudio');
       expect(list.find(m => m.id === id)).toMatchObject({ available: true, billingType: 'per_call', rates,
@@ -193,6 +204,33 @@ describe('HM new catalog integration (in-memory database, no upstream generation
     expect(response.status).toBe(400);
     expect(await response.text()).toContain(`4-${maxSeconds}`);
     expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(beforeUser);
+  });
+  it('sends MiniMax-H3 through web/API with exact nova ID and refunds the retail price on rejection', async () => {
+    const previous = globalThis.fetch, sent: any[] = [];
+    vi.stubGlobal('fetch',vi.fn(async (url:any, options:any)=>{
+      if(String(url).startsWith(origin+'/')) return nativeFetch(url,options);
+      sent.push(JSON.parse(options.body));
+      return Response.json({error:'新模型测试明确拒绝'},{status:400});
+    }));
+    try {
+      for(const api of [false,true]) for(const [resolution,price] of [['720p',1.5],['2k',2.2]] as const) {
+        const beforeUser=db.select().from(users).where(eq(users.id,userId)).get()!.balance;
+        const beforeToken=db.select().from(apiTokens).where(eq(apiTokens.id,tokenId)).get()!.balance;
+        const response=await post(api?'/v1/videos':'/api/video/generate',{model:'MiniMax-H3',prompt:'[ref_9] [ref_video_3] [ref_audio_3]',resolution,seconds:15,video_length:15,channel:'default',
+          reference_images:Array(9).fill('https://example.test/i.jpg'),reference_videos:Array(3).fill('https://example.test/v.mp4'),audio_urls:Array(3).fill('https://example.test/a.mp3')},api);
+        expect(response.status).toBe(api?202:200);await response.text();
+        await vi.waitFor(()=>{
+          const row=db.select().from(contents).all().at(-1)!;
+          expect(row).toMatchObject({modelId:'MiniMax-H3',status:'failed',cost:0});
+          expect(JSON.parse(row.metadata!)).toMatchObject({billingStatus:'refunded',refundAmount:price});
+        });
+        expect(sent.at(-1)).toMatchObject({model:'MINIMAXH3 9-3-3',channel:'nova',duration:15,video_resolution:resolution,function_mode:'omni_reference',prompt:'@Image9 @Video3 @Audio3'});
+        expect(sent.at(-1).materials).toHaveLength(15);
+        expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBeCloseTo(beforeUser);
+        expect(db.select().from(apiTokens).where(eq(apiTokens.id,tokenId)).get()!.balance).toBeCloseTo(beforeToken);
+      }
+      expect(sent).toHaveLength(4);
+    } finally {vi.stubGlobal('fetch',previous);}
   });
   it('submits enabled nova through real web/API entry points with resolution-specific reservations', async () => {
     const previousFetch = globalThis.fetch;
@@ -483,6 +521,20 @@ describe('HM administrator sync → pricing → real quote workflow', () => {
     origin + '/api/admin/pricing?modelId=' + encodeURIComponent(id),
     { headers: { Authorization: 'Bearer ' + userJwt } },
   )).json() as any[])[0];
+  it('syncs the spaced nova model ID with retail prices and preserves administrator overrides', async () => {
+    db.delete(models).where(eq(models.modelId,'MiniMax-H3')).run();
+    db.delete(modelPricing).where(eq(modelPricing.modelPattern,'MiniMax-H3')).run();
+    responseBody={data:[{id:'MINIMAXH3 9-3-3',display_name:'SD MiniMax-H3',price:0.7}]};
+    expect((await sync()).status).toBe(200);
+    expect(db.select().from(models).where(eq(models.modelId,'MiniMax-H3')).get()).toMatchObject({isActive:0,capabilities:'["video"]'});
+    expect(JSON.parse(db.select().from(channels).where(eq(channels.id,channelId)).get()!.modelMapping!)).toEqual({'MiniMax-H3':'MINIMAXH3 9-3-3'});
+    expect(await readPrice('MiniMax-H3')).toMatchObject({inputPrice:1.5,extraParams:{'720p':1.5,'2k':2.2}});
+    db.update(models).set({isActive:1}).where(eq(models.modelId,'MiniMax-H3')).run();
+    db.update(modelPricing).set({inputPrice:1.8,extraParams:JSON.stringify({category:'video','720p':1.8,'2k':2.8})}).where(eq(modelPricing.modelPattern,'MiniMax-H3')).run();
+    expect((await sync()).status).toBe(200);
+    await initDatabase();
+    expect(await readPrice('MiniMax-H3')).toMatchObject({inputPrice:1.8,extraParams:{'720p':1.8,'2k':2.8},modelActive:true});
+  });
   it('normalizes upstream IDs on the actual sync endpoint and saves both prices through the admin endpoint', async () => {
     db.delete(modelPricing).where(eq(modelPricing.modelPattern, 'sd2.5-301010')).run();
     db.delete(models).where(eq(models.modelId, 'sd2.5-301010')).run();

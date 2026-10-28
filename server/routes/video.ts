@@ -914,6 +914,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   }
 
   const hmStudioAdditionalValidationError = validateHmStudioAdditionalVideoInput(model, {
+    ratio: aspect_ratio,
     seconds: Number(video_length),
     resolution,
     imageCount: reference_images.length,

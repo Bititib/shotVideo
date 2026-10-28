@@ -2,7 +2,7 @@ import { publishReferenceUrl } from './publicReferenceService.js';
 import { HmSubmissionError } from './hmStudioSubmission.js';
 import { transportDiagnostic } from './upstreamDiagnostic.js';
 import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
-import { HM_STUDIO_FAST803_MODEL, HM_STUDIO_FAST813_MODEL, HM_STUDIO_MINI503_MODEL, HM_STUDIO_NOVA_MODEL, HM_STUDIO_NOVA_UPSTREAM_MODEL } from '../../shared/hmStudioVideo.js';
+import { HM_STUDIO_FAST803_MODEL, HM_STUDIO_FAST813_MODEL, HM_STUDIO_MINI503_MODEL, getHmStudioUpstreamVideoModel, isHmStudioNovaVideoModel, HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL } from '../../shared/hmStudioVideo.js';
 
 export const HM_STUDIO_CHANNEL_TYPE = 'hmstudio';
 export const HM_STUDIO_UPSTREAM_FACE_ENABLED = true;
@@ -109,7 +109,7 @@ function replaceReferenceMarkers(prompt: string): string {
 }
 
 function supportsHmStudioOmniReference(model: string): boolean {
-  return model === HM_STUDIO_NOVA_UPSTREAM_MODEL || model === HM_STUDIO_NOVA_MODEL
+  return isHmStudioNovaVideoModel(model)
     || /SD2\.0(?:Fast)?/i.test(model)
     || /^seedance_v2\.(?:0|5)(?:[-\u2014]\d+)?$/i.test(model)
     || /^MINIMAX-H3-(?:BF16|INF8)(?:-\d+)?$/i.test(model)
@@ -139,7 +139,7 @@ function appendOmniReferences(
 type HmPromptOptions = Pick<HmStudioVideoOptions, 'model' | 'prompt' | 'functionMode' | 'imageSources' | 'videoSources' | 'audioSources' | 'firstFrame' | 'lastFrame'>;
 
 function hmVideoMode(options: HmPromptOptions): string {
-  const isNova = options.model === HM_STUDIO_NOVA_MODEL || options.model === HM_STUDIO_NOVA_UPSTREAM_MODEL;
+  const isNova = isHmStudioNovaVideoModel(options.model);
   const images = (options.imageSources || []).filter(Boolean);
   const videos = (options.videoSources || []).filter(Boolean);
   const audios = (options.audioSources || []).filter(Boolean);
@@ -170,13 +170,24 @@ function formatHmStudioVideoPrompt(options: HmPromptOptions): string {
 export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData {
   const prompt = formatHmStudioVideoPrompt(options);
   const functionMode = hmVideoMode(options);
-  const isNova = options.model === HM_STUDIO_NOVA_MODEL || options.model === HM_STUDIO_NOVA_UPSTREAM_MODEL;
+  const isNova = isHmStudioNovaVideoModel(options.model);
   const images = (options.imageSources || []).filter(Boolean);
   const videos = (options.videoSources || []).filter(Boolean);
   const audios = (options.audioSources || []).filter(Boolean);
   const explicitFrames = [options.firstFrame, options.lastFrame].filter(Boolean) as string[];
   const form = new FormData();
-  form.append('model', isNova ? HM_STUDIO_NOVA_UPSTREAM_MODEL : options.model);
+  if (getHmStudioUpstreamVideoModel(options.model) === HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL) {
+    if (functionMode && !['first_last_frames', 'omni_reference'].includes(functionMode)) {
+      throw new Error('MiniMax-H3 仅支持首尾帧或混合素材模式');
+    }
+    if (explicitFrames.length && (images.length || videos.length || audios.length)) {
+      throw new Error('MiniMax-H3 首尾帧不能与普通参考素材混用');
+    }
+    if (functionMode === 'first_last_frames' && (images.length > 2 || videos.length || audios.length)) {
+      throw new Error('MiniMax-H3 首尾帧模式不支持混合素材，请选择混合素材模式');
+    }
+  }
+  form.append('model', isNova ? getHmStudioUpstreamVideoModel(options.model) : options.model);
   form.append('prompt', prompt);
   form.append('duration', String(options.duration));
   form.append('ratio', options.ratio);
@@ -185,7 +196,7 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
   // at the adapter boundary so web, API, retry and recovery paths cannot drift.
   form.append('face', String(HM_STUDIO_UPSTREAM_FACE_ENABLED));
   if (functionMode) form.append('function_mode', functionMode);
-  // FAST/MINI require lumen; 30-10-10 requires nova, never HM's default pool.
+  // FAST/MINI require lumen; confirmed nova models require nova, never HM's default pool.
   // Enforce this at the shared submission boundary (web/API/batch/retries),
   // including old queued payloads that explicitly persisted a default channel.
   const upstreamChannel = isNova

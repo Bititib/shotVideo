@@ -1115,7 +1115,9 @@ export default function VideoPage() {
       ? [{ value: '720p', label: '720p' }, { value: '1080p', label: '1080p' }]
       : [{ value: '480p', label: '480p' }, { value: '720p', label: '720p' }];
 
-  const ASPECT_RATIOS = currentModel?.routingLimits ? ALL_ASPECT_RATIOS.filter(r => currentModel.routingLimits!.ratios.includes(r.value)) : isLongxiaModel(selectedModel)
+  const ASPECT_RATIOS = currentModel?.routingLimits ? ALL_ASPECT_RATIOS.filter(r => currentModel.routingLimits!.ratios.includes(r.value)) : getHmStudioAdditionalVideoModel(selectedModel)?.ratios
+    ? ALL_ASPECT_RATIOS.filter(ratio => getHmStudioAdditionalVideoModel(selectedModel)!.ratios!.includes(ratio.value))
+    : isLongxiaModel(selectedModel)
     ? ALL_ASPECT_RATIOS.filter(ratio => LONGXIA_RATIOS.includes(ratio.value))
     : isWxHaidiYueVideoModel(selectedModel)
     ? ALL_ASPECT_RATIOS.filter(ratio => ratio.value !== '3:2' && ratio.value !== '2:3')

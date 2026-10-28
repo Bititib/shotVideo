@@ -14,6 +14,16 @@ import {
 } from '../server/services/hmStudioVideoModels.js';
 
 describe('HM Studio additional video models', () => {
+  it('keeps the new nova H3 identity, retail and limits separate from legacy 933', () => {
+    const id='MiniMax-H3';
+    expect(getHmStudioUpstreamVideoModel(id)).toBe('MINIMAXH3 9-3-3');
+    expect(canvasVideoReferenceLimits(id)).toEqual({images:9,videos:3,audios:3});
+    expect(getHmStudioAdditionalVideoModel(id)).toMatchObject({defaultEnabled:false,minSeconds:4,maxSeconds:15,supportsDedicatedFrames:true,resolutionPrices:{'720p':1.5,'2k':2.2}});
+    const base={seconds:15,resolution:'2k',ratio:'16:9',imageCount:9,videoCount:3,audioCount:3};
+    expect(validateHmStudioAdditionalVideoInput(id,base)).toBeNull();
+    for(const patch of [{seconds:16},{seconds:3},{seconds:4.5},{resolution:'1080p'},{imageCount:10},{videoCount:4},{audioCount:4},{ratio:'adaptive'}]) expect(validateHmStudioAdditionalVideoInput(id,{...base,...patch})).not.toBeNull();
+    expect(validateHmStudioAdditionalVideoInput(id,{...base,imageCount:0,videoCount:0,audioCount:0,hasFirstFrame:true,hasLastFrame:true})).toBeNull();
+  });
   it('defines nova public identity, resolution retail prices and confirmed limits', () => {
     const id = 'sd2.5-301010';
     expect(getHmStudioUpstreamVideoModel(id)).toBe('30-10-10');

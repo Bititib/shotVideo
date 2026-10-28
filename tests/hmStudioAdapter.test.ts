@@ -8,6 +8,7 @@ afterAll(() => { vi.unstubAllEnvs(); fs.rmSync(publicDir, { recursive: true, for
 import {
   buildHmStudioImageForm,
   buildHmStudioVideoForm,
+  buildHmStudioVideoPayload,
   hmStudioCreateUrl,
   hmStudioTaskUrl,
   normalizeHmStudioFace,
@@ -306,4 +307,21 @@ describe('HM Studio adapter', () => {
       progressText: '视频生成中',
     });
   });
+});
+
+it.each(['MiniMax-H3','MINIMAXH3 9-3-3'])('pins new H3 %s to nova and supports single-image omni and dedicated frames',model=>{
+  const base={model,prompt:'[ref_1]',duration:15,ratio:'16:9',resolution:'2k',upstreamChannel:'default'};
+  const single=buildHmStudioVideoPayload({...base,imageSources:['https://assets.test/i.jpg']});
+  expect(single).toMatchObject({model:'MINIMAXH3 9-3-3',channel:'nova',function_mode:'omni_reference',prompt:'@Image1',video_resolution:'2k'});
+  expect(single.materials).toEqual([{type:'image',name:'Image1',url:'https://assets.test/i.jpg'}]);
+  const frames=buildHmStudioVideoPayload({...base,firstFrame:'https://assets.test/first.jpg',lastFrame:'https://assets.test/last.jpg'});
+  expect(frames).toMatchObject({model:'MINIMAXH3 9-3-3',channel:'nova',function_mode:'first_last_frames',first_frame_url:'https://assets.test/first.jpg',end_frame_url:'https://assets.test/last.jpg'});
+  expect(frames.materials).toBeUndefined();
+});
+
+it('rejects unsupported H3 modes and mixed dedicated frames without dropping references',()=>{
+  const base={model:'MiniMax-H3',prompt:'test',duration:15,ratio:'16:9',resolution:'720p'};
+  for(const patch of [{functionMode:'multi_frame'},{firstFrame:'https://assets.test/first.jpg',audioSources:['https://assets.test/a.mp3']},{functionMode:'first_last_frames',imageSources:Array(3).fill('https://assets.test/i.jpg')}]) {
+    expect(()=>buildHmStudioVideoPayload({...base,...patch})).toThrow();
+  }
 });

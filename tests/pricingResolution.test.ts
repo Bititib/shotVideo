@@ -56,3 +56,7 @@ describe('pricing resolution fields', () => {
     expect(pricingResolutionFields('SD2.0MINI503').keys).toEqual(['720p']);
   });
 });
+
+it.each(['MiniMax-H3','MINIMAXH3 9-3-3'])('shows both H3 resolution pricing fields for %s',model=>{
+  expect(pricingResolutionFields(model,{category:'video','720p':1.5,'2k':2.2})).toEqual({keys:['720p','2k'],values:{'720p':1.5,'2k':2.2},otherText:''});
+});
