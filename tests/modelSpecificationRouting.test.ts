@@ -855,6 +855,30 @@ describe('HSS actual managed submission and recovery', () => {
     expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(100);
     resumeSpecificationTasks(); expect(fetch).toHaveBeenCalledOnce();
   });
+  it('retains the actual HSS HTTPS reference validation error after exhausting routes', async () => {
+    const req = setupHss(); req.body.reference_images = ['http://assets.invalid/reference.png'];
+    vi.stubGlobal('fetch', vi.fn());
+    await handleSpecificationGeneration(req, response(), 'video');
+    await vi.waitFor(() => expect(last().status).toBe('failed'));
+    const meta = JSON.parse(last().metadata);
+    expect(meta.error).toContain('HTTPS'); expect(meta.error).toContain('所有候选线路');
+    expect(meta.routingAttempts[0].reason).toContain('HTTPS');
+    expect(meta.requiresReview).toBe(false); expect(fetch).not.toHaveBeenCalled();
+    expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(100);
+  });
+  it('records why a selected route was skipped if the channel changes before dispatch', async () => {
+    const req = setupHss();
+    const candidates = ChannelService.getActiveChannels();
+    vi.mocked(ChannelService.getActiveChannels).mockImplementation(() => db.select().from(users).where(eq(users.id, userId)).get()!.balance < 100 ? [] : candidates);
+    vi.stubGlobal('fetch', vi.fn());
+    await handleSpecificationGeneration(req, response(), 'video');
+    await vi.waitFor(() => expect(last().status).toBe('failed'));
+    const meta = JSON.parse(last().metadata);
+    expect(meta.error).toContain('渠道已禁用或没有启用的 Key');
+    expect(meta.routingAttempts[0]).toMatchObject({ stage: 'pre_submit' });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(100);
+  });
   it('restart recovery replays only the persisted HSS request and never calls BB submissions', async () => {
     const req = setupHss(); let originalBody = '', originalKey = '';
     vi.stubGlobal('fetch', vi.fn(async (_url, init: any) => { originalBody = init.body; originalKey = init.headers['Idempotency-Key']; throw new Error('socket reset'); }));

@@ -25,7 +25,7 @@ import { BalanceService } from './balanceService.js';
 import { TokenService } from './tokenService.js';
 import { reserveUserCharge, linkReservationContent } from './billingReservation.js';
 import { withFundContext } from '../db/fundLedger.js';
-import { getModelSpecification, specificationAvailability, selectModelRoutes, routeStillEnabled, claimRouteProbe, noteRouteResult, type RouteCandidate } from './modelRoutingService.js';
+import { getModelSpecification, specificationAvailability, selectModelRoutes, routeStillEnabled, routeUnavailableReason, claimRouteProbe, noteRouteResult, type RouteCandidate } from './modelRoutingService.js';
 import { submitSpecificationVideo, pollSpecificationVideo, pollSpecificationImage, pollMjSpecificationImage, generateSpecificationImage, SpecificationUpstreamError, type SpecificationRequest } from './specificationAdapters.js';
 import { validateAndNormalizeImageReferences } from './imageReferenceValidationService.js';
 import { prepareHmReferenceImages } from './hmStudioReferenceService.js';
@@ -299,12 +299,18 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
 async function runVideo(id: number, candidates: RouteCandidate[], request: SpecificationRequest, onEvent: (data: any) => void) {
   for (const target of candidates) {
     // Re-read manual switches immediately before submission, including queued jobs.
-    const stillEnabled = () => routeStillEnabled(metadata(id).requestedModel, target, request.input);
-    if (!stillEnabled() || !claimRouteProbe(target.healthKey)) continue;
+    const unavailable = () => routeUnavailableReason(metadata(id).requestedModel, target, request.input);
+    const skippedReason = unavailable();
+    if (skippedReason) {
+      patch(id, { routingAttempts: [...(metadata(id).routingAttempts || []), { routeId: target.route.id, reason: skippedReason, stage: 'pre_submit', at: new Date().toISOString() }] });
+      continue;
+    }
+    if (!claimRouteProbe(target.healthKey)) continue;
     const attempt = async () => {
       const current = db.select().from(contents).where(eq(contents.id, id)).get();
       if (!current || ['completed', 'failed'].includes(current.status || '')) return;
-      if (!stillEnabled()) throw new SpecificationUpstreamError('线路已手动禁用', true);
+      const changed = unavailable();
+      if (changed) throw new SpecificationUpstreamError(changed, true);
       patch(id, { routingRouteId: target.route.id, routingHealthKey: target.healthKey, channelId: target.channel.id,
         channelApiKeyId: target.channel.apiKeyId, upstreamModel: target.route.upstreamModel, actualModel: target.route.executionModel,
         actualChannel: target.channel.type, progressText: '正在提交生成任务' }, 'processing');
@@ -363,7 +369,9 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
       failTask(id, e.message || '生成失败'); onEvent({ type: 'error', message: e.message || '生成失败' }); return;
     }
   }
-  failTask(id, '没有可用且满足参数的线路'); onEvent({ type: 'error', message: '没有可用且满足参数的线路' });
+  const reasons = [...new Set<string>((metadata(id).routingAttempts || []).map((attempt: any) => publicGenerationError(attempt.reason)).filter(Boolean))];
+  const reason = reasons.length ? '所有候选线路均未完成提交：' + reasons.join('；') : '没有可用且满足参数的线路（未记录到提交尝试，请检查规格及渠道配置）';
+  failTask(id, reason); onEvent({ type: 'error', message: reason });
 }
 async function runImages(id: number, candidates: RouteCandidate[], request: SpecificationRequest, req: Request, onEvent: (data: any) => void) {
   if (metadata(id).nativeImageOutputs === 4) return runMjImages(id, candidates, request, req, onEvent);

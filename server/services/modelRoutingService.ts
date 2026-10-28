@@ -133,15 +133,27 @@ export function specificationAvailable(spec: ModelSpecification) { return specif
 
 
 /** Re-check operator switches and capability edits after any queue wait, without releasing a claimed probe. */
-export function routeStillEnabled(modelId: string, target: RouteCandidate, input: RoutingInput): boolean {
+export function routeUnavailableReason(modelId: string, target: RouteCandidate, input: RoutingInput): string {
   const spec = getModelSpecification(modelId), route = spec?.routes.find(r => r.id === target.route.id);
-  if (!spec?.enabled || !route?.enabled || JSON.stringify(route) !== JSON.stringify(target.route)
-    || routingMismatches(spec.limits, input, spec.kind).length || routingMismatches(route.limits, input, spec.kind).length) return false;
+  if (!spec) return '提交前检查：模型规格不存在';
+  if (!spec.enabled) return '提交前检查：模型规格已禁用';
+  if (!route) return '提交前检查：原线路已删除';
+  if (!route.enabled) return '提交前检查：模型线路已禁用';
+  if (JSON.stringify(route) !== JSON.stringify(target.route)) return '提交前检查：线路配置已变更，请重新核对参数';
+  const mismatches = [...routingMismatches(spec.limits, input, spec.kind), ...routingMismatches(route.limits, input, spec.kind)];
+  if (mismatches.length) return '提交前检查：' + [...new Set(mismatches)].join('；');
   const registry = db.select().from(models).all();
-  if (registry.find(m => m.modelId === modelId)?.isActive !== 1) return false;
+  if (registry.find(m => m.modelId === modelId)?.isActive !== 1) return '提交前检查：对外模型已禁用';
   const execution = registry.find(m => m.modelId === route.executionModel);
-  if (execution?.isActive === 0 && execution.modelId !== MJ_OVERFLOW_VIDEO_MODEL) return false;
-  return ChannelService.getActiveChannels().some(c => c.id === target.channel.id && c.apiKeyId === target.channel.apiKeyId
-    && c.apiKey === target.channel.apiKey && c.baseUrl === target.channel.baseUrl && Boolean(c.apiKey)
-    && (c.supportedModels.includes(route.executionModel) || c.supportedModels.includes('*')));
+  if (execution?.isActive === 0 && execution.modelId !== MJ_OVERFLOW_VIDEO_MODEL) return '提交前检查：执行模型已禁用';
+  const candidates = ChannelService.getActiveChannels().filter(c => c.id === target.channel.id);
+  if (!candidates.length) return '提交前检查：渠道已禁用或没有启用的 Key';
+  const original = candidates.find(c => c.apiKeyId === target.channel.apiKeyId);
+  if (!original || !original.apiKey) return '提交前检查：原 Key 已禁用或未配置';
+  if (original.apiKey !== target.channel.apiKey || original.baseUrl !== target.channel.baseUrl) return '提交前检查：原渠道地址或 Key 已变更';
+  if (!original.supportedModels.includes(route.executionModel) && !original.supportedModels.includes('*')) return '提交前检查：渠道不再关联当前执行模型';
+  return '';
+}
+export function routeStillEnabled(modelId: string, target: RouteCandidate, input: RoutingInput): boolean {
+  return !routeUnavailableReason(modelId, target, input);
 }
