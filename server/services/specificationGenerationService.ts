@@ -1,5 +1,5 @@
 import { isMegabyChannel, normalizeMegabyTask, validateMegabyVideoInput, validateMegabyReferenceDurations } from './megabyVideoAdapter.js';
-import { isHussChannel, recoverHussSubmission } from './hussVideoAdapter.js';
+import { isHussChannel, recoverHussSubmission, normalizeHussTask } from './hussVideoAdapter.js';
 import { publicApiModelId } from '../../shared/funAi.js';
 import { isZonghengChannel, normalizeZonghengTask } from './zonghengAdapter.js';
 import { acceptZonghengVideoReceipt } from './zonghengTaskService.js';
@@ -162,7 +162,7 @@ function completeContent(id: number, urls: string[]) {
   actual = finalizeReservation(meta.billingReservationId, actual, id);
   patch(id, { imageUrls: record.type === 'image' ? urls : undefined, ...(meta.nativeImageOutputs ? { count: urls.length } : {}), progress: 100, progresses: urls.map(() => 100),
     completedAt: new Date().toISOString(), billingStatus: 'settled', requiresReview: false, reviewKind: null, upstreamQueryError: null,
-    resultSaveError: null, progressText: '生成完成' }, 'completed');
+    resultSaveError: null, upstreamDeliveryPending: false, progressText: '生成完成' }, 'completed');
   db.update(contents).set({ resultUrl: urls[0], cost: actual }).where(eq(contents.id, id)).run();
   if (record.userId) { try { logUsage(record.userId, record.type === 'video' ? 'video' : 'generate_image', undefined, Date.now() - meta.startedAt); } catch (error: any) { console.warn('[specification] usage log failed', id, error.message); } }
 }
@@ -198,11 +198,24 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
   if (isZonghengChannel(channel)) patch(id, { v6kQueryResumeAt: null });
   const end = Date.now() + 2 * 60 * 60_000;
   let queryFailures = 0;
+  if (isHussChannel(channel)) patch(id, { hussQueryResumeAt: null });
   while (Date.now() < end) {
     let task: any;
+    let saveRetryMs = 0;
+    let localCompletion = false;
     try {
-      const completedReceipt = metadata(id).megabyCompletedReceipt;
-      if (isMegabyChannel(channel) && completedReceipt?.taskId === taskId && completedReceipt.resultUrl) {
+      const hussInitial = isHussChannel(channel) ? metadata(id).hussInitialTask : null;
+      const hussMeta = metadata(id);
+      const hussReceipt = isHussChannel(channel) ? hussMeta.hussCompletedReceipt ||
+        (hussMeta.upstreamStatus === 'completed' && hussMeta.upstreamResultUrl && (hussMeta.videoId || hussMeta.upstreamTaskId) === taskId
+          ? { taskId, resultUrl: hussMeta.upstreamResultUrl } : null) : null;
+      const completedReceipt = hussReceipt || metadata(id).megabyCompletedReceipt;
+      if (hussInitial?.status === 'completed' && hussInitial?.url) {
+        localCompletion = true;
+        task = normalizeHussTask(hussInitial, channel.baseUrl, taskId);
+        patch(id, { hussInitialTask: null });
+      } else if ((isMegabyChannel(channel) || hussReceipt) && completedReceipt?.taskId === taskId && completedReceipt.resultUrl) {
+        localCompletion = Boolean(hussReceipt);
         task = { status: 'completed', progress: 100, resultUrl: completedReceipt.resultUrl };
       } else {
         const megabyInitial = metadata(id).megabyInitialTask;
@@ -225,10 +238,10 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
     patch(id, { upstreamQueryError: null });
     const progressKnown = task.progressKnown ?? (typeof task.progress === 'number' && Number.isFinite(task.progress));
     const message = (isZonghengChannel(channel) || isHussChannel(channel)) && task.progressText ? task.progressText : isHussChannel(channel) && task.storagePending ? 'HUSS 已生成，正在保存成品；继续查询原任务' : task.status === 'queued' ? '渠道已受理，正在排队'
-      : ['completed', 'success', 'succeeded', 'done'].includes(task.status) ? '上游已完成，正在保存结果'
+      : ['completed', 'success', 'succeeded', 'done'].includes(task.status) ? '视频已生成，正在保存到本站存储'
       : progressKnown ? '视频生成中' : '视频生成中，渠道暂未提供百分比';
     patch(id, { progress: task.progress, progressKnown, upstreamStatus: isZonghengChannel(channel) ? task.upstreamStatus || task.status : task.status, progressText: message,
-      lastQueryAt: new Date().toISOString(), lastQueryStatus: 200, queryFailures: 0 });
+      ...(!localCompletion ? { lastQueryAt: new Date().toISOString(), lastQueryStatus: 200, queryFailures: 0 } : {}) });
     onEvent({ type: 'progress', progress: task.progress, progressKnown, message, contentId: id });
     if (['failed', 'error', 'cancelled', 'canceled', 'failure'].includes(task.status)) {
       const meta = metadata(id);
@@ -239,6 +252,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       let localized = '';
       try {
         patch(id, { upstreamResultUrl: task.resultUrl,
+          ...(isHussChannel(channel) ? { hussCompletedReceipt: { taskId, resultUrl: task.resultUrl }, upstreamGenerated: true, upstreamDeliveryPending: true } : {}),
           ...(isMegabyChannel(channel) ? { megabyCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}) });
         const { downloadAndLocalizeVideo } = await import('./videoLocalizationService.js');
         localized = await downloadAndLocalizeVideo(task.resultUrl, taskId, metadata(id).actualModel, channel.id, channel.apiKeyId);
@@ -246,6 +260,15 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         console.warn('[specification] result save failed', id, error.message);
         const detail = transportDiagnostic(channel.type, '上游已完成，结果保存失败；正在重试保存', error, channel.apiKey);
         patch(id, isMegabyChannel(channel) || isHussChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
+        if (isHussChannel(channel)) {
+          saveRetryMs = Math.max(60_000, Number(error?.retryAfterMs) || 0);
+          onEvent({ type: 'status', message: detail, contentId: id });
+          if (error?.status === 410) {
+            patch(id, { hussDeliveryExpired: true });
+            holdForReview(id, detail + '；成品保存期限已结束，请联系上游核对原任务', 'local');
+            return;
+          }
+        }
       }
       if (localized) {
         try { complete(id, [localized]); if (isMegabyChannel(channel)) patch(id, { resultSaveError: null }); }
@@ -258,7 +281,11 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         onEvent({ type: 'complete', videoUrl: localized, contentId: id }); return;
       }
     }
-    await wait(isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : isHussChannel(channel) && taskId.startsWith('video_') ? 12_000 : 8_000);
+    await wait(saveRetryMs || (isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : isHussChannel(channel) && taskId.startsWith('video_') ? 12_000 : 8_000));
+  }
+  if (isHussChannel(channel)) {
+    patch(id, { hussQueryResumeAt: Date.now() + 60_000 });
+    return; // Resume the original ID/download in the next worker cycle, not a permanent review.
   }
   if (isZonghengChannel(channel)) {
     const message = '原任务尚未结束，将在后台继续查询，请勿重复提交';
@@ -742,6 +769,7 @@ export function restoreLegacyMjCompletedImages(): number {
 
 async function resumeHussReceipt(id: number, channel: any, key: string) {
   const before = metadata(id);
+  if (before.videoId || before.upstreamTaskId) return;
   if ([before.upstreamModel, before.actualModel, before.requestedModel].includes('hss-2.5-301010') && before.hussPayload?.model !== 'hss-2.5-301010') throw new Error('HUSS 异步原请求快照缺失，未发送请求');
   let receipt;
   try { receipt = await recoverHussSubmission(channel, key, before.hussPayload); }
@@ -755,7 +783,7 @@ async function resumeHussReceipt(id: number, channel: any, key: string) {
   if (meta.videoId || meta.hussIdempotencyKey !== key) return;
   if (receipt.state === 'accepted') {
     acceptVideoSubmission(id, receipt.taskId, { provider: 'huss', channelId: channel.id, channelApiKeyId: channel.apiKeyId });
-    patch(id, { error: null, progressText: '已从 HUSS 原提交回执找回任务，正在查询结果' });
+    patch(id, { ...('initialTask' in receipt ? { hussInitialTask: receipt.initialTask } : {}), error: null, progressText: '已从 HUSS 原提交回执找回任务，正在查询结果' });
     await pollVideo(id, channel, receipt.taskId, () => {});
   } else if (receipt.state === 'rejected') {
     endVideoSubmission(id, 'rejected');
@@ -774,7 +802,7 @@ export function resumeSpecificationTasks() {
     if (!meta.managedSpecification || active.has(row.id)) continue;
     if (meta.zonghengProtocol === 'v6k' && Number(meta.v6kQueryResumeAt) > Date.now()) continue;
     if (row.type === 'video' && videoSubmissionPending(row.id, meta)) continue;
-    if (row.type === 'video' && !meta.videoId && meta.hussIdempotencyKey && !meta.billingShortfall
+    if (row.type === 'video' && !meta.videoId && !meta.upstreamTaskId && meta.hussIdempotencyKey && !meta.billingShortfall
       && (!meta.reviewKind || meta.reviewKind === 'submission')) {
       const channel = ChannelService.getChannelRaw(Number(meta.channelId), Number(meta.channelApiKeyId) || null);
       if (channel && isHussChannel(channel)) {
@@ -791,7 +819,17 @@ export function resumeSpecificationTasks() {
       && Array.isArray(meta.nativeImageBatch?.sourceUrls) && meta.nativeImageBatch.sourceUrls.length > 0;
     const resumableMj = row.type === 'image' && meta.nativeImageOutputs === 4 && canResumeMjAsync(meta.mjAsyncImage);
     // Resume only known originals or a saved live query handle, never the paid POST.
-    if (row.status === 'review' && !knownMjResult && !resumableMj) continue;
+    const hussChannel = row.type === 'video' && (meta.videoId || meta.upstreamTaskId)
+      ? ChannelService.getChannelRaw(Number(meta.channelId), Number(meta.channelApiKeyId) || null) : null;
+    const resumableHuss = isHussChannel(hussChannel) && !meta.hussDeliveryExpired && !meta.refundPending
+      && !meta.billingShortfall && meta.billingStatus !== 'refunded' && !meta.queueRefunded
+      && (!meta.reviewKind || ['query', 'submission'].includes(meta.reviewKind) || meta.reviewKind === 'local' && meta.hussCompletedReceipt);
+    if (resumableHuss && Date.now() < Number(meta.hussQueryResumeAt || 0)) continue;
+    if (row.status === 'review' && !knownMjResult && !resumableMj && !resumableHuss) continue;
+    if (resumableHuss) {
+      meta.videoId = meta.videoId || meta.upstreamTaskId;
+      patch(row.id, { videoId: meta.videoId, requiresReview: false, reviewKind: null, error: null }, 'processing');
+    }
     if (knownMjResult || resumableMj) { try { assertMjReservation(row.id); } catch { continue; } }
     if (row.type === 'image' && (meta.nativeImageBatch || meta.imageJobs?.length || resumableMj)) {
       active.add(row.id);

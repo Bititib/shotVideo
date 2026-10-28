@@ -53,7 +53,7 @@ interface GetContentsOptions {
 const INTERNAL_VIDEO_ROUTING_FIELDS = [
   'zonghengProtocol', 'zonghengBaseUrl', 'zonghengInitialTask', 'zonghengLegacyTask',
   'videoSubmissionState', 'videoSubmissionDeadline', 'videoSubmissionStartedAt', 'videoSubmissionAttempt', 'submissionReceiptRecovered', 'missingTaskIdReview',
-  'pidoiFallbacks',
+  'pidoiFallbacks', 'hussCompletedReceipt', 'hussInitialTask', 'hussPayload', 'hussIdempotencyKey', 'hussQueryResumeAt', 'hussReceiptRetryAt',
   'mjRecovery', 'mjSubmissionDiagnostics', 'mjAsyncImage',
   'zonghengOrderId', 'zonghengSubmissionStarted', 'zonghengPollDelay', 'zonghengSubmissionDiagnostics', 'zonghengNotAcceptedResolution',
   'actualModel',

@@ -80,3 +80,15 @@ it('never replays an incomplete HSS request snapshot', async () => {
   await expect(recoverHussSubmission(channel, 'original-key', { model: HUSS_HSS_MODEL, idempotency_key: 'original-key' })).rejects.toThrow('不完整');
   expect(fetch).not.toHaveBeenCalled();
 });
+
+it('retains an immediately completed HSS response for saving before any GET', async () => {
+  const raw = { id: 'video_original', status: 'completed', url: 'https://cdn.example/result.mp4' };
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(raw)));
+  const accepted = vi.fn();
+  expect(await submitHussVideo(channel, input, vi.fn(), accepted)).toBe('video_original');
+  expect(accepted).toHaveBeenCalledWith(raw); expect(fetch).toHaveBeenCalledOnce();
+});
+it('a local write failure after acceptance remains uncertain and cannot trigger failover', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: 'video_original', status: 'completed', url: 'https://cdn.example/result.mp4' })));
+  await expect(submitHussVideo(channel, input, vi.fn(), () => { throw new Error('disk full'); })).rejects.toMatchObject({ uncertain: true });
+});

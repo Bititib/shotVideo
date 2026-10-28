@@ -235,3 +235,12 @@ describe('content routing privacy', () => {
     }
   });
 });
+
+it('hides HSS request snapshots and signed completion receipts while retaining delivery status', () => {
+  const result = sanitizeContentRoutingForClient({ status: 'processing', metadata: {
+    hussInitialTask: { url: 'https://private.invalid/?signature=secret' }, hussCompletedReceipt: { resultUrl: 'https://private.invalid/?signature=secret' },
+    hussPayload: { prompt: 'private request' }, hussIdempotencyKey: 'private-key',
+    upstreamGenerated: true, upstreamDeliveryPending: true, progressText: '视频已生成，正在保存到本站存储',
+  } });
+  expect(result.metadata).toEqual({ upstreamGenerated: true, upstreamDeliveryPending: true, progressText: '视频已生成，正在保存到本站存储' });
+});

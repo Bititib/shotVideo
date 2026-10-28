@@ -48,6 +48,7 @@ export interface VideoGenerateParams {
 }
 
 export interface VideoSSEEvent {
+  progressKnown?: boolean;
   type: 'status' | 'queue' | 'progress' | 'content' | 'complete' | 'error' | 'content_id' | 'close';
   progress?: number;
   content?: string;

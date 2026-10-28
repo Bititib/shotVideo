@@ -1565,7 +1565,7 @@ export default function VideoPage() {
               statusMessage: event.message || `HM Studio 排队中：前方 ${Math.max(0, (event.position || 1) - 1)} 项，当前运行 ${event.running || 0}/${event.concurrencyLimit || 10}`,
             });
             break;
-          case 'progress': updateTask({ progress: event.progress || 0, statusMessage: `视频生成中 ${event.progress}%` }); break;
+          case 'progress': updateTask({ progress: event.progress || 0, statusMessage: event.message || (event.progressKnown === false ? '正在处理任务' : `视频生成中 ${event.progress}%`) }); break;
           case 'complete':
             updateTask({ status: 'complete', progress: 100, videoUrl: event.videoUrl || null, statusMessage: '' });
             abortRef.current.delete(taskId);

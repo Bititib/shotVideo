@@ -1,5 +1,5 @@
 import { responseDiagnostic, upstreamDiagnostic } from './upstreamDiagnostic.js';
-import { isHussChannel, fetchHussVideoContent } from './hussVideoAdapter.js';
+import { isHussChannel, fetchHussVideoContent, HussApiError } from './hussVideoAdapter.js';
 import { isMegabyChannel, megabyContentUrl, fetchMegabyVideoContent, readMegabyJson } from './megabyVideoAdapter.js';
 import { zonghengTaskUrl } from './zonghengAdapter.js';
 import { isAsyncVideoChannel, resolveAsyncVideoUrl } from './asyncVideoAdapter.js';
@@ -70,11 +70,12 @@ export async function downloadAndLocalizeVideo(
     }
   }
 
-  let response = isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000), ...(authenticatedV6kContent ? { redirect: 'error' as const } : {}) });
+  const hssContent = isHussChannel(channel) && model === 'hss-2.5-301010' && videoId.startsWith('video_');
+  let response = hssContent ? await fetchHussVideoContent(channel, videoId) : isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000), ...(authenticatedV6kContent ? { redirect: 'error' as const } : {}) });
   // HUSS documents /content as an alternative to the signed media URL.
   // One read-only fallback per save attempt; never recreate the generation.
-  let hussContentFallback = false;
-  if (isHussChannel(channel) && [401, 403, 404].includes(response.status)) {
+  let hussContentFallback = hssContent;
+  if (!hssContent && isHussChannel(channel) && [401, 403, 404].includes(response.status)) {
     await response.body?.cancel();
     hussContentFallback = true;
     response = await fetchHussVideoContent(channel, videoId);
@@ -97,6 +98,8 @@ export async function downloadAndLocalizeVideo(
     });
   }
   if (!response.ok && isHussChannel(channel)) {
+    const retry = response.headers.get('retry-after') || '';
+    const retryAfterMs = /^\d+$/.test(retry) ? Number(retry) * 1000 : Math.max(0, Date.parse(retry) - Date.now()) || 0;
     const stage = hussContentFallback ? '原任务 /content 回退下载' : '结果下载';
     // HUSS redirects media downloads to TOS, whose errors use capitalized fields.
     // This is a download diagnostic, never evidence of a failed generation.
@@ -105,11 +108,11 @@ export async function downloadAndLocalizeVideo(
       const timing = ['ExpiresSeconds', 'Expires', 'ServerTime'].filter(key =>
         typeof payload[key] === 'string' || typeof payload[key] === 'number')
         .map(key => `${key}=${payload[key]}`).join('; ');
-      throw new Error(upstreamDiagnostic('HUSS/TOS', stage, {
+      throw new HussApiError(upstreamDiagnostic('HUSS/TOS', stage, {
         code: payload.Code, message: payload.Message + (timing ? '; ' + timing : ''),
-      }, channel.apiKey, response.status, payload.RequestId));
+      }, channel.apiKey, response.status, payload.RequestId), response.status, false, retryAfterMs);
     }
-    throw new Error(await responseDiagnostic('HUSS', stage, response, channel.apiKey));
+    throw new HussApiError(await responseDiagnostic('HUSS', stage, response, channel.apiKey), response.status, false, retryAfterMs);
   }
   if (isHussChannel(channel) && response.status === 202) {
     throw new Error(await responseDiagnostic('HUSS', '原任务下载仍在准备，继续查询原任务', response, channel.apiKey));

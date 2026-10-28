@@ -58,3 +58,18 @@ it('does not use fallback to extend an expired file retention period', async () 
   await expect(downloadAndLocalizeVideo('https://www.huss.top/media/old', 'task_original', 'bb-2.5-301010', 1)).rejects.toThrow('410');
   expect(fetch).toHaveBeenCalledOnce();
 });
+
+it('HSS prefers fresh original content delivery, bypassing stale signed URLs and never forwarding credentials', async () => {
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(new Response(null, { status: 307, headers: { Location: 'https://storage.example/fresh?signature=exact' } }))
+    .mockResolvedValueOnce(new Response(Buffer.from('0000ftypmp420000'), { headers: { 'Content-Type': 'video/mp4' } })));
+  await downloadAndLocalizeVideo('https://cdn.example/expired', 'video_original', 'hss-2.5-301010', 1);
+  expect(fetch).toHaveBeenNthCalledWith(1, 'https://www.huss.top/v1/videos/video_original/content', expect.objectContaining({ cache: 'no-store', headers: { Authorization: 'Bearer huss-secret' } }));
+  expect(fetch).toHaveBeenNthCalledWith(2, 'https://storage.example/fresh?signature=exact', expect.objectContaining({ headers: {} }));
+  expect(fetch).toHaveBeenCalledTimes(2); expect(fs.renameSync).toHaveBeenCalledOnce();
+});
+it('HSS content errors preserve HTTP status and Retry-After for the save worker', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { code: 'video_not_ready', message: 'still saving' } }, { status: 409, headers: { 'Retry-After': '90' } })));
+  await expect(downloadAndLocalizeVideo('https://cdn.example/old', 'video_original', 'hss-2.5-301010', 1)).rejects.toMatchObject({ status: 409, retryAfterMs: 90000, message: expect.stringContaining('video_not_ready') });
+  expect(fetch).toHaveBeenCalledOnce(); expect(fs.renameSync).not.toHaveBeenCalled();
+});

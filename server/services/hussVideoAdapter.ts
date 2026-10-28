@@ -36,7 +36,7 @@ export async function fetchHussVideoContent(channel: HussChannel, taskId: string
   let url = hussApiBase(channel.baseUrl) + '/v1/videos/' + encodeURIComponent(taskId) + '/content';
   const signal = AbortSignal.timeout(300_000);
   for (let hop = 0; hop <= 5; hop++) {
-    const response = await fetch(url, { method: 'GET', redirect: 'manual', signal,
+    const response = await fetch(url, { method: 'GET', redirect: 'manual', signal, cache: 'no-store',
       headers: hop === 0 ? { Authorization: 'Bearer ' + channel.apiKey } : {} });
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
     const location = response.headers.get('location');
@@ -107,7 +107,7 @@ export function hussVideoParameters(input: HussVideoInput) {
   const key = input.idempotencyKey || randomUUID(); if (!/^[A-Za-z0-9._:-]{1,128}$/.test(key)) throw new Error('HUSS 请求标识仅支持 1–128 位字母、数字、点、下划线、冒号和短横线');
   return { key, payload: { model: input.model, prompt: input.prompt.trim(), duration: input.seconds, ratio: input.ratio, resolution: input.resolution } };
 }
-export async function submitHussVideo(channel: HussChannel, input: HussVideoInput, beforeSubmit: (payload: Record<string, unknown>) => void) {
+export async function submitHussVideo(channel: HussChannel, input: HussVideoInput, beforeSubmit: (payload: Record<string, unknown>) => void, onAccepted?: (raw: unknown) => void) {
   const { key, payload } = hussVideoParameters(input); const publish = (items: string[]) => items.map(item => publishReferenceUrl(item, input.publicBaseUrl));
   const request: Record<string, any> = { ...payload, ...(input.images.length ? { [input.model === HUSS_HSS_MODEL ? 'images' : 'reference_images']: publish(input.images) } : {}), ...(input.videos.length ? { videos: publish(input.videos) } : {}), ...(input.audios.length ? { audios: publish(input.audios) } : {}) };
   if (input.model === HUSS_HSS_MODEL) {
@@ -131,7 +131,12 @@ export async function submitHussVideo(channel: HussChannel, input: HussVideoInpu
   }
   const id = result?.id ?? result?.data?.id;
   if (input.model === HUSS_HSS_MODEL && (typeof id !== 'string' || !/^video_[A-Za-z0-9_-]+$/.test(id))) throw new HussApiError(hussFailure('异步任务编号无效', result, 202, undefined, channel.apiKey), 202, true);
-  if ((typeof id !== 'string' && typeof id !== 'number') || !String(id).trim()) throw new HussApiError(hussFailure('未返回任务编号，提交结果待核实', result, 202, undefined, channel.apiKey), 202, true); return String(id);
+  if ((typeof id !== 'string' && typeof id !== 'number') || !String(id).trim()) throw new HussApiError(hussFailure('未返回任务编号，提交结果待核实', result, 202, undefined, channel.apiKey), 202, true);
+  if (input.model === HUSS_HSS_MODEL && result?.status === 'completed' && result?.url) {
+    try { onAccepted?.(result); }
+    catch (error) { throw new HussApiError(hussFailure('已受理任务凭据保存异常', error, 202, undefined, channel.apiKey), 202, true); }
+  }
+  return String(id);
 }
 export function normalizeHussTask(raw: any, baseUrl: string, taskId?: string) {
   const data = raw?.data && typeof raw.data === 'object' ? raw.data : raw; const original = String(data?.status || '').toLowerCase();
@@ -166,7 +171,7 @@ export async function recoverHussSubmission(channel: HussChannel, key: string, s
       // Documented same-account/key/parameters replay returns the original video ID.
       const raw = await hussRequest(channel, '/videos', request, key);
       if (typeof raw?.id === 'string' && /^video_[A-Za-z0-9_-]+$/.test(raw.id))
-        return { state: 'accepted' as const, taskId: raw.id, error: '' };
+        return { state: 'accepted' as const, taskId: raw.id, error: '', initialTask: raw };
       return { state: 'unknown' as const, taskId: '', error: hussFailure('异步回执缺少 video_ 编号', raw) };
     }
   }
