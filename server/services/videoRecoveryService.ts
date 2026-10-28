@@ -5,6 +5,7 @@ import { assertNoTaskIdVerification, beginTaskIdVerification } from './videoReco
 import { zonghengProtocol, zonghengTaskChannel, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE } from './zonghengProtocol.js';
 import { isAsyncVideoChannel, asyncVideoTaskUrl, normalizeAsyncVideoTask, resolveAsyncVideoUrl } from './asyncVideoAdapter.js';
 import { isZonghengChannel, zonghengTaskUrl, normalizeZonghengTask } from './zonghengAdapter.js';
+import { recordV6kDeliveryUnavailable, clearV6kDeliveryUnavailable } from './v6kDeliveryState.js';
 import { isHayaChannel, hayaTaskUrl, normalizeHayaTask } from './hayaVideoAdapter.js';
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
@@ -607,8 +608,10 @@ export class VideoRecoveryService {
     }
     let localizedUrl: string;
     try { localizedUrl = await download; }
+    catch (error) { recordV6kDeliveryUnavailable(contentId, error); throw error; }
     finally { if (recoveryDownloads.get(downloadKey) === download) recoveryDownloads.delete(downloadKey); }
     if (!localizedUrl) throw { status: 502, message: '上游视频下载失败，本次未新增扣费' };
+    clearV6kDeliveryUnavailable(contentId);
 
     if (beforeMetadata.batchItemId) {
       const { settleRecoveredBatch } = await import('./videoBatchService.js');

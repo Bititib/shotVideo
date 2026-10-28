@@ -22,6 +22,8 @@ vi.mock('../server/services/balanceService.js', async () => {
 import { sqlite } from '../server/db/index.js';
 import { batchStore, batchContextForRequest, tickVideoBatches, recordBatchFailure, markBatchSubmitting, settleRecoveredBatch, startVideoBatchWorker, isBatchChannelAtCapacity } from '../server/services/videoBatchService';
 import type { VideoBatchInput } from '../shared/videoBatch';
+import { recordV6kDeliveryUnavailable } from '../server/services/v6kDeliveryState';
+import { V6kVideoContentError } from '../server/services/v6kVideoContent';
 
 const input: VideoBatchInput = { name: 'test', model: 'test-video', resolution: '720p', aspect_ratio: '9:16', video_length: 6,
   autoRetry: true, maxRetries: 2, creatives: [{ prompt: 'original user prompt', count: 1, reference_images: [] }] };
@@ -43,6 +45,15 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('batch worker and prepaid bridge (no real database/upstream)', () => {
+  it('holds an accepted 410 delivery loss without automatic retries, refunds, or another reservation',()=>{
+    const i=running(),r=sqlite.prepare('SELECT metadata FROM contents WHERE id=?').get(i.content_id) as any,m=JSON.parse(r.metadata);
+    m.videoId='batch_original';m.videoSubmissionState='accepted';m.billingStatus='batch_reserved';sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify(m),i.content_id);
+    recordV6kDeliveryUnavailable(i.content_id,new V6kVideoContentError('成品获取失败 HTTP 410 task_not_found',410,'batch_original','task_not_found'));
+    tickVideoBatches();tickVideoBatches();
+    expect(batchStore.item(i.id)).toMatchObject({status:'review',billing_state:'reserved',retry_count:0});expect(balance()).toBe(98.5);expect(fetch).not.toHaveBeenCalled();
+    expect(JSON.parse((sqlite.prepare('SELECT metadata FROM contents WHERE id=?').get(i.content_id) as any).metadata).videoId).toBe('batch_original');
+    settleRecoveredBatch(i.content_id,'/uploads/restored.mp4');tickVideoBatches();expect(balance()).toBe(98.5);expect(batchStore.item(i.id).status).toBe('completed');
+  });
   it('ignores public prepaid body flags and rejects a forged internal credential', () => {
     expect(batchContextForRequest({ headers: {}, userId: 1, body: { prepaid: true, batchItemId: 1 } } as any)).toBeNull();
     expect(() => batchContextForRequest({ headers: { 'x-video-batch-key': 'forged' }, userId: 1 } as any)).toThrow('凭证');

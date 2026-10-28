@@ -56,6 +56,7 @@ const INTERNAL_VIDEO_ROUTING_FIELDS = [
   'pidoiFallbacks', 'hussCompletedReceipt', 'hussInitialTask', 'hussPayload', 'hussIdempotencyKey', 'hussQueryResumeAt', 'hussReceiptRetryAt',
   'mjRecovery', 'mjSubmissionDiagnostics', 'mjAsyncImage',
   'zonghengOrderId', 'zonghengSubmissionStarted', 'zonghengPollDelay', 'zonghengSubmissionDiagnostics', 'zonghengNotAcceptedResolution',
+  'v6kDeliveryDiagnostics',
   'actualModel',
   'actualChannel',
   'fallbackFrom',
@@ -85,7 +86,7 @@ export function sanitizeContentRoutingForClient<T extends { metadata?: string | 
   const publicFailure = (value: unknown) => needsReview ? videoReviewMessage(metadata) : publicGenerationError(value, privateNames);
   const reviewKind = videoReviewKind(metadata);
   if (reviewKind) metadata.reviewKind = reviewKind;
-  for (const field of ['error', 'errorMessage', 'failureReason', 'errorDetail']) {
+  for (const field of ['error', 'errorMessage', 'failureReason', 'errorDetail', 'resultSaveError']) {
     if (metadata[field]) metadata[field] = publicFailure(metadata[field]);
   }
   if (metadata.imageErrors && typeof metadata.imageErrors === 'object') {

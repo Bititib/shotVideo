@@ -14,12 +14,16 @@ export function videoReviewKind(raw: unknown): VideoReviewKind | null {
 }
 
 export function videoReviewLabel(raw: unknown): string {
+  let m: any; try { m = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch {}
+  if (m?.videoDeliveryUnavailable) return '成品获取失败';
   return ({ submission: '提交待核实', query: '查询异常', settlement: '结算待核实', local: '本地处理异常' })[videoReviewKind(raw) || 'submission'];
 }
 
 export function videoReviewMessage(raw: unknown): string {
   let m: any;
   try { m = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch {}
+  if (m?.videoDeliveryUnavailable) return sanitizedGenerationReason(m.resultSaveError || m.error || '成品获取失败（HTTP 410），原任务和费用已保留',
+    ['V6K', m?.channelName, m?.actualChannel].filter((v): v is string => typeof v === 'string'));
   const guidance = videoReviewKind(raw) === 'settlement' && m?.upstreamStatus === 'failed'
     ? '生成已失败，退款处理待核实；请勿重复提交。' : ({
     submission: '提交结果待核实，请在生成记录核实原任务，请勿重复提交。',

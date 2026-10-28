@@ -10,6 +10,7 @@ import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
 import { videoReviewKind } from '../../shared/videoReview.js';
 import { findVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
 import { assertNoTaskIdVerification, activeSpecificationTasks } from './videoRecoveryAction.js';
+import { videoSubmissionPending } from './videoSubmissionGuard.js';
 
 /** Synchronous: callers keep the balance change and content update in one transaction. */
 function refundLegacyFunds(row: any, meta: Record<string, any>, amount: number): string {
@@ -51,6 +52,7 @@ function confirmNotAccepted(contentId: number, adminId: number, confirmed: unkno
       return { id: contentId, status: 'failed', refundedAmount: Number(meta.refundAmount) || 0, alreadyResolved: true };
     }
     if (row.type !== 'video' || !(row.status === 'review' || row.status === 'processing' && meta.requiresReview === true)) fail(409, '仅可处理待核实的视频任务');
+    if (videoSubmissionPending(contentId, meta)) fail(409, '原提交仍在执行，请等待回执后核对，未执行退款');
     const channel = meta.channelId ? db.select().from(channels).where(eq(channels.id, Number(meta.channelId))).get() : null;
     if (zonghengOnly && !isZonghengChannel(channel) && meta.actualChannel !== 'zongheng') fail(409, '该入口仅处理纵横渠道的待核实任务');
     if (!zonghengOnly && videoReviewKind(meta) !== 'submission') fail(409, '仅可处理提交待核实且未取得上游任务 ID 的视频');
@@ -67,10 +69,12 @@ function confirmNotAccepted(contentId: number, adminId: number, confirmed: unkno
     let target = 'not_charged';
     if (meta.billingReservationId) {
       const reservation = sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(meta.billingReservationId) as any;
-      if (!reservation || !['review', ...(meta.managedSpecification ? ['reserved'] : [])].includes(reservation.state) || Math.abs(reservation.amount - amount) > 0.000001) fail(409, '预扣账本状态或金额不一致，请到异常账单核查');
+      if (!reservation || !['reserved','review'].includes(reservation.state) || !Number.isFinite(reservation.amount)
+        || Math.abs(reservation.amount - amount) > 0.000001) fail(409, '预扣账本状态或金额不一致，请到异常账单核查');
       const receipt = JSON.parse(reservation.receipt), context = JSON.parse(reservation.context);
       if (context.userId !== row.userId || context.contentId != null && Number(context.contentId) !== contentId) fail(409, '预扣账本归属不一致');
-      // Administrator has confirmed non-acceptance; transition and resolve atomically.
+      // Historical submission reviews could leave the ledger reserved. Only this
+      // confirmed, no-receipt reviewed order may transition it before reconciliation.
       if (reservation.state === 'reserved') sqlite.prepare("UPDATE billing_reservations SET state='review' WHERE id=? AND state='reserved'").run(meta.billingReservationId);
       resolveBillingReservation(meta.billingReservationId, adminId, 0, resolutionNote);
       target = receipt.target || (receipt.source === 'org' ? 'organization_balance' : 'user_balance');

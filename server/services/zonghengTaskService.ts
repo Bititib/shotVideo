@@ -7,6 +7,7 @@ import { recordBatchFailure } from './videoBatchService.js';
 import { sanitizedGenerationReason } from '../../shared/generationErrorPrivacy.js';
 import { persistVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
 import { acceptVideoSubmission } from './videoSubmissionGuard.js';
+import { finalizeReservedContent } from './contentBillingService.js';
 /** Keep the original receipt even if a subsequent content-metadata write fails. */
 export function acceptZonghengVideoReceipt(contentId: number, taskId: string, context: { channelId: number | null; channelApiKeyId?: number | null }) {
   persistVideoSubmissionReceipt({ contentId, upstreamTaskId: taskId, provider: 'zongheng', channelId: context.channelId, channelApiKeyId: context.channelApiKeyId ?? null });
@@ -27,7 +28,8 @@ export function reviewZonghengTask(id: number, message: string) {
   const reason = sanitizedGenerationReason(message);
   if (recordBatchFailure(id, reason, false)) return;
   const row = db.select().from(contents).where(eq(contents.id,id)).get();
-  if (!row || row.status === 'completed') return;
+  if (!row || ['completed','failed'].includes(row.status || '')) return;
+  if (finalizeReservedContent(id, 'review', { requiresReview: true, error: reason, progressText: reason })) return;
   db.update(contents).set({ status: 'review', metadata: JSON.stringify({ ...JSON.parse(row.metadata || '{}'), requiresReview: true,
     error: reason, progressText: reason }) }).where(eq(contents.id,id)).run();
 }

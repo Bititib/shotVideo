@@ -2,6 +2,7 @@ import { zonghengProtocol, zonghengProtocolSnapshot, zonghengTaskChannel, v6kQue
 import { VideoPollTimeout, withVideoPollDeadline, fetchVideoTaskResponse } from '../services/videoPollDeadline.js';
 import { refundConfirmedZonghengVideo } from '../services/zonghengSubmissionResolutionService.js';
 import { queryZonghengTask } from '../services/zonghengTaskQueryService.js';
+import { recordV6kDeliveryUnavailable } from '../services/v6kDeliveryState.js';
 import { publicGenerationEvent, publicGenerationError } from '../../shared/generationMessages.js';
 import { generationErrorResponse } from '../middleware/generationErrorResponse.js';
 import { canonicalZonghengModelId, ZONGHENG_VIDEO_MODELS, zonghengPublicModelId, getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
@@ -3001,6 +3002,11 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
                 : await downloadAndLocalizeVideo(resultUrl, videoId, model, dbChannel?.id, dbChannel?.apiKeyId);
             }
           } catch (localErr: any) {
+            if (contentId !== null && recordV6kDeliveryUnavailable(contentId, localErr)) {
+              sendEvent({ type: 'status', message: publicGenerationError(localErr.message, ['V6K']) });
+              if (!res.destroyed && !res.writableEnded) res.end('data: [DONE]\n\n');
+              return;
+            }
             if ((isZongheng || protectedPolling) && localErr instanceof VideoPollTimeout) throw localErr;
             console.error(`[video] VPS localization failed; task remains processing: ${localErr.message}`);
             sendEvent({ type: 'status', message: '视频已生成，正在保存到本站存储' });
@@ -4017,6 +4023,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
                 : await downloadAndLocalizeVideo(resultUrl, videoId, model, metadata.channelId, metadata.channelApiKeyId);
             }
           } catch (localErr: any) {
+            if (recordV6kDeliveryUnavailable(contentId, localErr)) break;
             console.error(`[video-recover] VPS localization failed; will retry: ${localErr.message}`);
             continue;
           }

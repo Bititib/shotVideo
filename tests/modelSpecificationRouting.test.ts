@@ -18,7 +18,8 @@ import { ChannelService } from '../server/services/channelService.js';
 import { defaultRoutingLimits, routingMismatches, routeRequestCost, type ModelSpecification, type RoutingInput } from '../shared/modelRouting.js';
 import { saveModelSpecification, getModelSpecification, selectModelRoutes, inspectModelRoutes, getRouteHealth, noteRouteResult, resetRouteHealth, claimRouteProbe, specificationAvailability } from '../server/services/modelRoutingService.js';
 import { getEnabledPublicModels } from '../server/services/modelCatalogService.js';
-import { handleSpecificationGeneration, specificationRequest, resumeSpecificationTasks } from '../server/services/specificationGenerationService.js';
+import { handleSpecificationGeneration, specificationRequest, resumeSpecificationTasks, recoverSpecificationVideo } from '../server/services/specificationGenerationService.js';
+import { V6kVideoContentError } from '../server/services/v6kVideoContent';
 import { resolvePublicModelId } from '../server/services/publicModelNameService.js';
 import { hmStudioQueue, HmStudioQueueFullError } from '../server/services/hmStudioQueueService.js';
 import specificationRoutes from '../server/routes/modelSpecifications.js';
@@ -223,6 +224,21 @@ describe('managed image execution and single reservation', () => {
 
 
 describe('managed video execution', () => {
+  it('pauses V6K 410 without settling its reservation and restores the original sale task without resubmitting',async()=>{
+    const l={...limits(),resolutions:['480p']},c={...channel(1),type:'zongheng-v6k',baseUrl:'https://www.v6k.top'};
+    vi.mocked(ChannelService.getActiveChannels).mockReturnValue([c]);vi.mocked(ChannelService.getChannelRaw).mockReturnValue(c as any);
+    const s={...spec(),aliases:[],limits:l,routes:[{...route(1),upstreamModel:'TTseadanco2.5-480',limits:l}]};saveModelSpecification(s);
+    const {downloadAndLocalizeVideo}=await import('../server/services/videoLocalizationService');
+    vi.mocked(downloadAndLocalizeVideo).mockRejectedValueOnce(new V6kVideoContentError('[上游诊断 V6K 成品获取失败] HTTP 410 code=task_not_found：任务或文件不存在或已失效',410,'spec_delivery','task_not_found'));
+    let posts=0,queries=0;vi.stubGlobal('fetch',vi.fn(async(_url:any,init:any)=>{if(init.method==='POST')posts++;else queries++;return Response.json({id:'spec_delivery',status:'completed'});}));
+    await handleSpecificationGeneration({body:{model:s.modelId,prompt:'场景',seconds:6,resolution:'480p'},headers:{},protocol:'https',get:()=> 'app.invalid',userId} as any,response(),'video');
+    let row=db.select().from(contents).all().at(-1)!,meta=JSON.parse(row.metadata);expect(row.status).toBe('review');expect(meta).toMatchObject({videoId:'spec_delivery',videoDeliveryUnavailable:true});
+    expect(sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(meta.billingReservationId)).toEqual({state:'reserved'});
+    resumeSpecificationTasks();resumeSpecificationTasks();expect(posts).toBe(1);expect(queries).toBe(0);
+    recoverSpecificationVideo(row.id);await vi.waitFor(()=>expect(db.select().from(contents).all().at(-1)!.status).toBe('completed'));
+    row=db.select().from(contents).all().at(-1)!;meta=JSON.parse(row.metadata);expect(meta.videoDeliveryUnavailable).toBe(false);expect(row.cost).toBe(2);
+    expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBe(98);recoverSpecificationVideo(row.id);expect(posts).toBe(1);expect(queries).toBe(1);
+  });
   it('submits TTTseadanco2.5/720 through its actual sales route at 720p and charges 6.5 once', async () => {
     const model = 'TTTseadanco2.5/720', l = existingModelLimits(model, 'video')!;
     db.update(models).set({ isActive: 1 }).where(eq(models.modelId, model)).run();

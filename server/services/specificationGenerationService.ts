@@ -4,6 +4,7 @@ import { isHussChannel, recoverHussSubmission, normalizeHussTask } from './hussV
 import { publicApiModelId } from '../../shared/funAi.js';
 import { isZonghengChannel, normalizeZonghengTask } from './zonghengAdapter.js';
 import { acceptZonghengVideoReceipt } from './zonghengTaskService.js';
+import { recordV6kDeliveryUnavailable } from './v6kDeliveryState.js';
 import { zonghengProtocol, zonghengTaskChannel, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE, v6kQueryRetryDelay } from './zonghengProtocol.js';
 import { modelAvailabilityMessage } from '../../shared/upstreamAvailability.js';
 import { startSseHeartbeat } from './sseHeartbeat.js';
@@ -162,7 +163,8 @@ function completeContent(id: number, urls: string[]) {
   actual = finalizeReservation(meta.billingReservationId, actual, id);
   patch(id, { imageUrls: record.type === 'image' ? urls : undefined, ...(meta.nativeImageOutputs ? { count: urls.length } : {}), progress: 100, progresses: urls.map(() => 100),
     completedAt: new Date().toISOString(), billingStatus: 'settled', requiresReview: false, reviewKind: null, upstreamQueryError: null,
-    resultSaveError: null, upstreamDeliveryPending: false, progressText: '生成完成' }, 'completed');
+    resultSaveError: null, upstreamDeliveryPending: false,
+    ...(meta.videoDeliveryUnavailable ? { videoDeliveryUnavailable: false, v6kDeliveryDiagnostics: undefined } : {}), progressText: '生成完成' }, 'completed');
   db.update(contents).set({ resultUrl: urls[0], cost: actual }).where(eq(contents.id, id)).run();
   if (record.userId) { try { logUsage(record.userId, record.type === 'video' ? 'video' : 'generate_image', undefined, Date.now() - meta.startedAt); } catch (error: any) { console.warn('[specification] usage log failed', id, error.message); } }
 }
@@ -257,6 +259,9 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         const { downloadAndLocalizeVideo } = await import('./videoLocalizationService.js');
         localized = await downloadAndLocalizeVideo(task.resultUrl, taskId, metadata(id).actualModel, channel.id, channel.apiKeyId);
       } catch (error: any) {
+        if (recordV6kDeliveryUnavailable(id, error)) {
+          onEvent({ type: 'status', message: publicGenerationError(error.message, ['V6K']), contentId: id }); return;
+        }
         console.warn('[specification] result save failed', id, error.message);
         const detail = transportDiagnostic(channel.type, '上游已完成，结果保存失败；正在重试保存', error, channel.apiKey);
         patch(id, isMegabyChannel(channel) || isHussChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });

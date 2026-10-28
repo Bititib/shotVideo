@@ -2,6 +2,7 @@ import { responseDiagnostic, upstreamDiagnostic } from './upstreamDiagnostic.js'
 import { isHussChannel, fetchHussVideoContent, HussApiError } from './hussVideoAdapter.js';
 import { isMegabyChannel, megabyContentUrl, fetchMegabyVideoContent, readMegabyJson } from './megabyVideoAdapter.js';
 import { zonghengTaskUrl } from './zonghengAdapter.js';
+import { fetchV6kVideoContent } from './v6kVideoContent.js';
 import { isAsyncVideoChannel, resolveAsyncVideoUrl } from './asyncVideoAdapter.js';
 import { isFunAiChannel, shouldSendFunAiAuthorization, funAiTaskUrl } from './funAiAdapter.js';
 import { isZonghengChannel } from './zonghengAdapter.js';
@@ -71,7 +72,7 @@ export async function downloadAndLocalizeVideo(
   }
 
   const hssContent = isHussChannel(channel) && model === 'hss-2.5-301010' && videoId.startsWith('video_');
-  let response = hssContent ? await fetchHussVideoContent(channel, videoId) : isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000), ...(authenticatedV6kContent ? { redirect: 'error' as const } : {}) });
+  let response = authenticatedV6kContent ? await fetchV6kVideoContent(channel, videoId) : hssContent ? await fetchHussVideoContent(channel, videoId) : isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
   // HUSS documents /content as an alternative to the signed media URL.
   // One read-only fallback per save attempt; never recreate the generation.
   let hussContentFallback = hssContent;

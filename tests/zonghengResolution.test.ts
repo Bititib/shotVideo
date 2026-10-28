@@ -10,6 +10,9 @@ import { reserveUserCharge } from '../server/services/billingReservation';
 import { videoTaskPhase } from '../shared/videoTaskPhase';
 import { sanitizeContentRoutingForClient } from '../server/services/contentService';
 import { publicGenerationStatus, publicGenerationError } from '../shared/generationMessages';
+import { recordV6kDeliveryUnavailable } from '../server/services/v6kDeliveryState';
+import { V6kVideoContentError } from '../server/services/v6kVideoContent';
+import { videoReviewLabel } from '../shared/videoReview';
 const note='已按业务订单号核对，上游确认未创建任务且不会继续受理';
 const row=()=>sqlite.prepare('SELECT * FROM contents WHERE id=12965').get() as any;
 const balance=()=> (sqlite.prepare('SELECT balance FROM users WHERE id=1').get() as any).balance;
@@ -26,6 +29,34 @@ beforeEach(()=>{
   db.insert(channels).values({id:21,name:'private channel',type:'zongheng',baseUrl:'https://channel.invalid',apiKey:'secret'}).run();
 });
 describe('confirmed Zongheng non-acceptance refunds',()=>{
+  it('reconciles a historical reviewed order whose matching ledger remained reserved, exactly once',()=>{
+    sqlite.exec('UPDATE users SET balance=100 WHERE id=1'); const reservation=reserveUserCharge(1,6.5,'generate_video');
+    add({billingReservationId:reservation.id,billingStatus:'reserved',requiresReview:true,videoSubmissionState:'unknown'});
+    expect(confirmReviewedVideoFailureAndRefund(12965,9,true)).toMatchObject({refundedAmount:6.5,alreadyResolved:false});
+    expect(confirmReviewedVideoFailureAndRefund(12965,9,true).alreadyResolved).toBe(true);
+    expect(balance()).toBe(100); expect(row()).toMatchObject({status:'failed',cost:0});
+    expect(sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(reservation.id)).toEqual({state:'refunded'});
+    expect(sqlite.prepare('SELECT count(*) AS n FROM billing_resolution_audit WHERE reservation_id=?').get(reservation.id)).toEqual({n:1});
+  });
+  it.each(['amount','owner','active','settled','missing','receipt'])('does not bypass refund protection while repairing reserved review state: %s',kind=>{
+    sqlite.exec('UPDATE users SET balance=100 WHERE id=1'); const reservation=reserveUserCharge(1,6.5,'generate_video');
+    add({billingReservationId:reservation.id,billingStatus:'reserved',requiresReview:true,videoSubmissionState:kind==='active'?'submitting':'unknown',videoSubmissionDeadline:Date.now()+60000});
+    if(kind==='amount')sqlite.prepare('UPDATE billing_reservations SET amount=7 WHERE id=?').run(reservation.id);
+    if(kind==='owner')sqlite.prepare('UPDATE billing_reservations SET context=? WHERE id=?').run(JSON.stringify({userId:99,contentId:12965}),reservation.id);
+    if(kind==='settled')sqlite.prepare("UPDATE billing_reservations SET state='settled' WHERE id=?").run(reservation.id);
+    if(kind==='missing')sqlite.prepare('DELETE FROM billing_reservations WHERE id=?').run(reservation.id);
+    if(kind==='receipt')persistVideoSubmissionReceipt({contentId:12965,upstreamTaskId:'accepted',channelId:21,channelApiKeyId:null,provider:'zongheng'});
+    expect(()=>confirmReviewedVideoFailureAndRefund(12965,9,true)).toThrow(); expect(balance()).toBe(93.5); expect(row().status).toBe('review');
+  });
+  it('rolls back the reserved-to-review transition, balance refund and audit if content finalization fails',()=>{
+    sqlite.exec('UPDATE users SET balance=100 WHERE id=1');const reservation=reserveUserCharge(1,6.5,'generate_video');
+    add({billingReservationId:reservation.id,billingStatus:'reserved',requiresReview:true,videoSubmissionState:'unknown'});
+    sqlite.exec("CREATE TRIGGER reject_failure BEFORE UPDATE OF status ON contents WHEN NEW.status='failed' BEGIN SELECT RAISE(ABORT, 'simulated storage failure'); END");
+    expect(()=>confirmReviewedVideoFailureAndRefund(12965,9,true)).toThrow('simulated storage failure');
+    expect(balance()).toBe(93.5);expect(row()).toMatchObject({status:'review',cost:6.5});
+    expect(sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(reservation.id)).toEqual({state:'reserved'});
+    expect(sqlite.prepare('SELECT count(*) AS n FROM billing_resolution_audit WHERE reservation_id=?').get(reservation.id)).toEqual({n:0});
+  });
   it('refunds a historical reviewed order once, clears review and records the confirmation',()=>{
     add();expect(confirmZonghengNotAccepted(12965,9,true,note)).toMatchObject({refundedAmount:6.5,alreadyResolved:false});
     expect(row()).toMatchObject({status:'failed',cost:0});expect(balance()).toBe(100);
@@ -120,6 +151,19 @@ describe('HM placeholder task IDs and confirmed refunds', () => {
 });
 
 describe('public video phases',()=>{
+  it('holds a V6K 410 without changing the charge or allowing a submission refund',()=>{
+    add({videoId:'task_original',videoSubmissionState:'accepted',billingStatus:'reserved'},{status:'processing'});
+    const error=new V6kVideoContentError('[上游诊断 V6K 成品获取失败] HTTP 410 code=task_not_found：任务或文件不存在或已失效',410,'task_original','task_not_found');
+    expect(recordV6kDeliveryUnavailable(12965,error)).toBe(true);
+    expect(recordV6kDeliveryUnavailable(12965,error)).toBe(true);
+    const meta=JSON.parse(row().metadata);
+    expect(row()).toMatchObject({status:'review',cost:6.5}); expect(balance()).toBe(93.5);
+    expect(meta).toMatchObject({videoId:'task_original',upstreamStatus:'completed',billingStatus:'reserved',videoDeliveryUnavailable:true});
+    expect(videoTaskPhase(row().status,meta)).toBe('review'); expect(videoReviewLabel(meta)).toBe('成品获取失败');
+    expect(()=>confirmReviewedVideoFailureAndRefund(12965,9,true)).toThrow(); expect(()=>confirmZonghengNotAccepted(12965,9,true,note)).toThrow('已有任务 ID');
+    const out=sanitizeContentRoutingForClient({status:'review',type:'video',metadata:meta}).metadata;
+    expect(out).not.toHaveProperty('v6kDeliveryDiagnostics'); expect(JSON.stringify(out)).not.toContain('V6K'); expect(out.resultSaveError).toContain('410');
+  });
   it('distinguishes generated-but-undelivered videos, local saving, final results, and review',()=>{
     const meta={upstreamGenerated:true,upstreamDeliveryPending:true};
     expect(videoTaskPhase('processing',meta)).toBe('awaiting_delivery');

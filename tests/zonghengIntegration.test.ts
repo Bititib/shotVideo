@@ -64,6 +64,8 @@ import { channels, models, modelPricing, users, contents } from '../server/db/sc
 import { ChannelService } from '../server/services/channelService';
 import { findVideoSubmissionReceipt } from '../server/services/videoSubmissionReceiptService';
 import { acceptVideoSubmission, claimVideoSubmission } from '../server/services/videoSubmissionGuard';
+import { V6kVideoContentError } from '../server/services/v6kVideoContent';
+import { confirmReviewedVideoFailureAndRefund } from '../server/services/zonghengSubmissionResolutionService';
 import { VideoRecoveryService as ContentRecoveryService } from '../server/services/videoRecoveryService';
 let video: typeof import('../server/routes/video');
 let server: Server, origin: string;
@@ -173,6 +175,32 @@ describe('V6K cutover using the existing Zongheng billing and recovery paths', (
     sqlite.prepare("INSERT INTO api_tokens (id,user_id,token_key,balance) VALUES (1,1,'test',-1)").run();
     return { old, id };
   }
+  it.each(['/api/video/generate','/v1/videos'])('synchronizes a no-ID submission review and lets the confirmed admin refund settle once at %s',async endpoint=>{
+    enableV6k();let posts=0;
+    upstream=async()=>{posts++;return Response.json({error:{code:'service_unavailable',message:'生成服务暂时繁忙或队列已满'}},{status:503});};
+    await(await post(endpoint,{...request,seconds:6})).text();expect(latest().status).toBe('review');
+    const id=latest().id,meta=JSON.parse(latest().metadata!);
+    if(meta.billingReservationId)expect(sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(meta.billingReservationId)).toEqual({state:'review'});
+    expect(balance()).toBe(98);expect(confirmReviewedVideoFailureAndRefund(id,1,true)).toMatchObject({refundedAmount:2,alreadyResolved:false});
+    expect(confirmReviewedVideoFailureAndRefund(id,1,true).alreadyResolved).toBe(true);
+    expect(latest()).toMatchObject({status:'failed',cost:0});expect(balance()).toBe(100);expect(posts).toBe(1);
+  });
+  it.each(['/api/video/generate','/v1/videos'])('pauses a 410 delivery failure and recovers the same ID without a second POST or money movement at %s',async endpoint=>{
+    enableV6k();let posts=0,queries=0;
+    const {downloadAndLocalizeVideo}=await import('../server/services/videoLocalizationService');
+    vi.mocked(downloadAndLocalizeVideo).mockRejectedValueOnce(new V6kVideoContentError('[上游诊断 V6K 成品获取失败] HTTP 410 code=task_not_found：任务或文件不存在或已失效',410,'delivery_original','task_not_found'));
+    upstream=async(_url,init)=>{if(init.method==='POST'){posts++;return Response.json({id:'delivery_original',status:'queued'});}queries++;return Response.json({id:'delivery_original',status:'completed'});};
+    const reply=await(await post(endpoint,{...request,seconds:6})).text(); await vi.waitFor(()=>expect(latest().status).toBe('review'));
+    expect(reply).not.toContain('V6K');
+    const id=latest().id,meta=JSON.parse(latest().metadata!);
+    expect(meta).toMatchObject({videoId:'delivery_original',videoSubmissionState:'accepted',videoDeliveryUnavailable:true,billingStatus:'reserved'});
+    expect(meta.resultSaveError).toContain('410');expect(latest().cost).toBe(2);expect(balance()).toBe(98);expect(posts).toBe(1);
+    const attempts=queries; video.resumeAllPendingVideoTasks();video.resumeAllPendingVideoTasks();await video.resumePollForTask(id,latest());
+    expect(queries).toBe(attempts);expect(balance()).toBe(98);
+    const recovered=await ContentRecoveryService.recover(id);expect(recovered.status).toBe('completed');expect(balance()).toBe(98);
+    expect(JSON.parse(latest().metadata!).videoDeliveryUnavailable).toBeUndefined();expect(latest().cost).toBe(2);
+    await ContentRecoveryService.recover(id);expect(balance()).toBe(98);expect(posts).toBe(1);
+  });
   it.each(['/api/video/generate', '/v1/videos'].flatMap(endpoint => ['completed', 'failed'].map(status => ({ endpoint, status }))))('keeps an unknown receipt and settles $status once at $endpoint through repeated query faults', async ({ endpoint, status }) => {
     const { id: channelId } = enableV6k(); let posts = 0, queries = 0;
     upstream = async (_url, init) => {
