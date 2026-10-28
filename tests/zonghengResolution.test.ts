@@ -1,3 +1,4 @@
+import { activeSpecificationTasks } from '../server/services/videoRecoveryAction';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
@@ -127,5 +128,44 @@ describe('public video phases',()=>{
     expect(videoTaskPhase('processing','{bad')).toBe('processing');
     expect(publicGenerationStatus('视频已生成，正在等待结果交付')).toBe('视频已生成，正在等待结果交付');
     expect(publicGenerationError('连接生成服务失败，请求未发送')).toBe('连接生成服务失败，请求未发送；任务未提交成功，请稍后重试。');
+  });
+});
+
+
+describe('historical specification submission review refund', () => {
+  function held() {
+    sqlite.exec('UPDATE users SET balance=100 WHERE id=1');
+    const reservation = reserveUserCharge(1,6.5,'generate_video');
+    add({managedSpecification:true,actualChannel:'huss',requiresReview:true,reviewKind:'submission',
+      videoSubmissionState:'unknown',billingReservationId:reservation.id,billingStatus:'reserved',reservedCost:6.5,
+      error:'[HUSS /videos] HTTP 400：invalid_prompt: prompt 必须为 1–8000 字符'}, {status:'processing'});
+    return reservation;
+  }
+  it('finishes the old processing/review record and refunds its original reservation exactly once', () => {
+    const reservation=held();
+    expect(confirmReviewedVideoFailureAndRefund(12965,9,true)).toMatchObject({refundedAmount:6.5,alreadyResolved:false});
+    expect(confirmReviewedVideoFailureAndRefund(12965,9,true).alreadyResolved).toBe(true);
+    expect(balance()).toBe(100);
+    expect(row()).toMatchObject({status:'failed',cost:0});
+    expect(JSON.parse(row().metadata)).toMatchObject({requiresReview:false,reviewKind:null,videoSubmissionState:'rejected',billingStatus:'refunded'});
+    expect(sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(reservation.id)).toEqual({state:'refunded'});
+  });
+  it('rejects a refund while original specification recovery is running', () => {
+    held(); activeSpecificationTasks.add(12965);
+    try { expect(()=>confirmReviewedVideoFailureAndRefund(12965,9,true)).toThrow('正在提交或恢复'); }
+    finally { activeSpecificationTasks.delete(12965); }
+    expect(balance()).toBe(93.5);
+  });
+  it('rejects an accepted receipt even if metadata still says submission review', () => {
+    held(); persistVideoSubmissionReceipt({contentId:12965, upstreamTaskId:'accepted-task', provider:'huss',channelId:21,channelApiKeyId:null});
+    expect(()=>confirmReviewedVideoFailureAndRefund(12965,9,true)).toThrow('已有任务 ID');
+    expect(balance()).toBe(93.5);
+  });
+  it('rolls back the reservation transition and refund if content finalization fails', () => {
+    const reservation=held();
+    sqlite.exec("CREATE TRIGGER reject_failure BEFORE UPDATE OF status ON contents WHEN NEW.status='failed' BEGIN SELECT RAISE(ABORT, 'storage failure'); END");
+    expect(()=>confirmReviewedVideoFailureAndRefund(12965,9,true)).toThrow('storage failure');
+    expect(balance()).toBe(93.5);
+    expect(sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(reservation.id)).toEqual({state:'reserved'});
   });
 });

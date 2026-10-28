@@ -9,3 +9,6 @@ export function beginTaskIdVerification(contentId: number): () => void {
   verifying.add(contentId);
   return () => { verifying.delete(contentId); };
 }
+
+// Shared with the specification executor so administrative settlement cannot race I/O.
+export const activeSpecificationTasks = new Set<number>();

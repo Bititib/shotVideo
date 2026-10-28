@@ -9,7 +9,7 @@ import { withFundContext } from '../db/fundLedger.js';
 import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
 import { videoReviewKind } from '../../shared/videoReview.js';
 import { findVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
-import { assertNoTaskIdVerification } from './videoRecoveryAction.js';
+import { assertNoTaskIdVerification, activeSpecificationTasks } from './videoRecoveryAction.js';
 
 /** Synchronous: callers keep the balance change and content update in one transaction. */
 function refundLegacyFunds(row: any, meta: Record<string, any>, amount: number): string {
@@ -37,6 +37,7 @@ const fail = (status: number, message: string): never => { throw Object.assign(n
 /** Administrator-confirmed non-acceptance; no provider POST and exactly one refund. */
 function confirmNotAccepted(contentId: number, adminId: number, confirmed: unknown, note: unknown, zonghengOnly: boolean) {
   assertNoTaskIdVerification(contentId);
+  if (activeSpecificationTasks.has(contentId)) fail(409, '原任务正在提交或恢复，请等待处理结束后再退款');
   if (!Number.isSafeInteger(contentId) || contentId <= 0 || !Number.isSafeInteger(adminId) || adminId <= 0) fail(400, '记录或操作人无效');
   if (confirmed !== true || typeof note !== 'string' || note.trim().length < 6 || note.length > 500) fail(400, '请先核对上游未接单，并填写核对依据');
   const resolutionNote = String(note).trim();
@@ -49,11 +50,12 @@ function confirmNotAccepted(contentId: number, adminId: number, confirmed: unkno
     if (row.status === 'failed' && row.cost === 0 && (meta.adminFailureRefundResolution || meta.zonghengNotAcceptedResolution)) {
       return { id: contentId, status: 'failed', refundedAmount: Number(meta.refundAmount) || 0, alreadyResolved: true };
     }
-    if (row.type !== 'video' || row.status !== 'review') fail(409, '仅可处理待核实的视频任务');
+    if (row.type !== 'video' || !(row.status === 'review' || row.status === 'processing' && meta.requiresReview === true)) fail(409, '仅可处理待核实的视频任务');
     const channel = meta.channelId ? db.select().from(channels).where(eq(channels.id, Number(meta.channelId))).get() : null;
     if (zonghengOnly && !isZonghengChannel(channel) && meta.actualChannel !== 'zongheng') fail(409, '该入口仅处理纵横渠道的待核实任务');
     if (!zonghengOnly && videoReviewKind(meta) !== 'submission') fail(409, '仅可处理提交待核实且未取得上游任务 ID 的视频');
-    if (meta.batchItemId || meta.managedSpecification) fail(409, '请通过对应批次或销售路由处理该记录');
+    if (meta.batchItemId) fail(409, '请通过对应批次处理该记录');
+    if (meta.managedSpecification && !meta.billingReservationId) fail(409, '规格任务缺少原预扣账本，请人工核查');
     const taskIds = [meta.videoId, meta.taskId, meta.task_id, meta.upstreamTaskId, meta.upstream_task_id, meta.requestId, meta.request_id,
       ...(Array.isArray(meta.upstreamTaskIds) ? meta.upstreamTaskIds : []), ...(Array.isArray(meta.recoveryTaskIds) ? meta.recoveryTaskIds : [])];
     const resultUrls = [row.resultUrl, meta.upstreamResultUrl, ...(Array.isArray(meta.recoverySourceUrls) ? meta.recoverySourceUrls : [])];
@@ -65,9 +67,11 @@ function confirmNotAccepted(contentId: number, adminId: number, confirmed: unkno
     let target = 'not_charged';
     if (meta.billingReservationId) {
       const reservation = sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(meta.billingReservationId) as any;
-      if (!reservation || reservation.state !== 'review' || Math.abs(reservation.amount - amount) > 0.000001) fail(409, '预扣账本状态或金额不一致，请到异常账单核查');
+      if (!reservation || !['review', ...(meta.managedSpecification ? ['reserved'] : [])].includes(reservation.state) || Math.abs(reservation.amount - amount) > 0.000001) fail(409, '预扣账本状态或金额不一致，请到异常账单核查');
       const receipt = JSON.parse(reservation.receipt), context = JSON.parse(reservation.context);
       if (context.userId !== row.userId || context.contentId != null && Number(context.contentId) !== contentId) fail(409, '预扣账本归属不一致');
+      // Administrator has confirmed non-acceptance; transition and resolve atomically.
+      if (reservation.state === 'reserved') sqlite.prepare("UPDATE billing_reservations SET state='review' WHERE id=? AND state='reserved'").run(meta.billingReservationId);
       resolveBillingReservation(meta.billingReservationId, adminId, 0, resolutionNote);
       target = receipt.target || (receipt.source === 'org' ? 'organization_balance' : 'user_balance');
     } else if (amount > 0) {
@@ -76,7 +80,7 @@ function confirmNotAccepted(contentId: number, adminId: number, confirmed: unkno
     const now = new Date().toISOString();
     const failureMessage = String(meta.error || meta.progressText || '管理员确认上游未接单并执行失败退款').slice(0, 1000);
     const resolution = { adminId, note: resolutionNote, confirmedAt: now, refundAmount: amount };
-    const metadata = { ...meta, requiresReview: false, hayaNeedsReview: false, queueStatus: 'failed', queuePosition: 0,
+    const metadata = { ...meta, videoSubmissionState: 'rejected', reviewKind: null, missingTaskIdReview: false, requiresReview: false, hayaNeedsReview: false, queueStatus: 'failed', queuePosition: 0,
       billingStatus: amount > 0 ? 'refunded' : 'not_charged', queueRefunded: amount > 0, refundAmount: amount, refundTarget: target,
       refundedAt: amount > 0 ? now : undefined, failedAt: now, error: failureMessage, progressText: failureMessage,
       adminFailureRefundResolution: resolution,

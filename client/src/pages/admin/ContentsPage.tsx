@@ -408,11 +408,11 @@ export default function ContentsPage() {
     const taskIds = [metadata.upstreamTaskIds, metadata.recoveryTaskIds]
       .flatMap(value => Array.isArray(value) ? value : []).filter(value => !isTaskIdPlaceholder(value));
     const resultUrls = [item.resultUrl, metadata.upstreamResultUrl, ...(Array.isArray(metadata.recoverySourceUrls) ? metadata.recoverySourceUrls : [])];
-    return item.type === 'video' && item.status === 'review'
+    return item.type === 'video' && (item.status === 'review' || item.status === 'processing' && metadata.requiresReview === true)
       && videoReviewKind(metadata) === 'submission'
       && !getUpstreamTaskId(metadata) && taskIds.length === 0
       && !resultUrls.some(url => typeof url === 'string' && url.trim())
-      && !metadata.batchItemId && !metadata.managedSpecification
+      && !metadata.batchItemId && (!metadata.managedSpecification || Boolean(metadata.billingReservationId))
       && !metadata.queueRefunded && !['refunded', 'settled'].includes(metadata.billingStatus);
   };
 

@@ -1,3 +1,4 @@
+import { activeSpecificationTasks } from './videoRecoveryAction.js';
 import { isMegabyChannel, normalizeMegabyTask, validateMegabyVideoInput, validateMegabyReferenceDurations } from './megabyVideoAdapter.js';
 import { isHussChannel, recoverHussSubmission, normalizeHussTask } from './hussVideoAdapter.js';
 import { publicApiModelId } from '../../shared/funAi.js';
@@ -44,7 +45,7 @@ import { claimVideoSubmission, acceptVideoSubmission, endVideoSubmission, releas
 import { isSnumomWanChannel } from './snumomWanAdapter.js';
 import { canCancelVideoContent } from './videoCancellationEligibility.js';
 
-const active = new Set<number>();
+const active = activeSpecificationTasks;
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const fail = (message: string, status = 400) => Object.assign(new Error(message), { status });
 function list(body: any, keys: string[]): string[] {
