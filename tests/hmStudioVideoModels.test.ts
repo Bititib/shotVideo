@@ -14,6 +14,13 @@ import {
 } from '../server/services/hmStudioVideoModels.js';
 
 describe('HM Studio additional video models', () => {
+  it('registers base 2.0 at the confirmed retail and latest limits',()=>{
+    expect(getHmStudioUpstreamVideoModel('seedance_v2.0')).toBe('MINIMAXH3-2.0采样');
+    expect(getHmStudioAdditionalVideoModel('seedance_v2.0')).toMatchObject({defaultEnabled:false,defaultPrice:0.7,minSeconds:4,maxSeconds:10,maxImages:30,maxVideos:3,maxAudios:3,supportsDedicatedFrames:true});
+    expect(canvasVideoReferenceLimits('seedance_v2.0')).toEqual({images:30,videos:3,audios:3});
+    expect(canvasVideoReferenceLimits('seedance_v2.0-933')).toEqual({images:9,videos:3,audios:3});
+    for(const seconds of [4,10]) expect(validateHmStudioAdditionalVideoInput('seedance_v2.0',{seconds,resolution:'720p',imageCount:30,videoCount:3,audioCount:3})).toBeNull();
+  });
   it('keeps the new nova H3 identity, retail and limits separate from legacy 933', () => {
     const id='MiniMax-H3';
     expect(getHmStudioUpstreamVideoModel(id)).toBe('MINIMAXH3 9-3-3');
@@ -102,7 +109,7 @@ describe('HM Studio additional video models', () => {
 
   it('accepts each model at its documented material limit', () => {
     expect(validateHmStudioAdditionalVideoInput(HM_STUDIO_SEEDANCE_V20_933_MODEL, {
-      seconds: 15, resolution: '720p', imageCount: 9, videoCount: 3, audioCount: 3,
+      seconds: 10, resolution: '720p', imageCount: 9, videoCount: 3, audioCount: 3,
     })).toBeNull();
     expect(validateHmStudioAdditionalVideoInput(HM_STUDIO_SEEDANCE_V25_101010_MODEL, {
       seconds: 30, resolution: '720p', imageCount: 10, videoCount: 10, audioCount: 10,
@@ -115,8 +122,8 @@ describe('HM Studio additional video models', () => {
 
   it('rejects unsupported resolution, duration, and excess media', () => {
     expect(validateHmStudioAdditionalVideoInput(HM_STUDIO_SEEDANCE_V20_933_MODEL, {
-      seconds: 16, resolution: '720p', imageCount: 0, videoCount: 0, audioCount: 0,
-    })).toContain('4-15');
+      seconds: 11, resolution: '720p', imageCount: 0, videoCount: 0, audioCount: 0,
+    })).toContain('4-10');
     expect(validateHmStudioAdditionalVideoInput(HM_STUDIO_SEEDANCE_V25_101010_MODEL, {
       seconds: 10, resolution: '1080p', imageCount: 0, videoCount: 0, audioCount: 0,
     })).toContain('720p');

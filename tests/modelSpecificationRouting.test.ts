@@ -545,6 +545,18 @@ describe('managed adapter protocol boundaries', () => {
       .rejects.toMatchObject({ outcome: 'rejected', message: expect.stringContaining('未发送上游') });
     expect(send).not.toHaveBeenCalled(); expect(started).not.toHaveBeenCalled();
   });
+  it.each([
+    ['seedance_v2.0','MINIMAXH3-2.0采样',30,true],
+    ['seedance_v2.0-933','MINIMAX-H3-2.0采样-933',9,false],
+  ] as const)('calibrates default %s across specification selection and submission',async (model,upstream,images,frames)=>{
+    const send=vi.fn().mockResolvedValue(json({task_id:'default-accepted'},202));vi.stubGlobal('fetch',send);
+    expect(await adapters.submitSpecificationVideo(target('hmstudio',model),input({video_length:10,reference_images:Array(images).fill('https://assets.invalid/a.png'),reference_videos:Array(3).fill('https://assets.invalid/v.mp4'),audio_urls:Array(3).fill('https://assets.invalid/a.mp3')}),vi.fn())).toBe('default-accepted');
+    expect(JSON.parse(send.mock.calls[0][1].body)).toMatchObject({model:upstream,channel:'default',duration:10,function_mode:'omni_reference'});
+    expect(existingModelLimits(model,'video')).toMatchObject({maxImages:images,maxVideos:3,maxAudios:3,resolutions:['720p'],duration:{min:4,max:10},firstFrame:frames});
+    send.mockClear();
+    for(const patch of [{video_length:11},{resolution:'2k'},{reference_images:Array(images+1).fill('https://assets.invalid/a.png')}]) await expect(adapters.submitSpecificationVideo(target('hmstudio',upstream),input({video_length:10,...patch}),vi.fn())).rejects.toMatchObject({retrySafe:true});
+    expect(send).not.toHaveBeenCalled();
+  });
   it('routes new H3 specifications to nova and rejects old nova limits before sending',async()=>{
     const send=vi.fn().mockResolvedValue(json({task_id:'h3-accepted'},202));vi.stubGlobal('fetch',send);
     expect(await adapters.submitSpecificationVideo(target('hmstudio','MiniMax-H3'),input({video_length:15,resolution:'2k',reference_images:Array(9).fill('https://assets.invalid/a.png'),reference_videos:Array(3).fill('https://assets.invalid/v.mp4'),audio_urls:Array(3).fill('https://assets.invalid/a.mp3')}),vi.fn())).toBe('h3-accepted');

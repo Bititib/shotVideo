@@ -2,7 +2,7 @@ import { publishReferenceUrl } from './publicReferenceService.js';
 import { HmSubmissionError } from './hmStudioSubmission.js';
 import { transportDiagnostic } from './upstreamDiagnostic.js';
 import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
-import { HM_STUDIO_FAST803_MODEL, HM_STUDIO_FAST813_MODEL, HM_STUDIO_MINI503_MODEL, getHmStudioUpstreamVideoModel, isHmStudioNovaVideoModel, HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL } from '../../shared/hmStudioVideo.js';
+import { HM_STUDIO_FAST803_MODEL, HM_STUDIO_FAST813_MODEL, HM_STUDIO_MINI503_MODEL, getHmStudioUpstreamVideoModel, isHmStudioNovaVideoModel, HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL, isHmStudioDefaultV20Model, getHmStudioPublicVideoModel, HM_STUDIO_SEEDANCE_V20_933_MODEL, validateHmStudioAdditionalVideoInput } from '../../shared/hmStudioVideo.js';
 
 export const HM_STUDIO_CHANNEL_TYPE = 'hmstudio';
 export const HM_STUDIO_UPSTREAM_FACE_ENABLED = true;
@@ -109,7 +109,7 @@ function replaceReferenceMarkers(prompt: string): string {
 }
 
 function supportsHmStudioOmniReference(model: string): boolean {
-  return isHmStudioNovaVideoModel(model)
+  return isHmStudioDefaultV20Model(model) || isHmStudioNovaVideoModel(model)
     || /SD2\.0(?:Fast)?/i.test(model)
     || /^seedance_v2\.(?:0|5)(?:[-\u2014]\d+)?$/i.test(model)
     || /^MINIMAX-H3-(?:BF16|INF8)(?:-\d+)?$/i.test(model)
@@ -147,7 +147,7 @@ function hmVideoMode(options: HmPromptOptions): string {
 
   let functionMode = options.functionMode || '';
   if (!functionMode) {
-    if (isNova && (images.length || videos.length || audios.length)) {
+    if (getHmStudioPublicVideoModel(options.model) === HM_STUDIO_SEEDANCE_V20_933_MODEL || ((isNova || isHmStudioDefaultV20Model(options.model)) && (images.length || videos.length || audios.length))) {
       functionMode = 'omni_reference';
     } else if (videos.length > 0 || audios.length > 0 || images.length > 2) {
       functionMode = supportsHmStudioOmniReference(options.model) ? 'omni_reference' : 'multi_frame';
@@ -176,6 +176,14 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
   const audios = (options.audioSources || []).filter(Boolean);
   const explicitFrames = [options.firstFrame, options.lastFrame].filter(Boolean) as string[];
   const form = new FormData();
+  if (isHmStudioDefaultV20Model(options.model)) {
+    const error = validateHmStudioAdditionalVideoInput(getHmStudioPublicVideoModel(options.model), {
+      seconds: options.duration, resolution: options.resolution, ratio: options.ratio,
+      imageCount: images.length, videoCount: videos.length, audioCount: audios.length,
+      hasFirstFrame: Boolean(options.firstFrame), hasLastFrame: Boolean(options.lastFrame), functionMode,
+    });
+    if (error) throw new Error(error);
+  }
   if (getHmStudioUpstreamVideoModel(options.model) === HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL) {
     if (functionMode && !['first_last_frames', 'omni_reference'].includes(functionMode)) {
       throw new Error('MiniMax-H3 仅支持首尾帧或混合素材模式');
@@ -187,7 +195,7 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
       throw new Error('MiniMax-H3 首尾帧模式不支持混合素材，请选择混合素材模式');
     }
   }
-  form.append('model', isNova ? getHmStudioUpstreamVideoModel(options.model) : options.model);
+  form.append('model', (isNova || isHmStudioDefaultV20Model(options.model)) ? getHmStudioUpstreamVideoModel(options.model) : options.model);
   form.append('prompt', prompt);
   form.append('duration', String(options.duration));
   form.append('ratio', options.ratio);
@@ -196,10 +204,10 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
   // at the adapter boundary so web, API, retry and recovery paths cannot drift.
   form.append('face', String(HM_STUDIO_UPSTREAM_FACE_ENABLED));
   if (functionMode) form.append('function_mode', functionMode);
-  // FAST/MINI require lumen; confirmed nova models require nova, never HM's default pool.
+  // Pin each confirmed family to its documented pool: default 2.0, lumen FAST/MINI, or nova.
   // Enforce this at the shared submission boundary (web/API/batch/retries),
   // including old queued payloads that explicitly persisted a default channel.
-  const upstreamChannel = isNova
+  const upstreamChannel = isHmStudioDefaultV20Model(options.model) ? 'default' : isNova
     ? 'nova'
     : HM_STUDIO_LUMEN_VIDEO_MODELS.has(options.model.trim().toUpperCase())
       ? 'lumen' : options.upstreamChannel;

@@ -1,3 +1,4 @@
+export const HM_STUDIO_SEEDANCE_V20_MODEL = 'seedance_v2.0';
 export const HM_STUDIO_SEEDANCE_V20_933_MODEL = 'seedance_v2.0-933';
 export const HM_STUDIO_SEEDANCE_V25_101010_MODEL = 'seedance_v2.5-101010';
 export const HM_STUDIO_SEEDANCE_V25_301010_MODEL = 'seedance_v2.5-301010';
@@ -10,6 +11,7 @@ export const HM_STUDIO_MINIMAX_H3_MODEL = 'MiniMax-H3';
 export const HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL = 'MINIMAXH3 9-3-3';
 
 export const HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP: Readonly<Record<string, string>> = {
+  [HM_STUDIO_SEEDANCE_V20_MODEL]: 'MINIMAXH3-2.0采样',
   'seedance_v2.5': 'MINIMAX-H3-2.5采样',
   [HM_STUDIO_SEEDANCE_V20_933_MODEL]: 'MINIMAX-H3-2.0采样-933',
   [HM_STUDIO_SEEDANCE_V25_101010_MODEL]: 'MINIMAX-H3-2.5采样-101010',
@@ -37,6 +39,10 @@ export function isHmStudioNovaVideoModel(modelId: string): boolean {
   return upstream === HM_STUDIO_NOVA_UPSTREAM_MODEL || upstream === HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL;
 }
 
+export function isHmStudioDefaultV20Model(modelId: string): boolean {
+  return [HM_STUDIO_SEEDANCE_V20_MODEL, HM_STUDIO_SEEDANCE_V20_933_MODEL].includes(getHmStudioPublicVideoModel(modelId));
+}
+
 export type HmStudioVideoModelSpec = {
   id: string;
   displayName: string;
@@ -57,6 +63,15 @@ export type HmStudioVideoModelSpec = {
 };
 
 export const HM_STUDIO_ADDITIONAL_VIDEO_MODELS: readonly HmStudioVideoModelSpec[] = [
+  {
+    id: HM_STUDIO_SEEDANCE_V20_MODEL,
+    displayName: 'HM-Seedance V2.0',
+    description: '720p；支持4-10秒；最多30张图片、3个视频、3段音频参考；支持首尾帧、多帧和混合素材；固定按次计费',
+    minSeconds: 4, maxSeconds: 10, resolution: '720p',
+    ratios: ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'],
+    maxImages: 30, maxVideos: 3, maxAudios: 3,
+    defaultPrice: 0.70, defaultEnabled: false, supportsDedicatedFrames: true,
+  },
   {
     id: HM_STUDIO_MINIMAX_H3_MODEL,
     displayName: 'MiniMax-H3 933',
@@ -111,16 +126,17 @@ export const HM_STUDIO_ADDITIONAL_VIDEO_MODELS: readonly HmStudioVideoModelSpec[
   {
     id: HM_STUDIO_SEEDANCE_V20_933_MODEL,
     displayName: 'HM-Seedance V2.0 933',
-    description: '卡脸；720p；支持4-15秒；最多9张图片、3个视频、3段音频参考；固定按次计费',
+    description: '卡脸；720p；支持4-10秒；最多9张图片、3个视频、3段音频参考；支持多帧和混合素材，不支持独立首尾帧；固定按次计费',
     minSeconds: 4,
-    maxSeconds: 15,
+    maxSeconds: 10,
+    ratios: ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'],
     resolution: '720p',
     maxImages: 9,
     maxVideos: 3,
     maxAudios: 3,
     defaultPrice: 0.50,
     faceRestricted: true,
-    supportsDedicatedFrames: true,
+    supportsDedicatedFrames: false,
   },
   {
     id: HM_STUDIO_SEEDANCE_V25_101010_MODEL,
@@ -170,6 +186,7 @@ export function validateHmStudioAdditionalVideoInput(modelId: string, input: {
   imageCount: number;
   videoCount: number;
   audioCount: number;
+  functionMode?: string;
   hasFirstFrame?: boolean;
   hasLastFrame?: boolean;
 }): string | null {
@@ -195,6 +212,16 @@ export function validateHmStudioAdditionalVideoInput(modelId: string, input: {
   }
   if (!spec.supportsDedicatedFrames && (input.hasFirstFrame || input.hasLastFrame)) {
     return `${modelId} 不支持首尾帧专用参数，请使用普通参考图片`;
+  }
+  if (isHmStudioDefaultV20Model(modelId)) {
+    const mode = input.functionMode;
+    if (mode && !['first_last_frames', 'multi_frame', 'omni_reference'].includes(mode)) return modelId + ' 不支持此素材模式';
+    if ((input.hasFirstFrame || input.hasLastFrame) && (input.imageCount || input.videoCount || input.audioCount)) return modelId + ' 首尾帧不能与普通参考素材混用';
+    if (mode === 'first_last_frames') {
+      if (!spec.supportsDedicatedFrames) return modelId + ' 不支持首尾帧模式';
+      if (input.imageCount > 2 || input.videoCount || input.audioCount) return modelId + ' 首尾帧模式最多两张图片，不支持视频或音频';
+    }
+    if (mode === 'multi_frame' && (input.audioCount || input.videoCount || imageCount < 2 || imageCount > 10)) return modelId + ' 多帧模式需要2-10张图片，视频或音频请使用混合素材模式';
   }
   return null;
 }

@@ -67,7 +67,7 @@ describe('HM Studio adapter', () => {
     }
   });
   it('leaves older HM video and image channel routing unchanged', () => {
-    for (const model of ['MINIMAX-H3-2.5采样', 'MINIMAX-H3-2.0采样-933', 'MINIMAX-H3-2.5采样-101010', 'MINIMAX-H3-2.5采样-301010']) {
+    for (const model of ['MINIMAX-H3-2.5采样', 'MINIMAX-H3-2.5采样-101010', 'MINIMAX-H3-2.5采样-301010']) {
       const options = { model, prompt: 'test', duration: 6, ratio: '16:9', resolution: '720p' };
       expect(buildHmStudioVideoForm(options).has('channel')).toBe(false);
       expect(buildHmStudioVideoForm({ ...options, upstreamChannel: 'custom' }).get('channel')).toBe('custom');
@@ -324,4 +324,34 @@ it('rejects unsupported H3 modes and mixed dedicated frames without dropping ref
   for(const patch of [{functionMode:'multi_frame'},{firstFrame:'https://assets.test/first.jpg',audioSources:['https://assets.test/a.mp3']},{functionMode:'first_last_frames',imageSources:Array(3).fill('https://assets.test/i.jpg')}]) {
     expect(()=>buildHmStudioVideoPayload({...base,...patch})).toThrow();
   }
+});
+
+describe('default HM 2.0 calibrated protocol', () => {
+  it.each([
+    ['seedance_v2.0','MINIMAXH3-2.0采样',30],
+    ['seedance_v2.0-933','MINIMAX-H3-2.0采样-933',9],
+  ] as const)('pins %s to default and preserves mixed material references', (id, upstream, count) => {
+    for (const model of [id,upstream]) for (const upstreamChannel of [undefined,'nova','lumen','default']) {
+      const payload=buildHmStudioVideoPayload({model,upstreamChannel,prompt:'[ref_1] [ref_video_3] [ref_audio_3]',duration:10,resolution:'720p',ratio:'16:9',
+        imageSources:Array(count).fill('https://assets.test/i.jpg'),videoSources:Array(3).fill('https://assets.test/v.mp4'),audioSources:Array(3).fill('https://assets.test/a.mp3')});
+      expect(payload).toMatchObject({model:upstream,channel:'default',function_mode:'omni_reference',prompt:'@Image1 @Video3 @Audio3',duration:10});
+      expect(payload.materials).toHaveLength(count+6);
+      expect(payload).not.toHaveProperty('first_frame_url');
+    }
+    const options={model:id,prompt:'test',duration:10,resolution:'720p',ratio:'16:9'};
+    for (const patch of [{duration:11},{resolution:'2k'},{ratio:'adaptive'}, {functionMode:'digital_human'}]) expect(()=>buildHmStudioVideoPayload({...options,...patch})).toThrow();
+    const mixed=buildHmStudioVideoPayload({...options,imageSources:['https://assets.test/i.jpg']});
+    expect(mixed.function_mode).toBe('omni_reference');
+    expect(()=>buildHmStudioVideoPayload({...options,functionMode:'multi_frame',imageSources:['https://assets.test/i.jpg','https://assets.test/j.jpg'],audioSources:['https://assets.test/a.mp3']})).toThrow('多帧');
+    const multi=buildHmStudioVideoPayload({...options,functionMode:'multi_frame',imageSources:['https://assets.test/i.jpg','https://assets.test/j.jpg']});
+    expect(multi.multi_frames).toEqual(['https://assets.test/i.jpg','https://assets.test/j.jpg']);
+    expect(()=>buildHmStudioVideoPayload({...options,functionMode:'multi_frame',imageSources:['https://assets.test/i.jpg'],videoSources:['https://assets.test/v.mp4']})).toThrow('多帧');
+  });
+  it('allows explicit frames only for the base model and does not drop extra references', () => {
+    const options={model:'seedance_v2.0',prompt:'test',duration:4,resolution:'720p',ratio:'9:16',firstFrame:'https://assets.test/first.jpg',lastFrame:'https://assets.test/last.jpg'};
+    expect(buildHmStudioVideoPayload(options)).toMatchObject({function_mode:'first_last_frames',first_frame_url:options.firstFrame,end_frame_url:options.lastFrame});
+    expect(()=>buildHmStudioVideoPayload({...options,model:'seedance_v2.0-933'})).toThrow('首尾帧');
+    expect(()=>buildHmStudioVideoPayload({...options,imageSources:['https://assets.test/extra.jpg']})).toThrow('混用');
+    expect(()=>buildHmStudioVideoPayload({model:'seedance_v2.0-933',prompt:'test',duration:4,resolution:'720p',ratio:'16:9',functionMode:'first_last_frames'})).toThrow('首尾帧');
+  });
 });

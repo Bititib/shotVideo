@@ -51,6 +51,8 @@ import channelRouter from '../server/routes/channels.js';
 import pricingRouter from '../server/routes/pricing.js';
 
 const cases = [
+  { id: 'seedance_v2.0', rates: { '720p': 0.7 }, images: 30, videos: 3, audios: 3, maxSeconds: 10 },
+  { id: 'seedance_v2.0-933', rates: { '720p': 0.5 }, images: 9, videos: 3, audios: 3, maxSeconds: 10 },
   { id: 'MiniMax-H3', rates: { '720p': 1.5, '2k': 2.2 }, images: 9, videos: 3, audios: 3, maxSeconds: 15 },
   { id: 'SD2.0FAST803', rates: { '720p': 1.1, '1080p': 1.3, '2k': 1.5 }, images: 8, videos: 0, audios: 3, maxSeconds: 15 },
   { id: 'SD2.0FAST813', rates: { '720p': 1.3, '1080p': 1.5, '2k': 1.7 }, images: 8, videos: 1, audios: 3, maxSeconds: 15 },
@@ -66,7 +68,7 @@ async function post(path: string, body: any, api = false) {
     Authorization: 'Bearer ' + (api ? tokenKey : userJwt), 'Content-Type': 'application/json',
   }, body: JSON.stringify(body) });
 }
-const batchInput = (model: string, resolution: string) => ({ name: 'test batch', model, resolution, aspect_ratio: '9:16', video_length: 15,
+const batchInput = (model: string, resolution: string) => ({ name: 'test batch', model, resolution, aspect_ratio: '9:16', video_length: Math.min(15,cases.find(c=>c.id===model)?.maxSeconds || 15),
   autoRetry: true, maxRetries: 2, creatives: [{ prompt: '商品展示', count: 20, reference_images: [] }] });
 beforeAll(async () => {
   vi.stubEnv('PUBLIC_REFERENCE_DIR', referenceDirectory);
@@ -109,6 +111,13 @@ describe('HM new catalog integration (in-memory database, no upstream generation
     await prepareSpecificationReferenceImages({prompt:'字'.repeat(8001),images:[],videos:[],audios:[],publicBaseUrl:origin} as any,candidates,[origin]);
     expect(candidates).toEqual([hm,other]);
   });
+  it('registers the base model disabled at confirmed retail without prepayment', async () => {
+    expect(db.select().from(models).where(eq(models.modelId,'seedance_v2.0')).get()).toMatchObject({isActive:0,provider:'hmstudio'});
+    const before = db.select().from(users).where(eq(users.id,userId)).get()!.balance;
+    for (const api of [false,true]) expect((await post(api?'/v1/videos':'/api/video/generate',{model:'seedance_v2.0',prompt:'test',seconds:4,video_length:4,resolution:'720p'},api)).status).toBeGreaterThanOrEqual(400);
+    expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBe(before);
+    db.update(models).set({isActive:1}).where(eq(models.modelId,'seedance_v2.0')).run();
+  });
   it('registers MiniMax-H3 disabled and prevents prepayment until enabled', async () => {
     const m = db.select().from(models).where(eq(models.modelId, 'MiniMax-H3')).get()!;
     expect(m).toMatchObject({ provider: 'hmstudio', isActive: 0, displayName: 'MiniMax-H3 933' });
@@ -147,7 +156,7 @@ describe('HM new catalog integration (in-memory database, no upstream generation
     expect(apiList.data.map((m: any) => m.id)).toContain('sd2.5-301010');
     expect(apiList.data.map((m: any) => m.id)).not.toContain('30-10-10');
     for (const { id, rates, maxSeconds } of cases) {
-      expect(mapping[id]).toBe(id === 'sd2.5-301010' ? '30-10-10' : id === 'MiniMax-H3' ? 'MINIMAXH3 9-3-3' : id);
+      expect(mapping[id]).toBe(id === 'seedance_v2.0' ? 'MINIMAXH3-2.0采样' : id === 'seedance_v2.0-933' ? 'MINIMAX-H3-2.0采样-933' : id === 'sd2.5-301010' ? '30-10-10' : id === 'MiniMax-H3' ? 'MINIMAXH3 9-3-3' : id);
       expect(JSON.parse(channel.supportedModels!)).toContain(id);
       expect(db.select().from(models).where(eq(models.modelId, id)).get()?.provider).toBe('hmstudio');
       expect(list.find(m => m.id === id)).toMatchObject({ available: true, billingType: 'per_call', rates,
@@ -155,11 +164,11 @@ describe('HM new catalog integration (in-memory database, no upstream generation
         allowedSeconds: Array.from({ length: maxSeconds - 3 }, (_, i) => i + 4) });
     }
   });
-  it.each(cases)('quotes $id per video, normalizes resolution, and reserves/refunds a batch once', async ({ id, rates }) => {
+  it.each(cases)('quotes $id per video, normalizes resolution, and reserves/refunds a batch once', async ({ id, rates, maxSeconds }) => {
     const initialBalance = db.select().from(users).where(eq(users.id, userId)).get()!.balance;
     for (const [resolution, price] of Object.entries(rates)) {
       expect(PricingService.quote(id, { resolution, seconds: 15, count: 1 }, false).cost).toBe(price);
-      const check = await post('/api/video/validate', { model: id, prompt: '商品展示', resolution: resolution.toUpperCase(), video_length: 15 });
+      const check = await post('/api/video/validate', { model: id, prompt: '商品展示', resolution: resolution.toUpperCase(), video_length: Math.min(15,maxSeconds) });
       expect(check.status).toBe(200);
       expect(await check.json()).toMatchObject({ unitCost: price, resolution });
       const input = batchInput(id, resolution);
@@ -184,7 +193,7 @@ describe('HM new catalog integration (in-memory database, no upstream generation
     const beforeToken = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance;
     const beforeContents = db.select().from(contents).all().length;
     for (const api of [false, true]) {
-      const base = { model: id, prompt: '商品展示', resolution: '720p', seconds: 15, video_length: 15 };
+      const base = { model: id, prompt: '商品展示', resolution: '720p', seconds: Math.min(15,maxSeconds), video_length: Math.min(15,maxSeconds) };
       const invalid = [
         { seconds: maxSeconds + 1, video_length: maxSeconds + 1 }, { resolution: '480p' },
         { [api ? 'image_urls' : 'reference_images']: Array(images + 1).fill('https://example.test/image.jpg') },
@@ -205,7 +214,11 @@ describe('HM new catalog integration (in-memory database, no upstream generation
     expect(await response.text()).toContain(`4-${maxSeconds}`);
     expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(beforeUser);
   });
-  it('sends MiniMax-H3 through web/API with exact nova ID and refunds the retail price on rejection', async () => {
+  it.each([
+    {id:'MiniMax-H3',upstream:'MINIMAXH3 9-3-3',channel:'nova',seconds:15,rates:[['720p',1.5],['2k',2.2]]},
+    {id:'seedance_v2.0',upstream:'MINIMAXH3-2.0采样',channel:'default',seconds:10,rates:[['720p',0.7]]},
+    {id:'seedance_v2.0-933',upstream:'MINIMAX-H3-2.0采样-933',channel:'default',seconds:10,rates:[['720p',0.5]]},
+  ])('sends $id through web/API and refunds the retail price on rejection', async ({id,upstream,channel,seconds,rates}) => {
     const previous = globalThis.fetch, sent: any[] = [];
     vi.stubGlobal('fetch',vi.fn(async (url:any, options:any)=>{
       if(String(url).startsWith(origin+'/')) return nativeFetch(url,options);
@@ -213,24 +226,36 @@ describe('HM new catalog integration (in-memory database, no upstream generation
       return Response.json({error:'新模型测试明确拒绝'},{status:400});
     }));
     try {
-      for(const api of [false,true]) for(const [resolution,price] of [['720p',1.5],['2k',2.2]] as const) {
+      for(const api of [false,true]) for(const [resolution,price] of rates) {
         const beforeUser=db.select().from(users).where(eq(users.id,userId)).get()!.balance;
         const beforeToken=db.select().from(apiTokens).where(eq(apiTokens.id,tokenId)).get()!.balance;
-        const response=await post(api?'/v1/videos':'/api/video/generate',{model:'MiniMax-H3',prompt:'[ref_9] [ref_video_3] [ref_audio_3]',resolution,seconds:15,video_length:15,channel:'default',
+        const response=await post(api?'/v1/videos':'/api/video/generate',{model:id,prompt:'[ref_9] [ref_video_3] [ref_audio_3]',resolution,seconds,video_length:seconds,channel:'lumen',
           reference_images:Array(9).fill('https://example.test/i.jpg'),reference_videos:Array(3).fill('https://example.test/v.mp4'),audio_urls:Array(3).fill('https://example.test/a.mp3')},api);
         expect(response.status).toBe(api?202:200);await response.text();
         await vi.waitFor(()=>{
           const row=db.select().from(contents).all().at(-1)!;
-          expect(row).toMatchObject({modelId:'MiniMax-H3',status:'failed',cost:0});
+          expect(row).toMatchObject({modelId:id,status:'failed',cost:0});
           expect(JSON.parse(row.metadata!)).toMatchObject({billingStatus:'refunded',refundAmount:price});
         });
-        expect(sent.at(-1)).toMatchObject({model:'MINIMAXH3 9-3-3',channel:'nova',duration:15,video_resolution:resolution,function_mode:'omni_reference',prompt:'@Image9 @Video3 @Audio3'});
+        expect(sent.at(-1)).toMatchObject({model:upstream,channel,duration:seconds,video_resolution:resolution,function_mode:'omni_reference',prompt:'@Image9 @Video3 @Audio3'});
         expect(sent.at(-1).materials).toHaveLength(15);
         expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBeCloseTo(beforeUser);
         expect(db.select().from(apiTokens).where(eq(apiTokens.id,tokenId)).get()!.balance).toBeCloseTo(beforeToken);
       }
-      expect(sent).toHaveLength(4);
+      expect(sent).toHaveLength(2*rates.length);
     } finally {vi.stubGlobal('fetch',previous);}
+  });
+  it('rejects unsupported default modes before API reservation',async()=>{
+    const beforeToken=db.select().from(apiTokens).where(eq(apiTokens.id,tokenId)).get()!.balance;
+    const beforeContents=db.select().from(contents).all().length;
+    for (const body of [
+      {model:'seedance_v2.0-933',function_mode:'first_last_frames'},
+      {model:'seedance_v2.0-933',first_frame_url:'https://example.test/i.jpg'},
+      {model:'seedance_v2.0',function_mode:'multi_frame',reference_images:Array(11).fill('https://example.test/i.jpg')},
+      {model:'seedance_v2.0',function_mode:'multi_frame',reference_images:Array(2).fill('https://example.test/i.jpg'),audio_urls:['https://example.test/a.mp3']},
+    ]) expect((await post('/v1/videos',{prompt:'test',seconds:10,resolution:'720p',...body},true)).status).toBe(400);
+    expect(db.select().from(apiTokens).where(eq(apiTokens.id,tokenId)).get()!.balance).toBe(beforeToken);
+    expect(db.select().from(contents).all().length).toBe(beforeContents);
   });
   it('submits enabled nova through real web/API entry points with resolution-specific reservations', async () => {
     const previousFetch = globalThis.fetch;
@@ -521,6 +546,21 @@ describe('HM administrator sync → pricing → real quote workflow', () => {
     origin + '/api/admin/pricing?modelId=' + encodeURIComponent(id),
     { headers: { Authorization: 'Bearer ' + userJwt } },
   )).json() as any[])[0];
+  it('syncs both default models without changing existing retail or administrator state', async () => {
+    db.delete(models).where(eq(models.modelId,'seedance_v2.0')).run();
+    db.delete(modelPricing).where(eq(modelPricing.modelPattern,'seedance_v2.0')).run();
+    db.update(models).set({isActive:0}).where(eq(models.modelId,'seedance_v2.0-933')).run();
+    db.update(modelPricing).set({inputPrice:1.37,extraParams:JSON.stringify({category:'video',custom:0.9})}).where(eq(modelPricing.modelPattern,'seedance_v2.0-933')).run();
+    responseBody={data:[{id:'MINIMAXH3-2.0采样',price:0.2},{id:'MINIMAX-H3-2.0采样-933',price:0.2}]};
+    expect((await sync()).status).toBe(200);
+    expect(await readPrice('seedance_v2.0')).toMatchObject({inputPrice:0.7,modelActive:false});
+    expect(await readPrice('seedance_v2.0-933')).toMatchObject({inputPrice:1.37,extraParams:{custom:0.9},modelActive:false});
+    expect(JSON.parse(db.select().from(channels).where(eq(channels.id,channelId)).get()!.modelMapping!)).toEqual({'seedance_v2.0':'MINIMAXH3-2.0采样','seedance_v2.0-933':'MINIMAX-H3-2.0采样-933'});
+    expect(db.select().from(models).where(eq(models.modelId,'seedance_v2.0-933')).get()!.description).toContain('4-10秒');
+    expect((await sync()).status).toBe(200);
+    await initDatabase();
+    expect(await readPrice('seedance_v2.0-933')).toMatchObject({inputPrice:1.37,extraParams:{custom:0.9},modelActive:false});
+  });
   it('syncs the spaced nova model ID with retail prices and preserves administrator overrides', async () => {
     db.delete(models).where(eq(models.modelId,'MiniMax-H3')).run();
     db.delete(modelPricing).where(eq(modelPricing.modelPattern,'MiniMax-H3')).run();

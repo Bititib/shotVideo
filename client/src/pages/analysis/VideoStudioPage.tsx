@@ -1,3 +1,4 @@
+import { getHmStudioAdditionalVideoModel, HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS } from '../../../../shared/hmStudioVideo';
 import { generationProblemSummary } from '../../../../shared/generationMessages';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -78,6 +79,7 @@ const HM_STUDIO_SEEDANCE_V20_933_MODEL = 'seedance_v2.0-933';
 const HM_STUDIO_SEEDANCE_V25_101010_MODEL = 'seedance_v2.5-101010';
 const HM_STUDIO_SEEDANCE_V25_301010_MODEL = 'seedance_v2.5-301010';
 const HM_STUDIO_VIDEO_MODEL_IDS = new Set([
+  ...HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS,
   'seedance_v2.5',
   HM_STUDIO_SEEDANCE_V20_933_MODEL,
   HM_STUDIO_SEEDANCE_V25_101010_MODEL,
@@ -86,6 +88,8 @@ const HM_STUDIO_VIDEO_MODEL_IDS = new Set([
 const isHmStudioVideoModel = (modelId: string) => HM_STUDIO_VIDEO_MODEL_IDS.has(modelId);
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  const hmSpec = getHmStudioAdditionalVideoModel(modelId);
+  if (hmSpec) return hmSpec.maxImages;
   if (modelId === SNUMOM_SD_MINI_MODEL) return 9;
   if (modelId === 'sd2.5') return 9;
   if (modelId === WX_HAIDIYUE_MULTIMODAL_MODEL) return 30;

@@ -2076,6 +2076,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   }
 
   const hmStudioAdditionalValidationError = validateHmStudioAdditionalVideoInput(model, {
+    functionMode: body.function_mode,
     ratio,
     seconds,
     resolution,

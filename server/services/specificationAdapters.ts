@@ -16,7 +16,7 @@ import type { RoutingInput } from '../../shared/modelRouting.js';
 import { buildHmStudioVideoPayload, buildHmStudioImageForm, hmStudioCreateUrl, hmStudioTaskUrl, normalizeHmStudioTask } from './hmStudioAdapter.js';
 import { HAYA_XG_SEEDANCE_20_MODEL, hayaPublicModelId, validateHayaVideoInput } from '../../shared/hayaVideo.js';
 import { buildSiYueTianSeedance25VideoPayload, getSiYueTianC2Model, getSiYueTianSeedance25VideoSpec } from './siYueTianVideoModels.js';
-import { getHmStudioUpstreamVideoModel, getHmStudioPublicVideoModel, isHmStudioNovaVideoModel, validateHmStudioAdditionalVideoInput } from '../../shared/hmStudioVideo.js';
+import { getHmStudioUpstreamVideoModel, getHmStudioPublicVideoModel, getHmStudioAdditionalVideoModel, validateHmStudioAdditionalVideoInput } from '../../shared/hmStudioVideo.js';
 import { buildWxHaidiYueVideoPayload, wxHaidiYueCreateUrl, wxHaidiYueTaskUrl, normalizeWxHaidiYueTask, isWxHaidiYueChannel } from './wxHaidiYueAdapter.js';
 import { buildMjNewApiVideoPayload, normalizeMjNewApiPrompt, isMjNewApiChannel } from './mjNewApiAdapter.js';
 import { buildLongxiaVideoPayload, longxiaVideoCreateUrl, longxiaVideoTaskUrl, normalizeLongxiaVideoTask, isLongxiaChannel } from './longxiaVideoAdapter.js';
@@ -208,8 +208,9 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   const refs = (items: string[]) => items.map(item => publishSpecificationAsset(item, request.publicBaseUrl));
   let payload: any, url = base + '/v1/videos';
   if (c.type === 'hmstudio') {
-    if (isHmStudioNovaVideoModel(exec) || isHmStudioNovaVideoModel(model)) {
-      const error = validateHmStudioAdditionalVideoInput(getHmStudioPublicVideoModel(isHmStudioNovaVideoModel(model) ? model : exec), {
+    const hmPublicModel = getHmStudioPublicVideoModel(model);
+    if (getHmStudioAdditionalVideoModel(hmPublicModel)) {
+      const error = validateHmStudioAdditionalVideoInput(hmPublicModel, {
         seconds: i.seconds, resolution: i.resolution, ratio: i.ratio, imageCount: request.images.length,
         videoCount: request.videos.length, audioCount: request.audios.length,
         hasFirstFrame: Boolean(request.firstFrame), hasLastFrame: Boolean(request.lastFrame),
