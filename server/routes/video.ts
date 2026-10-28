@@ -3385,6 +3385,7 @@ export function enqueueHmStudioVideoContent(contentId: number): HmStudioQueueSna
             upstreamChannel: latestMeta.upstream_channel,
             face: true,
           });
+          selectedHmUpstreamModel = String(payload.model);
           const headers: Record<string, string> = { 'Content-Type': 'application/json' };
           if (selectedHmChannel.apiKey) headers.Authorization = `Bearer ${selectedHmChannel.apiKey}`;
           try { response = await fetch(hmStudioCreateUrl(selectedHmChannel.baseUrl, 'video'), {

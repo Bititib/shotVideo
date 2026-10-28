@@ -6,7 +6,9 @@ export const HM_STUDIO_FAST803_MODEL = 'SD2.0FAST803';
 export const HM_STUDIO_FAST813_MODEL = 'SD2.0FAST813';
 export const HM_STUDIO_MINI503_MODEL = 'SD2.0MINI503';
 export const HM_STUDIO_NOVA_MODEL = 'sd2.5-301010';
-export const HM_STUDIO_NOVA_UPSTREAM_MODEL = '30-10-10';
+export const HM_STUDIO_NOVA_UPSTREAM_MODEL = 'SD2.5-30-10-10';
+// Internal compatibility for saved HM mappings and unsubmitted queued jobs.
+export const HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODEL = '30-10-10';
 export const HM_STUDIO_MINIMAX_H3_MODEL = 'MiniMax-H3';
 export const HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL = 'MINIMAXH3 9-3-3';
 
@@ -24,12 +26,14 @@ export const HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP: Readonly<Record<string, string>
 };
 
 export function getHmStudioUpstreamVideoModel(modelId: string): string {
+  if (modelId === HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODEL) return HM_STUDIO_NOVA_UPSTREAM_MODEL;
   return Object.hasOwn(HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP, modelId)
     ? HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP[modelId] : modelId;
 }
 
 // Only confirmed HM mappings belong here; never infer an unknown model's capabilities.
 export function getHmStudioPublicVideoModel(modelId: string): string {
+  if (modelId === HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODEL) return HM_STUDIO_NOVA_MODEL;
   return Object.entries(HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP)
     .find(([, upstream]) => upstream === modelId)?.[0] || modelId;
 }

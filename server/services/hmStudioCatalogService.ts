@@ -4,6 +4,7 @@ import { channels, modelPricing, models } from '../db/schema.js';
 import {
   getHmStudioAdditionalVideoModel, getHmStudioPublicVideoModel,
   getHmStudioUpstreamVideoModel, HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP,
+  HM_STUDIO_NOVA_MODEL, HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODEL,
 } from '../../shared/hmStudioVideo.js';
 
 /** HM catalog normalization only. Generation and settlement keep their existing paths. */
@@ -49,16 +50,20 @@ export function registerHmStudioCatalog(channel: { id: number; name: string }, r
       }
 
       const price = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, publicId)).get();
-      const legacyModel = publicId !== upstreamId
-        ? db.select().from(models).where(eq(models.modelId, upstreamId)).get() : undefined;
-      const legacyPrice = legacyModel?.provider === 'hmstudio'
-        ? db.select().from(modelPricing).where(eq(modelPricing.modelPattern, upstreamId)).get() : undefined;
+      const legacyIds = publicId !== upstreamId
+        ? [upstreamId, ...(publicId === HM_STUDIO_NOVA_MODEL ? [HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODEL] : [])] : [];
+      const legacyModels = legacyIds.map(id => db.select().from(models).where(eq(models.modelId, id)).get())
+        .filter(model => model?.provider === 'hmstudio');
+      const legacyModel = legacyModels.find(model => db.select().from(modelPricing).where(eq(modelPricing.modelPattern, model!.modelId)).get()) || legacyModels[0];
+      const legacyId = legacyModel?.modelId || upstreamId;
+      const legacyPrice = legacyModel
+        ? db.select().from(modelPricing).where(eq(modelPricing.modelPattern, legacyId)).get() : undefined;
       if (!price && legacyPrice) {
         // Copy, never delete or overwrite. Missing resolution rates retain the admin's base-rate fallback.
         db.insert(modelPricing).values({ modelPattern: publicId, billingType: legacyPrice.billingType,
           inputPrice: legacyPrice.inputPrice, outputPrice: legacyPrice.outputPrice,
           extraParams: legacyPrice.extraParams }).run();
-        warnings.push(`已沿用 ${upstreamId} 的价格至 ${publicId}，请核对分辨率售价。`);
+        warnings.push(`已沿用 ${legacyId} 的价格至 ${publicId}，请核对分辨率售价。`);
       } else if (!price && spec) {
         // These are user-confirmed retail prices, NOT prices returned by the upstream catalog.
         db.insert(modelPricing).values({ modelPattern: publicId, billingType: 'per_call',
@@ -66,7 +71,7 @@ export function registerHmStudioCatalog(channel: { id: number; name: string }, r
           extraParams: JSON.stringify({ category: 'video', ...(spec.resolutionPrices || {}) }) }).run();
       }
       if (legacyModel?.provider === 'hmstudio') {
-        warnings.push(`旧记录 ${upstreamId} 及其价格、权限和历史数据已保留；本渠道现在使用 ${publicId}。`
+        warnings.push(`旧记录 ${legacyId} 及其价格、权限和历史数据已保留；本渠道现在使用 ${publicId}。`
           + (price && legacyPrice ? '两份价格均未覆盖，请在新模型的管理价格中核对。' : ''));
       }
     }

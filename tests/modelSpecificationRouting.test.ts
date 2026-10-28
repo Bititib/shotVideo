@@ -573,7 +573,7 @@ describe('managed adapter protocol boundaries', () => {
       reference_videos: Array(10).fill('https://assets.invalid/a.mp4'), audio_urls: Array(10).fill('https://assets.invalid/a.mp3') });
     expect(await adapters.submitSpecificationVideo(target('hmstudio', 'sd2.5-301010'), request, vi.fn())).toBe('nova-accepted');
     const payload = JSON.parse(send.mock.calls[0][1].body);
-    expect(payload.model).toBe('30-10-10');
+    expect(payload.model).toBe('SD2.5-30-10-10');
     expect(payload.channel).toBe('nova');
     expect(payload.video_resolution).toBe('1080p');
     expect(payload.duration).toBe(30);

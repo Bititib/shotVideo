@@ -90,7 +90,7 @@ it.each(['720p', '1080p'])('actual HM queue overrides a stale lumen channel for 
     expect(new Headers(options.headers).get('content-type')).toBe('application/json');
     const payload = JSON.parse(String(options.body));
     expect(payload.channel).toBe('nova');
-    expect(payload.model).toBe('30-10-10');
+    expect(payload.model).toBe('SD2.5-30-10-10');
     expect(payload.video_resolution).toBe(resolution);
     expect(payload.duration).toBe(30);
     expect(payload.face).toBe(true);
@@ -246,9 +246,9 @@ it.each(['MiniMax-H3','seedance_v2.0','seedance_v2.0-933'].flatMap(model=>['reje
   }finally{vi.unstubAllGlobals();}
 });
 
-it.each(['MiniMax-H3','seedance_v2.0','seedance_v2.0-933'])('%s persists receipt before polling and settles once after a temporary query failure',async model=>{
-  const upstream = model==='seedance_v2.0'?'MINIMAXH3-2.0采样':model==='seedance_v2.0-933'?'MINIMAX-H3-2.0采样-933':'MINIMAXH3 9-3-3';
-  const retail = model==='seedance_v2.0'?0.7:model==='seedance_v2.0-933'?1.37:1.5;
+it.each(['sd2.5-301010','MiniMax-H3','seedance_v2.0','seedance_v2.0-933'])('%s persists receipt before polling and settles once after a temporary query failure',async model=>{
+  const upstream = model==='sd2.5-301010'?'30-10-10':model==='seedance_v2.0'?'MINIMAXH3-2.0采样':model==='seedance_v2.0-933'?'MINIMAX-H3-2.0采样-933':'MINIMAXH3 9-3-3';
+  const retail = model==='sd2.5-301010'?7:model==='seedance_v2.0'?0.7:model==='seedance_v2.0-933'?1.37:1.5;
   const id=++sequence, taskId='abecab12-3456-4789-9234-123456789abc';
   db.insert(users).values({id,email:id+'@test.invalid',username:'test',passwordHash:'test',balance:100}).run();
   db.insert(channels).values({id,name:'H3 accepted',type:'hmstudio',baseUrl:'https://hm.test',apiKey:'test',supportedModels:JSON.stringify([model]),modelMapping:JSON.stringify({[model]:upstream}),status:1}).run();
@@ -257,10 +257,14 @@ it.each(['MiniMax-H3','seedance_v2.0','seedance_v2.0-933'])('%s persists receipt
   });
   let gets=0;
   const fetcher=vi.fn(async (url:any,options:any)=>{
-    if(options?.method==='POST') return Response.json({task_id:taskId,status:'pending'},{status:202});
+    if(options?.method==='POST') {
+      if(model==='sd2.5-301010') expect(JSON.parse(options.body)).toMatchObject({model:'SD2.5-30-10-10',channel:'nova'});
+      return Response.json({task_id:taskId,status:'pending'},{status:202});
+    }
     expect(String(url)).toBe('https://hm.test/v1/tasks/'+taskId);
     const row=db.select().from(contents).where(eq(contents.id,id)).get()!;
     expect(JSON.parse(row.metadata!).videoId).toBe(taskId);
+    if(model==='sd2.5-301010') expect(JSON.parse(row.metadata!).upstreamModel).toBe('SD2.5-30-10-10');
     expect(db.select().from(users).where(eq(users.id,id)).get()?.balance).toBeCloseTo(100-retail);
     if(++gets===1) return Response.json({error:'暂时无法查询'},{status:503});
     return Response.json({task_id:taskId,status:'success',result_urls:['https://cdn.test/h3.mp4']});

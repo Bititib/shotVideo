@@ -156,7 +156,7 @@ describe('HM new catalog integration (in-memory database, no upstream generation
     expect(apiList.data.map((m: any) => m.id)).toContain('sd2.5-301010');
     expect(apiList.data.map((m: any) => m.id)).not.toContain('30-10-10');
     for (const { id, rates, maxSeconds } of cases) {
-      expect(mapping[id]).toBe(id === 'seedance_v2.0' ? 'MINIMAXH3-2.0采样' : id === 'seedance_v2.0-933' ? 'MINIMAX-H3-2.0采样-933' : id === 'sd2.5-301010' ? '30-10-10' : id === 'MiniMax-H3' ? 'MINIMAXH3 9-3-3' : id);
+      expect(mapping[id]).toBe(id === 'seedance_v2.0' ? 'MINIMAXH3-2.0采样' : id === 'seedance_v2.0-933' ? 'MINIMAX-H3-2.0采样-933' : id === 'sd2.5-301010' ? 'SD2.5-30-10-10' : id === 'MiniMax-H3' ? 'MINIMAXH3 9-3-3' : id);
       expect(JSON.parse(channel.supportedModels!)).toContain(id);
       expect(db.select().from(models).where(eq(models.modelId, id)).get()?.provider).toBe('hmstudio');
       expect(list.find(m => m.id === id)).toMatchObject({ available: true, billingType: 'per_call', rates,
@@ -286,7 +286,7 @@ describe('HM new catalog integration (in-memory database, no upstream generation
           expect(row).toMatchObject({ modelId: 'sd2.5-301010', status: 'failed', cost: 0 });
           expect(JSON.parse(row.metadata!)).toMatchObject({ billingStatus: 'refunded', refundAmount: price });
         });
-        expect(sent.at(-1).model).toBe('30-10-10');
+        expect(sent.at(-1).model).toBe('SD2.5-30-10-10');
         expect(sent.at(-1).channel).toBe('nova');
         expect(sent.at(-1).materials).toHaveLength(50);
         expect(sent.at(-1).face).toBe(true);
@@ -561,6 +561,19 @@ describe('HM administrator sync → pricing → real quote workflow', () => {
     await initDatabase();
     expect(await readPrice('seedance_v2.0-933')).toMatchObject({inputPrice:1.37,extraParams:{custom:0.9},modelActive:false});
   });
+  it('syncs renamed nova to the same public model and preserves admin pricing across restart',async()=>{
+    const existing=db.select().from(models).where(eq(models.modelId,'sd2.5-301010')).get()!;
+    db.update(models).set({isActive:0,displayName:'管理员自定义名称'}).where(eq(models.id,existing.id)).run();
+    db.update(modelPricing).set({inputPrice:8.8,extraParams:JSON.stringify({category:'video','720p':8.8,'1080p':13.3})}).where(eq(modelPricing.modelPattern,'sd2.5-301010')).run();
+    responseBody={data:[{id:'SD2.5-30-10-10',price:4}]};
+    expect((await sync()).status).toBe(200);
+    expect(db.select().from(models).where(eq(models.modelId,'SD2.5-30-10-10')).get()).toBeUndefined();
+    expect(db.select().from(models).where(eq(models.id,existing.id)).get()).toMatchObject({isActive:0,displayName:'管理员自定义名称'});
+    expect(JSON.parse(db.select().from(channels).where(eq(channels.id,channelId)).get()!.modelMapping!)).toEqual({'sd2.5-301010':'SD2.5-30-10-10'});
+    await initDatabase();
+    expect(await readPrice('sd2.5-301010')).toMatchObject({inputPrice:8.8,extraParams:{'720p':8.8,'1080p':13.3},modelActive:false});
+    expect(JSON.parse(db.select().from(channels).where(eq(channels.id,channelId)).get()!.modelMapping!)['sd2.5-301010']).toBe('SD2.5-30-10-10');
+  });
   it('syncs the spaced nova model ID with retail prices and preserves administrator overrides', async () => {
     db.delete(models).where(eq(models.modelId,'MiniMax-H3')).run();
     db.delete(modelPricing).where(eq(modelPricing.modelPattern,'MiniMax-H3')).run();
@@ -586,7 +599,7 @@ describe('HM administrator sync → pricing → real quote workflow', () => {
     const nova = db.select().from(models).where(eq(models.modelId, 'sd2.5-301010')).get()!;
     expect(nova).toMatchObject({ isActive: 0, capabilities: '["video"]' });
     const channel = db.select().from(channels).where(eq(channels.id, channelId)).get()!;
-    expect(JSON.parse(channel.modelMapping!)).toMatchObject({ 'sd2.5-301010': '30-10-10', 'seedance_v2.5': 'MINIMAX-H3-2.5采样' });
+    expect(JSON.parse(channel.modelMapping!)).toMatchObject({ 'sd2.5-301010': 'SD2.5-30-10-10', 'seedance_v2.5': 'MINIMAX-H3-2.5采样' });
     const price = await readPrice('sd2.5-301010');
     expect(price).toMatchObject({ inputPrice: 7, category: 'video', extraParams: { '720p': 7, '1080p': 12 } });
     const saved = await nativeFetch(origin + '/api/admin/pricing/' + price.id, {
@@ -621,11 +634,12 @@ describe('HM administrator sync → pricing → real quote workflow', () => {
       expect(JSON.parse(row.metadata!)).toMatchObject({ billingStatus: 'refunded', refundAmount: 13 });
     });
     expect(sent).toHaveLength(1);
-    expect(sent[0].model).toBe('30-10-10');
+    expect(sent[0].model).toBe('SD2.5-30-10-10');
     expect(sent[0].channel).toBe('nova');
     expect(db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance).toBe(balanceBefore);
   });
-  it('retains both legacy and canonical administrator prices, permissions and history on conflicts', async () => {
+  it.each(['30-10-10','SD2.5-30-10-10'])('syncs %s while retaining legacy and canonical prices, permissions and history', async upstream => {
+    responseBody={data:[upstream]};
     const old = db.insert(models).values({ modelId: '30-10-10', displayName: '旧名称', provider: 'hmstudio', isActive: 1 }).returning().get();
     db.insert(modelPricing).values({ modelPattern: '30-10-10', inputPrice: 20, extraParams: '{"1080p":25}' }).run();
     const permission = db.insert(tierModelAccess).values({ tierId: 1, modelId: old.id }).returning().get();

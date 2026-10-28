@@ -22,7 +22,7 @@ describe('HM Studio adapter', () => {
       duration: 30, ratio: '9:16', resolution: '1080p', upstreamChannel: 'lumen',
       imageSources: Array(30).fill('https://example.test/image.jpg'),
       videoSources: Array(10).fill('https://example.test/video.mp4'), audioSources: Array(10).fill('https://example.test/audio.mp3') });
-    expect(form.get('model')).toBe('30-10-10');
+    expect(form.get('model')).toBe('SD2.5-30-10-10');
     expect(form.getAll('channel')).toEqual(['nova']);
     expect(form.get('prompt')).toBe('@Image30 @Video10 @Audio10');
     expect(form.get('function_mode')).toBe('omni_reference');
@@ -34,12 +34,12 @@ describe('HM Studio adapter', () => {
     expect(single.get('function_mode')).toBe('omni_reference');
     expect(single.get('prompt')).toBe('@Image1');
   });
-  it.each(['720p', '1080p'])('pins 30-10-10 to nova at %s without changing the upstream model', resolution => {
-    for (const upstreamChannel of [undefined, '', 'default', 'official', '低价', 'lumen', 'nova']) {
-      const form = buildHmStudioVideoForm({ model: '30-10-10', prompt: 'test', duration: 6,
+  it.each(['720p', '1080p'])('upgrades old 30-10-10 mappings to the renamed nova model at %s', resolution => {
+    for (const model of ['sd2.5-301010','30-10-10','SD2.5-30-10-10']) for (const upstreamChannel of [undefined, '', 'default', 'official', '低价', 'lumen', 'nova']) {
+      const form = buildHmStudioVideoForm({ model, prompt: 'test', duration: 6,
         ratio: '16:9', resolution, upstreamChannel });
       expect(form.getAll('channel')).toEqual(['nova']);
-      expect(form.get('model')).toBe('30-10-10');
+      expect(form.get('model')).toBe('SD2.5-30-10-10');
       expect(form.get('video_resolution')).toBe(resolution);
     }
   });

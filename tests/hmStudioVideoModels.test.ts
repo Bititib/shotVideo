@@ -33,7 +33,7 @@ describe('HM Studio additional video models', () => {
   });
   it('defines nova public identity, resolution retail prices and confirmed limits', () => {
     const id = 'sd2.5-301010';
-    expect(getHmStudioUpstreamVideoModel(id)).toBe('30-10-10');
+    expect(getHmStudioUpstreamVideoModel(id)).toBe('SD2.5-30-10-10');
     expect(canvasVideoReferenceLimits(id)).toEqual({ images: 30, videos: 10, audios: 10 });
     expect(getHmStudioAdditionalVideoModel(id)).toMatchObject({ defaultEnabled: false,
       resolutionPrices: { '720p': 7, '1080p': 12 }, maxImages: 30, maxVideos: 10, maxAudios: 10 });

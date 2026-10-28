@@ -10,7 +10,7 @@ describe('HM video JSON protocol', () => {
     expect(String((await new Response(old).formData()).get('prompt')).length).toBe(8004);
     const result = JSON.parse(JSON.stringify(buildHmStudioVideoPayload({ ...base, prompt })));
     expect(result.prompt).toBe(prompt);
-    expect(result).toMatchObject({ model: '30-10-10', channel: 'nova', duration: 30, face: true, video_resolution: '1080p' });
+    expect(result).toMatchObject({ model: 'SD2.5-30-10-10', channel: 'nova', duration: 30, face: true, video_resolution: '1080p' });
   });
   it.each([8000, 8001, 12000])('preserves %s Unicode characters without a local HM limit', length => {
     const prompt = '😀'.repeat(length);
