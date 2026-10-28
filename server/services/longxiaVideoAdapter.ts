@@ -87,7 +87,6 @@ export function buildLongxiaVideoPayload(input: LongxiaVideoInput) {
   const base64Size = assets.reduce((total, item) => total + (item.data_base64?.length || 0), 0);
   if (base64Size > 40 * 1024 ** 2) throw new Error('LongXia Base64 素材合计不得超过 40 MiB，请改用 HTTPS URL');
   const prompt = referencePrompt(input.prompt.trim(), { image: images.length, video: videos.length, audio: audios.length });
-  if (Array.from(prompt).length > 9500) throw new Error('LongXia 提示词（含素材引用）最多 9500 字符');
   return { model: input.model, prompt, duration: input.seconds, size: input.ratio, ...(assets.length ? { assets } : {}) };
 }
 

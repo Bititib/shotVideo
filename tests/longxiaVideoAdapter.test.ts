@@ -45,12 +45,12 @@ describe('LongXia video contract', () => {
   it.each([['imageUrls', 31], ['audioUrls', 11]] as const)('rejects excessive %s', (field, count) => {
     expect(() => buildLongxiaVideoPayload({ ...input, [field]: Array(count).fill('https://example.com/file') })).toThrow('最多');
   });
-  it('rejects mismatched resolution, unsupported media, invalid references and excess prompt length', () => {
+  it('rejects mismatched resolution, unsupported media, invalid references', () => {
     expect(() => buildLongxiaVideoPayload({ ...input, resolution: '720p' })).toThrow('480p');
     expect(() => buildLongxiaVideoPayload({ ...input, audioUrls: ['data:audio/wav;base64,AAAA'] })).toThrow('MP3');
     expect(() => buildLongxiaVideoPayload({ ...input, imageUrls: ['http://example.com/i.jpg'] })).toThrow('HTTPS');
     expect(() => buildLongxiaVideoPayload({ ...input, prompt: '@image2', imageUrls: ['https://example.com/i.jpg'] })).toThrow('不存在');
-    expect(() => buildLongxiaVideoPayload({ ...input, prompt: '字'.repeat(9501) })).toThrow('9500');
+    expect(buildLongxiaVideoPayload({ ...input, prompt: '字'.repeat(25000) }).prompt).toBe('字'.repeat(25000));
     expect(() => buildLongxiaVideoPayload({ ...input, firstFrame: 'https://example.com/i.jpg' })).toThrow('首尾帧');
   });
   it('normalizes task URLs and detects only the configured channel or exact host', () => {

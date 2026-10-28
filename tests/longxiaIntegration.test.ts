@@ -105,7 +105,7 @@ describe('LongXia application integration', () => {
     const before = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance;
     const response = await realFetch(origin + '/v1/videos', {
       method: 'POST', headers: { Authorization: 'Bearer ' + tokenKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, prompt: '日出', seconds: 25, ratio: '16:9', audio_urls: ['https://example.com/ref.mp3'] }),
+      body: JSON.stringify({ model, prompt: '日出'.repeat(6000), seconds: 25, ratio: '16:9', audio_urls: ['https://example.com/ref.mp3'] }),
     });
     const result = await response.json() as any;
     expect(response.status, JSON.stringify(result)).toBe(200);
@@ -113,7 +113,7 @@ describe('LongXia application integration', () => {
     expect(upstream).toHaveBeenCalledOnce();
     const [url, options] = upstream.mock.calls[0] as any;
     expect(url).toBe('https://api8.longxiaai.store/v1/videos');
-    expect(JSON.parse(options.body)).toEqual({ model, prompt: '日出\n参考素材：@audio1', duration: 25, size: '16:9', assets: [
+    expect(JSON.parse(options.body)).toEqual({ model, prompt: '日出'.repeat(6000) + '\n参考素材：@audio1', duration: 25, size: '16:9', assets: [
       { category: 'audio', url: 'https://example.com/ref.mp3' },
     ] });
     const expectedCost = model === LONGXIA_MODELS[0] ? 10 : 14.5;

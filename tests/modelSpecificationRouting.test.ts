@@ -179,10 +179,11 @@ describe('managed image execution and single reservation', () => {
       .mockResolvedValueOnce(Response.json({ data: [{ url: 'https://result.invalid/2.png' }] }, { headers: { 'x-request-id': 'req-image-2' } }));
     vi.stubGlobal('fetch', upstream);
     const res = response();
-    await handleSpecificationGeneration({ body: { model: s.modelId, prompt: 'test', resolution: '4K', n: 2 }, protocol: 'https', get: () => 'app.invalid', userId } as any, res, 'image');
+    await handleSpecificationGeneration({ body: { model: s.modelId, prompt: '完整图片提示词'.repeat(2000), resolution: '4K', n: 2 }, protocol: 'https', get: () => 'app.invalid', userId } as any, res, 'image');
     const row = db.select().from(contents).all().at(-1)!;
     expect(row.status).toBe('completed');
     const meta = JSON.parse(row.metadata);
+    for (const call of upstream.mock.calls) expect(JSON.parse(call[1].body).prompt).toBe('完整图片提示词'.repeat(2000));
     expect(meta.upstreamTaskIds).toEqual(['req-image-1', 'req-image-2']);
     expect(meta.imageJobs.map((job: any) => ({ taskId: job.taskId, status: job.status }))).toEqual([
       { taskId: 'req-image-1', status: 'completed' }, { taskId: 'req-image-2', status: 'completed' },
