@@ -1,3 +1,4 @@
+import { generationProblemSummary } from '../../../../shared/generationMessages';
 import './TtsPage.css';
 import { ttsVoices, audioExtension, ttsPriceLabel, type TtsVoice } from '../../../../shared/tts';
 import React, { useState, useEffect, useRef } from 'react';
@@ -439,7 +440,7 @@ export default function TtsPage() {
           {error && (
             <div className="px-4 py-3 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-400 flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{error}</span>
+              <span>{generationProblemSummary(error)}</span>
             </div>
           )}
 

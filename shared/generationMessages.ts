@@ -52,8 +52,7 @@ export function publicGenerationEvent<T extends { type?: string; message?: unkno
 /** Also cover failure messages saved by older clients in local/cloud canvas documents. */
 export function publicCanvasJobMessage(job?: { status: string; message?: string }): string {
   if (!job?.message) return '';
-  return job.status === 'error' || /提交失败|生成失败|invalid.parameters|upstream.error/i.test(job.message)
-    ? publicGenerationError(job.message) : job.message;
+  return generationProblemSummary(job.message);
 }
 
 /** Compact card presentation only; never use for state, billing or stored diagnostics. */
@@ -61,10 +60,12 @@ export function generationProblemSummary(value: unknown): string {
   const original = sanitizedGenerationReason(value);
   let text = original;
   let code = '';
+  let status = '';
   for (let i = 0; i < 12; i++) {
     const before = text;
-    text = text.replace(/^\[(?:上游诊断 |HUSS )[^\]]*\]\s*[:：]?\s*/, '')
-      .replace(/^HTTP\s+\d{3}\s*[:：]?\s*/i, '')
+    text = stripDiagnosticEnvelope(text)
+      .replace(/^HTTP\s+(\d{3})\s*[:：]?\s*/i, (_, n) => { status = n; return ''; })
+      .replace(/^request_?id=[^\s:：]+\s*[:：]?\s*/i, '')
       .replace(/^Error\s*[:：]\s*/i, '');
     const match = /^code=([\w.-]+)\s*[:：]?\s*/.exec(text);
     if (match) { code = match[1]; text = text.slice(match[0].length); }
@@ -74,5 +75,17 @@ export function generationProblemSummary(value: unknown): string {
   }
   text = text.replace(/；提交结果待核实，请在生成记录核实原任务，请勿重复提交。?$/, '')
     .replace(/^prompt(?=\s|必须)/i, '提示词').trim();
-  return text || original;
+  return text || (code && code !== 'Error' ? code : status ? `请求返回 HTTP ${status}，未提供具体原因` : original);
+}
+
+// Only remove wrappers emitted by our adapters. Balanced brackets preserve redacted
+// provider names such as [服务] inside an outer diagnostic envelope.
+function stripDiagnosticEnvelope(text: string): string {
+  if (!/^\[(?:上游诊断 |HUSS )/.test(text)) return text;
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '[') depth++;
+    if (text[i] === ']' && --depth === 0) return text.slice(i + 1).replace(/^\s*[:：]?\s*/, '');
+  }
+  return text;
 }

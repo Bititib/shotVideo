@@ -1,3 +1,4 @@
+import { generationProblemSummary } from '../../../../shared/generationMessages';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Film, Play, Square, Download, Loader2, AlertCircle, ArrowLeft, Plus, Trash2, FastForward, Upload, X, Pause, SkipForward, PackageOpen, Scissors, ScanFace, HelpCircle } from 'lucide-react';
@@ -467,7 +468,7 @@ export default function VideoStudioPage() {
           {/* 错误 */}
           {error && (
             <div className="mx-4 mb-2 px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-lg text-xs text-red-400 flex items-center gap-2">
-              <AlertCircle className="w-3.5 h-3.5 shrink-0" /><span className="flex-1">{error}</span>
+              <AlertCircle className="w-3.5 h-3.5 shrink-0" /><span className="flex-1">{generationProblemSummary(error)}</span>
               <button onClick={() => setError(null)} className="text-red-500/60 hover:text-red-400">✕</button>
             </div>
           )}

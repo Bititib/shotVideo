@@ -1,3 +1,4 @@
+import { generationProblemSummary } from '../../../../shared/generationMessages';
 import { getZonghengVideoReferenceLimits } from '../../../../shared/zonghengVideo';
 import { getHayaVideoSpec } from '../../../../shared/hayaVideo';
 import { getHmStudioAdditionalVideoModel } from '../../../../shared/hmStudioVideo';
@@ -181,7 +182,7 @@ export default function VideoBatchPage() {
   const ended = detail?.items.filter(i => ['completed', 'failed', 'cancelled'].includes(i.status)).length || 0;
   return <main className="video-batch-page">
     <header className="vb-heading"><div><p className="vb-eyebrow">BATCH WORKSPACE</p><h1><Layers3 size={26} /> 批量视频</h1><p>一组提示词，多条成片。使用你的原始创意，不改写提示词。</p></div><span className="vb-pill">后台排队 · 按条预扣</span></header>
-    {error && <div className="vb-alert" role="alert">{error}<button onClick={() => setError('')} aria-label="关闭提示">×</button></div>}
+    {error && <div className="vb-alert" role="alert">{generationProblemSummary(error)}<button onClick={() => setError('')} aria-label="关闭提示">×</button></div>}
     {notice && <p className="vb-notice" role="status">{notice}</p>}
     <div className="vb-workspace">
       <section className="vb-panel">
@@ -224,7 +225,7 @@ export default function VideoBatchPage() {
           <div className="vb-row"><span className="vb-help">生成用时包含重试等待，不代表视频时长</span><select aria-label="筛选任务状态" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">所有状态</option>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>
           <div className="vb-table-wrap"><table><thead><tr><th>任务</th><th>状态 / 次数</th><th>用时</th><th>费用</th><th>结果</th></tr></thead><tbody>{detail.items.filter(i => filter === 'all' || filter === i.status).map(i => <tr key={i.id}>
             <td><strong>创意 {i.creative_index + 1} · #{i.ordinal}</strong><small>记录 {i.content_id ? `#${i.content_id}` : '未提交'}</small></td>
-            <td><span className={`vb-status vb-status-${i.status}`}>{statusLabels[i.status]}</span><small>已尝试 {i.attempts} 次</small>{i.error && <details className="vb-error-detail"><summary>查看原因</summary><p>{i.error}</p></details>}</td>
+            <td><span className={`vb-status vb-status-${i.status}`}>{statusLabels[i.status]}</span><small>已尝试 {i.attempts} 次</small>{i.error && <details className="vb-error-detail"><summary>查看原因</summary><p>{generationProblemSummary(i.error)}</p></details>}</td>
             <td>{elapsed(i)}</td><td>{money(i.unit_cost)}<small>{i.billing_state === 'reserved' ? '预扣保留' : i.billing_state === 'refunded' ? '已退款' : '已结算'}</small></td>
             <td>{i.result_url ? <button onClick={() => setPreview(i.result_url)}>预览</button> : '—'}</td>
           </tr>)}</tbody></table></div>

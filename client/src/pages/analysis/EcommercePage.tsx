@@ -1,3 +1,4 @@
+import { generationProblemSummary } from '../../../../shared/generationMessages';
 import React, { useState, useRef } from 'react';
 import { ShoppingBag, UploadCloud, RefreshCw, Target, Zap, X, Wand2, ShoppingCart, Image as ImageIcon } from 'lucide-react';
 import { analysisApi } from '../../api/analysis';
@@ -155,7 +156,7 @@ export default function EcommercePage() {
 
           <ModelSelector value={selectedModel} onChange={setSelectedModel} />
 
-          {error && <div className="mb-4 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-sm text-red-400">{error}</div>}
+          {error && <div className="mb-4 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-sm text-red-400">{generationProblemSummary(error)}</div>}
 
           <div className="flex gap-3 mt-auto">
             <button onClick={handleAnalyze} disabled={!file || isAnalyzing} className="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-medium py-3 rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2">

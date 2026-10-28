@@ -1,3 +1,4 @@
+import { generationProblemSummary } from '../../../../shared/generationMessages';
 import React, { useState, useRef } from 'react';
 import { Users, UploadCloud, RefreshCw, Wand2, X, Plus, TrendingUp, BarChart, Crosshair, Lightbulb, UserCheck, Search, Zap } from 'lucide-react';
 import { analysisApi } from '../../api/analysis';
@@ -123,7 +124,7 @@ export default function AccountPage() {
 
           <ModelSelector value={selectedModel} onChange={setSelectedModel} />
 
-          {error && <div className="mb-4 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-sm text-red-400">{error}</div>}
+          {error && <div className="mb-4 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-sm text-red-400">{generationProblemSummary(error)}</div>}
 
           <div className="flex gap-3 mt-auto">
             <button onClick={handleAnalyze} disabled={(!handle && files.length === 0) || isAnalyzing} className="flex-1 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-medium py-3 rounded-xl transition-all disabled:opacity-50 flex items-center justify-center gap-2">

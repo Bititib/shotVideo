@@ -1,3 +1,4 @@
+import { generationProblemSummary } from '../../../../shared/generationMessages';
 import { useAdminFilters } from '../../hooks/useAdminView';
 import { formatProductDetail, isProductDetailCopy } from '../../../../shared/copywriting';
 import { startPolling } from '../../utils/polling';
@@ -280,7 +281,7 @@ export default function HistoryPage() {
         ))}
       </div>
 
-      {error && <div className="history-error" role="alert"><AlertCircle /> <span>{error}</span><button onClick={() => loadContents()}>重试</button></div>}
+      {error && <div className="history-error" role="alert"><AlertCircle /> <span>{generationProblemSummary(error)}</span><button onClick={() => loadContents()}>重试</button></div>}
 
       <section className="history-list" aria-live="polite" aria-busy={loading}>
         {loading ? (
@@ -373,7 +374,7 @@ export default function HistoryPage() {
                   </section>
                 )}
 
-                {failure && <section className="history-failure"><h3><AlertCircle />失败原因</h3><p>{failure.message}</p></section>}
+                {failure && <section className="history-failure"><h3><AlertCircle />失败原因</h3><p>{generationProblemSummary(failure.message)}</p></section>}
 
                 <section className="history-detail-section">
                   <div className="history-detail-section-title"><h3>输入内容</h3>{selected.inputText && <button onClick={() => handleCopy(selected.inputText!)}><Copy />{copied ? '已复制' : '复制'}</button>}</div>

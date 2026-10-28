@@ -87,3 +87,19 @@ it('shows the actual cause without nested HUSS recovery diagnostics on cards', (
   expect(generationProblemSummary('[HUSS /videos] HTTP 400：code=invalid_prompt')).toContain('invalid_prompt');
   expect(generationProblemSummary('失败 Bearer secret-key')).not.toContain('secret-key');
 });
+
+
+it.each(['HM Studio', 'snumom', 'V6K', 'Haya', 'FunAI', 'Megaby', 'MingFei', 'Pidoi', 'LongXia'])(
+  'projects %s diagnostics without losing the concrete cause', provider => {
+    const raw = `[上游诊断 ${provider} 视频提交] HTTP 400 code=InvalidParameter request_id=req-123：InvalidParameter: 参考图片 3 格式不支持，请使用 PNG`;
+    expect(generationProblemSummary(raw)).toBe('参考图片 3 格式不支持，请使用 PNG');
+    expect(publicGenerationError(raw)).toContain('HTTP 400');
+    expect(raw).toContain('request_id=req-123');
+  });
+it('keeps code-only failures and meaningful status text, removing nested wrappers', () => {
+  expect(generationProblemSummary('[上游诊断 V6K 查询] HTTP 503 code=Busy request_id=req-123：')).toBe('Busy');
+  expect(generationProblemSummary('[HUSS /videos] HTTP 400 request_id=req-123：prompt 必须为文本')).toBe('提示词 必须为文本');
+  expect(generationProblemSummary('视频已生成，正在保存到本站存储')).toBe('视频已生成，正在保存到本站存储');
+  expect(generationProblemSummary('退款处理待核实')).toBe('退款处理待核实');
+  expect(generationProblemSummary('[上游诊断 Megaby 查询] HTTP 503：Error: [上游诊断 snumom 下载] HTTP 403 code=AccessDenied：AccessDenied: Request has expired')).toBe('Request has expired');
+});

@@ -1,3 +1,4 @@
+import { generationProblemSummary } from '../../../../shared/generationMessages';
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Megaphone, UploadCloud, RefreshCw, Wand2, X, Plus, ShoppingCart, Tag, Download, Image as ImageIcon, FileText, Pencil, Check, Copy, Save } from 'lucide-react';
@@ -185,7 +186,7 @@ export default function CopywritingPage() {
     </aside>
     <main className="cw-result" ref={resultRef}>
       <div className="cw-result-inner">
-        {error && <div role="alert" className="cw-message is-error">{error}</div>}
+        {error && <div role="alert" className="cw-message is-error">{generationProblemSummary(error)}</div>}
         {message && !error && <div role="status" className="cw-message">{message}</div>}
         {busy ? <LoadingOverlay message={loadingHistory ? '正在加载文案…' : uploading ? '正在处理产品素材…' : '正在生成文案…'} /> : visibleResult ? detail ? <>
           <div className="cw-result-toolbar">

@@ -1,3 +1,4 @@
+import { generationProblemSummary } from '../../../../shared/generationMessages';
 import { modelAvailabilityMessage } from '../../../../shared/upstreamAvailability';
 import { startPolling } from '../../utils/polling';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -781,7 +782,7 @@ export default function ImageGenPage() {
                   <div className="ig-task-info">
                     <p className="ig-task-prompt" title={record.prompt}>{record.prompt || '未填写描述'}</p>
                     <div className="ig-task-meta"><span>{contentId ? `任务 #${contentId}` : '本次任务'}</span><time dateTime={record.createdAt.toISOString()} title="北京时间">{record.createdAt.getTime() ? formatBeijingTime(record.createdAt, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '时间未记录'}</time></div>
-                    <p className="ig-task-detail" title={batch?.statusMessage || record.model}>{batch && !url ? batch.statusMessage : `${models.find(model => model.id === record.model)?.name || record.model} · ${record.aspectRatio || '默认比例'}`}</p>
+                    <p className="ig-task-detail" title={batch?.statusMessage ? generationProblemSummary(batch.statusMessage) : record.model}>{batch && !url ? generationProblemSummary(batch.statusMessage) : `${models.find(model => model.id === record.model)?.name || record.model} · ${record.aspectRatio || '默认比例'}`}</p>
                   </div>
                   <div className="ig-record-actions" aria-label={`任务 ${contentId || record.id} 操作`}>
                     {url && !image?.missing && <><button type="button" aria-label="继续改图" className="ig-text-button" disabled={referenceImporting} onClick={() => void continueEditing(url)}><Pencil size={14} />改图</button><button type="button" className="ig-text-button" aria-label="下载图片" onClick={event => void downloadImageFile(event, url, `generated-image-${contentId || record.id}-${index + 1}.png`)}><Download size={14} />下载</button></>}
@@ -816,7 +817,7 @@ export default function ImageGenPage() {
           <textarea id="ig-prompt" ref={textareaRef} value={prompt} onChange={event => setPrompt(event.target.value)} onKeyDown={handleKeyDown}
             aria-label={generationMode === 'image' ? '修改要求' : '图片描述'} rows={2} placeholder={generationMode === 'image' ? '想修改哪里？' : '描述你想要的画面…'} />
           {!selectedImageModel?.available && selectedImageModel && <p role="status" className="ig-error">{modelAvailabilityMessage(selectedImageModel)}</p>}
-          {error && <div role="alert" className="ig-error"><AlertCircle size={16} /><span>{error}</span><button type="button" aria-label="关闭错误提示" onClick={() => setError(null)}><X size={14} /></button></div>}
+          {error && <div role="alert" className="ig-error"><AlertCircle size={16} /><span>{generationProblemSummary(error)}</span><button type="button" aria-label="关闭错误提示" onClick={() => setError(null)}><X size={14} /></button></div>}
           {actionNotice && <p className="ig-action-notice" role="status">{actionNotice}</p>}
           <div className="ig-toolbar">
             <SettingSelect label="生成模型" value={selectedModel} onChange={setSelectedModel} options={models.map(model => ({ value: model.id, label: model.name + (!model.available ? ' · 暂不可用' : imageReferenceLimit(model) === 0 ? ' · 仅文生图' : '') }))} />

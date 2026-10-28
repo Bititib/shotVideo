@@ -1817,7 +1817,7 @@ export default function VideoPage() {
                               <p className="text-xs text-amber-200/80 text-center">视频已生成，正在等待结果交付</p>
                             </div>
                           ) : task.status === 'generating' ? (
-                            <WoodenFishLoader progress={task.progress} statusMessage={task.statusMessage} />
+                            <WoodenFishLoader progress={task.progress} statusMessage={task.statusMessage ? generationProblemSummary(task.statusMessage) : task.statusMessage} />
                           ) : task.status === 'complete' && task.videoUrl ? (
                             <>
                               <VideoPoster src={task.videoUrl || ''} className={`w-full h-full ${isVertical(task.metadata.aspect_ratio) ? 'object-contain bg-[#211a16]' : 'object-cover'}`} />
@@ -1919,7 +1919,7 @@ export default function VideoPage() {
                             <div className="flex max-w-[85%] flex-col items-center gap-2 text-center">
                               <AlertCircle className="h-9 w-9 text-red-300/80" />
                               <span className="text-sm font-semibold text-red-200">生成失败</span>
-                              <p className="line-clamp-2 text-[11px] leading-relaxed text-red-200/70">{failure?.message || '未记录失败原因'}</p>
+                              <p className="line-clamp-2 text-[11px] leading-relaxed text-red-200/70">{generationProblemSummary(failure?.message || '未记录失败原因')}</p>
                             </div>
                           ) : (
                             <>
@@ -2016,7 +2016,7 @@ export default function VideoPage() {
               )}
               {error && (
                 <div role="alert" className="px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400 flex items-center gap-2 backdrop-blur-md shadow-2xl pointer-events-auto">
-                  <AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{error}</span>
+                  <AlertCircle className="w-4 h-4 shrink-0" /><span className="flex-1">{generationProblemSummary(error)}</span>
                   <button type="button" aria-label="关闭错误提示" onClick={() => setError(null)} className="rounded-sm text-red-500/60 hover:text-red-400 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400">✕</button>
                 </div>
               )}
@@ -2452,7 +2452,7 @@ export default function VideoPage() {
                   <span className="font-medium text-[#725442]">失败模型</span>
                   <code className="max-w-[70%] truncate rounded-md bg-[#ead8c4] px-2 py-1 text-[11px] text-[#7c3f29]">{feedbackTask.metadata.model}</code>
                 </div>
-                <p className="mt-3 max-h-24 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-[#a04432]">{feedbackTask.error}</p>
+                <p className="mt-3 max-h-24 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-[#a04432]">{generationProblemSummary(feedbackTask.error)}</p>
               </div>
 
               <label className="block">
