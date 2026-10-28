@@ -848,12 +848,12 @@ describe('HSS actual managed submission and recovery', () => {
     expect(last().cost).toBe(6); expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(94);
     resumeSpecificationTasks(); expect(fetch).toHaveBeenCalledTimes(2);
   });
-  it('ends explicit parameter rejection, refunds once, and never queries an absent ID', async () => {
+  it.each(['invalid_duration', 'invalid_prompt'])('ends explicit %s rejection, refunds once, and never queries an absent ID', async code => {
     const req = setupHss();
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { code: 'invalid_duration', message: 'duration rejected by provider' } }, { status: 400 })));
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { code, message: 'parameter rejected by provider' } }, { status: 400 })));
     await handleSpecificationGeneration(req, response(), 'video');
     await vi.waitFor(() => expect(last().status).toBe('failed'));
-    expect(JSON.parse(last().metadata)).toMatchObject({ requiresReview: false, billingStatus: 'refunded', error: expect.stringContaining('invalid_duration') });
+    expect(JSON.parse(last().metadata)).toMatchObject({ requiresReview: false, billingStatus: 'refunded', error: expect.stringContaining(code) });
     expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(100);
     resumeSpecificationTasks(); expect(fetch).toHaveBeenCalledOnce();
   });

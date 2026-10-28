@@ -73,11 +73,11 @@ async function hussRequest(channel: HussChannel, endpoint: string, body?: unknow
   if (persistent && (!response.ok || failure)) {
     const code = payload?.error?.code || payload?.code;
     const rejected = [400,401,402,403].includes(response.status) &&
-      ['invalid_input','invalid_duration','unsupported_resolution','invalid_reference_count','invalid_api_key','model_not_allowed','request_not_allowed'].includes(code);
+      ['invalid_prompt','invalid_input','invalid_duration','unsupported_resolution','invalid_reference_count','invalid_api_key','model_not_allowed','request_not_allowed'].includes(code);
     const retry = response.headers.get('retry-after') || '';
     const delay = /^\d+$/.test(retry) ? Number(retry) * 1000 : Math.max(0, Date.parse(retry) - Date.now()) || 0;
     throw new HussApiError(hussFailure(endpoint, payload, response.status, requestId, channel.apiKey), response.status,
-      !rejected || Boolean(videoErrorTaskId(payload, response.headers)), delay);
+      !rejected || payload?.submission_uncertain === true || payload?.data?.submission_uncertain === true || Boolean(videoErrorTaskId(payload, response.headers)), delay);
   }
   if (!response.ok || failure) {
     throw new HussApiError(hussFailure(endpoint, payload, response.status, requestId, channel.apiKey), response.status || 502,

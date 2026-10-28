@@ -92,3 +92,10 @@ it('a local write failure after acceptance remains uncertain and cannot trigger 
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: 'video_original', status: 'completed', url: 'https://cdn.example/result.mp4' })));
   await expect(submitHussVideo(channel, input, vi.fn(), () => { throw new Error('disk full'); })).rejects.toMatchObject({ uncertain: true });
 });
+
+it('keeps conflicting invalid_prompt evidence uncertain when a task ID or uncertainty flag exists', async () => {
+  for (const evidence of [{ submission_uncertain: true }, { task_id: 'video_existing' }]) {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...evidence, error: { code: 'invalid_prompt', message: 'prompt rejected' } }, { status: 400 })));
+    await expect(submitHussVideo(channel, input, vi.fn())).rejects.toMatchObject({ uncertain: true });
+  }
+});
