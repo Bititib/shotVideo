@@ -1,3 +1,5 @@
+import { getAuthSession, invalidateAuthSession } from './authSession';
+
 const API_BASE = '/api';
 
 interface RequestOptions extends RequestInit {
@@ -6,12 +8,9 @@ interface RequestOptions extends RequestInit {
 }
 
 class ApiClient {
-  private getToken(): string | null {
-    return localStorage.getItem('token');
-  }
-
   async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
     const { skipAuth, headers: customHeaders, timeoutMs, ...rest } = options;
+    const session = getAuthSession();
 
     const headers: Record<string, string> = {
       ...(customHeaders as Record<string, string> || {}),
@@ -23,7 +22,7 @@ class ApiClient {
     }
 
     if (!skipAuth) {
-      const token = this.getToken();
+      const token = session.token;
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
@@ -41,19 +40,15 @@ class ApiClient {
       headers,
     });
 
-    if (response.status === 401) {
-      const hadToken = !!this.getToken();
-      if (hadToken) {
-        // token 过期 → 清除并提示重新登录
-        localStorage.removeItem('token');
-      }
-      // 不自动跳转，让调用方决定（如 useAuthGuard 弹登录框）
-      throw new Error(hadToken ? '登录已过期，请重新登录' : '请先登录');
-    }
-
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      const error: any = new Error(errorData.error || `请求失败 (${response.status})`);
+      if (response.status === 401 && !skipAuth && session.token) {
+        invalidateAuthSession(session);
+      }
+      const fallback = response.status === 401
+        ? (skipAuth ? '登录验证失败' : session.token ? '登录已过期，请重新登录' : '请先登录')
+        : `请求失败 (${response.status})`;
+      const error: any = new Error(errorData?.error || fallback);
       error.status = response.status;
       error.data = errorData;
       throw error;

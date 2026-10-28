@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { authApi, UserProfile } from '../api/auth';
+import { getAuthSession, isCurrentAuthSession, saveAuthToken, invalidateAuthSession, onAuthSessionInvalidated } from '../api/authSession';
 
 interface AuthState {
   user: UserProfile | null;
@@ -18,7 +19,19 @@ interface AuthState {
   requireAuth: () => boolean;
 }
 
-let authCheckRequest: Promise<boolean> | null = null;
+let authCheckRequest: { session: ReturnType<typeof getAuthSession>; promise: Promise<boolean> } | null = null;
+let loginAttempt = 0;
+
+async function completeLogin(request: () => ReturnType<typeof authApi.login>) {
+  const attempt = ++loginAttempt;
+  const result = await request();
+  if (attempt !== loginAttempt) throw new Error('登录状态已变更，请重新登录');
+  const session = saveAuthToken(result.token);
+  useAuthStore.setState({ user: null, isAuthenticated: false, isLoading: false });
+  const profile = await authApi.getProfile();
+  if (attempt !== loginAttempt || !isCurrentAuthSession(session)) throw new Error('登录状态已变更，请重新登录');
+  useAuthStore.setState({ user: profile, isAuthenticated: true, isLoading: false, showLoginModal: false });
+}
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
@@ -27,62 +40,50 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   showLoginModal: false,
 
   login: async (email, password) => {
-    const result = await authApi.login(email, password);
-    localStorage.setItem('token', result.token);
-    // 获取完整 profile（含等级信息）
-    const profile = await authApi.getProfile();
-    set({ user: profile, isAuthenticated: true, showLoginModal: false });
+    await completeLogin(() => authApi.login(email, password));
   },
 
   register: async (email, username, password) => {
-    const result = await authApi.register(email, username, password);
-    localStorage.setItem('token', result.token);
-    const profile = await authApi.getProfile();
-    set({ user: profile, isAuthenticated: true, showLoginModal: false });
+    await completeLogin(() => authApi.register(email, username, password));
   },
 
   logout: () => {
+    loginAttempt += 1;
     void fetch('/api/auth/logout',{method:'POST'}).catch(()=>{});
-    localStorage.removeItem('token');
-    set({ user: null, isAuthenticated: false });
+    invalidateAuthSession();
   },
 
   fetchProfile: async () => {
-    try {
-      const profile = await authApi.getProfile();
-      set({ user: profile, isAuthenticated: true });
-    } catch {
-      set({ user: null, isAuthenticated: false });
-      localStorage.removeItem('token');
-    }
+    await get().checkAuth();
   },
 
   checkAuth: async () => {
-    if (authCheckRequest) return authCheckRequest;
-
-    const token = localStorage.getItem('token');
-    if (!token) {
-      set({ isLoading: false, isAuthenticated: false });
+    const session = getAuthSession();
+    if (!session.token) {
+      set({ user: null, isLoading: false, isAuthenticated: false });
       return false;
     }
+    if (authCheckRequest && isCurrentAuthSession(authCheckRequest.session)) return authCheckRequest.promise;
 
     const request = (async () => {
       try {
         const profile = await authApi.getProfile();
+        if (!isCurrentAuthSession(session)) return get().isAuthenticated;
         set({ user: profile, isAuthenticated: true, isLoading: false });
         return true;
       } catch {
-        localStorage.removeItem('token');
-        set({ user: null, isAuthenticated: false, isLoading: false });
-        return false;
+        // The API client invalidates confirmed 401s. Network errors, timeouts,
+        // rate limiting and server errors are not evidence of an expired login.
+        if (isCurrentAuthSession(session)) set({ isLoading: false });
+        return get().isAuthenticated;
       }
     })();
-    authCheckRequest = request;
+    authCheckRequest = { session, promise: request };
 
     try {
       return await request;
     } finally {
-      if (authCheckRequest === request) authCheckRequest = null;
+      if (authCheckRequest?.promise === request) authCheckRequest = null;
     }
   },
 
@@ -91,8 +92,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   requireAuth: () => {
     const { isAuthenticated } = get();
-    if (isAuthenticated) return true;
-    set({ showLoginModal: true });
+    if (isAuthenticated && getAuthSession().token) return true;
+    set({ user: null, isAuthenticated: false, showLoginModal: true });
     return false;
   },
 }));
+
+onAuthSessionInvalidated(() => {
+  authCheckRequest = null;
+  useAuthStore.setState({ user: null, isAuthenticated: false, isLoading: false });
+});

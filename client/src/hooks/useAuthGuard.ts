@@ -13,13 +13,9 @@ import { useAuthStore } from '../stores/authStore';
  * };
  */
 export function useAuthGuard() {
-  const { isAuthenticated, openLoginModal } = useAuthStore();
+  const requireAuth = useAuthStore(state => state.requireAuth);
 
   return useCallback(() => {
-    if (!isAuthenticated) {
-      openLoginModal();
-      return false;
-    }
-    return true;
-  }, [isAuthenticated, openLoginModal]);
+    return requireAuth();
+  }, [requireAuth]);
 }
