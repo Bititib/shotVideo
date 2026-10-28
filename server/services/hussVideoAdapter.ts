@@ -99,8 +99,7 @@ export function hussVideoParameters(input: HussVideoInput) {
   const limits = persistent ? hussHssModelLimits() : hussBbModelLimits();
   if (![HUSS_BB_MODEL, HUSS_HSS_MODEL].includes(input.model)) throw new Error('HUSS 未接入此模型');
   if (input.firstFrame || input.lastFrame) throw new Error('HUSS 此模型不支持独立首尾帧，请作为普通参考图片提交');
-  const maxPrompt = persistent ? 8000 : 20000;
-  if (!input.prompt.trim() || Array.from(input.prompt.trim()).length > maxPrompt) throw new Error(`HUSS 提示词长度须为 1–${maxPrompt} 字符`);
+  if (!input.prompt.trim()) throw new Error('HUSS 提示词不能为空');
   if (!Number.isInteger(input.seconds) || input.seconds < limits.duration.min || input.seconds > 30) throw new Error(`HUSS ${input.model} 视频时长须为 ${limits.duration.min}–30 秒整数`);
   if (input.resolution !== '720p' || !limits.ratios.includes(input.ratio)) throw new Error(`HUSS ${input.model} 仅支持 720p 和 ${limits.ratios.join('、')}`);
   if (input.images.length > 30 || input.videos.length > 10 || input.audios.length > 10) throw new Error('HUSS 参考素材数量超过模型上限');

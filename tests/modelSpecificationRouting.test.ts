@@ -832,10 +832,11 @@ describe('HSS actual managed submission and recovery', () => {
   const last = () => db.select().from(contents).all().at(-1)!;
   it('saves the ID before polling, downloads, and settles one charge', async () => {
     const req = setupHss();
+    req.body.prompt = '完整提示词'.repeat(5000);
     vi.stubGlobal('fetch', vi.fn(async (_url, init: any) => {
       if (init.method === 'POST') {
         expect(JSON.parse(last().metadata).hussIdempotencyKey).toBe(init.headers['Idempotency-Key']);
-        expect(JSON.parse(init.body)).toMatchObject({ model, duration: 4, ratio: '21:9' });
+        expect(JSON.parse(init.body)).toMatchObject({ model, duration: 4, ratio: '21:9', prompt: req.body.prompt });
         return Response.json({ id: 'video_hss_test', status: 'queued' }, { status: 202 });
       }
       expect(JSON.parse(last().metadata).videoId).toBe('video_hss_test');

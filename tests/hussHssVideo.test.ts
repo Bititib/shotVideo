@@ -17,7 +17,7 @@ it('uses canonical HSS media fields and persists the exact request before sendin
   }));
   expect(await submitHussVideo(channel, input, p => { saved = p; })).toBe('video_original');
 });
-it.each([{ seconds: 3 }, { seconds: 4.5 }, { seconds: 31 }, { resolution: '1080p' }, { prompt: 'a'.repeat(8001) }, { ratio: '2:1' }, { firstFrame: 'https://media.example/first.png' }])('rejects unsupported input %j without sending', async invalid => {
+it.each([{ seconds: 3 }, { seconds: 4.5 }, { seconds: 31 }, { resolution: '1080p' }, { prompt: '   ' }, { ratio: '2:1' }, { firstFrame: 'https://media.example/first.png' }])('rejects unsupported input %j without sending', async invalid => {
   vi.stubGlobal('fetch', vi.fn());
   await expect(submitHussVideo(channel, { ...input, ...invalid }, vi.fn())).rejects.toThrow();
   expect(fetch).not.toHaveBeenCalled();
