@@ -38,6 +38,8 @@ export function videoInputError(options: Pick<GenerationDraft, 'kind' | 'videoMo
     if (options.model === VIDEO_EDIT_MODEL) return '请切换到视频编辑模式。';
     if (videos.length || audios.length) return '当前模式不支持视频或音频参考。请切换多模态参考；编辑原视频请切换视频编辑模式。';
   }
+  const imageLimit = canvasVideoReferenceLimits(options.model)?.images ?? 10;
+  if (options.videoMode === 'reference' && references.filter(n => n.kind === 'image' && n.src).length > imageLimit) return `当前模式最多使用 ${imageLimit} 张参考图片，请移除多余连线。`;
   return '';
 }
 

@@ -7,6 +7,19 @@ const options = { kind: 'video' as const, videoMode: 'edit' as const, model: VID
 const video = { ...newNode('video', { x: 0, y: 0 }), src: '/original.mp4' };
 afterEach(() => vi.restoreAllMocks());
 describe('canvas video editing constraints', () => {
+  it('uses model-specific reference image caps and keeps unknown models at ten', () => {
+    const image={...newNode('image',{x:0,y:0}),src:'/image.jpg'};
+    const ref={...options,videoMode:'reference' as const,model:'sd2.5-301010'};
+    expect(videoInputError(ref,Array(30).fill(image))).toBe('');
+    expect(videoInputError(ref,Array(31).fill(image))).toContain('30 张参考图片');
+    expect(videoInputError({...ref,model:'test-video'},Array(11).fill(image))).toContain('10 张参考图片');
+    const multi={...ref,videoMode:'multimodal' as const};
+    const audio={...newNode('audio',{x:0,y:0}),src:'/audio.mp3'};
+    const refs=[...Array(30).fill(image),...Array(10).fill(video),...Array(10).fill(audio)];
+    expect(videoInputError(multi,refs)).toBe('');
+    for(const extra of [image,video,audio]) expect(videoInputError(multi,[...refs,extra])).toContain('最多支持 30 张图片、10 个视频、10 段音频');
+  });
+
 
   it('uses Seedance 2.0 limits of 9 images and 3 audios without enabling video references',()=>{
     const image={...newNode('image',{x:0,y:0}),src:'/image.jpg'};

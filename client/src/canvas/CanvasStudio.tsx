@@ -23,7 +23,6 @@ import MjImagePicker, { latestMjImages } from './MjImagePicker';
 
 import ImageTools from './ImageTools';
 import { VIDEO_EDIT_MODEL, videoInputError, readVideoDuration } from './videoInputs';
-import { getZonghengVideoReferenceLimits } from '../../../shared/zonghengVideo';
 import { canvasVideoReferenceLimits } from '../../../shared/canvasVideoReferences';
 import type { GenerateOptions } from './GeneratorPanel';
 import { applyGenerationEvent, applyPendingGeneration, referenceDataUrl, streamGeneration } from './generation';
@@ -612,7 +611,7 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     const target = source && source.kind === options.kind && (!source.src || source.generator) ? source
       : newNode(options.kind, source ? { x: source.x + source.width + 100, y: source.y } : center());
     const capturedRefs = references.slice();
-    const imageLimit = options.routingLimits?.maxImages ?? (options.kind === 'video' ? getZonghengVideoReferenceLimits(options.model)?.images : undefined) ?? (options.videoMode === 'multimodal' ? canvasVideoReferenceLimits(options.model)?.images || 10 : 10);
+    const imageLimit = options.routingLimits?.maxImages ?? (options.kind === 'video' ? canvasVideoReferenceLimits(options.model)?.images : undefined) ?? 10;
     const imageRefs = capturedRefs.filter(n => n.kind === 'image' && n.src);
     if (imageRefs.length > imageLimit) { setNotice(`当前模式最多使用 ${imageLimit} 张参考图片，请移除多余连线。`); return; }
     if (options.kind === 'video' && options.videoMode === 'frames' && (!(options.routingLimits ? options.routingLimits.firstFrame : /^(veo|wan3\.0)/i.test(options.model)) || !imageRefs.some(n => n.id === options.firstFrameId) || Boolean(options.lastFrameId && !imageRefs.some(n => n.id === options.lastFrameId)))) { setNotice('请重新选择有效的首尾帧，并使用支持首尾帧的模型。'); return; }

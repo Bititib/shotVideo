@@ -24,12 +24,13 @@ vi.mock('../client/src/api/analysis', () => ({ getCachedTtsModels: () => [], ana
 vi.mock('../client/src/canvas/generation', async importOriginal => ({ ...await importOriginal<any>(), referenceDataUrl: vi.fn().mockResolvedValue('data:image/png;base64,aGVsbG8='), streamGeneration: vi.fn() }));
 
 beforeEach(() => {
+  localStorage.setItem('token', 'canvas-test-session');
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   vi.stubGlobal('PointerEvent', class extends MouseEvent { pointerId: number; constructor(type: string, init: any) { super(type, init); this.pointerId = init?.pointerId ?? 1; } });
   HTMLElement.prototype.setPointerCapture = vi.fn();
   useAuthStore.setState({ user: { id: 1 } as any, isAuthenticated: true, isLoading: false });
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
+afterEach(() => { localStorage.removeItem('token'); cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 function openSelectedComposer() {
   fireEvent.click(within(screen.getByRole('toolbar', {name:'所选素材操作'})).getByRole('button', {name:'创作',exact:true}));
@@ -501,11 +502,11 @@ describe('canvas user workflows', () => {
     expect(params.reference_videos || []).toEqual(videos.map(n=>n.src));
     expect(params.audio_urls || []).toEqual(audios.map(n=>n.src));
   });
-  it('submits the complete nova reference set using its public model ID', async () => {
+  it.each(['reference', 'multimodal'])('submits the complete nova reference set in %s mode using its public model ID', async mode => {
     const refs = [
       ...Array.from({ length: 30 }, (_, i) => ({ ...newNode('image', { x: 0, y: 0 }), src: '/nova-image-' + i + '.png' })),
-      ...Array.from({ length: 10 }, (_, i) => ({ ...newNode('video', { x: 0, y: 0 }), src: '/nova-video-' + i + '.mp4' })),
-      ...Array.from({ length: 10 }, (_, i) => ({ ...newNode('audio', { x: 0, y: 0 }), src: '/nova-audio-' + i + '.mp3' })),
+      ...Array.from({ length: mode === 'reference' ? 0 : 10 }, (_, i) => ({ ...newNode('video', { x: 0, y: 0 }), src: '/nova-video-' + i + '.mp4' })),
+      ...Array.from({ length: mode === 'reference' ? 0 : 10 }, (_, i) => ({ ...newNode('audio', { x: 0, y: 0 }), src: '/nova-audio-' + i + '.mp3' })),
     ];
     const target = { ...newNode('video', { x: 500, y: 0 }), generator: true, title: 'nova 素材目标' };
     vi.mocked(fetchVideoModels).mockResolvedValueOnce([{ id: 'sd2.5-301010', name: 'sd2.5-301010', description: '',
@@ -523,8 +524,24 @@ describe('canvas user workflows', () => {
     const params = vi.mocked(streamGeneration).mock.calls[0][1];
     expect(params.model).toBe('sd2.5-301010');
     expect(params.reference_images).toHaveLength(30);
-    expect(params.reference_videos).toHaveLength(10);
-    expect(params.audio_urls).toHaveLength(10);
+    expect(params.reference_videos || []).toHaveLength(mode === 'reference' ? 0 : 10);
+    expect(params.audio_urls || []).toHaveLength(mode === 'reference' ? 0 : 10);
+  });
+  it('blocks 31 HM nova images in reference mode before creating or sending a job', async () => {
+    const refs = Array.from({length:31}, (_,i) => ({...newNode('image',{x:0,y:0}),src:'/nova-'+i+'.png'}));
+    const target = {...newNode('video',{x:500,y:0}),generator:true,title:'nova 超量目标'};
+    vi.mocked(fetchVideoModels).mockResolvedValueOnce([{id:'sd2.5-301010',name:'HM Nova',description:'',available:true,rates:{'720p':7},allowedSeconds:[30]}]);
+    const board=mount({...newDocument(),nodes:[...refs,target],edges:refs.map(n=>({id:n.id,from:n.id,to:target.id}))});
+    fireEvent.pointerDown(screen.getByRole('article',{name:target.title}),{button:0,pointerId:1});
+    fireEvent.pointerUp(screen.getByLabelText('无限画布编辑区'),{pointerId:1}); openSelectedComposer();
+    await waitFor(()=>expect(screen.getByText('HM Nova',{exact:true})).toBeTruthy());
+    fireEvent.click(screen.getByRole('button',{name:'图片参考',exact:true}));
+    fireEvent.change(screen.getByLabelText('你想创作什么？'),{target:{value:'保留所有参考素材'}});
+    expect(screen.getByText('参考上限：30 张图片')).toBeTruthy();
+    expect(screen.getByText('当前模式最多使用 30 张参考图片，请移除多余连线。')).toBeTruthy();
+    expect((screen.getByRole('button',{name:'生成视频',exact:true}) as HTMLButtonElement).disabled).toBe(true);
+    expect(streamGeneration).not.toHaveBeenCalled();
+    expect(board.current().nodes.find(n=>n.id===target.id)?.job).toBeUndefined();
   });
   it('sends connected images, video and audio to multimodal generation', async () => {
     const image = { ...newNode('image', { x: 0, y: 0 }), src: '/image.png' };
