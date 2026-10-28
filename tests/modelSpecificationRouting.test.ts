@@ -901,3 +901,39 @@ describe('HSS actual managed submission and recovery', () => {
     expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(94);
   });
 });
+
+
+describe('cross-provider explicit HTTP rejection reaches the real order ledger', () => {
+  const cases = [
+    ['hmstudio', 'seedance_v2.5', 15],
+    ['haya', 'bz-seedance2.5-720p', 15],
+    ['longxia', 'LongXia-video-seedance2_5-standard-720p-express-PerSecond', 15],
+    ['miaowu', 'seedance-2.5-deal', 15],
+    ['funai', 'veo-3.1', 8],
+    ['megaby', 'videos-standard', 15],
+    ['async-video', '2.0B', 15],
+    ['wx-haidiyue', '2.5-s', 30],
+    ['openai', 'seedance-2.5-720p', 15],
+  ] as const;
+  it.each(cases)('%s: complete HTTP 400 rejection fails, refunds once and is not replayed', async (type, upstreamModel, seconds) => {
+    const c = { ...channel(1), type };
+    vi.mocked(ChannelService.getActiveChannels).mockReturnValue([c]);
+    vi.mocked(ChannelService.getChannelRaw).mockReturnValue(c as any);
+    saveModelSpecification({ ...spec(), aliases: [], routes: [{ ...route(1), upstreamModel }] });
+    const reason = 'provider rejected parameters';
+    const payload = type === 'hmstudio' ? { error: reason } : { error: { code: 'invalid_input', message: reason }, request_id: 'trace-only' };
+    const send = vi.fn(async () => Response.json(payload, { status: 400 }));
+    vi.stubGlobal('fetch', send);
+    await handleSpecificationGeneration({ body: { model: 'routing-public-test', prompt: 'scene', seconds, ratio: '16:9', resolution: '720p' }, headers: {}, protocol: 'https', get: () => 'app.invalid', userId } as any, response(), 'video');
+    await vi.waitFor(() => expect(db.select().from(contents).all().at(-1)?.status).toBe('failed'));
+    const row = db.select().from(contents).all().at(-1)!, meta = JSON.parse(row.metadata);
+    expect(send).toHaveBeenCalledOnce();
+    expect(meta.error).toContain(reason);
+    expect(meta.requiresReview).toBe(false);
+    expect(meta.billingStatus).toBe('refunded');
+    expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(100);
+    resumeSpecificationTasks(); resumeSpecificationTasks();
+    expect(send).toHaveBeenCalledOnce();
+    expect(db.select().from(users).where(eq(users.id, userId)).get()!.balance).toBe(100);
+  });
+});
