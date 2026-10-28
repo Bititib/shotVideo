@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { publicGenerationError, publicGenerationEvent } from '../shared/generationMessages';
+import { publicGenerationError, publicGenerationEvent, generationProblemSummary } from '../shared/generationMessages';
 import { generationErrorResponse } from '../server/middleware/generationErrorResponse';
 
 const moderation = 'task failed, code: DataInspectionFailed , message: Green net check rejected image (input)';
@@ -76,4 +76,14 @@ describe('display-only upstream error privacy', () => {
     expect(body.error.request.api_key).toBe('PRIVATE');
     expect(res.statusCode).toBe(502);
   });
+});
+
+
+it('shows the actual cause without nested HUSS recovery diagnostics on cards', () => {
+  const diagnostic = '[上游诊断 HUSS 原提交回执查询失败；保留原编号稍后重查] code=Error：Error: [HUSS /videos] HTTP 400：code=invalid_prompt invalid_prompt: prompt 必须为 1–8000 字符的文本。；提交结果待核实，请在生成记录核实原任务，请勿重复提交。';
+  expect(generationProblemSummary(diagnostic)).toBe('提示词 必须为 1–8000 字符的文本。');
+  expect(publicGenerationError(diagnostic)).toContain('HTTP 400');
+  expect(generationProblemSummary('素材下载失败，请确认链接可访问')).toBe('素材下载失败，请确认链接可访问');
+  expect(generationProblemSummary('[HUSS /videos] HTTP 400：code=invalid_prompt')).toContain('invalid_prompt');
+  expect(generationProblemSummary('失败 Bearer secret-key')).not.toContain('secret-key');
 });

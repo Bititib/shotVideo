@@ -55,3 +55,24 @@ export function publicCanvasJobMessage(job?: { status: string; message?: string 
   return job.status === 'error' || /提交失败|生成失败|invalid.parameters|upstream.error/i.test(job.message)
     ? publicGenerationError(job.message) : job.message;
 }
+
+/** Compact card presentation only; never use for state, billing or stored diagnostics. */
+export function generationProblemSummary(value: unknown): string {
+  const original = sanitizedGenerationReason(value);
+  let text = original;
+  let code = '';
+  for (let i = 0; i < 12; i++) {
+    const before = text;
+    text = text.replace(/^\[(?:上游诊断 |HUSS )[^\]]*\]\s*[:：]?\s*/, '')
+      .replace(/^HTTP\s+\d{3}\s*[:：]?\s*/i, '')
+      .replace(/^Error\s*[:：]\s*/i, '');
+    const match = /^code=([\w.-]+)\s*[:：]?\s*/.exec(text);
+    if (match) { code = match[1]; text = text.slice(match[0].length); }
+    if (code && text.startsWith(code + ':')) text = text.slice(code.length + 1).trim();
+    if (code && text.startsWith(code + '：')) text = text.slice(code.length + 1).trim();
+    if (before === text) break;
+  }
+  text = text.replace(/；提交结果待核实，请在生成记录核实原任务，请勿重复提交。?$/, '')
+    .replace(/^prompt(?=\s|必须)/i, '提示词').trim();
+  return text || original;
+}

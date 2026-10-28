@@ -1,6 +1,6 @@
 import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
 import { videoReviewLabel, videoReviewMessage } from '../../../../shared/videoReview';
-import { publicGenerationError } from '../../../../shared/generationMessages';
+import { publicGenerationError, generationProblemSummary } from '../../../../shared/generationMessages';
 import { HUSS_BB_PUBLIC_MODEL, HUSS_HSS_MODEL } from '../../../../shared/hussBbVideo';
 import { useVideoQuote } from '../../hooks/useVideoQuote';
 import { routingMismatches } from '../../../../shared/modelRouting';
@@ -1829,13 +1829,13 @@ export default function VideoPage() {
                             <div className="flex flex-col items-center gap-2 p-4" role="status">
                               <AlertCircle className="w-8 h-8 text-amber-400/70" />
                               <p className="text-sm text-amber-300">{videoReviewLabel(task.metadata)}</p>
-                              <p className="text-xs text-amber-200/80 text-center">{task.statusMessage}</p>
+                              <p className="text-xs text-amber-200/80 text-center">{generationProblemSummary(task.statusMessage)}</p>
                               {task.videoUrl && <button type="button" className="text-xs underline text-amber-200 focus-visible:outline focus-visible:outline-2" onClick={() => setPlayingVideo({ url: task.videoUrl!, prompt: restorePrompt(task.prompt) })}>查看已生成视频</button>}
                             </div>
                           ) : task.status === 'error' ? (
                             <div className="flex flex-col items-center gap-2 p-4">
                               <AlertCircle className="w-8 h-8 text-red-400/60" />
-                              <p className="text-xs text-red-400/80 text-center line-clamp-2">{task.error}</p>
+                              <p className="text-xs text-red-400/80 text-center line-clamp-2">{generationProblemSummary(task.error)}</p>
                             </div>
                           ) : null}
                         </div>
