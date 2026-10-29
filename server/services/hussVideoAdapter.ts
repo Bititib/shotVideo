@@ -49,13 +49,13 @@ export async function fetchHussVideoContent(channel: HussChannel, taskId: string
   throw new Error('HUSS 原任务下载未返回响应');
 }
 export class HussApiError extends Error { constructor(message: string, readonly status: number, readonly uncertain = false, readonly retryAfterMs = 0) { super(message); } }
-async function hussRequest(channel: HussChannel, endpoint: string, body?: unknown, idempotencyKey?: string) {
+async function hussRequest(channel: HussChannel, endpoint: string, body?: unknown, idempotencyKey?: string, unified = false) {
   const persistent = isHussHssModel((body as any)?.model);
   const generation = body !== undefined;
   let response: Response;
   try {
     response = await fetch(hussApiBase(channel.baseUrl) + '/v1' + endpoint, { method: generation ? 'POST' : 'GET',
-      headers: { Authorization: 'Bearer ' + channel.apiKey, ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}), ...(generation ? { 'Content-Type': 'application/json' } : {}) },
+      headers: { Authorization: 'Bearer ' + channel.apiKey, ...(unified ? { 'X-Huss-Video-API': 'unified-v1' } : {}), ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}), ...(generation ? { 'Content-Type': 'application/json' } : {}) },
       ...(generation ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(channel.timeout || (generation ? 900_000 : 60_000)), redirect: 'error' });
   } catch (error: any) { throw new HussApiError(hussFailure(endpoint + ' 连接', { code: error?.cause?.code || error?.code || error?.name, message: error?.message, detail: error?.cause?.message }, undefined, undefined, channel.apiKey) + (generation && !videoRequestNotSent(error) ? '；提交结果待核实，请勿重复生成' : ''), 0, generation && !videoRequestNotSent(error)); }
   const requestId = response.headers.get('x-request-id') || response.headers.get('request-id') || undefined;
@@ -68,7 +68,7 @@ async function hussRequest(channel: HussChannel, endpoint: string, body?: unknow
     ['queued','processing','accepted','not_submitted','rejected','submission_uncertain','failed','cancelled','canceled','completed','in_progress','running','success','succeeded'].includes(state)) return payload;
   if (generation && ['rejected','not_submitted'].includes(state) && payload.submission_uncertain !== true && !videoErrorTaskId(payload, response.headers))
     throw new HussApiError(hussFailure(endpoint, payload, response.status, requestId, channel.apiKey), response.status, false);
-  if (persistent && response.ok && typeof payload?.id === 'string' && /^video_[A-Za-z0-9_-]+$/.test(payload.id)) return payload;
+  if (persistent && response.ok && typeof payload?.id === 'string' && Boolean(payload.id.trim())) return payload;
   const failure = payload?.error || payload?.code && payload.code !== 0;
   if (persistent && (!response.ok || failure)) {
     const code = payload?.error?.code || payload?.code;
@@ -116,9 +116,10 @@ export async function submitHussVideo(channel: HussChannel, input: HussVideoInpu
     }
     if (Buffer.byteLength(JSON.stringify(request)) > 4 * 1024 * 1024) throw new Error('HUSS hss 请求超过 4 MiB');
   }
-  beforeSubmit({ ...request, idempotency_key: key });
+  const unified = input.model === HUSS_HSS_B_MODEL;
+  beforeSubmit({ ...request, idempotency_key: key, ...(unified ? { huss_api_mode: 'unified-v1' } : {}) });
   let result: any;
-  try { result = await hussRequest(channel, '/videos', request, key); }
+  try { result = await hussRequest(channel, '/videos', request, key, unified); }
   catch (error) {
     if (!(error instanceof HussApiError) || !error.uncertain) throw error;
     if (isHussHssModel(input.model)) throw error; // Persisted replay is handled by recovery, never legacy GET.
@@ -129,7 +130,7 @@ export async function submitHussVideo(channel: HussChannel, input: HussVideoInpu
     throw error;
   }
   const id = result?.id ?? result?.data?.id;
-  if (isHussHssModel(input.model) && (typeof id !== 'string' || !/^video_[A-Za-z0-9_-]+$/.test(id))) throw new HussApiError(hussFailure('异步任务编号无效', result, 202, undefined, channel.apiKey), 202, true);
+  if (isHussHssModel(input.model) && (typeof id !== 'string' || !id.trim())) throw new HussApiError(hussFailure('异步任务编号无效', result, 202, undefined, channel.apiKey), 202, true);
   if ((typeof id !== 'string' && typeof id !== 'number') || !String(id).trim()) throw new HussApiError(hussFailure('未返回任务编号，提交结果待核实', result, 202, undefined, channel.apiKey), 202, true);
   if (isHussHssModel(input.model) && result?.status === 'completed' && result?.url) {
     try { onAccepted?.(result); }
@@ -141,7 +142,7 @@ export function normalizeHussTask(raw: any, baseUrl: string, taskId?: string) {
   const data = raw?.data && typeof raw.data === 'object' ? raw.data : raw; const original = String(data?.status || '').toLowerCase();
   if (taskId && [data?.id, data?.task_id].some(id => id != null && String(id) !== taskId)) throw new Error('HUSS 返回的任务编号不一致，继续核查原任务');
   let status = ({ queued: 'queued', pending: 'queued', processing: 'running', in_progress: 'running', running: 'running', completed: 'completed', succeeded: 'completed', success: 'completed', not_submitted: 'failed', failed: 'failed', rejected: 'failed', cancelled: 'cancelled', canceled: 'cancelled' } as Record<string, string>)[original];
-  if (taskId?.startsWith('video_') && (data?.submission_uncertain === true || data?.recovery_status === 'manual_review_required')) status = 'running';
+  if (taskId && (data?.submission_uncertain === true || data?.recovery_status === 'manual_review_required')) status = 'running';
   if (!status) throw new Error(hussFailure('任务响应未包含有效状态 ' + original, data)); const rawUrl = data?.url || data?.output?.url || data?.output?.video_url || data?.video_url || '';
   const storagePending = status === 'completed' && data?.storage_status === 'pending';
   if (storagePending) status = 'running';
@@ -160,18 +161,18 @@ export async function pollHussVideo(channel: HussChannel, taskId: string) {
 /** Legacy BB: read-only receipt. HSS: documented identical-key/payload replay, never a new key. */
 export async function recoverHussSubmission(channel: HussChannel, key: string, snapshot?: Record<string, any>) {
   if (!/^[A-Za-z0-9._:-]{1,128}$/.test(key)) throw new Error('HUSS 原提交编号无效');
-  if (isHussHssModel(snapshot?.model)) {
+  if (snapshot?.model === HUSS_HSS_MODEL || snapshot?.model === HUSS_HSS_B_MODEL && snapshot?.huss_api_mode === 'unified-v1') {
     if (snapshot.idempotency_key !== key) throw new Error('HUSS 原请求快照与幂等编号不匹配，未重放');
     if (typeof snapshot.prompt !== 'string' || !['images','videos','audios'].every(field => snapshot[field] === undefined || Array.isArray(snapshot[field]) && snapshot[field].every((url: unknown) => typeof url === 'string'))) throw new Error('HUSS 原请求快照不完整，未重放');
     hussVideoParameters({ model: snapshot.model, prompt: snapshot.prompt, seconds: snapshot.duration, ratio: snapshot.ratio, resolution: snapshot.resolution,
       images: snapshot.images || [], videos: snapshot.videos || [], audios: snapshot.audios || [], idempotencyKey: key, publicBaseUrl: '' });
-    const { idempotency_key: _, ...request } = snapshot;
+    const { idempotency_key: _, huss_api_mode, ...request } = snapshot;
     {
       // Documented same-account/key/parameters replay returns the original video ID.
-      const raw = await hussRequest(channel, '/videos', request, key);
-      if (typeof raw?.id === 'string' && /^video_[A-Za-z0-9_-]+$/.test(raw.id))
+      const raw = await hussRequest(channel, '/videos', request, key, huss_api_mode === 'unified-v1');
+      if (typeof raw?.id === 'string' && raw.id.trim())
         return { state: 'accepted' as const, taskId: raw.id, error: '', initialTask: raw };
-      return { state: 'unknown' as const, taskId: '', error: hussFailure('异步回执缺少 video_ 编号', raw) };
+      return { state: 'unknown' as const, taskId: '', error: hussFailure('原提交回执', { message: '上游回执未返回任务 id，尚不能确认受理结果', error: raw?.error || raw?.message }) };
     }
   }
   const raw = await hussRequest(channel, '/videos/submissions', undefined, key);

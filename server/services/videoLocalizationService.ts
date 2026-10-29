@@ -72,7 +72,7 @@ export async function downloadAndLocalizeVideo(
     }
   }
 
-  const hssContent = isHussChannel(channel) && isHussHssModel(model) && videoId.startsWith('video_');
+  const hssContent = isHussChannel(channel) && isHussHssModel(model) && Boolean(videoId);
   let response = authenticatedV6kContent ? await fetchV6kVideoContent(channel, videoId) : hssContent ? await fetchHussVideoContent(channel, videoId) : isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
   // HUSS documents /content as an alternative to the signed media URL.
   // One read-only fallback per save attempt; never recreate the generation.

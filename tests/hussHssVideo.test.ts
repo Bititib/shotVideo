@@ -108,8 +108,25 @@ it('submits channel B through the persistent video protocol and restores its exa
   vi.stubGlobal('fetch',fetcher);
   await expect(submitHussVideo(channel,{...input,model,prompt:'长'.repeat(20000)},p=>{snapshot=p;})).rejects.toMatchObject({uncertain:true});
   expect(snapshot.model).toBe(model);
+  expect(snapshot.huss_api_mode).toBe('unified-v1');
+  expect(fetcher.mock.calls[0][1].headers['X-Huss-Video-API']).toBe('unified-v1');
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).not.toHaveProperty('huss_api_mode');
   expect(snapshot.images).toEqual(input.images);
   expect(fetcher.mock.calls[0][0]).toBe('https://www.huss.top/v1/videos');
   expect(await recoverHussSubmission(channel,input.idempotencyKey,snapshot)).toMatchObject({state:'accepted',taskId:'video_b'});
   expect(fetcher.mock.calls[1][1].body).toBe(fetcher.mock.calls[0][1].body);
+});
+
+
+it('does not replay an old channel B submission in a different API mode', async () => {
+  const fetcher=vi.fn(async()=>Response.json({status:'accepted',task_id:'task_original'}));
+  vi.stubGlobal('fetch',fetcher);
+  const snapshot={model:'hss-2.5-301010-渠道B',prompt:'old',idempotency_key:'original-key'};
+  expect(await recoverHussSubmission(channel,'original-key',snapshot)).toMatchObject({state:'accepted',taskId:'task_original'});
+  expect(fetcher.mock.calls[0][0]).toBe('https://www.huss.top/v1/videos/submissions');
+  expect((fetcher.mock.calls[0] as any)[1].method).toBe('GET');
+});
+it('accepts opaque unified IDs and keeps uncertain accepted tasks in progress', async () => {
+  vi.stubGlobal('fetch',vi.fn(async()=>Response.json({id:'task_unified_original',status:'queued'},{status:202})));
+  expect(await submitHussVideo(channel,{...input,model:'hss-2.5-301010-渠道B'},()=>{})).toBe('task_unified_original');
 });
