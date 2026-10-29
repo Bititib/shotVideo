@@ -868,6 +868,25 @@ describe('HSS actual managed submission and recovery', () => {
     return { body: { model, prompt: 'original scene', seconds: 4, ratio: '21:9', resolution: '720p' }, headers: {}, protocol: 'https', get: () => 'app.invalid', userId } as any;
   }
   const last = () => db.select().from(contents).all().at(-1)!;
+  it('submits channel B from the public model, persists its opaque ID and settles after content-only completion', async () => {
+    const req=setupHss(); const spec=getModelSpecification(model)!;
+    saveModelSpecification({...spec,routes:spec.routes.map(r=>({...r,upstreamModel:'hss-2.5-301010-渠道B'}))});
+    vi.stubGlobal('fetch',vi.fn(async (_url,init:any)=>{
+      if(init.method==='POST') {
+        expect(init.headers['X-Huss-Video-API']).toBe('unified-v1');
+        expect(JSON.parse(last().metadata).hussPayload.huss_api_mode).toBe('unified-v1');
+        expect(JSON.parse(init.body).model).toBe('hss-2.5-301010-渠道B');
+        return Response.json({id:'task_unified_b_new',status:'queued'},{status:202});
+      }
+      expect(JSON.parse(last().metadata).videoId).toBe('task_unified_b_new');
+      return Response.json({id:'task_unified_b_new',status:'completed',content_url:'/v1/videos/task_unified_b_new/content'});
+    }));
+    await handleSpecificationGeneration(req,response(),'video');
+    await vi.waitFor(()=>expect(last().status).toBe('completed'));
+    expect(JSON.parse(last().metadata)).toMatchObject({billingStatus:'settled',requiresReview:false});
+    expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBe(94);
+    resumeSpecificationTasks();expect(fetch).toHaveBeenCalledTimes(2);
+  });
   it('saves the ID before polling, downloads, and settles one charge', async () => {
     const req = setupHss();
     req.body.prompt = '完整提示词'.repeat(5000);

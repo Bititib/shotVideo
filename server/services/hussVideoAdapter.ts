@@ -73,7 +73,7 @@ async function hussRequest(channel: HussChannel, endpoint: string, body?: unknow
   if (persistent && (!response.ok || failure)) {
     const code = payload?.error?.code || payload?.code;
     const rejected = [400,401,402,403].includes(response.status) &&
-      ['invalid_prompt','invalid_input','invalid_duration','unsupported_resolution','invalid_reference_count','invalid_api_key','model_not_allowed','request_not_allowed'].includes(code);
+      ['too_many_references','invalid_task_id_format','invalid_prompt','invalid_input','invalid_duration','unsupported_resolution','invalid_reference_count','invalid_api_key','model_not_allowed','request_not_allowed'].includes(code);
     const retry = response.headers.get('retry-after') || '';
     const delay = /^\d+$/.test(retry) ? Number(retry) * 1000 : Math.max(0, Date.parse(retry) - Date.now()) || 0;
     throw new HussApiError(hussFailure(endpoint, payload, response.status, requestId, channel.apiKey), response.status,
@@ -143,7 +143,8 @@ export function normalizeHussTask(raw: any, baseUrl: string, taskId?: string) {
   if (taskId && [data?.id, data?.task_id].some(id => id != null && String(id) !== taskId)) throw new Error('HUSS 返回的任务编号不一致，继续核查原任务');
   let status = ({ queued: 'queued', pending: 'queued', processing: 'running', in_progress: 'running', running: 'running', completed: 'completed', succeeded: 'completed', success: 'completed', not_submitted: 'failed', failed: 'failed', rejected: 'failed', cancelled: 'cancelled', canceled: 'cancelled' } as Record<string, string>)[original];
   if (taskId && (data?.submission_uncertain === true || data?.recovery_status === 'manual_review_required')) status = 'running';
-  if (!status) throw new Error(hussFailure('任务响应未包含有效状态 ' + original, data)); const rawUrl = data?.url || data?.output?.url || data?.output?.video_url || data?.video_url || '';
+  if (!status) throw new Error(hussFailure('任务响应未包含有效状态 ' + original, data)); const rawUrl = data?.url || data?.output?.url || data?.output?.video_url || data?.video_url ||
+    (status === 'completed' && taskId ? hussApiBase(baseUrl) + '/v1/videos/' + encodeURIComponent(taskId) + '/content' : '');
   const storagePending = status === 'completed' && data?.storage_status === 'pending';
   if (storagePending) status = 'running';
   if (status === 'completed' && !rawUrl) throw new Error(hussFailure('任务已完成但缺少成品地址，继续查询原任务', data));
@@ -169,7 +170,13 @@ export async function recoverHussSubmission(channel: HussChannel, key: string, s
     const { idempotency_key: _, huss_api_mode, ...request } = snapshot;
     {
       // Documented same-account/key/parameters replay returns the original video ID.
-      const raw = await hussRequest(channel, '/videos', request, key, huss_api_mode === 'unified-v1');
+      let raw: any;
+      try { raw = await hussRequest(channel, '/videos', request, key, huss_api_mode === 'unified-v1'); }
+      catch (error) {
+        if (error instanceof HussApiError && !error.uncertain && error.status >= 400)
+          return { state: 'rejected' as const, taskId: '', error: error.message };
+        throw error;
+      }
       if (typeof raw?.id === 'string' && raw.id.trim())
         return { state: 'accepted' as const, taskId: raw.id, error: '', initialTask: raw };
       return { state: 'unknown' as const, taskId: '', error: hussFailure('原提交回执', { message: '上游回执未返回任务 id，尚不能确认受理结果', error: raw?.error || raw?.message }) };

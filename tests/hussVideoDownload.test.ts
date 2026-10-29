@@ -73,3 +73,13 @@ it('HSS content errors preserve HTTP status and Retry-After for the save worker'
   await expect(downloadAndLocalizeVideo('https://cdn.example/old', 'video_original', 'hss-2.5-301010', 1)).rejects.toMatchObject({ status: 409, retryAfterMs: 90000, message: expect.stringContaining('video_not_ready') });
   expect(fetch).toHaveBeenCalledOnce(); expect(fs.renameSync).not.toHaveBeenCalled();
 });
+
+
+it('downloads channel B using an opaque original ID and strips credentials on redirects', async () => {
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValueOnce(new Response(null,{status:307,headers:{location:'https://storage.example/b.mp4'}}))
+    .mockResolvedValueOnce(new Response(new Uint8Array([0,0,0,24,102,116,121,112]),{headers:{'content-type':'video/mp4'}})));
+  await downloadAndLocalizeVideo('https://cdn.example/expired','task_unified_b','hss-2.5-301010',1);
+  expect(fetch).toHaveBeenNthCalledWith(1,'https://www.huss.top/v1/videos/task_unified_b/content',expect.objectContaining({headers:{Authorization:'Bearer huss-secret'}}));
+  expect(fetch).toHaveBeenNthCalledWith(2,'https://storage.example/b.mp4',expect.objectContaining({headers:{}}));
+  expect(fs.renameSync).toHaveBeenCalledOnce();
+});

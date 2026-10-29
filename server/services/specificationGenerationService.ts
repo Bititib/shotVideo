@@ -303,7 +303,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         onEvent({ type: 'complete', videoUrl: localized, contentId: id }); return;
       }
     }
-    await wait(saveRetryMs || (isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : isHussChannel(channel) && taskId.startsWith('video_') ? 12_000 : 8_000));
+    await wait(saveRetryMs || (isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : isHussChannel(channel) ? 15_000 : 8_000));
   }
   if (isHussChannel(channel)) {
     patch(id, { hussQueryResumeAt: Date.now() + 60_000 });
@@ -819,7 +819,11 @@ async function resumeHussReceipt(id: number, channel: any, key: string) {
   const meta = metadata(id);
   if (meta.videoId || meta.hussIdempotencyKey !== key) return;
   if (receipt.state === 'accepted') {
-    acceptVideoSubmission(id, receipt.taskId, { provider: 'huss', channelId: channel.id, channelApiKeyId: channel.apiKeyId });
+    try { acceptVideoSubmission(id, receipt.taskId, { provider: 'huss', channelId: channel.id, channelApiKeyId: channel.apiKeyId }); }
+    catch (error: any) {
+      holdForReview(id, transportDiagnostic('HUSS', '已受理任务凭据保存异常，保留原任务核查', error, channel.apiKey), 'local');
+      return;
+    }
     patch(id, { ...('initialTask' in receipt ? { hussInitialTask: receipt.initialTask } : {}), error: null, progressText: '已从 HUSS 原提交回执找回任务，正在查询结果' });
     await pollVideo(id, channel, receipt.taskId, () => {});
   } else if (receipt.state === 'rejected') {

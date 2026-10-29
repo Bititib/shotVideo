@@ -1,3 +1,4 @@
+import { persistVideoSubmissionReceipt } from '../server/services/videoSubmissionReceiptService.js';
 import { beforeEach, afterEach, afterAll, expect, it, vi } from 'vitest';
 vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 vi.mock('../server/services/videoLocalizationService.js', () => ({ downloadAndLocalizeVideo: vi.fn(async () => '/uploads/huss-original.mp4') }));
@@ -14,6 +15,7 @@ const balance = () => db.select().from(users).where(eq(users.id, 1)).get()!.bala
 const change = (values: any) => db.update(contents).set({ metadata: JSON.stringify({ ...JSON.parse(saved().metadata), ...values }) }).where(eq(contents.id, id)).run();
 beforeEach(() => {
   vi.clearAllMocks();
+  if (sqlite.prepare("SELECT name FROM sqlite_master WHERE name='video_submission_receipts'").get()) sqlite.exec('DELETE FROM video_submission_receipts');
   vi.mocked(downloadAndLocalizeVideo).mockReset().mockResolvedValue('/uploads/huss-original.mp4');
   db.delete(contents).run(); db.delete(channels).run(); db.delete(users).run();
   db.insert(users).values({ id: 1, email: 'recovery@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
@@ -54,7 +56,7 @@ it('continues polling storage pending, without submitting or charging again', as
   await VideoRecoveryService.recover(id); await vi.advanceTimersByTimeAsync(100);
   expect(saved().status).toBe('processing'); expect(JSON.parse(saved().metadata).progressText).toContain('正在保存成品');
   expect(downloadAndLocalizeVideo).not.toHaveBeenCalled();
-  await vi.advanceTimersByTimeAsync(8100);
+  await vi.advanceTimersByTimeAsync(15100);
   expect(saved().status).toBe('completed'); expect(balance()).toBe(94);
   expect(vi.mocked(fetch).mock.calls.every(call => call[1]?.method === 'GET')).toBe(true);
 });
@@ -195,4 +197,47 @@ it('an existing upstreamTaskId prevents replay even when legacy videoId is missi
   }));
   resumeSpecificationTasks(); await vi.waitFor(() => expect(saved().status).toBe('completed'));
   expect(fetch).toHaveBeenCalledOnce(); expect(balance()).toBe(94);
+});
+
+
+it('recovers channel B from the persisted unified snapshot through completion with only a content endpoint', async () => {
+  const snapshot={model:'hss-2.5-301010-渠道B',prompt:'original',duration:4,ratio:'16:9',resolution:'720p',idempotency_key:'original-b',huss_api_mode:'unified-v1'};
+  change({videoId:'',upstreamModel:snapshot.model,actualModel:'hss-2.5-301010',hussPayload:snapshot,hussIdempotencyKey:'original-b',reviewKind:'submission'});
+  vi.stubGlobal('fetch',vi.fn(async (_url,init:any)=>{
+    if(init.method==='POST') {
+      expect(init.headers['X-Huss-Video-API']).toBe('unified-v1');
+      expect(init.headers['Idempotency-Key']).toBe('original-b');
+      return Response.json({id:'task_unified_b',status:'queued'},{status:202});
+    }
+    expect(JSON.parse(saved().metadata).videoId).toBe('task_unified_b');
+    return Response.json({id:'task_unified_b',status:'completed',content_url:'/v1/videos/task_unified_b/content'});
+  }));
+  await VideoRecoveryService.recover(id);
+  await vi.waitFor(()=>expect(saved().status, saved().metadata).toBe('completed'));
+  expect(downloadAndLocalizeVideo).toHaveBeenCalledWith('https://www.huss.top/v1/videos/task_unified_b/content','task_unified_b','hss-2.5-301010',1,null);
+  expect(JSON.parse(saved().metadata)).toMatchObject({requiresReview:false,billingStatus:'settled'});
+  expect(balance()).toBe(94);
+  resumeSpecificationTasks(); expect(fetch).toHaveBeenCalledTimes(2);
+});
+it('ends a channel B recovery with explicit invalid_prompt rejection and refunds once', async () => {
+  change({videoId:'',actualModel:'hss-2.5-301010',reviewKind:'submission',hussIdempotencyKey:'original-b',
+    hussPayload:{model:'hss-2.5-301010-渠道B',prompt:'original',duration:4,ratio:'16:9',resolution:'720p',idempotency_key:'original-b',huss_api_mode:'unified-v1'}});
+  vi.stubGlobal('fetch',vi.fn(async()=>Response.json({error:{code:'invalid_prompt',message:'明确拒绝'}},{status:400})));
+  await VideoRecoveryService.recover(id);
+  await vi.waitFor(()=>expect(saved().status).toBe('failed'));
+  expect(balance()).toBe(100); expect(JSON.parse(saved().metadata)).toMatchObject({requiresReview:false,billingStatus:'refunded'});
+  resumeSpecificationTasks(); expect(fetch).toHaveBeenCalledOnce();
+});
+
+
+it('never refunds a recovered accepted task when its saved receipt conflicts', async () => {
+  persistVideoSubmissionReceipt({contentId:id,upstreamTaskId:'previous-id',provider:'huss',channelId:1,channelApiKeyId:null});
+  change({videoId:'',actualModel:'hss-2.5-301010',reviewKind:'submission',hussIdempotencyKey:'original-b',
+    hussPayload:{model:'hss-2.5-301010-渠道B',prompt:'original',duration:4,ratio:'16:9',resolution:'720p',idempotency_key:'original-b',huss_api_mode:'unified-v1'}});
+  vi.stubGlobal('fetch',vi.fn(async()=>Response.json({id:'different-id',status:'queued'},{status:202})));
+  await VideoRecoveryService.recover(id);
+  await vi.waitFor(()=>expect(JSON.parse(saved().metadata).reviewKind).toBe('local'));
+  expect(balance()).toBe(94); expect(saved().status).not.toBe('failed');
+  expect(downloadAndLocalizeVideo).not.toHaveBeenCalled();
+  expect(fetch).toHaveBeenCalledOnce();
 });
