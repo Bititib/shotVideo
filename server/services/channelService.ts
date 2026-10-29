@@ -9,7 +9,9 @@ import { isZonghengChannel, zonghengBaseUrl, ZONGHENG_MODEL_PREFIX } from './zon
 import { HUSS_CHANNEL_TYPE, hussApiBase, isHussChannel, fetchHussVideoModels } from './hussVideoAdapter.js';
 import { HAYA_MODEL_IDS, HAYA_XG_SEEDANCE_20_MODEL, getHayaVideoSpec, hayaPublicModelId, hayaUpstreamModelId } from '../../shared/hayaVideo.js';
 import { isHayaChannel, hayaApiBaseUrl } from './hayaVideoAdapter.js';
-import { db } from '../db/index.js';
+import { db, sqlite } from '../db/index.js';
+import { SI_YUE_TIAN_MINIMAX_MODEL, isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
+import { ensureSiYueTianMinimaxModel } from './siYueTianMinimaxCatalog.js';
 import { channelApiKeys, channels, models, modelPricing } from '../db/schema.js';
 import { and, desc, eq } from 'drizzle-orm';
 import { hmStudioPoolConfig, hmStudioPoolKey, hmStudioQueue } from './hmStudioQueueService.js';
@@ -710,7 +712,8 @@ export class ChannelService {
     const unique = [...new Map(normalized.map((item: any) => [item.modelId, item])).values()] as Array<{
       modelId: string; displayName: string; capability: string;
     }>;
-    let added = 0;
+    let added = isSiYueTianVideoHost(channel.baseUrl) && unique.some(item => item.modelId === SI_YUE_TIAN_MINIMAX_MODEL)
+      ? ensureSiYueTianMinimaxModel(sqlite, channel.id) : 0;
     for (const item of unique) {
       if (isHayaChannel(channel) && item.modelId === HAYA_XG_SEEDANCE_20_MODEL
         && !db.select().from(modelPricing).where(eq(modelPricing.modelPattern, item.modelId)).get()) {

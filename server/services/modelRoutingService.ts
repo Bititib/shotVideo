@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { channels, models, settings } from '../db/schema.js';
 import { ChannelService } from './channelService.js';
+import { SI_YUE_TIAN_MINIMAX_MODEL, siYueTianMinimaxInputErrors } from '../../shared/siYueTianMinimax.js';
 import { routingMismatches, routeRequestCost, canShareImageAliases, type ModelSpecification, type ModelRoute, type RoutingInput, type ModelInputLimits } from '../../shared/modelRouting.js';
 
 const CONFIG_KEY = 'model_specification_routes_v1';
@@ -113,6 +114,7 @@ export function inspectModelRoutes(spec: ModelSpecification, input?: RoutingInpu
     const execution = registry.find(m => m.modelId === route.executionModel);
     const reason = execution?.isActive === 0 && execution.modelId !== MJ_OVERFLOW_VIDEO_MODEL ? ['执行模型已禁用'] : !spec.enabled || model?.isActive !== 1 ? ['规格已禁用'] : !route.enabled ? ['模型线路已禁用'] : !executions.length ? ['渠道或 Key 已禁用 / 未配置'] : [];
     const matches = input ? routingMismatches(route.limits, input, spec.kind) : [];
+    if (input && route.executionModel === SI_YUE_TIAN_MINIMAX_MODEL) matches.push(...siYueTianMinimaxInputErrors(input));
     const targets = executions.map(channel => ({ route, channel, cost: input ? routeRequestCost(route, input) : null, healthKey: routeHealthKey(route, channel.apiKeyId) }));
     return { route, reasons: [...reason, ...matches],
       cost: input ? routeRequestCost(route, input) : null, health: targets.map(t => ({ key: t.healthKey, ...(health[t.healthKey] || { state: 'healthy' }) })), candidates: targets };
@@ -120,6 +122,7 @@ export function inspectModelRoutes(spec: ModelSpecification, input?: RoutingInpu
 }
 export function selectModelRoutes(spec: ModelSpecification, input: RoutingInput): RouteCandidate[] {
   const reasons = routingMismatches(spec.limits, input, spec.kind);
+  if (spec.modelId === SI_YUE_TIAN_MINIMAX_MODEL) reasons.push(...siYueTianMinimaxInputErrors(input));
   if (reasons.length) throw error(reasons.join('；'));
   return inspectModelRoutes(spec, input).filter(item => !item.reasons.length).flatMap(item => item.candidates)
     .sort((a, b) => (a.cost ?? Infinity) - (b.cost ?? Infinity) || a.route.priority - b.route.priority || a.channel.priority - b.channel.priority || a.channel.id - b.channel.id);
@@ -141,6 +144,7 @@ export function routeUnavailableReason(modelId: string, target: RouteCandidate, 
   if (!route.enabled) return '提交前检查：模型线路已禁用';
   if (JSON.stringify(route) !== JSON.stringify(target.route)) return '提交前检查：线路配置已变更，请重新核对参数';
   const mismatches = [...routingMismatches(spec.limits, input, spec.kind), ...routingMismatches(route.limits, input, spec.kind)];
+  if (route.executionModel === SI_YUE_TIAN_MINIMAX_MODEL) mismatches.push(...siYueTianMinimaxInputErrors(input));
   if (mismatches.length) return '提交前检查：' + [...new Set(mismatches)].join('；');
   const registry = db.select().from(models).all();
   if (registry.find(m => m.modelId === modelId)?.isActive !== 1) return '提交前检查：对外模型已禁用';

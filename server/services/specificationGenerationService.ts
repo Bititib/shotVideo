@@ -1,4 +1,6 @@
 import { activeSpecificationTasks } from './videoRecoveryAction.js';
+import { SI_YUE_TIAN_MINIMAX_MODEL } from '../../shared/siYueTianMinimax.js';
+import { normalizeSiYueTianMinimaxTask } from './siYueTianMinimaxAdapter.js';
 import { isMegabyChannel, normalizeMegabyTask, validateMegabyVideoInput, validateMegabyReferenceDurations } from './megabyVideoAdapter.js';
 import { isHussChannel, recoverHussSubmission, normalizeHussTask } from './hussVideoAdapter.js';
 import { publicApiModelId } from '../../shared/funAi.js';
@@ -60,12 +62,17 @@ function list(body: any, keys: string[]): string[] {
   return value;
 }
 export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: string): SpecificationRequest {
+  const siYueTianMinimax = kind === 'video' && body.model === SI_YUE_TIAN_MINIMAX_MODEL;
+  if (siYueTianMinimax) {
+    const seconds = [body.seconds, body.duration, body.video_length].filter(value => value !== undefined).map(Number);
+    if (seconds.some(value => !Number.isFinite(value)) || new Set(seconds).size > 1) throw fail('seconds、duration、video_length 必须一致且为有效数字');
+  }
   if (body.resolution && body.output_resolution && String(body.resolution).toLowerCase() !== String(body.output_resolution).toLowerCase()) throw fail('resolution 与 output_resolution 不一致');
   if (body.mask !== undefined) throw fail('当前统一规格未配置蒙版编辑，请使用支持蒙版的独立入口');
   if (body.response_format && !['url', 'b64_json'].includes(body.response_format)) throw fail('response_format 仅支持 url 或 b64_json');
-  const images = list(body, ['reference_images', 'image_urls', 'image_url', 'images']);
-  const videos = list(body, ['reference_videos', 'reference_video', 'video_urls', 'video_url']);
-  const audios = list(body, ['audio_urls', 'audio_url', 'reference_audios', 'audios']);
+  const images = list(body, ['reference_images', 'image_urls', 'image_url', 'images', ...(siYueTianMinimax ? ['image_refs'] : [])]);
+  const videos = list(body, ['reference_videos', 'reference_video', 'video_urls', 'video_url', ...(siYueTianMinimax ? ['video_refs'] : [])]);
+  const audios = list(body, ['audio_urls', 'audio_url', 'reference_audios', 'audios', ...(siYueTianMinimax ? ['audio_refs'] : [])]);
   const firstFrame = body.first_frame || body.first_frame_url || '';
   const lastFrame = body.last_frame || body.last_frame_url || body.end_frame_url || '';
   const outputs = Number(body.n ?? 1), seconds = Number(body.video_length ?? body.seconds ?? body.duration ?? 6);
@@ -211,13 +218,14 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       const hussReceipt = isHussChannel(channel) ? hussMeta.hussCompletedReceipt ||
         (hussMeta.upstreamStatus === 'completed' && hussMeta.upstreamResultUrl && (hussMeta.videoId || hussMeta.upstreamTaskId) === taskId
           ? { taskId, resultUrl: hussMeta.upstreamResultUrl } : null) : null;
-      const completedReceipt = hussReceipt || metadata(id).megabyCompletedReceipt;
+      const siYueTianReceipt = metadata(id).actualModel === SI_YUE_TIAN_MINIMAX_MODEL ? metadata(id).siYueTianMinimaxCompletedReceipt : null;
+      const completedReceipt = hussReceipt || metadata(id).megabyCompletedReceipt || siYueTianReceipt;
       if (hussInitial?.status === 'completed' && hussInitial?.url) {
         localCompletion = true;
         task = normalizeHussTask(hussInitial, channel.baseUrl, taskId);
         patch(id, { hussInitialTask: null });
-      } else if ((isMegabyChannel(channel) || hussReceipt) && completedReceipt?.taskId === taskId && completedReceipt.resultUrl) {
-        localCompletion = Boolean(hussReceipt);
+      } else if ((isMegabyChannel(channel) || hussReceipt || siYueTianReceipt) && completedReceipt?.taskId === taskId && completedReceipt.resultUrl) {
+        localCompletion = Boolean(hussReceipt || siYueTianReceipt);
         task = { status: 'completed', progress: 100, resultUrl: completedReceipt.resultUrl };
       } else {
         const megabyInitial = metadata(id).megabyInitialTask;
@@ -225,7 +233,14 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         else {
           const initial = metadata(id).zonghengInitialTask;
           if (isZonghengChannel(channel) && initial) { task = normalizeZonghengTask(initial, channel.baseUrl, 'v6k', taskId); patch(id, { zonghengInitialTask: undefined }); }
-          else task = await pollSpecificationVideo(channel, taskId);
+          else {
+            const meta = metadata(id);
+            if (meta.actualModel === SI_YUE_TIAN_MINIMAX_MODEL && meta.siYueTianMinimaxInitialTask) {
+              task = normalizeSiYueTianMinimaxTask(meta.siYueTianMinimaxInitialTask, channel, taskId);
+              patch(id, { siYueTianMinimaxInitialTask: null });
+            } else task = meta.actualModel === SI_YUE_TIAN_MINIMAX_MODEL
+              ? await pollSpecificationVideo(channel, taskId, meta.actualModel) : await pollSpecificationVideo(channel, taskId);
+          }
         }
       }
     }
@@ -254,6 +269,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       let localized = '';
       try {
         patch(id, { upstreamResultUrl: task.resultUrl,
+          ...(metadata(id).actualModel === SI_YUE_TIAN_MINIMAX_MODEL ? { siYueTianMinimaxCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}),
           ...(isHussChannel(channel) ? { hussCompletedReceipt: { taskId, resultUrl: task.resultUrl }, upstreamGenerated: true, upstreamDeliveryPending: true } : {}),
           ...(isMegabyChannel(channel) ? { megabyCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}) });
         const { downloadAndLocalizeVideo } = await import('./videoLocalizationService.js');
@@ -291,6 +307,10 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
   if (isHussChannel(channel)) {
     patch(id, { hussQueryResumeAt: Date.now() + 60_000 });
     return; // Resume the original ID/download in the next worker cycle, not a permanent review.
+  }
+  if (metadata(id).actualModel === SI_YUE_TIAN_MINIMAX_MODEL) {
+    patch(id, { siYueTianMinimaxResumeAt: Date.now() + 60_000, progressText: '原任务尚未结束，将在后台继续查询，请勿重复提交' });
+    return;
   }
   if (isZonghengChannel(channel)) {
     const message = '原任务尚未结束，将在后台继续查询，请勿重复提交';
@@ -576,6 +596,9 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
   catch (error: any) { res.status(error.status || 400).json({ error:error.message }); return true; }
   const spec = getModelSpecification(suppliedId);
   const modelId = spec?.modelId || suppliedId;
+  if (suppliedId === SI_YUE_TIAN_MINIMAX_MODEL && !spec) {
+    res.status(503).json({ error: '四月天 MiniMax H3 尚未关联模型规格与渠道，请在后台同步该渠道模型' }); return true;
+  }
   if (!spec) return false;
   let id: number | undefined;
   let stopHeartbeat = () => {};
@@ -813,6 +836,7 @@ export function resumeSpecificationTasks() {
   for (const row of db.select().from(contents).where(inArray(contents.status, ['processing', 'queued', 'review'])).all()) {
     let meta: any; try { meta = JSON.parse(row.metadata || '{}'); } catch { continue; }
     if (!meta.managedSpecification || active.has(row.id)) continue;
+    if (meta.actualModel === SI_YUE_TIAN_MINIMAX_MODEL && Number(meta.siYueTianMinimaxResumeAt) > Date.now()) continue;
     if (meta.zonghengProtocol === 'v6k' && Number(meta.v6kQueryResumeAt) > Date.now()) continue;
     if (row.type === 'video' && videoSubmissionPending(row.id, meta)) continue;
     if (row.type === 'video' && !meta.videoId && !meta.upstreamTaskId && meta.hussIdempotencyKey && !meta.billingShortfall

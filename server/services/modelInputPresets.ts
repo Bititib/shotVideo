@@ -5,6 +5,7 @@ import { getHmStudioAdditionalVideoModel } from '../../shared/hmStudioVideo.js';
 import { getHayaVideoSpec, hayaVideoSeconds, HAYA_XG_SEEDANCE_20_MODEL, HAYA_XG_RATIOS } from '../../shared/hayaVideo.js';
 import { isLongxiaModel, longxiaResolution, LONGXIA_RATIOS } from '../../shared/longxiaVideo.js';
 import { getSiYueTianC2Model, getSiYueTianSeedance25VideoSpec } from './siYueTianVideoModels.js';
+import { SI_YUE_TIAN_MINIMAX_MODEL, siYueTianMinimaxLimits } from '../../shared/siYueTianMinimax.js';
 
 
 /** Capability drafts come from existing adapters, never from the spelling of a display name. */
@@ -17,6 +18,7 @@ export function existingModelLimits(id: string, kind: 'image' | 'video'): ModelI
     return { ...l, maxImages: textOnly ? 0 : id === 'gpt-image-2-mingfei' ? 16 : 10, maxOutputs: 4, resolutions: id === 'gpt-image-2' ? ['1K','4K'] : ['1K','2K','4K'], ratios: ['1:1','16:9','9:16','4:3','3:4','3:2','2:3'] };
   }
   if (id === HUSS_HSS_MODEL) return hussHssModelLimits();
+  if (id === SI_YUE_TIAN_MINIMAX_MODEL) return siYueTianMinimaxLimits();
   if (id === HUSS_BB_PUBLIC_MODEL) return hussBbModelLimits();
   if (id === V6K_TTT_720_MODEL) return video(30,10,10,'720p',5,30);
   const hm = getHmStudioAdditionalVideoModel(id);

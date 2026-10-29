@@ -1,4 +1,6 @@
 import { isMegabyChannel, megabyTaskUrl, normalizeMegabyTask, readMegabyJson } from './megabyVideoAdapter.js';
+import { SI_YUE_TIAN_MINIMAX_MODEL } from '../../shared/siYueTianMinimax.js';
+import { normalizeSiYueTianMinimaxTask } from './siYueTianMinimaxAdapter.js';
 import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
 import { canWithdrawTaskSupplement } from '../../shared/videoTaskSupplement.js';
 import { assertNoTaskIdVerification, beginTaskIdVerification } from './videoRecoveryAction.js';
@@ -313,9 +315,11 @@ export class VideoRecoveryService {
       throw { status: 503, message: '原任务渠道当前不可用' };
     }
 
-    const completedReceipt = metadata.megabyCompletedReceipt;
-    if (isMegabyChannel(channel) && completedReceipt?.taskId === videoId && completedReceipt.resultUrl) {
-      const task = normalizeMegabyTask({ status: 'completed', video_url: completedReceipt.resultUrl }, channel.baseUrl, videoId);
+    const siYueTianMinimax = (metadata.actualModel || record.modelId) === SI_YUE_TIAN_MINIMAX_MODEL;
+    const completedReceipt = siYueTianMinimax ? metadata.siYueTianMinimaxCompletedReceipt : metadata.megabyCompletedReceipt;
+    if ((isMegabyChannel(channel) || siYueTianMinimax) && completedReceipt?.taskId === videoId && completedReceipt.resultUrl) {
+      const task = siYueTianMinimax ? normalizeSiYueTianMinimaxTask({ status: 'completed', video_url: completedReceipt.resultUrl }, channel, videoId)
+        : normalizeMegabyTask({ status: 'completed', video_url: completedReceipt.resultUrl }, channel.baseUrl, videoId);
       return { status: 'completed', message: '原任务已完成，继续保存原结果', progress: 100,
         upstreamResultUrl: task.resultUrl, videoId, channelId: channel.id, channelApiKeyId: Number(channel.apiKeyId) || null };
     }
@@ -357,7 +361,11 @@ export class VideoRecoveryService {
     let progress = 0;
     let resultUrl = '';
     let error = '';
-    if (isMegabyChannel(channel)) {
+    if (siYueTianMinimax) {
+      const task = normalizeSiYueTianMinimaxTask(payload, channel, videoId);
+      normalizedStatus = ['succeeded', 'done'].includes(task.status) ? 'completed' : task.status;
+      progress = task.progress; resultUrl = task.resultUrl; error = task.error;
+    } else if (isMegabyChannel(channel)) {
       const task = normalizeMegabyTask(payload, channel.baseUrl, videoId, channel.apiKey);
       normalizedStatus = task.status; progress = task.progress; resultUrl = task.resultUrl; error = task.error;
     } else if (isAsyncVideoChannel(channel)) {

@@ -51,6 +51,7 @@ interface GetContentsOptions {
 }
 
 const INTERNAL_VIDEO_ROUTING_FIELDS = [
+  'siYueTianMinimaxInitialTask', 'siYueTianMinimaxCompletedReceipt', 'siYueTianMinimaxResumeAt',
   'zonghengProtocol', 'zonghengBaseUrl', 'zonghengInitialTask', 'zonghengLegacyTask',
   'videoSubmissionState', 'videoSubmissionDeadline', 'videoSubmissionStartedAt', 'videoSubmissionAttempt', 'submissionReceiptRecovered', 'missingTaskIdReview',
   'pidoiFallbacks', 'hussCompletedReceipt', 'hussInitialTask', 'hussPayload', 'hussIdempotencyKey', 'hussQueryResumeAt', 'hussReceiptRetryAt',

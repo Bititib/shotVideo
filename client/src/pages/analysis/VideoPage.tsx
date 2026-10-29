@@ -1,4 +1,5 @@
 import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
+import { SI_YUE_TIAN_MINIMAX_MODEL, siYueTianMinimaxInputErrors } from '../../../../shared/siYueTianMinimax';
 import { videoReviewLabel, videoReviewMessage } from '../../../../shared/videoReview';
 import { publicGenerationError, generationProblemSummary } from '../../../../shared/generationMessages';
 import { HUSS_BB_PUBLIC_MODEL, HUSS_HSS_MODEL } from '../../../../shared/hussBbVideo';
@@ -1468,6 +1469,11 @@ export default function VideoPage() {
     if (!prompt.trim()) return;
     if (!guard()) return;
     if (!videoQuote.quote || videoQuote.loading) { setError(videoQuote.error || '正在预估费用，请稍候'); return; }
+    if (selectedModel === SI_YUE_TIAN_MINIMAX_MODEL) {
+      const errors = siYueTianMinimaxInputErrors({ images: referenceImages.length, videos: referenceVideos.length, audios: referenceAudios.length,
+        outputs: 1, seconds: duration, resolution, ratio: aspectRatio, firstFrame: Boolean(firstFrame), lastFrame: Boolean(lastFrame) });
+      if (errors.length) { setError(errors.join('；')); return; }
+    }
     if (currentModel?.routingLimits) {
       const reasons = routingMismatches(currentModel.routingLimits, { images: referenceImages.length, videos: referenceVideos.length, audios: referenceAudios.length, outputs: 1, seconds: duration, resolution, ratio: aspectRatio, firstFrame: Boolean(firstFrame), lastFrame: Boolean(lastFrame) }, 'video');
       if (reasons.length) { setError(reasons.join('；')); return; }
