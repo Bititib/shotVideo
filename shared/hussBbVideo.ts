@@ -22,3 +22,6 @@ export function hussHssModelLimits(): ModelInputLimits {
   return { ...hussBbModelLimits(), ratios: ['21:9','16:9','4:3','1:1','3:4','9:16'],
     duration: { mode: 'range', min: 4, max: 30, step: 1, values: [] } };
 }
+
+export const HUSS_HSS_B_MODEL = 'hss-2.5-301010-渠道B';
+export function isHussHssModel(model: unknown): boolean { return model === HUSS_HSS_MODEL || model === HUSS_HSS_B_MODEL; }

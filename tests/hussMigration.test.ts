@@ -65,3 +65,21 @@ it('syncs HSS independently and preserves administrator pricing and enablement',
   expect(getModelSpecification(modelId)?.routes).toHaveLength(1);
   expect(JSON.parse(channel().modelMapping)).toEqual({ [modelId]: modelId });
 });
+
+
+it('switches the existing public HSS route to channel B without changing prices or adding a public model', async () => {
+  const old='hss-2.5-301010', next=old+'-渠道B';
+  vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{id:old}]})));
+  await syncHussModels(channel());
+  db.update(models).set({isActive:1}).where(eq(models.modelId,old)).run();
+  db.insert(modelPricing).values({modelPattern:old,inputPrice:8.8}).run();
+  vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{id:next},{id:old}]})));
+  await syncHussModels(channel());
+  await syncHussModels(channel());
+  expect(JSON.parse(channel().modelMapping)).toEqual({[old]:next});
+  expect(getModelSpecification(old)?.routes).toHaveLength(1);
+  expect(getModelSpecification(old)?.routes[0].upstreamModel).toBe(next);
+  expect(db.select().from(models).where(eq(models.modelId,next)).get()).toBeUndefined();
+  expect(db.select().from(models).where(eq(models.modelId,old)).get()?.isActive).toBe(1);
+  expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,old)).get()?.inputPrice).toBe(8.8);
+});

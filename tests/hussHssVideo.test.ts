@@ -99,3 +99,17 @@ it('keeps conflicting invalid_prompt evidence uncertain when a task ID or uncert
     await expect(submitHussVideo(channel, input, vi.fn())).rejects.toMatchObject({ uncertain: true });
   }
 });
+
+
+it('submits channel B through the persistent video protocol and restores its exact snapshot', async () => {
+  const model = 'hss-2.5-301010-渠道B';
+  let snapshot: any;
+  const fetcher = vi.fn().mockRejectedValueOnce(new Error('socket reset')).mockResolvedValueOnce(Response.json({id:'video_b',status:'queued'},{status:202}));
+  vi.stubGlobal('fetch',fetcher);
+  await expect(submitHussVideo(channel,{...input,model,prompt:'长'.repeat(20000)},p=>{snapshot=p;})).rejects.toMatchObject({uncertain:true});
+  expect(snapshot.model).toBe(model);
+  expect(snapshot.images).toEqual(input.images);
+  expect(fetcher.mock.calls[0][0]).toBe('https://www.huss.top/v1/videos');
+  expect(await recoverHussSubmission(channel,input.idempotencyKey,snapshot)).toMatchObject({state:'accepted',taskId:'video_b'});
+  expect(fetcher.mock.calls[1][1].body).toBe(fetcher.mock.calls[0][1].body);
+});

@@ -1,3 +1,4 @@
+import { isHussHssModel } from '../../shared/hussBbVideo.js';
 import { activeSpecificationTasks } from './videoRecoveryAction.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL } from '../../shared/siYueTianMinimax.js';
 import { normalizeSiYueTianMinimaxTask } from './siYueTianMinimaxAdapter.js';
@@ -806,7 +807,7 @@ export function restoreLegacyMjCompletedImages(): number {
 async function resumeHussReceipt(id: number, channel: any, key: string) {
   const before = metadata(id);
   if (before.videoId || before.upstreamTaskId) return;
-  if ([before.upstreamModel, before.actualModel, before.requestedModel].includes('hss-2.5-301010') && before.hussPayload?.model !== 'hss-2.5-301010') throw new Error('HUSS 异步原请求快照缺失，未发送请求');
+  if ([before.upstreamModel, before.actualModel, before.requestedModel].some(isHussHssModel) && !isHussHssModel(before.hussPayload?.model)) throw new Error('HUSS 异步原请求快照缺失，未发送请求');
   let receipt;
   try { receipt = await recoverHussSubmission(channel, key, before.hussPayload); }
   catch (error: any) {
