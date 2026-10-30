@@ -7,7 +7,7 @@ import AdminCollection from '../../components/AdminCollection';
 import AdminBatch from '../../components/AdminBatch';
 import { useEditDraft } from '../../hooks/useEditDraft';
 import { priceSource, priceSummary } from '../../utils/adminPricing';
-import { isResolutionPriceKey, pricingResolutionFields } from '../../utils/pricingResolution';
+import { isArchivedResolutionPrice, isResolutionPriceKey, pricingResolutionFields } from '../../utils/pricingResolution';
 import {
   Asterisk,
   AudioLines,
@@ -166,7 +166,10 @@ export default function PricingPage({ modelId, onEditingChange }: { modelId?: st
       return setError('价格必须是大于或等于 0 的有效数字');
     }
 
-    const extraParams: Record<string, any> = { category: edit.category };
+    const extraParams: Record<string, any> = {
+      ...Object.fromEntries(Object.entries(edit.extraParams || {}).filter(([key]) => isArchivedResolutionPrice(modelPattern, key))),
+      category: edit.category,
+    };
     for (const rawLine of String(edit.extraText || '').split('\n')) {
       const line = rawLine.trim();
       if (!line) continue;
@@ -306,7 +309,7 @@ export default function PricingPage({ modelId, onEditingChange }: { modelId?: st
         ]}>{visibleRules => <div className={modelId ? "pricing-card-grid grid grid-cols-1 gap-4" : "pricing-card-grid grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"}>
           {visibleRules.map(rule => {
             const Icon = categoryIcons[rule.category] || Coins;
-            const extraPrices = Object.entries(rule.extraParams || {}).filter(([key]) => key !== 'category');
+            const extraPrices = Object.entries(rule.extraParams || {}).filter(([key]) => key !== 'category' && !isArchivedResolutionPrice(rule.modelPattern, key));
             const hasResolutionPrices = extraPrices.some(([key]) => isResolutionPriceKey(key));
             return (
               <article key={`${rule.modelPattern}-${rule.id ?? 'virtual'}`} className="pricing-rule-card rounded-2xl border p-5 flex flex-col min-h-56">
