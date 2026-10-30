@@ -4,6 +4,18 @@ import { videoCapabilities, normalizeVideoParameters, type ParameterSchema } fro
 import { buildSnumomWanPayload } from '../server/services/snumomWanAdapter.js';
 
 describe('typed video capabilities contract', () => {
+  it('publishes only documented per-channel extras, with labels outside JSON Schema for older clients', () => {
+    expect(videoCapabilities('MiniMax-H3').parameterSchema.properties.function_mode.enum).toEqual(['first_last_frames','omni_reference']);
+    expect(videoCapabilities('seedance_v2.0-933').parameterSchema.properties.function_mode.enum).toEqual(['multi_frame','omni_reference']);
+    expect(videoCapabilities('funai-veo-3.1-lite').parameterSchema.properties.audio.type).toBe('boolean');
+    expect(videoCapabilities('funai-gemini-omni-flash').parameterEnumLabels.reference_mode).toEqual(['首帧','风格参考','元素参考']);
+    expect(videoCapabilities('funai-gemini-omni-flash').parameterSchema.properties.reference_mode).not.toHaveProperty('enumLabels');
+    for(const id of ['grok-imagine-video-1.5','hss-2.5-301010']) {
+      expect(videoCapabilities(id).parameterSchema.properties).toEqual({}); expect(videoCapabilities(id).parameterNote).toBeTruthy();
+    }
+    // Same public spelling on a different, unknown execution protocol is not evidence.
+    expect(videoCapabilities('veo-3.1').parameterSchema.properties).toEqual({});
+  });
   it('exposes verified declarations and never invents controls for unknown models', () => {
     expect(videoCapabilities('wan3.0-video-nsfw').parameterSchema.properties.prompt_extend.type).toBe('boolean');
     expect(videoCapabilities('unseen-model')).toMatchObject({ capabilityVersion: 1, routingLimits: undefined, parameterSchema: { properties: {} } });

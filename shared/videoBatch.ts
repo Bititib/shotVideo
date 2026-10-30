@@ -7,6 +7,7 @@ export interface VideoBatchInput {
   resolution: string;
   autoRetry: boolean;
   maxRetries: number;
+  model_parameters?: Record<string, string | number | boolean>;
   creatives: { prompt: string; count: number; reference_images: string[]; reference_videos?: string[]; audio_urls?: string[] }[];
 }
 export interface VideoBatchItem {

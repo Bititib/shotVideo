@@ -45,7 +45,16 @@ function reference(value: string) {
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('FunAI 参考素材地址无效');
   return value;
 }
+export function validateFunAiReferenceMode(model: string, request: SpecificationRequest) {
+  const mode = request.body.reference_mode;
+  if (mode === undefined) return;
+  if (model !== 'gemini-omni-flash' || !['frame', 'style', 'element'].includes(mode)) throw new Error('此模型的参考图用途不支持');
+  if (request.firstFrame && mode !== 'frame') throw new Error('独立首帧不能同时指定风格或元素参考用途');
+  if (!request.images.length && !request.firstFrame) throw new Error('选择参考图用途后必须提供图片');
+  if (mode === 'frame' && request.images.length > 1) throw new Error('Omni Flash 首帧模式最多 1 张图片');
+}
 export function buildFunAiVideoPayload(model: string, request: SpecificationRequest) {
+  validateFunAiReferenceMode(model, request);
   if (funAiModelKind(model) !== 'video') throw new Error('FunAI 视频模型未适配');
   const i = request.input, limits = funAiModelLimits(model);
   const mismatch = routingMismatches(limits, { ...i, images: request.images.length, videos: request.videos.length, audios: request.audios.length,
@@ -59,7 +68,7 @@ export function buildFunAiVideoPayload(model: string, request: SpecificationRequ
     resolution: model === 'minimax-h3' ? '1440P' : i.resolution, n: 1 };
   if (request.body.audio !== undefined) {
     if (typeof request.body.audio !== 'boolean') throw new Error('FunAI audio 必须为布尔值');
-    if (!['minimax-h3', 'happy-horse-1.1'].includes(model)) throw new Error('此 FunAI 模型没有开放结果音轨开关');
+    if (!['minimax-h3', 'happy-horse-1.1', 'veo-3.1', 'veo-3.1-lite'].includes(model)) throw new Error('此 FunAI 模型没有开放结果音轨开关');
     if (model === 'minimax-h3' && request.body.audio === false) throw new Error('MiniMax H3 固定生成原生音频');
     payload.audio = request.body.audio;
   }
@@ -92,9 +101,14 @@ export function buildFunAiVideoPayload(model: string, request: SpecificationRequ
   } else if (model === 'gemini-omni') {
     if (images.length) payload.reference_images = images;
   } else if (model === 'gemini-omni-flash') {
+    const mode = request.body.reference_mode;
     if (images.length + Number(Boolean(first)) + videos.length > 4) throw new Error('Omni Flash 参考素材合计最多 4 项');
     if (first) payload.input_reference = first;
-    if (images.length) payload.element_references = images;
+    if (images.length) {
+      if (mode === 'frame') payload.input_reference = images[0];
+      else if (mode === 'style') payload.style_references = images;
+      else payload.element_references = images;
+    }
     if (videos.length) payload.input_video = videos[0];
   } else if (images.length || first) {
     payload.images = first ? [first, ...(last ? [last] : [])] : images;

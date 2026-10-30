@@ -223,6 +223,10 @@ export function validateHmStudioAdditionalVideoInput(modelId: string, input: {
     return 'MiniMax-H3 首尾帧不能与普通参考素材混用';
   }
   const imageCount = input.imageCount + Number(Boolean(input.hasFirstFrame)) + Number(Boolean(input.hasLastFrame));
+  if (modelId === HM_STUDIO_MINIMAX_H3_MODEL) {
+    if (input.functionMode && !['first_last_frames', 'omni_reference'].includes(input.functionMode)) return 'MiniMax-H3 仅支持首尾帧或混合素材模式';
+    if (input.functionMode === 'first_last_frames' && (imageCount > 2 || input.videoCount || input.audioCount)) return 'MiniMax-H3 首尾帧模式最多两张图片，不支持视频或音频';
+  }
   if (imageCount > spec.maxImages || input.videoCount > spec.maxVideos || input.audioCount > spec.maxAudios) {
     return `${modelId} 最多支持 ${spec.maxImages} 张图片、${spec.maxVideos} 个视频和 ${spec.maxAudios} 段音频参考`;
   }

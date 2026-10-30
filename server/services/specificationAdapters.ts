@@ -11,6 +11,7 @@ import { isAsyncVideoChannel, buildAsyncVideoPayload, asyncVideoCreateUrl, pollA
 import fs from 'node:fs';
 import { extractImageUpstreamTaskId, imageResponseEvidence, type ImageResponseEvidence } from './imageTaskMetadataService.js';
 import { isFunAiChannel, funAiBaseUrl, buildFunAiVideoPayload, pollFunAiTask, generateFunAiImage, FunAiApiError } from './funAiAdapter.js';
+import { validateFunAiReferenceMode } from './funAiAdapter.js';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { RouteCandidate } from './modelRoutingService.js';
@@ -42,6 +43,20 @@ import { SI_YUE_TIAN_MINIMAX_MODEL } from '../../shared/siYueTianMinimax.js';
 import { submitSiYueTianMinimax, pollSiYueTianMinimax, SiYueTianMinimaxError } from './siYueTianMinimaxAdapter.js';
 
 export type SpecificationRequest = { prompt: string; input: RoutingInput; images: string[]; videos: string[]; audios: string[]; firstFrame: string; lastFrame: string; body: Record<string, any>; publicBaseUrl: string };
+/** Validate extra-parameter/media combinations before reserving money or creating a task. */
+export function validateSpecificationVideoParameters(request: SpecificationRequest, candidates: RouteCandidate[]) {
+  for (const target of candidates) {
+    if (isFunAiChannel(target.channel)) validateFunAiReferenceMode(target.route.upstreamModel, request);
+    if (target.channel.type === 'hmstudio' && request.body.function_mode !== undefined) {
+      const error = validateHmStudioAdditionalVideoInput(getHmStudioPublicVideoModel(target.route.upstreamModel), {
+        seconds: request.input.seconds, ratio: request.input.ratio, resolution: request.input.resolution,
+        imageCount: request.images.length, videoCount: request.videos.length, audioCount: request.audios.length,
+        hasFirstFrame: Boolean(request.firstFrame), hasLastFrame: Boolean(request.lastFrame), functionMode: request.body.function_mode,
+      });
+      if (error) throw new Error(error);
+    }
+  }
+}
 export class SpecificationUpstreamError extends Error {
   constructor(message: string, public readonly retrySafe: boolean, public readonly uncertain = false, public readonly blocked = false, public readonly upstreamStatus = 0, public readonly confirmedFailure = false) { super(message); }
 }
@@ -233,12 +248,13 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
         seconds: i.seconds, resolution: i.resolution, ratio: i.ratio, imageCount: request.images.length,
         videoCount: request.videos.length, audioCount: request.audios.length,
         hasFirstFrame: Boolean(request.firstFrame), hasLastFrame: Boolean(request.lastFrame),
+        functionMode: request.body.function_mode,
       });
       if (error) unsupported(error);
     }
     if ((request.firstFrame || request.lastFrame) && (request.images.length || request.videos.length || request.audios.length)) unsupported('HM 独立首尾帧不能与普通参考素材混用');
     payload = buildHmStudioVideoPayload({ model: getHmStudioUpstreamVideoModel(model), prompt: request.prompt, duration: i.seconds,
-      ratio: i.ratio, resolution: i.resolution, functionMode: request.images.length || request.videos.length || request.audios.length ? 'omni_reference' : undefined, imageSources: request.images, videoSources: request.videos, audioSources: request.audios,
+      ratio: i.ratio, resolution: i.resolution, functionMode: request.body.function_mode ?? (request.images.length || request.videos.length || request.audios.length ? 'omni_reference' : undefined), imageSources: request.images, videoSources: request.videos, audioSources: request.audios,
       firstFrame: request.firstFrame, lastFrame: request.lastFrame, localMediaBaseUrl: request.publicBaseUrl, face: true });
     url = hmStudioCreateUrl(c.baseUrl, 'video');
   } else if (isHayaChannel(c)) {

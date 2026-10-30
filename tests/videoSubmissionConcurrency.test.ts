@@ -43,7 +43,8 @@ vi.mock('../server/services/videoLocalizationService.js', () => ({
 }));
 
 import { db, sqlite } from '../server/db/index';
-import { users, channels, models, modelPricing, contents, apiTokens } from '../server/db/schema';
+import { users, channels, channelApiKeys, models, modelPricing, contents, apiTokens } from '../server/db/schema';
+import { getHmStudioUpstreamVideoModel } from '../shared/hmStudioVideo';
 import { TokenService } from '../server/services/tokenService';
 import { findVideoSubmissionReceipt } from '../server/services/videoSubmissionReceiptService';
 import { claimVideoSubmission, releaseVideoSubmission, endVideoSubmission } from '../server/services/videoSubmissionGuard';
@@ -60,6 +61,7 @@ import { ChannelService } from '../server/services/channelService';
 import { getModelSpecification } from '../server/services/modelRoutingService';
 import { SNUMOM_OUTPUT_ONLY_MODELS } from '../shared/snumomWanNsfw';
 import { existingModelLimits } from '../server/services/modelInputPresets';
+import { funAiModelLimits } from '../shared/funAi';
 import { batchStore, tickVideoBatches } from '../server/services/videoBatchService';
 
 const nativeFetch = globalThis.fetch, nativeTimer = globalThis.setTimeout;
@@ -116,6 +118,86 @@ function managed(targetModel = model) {
       limits, cost: 1, costUnit: 'per_second', resolutionCosts: {}, priority: 0 }] });
 }
 const body = { model, prompt: '并发提交测试', seconds: 15, video_length: 15, resolution: '720p', aspect_ratio: '16:9' };
+
+function extraSetup(id: string, provider: 'hmstudio'|'funai', spec: boolean) {
+  const upstream=provider==='hmstudio'?getHmStudioUpstreamVideoModel(id):id.replace(/^funai-/,'');
+  db.delete(channelApiKeys).run();
+  if(provider==='hmstudio')db.insert(channelApiKeys).values({channelId:1,apiKey:'test-extra-key',status:1,concurrencyLimit:5}).run();
+  db.update(channels).set({type:provider,supportedModels:JSON.stringify([id]),modelMapping:JSON.stringify({[id]:upstream})}).run();
+  db.update(models).set({modelId:id,displayName:id,provider}).run();
+  db.update(modelPricing).set({modelPattern:id,billingType:'per_call',inputPrice:1}).run();
+  if(spec) {
+    const limits=provider==='funai'?funAiModelLimits(upstream):existingModelLimits(id,'video')!;
+    saveModelSpecification({modelId:id,kind:'video',enabled:true,aliases:[],limits,
+      routes:[{id:'extras-route',channelId:1,executionModel:id,upstreamModel:upstream,enabled:true,limits,cost:1,costUnit:'per_call',resolutionCosts:{},priority:0}]});
+  }
+  return {model:provider==='funai'?upstream:id,prompt:'参数传递测试',seconds:4,video_length:4,resolution:'720p',aspect_ratio:'16:9'};
+}
+function extraUpstream(provider: string) {
+  const payloads: any[]=[];
+  vi.stubGlobal('fetch',vi.fn(async(_url:any,options:any)=>{
+    if(options?.method==='POST') {payloads.push(JSON.parse(options.body));return Response.json({id:'extras-accepted',task_id:'extras-accepted'},{status:202});}
+    return Response.json(provider==='hmstudio'?{status:'success',result_urls:['https://media.invalid/extras.mp4']}:{id:'extras-accepted',status:'completed',url:'https://media.invalid/extras.mp4'});
+  }));return payloads;
+}
+for(const endpoint of ['/v1/videos','/api/video/generate']) {
+  for(const spec of [false,true]) it.each([
+    ['MiniMax-H3','first_last_frames'],['sd2.5-933','first_last_frames'],['seedance_v2.0-933','multi_frame'],
+  ])(`${endpoint} managed=${spec}: HM %s carries explicit %s through the real queue/adapter`,async(id,mode)=>{
+    const input=extraSetup(id,'hmstudio',spec),payloads=extraUpstream('hmstudio');
+    const image='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX1sAAAAASUVORK5CYII=';
+    const response=await post(endpoint,{...input,reference_images:[image,image],model_parameters:{function_mode:mode}});
+    expect(response.status,await response.clone().text()).toBe(endpoint.startsWith('/v1')&&!spec?202:200);await response.text();await vi.waitFor(()=>expect(row()?.status).toBe('completed'));
+    expect(payloads).toHaveLength(1);expect(payloads[0].function_mode).toBe(mode);expect(payloads[0]).not.toHaveProperty('materials');
+    if(mode==='multi_frame')expect(payloads[0].multi_frames).toHaveLength(2);else expect(payloads[0]).toMatchObject({first_frame_url:expect.any(String),end_frame_url:expect.any(String)});
+    expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBe(99);
+  });
+  it.each(['funai-veo-3.1','funai-veo-3.1-lite'])(`${endpoint}: %s audio=false survives API normalization and actual managed submission`,async(id)=>{
+    const input=extraSetup(id,'funai',true),payloads=extraUpstream('funai');
+    const response=await post(endpoint,{...input,model_parameters:{audio:false}});expect(response.status).toBe(200);await response.text();
+    await vi.waitFor(()=>expect(row()?.status).toBe('completed'));expect(payloads).toHaveLength(1);expect(payloads[0].audio).toBe(false);
+  });
+  it.each(['frame','style','element'])(`${endpoint}: Omni %s maps every reference to the documented field`,async(mode)=>{
+    const input=extraSetup('funai-gemini-omni-flash','funai',true),payloads=extraUpstream('funai');
+    const response=await post(endpoint,{...input,reference_images:['https://assets.invalid/1.png'],model_parameters:{reference_mode:mode}});
+    expect(response.status).toBe(200);await response.text();await vi.waitFor(()=>expect(row()?.status).toBe('completed'));
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0][mode==='frame'?'input_reference':mode==='style'?'style_references':'element_references']).toEqual(mode==='frame'?'https://assets.invalid/1.png':['https://assets.invalid/1.png']);
+  });
+  it.each([
+    ['funai-veo-3.1',{audio:'false'},[]],
+    ['funai-gemini-omni-flash',{reference_mode:'frame'},['https://assets.invalid/1.png','https://assets.invalid/2.png']],
+    ['funai-gemini-omni-flash',{reference_mode:'style'},[]],
+    ['seedance_v2.0-933',{function_mode:'multi_frame'},['https://assets.invalid/1.png']],
+    ['MiniMax-H3',{function_mode:'first_last_frames'},['https://assets.invalid/1.png','https://assets.invalid/2.png','https://assets.invalid/3.png']],
+  ])(`${endpoint}: invalid %s extras/media are rejected before task creation or deduction`,async(id,values,images)=>{
+    const input=extraSetup(id as string,String(id).startsWith('funai-')?'funai':'hmstudio',true),payloads=extraUpstream('funai');
+    const response=await post(endpoint,{...input,reference_images:images,model_parameters:values});
+    expect(response.status).toBe(400);expect(await response.json()).toHaveProperty('error');expect(payloads).toEqual([]);
+    expect(db.select().from(contents).all()).toHaveLength(0);expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);
+  });
+}
+it('multipart API preserves audio=false as a typed special parameter, not an uploaded audio asset',async()=>{
+  const input=extraSetup('funai-veo-3.1','funai',true),payloads=extraUpstream('funai'),form=new FormData();
+  for(const [key,value] of Object.entries(input))form.set(key,String(value));form.set('model_parameters',JSON.stringify({audio:false}));
+  const response=await nativeFetch(origin+'/v1/videos',{method:'POST',headers:{Authorization:'Bearer '+tokenKey},body:form});
+  expect(response.status).toBe(200);await response.text();await vi.waitFor(()=>expect(row()?.status).toBe('completed'));
+  expect(payloads[0].audio).toBe(false);
+});
+it('batch quote, persisted settings and actual worker keep typed audio=false without charging or submitting twice',async()=>{
+  extraSetup('funai-veo-3.1','funai',true);const payloads:any[]=[];
+  vi.stubGlobal('fetch',vi.fn(async(url:any,options:any)=>{
+    if(String(url).startsWith('http://127.0.0.1:9876/'))return nativeFetch(origin+new URL(String(url)).pathname,options);
+    if(options?.method==='POST'){payloads.push(JSON.parse(options.body));return Response.json({id:'extras-batch-'+payloads.length});}
+    return Response.json({id:String(url).split('/').at(-1),status:'completed',url:'https://media.invalid/batch.mp4'});
+  }));
+  const input={model:'funai-veo-3.1',name:'special parameters batch',aspect_ratio:'16:9',resolution:'720p',video_length:4,autoRetry:false,maxRetries:0,
+    requestKey:'special-batch-request-key-111',expectedUnitCost:1,model_parameters:{audio:false},creatives:[{prompt:'自然风景',count:2,reference_images:[]}]};
+  const response=await post('/api/video-batches',input);expect(response.status,await response.clone().text()).toBe(200);const batch:any=await response.json();
+  await vi.waitFor(()=>{tickVideoBatches();expect(db.select().from(contents).all()).toHaveLength(2);expect(db.select().from(contents).all().every(c=>c.status==='completed')).toBe(true);});
+  expect(payloads).toHaveLength(2);expect(payloads.every(p=>p.audio===false)).toBe(true);expect(wallet()).toBe(98);
+  expect((await(await post('/api/video-batches',input)).json()).id).toBe(batch.id);tickVideoBatches();expect(payloads).toHaveLength(2);expect(wallet()).toBe(98);
+});
 
 const nsfwModel = 'wan3.0-video-nsfw';
 const nsfwPaths = [

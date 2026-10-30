@@ -1,5 +1,7 @@
 import { zonghengProtocol, zonghengProtocolSnapshot, zonghengTaskChannel, v6kQueryRetryDelay, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE } from '../services/zonghengProtocol.js';
 import { normalizeSnumomNsfwRequestBody } from '../services/snumomWanAdapter.js';
+import { normalizeVideoParameters } from '../services/videoCapabilities.js';
+import { validateSpecificationVideoParameters } from '../services/specificationAdapters.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { VideoPollTimeout, withVideoPollDeadline, fetchVideoTaskResponse } from '../services/videoPollDeadline.js';
 import { refundConfirmedZonghengVideo } from '../services/zonghengSubmissionResolutionService.js';
@@ -763,6 +765,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     try {
       if (isRetiredVideoModel(resolvePublicModelId(req.body.model))) return res.status(410).json({error:RETIRED_VIDEO_MODEL_MESSAGE});
       const canonicalModel=resolvePublicModelId(req.body.model);
+      normalizeVideoParameters(req.body, videoCapabilities(canonicalModel).parameterSchema, Boolean(req.is('multipart/form-data')));
       if(isSnumomWanVideoModel(canonicalModel))req.body.model=canonicalModel;
     } catch (error:any) { return res.status(error.status || 400).json({error:error.message}); }
   }
@@ -773,6 +776,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
       const origin = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
       const request = specificationRequest(body, 'video', origin), input = request.input;
       const candidates = selectModelRoutes(spec, input); const quote = PricingService.quote(spec.modelId, { resolution: input.resolution, seconds: input.seconds, count: 1 }, false, req.userId);
+      validateSpecificationVideoParameters(request, candidates);
       if (!quote.billingType) throw Object.assign(new Error('该规格尚未配置用户售价'), { status: 400 });
       if (candidates.some(target => isHmStudioChannel(target.channel))) await prepareSpecificationReferenceImages(request, candidates, [origin]);
       return res.status(candidates.length ? 200 : 503).json(candidates.length ? { valid: true, unitCost: quote.cost,
@@ -922,6 +926,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   }
 
   const hmStudioAdditionalValidationError = validateHmStudioAdditionalVideoInput(model, {
+    functionMode: req.body.function_mode,
     ratio: aspect_ratio,
     seconds: Number(video_length),
     resolution,
@@ -1395,6 +1400,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
         first_frame,
         last_frame,
         face: isHmStudioChannel(dbChannel) ? true : undefined,
+        function_mode: req.body.function_mode,
         face_processing: isHmStudioChannel(dbChannel) ? false : undefined,
         local_face_processed: Boolean(local_face_processed),
         face_split: isWxHaidiYueChannel(dbChannel)
@@ -1854,6 +1860,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
     } else if (isHmStudio) {
       sendEvent({ type: 'status', message: '正在整理素材并提交 HM Studio 任务...' });
       const payload = buildHmStudioVideoPayload({
+        functionMode: req.body.function_mode,
         localMediaBaseUrl: process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`,
         model: upstreamModel,
         prompt: prompt.trim(),

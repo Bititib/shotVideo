@@ -15,6 +15,7 @@ import { modelAvailabilityMessage } from '../../shared/upstreamAvailability.js';
 import { startSseHeartbeat } from './sseHeartbeat.js';
 import { publicGenerationError, publicGenerationEvent } from '../../shared/generationMessages.js';
 import { isFunAiChannel } from './funAiAdapter.js';
+import { validateSpecificationVideoParameters } from './specificationAdapters.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
 import { assertExpectedVideoCost } from './videoQuoteService.js';
 import { assertUserModelAccess } from './userModelAccessService.js';
@@ -666,6 +667,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     request.input.resolution = spec.limits.resolutions.find(r => r.toLowerCase() === request.input.resolution.toLowerCase()) || request.input.resolution;
     const candidates = selectModelRoutes(spec, request.input);
     if (!candidates.length) throw fail(modelAvailabilityMessage(specificationAvailability(spec)) || '该规格暂时没有满足参数的可用线路', 503);
+    if (kind === 'video') { try { validateSpecificationVideoParameters(request, candidates); } catch (error: any) { throw fail(error.message); } }
     if (snumomBilling && !candidates.every(t => isSnumomWanChannel(t.channel) && t.route.upstreamModel === modelId && t.route.executionModel === modelId)) throw fail('Wan 3.0 必须关联对应型号的 snumom 线路，未扣费');
     if (kind === 'video' && candidates.every(target => isMegabyChannel(target.channel))) {
       try {

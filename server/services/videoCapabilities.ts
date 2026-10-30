@@ -3,7 +3,7 @@ import type { ModelSpecification } from '../../shared/modelRouting.js';
 import { getZonghengVideoSpec } from '../../shared/zonghengVideo.js';
 import { existingModelLimits } from './modelInputPresets.js';
 import { getModelSpecification } from './modelRoutingService.js';
-import { getHmStudioAdditionalVideoModel } from '../../shared/hmStudioVideo.js';
+import { getHmStudioAdditionalVideoModel, getHmStudioPublicVideoModel } from '../../shared/hmStudioVideo.js';
 import { HUSS_BB_PUBLIC_MODEL, HUSS_HSS_MODEL } from '../../shared/hussBbVideo.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL } from '../../shared/siYueTianMinimax.js';
 import { HAYA_XG_SEEDANCE_20_MODEL } from '../../shared/hayaVideo.js';
@@ -13,6 +13,7 @@ import { SNUMOM_WAN_NSFW_MODEL, SNUMOM_OUTPUT_ONLY_MODELS, isSnumomWanVideoModel
 export type ParameterRule = {
   type: 'string' | 'integer' | 'number' | 'boolean'; title: string; description?: string;
   enum?: (string | number | boolean)[]; default?: string | number | boolean;
+  enumLabels?: string[];
   minimum?: number; maximum?: number; multipleOf?: number; minLength?: number; maxLength?: number;
 };
 export type ParameterSchema = { type: 'object'; properties: Record<string, ParameterRule>; required: string[]; additionalProperties: false };
@@ -24,6 +25,27 @@ const wanSchema: ParameterSchema = { type: 'object', properties: {
 export const VIDEO_PARAMETER_SCHEMAS: Record<string, ParameterSchema> = Object.fromEntries(
   [SNUMOM_WAN_NSFW_MODEL, ...Object.keys(SNUMOM_OUTPUT_ONLY_MODELS)].map(id => [id, wanSchema]));
 const emptySchema = (): ParameterSchema => ({ type: 'object', properties: {}, required: [], additionalProperties: false });
+const declare = (id: string, properties: Record<string, ParameterRule>) => { VIDEO_PARAMETER_SCHEMAS[id] = { ...emptySchema(), properties }; };
+for (const id of ['MiniMax-H3', 'sd2.5-933', 'seedance_v2.0-933']) {
+  const multi = id === 'seedance_v2.0-933';
+  declare(id, { function_mode: { type: 'string', title: '生成模式',
+    enum: [multi ? 'multi_frame' : 'first_last_frames', 'omni_reference'],
+    enumLabels: [multi ? '多帧关键帧' : '首尾帧 / 纯文本', '混合素材参考'],
+    description: multi ? '多帧需 2–9 张图片，不能带视频或音频；混合素材可使用图片、视频和音频。留空自动判断。'
+      : '首尾帧模式最多使用前后两张普通参考图，不能带视频或音频；混合素材按素材顺序引用。留空自动判断。' } });
+}
+for (const id of ['funai-veo-3.1', 'funai-veo-3.1-lite']) declare(id, {
+  audio: { type: 'boolean', title: '生成音轨', description: '控制生成结果是否带音轨；不是上传参考音频。留空使用上游默认行为。' },
+});
+declare('funai-gemini-omni-flash', { reference_mode: { type: 'string', title: '参考图用途',
+  enum: ['frame', 'style', 'element'], enumLabels: ['首帧', '风格参考', '元素参考'],
+  description: '普通参考图按所选角色发送；首帧最多 1 张、元素最多 3 张、风格最多 4 张，同时受网站素材数量上限限制。图片与源视频合计最多 4 项。留空使用元素参考。' } });
+
+const parameterNotes: Record<string, string> = {
+  'hss-2.5-301010': '已核对 HUSS 视频契约：当前没有额外生成参数；不转发种子、负面提示词或音轨开关。',
+  'hss-2.5-301010-渠道B': '已核对 HUSS 统一视频契约：当前没有额外生成参数；使用上方基础规格和参考素材。',
+  'grok-imagine-video-1.5': '已核对该渠道 Grok 1.5 文档：没有列出种子、负面提示词或音轨开关，不套用其他渠道参数。',
+};
 
 export function videoCapabilities(modelId: string, specification?: ModelSpecification | null) {
   const spec = specification === undefined ? getModelSpecification(modelId) : specification;
@@ -46,13 +68,15 @@ export function videoCapabilities(modelId: string, specification?: ModelSpecific
     duration: { mode: 'options' as const, values: [...zh.seconds], min: zh.seconds[0], max: zh.seconds.at(-1)!, step: 1 },
   } : limits || undefined;
   // Managed models can use several adapters: only advertise a field every enabled route consumes.
-  const ids = spec ? spec.routes.filter(r => r.enabled).map(r => r.executionModel) : [modelId];
+  const ids = (spec ? spec.routes.filter(r => r.enabled).map(r => r.executionModel) : [modelId]).map(getHmStudioPublicVideoModel);
   const schemas = ids.map(id => VIDEO_PARAMETER_SCHEMAS[id] || emptySchema());
   const first = schemas[0] || emptySchema();
   const properties = Object.fromEntries(Object.entries(first.properties).filter(([key, rule]) =>
     schemas.every(schema => JSON.stringify(schema.properties[key]) === JSON.stringify(rule))));
   return { canonical_id: publicApiModelId(modelId), capabilityVersion: 1,
-    routingLimits, parameterSchema: { ...emptySchema(), properties, required: first.required.filter(k => k in properties) } };
+    routingLimits, parameterNote: ids.length === 1 ? parameterNotes[ids[0]] : undefined,
+    parameterEnumLabels: Object.fromEntries(Object.entries(properties).filter(([, rule]) => rule.enumLabels).map(([key, rule]) => [key, rule.enumLabels])),
+    parameterSchema: { ...emptySchema(), properties: Object.fromEntries(Object.entries(properties).map(([key, { enumLabels, ...rule }]) => [key, rule])), required: first.required.filter(k => k in properties) } };
 }
 
 /** Called before reservations on both native and external API paths. Multipart uses JSON scalar spelling. */

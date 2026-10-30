@@ -49,6 +49,11 @@ const handle = (fn: (req: TierRequest, res: Response) => any) => (req: TierReque
 
 export function validateBatchInput(body: any): VideoBatchInput {
   if (!body || typeof body.model !== 'string' || !body.model) throw new Error('请选择视频模型');
+  // Preserve typed extras through quote, durable batch settings and worker dispatch.
+  // The normal /video/validate preflight checks the current model schema before reservation.
+  const extras = body.model_parameters;
+  if (extras !== undefined && (!extras || typeof extras !== 'object' || Array.isArray(extras) || Object.keys(extras).length > 48
+    || Object.values(extras).some(v => !['string','number','boolean'].includes(typeof v) || typeof v === 'number' && !Number.isFinite(v)))) throw new Error('model_parameters 必须为标量参数对象');
   if (isRetiredVideoModel(body.model)) throw Object.assign(new Error(RETIRED_VIDEO_MODEL_MESSAGE),{status:410});
   const limits = getModelSpecification(body.model)?.limits;
   if (!(limits?.ratios || ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']).includes(body.aspect_ratio)) throw new Error('请选择正确画面比例');
@@ -74,6 +79,7 @@ export function validateBatchInput(body: any): VideoBatchInput {
   if (creatives.reduce((n, c) => n + c.count, 0) > 100) throw new Error('单批次最多生成 100 条视频');
   return { name: typeof body.name === 'string' ? body.name.slice(0, 80) || '批量视频' : '批量视频',
     model: body.model, aspect_ratio: body.aspect_ratio, video_length: body.video_length, resolution: body.resolution,
+    ...(extras !== undefined ? { model_parameters: { ...extras } } : {}),
     autoRetry: body.autoRetry, maxRetries: body.maxRetries, creatives };
 }
 

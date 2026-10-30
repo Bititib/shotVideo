@@ -13,6 +13,21 @@ function request(model: string, overrides: Partial<SpecificationRequest> = {}): 
 }
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe('FunAI documented protocol', () => {
+  it.each(['veo-3.1','veo-3.1-lite'])('passes the documented %s result-audio flag without dropping false', model => {
+    expect(buildFunAiVideoPayload(model, request(model,{body:{audio:false}}))).toMatchObject({audio:false});
+    expect(buildFunAiVideoPayload(model, request(model))).not.toHaveProperty('audio');
+    expect(()=>buildFunAiVideoPayload(model, request(model,{body:{audio:'false'}}))).toThrow('布尔');
+  });
+  it('routes Omni ordinary images to the chosen upstream role without dropping or duplicating any', () => {
+    for(const [mode,field] of [['frame','input_reference'],['style','style_references'],['element','element_references']]) {
+      const payload=buildFunAiVideoPayload('gemini-omni-flash',request('gemini-omni-flash',{images:[url(1)],body:{reference_mode:mode}}));
+      expect(payload[field]).toEqual(mode==='frame'?url(1):[url(1)]);
+      for(const other of ['input_reference','style_references','element_references'].filter(x=>x!==field))expect(payload).not.toHaveProperty(other);
+    }
+    expect(()=>buildFunAiVideoPayload('gemini-omni-flash',request('gemini-omni-flash',{images:[url(1),url(2)],body:{reference_mode:'frame'}}))).toThrow('最多 1');
+    expect(()=>buildFunAiVideoPayload('gemini-omni-flash',request('gemini-omni-flash',{firstFrame:url(1),body:{reference_mode:'style'}}))).toThrow('独立首帧');
+    expect(()=>buildFunAiVideoPayload('gemini-omni-flash',request('gemini-omni-flash',{body:{reference_mode:'style'}}))).toThrow('必须提供图片');
+  });
   it('recognizes exact hostnames and normalizes SDK base paths', () => {
     expect(isFunAiChannel({ baseUrl: channel.baseUrl })).toBe(true);
     expect(isFunAiChannel({ baseUrl: 'https://ztyunjuan.com.evil.example' })).toBe(false);
