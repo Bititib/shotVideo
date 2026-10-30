@@ -1,6 +1,11 @@
 import { migrateZonghengModelPrefix } from '../server/services/zonghengPrefixMigration';
 import { ZONGHENG_VIDEO_MODELS } from '../shared/zonghengVideo';
+import { V6K_SEEDANCE_20_MODEL, V6K_XX_SEEDANCE_20_MODEL } from '../shared/v6kSeedance2';
+import { getModelSpecification, saveModelSpecification } from '../server/services/modelRoutingService';
+import { resumeSpecificationTasks } from '../server/services/specificationGenerationService';
+import { batchStore, tickVideoBatches } from '../server/services/videoBatchService';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
 import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -86,6 +91,7 @@ beforeAll(async()=>{
   intervalSpy.mockRestore();
 });
 beforeEach(()=>{
+  sqlite.exec('DELETE FROM video_batch_commands; DELETE FROM video_batch_attempts; DELETE FROM video_batch_items; DELETE FROM video_batches');
   findVideoSubmissionReceipt(1); sqlite.exec('DELETE FROM video_submission_receipts');
   for(const table of ['contents','channels','models','model_pricing','users','api_tokens','api_logs','settings'])sqlite.exec('DELETE FROM '+table);
   sqlite.exec('DROP TABLE IF EXISTS billing_reservations');
@@ -123,6 +129,127 @@ function installConfirmedVideos() {
   const channel=db.select().from(channels).get()!;
   ChannelService.updateChannel(channel.id,{supportedModels:ids,modelMapping:Object.fromEntries(ZONGHENG_VIDEO_MODELS.map(spec=>['ZH-'+spec.id,spec.id]))});
 }
+async function installSeedance20(allowed=['Asedanco2.05','XXsedanco2.0','Asedanco2.0']) {
+  const c=db.select().from(channels).get()!;
+  ChannelService.updateChannel(c.id,{type:'zongheng-v6k',baseUrl:'https://www.v6k.top',supportedModels:[],modelMapping:{}});
+  upstream=async url=>{
+    if(url.endsWith('/v1/models'))return Response.json({data:allowed.map(id=>({id}))});
+    if(url.endsWith('/api/pricing'))return Response.json({data:['Asedanco2.0','Asedanco2.05','XXsedanco2.0'].map(model_name=>({model_name,supported_endpoint_types:['openai-video']}))});
+    throw Error('Unexpected model discovery request');
+  };
+  const synced=await ChannelService.syncModels(c.id);
+  for(const model of [V6K_SEEDANCE_20_MODEL,V6K_XX_SEEDANCE_20_MODEL]){
+    db.update(models).set({isActive:1}).where(eq(models.modelId,model)).run();
+    saveModelSpecification({...getModelSpecification(model)!,enabled:true});
+  }
+  sqlite.prepare("INSERT INTO api_tokens (id,user_id,token_key,balance) VALUES (1,1,'test',-1)").run();
+  return synced;
+}
+
+describe('two Seedance 2.0 products through authenticated sync and actual entry points',()=>{
+  it('resumes the original A task after a worker cycle without switching models or reserving twice',async()=>{
+    await installSeedance20();let posts=0,queries=0,clock=Date.now();
+    const time=vi.spyOn(Date,'now').mockImplementation(()=>clock);
+    upstream=async(url,init)=>{
+      if(init.method==='POST'){posts++;return Response.json({id:'a_resume_original',status:'queued'});}
+      expect(url).toBe('https://www.v6k.top/v1/videos/a_resume_original');
+      expect(JSON.parse(latest().metadata)).toMatchObject({videoId:'a_resume_original',upstreamModel:'Asedanco2.0'});
+      if(++queries===1){clock+=2*60*60_000+1;return Response.json({id:'a_resume_original',status:'unknown'});}
+      return Response.json({id:'a_resume_original',status:'completed'});
+    };
+    try{
+      await(await post('/api/video/generate',{model:V6K_SEEDANCE_20_MODEL,prompt:'场景',seconds:15,resolution:'720p'})).text();
+      expect(latest().status).toBe('processing');expect(balance()).toBe(96);
+      expect(JSON.parse(latest().metadata)).toMatchObject({upstreamStatus:'unknown',progressKnown:false});
+      clock+=120_000;resumeSpecificationTasks();resumeSpecificationTasks();
+      await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+      expect(posts).toBe(1);expect(queries).toBe(2);expect(balance()).toBe(96);expect(latest().cost).toBe(4);
+    }finally{time.mockRestore();}
+  });
+  it.each([V6K_SEEDANCE_20_MODEL,V6K_XX_SEEDANCE_20_MODEL])('uses the persistent batch bridge and original prepayment for %s',async model=>{
+    await installSeedance20();let posts=0;
+    const batchId=batchStore.create(1,crypto.randomUUID(),{name:'Seedance batch',model,resolution:'720p',aspect_ratio:'16:9',video_length:15,
+      autoRetry:false,maxRetries:0,creatives:[{prompt:'批量场景',count:1,reference_images:[]}]},4,'https://app.example');
+    const item=batchStore.detail(batchId,1).items[0];
+    upstream=async(url,init)=>{
+      if(url==='http://127.0.0.1:9876/api/video/generate')return nativeFetch(origin+'/api/video/generate',init);
+      posts++;expect(url).toBe('https://www.v6k.top/v1/videos');
+      expect(JSON.parse(init.body)).toMatchObject({model:model===V6K_SEEDANCE_20_MODEL?'Asedanco2.0':'XXsedanco2.0',seconds:15,resolution:'720p'});
+      expect(balance()).toBe(96);return Response.json({id:'batch_seedance',status:'completed'});
+    };
+    tickVideoBatches();
+    await vi.waitFor(()=>expect(latest()?.status).toBe('completed'));
+    tickVideoBatches();tickVideoBatches();resumeSpecificationTasks();
+    expect(batchStore.item(item.id)).toMatchObject({status:'completed',billing_state:'charged'});
+    expect(latest().cost).toBe(4);expect(balance()).toBe(96);expect(posts).toBe(1);
+  });
+  it('groups the A models, imports XX separately, and never imports permission from the public square',async()=>{
+    const synced=await installSeedance20(['Asedanco2.05']);
+    expect(synced.models).toEqual([V6K_SEEDANCE_20_MODEL]);
+    expect(getModelSpecification(V6K_SEEDANCE_20_MODEL)!.routes.map(r=>r.upstreamModel)).toEqual(['Asedanco2.05']);
+    expect(getModelSpecification(V6K_XX_SEEDANCE_20_MODEL)!.routes).toEqual([]);
+    const c=db.select().from(channels).get()!;
+    expect(JSON.parse(c.supportedModels)).toEqual([V6K_SEEDANCE_20_MODEL]);
+    expect(JSON.parse(c.modelMapping)).toEqual({[V6K_SEEDANCE_20_MODEL]:'Asedanco2.05'});
+  });
+  it.each(['/api/video/generate','/v1/videos'])('publishes two 4-yuan entries and sends exact supported media without splitting at %s',async endpoint=>{
+    const synced=await installSeedance20();
+    expect(new Set(synced.models)).toEqual(new Set([V6K_SEEDANCE_20_MODEL,V6K_XX_SEEDANCE_20_MODEL]));
+    const catalog=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
+    for(const model of [V6K_SEEDANCE_20_MODEL,V6K_XX_SEEDANCE_20_MODEL])expect(catalog.find(m=>m.id===model)).toMatchObject({billingType:'per_call',rates:{'720p':4},available:true});
+    expect(catalog.some(m=>['ZH-Asedanco2.0','ZH-Asedanco2.05','ZH-XXsedanco2.0'].includes(m.id))).toBe(false);
+    const sent:any[]=[];
+    upstream=async(url,init)=>{
+      expect(url).toBe('https://www.v6k.top/v1/videos');expect(init.method).toBe('POST');
+      sent.push(JSON.parse(init.body));return Response.json({id:'seedance_'+sent.length,status:'completed'});
+    };
+    for(const model of [V6K_SEEDANCE_20_MODEL,V6K_XX_SEEDANCE_20_MODEL]){
+      const videos=model===V6K_SEEDANCE_20_MODEL?['https://media.example/ref.mp4']:[];
+      for(const seconds of [5,15]){
+        await(await post(endpoint,{model,prompt:'场景',seconds,resolution:'720p',reference_videos:videos,audio_urls:['https://media.example/a.mp3']})).text();
+        await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+        expect(latest().modelId).toBe(model);expect(latest().cost).toBe(4);
+        expect(sent.at(-1)).toEqual({model:model===V6K_SEEDANCE_20_MODEL?'Asedanco2.0':'XXsedanco2.0',prompt:'场景',seconds,ratio:'16:9',resolution:'720p',audios:['https://media.example/a.mp3'],...(videos.length?{videos}: {})});
+      }
+    }
+    resumeSpecificationTasks();resumeSpecificationTasks();expect(sent).toHaveLength(4);expect(balance()).toBe(84);
+  });
+  it.each(['/api/video/generate','/v1/videos'])('rejects XX reference videos and unsupported input before creating orders or charging at %s',async endpoint=>{
+    await installSeedance20();upstream=async()=>{throw Error('Must not submit rejected inputs');};
+    for(const invalid of [{reference_videos:['https://media.example/v.mp4']},{audio_urls:Array(4).fill('https://media.example/a.mp3')},{reference_images:Array(10).fill(reference)},{seconds:16},{resolution:'480p'}]){
+      const reply=await(await post(endpoint,{model:V6K_XX_SEEDANCE_20_MODEL,prompt:'场景',seconds:15,resolution:'720p',...invalid})).text();
+      expect(reply).not.toContain('content_id');
+      expect(db.select().from(contents).all()).toHaveLength(0);expect(balance()).toBe(100);
+    }
+  });
+  it.each(['rate-limit','rejected','unknown-no-id','receipt-failed'])('keeps original receipts and a single reservation across A routes: %s',async outcome=>{
+    await installSeedance20();let posts=0,queries=0;
+    upstream=async(url,init)=>{
+      if(init.method==='POST'){
+        posts++;const payload=JSON.parse(init.body);
+        expect(payload.model).toBe(outcome==='rate-limit'&&posts===2?'Asedanco2.05':'Asedanco2.0');
+        expect(balance()).toBe(96);
+        if(outcome==='rate-limit'&&posts===1)return Response.json({error:{code:'rate_limit_exceeded',message:'too many requests'}},{status:429});
+        if(outcome==='rejected')return Response.json({error:{code:'invalid_request',message:'duration rejected'}},{status:400});
+        if(outcome==='unknown-no-id')return new Response('<html>gateway timeout</html>',{status:504});
+        return Response.json({id:'a_original',status:outcome==='receipt-failed'?'unknown':'completed'}, {status:outcome==='receipt-failed'?503:200});
+      }
+      queries++;expect(url).toBe('https://www.v6k.top/v1/videos/a_original');
+      expect(JSON.parse(latest().metadata).videoId).toBe('a_original');
+      expect(findVideoSubmissionReceipt(latest().id)?.upstreamTaskId).toBe('a_original');
+      return Response.json({id:'a_original',status:'failed',error:{code:'video_generation_failed',message:'original task failed'}});
+    };
+    await(await post('/api/video/generate',{model:V6K_SEEDANCE_20_MODEL,prompt:'场景',seconds:15,resolution:'720p'})).text();
+    await vi.waitFor(()=>expect(latest().status).toBe(outcome==='rate-limit'?'completed':outcome==='unknown-no-id'?'processing':'failed'));
+    resumeSpecificationTasks();resumeSpecificationTasks();
+    expect(posts).toBe(outcome==='rate-limit'?2:1);expect(queries).toBe(outcome==='receipt-failed'?1:0);
+    expect(balance()).toBe(outcome==='rejected'||outcome==='receipt-failed'?100:96);
+    expect(latest().cost).toBe(outcome==='rate-limit'?4:outcome==='unknown-no-id'?4:0);
+    const meta=JSON.parse(latest().metadata);
+    expect(sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(meta.billingReservationId)).toMatchObject({state:outcome==='rate-limit'?'settled':outcome==='unknown-no-id'?'review':'refunded'});
+  });
+});
+
 describe('V6K cutover using the existing Zongheng billing and recovery paths', () => {
   it.each(['/api/video/generate', '/v1/videos'])('charges TTTseadanco2.5/720 exactly 6.5 per task at both 5 and 30 seconds at %s', async endpoint => {
     const model = 'TTTseadanco2.5/720';

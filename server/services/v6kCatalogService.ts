@@ -1,9 +1,11 @@
 import { eq } from 'drizzle-orm';
-import { db } from '../db/index.js';
+import { db, sqlite } from '../db/index.js';
 import { channels, models } from '../db/schema.js';
 import { getZonghengVideoSpec, zonghengPublicModelId, V6K_TTT_720_MODEL, V6K_TTT_720_DESCRIPTION } from '../../shared/zonghengVideo.js';
 import { zonghengBaseUrl } from './zonghengAdapter.js';
 import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
+import { v6kSeedance20Product } from '../../shared/v6kSeedance2.js';
+import { ensureV6kSeedance20Models, bindV6kSeedance20Routes } from './v6kSeedance2Catalog.js';
 
 export async function syncV6kVideoModels(channel: { id: number; baseUrl: string; apiKey: string; timeout?: number }) {
   const base = zonghengBaseUrl(channel.baseUrl);
@@ -25,9 +27,11 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     }
   } catch { /* Explicit video metadata and verified specifications still work without the square. */ }
   const imported = new Map<string, { id: string; upstream: string; description: string }>();
+  const authorizedIds: string[] = [];
   for (const entry of entries) {
     const id = String(typeof entry === 'string' ? entry : entry?.id || entry?.model || entry?.model_id || '').trim();
     if (!id) continue;
+    authorizedIds.push(id);
     const detail = square.find(item => item.model_name === id);
     const spec = getZonghengVideoSpec(id);
     const endpoints = [...(Array.isArray(entry?.supported_endpoint_types) ? entry.supported_endpoint_types : []),
@@ -35,11 +39,15 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     const kind = String(entry?.type || entry?.category || detail?.display_category || '').toLowerCase();
     if (!spec && !endpoints.includes('openai-video') && kind !== 'video') continue;
     const publicId = zonghengPublicModelId(id);
-    const description = id === V6K_TTT_720_MODEL ? V6K_TTT_720_DESCRIPTION : spec ? `${spec.resolution}；${spec.seconds.join('、')}秒；最多${spec.references.images}图、${spec.references.videos}视频、${spec.references.audios}音频`
-      : String(detail?.description || '新站视频模型；请先核对模型详情并配置规格与售价');
+    const product = v6kSeedance20Product(id);
+    const description = product?.description || (id === V6K_TTT_720_MODEL ? V6K_TTT_720_DESCRIPTION : spec ? `${spec.resolution}；${spec.seconds.join('、')}秒；最多${spec.references.images}图、${spec.references.videos}视频、${spec.references.audios}音频`
+      : String(detail?.description || '新站视频模型；请先核对模型详情并配置规格与售价'));
+    // Both A variants share one execution ID; the specification stores each actual upstream ID.
+    if (imported.has(publicId) && id !== product?.upstreamModels[0].id) continue;
     imported.set(publicId, { id: publicId, upstream: id, description });
   }
   return db.transaction(tx => {
+    ensureV6kSeedance20Models(sqlite);
     let added = 0;
     for (const item of imported.values()) {
       const existing = tx.select().from(models).where(eq(models.modelId, item.id)).get();
@@ -56,6 +64,7 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     tx.update(channels).set({ supportedModels: JSON.stringify(ids),
       modelMapping: JSON.stringify(Object.fromEntries([...imported.values()].map(item => [item.id, item.upstream]))),
       updatedAt: new Date().toISOString() }).where(eq(channels.id, channel.id)).run();
+    bindV6kSeedance20Routes(sqlite, channel.id, authorizedIds);
     return { count: ids.length, added, models: ids };
   });
 }

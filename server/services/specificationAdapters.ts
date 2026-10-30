@@ -1,4 +1,5 @@
 import { isHussHssModel } from '../../shared/hussBbVideo.js';
+import { V6K_SEEDANCE_20_MODEL } from '../../shared/v6kSeedance2.js';
 import { isMegabyChannel, buildMegabyVideoPayload, submitMegabyVideo, pollMegabyVideo, validateMegabyReferenceDurations, MegabyApiError } from './megabyVideoAdapter.js';
 import { isZonghengChannel, submitZonghengVideo, normalizeZonghengTask, readZonghengTaskResponse, zonghengTaskUrl, ZonghengSubmissionError } from './zonghengAdapter.js';
 import { zonghengProtocol, zonghengProtocolSnapshot } from './zonghengProtocol.js';
@@ -161,7 +162,14 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
     } catch (error: any) {
       if (acceptedTaskId) throw new SpecificationUpstreamError(error.message, false, true);
       if (error instanceof SpecificationUpstreamError) throw error;
-      if (error instanceof ZonghengSubmissionError) throw new SpecificationUpstreamError(error.message, false, error.uncertain, false, error.diagnostics?.httpStatus || 0, !error.uncertain);
+      if (error instanceof ZonghengSubmissionError) {
+        // V6K auth/rate-limit rejections have no accepted task. Socket/body errors,
+        // 5xx and every saved receipt remain on the original request, never fail over.
+        const status = error.diagnostics?.httpStatus || 0;
+        const aRoute = exec === V6K_SEEDANCE_20_MODEL && ['Asedanco2.0', 'Asedanco2.05'].includes(model);
+        const retrySafe = aRoute && !error.uncertain && (error.diagnostics?.requestNotSent === true || [401, 403, 429].includes(status));
+        throw new SpecificationUpstreamError(error.message, retrySafe, error.uncertain, false, status, !error.uncertain);
+      }
       throw new SpecificationUpstreamError(error.message, true);
     }
   }
