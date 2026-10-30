@@ -1,3 +1,4 @@
+import { migrateHmDdlongNaming } from './hmDdlongNamingMigration.js';
 import { MEGABY_BASE_URL, MEGABY_CHANNEL_TYPE } from '../../shared/megabyVideo.js';
 import { migrateZonghengToV6k } from '../services/zonghengV6kMigration.js';
 import { ensureFundLedger } from './fundLedger.js';
@@ -131,6 +132,7 @@ async function verifyBatch(
  * N 个 Key = 验证速度提升 N 倍，运行时请求也自动轮询分散限速
  */
 export async function syncModelsFromAPI() {
+  migrateHmDdlongNaming(sqlite);
   const existingModels = db.select().from(models).all();
   const existingModelIds = new Set(existingModels.map(m => m.modelId));
   const apiKey = env.GEMINI_API_KEY;

@@ -42,9 +42,9 @@ it.each(['invalid-local-audio', 'invalid-local-video'])('refunds a proven local 
   const id = ++sequence;
   db.insert(users).values({ id, email: id + '@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
   db.insert(channels).values({ id, name: 'HM preparation', type: 'hmstudio', baseUrl: 'https://hm.test', apiKey: 'test',
-    supportedModels: '["sd2.5-301010"]', modelMapping: '{"sd2.5-301010":"30-10-10"}', status: 1 }).run();
+    supportedModels: '["sd2.5-933"]', modelMapping: '{"sd2.5-933":"30-10-10"}', status: 1 }).run();
   reserveLegacyVideo(id, 7, charge => {
-    db.insert(contents).values({ id, userId: id, type: 'video', modelId: 'sd2.5-301010', status: 'queued', cost: 7,
+    db.insert(contents).values({ id, userId: id, type: 'video', modelId: 'sd2.5-933', status: 'queued', cost: 7,
       metadata: JSON.stringify({ channelId: id, prompt: 'test', resolution: '720p', seconds: 30,
         publicBaseUrl: 'https://public.test',
         ...(kind === 'invalid-local-audio' ? { audio_urls: ['/not-an-upload/audio.mp3'] } : { reference_videos: ['/not-an-upload/video.mp4'] }),
@@ -66,16 +66,16 @@ it.each(['invalid-local-audio', 'invalid-local-video'])('refunds a proven local 
     expect(fetcher).not.toHaveBeenCalled();
   } finally { vi.unstubAllGlobals(); }
 });
-it.each(['720p', '1080p'])('actual HM queue overrides a stale lumen channel for nova at %s', async resolution => {
+it.each(['720p'])('actual HM queue overrides a stale lumen channel for nova at %s', async resolution => {
   const id = ++sequence;
   db.insert(users).values({ id, email: id + '@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
   db.insert(channels).values({ id, name: 'HM nova test', type: 'hmstudio', baseUrl: 'https://hm.test', apiKey: 'test',
-    supportedModels: '["sd2.5-301010"]', modelMapping: '{"sd2.5-301010":"30-10-10"}', status: 1 }).run();
+    supportedModels: '["sd2.5-933"]', modelMapping: '{"sd2.5-933":"30-10-10"}', status: 1 }).run();
   const { contentId } = reserveLegacyVideo(id, 2, charge => {
-    db.insert(contents).values({ id, userId: id, type: 'video', modelId: 'sd2.5-301010', status: 'queued', cost: 2,
+    db.insert(contents).values({ id, userId: id, type: 'video', modelId: 'sd2.5-933', status: 'queued', cost: 2,
       metadata: JSON.stringify({ channelId: id, prompt: 'test', resolution, seconds: 30, upstream_channel: 'lumen',
-        reference_images: Array(30).fill('https://example.test/image.jpg'),
-        reference_videos: Array(10).fill('https://example.test/video.mp4'), audio_urls: Array(10).fill('https://example.test/audio.mp3'),
+        reference_images: Array(9).fill('https://example.test/image.jpg'),
+        reference_videos: Array(3).fill('https://example.test/video.mp4'), audio_urls: Array(3).fill('https://example.test/audio.mp3'),
         billingReservationId: charge.id, videoSubmissionState: 'preparing' }) }).run();
     return id;
   });
@@ -89,13 +89,13 @@ it.each(['720p', '1080p'])('actual HM queue overrides a stale lumen channel for 
     expect(url).toBe('https://hm.test/v1/videos/generations');
     expect(new Headers(options.headers).get('content-type')).toBe('application/json');
     const payload = JSON.parse(String(options.body));
-    expect(payload.channel).toBe('nova');
-    expect(payload.model).toBe('SD2.5-30-10-10');
+    expect(payload.channel).toBe('DDLONG');
+    expect(payload.model).toBe('DDLONG-SD2.5');
     expect(payload.video_resolution).toBe(resolution);
     expect(payload.duration).toBe(30);
     expect(payload.face).toBe(true);
     expect(payload.function_mode).toBe('omni_reference');
-    expect(payload.materials).toHaveLength(50);
+    expect(payload.materials).toHaveLength(15);
     expect(db.select().from(users).where(eq(users.id, id)).get()?.balance).toBe(100);
     await video.failHmQueuedVideo(id, new Error('duplicate'), true);
     await video.resumePollForTask(id, db.select().from(contents).where(eq(contents.id, id)).get());
@@ -135,9 +135,9 @@ it('sends a long queued prompt to HM and refunds an explicit upstream rejection 
   const id = ++sequence;
   db.insert(users).values({ id, email:id+'@test.invalid', username:'test', passwordHash:'test', balance:100 }).run();
   db.insert(channels).values({ id, name:'HM old queue',type:'hmstudio',baseUrl:'https://hm.test',apiKey:'test',
-    supportedModels:'["sd2.5-301010"]',modelMapping:'{"sd2.5-301010":"30-10-10"}',status:1 }).run();
+    supportedModels:'["sd2.5-933"]',modelMapping:'{"sd2.5-933":"30-10-10"}',status:1 }).run();
   reserveLegacyVideo(id,7,charge => {
-    db.insert(contents).values({id,userId:id,type:'video',modelId:'sd2.5-301010',status:'queued',cost:7,
+    db.insert(contents).values({id,userId:id,type:'video',modelId:'sd2.5-933',status:'queued',cost:7,
       metadata:JSON.stringify({channelId:id,prompt:'字'.repeat(8001),resolution:'720p',seconds:4,
         billingReservationId:charge.id,videoSubmissionState:'preparing'})}).run();
     return id;
@@ -166,9 +166,9 @@ it.each(['timeout', '502', 'reset', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'E
   const id = ++sequence;
   db.insert(users).values({ id, email: id + '@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
   db.insert(channels).values({ id, name: 'HM nova unknown', type: 'hmstudio', baseUrl: 'https://hm.test', apiKey: 'test',
-    supportedModels: '["sd2.5-301010"]', modelMapping: '{"sd2.5-301010":"30-10-10"}', status: 1 }).run();
+    supportedModels: '["sd2.5-933"]', modelMapping: '{"sd2.5-933":"30-10-10"}', status: 1 }).run();
   reserveLegacyVideo(id, 7, charge => {
-    db.insert(contents).values({ id, userId: id, type: 'video', modelId: 'sd2.5-301010', status: 'queued', cost: 7,
+    db.insert(contents).values({ id, userId: id, type: 'video', modelId: 'sd2.5-933', status: 'queued', cost: 7,
       metadata: JSON.stringify({ channelId: id, prompt: 'test', resolution: '720p', seconds: 4,
         billingReservationId: charge.id, videoSubmissionState: 'preparing' }) }).run();
     return id;
@@ -246,9 +246,9 @@ it.each(['MiniMax-H3','seedance_v2.0','seedance_v2.0-933'].flatMap(model=>['reje
   }finally{vi.unstubAllGlobals();}
 });
 
-it.each(['sd2.5-301010','MiniMax-H3','seedance_v2.0','seedance_v2.0-933'])('%s persists receipt before polling and settles once after a temporary query failure',async model=>{
-  const upstream = model==='sd2.5-301010'?'30-10-10':model==='seedance_v2.0'?'MINIMAXH3-2.0采样':model==='seedance_v2.0-933'?'MINIMAX-H3-2.0采样-933':'MINIMAXH3 9-3-3';
-  const retail = model==='sd2.5-301010'?7:model==='seedance_v2.0'?0.7:model==='seedance_v2.0-933'?1.37:1.5;
+it.each(['sd2.5-933','MiniMax-H3','seedance_v2.0','seedance_v2.0-933'])('%s persists receipt before polling and settles once after a temporary query failure',async model=>{
+  const upstream = model==='sd2.5-933'?'30-10-10':model==='seedance_v2.0'?'MINIMAXH3-2.0采样':model==='seedance_v2.0-933'?'MINIMAX-H3-2.0采样-933':'MINIMAXH3 9-3-3';
+  const retail = model==='sd2.5-933'?7:model==='seedance_v2.0'?0.7:model==='seedance_v2.0-933'?1.37:1.5;
   const id=++sequence, taskId='abecab12-3456-4789-9234-123456789abc';
   db.insert(users).values({id,email:id+'@test.invalid',username:'test',passwordHash:'test',balance:100}).run();
   db.insert(channels).values({id,name:'H3 accepted',type:'hmstudio',baseUrl:'https://hm.test',apiKey:'test',supportedModels:JSON.stringify([model]),modelMapping:JSON.stringify({[model]:upstream}),status:1}).run();
@@ -258,13 +258,13 @@ it.each(['sd2.5-301010','MiniMax-H3','seedance_v2.0','seedance_v2.0-933'])('%s p
   let gets=0;
   const fetcher=vi.fn(async (url:any,options:any)=>{
     if(options?.method==='POST') {
-      if(model==='sd2.5-301010') expect(JSON.parse(options.body)).toMatchObject({model:'SD2.5-30-10-10',channel:'nova'});
+      if(model==='sd2.5-933') expect(JSON.parse(options.body)).toMatchObject({model:'DDLONG-SD2.5',channel:'DDLONG'});
       return Response.json({task_id:taskId,status:'pending'},{status:202});
     }
     expect(String(url)).toBe('https://hm.test/v1/tasks/'+taskId);
     const row=db.select().from(contents).where(eq(contents.id,id)).get()!;
     expect(JSON.parse(row.metadata!).videoId).toBe(taskId);
-    if(model==='sd2.5-301010') expect(JSON.parse(row.metadata!).upstreamModel).toBe('SD2.5-30-10-10');
+    if(model==='sd2.5-933') expect(JSON.parse(row.metadata!).upstreamModel).toBe('DDLONG-SD2.5');
     expect(db.select().from(users).where(eq(users.id,id)).get()?.balance).toBeCloseTo(100-retail);
     if(++gets===1) return Response.json({error:'暂时无法查询'},{status:503});
     return Response.json({task_id:taskId,status:'success',result_urls:['https://cdn.test/h3.mp4']});
@@ -280,3 +280,25 @@ it.each(['sd2.5-301010','MiniMax-H3','seedance_v2.0','seedance_v2.0-933'])('%s p
     expect(gets).toBe(2);
   }finally{vi.unstubAllGlobals();}
 },20000);
+
+// Orders queued before the cutover must not silently lose media or change resolution.
+it.each([{resolution:'1080p'},{reference_images:Array(30).fill('https://example.test/i.jpg')},{reference_videos:Array(10).fill('https://example.test/v.mp4')},{audio_urls:Array(10).fill('https://example.test/a.mp3')}])('rejects incompatible old DDLONG queued input and refunds once: %j',async extra=>{
+  const id=++sequence;
+  db.insert(users).values({id,email:id+'@test.invalid',username:'test',passwordHash:'test',balance:100}).run();
+  db.insert(channels).values({id,name:'old nova config',type:'hmstudio',baseUrl:'https://hm.test',apiKey:'test',supportedModels:'["sd2.5-933"]',modelMapping:'{"sd2.5-933":"SD2.5-30-10-10"}',status:1}).run();
+  reserveLegacyVideo(id,7,charge=>{
+    db.insert(contents).values({id,userId:id,type:'video',modelId:'sd2.5-933',status:'queued',cost:7,metadata:JSON.stringify({channelId:id,prompt:'test',seconds:30,resolution:'720p',...extra,billingReservationId:charge.id,videoSubmissionState:'preparing'})}).run();return id;
+  });
+  const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);
+  try{
+    video.enqueueHmStudioVideoContent(id);
+    await vi.waitFor(()=>expect(db.select().from(contents).where(eq(contents.id,id)).get()?.status).toBe('failed'));
+    const row=db.select().from(contents).where(eq(contents.id,id)).get()!;
+    expect(JSON.parse(row.metadata!)).toMatchObject({billingStatus:'refunded',videoSubmissionState:'rejected'});
+    expect(JSON.parse(row.metadata!).error).toContain('未发送上游');
+    await video.failHmQueuedVideo(id,new Error('duplicate'),true);
+    await video.resumePollForTask(id,row);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(db.select().from(users).where(eq(users.id,id)).get()!.balance).toBe(100);
+  }finally{vi.unstubAllGlobals();}
+});

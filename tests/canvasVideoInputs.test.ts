@@ -9,15 +9,15 @@ afterEach(() => vi.restoreAllMocks());
 describe('canvas video editing constraints', () => {
   it('uses model-specific reference image caps and keeps unknown models at ten', () => {
     const image={...newNode('image',{x:0,y:0}),src:'/image.jpg'};
-    const ref={...options,videoMode:'reference' as const,model:'sd2.5-301010'};
-    expect(videoInputError(ref,Array(30).fill(image))).toBe('');
-    expect(videoInputError(ref,Array(31).fill(image))).toContain('30 张参考图片');
+    const ref={...options,videoMode:'reference' as const,model:'sd2.5-933'};
+    expect(videoInputError(ref,Array(9).fill(image))).toBe('');
+    expect(videoInputError(ref,Array(10).fill(image))).toContain('9 张参考图片');
     expect(videoInputError({...ref,model:'test-video'},Array(11).fill(image))).toContain('10 张参考图片');
     const multi={...ref,videoMode:'multimodal' as const};
     const audio={...newNode('audio',{x:0,y:0}),src:'/audio.mp3'};
-    const refs=[...Array(30).fill(image),...Array(10).fill(video),...Array(10).fill(audio)];
+    const refs=[...Array(9).fill(image),...Array(3).fill(video),...Array(3).fill(audio)];
     expect(videoInputError(multi,refs)).toBe('');
-    for(const extra of [image,video,audio]) expect(videoInputError(multi,[...refs,extra])).toContain('最多支持 30 张图片、10 个视频、10 段音频');
+    for(const extra of [image,video,audio]) expect(videoInputError(multi,[...refs,extra])).toContain('最多支持 9 张图片、3 个视频、3 段音频');
   });
 
 

@@ -32,17 +32,17 @@ describe('HM Studio additional video models', () => {
     expect(validateHmStudioAdditionalVideoInput(id,{...base,imageCount:0,videoCount:0,audioCount:0,hasFirstFrame:true,hasLastFrame:true})).toBeNull();
   });
   it('defines nova public identity, resolution retail prices and confirmed limits', () => {
-    const id = 'sd2.5-301010';
-    expect(getHmStudioUpstreamVideoModel(id)).toBe('SD2.5-30-10-10');
-    expect(canvasVideoReferenceLimits(id)).toEqual({ images: 30, videos: 10, audios: 10 });
+    const id = 'sd2.5-933';
+    expect(getHmStudioUpstreamVideoModel(id)).toBe('DDLONG-SD2.5');
+    expect(canvasVideoReferenceLimits(id)).toEqual({ images: 9, videos: 3, audios: 3 });
     expect(getHmStudioAdditionalVideoModel(id)).toMatchObject({ defaultEnabled: false,
-      resolutionPrices: { '720p': 7, '1080p': 12 }, maxImages: 30, maxVideos: 10, maxAudios: 10 });
-    for (const resolution of ['720p', '1080p']) {
+      resolutionPrices: { '720p': 7 }, maxImages: 9, maxVideos: 3, maxAudios: 3 });
+    for (const resolution of ['720p']) {
       for (const seconds of [4, 15, 30]) {
-        const input = { resolution, seconds, imageCount: 30, videoCount: 10, audioCount: 10 };
+        const input = { resolution, seconds, imageCount: 9, videoCount: 3, audioCount: 3 };
         expect(validateHmStudioAdditionalVideoInput(id, input)).toBeNull();
-        for (const patch of [{ seconds: 3 }, { seconds: 31 }, { seconds: 4.5 }, { resolution: '2k' },
-          { imageCount: 31 }, { videoCount: 11 }, { audioCount: 11 }, { hasFirstFrame: true }]) {
+        for (const patch of [{ seconds: 3 }, { seconds: 31 }, { seconds: 4.5 }, { resolution: '2k' }, { resolution: '1080p' },
+          { imageCount: 10 }, { videoCount: 4 }, { audioCount: 4 }, { hasFirstFrame: true }]) {
           expect(validateHmStudioAdditionalVideoInput(id, { ...input, ...patch })).not.toBeNull();
         }
       }

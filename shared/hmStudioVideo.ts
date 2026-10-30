@@ -5,10 +5,13 @@ export const HM_STUDIO_SEEDANCE_V25_301010_MODEL = 'seedance_v2.5-301010';
 export const HM_STUDIO_FAST803_MODEL = 'SD2.0FAST803';
 export const HM_STUDIO_FAST813_MODEL = 'SD2.0FAST813';
 export const HM_STUDIO_MINI503_MODEL = 'SD2.0MINI503';
-export const HM_STUDIO_NOVA_MODEL = 'sd2.5-301010';
-export const HM_STUDIO_NOVA_UPSTREAM_MODEL = 'SD2.5-30-10-10';
+export const HM_STUDIO_NOVA_MODEL = 'sd2.5-933';
+export const HM_STUDIO_LEGACY_NOVA_PUBLIC_MODEL = 'sd2.5-301010';
+export const HM_STUDIO_NOVA_UPSTREAM_MODEL = 'DDLONG-SD2.5';
 // Internal compatibility for saved HM mappings and unsubmitted queued jobs.
 export const HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODEL = '30-10-10';
+export const HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODELS = [HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODEL, 'SD2.5-30-10-10', HM_STUDIO_LEGACY_NOVA_PUBLIC_MODEL];
+export const HM_STUDIO_DDLONG_CHANNEL = 'DDLONG';
 export const HM_STUDIO_MINIMAX_H3_MODEL = 'MiniMax-H3';
 export const HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL = 'MINIMAXH3 9-3-3';
 
@@ -25,19 +28,28 @@ export const HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP: Readonly<Record<string, string>
   [HM_STUDIO_MINIMAX_H3_MODEL]: HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL,
 };
 
+export function normalizeHmStudioPublicModelId(modelId: string): string {
+  return modelId === HM_STUDIO_LEGACY_NOVA_PUBLIC_MODEL ? HM_STUDIO_NOVA_MODEL : modelId;
+}
+
 export function getHmStudioUpstreamVideoModel(modelId: string): string {
-  if (modelId === HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODEL) return HM_STUDIO_NOVA_UPSTREAM_MODEL;
+  if (HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODELS.includes(modelId)) return HM_STUDIO_NOVA_UPSTREAM_MODEL;
   return Object.hasOwn(HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP, modelId)
     ? HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP[modelId] : modelId;
 }
 
 // Only confirmed HM mappings belong here; never infer an unknown model's capabilities.
 export function getHmStudioPublicVideoModel(modelId: string): string {
-  if (modelId === HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODEL) return HM_STUDIO_NOVA_MODEL;
+  if (HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODELS.includes(modelId)) return HM_STUDIO_NOVA_MODEL;
   return Object.entries(HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP)
     .find(([, upstream]) => upstream === modelId)?.[0] || modelId;
 }
 
+export function isHmStudioDdlongVideoModel(modelId: string): boolean {
+  return getHmStudioUpstreamVideoModel(modelId) === HM_STUDIO_NOVA_UPSTREAM_MODEL;
+}
+
+// Historical family helper: includes the sd2.5 product now served by DDLONG.
 export function isHmStudioNovaVideoModel(modelId: string): boolean {
   const upstream = getHmStudioUpstreamVideoModel(modelId);
   return upstream === HM_STUDIO_NOVA_UPSTREAM_MODEL || upstream === HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL;
@@ -89,14 +101,14 @@ export const HM_STUDIO_ADDITIONAL_VIDEO_MODELS: readonly HmStudioVideoModelSpec[
   },
   {
     id: HM_STUDIO_NOVA_MODEL,
-    displayName: 'sd2.5-301010',
-    description: '720p/1080p；支持4-30秒；最多30张图片、10个视频、10段音频参考；按分辨率按次计费',
+    displayName: 'sd2.5-933',
+    description: '720p；支持4-30秒；最多9张图片、3个视频、3段音频参考；固定按次计费',
     minSeconds: 4, maxSeconds: 30, resolution: '720p',
-    resolutions: ['720p', '1080p'],
-    resolutionPrices: { '720p': 7, '1080p': 12 },
-    maxImages: 30, maxVideos: 10, maxAudios: 10,
+    resolutions: ['720p'],
+    resolutionPrices: { '720p': 7 },
+    maxImages: 9, maxVideos: 3, maxAudios: 3,
     defaultPrice: 7, defaultEnabled: false,
-    // Only ordinary references are confirmed for nova; dedicated frame mode is not advertised.
+    // Keep the existing product reference modes; this replacement does not add a frame-mode entry.
     supportsDedicatedFrames: false,
   },
   {
@@ -216,6 +228,10 @@ export function validateHmStudioAdditionalVideoInput(modelId: string, input: {
   }
   if (!spec.supportsDedicatedFrames && (input.hasFirstFrame || input.hasLastFrame)) {
     return `${modelId} 不支持首尾帧专用参数，请使用普通参考图片`;
+  }
+  if (isHmStudioDdlongVideoModel(modelId)) {
+    if (input.functionMode && !['first_last_frames', 'omni_reference'].includes(input.functionMode)) return 'DDLONG-SD2.5 仅支持首尾帧或混合素材模式';
+    if (input.functionMode === 'first_last_frames' && (imageCount > 2 || input.videoCount || input.audioCount)) return 'DDLONG-SD2.5 首尾帧模式不支持混合素材，请选择混合素材模式';
   }
   if (isHmStudioDefaultV20Model(modelId)) {
     const mode = input.functionMode;

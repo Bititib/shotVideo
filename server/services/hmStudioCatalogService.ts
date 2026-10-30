@@ -1,10 +1,11 @@
+import { migrateHmDdlongNaming } from '../db/hmDdlongNamingMigration.js';
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { channels, modelPricing, models } from '../db/schema.js';
 import {
   getHmStudioAdditionalVideoModel, getHmStudioPublicVideoModel,
   getHmStudioUpstreamVideoModel, HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP,
-  HM_STUDIO_NOVA_MODEL, HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODEL,
+  HM_STUDIO_NOVA_MODEL, HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODELS,
 } from '../../shared/hmStudioVideo.js';
 
 /** HM catalog normalization only. Generation and settlement keep their existing paths. */
@@ -30,6 +31,7 @@ export function registerHmStudioCatalog(channel: { id: number; name: string }, r
   });
   const unique = [...new Map(entries.map(entry => [entry.publicId, entry])).values()];
   return sqlite.transaction(() => {
+    migrateHmDdlongNaming(sqlite);
     let added = 0;
     const warnings: string[] = [];
     for (const entry of unique) {
@@ -51,7 +53,7 @@ export function registerHmStudioCatalog(channel: { id: number; name: string }, r
 
       const price = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, publicId)).get();
       const legacyIds = publicId !== upstreamId
-        ? [upstreamId, ...(publicId === HM_STUDIO_NOVA_MODEL ? [HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODEL] : [])] : [];
+        ? [upstreamId, ...(publicId === HM_STUDIO_NOVA_MODEL ? HM_STUDIO_NOVA_LEGACY_UPSTREAM_MODELS : [])] : [];
       const legacyModels = legacyIds.map(id => db.select().from(models).where(eq(models.modelId, id)).get())
         .filter(model => model?.provider === 'hmstudio');
       const legacyModel = legacyModels.find(model => db.select().from(modelPricing).where(eq(modelPricing.modelPattern, model!.modelId)).get()) || legacyModels[0];

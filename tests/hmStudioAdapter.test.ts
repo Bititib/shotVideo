@@ -18,28 +18,28 @@ import {
 
 describe('HM Studio adapter', () => {
   it('maps the nova public ID and preserves all reference URLs and prompt markers', () => {
-    const form = buildHmStudioVideoForm({ model: 'sd2.5-301010', prompt: '[ref_30] [ref_video_10] [ref_audio_10]',
-      duration: 30, ratio: '9:16', resolution: '1080p', upstreamChannel: 'lumen',
-      imageSources: Array(30).fill('https://example.test/image.jpg'),
-      videoSources: Array(10).fill('https://example.test/video.mp4'), audioSources: Array(10).fill('https://example.test/audio.mp3') });
-    expect(form.get('model')).toBe('SD2.5-30-10-10');
-    expect(form.getAll('channel')).toEqual(['nova']);
-    expect(form.get('prompt')).toBe('@Image30 @Video10 @Audio10');
+    const form = buildHmStudioVideoForm({ model: 'sd2.5-933', prompt: '[ref_9] [ref_video_3] [ref_audio_3]',
+      duration: 30, ratio: '9:16', resolution: '720p', upstreamChannel: 'lumen',
+      imageSources: Array(9).fill('https://example.test/image.jpg'),
+      videoSources: Array(3).fill('https://example.test/video.mp4'), audioSources: Array(3).fill('https://example.test/audio.mp3') });
+    expect(form.get('model')).toBe('DDLONG-SD2.5');
+    expect(form.getAll('channel')).toEqual(['DDLONG']);
+    expect(form.get('prompt')).toBe('@Image9 @Video3 @Audio3');
     expect(form.get('function_mode')).toBe('omni_reference');
     const materials = JSON.parse(String(form.get('materials')));
-    expect(materials).toHaveLength(50);
-    expect(materials.at(-1)).toEqual({ type: 'audio', name: 'Audio10', url: 'https://example.test/audio.mp3' });
+    expect(materials).toHaveLength(15);
+    expect(materials.at(-1)).toEqual({ type: 'audio', name: 'Audio3', url: 'https://example.test/audio.mp3' });
     const single = buildHmStudioVideoForm({ model: '30-10-10', prompt: '[ref_1]', duration: 4, ratio: '16:9', resolution: '720p',
       imageSources: ['https://example.test/image.jpg'] });
     expect(single.get('function_mode')).toBe('omni_reference');
     expect(single.get('prompt')).toBe('@Image1');
   });
-  it.each(['720p', '1080p'])('upgrades old 30-10-10 mappings to the renamed nova model at %s', resolution => {
-    for (const model of ['sd2.5-301010','30-10-10','SD2.5-30-10-10']) for (const upstreamChannel of [undefined, '', 'default', 'official', '低价', 'lumen', 'nova']) {
+  it.each(['720p'])('upgrades old 30-10-10 mappings to the renamed nova model at %s', resolution => {
+    for (const model of ['sd2.5-933','sd2.5-301010','30-10-10','SD2.5-30-10-10','DDLONG-SD2.5']) for (const upstreamChannel of [undefined, '', 'default', 'official', '低价', 'lumen', 'nova']) {
       const form = buildHmStudioVideoForm({ model, prompt: 'test', duration: 6,
         ratio: '16:9', resolution, upstreamChannel });
-      expect(form.getAll('channel')).toEqual(['nova']);
-      expect(form.get('model')).toBe('SD2.5-30-10-10');
+      expect(form.getAll('channel')).toEqual(['DDLONG']);
+      expect(form.get('model')).toBe('DDLONG-SD2.5');
       expect(form.get('video_resolution')).toBe(resolution);
     }
   });

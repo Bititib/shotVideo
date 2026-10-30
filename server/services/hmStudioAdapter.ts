@@ -2,7 +2,7 @@ import { publishReferenceUrl } from './publicReferenceService.js';
 import { HmSubmissionError } from './hmStudioSubmission.js';
 import { transportDiagnostic } from './upstreamDiagnostic.js';
 import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
-import { HM_STUDIO_FAST803_MODEL, HM_STUDIO_FAST813_MODEL, HM_STUDIO_MINI503_MODEL, getHmStudioUpstreamVideoModel, isHmStudioNovaVideoModel, HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL, isHmStudioDefaultV20Model, getHmStudioPublicVideoModel, HM_STUDIO_SEEDANCE_V20_933_MODEL, validateHmStudioAdditionalVideoInput } from '../../shared/hmStudioVideo.js';
+import { isHmStudioDdlongVideoModel, HM_STUDIO_DDLONG_CHANNEL, HM_STUDIO_FAST803_MODEL, HM_STUDIO_FAST813_MODEL, HM_STUDIO_MINI503_MODEL, getHmStudioUpstreamVideoModel, isHmStudioNovaVideoModel, HM_STUDIO_MINIMAX_H3_UPSTREAM_MODEL, isHmStudioDefaultV20Model, getHmStudioPublicVideoModel, HM_STUDIO_SEEDANCE_V20_933_MODEL, validateHmStudioAdditionalVideoInput } from '../../shared/hmStudioVideo.js';
 
 export const HM_STUDIO_CHANNEL_TYPE = 'hmstudio';
 export const HM_STUDIO_UPSTREAM_FACE_ENABLED = true;
@@ -176,7 +176,7 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
   const audios = (options.audioSources || []).filter(Boolean);
   const explicitFrames = [options.firstFrame, options.lastFrame].filter(Boolean) as string[];
   const form = new FormData();
-  if (isHmStudioDefaultV20Model(options.model)) {
+  if (isHmStudioDefaultV20Model(options.model) || isHmStudioDdlongVideoModel(options.model)) {
     const error = validateHmStudioAdditionalVideoInput(getHmStudioPublicVideoModel(options.model), {
       seconds: options.duration, resolution: options.resolution, ratio: options.ratio,
       imageCount: images.length, videoCount: videos.length, audioCount: audios.length,
@@ -204,10 +204,10 @@ export function buildHmStudioVideoForm(options: HmStudioVideoOptions): FormData 
   // at the adapter boundary so web, API, retry and recovery paths cannot drift.
   form.append('face', String(HM_STUDIO_UPSTREAM_FACE_ENABLED));
   if (functionMode) form.append('function_mode', functionMode);
-  // Pin each confirmed family to its documented pool: default 2.0, lumen FAST/MINI, or nova.
+  // Pin the replaced sd2.5 product to DDLONG; retain nova for MiniMax-H3.
   // Enforce this at the shared submission boundary (web/API/batch/retries),
   // including old queued payloads that explicitly persisted a default channel.
-  const upstreamChannel = isHmStudioDefaultV20Model(options.model) ? 'default' : isNova
+  const upstreamChannel = isHmStudioDdlongVideoModel(options.model) ? HM_STUDIO_DDLONG_CHANNEL : isHmStudioDefaultV20Model(options.model) ? 'default' : isNova
     ? 'nova'
     : HM_STUDIO_LUMEN_VIDEO_MODELS.has(options.model.trim().toUpperCase())
       ? 'lumen' : options.upstreamChannel;
