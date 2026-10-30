@@ -6,6 +6,7 @@ import { normalizeSiYueTianMinimaxTask } from './siYueTianMinimaxAdapter.js';
 import { isMegabyChannel, normalizeMegabyTask, validateMegabyVideoInput, validateMegabyReferenceDurations } from './megabyVideoAdapter.js';
 import { isHussChannel, recoverHussSubmission, normalizeHussTask } from './hussVideoAdapter.js';
 import { publicApiModelId } from '../../shared/funAi.js';
+import { videoCapabilities, normalizeVideoParameters } from './videoCapabilities.js';
 import { isZonghengChannel, normalizeZonghengTask } from './zonghengAdapter.js';
 import { acceptZonghengVideoReceipt } from './zonghengTaskService.js';
 import { recordV6kDeliveryUnavailable } from './v6kDeliveryState.js';
@@ -640,6 +641,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     assertUserModelAccess(userId, modelId);
     if (token?.allowedModels?.length && !token.allowedModels.includes(modelId) && !spec.aliases.some(alias => token.allowedModels.includes(alias) && !checkAlias(spec, alias))) throw fail('Token 无权调用此模型', 403);
     const body = { ...req.body, aspect_ratio: req.body.aspect_ratio || req.body.ratio || (spec.limits.ratios.includes(kind === 'image' ? '1:1' : '16:9') ? (kind === 'image' ? '1:1' : '16:9') : spec.limits.ratios[0]) };
+    if (kind === 'video') normalizeVideoParameters(body, videoCapabilities(modelId, spec).parameterSchema, Boolean(req.is?.('multipart/form-data')));
     const files = Array.isArray(req.files) ? req.files : [];
     const fields: Record<string, string[]> = { reference_images: ['image', 'image[]', 'images', 'input_reference[]', 'reference_images'], reference_videos: ['video', 'video[]', 'videos', 'reference_video', 'reference_videos'], audio_urls: ['audio', 'audio[]', 'audios', 'audio_urls'], first_frame: ['first_frame', 'first_frame_url'], last_frame: ['last_frame', 'last_frame_url'] };
     for (const file of files) {

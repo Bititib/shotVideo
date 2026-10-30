@@ -1,4 +1,5 @@
 import { publicApiModelId } from '../../shared/funAi.js';
+import { videoCapabilities, normalizeVideoParameters } from '../services/videoCapabilities.js';
 import { zonghengProtocol, zonghengProtocolSnapshot } from '../services/zonghengProtocol.js';
 import { publicGenerationError } from '../../shared/generationMessages.js';
 import { normalizeSnumomNsfwRequestBody } from '../services/snumomWanAdapter.js';
@@ -635,6 +636,7 @@ router.get('/models', (req: Request, res: Response) => {
       id: callableModelId(model),
       name: callableModelId(model),
       canonical_id: callableModelId(model),
+      ...(JSON.parse(model.capabilities || '[]').includes('video') ? { ...videoCapabilities(model.modelId), description: model.description || '' } : {}),
       object: 'model',
       created: Math.floor(Date.now() / 1000),
       owned_by: 'system',
@@ -1680,6 +1682,8 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
     if ([input.seconds, input.duration, input.video_length, input.parameters?.duration].every(value => value === undefined)) input.seconds = 5;
   }
+  try { normalizeVideoParameters(req.body, videoCapabilities(req.body.model).parameterSchema, Boolean(req.is('multipart/form-data'))); }
+  catch (error: any) { cleanupFiles(req.files); return res.status(400).json({ error: error.message }); }
   try { req.body=normalizeSnumomNsfwRequestBody(req.body); } catch(error:any) { cleanupFiles(req.files);return res.status(400).json({error:error.message}); }
   if (await handleSpecificationGeneration(req, res, 'video', { token, reserve: (amount, id, snapshot) => reserveApiCharge(token, amount, id, snapshot) })) return;
   const body = req.body || {};

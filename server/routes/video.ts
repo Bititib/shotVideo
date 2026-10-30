@@ -25,6 +25,7 @@ import { canvasRequestMiddleware, recordCanvasEvent } from '../middleware/canvas
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { hayaVideoSeconds, HAYA_VIDEO_MODELS, HAYA_XG_SEEDANCE_20_MODEL, getHayaVideoSpec, validateHayaVideoInput } from '../../shared/hayaVideo.js';
 import { existingModelLimits } from '../services/modelInputPresets.js';
+import { videoCapabilities } from '../services/videoCapabilities.js';
 import { isHayaChannel, hayaTaskUrl, normalizeHayaTask, hayaPollDelay, submitHayaVideo, HayaSubmissionError } from '../services/hayaVideoAdapter.js';
 import { prepareHayaMedia, validateHayaMedia } from '../services/hayaMediaService.js';
 import { patchHayaTask, reviewHayaTask } from '../services/hayaTaskService.js';
@@ -720,7 +721,7 @@ router.get('/models', optionalAuthMiddleware, (req: AuthRequest, res: Response) 
       description: m.description || preset?.description || 'AI 视频生成服务',
       available,
       modelStatus: calculateVideoModelStatus(recentRowsByModel.get(m.id) || [], available),
-      routingLimits: managedSpec?.limits ?? (m.id === HAYA_XG_SEEDANCE_20_MODEL || snumomOutputOnlySpec(m.id) ? existingModelLimits(m.id, 'video') : undefined),
+      ...videoCapabilities(m.id, managedSpec || null),
       maxSeconds: managedSpec?.limits.duration.max ?? (snumomOutputOnlySpec(m.id) ? 30 : preset?.maxSeconds),
       allowedSeconds: managedSpec ? managedSpec.limits.duration.mode === 'fixed' ? [managedSpec.limits.duration.min] : managedSpec.limits.duration.mode === 'options' ? managedSpec.limits.duration.values : Array.from({ length: Math.floor((managedSpec.limits.duration.max - managedSpec.limits.duration.min) / managedSpec.limits.duration.step) + 1 }, (_, index) => managedSpec.limits.duration.min + index * managedSpec.limits.duration.step) : meta?.allowedSeconds || null,
       requireRef: meta?.requireRef || false,
@@ -733,7 +734,7 @@ router.get('/models', optionalAuthMiddleware, (req: AuthRequest, res: Response) 
     };
   });
 
-  const availableModels = result.filter(m => m.available || Boolean(m.routingLimits)).sort((left, right) => {
+  const availableModels = result.filter(m => m.available || Boolean(getModelSpecification(m.id)) || m.id === HAYA_XG_SEEDANCE_20_MODEL || Boolean(snumomOutputOnlySpec(m.id))).sort((left, right) => {
     const leftRank = HM_STUDIO_VIDEO_MODEL_RANK.get(left.id);
     const rightRank = HM_STUDIO_VIDEO_MODEL_RANK.get(right.id);
     if (leftRank !== undefined && rightRank !== undefined) return leftRank - rightRank;

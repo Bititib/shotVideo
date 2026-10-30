@@ -31,6 +31,7 @@ import userTokenRoutes from './routes/userTokens.js';
 import feedbackRoutes from './routes/feedback.js';
 import canvasRoutes from './routes/canvas.js';
 import developerRoutes from './routes/developer.js';
+import { pluginUpdateRouter } from './routes/pluginUpdates.js';
 
 import { AdminService } from './services/adminService.js';
 
@@ -59,6 +60,7 @@ export async function createApp() {
   app.use(express.json({ limit: '150mb' }));
   app.get('/api/health', (_req, res) => { res.setHeader('Cache-Control', 'no-store'); res.json({ status: 'ok' }); });
   app.use('/reference-assets', publicReferences());
+  app.use('/plugin-updates/video_plugin_site_api', pluginUpdateRouter());
 
   // Static uploads directory serving
   const uploadDir = path.resolve(process.cwd(), 'data/uploads');

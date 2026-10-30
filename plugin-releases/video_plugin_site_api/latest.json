@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "plugin_id": "video_plugin_site_api",
+  "version": "1.1.0",
+  "min_updater": 1,
+  "archive": "/plugin-updates/video_plugin_site_api/lingxu-video-1.1.0.zip",
+  "size": 34631,
+  "sha256": "a7034accfdf61eac4ff2b63acb8ba5a6eec1f48b8dc7b78fc91d37a5b8297e8b",
+  "notes": "新增自动检查与点击升级，保留配置和任务记录，支持失败恢复及回退。新增网站模型专属参数、素材限制与独立首尾帧联动。"
+}

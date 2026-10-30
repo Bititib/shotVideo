@@ -7,7 +7,7 @@ import { randomBytes } from 'node:crypto';
 const root=process.cwd();
 await fs.mkdir(path.join(root,'output'),{recursive:true});
 const directory=await fs.mkdtemp(path.join(root,'output','production-package-'));
-for(const entry of ['server','shared','tsconfig.json','package.json'])await fs.cp(path.join(root,entry),path.join(directory,entry),{recursive:true});
+for(const entry of ['server','shared','plugin-releases','tsconfig.json','package.json'])await fs.cp(path.join(root,entry),path.join(directory,entry),{recursive:true});
 await fs.cp(path.join(root,'client/dist'),path.join(directory,'client/dist'),{recursive:true});
 await fs.writeFile(path.join(directory,'smoke.mjs'),`
 import {createApp} from './server/app.ts';
@@ -17,6 +17,12 @@ const server=app.listen(0,'127.0.0.1',async()=>{
     const base='http://127.0.0.1:'+server.address().port;
     const health=await fetch(base+'/api/health');
     if(health.status!==200||(await health.json()).status!=='ok')throw new Error('Health check failed');
+    const release=await fetch(base+'/plugin-updates/video_plugin_site_api/latest.json');
+    const manifest=await release.json();
+    if(release.status!==200||manifest.plugin_id!=='video_plugin_site_api')throw new Error('Plugin release missing');
+    const archive=await fetch(base+manifest.archive);const bytes=await archive.arrayBuffer();
+    const {createHash}=await import('node:crypto');
+    if(archive.status!==200||bytes.byteLength!==manifest.size||createHash('sha256').update(Buffer.from(bytes)).digest('hex')!==manifest.sha256)throw new Error('Plugin archive mismatch');
     if((await fetch(base+'/api/canvas/workspace')).status!==401)throw new Error('Canvas route protection failed');
     const page=await fetch(base+'/');if(page.status!==200||!(await page.text()).includes('<html'))throw new Error('Frontend missing');
     console.log('Production package startup, health, canvas authentication and frontend: PASS');

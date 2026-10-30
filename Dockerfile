@@ -32,6 +32,7 @@ COPY --from=builder /app/client/dist ./client/dist
 # 复制后端代码
 COPY server/ ./server/
 COPY shared/ ./shared/
+COPY plugin-releases/ ./plugin-releases/
 COPY scripts/backup.mjs ./scripts/backup.mjs
 COPY tsconfig.json ./
 
