@@ -13,7 +13,7 @@ https://video.zhubo.asia/plugin-updates/video_plugin_site_api/lingxu-video-1.1.2
    video_plugins\video_plugin_site_api\main.py
    不要只放压缩包，也不要多套一层同名文件夹。
 4. 重新打开字字动画，进入作品 → 视频模型管理 → 自定义插件，选择“灵序 AI 视频插件”。
-5. 展开“网站连接”，地址填写 https://video.zhubo.asia，填入自己在网站开发者中心创建的 API Key，点击“连接并获取模型”。
+5. 在网站个人中心创建自己的 API Key（https://video.zhubo.asia/app/profile）。展开插件“网站连接”，地址填写 https://video.zhubo.asia，填入该 API Key，点击“连接并获取模型”。
 6. 选择视频模型及其支持的时长、分辨率、画面比例和特殊参数，点击“应用设置”。
 7. 回到分镜填写视频提示词、添加参考素材，再点击分镜旁的“生成视频”。
 
