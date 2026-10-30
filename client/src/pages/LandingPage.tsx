@@ -107,6 +107,7 @@ export default function LandingPage() {
           </div>
 
           <div className="landing-nav-actions">
+            <Link to="/app/plugins" className="landing-compact-btn">插件下载</Link>
             <button type="button" className="landing-text-btn" onClick={goToWorkspace}>进入工作台</button>
             {!user && <button type="button" className="landing-compact-btn" onClick={openLoginModal}>登录</button>}
           </div>

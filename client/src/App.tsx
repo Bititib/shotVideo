@@ -22,6 +22,7 @@ const TtsPage = lazy(() => import('./pages/analysis/TtsPage'));
 const HistoryPage = lazy(() => import('./pages/analysis/HistoryPage'));
 const ProfilePage = lazy(() => import('./pages/analysis/ProfilePage'));
 const DeveloperPage = lazy(() => import('./pages/DeveloperPage'));
+const PluginDownloadPage = lazy(() => import('./pages/PluginDownloadPage'));
 const AdminLayout = lazy(() => import('./pages/admin/AdminLayout'));
 const DashboardPage = lazy(() => import('./pages/admin/DashboardPage'));
 const UsersPage = lazy(() => import('./pages/admin/UsersPage'));
@@ -97,6 +98,7 @@ export default function App() {
           <Route path="tts" element={<TtsPage />} />
           <Route path="history" element={<ApiKeyRoute><HistoryPage /></ApiKeyRoute>} />
           <Route path="docs" element={<DeveloperPage />} />
+          <Route path="plugins" element={<PluginDownloadPage />} />
           <Route path="models" element={<Navigate to="/app/docs?tab=models" replace />} />
           <Route path="profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
         </Route>

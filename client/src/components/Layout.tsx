@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { getPublicSettings } from '../api/admin';
-import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Layers3, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2, X, Key, User, FileText, History, Clapperboard } from 'lucide-react';
+import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Layers3, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2, X, Key, User, FileText, History, Clapperboard, Download } from 'lucide-react';
 
 const navItems: Array<{ to: string; icon: typeof PlaySquare; label: string; color: string; feature: string; requiresApiKey?: boolean }> = [
   { to: '/app/canvas', icon: Layers3, label: '无限画布', color: 'text-amber-400', feature: 'canvas' },
@@ -13,6 +13,7 @@ const navItems: Array<{ to: string; icon: typeof PlaySquare; label: string; colo
   { to: '/app/copywriting', icon: Megaphone, label: '电商文案', color: 'text-orange-400', feature: 'copywriting' },
   { to: '/app/account', icon: Users, label: '账号分析', color: 'text-emerald-400', feature: 'account' },
   { to: '/app/video', icon: Video, label: '视频生成', color: 'text-indigo-400', feature: 'video' },
+  { to: '/app/plugins', icon: Download, label: '插件下载', color: 'text-emerald-400', feature: 'docs' },
   { to: '/app/video-batch', icon: Layers3, label: '批量视频', color: 'text-amber-400', feature: 'video' },
   { to: '/app/comic-drama', icon: Clapperboard, label: '漫剧工坊', color: 'text-cyan-400', feature: 'video' },
   { to: '/app/image-gen', icon: ImageIcon, label: '图片生成', color: 'text-pink-400', feature: 'image_gen' },

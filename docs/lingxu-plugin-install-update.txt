@@ -1,5 +1,8 @@
 灵序 AI 视频插件｜安装与更新说明（1.1.2）
 
+网站下载入口：首页顶部或工作台左侧点击“插件下载”。
+下载与说明页面：https://video.zhubo.asia/app/plugins
+
 新版下载：
 https://video.zhubo.asia/plugin-updates/video_plugin_site_api/lingxu-video-1.1.2.zip
 网站：https://video.zhubo.asia
