@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "plugin_id": "video_plugin_site_api",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "min_updater": 1,
-  "archive": "/plugin-updates/video_plugin_site_api/lingxu-video-1.1.1.zip",
-  "size": 35201,
-  "sha256": "031873e5bf3080f89c228f3a664f8b242558e5b398438e344b28abe1bb200433",
-  "notes": "补齐 Veo 音轨开关、Omni Flash 参考角色及 HM 生成模式；修复布尔 audio 参数拦截，增加中文选项和渠道能力说明。保留用户配置与任务记录。"
+  "archive": "/plugin-updates/video_plugin_site_api/lingxu-video-1.1.2.zip",
+  "size": 35338,
+  "sha256": "0536d68d2773f923a88e47c02acb0d5d96fce58b88a39d9279bfc26f54a0a540",
+  "notes": "将“插件更新”移到面板最上方并默认展开，方便检查和升级。保留模型参数、API Key、用户配置和任务记录；安装后请重启字字动画。"
 }
