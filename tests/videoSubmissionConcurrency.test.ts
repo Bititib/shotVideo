@@ -54,9 +54,16 @@ import { resumeSpecificationTasks } from '../server/services/specificationGenera
 import * as snumomAdapter from '../server/services/snumomWanAdapter';
 import { settleDirectVideoBilling } from '../server/services/directVideoBillingService';
 import { ensureBillingReservations } from '../server/services/billingReservation';
+import { RETIRED_VIDEO_MODELS } from '../shared/retiredVideoModels';
+import { getEnabledPublicModels } from '../server/services/modelCatalogService';
+import { ChannelService } from '../server/services/channelService';
+import { getModelSpecification } from '../server/services/modelRoutingService';
+import { SNUMOM_OUTPUT_ONLY_MODELS } from '../shared/snumomWanNsfw';
+import { existingModelLimits } from '../server/services/modelInputPresets';
+import { batchStore, tickVideoBatches } from '../server/services/videoBatchService';
 
 const nativeFetch = globalThis.fetch, nativeTimer = globalThis.setTimeout;
-const model = 'wan3.0-video-prime';
+const model = 'wan3.0-video-nsfw';
 let video: typeof import('../server/routes/video'), server: Server, origin: string, tokenKey: string, tokenId: number;
 const row = () => db.select().from(contents).all().at(-1)!;
 const wallet = () => db.select().from(users).get()!.balance;
@@ -73,12 +80,16 @@ function deferred<T>() {
 beforeAll(async () => {
   video = await import('../server/routes/video');
   const api = await import('../server/routes/v1'), content = await import('../server/routes/content');
-  const app = express(); app.use(express.json()); app.use('/api/video', video.default); app.use('/v1', api.default); app.use('/api/contents', content.default);
+  const batchRouter = await import('../server/routes/videoBatches');
+  const app = express(); app.use(express.json()); app.use('/api/video-batches',batchRouter.default); app.use('/api/video', video.default); app.use('/v1', api.default); app.use('/api/contents', content.default);
   server = await new Promise<Server>(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   origin = 'http://127.0.0.1:' + (server.address() as AddressInfo).port;
   findVideoSubmissionReceipt(1);
 });
 beforeEach(() => {
+  for (const table of ['video_batch_commands','video_batch_attempts','video_batch_items','video_batches']) {
+    if (sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) sqlite.exec('DELETE FROM '+table);
+  }
   for (const table of ['fund_ledger_content_links','fund_ledger']) {
     if (sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) sqlite.exec('DELETE FROM ' + table);
   }
@@ -90,7 +101,7 @@ beforeEach(() => {
   db.insert(channels).values({ id: 1, name: 'snumom test', type: 'snumom', baseUrl: 'https://upstream.invalid', apiKey: 'test', status: 1,
     supportedModels: JSON.stringify([model]), modelMapping: '{}' }).run();
   db.insert(models).values({ modelId: model, displayName: model, provider: 'snumom', capabilities: '["video"]', isActive: 1 }).run();
-  db.insert(modelPricing).values({ modelPattern: model, billingType: 'per_call', inputPrice: 3.9, outputPrice: 0 }).run();
+  db.insert(modelPricing).values({ modelPattern: model, billingType: 'per_second', inputPrice: 0.26, outputPrice: 0 }).run();
   const token = TokenService.createToken({ userId: 1, name: 'test', balance: 100 }); tokenKey = token.tokenKey; tokenId = token.id;
   vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: any, ms: number, ...args: any[]) => nativeTimer(fn, [5000,8000,10000,12000].includes(ms) ? 2 : ms, ...args)) as any);
 });
@@ -102,9 +113,287 @@ function managed(targetModel = model) {
     duration: { mode: 'options' as const, min: 15, max: 15, step: 1, values: [15] } };
   saveModelSpecification({ modelId: targetModel, enabled: true, aliases: [], kind: 'video', limits,
     routes: [{ id: 'race-route', channelId: 1, executionModel: targetModel, upstreamModel: targetModel, enabled: true,
-      limits, cost: 1, costUnit: 'per_call', resolutionCosts: {}, priority: 0 }] });
+      limits, cost: 1, costUnit: 'per_second', resolutionCosts: {}, priority: 0 }] });
 }
 const body = { model, prompt: '并发提交测试', seconds: 15, video_length: 15, resolution: '720p', aspect_ratio: '16:9' };
+
+const nsfwModel = 'wan3.0-video-nsfw';
+const nsfwPaths = [
+  ['/v1/videos',false],['/api/video/generate',false],
+  ['/v1/videos',true],['/api/video/generate',true],
+] as const;
+function setupNsfw(spec: boolean, unlimited = false) {
+  db.update(channels).set({supportedModels:JSON.stringify([nsfwModel]),concurrencyLimit:10}).run();
+  db.update(models).set({modelId:nsfwModel,displayName:nsfwModel}).run();
+  db.update(modelPricing).set({modelPattern:nsfwModel,billingType:'per_second',inputPrice:1}).run();
+  if (unlimited) db.update(apiTokens).set({balance:-1}).run();
+  if (spec) {
+    const limits = {...defaultRoutingLimits(),maxImages:10,maxVideos:5,maxAudios:5,firstFrame:true,lastFrame:true,
+      resolutions:['480p','720p','1080p'],ratios:['16:9','9:16','adaptive'],duration:{mode:'range' as const,min:2,max:30,step:1,values:[]}};
+    saveModelSpecification({modelId:nsfwModel,kind:'video',enabled:true,aliases:[],limits,
+      routes:[{id:'nsfw-route',channelId:1,executionModel:nsfwModel,upstreamModel:nsfwModel,enabled:true,limits,cost:1,costUnit:'per_second',resolutionCosts:{},priority:0}]});
+  }
+}
+const nsfwBody = {model:nsfwModel,prompt:'测试自然风景',seconds:10,video_length:10,resolution:'720p',aspect_ratio:'16:9',
+  reference_videos:['https://example.com/reference.mp4'],audio_urls:['https://example.com/voice.wav'],reference_video_seconds:0.01};
+
+for(const [newModel,definition] of Object.entries(SNUMOM_OUTPUT_ONLY_MODELS)) {
+  function setupOutputOnly(spec:boolean) {
+    setupNsfw(false);
+    db.update(models).set({modelId:newModel}).run();
+    db.update(modelPricing).set({modelPattern:newModel}).run();
+    db.update(channels).set({supportedModels:JSON.stringify([newModel])}).run();
+    if(spec){const limits=existingModelLimits(newModel,'video')!;saveModelSpecification({modelId:newModel,kind:'video',enabled:true,aliases:[],limits,
+      routes:[{id:'output-only-route',channelId:1,executionModel:newModel,upstreamModel:newModel,enabled:true,limits,cost:1,costUnit:'per_second',resolutionCosts:{},priority:0}]});}
+    return {...nsfwBody,model:newModel,seconds:30,video_length:30,resolution:definition.resolution};
+  }
+  for(const state of ['completed','failed','timeout'] as const)it.each(nsfwPaths)(`${newModel} %s spec=%s ${state}: 30 seconds plus reference, output-only billing and idempotent recovery`,async(endpoint,spec)=>{
+    const request=setupOutputOnly(spec);let payload:any;
+    const upstream=vi.fn(async(_url:any,options:any)=>{
+      if(options?.method==='POST'){payload=JSON.parse(options.body);if(state==='timeout')throw new Error('socket hang up');return Response.json({id:'task_output_only'});}
+      return Response.json({id:'task_output_only',status:state,error:state==='failed'?{message:'confirmed rejection'}:undefined,
+        usage:{output_seconds:30,reference_video_seconds:5.1},metadata:{url:'https://media.invalid/result.mp4'}});
+    });vi.stubGlobal('fetch',upstream);
+    await(await post(endpoint,request)).text();
+    if(state==='timeout')await vi.waitFor(()=>expect(meta().billingStatus).toBe('review'));
+    else await vi.waitFor(()=>expect(row().status).toBe(state));
+    expect(payload).toMatchObject({model:newModel,seconds:'30',size:definition.resolution.toUpperCase(),reference_videos:[{url:expect.any(String)}]});
+    expect(meta().billableSeconds).toBe(30);expect(meta().referenceVideoSeconds).toBe(5.1);
+    expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBeCloseTo(state==='failed'?100:70);
+    video.resumeAllPendingVideoTasks();resumeSpecificationTasks();
+    expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBeCloseTo(state==='failed'?100:70);
+    expect(upstream.mock.calls.filter(([,o])=>o?.method==='POST')).toHaveLength(1);
+  });
+  it.each(nsfwPaths)(`${newModel} %s spec=%s: invalid duration/resolution and probe failure reject before charging`,async(endpoint,spec)=>{
+    const request=setupOutputOnly(spec);vi.stubGlobal('fetch',vi.fn());
+    for(const bad of [{...request,seconds:4,video_length:4},{...request,resolution:'480p'}]){const r=await post(endpoint,bad);expect(r.status).toBe(400);await r.text();}
+    probes.video.mockRejectedValue(new Error('reference probe unavailable'));
+    const response=await post(endpoint,request);expect(response.status).toBe(400);await response.text();
+    expect(db.select().from(contents).all()).toHaveLength(0);expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(nsfwPaths)(`${newModel} %s spec=%s: minimum duration and immediate completed receipt charge output only`,async(endpoint,spec)=>{
+    const request=setupOutputOnly(spec),seconds=definition.seconds[0];
+    db.update(models).set({displayName:'operator alias'}).run();
+    vi.stubGlobal('fetch',vi.fn(async()=>Response.json({id:'task_output_immediate',status:'completed',usage:{output_seconds:seconds,reference_video_seconds:5.1},metadata:{url:'https://media.invalid/result.mp4'}})));
+    await(await post(endpoint,{...request,model:'operator alias',seconds:undefined,video_length:undefined,duration_seconds:seconds})).text();await vi.waitFor(()=>expect(row().status).toBe('completed'));
+    expect(row().cost).toBe(seconds);expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBe(100-seconds);expect(fetch).toHaveBeenCalledOnce();
+  });
+  it.each([false,true])(`${newModel} batch spec=%s: references are free, repeated request key cannot double reserve`,async spec=>{
+    setupOutputOnly(spec);let submitted=0;
+    vi.stubGlobal('fetch',vi.fn(async(url:any,options:any)=>{
+      if(String(url).startsWith('http://127.0.0.1:9876/'))return nativeFetch(origin+new URL(String(url)).pathname,options);
+      if(options?.method==='POST')return Response.json({id:'task_output_batch_'+(++submitted)});
+      return Response.json({id:String(url).split('/').at(-1),status:'completed',usage:{output_seconds:30,reference_video_seconds:5.1},metadata:{url:'https://media.invalid/result.mp4'}});
+    }));
+    const input={model:newModel,name:'output-only batch',aspect_ratio:'16:9',resolution:definition.resolution,video_length:30,autoRetry:false,maxRetries:0,
+      requestKey:'output-only-batch-key-20261030',expectedUnitCost:30,creatives:[{prompt:'风景测试',count:2,reference_videos:nsfwBody.reference_videos,audio_urls:nsfwBody.audio_urls}]};
+    const first=await post('/api/video-batches',input);expect(first.status).toBe(200);const batch:any=await first.json();
+    await vi.waitFor(()=>{tickVideoBatches();expect(db.select().from(contents).all()).toHaveLength(2);expect(db.select().from(contents).all().every(c=>c.status==='completed')).toBe(true);});
+    tickVideoBatches();expect(wallet()).toBe(40);expect(submitted).toBe(2);
+    const again=await post('/api/video-batches',input);expect((await again.json()).id).toBe(batch.id);tickVideoBatches();expect(wallet()).toBe(40);expect(submitted).toBe(2);
+  });
+}
+
+for (const retired of RETIRED_VIDEO_MODELS) {
+  it.each([false,true])(`retired ${retired} managed=%s: all website/API aliases and batch entrances reject before debit or POST`,async spec=>{
+    db.update(models).set({modelId:retired,displayName:'old operator name'}).run();
+    db.update(modelPricing).set({modelPattern:retired}).run();
+    db.update(channels).set({supportedModels:'["*"]'}).run();
+    if(spec)managed(retired);
+    vi.stubGlobal('fetch',vi.fn());
+    for(const endpoint of ['/api/video/generate','/api/video/validate','/v1/videos','/v1/videos/generations','/v1/video/generations']){
+      const response=await post(endpoint,{...body,model:retired});
+      expect(response.status).toBe(410);expect(await response.text()).toContain('已下架');
+    }
+    for(const endpoint of ['/api/video-batches','/api/video-batches/quote']){
+      const response=await post(endpoint,{model:retired,requestKey:'retired-model-request-key'});expect(response.status).toBe(410);await response.text();
+    }
+    const alias=await post('/v1/videos',{...body,model:'old operator name'});expect(alias.status).toBe(410);await alias.text();
+    expect(getEnabledPublicModels('video').map(m=>m.modelId)).not.toContain(retired);
+    expect(ChannelService.findChannelForModel(retired)).toBeNull();
+    expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);expect(db.select().from(apiTokens).get()!.usedAmount).toBe(0);
+    expect(db.select().from(contents).all()).toHaveLength(0);expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(['/v1/videos','/api/video/generate'])(`retired upstream ${retired} cannot be reached through another public specification at %s`,async endpoint=>{
+    setupNsfw(true);
+    const spec=getModelSpecification(nsfwModel)!;
+    saveModelSpecification({...spec,routes:spec.routes.map(r=>({...r,upstreamModel:retired}))});
+    vi.stubGlobal('fetch',vi.fn());
+    const response=await post(endpoint,nsfwBody);expect(response.status).toBeGreaterThanOrEqual(400);await response.text();
+    expect(fetch).not.toHaveBeenCalled();expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);
+    expect(db.select().from(contents).all()).toHaveLength(0);
+  });
+}
+
+it('snumom model sync excludes retired products without modifying existing prices or balances',async()=>{
+  const prices=JSON.stringify(db.select().from(modelPricing).all());
+  vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[...RETIRED_VIDEO_MODELS,nsfwModel,'sd-mini'].map(id=>({id}))})));
+  const result=await ChannelService.syncModels(1);
+  expect(result.models).toEqual([nsfwModel,'sd-mini']);
+  for(const retired of RETIRED_VIDEO_MODELS)expect(db.select().from(models).all().some(m=>m.modelId===retired)).toBe(false);
+  expect(JSON.stringify(db.select().from(modelPricing).all())).toBe(prices);expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);
+});
+
+it.each(['/v1/videos','/api/video/generate'])('NSFW %s: wildcard channels cannot bypass snumom reference billing',async endpoint=>{
+  setupNsfw(false);
+  db.insert(channels).values({id:2,name:'other wildcard',type:'openai',baseUrl:'https://other.invalid',apiKey:'test',status:1,
+    supportedModels:'["*"]',modelMapping:'{}',priority:-100}).run();
+  const upstream=vi.fn(async(url:any,o:any)=>{
+    expect(String(url)).toContain('upstream.invalid');
+    return o?.method==='POST'?Response.json({id:'task_nsfw_provider'}):Response.json({id:'task_nsfw_provider',status:'completed',metadata:{url:'https://media.invalid/result.mp4'}});
+  });
+  vi.stubGlobal('fetch',upstream);
+  await(await post(endpoint,nsfwBody)).text();await vi.waitFor(()=>expect(row().status).toBe('completed'));
+  expect(meta().channelId).toBe(1);expect(meta().billableSeconds).toBe(15.1);
+  expect(upstream.mock.calls.filter(([,o])=>o?.method==='POST')).toHaveLength(1);
+});
+
+it.each(nsfwPaths)('NSFW %s managed=%s: probes references, reserves output+rounded-video seconds, not audio, and refunds failure once', async (endpoint,spec) => {
+  setupNsfw(spec);
+  let sent: any;
+  const upstream = vi.fn(async (_url:any, options:any)=> {
+    if (options?.method==='POST') {sent=JSON.parse(options.body);return Response.json({id:'task_nsfw_failed',status:'queued'});}
+    return Response.json({id:'task_nsfw_failed',status:'failed',error:{code:'DataInspectionFailed',message:'image rejected'}});
+  });
+  vi.stubGlobal('fetch',upstream);
+  const result = await post(endpoint,nsfwBody); await result.text();
+  await vi.waitFor(()=>expect(row().status).toBe('failed'));
+  expect(sent).toMatchObject({model:nsfwModel,seconds:'10',size:'720P',reference_videos:[{url:expect.any(String)}],reference_audios:[{url:expect.any(String)}]});
+  expect(meta()).toMatchObject({referenceVideoSeconds:5.1,referenceAudioSeconds:3.1,billableSeconds:15.1,billingStatus:'refunded'});
+  expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);expect(db.select().from(apiTokens).get()!.usedAmount).toBe(0);
+  expect(probes.video).toHaveBeenCalledOnce();expect(probes.audio).toHaveBeenCalledOnce();
+  video.resumeAllPendingVideoTasks();resumeSpecificationTasks();
+  expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);
+  expect(upstream.mock.calls.filter(([,o])=>o?.method==='POST')).toHaveLength(1);
+});
+
+it.each(nsfwPaths)('NSFW %s managed=%s: probe errors cannot create a task or debit funds', async(endpoint,spec)=>{
+  setupNsfw(spec);probes.video.mockRejectedValue(new Error('unreachable reference video'));
+  vi.stubGlobal('fetch',vi.fn());
+  const response=await post(endpoint,nsfwBody);expect(response.status).toBe(400);expect(await response.text()).toContain('unreachable');
+  expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);expect(fetch).not.toHaveBeenCalled();expect(db.select().from(contents).all()).toHaveLength(0);
+});
+
+it.each(nsfwPaths)('NSFW %s managed=%s: unknown submit acceptance keeps the full reference reservation without replay/refund',async(endpoint,spec)=>{
+  setupNsfw(spec);vi.stubGlobal('fetch',vi.fn(async()=>{throw new DOMException('connection lost','TimeoutError');}));
+  await(await post(endpoint,nsfwBody)).text();
+  await vi.waitFor(()=>expect(meta().billingStatus).toBe('review'));
+  expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBeCloseTo(84.9);
+  video.resumeAllPendingVideoTasks();resumeSpecificationTasks();expect(fetch).toHaveBeenCalledOnce();
+  expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBeCloseTo(84.9);
+});
+
+it.each(nsfwPaths)('NSFW %s managed=%s: explicit no-channel rejection ends and refunds the original reservation once',async(endpoint,spec)=>{
+  setupNsfw(spec);vi.stubGlobal('fetch',vi.fn(async()=>Response.json({error:{message:'No available channel for model wan3.0-video-nsfw under group default (distributor)'}},{status:503})));
+  await(await post(endpoint,nsfwBody)).text();await vi.waitFor(()=>expect(row().status).toBe('failed'));
+  expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);expect(meta().billingStatus).toBe('refunded');
+  video.resumeAllPendingVideoTasks();resumeSpecificationTasks();expect(fetch).toHaveBeenCalledOnce();
+  expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);
+});
+
+it.each([false,true].flatMap(spec=>['completed','failed'].map(status=>({spec,status}))))('NSFW managed=$spec status=$status: real batch bridge reserves references once and reuses the original batch request key',async ({spec,status})=>{
+  setupNsfw(spec);let submissions=0;
+  const upstream=vi.fn(async(url:any,options:any)=>{
+    if(String(url).startsWith('http://127.0.0.1:9876/'))return nativeFetch(origin+new URL(String(url)).pathname,options);
+    if(options?.method==='POST')return Response.json({id:'task_nsfw_batch_'+(++submissions)});
+    return Response.json({id:String(url).split('/').at(-1),status,error:status==='failed'?{code:'DataInspectionFailed',message:'image rejected'}:undefined,metadata:status==='completed'?{url:'https://media.invalid/result.mp4'}:undefined});
+  });vi.stubGlobal('fetch',upstream);
+  const input={model:nsfwModel,name:'reference batch',aspect_ratio:'16:9',resolution:'720p',video_length:10,autoRetry:false,maxRetries:0,
+    requestKey:'nsfw-batch-duplicate-key-20261030',expectedUnitCost:15.1,
+    creatives:[{prompt:'风景视频',count:2,reference_images:[],reference_videos:nsfwBody.reference_videos,audio_urls:nsfwBody.audio_urls}]};
+  const first=await post('/api/video-batches',input);expect(first.status).toBe(200);const batch:any=await first.json();
+  await vi.waitFor(()=>{tickVideoBatches();expect(db.select().from(contents).all(),JSON.stringify(batchStore.detail(batch.id,1).items)).toHaveLength(2);expect(db.select().from(contents).all().every(c=>c.status===status)).toBe(true);});
+  tickVideoBatches();tickVideoBatches();
+  expect(wallet()).toBeCloseTo(status==='completed'?69.8:100);expect(tokenWallet()).toBe(100);expect(submissions).toBe(2);
+  expect(batchStore.detail(batch.id,1)).toMatchObject({spent:status==='completed'?30.2:0,refunded:status==='failed'?30.2:0,reserved:0});
+  const again=await post('/api/video-batches',input);expect((await again.json()).id).toBe(batch.id);
+  tickVideoBatches();expect(wallet()).toBeCloseTo(status==='completed'?69.8:100);expect(submissions).toBe(2);
+});
+
+it.each(nsfwPaths.flatMap(([endpoint,spec])=>[13,17].map(actual=>({endpoint,spec,actual}))))('NSFW $endpoint managed=$spec: settles actual=$actual once with the original snapshot',async({endpoint,spec,actual})=>{
+  setupNsfw(spec);
+  const upstream=vi.fn(async(_url:any,options:any)=>{
+    if(options?.method==='POST'){db.update(modelPricing).set({inputPrice:99}).run();return Response.json({id:'task_nsfw_actual'});}
+    return Response.json({id:'task_nsfw_actual',status:'completed',usage:{billable_seconds:actual},metadata:{url:'https://media.invalid/result.mp4'}});
+  });vi.stubGlobal('fetch',upstream);
+  await(await post(endpoint,nsfwBody)).text();await vi.waitFor(()=>expect(row().status).toBe('completed'));
+  expect(row().cost).toBe(actual);expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBe(100-actual);
+  if(endpoint.startsWith('/v1'))expect(db.select().from(apiTokens).get()!.usedAmount).toBe(actual);
+  video.resumeAllPendingVideoTasks();resumeSpecificationTasks();
+  expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBe(100-actual);
+  expect(upstream.mock.calls.filter(([,o])=>o?.method==='POST')).toHaveLength(1);
+});
+
+it.each(nsfwPaths)('NSFW %s managed=%s: delayed ID plus concurrent recovery scans never refunds or sends another POST',async(endpoint,spec)=>{
+  setupNsfw(spec);const started=deferred<void>(),reply=deferred<Response>();
+  const upstream=vi.fn(async(_url:any,options:any)=>{if(options?.method==='POST'){started.resolve();return reply.promise;}return Response.json({id:'task_nsfw_delayed',status:'completed',metadata:{url:'https://media.invalid/result.mp4'}});});
+  vi.stubGlobal('fetch',upstream);const pending=post(endpoint,nsfwBody);await started.promise;
+  const id=row().id,stale={...row(),metadata:'{}'};
+  for(let i=0;i<3;i++){
+    await Promise.all([video.resumePollForTask(id,stale),ContentRecoveryService.inspect(id).catch(()=>undefined),nativeFetch(origin+'/api/contents/'+id).then(r=>r.text())]);
+    video.resumeAllPendingVideoTasks();resumeSpecificationTasks();
+  }
+  expect(row().status).toBe('processing');expect(meta().videoSubmissionState).toBe('submitting');
+  expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBeCloseTo(84.9);expect(meta().queueRefunded).not.toBe(true);
+  expect(upstream.mock.calls.filter(([,o])=>o?.method==='POST')).toHaveLength(1);
+  reply.resolve(Response.json({id:'task_nsfw_delayed',status:'queued'}));await(await pending).text();await vi.waitFor(()=>expect(row().status).toBe('completed'));
+  expect(findVideoSubmissionReceipt(id)?.upstreamTaskId).toBe('task_nsfw_delayed');
+  expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBeCloseTo(84.9);
+});
+
+it.each(nsfwPaths.flatMap(([endpoint,spec])=>['completed','failed'].map(status=>({endpoint,spec,status}))))('NSFW $endpoint managed=$spec: immediate $status is consumed after persisting the task ID',async({endpoint,spec,status})=>{
+  setupNsfw(spec);
+  const upstream=vi.fn(async(_url:any,o:any)=>{
+    if(o?.method!=='POST')throw new Error('terminal create response must not require another query');
+    return Response.json({id:'task_nsfw_terminal',status,error:status==='failed'?{code:'DataInspectionFailed',message:'image rejected'}:undefined,
+      usage:status==='completed'?{billable_seconds:13}:undefined,metadata:status==='completed'?{url:'https://media.invalid/result.mp4'}:undefined});
+  });vi.stubGlobal('fetch',upstream);
+  await(await post(endpoint,nsfwBody)).text();await vi.waitFor(()=>expect(row().status).toBe(status));
+  expect(meta().videoId).toBe('task_nsfw_terminal');expect(findVideoSubmissionReceipt(row().id)?.upstreamTaskId).toBe('task_nsfw_terminal');
+  expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBe(status==='completed'?87:100);
+  video.resumeAllPendingVideoTasks();resumeSpecificationTasks();expect(upstream).toHaveBeenCalledOnce();
+});
+
+it.each(nsfwPaths)('NSFW %s managed=%s: insufficient actual-settlement balance preserves result and original charge, not a generation failure',async(endpoint,spec)=>{
+  setupNsfw(spec);vi.stubGlobal('fetch',vi.fn(async(_url:any,o:any)=>o?.method==='POST'?Response.json({id:'task_nsfw_shortfall'}):Response.json({id:'task_nsfw_shortfall',status:'completed',usage:{billable_seconds:101},metadata:{url:'https://media.invalid/result.mp4'}})));
+  await(await post(endpoint,nsfwBody)).text();await vi.waitFor(()=>expect(row().status).toBe('review'));
+  expect(meta()).toMatchObject({reviewKind:'settlement',billingStatus:'review',upstreamStatus:'completed'});
+  expect(row().resultUrl).toBeTruthy();expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBeCloseTo(84.9);
+  video.resumeAllPendingVideoTasks();resumeSpecificationTasks();expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBeCloseTo(84.9);
+});
+
+it.each(nsfwPaths)('NSFW %s managed=%s: rejects tail-only frames and wrong billing configuration before any reservation',async(endpoint,spec)=>{
+  setupNsfw(spec);vi.stubGlobal('fetch',vi.fn());
+  const invalid=await post(endpoint,{...nsfwBody,last_frame:'https://example.com/end.jpg',reference_videos:[],audio_urls:[]});
+  expect(invalid.status).toBe(400);await invalid.text();expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);
+  db.update(modelPricing).set({billingType:'per_call'}).run();
+  const wrongPrice=await post(endpoint,nsfwBody);await wrongPrice.text();
+  expect(fetch).not.toHaveBeenCalled();expect(db.select().from(contents).all()).toHaveLength(0);expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);
+});
+
+it.each(nsfwPaths)('NSFW %s managed=%s: media objects and size are normalized without trusting supplied reference duration',async(endpoint,spec)=>{
+  setupNsfw(spec);let sent:any;
+  vi.stubGlobal('fetch',vi.fn(async(_url:any,o:any)=>{if(o?.method==='POST'){sent=JSON.parse(o.body);return Response.json({id:'task_nsfw_objects'});}return Response.json({id:'task_nsfw_objects',status:'completed',metadata:{url:'https://media.invalid/result.mp4'}});}));
+  await(await post(endpoint,{...nsfwBody,resolution:undefined,size:'1080P',reference_videos:[{url:'https://example.com/reference.mp4',duration:0.001}],audio_urls:undefined,reference_audios:[{url:'https://example.com/voice.wav'}]})).text();
+  await vi.waitFor(()=>expect(row().status).toBe('completed'));
+  expect(sent).toMatchObject({size:'1080P',seconds:'10',reference_videos:[{url:expect.any(String)}],reference_audios:[{url:expect.any(String)}]});
+  expect(row().cost).toBeCloseTo(15.1);expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBeCloseTo(84.9);
+});
+
+it.each([false,true])('NSFW managed=%s: unlimited Token refunds both original wallet and used quota once',async spec=>{
+  setupNsfw(spec,true);
+  vi.stubGlobal('fetch',vi.fn(async(_url:any,o:any)=>o?.method==='POST'?Response.json({id:'task_nsfw_unlimited'}):Response.json({id:'task_nsfw_unlimited',status:'failed',error:{message:'confirmed failure'}})));
+  await(await post('/v1/videos',nsfwBody)).text();await vi.waitFor(()=>expect(row().status).toBe('failed'));
+  expect(wallet()).toBe(100);expect(tokenWallet()).toBe(-1);expect(db.select().from(apiTokens).get()!.usedAmount).toBe(0);
+  video.resumeAllPendingVideoTasks();resumeSpecificationTasks();expect(wallet()).toBe(100);
+});
+
+it.each([false,true])('NSFW managed=%s: batch validation includes probed reference seconds but never creates a reservation',async spec=>{
+  setupNsfw(spec);vi.stubGlobal('fetch',vi.fn());
+  const response=await post('/api/video/validate',nsfwBody);expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({unitCost:15.1});expect(fetch).not.toHaveBeenCalled();
+  expect(wallet()).toBe(100);expect(db.select().from(contents).all()).toHaveLength(0);
+});
 
 it.each(['/v1/videos', '/api/video/generate'])('%s: audio probing failure rejects before any debit or POST', async endpoint => {
   probes.audio.mockRejectedValue(new Error('probe unavailable'));
@@ -125,7 +414,7 @@ it.each(['/v1/videos', '/api/video/generate'])('%s: audio over the duration limi
 });
 
 it.each(['/v1/videos', '/api/video/generate'])('%s: forwards smart-duration and input media; audio is validated but not billed', async endpoint => {
-  const standard = 'wan3.0-video';
+  const standard = 'wan3.0-video-nsfw';
   db.update(channels).set({ supportedModels: JSON.stringify([standard]) }).run();
   db.update(models).set({ modelId: standard }).run();
   db.update(modelPricing).set({ modelPattern: standard, billingType: 'per_second', inputPrice: 1 }).run();
@@ -332,7 +621,7 @@ it.each([
   vi.stubGlobal('fetch', vi.fn(async () => {
     expect(wallet()).toBeCloseTo(96.1);
     expect(db.select().from(apiTokens).get()!.usedAmount).toBeCloseTo(3.9);
-    return Response.json({ error: { message: 'No available channel for model wan3.0-video-prime under group default (distributor)' } }, { status: 503 });
+    return Response.json({ error: { message: 'No available channel for model wan3.0-video-nsfw under group default (distributor)' } }, { status: 503 });
   }));
   await (await post(endpoint, body)).text();
   await vi.waitFor(() => expect(row().status).toBe('failed'));
@@ -349,7 +638,7 @@ it.each([
   ['/v1/videos', false], ['/api/video/generate', false], ['/v1/videos', true], ['/api/video/generate', true],
 ] as const)('%s managed=%s: no-channel wording does not bypass uncertain-response protection', async (endpoint, spec) => {
   if (spec) managed();
-  const message = 'No available channel for model wan3.0-video-prime under group default (distributor)';
+  const message = 'No available channel for model wan3.0-video-nsfw under group default (distributor)';
   for (const scenario of [
     () => Response.json({ error: { message }, task_id: 'task_known' }, { status: 503 }),
     () => Response.json({ error: { message } }, { status: 503, headers: { 'x-task-id': 'task_known' } }),

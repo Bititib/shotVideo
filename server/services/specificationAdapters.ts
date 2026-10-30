@@ -270,6 +270,8 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
       images: refs(request.images), videos: refs(request.videos), audios: refs(request.audios) });
   } else if (isSnumomWanChannel(c)) {
     payload = buildSnumomWanPayload({ model, prompt: request.prompt, seconds: i.seconds, aspectRatio: i.ratio, resolution: i.resolution,
+      ...(isSnumomWanVideoModel(model) ? { smartDuration:Number(request.body.parameters?.duration ?? request.body.duration_seconds ?? request.body.video_length ?? request.body.seconds ?? request.body.duration) === -1,
+        promptExtend:request.body.parameters?.prompt_extend ?? request.body.prompt_extend,inputMedia:normalizeSnumomWanInputMedia(request.body.input?.media) } : {}),
       images: [...refs(request.images).map(url => ({ url, role: 'reference_image' as const })),
         ...(request.firstFrame ? [{ url: publishSpecificationAsset(request.firstFrame, request.publicBaseUrl), role: 'first_frame' as const }] : []),
         ...(request.lastFrame ? [{ url: publishSpecificationAsset(request.lastFrame, request.publicBaseUrl), role: 'last_frame' as const }] : [])],
@@ -324,9 +326,10 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   const id = isSnumomWanChannel(c) ? extractSnumomTaskId(job, taskHeaders)
     : job.task_id || job.taskId || job.id || job.data?.task_id || job.data?.id || job.request_id;
   if (!id) throw new SpecificationUpstreamError(upstreamDiagnostic(c.type || 'OpenAI-compatible', '上游未返回任务 ID，提交结果待核实，请勿重复提交', job, c.apiKey, undefined, taskHeaders?.get('x-request-id') || undefined), false, true);
+  if (isSnumomWanVideoModel(exec) && isSnumomWanChannel(c) && ['completed','failed'].includes(String(job.status).toLowerCase())) onStarting({videoId:String(id),upstreamTaskId:String(id),snumomInitialTask:job});
   return String(id);
 }
-export async function pollSpecificationVideo(channel: any, taskId: string, executionModel?: string) {
+export async function pollSpecificationVideo(channel: any, taskId: string, executionModel?: string, referenceVideoSeconds = 0) {
   if (executionModel === SI_YUE_TIAN_MINIMAX_MODEL) return pollSiYueTianMinimax(channel, taskId);
   if (isZonghengChannel(channel)) {
     const response = await fetchVideoTaskResponse(zonghengTaskUrl(channel.baseUrl, taskId), { headers: { Authorization: 'Bearer ' + channel.apiKey, 'Cache-Control': 'no-cache, no-store' }, cache: 'no-store', redirect: 'error' });
@@ -357,7 +360,7 @@ export async function pollSpecificationVideo(channel: any, taskId: string, execu
   if (isWxHaidiYueChannel(channel)) return normalizeWxHaidiYueTask(raw, channel.baseUrl);
   if (isLongxiaChannel(channel)) return normalizeLongxiaVideoTask(raw);
   if (isMiaowuChannel(channel)) return normalizeMiaowuVideoTask(raw, channel.baseUrl, taskId);
-  if (isSnumomWanChannel(channel)) return normalizeSnumomWanTask(raw);
+  if (isSnumomWanChannel(channel)) return normalizeSnumomWanTask(raw, referenceVideoSeconds, executionModel);
   const data = raw.data && !Array.isArray(raw.data) ? raw.data : raw;
   return { status: String(data.status || raw.status || '').toLowerCase(), progress: Number(data.progress || data.progress_pct || 0),
     resultUrl: String(data.url || data.video_url || data.result_url || data.output?.url || data.output?.video_url || data.metadata?.url || data.result?.url || data.result?.video_url || (Array.isArray(data.data) ? data.data[0]?.url : '') || ''),
@@ -617,3 +620,5 @@ export async function pollSpecificationImage(channel: any, taskId: string) {
 import { isPidoiImageChannel, generatePidoiImage, pollPidoiImage, PidoiImageError } from './pidoiImageAdapter.js';
 import { logImageRequestFailure } from './imageRequestDiagnostics.js';
 import { responseDiagnostic, upstreamDiagnostic, transportDiagnostic, diagnosticJson } from './upstreamDiagnostic.js';
+import { isSnumomWanVideoModel, snumomOutputOnlySpec, SNUMOM_WAN_NSFW_MODEL } from '../../shared/snumomWanNsfw.js';
+import { normalizeSnumomWanInputMedia } from './snumomWanAdapter.js';

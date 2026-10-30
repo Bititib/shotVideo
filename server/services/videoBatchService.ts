@@ -1,4 +1,6 @@
 import { randomBytes } from 'crypto';
+import { isSnumomWanVideoModel } from '../../shared/snumomWanNsfw.js';
+import { PricingService } from './pricingService.js';
 import jwt from 'jsonwebtoken';
 import { sqlite } from '../db/index.js';
 import { env } from '../config/env.js';
@@ -176,6 +178,10 @@ export function settleRecoveredBatch(contentId: number, resultUrl: string): bool
   const item = batchStore.item(meta.batchItemId);
   if (!item || item.content_id !== contentId || !['running', 'review'].includes(item.status) || item.billing_state !== 'reserved') {
     throw new Error('该批量任务已结算或已替换，禁止从历史尝试再次补扣费用');
+  }
+  if ([meta.model,meta.requestedModel,meta.actualModel].some(isSnumomWanVideoModel) && meta.upstreamBillingUsage) {
+    const actual = PricingService.quoteSnapshot(meta.pricingSnapshot,{resolution:meta.upstreamBillingUsage.resolution||meta.resolution,seconds:meta.upstreamBillingUsage.billableSeconds,count:1}).cost;
+    if(Math.abs(actual-item.unit_cost)>0.000001)throw new Error('批量实际用量与预扣不同，需核对结算；未重复生成或扣退款');
   }
   batchStore.complete(item.id, contentId, resultUrl, () => {
     const receipt = JSON.parse(item.receipt);

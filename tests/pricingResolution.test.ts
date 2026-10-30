@@ -10,7 +10,7 @@ describe('pricing resolution fields', () => {
   });
 
   it('always exposes the three WAN resolution prices independently', () => {
-    expect(pricingResolutionFields('wan3.0-video', {
+    expect(pricingResolutionFields('wan3.0-video-nsfw', {
       category: 'video',
       '480p': 0.12,
       '720p': 0.14,

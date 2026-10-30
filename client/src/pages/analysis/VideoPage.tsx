@@ -1,4 +1,5 @@
 import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
+import { isSnumomWanVideoModel } from '../../../../shared/snumomWanNsfw';
 import { SI_YUE_TIAN_MINIMAX_MODEL, siYueTianMinimaxInputErrors } from '../../../../shared/siYueTianMinimax';
 import { videoReviewLabel, videoReviewMessage } from '../../../../shared/videoReview';
 import { publicGenerationError, generationProblemSummary } from '../../../../shared/generationMessages';
@@ -370,7 +371,7 @@ const isSoraV4Model = (modelId: string) => {
 };
 
 const isWan30Model = (modelId: string) => {
-  return modelId === 'wan3.0th' || modelId === 'wan3.0-video' || modelId === 'wan3.0-video-prime';
+  return modelId === 'wan3.0th' || isSnumomWanVideoModel(modelId);
 };
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
@@ -2075,7 +2076,7 @@ export default function VideoPage() {
                         : 'snumom WAN3.0 支持 10 图 · 5 视频 · 5 段 MP3/WAV 音频，支持首帧与首尾帧模式'}
                     </span>
                   )}
-                  {(currentModel?.routingLimits ? currentModel.routingLimits.firstFrame || currentModel.routingLimits.lastFrame : isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1' || supportsHmDedicatedFrames(selectedModel) || selectedModel === 'wan3.0-video' || selectedModel === 'wan3.0-video-prime') && (
+                  {(currentModel?.routingLimits ? currentModel.routingLimits.firstFrame || currentModel.routingLimits.lastFrame : isSoraV4Model(selectedModel) || selectedModel === 'veo-3-1' || supportsHmDedicatedFrames(selectedModel) || selectedModel === 'wan3.0-video-nsfw') && (
                     <>
                       <button onClick={() => firstFrameInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                         <Upload className="w-3 h-3 text-emerald-400" /> 首帧 {firstFrame ? '(已上传)' : ''}

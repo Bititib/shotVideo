@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildSnumomWanPayload,
+  normalizeSnumomNsfwRequestBody,
   canonicalSnumomVideoModel,
   isSnumomWanChannel,
   normalizeSnumomWanTask,
@@ -20,10 +21,25 @@ import {
   snumomContentUrl,
 } from '../server/services/snumomWanAdapter.js';
 import { roundUpVideoDurationTenths } from '../server/services/videoDurationProbe.js';
+import { SNUMOM_OUTPUT_ONLY_MODELS } from '../shared/snumomWanNsfw';
 
 describe('snumom Wan 3.0 adapter', () => {
+  it.each(Object.entries(SNUMOM_OUTPUT_ONLY_MODELS))('%s enforces its exact resolution/duration and never adds reference seconds', (model,spec)=>{
+    for(const seconds of spec.seconds)expect(buildSnumomWanPayload({model,prompt:'风景',seconds,resolution:spec.resolution,aspectRatio:'16:9',videos:[{url:'https://example.com/ref.mp4'}]})).toMatchObject({seconds:String(seconds),size:spec.resolution.toUpperCase()});
+    for(const seconds of [-1,4,31,...(model.includes('prime')?[5,20]:[])])expect(()=>buildSnumomWanPayload({model,prompt:'风景',seconds,resolution:spec.resolution,aspectRatio:'16:9'})).toThrow();
+    expect(snumomWanBillableSeconds(model,30,15)).toBe(30);
+    expect(normalizeSnumomWanTask({usage:{output_seconds:30,reference_video_seconds:15}},15,model).billingUsage?.billableSeconds).toBe(30);
+  });
+  it('normalizes NSFW frame-role objects before billing without silently discarding frames',()=>{
+    const body=normalizeSnumomNsfwRequestBody({model:'wan3.0-video-nsfw',prompt:'test',seconds:'10',size:'720P',
+      reference_images:[{url:'https://example.com/start.jpg',role:'first_frame'},{url:'https://example.com/end.jpg',role:'last_frame'}]});
+    expect(body).toMatchObject({resolution:'720p',reference_images:[],first_frame:'https://example.com/start.jpg',last_frame:'https://example.com/end.jpg'});
+    expect(()=>normalizeSnumomNsfwRequestBody({...body,reference_images:['https://example.com/extra.jpg']})).toThrow('不能与普通参考素材');
+    expect(()=>normalizeSnumomNsfwRequestBody({...body,seconds:5,duration:10})).toThrow('时长参数必须一致');
+    expect(snumomWanBillableSeconds('wan3.0-video-nsfw',10,5.1)).toBeCloseTo(15.1);
+  });
   it('passes smart duration, prompt extension and file/link parameters', () => {
-    const payload = buildSnumomWanPayload({ model: 'wan3.0-video', prompt: 'test', seconds: 5,
+    const payload = buildSnumomWanPayload({ model: 'wan3.0-video-nsfw', prompt: 'test', seconds: 5,
       resolution: '720p', aspectRatio: '16:9', smartDuration: true, promptExtend: false,
       videos: [{ url: 'https://example.com/ref.mp4' }],
       inputMedia: [{ type: 'link', url: 'https://example.com/article' }] });
@@ -41,7 +57,7 @@ describe('snumom Wan 3.0 adapter', () => {
   it('forces adaptive only for WAN first/last-frame requests, not Grok', () => {
     const input = { prompt: 'test', seconds: 5, resolution: '720p', aspectRatio: '16:9',
       images: [{ url: 'https://example.com/a.jpg', role: 'first_frame' as const }] };
-    expect(buildSnumomWanPayload({ ...input, model: 'wan3.0-video' })).toMatchObject({ aspect_ratio: 'adaptive' });
+    expect(buildSnumomWanPayload({ ...input, model: 'wan3.0-video-nsfw' })).toMatchObject({ aspect_ratio: 'adaptive' });
     expect(buildSnumomWanPayload({ ...input, model: 'grok-imagine-video-1.5' })).toMatchObject({ aspect_ratio: '16:9' });
   });
   it('uses explicit usage only and preserves known reference seconds when omitted upstream', () => {
@@ -58,8 +74,8 @@ describe('snumom Wan 3.0 adapter', () => {
   it('declares the Grok per-request model and its advertised limits', () => {
     expect(SNUMOM_GROK_IMAGINE_VIDEO_MODEL).toBe('grok-imagine-video-1.5');
     expect(SNUMOM_VIDEO_MODELS).toEqual([
-      'wan3.0-video',
-      'wan3.0-video-prime',
+      'wan3.0-video-nsfw',
+      ...Object.keys(SNUMOM_OUTPUT_ONLY_MODELS),
       SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
       SNUMOM_SD_MINI_MODEL,
     ]);
@@ -105,13 +121,13 @@ describe('snumom Wan 3.0 adapter', () => {
 
   it('builds the documented flat payload', () => {
     expect(buildSnumomWanPayload({
-      model: 'wan3.0-video', prompt: ' 图1人物自然走动 ', seconds: 10,
+      model: 'wan3.0-video-nsfw', prompt: ' 图1人物自然走动 ', seconds: 10,
       resolution: '720p', aspectRatio: '9:16',
       images: [{ url: 'https://cdn.example.com/a.jpg', role: 'reference_image' }],
       videos: [{ url: 'https://cdn.example.com/a.mp4', duration: 5 }],
       audios: [{ url: 'https://cdn.example.com/a.mp3' }],
     })).toEqual({
-      model: 'wan3.0-video', prompt: '图1人物自然走动', seconds: '10',
+      model: 'wan3.0-video-nsfw', prompt: '图1人物自然走动', seconds: '10',
       size: '720P', aspect_ratio: '9:16',
       reference_images: [{ url: 'https://cdn.example.com/a.jpg', role: 'reference_image' }],
       reference_videos: [{ url: 'https://cdn.example.com/a.mp4', duration: 5 }],
@@ -151,8 +167,8 @@ describe('snumom Wan 3.0 adapter', () => {
   });
 
   it('adds probed reference-video duration only for Wan 3.0 video models', () => {
-    expect(snumomWanBillableSeconds('wan3.0-video', 10, 5.25)).toBe(15.25);
-    expect(snumomWanBillableSeconds('wan3.0-video-prime', 10, 3)).toBe(13);
+    expect(snumomWanBillableSeconds('wan3.0-video-nsfw', 10, 5.25)).toBe(15.25);
+    expect(snumomWanBillableSeconds('wan3.0-video-nsfw', 10, 3)).toBe(13);
     expect(snumomWanBillableSeconds(SNUMOM_GROK_IMAGINE_VIDEO_MODEL, 10, 5)).toBe(10);
   });
 

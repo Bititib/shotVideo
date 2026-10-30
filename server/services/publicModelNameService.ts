@@ -1,4 +1,5 @@
 import { FUNAI_MODEL_PREFIX } from '../../shared/funAi.js';
+import { isRetiredVideoModel } from '../../shared/retiredVideoModels.js';
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { normalizeMjModelId } from '../../shared/mj.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
@@ -23,6 +24,7 @@ export class PublicModelNameError extends Error {
 
 /** Resolve before permissions, pricing and routing; unknown legacy IDs retain their old behavior. */
 export function resolvePublicModelId(value: string, input: { resolution?: unknown; output_resolution?: unknown; quality?: unknown } = {}): string {
+  if (isRetiredVideoModel(value)) return value;
   value = normalizeMjModelId(value);
   const rows = db.select().from(models).all();
   const oldAlias = aliases()[value];
@@ -33,6 +35,7 @@ export function resolvePublicModelId(value: string, input: { resolution?: unknow
   }
   if (matches.length > 1) throw new PublicModelNameError(`模型名称“${value}”存在冲突，请管理员设置唯一名称`);
   const id = matches[0]?.modelId || value;
+  if (isRetiredVideoModel(id)) return id;
   const specs = getModelSpecifications();
   if (specs.some(spec => spec.modelId === id)) return id;
   const checkAlias = createVideoAliasChecker();

@@ -1,4 +1,5 @@
 import { db } from '../db/index.js';
+import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { models } from '../db/schema.js';
 import { resolvePublicModelId } from './publicModelNameService.js';
 import { getModelSpecification } from './modelRoutingService.js';
@@ -6,10 +7,12 @@ import { existingModelLimits } from './modelInputPresets.js';
 import { PricingService } from './pricingService.js';
 import { assertUserModelAccess } from './userModelAccessService.js';
 import { isSnumomWan30VideoModel, snumomWanBillableSeconds } from './snumomWanAdapter.js';
+import { isSnumomWanVideoModel, snumomOutputOnlySpec, SNUMOM_WAN_NSFW_MODEL } from '../../shared/snumomWanNsfw.js';
 const fail = (message: string, status = 400) => Object.assign(new Error(message), { status });
 /** Quote customer prices only. No uploads, upstream calls, reservations or task creation. */
 export function quoteVideoRequest(body: any, userId?: number) {
   const model = resolvePublicModelId(String(body?.model || ''));
+  if (isRetiredVideoModel(model)) throw fail(RETIRED_VIDEO_MODEL_MESSAGE,410);
   assertUserModelAccess(userId, model);
   const row = db.select().from(models).all().find(m => m.modelId === model);
   const spec = getModelSpecification(model);
@@ -32,6 +35,7 @@ export function quoteVideoRequest(body: any, userId?: number) {
   const billableSeconds = snumomWanBillableSeconds(model, seconds, referenceVideoSeconds);
   if (isSnumomWan30VideoModel(model) && billableSeconds > 30) throw fail('输出时长与参考视频总时长合计不能超过 30 秒');
   const quote = PricingService.quote(model, { resolution, seconds: billableSeconds, count: 1 }, false, userId);
+  if (isSnumomWanVideoModel(model) && quote.billingType !== 'per_second') throw fail('Wan 3.0 NSFW 需配置按秒售价');
   if (!['per_call', 'per_second'].includes(quote.billingType || '') || !Number.isFinite(quote.cost) || quote.cost < 0) throw fail('该模型尚未配置有效视频售价');
   return { model, resolution, seconds, referenceVideoSeconds, billableSeconds, cost: quote.cost, rate: quote.rate, billingType: quote.billingType };
 }

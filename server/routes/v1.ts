@@ -1,6 +1,8 @@
 import { publicApiModelId } from '../../shared/funAi.js';
 import { zonghengProtocol, zonghengProtocolSnapshot } from '../services/zonghengProtocol.js';
 import { publicGenerationError } from '../../shared/generationMessages.js';
+import { normalizeSnumomNsfwRequestBody } from '../services/snumomWanAdapter.js';
+import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { generationErrorResponse } from '../middleware/generationErrorResponse.js';
 import { getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, zonghengBaseUrl, buildZonghengVideoPayload, validateZonghengVideoAliases, buildZonghengImagePayload, validateZonghengImageReferences, zonghengImageSize, submitZonghengVideo, ZonghengSubmissionError } from '../services/zonghengAdapter.js';
@@ -1647,6 +1649,7 @@ async function handleVideoCreation(req: Request, res: Response) {
 
   if (typeof req.body?.model === 'string') req.body.model = canonicalSnumomVideoModel(req.body.model);
   if (!normalizeApiModel(req, res)) return;
+  if (isRetiredVideoModel(req.body?.model)) { cleanupFiles(req.files);return res.status(410).json({error:RETIRED_VIDEO_MODEL_MESSAGE}); }
   // Discovery hides disabled models; direct video submissions must honor that same switch.
   const registeredVideoModel = db.select().from(models).where(eq(models.modelId, String(req.body?.model || ''))).get();
   if (registeredVideoModel?.isActive === 0) {
@@ -1677,6 +1680,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
     if ([input.seconds, input.duration, input.video_length, input.parameters?.duration].every(value => value === undefined)) input.seconds = 5;
   }
+  try { req.body=normalizeSnumomNsfwRequestBody(req.body); } catch(error:any) { cleanupFiles(req.files);return res.status(400).json({error:error.message}); }
   if (await handleSpecificationGeneration(req, res, 'video', { token, reserve: (amount, id, snapshot) => reserveApiCharge(token, amount, id, snapshot) })) return;
   const body = req.body || {};
 
@@ -1770,7 +1774,7 @@ async function handleVideoCreation(req: Request, res: Response) {
 
   let snumomInputMedia: Array<{ type: 'file' | 'link'; url: string }> = [];
   let snumomPromptExtend: boolean | undefined;
-  if (model === 'wan3.0-video' || model === 'wan3.0-video-prime') {
+  if (isSnumomWan30VideoModel(model)) {
     try {
       snumomInputMedia = normalizeSnumomWanInputMedia(body.input?.media);
     } catch (error: any) {
@@ -1961,13 +1965,12 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
   }
 
-  if (model === 'wan3.0-video' || model === 'wan3.0-video-prime') {
+  if (isSnumomWan30VideoModel(model)) {
     const allowedRatios = ['adaptive', '21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
-    const smartDuration = model === 'wan3.0-video' && seconds === -1;
-    if ((!smartDuration && (!Number.isInteger(seconds) || seconds < 2 || seconds > 30))
-      || (model === 'wan3.0-video-prime' && seconds === -1)) {
+    const smartDuration = supportsSnumomSmartDuration(model) && seconds === -1;
+    if (!smartDuration && (!Number.isInteger(seconds) || seconds < 2 || seconds > 30)) {
       cleanupFiles(req.files);
-      return res.status(400).json({ error: `${model} seconds must be an integer from 2 to 30${model === 'wan3.0-video' ? ', or -1 with reference videos' : ''}` });
+      return res.status(400).json({ error: `${model} seconds must be an integer from 2 to 30, or -1 with reference videos` });
     }
     if (!allowedRatios.includes(ratio)) {
       cleanupFiles(req.files);
@@ -1983,7 +1986,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
     if (smartDuration && video_urls.length === 0) {
       cleanupFiles(req.files);
-      return res.status(400).json({ error: 'wan3.0-video smart duration -1 requires reference_videos' });
+      return res.status(400).json({ error: `${model} smart duration -1 requires reference_videos` });
     }
     if (snumomInputMedia.length > 0 && (body.first_frame_url || body.last_frame_url || body.end_frame_url)) {
       cleanupFiles(req.files);
@@ -2153,7 +2156,9 @@ async function handleVideoCreation(req: Request, res: Response) {
     : null;
   let channel = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL
     ? siYueTianSelection?.channel || null
-    : ChannelService.findChannelForModel(model);
+    : ChannelService.findChannelForModel(model, isSnumomWanVideoModel(model)
+      ? ChannelService.getActiveChannels().filter(isSnumomWanChannel)
+      : undefined);
   let executionModel = siYueTianSelection?.executionModel || model;
   let failoverReason = siYueTianSelection?.reason || '';
   let failoverFrom = siYueTianSelection?.kind === 'julun' ? 'siyuetian' : '';
@@ -2273,7 +2278,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   let referenceAudioRawDurations: number[] = [];
   let referenceAudioSeconds = 0;
   let billingOutputSeconds = seconds;
-  const smartSnumomDuration = model === 'wan3.0-video' && seconds === -1;
+  const smartSnumomDuration = supportsSnumomSmartDuration(model) && seconds === -1;
   if (isSnumomWanChannel(channel) && isSnumomWan30VideoModel(model) && video_urls.length > 0) {
     try {
       const probed = await probeReferenceVideoSeconds(video_urls);
@@ -2285,7 +2290,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         cleanupFiles(req.files);
         return res.status(400).json({ error: 'Wan 3.0 reference videos must be 1-15 seconds each and at most 15 seconds total' });
       }
-      if (billingOutputSeconds + referenceVideoSeconds > 30) {
+      if (model === SNUMOM_WAN_NSFW_MODEL && billingOutputSeconds + referenceVideoSeconds > 30) {
         cleanupFiles(req.files);
         return res.status(400).json({ error: 'Wan 3.0 output plus reference video duration must not exceed 30 seconds' });
       }
@@ -2332,6 +2337,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   }
   const billableSeconds = snumomWanBillableSeconds(model, billingOutputSeconds, referenceVideoSeconds);
   const pricingQuote = PricingService.quote(model, { resolution, seconds: billableSeconds, count: 1 }, false, token.userId ?? null);
+  if (isSnumomWanVideoModel(model) && pricingQuote.billingType !== 'per_second') { cleanupFiles(req.files); return res.status(400).json({error:'Wan 3.0 NSFW 需配置按秒售价，本次未扣费'}); }
   if (!pricingQuote.billingType) {
     cleanupFiles(req.files);
     return res.status(400).json({ error: `Model ${model} has no pricing rule. Configure it in Admin > Pricing.` });
@@ -2991,6 +2997,10 @@ async function handleVideoCreation(req: Request, res: Response) {
         status_url: `${req.protocol}://${req.get('host')}/v1/videos/task_${contentId}` });
     }
 
+    if(isSnumomWanVideoModel(model)){
+      const immediateId=extractSnumomTaskId(responseBody,upstreamRes.headers);
+      if(immediateId)acceptVideoSubmission(contentId!,immediateId,{channelId:Number(channel.id)||null,channelApiKeyId:Number(channel.apiKeyId)||null,provider:'snumom'});
+    }
     if (isSnumomSubmissionRejection(upstreamRes.status, responseText, channel, upstreamRes.headers)
       || explicitVideoCreateError(responseBody, upstreamRes.headers)
       || isSnumomWanChannel(channel) && isVideoFailurePayload(responseBody)) {
@@ -3038,6 +3048,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     } catch { /* keep the submission metadata below */ }
     const localMeta = {
       ...persistedMeta,
+      ...(isSnumomWanVideoModel(model) && responseBody?.status==='completed'?{snumomInitialTask:responseBody}:{}),
       model,
       prompt,
       seconds: billingOutputSeconds,
@@ -3406,3 +3417,4 @@ router.get('/files/video', async (req: Request, res: Response) => {
 });
 
 export default router;
+import { isSnumomWanVideoModel, snumomOutputOnlySpec, SNUMOM_WAN_NSFW_MODEL, supportsSnumomSmartDuration } from '../../shared/snumomWanNsfw.js';

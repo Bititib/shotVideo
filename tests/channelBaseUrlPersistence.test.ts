@@ -56,6 +56,22 @@ beforeAll(async () => {
 afterAll(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe('administrator channel URLs survive startup', () => {
+  it('keeps NSFW administrator activation, price, mappings and balances across startup',async()=>{
+    const id='wan3.0-video-nsfw', channel=db.select().from(channels).where(eq(channels.type,'snumom')).get()!;
+    const {users}=await import('../server/db/schema');
+    const balances=JSON.stringify(db.select({id:users.id,balance:users.balance}).from(users).all());
+    db.update(models).set({isActive:1,displayName:'operator NSFW'}).where(eq(models.modelId,id)).run();
+    db.insert(modelPricing).values({modelPattern:id,billingType:'per_second',inputPrice:0.43,outputPrice:0,extraParams:JSON.stringify({'480p':0.41,'720p':0.43,'1080p':0.87})}).run();
+    db.update(channels).set({supportedModels:JSON.stringify(['operator-model',id]),modelMapping:JSON.stringify({[id]:'operator-upstream', 'operator-model':'operator-original'})}).where(eq(channels.id,channel.id)).run();
+    const price=JSON.stringify(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,id)).get());
+    await initDatabase();await initDatabase();
+    expect(db.select().from(models).where(eq(models.modelId,id)).get()).toMatchObject({isActive:1,displayName:'operator NSFW'});
+    expect(JSON.stringify(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,id)).get())).toBe(price);
+    expect(JSON.stringify(db.select({id:users.id,balance:users.balance}).from(users).all())).toBe(balances);
+    const after=db.select().from(channels).where(eq(channels.id,channel.id)).get()!;
+    expect(JSON.parse(after.supportedModels)).toContain('operator-model');
+    expect(JSON.parse(after.modelMapping)).toMatchObject({[id]:'operator-upstream','operator-model':'operator-original'});
+  });
   it('still initializes default addresses on a fresh database', () => {
     for (const { type, url } of defaults) expect(originalDefaults.get(type)).toBe(url);
   });

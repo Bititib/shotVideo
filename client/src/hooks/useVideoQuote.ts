@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchVideoQuote, type VideoQuote } from '../api/video';
 import { useAuthStore } from '../stores/authStore';
-const WAN_VIDEO_MODELS = new Set(['wan3.0-video', 'wan3.0-video-prime']);
+const WAN_VIDEO_MODELS = new Set(['wan3.0-video-nsfw']);
 const EMPTY_REFERENCE_VIDEOS: string[] = [];
 
 function browserVideoDuration(source: string): Promise<number> {

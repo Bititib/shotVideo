@@ -6,6 +6,7 @@ import { getHayaVideoSpec, hayaVideoSeconds, HAYA_XG_SEEDANCE_20_MODEL, HAYA_XG_
 import { isLongxiaModel, longxiaResolution, LONGXIA_RATIOS } from '../../shared/longxiaVideo.js';
 import { getSiYueTianC2Model, getSiYueTianSeedance25VideoSpec } from './siYueTianVideoModels.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL, siYueTianMinimaxLimits } from '../../shared/siYueTianMinimax.js';
+import { SNUMOM_WAN_NSFW_MODEL, snumomOutputOnlySpec } from '../../shared/snumomWanNsfw.js';
 
 
 /** Capability drafts come from existing adapters, never from the spelling of a display name. */
@@ -41,6 +42,9 @@ export function existingModelLimits(id: string, kind: 'image' | 'video'): ModelI
   if (id === 'seedance-2.5-deal') return { ...video(30,0,10,'720p',5,30), resolutions: ['480p','720p'] };
   if (id === 'seedance-2.5-pro') return { ...video(30,10,10,'720p'), resolutions: ['480p','720p'] };
   if (id === 'wan3.0th') return video(10,5,5,'720p');
+  const outputOnly=snumomOutputOnlySpec(id);
+  if(outputOnly)return {...video(10,5,5,outputOnly.resolution),ratios:['adaptive','21:9','16:9','4:3','1:1','3:4','9:16'],firstFrame:true,lastFrame:true,duration:{mode:'options',min:outputOnly.seconds[0],max:30,step:1,values:[...outputOnly.seconds]}};
+  if (id === SNUMOM_WAN_NSFW_MODEL) return { ...video(10,5,5,'720p',2,30), resolutions:['480p','720p','1080p'], ratios:['adaptive','21:9','16:9','4:3','1:1','3:4','9:16'], firstFrame:true, lastFrame:true };
   if (id === 'Minimax-H3-768p-933-10s-15s') return { ...video(9,3,3,'768p',10,15), duration: { mode: 'options', min: 10, max: 15, step: 1, values: [10,15] } };
   if (id === 'seedance-2.0' || id === 'sd2-mini') return video(9,0,id === 'sd2-mini' ? 3 : 0,'720p',4,15);
   return null;

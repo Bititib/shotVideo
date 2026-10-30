@@ -1,4 +1,5 @@
 import { isHussHssModel } from '../../shared/hussBbVideo.js';
+import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { activeSpecificationTasks } from './videoRecoveryAction.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL } from '../../shared/siYueTianMinimax.js';
 import { normalizeSiYueTianMinimaxTask } from './siYueTianMinimaxAdapter.js';
@@ -46,7 +47,7 @@ import { saveMjImageBatch, restoreCachedMjOriginal, type MjImageBatch } from './
 import { resolvePublicModelId } from './publicModelNameService.js';
 import { batchContextForRequest, batchStore, markBatchSubmitting, recordBatchFailure } from './videoBatchService.js';
 import { claimVideoSubmission, acceptVideoSubmission, endVideoSubmission, releaseVideoSubmission, videoSubmissionPending, videoSubmissionPreparation } from './videoSubmissionGuard.js';
-import { isSnumomWanChannel } from './snumomWanAdapter.js';
+import { isSnumomWanChannel, normalizeSnumomWanTask } from './snumomWanAdapter.js';
 import { canCancelVideoContent } from './videoCancellationEligibility.js';
 
 const active = activeSpecificationTasks;
@@ -64,8 +65,8 @@ function list(body: any, keys: string[]): string[] {
 }
 export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: string): SpecificationRequest {
   const siYueTianMinimax = kind === 'video' && body.model === SI_YUE_TIAN_MINIMAX_MODEL;
-  if (siYueTianMinimax) {
-    const seconds = [body.seconds, body.duration, body.video_length].filter(value => value !== undefined).map(Number);
+  if (siYueTianMinimax || body.model === SNUMOM_WAN_NSFW_MODEL) {
+    const seconds = [body.seconds, body.duration, body.video_length, ...(body.model === SNUMOM_WAN_NSFW_MODEL ? [body.parameters?.duration,body.duration_seconds] : [])].filter(value => value !== undefined).map(Number);
     if (seconds.some(value => !Number.isFinite(value)) || new Set(seconds).size > 1) throw fail('seconds、duration、video_length 必须一致且为有效数字');
   }
   if (body.resolution && body.output_resolution && String(body.resolution).toLowerCase() !== String(body.output_resolution).toLowerCase()) throw fail('resolution 与 output_resolution 不一致');
@@ -76,10 +77,10 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
   const audios = list(body, ['audio_urls', 'audio_url', 'reference_audios', 'audios', ...(siYueTianMinimax ? ['audio_refs'] : [])]);
   const firstFrame = body.first_frame || body.first_frame_url || '';
   const lastFrame = body.last_frame || body.last_frame_url || body.end_frame_url || '';
-  const outputs = Number(body.n ?? 1), seconds = Number(body.video_length ?? body.seconds ?? body.duration ?? 6);
+  const outputs = Number(body.n ?? 1), seconds = Number(body.video_length ?? body.seconds ?? body.duration ?? (body.model === SNUMOM_WAN_NSFW_MODEL ? body.parameters?.duration ?? body.duration_seconds : undefined) ?? 6);
   if (typeof body.prompt !== 'string' || !body.prompt.trim()) throw fail('请输入描述');
   if (!Number.isInteger(outputs) || outputs < 1 || outputs > 4) throw fail('输出数量必须为 1–4');
-  if (kind === 'video' && (!Number.isFinite(seconds) || seconds <= 0 || outputs !== 1)) throw fail('视频时长或输出数量无效');
+  if (kind === 'video' && (!Number.isFinite(seconds) || seconds <= 0 && !(body.model === SNUMOM_WAN_NSFW_MODEL && seconds === -1) || outputs !== 1)) throw fail('视频时长或输出数量无效');
   if (typeof firstFrame !== 'string' || typeof lastFrame !== 'string') throw fail('首尾帧必须是图片 URL 或 Base64');
   if (kind === 'image' && (videos.length || audios.length || firstFrame || lastFrame)) throw fail('图片生成不能传入视频、音频或独立首尾帧');
   const sizeRatios: Record<string,string> = { '1024x1024': '1:1', '1536x864': '16:9', '864x1536': '9:16', '1536x1152': '4:3', '1152x1536': '3:4', '1536x1024': '3:2', '1024x1536': '2:3', '1280x720': '16:9', '720x1280': '9:16', '1024x768': '4:3', '768x1024': '3:4' };
@@ -119,7 +120,22 @@ function finalizeReservation(id: string | undefined, actual: number, contentId: 
     const row = sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(id) as any;
     if (!row) return 0;
     if (!['reserved', 'review'].includes(row.state)) return Number(row.actual) || 0;
-    if (actual < 0 || actual > row.amount) throw new Error('结算金额无效');
+    if (!Number.isFinite(actual) || actual < 0) throw new Error('结算金额无效');
+    if (actual > row.amount) {
+      if (!metadata(contentId).snumomReferenceBilling) throw new Error('结算金额无效');
+      const context = JSON.parse(row.context);
+      const extra = Math.round((actual-row.amount)*1e6)/1e6;
+      withFundContext(sqlite, {contentId,kind:'charge'}, () => {
+        if (!context.tokenId || context.unlimitedToken) {
+          const supplement = BalanceService.deductWithSource(context.userId,extra,'snumom_actual_supplement',{contentId});
+          if (!supplement) throw new Error('实际费用高于预扣且余额不足，结算待核实');
+          const receipt = JSON.parse(row.receipt);
+          const originalSource = context.tokenId ? receipt.balanceDeduction : receipt;
+          if (originalSource && (supplement.source !== originalSource.source || (supplement.orgId || null) !== (originalSource.orgId || null))) throw new Error('原扣款账户已变化，实际费用结算待核实');
+        }
+        if (context.tokenId) TokenService.deductBalance(context.tokenId,extra);
+      });
+    }
     const refund = Math.max(0, Math.round((row.amount - actual) * 1e6) / 1e6);
     const receipt = JSON.parse(row.receipt), context = JSON.parse(row.context);
     if (refund > 0) {
@@ -168,6 +184,12 @@ function completeContent(id: number, urls: string[]) {
   const meta = metadata(id), record = db.select().from(contents).where(eq(contents.id, id)).get()!;
   let actual = meta.batchItemId ? record.cost : meta.nativeImageOutputs ? meta.reservedCost || 0
     : Math.round((meta.reservedCost || 0) * urls.length / (meta.count || 1) * 1e6) / 1e6;
+  if (record.type === 'video' && meta.snumomReferenceBilling) {
+    actual = meta.upstreamBillingUsage ? PricingService.quoteSnapshot(meta.pricingSnapshot, {
+      resolution:meta.upstreamBillingUsage.resolution || meta.resolution,seconds:meta.upstreamBillingUsage.billableSeconds,count:1,
+    }).cost : meta.reservedCost ?? meta.batchReservedAmount;
+    if (meta.batchItemId && Math.abs(actual-Number(meta.batchReservedAmount))>0.000001) throw new Error('批量原任务实际用量与预扣不同，保留结果和原预扣，结算待核实');
+  }
   actual = finalizeReservation(meta.billingReservationId, actual, id);
   patch(id, { imageUrls: record.type === 'image' ? urls : undefined, ...(meta.nativeImageOutputs ? { count: urls.length } : {}), progress: 100, progresses: urls.map(() => 100),
     completedAt: new Date().toISOString(), billingStatus: 'settled', requiresReview: false, reviewKind: null, upstreamQueryError: null,
@@ -239,7 +261,11 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
             if (meta.actualModel === SI_YUE_TIAN_MINIMAX_MODEL && meta.siYueTianMinimaxInitialTask) {
               task = normalizeSiYueTianMinimaxTask(meta.siYueTianMinimaxInitialTask, channel, taskId);
               patch(id, { siYueTianMinimaxInitialTask: null });
-            } else task = meta.actualModel === SI_YUE_TIAN_MINIMAX_MODEL
+            } else if (meta.snumomReferenceBilling && isSnumomWanChannel(channel)) {
+              if (meta.snumomInitialTask) { task=normalizeSnumomWanTask(meta.snumomInitialTask,meta.referenceVideoSeconds || 0,meta.actualModel);patch(id,{snumomInitialTask:null}); }
+              else task = await pollSpecificationVideo(channel,taskId,meta.actualModel,meta.referenceVideoSeconds || 0);
+            }
+            else task = meta.actualModel === SI_YUE_TIAN_MINIMAX_MODEL
               ? await pollSpecificationVideo(channel, taskId, meta.actualModel) : await pollSpecificationVideo(channel, taskId);
           }
         }
@@ -270,6 +296,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       let localized = '';
       try {
         patch(id, { upstreamResultUrl: task.resultUrl,
+          ...(metadata(id).snumomReferenceBilling && task.billingUsage ? { upstreamBillingUsage:task.billingUsage } : {}),
           ...(metadata(id).actualModel === SI_YUE_TIAN_MINIMAX_MODEL ? { siYueTianMinimaxCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}),
           ...(isHussChannel(channel) ? { hussCompletedReceipt: { taskId, resultUrl: task.resultUrl }, upstreamGenerated: true, upstreamDeliveryPending: true } : {}),
           ...(isMegabyChannel(channel) ? { megabyCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}) });
@@ -595,6 +622,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
   let suppliedId: string;
   try { suppliedId = typeof req.body?.model === 'string' ? resolvePublicModelId(req.body.model, req.body) : ''; }
   catch (error: any) { res.status(error.status || 400).json({ error:error.message }); return true; }
+  if (isRetiredVideoModel(suppliedId)) { res.status(410).json({ error:RETIRED_VIDEO_MODEL_MESSAGE }); return true; }
   const spec = getModelSpecification(suppliedId);
   const modelId = spec?.modelId || suppliedId;
   if (suppliedId === SI_YUE_TIAN_MINIMAX_MODEL && !spec) {
@@ -627,12 +655,16 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     }
     const nativeImageOutputs = kind === 'image' && modelId === MJ_MODEL_ID ? 4 : undefined;
     if (nativeImageOutputs && body.n !== undefined && ![1, 4].includes(Number(body.n))) throw fail('MJ 每次仅提交一次任务，图片数量以上游实际结果为准');
-    const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (model.provider === 'megaby' ? 5 : spec.limits.duration.mode === 'fixed' ? spec.limits.duration.min : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'));
+    const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (modelId === SNUMOM_WAN_NSFW_MODEL ? body.parameters?.duration ?? body.duration_seconds : undefined) ?? (model.provider === 'megaby' ? 5 : spec.limits.duration.mode === 'fixed' ? spec.limits.duration.min : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'));
+    let snumomBilling: Awaited<ReturnType<typeof prepareSnumomNsfwReferences>> | undefined;
+    try { snumomBilling = kind === 'video' && isSnumomWanVideoModel(modelId) ? await prepareSnumomNsfwReferences(request) : undefined; }
+    catch(error:any) { throw fail(error.message); }
     const mismatch = routingMismatches(spec.limits, request.input, kind);
     if (mismatch.length) throw fail(mismatch.join('；'));
     request.input.resolution = spec.limits.resolutions.find(r => r.toLowerCase() === request.input.resolution.toLowerCase()) || request.input.resolution;
     const candidates = selectModelRoutes(spec, request.input);
     if (!candidates.length) throw fail(modelAvailabilityMessage(specificationAvailability(spec)) || '该规格暂时没有满足参数的可用线路', 503);
+    if (snumomBilling && !candidates.every(t => isSnumomWanChannel(t.channel) && t.route.upstreamModel === modelId && t.route.executionModel === modelId)) throw fail('Wan 3.0 必须关联对应型号的 snumom 线路，未扣费');
     if (kind === 'video' && candidates.every(target => isMegabyChannel(target.channel))) {
       try {
         if (body.first_image !== undefined || body.last_image !== undefined) throw new Error('Megaby 暂不支持独立首尾帧');
@@ -645,7 +677,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     const trustedOrigins = [request.publicBaseUrl, req.protocol + '://' + req.get('host')];
     await prepareSpecificationReferenceImages(request, kind === 'video' ? candidates : [], trustedOrigins);
     const batch = !apiContext && kind === 'video' ? batchContextForRequest(req as any) : null;
-    const usage = { resolution: request.input.resolution, seconds: request.input.seconds, count: nativeImageOutputs ? 1 : request.input.outputs };
+    const usage = { resolution: request.input.resolution, seconds: snumomBilling?.billableSeconds ?? request.input.seconds, count: nativeImageOutputs ? 1 : request.input.outputs };
     const quote = batch?.pricingSnapshot ? { ...PricingService.quoteSnapshot(batch.pricingSnapshot, usage), pricingSnapshot: batch.pricingSnapshot }
       : PricingService.quote(modelId, usage, false, userId || null);
     if (!quote.billingType) throw fail('该规格尚未配置用户售价');
@@ -654,16 +686,20 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
       if (!['per_call', 'per_second'].includes(quote.billingType)) throw fail('视频用户售价必须按条或按秒配置');
       if (!batch) assertExpectedVideoCost(body, quote.cost);
     }
+    if (snumomBilling && quote.billingType !== 'per_second') throw fail('Wan 3.0 NSFW 需配置按秒售价，本次未扣费');
+    if (req.path === '/validate' && snumomBilling) return res.json({unitCost:quote.cost,resolution:request.input.resolution,reference_images:request.images,first_frame:request.firstFrame,last_frame:request.lastFrame,pricingSnapshot:quote.pricingSnapshot}), true;
+    if (snumomBilling && batch && Math.abs(quote.cost-batch.item.unit_cost)>0.000001) throw fail('参考视频或计费用量已变化，请重新预估批次，本次未提交上游');
     const create = () => ContentService.save({ userId, orgId: (req as any).orgId || null, type: kind, modelId,
       title: request.prompt.slice(0, 200), inputText: request.prompt, status: 'queued', cost: batch ? 0 : quote.cost,
       metadata: { managedSpecification: true, requestedModel: modelId, model: modelId, count: request.input.outputs, nativeImageOutputs,
+        ...snumomBilling,
         ...(kind === 'video' ? videoSubmissionPreparation() : {}),
         pricingSnapshot: quote.pricingSnapshot,
         seconds: request.input.seconds, resolution: request.input.resolution, aspect_ratio: request.input.ratio,
         reference_images: request.images, reference_videos: request.videos, audio_urls: request.audios,
         first_frame: request.firstFrame, last_frame: request.lastFrame, queueUserKey: token ? 'token:' + token.id : 'user:' + userId,
         tokenId: token?.id, billingSource: token ? 'api' : 'user', publicBaseUrl: request.publicBaseUrl, startedAt: Date.now(), imageUrls: [], routingAttempts: [],
-        ...(batch ? { batchId: batch.batch.id, batchItemId: batch.item.id, batchAttempt: batch.item.attempts, billingStatus: 'batch_reserved' } : {}) } });
+        ...(batch ? { batchId: batch.batch.id, batchItemId: batch.item.id, batchAttempt: batch.item.attempts, batchReservedAmount:batch.item.unit_cost, reservedCost:batch.item.unit_cost, billingStatus: 'batch_reserved' } : {}) } });
     let charge: any;
     sqlite.transaction(() => {
       id = batch ? batchStore.attach(batch.item.id, batch.item.attempts, userId, create) : create();
@@ -929,3 +965,5 @@ export function recoverSpecificationVideo(id: number) {
   } catch (error) { active.delete(id); throw error; }
   return { status: 'processing', message: '已恢复原任务查询和结果保存，未重新生成或扣费', chargedAmount: 0 };
 }
+import { isSnumomWanVideoModel, snumomOutputOnlySpec, SNUMOM_WAN_NSFW_MODEL } from '../../shared/snumomWanNsfw.js';
+import { prepareSnumomNsfwReferences } from './snumomNsfwReferences.js';

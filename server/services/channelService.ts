@@ -1,5 +1,6 @@
 import { isMegabyChannel, megabyBaseUrl, fetchMegabyVideoModels } from './megabyVideoAdapter.js';
 import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
+import { isRetiredVideoModel } from '../../shared/retiredVideoModels.js';
 import { isMjChannel, normalizeMjBaseUrl, fetchMjModels } from './mjAdapter.js';
 import { isAsyncVideoChannel, asyncVideoBaseUrl, fetchAsyncVideoModels, AsyncVideoCatalogError } from './asyncVideoAdapter.js';
 import { syncV6kVideoModels } from './v6kCatalogService.js';
@@ -325,10 +326,12 @@ export class ChannelService {
   }
 
   static findChannelsForModel(modelName: string, activeChannels?: any[]) {
+    if (isRetiredVideoModel(modelName)) return [];
     modelName = canonicalZonghengModelId(modelName);
     const registered = modelName.startsWith(ZONGHENG_MODEL_PREFIX)
       ? db.select().from(models).where(eq(models.modelId, modelName)).get() : undefined;
     return (activeChannels || this.getActiveChannels())
+      .filter(channel => !isRetiredVideoModel(channel.modelMapping?.[modelName]))
       .filter(channel => !modelName.startsWith(ZONGHENG_MODEL_PREFIX) || (isZonghengChannel(channel) && registered?.isActive === 1 && Boolean(channel.apiKey)))
       .filter(channel => !HAYA_MODEL_IDS.includes(modelName) || (isHayaChannel(channel) && Boolean(channel.apiKey)))
       .filter(channel => channel.supportedModels.includes(modelName) || (!isHayaChannel(channel) && channel.supportedModels.includes('*')))
@@ -707,7 +710,7 @@ export class ChannelService {
             ? 'image'
             : 'text';
       return { modelId, displayName: displayName || modelId, capability };
-    }).filter((item: any) => item.modelId && (!isHayaChannel(channel) || HAYA_MODEL_IDS.includes(item.modelId)));
+    }).filter((item: any) => item.modelId && !isRetiredVideoModel(item.modelId) && (!isHayaChannel(channel) || HAYA_MODEL_IDS.includes(item.modelId)));
 
     const unique = [...new Map(normalized.map((item: any) => [item.modelId, item])).values()] as Array<{
       modelId: string; displayName: string; capability: string;

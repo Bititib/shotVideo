@@ -1,4 +1,5 @@
 import { getHmStudioAdditionalVideoModel, getHmStudioPublicVideoModel, isHmStudioDdlongVideoModel } from '../../../shared/hmStudioVideo';
+import { snumomOutputOnlySpec } from '../../../shared/snumomWanNsfw';
 
 const WAN_RESOLUTIONS = ['480p', '720p', '1080p'];
 const MINGFEI_RESOLUTIONS = ['1K', '2K', '4K'];
@@ -30,7 +31,8 @@ export function pricingResolutionFields(
   const existingKeys = Object.keys(extraParams).filter(key => isResolutionPriceKey(key) && !isArchivedResolutionPrice(modelPattern, key));
   const hmSpec = getHmStudioAdditionalVideoModel(getHmStudioPublicVideoModel(modelPattern));
   const keys = sortResolutionKeys(Array.from(new Set([
-    ...(modelPattern === 'wan3.0-video' || modelPattern === 'wan3.0-video-prime' ? WAN_RESOLUTIONS : []),
+    ...(snumomOutputOnlySpec(modelPattern) ? [snumomOutputOnlySpec(modelPattern)!.resolution] : []),
+    ...(['wan3.0-video-nsfw'].includes(modelPattern) ? WAN_RESOLUTIONS : []),
     ...(modelPattern === 'gpt-image-2-mingfei' ? MINGFEI_RESOLUTIONS : []),
     ...(hmSpec?.resolutions || (hmSpec ? [hmSpec.resolution] : [])),
     ...existingKeys,

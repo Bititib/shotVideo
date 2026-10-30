@@ -1,4 +1,5 @@
 import { migrateHmDdlongNaming } from './hmDdlongNamingMigration.js';
+import { SNUMOM_WAN_NSFW_MODEL, SNUMOM_OUTPUT_ONLY_MODELS } from '../../shared/snumomWanNsfw.js';
 import { MEGABY_BASE_URL, MEGABY_CHANNEL_TYPE } from '../../shared/megabyVideo.js';
 import { migrateZonghengToV6k } from '../services/zonghengV6kMigration.js';
 import { ensureFundLedger } from './fundLedger.js';
@@ -158,7 +159,7 @@ export async function syncModelsFromAPI() {
 
       for (const m of modelList) {
         const modelId = String(m.id || m.name || '').replace(/^models\//, '');
-        if (!modelId) continue;
+        if (!modelId || isRetiredVideoModel(modelId)) continue;
 
         // 确定 capabilities
         let capabilities: string[] = ['text'];
@@ -241,8 +242,9 @@ export async function syncModelsFromAPI() {
     })),
     { provider: 'julun', modelId: 'wan3.0th', displayName: 'Wan 3.0 视频大模型 (wan3.0th)', description: '按秒计费，¥0.14/秒；720p；支持4-30秒文生视频和多参考视频；最多10张图片、5个视频、5段音频公网URL，音频仅支持WAV；支持1:1、16:9、9:16、4:3、3:4', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'julun', modelId: JULUN_MINIMAX_H3_MODEL, displayName: 'MiniMax H3 768p（933）', description: '巨轮 MiniMax H3；固定768p；仅支持10秒或15秒；最多9图、3视频、3音频参考；按秒计费 ¥0.18/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
-    { provider: 'snumom', modelId: 'wan3.0-video', displayName: 'Wan 3.0 Video（标准版）', description: 'snumom 标准版；支持2-30秒、480P/720P/1080P；最多10图、5视频、5音频参考；支持文生、首帧及首尾帧视频', capabilities: JSON.stringify(['video']), isActive: 1 },
-    { provider: 'snumom', modelId: 'wan3.0-video-prime', displayName: 'Wan 3.0 Video Prime（高速版）', description: 'snumom 高速版；生成速度更快；支持2-30秒、480P/720P/1080P；最多10图、5视频、5音频参考', capabilities: JSON.stringify(['video']), isActive: 1 },
+    // New models stay disabled; upstream USD costs are not customer RMB prices.
+    ...Object.entries(SNUMOM_OUTPUT_ONLY_MODELS).map(([modelId,spec])=>({provider:'snumom',modelId,displayName:modelId,description:`${spec.resolution}；支持${spec.seconds.join('/')}秒；最多10图、5视频、5音频；仅输出时长计费，参考视频不计费`,capabilities:JSON.stringify(['video']),isActive:0})),
+    { provider: 'snumom', modelId: SNUMOM_WAN_NSFW_MODEL, displayName: 'Wan 3.0 Video NSFW', description: '支持2-30秒、480P/720P/1080P；最多10图、5视频、5音频参考；输出与参考视频时长计费，音频不计费；售价以管理员配置为准', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'snumom', modelId: SNUMOM_GROK_IMAGINE_VIDEO_MODEL, displayName: 'Grok Imagine Video 1.5', description: '支持1-15秒、480P/720P；最多7张参考图；不支持参考视频或音频；按次计费 ¥0.60/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'snumom', modelId: SNUMOM_SD_MINI_MODEL, displayName: 'Seedance 2.0 Mini', description: '支持9图、3视频、3音频参考，不卡脸；480p支持15秒，720p仅支持10秒；按次计费 ¥0.60/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'sudashui', modelId: 'ld-sdas-cvk-pro-933-720p', displayName: 'SudaShui CVK Pro 933 (720p)', capabilities: JSON.stringify(['video']) },
@@ -896,8 +898,6 @@ export async function initDatabase() {
     { key: 'seedance_2_5m_rate', value: '3.00', label: 'seedance-2.5m 费率(¥/次)' },
     { key: 'wan3_0th_rate', value: '0.14', label: 'wan3.0th 费率(¥/秒)' },
     { key: 'julun_minimax_h3_768p_rate', value: '0.18', label: '巨轮 MiniMax H3 768p 费率(¥/秒)' },
-    { key: 'snumom_wan3_video_rate', value: '0.14', label: 'snumom Wan 3.0 Video 默认费率(¥/秒)' },
-    { key: 'snumom_wan3_video_prime_rate', value: '0.18', label: 'snumom Wan 3.0 Video Prime 默认费率(¥/秒)' },
   ];
   // 物理清理旧 of rd_seedance 相关的设置项
   db.delete(settings).where(eq(settings.key, 'rd_seedance_2_5_480p_rate')).run();
@@ -1132,8 +1132,6 @@ export async function initDatabase() {
     { modelPattern: 'seedance-2.5m', billingType: 'per_call', inputPrice: legacyRate('seedance_2_5m_rate', 3.00), category: 'video' },
     { modelPattern: 'wan3.0th', billingType: 'per_second', inputPrice: legacyRate('wan3_0th_rate', 0.14), category: 'video' },
     { modelPattern: JULUN_MINIMAX_H3_MODEL, billingType: 'per_second', inputPrice: legacyRate('julun_minimax_h3_768p_rate', 0.18), category: 'video', extraParams: { '768p': 0.18 } },
-    { modelPattern: 'wan3.0-video', billingType: 'per_second', inputPrice: legacyRate('snumom_wan3_video_rate', 0.14), category: 'video', extraParams: { '480p': 0.12, '720p': 0.14, '1080p': 0.16 } },
-    { modelPattern: 'wan3.0-video-prime', billingType: 'per_second', inputPrice: legacyRate('snumom_wan3_video_prime_rate', 0.18), category: 'video', extraParams: { '480p': 0.15, '720p': 0.18, '1080p': 0.20 } },
     { modelPattern: 'grok-video-1.5', billingType: 'per_second', inputPrice: legacyRate('grok_video_1_5_per_sec_rate', 0.09), category: 'video' },
     { modelPattern: SNUMOM_GROK_IMAGINE_VIDEO_MODEL, billingType: 'per_call', inputPrice: legacyRate('grok_imagine_video_1_5_per_req_rate', 0.60), category: 'video' },
     { modelPattern: SNUMOM_SD_MINI_MODEL, billingType: 'per_call', inputPrice: legacyRate('snumom_sd_mini_per_req_rate', 0.60), category: 'video' },
@@ -1805,9 +1803,9 @@ export async function initDatabase() {
         type: 'snumom',
         // Preserve the administrator's endpoint across restarts and upgrades.
         baseUrl: existingSnumom.baseUrl || snumomBaseUrl,
-        ...(snumomApiKey ? { apiKey: snumomApiKey, status: 1 } : {}),
-        supportedModels: JSON.stringify(snumomModels),
-        modelMapping: JSON.stringify(snumomMapping),
+        ...(snumomApiKey && !existingSnumom.apiKey ? { apiKey: snumomApiKey } : {}),
+        supportedModels: JSON.stringify([...new Set([...JSON.parse(existingSnumom.supportedModels || '[]'), ...snumomModels])]),
+        modelMapping: JSON.stringify({ ...snumomMapping, ...JSON.parse(existingSnumom.modelMapping || '{}') }),
         updatedAt: new Date().toISOString(),
       }).where(eq(channels.id, existingSnumom.id)).run();
       console.log('🔄 已校准 snumom 视频渠道模型');
@@ -2074,6 +2072,7 @@ export async function initDatabase() {
   ensureV6kTttModel(sqlite);
   ensureSiYueTianMinimaxModel(sqlite);
   ensureFundLedger(sqlite);
+  retireRemovedVideoModels(sqlite);
   console.log('✅ 数据库初始化完成');
 }
 
@@ -2081,6 +2080,8 @@ export const seed = async () => {
   await initDatabase();
   await syncModelsFromAPI();
 };
+import { retireRemovedVideoModels } from '../services/retiredVideoModelsMigration.js';
+import { isRetiredVideoModel } from '../../shared/retiredVideoModels.js';
 
 if (process.argv[1]?.includes('seed.ts') || process.argv[1]?.includes('seed.js')) {
   seed().catch(console.error);

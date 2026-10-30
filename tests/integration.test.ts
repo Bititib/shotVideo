@@ -15,6 +15,8 @@ import { getAccessibleModelIds } from '../server/routes/v1.js';
 import { JULUN_MINIMAX_H3_MODEL } from '../server/services/julunMinimaxAdapter.js';
 import { SNUMOM_GROK_IMAGINE_VIDEO_MODEL, SNUMOM_SD_MINI_MODEL } from '../server/services/snumomWanAdapter.js';
 import { quoteVideoRequest } from '../server/services/videoQuoteService.js';
+import { SNUMOM_WAN_NSFW_MODEL, SNUMOM_OUTPUT_ONLY_MODELS } from '../shared/snumomWanNsfw.js';
+import { getEnabledPublicModels } from '../server/services/modelCatalogService.js';
 import {
   HM_STUDIO_SEEDANCE_V20_933_MODEL,
   HM_STUDIO_SEEDANCE_V25_101010_MODEL,
@@ -48,6 +50,16 @@ describe('数据库 Schema', () => {
 
 // ============ 种子数据测试 ============
 describe('种子数据完整性', () => {
+  it('registers the confirmed NSFW catalog identity disabled without copying an upstream cost into the customer price', () => {
+    const before = db.select({ id: users.id, balance: users.balance }).from(users).all();
+    const model = db.select().from(models).where(eq(models.modelId, SNUMOM_WAN_NSFW_MODEL)).get();
+    expect(model).toMatchObject({ provider:'snumom', displayName:'Wan 3.0 Video NSFW', isActive:0 });
+    expect(model?.description).toContain('输出与参考视频时长计费');
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, SNUMOM_WAN_NSFW_MODEL)).get()).toBeUndefined();
+    expect(getEnabledPublicModels('video').map(m => m.modelId)).not.toContain(SNUMOM_WAN_NSFW_MODEL);
+    expect(() => quoteVideoRequest({ model:SNUMOM_WAN_NSFW_MODEL, resolution:'720p', seconds:10 })).toThrow('未开放');
+    expect(db.select({ id: users.id, balance: users.balance }).from(users).all()).toEqual(before);
+  });
   it('应该有4个等级（free/basic/pro/enterprise）', () => {
     const allTiers = db.select().from(tiers).all();
     expect(allTiers.length).toBe(4);
@@ -134,19 +146,24 @@ describe('种子数据完整性', () => {
     expect(v25LargePricing).toMatchObject({ billingType: 'per_call', inputPrice: 5.5 });
   });
 
-  it('snumom 渠道绑定 WAN3.0 与 Grok 1.5，并配置对应计费', () => {
+  it('snumom 渠道仅绑定仍支持的型号，不再初始化已下架型号或其售价', () => {
+    for(const id of Object.keys(SNUMOM_OUTPUT_ONLY_MODELS)){
+      expect(db.select().from(models).where(eq(models.modelId,id)).get()).toMatchObject({isActive:0,provider:'snumom'});
+      expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,id)).get()).toBeUndefined();
+      expect(getEnabledPublicModels('video').some(m=>m.modelId===id)).toBe(false);
+    }
     const channel = db.select().from(channels).where(eq(channels.type, 'snumom')).get();
     expect(channel).toBeDefined();
     expect(channel!.baseUrl).toBe('https://snumom.com');
     expect(JSON.parse(channel!.supportedModels)).toEqual([
-      'wan3.0-video',
-      'wan3.0-video-prime',
+      SNUMOM_WAN_NSFW_MODEL,
+      ...Object.keys(SNUMOM_OUTPUT_ONLY_MODELS),
       SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
       SNUMOM_SD_MINI_MODEL,
     ]);
     expect(JSON.parse(channel!.modelMapping)).toEqual({
-      'wan3.0-video': 'wan3.0-video',
-      'wan3.0-video-prime': 'wan3.0-video-prime',
+      [SNUMOM_WAN_NSFW_MODEL]: SNUMOM_WAN_NSFW_MODEL,
+      ...Object.fromEntries(Object.keys(SNUMOM_OUTPUT_ONLY_MODELS).map(id=>[id,id])),
       [SNUMOM_GROK_IMAGINE_VIDEO_MODEL]: SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
       [SNUMOM_SD_MINI_MODEL]: SNUMOM_SD_MINI_MODEL,
     });
@@ -155,9 +172,8 @@ describe('种子数据完整性', () => {
     const prime = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, 'wan3.0-video-prime')).get();
     const grok = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, SNUMOM_GROK_IMAGINE_VIDEO_MODEL)).get();
     const sdMini = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, SNUMOM_SD_MINI_MODEL)).get();
-    expect(standard?.billingType).toBe('per_second');
-    expect(JSON.parse(standard!.extraParams)).toMatchObject({ '480p': 0.12, '720p': 0.14, '1080p': 0.16 });
-    expect(JSON.parse(prime!.extraParams)).toMatchObject({ '480p': 0.15, '720p': 0.18, '1080p': 0.20 });
+    expect(standard).toBeUndefined();
+    expect(prime).toBeUndefined();
     expect(grok?.billingType).toBe('per_call');
     expect(grok?.inputPrice).toBeCloseTo(0.60, 6);
     expect(sdMini?.billingType).toBe('per_call');
@@ -177,9 +193,10 @@ describe('种子数据完整性', () => {
     expect(sdMiniModel?.description).toContain('480p支持15秒');
     expect(sdMiniModel?.description).toContain('720p仅支持10秒');
 
-    expect(quoteVideoRequest({
-      model: 'wan3.0-video', resolution: '720p', video_length: 10, reference_video_seconds: 5,
-    })).toMatchObject({ seconds: 10, referenceVideoSeconds: 5, billableSeconds: 15, cost: 2.1 });
+    for (const id of ['wan3.0-video','wan3.0-video-prime']) {
+      expect(db.select().from(models).where(eq(models.modelId,id)).get()).toBeUndefined();
+      expect(()=>quoteVideoRequest({model:id,resolution:'720p',video_length:10})).toThrow('已下架');
+    }
   });
 
   it('巨轮渠道永久绑定 MiniMax H3 768p 并按 ¥0.18/秒计费', () => {

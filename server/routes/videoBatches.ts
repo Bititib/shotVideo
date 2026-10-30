@@ -1,5 +1,7 @@
 import { getModelSpecification } from '../services/modelRoutingService.js';
+import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import type { PricingSnapshot } from '../services/pricingService.js';
+import { SNUMOM_WAN_NSFW_MODEL } from '../../shared/snumomWanNsfw.js';
 import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -47,6 +49,7 @@ const handle = (fn: (req: TierRequest, res: Response) => any) => (req: TierReque
 
 export function validateBatchInput(body: any): VideoBatchInput {
   if (!body || typeof body.model !== 'string' || !body.model) throw new Error('请选择视频模型');
+  if (isRetiredVideoModel(body.model)) throw Object.assign(new Error(RETIRED_VIDEO_MODEL_MESSAGE),{status:410});
   const limits = getModelSpecification(body.model)?.limits;
   if (!(limits?.ratios || ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']).includes(body.aspect_ratio)) throw new Error('请选择正确画面比例');
   if (!Number.isFinite(body.video_length) || (!limits && !Number.isInteger(body.video_length)) || body.video_length < 1 || body.video_length > (limits ? 3600 : 120)) throw new Error('视频时长必须为 1–120 秒的整数');
@@ -91,7 +94,7 @@ async function preflight(req: TierRequest, input: VideoBatchInput) {
     const result: any = await response.json();
     if (!response.ok) throw new Error(`创意 ${index + 1}：${result.error || '参数校验失败'}`);
     if (!Number.isFinite(result.unitCost) || result.unitCost < 0) throw new Error('费用配置异常');
-    if (unitCost >= 0 && unitCost !== result.unitCost) throw new Error('价格正在调整，请重新预估');
+    if (unitCost >= 0 && unitCost !== result.unitCost) throw new Error(input.model === SNUMOM_WAN_NSFW_MODEL ? '不同创意的参考视频时长导致单条费用不同，请分批提交，本次未扣费' : '价格正在调整，请重新预估');
     unitCost = result.unitCost;
     pricingSnapshot = result.pricingSnapshot;
     // Store preflight's published images before reservation, not temporary URLs.

@@ -1,4 +1,5 @@
 import type { ModelAvailability } from '../../shared/upstreamAvailability.js';
+import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
 import { MJ_OVERFLOW_VIDEO_MODEL } from './videoFailoverService.js';
 import { randomUUID } from 'node:crypto';
@@ -110,9 +111,11 @@ export function claimRouteProbe(_key: string): boolean {
 export function inspectModelRoutes(spec: ModelSpecification, input?: RoutingInput, activeChannels = ChannelService.getActiveChannels()) {
   const health = getRouteHealth(), registry = db.select().from(models).all(), model = registry.find(m => m.modelId === spec.modelId);
   return spec.routes.map(route => {
+    const retired = [spec.modelId,route.executionModel,route.upstreamModel].some(isRetiredVideoModel);
     const executions = activeChannels.filter(c => c.id === route.channelId && Boolean(String(c.apiKey || '').trim()) && (c.supportedModels.includes(route.executionModel) || c.supportedModels.includes('*')));
     const execution = registry.find(m => m.modelId === route.executionModel);
     const reason = execution?.isActive === 0 && execution.modelId !== MJ_OVERFLOW_VIDEO_MODEL ? ['执行模型已禁用'] : !spec.enabled || model?.isActive !== 1 ? ['规格已禁用'] : !route.enabled ? ['模型线路已禁用'] : !executions.length ? ['渠道或 Key 已禁用 / 未配置'] : [];
+    if (retired) reason.push(RETIRED_VIDEO_MODEL_MESSAGE);
     const matches = input ? routingMismatches(route.limits, input, spec.kind) : [];
     if (input && route.executionModel === SI_YUE_TIAN_MINIMAX_MODEL) matches.push(...siYueTianMinimaxInputErrors(input));
     const targets = executions.map(channel => ({ route, channel, cost: input ? routeRequestCost(route, input) : null, healthKey: routeHealthKey(route, channel.apiKeyId) }));
@@ -137,6 +140,7 @@ export function specificationAvailable(spec: ModelSpecification) { return specif
 
 /** Re-check operator switches and capability edits after any queue wait, without releasing a claimed probe. */
 export function routeUnavailableReason(modelId: string, target: RouteCandidate, input: RoutingInput): string {
+  if ([modelId,target.route.executionModel,target.route.upstreamModel].some(isRetiredVideoModel)) return RETIRED_VIDEO_MODEL_MESSAGE;
   const spec = getModelSpecification(modelId), route = spec?.routes.find(r => r.id === target.route.id);
   if (!spec) return '提交前检查：模型规格不存在';
   if (!spec.enabled) return '提交前检查：模型规格已禁用';
