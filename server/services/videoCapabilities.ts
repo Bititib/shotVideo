@@ -8,6 +8,7 @@ import { HUSS_BB_PUBLIC_MODEL, HUSS_HSS_MODEL } from '../../shared/hussBbVideo.j
 import { SI_YUE_TIAN_MINIMAX_MODEL } from '../../shared/siYueTianMinimax.js';
 import { HAYA_XG_SEEDANCE_20_MODEL } from '../../shared/hayaVideo.js';
 import { isLongxiaModel } from '../../shared/longxiaVideo.js';
+import { SNUMOM_WAN_NSFW_MODEL, SNUMOM_OUTPUT_ONLY_MODELS, isSnumomWanVideoModel } from '../../shared/snumomWanNsfw.js';
 
 export type ParameterRule = {
   type: 'string' | 'integer' | 'number' | 'boolean'; title: string; description?: string;
@@ -20,9 +21,8 @@ export type ParameterSchema = { type: 'object'; properties: Record<string, Param
 const wanSchema: ParameterSchema = { type: 'object', properties: {
   prompt_extend: { type: 'boolean', title: '提示词智能扩写', description: '由模型扩展提示词；留空使用上游默认行为。' },
 }, required: [], additionalProperties: false };
-export const VIDEO_PARAMETER_SCHEMAS: Record<string, ParameterSchema> = {
-  'wan3.0-video': wanSchema, 'wan3.0-video-prime': wanSchema,
-};
+export const VIDEO_PARAMETER_SCHEMAS: Record<string, ParameterSchema> = Object.fromEntries(
+  [SNUMOM_WAN_NSFW_MODEL, ...Object.keys(SNUMOM_OUTPUT_ONLY_MODELS)].map(id => [id, wanSchema]));
 const emptySchema = (): ParameterSchema => ({ type: 'object', properties: {}, required: [], additionalProperties: false });
 
 export function videoCapabilities(modelId: string, specification?: ModelSpecification | null) {
@@ -31,7 +31,7 @@ export function videoCapabilities(modelId: string, specification?: ModelSpecific
   if (!spec && limits) {
     // Preset drafts inherit generic ratios. Publish only adapter-confirmed ratios.
     const hm = getHmStudioAdditionalVideoModel(modelId);
-    const explicitRatios = [HUSS_BB_PUBLIC_MODEL, HUSS_HSS_MODEL, SI_YUE_TIAN_MINIMAX_MODEL, HAYA_XG_SEEDANCE_20_MODEL].includes(modelId) || isLongxiaModel(modelId);
+    const explicitRatios = [HUSS_BB_PUBLIC_MODEL, HUSS_HSS_MODEL, SI_YUE_TIAN_MINIMAX_MODEL, HAYA_XG_SEEDANCE_20_MODEL].includes(modelId) || isLongxiaModel(modelId) || isSnumomWanVideoModel(modelId);
     limits = { ...limits, ratios: hm?.ratios ? [...hm.ratios] : explicitRatios ? limits.ratios : [] };
   }
   if (!limits && modelId.startsWith(FUNAI_MODEL_PREFIX) && funAiModelKind(publicApiModelId(modelId)) === 'video') {

@@ -5,17 +5,17 @@ import { buildSnumomWanPayload } from '../server/services/snumomWanAdapter.js';
 
 describe('typed video capabilities contract', () => {
   it('exposes verified declarations and never invents controls for unknown models', () => {
-    expect(videoCapabilities('wan3.0-video').parameterSchema.properties.prompt_extend.type).toBe('boolean');
+    expect(videoCapabilities('wan3.0-video-nsfw').parameterSchema.properties.prompt_extend.type).toBe('boolean');
     expect(videoCapabilities('unseen-model')).toMatchObject({ capabilityVersion: 1, routingLimits: undefined, parameterSchema: { properties: {} } });
     expect(videoCapabilities('TTTseadanco2.5/720').parameterSchema.properties).toEqual({});
     expect(videoCapabilities('MiniMax-H3').routingLimits).toMatchObject({ maxImages: 9, maxVideos: 3, maxAudios: 3 });
   });
   it('preserves false through JSON and multipart into the actual Wan payload', () => {
-    const schema = videoCapabilities('wan3.0-video').parameterSchema;
+    const schema = videoCapabilities('wan3.0-video-nsfw').parameterSchema;
     for (const [body, multipart] of [[{ model_parameters: { prompt_extend: false } }, false], [{ model_parameters: '{"prompt_extend":false}' }, true], [{ prompt_extend: 'false' }, true]] as const) {
       const request: any = { ...body }; normalizeVideoParameters(request, schema, multipart);
       expect(request.prompt_extend).toBe(false);
-      const payload = buildSnumomWanPayload({ model: 'wan3.0-video', prompt: 'test', seconds: 5, aspectRatio: '16:9', resolution: '720p', promptExtend: request.prompt_extend });
+      const payload = buildSnumomWanPayload({ model: 'wan3.0-video-nsfw', prompt: 'test', seconds: 5, aspectRatio: '16:9', resolution: '720p', promptExtend: request.prompt_extend });
       expect(payload.parameters).toMatchObject({ prompt_extend: false });
     }
   });
@@ -28,7 +28,7 @@ describe('typed video capabilities contract', () => {
     for (const values of [{}, {seed: -1}, {seed: 1}, {seed: true}, {seed: 0, style: 'c'}, {seed: 0, note: '12345'}, {seed:0, model:'other'}]) expect(() => normalizeVideoParameters({ model_parameters:values }, schema)).toThrow();
   });
   it('omits extras when any enabled route cannot consume them', () => {
-    const spec: any = { kind: 'video', routes: [{ enabled: true, executionModel: 'wan3.0-video' }, { enabled: true, executionModel: 'other' }] };
+    const spec: any = { kind: 'video', routes: [{ enabled: true, executionModel: 'wan3.0-video-nsfw' }, { enabled: true, executionModel: 'other' }] };
     expect(videoCapabilities('mixed', spec).parameterSchema.properties).toEqual({});
     spec.routes[1].enabled=false;
     expect(videoCapabilities('mixed', spec).parameterSchema.properties.prompt_extend.type).toBe('boolean');

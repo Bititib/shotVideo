@@ -83,7 +83,7 @@ afterAll(async () => {
 
 describe('admin-owned model catalog', () => {
   it('rejects unsupported typed parameters at the HTTP entry before charging', async () => {
-    const saved = ['MiniMax-H3', 'wan3.0-video'].map(id => db.select().from(models).where(eq(models.modelId, id)).get()).filter(Boolean);
+    const saved = ['MiniMax-H3', 'wan3.0-video-nsfw'].map(id => db.select().from(models).where(eq(models.modelId, id)).get()).filter(Boolean);
     for (const row of saved) db.update(models).set({ isActive: 1 }).where(eq(models.id, row!.id)).run();
     const validate = vi.spyOn(TokenService, 'validateToken').mockReturnValue({ valid: true, token: { allowedModels: [], balance: 1000000 } } as any);
     const charge = vi.spyOn(TokenService, 'deductBalance');
@@ -93,7 +93,7 @@ describe('admin-owned model catalog', () => {
           body: JSON.stringify({ model: 'MiniMax-H3', prompt: 'test', model_parameters: JSON.parse('{"' + field + '":1}') }) });
         expect(response.status).toBe(400); expect(JSON.stringify(await response.json())).toContain('不支持参数');
       }
-      const form = new FormData(); form.set('model', 'wan3.0-video'); form.set('prompt', 'test'); form.set('model_parameters', '{"prompt_extend":"false"}');
+      const form = new FormData(); form.set('model', 'wan3.0-video-nsfw'); form.set('prompt', 'test'); form.set('model_parameters', '{"prompt_extend":"false"}');
       const response = await fetch(baseUrl + '/v1/videos', { method: 'POST', headers: { Authorization: 'Bearer test' }, body: form });
       expect(response.status).toBe(400); expect(JSON.stringify(await response.json())).toContain('类型');
       expect(charge).not.toHaveBeenCalled();
