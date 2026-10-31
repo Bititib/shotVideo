@@ -42,7 +42,8 @@ export const APIPATH_IMAGE_SIZES: Record<string, Record<string,string>> = {
     "4K": "3696x1584"
   }
 };
-export const isApipathSunburstSpec = (model: string) => ['1k','2k','4k'].some(tier => model === APIPATH_SUNBURST + '-' + tier);
+export const APIPATH_LEGACY_IMAGE_IDS = ['1k','2k','4k'].map(tier => APIPATH_SUNBURST + '-' + tier);
+export const isApipathSunburstSpec = (model: string) => model === APIPATH_SUNBURST || APIPATH_LEGACY_IMAGE_IDS.includes(model);
 export function apipathImageSize(ratio: string, resolution: string, explicitSize?: string): string {
   const size = APIPATH_IMAGE_SIZES[ratio]?.[resolution.toUpperCase()];
   if (!size) throw new Error('通联 Sunburst 图片比例或分辨率不支持');

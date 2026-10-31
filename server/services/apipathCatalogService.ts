@@ -1,6 +1,8 @@
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
-import { channels, models, apipathChannelKeys } from '../db/schema.js';
+import { channels, models, apipathChannelKeys, modelPricing } from '../db/schema.js';
+import { APIPATH_SUNBURST, APIPATH_LEGACY_IMAGE_IDS } from '../../shared/apipathImageSizes.js';
+import { archiveApipathModels } from './apipathModelArchive.js';
 import { APIPATH_MODELS, APIPATH_SYNC_MODEL_IDS } from '../../shared/apipathModels.js';
 import { apipathRequest, type ApipathChannel } from './apipathAdapter.js';
 import { getModelSpecification, saveModelSpecification } from './modelRoutingService.js';
@@ -52,13 +54,18 @@ export async function syncApipathModels(channel: ApipathChannel & { id: number; 
         db.insert(models).values({ provider: 'apipath', modelId: entry.id, displayName: entry.name,
           description: entry.description || legacyDescription,
           capabilities: JSON.stringify([entry.kind]), isActive: 0 }).run(); added++;
-      } else if (entry.description && (!occupied.description?.trim() || occupied.description === legacyDescription)) {
+      } else if (entry.description && (!occupied.description?.trim() || occupied.description === legacyDescription
+        || (entry.id === APIPATH_SUNBURST && occupied.description === '通联 Sunburst 图片 1K；最多 4 张参考图；尺寸按上游档位映射。配置售价后启用。'))) {
         // Upgrade only our placeholder copy; retain administrator-authored descriptions and all other model settings.
         db.update(models).set({ description: entry.description }).where(eq(models.id, occupied.id)).run();
       }
       imported.push(entry.id);
       upstreamMapping[entry.id] = entry.upstreamModel || entry.id;
-      const existing = getModelSpecification(entry.id);
+      let existing = getModelSpecification(entry.id);
+      if (entry.id === APIPATH_SUNBURST && existing?.limits.resolutions.join() === 'default') {
+        existing = saveModelSpecification({ ...existing, limits: entry.limits, routes: existing.routes.map(r =>
+          r.channelId === channel.id ? { ...r, limits: entry.limits } : r) });
+      }
       if (existing?.routes.some(r => r.channelId === channel.id)) continue;
       const route = { id: 'apipath-' + channel.id + '-' + entry.id, channelId: channel.id, executionModel: entry.id,
         upstreamModel: entry.upstreamModel || entry.id, enabled: true, limits: structuredClone(entry.limits), cost: null,
@@ -76,6 +83,43 @@ export async function syncApipathModels(channel: ApipathChannel & { id: number; 
     db.update(channels).set({ supportedModels: JSON.stringify(imported),
       modelMapping: JSON.stringify(Object.fromEntries(imported.map(id => [id, mapping[id] || upstreamMapping[id]]))),
       maxRetries: 0, updatedAt: new Date().toISOString() }).where(eq(channels.id, channel.id)).run();
+    if (imported.includes(APIPATH_SUNBURST)) mergeLegacySunburst(channel.id, warnings);
     return { count: imported.length, added, models: imported, warnings };
   })();
+}
+
+// Run within the sync transaction, after both key catalogs and new bindings succeeded.
+function mergeLegacySunburst(channelId: number, warnings: string[]) {
+  const oldModels = db.select().from(models).all().filter(m => m.provider === 'apipath' && APIPATH_LEGACY_IMAGE_IDS.includes(m.modelId));
+  if (!oldModels.length) return;
+  const prices = db.select().from(modelPricing).all();
+  if (!prices.some(p => p.modelPattern === APIPATH_SUNBURST)) {
+    const tierPrices: Record<string, number> = {};
+    for (const old of oldModels) {
+      const matching = prices.filter(p => p.modelPattern === old.modelId);
+      const rule = matching[0], tier = old.modelId.split('-').at(-1)!.toUpperCase();
+      if (matching.length !== 1 || rule.billingType !== 'per_call') continue;
+      const extra = JSON.parse(rule.extraParams);
+      const value = Object.entries(extra).find(([k]) => k.toUpperCase() === tier)?.[1] ?? rule.inputPrice;
+      if (Number.isFinite(Number(value)) && Number(value) >= 0) tierPrices[tier] = Number(value);
+    }
+    if (Object.keys(tierPrices).length === 3) {
+      db.insert(modelPricing).values({ modelPattern: APIPATH_SUNBURST, billingType: 'per_call', inputPrice: tierPrices['1K'],
+        outputPrice: 0, extraParams: JSON.stringify({ category: 'image', ...tierPrices }) }).run();
+    } else if (prices.some(p => APIPATH_LEGACY_IMAGE_IDS.includes(p.modelPattern))) {
+      warnings.push('Sunburst 旧分档售价不完整或计费类型不一致，原价已保留；请为合并模型配置 1K、2K、4K 售价。');
+    }
+  }
+  const others = db.select().from(channels).all().filter(c => c.id !== channelId);
+  const archived: string[] = [];
+  for (const old of oldModels) {
+    if (others.some(c => (JSON.parse(c.supportedModels) as string[]).includes(old.modelId))) {
+      warnings.push(old.modelId + '仍被其他渠道绑定，保留该旧入口，当前渠道已使用合并模型。');
+      continue;
+    }
+    // Preserve records, per-user permissions/prices and receipts; retire new submissions only.
+    db.update(models).set({ isActive: 0 }).where(eq(models.id, old.id)).run();
+    archived.push(old.modelId);
+  }
+  if (archived.length) archiveApipathModels(archived);
 }

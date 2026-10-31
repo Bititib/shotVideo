@@ -12,10 +12,13 @@ import { VideoRecoveryService } from '../server/services/videoRecoveryService.js
 import { downloadAndLocalizeVideo } from '../server/services/videoLocalizationService.js';
 import * as referenceValidation from '../server/services/imageReferenceValidationService.js';
 import { APIPATH_MODELS } from '../shared/apipathModels.js';
+import { APIPATH_LEGACY_IMAGE_IDS, APIPATH_SUNBURST } from '../shared/apipathImageSizes.js';
+import { AdminService } from '../server/services/adminService.js';
+import { PricingService } from '../server/services/pricingService.js';
 
 const key = 'private-apipath-key';
 const selectedModels = ['seedance2-5-特惠-1080p', 'Seedance-2.0-mini-480-GK', 'dola2.5',
-  'gpt-image-2-5-sunburst-1k', 'gpt-image-2-5-sunburst-2k', 'gpt-image-2-5-sunburst-4k'];
+  'gpt-image-2-5-sunburst'];
 let channelId: number, modelId: string;
 const discovery = () => Response.json({ data: [{ id: 'seedance-2.0-YZ' }, { id: 'gpt-image-2-5-flare' }, ...['seedance2-5-特惠-1080p','Seedance-2.0-mini-480-GK','dola2.5','gpt-image-2-5-sunburst'].map(id=>({id}))] });
 const response = () => {
@@ -46,20 +49,117 @@ function enable() {
 
 
 describe('通联 actual specification entry and isolated billing', () => {
-  it.each(['legacy', 'dual'])('imports exactly the six selected products from the full upstream catalog (%s)', async mode => {
+  function seedLegacyImages() {
+    for (const [index, id] of APIPATH_LEGACY_IMAGE_IDS.entries()) {
+      db.insert(models).values({ provider: 'apipath', modelId: id, displayName: id, capabilities: '["image"]', isActive: 1 }).run();
+      db.insert(modelPricing).values({ modelPattern: id, billingType: 'per_call', inputPrice: index + 1,
+        extraParams: JSON.stringify({ category: 'image' }) }).run();
+      const entry = APIPATH_MODELS.find(m => m.id === id)!;
+      saveModelSpecification({ modelId: id, kind: 'image', imageFamily: APIPATH_SUNBURST, enabled: true,
+        limits: entry.limits, aliases: [], routes: [{ ...getModelSpecification(APIPATH_SUNBURST)!.routes[0],
+          id: 'legacy-' + index, executionModel: id, limits: entry.limits }] });
+    }
+    ChannelService.updateChannel(channelId, { supportedModels: [...selectedModels.slice(0, 3), ...APIPATH_LEGACY_IMAGE_IDS] });
+  }
+  it('merges existing tier rows on resync, preserves history and prices, and lists only four models', async () => {
+    seedLegacyImages();
+    const oldPrices = db.select().from(modelPricing).all();
+    db.insert(contents).values({ userId: 1, type: 'image', modelId: APIPATH_LEGACY_IMAGE_IDS[1], status: 'completed',
+      resultUrl: '/uploads/old.png', cost: 2, metadata: JSON.stringify({ channelId, requestedModel: APIPATH_LEGACY_IMAGE_IDS[1] }) }).run();
+    const history = db.select().from(contents).all();
+    ChannelService.updateChannel(channelId, { apipathImageKey: 'image-secret', apipathVideoKey: 'video-secret' });
+    expect(await ChannelService.syncModels(channelId)).toMatchObject({ count: 4 });
+    expect(AdminService.getModels(false).map(m => m.modelId).sort()).toEqual([...selectedModels].sort());
+    expect(PricingService.getPricingRules({ scope: 'models' }).map(m => m.modelPattern).sort()).toEqual([...selectedModels].sort());
+    expect(db.select().from(contents).all()).toEqual(history);
+    expect(db.select().from(modelPricing).all().filter(p => p.modelPattern !== APIPATH_SUNBURST)).toEqual(oldPrices);
+    expect(PricingService.getPublicPricingForModels([APIPATH_SUNBURST])[0].resolution_prices).toEqual({ '1K': 1, '2K': 2, '4K': 3 });
+    expect(db.select().from(models).all().filter(m => APIPATH_LEGACY_IMAGE_IDS.includes(m.modelId)).every(m => m.isActive === 0)).toBe(true);
+    const imageKey = db.select().from(apipathChannelKeys).all().find(k => k.kind === 'image')!;
+    expect(JSON.parse(imageKey.supportedModels)).toEqual([APIPATH_SUNBURST]);
+    const prices = db.select().from(modelPricing).all();
+    await ChannelService.syncModels(channelId);
+    expect(db.select().from(modelPricing).all()).toEqual(prices);
+    modelId = APIPATH_LEGACY_IMAGE_IDS[0]; vi.mocked(fetch).mockClear();
+    const res = response(); await handleSpecificationGeneration(request({ resolution: '1K' }), res, 'image');
+    expect(res.statusCode).toBe(403); expect(fetch).not.toHaveBeenCalled();
+  });
+  it('preserves an existing consolidated price and does not retire old entries bound to another channel', async () => {
+    seedLegacyImages();
+    const other = ChannelService.createChannel({ name: 'other', type: 'openai', baseUrl: 'https://other.invalid', supportedModels: [APIPATH_LEGACY_IMAGE_IDS[0]] });
+    const before = ChannelService.getChannelRaw(other);
+    db.insert(modelPricing).values({ modelPattern: APIPATH_SUNBURST, inputPrice: 9, extraParams: '{"1K":9,"2K":12,"4K":15}' }).run();
+    const prices = db.select().from(modelPricing).all();
+    await ChannelService.syncModels(channelId);
+    expect(db.select().from(modelPricing).all()).toEqual(prices);
+    expect(ChannelService.getChannelRaw(other)).toEqual(before);
+    expect(AdminService.getModels(false).some(m => m.modelId === APIPATH_LEGACY_IMAGE_IDS[0])).toBe(true);
+  });
+  it('does not invent missing tier prices during consolidation', async () => {
+    seedLegacyImages();
+    db.delete(modelPricing).where(eq(modelPricing.modelPattern, APIPATH_LEGACY_IMAGE_IDS[2])).run();
+    const result = await ChannelService.syncModels(channelId);
+    expect(result.warnings.join()).toContain('旧分档售价不完整');
+    expect(PricingService.getPublicPricingForModels([APIPATH_SUNBURST])).toEqual([]);
+  });
+  it('upgrades the original default Sunburst specification without changing its route switch or price', async () => {
+    const spec = getModelSpecification(APIPATH_SUNBURST)!;
+    spec.limits.resolutions = ['default']; spec.limits.maxImages = 1;
+    spec.routes[0].limits = structuredClone(spec.limits); spec.routes[0].enabled = false;
+    saveModelSpecification(spec);
+    modelId = APIPATH_SUNBURST; enable();
+    await ChannelService.syncModels(channelId);
+    expect(getModelSpecification(modelId)).toMatchObject({ limits: { resolutions: ['1K', '2K', '4K'], maxImages: 4 },
+      routes: [{ enabled: false, limits: { resolutions: ['1K', '2K', '4K'], maxImages: 4 } }] });
+    expect(PricingService.getPublicPricingForModels([modelId])[0].unit_price).toBe(2);
+  });
+  it('does not archive or migrate old prices if either key catalog fails', async () => {
+    seedLegacyImages();
+    ChannelService.updateChannel(channelId, { apipathImageKey: 'image-secret', apipathVideoKey: 'video-secret' });
+    const before = { models: db.select().from(models).all(), prices: db.select().from(modelPricing).all(), settings: db.select().from(settings).all() };
+    vi.stubGlobal('fetch', vi.fn(async (_url, init: any) => init.headers.Authorization === 'Bearer video-secret'
+      ? Response.json({ error: { code: 'invalid_api_key', message: 'invalid' } }, { status: 401 }) : discovery()));
+    await expect(ChannelService.syncModels(channelId)).rejects.toThrow();
+    expect({ models: db.select().from(models).all(), prices: db.select().from(modelPricing).all(), settings: db.select().from(settings).all() }).toEqual(before);
+  });
+  it.each([['1K', 1], ['2K', 2.5], ['4K', 4]] as const)('charges the selected %s price using the image key only', async (resolution, price) => {
+    ChannelService.updateChannel(channelId, { apipathImageKey: 'image-secret', apipathVideoKey: 'video-secret' });
+    await ChannelService.syncModels(channelId);
+    modelId = APIPATH_SUNBURST; enable();
+    db.update(modelPricing).set({ extraParams: '{"category":"image","1K":1,"2K":2.5,"4K":4}' }).where(eq(modelPricing.modelPattern, modelId)).run();
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [{ url: 'https://cdn.example/result.png' }] })));
+    await handleSpecificationGeneration(request({ resolution }), response(), 'image');
+    expect(db.select().from(contents).all()[0]).toMatchObject({ status: 'completed', cost: price });
+    expect(db.select().from(users).all()[0].balance).toBe(100 - price);
+    expect(vi.mocked(fetch).mock.calls).toHaveLength(1);
+    expect(vi.mocked(fetch).mock.calls[0][1]?.headers).toMatchObject({ Authorization: 'Bearer image-secret' });
+  });
+  it('refunds the selected 4K price once on explicit image rejection without replay', async () => {
+    modelId = APIPATH_SUNBURST; enable();
+    db.update(modelPricing).set({ extraParams: '{"4K":7}' }).where(eq(modelPricing.modelPattern, modelId)).run();
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { code: 'invalid_api_key', message: 'invalid key' } }, { status: 401 })));
+    await handleSpecificationGeneration(request({ resolution: '4K' }), response(), 'image');
+    const failed = db.select().from(contents).all()[0];
+    expect(failed).toMatchObject({ status: 'failed', cost: 0 });
+    expect(JSON.parse(failed.metadata).reservedCost).toBe(7);
+    await resumeSpecificationTasks(); await resumeSpecificationTasks();
+    expect(db.select().from(users).all()[0].balance).toBe(100);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it.each(['legacy', 'dual'])('imports exactly the four selected products from the full upstream catalog (%s)', async mode => {
     if (mode === 'dual') ChannelService.updateChannel(channelId, { apipathImageKey: 'image-secret', apipathVideoKey: 'video-secret' });
     db.delete(models).run(); db.delete(settings).run();
     const upstreamIds = [...new Set(APIPATH_MODELS.map(x => x.upstreamModel || x.id)), 'future-unrequested-model'];
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: upstreamIds.map(id => ({ id })) })));
     const result = await ChannelService.syncModels(channelId);
-    expect(result.count).toBe(6); expect(result.added).toBe(6);
+    expect(result.count).toBe(4); expect(result.added).toBe(4);
     expect(result.models.sort()).toEqual([...selectedModels].sort());
     expect(db.select().from(models).all().map(x => x.modelId).sort()).toEqual([...selectedModels].sort());
     expect(db.select().from(models).all().every(x => x.isActive === 0)).toBe(true);
     const saved = ChannelService.getChannelRaw(channelId)!;
     expect(JSON.parse(saved.supportedModels).sort()).toEqual([...selectedModels].sort());
     expect(Object.keys(JSON.parse(saved.modelMapping)).sort()).toEqual([...selectedModels].sort());
-    expect(result.models).not.toContain('gpt-image-2-5-sunburst'); // No default fourth image entry.
+    expect(result.models).not.toContain('gpt-image-2-5-sunburst-1k'); // One image model with three resolutions.
     if (mode === 'dual') {
       const keys = db.select().from(apipathChannelKeys).all();
       expect(JSON.parse(keys.find(k => k.kind === 'image')!.supportedModels).sort()).toEqual(selectedModels.slice(3).sort());
@@ -70,7 +170,7 @@ describe('通联 actual specification entry and isolated billing', () => {
     ChannelService.updateChannel(channelId, kind === 'image' ? { apipathImageKey: 'image-secret' } : { apipathVideoKey: 'video-secret' });
     const result = await ChannelService.syncModels(channelId);
     expect(result.models.sort()).toEqual((kind === 'image' ? selectedModels.slice(3) : selectedModels.slice(0, 3)).sort());
-    expect(result.count).toBe(3);
+    expect(result.count).toBe(kind === 'image' ? 1 : 3);
   });
   it('does not invent selected products absent from the key authorization', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [{ id: 'dola2.5' }, { id: 'gpt-image-2-5-flare' }] })));
@@ -117,7 +217,7 @@ describe('通联 actual specification entry and isolated billing', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: any) => Response.json(String(url).includes('/images/')
       ? { data: [{ url: 'https://cdn.example/image.png' }] } : { task_no: 'dual-key', status: 'completed', url: 'https://cdn.example/video.mp4' })));
     modelId = 'dola2.5'; enable(); await handleSpecificationGeneration(request({ seconds: 5 }), response(), 'video');
-    modelId = 'gpt-image-2-5-sunburst-2k'; enable(); await handleSpecificationGeneration(request({ resolution: '2K' }), response(), 'image');
+    modelId = 'gpt-image-2-5-sunburst'; enable(); await handleSpecificationGeneration(request({ resolution: '2K' }), response(), 'image');
     expect(vi.mocked(fetch).mock.calls.map(c => (c[1]?.headers as any).Authorization)).toEqual(['Bearer video-secret', 'Bearer image-secret']);
     const rows = db.select().from(contents).all();
     expect(rows.map(r => r.status)).toEqual(['completed', 'completed']);
@@ -204,7 +304,7 @@ describe('通联 actual specification entry and isolated billing', () => {
     expect(await ChannelService.testChannel(id)).toMatchObject({ success: true });
     expect(vi.mocked(fetch).mock.calls.every(c => c[1]?.method === 'GET')).toBe(true);
   });
-  it.each(APIPATH_MODELS.filter(entry => entry.description))('imports and upgrades the description of $id without changing configuration', async entry => {
+  it.each(APIPATH_MODELS.filter(entry => entry.description && selectedModels.includes(entry.id)))('imports and upgrades the description of $id without changing configuration', async entry => {
     const read = () => db.select().from(models).where(eq(models.modelId, entry.id)).get()!;
     expect(read()).toMatchObject({ description: entry.description, isActive: 0 });
     modelId = entry.id;
@@ -275,7 +375,7 @@ describe('通联 actual specification entry and isolated billing', () => {
     expect(vi.mocked(fetch).mock.calls.every(c=>c[1]?.method==='GET')).toBe(true);
   });
   it('generates an image through the charged website entry',async()=>{
-    modelId='gpt-image-2-5-sunburst-1k';enable();vi.stubGlobal('fetch',vi.fn(async()=>Response.json({created:1,data:[{url:'https://cdn.example/image.png'}]})));
+    modelId='gpt-image-2-5-sunburst';enable();vi.stubGlobal('fetch',vi.fn(async()=>Response.json({created:1,data:[{url:'https://cdn.example/image.png'}]})));
     const res=response();await handleSpecificationGeneration(request({resolution:'1K'}),res,'image');
     expect(db.select().from(contents).all().at(-1),JSON.stringify(res.body)).toMatchObject({status:'completed',cost:2});
     const [url,init]=vi.mocked(fetch).mock.calls[0];expect(String(url)).toContain('/v1/images/generations');expect(JSON.parse(String(init?.body))).toMatchObject({model:'gpt-image-2-5-sunburst',n:1});
@@ -301,7 +401,7 @@ describe('通联 actual specification entry and isolated billing', () => {
     }finally{vi.useRealTimers();}
   });
   it('uses multipart edits with all validated reference bytes',async()=>{
-    modelId='gpt-image-2-5-sunburst-1k';enable();const validation=vi.spyOn(referenceValidation,'validateAndNormalizeImageReferences').mockResolvedValue(['data:image/png;base64,aGVsbG8=']);
+    modelId='gpt-image-2-5-sunburst';enable();const validation=vi.spyOn(referenceValidation,'validateAndNormalizeImageReferences').mockResolvedValue(['data:image/png;base64,aGVsbG8=']);
     vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{url:'https://cdn.example/edited.png'}]})));
     try{await handleSpecificationGeneration(request({resolution:'1K',reference_images:['https://images.example/ref.png']}),response(),'image');
       const [url,init]=vi.mocked(fetch).mock.calls[0];expect(String(url)).toContain('/v1/images/edits');expect(init?.body).toBeInstanceOf(FormData);expect((init?.body as FormData).getAll('image[]')).toHaveLength(1);
@@ -336,27 +436,27 @@ describe('通联 actual specification entry and isolated billing', () => {
     ['1k','9:16','720x1280'],['2k','9:16','1440x2560'],['4k','9:16','2160x3840'],
     ['4k','21:9','3696x1584'],
   ])('maps Sunburst %s %s to the documented size %s',async(tier,ratio,size)=>{
-    modelId='gpt-image-2-5-sunburst-'+tier;enable();vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{url:'https://cdn.example/image.png'}]})));
+    modelId='gpt-image-2-5-sunburst';enable();vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{url:'https://cdn.example/image.png'}]})));
     const res=response();await handleSpecificationGeneration(request({resolution:tier,aspect_ratio:ratio}),res,'image');
     expect(db.select().from(contents).all().at(-1),JSON.stringify(res.body)).toMatchObject({status:'completed',cost:2});
     expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toMatchObject({model:'gpt-image-2-5-sunburst',size,aspect_ratio:ratio});
-    expect(getModelSpecification(modelId)?.imageFamily).toBe('gpt-image-2-5-sunburst');
+    expect(getModelSpecification(modelId)?.limits.resolutions).toEqual(['1K','2K','4K']);
   });
   it('preserves four edit references and applies 4K dimensions to multipart',async()=>{
-    modelId='gpt-image-2-5-sunburst-4k';enable();const images=Array(4).fill('data:image/png;base64,aGVsbG8=');const validation=vi.spyOn(referenceValidation,'validateAndNormalizeImageReferences').mockResolvedValue(images);
+    modelId='gpt-image-2-5-sunburst';enable();const images=Array(4).fill('data:image/png;base64,aGVsbG8=');const validation=vi.spyOn(referenceValidation,'validateAndNormalizeImageReferences').mockResolvedValue(images);
     vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{url:'https://cdn.example/edited.png'}]})));
     try{await handleSpecificationGeneration(request({resolution:'4K',reference_images:images}),response(),'image');const form=vi.mocked(fetch).mock.calls[0][1]?.body as FormData;
       expect(form.get('model')).toBe('gpt-image-2-5-sunburst');expect(form.get('size')).toBe('2160x3840');expect(form.getAll('image[]')).toHaveLength(4);
       expect(db.select().from(contents).all().at(-1)?.status).toBe('completed');
     }finally{validation.mockRestore();}
   });
-  it.each([{size:'1024x1024',aspect_ratio:'1:1'},{resolution:'1K'},{reference_images:Array(5).fill('https://cdn.example/ref.png')}])('rejects conflicting Sunburst request before charge: %j',async body=>{
-    modelId='gpt-image-2-5-sunburst-4k';enable();vi.stubGlobal('fetch',vi.fn());const res=response();await handleSpecificationGeneration(request({resolution:'4K',...body}),res,'image');expect(res.statusCode).toBe(400);expect(fetch).not.toHaveBeenCalled();expect(db.select().from(users).all()[0].balance).toBe(100);
+  it.each([{size:'1024x1024',aspect_ratio:'1:1'},{resolution:'8K'},{reference_images:Array(5).fill('https://cdn.example/ref.png')}])('rejects conflicting Sunburst request before charge: %j',async body=>{
+    modelId='gpt-image-2-5-sunburst';enable();vi.stubGlobal('fetch',vi.fn());const res=response();await handleSpecificationGeneration(request({resolution:'4K',...body}),res,'image');expect(res.statusCode).toBe(400);expect(fetch).not.toHaveBeenCalled();expect(db.select().from(users).all()[0].balance).toBe(100);
   });
-  it('syncs three Sunburst specifications from one upstream ID without replacing prices or switches',async()=>{
-    modelId='gpt-image-2-5-sunburst-2k';enable();const spec=getModelSpecification(modelId)!;spec.enabled=false;spec.routes[0].limits.maxImages=2;saveModelSpecification(spec);await ChannelService.syncModels(channelId);
+  it('syncs one Sunburst model with three resolutions without replacing prices or switches',async()=>{
+    modelId='gpt-image-2-5-sunburst';enable();const spec=getModelSpecification(modelId)!;spec.enabled=false;spec.routes[0].limits.maxImages=2;saveModelSpecification(spec);await ChannelService.syncModels(channelId);
     expect(getModelSpecification(modelId)).toMatchObject({enabled:false,routes:[{limits:{maxImages:2}}]});expect(db.select().from(modelPricing).all()[0].inputPrice).toBe(2);
-    const mapping=JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping);for(const tier of ['1k','2k','4k'])expect(mapping['gpt-image-2-5-sunburst-'+tier]).toBe('gpt-image-2-5-sunburst');
+    const mapping=JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping);expect(mapping['gpt-image-2-5-sunburst']).toBe('gpt-image-2-5-sunburst');
   });
 
   it('uses separate image and video keys and preserves their channel bindings',async()=>{
@@ -366,7 +466,7 @@ describe('通联 actual specification entry and isolated billing', () => {
     ChannelService.updateChannel(channelId,{supportedModels:['dola2.5']});
     const calls:any[]=[];vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{calls.push([url,init]);return Response.json(String(url).includes('/images/')?{data:[{url:'https://cdn.example/image.png'}]}:{task_no:'split',status:'completed',url:'https://cdn.example/video.mp4'});}));
     modelId='dola2.5';enable();await handleSpecificationGeneration(request({seconds:5}),response(),'video');
-    modelId='gpt-image-2-5-sunburst-2k';enable();await handleSpecificationGeneration(request({resolution:'2K'}),response(),'image');
+    modelId='gpt-image-2-5-sunburst';enable();await handleSpecificationGeneration(request({resolution:'2K'}),response(),'image');
     expect(calls[0][1].headers.Authorization).toBe('Bearer '+key);expect(calls[1][1].headers.Authorization).toBe('Bearer '+imageKey);
     expect(db.select().from(contents).all().map(x=>JSON.parse(x.metadata).channelId)).toEqual([channelId,imageChannel]);
   });

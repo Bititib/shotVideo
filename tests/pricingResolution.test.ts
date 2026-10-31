@@ -22,8 +22,8 @@ describe('pricing resolution fields', () => {
     });
   });
 
-  it('always exposes MingFei 1K, 2K and 4K prices independently', () => {
-    expect(pricingResolutionFields('gpt-image-2-mingfei', { category: 'image' })).toEqual({
+  it.each(['gpt-image-2-mingfei', 'gpt-image-2-5-sunburst'])('exposes %s 1K, 2K and 4K prices independently', model => {
+    expect(pricingResolutionFields(model, { category: 'image' })).toEqual({
       keys: ['1K', '2K', '4K'],
       values: { '1K': '', '2K': '', '4K': '' },
       otherText: '',

@@ -755,8 +755,12 @@ export default function ImageGenPage() {
   const visibleCards = galleryCards.filter(card => galleryFilter === 'all' || card.status === galleryFilter);
   const selectedMingFeiRate = models.find(model => model.id === 'gpt-image-2-mingfei')?.resolutionPrices?.[mingFeiResolution];
 
-  const displayRate = selectedModel === 'gpt-image-2-mingfei' && Number.isFinite(selectedMingFeiRate)
-    ? selectedMingFeiRate : selectedImageModel?.rate;
+  const selectedManagedRate = selectedModel === 'gpt-image-2-5-sunburst' && managedLimits
+    ? selectedImageModel?.resolutionPrices?.[managedLimits.resolutions.length === 1 ? managedLimits.resolutions[0] : mingFeiResolution]
+    : undefined;
+  const displayRate = Number.isFinite(selectedManagedRate) ? selectedManagedRate
+    : selectedModel === 'gpt-image-2-mingfei' && Number.isFinite(selectedMingFeiRate)
+      ? selectedMingFeiRate : selectedImageModel?.rate;
   const canGenerate = Boolean(prompt.trim() && !referenceImporting && activeBatchCount < MAX_CONCURRENT_BATCHES
     && selectedImageModel?.available && (generationMode === 'text' || (maxReferenceImages > 0 && referenceImages.length > 0 && referenceImages.length <= maxReferenceImages)));
 

@@ -33,7 +33,7 @@ export function pricingResolutionFields(
   const keys = sortResolutionKeys(Array.from(new Set([
     ...(snumomOutputOnlySpec(modelPattern) ? [snumomOutputOnlySpec(modelPattern)!.resolution] : []),
     ...(['wan3.0-video-nsfw'].includes(modelPattern) ? WAN_RESOLUTIONS : []),
-    ...(modelPattern === 'gpt-image-2-mingfei' ? MINGFEI_RESOLUTIONS : []),
+    ...(['gpt-image-2-mingfei', 'gpt-image-2-5-sunburst'].includes(modelPattern) ? MINGFEI_RESOLUTIONS : []),
     ...(hmSpec?.resolutions || (hmSpec ? [hmSpec.resolution] : [])),
     ...existingKeys,
   ].map(key => existingKeys.find(existing => existing.toLowerCase() === key.toLowerCase()) || key))));

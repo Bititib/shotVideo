@@ -1,5 +1,5 @@
 import { isApipathChannel, normalizeApipathVideo } from './apipathAdapter.js';
-import { APIPATH_IMAGE_SIZES, apipathImageSize, isApipathSunburstSpec } from '../../shared/apipathImageSizes.js';
+import { APIPATH_SUNBURST, APIPATH_IMAGE_SIZES, apipathImageSize, isApipathSunburstSpec } from '../../shared/apipathImageSizes.js';
 import { isHussHssModel } from '../../shared/hussBbVideo.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { activeSpecificationTasks } from './videoRecoveryAction.js';
@@ -89,17 +89,20 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
   if (kind === 'image' && (videos.length || audios.length || firstFrame || lastFrame)) throw fail('图片生成不能传入视频、音频或独立首尾帧');
   const sizeRatios: Record<string,string> = { '1024x1024': '1:1', '1536x864': '16:9', '864x1536': '9:16', '1536x1152': '4:3', '1152x1536': '3:4', '1536x1024': '3:2', '1024x1536': '2:3', '1280x720': '16:9', '720x1280': '9:16', '1024x768': '4:3', '768x1024': '3:4' };
   const sunburst = kind === 'image' && isApipathSunburstSpec(String(body.model || ''));
+  const resolution = String(body.output_resolution || body.resolution || (sunburst
+    ? body.model === APIPATH_SUNBURST ? '1K' : String(body.model).split('-').at(-1)
+    : kind === 'image' ? '2K' : '720p'));
   if (sunburst) for (const [ratio, tiers] of Object.entries(APIPATH_IMAGE_SIZES)) for (const size of Object.values(tiers)) sizeRatios[size] = ratio;
   if (kind === 'image' && body.size && !sizeRatios[body.size]) throw fail('此规格不支持该 size，请使用 aspect_ratio 和 resolution');
   if (kind === 'image' && body.size && (body.aspect_ratio || body.ratio) && sizeRatios[body.size] !== (body.aspect_ratio || body.ratio)) throw fail('size 与宽高比不一致');
   const ratio = String(body.aspect_ratio || body.ratio || (sizeRatios[body.size] ? sizeRatios[body.size] : kind === 'image' ? '1:1' : '16:9'));
   if (sunburst) {
-    try { apipathImageSize(ratio, String(body.output_resolution || body.resolution || String(body.model).split('-').at(-1)), body.size); }
+    try { apipathImageSize(ratio, resolution, body.size); }
     catch (error: any) { throw fail(error.message); }
   }
   return { prompt: body.prompt.trim(), images, videos, audios, firstFrame, lastFrame, body, publicBaseUrl,
     input: { images: images.length, videos: videos.length, audios: audios.length, outputs, seconds,
-      resolution: String(body.output_resolution || body.resolution || (kind === 'image' ? '2K' : '720p')), ratio,
+      resolution, ratio,
       firstFrame: Boolean(firstFrame), lastFrame: Boolean(lastFrame), quality: body.quality } };
 }
 export async function prepareSpecificationReferenceImages(request: SpecificationRequest, candidates: RouteCandidate[], trustedOrigins: string[]) {

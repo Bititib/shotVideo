@@ -36,6 +36,27 @@ const open = async () => {
 };
 
 describe('channel details and model sync workflow', () => {
+  it('edits Apipath Sunburst 1K, 2K and 4K prices inside one model', async () => {
+    const id = 'gpt-image-2-5-sunburst';
+    vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, name: 'Vx-魅影', type: 'apipath', supportedModels: [id] }]);
+    vi.mocked(adminApi.getModels).mockResolvedValue([{ id: 500, modelId: id, displayName: 'Sunburst', provider: 'apipath', capabilities: ['image'], isActive: 0 }]);
+    vi.mocked(adminApi.getPricing).mockResolvedValue([{ id: 100, modelPattern: id, displayName: 'Sunburst', category: 'image',
+      billingType: 'per_call', inputPrice: 1, outputPrice: 0, extraParams: { category: 'image' }, configured: true, modelActive: false }]);
+    vi.mocked(adminApi.updatePricing).mockResolvedValue({});
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: '查看Vx-魅影详情' }));
+    fireEvent.click(await screen.findByRole('button', { name: '管理价格' }));
+    const pricing = await screen.findByRole('dialog', { name: id + ' · 价格详情' });
+    fireEvent.click(await within(pricing).findByRole('button', { name: '编辑', exact: true }));
+    for (const [tier, price] of [['1K', '1'], ['2K', '2.5'], ['4K', '4']]) {
+      fireEvent.change(await screen.findByLabelText(tier + ' 单价'), { target: { value: price } });
+    }
+    fireEvent.click(screen.getByRole('button', { name: '保存并立即生效' }));
+    await waitFor(() => expect(adminApi.updatePricing).toHaveBeenCalledExactlyOnceWith(100, {
+      modelPattern: id, billingType: 'per_call', inputPrice: 1, outputPrice: 0,
+      extraParams: { category: 'image', '1K': 1, '2K': 2.5, '4K': 4 },
+    }));
+  });
   it('edits two Apipath keys under one channel without submitting masked or unchanged credentials', async () => {
     vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, name: '通联', type: 'apipath', apiKey: '', apipathImageKey: '****1111', apipathVideoKey: '****2222' }]);
     vi.mocked(adminApi.updateChannel).mockResolvedValue({});

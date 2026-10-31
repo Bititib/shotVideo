@@ -6,6 +6,7 @@ import ImageGenPage from '../client/src/pages/analysis/ImageGenPage';
 import { fetchImageModels, generatedImageReference, generateImage, getCachedImageModels } from '../client/src/api/imageGen';
 import { contentApi } from '../client/src/api/content';
 import { MJ_MODEL_ID, mjLimits } from '../shared/mj';
+import { APIPATH_MODELS } from '../shared/apipathModels';
 
 vi.mock('../client/src/api/imageGen', async original => ({
   ...await original<any>(), fetchImageModels: vi.fn(), getCachedImageModels: vi.fn(),
@@ -41,6 +42,21 @@ function history() {
 }
 
 describe('图片生成与继续改图', () => {
+  it.each([['1K', 1], ['2K', 2], ['4K', 4]] as const)('selects Sunburst %s inside one entry and submits its matching price tier', async (resolution, price) => {
+    const spec = APIPATH_MODELS.find(m => m.id === 'gpt-image-2-5-sunburst')!;
+    const catalog = [{ id: spec.id, name: spec.name, description: spec.description!, available: true,
+      rate: 1, resolutionPrices: { '1K': 1, '2K': 2, '4K': 4 }, maxReferenceImages: 4, routingLimits: spec.limits }];
+    vi.mocked(getCachedImageModels).mockReturnValue(catalog);
+    vi.mocked(fetchImageModels).mockResolvedValue(catalog);
+    render(<ImageGenPage />);
+    const control = screen.getByRole('combobox', { name: '输出分辨率' }) as HTMLSelectElement;
+    expect(Array.from(control.options, option => option.value)).toEqual(['1K', '2K', '4K']);
+    fireEvent.change(control, { target: { value: resolution } });
+    expect(screen.getByTitle('预计费用').textContent).toBe('¥' + price.toFixed(2));
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'sunset' } });
+    fireEvent.click(screen.getByRole('button', { name: '开始生成图片' }));
+    expect(vi.mocked(generateImage).mock.calls[0][0]).toMatchObject({ model: spec.id, resolution, n: 1 });
+  });
   it('displays MJ task progress on all pending images without requiring an image index', async () => {
     const mj = [{ id: MJ_MODEL_ID, name: 'MJ', description: '', available: true, routingLimits: mjLimits() }];
     vi.mocked(getCachedImageModels).mockReturnValue(mj);

@@ -5,9 +5,7 @@ export const APIPATH_SYNC_MODEL_IDS = [
   'seedance2-5-特惠-1080p',
   'Seedance-2.0-mini-480-GK',
   'dola2.5',
-  'gpt-image-2-5-sunburst-1k',
-  'gpt-image-2-5-sunburst-2k',
-  'gpt-image-2-5-sunburst-4k',
+  'gpt-image-2-5-sunburst',
 ] as const;
 
 // Provider snapshot 2026-10-31. Image count 1 is a local limit, not a provider maximum.
@@ -247,9 +245,10 @@ export const APIPATH_MODELS: {id: string; name: string; description?: string; ki
   {
     "id": "gpt-image-2-5-sunburst",
     "name": "GPT Image 2.5 Sunburst（渠道1）",
+    "description": "支持 1K、2K、4K 静态图片，按所选分辨率分别计费；支持文生图和参考图编辑；比例 1:1、16:9、9:16、4:3、3:4、3:2、2:3、21:9；最多 4 张参考图片，不支持参考视频、音频及独立首尾帧；每次输出 1 张。1:1 的 1K/2K/4K 分别为 1024×1024、2048×2048、2880×2880；16:9 分别为 1280×720、2560×1440、3840×2160。4K 为上游档位名称，并非所有比例长边均为 4096。",
     "kind": "image",
     "limits": {
-      "maxImages": 1,
+      "maxImages": 4,
       "maxVideos": 0,
       "maxAudios": 0,
       "maxOutputs": 1,
@@ -257,17 +256,16 @@ export const APIPATH_MODELS: {id: string; name: string; description?: string; ki
       "firstFrame": false,
       "lastFrame": false,
       "resolutions": [
-        "default"
+        "1K", "2K", "4K"
       ],
       "ratios": [
-        "auto",
         "1:1",
         "2:3",
         "3:2",
         "3:4",
         "4:3",
         "9:16",
-        "16:9"
+        "16:9", "21:9"
       ],
       "qualities": [
         "auto",

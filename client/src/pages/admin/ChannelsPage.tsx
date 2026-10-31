@@ -572,9 +572,9 @@ export default function ChannelsPage() {
                         className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
                     </div>;
                   })}
-                  <p className="text-xs leading-5 text-zinc-400">图片和视频分别使用对应的 Key。保存后点击渠道列表中的“同步模型”，仅同步下列 6 个指定条目中对应 Key 已授权的模型；未填写的类型不开放生成。</p>
+                  <p className="text-xs leading-5 text-zinc-400">图片和视频分别使用对应的 Key。保存后点击渠道列表中的“同步模型”，仅同步下列 4 款指定模型中对应 Key 已授权的模型；未填写的类型不开放生成。</p>
                   <section aria-label="通联指定同步范围" className="rounded-xl border border-white/10 p-3 text-xs leading-5 text-zinc-400">
-                    <p className="mb-1">指定同步范围（3 款视频 + 图片 1K / 2K / 4K）：</p>
+                    <p className="mb-1">指定同步范围（3 款视频 + 1 款图片，图片内选 1K / 2K / 4K 并分别定价）：</p>
                     <ul className="space-y-1">{APIPATH_SYNC_MODEL_IDS.map(id => <li key={id} className="break-all">{id}</li>)}</ul>
                     <p className="mt-2">这是允许同步的范围，实际已绑定模型以下方列表为准。</p>
                   </section>

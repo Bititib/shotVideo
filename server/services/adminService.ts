@@ -1,3 +1,4 @@
+import { archivedApipathModelIds } from './apipathModelArchive.js';
 import { getModelSpecifications } from './modelRoutingService.js';
 import { recordPublicModelReview } from './publicModelMetadataService.js';
 import { validatePublicModelName, rememberPublicModelNames } from './publicModelNameService.js';
@@ -402,7 +403,8 @@ export class AdminService {
     return rows;
   }
   static getModels(includeStats = true): any[] {
-    const allModels = db.select().from(models).all();
+    const archived = archivedApipathModelIds();
+    const allModels = db.select().from(models).all().filter(model => !archived.has(model.modelId));
     if (!includeStats) return allModels.map(m => ({ ...m, capabilities: JSON.parse(m.capabilities), apiKey: m.apiKey ? '****' + m.apiKey.slice(-4) : null }));
     // Four queries regardless of model count. Only select fields used by statistics.
     const contentByModel = new Map<string, Array<{ status: string; resultUrl: string | null; metadata: string; createdAt: string }>>();
