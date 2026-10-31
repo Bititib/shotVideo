@@ -35,6 +35,7 @@ import { formatBeijingTime } from '../../../../shared/time';
 import { isOmniVideoEditModel, isSnumomGrokImagineVideoModel, isWxHaidiYueVideoModel, SNUMOM_SD_MINI_MODEL, snumomSdMiniSecondsForResolution, WX_HAIDIYUE_FACE_SPLIT_MODEL, WX_HAIDIYUE_MULTIMODAL_MODEL } from '../../utils/videoModelCapabilities';
 import { getContentFailureInfo } from '../../utils/contentFailure';
 import { findUnreadableImageIndexes, isSupportedImageFile, MOBILE_IMAGE_ACCEPT, normalizeImageFile } from '../../utils/imageNormalization';
+import { groupTt25ModelCards, tt25Resolution, type VideoModelCard } from '../../utils/tt25ModelCards';
 
 interface VideoTask {
   id: string;
@@ -436,7 +437,7 @@ function CustomSelect({ value, options, onChange }: any) {
       {isOpen && (
         <div className="absolute bottom-full left-0 mb-2 min-w-full w-max bg-[#fffaf2] border border-[#d5b996] rounded-xl shadow-[0_18px_45px_rgba(78,48,31,0.18)] p-1.5 z-50 flex flex-col max-h-[240px] overflow-y-auto [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
           {options.map((o: any) => (
-            <button key={o.value} onClick={() => { onChange(o.value); setIsOpen(false); }}
+            <button key={o.value} disabled={o.disabled} onClick={() => { onChange(o.value); setIsOpen(false); }}
               className={`flex items-center gap-2 px-3 py-2 rounded-lg text-left text-[11px] transition-colors ${value === o.value ? 'bg-[#ead4bf] text-[#7c3f29] font-semibold' : 'text-[#6f594a] hover:text-[#7c3f29] hover:bg-[#f5e8d8]'}`}>
               {o.icon && <o.icon className="w-3.5 h-3.5" />}{o.label}
             </button>
@@ -463,22 +464,19 @@ export default function VideoPage() {
   const quoteUser = useAuthStore(state => state.user);
   const [models, setModels] = useState<VideoModel[]>(getCachedVideoModels);
 
-  const groupedModels = React.useMemo(() => {
-    const groups: Record<string, VideoModel[]> = {};
-    models.forEach(m => {
-      const g = getModelGroup(m.id);
-      if (!groups[g]) groups[g] = [];
-      groups[g].push(m);
-    });
-    return groups;
-  }, [models]);
-
   const [selectedModel, setSelectedModel] = useState(() => models[0]?.id || '');
   const [expandedModelGroups, setExpandedModelGroups] = useState<Set<string>>(new Set(['Seedance 系列']));
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState('16:9');
   const [duration, setDuration] = useState(6);
   const [resolution, setResolution] = useState('720p');
+  const modelCards = React.useMemo(() => groupTt25ModelCards(models, selectedModel, resolution), [models, selectedModel, resolution]);
+  const groupedModels = React.useMemo(() => {
+    const groups: Record<string, VideoModelCard[]> = {};
+    modelCards.forEach(model => { (groups[getModelGroup(model.id)] ??= []).push(model); });
+    return groups;
+  }, [modelCards]);
+  const resolutionFamily = modelCards.find(card => card.resolutionModels && Object.values<VideoModel>(card.resolutionModels).some(model => model.id === selectedModel));
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const maxRefs = getMaxReferenceImages(selectedModel, models);
 
@@ -1109,7 +1107,9 @@ export default function VideoPage() {
     : ALL_DURATIONS;
 
   const isOmniModel = selectedModel.startsWith('omni-flash') || selectedModel.startsWith('veo-omni-flash');
-  const RESOLUTIONS = currentModel?.rates
+  const RESOLUTIONS = resolutionFamily?.resolutionModels
+    ? Object.entries<VideoModel>(resolutionFamily.resolutionModels).map(([value, model]) => ({ value, label: value + (model.available ? '' : '（暂不可用）'), disabled: !model.available }))
+    : currentModel?.rates
     ? Object.keys(currentModel.rates)
       .sort((a, b) => (a.endsWith('k') ? parseFloat(a) * 1000 : parseInt(a)) - (b.endsWith('k') ? parseFloat(b) * 1000 : parseInt(b)))
       .map(r => ({ value: r, label: r }))
@@ -1150,7 +1150,10 @@ export default function VideoPage() {
     }
     // 自动修正分辨率：如果当前分辨率不在该模型支持的选项中，回退到第一个可用选项
     const validResolutions = RESOLUTIONS.map(r => r.value);
-    if (!validResolutions.includes(resolution)) {
+    const nativeTt25Resolution = tt25Resolution(selectedModel);
+    if (resolutionFamily && nativeTt25Resolution && nativeTt25Resolution !== resolution) {
+      setResolution(nativeTt25Resolution);
+    } else if (!validResolutions.includes(resolution)) {
       setResolution(validResolutions[validResolutions.length - 1] || '720p');
     }
     if (isOmniModel) {
@@ -1697,7 +1700,7 @@ export default function VideoPage() {
                 if (!groupModels || groupModels.length === 0) return null;
                 const isExpanded = expandedModelGroups.has(groupName);
                 const panelId = `video-model-series-${GROUP_ORDER.indexOf(groupName)}`;
-                const selectedInGroup = groupModels.find(model => model.id === selectedModel);
+                const selectedInGroup = groupModels.find(model => model.id === selectedModel || Object.values<VideoModel>(model.resolutionModels || {}).some(variant => variant.id === selectedModel));
                 return (
                   <div key={groupName} className="overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.015]">
                     <button
@@ -1729,9 +1732,14 @@ export default function VideoPage() {
                     <div id={panelId} hidden={!isExpanded} className="space-y-2 border-t border-white/[0.05] p-2">
                       {groupModels.map((m) => {
                         const isComic = isComicDramaModel(m.id);
-                        const isSelected = selectedModel === m.id;
+                        const isSelected = selectedModel === m.id || Object.values<VideoModel>(m.resolutionModels || {}).some(variant => variant.id === selectedModel);
                         return (
-                          <button key={m.id} type="button" aria-pressed={isSelected} onClick={() => setSelectedModel(m.id)}
+                          <button key={m.displayKey || m.id} type="button" aria-pressed={isSelected} onClick={() => {
+                            const variant = m.resolutionModels?.[resolution]?.available ? m.resolutionModels[resolution]
+                              : Object.values<VideoModel>(m.resolutionModels || {}).find(model => model.available);
+                            setSelectedModel(variant?.id || m.id);
+                            if (variant) setResolution(tt25Resolution(variant.id)!);
+                          }}
                             className={`earth-model-card w-full text-left px-4 py-3 rounded-xl border transition-all relative overflow-hidden ${isSelected
                               ? isComic
                                 ? 'border-purple-400 bg-gradient-to-r from-purple-500/20 via-indigo-500/15 to-purple-500/10 shadow-[0_0_16px_rgba(168,85,247,0.3)] ring-1 ring-purple-400/50'
@@ -1748,7 +1756,7 @@ export default function VideoPage() {
                               <div className="flex items-center gap-2 flex-wrap justify-end">
                                 {m.rates && (
                                   <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20 font-medium">
-                                    ¥{(m.rates[resolution as keyof typeof m.rates] !== undefined ? m.rates[resolution as keyof typeof m.rates] : Object.values(m.rates)[0])?.toFixed(2)}{getBillingUnit(m.billingType, 'video')}
+                                    ¥{(m.rates[(m.resolutionModels ? tt25Resolution(m.id)! : resolution) as keyof typeof m.rates] ?? Object.values(m.rates)[0])?.toFixed(2)}{getBillingUnit(m.billingType, 'video')}
                                   </span>
                                 )}
                                 <VideoModelStatusIndicator status={m.modelStatus} />
@@ -1761,7 +1769,7 @@ export default function VideoPage() {
                                 {Object.entries(m.rates).map(([resKey, resRate], rIdx, arr) => (
                                   <React.Fragment key={resKey}>
                                     <span>
-                                      {resKey}: <span className="text-zinc-400">¥{(Number(resRate) || 0).toFixed(2)}{getBillingUnit(m.billingType, 'video')}</span>
+                                      {resKey}{m.resolutionModels?.[resKey]?.available === false ? '（暂不可用）' : ''}: <span className="text-zinc-400">¥{(Number(resRate) || 0).toFixed(2)}{getBillingUnit(m.billingType, 'video')}</span>
                                     </span>
                                     {rIdx < arr.length - 1 && <span className="text-zinc-800">•</span>}
                                   </React.Fragment>
@@ -2040,7 +2048,12 @@ export default function VideoPage() {
                 <div className="flex items-center gap-2 px-4 py-2 border-b border-white/[0.04] flex-wrap rounded-t-2xl">
                   <CustomSelect value={aspectRatio} onChange={setAspectRatio} options={ASPECT_RATIOS} />
                   <CustomSelect value={duration} onChange={(v: number) => setDuration(v)} options={DURATIONS} />
-                  <CustomSelect value={resolution} onChange={setResolution} options={RESOLUTIONS} />
+                  <CustomSelect value={resolution} onChange={(value: string) => {
+                    const variant = resolutionFamily?.resolutionModels?.[value];
+                    if (variant && !variant.available) return;
+                    if (variant) setSelectedModel(variant.id);
+                    setResolution(value);
+                  }} options={RESOLUTIONS} />
                   <button aria-label={`上传参考图片，最多 ${maxRefs} 张`} onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 bg-white/[0.04] hover:bg-white/[0.08] rounded-lg px-2.5 py-1.5 text-[11px] text-zinc-300 transition-colors border border-white/5 hover:border-white/10">
                     <Upload className="w-3 h-3 text-indigo-400" /> 参考图 ({referenceImages.length}/{maxRefs})
                   </button>
