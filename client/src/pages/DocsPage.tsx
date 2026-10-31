@@ -445,7 +445,7 @@ print(resp.json())`,
             </div>
             <div>
               <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-                开发者中心 <span className="text-[10px] bg-rose-500/15 border border-rose-500/30 text-rose-400 font-mono px-2 py-0.5 rounded-full">v1 API</span>
+                API 文档 <span className="text-[10px] bg-rose-500/15 border border-rose-500/30 text-rose-400 font-mono px-2 py-0.5 rounded-full">v1 API</span>
               </h2>
               <p className="text-xs text-zinc-400 mt-0.5">面向企业用户、独立开发者和自研系统的兼容 OpenAI 规范的 API 服务文档</p>
             </div>

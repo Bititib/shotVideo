@@ -37,10 +37,10 @@ export default function DeveloperPage() {
     timer.current = setTimeout(() => setCopyStatus(''), 2500);
   }
   return <div className="developer-page">
-    <header className="developer-heading"><div><p className="developer-eyebrow">DEVELOPER CENTER</p><h1>开发者中心</h1><p>浏览接口文档与可用模型，快速接入 API。<Link className="developer-model-link" to="/app/models"><Layers3 size={14} />独立查看模型列表</Link></p></div>
+    <header className="developer-heading"><div><p className="developer-eyebrow">API DOCUMENTATION</p><h1>API 文档</h1><p>查看接口说明、鉴权方式和调用示例。<Link className="developer-model-link" to="/app/models"><Layers3 size={14} />独立查看模型列表</Link></p></div>
       <div className="developer-base"><span>BASE URL</span><div><code>{baseUrl}</code><button aria-label="复制接口地址" onClick={copyBaseUrl}>{copyStatus === '已复制接口地址' ? <Check size={16} /> : <Copy size={16} />}</button></div><small role="status" aria-live="polite">{copyStatus}</small></div>
     </header>
-    <div className="developer-tabs" role="tablist" aria-label="开发者中心内容" onKeyDown={navigateTabs}>{tabs.map(tab => <button key={tab.id} role="tab" id={`developer-tab-${tab.id}`}
+    <div className="developer-tabs" role="tablist" aria-label="API 文档内容" onKeyDown={navigateTabs}>{tabs.map(tab => <button key={tab.id} role="tab" id={`developer-tab-${tab.id}`}
       aria-selected={activeTab === tab.id} aria-controls={`developer-panel-${tab.id}`} tabIndex={activeTab === tab.id ? 0 : -1} onClick={() => selectTab(tab.id)}><tab.icon size={17} />{tab.label}</button>)}</div>
     <section id="developer-panel-docs" role="tabpanel" aria-labelledby="developer-tab-docs" hidden={activeTab !== 'docs'} tabIndex={0}>
       <Suspense fallback={<p className="developer-loading" role="status">正在加载接口文档…</p>}><DocsPage embedded /></Suspense>

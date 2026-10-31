@@ -34,7 +34,7 @@ describe('standalone public API model catalog routes', () => {
     expect(await screen.findByRole('heading', { name: 'TT 480P API' })).toBeInTheDocument();
     expect(screen.getByRole('table', { name: 'API 模型列表' })).toHaveTextContent('¥0.28 / 秒');
     expect(screen.getByLabelText('当前页面地址')).toHaveTextContent('/app/models');
-    expect(screen.queryByRole('heading', { name: '开发者中心' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'API 文档' })).not.toBeInTheDocument();
     expect(mocks.docs).not.toHaveBeenCalled(); expect(mocks.tokens).not.toHaveBeenCalled(); expect(mocks.privateModels).not.toHaveBeenCalled();
     expect(auth.openLoginModal).not.toHaveBeenCalled();
     expect(within(screen.getByLabelText('主导航')).getByRole('link', { name: '模型列表' })).toHaveAttribute('aria-current', 'page');
@@ -50,7 +50,7 @@ describe('standalone public API model catalog routes', () => {
   });
   it('retains the old docs model tab and links it to the independent page', async () => {
     open('/app/docs?tab=models');
-    expect(await screen.findByRole('heading', { name: '开发者中心' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'API 文档' })).toBeInTheDocument();
     expect(await screen.findByRole('table', { name: 'API 模型列表' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: '独立查看模型列表' }));
     expect(await screen.findByRole('heading', { name: '模型列表', level: 1 })).toBeInTheDocument();
@@ -60,7 +60,7 @@ describe('standalone public API model catalog routes', () => {
   it('provides a working return link to interface documentation', async () => {
     open('/app/models'); await screen.findByRole('heading', { name: '模型列表', level: 1 });
     fireEvent.click(screen.getByRole('link', { name: '接口文档' }));
-    expect(await screen.findByRole('heading', { name: '开发者中心' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'API 文档' })).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: '接口文档内容' })).toBeInTheDocument();
     expect(screen.getByLabelText('当前页面地址')).toHaveTextContent('/app/docs?tab=docs');
   });
