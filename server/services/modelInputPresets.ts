@@ -1,6 +1,7 @@
 import { HUSS_BB_PUBLIC_MODEL, hussBbModelLimits, HUSS_HSS_MODEL, hussHssModelLimits } from '../../shared/hussBbVideo.js';
 import { V6K_TTT_720_MODEL } from '../../shared/zonghengVideo.js';
 import { v6kSeedance20Limits } from '../../shared/v6kSeedance2.js';
+import { v6kTt25Limits } from '../../shared/v6kTt25.js';
 import { defaultRoutingLimits, type ModelInputLimits } from '../../shared/modelRouting.js';
 import { getHmStudioAdditionalVideoModel } from '../../shared/hmStudioVideo.js';
 import { getHayaVideoSpec, hayaVideoSeconds, HAYA_XG_SEEDANCE_20_MODEL, HAYA_XG_RATIOS } from '../../shared/hayaVideo.js';
@@ -25,6 +26,8 @@ export function existingModelLimits(id: string, kind: 'image' | 'video'): ModelI
   if (id === V6K_TTT_720_MODEL) return video(30,10,10,'720p',5,30);
   const v6kSeedance20 = v6kSeedance20Limits(id);
   if (v6kSeedance20) return v6kSeedance20;
+  const tt25 = v6kTt25Limits(id);
+  if (tt25) return tt25;
   const hm = getHmStudioAdditionalVideoModel(id);
   if (hm) return { ...video(hm.maxImages, hm.maxVideos, hm.maxAudios, hm.resolution, hm.minSeconds, hm.maxSeconds), resolutions: [...(hm.resolutions || [hm.resolution])], firstFrame: hm.supportsDedicatedFrames, lastFrame: hm.supportsDedicatedFrames, ...(hm.ratios ? { ratios: [...hm.ratios] } : {}) };
   if (id === 'seedance_v2.5') return { ...video(10,0,0,'720p'), firstFrame: true, lastFrame: true };

@@ -6,6 +6,8 @@ import { zonghengBaseUrl } from './zonghengAdapter.js';
 import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
 import { v6kSeedance20Product } from '../../shared/v6kSeedance2.js';
 import { ensureV6kSeedance20Models, bindV6kSeedance20Routes } from './v6kSeedance2Catalog.js';
+import { v6kTt25Product, v6kTt25Description } from '../../shared/v6kTt25.js';
+import { ensureV6kTt25Models, bindV6kTt25Routes, v6kTt25SaleId } from './v6kTt25Catalog.js';
 
 export async function syncV6kVideoModels(channel: { id: number; baseUrl: string; apiKey: string; timeout?: number }) {
   const base = zonghengBaseUrl(channel.baseUrl);
@@ -40,7 +42,7 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     if (!spec && !endpoints.includes('openai-video') && kind !== 'video') continue;
     const publicId = zonghengPublicModelId(id);
     const product = v6kSeedance20Product(id);
-    const description = product?.description || (id === V6K_TTT_720_MODEL ? V6K_TTT_720_DESCRIPTION : spec ? `${spec.resolution}；${spec.seconds.join('、')}秒；最多${spec.references.images}图、${spec.references.videos}视频、${spec.references.audios}音频`
+    const description = product?.description || v6kTt25Description(id) || (id === V6K_TTT_720_MODEL ? V6K_TTT_720_DESCRIPTION : spec ? `${spec.resolution}；${spec.seconds.join('、')}秒；最多${spec.references.images}图、${spec.references.videos}视频、${spec.references.audios}音频`
       : String(detail?.description || '新站视频模型；请先核对模型详情并配置规格与售价'));
     // Both A variants share one execution ID; the specification stores each actual upstream ID.
     if (imported.has(publicId) && id !== product?.upstreamModels[0].id) continue;
@@ -48,8 +50,14 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
   }
   return db.transaction(tx => {
     ensureV6kSeedance20Models(sqlite);
+    ensureV6kTt25Models(sqlite);
+    // Resolve existing TT product identities while holding the configuration transaction.
+    const items = [...imported.values()].map(item => {
+      const tt25 = v6kTt25Product(item.upstream);
+      return tt25 ? { ...item, id: v6kTt25SaleId(sqlite, tt25.id) } : item;
+    });
     let added = 0;
-    for (const item of imported.values()) {
+    for (const item of items) {
       const existing = tx.select().from(models).where(eq(models.modelId, item.id)).get();
       if (!existing) {
         tx.insert(models).values({ modelId: item.id, displayName: item.id, provider: V6K_CHANNEL_TYPE,
@@ -60,11 +68,12 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
           .where(eq(models.id, existing.id)).run();
       }
     }
-    const ids = [...imported.keys()];
+    const ids = items.map(item => item.id);
     tx.update(channels).set({ supportedModels: JSON.stringify(ids),
-      modelMapping: JSON.stringify(Object.fromEntries([...imported.values()].map(item => [item.id, item.upstream]))),
+      modelMapping: JSON.stringify(Object.fromEntries(items.map(item => [item.id, item.upstream]))),
       updatedAt: new Date().toISOString() }).where(eq(channels.id, channel.id)).run();
     bindV6kSeedance20Routes(sqlite, channel.id, authorizedIds);
+    bindV6kTt25Routes(sqlite, channel.id, authorizedIds);
     return { count: ids.length, added, models: ids };
   });
 }

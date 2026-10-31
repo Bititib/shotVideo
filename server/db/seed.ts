@@ -7,6 +7,7 @@ import { migratePidoiImageTimeout } from './imageTimeoutMigration.js';
 import { migrateV6kCatalog } from '../services/v6kCatalogMigration.js';
 import { ensureV6kTttModel } from '../services/v6kTttModel.js';
 import { ensureV6kSeedance20Models } from '../services/v6kSeedance2Catalog.js';
+import { ensureV6kTt25Models } from '../services/v6kTt25Catalog.js';
 import { ensureSiYueTianMinimaxModel } from '../services/siYueTianMinimaxCatalog.js';
 import { HAYA_VIDEO_MODELS, HAYA_XG_SEEDANCE_20_MODEL, hayaVideoSeconds } from '../../shared/hayaVideo.js';
 import { ASYNC_VIDEO_BASE_URL, ASYNC_VIDEO_CHANNEL_TYPE } from '../../shared/asyncVideo.js';
@@ -2072,6 +2073,7 @@ export async function initDatabase() {
   migrateV6kCatalog(sqlite);
   ensureV6kTttModel(sqlite);
   ensureV6kSeedance20Models(sqlite);
+  ensureV6kTt25Models(sqlite);
   ensureSiYueTianMinimaxModel(sqlite);
   ensureFundLedger(sqlite);
   retireRemovedVideoModels(sqlite);

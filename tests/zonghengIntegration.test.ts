@@ -4,6 +4,10 @@ import { V6K_SEEDANCE_20_MODEL, V6K_XX_SEEDANCE_20_MODEL } from '../shared/v6kSe
 import { getModelSpecification, saveModelSpecification } from '../server/services/modelRoutingService';
 import { resumeSpecificationTasks } from '../server/services/specificationGenerationService';
 import { batchStore, tickVideoBatches } from '../server/services/videoBatchService';
+import { V6K_TT25_PRODUCTS } from '../shared/v6kTt25';
+import { ensureV6kTt25Models, v6kTt25SaleId } from '../server/services/v6kTt25Catalog';
+import { quoteVideoRequest } from '../server/services/videoQuoteService';
+import { PricingService } from '../server/services/pricingService';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import express from 'express';
@@ -247,6 +251,120 @@ describe('two Seedance 2.0 products through authenticated sync and actual entry 
     expect(latest().cost).toBe(outcome==='rate-limit'?4:outcome==='unknown-no-id'?4:0);
     const meta=JSON.parse(latest().metadata);
     expect(sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(meta.billingReservationId)).toMatchObject({state:outcome==='rate-limit'?'settled':outcome==='unknown-no-id'?'review':'refunded'});
+  });
+});
+
+async function installTt25(legacy=false,allowed=V6K_TT25_PRODUCTS.map(p=>String(p.id))) {
+  if(legacy)for(const p of V6K_TT25_PRODUCTS){
+    db.insert(models).values({modelId:'ZH-'+p.id,displayName:'custom '+p.resolution,provider:'zongheng-v6k',capabilities:'["video"]',isActive:1}).run();
+    db.insert(modelPricing).values({modelPattern:'ZH-'+p.id,billingType:'per_call',inputPrice:6.5,extraParams:JSON.stringify({[p.resolution.toUpperCase()]:8})}).run();
+  }
+  const c=db.select().from(channels).get()!;
+  ChannelService.updateChannel(c.id,{type:'zongheng-v6k',baseUrl:'https://www.v6k.top'});
+  upstream=async url=>{
+    if(url.endsWith('/v1/models'))return Response.json({data:allowed.map(id=>({id}))});
+    if(url.endsWith('/api/pricing'))return Response.json({data:V6K_TT25_PRODUCTS.map(p=>({model_name:p.id,supported_endpoint_types:['openai-video']}))});
+    throw Error('Unexpected TT model discovery request');
+  };
+  const synced=await ChannelService.syncModels(c.id);
+  for(const p of V6K_TT25_PRODUCTS){const id=v6kTt25SaleId(sqlite,p.id);
+    db.update(models).set({isActive:1}).where(eq(models.modelId,id)).run();
+    saveModelSpecification({...getModelSpecification(id)!,enabled:true});
+  }
+  sqlite.prepare("INSERT INTO api_tokens (id,user_id,token_key,balance) VALUES (1,1,'test',-1)").run();
+  return synced;
+}
+
+describe('TT 2.5 native resolutions and per-second prices through actual entry points',()=>{
+  it('finishes an already accepted legacy direct task at its original 6.5 price while the new second rates are applied',async()=>{
+    const id='ZH-TTseadanco2.5-480',c=db.select().from(channels).get()!;
+    db.insert(models).values({modelId:id,displayName:id,provider:'zongheng-v6k',capabilities:'["video"]',isActive:1}).run();
+    db.insert(modelPricing).values({modelPattern:id,billingType:'per_call',inputPrice:6.5}).run();
+    ChannelService.updateChannel(c.id,{type:'zongheng-v6k',baseUrl:'https://www.v6k.top',supportedModels:[id],modelMapping:{[id]:'TTseadanco2.5-480'}});
+    let posts=0,queries=0;
+    upstream=async(url,init)=>{if(init.method==='POST'){posts++;return Response.json({id:'legacy_price_original',status:'queued'});}
+      queries++;expect(url).toBe('https://www.v6k.top/v1/videos/legacy_price_original');
+      expect(JSON.parse(latest().metadata).videoId).toBe('legacy_price_original');
+      ensureV6kTt25Models(sqlite);
+      expect(sqlite.prepare('SELECT billing_type,input_price FROM model_pricing WHERE model_pattern=?').get(id)).toEqual({billing_type:'per_second',input_price:.28});
+      return Response.json({id:'legacy_price_original',status:'completed'});};
+    await(await post('/api/video/generate',{model:id,prompt:'原任务',seconds:30,resolution:'480p'})).text();
+    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    expect(latest().cost).toBe(6.5);expect(balance()).toBe(93.5);expect(posts).toBe(1);expect(queries).toBe(1);
+    expect(JSON.parse(latest().metadata).pricingSnapshot).toMatchObject({billingType:'per_call',inputPrice:6.5});
+  });
+  it('does not import unauthorized TT routes from the public catalog',async()=>{
+    const synced=await installTt25(false,['TTseadanco2.5-480']);
+    expect(synced.models).toEqual(['TTseadanco2.5-480']);
+    expect(getModelSpecification('TTseadanco2.5-480')!.routes).toHaveLength(1);
+    expect(getModelSpecification('TTseadanco2.5-720')!.routes).toEqual([]);
+    expect(getModelSpecification('TTseadanco2.5-1080')!.routes).toEqual([]);
+  });
+  it.each([['/api/video/generate',false],['/v1/videos',false],['/api/video/generate',true],['/v1/videos',true]] as const)('quotes and charges exactly seconds times the requested rate at %s (legacy IDs: %s)',async(endpoint,legacy)=>{
+    const synced=await installTt25(legacy),prefix=legacy?'ZH-':'';
+    expect(new Set(synced.models)).toEqual(new Set(V6K_TT25_PRODUCTS.map(p=>prefix+p.id)));
+    const catalog=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
+    for(const p of V6K_TT25_PRODUCTS)expect(catalog.find(m=>m.id===prefix+p.id)).toMatchObject({billingType:'per_second',rates:{[p.resolution]:p.saleRate},available:true,routingLimits:{maxImages:30,maxVideos:10,maxAudios:10,resolutions:[p.resolution]}});
+    let posts=0,expected:any;
+    upstream=async(url,init)=>{posts++;expect(url).toBe('https://www.v6k.top/v1/videos');expect(init.method).toBe('POST');
+      const body=JSON.parse(init.body);expect(body).toMatchObject(expected);expect(body.videos).toHaveLength(10);expect(body.audios).toHaveLength(10);
+      return Response.json({id:'tt25_'+posts,status:'completed'});};
+    for(const p of V6K_TT25_PRODUCTS)for(const seconds of [5,30]){
+      const cost=Number((p.saleRate*seconds).toFixed(6));expected={model:p.id,resolution:p.resolution,seconds};
+      expect(quoteVideoRequest({model:prefix+p.id,resolution:p.resolution,seconds},1)).toMatchObject({cost,rate:p.saleRate,billingType:'per_second'});
+      await(await post(endpoint,{model:prefix+p.id,prompt:'TT场景',seconds,resolution:p.resolution,expectedCost:cost,
+        reference_videos:Array.from({length:10},(_,i)=>'https://media.example/v'+i+'.mp4'),audio_urls:Array.from({length:10},(_,i)=>'https://media.example/a'+i+'.mp3')})).text();
+      await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+      expect(latest().cost).toBe(cost);expect(JSON.parse(latest().metadata)).toMatchObject({upstreamModel:p.id,resolution:p.resolution,pricingSnapshot:{billingType:'per_second',inputPrice:p.saleRate}});
+    }
+    resumeSpecificationTasks();resumeSpecificationTasks();expect(posts).toBe(6);expect(balance()).toBeCloseTo(44.7,6);
+  });
+  it.each(V6K_TT25_PRODUCTS)('rejects wrong $resolution specifications and oversize material before reserving money',async p=>{
+    await installTt25();let posts=0;upstream=async()=>{posts++;throw Error('Invalid TT request must not be submitted');};
+    for(const invalid of [{seconds:4},{seconds:31},{resolution:p.resolution==='720p'?'480p':'720p'},
+      {reference_images:Array(31).fill(reference)},{reference_videos:Array(11).fill('https://media.example/v.mp4')},{audio_urls:Array(11).fill('https://media.example/a.mp3')}]){
+      const response=await post('/api/video/generate',{model:p.id,prompt:'场景',seconds:30,resolution:p.resolution,...invalid});
+      expect(response.status).toBeGreaterThanOrEqual(400);await response.text();
+      expect(db.select().from(contents).all()).toHaveLength(0);expect(balance()).toBe(100);
+    }
+    expect(posts).toBe(0);
+  });
+  it.each(V6K_TT25_PRODUCTS.flatMap(p=>['rejected','failed','uncertain'].map(outcome=>({p,outcome}))))('settles or retains only the original TT prepayment: $p.id / $outcome',async({p,outcome})=>{
+    await installTt25();let posts=0,queries=0;const cost=Number((p.saleRate*10).toFixed(6));
+    upstream=async(url,init)=>{
+      if(init.method==='POST'){posts++;expect(balance()).toBeCloseTo(100-cost,6);
+        if(outcome==='rejected')return Response.json({error:{code:'invalid_request',message:'confirmed invalid input'}},{status:400});
+        if(outcome==='uncertain')return new Response('<html>gateway timeout</html>',{status:504});
+        return Response.json({id:'tt_original',status:'unknown'},{status:503});}
+      queries++;expect(url).toBe('https://www.v6k.top/v1/videos/tt_original');
+      expect(findVideoSubmissionReceipt(latest().id)?.upstreamTaskId).toBe('tt_original');
+      return Response.json({id:'tt_original',status:'failed',error:{code:'video_generation_failed',message:'confirmed original failure'}});
+    };
+    await(await post('/api/video/generate',{model:p.id,prompt:'场景',seconds:10,resolution:p.resolution})).text();
+    await vi.waitFor(()=>expect(latest().status).toBe(outcome==='uncertain'?'processing':'failed'));
+    resumeSpecificationTasks();resumeSpecificationTasks();expect(posts).toBe(1);expect(queries).toBe(outcome==='failed'?1:0);
+    expect(balance()).toBeCloseTo(outcome==='uncertain'?100-cost:100,6);
+    const meta=JSON.parse(latest().metadata);expect(sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(meta.billingReservationId)).toMatchObject({state:outcome==='uncertain'?'review':'refunded'});
+  });
+  it('uses the captured TT price when an administrator changes future prices while the original task is generating',async()=>{
+    await installTt25(true);const id='ZH-TTseadanco2.5-480';let posts=0,queries=0;
+    upstream=async(_url,init)=>{if(init.method==='POST'){posts++;return Response.json({id:'priced_original',status:'queued'});}queries++;
+      sqlite.prepare('UPDATE model_pricing SET input_price=99,extra_params=? WHERE model_pattern=?').run('{"480p":99}',id);
+      return Response.json({id:'priced_original',status:'completed'});};
+    await(await post('/api/video/generate',{model:id,prompt:'场景',seconds:30,resolution:'480p'})).text();
+    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    resumeSpecificationTasks();expect(posts).toBe(1);expect(queries).toBe(1);expect(latest().cost).toBe(8.4);expect(balance()).toBeCloseTo(91.6,6);
+    expect(JSON.parse(latest().metadata).pricingSnapshot).toMatchObject({billingType:'per_second',inputPrice:.28});
+  });
+  it.each(V6K_TT25_PRODUCTS)('uses the real batch bridge and one per-second reservation for $id',async p=>{
+    await installTt25();const cost=Number((p.saleRate*30).toFixed(6));let posts=0;
+    const snapshot=PricingService.quote(p.id,{resolution:p.resolution,seconds:30,count:1},false,1).pricingSnapshot;
+    const batchId=batchStore.create(1,crypto.randomUUID(),{name:'TT batch',model:p.id,resolution:p.resolution,aspect_ratio:'16:9',video_length:30,autoRetry:false,maxRetries:0,creatives:[{prompt:'TT批量',count:1,reference_images:[]}]},cost,'https://app.example',snapshot);
+    const item=batchStore.detail(batchId,1).items[0];
+    upstream=async(url,init)=>{if(url==='http://127.0.0.1:9876/api/video/generate')return nativeFetch(origin+'/api/video/generate',init);
+      posts++;expect(JSON.parse(init.body)).toMatchObject({model:p.id,resolution:p.resolution,seconds:30});expect(balance()).toBeCloseTo(100-cost,6);return Response.json({id:'tt_batch_original',status:'completed'});};
+    tickVideoBatches();await vi.waitFor(()=>expect(latest()?.status).toBe('completed'));tickVideoBatches();tickVideoBatches();resumeSpecificationTasks();
+    expect(batchStore.item(item.id)).toMatchObject({status:'completed',billing_state:'charged',charged:cost});expect(posts).toBe(1);expect(balance()).toBeCloseTo(100-cost,6);expect(latest().cost).toBe(cost);
   });
 });
 
