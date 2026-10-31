@@ -1,6 +1,6 @@
 import type { ModelInputLimits } from './modelRouting.js';
 // Provider snapshot 2026-10-31. Image count 1 is a local limit, not a provider maximum.
-export const APIPATH_MODELS: {id: string; name: string; kind: 'image' | 'video'; limits: ModelInputLimits}[] = [
+export const APIPATH_MODELS: {id: string; name: string; kind: 'image' | 'video'; upstreamModel?: string; imageFamily?: string; limits: ModelInputLimits}[] = [
   {
     "id": "gpt-image-2-5-flare",
     "name": "GPT Image 2.5 Flare（渠道1）",
@@ -831,6 +831,225 @@ export const APIPATH_MODELS: {id: string; name: string; kind: 'image' | 'video';
         "step": 1,
         "values": []
       }
+    }
+  },
+  {
+    "id": "seedance2-5-特惠-1080p",
+    "name": "Seedance 2.5-1080P-福利特价",
+    "kind": "video",
+    "limits": {
+      "maxImages": 9,
+      "maxVideos": 0,
+      "maxAudios": 3,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "qualities": [],
+      "duration": {
+        "mode": "range",
+        "min": 5,
+        "max": 30,
+        "step": 1,
+        "values": []
+      },
+      "resolutions": [
+        "1080p"
+      ],
+      "ratios": [
+        "9:16",
+        "16:9"
+      ]
+    }
+  },
+  {
+    "id": "Seedance-2.0-mini-480-GK",
+    "name": "Seedance-2.0-mini-480-GK",
+    "kind": "video",
+    "limits": {
+      "maxImages": 9,
+      "maxVideos": 3,
+      "maxAudios": 3,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "qualities": [],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      },
+      "resolutions": [
+        "480p"
+      ],
+      "ratios": [
+        "1:1",
+        "9:16",
+        "16:9"
+      ]
+    }
+  },
+  {
+    "id": "dola2.5",
+    "name": "dola2.5",
+    "kind": "video",
+    "limits": {
+      "maxImages": 9,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "qualities": [],
+      "duration": {
+        "mode": "options",
+        "min": 5,
+        "max": 15,
+        "step": 5,
+        "values": [
+          5,
+          10,
+          15
+        ]
+      },
+      "resolutions": [
+        "720p"
+      ],
+      "ratios": [
+        "1:1",
+        "9:16",
+        "16:9"
+      ]
+    }
+  },
+  {
+    "id": "gpt-image-2-5-sunburst-1k",
+    "upstreamModel": "gpt-image-2-5-sunburst",
+    "imageFamily": "gpt-image-2-5-sunburst",
+    "name": "GPT Image 2.5 Sunburst（渠道1） 1K",
+    "kind": "image",
+    "limits": {
+      "maxImages": 4,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 5,
+        "max": 30,
+        "step": 1,
+        "values": []
+      },
+      "resolutions": [
+        "1K"
+      ],
+      "ratios": [
+        "1:1",
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:4",
+        "3:2",
+        "2:3",
+        "21:9"
+      ]
+    }
+  },
+  {
+    "id": "gpt-image-2-5-sunburst-2k",
+    "upstreamModel": "gpt-image-2-5-sunburst",
+    "imageFamily": "gpt-image-2-5-sunburst",
+    "name": "GPT Image 2.5 Sunburst（渠道1） 2K",
+    "kind": "image",
+    "limits": {
+      "maxImages": 4,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 5,
+        "max": 30,
+        "step": 1,
+        "values": []
+      },
+      "resolutions": [
+        "2K"
+      ],
+      "ratios": [
+        "1:1",
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:4",
+        "3:2",
+        "2:3",
+        "21:9"
+      ]
+    }
+  },
+  {
+    "id": "gpt-image-2-5-sunburst-4k",
+    "upstreamModel": "gpt-image-2-5-sunburst",
+    "imageFamily": "gpt-image-2-5-sunburst",
+    "name": "GPT Image 2.5 Sunburst（渠道1） 4K",
+    "kind": "image",
+    "limits": {
+      "maxImages": 4,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 5,
+        "max": 30,
+        "step": 1,
+        "values": []
+      },
+      "resolutions": [
+        "4K"
+      ],
+      "ratios": [
+        "1:1",
+        "16:9",
+        "9:16",
+        "4:3",
+        "3:4",
+        "3:2",
+        "2:3",
+        "21:9"
+      ]
     }
   }
 ];

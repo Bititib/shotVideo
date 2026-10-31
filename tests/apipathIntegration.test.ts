@@ -14,7 +14,7 @@ import * as referenceValidation from '../server/services/imageReferenceValidatio
 
 const key = 'private-apipath-key';
 let channelId: number, modelId: string;
-const discovery = () => Response.json({ data: [{ id: 'seedance-2.0-YZ' }, { id: 'gpt-image-2-5-flare' }] });
+const discovery = () => Response.json({ data: [{ id: 'seedance-2.0-YZ' }, { id: 'gpt-image-2-5-flare' }, ...['seedance2-5-特惠-1080p','Seedance-2.0-mini-480-GK','dola2.5','gpt-image-2-5-sunburst'].map(id=>({id}))] });
 const response = () => {
   const res: any = { headersSent: false, writableEnded: false, destroyed: false };
   res.status = vi.fn(code => { res.statusCode = code; return res; }); res.json = vi.fn(body => { res.body = body; return res; });
@@ -118,6 +118,63 @@ describe('通联 actual specification entry and isolated billing', () => {
     enable();vi.stubGlobal('fetch',vi.fn(async()=>Response.json({task_no:'accepted',status:'processing',error:{code:'upstream_error',message:'网关异常'}},{status:502})));
     await handleSpecificationGeneration(request(),response(),'video');const meta=JSON.parse(db.select().from(contents).all().at(-1)!.metadata);
     expect(meta).toMatchObject({videoId:'accepted',requiresReview:true});expect(db.select().from(users).all()[0].balance).toBe(98);expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['seedance2-5-特惠-1080p','1080p','9:16',5],['seedance2-5-特惠-1080p','1080p','16:9',30],
+    ...['1:1','9:16','16:9'].map(r=>['Seedance-2.0-mini-480-GK','480p',r,4]),
+    ...['1:1','9:16','16:9'].map(r=>['dola2.5','720p',r,15]),
+  ])('executes selected video %s %s %s %s without changing parameters',async (model,resolution,ratio,seconds)=>{
+    modelId=String(model);enable();vi.stubGlobal('fetch',vi.fn(async()=>Response.json({task_no:'selected',status:'completed',url:'https://cdn.example/video.mp4'})));
+    const res=response();await handleSpecificationGeneration(request({resolution,aspect_ratio:ratio,seconds}),res,'video');
+    expect(db.select().from(contents).all().at(-1),JSON.stringify(res.body)).toMatchObject({status:'completed',cost:2});
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toEqual({model,prompt:'海浪拍打礁石',count:1,duration:seconds,aspect_ratio:ratio,resolution});
+  });
+  it.each([
+    ['dola2.5','720p',6],['dola2.5','480p',5],['Seedance-2.0-mini-480-GK','720p',5],['seedance2-5-特惠-1080p','1080p',4],
+  ])('rejects unsupported video %s %s %s before charge',async(model,resolution,seconds)=>{
+    modelId=String(model);enable();vi.stubGlobal('fetch',vi.fn());const res=response();await handleSpecificationGeneration(request({resolution,seconds}),res,'video');
+    expect(res.statusCode).toBe(400);expect(fetch).not.toHaveBeenCalled();expect(db.select().from(contents).all()).toHaveLength(0);expect(db.select().from(users).all()[0].balance).toBe(100);
+  });
+  it.each([
+    ['1k','1:1','1024x1024'],['2k','1:1','2048x2048'],['4k','1:1','2880x2880'],
+    ['1k','16:9','1280x720'],['2k','16:9','2560x1440'],['4k','16:9','3840x2160'],
+    ['1k','9:16','720x1280'],['2k','9:16','1440x2560'],['4k','9:16','2160x3840'],
+    ['4k','21:9','3696x1584'],
+  ])('maps Sunburst %s %s to the documented size %s',async(tier,ratio,size)=>{
+    modelId='gpt-image-2-5-sunburst-'+tier;enable();vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{url:'https://cdn.example/image.png'}]})));
+    const res=response();await handleSpecificationGeneration(request({resolution:tier,aspect_ratio:ratio}),res,'image');
+    expect(db.select().from(contents).all().at(-1),JSON.stringify(res.body)).toMatchObject({status:'completed',cost:2});
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body))).toMatchObject({model:'gpt-image-2-5-sunburst',size,aspect_ratio:ratio});
+    expect(getModelSpecification(modelId)?.imageFamily).toBe('gpt-image-2-5-sunburst');
+  });
+  it('preserves four edit references and applies 4K dimensions to multipart',async()=>{
+    modelId='gpt-image-2-5-sunburst-4k';enable();const images=Array(4).fill('data:image/png;base64,aGVsbG8=');const validation=vi.spyOn(referenceValidation,'validateAndNormalizeImageReferences').mockResolvedValue(images);
+    vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{url:'https://cdn.example/edited.png'}]})));
+    try{await handleSpecificationGeneration(request({resolution:'4K',reference_images:images}),response(),'image');const form=vi.mocked(fetch).mock.calls[0][1]?.body as FormData;
+      expect(form.get('model')).toBe('gpt-image-2-5-sunburst');expect(form.get('size')).toBe('2160x3840');expect(form.getAll('image[]')).toHaveLength(4);
+      expect(db.select().from(contents).all().at(-1)?.status).toBe('completed');
+    }finally{validation.mockRestore();}
+  });
+  it.each([{size:'1024x1024',aspect_ratio:'1:1'},{resolution:'1K'},{reference_images:Array(5).fill('https://cdn.example/ref.png')}])('rejects conflicting Sunburst request before charge: %j',async body=>{
+    modelId='gpt-image-2-5-sunburst-4k';enable();vi.stubGlobal('fetch',vi.fn());const res=response();await handleSpecificationGeneration(request({resolution:'4K',...body}),res,'image');expect(res.statusCode).toBe(400);expect(fetch).not.toHaveBeenCalled();expect(db.select().from(users).all()[0].balance).toBe(100);
+  });
+  it('syncs three Sunburst specifications from one upstream ID without replacing prices or switches',async()=>{
+    modelId='gpt-image-2-5-sunburst-2k';enable();const spec=getModelSpecification(modelId)!;spec.enabled=false;spec.routes[0].limits.maxImages=2;saveModelSpecification(spec);await ChannelService.syncModels(channelId);
+    expect(getModelSpecification(modelId)).toMatchObject({enabled:false,routes:[{limits:{maxImages:2}}]});expect(db.select().from(modelPricing).all()[0].inputPrice).toBe(2);
+    const mapping=JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping);for(const tier of ['1k','2k','4k'])expect(mapping['gpt-image-2-5-sunburst-'+tier]).toBe('gpt-image-2-5-sunburst');
+  });
+
+  it('uses separate image and video keys and preserves their channel bindings',async()=>{
+    const imageKey='private-image-only-key';
+    const imageChannel=ChannelService.createChannel({name:'通联图片',type:'apipath',baseUrl:'https://provider.invalid',apiKey:imageKey});
+    vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{id:'gpt-image-2-5-sunburst'}]})));await ChannelService.syncModels(imageChannel);
+    ChannelService.updateChannel(channelId,{supportedModels:['dola2.5']});
+    const calls:any[]=[];vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{calls.push([url,init]);return Response.json(String(url).includes('/images/')?{data:[{url:'https://cdn.example/image.png'}]}:{task_no:'split',status:'completed',url:'https://cdn.example/video.mp4'});}));
+    modelId='dola2.5';enable();await handleSpecificationGeneration(request({seconds:5}),response(),'video');
+    modelId='gpt-image-2-5-sunburst-2k';enable();await handleSpecificationGeneration(request({resolution:'2K'}),response(),'image');
+    expect(calls[0][1].headers.Authorization).toBe('Bearer '+key);expect(calls[1][1].headers.Authorization).toBe('Bearer '+imageKey);
+    expect(db.select().from(contents).all().map(x=>JSON.parse(x.metadata).channelId)).toEqual([channelId,imageChannel]);
   });
 
 });
