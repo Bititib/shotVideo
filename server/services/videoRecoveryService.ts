@@ -1,3 +1,4 @@
+import { isApipathChannel, pollApipathVideo } from './apipathAdapter.js';
 import { isMegabyChannel, megabyTaskUrl, normalizeMegabyTask, readMegabyJson } from './megabyVideoAdapter.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL } from '../../shared/siYueTianMinimax.js';
 import { normalizeSiYueTianMinimaxTask } from './siYueTianMinimaxAdapter.js';
@@ -315,6 +316,15 @@ export class VideoRecoveryService {
       throw { status: 503, message: '原任务渠道当前不可用' };
     }
 
+    if (isApipathChannel(channel)) {
+      const receipt = metadata.apipathCompletedReceipt;
+      const task = receipt?.taskId === videoId && receipt.resultUrl
+        ? { status: 'completed', progress: 100, resultUrl: receipt.resultUrl, error: '' }
+        : await pollApipathVideo(channel, videoId);
+      return { status: task.status === 'completed' ? 'completed' : task.status === 'failed' ? 'failed' : 'processing',
+        message: task.error || '通联原任务状态：' + task.status, progress: task.progress,
+        upstreamResultUrl: task.resultUrl, videoId, channelId: channel.id, channelApiKeyId: Number(channel.apiKeyId) || null } as any;
+    }
     const siYueTianMinimax = (metadata.actualModel || record.modelId) === SI_YUE_TIAN_MINIMAX_MODEL;
     const completedReceipt = siYueTianMinimax ? metadata.siYueTianMinimaxCompletedReceipt : metadata.megabyCompletedReceipt;
     if ((isMegabyChannel(channel) || siYueTianMinimax) && completedReceipt?.taskId === videoId && completedReceipt.resultUrl) {

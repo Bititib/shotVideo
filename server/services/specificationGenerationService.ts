@@ -1,3 +1,4 @@
+import { isApipathChannel, normalizeApipathVideo } from './apipathAdapter.js';
 import { isHussHssModel } from '../../shared/hussBbVideo.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { activeSpecificationTasks } from './videoRecoveryAction.js';
@@ -245,7 +246,12 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
           ? { taskId, resultUrl: hussMeta.upstreamResultUrl } : null) : null;
       const siYueTianReceipt = metadata(id).actualModel === SI_YUE_TIAN_MINIMAX_MODEL ? metadata(id).siYueTianMinimaxCompletedReceipt : null;
       const completedReceipt = hussReceipt || metadata(id).megabyCompletedReceipt || siYueTianReceipt;
-      if (hussInitial?.status === 'completed' && hussInitial?.url) {
+      const apipathMeta = metadata(id);
+      if (isApipathChannel(channel) && apipathMeta.apipathCompletedReceipt?.taskId === taskId) {
+        task = { status: 'completed', progress: 100, resultUrl: apipathMeta.apipathCompletedReceipt.resultUrl }; localCompletion = true;
+      } else if (isApipathChannel(channel) && ['completed', 'failed'].includes(apipathMeta.apipathInitialTask?.status)) {
+        task = normalizeApipathVideo(apipathMeta.apipathInitialTask, channel, taskId); patch(id, { apipathInitialTask: null });
+      } else if (hussInitial?.status === 'completed' && hussInitial?.url) {
         localCompletion = true;
         task = normalizeHussTask(hussInitial, channel.baseUrl, taskId);
         patch(id, { hussInitialTask: null });
@@ -301,6 +307,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
           ...(metadata(id).snumomReferenceBilling && task.billingUsage ? { upstreamBillingUsage:task.billingUsage } : {}),
           ...(metadata(id).actualModel === SI_YUE_TIAN_MINIMAX_MODEL ? { siYueTianMinimaxCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}),
           ...(isHussChannel(channel) ? { hussCompletedReceipt: { taskId, resultUrl: task.resultUrl }, upstreamGenerated: true, upstreamDeliveryPending: true } : {}),
+          ...(isApipathChannel(channel) ? { apipathCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}),
           ...(isMegabyChannel(channel) ? { megabyCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}) });
         const { downloadAndLocalizeVideo } = await import('./videoLocalizationService.js');
         localized = await downloadAndLocalizeVideo(task.resultUrl, taskId, metadata(id).actualModel, channel.id, channel.apiKeyId);
@@ -381,9 +388,10 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
             try { claimVideoSubmission(id, target.channel.timeout || 120_000); claimed = true; }
             catch (error: any) { throw new SpecificationUpstreamError(error.message, false, true); }
           }
-          if (isZonghengChannel(target.channel) && typeof submissionMetadata?.videoId === 'string') {
+          if ((isZonghengChannel(target.channel) || isApipathChannel(target.channel)) && typeof submissionMetadata?.videoId === 'string') {
             taskId = submissionMetadata.videoId;
-            acceptZonghengVideoReceipt(id, taskId, { channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId });
+            if (isApipathChannel(target.channel)) acceptVideoSubmission(id, taskId, { provider: 'apipath', channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId });
+            else acceptZonghengVideoReceipt(id, taskId, { channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId });
           }
           patch(id, { ...submissionMetadata, submissionStartedAt: new Date().toISOString() });
           dispatchPrepared = true;

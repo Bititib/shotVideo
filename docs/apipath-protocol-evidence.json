@@ -1,0 +1,3895 @@
+{
+  "source": "https://online.apipath.top/api/api-docs",
+  "retrieved": "2026-10-31",
+  "models": [
+    {
+      "model_code": "gpt-image-2-5-flare",
+      "model_name": "GPT Image 2.5 Flare（渠道1）",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-5-flare",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-5-flare",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-5-flare",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-5-flare",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-5-flare",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-5-flare",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2-21",
+      "model_name": "GPT Image 2（渠道2）",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-21",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-21",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-21",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-21",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-21",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-21",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "seedance-2.0-YZ",
+      "model_name": "seedance-2.0-YZ",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：seedance-2.0-YZ",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "同时兼容 Sora / OpenAI 视频字段 seconds、size、input、input_reference，平台会在校验前自动转换，无需下游改参数。",
+          "创建任务有两个等价入口：POST /v1/video/generations（平台/新API 任务契约）与 POST /v1/videos（OpenAI Sora 契约）。",
+          "轮询用 GET /v1/video/generations/{task_no}，也兼容 GET /v1/tasks/{task_no}。",
+          "取成品优先用返回的 url 字段（对象存储直链）；/content 端点会经服务器中转，速度慢，仅作兜底。"
+        ],
+        "operation_id": "seedance-2.0-YZ",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 seedance-2.0-YZ",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "视频生成提示词；是否必填由当前模板形态决定",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "maximum": 1,
+            "name": "count",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "视频时长（秒），当前模型支持 4-15",
+            "maximum": 15,
+            "minimum": 4,
+            "name": "duration",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "视频时长（秒），当前模型支持 4-15",
+            "maximum": 15,
+            "minimum": 4,
+            "name": "duration_seconds",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "视频时长（秒），当前模型支持 4-15",
+            "maximum": 15,
+            "minimum": 4,
+            "name": "seconds",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "宽x高，例如 1280x720；平台自动换算为画面比例与清晰度（当前模型档位：480p / 720p / 1080p）",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "480P",
+            "description": "清晰度档位，当前模型支持 480p / 720p / 1080p",
+            "enum": [
+              "480p",
+              "720p",
+              "1080p"
+            ],
+            "name": "resolution",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "prompt 的兼容别名（OpenAI 视频接口写法）",
+            "name": "input",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "reference_images 的兼容别名",
+            "name": "input_reference",
+            "required": false,
+            "type": "string[]"
+          },
+          {
+            "description": "画面方向，例如 portrait / landscape",
+            "name": "orientation",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "画面比例，当前模型支持 1:1 / 3:4 / 4:3 / 4:5 / 5:4 / 9:16 / 9:21 / 16:9 / 21:9；ratio 是它的兼容别名，二选一即可",
+            "enum": [
+              "1:1",
+              "3:4",
+              "4:3",
+              "4:5",
+              "5:4",
+              "9:16",
+              "9:21",
+              "16:9",
+              "21:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "兼容素材别名：首帧模板映射到 first_frame，参考图模板映射到 reference_images",
+            "name": "image",
+            "required": false,
+            "type": "string|string[]"
+          },
+          {
+            "description": "首帧图片 URL；first_frame_image 为兼容别名",
+            "name": "first_frame",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "尾帧图片 URL；last_frame_image 为兼容别名",
+            "name": "last_frame",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "参考图片 URL 数组",
+            "name": "reference_images",
+            "required": false,
+            "type": "string[]"
+          },
+          {
+            "description": "参考视频 URL 数组",
+            "name": "reference_videos",
+            "required": false,
+            "type": "string[]"
+          },
+          {
+            "description": "参考音频 URL 数组",
+            "name": "reference_audios",
+            "required": false,
+            "type": "string[]"
+          }
+        ],
+        "polling": {
+          "alternate": "/v1/tasks/{task_no}",
+          "endpoint": "/v1/video/generations/{task_no}",
+          "events": "/v1/tasks/{task_no}/events",
+          "method": "GET",
+          "notes": "status=completed 时读 url（对象存储永久地址）；status=failed 时读 error.message。"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_endpoints": [
+          "/v1/video/generations",
+          "/v1/videos"
+        ],
+        "request_example": {
+          "count": 1,
+          "duration": 5,
+          "model": "seedance-2.0-YZ",
+          "prompt": "生成一段商品展示短视频，突出产品质感、卖点和镜头推进",
+          "resolution": "480P"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created_at": "2026-01-01T00:00:00Z",
+          "id": "task_xxx",
+          "object": "video",
+          "poll_url": "/v1/video/generations/task_xxx",
+          "progress": 0,
+          "status": "queued",
+          "task_id": "task_xxx",
+          "task_no": "task_xxx"
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "seedance-2.0-YZ",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "video"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "video",
+          "endpoint": "/v1/video/generations",
+          "method": "POST",
+          "model": "seedance-2.0-YZ",
+          "requestMode": "video"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "seedance-2.0-Fast-YZ",
+      "model_name": "seedance-2.0-Fast-YZ",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：seedance-2.0-Fast-YZ",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "同时兼容 Sora / OpenAI 视频字段 seconds、size、input、input_reference，平台会在校验前自动转换，无需下游改参数。",
+          "创建任务有两个等价入口：POST /v1/video/generations（平台/新API 任务契约）与 POST /v1/videos（OpenAI Sora 契约）。",
+          "轮询用 GET /v1/video/generations/{task_no}，也兼容 GET /v1/tasks/{task_no}。",
+          "取成品优先用返回的 url 字段（对象存储直链）；/content 端点会经服务器中转，速度慢，仅作兜底。"
+        ],
+        "operation_id": "seedance-2.0-Fast-YZ",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 seedance-2.0-Fast-YZ",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "视频生成提示词；是否必填由当前模板形态决定",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "maximum": 1,
+            "name": "count",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "视频时长（秒），当前模型支持 4-15",
+            "maximum": 15,
+            "minimum": 4,
+            "name": "duration",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "视频时长（秒），当前模型支持 4-15",
+            "maximum": 15,
+            "minimum": 4,
+            "name": "duration_seconds",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "视频时长（秒），当前模型支持 4-15",
+            "maximum": 15,
+            "minimum": 4,
+            "name": "seconds",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "宽x高，例如 1280x720；平台自动换算为画面比例与清晰度（当前模型档位：480p / 720p）",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "480P",
+            "description": "清晰度档位，当前模型支持 480p / 720p",
+            "enum": [
+              "480p",
+              "720p"
+            ],
+            "name": "resolution",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "prompt 的兼容别名（OpenAI 视频接口写法）",
+            "name": "input",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "reference_images 的兼容别名",
+            "name": "input_reference",
+            "required": false,
+            "type": "string[]"
+          },
+          {
+            "description": "画面方向，例如 portrait / landscape",
+            "name": "orientation",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "画面比例，当前模型支持 1:1 / 3:4 / 4:3 / 4:5 / 5:4 / 9:16 / 9:21 / 16:9 / 21:9；ratio 是它的兼容别名，二选一即可",
+            "enum": [
+              "1:1",
+              "3:4",
+              "4:3",
+              "4:5",
+              "5:4",
+              "9:16",
+              "9:21",
+              "16:9",
+              "21:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "兼容素材别名：首帧模板映射到 first_frame，参考图模板映射到 reference_images",
+            "name": "image",
+            "required": false,
+            "type": "string|string[]"
+          },
+          {
+            "description": "首帧图片 URL；first_frame_image 为兼容别名",
+            "name": "first_frame",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "尾帧图片 URL；last_frame_image 为兼容别名",
+            "name": "last_frame",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "参考图片 URL 数组",
+            "name": "reference_images",
+            "required": false,
+            "type": "string[]"
+          },
+          {
+            "description": "参考视频 URL 数组",
+            "name": "reference_videos",
+            "required": false,
+            "type": "string[]"
+          },
+          {
+            "description": "参考音频 URL 数组",
+            "name": "reference_audios",
+            "required": false,
+            "type": "string[]"
+          }
+        ],
+        "polling": {
+          "alternate": "/v1/tasks/{task_no}",
+          "endpoint": "/v1/video/generations/{task_no}",
+          "events": "/v1/tasks/{task_no}/events",
+          "method": "GET",
+          "notes": "status=completed 时读 url（对象存储永久地址）；status=failed 时读 error.message。"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_endpoints": [
+          "/v1/video/generations",
+          "/v1/videos"
+        ],
+        "request_example": {
+          "count": 1,
+          "duration": 5,
+          "model": "seedance-2.0-Fast-YZ",
+          "prompt": "生成一段商品展示短视频，突出产品质感、卖点和镜头推进",
+          "resolution": "480P"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created_at": "2026-01-01T00:00:00Z",
+          "id": "task_xxx",
+          "object": "video",
+          "poll_url": "/v1/video/generations/task_xxx",
+          "progress": 0,
+          "status": "queued",
+          "task_id": "task_xxx",
+          "task_no": "task_xxx"
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "seedance-2.0-Fast-YZ",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "video"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "video",
+          "endpoint": "/v1/video/generations",
+          "method": "POST",
+          "model": "seedance-2.0-Fast-YZ",
+          "requestMode": "video"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "seedance-2-0-mini",
+      "model_name": "Seedance 2.0 Mini",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：seedance-2-0-mini",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "同时兼容 Sora / OpenAI 视频字段 seconds、size、input、input_reference，平台会在校验前自动转换，无需下游改参数。",
+          "创建任务有两个等价入口：POST /v1/video/generations（平台/新API 任务契约）与 POST /v1/videos（OpenAI Sora 契约）。",
+          "轮询用 GET /v1/video/generations/{task_no}，也兼容 GET /v1/tasks/{task_no}。",
+          "取成品优先用返回的 url 字段（对象存储直链）；/content 端点会经服务器中转，速度慢，仅作兜底。"
+        ],
+        "operation_id": "seedance-2-0-mini",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 seedance-2-0-mini",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "视频生成提示词；是否必填由当前模板形态决定",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "maximum": 1,
+            "name": "count",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "视频时长（秒），当前模型支持 4-15",
+            "maximum": 15,
+            "minimum": 4,
+            "name": "duration",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "视频时长（秒），当前模型支持 4-15",
+            "maximum": 15,
+            "minimum": 4,
+            "name": "duration_seconds",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "视频时长（秒），当前模型支持 4-15",
+            "maximum": 15,
+            "minimum": 4,
+            "name": "seconds",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "宽x高，例如 1280x720；平台自动换算为画面比例与清晰度（当前模型档位：480p / 720p）",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "480P",
+            "description": "清晰度档位，当前模型支持 480p / 720p",
+            "enum": [
+              "480p",
+              "720p"
+            ],
+            "name": "resolution",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "prompt 的兼容别名（OpenAI 视频接口写法）",
+            "name": "input",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "reference_images 的兼容别名",
+            "name": "input_reference",
+            "required": false,
+            "type": "string[]"
+          },
+          {
+            "description": "画面方向，例如 portrait / landscape",
+            "name": "orientation",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "画面比例，当前模型支持 1:1 / 3:4 / 4:3 / 4:5 / 5:4 / 9:16 / 9:21 / 16:9 / 21:9；ratio 是它的兼容别名，二选一即可",
+            "enum": [
+              "1:1",
+              "3:4",
+              "4:3",
+              "4:5",
+              "5:4",
+              "9:16",
+              "9:21",
+              "16:9",
+              "21:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "兼容素材别名：首帧模板映射到 first_frame，参考图模板映射到 reference_images",
+            "name": "image",
+            "required": false,
+            "type": "string|string[]"
+          },
+          {
+            "description": "首帧图片 URL；first_frame_image 为兼容别名",
+            "name": "first_frame",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "尾帧图片 URL；last_frame_image 为兼容别名",
+            "name": "last_frame",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "参考图片 URL 数组",
+            "name": "reference_images",
+            "required": false,
+            "type": "string[]"
+          },
+          {
+            "description": "参考视频 URL 数组",
+            "name": "reference_videos",
+            "required": false,
+            "type": "string[]"
+          },
+          {
+            "description": "参考音频 URL 数组",
+            "name": "reference_audios",
+            "required": false,
+            "type": "string[]"
+          }
+        ],
+        "polling": {
+          "alternate": "/v1/tasks/{task_no}",
+          "endpoint": "/v1/video/generations/{task_no}",
+          "events": "/v1/tasks/{task_no}/events",
+          "method": "GET",
+          "notes": "status=completed 时读 url（对象存储永久地址）；status=failed 时读 error.message。"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_endpoints": [
+          "/v1/video/generations",
+          "/v1/videos"
+        ],
+        "request_example": {
+          "count": 1,
+          "duration": 5,
+          "model": "seedance-2-0-mini",
+          "prompt": "生成一段商品展示短视频，突出产品质感、卖点和镜头推进",
+          "resolution": "480P"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created_at": "2026-01-01T00:00:00Z",
+          "id": "task_xxx",
+          "object": "video",
+          "poll_url": "/v1/video/generations/task_xxx",
+          "progress": 0,
+          "status": "queued",
+          "task_id": "task_xxx",
+          "task_no": "task_xxx"
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "seedance-2-0-mini",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "video"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "video",
+          "endpoint": "/v1/video/generations",
+          "method": "POST",
+          "model": "seedance-2-0-mini",
+          "requestMode": "video"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2",
+      "model_name": "GPT Image 2（渠道1）",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2-5-sunburst",
+      "model_name": "GPT Image 2.5 Sunburst（渠道1）",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-5-sunburst",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-5-sunburst",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-5-sunburst",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-5-sunburst",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-5-sunburst",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-5-sunburst",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2（渠道2）",
+      "model_name": "GPT Image 2（渠道2）",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2（渠道2）",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2（渠道2）",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2（渠道2）",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2（渠道2）",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2（渠道2）",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2（渠道2）",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2-cdn（渠道2）",
+      "model_name": "GPT Image 2 Cdn（渠道2）",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-cdn（渠道2）",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-cdn（渠道2）",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-cdn（渠道2）",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-cdn（渠道2）",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-cdn（渠道2）",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-cdn（渠道2）",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2-5（渠道2）",
+      "model_name": "GPT Image 2.5（渠道2）",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-5（渠道2）",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-5（渠道2）",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-5（渠道2）",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-5（渠道2）",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-5（渠道2）",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-5（渠道2）",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2-5-cdn（渠道2）",
+      "model_name": "GPT Image 2.5 Cdn（渠道2）",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-5-cdn（渠道2）",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-5-cdn（渠道2）",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-5-cdn（渠道2）",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-5-cdn（渠道2）",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-5-cdn（渠道2）",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-5-cdn（渠道2）",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2-5-flare（渠道2）",
+      "model_name": "GPT Image 2.5 Flare（渠道2）",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-5-flare（渠道2）",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-5-flare（渠道2）",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-5-flare（渠道2）",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-5-flare（渠道2）",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-5-flare（渠道2）",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-5-flare（渠道2）",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2-5-flare-cdn（渠道2）",
+      "model_name": "GPT Image 2.5 Flare Cdn（渠道2）",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-5-flare-cdn（渠道2）",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-5-flare-cdn（渠道2）",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-5-flare-cdn（渠道2）",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-5-flare-cdn（渠道2）",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-5-flare-cdn（渠道2）",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-5-flare-cdn（渠道2）",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2-5-sunburst（渠道2）",
+      "model_name": "GPT Image 2.5 Sunburst（渠道2）",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-5-sunburst（渠道2）",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-5-sunburst（渠道2）",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-5-sunburst（渠道2）",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-5-sunburst（渠道2）",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-5-sunburst（渠道2）",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-5-sunburst（渠道2）",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2-5-sunburst-cdn（渠道2）",
+      "model_name": "GPT Image 2.5 Sunburst Cdn（渠道2）",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-5-sunburst-cdn（渠道2）",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-5-sunburst-cdn（渠道2）",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-5-sunburst-cdn（渠道2）",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-5-sunburst-cdn（渠道2）",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-5-sunburst-cdn（渠道2）",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-5-sunburst-cdn（渠道2）",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2-4k（渠道2）",
+      "model_name": "GPT Image 2 4k 超分（渠道2）",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-4k（渠道2）",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-4k（渠道2）",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-4k（渠道2）",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-4k（渠道2）",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-4k（渠道2）",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-4k（渠道2）",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2-5-flare-4k（渠道2）",
+      "model_name": "GPT Image 2.5 Flare 4K超分（渠道2）",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-5-flare-4k（渠道2）",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-5-flare-4k（渠道2）",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-5-flare-4k（渠道2）",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-5-flare-4k（渠道2）",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-5-flare-4k（渠道2）",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-5-flare-4k（渠道2）",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2-5-sunburst-4k（渠道2）",
+      "model_name": "GPT Image 2.5 Sunburst 4K超分（渠道2）",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-5-sunburst-4k（渠道2）",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-5-sunburst-4k（渠道2）",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-5-sunburst-4k（渠道2）",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-5-sunburst-4k（渠道2）",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-5-sunburst-4k（渠道2）",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-5-sunburst-4k（渠道2）",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2-adobe",
+      "model_name": "GPT Image 2 Adobe 全质量",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-adobe",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-adobe",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-adobe",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-adobe",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-adobe",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-adobe",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2-5-flare-adobe",
+      "model_name": "GPT Image 2.5 Flare Adobe 全质量",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-5-flare-adobe",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-5-flare-adobe",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-5-flare-adobe",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-5-flare-adobe",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-5-flare-adobe",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-5-flare-adobe",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    },
+    {
+      "model_code": "gpt-image-2-5-sunburst-adobe",
+      "model_name": "GPT Image 2.5 Sunburst Adobe 全质量",
+      "content": {
+        "async": true,
+        "auto_generated": true,
+        "default_mode": "sync",
+        "deprecated": false,
+        "features": [
+          "统一 API Key",
+          "平台模型编码",
+          "标准 JSON 响应"
+        ],
+        "http_status": 200,
+        "idempotency": {
+          "header": "Idempotency-Key",
+          "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+          "supported": false
+        },
+        "notes": [
+          "Authorization 使用平台 API Key，而不是上游供应商 Key。",
+          "model 字段填写平台模型编码：gpt-image-2-5-sunburst-adobe",
+          "计费、限流和路由以平台后台模型配置为准。",
+          "默认同步返回：请求完成后直接给 {created,data:[{url}]}，url 是对象存储永久地址。",
+          "需要异步任务时传 response_format=\"async\"，返回 task_no，再轮询 /v1/tasks/{task_no}。"
+        ],
+        "operation_id": "gpt-image-2-5-sunburst-adobe",
+        "parameters": [
+          {
+            "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-5-sunburst-adobe",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "生成或编辑指令",
+            "name": "prompt",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+            "name": "image",
+            "required": false,
+            "type": "file|file[]"
+          },
+          {
+            "description": "生成数量，默认 1",
+            "name": "n",
+            "required": false,
+            "type": "integer"
+          },
+          {
+            "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+            "name": "size",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "生成质量",
+            "enum": [
+              "auto",
+              "low",
+              "medium",
+              "high"
+            ],
+            "name": "quality",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "default": "auto",
+            "description": "图片比例",
+            "enum": [
+              "auto",
+              "1:1",
+              "2:3",
+              "3:2",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9"
+            ],
+            "name": "aspect_ratio",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "polling": {
+          "endpoint": "/v1/tasks/{task_no}",
+          "method": "GET",
+          "notes": "默认同步返回 {created,data:[{url}]}，url 为对象存储永久地址，无需轮询。",
+          "when": "仅当请求体传 response_format=\"async\" 时需要"
+        },
+        "rate_limit": {
+          "policy": "按用户和 API Key 限流",
+          "requests_per_minute": 120
+        },
+        "request_content_type": "application/json",
+        "request_example": {
+          "aspect_ratio": "auto",
+          "model": "gpt-image-2-5-sunburst-adobe",
+          "n": 1,
+          "prompt": "为产品生成一张高级质感的真实摄影图",
+          "quality": "auto",
+          "size": "1024x1024"
+        },
+        "response_content_type": "application/json",
+        "response_example": {
+          "created": 1793411865,
+          "data": [
+            {
+              "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+            }
+          ]
+        },
+        "response_status": 200,
+        "responses": {
+          "200": {
+            "body": {
+              "created_at": "2026-01-01T00:00:00Z",
+              "estimated_cost": 1,
+              "model_code": "gpt-image-2-5-sunburst-adobe",
+              "poll_url": "/v1/tasks/task_xxx",
+              "status": "pending",
+              "task_no": "task_xxx",
+              "type": "image"
+            },
+            "description": "请求成功"
+          },
+          "400": {
+            "body": {
+              "error": {
+                "code": "invalid_request_error",
+                "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                "type": "invalid_request_error"
+              }
+            },
+            "description": "请求参数错误，例如 model 不存在或未启用"
+          },
+          "401": {
+            "body": {
+              "error": {
+                "code": "invalid_api_key",
+                "message": "API Key 无效或已停用",
+                "type": "invalid_api_key"
+              }
+            },
+            "description": "API Key 无效或已停用"
+          },
+          "502": {
+            "body": {
+              "error": {
+                "code": "upstream_error",
+                "message": "模型服务异常",
+                "type": "upstream_error"
+              }
+            },
+            "description": "上游模型服务异常"
+          }
+        },
+        "standard": {
+          "category": "image",
+          "endpoint": "/v1/images/generations",
+          "method": "POST",
+          "model": "gpt-image-2-5-sunburst-adobe",
+          "requestMode": "images"
+        },
+        "status_code": 200,
+        "streaming": false,
+        "version": "v1"
+      }
+    }
+  ]
+}

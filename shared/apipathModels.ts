@@ -1,0 +1,836 @@
+import type { ModelInputLimits } from './modelRouting.js';
+// Provider snapshot 2026-10-31. Image count 1 is a local limit, not a provider maximum.
+export const APIPATH_MODELS: {id: string; name: string; kind: 'image' | 'video'; limits: ModelInputLimits}[] = [
+  {
+    "id": "gpt-image-2-5-flare",
+    "name": "GPT Image 2.5 Flare（渠道1）",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2-21",
+    "name": "GPT Image 2（渠道2）",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "seedance-2.0-YZ",
+    "name": "seedance-2.0-YZ",
+    "kind": "video",
+    "limits": {
+      "maxImages": 9,
+      "maxVideos": 3,
+      "maxAudios": 3,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "480p",
+        "720p",
+        "1080p"
+      ],
+      "ratios": [
+        "1:1",
+        "3:4",
+        "4:3",
+        "4:5",
+        "5:4",
+        "9:16",
+        "9:21",
+        "16:9",
+        "21:9"
+      ],
+      "qualities": [],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "seedance-2.0-Fast-YZ",
+    "name": "seedance-2.0-Fast-YZ",
+    "kind": "video",
+    "limits": {
+      "maxImages": 9,
+      "maxVideos": 3,
+      "maxAudios": 3,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "480p",
+        "720p"
+      ],
+      "ratios": [
+        "1:1",
+        "3:4",
+        "4:3",
+        "4:5",
+        "5:4",
+        "9:16",
+        "9:21",
+        "16:9",
+        "21:9"
+      ],
+      "qualities": [],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "seedance-2-0-mini",
+    "name": "Seedance 2.0 Mini",
+    "kind": "video",
+    "limits": {
+      "maxImages": 9,
+      "maxVideos": 3,
+      "maxAudios": 3,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "480p",
+        "720p"
+      ],
+      "ratios": [
+        "1:1",
+        "3:4",
+        "4:3",
+        "4:5",
+        "5:4",
+        "9:16",
+        "9:21",
+        "16:9",
+        "21:9"
+      ],
+      "qualities": [],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2",
+    "name": "GPT Image 2（渠道1）",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2-5-sunburst",
+    "name": "GPT Image 2.5 Sunburst（渠道1）",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2（渠道2）",
+    "name": "GPT Image 2（渠道2）",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2-cdn（渠道2）",
+    "name": "GPT Image 2 Cdn（渠道2）",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2-5（渠道2）",
+    "name": "GPT Image 2.5（渠道2）",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2-5-cdn（渠道2）",
+    "name": "GPT Image 2.5 Cdn（渠道2）",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2-5-flare（渠道2）",
+    "name": "GPT Image 2.5 Flare（渠道2）",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2-5-flare-cdn（渠道2）",
+    "name": "GPT Image 2.5 Flare Cdn（渠道2）",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2-5-sunburst（渠道2）",
+    "name": "GPT Image 2.5 Sunburst（渠道2）",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2-5-sunburst-cdn（渠道2）",
+    "name": "GPT Image 2.5 Sunburst Cdn（渠道2）",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2-4k（渠道2）",
+    "name": "GPT Image 2 4k 超分（渠道2）",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2-5-flare-4k（渠道2）",
+    "name": "GPT Image 2.5 Flare 4K超分（渠道2）",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2-5-sunburst-4k（渠道2）",
+    "name": "GPT Image 2.5 Sunburst 4K超分（渠道2）",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2-adobe",
+    "name": "GPT Image 2 Adobe 全质量",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2-5-flare-adobe",
+    "name": "GPT Image 2.5 Flare Adobe 全质量",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  },
+  {
+    "id": "gpt-image-2-5-sunburst-adobe",
+    "name": "GPT Image 2.5 Sunburst Adobe 全质量",
+    "kind": "image",
+    "limits": {
+      "maxImages": 1,
+      "maxVideos": 0,
+      "maxAudios": 0,
+      "maxOutputs": 1,
+      "minImages": 0,
+      "firstFrame": false,
+      "lastFrame": false,
+      "resolutions": [
+        "default"
+      ],
+      "ratios": [
+        "auto",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "9:16",
+        "16:9"
+      ],
+      "qualities": [
+        "auto",
+        "low",
+        "medium",
+        "high"
+      ],
+      "duration": {
+        "mode": "range",
+        "min": 4,
+        "max": 15,
+        "step": 1,
+        "values": []
+      }
+    }
+  }
+];

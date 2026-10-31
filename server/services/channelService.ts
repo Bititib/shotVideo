@@ -1,3 +1,4 @@
+import { isApipathChannel, apipathBase, apipathRequest } from './apipathAdapter.js';
 import { isMegabyChannel, megabyBaseUrl, fetchMegabyVideoModels } from './megabyVideoAdapter.js';
 import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
 import { isRetiredVideoModel } from '../../shared/retiredVideoModels.js';
@@ -390,6 +391,7 @@ export class ChannelService {
 
   static createChannel(data: any) {
     let { name, type, baseUrl, apiKey, modelMapping, supportedModels, priority, weight, maxRetries, timeout } = data;
+    if (type === 'apipath') { baseUrl = apipathBase(baseUrl || 'https://online.apipath.top'); maxRetries = 0; }
     if (type === 'blobdraw') {
       const alreadyHuss = isHussChannel({ baseUrl });
       type = HUSS_CHANNEL_TYPE;
@@ -525,6 +527,7 @@ export class ChannelService {
     }
     updates.updatedAt = new Date().toISOString();
 
+    if (nextType === 'apipath') { updates.maxRetries = 0; updates.baseUrl = apipathBase(String(data.baseUrl ?? channel.baseUrl)); }
     if (nextType === 'hmstudio') {
       if (Array.isArray(data.apiKeys)) {
         saveHmStudioKeys(id, data.apiKeys, true);
@@ -549,6 +552,13 @@ export class ChannelService {
 
     const start = Date.now();
     try {
+      if (isApipathChannel(channel)) {
+        const raw = await apipathRequest(channel, '/v1/models');
+        if (!Array.isArray(raw?.data)) throw new Error('通联模型目录格式无效');
+        const message = '通联连接成功，可用模型 ' + raw.data.length + ' 个';
+        db.update(channels).set({ lastTestAt: new Date().toISOString(), lastTestResult: message }).where(eq(channels.id, id)).run();
+        return { success: true, message, durationMs: Date.now() - start };
+      }
       if (isMegabyChannel(channel) || isMjChannel(channel) || isAsyncVideoChannel(channel) || isHussChannel(channel) || isFunAiChannel(channel)) {
         let catalogSummary = '';
         if (isMegabyChannel(channel)) {
@@ -613,6 +623,7 @@ export class ChannelService {
     if (!channel) throw { status: 404, message: '渠道不存在' };
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
 
+    if (isApipathChannel(channel)) return (await import('./apipathCatalogService.js')).syncApipathModels(channel);
     // Pidoi's /v1/models endpoint is a general catalog and currently returns video
     // products for the same account. This channel is deliberately image-only; a
     // generic replacement would remove gpt-image-2 and disable image generation.
