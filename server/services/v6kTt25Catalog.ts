@@ -41,7 +41,7 @@ export function v6kTt25SaleId(sqlite: Database.Database, upstreamId: string): st
   return upstreamId;
 }
 
-/** Apply this explicit pricing request once; subsequent restarts preserve administrator edits. */
+/** Initialize only missing defaults; existing prices are authoritative, including on first sync. */
 export function ensureV6kTt25Models(sqlite: Database.Database) {
   return sqlite.transaction(() => {
     const applied = read<PriceMigration>(sqlite, PRICE_KEY, {}), specs = read<ModelSpecification[]>(sqlite, CONFIG_KEY, []);
@@ -56,14 +56,7 @@ export function ensureV6kTt25Models(sqlite: Database.Database) {
         VALUES(?,?,?,?,?,0)`).run(V6K_CHANNEL_TYPE, id, id, v6kTt25Description(id), '["video"]');
       if (!applied[product.id]) {
         const previousPrices = sqlite.prepare('SELECT * FROM model_pricing WHERE model_pattern=?').all(id) as any[];
-        if (previousPrices.length) for (const price of previousPrices) {
-          const extra = JSON.parse(price.extra_params || '{}');
-          if (!extra || typeof extra !== 'object' || Array.isArray(extra)) throw new Error(id + ' 价格参数无效，未覆盖');
-          for (const key of Object.keys(extra)) if (key.toLowerCase() === product.resolution) extra[key] = product.saleRate;
-          extra[product.resolution] = product.saleRate;
-          sqlite.prepare('UPDATE model_pricing SET billing_type=?,input_price=?,extra_params=? WHERE id=?')
-            .run('per_second', product.saleRate, JSON.stringify(extra), price.id);
-        } else sqlite.prepare(`INSERT INTO model_pricing(model_pattern,billing_type,input_price,output_price,extra_params)
+        if (!previousPrices.length) sqlite.prepare(`INSERT INTO model_pricing(model_pattern,billing_type,input_price,output_price,extra_params)
           VALUES(?,'per_second',?,0,?)`).run(id, product.saleRate, JSON.stringify({ [product.resolution]: product.saleRate }));
         applied[product.id] = { modelId: id, previousPrices, appliedAt: new Date().toISOString() };
         priceChanged = true;
@@ -82,16 +75,12 @@ export function ensureV6kTt25Models(sqlite: Database.Database) {
 /** Only authenticated /v1/models discoveries may create new routes. */
 export function bindV6kTt25Routes(sqlite: Database.Database, channelId: number, authorizedIds: string[]) {
   const specs = read<ModelSpecification[]>(sqlite, CONFIG_KEY, []);
+  let changed = false;
   for (const product of V6K_TT25_PRODUCTS) {
     const id = v6kTt25SaleId(sqlite, product.id), spec = specs.find(spec => spec.modelId === id)!;
-    const previous = spec.routes.filter(route => route.channelId === channelId && route.executionModel === id && route.upstreamModel === product.id);
-    spec.routes = spec.routes.filter(route => !previous.includes(route));
-    if (authorizedIds.includes(product.id)) {
-      if (previous.length) spec.routes.push(...previous);
-      else {
-        spec.routes.push(newRoute(channelId, id, product));
-      }
+    if (authorizedIds.includes(product.id) && !spec.routes.some(route => route.channelId === channelId && route.executionModel === id && route.upstreamModel === product.id)) {
+      spec.routes.push(newRoute(channelId, id, product)); changed = true;
     }
   }
-  write(sqlite, CONFIG_KEY, specs);
+  if (changed) write(sqlite, CONFIG_KEY, specs);
 }

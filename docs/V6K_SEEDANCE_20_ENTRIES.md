@@ -20,7 +20,7 @@
 
 1. `server/db/seed.ts` → `ensureV6kSeedance20Models` 仅注册两个停用入口、默认价格和停用规格，保留管理员已有价格、名称、开关、规格与历史任务。
 2. 渠道“同步模型” → `ChannelService.syncModels` → `syncV6kVideoModels`：先读取当前 Key 的 `/v1/models`。公开目录只补参数，不能授予调用权限；两个 A 型号归到同一公开 ID，XX 保持独立。
-3. `bindV6kSeedance20Routes` 只为当前 Key 返回的真实 ID 绑定线路。同步保留既有线路成本与停用状态，移除该渠道本次已不再授权的受管线路，不影响其他渠道。
+3. `bindV6kSeedance20Routes` 只为当前 Key 返回的真实 ID 新增缺少的线路。同步保留既有线路、成本与停用状态；目录缺席不自动删除原线路，不影响其他渠道。同步范围以 `V6K_MODEL_SYNC_ALLOWLIST.md` 为准。
 4. 网站、画布、外部 API → `handleSpecificationGeneration`；批量队列经持久化的内部网站入口进入同一函数。`specificationRequest` 与规格校验在订单创建/预扣之前拒绝超限输入，XX 不会静默丢弃视频。
 5. `selectModelRoutes` 按实际线路成本排序；`runVideo` 占用提交锁 → `submitSpecificationVideo` → `submitZonghengVideo`。实际发送真实上游 ID，不发送销售入口名。有效任务 ID 先持久化，再解释状态并查询原任务。
 6. 仅 A 入口的连接建立前失败、无受理证据的 V6K 401/403/429 拒绝可切下一条线路。参数拒绝结束订单；有效 ID、5xx、断线、响应不完整等未知受理不切换重发。其他 V6K 产品的既有切换判定不变。

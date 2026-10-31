@@ -47,12 +47,12 @@ describe('separate V6K Seedance 2.0 sale products', () => {
     entries[0].routes[0].enabled=false; entries[0].routes[0].cost=8;
     db.prepare('UPDATE settings SET value=?').run(JSON.stringify(entries));
     bindV6kSeedance20Routes(db,21,['Asedanco2.0','XXsedanco2.0']);
-    expect(specs(db)[0].routes).toEqual([entries[0].routes[0]]);
+    expect(specs(db)[0].routes).toEqual(entries[0].routes);
     expect(specs(db)[1]).toEqual(entries[1]);
     bindV6kSeedance20Routes(db,22,['Asedanco2.05']);
     bindV6kSeedance20Routes(db,21,[]);
-    expect(specs(db)[0].routes.map((r: any) => r.channelId)).toEqual([22]);
-    expect(specs(db)[1].routes).toEqual([]);
+    expect(specs(db)[0].routes.map((r: any) => r.channelId)).toEqual([21,21,22]);
+    expect(specs(db)[1]).toEqual(entries[1]);
   });
   it('does not grant public-square-only models or collapse the XX capability into the A product', () => {
     const db = database(); ensureV6kSeedance20Models(db);

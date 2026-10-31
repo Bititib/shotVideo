@@ -49,7 +49,7 @@ describe('TT 2.5 requested per-second sale configuration', () => {
     expect(db.prepare('SELECT DISTINCT input_price FROM model_pricing').all()).toEqual([{input_price:7.7}]);
     expect(db.prepare('SELECT DISTINCT is_active FROM models').all()).toEqual([{is_active:1}]);
   });
-  it('updates the explicitly requested legacy product prices once without renaming IDs, permissions, switches or accepted-task snapshots',()=>{
+  it('preserves existing legacy prices even without the previous release marker, along with IDs, permissions, switches and task snapshots',()=>{
     const db=database();
     const insert=db.prepare('INSERT INTO models VALUES(?,?,?,?,?,?,?)');
     for(const [index,product] of V6K_TT25_PRODUCTS.entries()){
@@ -67,8 +67,8 @@ describe('TT 2.5 requested per-second sale configuration', () => {
     for(const product of V6K_TT25_PRODUCTS){
       const id='ZH-'+product.id;expect(v6kTt25SaleId(db,product.id)).toBe(id);
       const price=db.prepare('SELECT * FROM model_pricing WHERE model_pattern=?').get(id) as any;
-      expect(price).toMatchObject({billing_type:'per_second',input_price:product.saleRate});
-      expect(JSON.parse(price.extra_params)).toMatchObject({[product.resolution]:product.saleRate,[product.resolution.toUpperCase()]:product.saleRate,category:'video'});
+      expect(price).toMatchObject({billing_type:'per_call',input_price:6.5});
+      expect(JSON.parse(price.extra_params)).toEqual({[product.resolution.toUpperCase()]:8,category:'video'});
       expect(applied[product.id].previousPrices[0]).toMatchObject({billing_type:'per_call',input_price:6.5});
       expect(specs(db).find(s=>s.modelId===id).enabled).toBe(true);
     }
@@ -81,10 +81,10 @@ describe('TT 2.5 requested per-second sale configuration', () => {
     db.prepare('UPDATE settings SET value=? WHERE key=?').run(JSON.stringify(saved),'model_specification_routes_v1');
     bindV6kTt25Routes(db,21,[V6K_TT25_PRODUCTS[0].id]);
     expect(specs(db)[0].routes).toEqual(saved[0].routes);
-    expect(specs(db)[1].routes).toEqual([]);expect(specs(db)[2].routes).toEqual([]);
+    expect(specs(db)[1].routes).toEqual(saved[1].routes);expect(specs(db)[2].routes).toEqual(saved[2].routes);
     bindV6kTt25Routes(db,22,[V6K_TT25_PRODUCTS[0].id]);bindV6kTt25Routes(db,21,[]);
-    expect(specs(db)[0].routes.map((r:any)=>r.channelId)).toEqual([22]);
-    expect(specs(db)[0].routes[0]).toMatchObject({cost:.21,costUnit:'per_second',limits:{resolutions:['480p']}});
+    expect(specs(db)[0].routes.map((r:any)=>r.channelId)).toEqual([21,21,22]);
+    expect(specs(db)[0].routes[2]).toMatchObject({cost:.21,costUnit:'per_second',limits:{resolutions:['480p']}});
   });
   it('does not touch unrelated products, fixed-price TTT or A/XX models and rolls back namespace conflicts',()=>{
     const db=database();

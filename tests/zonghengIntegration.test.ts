@@ -8,6 +8,8 @@ import { V6K_TT25_PRODUCTS } from '../shared/v6kTt25';
 import { ensureV6kTt25Models, v6kTt25SaleId } from '../server/services/v6kTt25Catalog';
 import { quoteVideoRequest } from '../server/services/videoQuoteService';
 import { PricingService } from '../server/services/pricingService';
+import { ensureV6kTttModel } from '../server/services/v6kTttModel';
+import { V6K_SYNC_UPSTREAM_MODELS } from '../shared/v6kSyncModels';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import express from 'express';
@@ -257,7 +259,7 @@ describe('two Seedance 2.0 products through authenticated sync and actual entry 
 async function installTt25(legacy=false,allowed=V6K_TT25_PRODUCTS.map(p=>String(p.id))) {
   if(legacy)for(const p of V6K_TT25_PRODUCTS){
     db.insert(models).values({modelId:'ZH-'+p.id,displayName:'custom '+p.resolution,provider:'zongheng-v6k',capabilities:'["video"]',isActive:1}).run();
-    db.insert(modelPricing).values({modelPattern:'ZH-'+p.id,billingType:'per_call',inputPrice:6.5,extraParams:JSON.stringify({[p.resolution.toUpperCase()]:8})}).run();
+    db.insert(modelPricing).values({modelPattern:'ZH-'+p.id,billingType:'per_second',inputPrice:p.saleRate,extraParams:JSON.stringify({[p.resolution.toUpperCase()]:p.saleRate})}).run();
   }
   const c=db.select().from(channels).get()!;
   ChannelService.updateChannel(c.id,{type:'zongheng-v6k',baseUrl:'https://www.v6k.top'});
@@ -285,6 +287,7 @@ describe('TT 2.5 native resolutions and per-second prices through actual entry p
     upstream=async(url,init)=>{if(init.method==='POST'){posts++;return Response.json({id:'legacy_price_original',status:'queued'});}
       queries++;expect(url).toBe('https://www.v6k.top/v1/videos/legacy_price_original');
       expect(JSON.parse(latest().metadata).videoId).toBe('legacy_price_original');
+      sqlite.prepare('UPDATE model_pricing SET billing_type=?,input_price=?,extra_params=? WHERE model_pattern=?').run('per_second',.28,'{}',id);
       ensureV6kTt25Models(sqlite);
       expect(sqlite.prepare('SELECT billing_type,input_price FROM model_pricing WHERE model_pattern=?').get(id)).toEqual({billing_type:'per_second',input_price:.28});
       return Response.json({id:'legacy_price_original',status:'completed'});};
@@ -365,6 +368,108 @@ describe('TT 2.5 native resolutions and per-second prices through actual entry p
       posts++;expect(JSON.parse(init.body)).toMatchObject({model:p.id,resolution:p.resolution,seconds:30});expect(balance()).toBeCloseTo(100-cost,6);return Response.json({id:'tt_batch_original',status:'completed'});};
     tickVideoBatches();await vi.waitFor(()=>expect(latest()?.status).toBe('completed'));tickVideoBatches();tickVideoBatches();resumeSpecificationTasks();
     expect(batchStore.item(item.id)).toMatchObject({status:'completed',billing_state:'charged',charged:cost});expect(posts).toBe(1);expect(balance()).toBeCloseTo(100-cost,6);expect(latest().cost).toBe(cost);
+  });
+});
+
+async function syncV6kEntries(entries:any[]) {
+  const c=db.select().from(channels).get()!;
+  if(c.type!=='zongheng-v6k'||c.baseUrl!=='https://www.v6k.top')ChannelService.updateChannel(c.id,{type:'zongheng-v6k',baseUrl:'https://www.v6k.top'});
+  upstream=async(url,init)=>{expect(url).toBe('https://www.v6k.top/v1/models');expect(init.method).not.toBe('POST');return Response.json({data:entries});};
+  return ChannelService.syncModels(c.id);
+}
+function syncConfiguration() {
+  const c=db.select().from(channels).get()!;
+  return {models:db.select().from(models).all(),prices:db.select().from(modelPricing).all(),
+    supported:c.supportedModels,mapping:c.modelMapping,status:c.status,
+    specifications:sqlite.prepare('SELECT value FROM settings WHERE key=?').get('model_specification_routes_v1'),
+    tasks:db.select().from(contents).all(),users:db.select().from(users).all()};
+}
+
+describe('V6K explicitly requested model sync allowlist',()=>{
+  it('imports only seven approved upstream IDs as six entries and never expands scope from video metadata or similar names',async()=>{
+    ensureV6kTttModel(sqlite);
+    const unrelated=['TTseadanco2.5-720YT','XXsedanco2.0S','dola2.0','grok--1.5','QQsedanco2.5/720','KKseadanco2.5X','Asedanco2.0-extra','ttseadanco2.5-480','brand-new-video'];
+    const result=await syncV6kEntries([...V6K_SYNC_UPSTREAM_MODELS.map(id=>({id})),...unrelated.map(id=>({id,type:'video',supported_endpoint_types:['openai-video']})),{id:'Asedanco2.0'}]);
+    const expected=['TTTseadanco2.5/720',V6K_SEEDANCE_20_MODEL,V6K_XX_SEEDANCE_20_MODEL,...V6K_TT25_PRODUCTS.map(p=>p.id)];
+    expect(result.count).toBe(6);expect(new Set(result.models)).toEqual(new Set(expected));
+    expect(db.select().from(models).all().filter(m=>expected.includes(m.modelId))).toHaveLength(6);
+    expect(db.select().from(models).all().filter(m=>unrelated.some(id=>m.modelId===id||m.modelId==='ZH-'+id))).toEqual([]);
+    expect(expected.every(id=>db.select().from(models).all().find(m=>m.modelId===id)!.isActive===0)).toBe(true);
+    const channel=db.select().from(channels).get()!;
+    expect(JSON.parse(channel.supportedModels)).toEqual(expect.arrayContaining(['ZH-video-public','ZH-image-public','ZH-gpt-public',...expected]));
+    expect(JSON.parse(channel.modelMapping)).toMatchObject({'ZH-video-public':'video-public','ZH-image-public':'image-public','ZH-gpt-public':'gpt-public'});
+    expect(result.warnings?.join('')).toContain('其他型号 9 个');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(db.select().from(contents).all()).toEqual([]);expect(balance()).toBe(100);
+  });
+  it('preserves existing prices, names, switches, mappings, route objects and legacy non-whitelisted models across full and partial repeated syncs',async()=>{
+    ensureV6kTttModel(sqlite);await syncV6kEntries([...V6K_SYNC_UPSTREAM_MODELS]);
+    db.update(models).set({displayName:'administrator name',description:'administrator description',isActive:1}).run();
+    db.update(models).set({isActive:0}).where(eq(models.modelId,V6K_XX_SEEDANCE_20_MODEL)).run();
+    db.update(modelPricing).set({billingType:'per_call',inputPrice:7.77,outputPrice:3.33,extraParams:'{"720P":8.88,"category":"video"}'}).run();
+    sqlite.prepare('DELETE FROM settings WHERE key=?').run('v6k_tt25_requested_second_prices_v1');
+    const row=sqlite.prepare('SELECT value FROM settings WHERE key=?').get('model_specification_routes_v1') as any;
+    const specs=JSON.parse(row.value);for(const spec of specs){spec.enabled=spec.modelId!==V6K_SEEDANCE_20_MODEL;for(const route of spec.routes){route.enabled=false;route.cost=42;route.priority=7;}}
+    sqlite.prepare('UPDATE settings SET value=? WHERE key=?').run(JSON.stringify(specs),'model_specification_routes_v1');
+    const c=db.select().from(channels).get()!;
+    ChannelService.updateChannel(c.id,{status:0,modelMapping:{...JSON.parse(c.modelMapping),[V6K_SEEDANCE_20_MODEL]:'Asedanco2.05'}});
+    db.insert(contents).values({userId:1,type:'video',modelId:'ZH-video-public',cost:2,status:'processing',metadata:'{"videoId":"unrelated_original","pricingSnapshot":{"inputPrice":2},"billingStatus":"reserved"}'}).run();
+    const before=syncConfiguration();
+    await syncV6kEntries([...V6K_SYNC_UPSTREAM_MODELS,'another-new-video']);
+    expect(syncConfiguration()).toEqual(before);
+    await syncV6kEntries(['Asedanco2.0','XXsedanco2.0','another-new-video']);
+    expect(syncConfiguration()).toEqual(before);
+    expect(db.select().from(models).all().some(m=>m.modelId==='ZH-another-new-video')).toBe(false);
+  });
+  it.each(['empty','only-other','http-error','invalid-list','invalid-json'])('makes no configuration or money changes when discovery is %s',async mode=>{
+    const c=db.select().from(channels).get()!;ChannelService.updateChannel(c.id,{type:'zongheng-v6k',baseUrl:'https://www.v6k.top'});
+    const before=syncConfiguration();
+    upstream=async()=>mode==='http-error'?Response.json({error:{message:'denied'}},{status:403}):mode==='invalid-list'?Response.json({data:{}}):mode==='invalid-json'?new Response('<html>gateway</html>'):Response.json({data:mode==='empty'?[]:[{id:'brand-new-video',type:'video'}]});
+    if(mode==='empty'||mode==='only-other')expect(await ChannelService.syncModels(c.id)).toMatchObject({count:0,added:0,models:[]});
+    else await expect(ChannelService.syncModels(c.id)).rejects.toBeDefined();
+    expect(syncConfiguration()).toEqual(before);expect(balance()).toBe(100);
+  });
+  it('does not apply stale discovery after an administrator replaces the channel key',async()=>{
+    const c=db.select().from(channels).get()!;ChannelService.updateChannel(c.id,{type:'zongheng-v6k',baseUrl:'https://www.v6k.top'});
+    const before=syncConfiguration();
+    upstream=async()=>{ChannelService.updateChannel(c.id,{apiKey:'replacement-test-key'});return Response.json({data:V6K_SYNC_UPSTREAM_MODELS.map(id=>({id}))});};
+    await expect(ChannelService.syncModels(c.id)).rejects.toMatchObject({status:409});
+    expect(syncConfiguration()).toEqual(before);expect(db.select().from(channels).get()!.apiKey).toBe('replacement-test-key');
+  });
+  it.each(['/api/video/generate','/v1/videos'])('keeps an accepted original and reserved funds recoverable when A disappears from discovery at %s',async endpoint=>{
+    await installSeedance20();const c=db.select().from(channels).get()!;let posts=0,queries=0,clock=Date.now();
+    const time=vi.spyOn(Date,'now').mockImplementation(()=>clock);
+    upstream=async(url,init)=>{
+      if(init.method==='POST'){posts++;return Response.json({id:'allowlist_original',status:'queued'});}
+      expect(url).toBe('https://www.v6k.top/v1/videos/allowlist_original');queries++;clock+=2*60*60_000+1;
+      return Response.json({id:'allowlist_original',status:'unknown'});
+    };
+    try{
+      await(await post(endpoint,{model:V6K_SEEDANCE_20_MODEL,prompt:'原任务',seconds:15,resolution:'720p'})).text();
+      await vi.waitFor(()=>expect(Number(JSON.parse(latest().metadata).v6kQueryResumeAt)).toBeGreaterThan(clock));
+      const original=latest(),meta=JSON.parse(original.metadata),receipt=findVideoSubmissionReceipt(original.id),reservation=sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(meta.billingReservationId),before=syncConfiguration();
+      upstream=async(url,init)=>{
+        if(url.endsWith('/v1/models'))return Response.json({data:[{id:'XXsedanco2.0'},{id:'brand-new-video',type:'video'}]});
+        expect(init.method).not.toBe('POST');queries++;expect(url).toBe('https://www.v6k.top/v1/videos/allowlist_original');return Response.json({id:'allowlist_original',status:'completed'});
+      };
+      await ChannelService.syncModels(c.id);
+      expect(syncConfiguration()).toEqual(before);expect(findVideoSubmissionReceipt(original.id)).toEqual(receipt);
+      expect(sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(meta.billingReservationId)).toEqual(reservation);
+      clock+=120_000;resumeSpecificationTasks();resumeSpecificationTasks();
+      await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+      expect(latest().cost).toBe(4);expect(balance()).toBe(96);expect(posts).toBe(1);expect(queries).toBe(2);
+    }finally{time.mockRestore();}
+  });
+  it('keeps a prepaid queued batch eligible and charges once after a partial sync',async()=>{
+    await installSeedance20();const c=db.select().from(channels).get()!;let posts=0;
+    const batchId=batchStore.create(1,crypto.randomUUID(),{name:'queued before sync',model:V6K_SEEDANCE_20_MODEL,resolution:'720p',aspect_ratio:'16:9',video_length:15,autoRetry:false,maxRetries:0,creatives:[{prompt:'原批次',count:1,reference_images:[]}]},4,'https://app.example');
+    const item=batchStore.item(batchStore.detail(batchId,1).items[0].id),before=syncConfiguration();
+    upstream=async()=>Response.json({data:[{id:'XXsedanco2.0'},{id:'unrequested-model',type:'video'}]});
+    await ChannelService.syncModels(c.id);expect(syncConfiguration()).toEqual(before);expect(batchStore.item(item.id)).toEqual(item);
+    upstream=async(url,init)=>{if(url==='http://127.0.0.1:9876/api/video/generate')return nativeFetch(origin+'/api/video/generate',init);
+      posts++;expect(JSON.parse(init.body).model).toBe('Asedanco2.0');return Response.json({id:'queued_batch_original',status:'completed'});};
+    tickVideoBatches();await vi.waitFor(()=>expect(latest()?.status).toBe('completed'));tickVideoBatches();tickVideoBatches();
+    expect(batchStore.item(item.id)).toMatchObject({status:'completed',billing_state:'charged',charged:4});expect(balance()).toBe(96);expect(posts).toBe(1);
   });
 });
 

@@ -41,19 +41,16 @@ export function ensureV6kSeedance20Models(sqlite: Database.Database) {
 /** Called only with IDs returned by this channel's authenticated model discovery. */
 export function bindV6kSeedance20Routes(sqlite: Database.Database, channelId: number, authorizedIds: string[]) {
   const allowed = new Set(authorizedIds), specs = readSpecifications(sqlite);
+  let changed = false;
   for (const product of V6K_SEEDANCE_20_PRODUCTS) {
     const spec = specs.find(spec => spec.modelId === product.id)!;
-    const previous = spec.routes;
-    const matching = previous.filter(route => route.channelId === channelId && route.executionModel === product.id
-      && product.upstreamModels.some(model => model.id === route.upstreamModel));
-    const retained = previous.filter(route => !matching.includes(route));
-    const routes: ModelRoute[] = product.upstreamModels.filter(model => allowed.has(model.id)).map((model, index) => {
-      const existing = matching.find(route => route.upstreamModel === model.id);
-      return existing || { id: `v6k-seedance20-${channelId}-${model.id}`, channelId, executionModel: product.id,
+    product.upstreamModels.forEach((model, index) => {
+      if (!allowed.has(model.id) || spec.routes.some(route => route.channelId === channelId && route.executionModel === product.id && route.upstreamModel === model.id)) return;
+      const route: ModelRoute = { id: `v6k-seedance20-${channelId}-${model.id}`, channelId, executionModel: product.id,
         upstreamModel: model.id, enabled: true, limits: v6kSeedance20Limits(product.id)!, cost: model.cost,
         costUnit: 'per_call', resolutionCosts: {}, priority: index };
+      spec.routes.push(route); changed = true;
     });
-    spec.routes = [...retained, ...routes];
   }
-  saveSpecifications(sqlite, specs);
+  if (changed) saveSpecifications(sqlite, specs);
 }
