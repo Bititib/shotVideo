@@ -108,7 +108,7 @@ export default function ChannelsPage() {
   }, 5000), []);
 
   const openNew = () => setEdit({
-    name: '', type: 'openai', baseUrl: '', apiKey: '',
+    name: '', type: 'openai', baseUrl: '', apiKey: '', apipathImageKey: '', apipathVideoKey: '',
     apiKeys: [],
     modelMapping: {}, supportedModels: [],
     priority: 0, weight: 1, maxRetries: 3, timeout: 120000,
@@ -122,7 +122,9 @@ export default function ChannelsPage() {
   const openEdit = (ch: any) => setEdit({
     ...ch,
     apiKeys: (ch.apiKeys || []).map((key: any) => ({ ...key })),
-    apiKey: '', isNew: false,
+    apiKey: '', apipathImageKey: '', apipathVideoKey: '',
+    apipathImageKeyConfigured: Boolean(ch.apipathImageKey), apipathVideoKeyConfigured: Boolean(ch.apipathVideoKey),
+    apipathLegacyKeyConfigured: Boolean(ch.apiKey), isNew: false,
     mappingText: Object.entries(ch.modelMapping || {}).map(([k, v]) => `${k}:${v}`).join('\n'),
     modelsText: (ch.supportedModels || []).join('\n'),
   });
@@ -196,6 +198,9 @@ export default function ChannelsPage() {
           concurrencyLimit: Math.max(1, Number.parseInt(key.concurrencyLimit, 10) || 1),
           status: key.status === 0 ? 0 : 1,
         }));
+      } else if (edit.type === 'apipath') {
+        if (edit.apipathImageKey?.trim()) data.apipathImageKey = edit.apipathImageKey.trim();
+        if (edit.apipathVideoKey?.trim()) data.apipathVideoKey = edit.apipathVideoKey.trim();
       } else if (edit.apiKey) {
         data.apiKey = edit.apiKey;
       }
@@ -554,7 +559,23 @@ export default function ChannelsPage() {
                 <input type="text" value={edit.baseUrl} onChange={e => setEdit({ ...edit, baseUrl: e.target.value })} placeholder={edit.type === 'mj' ? '留空使用默认接口' : 'http://vps-ip:8080'}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono" />
               </div>
-              {edit.type !== 'hmstudio' && (
+              {edit.type === 'apipath' && (
+                <section className="space-y-3" aria-label="通联分类密钥">
+                  {(['image', 'video'] as const).map(kind => {
+                    const field = kind === 'image' ? 'apipathImageKey' : 'apipathVideoKey';
+                    const label = kind === 'image' ? '图片 API Key' : '视频 API Key';
+                    return <div key={kind}>
+                      <label htmlFor={field} className="block text-xs text-zinc-400 mb-1.5">{label}{edit[field + 'Configured'] ? '（已配置）' : '（未配置）'}</label>
+                      <input id={field} type="password" autoComplete="new-password" value={edit[field] || ''}
+                        onChange={e => setEdit({ ...edit, [field]: e.target.value })} placeholder={edit.isNew ? '填写对应类型的密钥，可稍后补充' : '留空保留原密钥'}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
+                    </div>;
+                  })}
+                  <p className="text-xs leading-5 text-zinc-400">图片和视频分别使用对应的 Key。保存后同步模型，只导入各 Key 对应类型的授权模型；未填写的类型不开放生成。</p>
+                  {edit.apipathLegacyKeyConfigured && <p className="text-xs leading-5 text-amber-300">当前保留旧版通用 Key。填写分类 Key 后，新任务仅使用分类 Key；旧任务继续按原凭据查询。</p>}
+                </section>
+              )}
+              {edit.type !== 'hmstudio' && edit.type !== 'apipath' && (
                 <div>
                   <label htmlFor="channel-api-key" className="block text-xs text-zinc-400 mb-1.5">API Key（上游密钥）</label>
                   <input id="channel-api-key" type="password" value={edit.apiKey} onChange={e => setEdit({ ...edit, apiKey: e.target.value })} placeholder={edit.isNew ? '可选' : '留空=不修改'}

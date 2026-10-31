@@ -4,7 +4,7 @@ vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryData
 vi.mock('../server/services/videoLocalizationService.js', () => ({ downloadAndLocalizeVideo: vi.fn(async () => '/uploads/async-video-result.mp4') }));
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../server/db/index.js';
-import { channels, contents, models, modelPricing, settings, users } from '../server/db/schema.js';
+import { channels, contents, models, modelPricing, settings, users, apipathChannelKeys } from '../server/db/schema.js';
 import { ChannelService } from '../server/services/channelService.js';
 import { getModelSpecification, saveModelSpecification } from '../server/services/modelRoutingService.js';
 import { handleSpecificationGeneration, resumeSpecificationTasks } from '../server/services/specificationGenerationService.js';
@@ -28,6 +28,7 @@ const request = (body: Record<string, unknown> = {}) => ({ userId: 1, headers: {
 beforeEach(async () => {
   if (sqlite.prepare("SELECT name FROM sqlite_master WHERE name='video_submission_receipts'").get()) sqlite.exec('DELETE FROM video_submission_receipts');
   vi.clearAllMocks();
+  db.delete(apipathChannelKeys).run();
   db.delete(contents).run(); db.delete(settings).run(); db.delete(models).run(); db.delete(channels).run(); db.delete(modelPricing).run(); db.delete(users).run();
   db.insert(users).values({ id: 1, email: 'async@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
   vi.stubGlobal('fetch', vi.fn(async () => discovery()));
@@ -43,6 +44,104 @@ function enable() {
 
 
 describe('通联 actual specification entry and isolated billing', () => {
+  it('uses two type-specific keys in one channel and persists distinct execution key IDs', async () => {
+    ChannelService.updateChannel(channelId, { apipathImageKey: 'image-secret', apipathVideoKey: 'video-secret' });
+    await ChannelService.syncModels(channelId); // Each key returns both types; binding must still filter by kind.
+    expect(vi.mocked(fetch).mock.calls.slice(-2).map(c => (c[1]?.headers as any).Authorization)).toEqual(['Bearer image-secret', 'Bearer video-secret']);
+    const candidates = ChannelService.getActiveChannels().filter(c => c.id === channelId);
+    expect(candidates).toHaveLength(2);
+    expect(candidates.find(c => c.apiKey === 'image-secret')?.supportedModels).not.toContain('dola2.5');
+    expect(candidates.find(c => c.apiKey === 'video-secret')?.supportedModels).not.toContain('gpt-image-2-5-sunburst-2k');
+    vi.stubGlobal('fetch', vi.fn(async (url: any) => Response.json(String(url).includes('/images/')
+      ? { data: [{ url: 'https://cdn.example/image.png' }] } : { task_no: 'dual-key', status: 'completed', url: 'https://cdn.example/video.mp4' })));
+    modelId = 'dola2.5'; enable(); await handleSpecificationGeneration(request({ seconds: 5 }), response(), 'video');
+    modelId = 'gpt-image-2-5-sunburst-2k'; enable(); await handleSpecificationGeneration(request({ resolution: '2K' }), response(), 'image');
+    expect(vi.mocked(fetch).mock.calls.map(c => (c[1]?.headers as any).Authorization)).toEqual(['Bearer video-secret', 'Bearer image-secret']);
+    const rows = db.select().from(contents).all();
+    expect(rows.map(r => r.status)).toEqual(['completed', 'completed']);
+    expect(rows.map(r => JSON.parse(r.metadata).channelId)).toEqual([channelId, channelId]);
+    const ids = rows.map(r => JSON.parse(r.metadata).channelApiKeyId);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids.every(id => Number(id) > 0)).toBe(true);
+    expect(db.select().from(users).all()[0].balance).toBe(96);
+  });
+  it('does not fall back to the image or legacy key when video key is absent', async () => {
+    ChannelService.updateChannel(channelId, { apipathImageKey: 'image-only-secret' });
+    await ChannelService.syncModels(channelId);
+    modelId = 'dola2.5'; enable(); vi.mocked(fetch).mockClear();
+    await handleSpecificationGeneration(request({ seconds: 5 }), response(), 'video');
+    expect(fetch).not.toHaveBeenCalled();
+    expect(db.select().from(users).all()[0].balance).toBe(100);
+  });
+  it.each(['rejected', 'unknown'])('settles a typed-key %s submission without resending or duplicate refunds', async outcome => {
+    ChannelService.updateChannel(channelId, { apipathImageKey: 'image-secret', apipathVideoKey: 'video-secret' });
+    await ChannelService.syncModels(channelId); enable();
+    vi.stubGlobal('fetch', vi.fn(async (_url: any, init: any) => {
+      expect(init.headers.Authorization).toBe('Bearer video-secret');
+      if (outcome === 'unknown') throw new Error('socket closed');
+      return Response.json({ error: { code: 'invalid_request_error', message: '参数拒绝' } }, { status: 400 });
+    }));
+    await handleSpecificationGeneration(request(), response(), 'video');
+    resumeSpecificationTasks(); resumeSpecificationTasks();
+    expect(fetch).toHaveBeenCalledOnce();
+    const row = db.select().from(contents).all().at(-1)!;
+    expect(JSON.parse(row.metadata).channelApiKeyId).toBeGreaterThan(0);
+    if (outcome === 'rejected') expect(row.status).toBe('failed');
+    else expect(JSON.parse(row.metadata).requiresReview).toBe(true);
+    expect(db.select().from(users).all()[0].balance).toBe(outcome === 'rejected' ? 100 : 98);
+  });
+  it('rejects stale catalog bindings when a key changes during discovery', async () => {
+    ChannelService.updateChannel(channelId, { apipathImageKey: 'image-secret' });
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      ChannelService.updateChannel(channelId, { apipathImageKey: 'image-replacement' });
+      return discovery();
+    }));
+    await expect(ChannelService.syncModels(channelId)).rejects.toThrow('Key 已变更');
+    expect(ChannelService.getActiveChannels().find(c => c.apiKey === 'image-replacement')?.supportedModels).toEqual([]);
+  });
+  it('keeps discovery atomic when either key fails, with no secret disclosure', async () => {
+    ChannelService.updateChannel(channelId, { apipathImageKey: 'image-secret', apipathVideoKey: 'video-secret' });
+    await ChannelService.syncModels(channelId);
+    const before = ChannelService.getChannelRaw(channelId);
+    const bindings = db.select().from(apipathChannelKeys).all();
+    vi.stubGlobal('fetch', vi.fn(async (_url: any, init: any) => init.headers.Authorization.includes('video-secret')
+      ? Response.json({ error: { code: 'invalid_api_key', message: 'invalid video-secret' } }, { status: 401 })
+      : Response.json({ data: [] })));
+    let message = '';
+    try { await ChannelService.syncModels(channelId); } catch (error: any) { message = error.message; }
+    expect(message).toContain('视频 Key'); expect(message).toContain('invalid_api_key'); expect(message).not.toContain('video-secret');
+    expect(ChannelService.getChannelRaw(channelId)).toEqual(before);
+    expect(db.select().from(apipathChannelKeys).all()).toEqual(bindings);
+  });
+  it('recovers an accepted video with the original key after key replacement, GET only', async () => {
+    ChannelService.updateChannel(channelId, { apipathVideoKey: 'video-original' });
+    await ChannelService.syncModels(channelId);
+    const original = ChannelService.getActiveChannels().find(c => c.id === channelId)!;
+    const id = Number(db.insert(contents).values({ userId: 1, type: 'video', modelId, status: 'processing',
+      metadata: JSON.stringify({ managedSpecification: true, channelId, channelApiKeyId: original.apiKeyId, videoId: 'original-receipt', actualModel: modelId, requestedModel: modelId }) }).run().lastInsertRowid);
+    ChannelService.updateChannel(channelId, { apipathVideoKey: 'video-new', apipathImageKey: 'image-secret' });
+    expect(ChannelService.getActiveChannels().find(c => c.apiKey === 'video-new')?.supportedModels).toEqual([]);
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ task_no: 'original-receipt', status: 'completed', url: 'https://cdn.example/video.mp4' })));
+    expect(await VideoRecoveryService.inspect(id)).toMatchObject({ status: 'completed' });
+    resumeSpecificationTasks();
+    await vi.waitFor(() => expect(db.select().from(contents).where(eq(contents.id, id)).get()?.status).toBe('completed'));
+    expect(vi.mocked(fetch).mock.calls.every(c => c[1]?.method === 'GET' && (c[1]?.headers as any).Authorization === 'Bearer video-original')).toBe(true);
+    expect(ChannelService.getChannelRaw(channelId, 999999)).toBeUndefined();
+    expect(ChannelService.getChannelRaw(channelId)?.apiKey).toBe(key); // Pre-upgrade receipts with no key ID retain their legacy identity.
+  });
+  it('masks both keys, preserves blank edits and validates key changes atomically', async () => {
+    const id = ChannelService.createChannel({ name: '单渠道双 Key', type: 'apipath', baseUrl: 'https://provider.invalid', apipathImageKey: 'image-secret-1111', apipathVideoKey: 'video-secret-2222' });
+    const exposed = ChannelService.getChannels().find(c => c.id === id)!;
+    expect(exposed).toMatchObject({ apipathImageKey: '****1111', apipathVideoKey: '****2222', apiKey: '' });
+    expect(JSON.stringify(exposed)).not.toMatch(/image-secret|video-secret/);
+    const before = db.select().from(apipathChannelKeys).all();
+    ChannelService.updateChannel(id, { apipathImageKey: '', apipathVideoKey: '' });
+    expect(db.select().from(apipathChannelKeys).all()).toEqual(before);
+    expect(() => ChannelService.updateChannel(id, { apipathImageKey: 'replacement', apipathVideoKey: '****2222' })).toThrow();
+    expect(db.select().from(apipathChannelKeys).all()).toEqual(before);
+    expect(await ChannelService.testChannel(id)).toMatchObject({ success: true });
+    expect(vi.mocked(fetch).mock.calls.every(c => c[1]?.method === 'GET')).toBe(true);
+  });
   it.each(APIPATH_MODELS.filter(entry => entry.description))('imports and upgrades the description of $id without changing configuration', async entry => {
     const read = () => db.select().from(models).where(eq(models.modelId, entry.id)).get()!;
     expect(read()).toMatchObject({ description: entry.description, isActive: 0 });

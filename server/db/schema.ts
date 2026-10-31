@@ -130,6 +130,16 @@ export const channelApiKeys = sqliteTable('channel_api_keys', {
   updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
 });
 
+// 通联按图片/视频保存密钥版本；旧版本保留给已受理任务恢复。
+export const apipathChannelKeys = sqliteTable('apipath_channel_keys', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  channelId: integer('channel_id').notNull(),
+  kind: text('kind').notNull(),
+  apiKey: text('api_key').notNull(),
+  supportedModels: text('supported_models').notNull().default('[]'),
+  status: integer('status').notNull().default(1),
+});
+
 // ============ API Token 表 ============
 export const apiTokens = sqliteTable('api_tokens', {
   id: integer('id').primaryKey({ autoIncrement: true }),

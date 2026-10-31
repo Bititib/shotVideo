@@ -1,19 +1,43 @@
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
-import { channels, models } from '../db/schema.js';
+import { channels, models, apipathChannelKeys } from '../db/schema.js';
 import { APIPATH_MODELS } from '../../shared/apipathModels.js';
 import { apipathRequest, type ApipathChannel } from './apipathAdapter.js';
 import { getModelSpecification, saveModelSpecification } from './modelRoutingService.js';
+import { apipathKeys } from './apipathKeyService.js';
+
+export async function fetchApipathCatalog(channel: ApipathChannel & { id: number }) {
+  const allKeys = apipathKeys(channel.id), keys = allKeys.filter(k => k.status === 1);
+  const sources = allKeys.length ? keys : channel.apiKey ? [{ id: null, kind: 'legacy', apiKey: channel.apiKey }] : [];
+  if (!sources.length) throw new Error('请先填写通联图片 API Key 或视频 API Key');
+  const entries: typeof APIPATH_MODELS = [], summaries: string[] = [];
+  const warnings: string[] = [];
+  const bindings: { id: number; models: string[] }[] = [];
+  // Resolve every configured key before mutating the catalog. One failed lookup leaves all bindings intact.
+  for (const source of sources) {
+    const label = source.kind === 'image' ? '图片 Key' : source.kind === 'video' ? '视频 Key' : '原有 Key';
+    let raw: any;
+    try { raw = await apipathRequest({ ...channel, apiKey: source.apiKey }, '/v1/models'); }
+    catch (error: any) { throw new Error('通联' + label + '目录查询失败：' + error.message); }
+    if (!Array.isArray(raw?.data) || raw.data.some((x: any) => typeof x?.id !== 'string')) throw new Error('通联' + label + '目录 data/id 格式无效');
+    const names = new Set<string>(raw.data.map((x: any) => x.id));
+    const allowed = APIPATH_MODELS.filter(x => names.has(x.upstreamModel || x.id) && (source.kind === 'legacy' || x.kind === source.kind));
+    entries.push(...allowed);
+    if (source.id !== null) bindings.push({ id: source.id, models: allowed.map(x => x.id) });
+    summaries.push(label + '已核实规格 ' + allowed.length + ' 个');
+    if (!allowed.length) warnings.push(label + '没有返回可接入的对应类型模型，请检查该 Key 的授权');
+    const unknown = [...names].filter(id => !APIPATH_MODELS.some(x => (x.upstreamModel || x.id) === id));
+    if (unknown.length) warnings.push(label + '未导入规格尚未核实或非图片/视频模型：' + unknown.join('、'));
+  }
+  return { entries, warnings, bindings, summaries, keyIds: keys.map(k => k.id) };
+}
 
 export async function syncApipathModels(channel: ApipathChannel & { id: number; priority: number }) {
-  const raw = await apipathRequest(channel, '/v1/models');
-  if (!Array.isArray(raw?.data) || raw.data.some((x: any) => typeof x?.id !== 'string')) throw new Error('通联模型目录 data/id 格式无效');
-  const names = new Set(raw.data.map((x: any) => x.id));
-  const entries = APIPATH_MODELS.filter(x => names.has(x.upstreamModel || x.id));
-  const warnings: string[] = [];
-  const unknown = [...names].filter(id => !APIPATH_MODELS.some(x => x.id === id));
-  if (unknown.length) warnings.push('未导入规格尚未核实或非图片/视频模型：' + unknown.join('、'));
+  const { entries, warnings, bindings, keyIds } = await fetchApipathCatalog(channel);
   return sqlite.transaction(() => {
+    if (JSON.stringify(apipathKeys(channel.id).filter(k => k.status === 1).map(k => k.id)) !== JSON.stringify(keyIds)) {
+      throw new Error('同步期间通联 Key 已变更，请重新同步');
+    }
     let added = 0;
     const imported: string[] = [];
     const upstreamMapping: Record<string, string> = {};
@@ -42,6 +66,11 @@ export async function syncApipathModels(channel: ApipathChannel & { id: number; 
         : { modelId: entry.id, kind: entry.kind, ...(entry.imageFamily ? { imageFamily: entry.imageFamily } : {}), enabled: true, aliases: [], limits: entry.limits, routes: [route] });
     }
     const saved = db.select().from(channels).where(eq(channels.id, channel.id)).get();
+    if (!saved || saved.type !== 'apipath' || saved.apiKey !== channel.apiKey || saved.baseUrl !== channel.baseUrl) throw new Error('同步期间通联渠道配置已变更，请重新同步');
+    for (const binding of bindings) {
+      db.update(apipathChannelKeys).set({ supportedModels: JSON.stringify(binding.models.filter(id => imported.includes(id))) })
+        .where(eq(apipathChannelKeys.id, binding.id)).run();
+    }
     const mapping = JSON.parse(saved?.modelMapping || '{}');
     db.update(channels).set({ supportedModels: JSON.stringify(imported),
       modelMapping: JSON.stringify(Object.fromEntries(imported.map(id => [id, mapping[id] || upstreamMapping[id]]))),

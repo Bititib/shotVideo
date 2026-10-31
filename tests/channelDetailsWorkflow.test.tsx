@@ -11,6 +11,7 @@ vi.mock('../client/src/utils/polling', () => ({ startPolling: () => () => {} }))
 vi.mock('../client/src/api/admin', () => ({ adminApi: {
   getModelSpecifications: vi.fn().mockResolvedValue([]), getChannels: vi.fn(), getSettings: vi.fn(), getModels: vi.fn(), getModelStatistics: vi.fn(),
   getPricing: vi.fn(), updatePricing: vi.fn(), syncChannelModels: vi.fn(), testChannel: vi.fn(), deleteChannel: vi.fn(),
+  createChannel: vi.fn(), updateChannel: vi.fn(),
 } }));
 const ids = ['ZH-Cseadanco2.5K', 'ZH-Xminimex-h3', 'ZH-wan-1080', 'ZH-A-SD2.0'];
 const base = { id: 9, name: '纵横渠道', type: 'zongheng', status: 1, baseUrl: 'https://example.invalid',
@@ -35,6 +36,23 @@ const open = async () => {
 };
 
 describe('channel details and model sync workflow', () => {
+  it('edits two Apipath keys under one channel without submitting masked or unchanged credentials', async () => {
+    vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, name: '通联', type: 'apipath', apiKey: '', apipathImageKey: '****1111', apipathVideoKey: '****2222' }]);
+    vi.mocked(adminApi.updateChannel).mockResolvedValue({});
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: '编辑通联' }));
+    const image = screen.getByLabelText('图片 API Key（已配置）');
+    const video = screen.getByLabelText('视频 API Key（已配置）');
+    expect(image).toHaveValue(''); expect(video).toHaveValue('');
+    fireEvent.change(image, { target: { value: 'new-image-key' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存', exact: true }));
+    await waitFor(() => expect(adminApi.updateChannel).toHaveBeenCalledTimes(1));
+    const [id, payload] = vi.mocked(adminApi.updateChannel).mock.calls[0];
+    expect(id).toBe(base.id);
+    expect(payload).toMatchObject({ type: 'apipath', apipathImageKey: 'new-image-key' });
+    expect(payload).not.toHaveProperty('apiKey'); expect(payload).not.toHaveProperty('apipathVideoKey');
+    expect(JSON.stringify(payload)).not.toContain('****');
+  });
   it('opens HM synced nova pricing with independent resolution inputs and preserves blank fallback values', async () => {
     const id = 'sd2.5-301010';
     vi.mocked(adminApi.getChannels).mockImplementation(async () => [{ ...base, name: 'HM Studio', type: 'hmstudio',

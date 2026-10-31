@@ -133,6 +133,17 @@ try {
   }
 } catch (e) {}
 
+sqlite.exec(`CREATE TABLE IF NOT EXISTS apipath_channel_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel_id INTEGER NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('image', 'video')),
+  api_key TEXT NOT NULL,
+  supported_models TEXT NOT NULL DEFAULT '[]',
+  status INTEGER NOT NULL DEFAULT 1
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_apipath_active_kind
+  ON apipath_channel_keys(channel_id, kind) WHERE status = 1;`);
+
 migrateMjNaming(sqlite);
 ensureFundLedger(sqlite);
 export const db = drizzle(sqlite, { schema });
