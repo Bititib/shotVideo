@@ -84,6 +84,7 @@ describe('API model catalog page', () => {
   it('shows public models to visitors without requesting account tokens or asking them to log in', async () => {
     auth.isAuthenticated = false;
     open();
+    expect(screen.getByRole('heading', { name: '模型列表', level: 1 })).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: 'Public model' })).toBeInTheDocument();
     expect(tokensApi.getTokens).not.toHaveBeenCalled(); expect(developerApi.getModels).not.toHaveBeenCalled();
     expect(auth.openLoginModal).not.toHaveBeenCalled();

@@ -100,6 +100,7 @@ export default function LandingPage() {
 
           <div className="landing-nav-links">
             <Link to="/app/canvas">无限画布</Link>
+            <Link to="/app/models">模型列表</Link>
             <a href="#features">核心能力</a>
             <a href="#workflow">工作流程</a>
             <a href="#pricing">方案定价</a>
@@ -257,7 +258,7 @@ export default function LandingPage() {
       <footer className="landing-footer">
         <div className="landing-footer-brand"><span className="landing-brand-mark" aria-hidden="true"><BrandMark size={40} /></span><div><strong>灵序 AI</strong><small>AI CREATIVE STUDIO</small></div></div>
         <p>© 2026 灵序 AI · 让灵感，自由成形。</p>
-        <div><a href="#features">产品能力</a><a href="#pricing">方案定价</a><a href="#faq">常见问题</a></div>
+        <div><a href="#features">产品能力</a><Link to="/app/models">模型列表</Link><a href="#pricing">方案定价</a><a href="#faq">常见问题</a></div>
       </footer>
     </div>
   );

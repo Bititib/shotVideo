@@ -22,6 +22,7 @@ const TtsPage = lazy(() => import('./pages/analysis/TtsPage'));
 const HistoryPage = lazy(() => import('./pages/analysis/HistoryPage'));
 const ProfilePage = lazy(() => import('./pages/analysis/ProfilePage'));
 const DeveloperPage = lazy(() => import('./pages/DeveloperPage'));
+const ApiModelsPage = lazy(() => import('./pages/ApiModelsPage'));
 const PluginDownloadPage = lazy(() => import('./pages/PluginDownloadPage'));
 const AdminLayout = lazy(() => import('./pages/admin/AdminLayout'));
 const DashboardPage = lazy(() => import('./pages/admin/DashboardPage'));
@@ -83,6 +84,7 @@ export default function App() {
         {/* Public */}
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginRedirect />} />
+        <Route path="/models" element={<Navigate to="/app/models" replace />} />
 
         {/* 工作台 — 共享同一个持久化布局，切换子页面时不重复挂载侧栏和公共请求 */}
         <Route path="/app" element={<Layout />}>
@@ -99,7 +101,7 @@ export default function App() {
           <Route path="history" element={<ApiKeyRoute><HistoryPage /></ApiKeyRoute>} />
           <Route path="docs" element={<DeveloperPage />} />
           <Route path="plugins" element={<PluginDownloadPage />} />
-          <Route path="models" element={<Navigate to="/app/docs?tab=models" replace />} />
+          <Route path="models" element={<ApiModelsPage />} />
           <Route path="profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
         </Route>
         <Route path="/app/video/studio" element={<VideoStudioPage />} />

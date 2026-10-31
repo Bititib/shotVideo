@@ -18,6 +18,7 @@ describe('combined developer center', () => {
   it('switches tabs through the URL and preserves model filters', async () => {
     open();
     await screen.findByText('接口说明内容');
+    expect(screen.getByRole('link', { name: '独立查看模型列表' })).toHaveAttribute('href', '/app/models');
     expect(screen.getByRole('tab', { name: '接口文档' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByLabelText('模型筛选')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'API 模型' }));

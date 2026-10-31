@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Check, Copy, FileText, Layers3 } from 'lucide-react';
 import './DeveloperPage.css';
 
@@ -37,7 +37,7 @@ export default function DeveloperPage() {
     timer.current = setTimeout(() => setCopyStatus(''), 2500);
   }
   return <div className="developer-page">
-    <header className="developer-heading"><div><p className="developer-eyebrow">DEVELOPER CENTER</p><h1>开发者中心</h1><p>浏览接口文档与可用模型，快速接入 API。</p></div>
+    <header className="developer-heading"><div><p className="developer-eyebrow">DEVELOPER CENTER</p><h1>开发者中心</h1><p>浏览接口文档与可用模型，快速接入 API。<Link className="developer-model-link" to="/app/models"><Layers3 size={14} />独立查看模型列表</Link></p></div>
       <div className="developer-base"><span>BASE URL</span><div><code>{baseUrl}</code><button aria-label="复制接口地址" onClick={copyBaseUrl}>{copyStatus === '已复制接口地址' ? <Check size={16} /> : <Copy size={16} />}</button></div><small role="status" aria-live="polite">{copyStatus}</small></div>
     </header>
     <div className="developer-tabs" role="tablist" aria-label="开发者中心内容" onKeyDown={navigateTabs}>{tabs.map(tab => <button key={tab.id} role="tab" id={`developer-tab-${tab.id}`}
