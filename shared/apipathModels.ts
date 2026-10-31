@@ -1,4 +1,15 @@
 import type { ModelInputLimits } from './modelRouting.js';
+// Vx-魅影 only imports these selected public products. Keep the larger protocol
+// catalog below for existing records and task recovery, not automatic discovery.
+export const APIPATH_SYNC_MODEL_IDS = [
+  'seedance2-5-特惠-1080p',
+  'Seedance-2.0-mini-480-GK',
+  'dola2.5',
+  'gpt-image-2-5-sunburst-1k',
+  'gpt-image-2-5-sunburst-2k',
+  'gpt-image-2-5-sunburst-4k',
+] as const;
+
 // Provider snapshot 2026-10-31. Image count 1 is a local limit, not a provider maximum.
 export const APIPATH_MODELS: {id: string; name: string; description?: string; kind: 'image' | 'video'; upstreamModel?: string; imageFamily?: string; limits: ModelInputLimits}[] = [
   {

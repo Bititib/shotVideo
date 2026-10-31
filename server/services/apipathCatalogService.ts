@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { channels, models, apipathChannelKeys } from '../db/schema.js';
-import { APIPATH_MODELS } from '../../shared/apipathModels.js';
+import { APIPATH_MODELS, APIPATH_SYNC_MODEL_IDS } from '../../shared/apipathModels.js';
 import { apipathRequest, type ApipathChannel } from './apipathAdapter.js';
 import { getModelSpecification, saveModelSpecification } from './modelRoutingService.js';
 import { apipathKeys } from './apipathKeyService.js';
@@ -21,7 +21,8 @@ export async function fetchApipathCatalog(channel: ApipathChannel & { id: number
     catch (error: any) { throw new Error('通联' + label + '目录查询失败：' + error.message); }
     if (!Array.isArray(raw?.data) || raw.data.some((x: any) => typeof x?.id !== 'string')) throw new Error('通联' + label + '目录 data/id 格式无效');
     const names = new Set<string>(raw.data.map((x: any) => x.id));
-    const allowed = APIPATH_MODELS.filter(x => names.has(x.upstreamModel || x.id) && (source.kind === 'legacy' || x.kind === source.kind));
+    const allowed = APIPATH_MODELS.filter(x => APIPATH_SYNC_MODEL_IDS.some(id => id === x.id)
+      && names.has(x.upstreamModel || x.id) && (source.kind === 'legacy' || x.kind === source.kind));
     entries.push(...allowed);
     if (source.id !== null) bindings.push({ id: source.id, models: allowed.map(x => x.id) });
     summaries.push(label + '已核实规格 ' + allowed.length + ' 个');

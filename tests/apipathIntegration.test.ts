@@ -14,6 +14,8 @@ import * as referenceValidation from '../server/services/imageReferenceValidatio
 import { APIPATH_MODELS } from '../shared/apipathModels.js';
 
 const key = 'private-apipath-key';
+const selectedModels = ['seedance2-5-特惠-1080p', 'Seedance-2.0-mini-480-GK', 'dola2.5',
+  'gpt-image-2-5-sunburst-1k', 'gpt-image-2-5-sunburst-2k', 'gpt-image-2-5-sunburst-4k'];
 let channelId: number, modelId: string;
 const discovery = () => Response.json({ data: [{ id: 'seedance-2.0-YZ' }, { id: 'gpt-image-2-5-flare' }, ...['seedance2-5-特惠-1080p','Seedance-2.0-mini-480-GK','dola2.5','gpt-image-2-5-sunburst'].map(id=>({id}))] });
 const response = () => {
@@ -33,7 +35,7 @@ beforeEach(async () => {
   db.insert(users).values({ id: 1, email: 'async@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
   vi.stubGlobal('fetch', vi.fn(async () => discovery()));
   channelId = ChannelService.createChannel({ name: '通联测试', type: 'apipath', baseUrl: 'http://provider.invalid:8080/v1/', apiKey: key });
-  await ChannelService.syncModels(channelId); modelId = 'seedance-2.0-YZ';
+  await ChannelService.syncModels(channelId); modelId = 'dola2.5';
 });
 afterEach(() => vi.unstubAllGlobals());
 afterAll(() => sqlite.close());
@@ -44,6 +46,66 @@ function enable() {
 
 
 describe('通联 actual specification entry and isolated billing', () => {
+  it.each(['legacy', 'dual'])('imports exactly the six selected products from the full upstream catalog (%s)', async mode => {
+    if (mode === 'dual') ChannelService.updateChannel(channelId, { apipathImageKey: 'image-secret', apipathVideoKey: 'video-secret' });
+    db.delete(models).run(); db.delete(settings).run();
+    const upstreamIds = [...new Set(APIPATH_MODELS.map(x => x.upstreamModel || x.id)), 'future-unrequested-model'];
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: upstreamIds.map(id => ({ id })) })));
+    const result = await ChannelService.syncModels(channelId);
+    expect(result.count).toBe(6); expect(result.added).toBe(6);
+    expect(result.models.sort()).toEqual([...selectedModels].sort());
+    expect(db.select().from(models).all().map(x => x.modelId).sort()).toEqual([...selectedModels].sort());
+    expect(db.select().from(models).all().every(x => x.isActive === 0)).toBe(true);
+    const saved = ChannelService.getChannelRaw(channelId)!;
+    expect(JSON.parse(saved.supportedModels).sort()).toEqual([...selectedModels].sort());
+    expect(Object.keys(JSON.parse(saved.modelMapping)).sort()).toEqual([...selectedModels].sort());
+    expect(result.models).not.toContain('gpt-image-2-5-sunburst'); // No default fourth image entry.
+    if (mode === 'dual') {
+      const keys = db.select().from(apipathChannelKeys).all();
+      expect(JSON.parse(keys.find(k => k.kind === 'image')!.supportedModels).sort()).toEqual(selectedModels.slice(3).sort());
+      expect(JSON.parse(keys.find(k => k.kind === 'video')!.supportedModels).sort()).toEqual(selectedModels.slice(0, 3).sort());
+    }
+  });
+  it.each(['image', 'video'])('imports only the selected %s entries when only that key is configured', async kind => {
+    ChannelService.updateChannel(channelId, kind === 'image' ? { apipathImageKey: 'image-secret' } : { apipathVideoKey: 'video-secret' });
+    const result = await ChannelService.syncModels(channelId);
+    expect(result.models.sort()).toEqual((kind === 'image' ? selectedModels.slice(3) : selectedModels.slice(0, 3)).sort());
+    expect(result.count).toBe(3);
+  });
+  it('does not invent selected products absent from the key authorization', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [{ id: 'dola2.5' }, { id: 'gpt-image-2-5-flare' }] })));
+    expect(await ChannelService.syncModels(channelId)).toMatchObject({ count: 1, models: ['dola2.5'] });
+  });
+  it('prunes obsolete bindings while retaining existing records, prices, other channels and task recovery', async () => {
+    ChannelService.updateChannel(channelId, { apipathImageKey: 'image-secret', apipathVideoKey: 'video-secret' });
+    await ChannelService.syncModels(channelId);
+    const videoKey = db.select().from(apipathChannelKeys).all().find(k => k.kind === 'video')!;
+    const oldId = 'seedance-2.0-YZ';
+    db.insert(models).values({ provider: 'apipath', modelId: oldId, displayName: '旧视频', description: '管理员说明', capabilities: '["video"]', isActive: 1 }).run();
+    db.insert(modelPricing).values({ modelPattern: oldId, billingType: 'per_call', inputPrice: 9, outputPrice: 0 }).run();
+    const otherChannel = ChannelService.createChannel({ name: '其他渠道', type: 'openai', baseUrl: 'https://other.invalid', apiKey: 'other-secret', supportedModels: [oldId] });
+    const otherBefore = ChannelService.getChannelRaw(otherChannel);
+    const spec = structuredClone(getModelSpecification('dola2.5')!);
+    spec.modelId = oldId; spec.routes[0] = { ...spec.routes[0], id: 'old-route', executionModel: oldId, upstreamModel: oldId };
+    saveModelSpecification(spec);
+    ChannelService.updateChannel(channelId, { supportedModels: [...selectedModels, oldId], modelMapping: { [oldId]: oldId } });
+    db.update(apipathChannelKeys).set({ supportedModels: JSON.stringify([...selectedModels.slice(0, 3), oldId]) }).where(eq(apipathChannelKeys.id, videoKey.id)).run();
+    const oldModel = db.select().from(models).where(eq(models.modelId, oldId)).get();
+    const prices = db.select().from(modelPricing).all();
+    await ChannelService.syncModels(channelId);
+    expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping)).not.toHaveProperty(oldId);
+    expect(ChannelService.getActiveChannels().filter(c => c.id === channelId).every(c => !c.supportedModels.includes(oldId))).toBe(true);
+    expect(ChannelService.findChannelsForModel(oldId).map(c => c.id)).toEqual([otherChannel]);
+    expect(db.select().from(models).where(eq(models.modelId, oldId)).get()).toEqual(oldModel);
+    expect(db.select().from(modelPricing).all()).toEqual(prices);
+    expect(getModelSpecification(oldId)).toEqual(spec);
+    expect(ChannelService.getChannelRaw(otherChannel)).toEqual(otherBefore);
+    const id = Number(db.insert(contents).values({ userId: 1, type: 'video', modelId: oldId, status: 'processing',
+      metadata: JSON.stringify({ managedSpecification: true, channelId, channelApiKeyId: videoKey.id, videoId: 'old-task', actualModel: oldId, requestedModel: oldId }) }).run().lastInsertRowid);
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ task_no: 'old-task', status: 'completed', url: 'https://cdn.example/old.mp4' })));
+    expect(await VideoRecoveryService.inspect(id)).toMatchObject({ status: 'completed' });
+    expect(vi.mocked(fetch).mock.calls[0][1]).toMatchObject({ method: 'GET', headers: { Authorization: 'Bearer video-secret' } });
+  });
   it('uses two type-specific keys in one channel and persists distinct execution key IDs', async () => {
     ChannelService.updateChannel(channelId, { apipathImageKey: 'image-secret', apipathVideoKey: 'video-secret' });
     await ChannelService.syncModels(channelId); // Each key returns both types; binding must still filter by kind.
@@ -167,6 +229,7 @@ describe('通联 actual specification entry and isolated billing', () => {
     expect(read().description).toBe('管理员自定义说明');
   });
   it('does not update descriptions for a conflicting provider or unrelated model', async () => {
+    db.insert(models).values({ provider: 'apipath', modelId: 'seedance-2.0-YZ', displayName: '旧模型', description: '旧说明', capabilities: '["video"]', isActive: 0 }).run();
     const original = db.select().from(models).where(eq(models.modelId, 'seedance-2.0-YZ')).get()!;
     db.update(models).set({ provider: 'other', description: '' }).where(eq(models.modelId, 'dola2.5')).run();
     await ChannelService.syncModels(channelId);
@@ -212,10 +275,10 @@ describe('通联 actual specification entry and isolated billing', () => {
     expect(vi.mocked(fetch).mock.calls.every(c=>c[1]?.method==='GET')).toBe(true);
   });
   it('generates an image through the charged website entry',async()=>{
-    modelId='gpt-image-2-5-flare';enable();vi.stubGlobal('fetch',vi.fn(async()=>Response.json({created:1,data:[{url:'https://cdn.example/image.png'}]})));
-    const res=response();await handleSpecificationGeneration(request({resolution:'default'}),res,'image');
+    modelId='gpt-image-2-5-sunburst-1k';enable();vi.stubGlobal('fetch',vi.fn(async()=>Response.json({created:1,data:[{url:'https://cdn.example/image.png'}]})));
+    const res=response();await handleSpecificationGeneration(request({resolution:'1K'}),res,'image');
     expect(db.select().from(contents).all().at(-1),JSON.stringify(res.body)).toMatchObject({status:'completed',cost:2});
-    const [url,init]=vi.mocked(fetch).mock.calls[0];expect(String(url)).toContain('/v1/images/generations');expect(JSON.parse(String(init?.body))).toMatchObject({model:modelId,n:1});
+    const [url,init]=vi.mocked(fetch).mock.calls[0];expect(String(url)).toContain('/v1/images/generations');expect(JSON.parse(String(init?.body))).toMatchObject({model:'gpt-image-2-5-sunburst',n:1});
   });
   it('imports disabled and preserves prices and administrator switches',async()=>{
     expect(db.select().from(models).all().every(x=>x.isActive===0)).toBe(true);enable();const spec=getModelSpecification(modelId)!;spec.routes[0].enabled=false;saveModelSpecification(spec);
@@ -238,9 +301,9 @@ describe('通联 actual specification entry and isolated billing', () => {
     }finally{vi.useRealTimers();}
   });
   it('uses multipart edits with all validated reference bytes',async()=>{
-    modelId='gpt-image-2-5-flare';enable();const validation=vi.spyOn(referenceValidation,'validateAndNormalizeImageReferences').mockResolvedValue(['data:image/png;base64,aGVsbG8=']);
+    modelId='gpt-image-2-5-sunburst-1k';enable();const validation=vi.spyOn(referenceValidation,'validateAndNormalizeImageReferences').mockResolvedValue(['data:image/png;base64,aGVsbG8=']);
     vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{url:'https://cdn.example/edited.png'}]})));
-    try{await handleSpecificationGeneration(request({resolution:'default',reference_images:['https://images.example/ref.png']}),response(),'image');
+    try{await handleSpecificationGeneration(request({resolution:'1K',reference_images:['https://images.example/ref.png']}),response(),'image');
       const [url,init]=vi.mocked(fetch).mock.calls[0];expect(String(url)).toContain('/v1/images/edits');expect(init?.body).toBeInstanceOf(FormData);expect((init?.body as FormData).getAll('image[]')).toHaveLength(1);
       expect(db.select().from(contents).all().at(-1)?.status).toBe('completed');
     }finally{validation.mockRestore();}
