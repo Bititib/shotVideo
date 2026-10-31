@@ -2,13 +2,16 @@ import BrandMark from './BrandMark';
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
-import { X, Mail, Lock, ArrowRight, MessageCircle, Eye, EyeOff } from 'lucide-react';
+import { X, Mail, Lock, ArrowRight, User, Eye, EyeOff } from 'lucide-react';
 
 export default function LoginModal() {
-  const { showLoginModal, closeLoginModal, login } = useAuthStore();
+  const { showLoginModal, closeLoginModal, login, register } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
   const [email, setEmail] = useState('');
+  const [isRegister, setIsRegister] = useState(false);
+  const [username, setUsername] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
@@ -17,6 +20,8 @@ export default function LoginModal() {
   const handleClose = () => {
     closeLoginModal();
     setPassword('');
+    setConfirmPassword('');
+    setIsRegister(false);
     setShowPassword(false);
     setError('');
   };
@@ -42,16 +47,18 @@ export default function LoginModal() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    if (isRegister && password !== confirmPassword) { setError('两次输入的密码不一致'); return; }
     setLoading(true);
     try {
-      await login(email, password);
-      setEmail(''); setPassword(''); setError('');
+      if (isRegister) await register(email, username, password);
+      else await login(email, password);
+      setEmail(''); setPassword(''); setConfirmPassword(''); setUsername(''); setIsRegister(false); setError('');
       // 如果在首页或登录页，跳转到工作台
       if (location.pathname === '/' || location.pathname === '/login') {
         navigate('/app', { replace: true });
       }
     } catch (err: any) {
-      setError(err.message || '登录失败');
+      setError(err.message || (isRegister ? '注册失败' : '登录失败'));
     } finally {
       setLoading(false);
     }
@@ -64,7 +71,7 @@ export default function LoginModal() {
 
       {/* 弹窗 */}
       <section
-        className="login-modal-card relative w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+        className="login-modal-card relative w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto animate-in fade-in zoom-in-95 duration-200"
         role="dialog"
         aria-modal="true"
         aria-labelledby="login-modal-title"
@@ -88,10 +95,14 @@ export default function LoginModal() {
             </span>
           </div>
 
-          <h2 id="login-modal-title" className="login-modal-title text-2xl font-bold mb-1.5">欢迎回来</h2>
-          <p id="login-modal-description" className="login-modal-subtitle text-sm mb-7">使用已授权的账号进入创作工作台</p>
+          <h2 id="login-modal-title" className="login-modal-title text-2xl font-bold mb-1.5">{isRegister ? '创建账号' : '欢迎回来'}</h2>
+          <p id="login-modal-description" className="login-modal-subtitle text-sm mb-7">{isRegister ? '填写邮箱和密码，注册后即可登录工作台' : '登录账号，进入创作工作台'}</p>
 
           <form onSubmit={handleSubmit} className="space-y-5">
+            {isRegister && <div><label htmlFor="register-username" className="login-modal-label block text-sm font-medium mb-2">用户名</label><div className="relative">
+              <User className="login-modal-field-icon absolute left-4 top-1/2 -translate-y-1/2 w-[18px] h-[18px] pointer-events-none" />
+              <input id="register-username" value={username} onChange={e => setUsername(e.target.value)} required maxLength={50} autoComplete="nickname" placeholder="你的昵称" className="login-modal-field w-full rounded-xl pl-11 pr-4 py-3 text-sm" />
+            </div></div>}
             <div>
               <label htmlFor="login-email" className="login-modal-label block text-sm font-medium mb-2">邮箱</label>
               <div className="relative">
@@ -114,7 +125,7 @@ export default function LoginModal() {
                   id="login-password"
                   type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)}
                   placeholder="请输入密码" required minLength={6}
-                  autoComplete="current-password"
+                  maxLength={isRegister ? 72 : undefined} autoComplete={isRegister ? 'new-password' : 'current-password'}
                   className="login-modal-field w-full rounded-xl pl-11 pr-12 py-3 text-sm"
                 />
                 <button
@@ -128,6 +139,11 @@ export default function LoginModal() {
               </div>
             </div>
 
+            {isRegister && <div><label htmlFor="register-confirm-password" className="login-modal-label block text-sm font-medium mb-2">确认密码</label><div className="relative">
+              <Lock className="login-modal-field-icon absolute left-4 top-1/2 -translate-y-1/2 w-[18px] h-[18px] pointer-events-none" />
+              <input id="register-confirm-password" type={showPassword ? 'text' : 'password'} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required minLength={6} maxLength={72} autoComplete="new-password" placeholder="再次输入密码" className="login-modal-field w-full rounded-xl pl-11 pr-4 py-3 text-sm" />
+            </div></div>}
+
             {error && (
               <div className="login-modal-error rounded-xl px-4 py-3 text-sm" role="alert">
                 {error}
@@ -139,18 +155,17 @@ export default function LoginModal() {
               className="login-modal-submit w-full font-semibold py-3 rounded-xl flex items-center justify-center gap-2"
             >
               {loading ? (
-                <><div className="w-5 h-5 border-2 border-white/35 border-t-white rounded-full animate-spin" /><span>登录中…</span></>
+                <><div className="w-5 h-5 border-2 border-white/35 border-t-white rounded-full animate-spin" /><span>{isRegister ? '注册中…' : '登录中…'}</span></>
               ) : (
-                <>登录<ArrowRight className="w-4 h-4" /></>
+                <>{isRegister ? '注册并登录' : '登录'}<ArrowRight className="w-4 h-4" /></>
               )}
             </button>
           </form>
 
-          {/* 提示联系管理员 */}
+          {/* 登录与注册共用会话流程 */}
           <div className="mt-6 pt-5 border-t login-modal-divider text-center">
             <div className="login-modal-help flex items-center justify-center gap-2 text-sm">
-              <MessageCircle className="w-3.5 h-3.5" />
-              <span>没有账号？请联系管理员开通</span>
+              <span>{isRegister ? '已有账号？' : '没有账号？'}</span><button type="button" disabled={loading} onClick={() => { setIsRegister(value => !value); setError(''); setPassword(''); setConfirmPassword(''); }}>{isRegister ? '返回登录' : '立即注册'}</button>
             </div>
           </div>
         </div>

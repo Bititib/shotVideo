@@ -19,12 +19,21 @@ export function getDeveloperModels(userId: number, tokenId: number): DeveloperMo
   const result = TokenService.validateToken(owned.tokenKey);
   if (!result.valid) throw Object.assign(new Error(result.error), { status: 403 });
   const token = result.token!;
-  const models = getAccessibleModels(token);
+  return buildDeveloperCatalog(getAccessibleModels(token), userId,
+    { id: token.id, name: token.name || 'API Key', maskedKey: owned.tokenKey.slice(0, 6) + '****' + owned.tokenKey.slice(-4) });
+}
+
+/** Anonymous discovery exposes public metadata and standard prices, never personal or upstream data. */
+export function getPublicDeveloperModels(): DeveloperModelCatalog {
+  return buildDeveloperCatalog(getAccessibleModels({ allowedModels: [], userId: null }), null, null);
+}
+
+function buildDeveloperCatalog(models: ReturnType<typeof getAccessibleModels>, userId: number | null, token: DeveloperModelCatalog['token']): DeveloperModelCatalog {
   const activeChannels = ChannelService.getActiveChannels();
   const hmOverflow = hasHmStudioOverflowChannel(activeChannels);
   const prices = new Map(PricingService.getPublicPricingForModels(models.map(model => model.modelId), userId).map(price => [price.model, price]));
   return {
-    token: { id: token.id, name: token.name || 'API Key', maskedKey: owned.tokenKey.slice(0, 6) + '****' + owned.tokenKey.slice(-4) },
+    token,
     checkedAt: new Date().toISOString(),
     items: models.map(model => {
       let capabilities: string[] = [];

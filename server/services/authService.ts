@@ -21,10 +21,16 @@ interface LoginInput {
 export class AuthService {
   /** 注册新用户（默认免费等级） */
   static async register(input: RegisterInput) {
-    const { email, username, password } = input;
+    if (!input || typeof input.email !== 'string' || typeof input.username !== 'string' || typeof input.password !== 'string')
+      throw { status: 400, message: '请填写邮箱、用户名和密码' };
+    const email = input.email.trim().toLowerCase(), username = input.username.trim(), password = input.password;
+    if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw { status: 400, message: '请输入有效的邮箱地址' };
+    if (!username || username.length > 50) throw { status: 400, message: '用户名需为1–50个字符' };
+    if (password.length < 6) throw { status: 400, message: '密码至少为6位' };
+    if (Buffer.byteLength(password, 'utf8') > 72) throw { status: 400, message: '密码过长，请使用更短的密码' };
 
     // 检查邮箱是否已存在
-    const existing = db.select().from(users).where(eq(users.email, email)).get();
+    const existing = db.select().from(users).where(sql`lower(${users.email}) = ${email}`).get();
     if (existing) {
       throw { status: 409, message: '该邮箱已被注册' };
     }
@@ -35,15 +41,24 @@ export class AuthService {
       throw { status: 500, message: '系统未初始化等级配置' };
     }
 
-    const passwordHash = bcrypt.hashSync(password, 12);
+    const passwordHash = await bcrypt.hash(password, 12);
 
-    const result = db.insert(users).values({
+    let result;
+    try { result = db.insert(users).values({
       email,
       username,
       passwordHash,
       role: 'user',
       tierId: freeTier.id,
-    }).run();
+      balance: 0,
+      orgId: null,
+      isActive: 1,
+    }).run(); }
+    catch (error: any) {
+      if (error.code === 'SQLITE_CONSTRAINT_UNIQUE' || error.cause?.code === 'SQLITE_CONSTRAINT_UNIQUE')
+        throw { status: 409, message: '该邮箱已被注册' };
+      throw { status: 500, message: '注册失败，请稍后重试' };
+    }
 
     const user = db.select().from(users).where(eq(users.id, Number(result.lastInsertRowid))).get();
     return this.generateAuthResponse(user!);
@@ -52,8 +67,11 @@ export class AuthService {
   /** 登录 */
   static async login(input: LoginInput) {
     const { email, password } = input;
+    if (typeof email !== 'string' || typeof password !== 'string') throw { status: 400, message: '请填写邮箱和密码' };
 
-    const user = db.select().from(users).where(eq(users.email, email)).get();
+    const address = email.trim();
+    const user = db.select().from(users).where(eq(users.email, address)).get()
+      || db.select().from(users).where(sql`lower(${users.email}) = ${address.toLowerCase()}`).get();
     if (!user) {
       throw { status: 401, message: '邮箱或密码错误' };
     }

@@ -24,7 +24,7 @@ export interface DeveloperModel {
   health: VideoModelStatus | null;
 }
 export interface DeveloperModelCatalog {
-  token: { id: number; name: string; maskedKey: string };
+  token: { id: number; name: string; maskedKey: string } | null;
   checkedAt: string;
   items: DeveloperModel[];
 }

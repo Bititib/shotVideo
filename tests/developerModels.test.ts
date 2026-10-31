@@ -12,7 +12,7 @@ import { ChannelService } from '../server/services/channelService.js';
 import { TokenService } from '../server/services/tokenService.js';
 import { env } from '../server/config/env.js';
 import developerRouter from '../server/routes/developer.js';
-import { getDeveloperModels } from '../server/services/developerModelService.js';
+import { getDeveloperModels, getPublicDeveloperModels } from '../server/services/developerModelService.js';
 import { getAccessibleModelIds } from '../server/services/modelAccessService.js';
 import { defaultRoutingLimits } from '../shared/modelRouting.js';
 import { resolvePublicModelId } from '../server/services/publicModelNameService.js';
@@ -32,6 +32,7 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   vi.restoreAllMocks();
+  sqlite.exec('DELETE FROM user_model_pricing');
   for (const table of [apiTokens, modelPricing, models, settings, contents, users]) db.delete(table).run();
   db.insert(users).values({ id: 1, email: 'developer@test.invalid', username: 'Developer', passwordHash: 'test-only' }).run();
   for (const [modelId, displayName, capabilities] of [
@@ -49,6 +50,24 @@ afterAll(async () => {
 });
 
 describe('developer model catalog authorization and public data', () => {
+  it('serves anonymous public metadata and standard pricing without a website session or API Key', async () => {
+    TokenService.updateToken(keyId, { allowedModels: ['catalog-chat'] });
+    const response = await fetch(`${baseUrl}/api/developer/models/public`);
+    expect(response.status).toBe(200);
+    const catalog = await response.json() as any;
+    expect(catalog.token).toBeNull();
+    expect(catalog.items.find((m:any)=>m.id==='gpt-image-2')).toMatchObject({pricing:{unit_price:.1,resolution_prices:{'4K':.2}}});
+    for(const secret of ['private-model-secret','private-channel-secret','tokenKey','upstreamModel','channelId','resolutionCosts'])expect(JSON.stringify(catalog)).not.toContain(secret);
+    expect((await fetch(`${baseUrl}/api/developer/models?tokenId=${keyId}`)).status).toBe(401);
+  });
+  it('uses global public prices and excludes disabled models regardless of a visiting users private rules', async () => {
+    const model=db.select().from(models).where(eq(models.modelId,'gpt-image-2')).get()!;
+    sqlite.prepare('INSERT INTO user_model_pricing(user_id,model_id,billing_type,input_price,output_price,extra_params) VALUES(?,?,?,?,?,?)').run(1,model.id,'per_call',.009,0,'{}');
+    expect(getDeveloperModels(1,keyId).items.find(m=>m.id==='gpt-image-2')!.pricing!.unit_price).toBe(.009);
+    expect(getPublicDeveloperModels().items.find(m=>m.id==='gpt-image-2')!.pricing!.unit_price).toBe(.1);
+    db.update(models).set({isActive:0}).where(eq(models.id,model.id)).run();
+    expect(getPublicDeveloperModels().items.some(m=>m.id==='gpt-image-2')).toBe(false);
+  });
   it.each(['veo-3.1', 'veo-3.1-lite', 'nano-banana2-2k'])('publishes %s without the channel prefix while retaining internal routing', id => {
     const internal = 'funai-' + id;
     db.insert(models).values({ modelId: internal, displayName: internal, capabilities: '["video"]' }).run();

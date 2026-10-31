@@ -1,7 +1,6 @@
 import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Check, Copy, FileText, KeyRound, Layers3 } from 'lucide-react';
-import { useAuthStore } from '../stores/authStore';
+import { Check, Copy, FileText, Layers3 } from 'lucide-react';
 import './DeveloperPage.css';
 
 const DocsPage = lazy(() => import('./DocsPage'));
@@ -11,7 +10,6 @@ const tabs = [{ id: 'docs', label: '接口文档', icon: FileText }, { id: 'mode
 export default function DeveloperPage() {
   const [params, setParams] = useSearchParams();
   const activeTab = params.get('tab') === 'models' ? 'models' : 'docs';
-  const { isAuthenticated, openLoginModal } = useAuthStore();
   const [modelsVisited, setModelsVisited] = useState(activeTab === 'models');
   const [copyStatus, setCopyStatus] = useState('');
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -48,8 +46,7 @@ export default function DeveloperPage() {
       <Suspense fallback={<p className="developer-loading" role="status">正在加载接口文档…</p>}><DocsPage embedded /></Suspense>
     </section>
     <section id="developer-panel-models" role="tabpanel" aria-labelledby="developer-tab-models" hidden={activeTab !== 'models'} tabIndex={0}>
-      {!isAuthenticated ? <div className="developer-login"><KeyRound size={28} /><h2>登录后查看 API 模型</h2><p>选择自己的 API Key，查看对应模型、价格和调用示例。</p><button onClick={openLoginModal}>登录 / 注册</button></div>
-        : (modelsVisited || activeTab === 'models') && <Suspense fallback={<p className="developer-loading" role="status">正在加载模型列表…</p>}><ApiModelsPage embedded /></Suspense>}
+      {(modelsVisited || activeTab === 'models') && <Suspense fallback={<p className="developer-loading" role="status">正在加载模型列表…</p>}><ApiModelsPage embedded /></Suspense>}
     </section>
   </div>;
 }

@@ -42,7 +42,7 @@ export default function DocsPage({ embedded = false }: { embedded?: boolean }) {
       title: '获取可用模型列表',
       method: 'GET',
       path: '/v1/models',
-      description: '获取当前 API Key 有权访问且已配置可用渠道的模型列表。调用其他接口时，请始终使用本接口实时返回的模型 ID。返回结构兼容 OpenAI 模型列表格式。',
+      description: '浏览本站“API 模型”目录无需登录或 API Key，可查看公开型号、标准价格和示例。本接口则返回当前 API Key 有权调用的模型列表；实际调用时请使用本接口返回的模型 ID。返回结构兼容 OpenAI 模型列表格式。',
       parameters: [],
       curlExample: `curl -X GET "${getBaseUrl()}/models" \\
   -H "Authorization: Bearer sk-你的令牌Key"`,

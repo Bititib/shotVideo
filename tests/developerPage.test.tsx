@@ -37,13 +37,11 @@ describe('combined developer center', () => {
     await waitFor(() => expect(screen.getByRole('tab', { name: '接口文档' })).toHaveFocus());
     expect(screen.getByLabelText('当前地址')).toHaveTextContent('?tab=docs');
   });
-  it('keeps docs public and prompts login for models', async () => {
+  it('keeps both docs and model browsing public', async () => {
     auth.isAuthenticated = false;
     open('/app/docs?tab=models');
-    expect(screen.getByRole('heading', { name: '登录后查看 API 模型' })).toBeInTheDocument();
-    expect(screen.queryByLabelText('模型筛选')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '登录 / 注册' }));
-    expect(auth.openLoginModal).toHaveBeenCalledOnce();
+    expect(await screen.findByLabelText('模型筛选')).toBeInTheDocument();
+    expect(auth.openLoginModal).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('tab', { name: '接口文档' }));
     await screen.findByText('接口说明内容');
   });

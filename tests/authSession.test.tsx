@@ -27,6 +27,26 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('login recovery through the actual API client and auth store', () => {
+  it('registers through the visible dialog and completes the normal account session without an API Key',async()=>{
+    useAuthStore.setState({showLoginModal:true});
+    const fetcher=vi.fn().mockResolvedValueOnce(Response.json({token:'registered-token',user:profile},{status:201})).mockResolvedValueOnce(Response.json({...profile,balance:0,hasActiveApiKey:false}));
+    vi.stubGlobal('fetch',fetcher);
+    render(<MemoryRouter initialEntries={['/app/docs?tab=models']}><LoginModal /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('button',{name:'立即注册'}));
+    fireEvent.change(screen.getByLabelText('用户名'),{target:{value:'New user'}});
+    fireEvent.change(screen.getByLabelText('邮箱'),{target:{value:profile.email}});
+    fireEvent.change(screen.getByLabelText('密码'),{target:{value:'correct-password'}});
+    fireEvent.change(screen.getByLabelText('确认密码'),{target:{value:'different-password'}});
+    fireEvent.click(screen.getByRole('button',{name:'注册并登录'}));
+    expect((await screen.findByRole('alert')).textContent).toContain('两次输入的密码不一致');expect(fetcher).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('确认密码'),{target:{value:'correct-password'}});
+    fireEvent.click(screen.getByRole('button',{name:'注册并登录'}));
+    await waitFor(()=>expect(screen.queryByRole('dialog')).toBeNull());
+    expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({email:profile.email,username:'New user',password:'correct-password'});
+    expect(fetcher.mock.calls[0][0]).toBe('/api/auth/register');
+    expect(fetcher.mock.calls[1][1].headers.Authorization).toBe('Bearer registered-token');
+    expect(useAuthStore.getState().isAuthenticated).toBe(true);expect(useAuthStore.getState().user).toMatchObject({balance:0,hasActiveApiKey:false});
+  });
   it('shows the actual credential error in the login dialog, then allows a corrected login', async () => {
     useAuthStore.setState({ showLoginModal: true });
     const fetcher = vi.fn()

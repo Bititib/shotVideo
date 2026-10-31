@@ -1,8 +1,12 @@
 import { Router } from 'express';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
-import { getDeveloperModels } from '../services/developerModelService.js';
+import { getDeveloperModels, getPublicDeveloperModels } from '../services/developerModelService.js';
 
 const router = Router();
+router.get('/models/public', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.json(getPublicDeveloperModels()); } catch (error) { next(error); }
+});
 router.use(authMiddleware);
 router.get('/models', (req: AuthRequest, res, next) => {
   res.setHeader('Cache-Control', 'no-store');

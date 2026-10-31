@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, Check, Copy, FileText, KeyRound, Layers3, RefreshCw, Search, X } from 'lucide-react';
 import { tokensApi } from '../api/tokens';
 import { developerApi } from '../api/developer';
+import { useAuthStore } from '../stores/authStore';
 import type { DeveloperEndpoint, DeveloperModel, DeveloperModelCatalog, DeveloperModelKind } from '../../../shared/developerModels';
 import { formatModelPrice, modelExample } from '../utils/apiModelExamples';
 import './ApiModelsPage.css';
@@ -56,10 +57,11 @@ function ModelDetails({ model, onClose, onCopy, notice }: { model: DeveloperMode
 }
 
 export default function ApiModelsPage({ embedded = false }: { embedded?: boolean }) {
+  const { isAuthenticated, openLoginModal } = useAuthStore();
   const [keys, setKeys] = useState<KeyOption[]>([]);
   const [tokenId, setTokenId] = useState('');
   const [catalog, setCatalog] = useState<DeveloperModelCatalog | null>(null);
-  const [keysLoading, setKeysLoading] = useState(true);
+  const [keysLoading, setKeysLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [keysError, setKeysError] = useState('');
   const [error, setError] = useState('');
@@ -68,10 +70,12 @@ export default function ApiModelsPage({ embedded = false }: { embedded?: boolean
   const [kind, setKind] = useState('all');
   const [selected, setSelected] = useState<DeveloperModel | null>(null);
   const [notice, setNotice] = useState('');
+  const keyCatalogReady = !tokenId || isAuthenticated && !keysLoading && !keysError;
   const noticeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(noticeTimer.current), []);
   useEffect(() => {
     let current = true;
+    if (!isAuthenticated) { setKeys([]); setTokenId(''); setKeysLoading(false); setKeysError(''); return; }
     setKeysLoading(true); setKeysError('');
     (async () => {
       const items: KeyOption[] = [];
@@ -85,43 +89,45 @@ export default function ApiModelsPage({ embedded = false }: { embedded?: boolean
       } while (current);
       if (!current) return;
       setKeys(items);
-      setTokenId(previous => items.some(item => String(item.id) === previous) ? previous : String((items.find(item => item.status === 1 && (!item.expiresAt || new Date(item.expiresAt) > new Date())) || items[0])?.id || ''));
+      setTokenId(previous => items.some(item => String(item.id) === previous) ? previous : '');
     })().catch(err => { if (current) setKeysError(err.message || 'API Key 加载失败'); })
       .finally(() => { if (current) setKeysLoading(false); });
     return () => { current = false; };
-  }, [revision]);
+  }, [revision, isAuthenticated]);
   useEffect(() => {
     const controller = new AbortController();
     setCatalog(null); setSelected(null); setError('');
-    if (!tokenId || keysLoading || keysError) { setLoading(false); return; }
+    if (!keyCatalogReady) { setLoading(false); return; }
     setLoading(true);
-    developerApi.getModels(Number(tokenId), controller.signal).then(result => { if (!controller.signal.aborted) setCatalog(result); })
+    const request = tokenId ? developerApi.getModels(Number(tokenId), controller.signal) : developerApi.getPublicModels(controller.signal);
+    request.then(result => { if (!controller.signal.aborted) setCatalog(result); })
       .catch(err => { if (!controller.signal.aborted) setError(err.message || '模型列表加载失败'); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [tokenId, keysLoading, keysError, revision]);
+  }, [tokenId, keyCatalogReady, revision, isAuthenticated]);
   async function copy(value: string) {
     try { await navigator.clipboard.writeText(value); setNotice('已复制'); }
     catch { setNotice('复制失败，请手动选择并复制'); }
     clearTimeout(noticeTimer.current); noticeTimer.current = setTimeout(() => setNotice(''), 2500);
   }
-  const activeCatalog = catalog?.token.id === Number(tokenId) && !keysLoading ? catalog : null;
+  const activeCatalog = tokenId ? isAuthenticated && catalog?.token?.id === Number(tokenId) && !keysLoading ? catalog : null : catalog?.token === null ? catalog : null;
   const items = activeCatalog?.items || [];
   const query = search.trim().toLowerCase();
   const filtered = items.filter(model => (kind === 'all' || model.kinds.includes(kind as DeveloperModelKind))
     && `${model.name} ${model.id} ${model.canonicalId} ${model.description}`.toLowerCase().includes(query));
-  const busy = keysLoading || loading;
+  const busy = Boolean(tokenId && keysLoading) || loading;
   return <div className="api-model-page">
-    {!embedded && <header className="api-model-heading"><div><p className="api-model-eyebrow">DEVELOPER / MODELS</p><h1>API 模型</h1><p className="api-model-muted">找到当前密钥可访问的模型，查看价格与接入方式。</p></div><Link className="api-model-button" to="/app/docs?tab=docs"><FileText size={16} />接口文档<ArrowRight size={14} /></Link></header>}
+    {!embedded && <header className="api-model-heading"><div><p className="api-model-eyebrow">DEVELOPER / MODELS</p><h1>API 模型</h1><p className="api-model-muted">无需 API Key 即可浏览公开模型、标准价格与调用示例。</p></div><Link className="api-model-button" to="/app/docs?tab=docs"><FileText size={16} />接口文档<ArrowRight size={14} /></Link></header>}
     <div className={`api-model-connection ${embedded ? 'is-embedded' : ''}`}>{!embedded && <div><span className="api-model-eyebrow">BASE URL</span><div className="api-model-base"><code>{window.location.origin}/v1</code><button className="api-model-icon" aria-label="复制 Base URL" onClick={() => copy(`${window.location.origin}/v1`)}><Copy size={15} /></button></div></div>}
-      <label className="api-model-key"><span><KeyRound size={14} />当前 API Key</span><select aria-label="当前 API Key" value={tokenId} disabled={keysLoading || !keys.length} onChange={event => { setSelected(null); setTokenId(event.target.value); }}>
-        {!keys.length && <option value="">{keysLoading ? '正在加载…' : '暂无 API Key'}</option>}{keys.map(key => <option key={key.id} value={key.id}>{key.name || 'API Key'} · {key.tokenKeyMasked}{key.status === 0 ? '（已停用）' : key.expiresAt && new Date(key.expiresAt) < new Date() ? '（已过期）' : ''}</option>)}
-      </select></label><button className="api-model-button" disabled={busy} onClick={() => setRevision(value => value + 1)}><RefreshCw size={15} className={busy ? 'animate-spin' : ''} />刷新</button>
+      {isAuthenticated ? <label className="api-model-key"><span><KeyRound size={14} />当前 API Key</span><select aria-label="当前 API Key" value={tokenId} disabled={keysLoading} onChange={event => { setSelected(null); setTokenId(event.target.value); }}>
+        <option value="">公开模型（无需 API Key）</option>{keys.map(key => <option key={key.id} value={key.id}>{key.name || 'API Key'} · {key.tokenKeyMasked}{key.status === 0 ? '（已停用）' : key.expiresAt && new Date(key.expiresAt) < new Date() ? '（已过期）' : ''}</option>)}
+      </select></label> : <p className="api-model-muted">公开模型与标准价格 · 无需登录或 API Key</p>}<button className="api-model-button" disabled={busy} onClick={() => setRevision(value => value + 1)}><RefreshCw size={15} className={busy ? 'animate-spin' : ''} />刷新</button>
     </div>
     <div className="api-model-toolbar"><div className="api-model-filters" aria-label="模型类型">{(['all', 'text', 'image', 'video', 'tts', 'other'] as const).filter(value => value === 'all' || items.some(model => model.kinds.includes(value))).map(value => <button key={value} aria-pressed={kind === value} onClick={() => setKind(value)}>{value === 'all' ? '全部模型' : labels[value]}<span>{value === 'all' ? items.length : items.filter(model => model.kinds.includes(value)).length}</span></button>)}</div>
       <label className="api-model-search"><Search size={16} /><input aria-label="搜索模型" placeholder="搜索模型名称或 ID" value={search} onChange={event => setSearch(event.target.value)} /></label></div>
-    {(keysError || error) && <div className="api-model-error" role="alert"><p>{keysError || error}</p><button className="api-model-link" onClick={() => setRevision(value => value + 1)}>重新加载</button><Link to="/app/profile">管理 API Key</Link></div>}
-    {busy ? <div className="api-model-empty" role="status"><RefreshCw className="animate-spin" size={24} /><p>正在加载模型目录…</p></div> : !keysError && !error && !keys.length ? <div className="api-model-empty"><KeyRound size={30} /><h2>创建密钥，开始接入</h2><p>在个人中心创建 API Key 后，即可查看可访问模型。</p><Link className="api-model-button api-model-primary" to="/app/profile">前往创建 API Key<ArrowRight size={15} /></Link></div> : !keysError && !error && !filtered.length ? <div className="api-model-empty"><Layers3 size={30} /><h2>{items.length ? '没有匹配的模型' : '当前 Key 暂无可访问模型'}</h2><p>{items.length ? '尝试其他关键词或模型类型。' : '请检查模型是否已启用及密钥授权，或切换 API Key。'}</p>{items.length > 0 && <button className="api-model-button" onClick={() => { setSearch(''); setKind('all'); }}>清除筛选</button>}</div> : !keysError && !error && <div className="api-model-list"><table aria-label="API 模型列表">
+    {keysError && <p role="status" className="api-model-muted">{keysError}，仍可浏览公开目录。<button className="api-model-link" onClick={() => setRevision(value => value + 1)}>重新加载密钥</button></p>}
+    {error && <div className="api-model-error" role="alert"><p>{error}</p><button className="api-model-link" onClick={() => setRevision(value => value + 1)}>重新加载</button></div>}
+    {busy ? <div className="api-model-empty" role="status"><RefreshCw className="animate-spin" size={24} /><p>正在加载模型目录…</p></div> : !error && !filtered.length ? <div className="api-model-empty"><Layers3 size={30} /><h2>{items.length ? '没有匹配的模型' : tokenId ? '当前 Key 暂无可访问模型' : '暂无已开放的模型'}</h2><p>{items.length ? '尝试其他关键词或模型类型。' : tokenId ? '请检查模型是否已启用及密钥授权，或切换 API Key。' : '模型开放后将展示在此处。'}</p>{items.length > 0 && <button className="api-model-button" onClick={() => { setSearch(''); setKind('all'); }}>清除筛选</button>}</div> : !error && <div className="api-model-list"><table aria-label="API 模型列表">
       <thead><tr><th scope="col">模型 / 调用 ID</th><th scope="col">类型</th><th scope="col">调用价格</th><th scope="col">状态</th><th scope="col">操作</th></tr></thead>
       <tbody>{filtered.map(model => <tr key={model.canonicalId}>
         <td className="api-model-name-cell"><h2>{model.name}</h2><div className="api-model-row-id"><code>{model.id}</code><button className="api-model-icon" aria-label={`复制 ${model.name} 的调用 ID`} onClick={() => copy(model.id)}><Copy size={14} /></button></div>{model.description && <p className="api-model-row-description">{model.description}</p>}</td>
@@ -131,7 +137,8 @@ export default function ApiModelsPage({ embedded = false }: { embedded?: boolean
         <td className="api-model-action-cell"><button className="api-model-link" onClick={() => setSelected(model)}>详情与示例<ArrowRight size={15} /></button></td>
       </tr>)}</tbody>
     </table></div>}
-    {activeCatalog && !busy && <footer className="api-model-footer"><span>展示 {filtered.length} / {items.length} 个模型 · 按当前 Key 权限筛选</span><span>更新于 {new Date(activeCatalog.checkedAt).toLocaleTimeString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })}（北京时间）</span></footer>}
+    {activeCatalog && !busy && <footer className="api-model-footer"><span>展示 {filtered.length} / {items.length} 个模型 · {tokenId ? '按当前 Key 权限筛选' : '公开目录与标准价格'}</span><span>更新于 {new Date(activeCatalog.checkedAt).toLocaleTimeString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })}（北京时间）</span></footer>}
+    {!isAuthenticated ? <button className="api-model-link" onClick={() => openLoginModal()}>登录 / 注册后创建 API Key</button> : <Link className="api-model-link" to="/app/profile">管理 API Key</Link>}
     <div className="api-model-notice" role="status" aria-live="polite">{notice && <span><Check size={15} />{notice}</span>}</div>
     {selected && <ModelDetails model={selected} onClose={() => setSelected(null)} onCopy={copy} notice={notice} />}
   </div>;
