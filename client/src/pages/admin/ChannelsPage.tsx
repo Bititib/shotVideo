@@ -15,6 +15,7 @@ import { adminApi } from '../../api/admin';
 import { Plus, Radio, Trash2, Pencil, Zap, Loader2, Power, PowerOff, RefreshCw, KeyRound, Activity, CircleCheck, CircleX, Timer, ScanFace } from 'lucide-react';
 import { FUNAI_BASE_URL } from '../../../../shared/funAi';
 import { ASYNC_VIDEO_BASE_URL } from '../../../../shared/asyncVideo';
+import { APIPATH_SYNC_MODEL_IDS } from '../../../../shared/apipathModels';
 
 const HM_STUDIO_BASE_URL = 'https://dnyovzpgyokm.sealosbja.site';
 const HAYA_BASE_URL = 'https://hayaai.fun';
@@ -571,7 +572,12 @@ export default function ChannelsPage() {
                         className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
                     </div>;
                   })}
-                  <p className="text-xs leading-5 text-zinc-400">图片和视频分别使用对应的 Key。保存后同步模型，只导入各 Key 对应类型的授权模型；未填写的类型不开放生成。</p>
+                  <p className="text-xs leading-5 text-zinc-400">图片和视频分别使用对应的 Key。保存后点击渠道列表中的“同步模型”，仅同步下列 6 个指定条目中对应 Key 已授权的模型；未填写的类型不开放生成。</p>
+                  <section aria-label="通联指定同步范围" className="rounded-xl border border-white/10 p-3 text-xs leading-5 text-zinc-400">
+                    <p className="mb-1">指定同步范围（3 款视频 + 图片 1K / 2K / 4K）：</p>
+                    <ul className="space-y-1">{APIPATH_SYNC_MODEL_IDS.map(id => <li key={id} className="break-all">{id}</li>)}</ul>
+                    <p className="mt-2">这是允许同步的范围，实际已绑定模型以下方列表为准。</p>
+                  </section>
                   {edit.apipathLegacyKeyConfigured && <p className="text-xs leading-5 text-amber-300">当前保留旧版通用 Key。填写分类 Key 后，新任务仅使用分类 Key；旧任务继续按原凭据查询。</p>}
                 </section>
               )}
@@ -682,13 +688,13 @@ export default function ChannelsPage() {
               <div>
                 <label className="block text-xs text-zinc-400 mb-1.5">支持的模型名（每行一个，对外暴露的名字）</label>
                 <textarea value={edit.modelsText} onChange={e => setEdit({ ...edit, modelsText: e.target.value })} rows={3}
-                  placeholder={"grok-4\ngrok-imagine-video\ngrok-imagine-image"}
+                  placeholder={edit.type === 'apipath' ? '尚未绑定模型。保存对应 Key 后，请点击“同步模型”。' : "grok-4\ngrok-imagine-video\ngrok-imagine-image"}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono resize-none" />
               </div>
               <div>
                 <label className="block text-xs text-zinc-400 mb-1.5">模型名映射（每行一条，格式: 对外名:上游名）</label>
                 <textarea value={edit.mappingText} onChange={e => setEdit({ ...edit, mappingText: e.target.value })} rows={3}
-                  placeholder={"grok-4:grok-4.20-0309-super\ngrok-video:grok-imagine-video"}
+                  placeholder={edit.type === 'apipath' ? '同步成功后自动填写指定模型与上游型号的映射。' : "grok-4:grok-4.20-0309-super\ngrok-video:grok-imagine-video"}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono resize-none" />
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
