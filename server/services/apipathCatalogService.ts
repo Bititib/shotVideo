@@ -22,10 +22,14 @@ export async function syncApipathModels(channel: ApipathChannel & { id: number; 
       if (occupied && occupied.provider !== 'apipath') {
         warnings.push('公开 ID 已被其他产品使用，未合并或改名：' + entry.id); continue;
       }
+      const legacyDescription = entry.imageFamily ? `通联 Sunburst 图片 ${entry.limits.resolutions[0]}；最多 4 张参考图；尺寸按上游档位映射。配置售价后启用。` : entry.kind === 'image' ? '通联图片；默认输出规格；本站暂限 1 张参考图。配置售价后启用。' : '通联视频；规格按独立模型配置。配置售价后启用。';
       if (!occupied) {
         db.insert(models).values({ provider: 'apipath', modelId: entry.id, displayName: entry.name,
-          description: entry.imageFamily ? `通联 Sunburst 图片 ${entry.limits.resolutions[0]}；最多 4 张参考图；尺寸按上游档位映射。配置售价后启用。` : entry.kind === 'image' ? '通联图片；默认输出规格；本站暂限 1 张参考图。配置售价后启用。' : '通联视频；规格按独立模型配置。配置售价后启用。',
+          description: entry.description || legacyDescription,
           capabilities: JSON.stringify([entry.kind]), isActive: 0 }).run(); added++;
+      } else if (entry.description && (!occupied.description?.trim() || occupied.description === legacyDescription)) {
+        // Upgrade only our placeholder copy; retain administrator-authored descriptions and all other model settings.
+        db.update(models).set({ description: entry.description }).where(eq(models.id, occupied.id)).run();
       }
       imported.push(entry.id);
       upstreamMapping[entry.id] = entry.upstreamModel || entry.id;

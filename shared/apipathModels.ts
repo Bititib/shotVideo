@@ -1,6 +1,6 @@
 import type { ModelInputLimits } from './modelRouting.js';
 // Provider snapshot 2026-10-31. Image count 1 is a local limit, not a provider maximum.
-export const APIPATH_MODELS: {id: string; name: string; kind: 'image' | 'video'; upstreamModel?: string; imageFamily?: string; limits: ModelInputLimits}[] = [
+export const APIPATH_MODELS: {id: string; name: string; description?: string; kind: 'image' | 'video'; upstreamModel?: string; imageFamily?: string; limits: ModelInputLimits}[] = [
   {
     "id": "gpt-image-2-5-flare",
     "name": "GPT Image 2.5 Flare（渠道1）",
@@ -836,6 +836,7 @@ export const APIPATH_MODELS: {id: string; name: string; kind: 'image' | 'video';
   {
     "id": "seedance2-5-特惠-1080p",
     "name": "Seedance 2.5-1080P-福利特价",
+    "description": "1080p；支持 5–30 秒（整数秒）；比例 9:16、16:9；最多 9 张参考图片、3 段参考音频；不支持参考视频及独立首尾帧。",
     "kind": "video",
     "limits": {
       "maxImages": 9,
@@ -865,6 +866,7 @@ export const APIPATH_MODELS: {id: string; name: string; kind: 'image' | 'video';
   {
     "id": "Seedance-2.0-mini-480-GK",
     "name": "Seedance-2.0-mini-480-GK",
+    "description": "480p；支持 4–15 秒（整数秒）；比例 1:1、9:16、16:9；最多 9 张参考图片、3 个参考视频、3 段参考音频；不支持独立首尾帧。",
     "kind": "video",
     "limits": {
       "maxImages": 9,
@@ -895,6 +897,7 @@ export const APIPATH_MODELS: {id: string; name: string; kind: 'image' | 'video';
   {
     "id": "dola2.5",
     "name": "dola2.5",
+    "description": "720p；仅支持 5、10、15 秒；比例 1:1、9:16、16:9；最多 9 张参考图片；不支持参考视频、参考音频及独立首尾帧。",
     "kind": "video",
     "limits": {
       "maxImages": 9,
@@ -931,6 +934,7 @@ export const APIPATH_MODELS: {id: string; name: string; kind: 'image' | 'video';
     "upstreamModel": "gpt-image-2-5-sunburst",
     "imageFamily": "gpt-image-2-5-sunburst",
     "name": "GPT Image 2.5 Sunburst（渠道1） 1K",
+    "description": "1K 静态图片；支持文生图和参考图编辑；比例 1:1、16:9、9:16、4:3、3:4、3:2、2:3、21:9；最多 4 张参考图片，不支持参考视频或音频；每次输出 1 张。1:1 为 1024×1024，16:9 为 1280×720，其余比例按上游尺寸表输出。",
     "kind": "image",
     "limits": {
       "maxImages": 4,
@@ -973,6 +977,7 @@ export const APIPATH_MODELS: {id: string; name: string; kind: 'image' | 'video';
     "upstreamModel": "gpt-image-2-5-sunburst",
     "imageFamily": "gpt-image-2-5-sunburst",
     "name": "GPT Image 2.5 Sunburst（渠道1） 2K",
+    "description": "2K 静态图片；支持文生图和参考图编辑；比例 1:1、16:9、9:16、4:3、3:4、3:2、2:3、21:9；最多 4 张参考图片，不支持参考视频或音频；每次输出 1 张。1:1 为 2048×2048，16:9 为 2560×1440，其余比例按上游尺寸表输出。",
     "kind": "image",
     "limits": {
       "maxImages": 4,
@@ -1015,6 +1020,7 @@ export const APIPATH_MODELS: {id: string; name: string; kind: 'image' | 'video';
     "upstreamModel": "gpt-image-2-5-sunburst",
     "imageFamily": "gpt-image-2-5-sunburst",
     "name": "GPT Image 2.5 Sunburst（渠道1） 4K",
+    "description": "4K 静态图片；支持文生图和参考图编辑；比例 1:1、16:9、9:16、4:3、3:4、3:2、2:3、21:9；最多 4 张参考图片，不支持参考视频或音频；每次输出 1 张。4K 为上游档位名称：1:1 为 2880×2880，16:9 为 3840×2160，并非所有比例长边均为 4096；其余比例按上游尺寸表输出。",
     "kind": "image",
     "limits": {
       "maxImages": 4,

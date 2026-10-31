@@ -11,6 +11,7 @@ import { handleSpecificationGeneration, resumeSpecificationTasks } from '../serv
 import { VideoRecoveryService } from '../server/services/videoRecoveryService.js';
 import { downloadAndLocalizeVideo } from '../server/services/videoLocalizationService.js';
 import * as referenceValidation from '../server/services/imageReferenceValidationService.js';
+import { APIPATH_MODELS } from '../shared/apipathModels.js';
 
 const key = 'private-apipath-key';
 let channelId: number, modelId: string;
@@ -42,6 +43,37 @@ function enable() {
 
 
 describe('通联 actual specification entry and isolated billing', () => {
+  it.each(APIPATH_MODELS.filter(entry => entry.description))('imports and upgrades the description of $id without changing configuration', async entry => {
+    const read = () => db.select().from(models).where(eq(models.modelId, entry.id)).get()!;
+    expect(read()).toMatchObject({ description: entry.description, isActive: 0 });
+    modelId = entry.id;
+    enable();
+    const spec = getModelSpecification(entry.id)!;
+    spec.routes[0].enabled = false;
+    saveModelSpecification(spec);
+    const oldDescription = entry.kind === 'video'
+      ? '通联视频；规格按独立模型配置。配置售价后启用。'
+      : `通联 Sunburst 图片 ${entry.limits.resolutions[0]}；最多 4 张参考图；尺寸按上游档位映射。配置售价后启用。`;
+    for (const previous of [oldDescription, '']) {
+      db.update(models).set({ description: previous }).where(eq(models.modelId, entry.id)).run();
+      const before = read();
+      const result = await ChannelService.syncModels(channelId);
+      expect(result.added).toBe(0);
+      expect(read()).toEqual({ ...before, description: entry.description });
+      expect(getModelSpecification(entry.id)).toEqual(spec);
+      expect(db.select().from(modelPricing).all()[0].inputPrice).toBe(2);
+    }
+    db.update(models).set({ description: '管理员自定义说明' }).where(eq(models.modelId, entry.id)).run();
+    await ChannelService.syncModels(channelId);
+    expect(read().description).toBe('管理员自定义说明');
+  });
+  it('does not update descriptions for a conflicting provider or unrelated model', async () => {
+    const original = db.select().from(models).where(eq(models.modelId, 'seedance-2.0-YZ')).get()!;
+    db.update(models).set({ provider: 'other', description: '' }).where(eq(models.modelId, 'dola2.5')).run();
+    await ChannelService.syncModels(channelId);
+    expect(db.select().from(models).where(eq(models.modelId, 'dola2.5')).get()?.description).toBe('');
+    expect(db.select().from(models).where(eq(models.modelId, 'seedance-2.0-YZ')).get()).toEqual(original);
+  });
   it.each(['completed','failed'])('settles %s and persists the receipt before GET', async status => {
     enable(); vi.stubGlobal('fetch', vi.fn(async (_url: any, init: any) => {
       if(init?.method==='POST') return Response.json({task_no:'task_1',status:'queued'});
