@@ -40,7 +40,9 @@ export function modelExample(model: DeveloperModel, endpoint: DeveloperEndpoint,
     return `import requests\n\nwith open("/path/to/reference.png", "rb") as image:\n    response = requests.post(\n        ${JSON.stringify(url)},\n        headers={"Authorization": "Bearer sk-YOUR_API_KEY"},\n        data=${JSON.stringify(payload)},\n        files={"image": image},\n        timeout=180,\n    )\nresponse.raise_for_status()\nprint(response.json())`;
   }
   const json = JSON.stringify(payload, null, 2);
-  const poll = endpoint === '/v1/videos' ? '\n# 保存响应中的 task_id，再调用 GET /v1/videos/{task_id} 查询结果。' : '';
-  if (language === 'curl') return `curl ${shellQuote(url)} \\\n  -H "Authorization: Bearer sk-YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d ${shellQuote(json)}${poll}`;
-  return `import requests\n\nresponse = requests.post(\n    ${JSON.stringify(url)},\n    headers={"Authorization": "Bearer sk-YOUR_API_KEY"},\n    json=${json},\n    timeout=180,\n)\nresponse.raise_for_status()\nprint(response.json())${poll}`;
+  const video = endpoint === '/v1/videos';
+  const poll = video ? '\n# 网络重试必须复用同一个 Idempotency-Key；主动生成新视频时换新键。\n# 保存响应中的 task_id，再调用 GET /v1/videos/{task_id} 查询结果。任务 ID 是不透明字符串，请原样保存。' : '';
+  const header = video ? '  -H "Idempotency-Key: REPLACE-WITH-A-UNIQUE-TASK-KEY" \\\n' : '';
+  if (language === 'curl') return `curl ${shellQuote(url)} \\\n  -H "Authorization: Bearer sk-YOUR_API_KEY" \\\n${header}  -H "Content-Type: application/json" \\\n  -d ${shellQuote(json)}${poll}`;
+  return `import requests${video ? '\nimport uuid\n\n# 只为新任务创建一次；网络重试复用已保存的 request_key。\nrequest_key = str(uuid.uuid4())' : ''}\n\nresponse = requests.post(\n    ${JSON.stringify(url)},\n    headers={"Authorization": "Bearer sk-YOUR_API_KEY"${video ? ', "Idempotency-Key": request_key' : ''}},\n    json=${json},\n    timeout=180,\n)\nresponse.raise_for_status()\nprint(response.json())${poll}`;
 }

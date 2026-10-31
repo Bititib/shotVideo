@@ -72,7 +72,7 @@ const wallet = () => db.select().from(users).get()!.balance;
 const tokenWallet = () => db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance;
 const meta = () => JSON.parse(row().metadata);
 const post = (path: string, body: any) => nativeFetch(origin + path, {
-  method: 'POST', headers: { Authorization: 'Bearer ' + tokenKey, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  method: 'POST', headers: { Authorization: 'Bearer ' + tokenKey, 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(body),
 });
 function deferred<T>() {
   let resolve!: (v: T) => void;
@@ -89,6 +89,7 @@ beforeAll(async () => {
   findVideoSubmissionReceipt(1);
 });
 beforeEach(() => {
+  sqlite.exec('DROP TABLE IF EXISTS api_video_requests');
   for (const table of ['video_batch_commands','video_batch_attempts','video_batch_items','video_batches']) {
     if (sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) sqlite.exec('DELETE FROM '+table);
   }

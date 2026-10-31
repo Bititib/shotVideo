@@ -8,6 +8,7 @@ import { V6K_TT25_PRODUCTS } from '../shared/v6kTt25';
 import { ensureV6kTt25Models, v6kTt25SaleId } from '../server/services/v6kTt25Catalog';
 import { quoteVideoRequest } from '../server/services/videoQuoteService';
 import { PricingService } from '../server/services/pricingService';
+import { TokenService } from '../server/services/tokenService';
 import { ensureV6kTttModel } from '../server/services/v6kTttModel';
 import { V6K_SYNC_UPSTREAM_MODELS } from '../shared/v6kSyncModels';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -97,6 +98,7 @@ beforeAll(async()=>{
   intervalSpy.mockRestore();
 });
 beforeEach(()=>{
+  sqlite.exec('DROP TABLE IF EXISTS api_video_requests');
   sqlite.exec('DELETE FROM video_batch_commands; DELETE FROM video_batch_attempts; DELETE FROM video_batch_items; DELETE FROM video_batches');
   findVideoSubmissionReceipt(1); sqlite.exec('DELETE FROM video_submission_receipts');
   for(const table of ['contents','channels','models','model_pricing','users','api_tokens','api_logs','settings'])sqlite.exec('DELETE FROM '+table);
@@ -121,10 +123,11 @@ afterEach(()=>{
       if(file.startsWith(path.resolve('data/uploads')+path.sep)&&fs.existsSync(file))fs.unlinkSync(file);
     }
   }
-  vi.restoreAllMocks();vi.unstubAllGlobals();
+  vi.restoreAllMocks();vi.unstubAllGlobals();vi.unstubAllEnvs();
 });
 afterAll(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));sqlite.close();});
-async function post(endpoint:string,body:any){return nativeFetch(origin+endpoint,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer test'},body:JSON.stringify(body)});}
+async function post(endpoint:string,body:any){return nativeFetch(origin+endpoint,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer test','Idempotency-Key':crypto.randomUUID()},body:JSON.stringify(body)});}
+async function retryVideo(endpoint:string,body:any,key?:string){return nativeFetch(origin+endpoint,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer test',...(key===undefined?{}:{'Idempotency-Key':key})},body:JSON.stringify(body)});}
 const request={model:'ZH-video-public',prompt:'产品视频',video_length:6,resolution:'720p',aspect_ratio:'16:9'};
 function installConfirmedVideos() {
   const ids = ZONGHENG_VIDEO_MODELS.map(spec => 'ZH-' + spec.id);
@@ -470,6 +473,92 @@ describe('V6K explicitly requested model sync allowlist',()=>{
       posts++;expect(JSON.parse(init.body).model).toBe('Asedanco2.0');return Response.json({id:'queued_batch_original',status:'completed'});};
     tickVideoBatches();await vi.waitFor(()=>expect(latest()?.status).toBe('completed'));tickVideoBatches();tickVideoBatches();
     expect(batchStore.item(item.id)).toMatchObject({status:'completed',billing_state:'charged',charged:4});expect(balance()).toBe(96);expect(posts).toBe(1);
+  });
+});
+
+describe('API request retry protection before order creation and charging',()=>{
+  it.each(V6K_TT25_PRODUCTS.flatMap(p=>['completed','failed','uncertain'].map(outcome=>({p,outcome}))))('returns the original $p.id task and settles once after $outcome',async({p,outcome})=>{
+    await installTt25(true);let posts=0;
+    upstream=async(_url,init)=>{if(init.method==='POST'){posts++;if(outcome==='uncertain')return new Response('<html>gateway timeout</html>',{status:504});return Response.json({id:'retry_original',status:outcome,error:outcome==='failed'?{code:'video_generation_failed',message:'original generation failed'}:undefined});}throw Error('must not create a second poller');};
+    const body={model:'ZH-'+p.id,prompt:'相同订单重试',seconds:10,resolution:p.resolution},key='stable-api-retry';
+    const first=await(await retryVideo('/v1/videos',body,key)).json() as any;
+    expect(first.id).toMatch(/^task_req_[a-f0-9]{32}$/);
+    await vi.waitFor(()=>expect(latest().status).toBe(outcome==='uncertain'?'processing':outcome));
+    const replies=await Promise.all(['/v1/videos','/v1/videos/generations','/v1/video/generations'].map(async endpoint=>{
+      const response=await retryVideo(endpoint,body,key);expect(response.headers.get('x-idempotency-replayed')).toBe('true');return response.json() as any;
+    }));
+    for(const reply of replies){expect(reply.id).toBe(first.id);expect(reply.task_id).toBe(first.id);expect(reply.status_url).toBe(origin+'/v1/videos/'+first.id);}
+    expect(db.select().from(contents).all()).toHaveLength(1);expect(posts).toBe(1);
+    const cost=Number((p.saleRate*10).toFixed(6)),meta=JSON.parse(latest().metadata);
+    expect(balance()).toBeCloseTo(outcome==='failed'?100:100-cost,6);
+    expect(sqlite.prepare('SELECT COUNT(*) AS n FROM billing_reservations').get()).toEqual({n:1});
+    expect(sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(meta.billingReservationId)).toMatchObject({state:outcome==='completed'?'settled':outcome==='failed'?'refunded':'review'});
+    resumeSpecificationTasks();resumeSpecificationTasks();expect(posts).toBe(1);
+    if(outcome==='completed')expect(replies[0].url).toBe(origin+'/v1/videos/'+first.id+'/content');
+  });
+  it('deduplicates concurrent headerless JSON retries and ignores key order while allowing an explicit new task',async()=>{
+    const p=V6K_TT25_PRODUCTS[0];await installTt25();let posts=0;
+    upstream=async()=>{posts++;return Response.json({id:'concurrent_'+posts,status:'completed'});};
+    const body={model:p.id,prompt:'并发无键重试',seconds:5,resolution:p.resolution};
+    const replies=await Promise.all(Array.from({length:8},async(_,i)=>(await retryVideo(i%2?'/v1/videos/generations':'/v1/videos',i%2?{resolution:p.resolution,seconds:5,prompt:body.prompt,model:p.id}:body)).json() as any));
+    expect(new Set(replies.map(x=>x.id)).size).toBe(1);await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    expect(posts).toBe(1);expect(db.select().from(contents).all()).toHaveLength(1);expect(balance()).toBeCloseTo(98.6,6);
+    await(await retryVideo('/v1/videos',body,'intentional-new-task')).json();await vi.waitFor(()=>expect(db.select().from(contents).all().filter(x=>x.status==='completed')).toHaveLength(2));
+    expect(posts).toBe(2);expect(balance()).toBeCloseTo(97.2,6);
+  });
+  it('rejects changed seconds, model or reference under the same key before another order or deduction',async()=>{
+    const p=V6K_TT25_PRODUCTS[0];await installTt25();let posts=0;
+    upstream=async()=>{posts++;return Response.json({id:'conflict_original',status:'completed'});};
+    const body={model:p.id,prompt:'原始参数',seconds:5,resolution:p.resolution};
+    await(await retryVideo('/v1/videos',body,'same-key')).json();await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    for(const patch of [{seconds:10},{model:V6K_TT25_PRODUCTS[1].id,resolution:'720p'},{reference_images:[reference]}]){
+      const response=await retryVideo('/v1/video/generations',{...body,...patch},'same-key');expect(response.status).toBe(409);expect(await response.json()).toMatchObject({error:{code:'idempotency_conflict'}});
+    }
+    expect(posts).toBe(1);expect(db.select().from(contents).all()).toHaveLength(1);expect(balance()).toBeCloseTo(98.6,6);
+  });
+  it('replays a stored validation rejection without creating an order, and treats missing linked content as gone',async()=>{
+    const p=V6K_TT25_PRODUCTS[0];await installTt25();let posts=0;
+    upstream=async()=>{posts++;return Response.json({id:'deleted_original',status:'completed'});};
+    const invalid={model:p.id,prompt:'非法秒数',seconds:31,resolution:p.resolution};
+    const first=await retryVideo('/v1/videos',invalid,'bad-request'),error=await first.json();expect(first.status).toBe(400);
+    const retry=await retryVideo('/v1/videos',invalid,'bad-request');expect(retry.status).toBe(400);expect(await retry.json()).toEqual(error);expect(db.select().from(contents).all()).toHaveLength(0);expect(balance()).toBe(100);
+    const body={...invalid,seconds:5};await(await retryVideo('/v1/videos',body,'good-request')).json();await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    db.delete(contents).run();const gone=await retryVideo('/v1/videos',body,'good-request');expect(gone.status).toBe(410);expect(posts).toBe(1);expect(balance()).toBeCloseTo(98.6,6);
+  });
+  it('protects the legacy direct branch and preserves its original local task alias on query',async()=>{
+    const model='TTTseadanco2.5/720',c=db.select().from(channels).get()!;
+    db.insert(models).values({modelId:model,displayName:model,provider:'zongheng-v6k',capabilities:'["video"]',isActive:1}).run();
+    db.insert(modelPricing).values({modelPattern:model,billingType:'per_call',inputPrice:6.5}).run();
+    ChannelService.updateChannel(c.id,{type:'zongheng-v6k',baseUrl:'https://www.v6k.top',supportedModels:[model],modelMapping:{[model]:model}});
+    let posts=0;upstream=async()=>{posts++;return Response.json({id:'direct_retry_original',status:'completed'});};
+    const body={model,prompt:'直连原订单',seconds:5,resolution:'720p'};
+    const original=await(await retryVideo('/v1/videos',body,'direct-key')).json() as any;await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    const replay=await(await retryVideo('/v1/video/generations',body,'direct-key')).json() as any;
+    expect(replay.id).toBe(original.id);expect(replay.status).toBe('completed');expect(posts).toBe(1);expect(balance()).toBe(93.5);
+    const historical=await(await nativeFetch(origin+'/v1/videos/task_'+latest().id,{headers:{Authorization:'Bearer test'}})).json() as any;
+    expect(historical.id).toBe('task_'+latest().id);expect(historical.status).toBe('completed');
+  });
+  it('deduplicates real multipart retries with different filenames and boundaries, and maps the download alias locally',async()=>{
+    vi.stubEnv('BACKEND_URL','https://app.example');
+    const p=V6K_TT25_PRODUCTS[0];await installTt25();let posts=0;
+    upstream=async()=>{posts++;return Response.json({id:'multipart_original',status:'completed'});};
+    const send=async(name:string)=>{const form=new FormData();form.append('model',p.id);form.append('prompt','同一上传重试');form.append('seconds','5');form.append('resolution',p.resolution);form.append('image',new Blob([Buffer.from(reference.split(',')[1],'base64')],{type:'image/png'}),name);
+      return nativeFetch(origin+'/v1/videos',{method:'POST',headers:{Authorization:'Bearer test'},body:form});};
+    const first=await(await send('first.png')).json() as any;await vi.waitFor(()=>expect(latest().status,latest().metadata).toBe('completed'));
+    const retry=await(await send('renamed.png')).json() as any;expect(retry.id).toBe(first.id);expect(posts).toBe(1);expect(balance()).toBeCloseTo(98.6,6);
+    const download=await nativeFetch(origin+'/v1/files/video?id='+first.id,{headers:{Authorization:'Bearer test'},redirect:'manual'});
+    expect(download.status).toBe(307);expect(download.headers.get('location')).toBe('/v1/videos/'+first.id+'/content');expect(posts).toBe(1);
+  });
+  it('keeps original tasks readable by an exhausted key and refuses another key without consulting the upstream',async()=>{
+    const p=V6K_TT25_PRODUCTS[0];await installTt25();let posts=0;
+    upstream=async()=>{posts++;return Response.json({id:'auth_original',status:'completed'});};
+    const body={model:p.id,prompt:'读取原任务',seconds:5,resolution:p.resolution};
+    const first=await(await retryVideo('/v1/videos',body,'auth-key')).json() as any;await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    vi.spyOn(TokenService,'validateToken').mockImplementation((key:string,options:any)=>options?.allowExhausted?{valid:true,token:{id:key==='test'?1:2,userId:1,balance:0,allowedModels:[]}}:{valid:false,error:'Token额度用完'});
+    const retry=await(await retryVideo('/v1/videos',body,'auth-key')).json() as any;expect(retry.id).toBe(first.id);
+    const status=await nativeFetch(origin+'/v1/videos/'+first.id,{headers:{Authorization:'Bearer test'}});expect(status.status).toBe(200);
+    const denied=await nativeFetch(origin+'/v1/videos/'+first.id,{headers:{Authorization:'Bearer other'}});expect(denied.status).toBe(404);
+    const malformed=await nativeFetch(origin+'/v1/videos/task_req_invalid',{headers:{Authorization:'Bearer test'}});expect(malformed.status).toBe(404);expect(posts).toBe(1);expect(balance()).toBeCloseTo(98.6,6);
   });
 });
 

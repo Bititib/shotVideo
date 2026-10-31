@@ -157,6 +157,7 @@ import { videoRequestNotSent, explicitVideoCreateError } from '../services/video
 import { videoReviewKind, videoReviewMessage } from '../../shared/videoReview.js';
 import { isSnumomSubmissionRejection } from '../services/snumomSubmissionRejection.js';
 import { refundUnreservedVideo } from '../services/directVideoBillingService.js';
+import { claimApiVideoRequest, captureApiVideoResponse, linkApiVideoRequest, isApiVideoRequestId, getApiVideoRequest, respondPendingApiVideoRequest } from '../services/apiVideoIdempotency.js';
 
 const router = Router();
 router.use(['/videos', '/video/generations', '/images'], generationErrorResponse);
@@ -1643,10 +1644,25 @@ async function handleVideoCreation(req: Request, res: Response) {
     return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
   }
 
-  const { valid, error, token } = TokenService.validateToken(tokenKey);
+  const { valid, error, token } = TokenService.validateToken(tokenKey, { allowExhausted: true });
   if (!valid) {
     cleanupFiles(req.files);
     return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
+  }
+
+  // Persist a logical request before model preparation, order creation, money, or dispatch.
+  try {
+    const request = await claimApiVideoRequest(req, token!);
+    if (!request.fresh) {
+      cleanupFiles(req.files);
+      res.setHeader('X-Idempotency-Replayed', 'true');
+      req.params.id = request.record.id;
+      return handleVideoQuery(req, res);
+    }
+    captureApiVideoResponse(req, res, request.record.id);
+  } catch (error: any) {
+    cleanupFiles(req.files);
+    return res.status(error.status || 503).json({ error: { message: error.status ? error.message : '请求去重记录暂不可用，本次未提交或扣费', type: 'invalid_request_error', ...(error.code ? { code: error.code } : {}) } });
   }
 
   if (typeof req.body?.model === 'string') req.body.model = canonicalSnumomVideoModel(req.body.model);
@@ -2357,7 +2373,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   // 先在本地 contents 数据库创建初始任务记录 (status = 'processing')
   let contentId: number | null = null;
   try {
-    contentId = ContentService.save({
+    const create = () => ContentService.save({
       userId: token.userId || 1,
       orgId: null,
       type: 'video',
@@ -2414,6 +2430,11 @@ async function handleVideoCreation(req: Request, res: Response) {
         publicBaseUrl: process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`
       }
     });
+    contentId = sqlite.transaction(() => {
+      const createdId = create();
+      linkApiVideoRequest(req, createdId);
+      return createdId;
+    })();
   } catch (e) {
     console.error('[v1-video] Failed to save content record:', e);
     cleanupFiles(req.files);
@@ -3158,12 +3179,20 @@ async function handleVideoQuery(req: Request, res: Response) {
   const tokenKey = extractToken(req);
   if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
 
-  const { valid, error, token } = TokenService.validateToken(tokenKey);
+  const { valid, error, token } = TokenService.validateToken(tokenKey, { allowExhausted: true });
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
   const idParam = req.params.id;
+  const apiRequest = isApiVideoRequestId(idParam) ? getApiVideoRequest(idParam) : undefined;
+  if (isApiVideoRequestId(idParam)) {
+    if (!apiRequest || apiRequest.tokenId !== token!.id || apiRequest.userId !== (Number(token!.userId) || 0))
+      return res.status(404).json({ error: 'Task not found' });
+    if (apiRequest.contentId === null) return respondPendingApiVideoRequest(req, res, apiRequest);
+  }
   let contentId = NaN;
-  if (idParam.startsWith('task_')) {
+  if (apiRequest) {
+    contentId = apiRequest.contentId!;
+  } else if (idParam.startsWith('task_')) {
     contentId = parseInt(idParam.slice(5), 10);
   } else {
     contentId = parseInt(idParam, 10);
@@ -3205,11 +3234,12 @@ async function handleVideoQuery(req: Request, res: Response) {
 
     const host = req.get('host');
     const protocol = req.protocol;
-    const contentUrl = `${protocol}://${host}/v1/videos/task_${record.id}/content`;
+    const taskId = apiRequest?.id || `task_${record.id}`;
+    const contentUrl = `${protocol}://${host}/v1/videos/${taskId}/content`;
 
     const responseJson: Record<string, any> = {
-      id: `task_${record.id}`,
-      task_id: `task_${record.id}`,
+      id: taskId,
+      task_id: taskId,
       object: 'video',
       model: publicApiModelId(record.modelId),
       status: mappedStatus,
@@ -3225,7 +3255,7 @@ async function handleVideoQuery(req: Request, res: Response) {
         : (wasInternallyRouted ? '视频生成中' : (metadata.progressText || undefined)),
       upstream_task_id: metadata.videoId || undefined,
       upstream_status: metadata.upstreamStatus || undefined,
-      status_url: `${protocol}://${host}/v1/videos/task_${record.id}`,
+      status_url: `${protocol}://${host}/v1/videos/${taskId}`,
       ...(!['completed', 'failed'].includes(mappedStatus) ? { retry_after: 5 } : {}),
     };
     const persistedChannel = metadata.channelId
@@ -3247,6 +3277,7 @@ async function handleVideoQuery(req: Request, res: Response) {
     return res.json(responseJson);
   }
 
+  if (apiRequest) return res.status(410).json({ error: '原任务记录已不存在；为防止重复生成和扣费，不会重新提交', id: apiRequest.id, task_id: apiRequest.id });
   // 兜底回退：若本地找不到记录，按旧逻辑向上游查询
   const config = findUpstreamVideoConfig();
   if (!config) return res.status(404).json({ error: 'Task not found locally and no video channel configured' });
@@ -3297,9 +3328,12 @@ router.get('/video/generations/:id', handleVideoQuery);
 /** GET /v1/videos/:id/content — 统一视频内容直连下载/播放 */
 router.get('/videos/:id/content', async (req: Request, res: Response) => {
   const idParam = req.params.id;
-  if (!/^(?:task_)?[1-9]\d*$/.test(idParam)) return res.status(404).json({ error: 'Video not found' });
+  const apiRequest = isApiVideoRequestId(idParam) ? getApiVideoRequest(idParam) : undefined;
+  if (!/^(?:task_)?[1-9]\d*$/.test(idParam) && !apiRequest?.contentId) return res.status(404).json({ error: 'Video not found' });
   let contentId = NaN;
-  if (idParam.startsWith('task_')) {
+  if (apiRequest?.contentId) {
+    contentId = apiRequest.contentId;
+  } else if (idParam.startsWith('task_')) {
     contentId = parseInt(idParam.slice(5), 10);
   } else {
     contentId = parseInt(idParam, 10);
@@ -3397,11 +3431,16 @@ router.get('/files/video', async (req: Request, res: Response) => {
   const tokenKey = extractToken(req);
   if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
 
-  const { valid, error } = TokenService.validateToken(tokenKey);
+  const { valid, error, token } = TokenService.validateToken(tokenKey, { allowExhausted: true });
   if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
 
   const id = req.query.id as string;
-  if (!id) return res.status(400).json({ error: 'Missing video id' });
+  if (typeof id !== 'string' || !id) return res.status(400).json({ error: 'Missing video id' });
+  if (isApiVideoRequestId(id)) {
+    const original = getApiVideoRequest(id);
+    if (!original || original.tokenId !== token!.id || original.userId !== (Number(token!.userId) || 0)) return res.status(404).json({ error: 'Video not found' });
+    return res.redirect(307, '/v1/videos/' + encodeURIComponent(original.id) + '/content');
+  }
 
   const config = findUpstreamVideoConfig();
   if (!config) return res.status(503).json({ error: 'No video channel configured' });

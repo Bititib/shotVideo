@@ -4,7 +4,7 @@ import type { RequestHandler } from 'express';
 export function applicationCors(config: NodeJS.ProcessEnv = process.env): RequestHandler {
   const publicApi = cors({
     origin: '*', credentials: false,
-    exposedHeaders: ['X-Billing-Status', 'X-Billing-Reservation'],
+    exposedHeaders: ['X-Billing-Status', 'X-Billing-Reservation', 'X-Idempotency-Replayed', 'Retry-After'],
   });
   const origins = config.ALLOWED_ORIGINS?.split(',').map(v => v.trim()).filter(Boolean);
   const allowed = origins?.length ? origins : config.BACKEND_URL ? [new URL(config.BACKEND_URL).origin] : [];

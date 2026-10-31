@@ -119,7 +119,9 @@ describe('LongXia application integration', () => {
     const expectedCost = model === LONGXIA_MODELS[0] ? 10 : 14.5;
     const after = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get()!.balance;
     expect(before - after).toBe(expectedCost);
-    const record = db.select().from(contents).where(eq(contents.id, Number(result.id.slice(5)))).get()!;
+    expect(result.id).toMatch(/^task_req_[a-f0-9]{32}$/);
+    const request = sqlite.prepare('SELECT content_id FROM api_video_requests WHERE id=?').get(result.id) as { content_id: number };
+    const record = db.select().from(contents).where(eq(contents.id, request.content_id)).get()!;
     expect(JSON.parse(record.metadata).videoId).toBe('longxia-upstream');
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ status: 'completed', data: [{ url: 'https://media.longxiaai.store/result.mp4' }] }))));
     expect(await VideoRecoveryService.inspect(record.id)).toMatchObject({ status: 'completed', upstreamResultUrl: 'https://media.longxiaai.store/result.mp4' });

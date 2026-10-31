@@ -85,7 +85,7 @@ describe('admin-owned model catalog', () => {
   it('rejects unsupported typed parameters at the HTTP entry before charging', async () => {
     const saved = ['MiniMax-H3', 'wan3.0-video-nsfw'].map(id => db.select().from(models).where(eq(models.modelId, id)).get()).filter(Boolean);
     for (const row of saved) db.update(models).set({ isActive: 1 }).where(eq(models.id, row!.id)).run();
-    const validate = vi.spyOn(TokenService, 'validateToken').mockReturnValue({ valid: true, token: { allowedModels: [], balance: 1000000 } } as any);
+    const validate = vi.spyOn(TokenService, 'validateToken').mockReturnValue({ valid: true, token: { id: 1, allowedModels: [], balance: 1000000 } } as any);
     const charge = vi.spyOn(TokenService, 'deductBalance');
     try {
       for (const field of ['made_up', 'model', '__proto__']) {
@@ -103,7 +103,7 @@ describe('admin-owned model catalog', () => {
     const internal = 'funai-veo-3.1-lite';
     db.insert(models).values({ modelId: internal, displayName: internal, capabilities: '["video"]' }).run();
     db.insert(modelPricing).values({ modelPattern: internal, billingType: 'per_call', inputPrice: .3 }).run();
-    const validate = vi.spyOn(TokenService, 'validateToken').mockReturnValue({ valid: true, token: { allowedModels: [internal], balance: 1000000 } } as any);
+    const validate = vi.spyOn(TokenService, 'validateToken').mockReturnValue({ valid: true, token: { id: 1, allowedModels: [internal], balance: 1000000 } } as any);
     try {
       const headers = { Authorization: 'Bearer test' };
       const list = await (await fetch(baseUrl + '/v1/models', { headers })).json();
@@ -165,7 +165,7 @@ describe('admin-owned model catalog', () => {
 
   it('returns stable API IDs independently of admin display names, without exposing secrets', async () => {
     const validate = vi.spyOn(TokenService, 'validateToken').mockReturnValue({
-      valid: true, token: { allowedModels: ['nano-banana-2'], balance: 1000000 },
+      valid: true, token: { id: 1, allowedModels: ['nano-banana-2'], balance: 1000000 },
     } as any);
     db.update(models).set({ displayName: '我的图片模型', apiKey: 'private-model-key' })
       .where(eq(models.modelId, 'nano-banana-2')).run();
@@ -199,7 +199,7 @@ describe('admin-owned model catalog', () => {
 
   it('normalizes names before permission checks on all generation endpoints, including multipart edits', async () => {
     const validate = vi.spyOn(TokenService, 'validateToken').mockReturnValue({
-      valid: true, token: { allowedModels: ['different-model'] },
+      valid: true, token: { id: 1, allowedModels: ['different-model'] },
     } as any);
     for (const endpoint of ['/chat/completions', '/images/generations', '/images/edits', '/videos', '/videos/generations', '/video/generations']) {
       const payload = { model: '图片新名称', prompt: 'A peaceful mountain landscape', messages: [{ role: 'user', content: 'Hello' }] };
@@ -221,7 +221,7 @@ describe('admin-owned model catalog', () => {
 
   it('accepts a permitted public name and routes using its canonical ID', async () => {
     const validate = vi.spyOn(TokenService, 'validateToken').mockReturnValue({
-      valid: true, token: { allowedModels: ['nano-banana-2'], balance: 1000000 },
+      valid: true, token: { id: 1, allowedModels: ['nano-banana-2'], balance: 1000000 },
     } as any);
     const response = await fetch(`${baseUrl}/v1/chat/completions`, {
       method: 'POST', headers: { Authorization: 'Bearer test', 'Content-Type': 'application/json' },
@@ -235,7 +235,7 @@ describe('admin-owned model catalog', () => {
 
   it('looks up the same price by public name and old ID', async () => {
     const validate = vi.spyOn(TokenService, 'validateToken').mockReturnValue({
-      valid: true, token: { allowedModels: ['nano-banana-2'], balance: 1000000 },
+      valid: true, token: { id: 1, allowedModels: ['nano-banana-2'], balance: 1000000 },
     } as any);
     const results = [];
     for (const name of ['图片新名称', 'nano-banana-2']) {

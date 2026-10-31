@@ -34,6 +34,7 @@ import { PricingService } from './pricingService.js';
 import { BalanceService } from './balanceService.js';
 import { TokenService } from './tokenService.js';
 import { reserveUserCharge, linkReservationContent } from './billingReservation.js';
+import { linkApiVideoRequest } from './apiVideoIdempotency.js';
 import { withFundContext } from '../db/fundLedger.js';
 import { getModelSpecification, specificationAvailability, selectModelRoutes, routeStillEnabled, routeUnavailableReason, claimRouteProbe, noteRouteResult, type RouteCandidate } from './modelRoutingService.js';
 import { submitSpecificationVideo, pollSpecificationVideo, pollSpecificationImage, pollMjSpecificationImage, generateSpecificationImage, SpecificationUpstreamError, type SpecificationRequest } from './specificationAdapters.js';
@@ -725,6 +726,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     let charge: any;
     sqlite.transaction(() => {
       id = batch ? batchStore.attach(batch.item.id, batch.item.attempts, userId, create) : create();
+      if (apiContext && kind === 'video') linkApiVideoRequest(req, id!);
       if (!batch) {
         charge = apiContext ? apiContext.reserve(quote.cost, modelId, quote.pricingSnapshot) : reserveUserCharge(userId, quote.cost, 'specification_generate', { contentId: id, model: modelId, pricingSnapshot: quote.pricingSnapshot });
         linkReservationContent(charge.id, id!);

@@ -86,6 +86,7 @@ beforeAll(async () => {
   intervalSpy.mockRestore();
 });
 beforeEach(() => {
+  sqlite.exec('DROP TABLE IF EXISTS api_video_requests');
   for (const table of ['video_batch_commands', 'video_batch_attempts', 'video_batch_items', 'video_batches']) sqlite.exec('DELETE FROM ' + table);
   if (sqlite.prepare("SELECT name FROM sqlite_master WHERE name='video_submission_receipts'").get()) sqlite.exec('DELETE FROM video_submission_receipts');
   for (const table of ['contents', 'channels', 'models', 'model_pricing', 'users', 'api_logs']) sqlite.exec('DELETE FROM ' + table);
@@ -102,7 +103,7 @@ beforeEach(() => {
 afterAll(async () => { vi.restoreAllMocks(); vi.unstubAllGlobals(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); sqlite.close(); });
 
 async function post(endpoint: string, body: any) {
-  return nativeFetch(origin + endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test' }, body: JSON.stringify(body) });
+  return nativeFetch(origin + endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(body) });
 }
 const body = { model: HAYA_MODEL_IDS[0], prompt: '电影感产品展示', video_length: 6, resolution: '720p', aspect_ratio: '16:9' };
 const seedanceReferences = {

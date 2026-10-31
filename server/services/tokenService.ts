@@ -181,12 +181,12 @@ export class TokenService {
   }
 
   /** 检查 Token 是否有效 */
-  static validateToken(tokenKey: string): { valid: boolean; error?: string; token?: any } {
+  static validateToken(tokenKey: string, options: { allowExhausted?: boolean } = {}): { valid: boolean; error?: string; token?: any } {
     const token = this.findByKey(tokenKey);
     if (!token) return { valid: false, error: '无效的 API Token' };
     if (token.status === 0) return { valid: false, error: 'Token 已被禁用' };
     if (token.expiresAt && new Date(token.expiresAt) < new Date()) return { valid: false, error: 'Token 已过期' };
-    if (token.balance !== -1 && token.balance <= 0) return { valid: false, error: 'Token 额度已用完' };
+    if (!options.allowExhausted && token.balance !== -1 && token.balance <= 0) return { valid: false, error: 'Token 额度已用完' };
     return { valid: true, token };
   }
 }

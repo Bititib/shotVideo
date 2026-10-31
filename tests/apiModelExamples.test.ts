@@ -11,6 +11,11 @@ describe('model-specific API examples', () => {
     expect(code).toContain('reference-2.png');
     expect(code).toContain("'\"'\"'");
     expect(code).toContain('GET /v1/videos/{task_id}');
+    expect(code).toContain('Idempotency-Key: REPLACE-WITH-A-UNIQUE-TASK-KEY');
+    const python = modelExample(model, '/v1/videos', 'https://test.invalid', 'python');
+    expect(python).toContain('request_key = str(uuid.uuid4())');
+    expect(python).toContain('"Idempotency-Key": request_key');
+    expect(modelExample(model, '/v1/images/generations', 'https://test.invalid', 'curl')).not.toContain('Idempotency-Key');
   });
   it('builds multipart image edits for both languages', () => {
     expect(modelExample(model, '/v1/images/edits', 'https://test.invalid', 'curl')).toContain('-F "image=@/path/to/reference.png"');

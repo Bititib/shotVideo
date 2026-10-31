@@ -258,8 +258,9 @@ print(resp.json()["data"][0]["url"])`,
       title: '统一视频任务创建 (Unified Video Entry)',
       method: 'POST',
       path: '/v1/videos',
-      description: '统一视频生成入口，自动完成参数归一、排队和可用容量调度。系统可能在容量繁忙时自动选择兼容的执行模型；请求模型、计费和任务 ID 保持不变。',
+      description: '统一视频生成入口。请在请求头携带 Idempotency-Key，同一逻辑任务的所有网络重试复用原键和原参数；需要主动新生成时换新键。同键不同参数返回409，不创建任务或扣费。未带键时，同一 API Key 下相同参数和素材会返回原任务。去重记录持久保存，重启或超时不会触发重新生成。三个提交地址 /v1/videos、/v1/videos/generations、/v1/video/generations 共享去重记录。',
       parameters: [
+        { name: 'Idempotency-Key', type: 'header', required: false, description: '推荐。1–200个可见 ASCII 字符，如持久保存的 UUID。重试复用原键；主动创建新任务必须使用新键。' },
         { name: 'model', type: 'string', required: true, description: '从 GET /v1/models 获取的视频模型 ID；当前示例：seedance_v2.5、wan3.0th、veo-3-1' },
         { name: 'prompt', type: 'string', required: true, description: '视频画面的文字描述词' },
         { name: 'seconds', type: 'integer', required: false, defaultVal: '6', description: '视频时长（秒），支持别名 duration' },
@@ -271,6 +272,7 @@ print(resp.json()["data"][0]["url"])`,
       ],
       curlExample: `curl -X POST "${getBaseUrl()}/videos" \\
   -H "Authorization: Bearer sk-你的令牌Key" \\
+  -H "Idempotency-Key: REPLACE-WITH-A-UNIQUE-TASK-KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "seedance_v2.5",
@@ -281,10 +283,15 @@ print(resp.json()["data"][0]["url"])`,
     "image_urls": ["https://cdn.example.com/character.jpg"]
   }'`,
       pythonExample: `import requests
+import uuid
+
+# 新任务创建一次并保存；网络重试复用此值，不重新生成 UUID。
+request_key = str(uuid.uuid4())
 
 url = "${getBaseUrl()}/videos"
 headers = {
     "Authorization": "Bearer sk-你的令牌Key",
+    "Idempotency-Key": request_key,
     "Content-Type": "application/json"
 }
 payload = {
@@ -315,7 +322,7 @@ print(resp.json())
       title: '统一视频任务轮询与查询',
       method: 'GET',
       path: '/v1/videos/{task_id}',
-      description: '使用 status_url（或 task_id）持续轮询。queued / processing 期间只返回状态查询地址，不会提前返回视频结果地址；completed 后才返回 url / result_url。failed 时会返回失败原因与 billing_status、refunded、refund_amount 等退款凭证。',
+      description: '使用 status_url（或 task_id）持续轮询。任务 ID 是不透明字符串（新请求可返回 task_req_ 开头的 ID），请原样保存，不要截取数字或替换前缀。queued / processing 期间只返回状态查询地址，completed 后返回 url / result_url。failed 时返回失败原因及退款凭证。有效但额度已用完的 API Key 仍可查询原任务；新任务仍检查余额。',
       parameters: [
         { name: 'task_id', type: 'path_param', required: true, description: '创建任务时返回的任务 ID（如 task_123）' }
       ],
