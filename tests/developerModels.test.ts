@@ -157,7 +157,7 @@ describe('developer model catalog authorization and public data', () => {
     expect(JSON.stringify(model)).not.toContain('Pidoi');
   });
   it('does not auto-enable newly synchronized models and preserves administrator switches on resync', async () => {
-    const channelId = ChannelService.createChannel({ name: '同步测试渠道', type: 'openai', baseUrl: 'https://sync.test.invalid', apiKey: 'test-only' });
+    const channelId = ChannelService.createChannel({ name: '同步测试渠道', type: 'openai', baseUrl: 'https://sync.test.invalid', apiKey: 'test-only', supportedModels: ['new-import'] });
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ data: [{ id: 'new-import' }] }));
     await ChannelService.syncModels(channelId);
     const imported = db.select().from(models).where(eq(models.modelId, 'new-import')).get()!;

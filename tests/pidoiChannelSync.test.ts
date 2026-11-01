@@ -55,7 +55,7 @@ describe('Pidoi 图片渠道模型同步', () => {
     expect(upstream).not.toHaveBeenCalled();
   });
 
-  it('同域名的 Pidoi 视频渠道仍按上游目录同步', async () => {
+  it('同域名的 Pidoi 视频渠道只同步明确配置的型号', async () => {
     const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const modelId = `pidoi-video-${suffix}`;
     const id = ChannelService.createChannel({
@@ -63,7 +63,7 @@ describe('Pidoi 图片渠道模型同步', () => {
       type: 'openai',
       baseUrl: 'https://pidoi.com',
       apiKey: 'test-only-key',
-      supportedModels: [],
+      supportedModels: [modelId],
     });
     createdChannelIds.push(id);
     createdModelIds.push(modelId);

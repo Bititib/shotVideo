@@ -4,6 +4,7 @@ import { channels, models } from '../db/schema.js';
 import { fetchAsyncVideoModels, type AsyncVideoChannel, type AsyncVideoModel } from './asyncVideoAdapter.js';
 import { VX_LE_SEEDANCE_MODEL, LEGACY_VX_LE_SEEDANCE_MODEL, asyncVideoConfirmedLimits, asyncVideoPublicModelId } from '../../shared/asyncVideo.js';
 import { getModelSpecification, saveModelSpecification } from './modelRoutingService.js';
+import { configuredSyncBindings } from './modelSyncScope.js';
 
 type CatalogChannel = AsyncVideoChannel & { id: number; name: string; priority: number };
 
@@ -13,17 +14,24 @@ export function ensureVxLeSeedanceModel(channel: CatalogChannel) {
 }
 
 export async function syncAsyncVideoModels(channel: CatalogChannel) {
-  return registerAsyncVideoModels(channel, await fetchAsyncVideoModels(channel), true);
+  const configured = configuredSyncBindings(channel);
+  const allowed = new Set([VX_LE_SEEDANCE_MODEL, ...configured.values()]);
+  const upstream = await fetchAsyncVideoModels(channel);
+  const approved = upstream.filter(entry => allowed.has(entry.name));
+  if (!approved.length) return { count: 0, added: 0, models: [], warnings: ['当前目录没有已接入型号，原配置未修改。'] };
+  return { ...registerAsyncVideoModels(channel, approved, false),
+    warnings: [`仅同步已接入或明确配置的型号，忽略其他型号 ${upstream.length - approved.length} 个。`] };
 }
 
 function registerAsyncVideoModels(channel: CatalogChannel, upstream: AsyncVideoModel[], replace: boolean) {
   let added = 0;
   return sqlite.transaction(() => {
+    const configured = configuredSyncBindings(channel);
     const legacyModelId = asyncVideoPublicModelId(channel.id, LEGACY_VX_LE_SEEDANCE_MODEL);
     const legacyModel = db.select().from(models).where(eq(models.modelId, legacyModelId)).get();
     // Keep the existing public ID so saved access rules, prices and tasks retain their bindings.
     const entries = upstream.map(model => ({ ...model, modelId: model.name === VX_LE_SEEDANCE_MODEL && legacyModel
-      ? legacyModelId : asyncVideoPublicModelId(channel.id, model.name) }));
+      ? legacyModelId : [...configured].find(([, upstream]) => upstream === model.name)?.[0] || asyncVideoPublicModelId(channel.id, model.name) }));
     for (const entry of entries) {
       if (!db.select().from(models).where(eq(models.modelId, entry.modelId)).get()) {
         db.insert(models).values({ provider: 'async-video', modelId: entry.modelId, displayName: channel.name + ' · ' + entry.name,

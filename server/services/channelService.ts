@@ -1,4 +1,7 @@
 import { isApipathChannel, apipathBase } from './apipathAdapter.js';
+import { configuredSyncBindings } from './modelSyncScope.js';
+import { GOOGLE_SYNC_MODEL_IDS } from '../../shared/googleSyncModels.js';
+import { SNUMOM_VIDEO_MODELS } from './snumomWanAdapter.js';
 import { apipathKeys, saveApipathKeys, apipathExecutions, apipathKeyForReceipt } from './apipathKeyService.js';
 import { isMegabyChannel, megabyBaseUrl, fetchMegabyVideoModels } from './megabyVideoAdapter.js';
 import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
@@ -721,14 +724,39 @@ export class ChannelService {
       const { registerHmStudioCatalog } = await import('./hmStudioCatalogService.js');
       return registerHmStudioCatalog(channel, rawModels);
     }
-    const normalized = rawModels.map((item: any) => {
-      const rawModelId = String(typeof item === 'string' ? item : item.id || item.model || item.model_id || '').trim();
+    if (!Array.isArray(payload) && !Array.isArray(payload?.data) && !Array.isArray(payload?.models))
+      throw { status: 502, message: '同步模型响应缺少模型列表，原配置未修改' };
+    const bindings = configuredSyncBindings(channel);
+    if (channel.type === 'gemini') for (const modelId of GOOGLE_SYNC_MODEL_IDS) {
+      if (!bindings.has(modelId)) bindings.set(modelId, modelId);
+    }
+    if (channel.type === 'snumom') for (const modelId of SNUMOM_VIDEO_MODELS) {
+      if (!bindings.has(modelId)) bindings.set(modelId, modelId);
+    }
+    // These dedicated adapters already have exact, reviewed product definitions.
+    if (isHayaChannel(channel)) {
+      bindings.clear();
+      for (const id of HAYA_MODEL_IDS) bindings.set(id, hayaUpstreamModelId(id));
+    } else if (isLongxiaChannel(channel)) {
+      bindings.clear(); for (const id of LONGXIA_MODELS) bindings.set(id, id);
+    } else if (isMiaowuChannel(channel)) {
+      bindings.clear(); for (const id of MIAOWU_DEFAULT_VIDEO_MODELS) bindings.set(id, id);
+    }
+    if (isSiYueTianVideoHost(channel.baseUrl)) bindings.set(SI_YUE_TIAN_MINIMAX_MODEL, SI_YUE_TIAN_MINIMAX_MODEL);
+    let ignored = 0;
+    const normalized = rawModels.flatMap((item: any) => {
+      const value = typeof item === 'string' ? item : item?.id || item?.model || item?.model_id;
+      if (typeof value !== 'string' || !value.trim()) throw { status: 502, message: '同步模型列表包含无效模型标识，原配置未修改' };
+      const rawModelId = value.trim();
+      const approved = [...bindings].filter(([, upstream]) => upstream === rawModelId);
+      if (!approved.length) { ignored++; return []; }
       const modelId = isHayaChannel(channel) ? hayaPublicModelId(rawModelId) : rawModelId;
-      if (!modelId) return { modelId: '', displayName: '', capability: 'text' };
       const displayName = isHayaChannel(channel) && modelId === HAYA_XG_SEEDANCE_20_MODEL ? modelId
         : String(typeof item === 'string' ? item : item.display_name || item.name || modelId).trim();
       const explicitType = String(typeof item === 'object' ? item.type || item.category || '' : '').toLowerCase();
-      const capability = explicitType.includes('tts') || /tts|speech/i.test(modelId)
+      const knownVideo = isHayaChannel(channel) || isLongxiaChannel(channel) || isMiaowuChannel(channel)
+        || channel.type === 'snumom' && (SNUMOM_VIDEO_MODELS as readonly string[]).includes(modelId);
+      const capability = knownVideo ? 'video' : explicitType.includes('tts') || /tts|speech/i.test(modelId)
         ? 'tts'
         : explicitType.includes('lip') || /lip-sync/i.test(modelId)
         ? 'lip_sync'
@@ -737,45 +765,54 @@ export class ChannelService {
           : explicitType.includes('image') || /image|jimeng|banana/i.test(modelId)
             ? 'image'
             : 'text';
-      return { modelId, displayName: displayName || modelId, capability };
+      return approved.map(([id]) => ({ modelId: id, displayName: id === rawModelId ? displayName || id : id, capability }));
     }).filter((item: any) => item.modelId && !isRetiredVideoModel(item.modelId) && (!isHayaChannel(channel) || HAYA_MODEL_IDS.includes(item.modelId)));
 
     const unique = [...new Map(normalized.map((item: any) => [item.modelId, item])).values()] as Array<{
       modelId: string; displayName: string; capability: string;
     }>;
-    let added = isSiYueTianVideoHost(channel.baseUrl) && unique.some(item => item.modelId === SI_YUE_TIAN_MINIMAX_MODEL)
-      ? ensureSiYueTianMinimaxModel(sqlite, channel.id) : 0;
-    for (const item of unique) {
-      if (isHayaChannel(channel) && item.modelId === HAYA_XG_SEEDANCE_20_MODEL
-        && !db.select().from(modelPricing).where(eq(modelPricing.modelPattern, item.modelId)).get()) {
-        const spec = getHayaVideoSpec(item.modelId)!;
-        db.insert(modelPricing).values({ modelPattern: item.modelId, billingType: spec.billingType, inputPrice: spec.price,
-          extraParams: JSON.stringify({ category: 'video' }) }).run();
+    const warnings = [`仅同步已接入或明确配置的型号，忽略其他型号 ${ignored} 个；保留现有价格、启用状态和关联。`];
+    if (!unique.length) return { count: 0, added: 0, models: [], warnings };
+    return db.transaction(tx => {
+      const current = tx.select().from(channels).where(eq(channels.id, id)).get();
+      if (!current || current.apiKey !== channel.apiKey || current.baseUrl !== channel.baseUrl || current.type !== channel.type
+        || current.supportedModels !== channel.supportedModels || current.modelMapping !== channel.modelMapping)
+        throw { status: 409, message: '同步期间渠道配置已变化，原配置未修改，请重新同步' };
+      let added = isSiYueTianVideoHost(channel.baseUrl) && unique.some(item => item.modelId === SI_YUE_TIAN_MINIMAX_MODEL)
+        ? ensureSiYueTianMinimaxModel(sqlite, channel.id) : 0;
+      for (const item of unique) {
+        if (isHayaChannel(channel) && item.modelId === HAYA_XG_SEEDANCE_20_MODEL
+          && !db.select().from(modelPricing).where(eq(modelPricing.modelPattern, item.modelId)).get()) {
+          const spec = getHayaVideoSpec(item.modelId)!;
+          db.insert(modelPricing).values({ modelPattern: item.modelId, billingType: spec.billingType, inputPrice: spec.price,
+            extraParams: JSON.stringify({ category: 'video' }) }).run();
+        }
+        const existing = db.select().from(models).where(eq(models.modelId, item.modelId)).get();
+        if (!existing) {
+          db.insert(models).values({
+            provider: channel.type,
+            modelId: item.modelId,
+            displayName: item.displayName,
+            description: `由 ${channel.name} 同步`,
+            capabilities: JSON.stringify([item.capability]),
+            isActive: 0,
+          }).run();
+          added++;
+        } else if (item.capability === 'tts' && existing.capabilities !== JSON.stringify(['tts'])) {
+          db.update(models).set({ capabilities: JSON.stringify(['tts']) }).where(eq(models.id, existing.id)).run();
+        }
       }
-      const existing = db.select().from(models).where(eq(models.modelId, item.modelId)).get();
-      if (!existing) {
-        db.insert(models).values({
-          provider: channel.type,
-          modelId: item.modelId,
-          displayName: item.displayName,
-          description: `由 ${channel.name} 同步`,
-          capabilities: JSON.stringify([item.capability]),
-          isActive: 0,
-        }).run();
-        added++;
-      } else if (item.capability === 'tts' && existing.capabilities !== JSON.stringify(['tts'])) {
-        db.update(models).set({ capabilities: JSON.stringify(['tts']) }).where(eq(models.id, existing.id)).run();
-      }
-    }
 
-    const modelIds = unique.map(item => item.modelId);
-    const mapping = Object.fromEntries(modelIds.map(modelId => [modelId, isHayaChannel(channel) ? hayaUpstreamModelId(modelId) : modelId]));
-    db.update(channels).set({
-      supportedModels: JSON.stringify(modelIds),
-      modelMapping: JSON.stringify(mapping),
-      updatedAt: new Date().toISOString(),
-    }).where(eq(channels.id, id)).run();
-    return { count: modelIds.length, added, models: modelIds };
+      const modelIds = unique.map(item => item.modelId);
+      const mapping = JSON.parse(current.modelMapping || '{}');
+      for (const modelId of modelIds) if (!Object.hasOwn(mapping, modelId)) mapping[modelId] = bindings.get(modelId)!;
+      db.update(channels).set({
+        supportedModels: JSON.stringify([...new Set([...JSON.parse(current.supportedModels), ...modelIds])]),
+        modelMapping: JSON.stringify(mapping),
+        updatedAt: new Date().toISOString(),
+      }).where(eq(channels.id, id)).run();
+      return { count: modelIds.length, added, models: modelIds, warnings };
+    });
   }
 }
 import { upstreamDiagnostic, responseDiagnostic, transportDiagnostic, diagnosticJson } from './upstreamDiagnostic.js';

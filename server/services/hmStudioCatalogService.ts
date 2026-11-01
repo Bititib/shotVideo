@@ -2,6 +2,7 @@ import { migrateHmDdlongNaming } from '../db/hmDdlongNamingMigration.js';
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { channels, modelPricing, models } from '../db/schema.js';
+import { configuredSyncBindings } from './modelSyncScope.js';
 import {
   getHmStudioAdditionalVideoModel, getHmStudioPublicVideoModel,
   getHmStudioUpstreamVideoModel, HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP,
@@ -10,15 +11,20 @@ import {
 
 /** HM catalog normalization only. Generation and settlement keep their existing paths. */
 export function registerHmStudioCatalog(channel: { id: number; name: string }, rawModels: unknown[]) {
+  const saved = db.select().from(channels).where(eq(channels.id, channel.id)).get();
+  if (!saved) throw { status: 404, message: '渠道不存在' };
+  const configured = configuredSyncBindings(saved);
+  let ignored = 0;
   const entries = rawModels.map((raw: any) => {
     const id = typeof raw === 'string' ? raw : raw?.id || raw?.model || raw?.model_id;
     if (typeof id !== 'string' || !id.trim()) {
       throw { status: 502, message: 'HM Studio 同步模型列表包含无效模型标识，原配置未修改' };
     }
-    const publicId = getHmStudioPublicVideoModel(id.trim());
-    const upstreamId = getHmStudioUpstreamVideoModel(publicId);
+    const canonicalId = getHmStudioPublicVideoModel(id.trim());
+    const knownVideo = Object.hasOwn(HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP, canonicalId);
+    const publicId = knownVideo ? canonicalId : [...configured].find(([, upstream]) => upstream === id.trim())?.[0] || canonicalId;
+    const upstreamId = knownVideo ? getHmStudioUpstreamVideoModel(publicId) : id.trim();
     const spec = getHmStudioAdditionalVideoModel(publicId);
-    const knownVideo = Object.hasOwn(HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP, publicId);
     const explicitType = String(raw?.type || raw?.category || '').toLowerCase();
     const capability = knownVideo ? 'video'
       : explicitType.includes('tts') || /tts|speech/i.test(publicId) ? 'tts'
@@ -29,11 +35,18 @@ export function registerHmStudioCatalog(channel: { id: number; name: string }, r
       : String(raw?.display_name || raw?.name || publicId));
     return { publicId, upstreamId, spec, knownVideo, capability, displayName };
   });
-  const unique = [...new Map(entries.map(entry => [entry.publicId, entry])).values()];
+  const approved = entries.filter(entry => {
+    const allowed = entry.knownVideo || configured.get(entry.publicId) === entry.upstreamId;
+    if (!allowed) ignored++;
+    return allowed;
+  });
+  const unique = [...new Map(approved.map(entry => [entry.publicId, entry])).values()];
+  const scopeWarning = `仅同步已接入或明确配置的 HM 型号，忽略其他型号 ${ignored} 个。`;
+  if (!unique.length) return { count: 0, added: 0, models: [], warnings: [scopeWarning + '原配置未修改。'] };
   return sqlite.transaction(() => {
     migrateHmDdlongNaming(sqlite);
     let added = 0;
-    const warnings: string[] = [];
+    const warnings: string[] = [scopeWarning];
     for (const entry of unique) {
       const { publicId, upstreamId, spec, knownVideo } = entry;
       const existing = db.select().from(models).where(eq(models.modelId, publicId)).get();

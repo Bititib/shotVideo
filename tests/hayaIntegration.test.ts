@@ -170,11 +170,12 @@ describe('Haya in both application entry points (isolated in-memory database)', 
     }
     expect((await nativeFetch(`${origin}/v1/videos/task_1junk/content`)).status).toBe(404);
   });
-  it('discovers only TTS models actually advertised upstream and preserves them on authentication failure', async () => {
+  it('refreshes configured TTS models advertised upstream and preserves them on authentication failure', async () => {
     const { env } = await import('../server/config/env');
     const previousKey = env.GEMINI_API_KEY;
     env.GEMINI_API_KEY = 'test-only';
     try {
+      db.insert(models).values({ modelId: 'gemini-upstream-only-tts', displayName: 'Configured TTS', provider: 'google', capabilities: '["tts"]', isActive: 0 }).run();
       upstream = async () => Response.json({ data: [{ id: 'gemini-upstream-only-tts' }] });
       const { syncModelsFromAPI } = await import('../server/db/seed');
       await syncModelsFromAPI();
@@ -186,13 +187,13 @@ describe('Haya in both application entry points (isolated in-memory database)', 
     } finally { env.GEMINI_API_KEY = previousKey; }
   });
   it('classifies synchronized TTS models and repairs old text classification without enabling disabled models', async () => {
-    const channel = ChannelService.createChannel({ name: 'AIStudio2API test', type: 'gemini', baseUrl: 'https://tts.invalid', apiKey: 'test-key' });
+    const channel = ChannelService.createChannel({ name: 'AIStudio2API test', type: 'gemini', baseUrl: 'https://tts.invalid', apiKey: 'test-key', supportedModels: ['gemini-3.8-flash-tts'] });
     db.insert(models).values({ modelId: 'gemini-3.8-flash-tts', displayName: 'Custom name', provider: 'google', capabilities: '["text"]', isActive: 0 }).run();
     upstream = async () => Response.json({ data: [{ id: 'gemini-3.8-flash-tts' }, { id: 'new-tts' }] });
     await ChannelService.syncModels(channel);
     const rows = db.select().from(models).all();
     expect(rows.find(m => m.modelId === 'gemini-3.8-flash-tts')).toMatchObject({ capabilities: '["tts"]', isActive: 0, displayName: 'Custom name' });
-    expect(rows.find(m => m.modelId === 'new-tts')?.capabilities).toBe('["tts"]');
+    expect(rows.find(m => m.modelId === 'new-tts')).toBeUndefined();
   });
   it('seeds all models even when unrelated discovery is unavailable, with the new model disabled', async () => {
     sqlite.exec('DELETE FROM models');
@@ -318,7 +319,7 @@ describe('Haya in both application entry points (isolated in-memory database)', 
     upstream = async () => Response.json({ data: [{ id: HAYA_MODEL_IDS[0] }, { id: 'text-model' }] });
     const result = await ChannelService.syncModels(db.select().from(channels).get()!.id);
     expect(result.models).toEqual([HAYA_MODEL_IDS[0]]);
-    expect(ChannelService.findChannelForModel(HAYA_MODEL_IDS[1])).toBeNull();
+    expect(ChannelService.findChannelForModel(HAYA_MODEL_IDS[1])?.type).toBe('haya');
     const listed = await (await nativeFetch(origin + '/api/video/models')).json() as any[];
     expect(listed[0]).toMatchObject({ id: HAYA_MODEL_IDS[0], rates: { '720p': 6.5 }, billingType: 'per_call' });
   });

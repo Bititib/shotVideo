@@ -1,4 +1,5 @@
 import { migrateHmDdlongNaming } from './hmDdlongNamingMigration.js';
+import { GOOGLE_SYNC_MODEL_IDS } from '../../shared/googleSyncModels.js';
 import { SNUMOM_WAN_NSFW_MODEL, SNUMOM_OUTPUT_ONLY_MODELS } from '../../shared/snumomWanNsfw.js';
 import { MEGABY_BASE_URL, MEGABY_CHANNEL_TYPE } from '../../shared/megabyVideo.js';
 import { migrateZonghengToV6k } from '../services/zonghengV6kMigration.js';
@@ -141,7 +142,8 @@ export async function syncModelsFromAPI() {
   const apiKey = env.GEMINI_API_KEY;
 
   let allVerified: ModelEntry[] = [];
-  let apiSuccess = false;
+  const allowedGoogleModels = new Set<string>([...GOOGLE_SYNC_MODEL_IDS,
+    ...existingModels.filter(model => model.provider === 'google').map(model => model.modelId)]);
 
   if (!apiKey) {
     console.warn('⚠️ 未配置 API Key，使用默认模型');
@@ -161,7 +163,7 @@ export async function syncModelsFromAPI() {
 
       for (const m of modelList) {
         const modelId = String(m.id || m.name || '').replace(/^models\//, '');
-        if (!modelId || isRetiredVideoModel(modelId)) continue;
+        if (!modelId || isRetiredVideoModel(modelId) || !allowedGoogleModels.has(modelId)) continue;
 
         // 确定 capabilities
         let capabilities: string[] = ['text'];
@@ -184,8 +186,7 @@ export async function syncModelsFromAPI() {
         allVerified.push({ provider: 'google', modelId, displayName, capabilities: JSON.stringify(capabilities) });
       }
 
-      console.log(`🔍 从代理端发现 ${allVerified.length} 个可用模型`);
-      apiSuccess = true;
+      console.log(`🔍 从代理端核实 ${allVerified.length} 个已接入模型，其他型号未自动导入`);
     } catch (err: any) {
       console.warn(`⚠️ 无法获取模型列表: ${err.message}，保留已有模型数据`);
     }
@@ -411,22 +412,7 @@ export async function syncModelsFromAPI() {
     console.error('⚠️ 清理废弃模型出错:', err.message);
   }
 
-  // 仅在 API 成功拉取时才清理不在列表中的旧模型，网络失败时保留已有数据
-  if (apiSuccess) {
-    const verifiedIds = new Set(allVerified.map(m => m.modelId));
-    // Google discovery must only manage Google-owned rows. Dynamic HM Studio,
-    // OpenAI and administrator-created models are managed by their own channel
-    // sync and must survive every restart/deployment.
-    const toRemove = existingModels.filter(m => shouldRemoveMissingGoogleModel(m, verifiedIds));
-    if (toRemove.length > 0) {
-      for (const m of toRemove) {
-        db.delete(modelPricing).where(eq(modelPricing.modelPattern, m.modelId)).run();
-        db.delete(tierModelAccess).where(eq(tierModelAccess.modelId, m.id)).run();
-        db.delete(models).where(eq(models.id, m.id)).run();
-      }
-      console.log(`🧹 移除 ${toRemove.length} 个不可用模型: ${toRemove.map(m => m.modelId).join(', ')}`);
-    }
-  }
+  // A partial catalog is not authorization to delete existing models, prices or access rules.
 }
 
 /**

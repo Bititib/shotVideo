@@ -35,6 +35,8 @@ beforeEach(async () => {
   db.insert(users).values({ id: 1, email: 'async@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
   vi.stubGlobal('fetch', vi.fn(async () => discovery()));
   channelId = ChannelService.createChannel({ name: '异步视频测试', type: 'async-video', baseUrl: 'http://provider.invalid:8080/v1/', apiKey: key });
+  const approvedId = asyncVideoPublicModelId(channelId, 'seedance-video');
+  ChannelService.updateChannel(channelId, { supportedModels: [approvedId], modelMapping: { [approvedId]: 'seedance-video' } });
   modelId = (await ChannelService.syncModels(channelId)).models[0];
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -109,14 +111,14 @@ describe('documented async video channel', () => {
     expect(getModelSpecification(modelId)).toMatchObject({ enabled: false, limits: { maxImages: 3 }, routes: [{ enabled: false, upstreamModel: 'custom-name' }] });
     expect(db.select().from(modelPricing).all()[0].inputPrice).toBe(2);
   });
-  it('validates discovery before changing saved configuration and removes unavailable models from routing', async () => {
+  it('validates discovery and preserves configured routing on an empty catalog', async () => {
     const before = ChannelService.getChannelRaw(channelId);
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [{ id: 17, name: 'seedance-video', seconds: 'bad' }] })));
     await expect(ChannelService.syncModels(channelId)).rejects.toThrow('时长');
     expect(ChannelService.getChannelRaw(channelId)?.supportedModels).toBe(before?.supportedModels);
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [] })));
     await ChannelService.syncModels(channelId); enable();
-    expect(selectModelRoutes(getModelSpecification(modelId)!, input)).toEqual([]);
+    expect(selectModelRoutes(getModelSpecification(modelId)!, input)).toHaveLength(1);
   });
   it('submits JSON references with the name and accepts numeric task IDs from HTTP 202', async () => {
     enable();
