@@ -1298,3 +1298,38 @@ describe('batch video references', () => {
     expect(streamGeneration).not.toHaveBeenCalled();
   });
 });
+
+it('Midjourney canvas exposes style controls and submits them through the actual composer',async()=>{
+ const {hussMjLimits,HUSS_MJ_MODEL}=await import('../shared/hussMidjourney');
+ vi.mocked(fetchImageModels).mockResolvedValueOnce([{id:HUSS_MJ_MODEL,name:HUSS_MJ_MODEL,description:'',available:true,rate:2,routingLimits:hussMjLimits()}]);
+ const node={...newNode('image',{x:0,y:0},'watercolor castle'),generator:true,model:HUSS_MJ_MODEL,title:'V82风格测试'};
+ const board=mount({...newDocument(),nodes:[node],drafts:{[node.id]:{kind:'image',model:HUSS_MJ_MODEL,prompt:'watercolor castle',resolution:'2K',ratio:'1:1',seconds:5,count:4,mjOptions:{seed:0,style:'raw'}}}});
+ fireEvent.doubleClick(screen.getByRole('article',{name:node.title}));
+ await waitFor(()=>expect((screen.getByRole('button',{name:'生成图像',exact:true}) as HTMLButtonElement).disabled).toBe(false));
+ fireEvent.click(screen.getByLabelText('生成参数'));fireEvent.click(screen.getByText('风格参数'));
+ expect((screen.getByLabelText('随机种子') as HTMLInputElement).value).toBe('0');
+ fireEvent.change(screen.getByLabelText('风格化强度'),{target:{value:'250'}});
+ fireEvent.change(screen.getByLabelText('质量'),{target:{value:'0.5'}});
+ fireEvent.change(screen.getByLabelText('风格参考图直链'),{target:{value:'https://example.com/style.png'}});
+ fireEvent.click(screen.getByLabelText('无缝平铺'));
+ vi.mocked(streamGeneration).mockImplementation(async(_kind,_params,_signal,cb)=>{cb({type:'content_id',contentId:4242});cb({type:'image_ready',imageUrl:'/uploads/first.png'});cb({type:'complete',imageUrls:['/uploads/first.png','/uploads/second.png']});});
+ fireEvent.click(screen.getByRole('button',{name:'生成图像',exact:true}));
+ await waitFor(()=>expect(board.current().nodes[0].job?.status).toBe('done'));
+ expect(streamGeneration).toHaveBeenCalledWith('image',expect.objectContaining({model:HUSS_MJ_MODEL,n:1,quality:'0.5',stylize:'250',seed:0,style:'raw',tile:true,sref:'https://example.com/style.png'}),expect.anything(),expect.anything());
+ expect(board.current().nodes[0].versions).toHaveLength(2);expect(board.current().drafts?.[node.id].mjOptions).toMatchObject({quality:'0.5',seed:0,tile:true});
+});
+
+it('Midjourney canvas continues original-task queries after review and recovers all saved candidates without resubmitting', async () => {
+  const { HUSS_MJ_MODEL } = await import('../shared/hussMidjourney');
+  vi.mocked(contentApi.getById)
+    .mockResolvedValueOnce({status:'review',metadata:{requiresReview:true,upstreamGenerated:true,error:'结果正在恢复'}})
+    .mockResolvedValueOnce({status:'completed',resultUrl:'/uploads/recovered-1.png',metadata:{imageUrls:['/uploads/recovered-1.png','/uploads/recovered-2.png']}});
+  const node={...newNode('image',{x:0,y:0},'castle'),model:HUSS_MJ_MODEL,settings:{resolution:'2K',seconds:5,mjOptions:{style:'raw',seed:0}},job:{status:'running' as const,contentId:4243,requestId:'original-canvas-request',message:'正在保存',expectedCount:1}};
+  const board=mount({...newDocument(),nodes:[node]});
+  await waitFor(()=>expect(board.current().nodes[0].job).toMatchObject({status:'interrupted',message:'图片已生成，结果保存待核实，将继续查询原任务。'}));
+  await waitFor(()=>expect(board.current().nodes[0].job?.status).toBe('done'),{timeout:8000});
+  expect(board.current().nodes[0].versions?.map(v=>v.src)).toEqual(['/uploads/recovered-1.png','/uploads/recovered-2.png']);
+  expect(board.current().nodes[0].versions?.every(v=>v.mjOptions?.seed===0)).toBe(true);
+  expect(contentApi.getById).toHaveBeenCalledWith(4243,expect.any(AbortSignal));
+  expect(streamGeneration).not.toHaveBeenCalled();
+},12000);

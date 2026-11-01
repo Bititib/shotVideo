@@ -1,20 +1,21 @@
+import { hussMjFields, type HussMjOptions } from './hussMidjourney.js';
 import { normalizeHmStudioPublicModelId } from './hmStudioVideo.js';
 import { publicCanvasJobMessage } from './generationMessages.js';
 import { normalizeMjModelId } from './mj.js';
 export type Point = { x: number; y: number };
 export type View = Point & { zoom: number };
 export type NodeKind = 'text' | 'image' | 'video' | 'audio';
-export type CanvasVersion = { id: string; src: string; prompt: string; model?: string; ratio?: string; resolution?: string; createdAt: number; requestId?: string; contentId?: number };
+export type CanvasVersion = { mjOptions?: HussMjOptions; id: string; src: string; prompt: string; model?: string; ratio?: string; resolution?: string; createdAt: number; requestId?: string; contentId?: number };
 export type CanvasNode = Point & {
   id: string; kind: NodeKind; title: string; text: string; width: number; height: number;
   src?: string; assetFolder?: string; group?: string; model?: string; ratio?: string;
   generator?: boolean; versions?: CanvasVersion[];
-  settings?: { resolution: string; seconds: number };
+  settings?: { resolution: string; seconds: number; mjOptions?: HussMjOptions };
   origin?: { projectId: string; nodeId: string; title: string };
   job?: { status: 'running' | 'done' | 'error' | 'interrupted'; contentId?: number; requestId?: string; expectedCount?: number; message: string; progress?: number };
 };
 export type Edge = { id: string; from: string; to: string };
-export type GenerationDraft = { kind: 'image' | 'video' | 'audio'; prompt: string; model: string; ratio: string; resolution: string; seconds: number; count?: number; videoMode?: 'text' | 'reference' | 'frames' | 'edit' | 'multimodal'; firstFrameId?: string; lastFrameId?: string; voice?: string; referenceBindings?: Record<string, string> };
+export type GenerationDraft = { mjOptions?: HussMjOptions; kind: 'image' | 'video' | 'audio'; prompt: string; model: string; ratio: string; resolution: string; seconds: number; count?: number; videoMode?: 'text' | 'reference' | 'frames' | 'edit' | 'multimodal'; firstFrameId?: string; lastFrameId?: string; voice?: string; referenceBindings?: Record<string, string> };
 export type CanvasDocument = { assetFolders?: string[]; id: string; title: string; nodes: CanvasNode[]; edges: Edge[]; view: View; updatedAt: number; drafts?: Record<string, GenerationDraft> };
 export type Workspace = { version: 2; activeId: string; projects: CanvasDocument[]; cloudRevision?: number; cloudPending?: boolean };
 export type Snapshot = Pick<CanvasDocument, 'nodes' | 'edges'>;
@@ -104,6 +105,11 @@ export function safeMedia(value: unknown): value is string {
   return typeof value === 'string' && (/^data:(image\/(png|jpeg|webp|gif)|video\/(mp4|webm)|audio\/(mpeg|mp3|wav|x-wav|ogg|webm));base64,[a-z0-9+/=\s]+$/i.test(value)
     || /^https?:\/\//i.test(value) || /^\/(?!\/)/.test(value));
 }
+export function storedHussMjOptions(value: unknown): HussMjOptions | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const fields = value as Record<string, unknown>;
+  return Object.fromEntries(hussMjFields.filter(k => ['string','number','boolean'].includes(typeof fields[k])).map(k => [k,fields[k]])) as HussMjOptions;
+}
 // Validate backups before they can enter the editor. Legacy drafts keep their positions and images.
 export function parseDocument(raw: any): CanvasDocument {
   if (!raw || typeof raw !== 'object') throw new Error('画布文件格式不正确');
@@ -123,10 +129,10 @@ export function parseDocument(raw: any): CanvasDocument {
       text: typeof n.text === 'string' ? n.text : '', src,
       assetFolder: typeof n.assetFolder === 'string' && n.assetFolder.trim() ? n.assetFolder.trim().slice(0,40) : undefined,
       generator: n.generator === true || undefined,
-      versions: Array.isArray(n.versions) ? n.versions.slice(-100).filter((v: any) => v && typeof v.id === 'string' && safeMedia(v.src)).map((v: any) => ({ id: v.id, src: v.src, prompt: typeof v.prompt === 'string' ? v.prompt : '', model: typeof v.model === 'string' ? normalizeHmStudioPublicModelId(normalizeMjModelId(v.model)) : undefined, ratio: typeof v.ratio === 'string' ? v.ratio : undefined, resolution: typeof v.resolution === 'string' ? v.resolution : undefined, createdAt: Number.isSafeInteger(v.createdAt) ? v.createdAt : 0, requestId: typeof v.requestId === 'string' ? v.requestId : undefined, contentId: Number.isSafeInteger(v.contentId) ? v.contentId : undefined })) : undefined,
+      versions: Array.isArray(n.versions) ? n.versions.slice(-100).filter((v: any) => v && typeof v.id === 'string' && safeMedia(v.src)).map((v: any) => ({ mjOptions:storedHussMjOptions(v.mjOptions), id: v.id, src: v.src, prompt: typeof v.prompt === 'string' ? v.prompt : '', model: typeof v.model === 'string' ? normalizeHmStudioPublicModelId(normalizeMjModelId(v.model)) : undefined, ratio: typeof v.ratio === 'string' ? v.ratio : undefined, resolution: typeof v.resolution === 'string' ? v.resolution : undefined, createdAt: Number.isSafeInteger(v.createdAt) ? v.createdAt : 0, requestId: typeof v.requestId === 'string' ? v.requestId : undefined, contentId: Number.isSafeInteger(v.contentId) ? v.contentId : undefined })) : undefined,
       group: typeof n.group === 'string' ? n.group : undefined, model: typeof n.model === 'string' ? normalizeHmStudioPublicModelId(normalizeMjModelId(n.model)) : undefined,
       ratio: typeof n.ratio === 'string' ? n.ratio : undefined,
-      settings: n.settings && typeof n.settings.resolution === 'string' && finite(n.settings.seconds) ? { resolution: n.settings.resolution.slice(0, 20), seconds: n.settings.seconds } : undefined,
+      settings: n.settings && typeof n.settings.resolution === 'string' && finite(n.settings.seconds) ? { resolution: n.settings.resolution.slice(0, 20), seconds: n.settings.seconds, mjOptions:storedHussMjOptions(n.settings.mjOptions) } : undefined,
       origin: n.origin && ['projectId', 'nodeId', 'title'].every(k => typeof n.origin[k] === 'string') ? { projectId: n.origin.projectId, nodeId: n.origin.nodeId, title: n.origin.title.slice(0, 120) } : undefined,
       job: n.job && ['running', 'done', 'error', 'interrupted'].includes(n.job.status) ? {
         status: n.job.status === 'running' && !(Number.isSafeInteger(n.job.contentId) && n.job.contentId > 0) && !(typeof n.job.requestId === 'string' && /^[a-zA-Z0-9-]{16,100}$/.test(n.job.requestId)) ? 'interrupted' : n.job.status,
@@ -152,7 +158,7 @@ export function parseDocument(raw: any): CanvasDocument {
   for (const [key, value] of Object.entries(raw.drafts && typeof raw.drafts === 'object' ? raw.drafts : {}).slice(0, 1001)) {
     const d = value as any;
     if (d && ['image', 'video', 'audio'].includes(d.kind) && ['prompt', 'model', 'ratio', 'resolution'].every(k => typeof d[k] === 'string') && finite(d.seconds))
-      drafts[key.slice(0, 160)] = { kind: d.kind, prompt: d.prompt, model: normalizeHmStudioPublicModelId(normalizeMjModelId(d.model.slice(0, 200))), ratio: d.ratio.slice(0, 20), resolution: d.resolution.slice(0, 20), seconds: d.seconds, count: [1, 2, 4].includes(d.count) ? d.count : 1, videoMode: ['text', 'reference', 'frames', 'edit', 'multimodal'].includes(d.videoMode) ? d.videoMode : 'reference', firstFrameId: typeof d.firstFrameId === 'string' ? d.firstFrameId : '', lastFrameId: typeof d.lastFrameId === 'string' ? d.lastFrameId : '', voice: typeof d.voice === 'string' ? d.voice.slice(0, 40) : 'Zephyr', referenceBindings: d.referenceBindings && typeof d.referenceBindings === 'object' ? Object.fromEntries(Object.entries(d.referenceBindings).filter(([label, id]) => /^(图片|视频|音频)[1-9][0-9]{0,4}$/.test(label) && typeof id === 'string').slice(0, 1000).map(([label, id]) => [label, (id as string).slice(0, 160)])) : undefined };
+      drafts[key.slice(0, 160)] = { mjOptions:storedHussMjOptions(d.mjOptions), kind: d.kind, prompt: d.prompt, model: normalizeHmStudioPublicModelId(normalizeMjModelId(d.model.slice(0, 200))), ratio: d.ratio.slice(0, 20), resolution: d.resolution.slice(0, 20), seconds: d.seconds, count: [1, 2, 4].includes(d.count) ? d.count : 1, videoMode: ['text', 'reference', 'frames', 'edit', 'multimodal'].includes(d.videoMode) ? d.videoMode : 'reference', firstFrameId: typeof d.firstFrameId === 'string' ? d.firstFrameId : '', lastFrameId: typeof d.lastFrameId === 'string' ? d.lastFrameId : '', voice: typeof d.voice === 'string' ? d.voice.slice(0, 40) : 'Zephyr', referenceBindings: d.referenceBindings && typeof d.referenceBindings === 'object' ? Object.fromEntries(Object.entries(d.referenceBindings).filter(([label, id]) => /^(图片|视频|音频)[1-9][0-9]{0,4}$/.test(label) && typeof id === 'string').slice(0, 1000).map(([label, id]) => [label, (id as string).slice(0, 160)])) : undefined };
   }
   return { id: typeof raw.id === 'string' ? raw.id : uid(), title: typeof raw.title === 'string' ? raw.title.slice(0, 80) : '我的画布', nodes, edges,
     assetFolders: Array.isArray(raw.assetFolders) ? [...new Set<string>(raw.assetFolders.filter((f:unknown)=>typeof f === 'string' && f.trim()).map((f:string)=>f.trim().slice(0,40)))].slice(0,100) : undefined,

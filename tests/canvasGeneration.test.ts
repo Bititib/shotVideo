@@ -61,3 +61,24 @@ describe('canvas generation lifecycle', () => {
     expect(onEvent).not.toHaveBeenCalled();
   });
 });
+
+it('Midjourney partial candidates stay recoverable until the backend confirms the complete batch',async()=>{
+ const {HUSS_MJ_MODEL}=await import('../shared/hussMidjourney');
+ let node:import('../shared/canvasModel').CanvasNode={...newNode('image',{x:0,y:0}),model:HUSS_MJ_MODEL,settings:{resolution:'2K',seconds:5,mjOptions:{seed:0,style:'raw'}},job:{status:'running',requestId:'mj',contentId:42,expectedCount:1,message:''}};
+ node=applyGenerationEvent(node,{type:'image_ready',imageUrl:'/uploads/a.png'});expect(node.job?.status).toBe('running');
+ node=applyGenerationEvent(node,{type:'error',message:'stream lost'});expect(node.job?.status).toBe('running');
+ node=applyPendingGeneration(node,{status:'processing',metadata:{progressText:'图片已生成，保存暂时失败，正在重试'}});expect(node.job?.status).toBe('running');
+ node=applyGenerationEvent(node,{type:'complete',imageUrls:['/uploads/a.png','/uploads/b.png'],contentId:42});
+ expect(node.job?.status).toBe('done');expect(node.versions).toHaveLength(2);expect(node.versions?.[1].mjOptions).toEqual({seed:0,style:'raw'});
+});
+it('Midjourney payload forces one call and numeric quality while other models omit its style fields',async()=>{
+ const {canvasImageParameters}=await import('../client/src/canvas/generation');
+ expect(canvasImageParameters({model:'Midjourney V8.2',count:4,resolution:'2K',mjOptions:{quality:'0.5',seed:0,tile:false,stylize:'200'}})).toEqual({n:1,quality:'0.5',seed:0,tile:false,stylize:'200'});
+ expect(canvasImageParameters({model:'other',count:2,resolution:'2K',mjOptions:{style:'raw'}})).toEqual({n:2,quality:'medium'});
+});
+it('canvas backups retain Midjourney options on drafts, nodes and historical versions',async()=>{
+ const {parseDocument,newDocument}=await import('../shared/canvasModel');const mjOptions={seed:0,tile:false,style:'raw',quality:'2',sref:'https://example.com/style.png'};
+ const node={...newNode('image',{x:0,y:0}),settings:{resolution:'1K',seconds:5,mjOptions},versions:[{id:'v1',src:'/uploads/a.png',prompt:'test',createdAt:1,mjOptions}]};
+ const doc=parseDocument({...newDocument(),nodes:[node],drafts:{[node.id]:{kind:'image',model:'Midjourney V8.2',prompt:'test',ratio:'1:1',resolution:'1K',seconds:5,mjOptions}}});
+ expect(doc.nodes[0].settings?.mjOptions).toEqual(mjOptions);expect(doc.nodes[0].versions?.[0].mjOptions).toEqual(mjOptions);expect(doc.drafts?.[node.id].mjOptions).toEqual(mjOptions);
+});

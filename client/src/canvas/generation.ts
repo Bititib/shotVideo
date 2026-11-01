@@ -1,3 +1,4 @@
+import { HUSS_MJ_MODEL, hussMjOptions, type HussMjOptions } from '../../../shared/hussMidjourney';
 import { publicGenerationEvent, publicGenerationError } from '../../../shared/generationMessages';
 import { uid, type CanvasNode } from './model';
 export type GenerationEvent = { type: string; position?: number; message?: string; contentId?: number; progress?: number; imageUrl?: string; imageUrls?: string[]; videoUrl?: string };
@@ -29,13 +30,13 @@ export function applyGenerationEvent(node: CanvasNode, event: GenerationEvent): 
   const urls = [...new Set([event.imageUrl, ...(event.imageUrls || []), event.videoUrl].filter(Boolean))] as string[];
   if (urls.length) {
     const versions = (node.versions || []).map(v => v.requestId === job.requestId && job.contentId ? { ...v, contentId: job.contentId } : v);
-    for (const src of urls) if (!versions.some(v => v.src === src && v.requestId === job.requestId)) versions.push({ id: uid(), src, prompt: node.text, model: node.model, ratio: node.ratio, resolution: node.settings?.resolution, createdAt: Date.now(), requestId: job.requestId, contentId: job.contentId });
+    for (const src of urls) if (!versions.some(v => v.src === src && v.requestId === job.requestId)) versions.push({ id: uid(), src, prompt: node.text, model: node.model, ratio: node.ratio, resolution: node.settings?.resolution, mjOptions:node.settings?.mjOptions, createdAt: Date.now(), requestId: job.requestId, contentId: job.contentId });
     const received = versions.filter(v => v.requestId === job.requestId).length;
-    const complete = event.type === 'complete' || received >= (job.expectedCount || 1);
-    return { ...node, src: node.src || urls[0], versions: versions.slice(-100), job: { ...job, status: complete ? 'done' : 'running', message: complete ? '已完成' : `已生成 ${received} / ${job.expectedCount} 张`, progress: complete ? 100 : job.progress } };
+    const complete = event.type === 'complete' || node.model !== HUSS_MJ_MODEL && received >= (job.expectedCount || 1);
+    return { ...node, src: node.src || urls[0], versions: versions.slice(-100), job: { ...job, status: complete ? 'done' : 'running', message: complete ? '已完成' : node.model === HUSS_MJ_MODEL ? `已保存 ${received} 张，等待整批完成` : `已生成 ${received} / ${job.expectedCount} 张`, progress: complete ? 100 : job.progress } };
   }
   if (node.job.status === 'done') return node;
-  if (node.src && (event.type === 'complete' || event.type === 'error')) return { ...node, job: { ...job, status: 'done', message: event.type === 'error' ? `部分结果已保留：${event.message || '生成中断'}` : '已完成', progress: 100 } };
+  if (node.model !== HUSS_MJ_MODEL && node.src && (event.type === 'complete' || event.type === 'error')) return { ...node, job: { ...job, status: 'done', message: event.type === 'error' ? `部分结果已保留：${event.message || '生成中断'}` : '已完成', progress: 100 } };
   if (event.type === 'error' || event.type === 'image_error') return { ...node, job: { ...job,
     status: job.contentId || job.requestId ? 'running' : 'error',
     message: job.contentId || job.requestId ? '生成通道中断，正在核实后台结果，请勿重复提交。' : event.message || '生成失败，请检查参数后重试' } };
@@ -65,4 +66,9 @@ export async function referenceDataUrl(src: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(blob);
   });
+}
+
+export function canvasImageParameters(options: {model:string;count?:number;resolution:string;mjOptions?:HussMjOptions;routingLimits?:{qualities:string[]}}) {
+  if (options.model === HUSS_MJ_MODEL) return {n:1,...hussMjOptions(options.mjOptions || {})};
+  return {n:options.count || 1,...(options.routingLimits && !options.routingLimits.qualities.length ? {} : {quality:options.resolution === '4K' ? 'high' : options.resolution === '2K' ? 'medium' : 'low'})};
 }
