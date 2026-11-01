@@ -282,3 +282,13 @@ describe('separate sale permissions',()=>{
     db.delete(settings).where(eq(settings.key,'model_specification_routes_v1')).run();
   });
 });
+
+it('keeps admin image_gen capability visible in the image catalog and honors disabled state', () => {
+  const model = db.insert(models).values({modelId:'canvas-image-gen-test',provider:'huss',displayName:'Image generation',capabilities:JSON.stringify(['image_gen']),isActive:1}).returning().get();
+  try {
+    expect(getEnabledPublicModels('image').map(m=>m.modelId)).toContain(model.modelId);
+    expect(getEnabledPublicModels('video').map(m=>m.modelId)).not.toContain(model.modelId);
+    AdminService.updateModel(model.id,{isActive:0});
+    expect(getEnabledPublicModels('image').map(m=>m.modelId)).not.toContain(model.modelId);
+  } finally { db.delete(models).where(eq(models.id,model.id)).run(); }
+});

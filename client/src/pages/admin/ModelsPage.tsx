@@ -342,6 +342,8 @@ export default function ModelsPage({ channelId, onEditingChange }: { channelId?:
                     <option value="sudashui">SudaShui</option>
                     <option value="pidoi">Pidoi</option>
                     <option value="hmstudio">HM Studio</option>
+                    <option value="huss">HUSS</option>
+                    {edit.provider && !['google','openai','anthropic','grok','diwdiw','newtoken','sudashui','pidoi','hmstudio','huss','other'].includes(edit.provider) && <option value={edit.provider}>{edit.provider}</option>}
                     <option value="other">其他</option>
                   </select>
                 </div>

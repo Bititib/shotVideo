@@ -15,7 +15,7 @@ export function getEnabledPublicModels(capability?: string) {
       if (!capability) return true;
       try {
         const capabilities = JSON.parse(model.capabilities || '[]');
-        return Array.isArray(capabilities) && capabilities.includes(capability);
+        return Array.isArray(capabilities) && (capabilities.includes(capability) || capability === 'image' && capabilities.includes('image_gen'));
       } catch { return false; }
     });
 }
