@@ -1,4 +1,3 @@
-import { isHussHssModel } from '../../shared/hussBbVideo.js';
 import { responseDiagnostic, upstreamDiagnostic } from './upstreamDiagnostic.js';
 import { isHussChannel, fetchHussVideoContent, HussApiError } from './hussVideoAdapter.js';
 import { isMegabyChannel, megabyContentUrl, fetchMegabyVideoContent, readMegabyJson } from './megabyVideoAdapter.js';
@@ -72,7 +71,7 @@ export async function downloadAndLocalizeVideo(
     }
   }
 
-  const hssContent = isHussChannel(channel) && isHussHssModel(model) && Boolean(videoId);
+  const hssContent = isHussChannel(channel) && Boolean(videoId);
   let response = authenticatedV6kContent ? await fetchV6kVideoContent(channel, videoId) : hssContent ? await fetchHussVideoContent(channel, videoId) : isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
   // HUSS documents /content as an alternative to the signed media URL.
   // One read-only fallback per save attempt; never recreate the generation.

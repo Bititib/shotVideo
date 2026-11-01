@@ -2,7 +2,7 @@ import { HUSS_MJ_MODEL, hussMjOptions } from '../../shared/hussMidjourney.js';
 import { submitHussImage, queryHussImage, HussImageError } from './hussImageAdapter.js';
 import { isApipathChannel, normalizeApipathVideo } from './apipathAdapter.js';
 import { APIPATH_SUNBURST, APIPATH_IMAGE_SIZES, apipathImageSize, isApipathSunburstSpec } from '../../shared/apipathImageSizes.js';
-import { isHussHssModel } from '../../shared/hussBbVideo.js';
+import { isHussPersistentVideoModel } from '../../shared/hussBbVideo.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { activeSpecificationTasks } from './videoRecoveryAction.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL } from '../../shared/siYueTianMinimax.js';
@@ -264,7 +264,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         task = { status: 'completed', progress: 100, resultUrl: apipathMeta.apipathCompletedReceipt.resultUrl }; localCompletion = true;
       } else if (isApipathChannel(channel) && ['completed', 'failed'].includes(apipathMeta.apipathInitialTask?.status)) {
         task = normalizeApipathVideo(apipathMeta.apipathInitialTask, channel, taskId); patch(id, { apipathInitialTask: null });
-      } else if (hussInitial?.status === 'completed' && hussInitial?.url) {
+      } else if (hussInitial && ['completed','failed','cancelled','canceled'].includes(hussInitial.status)) {
         localCompletion = true;
         task = normalizeHussTask(hussInitial, channel.baseUrl, taskId);
         patch(id, { hussInitialTask: null });
@@ -342,7 +342,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         }
       }
       if (localized) {
-        try { complete(id, [localized]); if (isMegabyChannel(channel)) patch(id, { resultSaveError: null }); }
+        try { complete(id, [localized]); if (isMegabyChannel(channel) || isHussChannel(channel)) patch(id, { resultSaveError: null, upstreamDeliveryPending:false }); }
         catch (error: any) {
           db.update(contents).set({ resultUrl: localized }).where(eq(contents.id, id)).run();
           holdForReview(id, error.message || '生成结果已保留，费用结算待核实', 'settlement');
@@ -985,7 +985,7 @@ export function restoreLegacyMjCompletedImages(): number {
 async function resumeHussReceipt(id: number, channel: any, key: string) {
   const before = metadata(id);
   if (before.videoId || before.upstreamTaskId) return;
-  if ([before.upstreamModel, before.actualModel, before.requestedModel].some(isHussHssModel) && !isHussHssModel(before.hussPayload?.model)) throw new Error('HUSS 异步原请求快照缺失，未发送请求');
+  if ([before.upstreamModel, before.actualModel, before.requestedModel].some(isHussPersistentVideoModel) && !isHussPersistentVideoModel(before.hussPayload?.model)) throw new Error('HUSS 异步原请求快照缺失，未发送请求');
   let receipt;
   try { receipt = await recoverHussSubmission(channel, key, before.hussPayload); }
   catch (error: any) {

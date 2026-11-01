@@ -56,7 +56,7 @@ describe('HUSS BB Seedance protocol', () => {
   });
   it('requires the documented BB model in the authenticated catalog', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ok({ data: [{ id: HUSS_BB_MODEL }] })));
-    await expect(fetchHussVideoModels(channel)).resolves.toMatchObject([{ id: HUSS_BB_MODEL }]);
+    await expect(fetchHussVideoModels(channel)).rejects.toThrow('未开放已接入');
     expect(fetch).toHaveBeenCalledWith('https://www.huss.top/v1/models', expect.objectContaining({ headers: { Authorization: 'Bearer huss-test-key' } }));
   });
   it('uses JSON references, Bearer auth and the same idempotency key', async () => {

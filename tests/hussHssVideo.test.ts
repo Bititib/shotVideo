@@ -130,3 +130,18 @@ it('accepts opaque unified IDs and keeps uncertain accepted tasks in progress', 
   vi.stubGlobal('fetch',vi.fn(async()=>Response.json({id:'task_unified_original',status:'queued'},{status:202})));
   expect(await submitHussVideo(channel,{...input,model:'hss-2.5-301010-渠道B'},()=>{})).toBe('task_unified_original');
 });
+
+const bbA = 'bb-2.5-301010-渠道A';
+it('channel A persists unified canonical arrays and recovers with the exact original payload',async()=>{
+ let saved:any;const fetcher=vi.fn().mockRejectedValueOnce(new Error('socket reset')).mockResolvedValueOnce(Response.json({id:'task_uni_channel_a',status:'queued'}));vi.stubGlobal('fetch',fetcher);
+ await expect(submitHussVideo(channel,{...input,model:bbA,seconds:5,videos:['https://media.example/v.mp4'],audios:['https://media.example/a.mp3'],prompt:'字'.repeat(20000)},p=>{saved=p;})).rejects.toMatchObject({uncertain:true});
+ expect(saved).toMatchObject({model:bbA,huss_api_mode:'unified-v1',reference_images:input.images,reference_videos:['https://media.example/v.mp4'],reference_audios:['https://media.example/a.mp3']});
+ expect(await recoverHussSubmission(channel,input.idempotencyKey,saved)).toMatchObject({state:'accepted',taskId:'task_uni_channel_a'});
+ expect(fetcher.mock.calls[1][1].body).toBe(fetcher.mock.calls[0][1].body);
+ expect(fetcher.mock.calls[1][1].headers).toMatchObject({'X-Huss-Video-API':'unified-v1','Idempotency-Key':input.idempotencyKey});
+});
+it('channel A rejects combined references over 30 without truncation or POST',async()=>{
+ vi.stubGlobal('fetch',vi.fn());
+ await expect(submitHussVideo(channel,{...input,model:bbA,seconds:5,images:Array(30).fill(input.images[0]),audios:['https://media.example/a.mp3']},vi.fn())).rejects.toThrow('合计最多30');
+ expect(fetch).not.toHaveBeenCalled();
+});

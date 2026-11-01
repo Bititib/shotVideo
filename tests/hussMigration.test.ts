@@ -34,52 +34,26 @@ it('never forwards an actual old provider key to HUSS', () => {
   expect(channel()).toMatchObject({ type: 'huss', apiKey: '', status: 0, baseUrl: 'https://www.huss.top' });
   expect(getModelSpecification(HUSS_BB_PUBLIC_MODEL)).toBeFalsy();
 });
-it('sync repairs existing stale routes and is repeatable without overriding price or enabled state', async () => {
-  db.update(channels).set({ type: 'huss' }).where(eq(channels.id, 1)).run();
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [{ id: HUSS_BB_MODEL }] })));
-  await syncHussModels(channel()); await syncHussModels(channel());
-  expect(getModelSpecification(HUSS_BB_PUBLIC_MODEL)?.routes).toHaveLength(1);
-  expect(getModelSpecification(HUSS_BB_PUBLIC_MODEL)?.routes[0]).toMatchObject({ id: 'original-route', upstreamModel: HUSS_BB_MODEL, cost: 3, enabled: false, priority: 7 });
-  expect(db.select().from(models).get()).toMatchObject({ isActive: 1 });
-  expect(db.select().from(modelPricing).get()).toMatchObject({ inputPrice: 6 });
-});
-
-
 it('keeps an explicitly supplied HUSS key when an older admin form still sends blobdraw', async () => {
   const { ChannelService } = await import('../server/services/channelService.js');
   ChannelService.updateChannel(1, { type: 'blobdraw', baseUrl: 'https://www.huss.top', apiKey: 'replacement-huss-key' });
   expect(channel()).toMatchObject({ type: 'huss', apiKey: 'replacement-huss-key', maxRetries: 0 });
 });
 
-it('syncs HSS independently and preserves administrator pricing and enablement', async () => {
-  const modelId = 'hss-2.5-301010';
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [{ id: modelId }] })));
-  await syncHussModels(channel());
-  expect(db.select().from(models).where(eq(models.modelId, modelId)).get()).toMatchObject({ isActive: 0 });
-  expect(getModelSpecification(modelId)?.limits).toMatchObject({ resolutions: ['720p'], duration: { min: 4, max: 30 }, maxImages: 30 });
-  db.update(models).set({ isActive: 1 }).where(eq(models.modelId, modelId)).run();
-  db.insert(modelPricing).values({ modelPattern: modelId, inputPrice: 8.8 }).run();
-  await syncHussModels(channel());
-  expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, modelId)).get()).toMatchObject({ inputPrice: 8.8 });
-  expect(db.select().from(models).where(eq(models.modelId, modelId)).get()).toMatchObject({ isActive: 1 });
-  expect(getModelSpecification(modelId)?.routes).toHaveLength(1);
-  expect(JSON.parse(channel().modelMapping)).toEqual({ [modelId]: modelId });
+it('channel A sync maps both stable public IDs and preserves old price and disabled route',async()=>{
+ db.update(channels).set({type:'huss'}).where(eq(channels.id,1)).run();
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{id:'bb-2.5-301010-渠道A'}]})));
+ await syncHussModels(channel());await syncHussModels(channel());
+ expect(JSON.parse(channel().modelMapping)).toEqual({'bb-2.5-301010':'bb-2.5-301010-渠道A','hss-2.5-301010':'bb-2.5-301010-渠道A'});
+ expect(getModelSpecification(HUSS_BB_PUBLIC_MODEL)?.routes[0]).toMatchObject({enabled:false,upstreamModel:'bb-2.5-301010-渠道A',cost:3});
+ expect(getModelSpecification(HUSS_BB_PUBLIC_MODEL)?.limits.duration.min).toBe(5);
+ expect(db.select().from(models).where(eq(models.modelId,'hss-2.5-301010')).get()?.isActive).toBe(0);
+ expect(db.select().from(modelPricing).get()?.inputPrice).toBe(6);
 });
-
-
-it('switches the existing public HSS route to channel B without changing prices or adding a public model', async () => {
-  const old='hss-2.5-301010', next=old+'-渠道B';
-  vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{id:old}]})));
-  await syncHussModels(channel());
-  db.update(models).set({isActive:1}).where(eq(models.modelId,old)).run();
-  db.insert(modelPricing).values({modelPattern:old,inputPrice:8.8}).run();
-  vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{id:next},{id:old}]})));
-  await syncHussModels(channel());
-  await syncHussModels(channel());
-  expect(JSON.parse(channel().modelMapping)).toEqual({[old]:next});
-  expect(getModelSpecification(old)?.routes).toHaveLength(1);
-  expect(getModelSpecification(old)?.routes[0].upstreamModel).toBe(next);
-  expect(db.select().from(models).where(eq(models.modelId,next)).get()).toBeUndefined();
-  expect(db.select().from(models).where(eq(models.modelId,old)).get()?.isActive).toBe(1);
-  expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,old)).get()?.inputPrice).toBe(8.8);
+it('startup migration preserves public names, switches and pricing and runs only once',async()=>{
+ const {migrateHussChannelA}=await import('../server/services/hussChannelAMigration.js');
+ retireBlobDrawChannels();migrateHussChannelA();
+ expect(getModelSpecification(HUSS_BB_PUBLIC_MODEL)?.routes[0]).toMatchObject({upstreamModel:'bb-2.5-301010-渠道A',enabled:false,cost:3});
+ expect(db.select().from(models).get()).toMatchObject({displayName:'BB',isActive:1});expect(db.select().from(modelPricing).get()?.inputPrice).toBe(6);
+ const spec=getModelSpecification(HUSS_BB_PUBLIC_MODEL)!;saveModelSpecification({...spec,enabled:false});migrateHussChannelA();expect(getModelSpecification(HUSS_BB_PUBLIC_MODEL)?.enabled).toBe(false);
 });

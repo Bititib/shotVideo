@@ -1,6 +1,6 @@
 import { isApipathChannel, apipathRequest, apipathTaskId, pollApipathVideo, ApipathError } from './apipathAdapter.js';
 import { apipathImageSize, isApipathSunburstSpec } from '../../shared/apipathImageSizes.js';
-import { isHussHssModel } from '../../shared/hussBbVideo.js';
+import { isHussPersistentVideoModel } from '../../shared/hussBbVideo.js';
 import { V6K_SEEDANCE_20_MODEL } from '../../shared/v6kSeedance2.js';
 import { isMegabyChannel, buildMegabyVideoPayload, submitMegabyVideo, pollMegabyVideo, validateMegabyReferenceDurations, MegabyApiError } from './megabyVideoAdapter.js';
 import { isZonghengChannel, submitZonghengVideo, normalizeZonghengTask, readZonghengTaskResponse, zonghengTaskUrl, ZonghengSubmissionError } from './zonghengAdapter.js';
@@ -251,7 +251,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
       return await submitHussVideo(c, { model, prompt: request.prompt, seconds: i.seconds, ratio: i.ratio, resolution: i.resolution, images: request.images, videos: request.videos, audios: request.audios, firstFrame: request.firstFrame, lastFrame: request.lastFrame, publicBaseUrl: request.publicBaseUrl }, payload => onStarting({ hussIdempotencyKey: payload.idempotency_key, hussPayload: payload }), raw => onStarting({ hussInitialTask: raw }));
     } catch (error: any) {
       if (error instanceof HussApiError && error.retryAfterMs > 0) onStarting({ hussReceiptRetryAt: Date.now() + error.retryAfterMs });
-      if (error instanceof HussApiError) throw new SpecificationUpstreamError(error.message, !isHussHssModel(model) && !error.uncertain && [401, 402, 429].includes(error.status), error.uncertain, [401, 402, 403].includes(error.status), error.status, !error.uncertain);
+      if (error instanceof HussApiError) throw new SpecificationUpstreamError(error.message, !isHussPersistentVideoModel(model) && !error.uncertain && [401, 402, 429].includes(error.status), error.uncertain, [401, 402, 403].includes(error.status), error.status, !error.uncertain);
       throw new SpecificationUpstreamError(error.message || 'HUSS 视频提交失败', true);
     }
   }

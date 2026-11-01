@@ -1,3 +1,4 @@
+import { migrateHussChannelA } from './services/hussChannelAMigration.js';
 import { migrateZonghengModelPrefix } from './services/zonghengPrefixMigration.js';
 import { retireBlobDrawChannels } from './services/blobDrawRetirementMigration.js';
 import { env } from './config/env.js';
@@ -11,6 +12,7 @@ async function main() {
   await initDatabase();
   migrateZonghengModelPrefix();
   const retiredChannels = retireBlobDrawChannels();
+  migrateHussChannelA();
   if (retiredChannels) console.log(`已将 ${retiredChannels} 个 BlobDraw 渠道切换为待配置的 HUSS 渠道`);
 
   // 创建 Express 应用

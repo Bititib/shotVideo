@@ -9,10 +9,10 @@ beforeEach(() => {
   vi.spyOn(fs, 'writeFileSync').mockReturnValue(undefined); vi.spyOn(fs, 'renameSync').mockReturnValue(undefined);
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-it.each(['https://www.huss.top/files/clip.mp4?signature=keep%2Bthis&expires=99','https://cdn.example/clip.mp4?token=signed'])('downloads the complete signed URL without sending API key: %s', async url => {
+it.each(['https://www.huss.top/files/clip.mp4?signature=keep%2Bthis&expires=99','https://cdn.example/clip.mp4?token=signed'])('refreshes the original content instead of reusing signed URL: %s', async url => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(Buffer.from('0000ftypmp420000'), { headers: { 'Content-Type': 'video/mp4' } })));
   expect(await downloadAndLocalizeVideo(url, 'task_original', 'bb-2.5-301010', 1)).toContain('/uploads/videos/');
-  expect(fetch).toHaveBeenCalledWith(url, expect.objectContaining({ headers: {} }));
+  expect(fetch).toHaveBeenCalledWith('https://www.huss.top/v1/videos/task_original/content', expect.objectContaining({ headers: {Authorization:'Bearer huss-secret'} }));
   expect(fs.renameSync).toHaveBeenCalledOnce();
 });
 it('preserves the upstream download reason without exposing the key', async () => {
@@ -30,25 +30,24 @@ it('preserves the observed HUSS TOS expiry error including timing and request ID
   expect(error.message).not.toContain('signature=private'); expect(error.message).not.toContain('huss-secret');
   expect(fs.renameSync).not.toHaveBeenCalled();
 });
-it('falls back to original /content on expired signed download, strips credentials on every redirect, and saves once', async () => {
+it('refreshes original /content, strips credentials on every redirect, and saves once', async () => {
   vi.stubGlobal('fetch', vi.fn()
-    .mockResolvedValueOnce(Response.json({ Code: 'AccessDenied', Message: 'Request has expired' }, { status: 403 }))
     .mockResolvedValueOnce(new Response(null, { status: 307, headers: { Location: 'https://www.huss.top/media/fresh?signature=keep%2Bexact' } }))
     .mockResolvedValueOnce(new Response(null, { status: 307, headers: { Location: 'https://storage.example/final?signature=new' } }))
     .mockResolvedValueOnce(new Response(Buffer.from('0000ftypmp420000'), { headers: { 'Content-Type': 'video/mp4' } })));
   expect(await downloadAndLocalizeVideo('https://www.huss.top/media/old?signature=old', 'task_original', 'bb-2.5-301010', 1)).toContain('/uploads/videos/');
   const calls = vi.mocked(fetch).mock.calls;
-  expect(calls[1]).toEqual(['https://www.huss.top/v1/videos/task_original/content', expect.objectContaining({ method: 'GET', redirect: 'manual', headers: { Authorization: 'Bearer huss-secret' } })]);
-  expect(calls[2]).toEqual(['https://www.huss.top/media/fresh?signature=keep%2Bexact', expect.objectContaining({ headers: {} })]);
-  expect(calls[3][1]?.headers).toEqual({}); expect(calls).toHaveLength(4); expect(fs.renameSync).toHaveBeenCalledOnce();
+  expect(calls[0]).toEqual(['https://www.huss.top/v1/videos/task_original/content', expect.objectContaining({ method: 'GET', redirect: 'manual', headers: { Authorization: 'Bearer huss-secret' } })]);
+  expect(calls[1]).toEqual(['https://www.huss.top/media/fresh?signature=keep%2Bexact', expect.objectContaining({ headers: {} })]);
+  expect(calls[2][1]?.headers).toEqual({}); expect(calls).toHaveLength(3); expect(fs.renameSync).toHaveBeenCalledOnce();
 });
 it('retains detailed failure when official fallback also fails, without unbounded retries', async () => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json({ Code: 'AccessDenied', Message: 'Request has expired' }, { status: 403 })));
   await expect(downloadAndLocalizeVideo('https://www.huss.top/media/old', 'task_original', 'bb-2.5-301010', 1)).rejects.toThrow('/content');
-  expect(fetch).toHaveBeenCalledTimes(2); expect(fs.renameSync).not.toHaveBeenCalled();
+  expect(fetch).toHaveBeenCalledTimes(1); expect(fs.renameSync).not.toHaveBeenCalled();
 });
 it('does not treat content storage-pending as a finished video', async () => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response(null, { status: 403 }))
+  vi.stubGlobal('fetch', vi.fn()
     .mockResolvedValueOnce(Response.json({ status: 'storage_pending', message: 'storage pending' }, { status: 202 })));
   await expect(downloadAndLocalizeVideo('https://www.huss.top/media/old', 'task_original', 'bb-2.5-301010', 1)).rejects.toThrow('继续查询原任务');
   expect(fs.renameSync).not.toHaveBeenCalled();
@@ -75,10 +74,10 @@ it('HSS content errors preserve HTTP status and Retry-After for the save worker'
 });
 
 
-it('downloads channel B using an opaque original ID and strips credentials on redirects', async () => {
+it.each(['hss-2.5-301010','bb-2.5-301010'])('downloads %s using original ID and strips credentials on redirects', async model => {
   vi.stubGlobal('fetch',vi.fn().mockResolvedValueOnce(new Response(null,{status:307,headers:{location:'https://storage.example/b.mp4'}}))
     .mockResolvedValueOnce(new Response(new Uint8Array([0,0,0,24,102,116,121,112]),{headers:{'content-type':'video/mp4'}})));
-  await downloadAndLocalizeVideo('https://cdn.example/expired','task_unified_b','hss-2.5-301010',1);
+  await downloadAndLocalizeVideo('https://cdn.example/expired','task_unified_b',model,1);
   expect(fetch).toHaveBeenNthCalledWith(1,'https://www.huss.top/v1/videos/task_unified_b/content',expect.objectContaining({headers:{Authorization:'Bearer huss-secret'}}));
   expect(fetch).toHaveBeenNthCalledWith(2,'https://storage.example/b.mp4',expect.objectContaining({headers:{}}));
   expect(fs.renameSync).toHaveBeenCalledOnce();

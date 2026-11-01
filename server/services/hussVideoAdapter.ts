@@ -1,5 +1,5 @@
 import { HUSS_MJ_MODEL, hussMjLimits } from '../../shared/hussMidjourney.js';
-import { HUSS_HSS_B_MODEL, isHussHssModel, HUSS_HSS_MODEL, hussHssModelLimits } from '../../shared/hussBbVideo.js';
+import { HUSS_BB_A_MODEL, hussBbAModelLimits, isHussPersistentVideoModel, HUSS_HSS_B_MODEL, isHussHssModel, HUSS_HSS_MODEL, hussHssModelLimits } from '../../shared/hussBbVideo.js';
 import { randomUUID } from 'node:crypto';
 import { videoErrorTaskId, videoRequestNotSent } from './videoSubmissionErrors.js';
 import { publishReferenceUrl } from './publicReferenceService.js';
@@ -51,7 +51,7 @@ export async function fetchHussVideoContent(channel: HussChannel, taskId: string
 }
 export class HussApiError extends Error { constructor(message: string, readonly status: number, readonly uncertain = false, readonly retryAfterMs = 0) { super(message); } }
 async function hussRequest(channel: HussChannel, endpoint: string, body?: unknown, idempotencyKey?: string, unified = false) {
-  const persistent = isHussHssModel((body as any)?.model);
+  const persistent = isHussPersistentVideoModel((body as any)?.model);
   const generation = body !== undefined;
   let response: Response;
   try {
@@ -91,39 +91,40 @@ export function hussBbModelLimits(): ModelInputLimits { return { maxImages: 30, 
 export async function fetchHussVideoModels(channel: HussChannel): Promise<HussVideoModel[]> {
   const raw = await hussRequest(channel, '/models'); const candidates = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : Array.isArray(raw?.models) ? raw.models : [];
   const allowed = new Set(candidates.map((item: any) => typeof item === 'string' ? item : item?.id));
-  const selected = [HUSS_MJ_MODEL, HUSS_BB_MODEL, allowed.has(HUSS_HSS_B_MODEL) ? HUSS_HSS_B_MODEL : HUSS_HSS_MODEL].filter(id => allowed.has(id));
+  const selected = [HUSS_MJ_MODEL, HUSS_BB_A_MODEL].filter(id => allowed.has(id));
   if (!selected.length) throw new Error('HUSS 当前 API Key 未开放已接入的模型');
-  return selected.map(id => ({ id, name: id, type: id === HUSS_MJ_MODEL ? 'image' as const : 'video' as const, config: { limits: id === HUSS_MJ_MODEL ? hussMjLimits() : isHussHssModel(id) ? hussHssModelLimits() : hussBbModelLimits() } }));
+  return selected.map(id => ({ id, name: id, type: id === HUSS_MJ_MODEL ? 'image' as const : 'video' as const, config: { limits: id === HUSS_MJ_MODEL ? hussMjLimits() : id === HUSS_BB_A_MODEL ? hussBbAModelLimits() : isHussHssModel(id) ? hussHssModelLimits() : hussBbModelLimits() } }));
 }
 export function hussVideoParameters(input: HussVideoInput) {
-  const persistent = isHussHssModel(input.model);
-  const limits = persistent ? hussHssModelLimits() : hussBbModelLimits();
-  if (![HUSS_BB_MODEL, HUSS_HSS_MODEL, HUSS_HSS_B_MODEL].includes(input.model)) throw new Error('HUSS 未接入此模型');
+  const persistent = isHussPersistentVideoModel(input.model);
+  const limits = input.model === HUSS_BB_A_MODEL ? hussBbAModelLimits() : persistent ? hussHssModelLimits() : hussBbModelLimits();
+  if (![HUSS_BB_MODEL, HUSS_BB_A_MODEL, HUSS_HSS_MODEL, HUSS_HSS_B_MODEL].includes(input.model)) throw new Error('HUSS 未接入此模型');
   if (input.firstFrame || input.lastFrame) throw new Error('HUSS 此模型不支持独立首尾帧，请作为普通参考图片提交');
   if (!input.prompt.trim()) throw new Error('HUSS 提示词不能为空');
   if (!Number.isInteger(input.seconds) || input.seconds < limits.duration.min || input.seconds > 30) throw new Error(`HUSS ${input.model} 视频时长须为 ${limits.duration.min}–30 秒整数`);
   if (input.resolution !== '720p' || !limits.ratios.includes(input.ratio)) throw new Error(`HUSS ${input.model} 仅支持 720p 和 ${limits.ratios.join('、')}`);
   if (input.images.length > 30 || input.videos.length > 10 || input.audios.length > 10) throw new Error('HUSS 参考素材数量超过模型上限');
+  if (input.model === HUSS_BB_A_MODEL && input.images.length + input.videos.length + input.audios.length > 30) throw new Error('HUSS 渠道A参考图片、视频和音频合计最多30个');
   const key = input.idempotencyKey || randomUUID(); if (!/^[A-Za-z0-9._:-]{1,128}$/.test(key)) throw new Error('HUSS 请求标识仅支持 1–128 位字母、数字、点、下划线、冒号和短横线');
   return { key, payload: { model: input.model, prompt: input.prompt.trim(), duration: input.seconds, ratio: input.ratio, resolution: input.resolution } };
 }
 export async function submitHussVideo(channel: HussChannel, input: HussVideoInput, beforeSubmit: (payload: Record<string, unknown>) => void, onAccepted?: (raw: unknown) => void) {
   const { key, payload } = hussVideoParameters(input); const publish = (items: string[]) => items.map(item => publishReferenceUrl(item, input.publicBaseUrl));
-  const request: Record<string, any> = { ...payload, ...(input.images.length ? { [isHussHssModel(input.model) ? 'images' : 'reference_images']: publish(input.images) } : {}), ...(input.videos.length ? { videos: publish(input.videos) } : {}), ...(input.audios.length ? { audios: publish(input.audios) } : {}) };
-  if (isHussHssModel(input.model)) {
-    for (const value of [...(request.images || []), ...(request.videos || []), ...(request.audios || [])]) {
+  const request: Record<string, any> = { ...payload, ...(input.images.length ? { [input.model !== HUSS_BB_A_MODEL && isHussPersistentVideoModel(input.model) ? 'images' : 'reference_images']: publish(input.images) } : {}), ...(input.videos.length ? { [input.model === HUSS_BB_A_MODEL ? 'reference_videos' : 'videos']: publish(input.videos) } : {}), ...(input.audios.length ? { [input.model === HUSS_BB_A_MODEL ? 'reference_audios' : 'audios']: publish(input.audios) } : {}) };
+  if (isHussPersistentVideoModel(input.model)) {
+    for (const value of [...(request.reference_images || request.images || []), ...(request.reference_videos || request.videos || []), ...(request.reference_audios || request.audios || [])]) {
       const url = new URL(value);
       if (url.protocol !== 'https:' || url.username || url.password) throw new Error('HUSS hss 素材必须为无需登录的公网 HTTPS 直链');
     }
     if (Buffer.byteLength(JSON.stringify(request)) > 4 * 1024 * 1024) throw new Error('HUSS hss 请求超过 4 MiB');
   }
-  const unified = input.model === HUSS_HSS_B_MODEL;
+  const unified = input.model === HUSS_HSS_B_MODEL || input.model === HUSS_BB_A_MODEL;
   beforeSubmit({ ...request, idempotency_key: key, ...(unified ? { huss_api_mode: 'unified-v1' } : {}) });
   let result: any;
   try { result = await hussRequest(channel, '/videos', request, key, unified); }
   catch (error) {
     if (!(error instanceof HussApiError) || !error.uncertain) throw error;
-    if (isHussHssModel(input.model)) throw error; // Persisted replay is handled by recovery, never legacy GET.
+    if (isHussPersistentVideoModel(input.model)) throw error; // Persisted replay is handled by recovery, never legacy GET.
     let receipt: Awaited<ReturnType<typeof recoverHussSubmission>>;
     try { receipt = await recoverHussSubmission(channel, key); } catch { throw error; }
     if (receipt.state === 'accepted') return receipt.taskId;
@@ -131,9 +132,9 @@ export async function submitHussVideo(channel: HussChannel, input: HussVideoInpu
     throw error;
   }
   const id = result?.id ?? result?.data?.id;
-  if (isHussHssModel(input.model) && (typeof id !== 'string' || !id.trim())) throw new HussApiError(hussFailure('异步任务编号无效', result, 202, undefined, channel.apiKey), 202, true);
+  if (isHussPersistentVideoModel(input.model) && (typeof id !== 'string' || !id.trim())) throw new HussApiError(hussFailure('异步任务编号无效', result, 202, undefined, channel.apiKey), 202, true);
   if ((typeof id !== 'string' && typeof id !== 'number') || !String(id).trim()) throw new HussApiError(hussFailure('未返回任务编号，提交结果待核实', result, 202, undefined, channel.apiKey), 202, true);
-  if (isHussHssModel(input.model) && result?.status === 'completed' && result?.url) {
+  if (isHussPersistentVideoModel(input.model) && ['completed','failed','cancelled','canceled'].includes(result?.status)) {
     try { onAccepted?.(result); }
     catch (error) { throw new HussApiError(hussFailure('已受理任务凭据保存异常', error, 202, undefined, channel.apiKey), 202, true); }
   }
@@ -163,11 +164,11 @@ export async function pollHussVideo(channel: HussChannel, taskId: string) {
 /** Legacy BB: read-only receipt. HSS: documented identical-key/payload replay, never a new key. */
 export async function recoverHussSubmission(channel: HussChannel, key: string, snapshot?: Record<string, any>) {
   if (!/^[A-Za-z0-9._:-]{1,128}$/.test(key)) throw new Error('HUSS 原提交编号无效');
-  if (snapshot?.model === HUSS_HSS_MODEL || snapshot?.model === HUSS_HSS_B_MODEL && snapshot?.huss_api_mode === 'unified-v1') {
+  if (snapshot?.model === HUSS_HSS_MODEL || [HUSS_HSS_B_MODEL,HUSS_BB_A_MODEL].includes(snapshot?.model) && snapshot?.huss_api_mode === 'unified-v1') {
     if (snapshot.idempotency_key !== key) throw new Error('HUSS 原请求快照与幂等编号不匹配，未重放');
-    if (typeof snapshot.prompt !== 'string' || !['images','videos','audios'].every(field => snapshot[field] === undefined || Array.isArray(snapshot[field]) && snapshot[field].every((url: unknown) => typeof url === 'string'))) throw new Error('HUSS 原请求快照不完整，未重放');
+    if (typeof snapshot.prompt !== 'string' || !['images','videos','audios','reference_images','reference_videos','reference_audios'].every(field => snapshot[field] === undefined || Array.isArray(snapshot[field]) && snapshot[field].every((url: unknown) => typeof url === 'string'))) throw new Error('HUSS 原请求快照不完整，未重放');
     hussVideoParameters({ model: snapshot.model, prompt: snapshot.prompt, seconds: snapshot.duration, ratio: snapshot.ratio, resolution: snapshot.resolution,
-      images: snapshot.images || [], videos: snapshot.videos || [], audios: snapshot.audios || [], idempotencyKey: key, publicBaseUrl: '' });
+      images: snapshot.reference_images || snapshot.images || [], videos: snapshot.reference_videos || snapshot.videos || [], audios: snapshot.reference_audios || snapshot.audios || [], idempotencyKey: key, publicBaseUrl: '' });
     const { idempotency_key: _, huss_api_mode, ...request } = snapshot;
     {
       // Documented same-account/key/parameters replay returns the original video ID.

@@ -868,6 +868,55 @@ describe('HSS actual managed submission and recovery', () => {
     return { body: { model, prompt: 'original scene', seconds: 4, ratio: '21:9', resolution: '720p' }, headers: {}, protocol: 'https', get: () => 'app.invalid', userId } as any;
   }
   const last = () => db.select().from(contents).all().at(-1)!;
+  function setupA(publicId=model) {
+    const req=setupHss();const l={...existingModelLimits(model,'video')!,duration:{mode:'range' as const,min:5,max:30,step:1,values:[]}};
+    db.insert(models).values({modelId:publicId,provider:'huss',displayName:publicId,capabilities:'["video"]',isActive:1}).onConflictDoNothing().run();
+    db.delete(modelPricing).where(eq(modelPricing.modelPattern,publicId)).run();db.insert(modelPricing).values({modelPattern:publicId,billingType:'per_call',inputPrice:6,outputPrice:0}).run();
+    const c={...channel(1),type:'huss',baseUrl:'https://www.huss.top',supportedModels:[publicId]};
+    vi.mocked(ChannelService.getActiveChannels).mockReturnValue([c]);vi.mocked(ChannelService.getChannelRaw).mockReturnValue(c as any);
+    saveModelSpecification({modelId:publicId,kind:'video',enabled:true,aliases:[],limits:l,routes:[{...route(1),executionModel:publicId,upstreamModel:'bb-2.5-301010-渠道A',limits:l}]});
+    req.body.model=publicId;req.body.seconds=5;return req;
+  }
+  it.each(['bb-2.5-301010','hss-2.5-301010'])('channel A serves public %s without renaming or duplicate charges',async publicId=>{
+    const req=setupA(publicId);vi.stubGlobal('fetch',vi.fn(async (_url,init:any)=>{
+      if(init.method==='POST') {expect(JSON.parse(init.body).model).toBe('bb-2.5-301010-渠道A');expect(init.headers['X-Huss-Video-API']).toBe('unified-v1');return Response.json({id:'task_uni_a',status:'queued'},{status:202});}
+      expect(JSON.parse(last().metadata).upstreamTaskId).toBe('task_uni_a');return Response.json({id:'task_uni_a',status:'completed',storage_status:'ready'});
+    }));
+    await handleSpecificationGeneration(req,response(),'video');await vi.waitFor(()=>expect(last().status).toBe('completed'));
+    expect(last().modelId).toBe(publicId);expect(JSON.parse(last().metadata).billingStatus).toBe('settled');
+    expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBe(94);resumeSpecificationTasks();expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it('channel A explicit submission rejection refunds once and never starts receipt recovery',async()=>{
+    const req=setupA();vi.stubGlobal('fetch',vi.fn(async()=>Response.json({error:{code:'invalid_prompt',message:'specific upstream reason'}},{status:400})));
+    await handleSpecificationGeneration(req,response(),'video');await vi.waitFor(()=>expect(last().status).toBe('failed'));
+    expect(JSON.parse(last().metadata)).toMatchObject({billingStatus:'refunded',requiresReview:false});resumeSpecificationTasks();expect(fetch).toHaveBeenCalledOnce();
+    expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBe(100);
+  });
+  it('channel A immediately failed receipt persists ID and refunds without waiting for another query',async()=>{
+    const req=setupA();vi.stubGlobal('fetch',vi.fn(async()=>Response.json({id:'task_uni_failed',status:'failed',error:{code:'upstream_rejected',message:'reference unavailable'}},{status:202})));
+    await handleSpecificationGeneration(req,response(),'video');expect(last().status).toBe('failed');
+    expect(JSON.parse(last().metadata)).toMatchObject({upstreamTaskId:'task_uni_failed',billingStatus:'refunded',requiresReview:false});
+    resumeSpecificationTasks();expect(fetch).toHaveBeenCalledOnce();expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBe(100);
+  });
+  it('channel A completed download failure retries original delivery without another POST or refund',async()=>{
+    vi.useFakeTimers();
+    try {
+      const req=setupA();const {downloadAndLocalizeVideo}=await import('../server/services/videoLocalizationService.js');
+      vi.mocked(downloadAndLocalizeVideo).mockRejectedValueOnce(new Error('download temporarily unavailable'));
+      vi.stubGlobal('fetch',vi.fn(async (_url,init:any)=>Response.json(init.method==='POST'?{id:'task_uni_save',status:'queued'}:{id:'task_uni_save',status:'completed',url:'https://cdn.invalid/a.mp4'})));
+      const running=handleSpecificationGeneration(req,response(),'video');await vi.waitFor(()=>expect(JSON.parse(last().metadata).resultSaveError).toContain('download temporarily unavailable'));
+      expect(JSON.parse(last().metadata).requiresReview).not.toBe(true);expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBe(94);
+      await vi.advanceTimersByTimeAsync(60001);await running;await vi.waitFor(()=>expect(last().status).toBe('completed'));
+      expect(JSON.parse(last().metadata)).toMatchObject({billingStatus:'settled',resultSaveError:null,upstreamDeliveryPending:false});expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {vi.useRealTimers();}
+  });
+  it('channel A response-loss recovery keeps original key and parameters across worker scans',async()=>{
+    const req=setupA();let body='',key='';vi.stubGlobal('fetch',vi.fn(async (_u,init:any)=>{body=init.body;key=init.headers['Idempotency-Key'];throw new Error('socket reset');}));
+    await handleSpecificationGeneration(req,response(),'video');await vi.waitFor(()=>expect(JSON.parse(last().metadata).requiresReview).toBe(true));expect(fetch).toHaveBeenCalledOnce();
+    vi.stubGlobal('fetch',vi.fn(async (_u,init:any)=>{if(init.method==='POST'){expect(init.body).toBe(body);expect(init.headers['Idempotency-Key']).toBe(key);return Response.json({id:'task_uni_restore',status:'queued'});}return Response.json({id:'task_uni_restore',status:'completed',url:'https://cdn.invalid/a.mp4'});}));
+    resumeSpecificationTasks();resumeSpecificationTasks();await vi.waitFor(()=>expect(last().status).toBe('completed'));expect(fetch).toHaveBeenCalledTimes(2);
+    expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBe(94);
+  });
   it('submits channel B from the public model, persists its opaque ID and settles after content-only completion', async () => {
     const req=setupHss(); const spec=getModelSpecification(model)!;
     saveModelSpecification({...spec,routes:spec.routes.map(r=>({...r,upstreamModel:'hss-2.5-301010-渠道B'}))});

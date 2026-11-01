@@ -25,3 +25,13 @@ export function hussHssModelLimits(): ModelInputLimits {
 
 export const HUSS_HSS_B_MODEL = 'hss-2.5-301010-渠道B';
 export function isHussHssModel(model: unknown): boolean { return model === HUSS_HSS_MODEL || model === HUSS_HSS_B_MODEL; }
+
+// Current channel A; legacy IDs remain parseable only for original task recovery.
+export const HUSS_BB_A_MODEL = 'bb-2.5-301010-渠道A';
+export function isHussPersistentVideoModel(model: unknown): boolean {
+  return model === HUSS_BB_A_MODEL || isHussHssModel(model);
+}
+export function hussBbAModelLimits(): ModelInputLimits {
+  return {...hussBbModelLimits(), ratios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'],
+    duration:{mode:'range',min:5,max:30,step:1,values:[]}};
+}
