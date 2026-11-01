@@ -146,3 +146,61 @@ it('external API returns a local query handle and keeps the original reservation
  expect(res.json).toHaveBeenCalledWith(expect.objectContaining({task_id:'task_'+row().id,status:'processing',status_url:'https://local.test/v1/images/tasks/task_'+row().id}));
  expect(meta().upstreamTaskId).toBe('original-image');expect(meta().tokenId).toBe(700);
 });
+
+it.each(['expired','processing','failed'])('keeps saving known successful results despite later %s status',async(status)=>{
+ let ready=false;
+ const f=vi.fn(async(url:any,opts:any)=>{
+  if(opts?.method==='POST')return completed();
+  if(String(url).includes('/tasks/'))return Response.json({task_id:'original-image',status,error:{message:'later status'}});
+  return ready ? new Response(png) : new Response('temporary download failure',{status:503});
+ });vi.stubGlobal('fetch',f);await submit();expect(meta().upstreamGenerated).toBe(true);expect(row().status).toBe('processing');
+ ready=true;await vi.advanceTimersByTimeAsync(31000);await vi.waitFor(()=>expect(row().status).toBe('completed'));
+ expect(meta().imageUrls).toHaveLength(2);expect(meta().billingStatus).toBe('settled');
+ expect(f.mock.calls.filter(c=>c[1]?.method==='POST')).toHaveLength(1);
+ expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBe(98);
+});
+it('settles a fully saved original batch after restart without requiring the upstream query',async()=>{
+ const f=vi.fn(async()=>Response.json({task_id:'original-image',status:'queued'}));vi.stubGlobal('fetch',f);await submit();
+ const m=meta();m.hussImageInitial=null;m.hussImageResumeAt=0;m.upstreamGenerated=true;
+ m.nativeImageBatch={sourceUrls:['https://cdn.test/1.png'],jobs:[{index:0,sourceUrl:'https://cdn.test/1.png',status:'completed',localUrl:'/api/uploads/already-saved.png'}]};
+ db.update(contents).set({metadata:JSON.stringify(m)}).where(eq(contents.id,row().id)).run();
+ f.mockClear();resumeSpecificationTasks();await vi.waitFor(()=>expect(row().status).toBe('completed'));
+ expect(f).not.toHaveBeenCalled();expect(row().resultUrl).toBe('/api/uploads/already-saved.png');expect(row().cost).toBe(2);
+ resumeSpecificationTasks();expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBe(98);
+});
+it('does not discard a candidate with a missing URL or charge for a partial batch',async()=>{
+ let ready=false;const f=vi.fn(async(url:any,opts:any)=>{
+  if(opts?.method==='POST')return Response.json({task_id:'original-image',status:'completed',data:[{url:'https://cdn.test/1.png'},{}]});
+  if(String(url).includes('/tasks/'))return ready ? completed() : Response.json({task_id:'original-image',status:'completed',data:[]});
+  return new Response(png);
+ });vi.stubGlobal('fetch',f);await submit();expect(row().status).toBe('processing');expect(meta().upstreamGenerated).toBe(true);
+ expect(meta().resultSaveError).toContain('第 2 张');expect(meta().billingStatus).toBe('reserved');expect(meta().imageUrls).toHaveLength(0);
+ ready=true;await vi.advanceTimersByTimeAsync(31000);await vi.waitFor(()=>expect(row().status).toBe('completed'));expect(meta().imageUrls).toHaveLength(2);
+});
+it('recognizes generated but upstream storage-pending as delivery, not a new generation',async()=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({task_id:'original-image',status:'completed',storage_status:'pending'})));
+ await submit();expect(meta().upstreamGenerated).toBe(true);expect(meta().progressText).toContain('等待上游保存');
+ expect(meta().requiresReview).not.toBe(true);expect(meta().billingStatus).toBe('reserved');
+});
+it('rejects a query without status instead of silently assuming queued',()=>{
+ expect(()=>normalizeHussImage({task_id:'x'},'x')).toThrow('未识别状态');
+ expect(normalizeHussImage({task_id:'x'}).status).toBe('queued');
+});
+
+it('propagates local disk write failure instead of treating a data URL as a saved result',async()=>{
+ const fs=await import('node:fs');
+ const actual=await vi.importActual<typeof import('../server/routes/imageGen.js')>('../server/routes/imageGen.js');
+ const write=vi.spyOn(fs.default,'writeFileSync').mockImplementation(()=>{throw new Error('ENOSPC test disk full');});
+ try {
+  await expect(actual.localizeGeneratedImage('data:image/png;base64,'+png.toString('base64'),'huss-test', {protocol:'https',headers:{},get:()=> 'local.test'} as any,channel,{relative:true})).rejects.toThrow('ENOSPC test disk full');
+ } finally {write.mockRestore();}
+});
+
+it('saves a real image with a restart recovery request lacking HTTP headers',async()=>{
+ const fs=await import('node:fs');const path=await import('node:path');
+ const actual=await vi.importActual<typeof import('../server/routes/imageGen.js')>('../server/routes/imageGen.js');
+ const url=await actual.localizeGeneratedImage('data:image/png;base64,'+png.toString('base64'),'huss-restart-test',{protocol:'https',get:()=> 'local.test'} as any,channel,{relative:true});
+ expect(url).toMatch(/^\/api\/uploads\/huss-restart-test_/);
+ const file=path.resolve('data/uploads',path.basename(url));
+ try {expect(fs.readFileSync(file)).toEqual(png);} finally {fs.unlinkSync(file);}
+});

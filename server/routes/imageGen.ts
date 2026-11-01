@@ -49,7 +49,7 @@ router.use('/generate', generationErrorResponse);
 /**
  * 将 base64 数据转换并存储为本地静态文件，返回可外网访问的公网 URL
  */
-function convertBase64ToPublicUrl(dataUrl: string, prefix: string, req: Request): string {
+function convertBase64ToPublicUrl(dataUrl: string, prefix: string, req: Request, strict = false): string {
   if (!dataUrl) return '';
   if (uploadPath(dataUrl)) return issueUploadUrl(dataUrl, process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`);
   if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
@@ -81,12 +81,15 @@ function convertBase64ToPublicUrl(dataUrl: string, prefix: string, req: Request)
     }
 
     fs.writeFileSync(destPath, buffer);
+    // Generated outputs need durable storage paths, not temporary reference grants.
+    if (strict) return registerUpload(`/uploads/${filename}`);
 
     // 优先使用环境变量配置的公网基准 URL
-    const baseUrl = process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
+    const baseUrl = process.env.BACKEND_URL || `${req.headers?.['x-forwarded-proto'] || req.protocol}://${req.get('host')}`;
     return issueUploadUrl(`${baseUrl.replace(/\/+$/, '')}/uploads/${filename}`);
   } catch (err: any) {
     console.error('[imageGen] convertBase64ToPublicUrl 失败:', err.message);
+    if (strict) throw err;
     return dataUrl;
   }
 }
@@ -133,7 +136,7 @@ export function storedImageUrls(record: { resultUrl?: string | null; metadata?: 
 }
 
 function publicBaseUrl(req: Request): string {
-  return (process.env.BACKEND_URL || `${req.headers['x-forwarded-proto'] || req.protocol}://${req.get('host')}`)
+  return (process.env.BACKEND_URL || `${req.headers?.['x-forwarded-proto'] || req.protocol}://${req.get('host')}`)
     .replace(/\/+$/, '');
 }
 
@@ -174,8 +177,9 @@ export async function localizeGeneratedImage(
   if (!sourceUrl) throw new Error('上游未返回图片 URL');
   const siteBase = publicBaseUrl(req);
   if (sourceUrl.startsWith('data:')) {
-    const publicUrl = convertBase64ToPublicUrl(sourceUrl, prefix, req);
-    return options?.relative ? new URL(publicUrl).pathname.replace(/^\/uploads\//, '/api/uploads/') : publicUrl;
+    const publicUrl = convertBase64ToPublicUrl(sourceUrl, prefix, req, true);
+    const pathname = new URL(publicUrl, siteBase).pathname;
+    return options?.relative ? pathname.replace(/^\/uploads\//, '/api/uploads/') : `${siteBase}${pathname}`;
   }
   if (sourceUrl.startsWith('/api/uploads/')) {
     return options?.relative ? sourceUrl : `${siteBase}${sourceUrl.replace(/^\/api/, '')}`;

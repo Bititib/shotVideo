@@ -669,25 +669,46 @@ async function continueHussImages(id: number, req: Request, emit: (data: any) =>
   if (!channel || !isHussChannel(channel)) { holdForReview(id, '原 HUSS 图片渠道不存在', 'query'); return; }
   let phase = 'query';
   try {
-    const task = m.hussImageInitial || await queryHussImage(channel, m.upstreamTaskId).catch(error => {
-      if (m.nativeImageBatch?.sourceUrls?.length) return {id:m.upstreamTaskId,status:'completed',urls:m.nativeImageBatch.sourceUrls,delay:30000};
+    const cached = m.nativeImageBatch as MjImageBatch | undefined;
+    // A fully saved batch only needs local settlement. Do not depend on an upstream
+    // query remaining available after all original candidates have been delivered.
+    if (cached?.sourceUrls.length && cached.jobs.length === cached.sourceUrls.length && cached.jobs.every(job => job.localUrl)) {
+      phase = 'save';
+      await mediaOwnerContext.run(record.userId, () => saveMjResults(id, channel, req, emit));
+      patch(id, {resultSaveError:null,upstreamQueryError:null,hussImageResumeAt:null,hussImageStopped:false});
+      return;
+    }
+    let queryError: string | null = null;
+    let task = m.hussImageInitial || await queryHussImage(channel, m.upstreamTaskId).catch(error => {
+      if (cached?.sourceUrls?.length) {
+        queryError = error.message;
+        return {id:m.upstreamTaskId,status:'completed',urls:cached.sourceUrls,delay:30000,generated:true};
+      }
       throw error;
     });
-    patch(id, { hussImageInitial:null, upstreamStatus:task.status, lastQueryAt:new Date().toISOString(),
-      upstreamQueryError:null, hussImageResumeAt:Date.now()+task.delay });
+    // Once completion is evidenced, a later status regression/expiry must not
+    // prevent trying already recorded original result URLs or cause a refund.
+    if (cached?.sourceUrls.length && (task.status !== 'completed' || task.resultError)) {
+      queryError = task.error || task.resultError || '上游原任务状态变为 ' + task.status + '，继续恢复已生成图片';
+      task = {id:m.upstreamTaskId,status:'completed',urls:cached.sourceUrls,delay:30000,generated:true};
+    }
+    patch(id, { hussImageInitial:null, upstreamStatus:task.generated ? 'completed' : task.status,
+      ...(task.generated ? {upstreamGenerated:true} : {}), lastQueryAt:new Date().toISOString(),
+      upstreamQueryError:queryError, hussImageResumeAt:Date.now()+task.delay });
     if (task.status === 'expired') {
       patch(id, {hussImageStopped:true});
       holdForReview(id,task.error || '上游图片结果已过期，需要核实原任务交付', 'local');
       return;
     }
     if (['failed','cancelled'].includes(task.status)) {
-      // Previously observed completed images are delivery evidence, not a failed generation.
-      if (m.nativeImageBatch) throw new Error(task.error || '原任务结果链接已失效，需要恢复原图片');
+      if (m.upstreamGenerated) throw new Error(task.error || '上游已生成图片，后续状态不一致，正在查询原结果');
       failTask(id, task.error); emit({type:'error',message:task.error}); return;
     }
     if (task.status !== 'completed') {
-      patch(id, { progressText:m.nativeImageBatch ? '图片已生成，正在恢复保存' : '图片生成中' }); return;
+      patch(id, { progressText:task.generated || m.upstreamGenerated ? '图片已生成，等待上游保存结果' : '图片生成中' }); return;
     }
+    phase = 'save';
+    if (task.resultError || !task.urls.length) throw new Error(task.resultError || '上游已生成图片，尚未提供结果地址');
     const previous = m.nativeImageBatch as MjImageBatch | undefined;
     if (previous && previous.sourceUrls.length !== task.urls.length) throw new Error('原图片候选数量发生变化，保留已保存结果等待核实');
     const jobs = previous?.jobs || [];
@@ -704,7 +725,7 @@ async function continueHussImages(id: number, req: Request, emit: (data: any) =>
     try { assertMjReservation(id); } catch { return; }
     const reason = transportDiagnostic('HUSS Midjourney', phase === 'save' ? '原图片保存' : '原图片查询', error, channel.apiKey);
     patch(id, { [phase === 'save' ? 'resultSaveError' : 'upstreamQueryError']:reason,
-      progressText:metadata(id).nativeImageBatch ? '图片已生成，保存暂时失败，正在重试' : '查询暂时失败，正在重试原任务',
+      progressText:metadata(id).upstreamGenerated ? '图片已生成，保存暂时失败，正在重试' : '查询暂时失败，正在重试原任务',
       hussImageResumeAt:Date.now()+30000, requiresReview:false, reviewKind:null }, 'processing');
   } finally { scheduleHussImage(id); }
 }
@@ -999,7 +1020,8 @@ export function resumeSpecificationTasks() {
     let meta: any; try { meta = JSON.parse(row.metadata || '{}'); } catch { continue; }
     if (!meta.managedSpecification || active.has(row.id)) continue;
     if (row.type === 'image' && meta.hussImage && meta.upstreamTaskId) {
-      if (meta.hussImageStopped) continue;
+      if (meta.hussImageStopped && !meta.nativeImageBatch?.sourceUrls?.length) continue;
+      if (meta.hussImageStopped) patch(row.id,{hussImageStopped:false});
       if (Number(meta.hussImageResumeAt || 0) > Date.now()) continue;
       try { assertMjReservation(row.id); } catch { continue; }
       const req = { protocol:new URL(meta.publicBaseUrl).protocol.slice(0,-1), get:() => new URL(meta.publicBaseUrl).host } as unknown as Request;

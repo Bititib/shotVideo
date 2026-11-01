@@ -4,16 +4,32 @@ import { upstreamDiagnostic, transportDiagnostic } from './upstreamDiagnostic.js
 export class HussImageError extends Error {
   constructor(message: string, public rejected = false) { super(message); }
 }
-export type HussImageTask = { id: string; status: string; urls: string[]; delay: number; error?: string };
+export type HussImageTask = { id: string; status: string; urls: string[]; delay: number; error?: string; generated?: boolean; resultError?: string };
 export function normalizeHussImage(raw: any, expectedId?: string): HussImageTask {
-  const id = raw?.task_id || expectedId;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new HussImageError('HUSS 图片响应结构无效');
+  const id = raw.task_id || expectedId;
   if (typeof id !== 'string' || !id.trim() || (expectedId && raw.task_id && raw.task_id !== expectedId)) throw new HussImageError('HUSS 图片回执缺少任务编号或编号不匹配');
-  const status = raw.status || 'queued';
-  if (!['queued','processing','completed','failed','cancelled','expired'].includes(status)) throw new HussImageError('HUSS 图片返回未识别状态：' + status);
-  const urls = Array.isArray(raw.data) ? raw.data.map((item: any) => item?.url).filter((url: any) => typeof url === 'string' && url) : [];
-  for (const value of urls) { const u = new URL(value); if (!['https:','http:'].includes(u.protocol) || u.username || u.password) throw new HussImageError('HUSS 图片结果地址无效'); }
-  if (status === 'completed' && raw.storage_status !== 'pending' && !urls.length) throw new HussImageError('HUSS 图片已完成但未返回结果地址');
+  // Submission may return only a receipt; queries must explicitly state their status.
+  const status = raw.status || (!expectedId ? 'queued' : '');
+  if (!['queued','processing','completed','failed','cancelled','expired'].includes(status)) throw new HussImageError('HUSS 图片返回未识别状态：' + String(status));
+  let urls: string[] = [], resultError: string | undefined;
+  if (status === 'completed' && raw.storage_status !== 'pending') {
+    if (!Array.isArray(raw.data) || !raw.data.length) resultError = 'HUSS 图片已生成，但尚未返回结果地址';
+    else {
+      for (const [index,item] of raw.data.entries()) {
+        try {
+          if (typeof item?.url !== 'string' || !item.url) throw new Error();
+          const u = new URL(item.url);
+          if (!['http:','https:'].includes(u.protocol) || u.username || u.password) throw new Error();
+          urls.push(item.url);
+        } catch { resultError = 'HUSS 第 ' + (index+1) + ' 张候选图缺少有效结果地址'; break; }
+      }
+      // Do not settle a subset of the upstream candidate batch.
+      if (resultError) urls = [];
+    }
+  }
   return { id, status: raw.storage_status === 'pending' && status === 'completed' ? 'processing' : status, urls,
+    generated:status === 'completed', resultError,
     delay: Number.isFinite(Number(raw.poll_after_ms)) ? Math.max(1000, Number(raw.poll_after_ms)) : 5000,
     error: ['failed','cancelled','expired'].includes(status) ? upstreamDiagnostic('HUSS Midjourney', '图片任务 ' + status, raw.error || raw) : undefined };
 }
@@ -38,8 +54,6 @@ export async function submitHussImage(channel: HussChannel, body: Record<string,
   const payload = { model:HUSS_MJ_MODEL, prompt:body.prompt, n:1, resolution:String(body.resolution).toLowerCase(), aspect_ratio:body.aspect_ratio,
     response_format:'url', ...hussMjOptions(body), ...(images.length ? {images:images.map(image_url => ({image_url}))} : {}) };
   const raw = await request(channel, images.length ? '/images/edits/async' : '/images/generations/async', payload, onReceipt);
-  // Persist acceptance before any status or result parsing can fail.
-  if (typeof raw.task_id === 'string' && raw.task_id.trim()) onReceipt(raw.task_id);
   return normalizeHussImage(raw);
 }
 export async function queryHussImage(channel: HussChannel, id: string) {
