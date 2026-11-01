@@ -1,3 +1,4 @@
+import { HUSS_MJ_MODEL } from '../../shared/hussMidjourney.js';
 import type { ModelAvailability } from '../../shared/upstreamAvailability.js';
 import { APIPATH_SUNBURST } from '../../shared/apipathImageSizes.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
@@ -54,7 +55,7 @@ export function saveModelSpecification(value: ModelSpecification): ModelSpecific
   validateLimits(value.limits);
   const multiResolutionSunburst = value.modelId === APIPATH_SUNBURST && model.provider === 'apipath'
     && value.limits.resolutions.length > 0 && value.limits.resolutions.every(r => ['1K', '2K', '4K'].includes(r));
-  if (value.kind === 'image' && value.limits.resolutions.length !== 1 && !multiResolutionSunburst) throw error('图片入口必须固定一个输出分辨率，请为不同分辨率分别创建规格');
+  if (value.kind === 'image' && value.limits.resolutions.length !== 1 && !multiResolutionSunburst && !(value.modelId === HUSS_MJ_MODEL && model.provider === 'huss' && value.limits.resolutions.length > 0 && value.limits.resolutions.every(r => ['1K','2K'].includes(r)))) throw error('图片入口必须固定一个输出分辨率，请为不同分辨率分别创建规格');
   if (value.imageFamily !== undefined && (value.kind !== 'image' || typeof value.imageFamily !== 'string' || !value.imageFamily.trim() || value.imageFamily !== value.imageFamily.trim() || value.imageFamily.length > 100)) throw error('所属图片模型无效');
   if (value.limits.maxOutputs > (value.kind === 'image' ? 4 : 1)) throw error('图片每次最多 4 张，视频每次只支持 1 条');
   if (!Array.isArray(value.aliases) || !value.aliases.every(id => typeof id === 'string' && rows.some(m => m.modelId === id && JSON.parse(m.capabilities).includes(value.kind)))) throw error('关联的旧模型不存在或生成类型不一致');

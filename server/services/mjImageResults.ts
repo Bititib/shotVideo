@@ -1,3 +1,5 @@
+import { isHussChannel } from './hussVideoAdapter.js';
+import { downloadHussImage } from './hussImageAdapter.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Request } from 'express';
@@ -47,7 +49,8 @@ export async function saveMjImageBatch(batch: MjImageBatch, contentId: number, r
   }
   for (const job of batch.jobs) {
     if (!job.localUrl) {
-      job.localUrl = await localizeGeneratedImage(job.sourceUrl, 'mj_' + contentId + '_' + job.index, req, channel, { relative: true });
+      const source = isHussChannel(channel) ? await downloadHussImage(channel,job.sourceUrl) : job.sourceUrl;
+      job.localUrl = await localizeGeneratedImage(source, 'mj_' + contentId + '_' + job.index, req, channel, { relative: true });
       job.status = 'completed'; persist();
     }
     onReady(job.localUrl, job.index);

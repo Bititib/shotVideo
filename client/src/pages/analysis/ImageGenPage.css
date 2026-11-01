@@ -167,3 +167,5 @@
 @media (max-width:1100px) { .ig-unified-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media (max-width:559px) { .ig-unified-grid { grid-template-columns:minmax(0,1fr); } .ig-gallery-filters { gap:2px; padding-bottom:10px; } .image-studio .ig-gallery-filters button { padding:8px; font-size:12px; gap:4px; } .ig-task-card { padding:12px; } }
 @media (prefers-reduced-motion:reduce) { .image-studio *, .image-studio *::before,.image-studio *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
+
+.ig-mj-options {padding:12px 0;} .ig-mj-options p{font-size:12px;opacity:.75;} .ig-mj-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;padding:10px 0;} .ig-mj-fields label{display:flex;flex-direction:column;gap:5px;font-size:12px;} .ig-mj-fields input,.ig-mj-fields select{min-width:0;padding:8px;border:1px solid #d5d4c4;border-radius:6px;background:transparent;color:inherit;}

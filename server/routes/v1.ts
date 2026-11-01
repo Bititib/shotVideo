@@ -984,6 +984,22 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
   } finally { reservation?.cancel(); }
 });
 
+/** Original HUSS image result; exhausted tokens may still retrieve paid tasks. */
+router.get('/images/tasks/:id', (req: Request, res: Response) => {
+  const key = extractToken(req);
+  if (!key) return res.status(401).json({error:'Missing API key'});
+  const auth = TokenService.validateToken(key, {allowExhausted:true});
+  if (!auth.valid || !auth.token) return res.status(401).json({error:auth.error});
+  const match = /^task_([1-9][0-9]*)$/.exec(String(req.params.id));
+  const row = match ? db.select().from(contents).where(eq(contents.id,Number(match[1]))).get() : undefined;
+  const meta = row ? JSON.parse(row.metadata || '{}') : {};
+  if (!row || row.type !== 'image' || !meta.hussImage || meta.tokenId !== auth.token.id || row.userId !== (auth.token.userId || 0)) return res.status(404).json({error:'Task not found'});
+  return res.json({task_id:req.params.id,status:row.status,
+    phase:row.status === 'completed' ? 'completed' : meta.upstreamGenerated ? 'saving' : row.status,
+    poll_after_ms:5000, ...(row.status === 'completed' ? {data:(meta.imageUrls || []).map((url:string) => ({url:issueUploadUrl(url,req.protocol+'://'+req.get('host'))}))} : {}),
+    ...(row.status === 'failed' || meta.requiresReview ? {error:publicGenerationError(meta.error || meta.failureReason || '上游未提供具体原因')} : {})});
+});
+
 /** POST /v1/images/generations — 图片生成代理转发 */
 router.post('/images/generations', async (req: Request, res: Response) => {
   const startTime = Date.now();

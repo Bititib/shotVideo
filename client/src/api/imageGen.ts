@@ -1,3 +1,4 @@
+import type { HussMjOptions } from '../../../shared/hussMidjourney';
 import type { ModelAvailability } from '../../../shared/upstreamAvailability';
 import { requestModelList, isGenerationModel } from './modelListRequest';
 import { publicGenerationEvent } from '../../../shared/generationMessages';
@@ -36,12 +37,12 @@ export async function generatedImageReference(url: string): Promise<string> {
   });
 }
 
-export interface ImageGenerateParams {
+export interface ImageGenerateParams extends HussMjOptions {
   prompt: string;
   model?: string;
   aspect_ratio?: string;
   resolution?: '1K' | '2K' | '4K';
-  quality?: 'low' | 'medium' | 'high';
+  quality?: 'low' | 'medium' | 'high' | '0.25' | '0.5' | '1' | '2';
   n?: number;                    // 生成数量 1~4
   reference_images?: string[];   // base64 数据 URL
 }

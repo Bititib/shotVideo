@@ -1,3 +1,4 @@
+import { HUSS_MJ_MODEL, hussMjLimits } from '../../shared/hussMidjourney.js';
 import { HUSS_HSS_B_MODEL, isHussHssModel, HUSS_HSS_MODEL, hussHssModelLimits } from '../../shared/hussBbVideo.js';
 import { randomUUID } from 'node:crypto';
 import { videoErrorTaskId, videoRequestNotSent } from './videoSubmissionErrors.js';
@@ -18,7 +19,7 @@ export const HUSS_BASE_URL = 'https://www.huss.top';
 export const HUSS_BB_MODEL = 'bb-seedance2.5-301010';
 export type HussChannel = { type?: string; baseUrl: string; apiKey: string; timeout?: number };
 export type HussVideoInput = { model: string; prompt: string; seconds: number; ratio: string; resolution: string; images: string[]; videos: string[]; audios: string[]; firstFrame?: string; lastFrame?: string; idempotencyKey?: string; publicBaseUrl: string };
-export type HussVideoModel = { id: string; name: string; type: 'video'; config: Record<string, unknown> };
+export type HussVideoModel = { id: string; name: string; type: 'video' | 'image'; config: Record<string, unknown> };
 
 export function isHussChannel(channel: { type?: string; baseUrl?: string } | null | undefined) {
   if (channel?.type === HUSS_CHANNEL_TYPE) return true;
@@ -90,9 +91,9 @@ export function hussBbModelLimits(): ModelInputLimits { return { maxImages: 30, 
 export async function fetchHussVideoModels(channel: HussChannel): Promise<HussVideoModel[]> {
   const raw = await hussRequest(channel, '/models'); const candidates = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : Array.isArray(raw?.models) ? raw.models : [];
   const allowed = new Set(candidates.map((item: any) => typeof item === 'string' ? item : item?.id));
-  const selected = [HUSS_BB_MODEL, allowed.has(HUSS_HSS_B_MODEL) ? HUSS_HSS_B_MODEL : HUSS_HSS_MODEL].filter(id => allowed.has(id));
-  if (!selected.length) throw new Error('HUSS 当前 API Key 未开放已接入的视频模型');
-  return selected.map(id => ({ id, name: id, type: 'video' as const, config: { limits: isHussHssModel(id) ? hussHssModelLimits() : hussBbModelLimits() } }));
+  const selected = [HUSS_MJ_MODEL, HUSS_BB_MODEL, allowed.has(HUSS_HSS_B_MODEL) ? HUSS_HSS_B_MODEL : HUSS_HSS_MODEL].filter(id => allowed.has(id));
+  if (!selected.length) throw new Error('HUSS 当前 API Key 未开放已接入的模型');
+  return selected.map(id => ({ id, name: id, type: id === HUSS_MJ_MODEL ? 'image' as const : 'video' as const, config: { limits: id === HUSS_MJ_MODEL ? hussMjLimits() : isHussHssModel(id) ? hussHssModelLimits() : hussBbModelLimits() } }));
 }
 export function hussVideoParameters(input: HussVideoInput) {
   const persistent = isHussHssModel(input.model);

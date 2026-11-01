@@ -1,3 +1,5 @@
+import { HUSS_MJ_MODEL, hussMjOptions } from '../../shared/hussMidjourney.js';
+import { submitHussImage, queryHussImage, HussImageError } from './hussImageAdapter.js';
 import { isApipathChannel, normalizeApipathVideo } from './apipathAdapter.js';
 import { APIPATH_SUNBURST, APIPATH_IMAGE_SIZES, apipathImageSize, isApipathSunburstSpec } from '../../shared/apipathImageSizes.js';
 import { isHussHssModel } from '../../shared/hussBbVideo.js';
@@ -448,6 +450,7 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
   failTask(id, reason); onEvent({ type: 'error', message: reason });
 }
 async function runImages(id: number, candidates: RouteCandidate[], request: SpecificationRequest, req: Request, onEvent: (data: any) => void) {
+  if (metadata(id).requestedModel === HUSS_MJ_MODEL) return runHussImages(id, candidates, request, req, onEvent);
   if (metadata(id).nativeImageOutputs === 4) return runMjImages(id, candidates, request, req, onEvent);
   const urls: string[] = [], taskIds: string[] = [], jobs: any[] = [];
   for (let index = 0; index < request.input.outputs; index++) {
@@ -638,6 +641,94 @@ async function runMjImages(id: number, candidates: RouteCandidate[], request: Sp
   }
   failTask(id, failureReason); onEvent({ type: 'error', message: failureReason });
 }
+/** Image receipts have their own protocol: never replay an ambiguous image POST. */
+async function runHussImages(id: number, candidates: RouteCandidate[], request: SpecificationRequest, req: Request, emit: (data: any) => void) {
+  const target = candidates.find(t => isHussChannel(t.channel) && t.route.upstreamModel === HUSS_MJ_MODEL && routeStillEnabled(HUSS_MJ_MODEL, t, request.input));
+  if (!target) { failTask(id, 'Midjourney V8.2 没有可用 HUSS 线路'); return; }
+  patch(id, { hussImage: true, channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId,
+    upstreamModel: target.route.upstreamModel, actualModel: HUSS_MJ_MODEL, actualChannel: 'huss',
+    submissionStartedAt: new Date().toISOString(), hussImageOptions: hussMjOptions(request.body) }, 'processing');
+  try {
+    const task = await submitHussImage(target.channel, { ...request.body, prompt:request.prompt,
+      resolution:request.input.resolution, aspect_ratio:request.input.ratio }, request.images,
+      upstreamTaskId => patch(id, { upstreamTaskId, upstreamTaskIds:[upstreamTaskId], submissionStartedAt:null }));
+    patch(id, { hussImageInitial: task });
+  } catch (error: any) {
+    if (metadata(id).upstreamTaskId) {
+      patch(id, { upstreamQueryError:error.message, hussImageResumeAt:Date.now()+5000 });
+    } else if (error instanceof HussImageError && error.rejected) {
+      failTask(id, error.message); emit({type:'error', message:error.message}); return;
+    } else { holdForReview(id, error.message, 'submission'); emit({type:'error', message:error.message}); return; }
+  }
+  await continueHussImages(id, req, emit);
+  if (db.select().from(contents).where(eq(contents.id,id)).get()?.status === 'processing') emit({type:'status',status:metadata(id).upstreamGenerated ? 'saving' : 'processing',background:true,contentId:id,message:metadata(id).progressText || '图片正在后台处理'});
+}
+async function continueHussImages(id: number, req: Request, emit: (data: any) => void) {
+  const record = assertMjReservation(id);
+  const m = metadata(id), channel = ChannelService.getChannelRaw(m.channelId, m.channelApiKeyId || null);
+  if (!channel || !isHussChannel(channel)) { holdForReview(id, '原 HUSS 图片渠道不存在', 'query'); return; }
+  let phase = 'query';
+  try {
+    const task = m.hussImageInitial || await queryHussImage(channel, m.upstreamTaskId).catch(error => {
+      if (m.nativeImageBatch?.sourceUrls?.length) return {id:m.upstreamTaskId,status:'completed',urls:m.nativeImageBatch.sourceUrls,delay:30000};
+      throw error;
+    });
+    patch(id, { hussImageInitial:null, upstreamStatus:task.status, lastQueryAt:new Date().toISOString(),
+      upstreamQueryError:null, hussImageResumeAt:Date.now()+task.delay });
+    if (task.status === 'expired') {
+      patch(id, {hussImageStopped:true});
+      holdForReview(id,task.error || '上游图片结果已过期，需要核实原任务交付', 'local');
+      return;
+    }
+    if (['failed','cancelled'].includes(task.status)) {
+      // Previously observed completed images are delivery evidence, not a failed generation.
+      if (m.nativeImageBatch) throw new Error(task.error || '原任务结果链接已失效，需要恢复原图片');
+      failTask(id, task.error); emit({type:'error',message:task.error}); return;
+    }
+    if (task.status !== 'completed') {
+      patch(id, { progressText:m.nativeImageBatch ? '图片已生成，正在恢复保存' : '图片生成中' }); return;
+    }
+    const previous = m.nativeImageBatch as MjImageBatch | undefined;
+    if (previous && previous.sourceUrls.length !== task.urls.length) throw new Error('原图片候选数量发生变化，保留已保存结果等待核实');
+    const jobs = previous?.jobs || [];
+    // Refresh signed URLs from the original task; retain successfully saved candidates by index.
+    const batch = { sourceUrls:task.urls, jobs:task.urls.map((sourceUrl: string,index: number) => ({
+      index,sourceUrl,status:jobs[index]?.localUrl ? 'completed' as const : 'saving' as const, localUrl:jobs[index]?.localUrl })) };
+    patch(id, { nativeImageBatch:batch, upstreamImageUrls:task.urls, upstreamGenerated:true,
+      requiresReview:false, reviewKind:null, error:null, progressText:'图片已生成，正在保存', progress:99 }, 'processing');
+    emit({type:'status',status:'saving',message:'图片已生成，正在保存',contentId:id});
+    phase = 'save';
+    await mediaOwnerContext.run(record.userId, () => saveMjResults(id, channel, req, emit));
+    patch(id, { resultSaveError:null, upstreamQueryError:null, hussImageResumeAt:null });
+  } catch (error: any) {
+    try { assertMjReservation(id); } catch { return; }
+    const reason = transportDiagnostic('HUSS Midjourney', phase === 'save' ? '原图片保存' : '原图片查询', error, channel.apiKey);
+    patch(id, { [phase === 'save' ? 'resultSaveError' : 'upstreamQueryError']:reason,
+      progressText:metadata(id).nativeImageBatch ? '图片已生成，保存暂时失败，正在重试' : '查询暂时失败，正在重试原任务',
+      hussImageResumeAt:Date.now()+30000, requiresReview:false, reviewKind:null }, 'processing');
+  } finally { scheduleHussImage(id); }
+}
+const hussImageTimers = new Map<number, ReturnType<typeof setTimeout>>();
+function scheduleHussImage(id: number) {
+  if (hussImageTimers.has(id)) return;
+  const row = db.select().from(contents).where(eq(contents.id,id)).get();
+  if (!row || row.status !== 'processing') return;
+  const m = metadata(id);
+  if (m.hussImageStopped) return;
+  const timer = setTimeout(() => {
+    hussImageTimers.delete(id);
+    const row = db.select().from(contents).where(eq(contents.id,id)).get();
+    if (!row || row.status !== 'processing') return;
+    if (active.has(id)) { scheduleHussImage(id); return; }
+    const meta = metadata(id);
+    if (Number(meta.hussImageResumeAt || 0) > Date.now()) { scheduleHussImage(id); return; }
+    const req = { protocol:new URL(meta.publicBaseUrl).protocol.slice(0,-1),get:() => new URL(meta.publicBaseUrl).host } as unknown as Request;
+    active.add(id);
+    void continueHussImages(id,req,() => {}).catch((e:any) => holdForReview(id,e.message,'local')).finally(() => active.delete(id));
+  }, Math.max(1000,Number(m.hussImageResumeAt || 0)-Date.now()));
+  timer.unref?.(); hussImageTimers.set(id,timer);
+}
+
 type ApiContext = { token: any; reserve: (amount: number, model: string, pricingSnapshot?: PricingSnapshot) => any };
 export async function handleSpecificationGeneration(req: Request, res: Response, kind: MediaKind, apiContext?: ApiContext): Promise<boolean> {
   let suppliedId: string;
@@ -675,7 +766,12 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
         for (const key of field === 'reference_images' ? ['image_urls','image_url','images'] : field === 'reference_videos' ? ['reference_video','video_urls','video_url'] : ['audio_url','reference_audios','audios']) delete body[key];
         body[field] = [...values, data]; }
     }
-    const nativeImageOutputs = kind === 'image' && modelId === MJ_MODEL_ID ? 4 : undefined;
+    const nativeImageOutputs = kind === 'image' ? modelId === MJ_MODEL_ID ? 4 : modelId === HUSS_MJ_MODEL ? 1 : undefined : undefined;
+    if (modelId === HUSS_MJ_MODEL) {
+      if (req.is?.('multipart/form-data') && ['true','false'].includes(body.tile)) body.tile = body.tile === 'true';
+      if (body.n !== undefined && Number(body.n) !== 1) throw fail('Midjourney V8.2 每次只能提交一次生成');
+      try { hussMjOptions(body); } catch (e: any) { throw fail(e.message); }
+    }
     if (nativeImageOutputs && body.n !== undefined && ![1, 4].includes(Number(body.n))) throw fail('MJ 每次仅提交一次任务，图片数量以上游实际结果为准');
     const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (modelId === SNUMOM_WAN_NSFW_MODEL ? body.parameters?.duration ?? body.duration_seconds : undefined) ?? (model.provider === 'megaby' ? 5 : spec.limits.duration.mode === 'fixed' ? spec.limits.duration.min : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'));
     let snumomBilling: Awaited<ReturnType<typeof prepareSnumomNsfwReferences>> | undefined;
@@ -765,7 +861,8 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
       await run();
       if (apiContext) {
         const row = db.select().from(contents).where(eq(contents.id, id!)).get()!, meta = JSON.parse(row.metadata);
-        if (row.status !== 'completed') res.status(meta.requiresReview ? 202 : 502).json({ id: 'task_' + id, status: row.status, requires_review: Boolean(meta.requiresReview), error: publicGenerationError((meta.error || meta.upstreamQueryError || '生成失败') + (meta.requiresReview ? '；提交结果待核实，请勿重复提交' : '')) });
+        if (meta.hussImage && row.status === 'processing' && meta.upstreamTaskId) res.status(202).json({id:'task_'+id, task_id:'task_'+id, status:'processing', status_url:request.publicBaseUrl+'/v1/images/tasks/task_'+id});
+        else if (row.status !== 'completed') res.status(meta.requiresReview ? 202 : 502).json({ id: 'task_' + id, status: row.status, requires_review: Boolean(meta.requiresReview), error: publicGenerationError((meta.error || meta.upstreamQueryError || '生成失败') + (meta.requiresReview ? '；提交结果待核实，请勿重复提交' : '')) });
         else res.json({ created: Math.floor(Date.now() / 1000), data: meta.imageUrls.map((url: string) => (request.body.response_format === 'b64_json' ? { b64_json: fs.readFileSync(path.join('data/uploads', path.basename(url))).toString('base64') } : { url: issueUploadUrl(url, request.publicBaseUrl) })) });
       } else if (!res.writableEnded && !res.destroyed) res.end('data: [DONE]\n\n');
     }
@@ -901,6 +998,15 @@ export function resumeSpecificationTasks() {
   for (const row of db.select().from(contents).where(inArray(contents.status, ['processing', 'queued', 'review'])).all()) {
     let meta: any; try { meta = JSON.parse(row.metadata || '{}'); } catch { continue; }
     if (!meta.managedSpecification || active.has(row.id)) continue;
+    if (row.type === 'image' && meta.hussImage && meta.upstreamTaskId) {
+      if (meta.hussImageStopped) continue;
+      if (Number(meta.hussImageResumeAt || 0) > Date.now()) continue;
+      try { assertMjReservation(row.id); } catch { continue; }
+      const req = { protocol:new URL(meta.publicBaseUrl).protocol.slice(0,-1), get:() => new URL(meta.publicBaseUrl).host } as unknown as Request;
+      active.add(row.id);
+      void continueHussImages(row.id, req, () => {}).catch((e: any) => holdForReview(row.id,e.message,'local')).finally(() => active.delete(row.id));
+      continue;
+    }
     if (meta.actualModel === SI_YUE_TIAN_MINIMAX_MODEL && Number(meta.siYueTianMinimaxResumeAt) > Date.now()) continue;
     if (meta.zonghengProtocol === 'v6k' && Number(meta.v6kQueryResumeAt) > Date.now()) continue;
     if (row.type === 'video' && videoSubmissionPending(row.id, meta)) continue;

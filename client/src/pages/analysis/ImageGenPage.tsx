@@ -1,3 +1,5 @@
+import { HussMidjourneySettings } from '../../components/HussMidjourneySettings';
+import { HUSS_MJ_MODEL, hussMjOptions, type HussMjOptions } from '../../../../shared/hussMidjourney';
 import { generationProblemSummary } from '../../../../shared/generationMessages';
 import { modelAvailabilityMessage } from '../../../../shared/upstreamAvailability';
 import { startPolling } from '../../utils/polling';
@@ -76,7 +78,7 @@ interface ActiveImageBatch {
   persisted?: boolean;
   createdAt: Date;
   galleryId?: string;
-  phase?: 'queued' | 'processing' | 'checking' | 'review' | 'failed';
+  phase?: 'queued' | 'processing' | 'saving' | 'checking' | 'review' | 'failed';
   prompt: string;
   model: string;
   aspectRatio: string;
@@ -129,7 +131,7 @@ function parseImageRecords(items: any[]) {
       && Date.now() - createdAt.getTime() > Math.max(30 * 60_000, Number(metadata.requestTimeoutMs || 0) + 60_000);
 
     if (isProcessing || isReview || isFailed) {
-      const count = Math.max(1, Math.min(4, Number(metadata.count) || 1));
+      const count = metadata.hussImage ? Math.max(1, metadata.nativeImageBatch?.sourceUrls?.length || Number(metadata.count) || 1) : Math.max(1, Math.min(4, Number(metadata.count) || 1));
       const images = new Array(count).fill('');
       storedImageUrls.slice(0, count).forEach((url: string, index: number) => { images[index] = url || ''; });
       const taskProgress = typeof metadata.progress === 'number' && Number.isFinite(metadata.progress)
@@ -147,7 +149,7 @@ function parseImageRecords(items: any[]) {
         persisted: true,
         createdAt,
         galleryId: String(item.id),
-        phase: isReview ? 'review' : isFailed ? 'failed' : overdue ? 'checking' : item.status === 'queued' ? 'queued' : 'processing',
+        phase: isReview ? 'review' : isFailed ? 'failed' : metadata.hussImage && metadata.upstreamGenerated ? 'saving' : overdue ? 'checking' : item.status === 'queued' ? 'queued' : 'processing',
         prompt: promptText,
         model,
         aspectRatio: itemAspectRatio,
@@ -159,6 +161,7 @@ function parseImageRecords(items: any[]) {
           : [],
         statusMessage: isReview ? (metadata.failureReason || metadata.error || metadata.progressText || '结果待管理员核实，请勿重复提交')
           : isFailed ? (metadata.failureReason || metadata.error || metadata.progressText || '图片生成失败，请在生成记录中查看详情')
+          : metadata.hussImage && metadata.upstreamGenerated ? metadata.progressText || '图片已生成，正在保存'
           : overdue ? '等待时间较长，后台尚未确认成功或失败，请联系管理员核实该任务'
           : metadata.progressText || '图片正在后台生成，刷新页面不会丢失',
       });
@@ -197,7 +200,7 @@ function SettingSelect({ label, value, options, onChange }: { label: string; val
 }
 
 /** 生成中的占位卡片 - 骨架屏风格 */
-const batchPhaseLabel = (phase?: ActiveImageBatch['phase']) => ({ queued: '排队中', processing: '生成中', checking: '核实中', review: '待核实', failed: '失败' })[phase || 'processing'];
+const batchPhaseLabel = (phase?: ActiveImageBatch['phase']) => ({ queued: '排队中', processing: '生成中', saving: '保存中', checking: '核实中', review: '待核实', failed: '失败' })[phase || 'processing'];
 
 function PlaceholderCard({ index, progress, phase }: { index: number; progress: number; phase?: ActiveImageBatch['phase']; key?: any }) {
   const label = batchPhaseLabel(phase);
@@ -271,6 +274,7 @@ export default function ImageGenPage() {
   const [referenceNotice, setReferenceNotice] = useState('');
   const [editFocusRequest, setEditFocusRequest] = useState(0);
   const [prompt, setPrompt] = useState('');
+  const [mjOptions, setMjOptions] = useState<HussMjOptions>({});
   const [aspectRatio, setAspectRatio] = useState('1:1');
   const [managedQuality, setManagedQuality] = useState('');
   const [pidoiQuality, setPidoiQuality] = useState<'low' | 'high'>('high');
@@ -497,7 +501,7 @@ export default function ImageGenPage() {
     const batchPrompt = prompt.trim();
     const batchModel = selectedModel;
     const batchAspectRatio = aspectRatio;
-    const batchCount = managedLimits?.outputsPerTask || imageCount;
+    const batchCount = selectedModel === HUSS_MJ_MODEL ? 1 : managedLimits?.outputsPerTask || imageCount;
     const batchQuality = managedLimits ? managedQuality || undefined : batchModel === 'gpt-image-2'
       ? pidoiQuality
       : batchModel === 'gpt-image-2-mingfei' ? mingFeiQuality : undefined;
@@ -508,6 +512,7 @@ export default function ImageGenPage() {
       resolution: managedLimits ? managedLimits.resolutions.length === 1 ? managedLimits.resolutions[0] as '1K' | '2K' | '4K' : mingFeiResolution : batchModel === 'gpt-image-2' ? (batchQuality === 'high' ? '4K' : '1K') : batchResolution,
       quality: batchQuality as ImageGenerateParams['quality'], n: batchCount,
       reference_images: batchReferences.length > 0 ? batchReferences : undefined,
+      ...(batchModel === HUSS_MJ_MODEL ? mjOptions : {}),
     };
     setActiveBatches(previous => [...previous, {
       id: batchId,
@@ -546,7 +551,7 @@ export default function ImageGenPage() {
             break;
           case 'content_id':
           case 'status':
-            updateBatch(batch => ({ ...batch, contentId: event.contentId || batch.contentId, persisted: event.background || batch.persisted, phase: 'processing', statusMessage: event.message || batch.statusMessage }));
+            updateBatch(batch => ({ ...batch, contentId: event.contentId || batch.contentId, persisted: event.background || batch.persisted, phase: event.status === 'saving' ? 'saving' : 'processing', statusMessage: event.message || batch.statusMessage }));
             if (event.background) batchControllersRef.current.delete(batchId);
             break;
           case 'progress': {
@@ -680,7 +685,7 @@ export default function ImageGenPage() {
           model: detail?.modelId || detail?.model || record.model,
           aspect_ratio: meta.aspectRatio || meta.aspect_ratio || record.aspectRatio || '1:1',
           n: Number(meta.count) || ('count' in record ? record.count : 1),
-          resolution: meta.resolution, quality: meta.quality,
+          resolution: meta.resolution, quality: meta.quality, ...meta.hussImageOptions,
           reference_images: Array.isArray(references) ? references.filter((source: unknown): source is string => typeof source === 'string' && Boolean(source)) : [],
         };
       }
@@ -692,8 +697,9 @@ export default function ImageGenPage() {
       setPrompt(params.prompt);
       setAspectRatio(params.aspect_ratio || '1:1');
       setImageCount(Math.max(1, Math.min(4, Number(params.n) || 1)));
+      if (target.id === HUSS_MJ_MODEL) setMjOptions(hussMjOptions(params));
       if (params.resolution) setMingFeiResolution(params.resolution);
-      if (params.quality) { setManagedQuality(params.quality); setMingFeiQuality(params.quality); }
+      if (params.quality) { setManagedQuality(params.quality); if (['low','medium','high'].includes(params.quality)) setMingFeiQuality(params.quality as 'low'|'medium'|'high'); }
       if (target.id === 'gpt-image-2') setPidoiQuality(params.quality === 'low' || params.resolution === '1K' ? 'low' : 'high');
       const references = params.reference_images || [];
       setReferenceImages(references);
@@ -792,7 +798,7 @@ export default function ImageGenPage() {
                     {url && !image?.missing && <><button type="button" aria-label="继续改图" className="ig-text-button" disabled={referenceImporting} onClick={() => void continueEditing(url)}><Pencil size={14} />改图</button><button type="button" className="ig-text-button" aria-label="下载图片" onClick={event => void downloadImageFile(event, url, `generated-image-${contentId || record.id}-${index + 1}.png`)}><Download size={14} />下载</button></>}
                     {canManage && <><button type="button" className="ig-text-button ig-regenerate" title={count > 1 ? '套用整批生成参数' : '套用生成参数'} disabled={busyRecords.has(record.id) || referenceImporting} onClick={() => void prepareRegeneration(record)}><RotateCcw size={14} />重新生成</button><button type="button" className="ig-text-button ig-delete" disabled={busyRecords.has(record.id)} onClick={() => void deleteImageRecord(record)}><Trash2 size={14} />删除</button></>}
                     {batch && !canManage && !batch.contentId && !batch.persisted && <button type="button" className="ig-text-button" onClick={() => handleCancelBatch(batch.id)}><Square size={13} />取消本批</button>}
-                    {batch && !canManage && !url && (batch.contentId || batch.persisted) && <span className="ig-task-wait">{status === 'review' ? '结果待核实，请勿重复提交' : '后台生成中，可继续提交其他任务'}</span>}
+                    {batch && !canManage && !url && (batch.contentId || batch.persisted) && <span className="ig-task-wait">{status === 'review' ? '结果待核实，请勿重复提交' : batch.phase === 'saving' ? '图片已生成，正在保存原结果' : '后台生成中，可继续提交其他任务'}</span>}
                   </div>
                 </article>;
               })}
@@ -823,10 +829,11 @@ export default function ImageGenPage() {
           {!selectedImageModel?.available && selectedImageModel && <p role="status" className="ig-error">{modelAvailabilityMessage(selectedImageModel)}</p>}
           {error && <div role="alert" className="ig-error"><AlertCircle size={16} /><span>{generationProblemSummary(error)}</span><button type="button" aria-label="关闭错误提示" onClick={() => setError(null)}><X size={14} /></button></div>}
           {actionNotice && <p className="ig-action-notice" role="status">{actionNotice}</p>}
+          {selectedModel === HUSS_MJ_MODEL && <HussMidjourneySettings mjOptions={mjOptions} setMjOptions={setMjOptions} />}
           <div className="ig-toolbar">
             <SettingSelect label="生成模型" value={selectedModel} onChange={setSelectedModel} options={models.map(model => ({ value: model.id, label: model.name + (!model.available ? ' · 暂不可用' : imageReferenceLimit(model) === 0 ? ' · 仅文生图' : '') }))} />
             <SettingSelect label="画面比例" value={aspectRatio} onChange={setAspectRatio} options={managedLimits ? managedLimits.ratios.map(ratio => ({ value: ratio, label: ratio })) : ASPECT_RATIOS} />
-            {managedLimits?.outputsPerTask ? <div className="ig-fixed-setting"><span>每次出图</span><strong>按实际结果 · 按次计费</strong></div> : <SettingSelect label="生成数量" value={imageCount} onChange={setImageCount} options={managedLimits ? COUNT_OPTIONS.filter(option => option.value <= managedLimits.maxOutputs) : COUNT_OPTIONS} />}
+            {(managedLimits?.outputsPerTask || selectedModel === HUSS_MJ_MODEL) ? <div className="ig-fixed-setting"><span>每次出图</span><strong>按实际结果 · 按次计费</strong></div> : <SettingSelect label="生成数量" value={imageCount} onChange={setImageCount} options={managedLimits ? COUNT_OPTIONS.filter(option => option.value <= managedLimits.maxOutputs) : COUNT_OPTIONS} />}
             <details className="ig-advanced"><summary aria-label="画质设置" title="画质设置"><SlidersHorizontal size={17} /></summary><div className="ig-settings">
             {selectedModel === 'gpt-image-2' && !managedLimits && <SettingSelect label="输出画质" value={pidoiQuality} onChange={setPidoiQuality} options={PIDOI_QUALITY_OPTIONS} />}
             {Boolean(managedLimits?.qualities.length) && <SettingSelect label="生成质量" value={managedQuality} onChange={setManagedQuality} options={managedLimits!.qualities.map(quality => ({ value: quality, label: quality }))} />}

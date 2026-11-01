@@ -1,3 +1,4 @@
+import { HUSS_MJ_MODEL } from '../../../shared/hussMidjourney';
 import type { DeveloperEndpoint, DeveloperModel, DeveloperModelPricing } from '../../../shared/developerModels';
 
 export function formatModelPrice(price: DeveloperModelPricing | null): string {
@@ -34,6 +35,7 @@ export function modelExample(model: DeveloperModel, endpoint: DeveloperEndpoint,
     if (limits?.qualities[0]) payload.quality = limits.qualities[0];
     if (endpoint === '/v1/images/generations' && limits?.minImages) payload.image_urls = Array.from({ length: limits.minImages }, (_, index) => `https://example.com/reference-${index + 1}.png`);
   }
+  if (model.id === HUSS_MJ_MODEL && endpoint.startsWith('/v1/images/')) { payload.stylize = '250'; payload.style = 'raw'; }
   if (endpoint === '/v1/images/edits') {
     if (language === 'curl') return [`curl ${shellQuote(url)} \\`, '  -H "Authorization: Bearer sk-YOUR_API_KEY" \\',
       ...Object.entries(payload).map(([key, value]) => `  --form-string ${shellQuote(`${key}=${value}`)} \\`), '  -F "image=@/path/to/reference.png"'].join('\n');
@@ -41,7 +43,7 @@ export function modelExample(model: DeveloperModel, endpoint: DeveloperEndpoint,
   }
   const json = JSON.stringify(payload, null, 2);
   const video = endpoint === '/v1/videos';
-  const poll = video ? '\n# 网络重试必须复用同一个 Idempotency-Key；主动生成新视频时换新键。\n# 保存响应中的 task_id，再调用 GET /v1/videos/{task_id} 查询结果。任务 ID 是不透明字符串，请原样保存。' : '';
+  const poll = model.id === HUSS_MJ_MODEL ? '\n# 返回 202 时保存 task_id，使用同一 Key GET /v1/images/tasks/{task_id}；完成后读取全部 data[]。不要自动重发图片 POST。' : video ? '\n# 网络重试必须复用同一个 Idempotency-Key；主动生成新视频时换新键。\n# 保存响应中的 task_id，再调用 GET /v1/videos/{task_id} 查询结果。任务 ID 是不透明字符串，请原样保存。' : '';
   const header = video ? '  -H "Idempotency-Key: REPLACE-WITH-A-UNIQUE-TASK-KEY" \\\n' : '';
   if (language === 'curl') return `curl ${shellQuote(url)} \\\n  -H "Authorization: Bearer sk-YOUR_API_KEY" \\\n${header}  -H "Content-Type: application/json" \\\n  -d ${shellQuote(json)}${poll}`;
   return `import requests${video ? '\nimport uuid\n\n# 只为新任务创建一次；网络重试复用已保存的 request_key。\nrequest_key = str(uuid.uuid4())' : ''}\n\nresponse = requests.post(\n    ${JSON.stringify(url)},\n    headers={"Authorization": "Bearer sk-YOUR_API_KEY"${video ? ', "Idempotency-Key": request_key' : ''}},\n    json=${json},\n    timeout=180,\n)\nresponse.raise_for_status()\nprint(response.json())${poll}`;
