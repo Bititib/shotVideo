@@ -53,7 +53,9 @@ export function normalizeApipathVideo(raw: any, c: ApipathChannel, id: string) {
   const returnedId = apipathTaskId(raw);
   if (returnedId && returnedId !== id) throw new ApipathError('通联查询返回了其他任务编号，保留原任务');
   const status = raw?.status;
-  if (!['queued', 'pending', 'processing', 'completed', 'failed'].includes(status)) {
+  // Observed on Apipath video receipts (2026-11-01); keep its raw nonterminal
+  // status for diagnostics while the shared poller continues the original task.
+  if (!['queued', 'pending', 'processing', 'in_progress', 'completed', 'failed'].includes(status)) {
     throw new ApipathError(diagnostic(c, '查询状态未确认', { message: '未知状态：' + String(status) }));
   }
   let resultUrl = '';

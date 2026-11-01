@@ -367,12 +367,53 @@ describe('通联 actual specification entry and isolated billing', () => {
     await handleSpecificationGeneration(request(),response(),'video');expect(fetch).toHaveBeenCalledOnce();
     const row=db.select().from(contents).all().at(-1)!;expect(row.status).toBe('failed');expect(JSON.parse(row.metadata).videoId).toBe('failed_1');expect(db.select().from(users).all()[0].balance).toBe(100);
   });
-  it('resumes original video with GET only',async()=>{
+  it.each(['completed', 'failed'])('continues in_progress to %s without a query error, resubmission or duplicate settlement', async status => {
+    enable(); vi.useFakeTimers(); let queries = 0;
+    const res = response();
+    vi.stubGlobal('fetch', vi.fn(async (_url: any, init: any) => {
+      if (init?.method === 'POST') return Response.json({ task_no: 'in-progress-1', status: 'in_progress' });
+      return Response.json(++queries === 1
+        ? { task_no: 'in-progress-1', status: 'in_progress', progress: 37 }
+        : { task_no: 'in-progress-1', status, url: 'https://cdn.example/result.mp4',
+          error: status === 'failed' ? { code: 'render_failed', message: '渲染具体失败原因' } : null });
+    }));
+    try {
+      const work = handleSpecificationGeneration(request(), res, 'video');
+      await vi.advanceTimersByTimeAsync(100);
+      const pending = db.select().from(contents).all().at(-1)!;
+      expect(pending.status).toBe('processing');
+      expect(JSON.parse(pending.metadata)).toMatchObject({ videoId: 'in-progress-1', upstreamStatus: 'in_progress',
+        upstreamQueryError: null, progress: 37, queryFailures: 0, progressText: '视频生成中' });
+      expect(db.select().from(users).all()[0].balance).toBe(98);
+      await vi.advanceTimersByTimeAsync(8000); await work;
+      expect(db.select().from(contents).all().at(-1)).toMatchObject({ status, cost: status === 'completed' ? 2 : 0 });
+      if (status === 'failed') expect(db.select().from(contents).all().at(-1)!.metadata).toContain('渲染具体失败原因');
+      resumeSpecificationTasks();
+      expect(vi.mocked(fetch).mock.calls.filter(c => c[1]?.method === 'POST')).toHaveLength(1);
+      expect(queries).toBe(2);
+      expect(db.select().from(users).all()[0].balance).toBe(status === 'completed' ? 98 : 100);
+    } finally { vi.useRealTimers(); }
+  });
+  it('resumes original in_progress video with GET only',async()=>{
     const id=Number(db.insert(contents).values({userId:1,type:'video',modelId,status:'processing',metadata:JSON.stringify({managedSpecification:true,channelId,videoId:'original',actualModel:modelId,requestedModel:modelId})}).run().lastInsertRowid);
-    vi.stubGlobal('fetch',vi.fn(async()=>Response.json({task_no:'original',status:'completed',url:'https://cdn.example/video.mp4'})));
+    vi.stubGlobal('fetch',vi.fn(async()=>Response.json({task_no:'original',status:'in_progress',progress:42})));
+    expect(await VideoRecoveryService.inspect(id)).toMatchObject({status:'processing',progress:42});
+    expect(db.select().from(contents).where(eq(contents.id,id)).get()?.status).toBe('processing');
+    vi.mocked(fetch).mockImplementation(async()=>Response.json({task_no:'original',status:'completed',url:'https://cdn.example/video.mp4'}));
     expect(await VideoRecoveryService.inspect(id)).toMatchObject({status:'completed'});resumeSpecificationTasks();
     await vi.waitFor(()=>expect(db.select().from(contents).where(eq(contents.id,id)).get()?.status).toBe('completed'));
     expect(vi.mocked(fetch).mock.calls.every(c=>c[1]?.method==='GET')).toBe(true);
+  });
+  it('still rejects unconfirmed states during recovery without changing the order or balance', async () => {
+    const id = Number(db.insert(contents).values({ userId: 1, type: 'video', modelId, status: 'processing',
+      metadata: JSON.stringify({ managedSpecification: true, channelId, videoId: 'unknown-state', actualModel: modelId }) }).run().lastInsertRowid);
+    const before = db.select().from(contents).where(eq(contents.id, id)).get();
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ task_no: 'unknown-state', status: 'unconfirmed_state' })));
+    await expect(VideoRecoveryService.inspect(id)).rejects.toThrow('未知状态：unconfirmed_state');
+    expect(db.select().from(contents).where(eq(contents.id, id)).get()).toEqual(before);
+    expect(db.select().from(users).all()[0].balance).toBe(100);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(vi.mocked(fetch).mock.calls[0][1]?.method).toBe('GET');
   });
   it('generates an image through the charged website entry',async()=>{
     modelId='gpt-image-2-5-sunburst';enable();vi.stubGlobal('fetch',vi.fn(async()=>Response.json({created:1,data:[{url:'https://cdn.example/image.png'}]})));
