@@ -316,11 +316,11 @@ describe('canvas user workflows', () => {
     expect(within(screen.getByRole('article',{name:node.title})).queryByRole('button',{name:/下载/})).toBeNull();
     await act(async()=>{});
   });
-  it('selects an MJ candidate above the node, preserves all versions and connections, and can undo the choice', async () => {
+  it.each([MJ_MODEL_ID, 'Midjourney V8.2'])('selects an MJ candidate above the node, preserves all versions and connections, and can undo the choice', async modelId => {
     const versions = ['old','current'].flatMap(requestId => [1,2,3,4].map(index => ({ id: requestId + index,
-      src: '/' + requestId + index + '.png', model: MJ_MODEL_ID, prompt: 'a paper boat',
+      src: '/' + requestId + index + '.png', model: modelId, prompt: 'a paper boat',
       ratio: '1:1', resolution: '1K', createdAt: index, requestId })));
-    const image = { ...newNode('image', { x: 250, y: 340 }), model: MJ_MODEL_ID, title: 'MJ 候选节点',
+    const image = { ...newNode('image', { x: 250, y: 340 }), model: modelId, title: 'MJ 候选节点',
       src: '/current1.png', versions, job: { status: 'done' as const, requestId: 'current', message: '已完成' } };
     const target = { ...newNode('video', { x: 700, y: 340 }), title: '后续视频' };
     const edge = { id: 'mj-reference', from: image.id, to: target.id };
@@ -335,7 +335,7 @@ describe('canvas user workflows', () => {
     expect(board.current().nodes[0].versions).toHaveLength(8);
     expect(board.current().nodes[0]).toMatchObject({ x:250,y:340 });
     expect(board.current().edges).toEqual([edge]); expect(streamGeneration).not.toHaveBeenCalled();
-    expect(board.current().drafts?.[image.id]).toMatchObject({ model:MJ_MODEL_ID,count:4 });
+    expect(board.current().drafts?.[image.id]).toMatchObject({ model:modelId,count:4 });
     expect(screen.getByRole('button', { name:'将第 3 张图片设为当前版本' }).getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name:'撤销',exact:true }));
     expect(board.current().nodes[0].src).toBe('/current1.png');

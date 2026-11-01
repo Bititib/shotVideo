@@ -211,3 +211,12 @@ it('refreshes a cooled-down MJ model without submitting a generation or losing t
     expect(generateImage).not.toHaveBeenCalled();
   } finally { cleanup(); vi.useRealTimers(); }
 });
+
+it('restores all four V8.2 candidates even when request count is one', async () => {
+  vi.mocked(contentApi.getMyContents).mockResolvedValue({items:[{id:888,status:'completed',modelId:'Midjourney V8.2',createdAt:new Date().toISOString(),metadata:JSON.stringify({count:1,imageUrls:['/a.png','/b.png','/c.png','/d.png']})}],total:1} as any);
+  render(<ImageGenPage />);
+  expect(await screen.findByText('第 1 / 4 张')).toBeTruthy();
+  expect(screen.getByText('第 4 / 4 张')).toBeTruthy();
+  expect(screen.getAllByRole('button',{name:/^预览.*图片/})).toHaveLength(4);
+  expect(generateImage).not.toHaveBeenCalled();
+});

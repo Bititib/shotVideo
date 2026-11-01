@@ -131,7 +131,7 @@ function parseImageRecords(items: any[]) {
       && Date.now() - createdAt.getTime() > Math.max(30 * 60_000, Number(metadata.requestTimeoutMs || 0) + 60_000);
 
     if (isProcessing || isReview || isFailed) {
-      const count = metadata.hussImage ? Math.max(1, metadata.nativeImageBatch?.sourceUrls?.length || Number(metadata.count) || 1) : Math.max(1, Math.min(4, Number(metadata.count) || 1));
+      const count = metadata.hussImage ? Math.max(1, metadata.nativeImageBatch?.sourceUrls?.length || (model === HUSS_MJ_MODEL ? 4 : Number(metadata.count) || 1)) : Math.max(1, Math.min(4, Number(metadata.count) || 1));
       const images = new Array(count).fill('');
       storedImageUrls.slice(0, count).forEach((url: string, index: number) => { images[index] = url || ''; });
       const taskProgress = typeof metadata.progress === 'number' && Number.isFinite(metadata.progress)
@@ -175,7 +175,7 @@ function parseImageRecords(items: any[]) {
         id: `${item.id}_${suffix}`,
         galleryId: String(item.id),
         slotIndex: suffix === 'main' ? 0 : Number(suffix),
-        count: Math.max(1, Number(metadata.count) || imageUrls.length),
+        count: Math.max(1, Number(metadata.count) || 0, imageUrls.length),
         prompt: promptText,
         imageUrl: url,
         model,
@@ -521,11 +521,11 @@ export default function ImageGenPage() {
       prompt: batchPrompt,
       model: batchModel,
       aspectRatio: batchAspectRatio,
-      count: batchCount,
-      images: new Array(batchCount).fill(''),
-      progresses: new Array(batchCount).fill(0),
+      count: batchModel === HUSS_MJ_MODEL ? 4 : batchCount,
+      images: new Array(batchModel === HUSS_MJ_MODEL ? 4 : batchCount).fill(''),
+      progresses: new Array(batchModel === HUSS_MJ_MODEL ? 4 : batchCount).fill(0),
       failedIndexes: [],
-      statusMessage: `正在生成 ${batchCount} 张图片...`,
+      statusMessage: `正在生成 ${batchModel === HUSS_MJ_MODEL ? 4 : batchCount} 张图片...`,
       requestParams,
     }]);
     setError(null);
@@ -625,7 +625,7 @@ export default function ImageGenPage() {
       },
     );
     batchControllersRef.current.set(batchId, ctrl);
-  }, [prompt, selectedModel, aspectRatio, pidoiQuality, mingFeiQuality, mingFeiResolution, imageCount, activeBatchCount, referenceImages, guard, managedLimits, managedQuality, generationMode, maxReferenceImages, referenceImporting]);
+  }, [prompt, selectedModel, aspectRatio, pidoiQuality, mingFeiQuality, mingFeiResolution, imageCount, activeBatchCount, referenceImages, guard, managedLimits, managedQuality, generationMode, maxReferenceImages, referenceImporting, mjOptions]);
 
   const handleCancelBatch = useCallback((batchId: string) => {
     batchControllersRef.current.get(batchId)?.abort();
@@ -833,7 +833,7 @@ export default function ImageGenPage() {
           <div className="ig-toolbar">
             <SettingSelect label="生成模型" value={selectedModel} onChange={setSelectedModel} options={models.map(model => ({ value: model.id, label: model.name + (!model.available ? ' · 暂不可用' : imageReferenceLimit(model) === 0 ? ' · 仅文生图' : '') }))} />
             <SettingSelect label="画面比例" value={aspectRatio} onChange={setAspectRatio} options={managedLimits ? managedLimits.ratios.map(ratio => ({ value: ratio, label: ratio })) : ASPECT_RATIOS} />
-            {(managedLimits?.outputsPerTask || selectedModel === HUSS_MJ_MODEL) ? <div className="ig-fixed-setting"><span>每次出图</span><strong>按实际结果 · 按次计费</strong></div> : <SettingSelect label="生成数量" value={imageCount} onChange={setImageCount} options={managedLimits ? COUNT_OPTIONS.filter(option => option.value <= managedLimits.maxOutputs) : COUNT_OPTIONS} />}
+            {(managedLimits?.outputsPerTask || selectedModel === HUSS_MJ_MODEL) ? <div className="ig-fixed-setting"><span>每次出图</span><strong>{selectedModel === HUSS_MJ_MODEL ? '4 张候选图 · 按次计费' : '按实际结果 · 按次计费'}</strong></div> : <SettingSelect label="生成数量" value={imageCount} onChange={setImageCount} options={managedLimits ? COUNT_OPTIONS.filter(option => option.value <= managedLimits.maxOutputs) : COUNT_OPTIONS} />}
             <details className="ig-advanced"><summary aria-label="画质设置" title="画质设置"><SlidersHorizontal size={17} /></summary><div className="ig-settings">
             {selectedModel === 'gpt-image-2' && !managedLimits && <SettingSelect label="输出画质" value={pidoiQuality} onChange={setPidoiQuality} options={PIDOI_QUALITY_OPTIONS} />}
             {Boolean(managedLimits?.qualities.length) && <SettingSelect label="生成质量" value={managedQuality} onChange={setManagedQuality} options={managedLimits!.qualities.map(quality => ({ value: quality, label: quality }))} />}
@@ -842,7 +842,7 @@ export default function ImageGenPage() {
             {selectedModel === 'gpt-image-2-mingfei' && !managedLimits && <><SettingSelect label="生成质量" value={mingFeiQuality} onChange={setMingFeiQuality} options={MINGFEI_QUALITY_OPTIONS} /><SettingSelect label="输出分辨率" value={mingFeiResolution} onChange={setMingFeiResolution} options={MINGFEI_RESOLUTION_OPTIONS} /></>}
               {!managedLimits && !['gpt-image-2','gpt-image-2-mingfei'].includes(selectedModel) && <span className="ig-default-quality">默认画质</span>}
             </div></details>
-            <div className="ig-submit-section">{displayRate !== undefined && <span className="ig-estimate" title="预计费用">¥{(Number(displayRate) * (managedLimits?.outputsPerTask ? 1 : imageCount)).toFixed(2)}</span>}
+            <div className="ig-submit-section">{displayRate !== undefined && <span className="ig-estimate" title="预计费用">¥{(Number(displayRate) * (selectedModel === HUSS_MJ_MODEL || managedLimits?.outputsPerTask ? 1 : imageCount)).toFixed(2)}</span>}
               <button type="submit" className="ig-submit" disabled={!canGenerate} aria-label={activeBatchCount >= MAX_CONCURRENT_BATCHES ? '已达到并发批次上限' : generationMode === 'image' ? '开始改图' : '开始生成图片'} title="Enter 生成"><ArrowUpRight size={20} /><span>生成</span></button>
             </div>
           </div>

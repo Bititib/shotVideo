@@ -189,12 +189,12 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     if (!node || node.job?.status === 'running' || node.src === version.src) return;
     commit(current => ({ ...current, nodes: current.nodes.map(item => item.id === nodeId ? {
       ...item, src: version.src, text: version.prompt, model: version.model || item.model, ratio: version.ratio || item.ratio,
-      settings: { resolution: version.resolution || item.settings?.resolution || '1K', seconds: item.settings?.seconds || 5 },
+      settings: { resolution: version.resolution || item.settings?.resolution || '1K', seconds: item.settings?.seconds || 5, mjOptions: version.mjOptions || item.settings?.mjOptions },
       job: { ...item.job, status: 'done', contentId: version.contentId ?? item.job?.contentId, message: '已设为当前版本' },
     } : item), drafts: { ...current.drafts, [nodeId]: {
       ...current.drafts?.[nodeId], kind: 'image', prompt: version.prompt, model: version.model || node.model || '',
       ratio: version.ratio || node.ratio || '1:1', resolution: version.resolution || node.settings?.resolution || '1K',
-      seconds: node.settings?.seconds || 5, count: 4,
+      seconds: node.settings?.seconds || 5, count: 4, mjOptions: version.mjOptions || node.settings?.mjOptions,
     } } }));
   };
   const editNode = (id: string, patch: Partial<CanvasNode>) => update({ ...docRef.current, nodes: docRef.current.nodes.map(n => n.id === id ? { ...n, ...patch } : n) });

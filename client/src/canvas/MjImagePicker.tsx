@@ -2,13 +2,14 @@ import { ImageThumbnail } from '../components/MediaPreview';
 import { useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { Check } from 'lucide-react';
+import { HUSS_MJ_MODEL } from '../../../shared/hussMidjourney';
 import { MJ_MODEL_ID } from '../../../shared/mj';
 import type { CanvasNode, CanvasVersion, View } from './model';
 
 export function latestMjImages(node: CanvasNode): CanvasVersion[] {
   if (node.kind !== 'image' || node.job?.status === 'running') return [];
   const versions = node.versions || [], last = versions.at(-1);
-  if (!last || (last.model || node.model) !== MJ_MODEL_ID) return [];
+  if (!last || ![MJ_MODEL_ID, HUSS_MJ_MODEL].includes(last.model || node.model || '')) return [];
   const batch = last.requestId ? versions.filter(version => version.requestId === last.requestId)
     : last.contentId ? versions.filter(version => version.contentId === last.contentId) : [last];
   return batch.length >= 1 && batch.length <= 4 ? batch : [];
