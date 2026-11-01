@@ -1,8 +1,9 @@
+import { selectedHssSource } from './hssSourceService.js';
 import { HUSS_MJ_MODEL, hussMjLimits } from '../../shared/hussMidjourney.js';
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { channels, models } from '../db/schema.js';
-import { HUSS_BB_A_MODEL, hussBbAModelLimits, isHussHssModel, HUSS_BB_PUBLIC_MODEL, HUSS_HSS_MODEL, hussHssModelLimits } from '../../shared/hussBbVideo.js';
+import { HUSS_HSS_B_MODEL, HUSS_BB_A_MODEL, hussBbAModelLimits, isHussHssModel, HUSS_BB_PUBLIC_MODEL, HUSS_HSS_MODEL, hussHssModelLimits } from '../../shared/hussBbVideo.js';
 import { fetchHussVideoModels, hussBbModelLimits, type HussChannel } from './hussVideoAdapter.js';
 import { getModelSpecification, saveModelSpecification } from './modelRoutingService.js';
 
@@ -13,6 +14,8 @@ export async function syncHussModels(channel: HussChannel & { id: number; name: 
   if (upstream.some(item => item.id === HUSS_BB_A_MODEL)) {
     mapping[HUSS_BB_PUBLIC_MODEL] = HUSS_BB_A_MODEL; mapping[HUSS_HSS_MODEL] = HUSS_BB_A_MODEL;
   }
+  const manual = selectedHssSource();
+  if (manual && (mapping[HUSS_HSS_MODEL] || getModelSpecification(HUSS_HSS_MODEL)?.routes.some(r=>r.channelId===channel.id))) mapping[HUSS_HSS_MODEL] = manual === 'A' ? HUSS_BB_A_MODEL : HUSS_HSS_B_MODEL;
   sqlite.transaction(() => {
     for (const [publicId, upstreamId] of Object.entries(mapping)) {
       const existing = db.select().from(models).where(eq(models.modelId, publicId)).get();

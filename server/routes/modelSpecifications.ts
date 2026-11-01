@@ -1,3 +1,4 @@
+import { switchHssSource } from '../services/hssSourceService.js';
 import { createVideoAliasChecker, createModelSalePriceResolver } from '../services/modelSaleService.js';
 import { suggestedModelSpecifications } from '../services/modelSpecificationPresets.js';
 import { Router } from 'express';
@@ -23,6 +24,7 @@ router.get('/', (_req, res, next) => {
     }));
   } catch (e) { next(e); }
 });
+router.post('/:modelId/hss-source', (req,res,next)=>{ try { if(req.params.modelId !== 'hss-2.5-301010') return res.status(400).json({error:'仅支持 hss-2.5-301010'}); res.json(switchHssSource(req.body?.source)); } catch(e){next(e);} });
 router.put('/:modelId', (req, res, next) => {
   try {
     if (req.params.modelId !== req.body?.modelId) return res.status(400).json({ error: '规格 ID 不一致' });

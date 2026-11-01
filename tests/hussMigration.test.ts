@@ -57,3 +57,27 @@ it('startup migration preserves public names, switches and pricing and runs only
  expect(db.select().from(models).get()).toMatchObject({displayName:'BB',isActive:1});expect(db.select().from(modelPricing).get()?.inputPrice).toBe(6);
  const spec=getModelSpecification(HUSS_BB_PUBLIC_MODEL)!;saveModelSpecification({...spec,enabled:false});migrateHussChannelA();expect(getModelSpecification(HUSS_BB_PUBLIC_MODEL)?.enabled).toBe(false);
 });
+
+it('one-click HSS source switches new routing, survives sync and preserves BB pricing and disabled controls',async()=>{
+ const {switchHssSource,selectedHssSource}=await import('../server/services/hssSourceService.js');
+ const {selectModelRoutes}=await import('../server/services/modelRoutingService.js');
+ db.update(channels).set({type:'huss'}).where(eq(channels.id,1)).run();
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{id:'bb-2.5-301010-渠道A'}]})));
+ await syncHussModels(channel());
+ db.update(models).set({isActive:1}).where(eq(models.modelId,'hss-2.5-301010')).run();
+ const before=getModelSpecification(HUSS_BB_PUBLIC_MODEL);
+ const input={images:0,videos:0,audios:0,outputs:1,seconds:10,resolution:'720p',ratio:'16:9',firstFrame:false,lastFrame:false};
+ const original=selectModelRoutes(getModelSpecification('hss-2.5-301010')!,input)[0];
+ const switched=switchHssSource('B');
+ expect(selectModelRoutes(switched,input)[0].route.upstreamModel).toBe('hss-2.5-301010-渠道B');
+ expect(original.route.upstreamModel).toBe('bb-2.5-301010-渠道A');
+ expect(selectedHssSource()).toBe('B');
+ await syncHussModels(channel());
+ expect(getModelSpecification('hss-2.5-301010')!.routes[0].upstreamModel).toBe('hss-2.5-301010-渠道B');
+ expect(getModelSpecification(HUSS_BB_PUBLIC_MODEL)).toEqual(before);
+ expect(db.select().from(modelPricing).get()?.inputPrice).toBe(6);
+ const disabled=getModelSpecification('hss-2.5-301010')!;
+ saveModelSpecification({...disabled,routes:disabled.routes.map(r=>({...r,enabled:false}))});
+ expect(switchHssSource('A').routes[0]).toMatchObject({enabled:false,upstreamModel:'bb-2.5-301010-渠道A'});
+ expect(()=>switchHssSource('invalid')).toThrow('请选择');
+});

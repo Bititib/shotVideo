@@ -1,0 +1,7 @@
+import React, {useEffect,useState} from 'react';
+import {adminApi} from '../api/admin';
+export default function HssSourceSwitch(){
+ const [spec,setSpec]=useState<any>(null),[busy,setBusy]=useState(true),[error,setError]=useState(''),[notice,setNotice]=useState('');
+ useEffect(()=>{let live=true;adminApi.getModelSpecifications().then(items=>{if(live)setSpec(items.find(s=>s.modelId==='hss-2.5-301010'));}).catch(e=>{if(live)setError(e.message);}).finally(()=>{if(live)setBusy(false);});return()=>{live=false;};},[]);
+ return <section aria-label="HSS 渠道切换" className="rounded-xl border p-3 space-y-2"><strong>新任务使用渠道</strong><p className="text-xs">点击立即生效；已有任务继续原渠道，用户售价和启用状态保持不变。</p><div className="flex gap-2">{(['B','A'] as const).map(source=>{const target=source==='A'?'bb-2.5-301010-渠道A':'hss-2.5-301010-渠道B';const selected=Boolean(spec?.routes?.length && spec.routes.every((r:any)=>r.upstreamModel===target));return <button key={source} type="button" aria-pressed={selected} disabled={busy||!spec||selected} className={'rounded-lg border px-3 py-2 text-sm '+(selected?'bg-green-100':'')} onClick={async()=>{setBusy(true);setError('');setNotice('');try{setSpec(await adminApi.switchHssSource(source));setNotice('已切换为'+(source==='A'?'新渠道A':'原渠道B')+'，仅对新任务生效');}catch(e:any){setError(e.message);}finally{setBusy(false);}}}>{source==='A'?'新渠道A':'原渠道B'}{selected?' · 当前':''}</button>;})}</div>{busy&&<p role="status">正在读取或保存渠道配置…</p>}{!busy&&!spec&&!error&&<p>请先同步 HUSS 模型和线路。</p>}{error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}</section>;
+}

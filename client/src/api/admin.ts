@@ -21,6 +21,7 @@ const api = {
 
 export const adminApi = {
   getModelSpecificationSuggestions() { return api.get<any[]>('/admin/model-specifications/suggestions'); },
+  switchHssSource(source: 'A' | 'B') { return api.post<any>('/admin/model-specifications/hss-2.5-301010/hss-source', {source}); },
   getModelSpecifications() { return api.get<any[]>('/admin/model-specifications'); },
   saveModelSpecification(data: any) { return api.put<any>('/admin/model-specifications/' + encodeURIComponent(data.modelId), data); },
   deleteModelSpecification(id: string) { return api.delete<any>('/admin/model-specifications/' + encodeURIComponent(id)); },
