@@ -169,3 +169,5 @@
 @media (prefers-reduced-motion:reduce) { .image-studio *, .image-studio *::before,.image-studio *::after { animation:none !important; transition:none !important; scroll-behavior:auto !important; } }
 
 .ig-mj-options {padding:12px 0;} .ig-mj-options p{font-size:12px;opacity:.75;} .ig-mj-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;padding:10px 0;} .ig-mj-fields label{display:flex;flex-direction:column;gap:5px;font-size:12px;} .ig-mj-fields input,.ig-mj-fields select{min-width:0;padding:8px;border:1px solid #d5d4c4;border-radius:6px;background:transparent;color:inherit;}
+
+.ig-task-progress { width: min(160px, 65%); height: 6px; accent-color: var(--ig-accent); }
