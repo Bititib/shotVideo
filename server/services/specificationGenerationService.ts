@@ -330,7 +330,8 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         }
         console.warn('[specification] result save failed', id, error.message);
         const detail = transportDiagnostic(channel.type, '上游已完成，结果保存失败；正在重试保存', error, channel.apiKey);
-        patch(id, isMegabyChannel(channel) || isHussChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
+        patch(id, isMegabyChannel(channel) || isHussChannel(channel) || isApipathChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
+        if (isApipathChannel(channel)) onEvent({ type: 'status', message: detail, contentId: id });
         if (isHussChannel(channel)) {
           saveRetryMs = Math.max(60_000, Number(error?.retryAfterMs) || 0);
           onEvent({ type: 'status', message: detail, contentId: id });
@@ -342,7 +343,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         }
       }
       if (localized) {
-        try { complete(id, [localized]); if (isMegabyChannel(channel) || isHussChannel(channel)) patch(id, { resultSaveError: null, upstreamDeliveryPending:false }); }
+        try { complete(id, [localized]); if (isMegabyChannel(channel) || isHussChannel(channel) || isApipathChannel(channel)) patch(id, { resultSaveError: null, upstreamDeliveryPending:false }); }
         catch (error: any) {
           db.update(contents).set({ resultUrl: localized }).where(eq(contents.id, id)).run();
           holdForReview(id, error.message || '生成结果已保留，费用结算待核实', 'settlement');

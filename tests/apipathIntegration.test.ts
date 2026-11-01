@@ -437,8 +437,21 @@ describe('通联 actual specification entry and isolated billing', () => {
   it('keeps the completed receipt when saving fails and never generates again',async()=>{
     enable();vi.useFakeTimers();vi.mocked(downloadAndLocalizeVideo).mockRejectedValueOnce(new Error('disk temporarily unavailable'));
     vi.stubGlobal('fetch',vi.fn(async (_url:any,init:any)=>Response.json(init?.method==='POST'?{task_no:'save1',status:'queued'}:{task_no:'save1',status:'completed',url:'https://cdn.example/video.mp4'})));
-    try {const work=handleSpecificationGeneration(request(),response(),'video');await vi.advanceTimersByTimeAsync(9000);await work;
+    try {const res=response();const work=handleSpecificationGeneration(request(),res,'video');
+      await vi.advanceTimersByTimeAsync(100);
+      const pending=db.select().from(contents).all().at(-1)!;
+      expect(pending.status).toBe('processing');
+      const pendingMeta=JSON.parse(pending.metadata);
+      expect(pendingMeta.apipathCompletedReceipt).toMatchObject({taskId:'save1',resultUrl:'https://cdn.example/video.mp4'});
+      expect(pendingMeta.resultSaveError).toContain('disk temporarily unavailable');
+      expect(pendingMeta.progressText).toContain('disk temporarily unavailable');
+      expect(pendingMeta.requiresReview).not.toBe(true);
+      expect(db.select().from(users).all()[0].balance).toBe(98);
+      expect(res.write.mock.calls.some((call:any[])=>String(call[0]).includes('disk temporarily unavailable'))).toBe(true);
+      await vi.advanceTimersByTimeAsync(9000);await work;
       expect(fetch).toHaveBeenCalledTimes(2);expect(downloadAndLocalizeVideo).toHaveBeenCalledTimes(2);expect(db.select().from(users).all()[0].balance).toBe(98);
+      const finished=db.select().from(contents).all().at(-1)!;
+      expect(finished.status).toBe('completed');expect(JSON.parse(finished.metadata).resultSaveError).toBeNull();
     }finally{vi.useRealTimers();}
   });
   it('uses multipart edits with all validated reference bytes',async()=>{
