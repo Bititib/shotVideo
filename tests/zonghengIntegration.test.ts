@@ -2,11 +2,16 @@ import { migrateZonghengModelPrefix } from '../server/services/zonghengPrefixMig
 import { ZONGHENG_VIDEO_MODELS } from '../shared/zonghengVideo';
 import { getPublicDeveloperModels } from '../server/services/developerModelService';
 import { V6K_SEEDANCE_20_MODEL, V6K_XX_SEEDANCE_20_MODEL } from '../shared/v6kSeedance2';
-import { getModelSpecification, saveModelSpecification } from '../server/services/modelRoutingService';
+import { getModelSpecification, saveModelSpecification, deleteModelSpecification } from '../server/services/modelRoutingService';
 import { resumeSpecificationTasks } from '../server/services/specificationGenerationService';
 import { batchStore, tickVideoBatches } from '../server/services/videoBatchService';
 import { V6K_TT25_PRODUCTS } from '../shared/v6kTt25';
 import { removeTtBbFallbacks } from '../server/db/removeTtBbFallbacks';
+import { ensureBbHssKkMapping } from '../server/services/bbHssKkMigration';
+import { BB_HSS_KK_ENTRIES, bbHssKkLimits } from '../shared/bbHssKk';
+import { switchHssSource } from '../server/services/hssSourceService';
+import { hussHssModelLimits, hussBbAModelLimits } from '../shared/hussBbVideo';
+import { syncHussModels } from '../server/services/hussCatalogService';
 import { ensureV6kTt25Models, v6kTt25SaleId } from '../server/services/v6kTt25Catalog';
 import { quoteVideoRequest } from '../server/services/videoQuoteService';
 import { PricingService } from '../server/services/pricingService';
@@ -533,6 +538,55 @@ describe('new KK 2.5 product, fixed per-task price',()=>{
     upstream=async(url,init)=>{if(url==='http://127.0.0.1:9876/api/video/generate')return nativeFetch(origin+'/api/video/generate',init);posts++;expect(JSON.parse(init.body)).toMatchObject({model:id,seconds:30,resolution:'720p'});return Response.json({id:'kk_batch_original',status:'completed'});};
     tickVideoBatches();await vi.waitFor(()=>expect(latest()?.status).toBe('completed'));tickVideoBatches();tickVideoBatches();
     expect(batchStore.item(item.id)).toMatchObject({status:'completed',billing_state:'charged',charged:6.5});expect(balance()).toBe(93.5);expect(posts).toBe(1);
+  });
+});
+
+describe('BB and HSS new requests retargeted to KK',()=>{
+  async function legacy(){
+    const c=ChannelService.createChannel({name:'Old HUSS',type:'huss',baseUrl:'https://www.huss.top',apiKey:'original-huss-key',supportedModels:[...BB_HSS_KK_ENTRIES,'mj-v8.2'],modelMapping:Object.fromEntries(BB_HSS_KK_ENTRIES.map(id=>[id,'bb-2.5-301010-渠道A']))});
+    for(const id of BB_HSS_KK_ENTRIES){db.insert(models).values({modelId:id,displayName:'original '+id,provider:'huss',capabilities:'["video"]',isActive:1}).run();
+      db.insert(modelPricing).values({modelPattern:id,billingType:'per_call',inputPrice:4.5,extraParams:'{"720P":4.5}'}).run();
+      saveModelSpecification({modelId:id,enabled:true,aliases:[],kind:'video',limits:id.startsWith('hss')?hussHssModelLimits():hussBbAModelLimits(),routes:[{id:'old-'+id,channelId:c,executionModel:id,upstreamModel:'bb-2.5-301010-渠道A',enabled:true,limits:hussBbAModelLimits(),cost:3,costUnit:'per_call',resolutionCosts:{},priority:0}]});}
+    return c;
+  }
+  async function install(){const old=await legacy();await syncV6kEntries(['kkseadanco2.5']);sqlite.prepare("INSERT INTO api_tokens(id,user_id,token_key,balance) VALUES(1,1,'test',-1)").run();return old;}
+  it('preserves public IDs, enabled switches and original names, shows both aliases and 6.5 pricing, and cannot sync HUSS back in',async()=>{
+    const old=await install();const list=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
+    for(const id of BB_HSS_KK_ENTRIES){expect(list.find(m=>m.id===id)).toMatchObject({available:true,billingType:'per_call',rates:{'720p':6.5},routingLimits:bbHssKkLimits()});
+      expect(getPublicDeveloperModels().items.find(m=>m.id===id)).toMatchObject({available:true,pricing:{billing_type:'per_call',unit_price:6.5}});}
+    const before=BB_HSS_KK_ENTRIES.map(id=>getModelSpecification(id));
+    upstream=async()=>Response.json({data:[{id:'bb-2.5-301010-渠道A'}]});await syncHussModels(ChannelService.getChannelRaw(old)!);
+    expect(BB_HSS_KK_ENTRIES.map(id=>getModelSpecification(id))).toEqual(before);expect(()=>switchHssSource('A')).toThrow('KK');
+    expect(ChannelService.getChannelRaw(old)?.apiKey).toBe('original-huss-key');
+  });
+  it.each(BB_HSS_KK_ENTRIES.flatMap(id=>['/api/video/generate','/v1/videos'].map(endpoint=>({id,endpoint}))))('submits $id at $endpoint to KK at 6.5 per task for 5 and 30 seconds',async({id,endpoint})=>{
+    await install();let posts=0;upstream=async(url,init)=>{posts++;expect(url).toBe('https://www.v6k.top/v1/videos');const q=JSON.parse(init.body);expect(q).toMatchObject({model:'kkseadanco2.5',resolution:'720p'});expect(q.videos).toHaveLength(10);expect(q.audios).toHaveLength(10);return Response.json({id:'retargeted_'+posts,status:'completed'});};
+    for(const seconds of [5,30]){await(await post(endpoint,{model:id,prompt:'new alias request',seconds,resolution:'720p',reference_videos:Array(10).fill('https://media.example/v.mp4'),audio_urls:Array(10).fill('https://media.example/a.wav')})).text();await vi.waitFor(()=>expect(latest().status).toBe('completed'));expect(latest().cost).toBe(6.5);expect(latest().modelId).toBe(id);}
+    expect(posts).toBe(2);expect(balance()).toBe(87);expect(JSON.parse(latest().metadata)).toMatchObject({upstreamModel:'kkseadanco2.5',actualChannel:'zongheng-v6k'});
+  });
+  it.each(BB_HSS_KK_ENTRIES)('rejects obsolete 4 second and wide-ratio inputs for %s before order creation and charging',async id=>{
+    await install();vi.mocked(fetch).mockClear();upstream=async()=>{throw Error('Not allowed');};
+    for(const patch of [{seconds:4},{aspect_ratio:'21:9'},{aspect_ratio:'4:3'},{resolution:'480p'}]){const r=await post('/api/video/generate',{model:id,prompt:'old cached options',seconds:5,resolution:'720p',...patch});expect(r.status).toBe(400);await r.text();}
+    expect(balance()).toBe(100);expect(fetch).not.toHaveBeenCalled();expect(db.select().from(contents).all()).toEqual([]);
+  });
+  it('cannot fall through to legacy HUSS generation if an administrator deletes a migrated specification',async()=>{
+    await install();const id=BB_HSS_KK_ENTRIES[0];deleteModelSpecification(id);vi.mocked(fetch).mockClear();upstream=async()=>{throw Error('No legacy submission');};
+    for(const endpoint of ['/api/video/generate','/v1/videos']){const r=await post(endpoint,{model:id,prompt:'missing spec',seconds:5,resolution:'720p'});expect(r.status).toBe(503);await r.text();}
+    expect(balance()).toBe(100);expect(db.select().from(contents).all()).toEqual([]);expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(['completed','failed','uncertain'])('retries the same API request without a second generation and settles KK %s once',async outcome=>{
+    await install();let posts=0;upstream=async()=>{posts++;if(outcome==='uncertain')return new Response('<html>timeout</html>',{status:504});return Response.json({id:'kk_alias_original',status:outcome,error:outcome==='failed'?{message:'original failed'}:undefined});};
+    const body={model:BB_HSS_KK_ENTRIES[1],prompt:'same alias order',seconds:30,resolution:'720p'};
+    const r=await retryVideo('/v1/videos',body,'alias-stable');const first=await r.json() as any;
+    await vi.waitFor(()=>expect(JSON.parse(latest().metadata).billingStatus).toBe(outcome==='uncertain'?'review':outcome==='failed'?'refunded':'settled'));
+    const again=await retryVideo('/v1/video/generations',body,'alias-stable');expect((await again.json() as any).id).toBe(first.id);resumeSpecificationTasks();resumeSpecificationTasks();expect(posts).toBe(1);expect(balance()).toBe(outcome==='failed'?100:93.5);
+  });
+  it.each([true,false])('keeps the old prepaid batch amount when starting on KK (pricing snapshot=%s)',async withSnapshot=>{
+    await legacy();const id=BB_HSS_KK_ENTRIES[0],quote=PricingService.quote(id,{seconds:30,resolution:'720p'},false,1);
+    const batchId=batchStore.create(1,crypto.randomUUID(),{name:'prepaid old order',model:id,resolution:'720p',aspect_ratio:'16:9',video_length:30,autoRetry:false,maxRetries:0,creatives:[{prompt:'original prepaid',count:1,reference_images:[]}]},4.5,'https://app.example',withSnapshot?quote.pricingSnapshot:undefined);
+    const item=batchStore.item(batchStore.detail(batchId,1).items[0].id);await syncV6kEntries(['kkseadanco2.5']);let posts=0;
+    upstream=async(url,init)=>{if(url==='http://127.0.0.1:9876/api/video/generate')return nativeFetch(origin+'/api/video/generate',init);posts++;expect(JSON.parse(init.body).model).toBe('kkseadanco2.5');return Response.json({id:'prepaid_kk_original',status:'completed'});};
+    tickVideoBatches();await vi.waitFor(()=>expect(latest()?.status).toBe('completed'));tickVideoBatches();tickVideoBatches();expect(posts).toBe(1);expect(balance()).toBe(95.5);expect(batchStore.item(item.id)).toMatchObject({charged:4.5,billing_state:'charged'});expect(latest().cost).toBe(4.5);
   });
 });
 

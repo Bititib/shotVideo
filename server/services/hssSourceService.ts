@@ -3,6 +3,7 @@ import { db, sqlite } from '../db/index.js';
 import { channels, settings } from '../db/schema.js';
 import { HUSS_HSS_MODEL, HUSS_HSS_B_MODEL, HUSS_BB_A_MODEL, hussHssModelLimits, hussBbAModelLimits } from '../../shared/hussBbVideo.js';
 import { getModelSpecification, saveModelSpecification } from './modelRoutingService.js';
+import { bbHssKkManaged } from './bbHssKkMigration.js';
 const key = 'hss_manual_video_source';
 export function selectedHssSource(): 'A' | 'B' | undefined {
   const value = db.select().from(settings).where(eq(settings.key,key)).get()?.value;
@@ -10,6 +11,7 @@ export function selectedHssSource(): 'A' | 'B' | undefined {
 }
 export function switchHssSource(source: unknown) {
   const invalid = (message:string) => Object.assign(new Error(message),{status:400});
+  if(bbHssKkManaged(sqlite,HUSS_HSS_MODEL))throw Object.assign(new Error('HSS 已改由 KK 生成，不再使用旧渠道 A/B 切换'),{status:409});
   if (source !== 'A' && source !== 'B') throw invalid('请选择原渠道B或新渠道A');
   return sqlite.transaction(() => {
     const spec = getModelSpecification(HUSS_HSS_MODEL);

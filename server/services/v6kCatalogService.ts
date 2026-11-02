@@ -11,6 +11,7 @@ import { ensureV6kTt25Models, bindV6kTt25Routes, v6kTt25SaleId } from './v6kTt25
 import { isV6kSyncModel } from '../../shared/v6kSyncModels.js';
 import { V6K_KK25_MODEL, V6K_KK25_DESCRIPTION } from '../../shared/zonghengVideo.js';
 import { ensureV6kKk25Model } from './v6kKk25Catalog.js';
+import { ensureBbHssKkMapping } from './bbHssKkMigration.js';
 
 export async function syncV6kVideoModels(channel: { id: number; baseUrl: string; apiKey: string; timeout?: number; type?: string }) {
   const base = zonghengBaseUrl(channel.baseUrl);
@@ -73,7 +74,7 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
       updatedAt: new Date().toISOString() }).where(eq(channels.id, channel.id)).run();
     bindV6kSeedance20Routes(sqlite, channel.id, authorizedIds);
     bindV6kTt25Routes(sqlite, channel.id, authorizedIds);
-    if (authorizedIds.includes(V6K_KK25_MODEL)) ensureV6kKk25Model(sqlite, channel.id);
+    if (authorizedIds.includes(V6K_KK25_MODEL)) { ensureV6kKk25Model(sqlite, channel.id); ensureBbHssKkMapping(sqlite, channel.id); }
     return { count: ids.length, added: ids.filter(id => !previouslyPresent.has(id)).length, models: ids, warnings };
   });
 }

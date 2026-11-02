@@ -6,6 +6,13 @@ import HssSourceSwitch from '../client/src/components/HssSourceSwitch';
 import {adminApi} from '../client/src/api/admin';
 vi.mock('../client/src/api/admin',()=>({adminApi:{getModelSpecifications:vi.fn(),switchHssSource:vi.fn()}}));
 afterEach(()=>{cleanup();vi.clearAllMocks();});
+it('shows KK after the cutover and removes the obsolete HUSS A/B controls',async()=>{
+ vi.mocked(adminApi.getModelSpecifications).mockResolvedValue([{modelId:'hss-2.5-301010',generationSource:'kkseadanco2.5',routes:[]}]);
+ render(<HssSourceSwitch/>);await screen.findByText('新任务使用 KK');
+ expect(screen.queryByRole('button',{name:'原渠道B'})).toBeNull();
+ expect(screen.queryByRole('button',{name:'新渠道A'})).toBeNull();
+ expect(adminApi.switchHssSource).not.toHaveBeenCalled();
+});
 it('switches immediately and displays only the confirmed saved source',async()=>{
  vi.mocked(adminApi.getModelSpecifications).mockResolvedValue([{modelId:'hss-2.5-301010',routes:[{upstreamModel:'bb-2.5-301010-渠道A'}]}]);
  vi.mocked(adminApi.switchHssSource).mockResolvedValue({routes:[{upstreamModel:'hss-2.5-301010-渠道B'}]});

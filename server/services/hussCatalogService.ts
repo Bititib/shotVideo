@@ -1,4 +1,5 @@
 import { selectedHssSource } from './hssSourceService.js';
+import { bbHssKkManaged } from './bbHssKkMigration.js';
 import { HUSS_MJ_MODEL, hussMjLimits } from '../../shared/hussMidjourney.js';
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
@@ -16,6 +17,7 @@ export async function syncHussModels(channel: HussChannel & { id: number; name: 
   }
   const manual = selectedHssSource();
   if (manual && (mapping[HUSS_HSS_MODEL] || getModelSpecification(HUSS_HSS_MODEL)?.routes.some(r=>r.channelId===channel.id))) mapping[HUSS_HSS_MODEL] = manual === 'A' ? HUSS_BB_A_MODEL : HUSS_HSS_B_MODEL;
+  for(const id of [HUSS_BB_PUBLIC_MODEL,HUSS_HSS_MODEL])if(bbHssKkManaged(sqlite,id))delete mapping[id];
   sqlite.transaction(() => {
     for (const [publicId, upstreamId] of Object.entries(mapping)) {
       const existing = db.select().from(models).where(eq(models.modelId, publicId)).get();
@@ -36,5 +38,5 @@ export async function syncHussModels(channel: HussChannel & { id: number; name: 
     }
     db.update(channels).set({ type: 'huss', supportedModels: JSON.stringify(Object.keys(mapping)), modelMapping: JSON.stringify(mapping), updatedAt: new Date().toISOString() }).where(eq(channels.id, channel.id)).run();
   })();
-  return { count: upstream.length, added, models: Object.keys(mapping) };
+  return { count: Object.keys(mapping).length, added, models: Object.keys(mapping) };
 }

@@ -1,6 +1,7 @@
 import { HUSS_MJ_MODEL, hussMjOptions } from '../../shared/hussMidjourney.js';
 import { submitHussImage, queryHussImage, HussImageError } from './hussImageAdapter.js';
 import { isHussPersistentVideoModel } from '../../shared/hussBbVideo.js';
+import { bbHssKkManaged } from './bbHssKkMigration.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { activeSpecificationTasks } from './videoRecoveryAction.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL } from '../../shared/siYueTianMinimax.js';
@@ -747,6 +748,9 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
   if (isRetiredVideoModel(suppliedId)) { res.status(410).json({ error:RETIRED_VIDEO_MODEL_MESSAGE }); return true; }
   const spec = getModelSpecification(suppliedId);
   const modelId = spec?.modelId || suppliedId;
+  if (!spec && bbHssKkManaged(sqlite,suppliedId)) {
+    res.status(503).json({error:'BB/HSS 的 KK 规格配置缺失，请在后台恢复对应规格；未提交或扣费'});return true;
+  }
   if (suppliedId === SI_YUE_TIAN_MINIMAX_MODEL && !spec) {
     res.status(503).json({ error: '四月天 MiniMax H3 尚未关联模型规格与渠道，请在后台同步该渠道模型' }); return true;
   }

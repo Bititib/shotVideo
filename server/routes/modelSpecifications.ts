@@ -1,4 +1,5 @@
 import { switchHssSource } from '../services/hssSourceService.js';
+import { bbHssKkManaged } from '../services/bbHssKkMigration.js';
 import { createVideoAliasChecker, createModelSalePriceResolver } from '../services/modelSaleService.js';
 import { suggestedModelSpecifications } from '../services/modelSpecificationPresets.js';
 import { Router } from 'express';
@@ -15,7 +16,7 @@ router.get('/', (_req, res, next) => {
     const registry = db.select().from(models).all(), checkAlias = createVideoAliasChecker(), modelSalePrice = createModelSalePriceResolver();
     res.json(getModelSpecifications().map(spec => {
       const details = inspectModelRoutes(spec);
-      return { ...spec, displayName: registry.find(m => m.modelId === spec.modelId)?.displayName || spec.modelId,
+      return { ...spec, generationSource: bbHssKkManaged(sqlite,spec.modelId)?'kkseadanco2.5':undefined, displayName: registry.find(m => m.modelId === spec.modelId)?.displayName || spec.modelId,
         salePrice: modelSalePrice(spec.modelId, spec.limits.resolutions),
         aliasIssues: spec.aliases.flatMap(modelId => { const reason = checkAlias(spec, modelId); return reason ? [{ modelId, reason }] : []; }),
         channelCount: new Set(spec.routes.map(r => r.channelId)).size,
