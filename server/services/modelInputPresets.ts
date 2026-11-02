@@ -1,5 +1,5 @@
 import { HUSS_BB_PUBLIC_MODEL, hussBbModelLimits, HUSS_HSS_MODEL, hussHssModelLimits } from '../../shared/hussBbVideo.js';
-import { V6K_TTT_720_MODEL } from '../../shared/zonghengVideo.js';
+import { V6K_TTT_720_MODEL, V6K_KK25_MODEL } from '../../shared/zonghengVideo.js';
 import { v6kSeedance20Limits } from '../../shared/v6kSeedance2.js';
 import { v6kTt25Limits } from '../../shared/v6kTt25.js';
 import { defaultRoutingLimits, type ModelInputLimits } from '../../shared/modelRouting.js';
@@ -23,7 +23,7 @@ export function existingModelLimits(id: string, kind: 'image' | 'video'): ModelI
   if (id === HUSS_HSS_MODEL) return hussHssModelLimits();
   if (id === SI_YUE_TIAN_MINIMAX_MODEL) return siYueTianMinimaxLimits();
   if (id === HUSS_BB_PUBLIC_MODEL) return hussBbModelLimits();
-  if (id === V6K_TTT_720_MODEL) return video(30,10,10,'720p',5,30);
+  if ([V6K_TTT_720_MODEL,V6K_KK25_MODEL].includes(id)) return video(30,10,10,'720p',5,30);
   const v6kSeedance20 = v6kSeedance20Limits(id);
   if (v6kSeedance20) return v6kSeedance20;
   const tt25 = v6kTt25Limits(id);

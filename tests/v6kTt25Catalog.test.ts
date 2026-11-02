@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import { ensureV6kTt25Models, bindV6kTt25Routes, v6kTt25SaleId } from '../server/services/v6kTt25Catalog';
 import { V6K_TT25_PRODUCTS, v6kTt25Limits } from '../shared/v6kTt25';
 import { existingModelLimits } from '../server/services/modelInputPresets';
+import { ensureV6kKk25Model } from '../server/services/v6kKk25Catalog';
 
 const databases: Database.Database[] = [];
 afterEach(() => { for (const db of databases.splice(0)) db.close(); });
@@ -23,6 +24,18 @@ function specs(db: Database.Database): any[] {
 }
 
 describe('TT 2.5 requested per-second sale configuration', () => {
+  it('registers the distinct KK product at 6.5 per call and never resets administrator settings or task snapshots',()=>{
+    const d=database(),id='kkseadanco2.5';ensureV6kKk25Model(d);
+    expect(d.prepare('SELECT * FROM models WHERE model_id=?').get(id)).toMatchObject({model_id:id,is_active:0});
+    expect(d.prepare('SELECT * FROM model_pricing WHERE model_pattern=?').get(id)).toMatchObject({billing_type:'per_call',input_price:6.5});
+    expect(specs(d).find(s=>s.modelId===id)).toMatchObject({enabled:false,routes:[],limits:{maxImages:30,maxVideos:10,maxAudios:10,resolutions:['720p'],duration:{min:5,max:30,step:1}}});
+    ensureV6kKk25Model(d,21);const s=specs(d);s[0].enabled=true;s[0].routes[0].enabled=false;s[0].limits.maxImages=20;
+    d.prepare('UPDATE settings SET value=? WHERE key=?').run(JSON.stringify(s),'model_specification_routes_v1');
+    d.prepare('UPDATE model_pricing SET input_price=7.7 WHERE model_pattern=?').run(id);
+    const before=JSON.stringify(['models','model_pricing','settings','contents','users'].map(t=>d.prepare('SELECT * FROM '+t).all()));
+    ensureV6kKk25Model(d,21);ensureV6kKk25Model(d);
+    expect(JSON.stringify(['models','model_pricing','settings','contents','users'].map(t=>d.prepare('SELECT * FROM '+t).all()))).toBe(before);
+  });
   it('keeps an enabled legacy product usable on its previously mapped channel without requiring a new sync',()=>{
     const db=database(),id='ZH-TTseadanco2.5-480';
     db.exec('CREATE TABLE channels(id INTEGER,type TEXT,supported_models TEXT,model_mapping TEXT)');

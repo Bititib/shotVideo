@@ -9,6 +9,8 @@ import { ensureV6kSeedance20Models, bindV6kSeedance20Routes } from './v6kSeedanc
 import { v6kTt25Product, v6kTt25Description } from '../../shared/v6kTt25.js';
 import { ensureV6kTt25Models, bindV6kTt25Routes, v6kTt25SaleId } from './v6kTt25Catalog.js';
 import { isV6kSyncModel } from '../../shared/v6kSyncModels.js';
+import { V6K_KK25_MODEL, V6K_KK25_DESCRIPTION } from '../../shared/zonghengVideo.js';
+import { ensureV6kKk25Model } from './v6kKk25Catalog.js';
 
 export async function syncV6kVideoModels(channel: { id: number; baseUrl: string; apiKey: string; timeout?: number; type?: string }) {
   const base = zonghengBaseUrl(channel.baseUrl);
@@ -32,7 +34,7 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     const spec = getZonghengVideoSpec(id);
     const publicId = zonghengPublicModelId(id);
     const product = v6kSeedance20Product(id);
-    const description = product?.description || v6kTt25Description(id) || (id === V6K_TTT_720_MODEL ? V6K_TTT_720_DESCRIPTION : spec ? `${spec.resolution}；${spec.seconds.join('、')}秒；最多${spec.references.images}图、${spec.references.videos}视频、${spec.references.audios}音频`
+    const description = id === V6K_KK25_MODEL ? V6K_KK25_DESCRIPTION : product?.description || v6kTt25Description(id) || (id === V6K_TTT_720_MODEL ? V6K_TTT_720_DESCRIPTION : spec ? `${spec.resolution}；${spec.seconds.join('、')}秒；最多${spec.references.images}图、${spec.references.videos}视频、${spec.references.audios}音频`
       : '已接入视频模型');
     // Both A variants share one execution ID; the specification stores each actual upstream ID.
     if (imported.has(publicId) && id !== product?.upstreamModels[0].id) continue;
@@ -71,6 +73,7 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
       updatedAt: new Date().toISOString() }).where(eq(channels.id, channel.id)).run();
     bindV6kSeedance20Routes(sqlite, channel.id, authorizedIds);
     bindV6kTt25Routes(sqlite, channel.id, authorizedIds);
+    if (authorizedIds.includes(V6K_KK25_MODEL)) ensureV6kKk25Model(sqlite, channel.id);
     return { count: ids.length, added: ids.filter(id => !previouslyPresent.has(id)).length, models: ids, warnings };
   });
 }
