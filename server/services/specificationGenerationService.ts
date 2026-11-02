@@ -307,7 +307,13 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
           ...(isHussChannel(channel) ? { hussCompletedReceipt: { taskId, resultUrl: task.resultUrl }, upstreamGenerated: true, upstreamDeliveryPending: true } : {}),
           ...(isMegabyChannel(channel) ? { megabyCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}) });
         const { downloadAndLocalizeVideo } = await import('./videoLocalizationService.js');
-        localized = await downloadAndLocalizeVideo(task.resultUrl, taskId, metadata(id).actualModel, channel.id, channel.apiKeyId);
+        localized = await downloadAndLocalizeVideo(task.resultUrl, taskId, metadata(id).actualModel, channel.id, channel.apiKeyId, progress => {
+          const mb = (n: number) => (n / 1048576).toFixed(2);
+          const message = progress.phase === 'validating' ? '视频已下载，正在校验或转换播放格式'
+            : progress.phase === 'retrying' ? `下载中断，已保留 ${mb(progress.bytes)} MB；等待恢复原任务`
+            : `视频下载中：${mb(progress.bytes)}${progress.total ? ' / ' + mb(progress.total) : ''} MB${progress.resumable ? '（支持安全续传）' : ''}`;
+          patch(id, { downloadProgress: { ...progress, updatedAt: new Date().toISOString() }, progressText: message });
+        });
       } catch (error: any) {
         if (recordV6kDeliveryUnavailable(id, error)) {
           onEvent({ type: 'status', message: publicGenerationError(error.message, ['V6K']), contentId: id }); return;

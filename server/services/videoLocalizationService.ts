@@ -1,5 +1,4 @@
-import { responseDiagnostic, upstreamDiagnostic } from './upstreamDiagnostic.js';
-import { isHussChannel, fetchHussVideoContent, HussApiError } from './hussVideoAdapter.js';
+import { isHussChannel } from './hussVideoAdapter.js';
 import { isMegabyChannel, megabyContentUrl, fetchMegabyVideoContent, readMegabyJson } from './megabyVideoAdapter.js';
 import { zonghengTaskUrl } from './zonghengAdapter.js';
 import { fetchV6kVideoContent } from './v6kVideoContent.js';
@@ -10,8 +9,7 @@ import { isHayaChannel, shouldSendHayaAuthorization, hayaTaskUrl } from './hayaV
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { Readable, Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { saveHussVideo, type HussDownloadProgress } from './hussResumableDownload.js';
 import { prepareVideoForDelivery } from './videoCompatibilityService.js';
 import { createMediaPreview } from './mediaPreviewService.js';
 import { ChannelService } from './channelService.js';
@@ -41,6 +39,7 @@ export async function downloadAndLocalizeVideo(
   model: string,
   channelId?: number | null,
   channelApiKeyId?: number | null,
+  onProgress?: (progress: HussDownloadProgress) => void,
 ): Promise<string> {
   if (!url) throw new Error('Upstream completed without a video URL');
   if (url.startsWith('/uploads/')) {
@@ -73,16 +72,11 @@ export async function downloadAndLocalizeVideo(
     }
   }
 
-  const hssContent = isHussChannel(channel) && Boolean(videoId);
-  let response = authenticatedV6kContent ? await fetchV6kVideoContent(channel, videoId) : hssContent ? await fetchHussVideoContent(channel, videoId) : isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
-  // HUSS documents /content as an alternative to the signed media URL.
-  // One read-only fallback per save attempt; never recreate the generation.
-  let hussContentFallback = hssContent;
-  if (!hssContent && isHussChannel(channel) && [401, 403, 404].includes(response.status)) {
-    await response.body?.cancel();
-    hussContentFallback = true;
-    response = await fetchHussVideoContent(channel, videoId);
+  if (isHussChannel(channel)) {
+    return localVideoUrl(await saveHussVideo({ ...channel, id: channelId || undefined, apiKeyId: channelApiKeyId }, videoId,
+      path.join(uploadDir, `video_${safeId}`), onProgress));
   }
+  let response = authenticatedV6kContent ? await fetchV6kVideoContent(channel, videoId) : isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
   if (isMegabyChannel(channel) && [401, 403, 404].includes(response.status) && url !== megabyContentUrl(channel.baseUrl, videoId)) response = await fetchMegabyVideoContent(channel, megabyContentUrl(channel.baseUrl, videoId), videoId);
   if (!response.ok && isMegabyChannel(channel)) await readMegabyJson(channel, response, 'query');
   if (isAsyncVideoChannel(channel) && [401, 403, 404].includes(response.status)) {
@@ -100,56 +94,7 @@ export async function downloadAndLocalizeVideo(
       headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(300_000), redirect: 'error',
     });
   }
-  if (!response.ok && isHussChannel(channel)) {
-    const retry = response.headers.get('retry-after') || '';
-    const retryAfterMs = /^\d+$/.test(retry) ? Number(retry) * 1000 : Math.max(0, Date.parse(retry) - Date.now()) || 0;
-    const stage = hussContentFallback ? '原任务 /content 回退下载' : '结果下载';
-    // HUSS redirects media downloads to TOS, whose errors use capitalized fields.
-    // This is a download diagnostic, never evidence of a failed generation.
-    const payload = await response.clone().json().catch(() => null);
-    if (typeof payload?.Code === 'string' && typeof payload?.Message === 'string') {
-      const timing = ['ExpiresSeconds', 'Expires', 'ServerTime'].filter(key =>
-        typeof payload[key] === 'string' || typeof payload[key] === 'number')
-        .map(key => `${key}=${payload[key]}`).join('; ');
-      throw new HussApiError(upstreamDiagnostic('HUSS/TOS', stage, {
-        code: payload.Code, message: payload.Message + (timing ? '; ' + timing : ''),
-      }, channel.apiKey, response.status, payload.RequestId), response.status, false, retryAfterMs);
-    }
-    throw new HussApiError(await responseDiagnostic('HUSS', stage, response, channel.apiKey), response.status, false, retryAfterMs);
-  }
-  if (isHussChannel(channel) && response.status === 202) {
-    throw new Error(await responseDiagnostic('HUSS', '原任务下载仍在准备，继续查询原任务', response, channel.apiKey));
-  }
   if (!response.ok) throw new Error(`Failed to fetch video from upstream: ${response.status} ${response.statusText}`);
-
-  if (isHussChannel(channel)) {
-    if (!response.body) throw new Error('HUSS 成品下载返回空内容');
-    const tempPath = path.join(uploadDir, `video_${safeId}.${crypto.randomUUID()}.part`);
-    let bytes = 0;
-    let header = Buffer.alloc(0);
-    const meter = new Transform({ transform(chunk, _encoding, callback) {
-      bytes += chunk.length;
-      if (header.length < 16) header = Buffer.concat([header, chunk.subarray(0, 16 - header.length)]);
-      callback(null, chunk);
-    } });
-    try {
-      await pipeline(Readable.fromWeb(response.body as any), meter, fs.createWriteStream(tempPath, { flags: 'wx' }));
-      const expected = Number(response.headers.get('content-length'));
-      if (!bytes || (expected > 0 && !response.headers.get('content-encoding') && bytes !== expected))
-        throw new Error(`HUSS 成品下载不完整：收到 ${bytes} 字节，声明 ${expected} 字节`);
-      const mp4 = header.length >= 12 && header.subarray(4, 8).toString('ascii') === 'ftyp';
-      const webm = header.length >= 4 && header.readUInt32BE(0) === 0x1a45dfa3;
-      if (!mp4 && !webm && !(response.headers.get('content-type') || '').startsWith('video/'))
-        throw new Error('HUSS 成品下载未返回视频文件');
-      // Validate before publishing: a partial response must never become a cached final file.
-      const playable = await prepareVideoForDelivery(tempPath);
-      const finalPath = path.join(uploadDir, `video_${safeId}.${webm && playable === tempPath ? 'webm' : 'mp4'}`);
-      fs.renameSync(playable, finalPath);
-      return localVideoUrl(finalPath);
-    } finally {
-      fs.rmSync(tempPath, { force: true });
-    }
-  }
 
   const buffer = Buffer.from(await response.arrayBuffer());
   if (buffer.length === 0) throw new Error('Upstream returned an empty video file');

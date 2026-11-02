@@ -1,5 +1,5 @@
 /** HUSS content GET: inactivity deadline, not a five-minute body deadline. */
-export async function fetchHussDownload(url: string, key: string): Promise<Response> {
+export async function fetchHussDownload(url: string, key: string, range?: { offset: number; etag: string }): Promise<Response> {
   const abort = new AbortController();
   let received = 0;
   let idle: ReturnType<typeof setTimeout>;
@@ -17,7 +17,8 @@ export async function fetchHussDownload(url: string, key: string): Promise<Respo
   try {
     for (let hop = 0; hop <= 5; hop++) {
       const response = await fetch(url, { method: 'GET', redirect: 'manual', signal: abort.signal, cache: 'no-store',
-        headers: hop === 0 ? { Authorization: 'Bearer ' + key } : {} });
+        headers: { ...(hop === 0 ? { Authorization: 'Bearer ' + key } : {}),
+          ...(range ? { Range: `bytes=${range.offset}-`, 'If-Range': range.etag } : {}) } });
       touch();
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         const location = response.headers.get('location');

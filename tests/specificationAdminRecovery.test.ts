@@ -214,7 +214,7 @@ it('recovers channel B from the persisted unified snapshot through completion wi
   }));
   await VideoRecoveryService.recover(id);
   await vi.waitFor(()=>expect(saved().status, saved().metadata).toBe('completed'));
-  expect(downloadAndLocalizeVideo).toHaveBeenCalledWith('https://www.huss.top/v1/videos/task_unified_b/content','task_unified_b','hss-2.5-301010',1,null);
+  expect(downloadAndLocalizeVideo).toHaveBeenCalledWith('https://www.huss.top/v1/videos/task_unified_b/content','task_unified_b','hss-2.5-301010',1,null,expect.any(Function));
   expect(JSON.parse(saved().metadata)).toMatchObject({requiresReview:false,billingStatus:'settled'});
   expect(balance()).toBe(94);
   resumeSpecificationTasks(); expect(fetch).toHaveBeenCalledTimes(2);
@@ -240,4 +240,28 @@ it('never refunds a recovered accepted task when its saved receipt conflicts', a
   expect(balance()).toBe(94); expect(saved().status).not.toBe('failed');
   expect(downloadAndLocalizeVideo).not.toHaveBeenCalled();
   expect(fetch).toHaveBeenCalledOnce();
+});
+
+it('persists byte progress during original-task recovery and settles the original reservation once', async () => {
+  let release!: () => void;
+  const paused = new Promise<void>(resolve => { release = resolve; });
+  vi.mocked(downloadAndLocalizeVideo).mockImplementationOnce(async (_url, _task, _model, _channel, _key, progress) => {
+    progress?.({ phase: 'downloading', bytes: 1048576, total: 2097152, resumable: true });
+    await paused;
+    progress?.({ phase: 'validating', bytes: 2097152, total: 2097152, resumable: true });
+    return '/uploads/huss-original.mp4';
+  });
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ id: 'task_original', status: 'completed', url: 'https://cdn.example/result.mp4' })));
+  await VideoRecoveryService.recover(id);
+  await vi.waitFor(() => expect(JSON.parse(saved().metadata).downloadProgress).toMatchObject({ bytes: 1048576, total: 2097152 }));
+  expect(saved().status).toBe('processing');
+  expect(saved().resultUrl).toBeNull();
+  expect(balance()).toBe(94);
+  release();
+  await vi.waitFor(() => expect(saved().status).toBe('completed'));
+  await VideoRecoveryService.recover(id);
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(downloadAndLocalizeVideo).toHaveBeenCalledOnce();
+  expect(balance()).toBe(94);
+  expect(sqlite.prepare('SELECT state,actual FROM billing_reservations WHERE id=?').get(reservationId)).toMatchObject({ state: 'settled', actual: 6 });
 });

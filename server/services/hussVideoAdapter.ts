@@ -34,8 +34,8 @@ export function hussApiBase(baseUrl: string) {
 }
 
 /** Official read-only content endpoint. Never forward the API key on redirects. */
-export async function fetchHussVideoContent(channel: HussChannel, taskId: string): Promise<Response> {
-  return fetchHussDownload(hussApiBase(channel.baseUrl) + '/v1/videos/' + encodeURIComponent(taskId) + '/content', channel.apiKey);
+export async function fetchHussVideoContent(channel: HussChannel, taskId: string, range?: { offset: number; etag: string }): Promise<Response> {
+  return fetchHussDownload(hussApiBase(channel.baseUrl) + '/v1/videos/' + encodeURIComponent(taskId) + '/content', channel.apiKey, range);
 }
 
 export class HussApiError extends Error { constructor(message: string, readonly status: number, readonly uncertain = false, readonly retryAfterMs = 0) { super(message); } }
