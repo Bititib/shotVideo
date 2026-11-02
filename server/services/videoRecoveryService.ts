@@ -1,3 +1,4 @@
+import { isHussChannel } from './hussVideoAdapter.js';
 import { isMegabyChannel, megabyTaskUrl, normalizeMegabyTask, readMegabyJson } from './megabyVideoAdapter.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL } from '../../shared/siYueTianMinimax.js';
 import { normalizeSiYueTianMinimaxTask } from './siYueTianMinimaxAdapter.js';
@@ -611,7 +612,7 @@ export class VideoRecoveryService {
         beforeDownload.modelId || WX_HAIDIYUE_FACE_SPLIT_MODEL,
         inspection.channelId,
         inspection.channelApiKeyId,
-      ), 360_000, 'Video result storage');
+      ), isHussChannel(ChannelService.getChannelRaw(inspection.channelId, inspection.channelApiKeyId)) ? 65 * 60_000 : 360_000, 'Video result storage');
       recoveryDownloads.set(downloadKey, download);
     }
     let localizedUrl: string;

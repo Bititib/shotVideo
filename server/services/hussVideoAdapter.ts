@@ -1,3 +1,4 @@
+import { fetchHussDownload } from './hussDownloadTransport.js';
 import { HUSS_MJ_MODEL, hussMjLimits } from '../../shared/hussMidjourney.js';
 import { HUSS_BB_A_MODEL, hussBbAModelLimits, isHussPersistentVideoModel, HUSS_HSS_B_MODEL, isHussHssModel, HUSS_HSS_MODEL, hussHssModelLimits } from '../../shared/hussBbVideo.js';
 import { randomUUID } from 'node:crypto';
@@ -34,21 +35,9 @@ export function hussApiBase(baseUrl: string) {
 
 /** Official read-only content endpoint. Never forward the API key on redirects. */
 export async function fetchHussVideoContent(channel: HussChannel, taskId: string): Promise<Response> {
-  let url = hussApiBase(channel.baseUrl) + '/v1/videos/' + encodeURIComponent(taskId) + '/content';
-  const signal = AbortSignal.timeout(300_000);
-  for (let hop = 0; hop <= 5; hop++) {
-    const response = await fetch(url, { method: 'GET', redirect: 'manual', signal, cache: 'no-store',
-      headers: hop === 0 ? { Authorization: 'Bearer ' + channel.apiKey } : {} });
-    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
-    const location = response.headers.get('location');
-    await response.body?.cancel();
-    if (!location || hop === 5) throw new Error('HUSS 原任务下载入口重定向缺少地址或次数超限');
-    const next = new URL(location, url);
-    if (next.protocol !== 'https:' || next.username || next.password) throw new Error('HUSS 原任务下载入口返回无效重定向地址');
-    url = next.href;
-  }
-  throw new Error('HUSS 原任务下载未返回响应');
+  return fetchHussDownload(hussApiBase(channel.baseUrl) + '/v1/videos/' + encodeURIComponent(taskId) + '/content', channel.apiKey);
 }
+
 export class HussApiError extends Error { constructor(message: string, readonly status: number, readonly uncertain = false, readonly retryAfterMs = 0) { super(message); } }
 async function hussRequest(channel: HussChannel, endpoint: string, body?: unknown, idempotencyKey?: string, unified = false) {
   const persistent = isHussPersistentVideoModel((body as any)?.model);

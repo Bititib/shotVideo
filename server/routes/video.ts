@@ -1,3 +1,4 @@
+import { isHussChannel } from '../services/hussVideoAdapter.js';
 import { zonghengProtocol, zonghengProtocolSnapshot, zonghengTaskChannel, v6kQueryRetryDelay, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE } from '../services/zonghengProtocol.js';
 import { normalizeSnumomNsfwRequestBody } from '../services/snumomWanAdapter.js';
 import { normalizeVideoParameters } from '../services/videoCapabilities.js';
@@ -3034,7 +3035,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
                 : await localizeChre3Video(resultUrl, videoId, model);
             } else {
               finalVideoUrl = isZongheng || protectedPolling
-                ? await withVideoPollDeadline(() => downloadAndLocalizeVideo(resultUrl, videoId, model, dbChannel?.id, dbChannel?.apiKeyId), 360_000, 'Video result storage')
+                ? await withVideoPollDeadline(() => downloadAndLocalizeVideo(resultUrl, videoId, model, dbChannel?.id, dbChannel?.apiKeyId), isHussChannel(dbChannel) ? 65 * 60_000 : 360_000, 'Video result storage')
                 : await downloadAndLocalizeVideo(resultUrl, videoId, model, dbChannel?.id, dbChannel?.apiKeyId);
             }
           } catch (localErr: any) {
@@ -4058,7 +4059,7 @@ export function resumePollForTask(contentId: number, record: any): Promise<void>
                 : await localizeChre3Video(resultUrl, videoId, model);
             } else {
               finalVideoUrl = isZongheng || protectedPolling
-                ? await withVideoPollDeadline(() => downloadAndLocalizeVideo(resultUrl, videoId, model, metadata.channelId, metadata.channelApiKeyId), 360_000, 'Video result storage')
+                ? await withVideoPollDeadline(() => downloadAndLocalizeVideo(resultUrl, videoId, model, metadata.channelId, metadata.channelApiKeyId), isHussChannel(ChannelService.getChannelRaw(metadata.channelId, metadata.channelApiKeyId)) ? 65 * 60_000 : 360_000, 'Video result storage')
                 : await downloadAndLocalizeVideo(resultUrl, videoId, model, metadata.channelId, metadata.channelApiKeyId);
             }
           } catch (localErr: any) {

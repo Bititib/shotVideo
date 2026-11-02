@@ -10,6 +10,8 @@ import { isHayaChannel, shouldSendHayaAuthorization, hayaTaskUrl } from './hayaV
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { prepareVideoForDelivery } from './videoCompatibilityService.js';
 import { createMediaPreview } from './mediaPreviewService.js';
 import { ChannelService } from './channelService.js';
@@ -119,6 +121,35 @@ export async function downloadAndLocalizeVideo(
     throw new Error(await responseDiagnostic('HUSS', '原任务下载仍在准备，继续查询原任务', response, channel.apiKey));
   }
   if (!response.ok) throw new Error(`Failed to fetch video from upstream: ${response.status} ${response.statusText}`);
+
+  if (isHussChannel(channel)) {
+    if (!response.body) throw new Error('HUSS 成品下载返回空内容');
+    const tempPath = path.join(uploadDir, `video_${safeId}.${crypto.randomUUID()}.part`);
+    let bytes = 0;
+    let header = Buffer.alloc(0);
+    const meter = new Transform({ transform(chunk, _encoding, callback) {
+      bytes += chunk.length;
+      if (header.length < 16) header = Buffer.concat([header, chunk.subarray(0, 16 - header.length)]);
+      callback(null, chunk);
+    } });
+    try {
+      await pipeline(Readable.fromWeb(response.body as any), meter, fs.createWriteStream(tempPath, { flags: 'wx' }));
+      const expected = Number(response.headers.get('content-length'));
+      if (!bytes || (expected > 0 && !response.headers.get('content-encoding') && bytes !== expected))
+        throw new Error(`HUSS 成品下载不完整：收到 ${bytes} 字节，声明 ${expected} 字节`);
+      const mp4 = header.length >= 12 && header.subarray(4, 8).toString('ascii') === 'ftyp';
+      const webm = header.length >= 4 && header.readUInt32BE(0) === 0x1a45dfa3;
+      if (!mp4 && !webm && !(response.headers.get('content-type') || '').startsWith('video/'))
+        throw new Error('HUSS 成品下载未返回视频文件');
+      // Validate before publishing: a partial response must never become a cached final file.
+      const playable = await prepareVideoForDelivery(tempPath);
+      const finalPath = path.join(uploadDir, `video_${safeId}.${webm && playable === tempPath ? 'webm' : 'mp4'}`);
+      fs.renameSync(playable, finalPath);
+      return localVideoUrl(finalPath);
+    } finally {
+      fs.rmSync(tempPath, { force: true });
+    }
+  }
 
   const buffer = Buffer.from(await response.arrayBuffer());
   if (buffer.length === 0) throw new Error('Upstream returned an empty video file');
