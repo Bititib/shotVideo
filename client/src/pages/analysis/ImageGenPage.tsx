@@ -224,7 +224,10 @@ function PlaceholderCard({ index, progress, phase }: { index: number; progress: 
         </div>
       </div>
       <span>#{index + 1} {label}</span>
-      <progress className="ig-task-progress" aria-label={`图片 ${index + 1} 生成进度`} max={100} value={progress > 0 ? progress : undefined} />
+      <div className={'ig-task-progress' + (progress > 0 ? '' : ' is-indeterminate')} role="progressbar" aria-label={`图片 ${index + 1} 生成进度`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress > 0 ? progress : undefined} aria-valuetext={progress > 0 ? `${progress}%` : `${label}，暂未返回百分比`}>
+        <span className="ig-task-progress-fill" style={progress > 0 ? {width:`${progress}%`} : undefined}/>
+      </div>
+      {progress <= 0 && <small className="ig-task-progress-caption">{label}，暂未返回百分比</small>}
     </div>
   );
 }

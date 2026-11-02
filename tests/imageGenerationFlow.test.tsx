@@ -74,7 +74,9 @@ describe('图片生成与继续改图', () => {
     render(<ImageGenPage />);
     await screen.findByRole('status', { name: /^图片 1 (生成中|排队中)$/ });
     expect(screen.queryByText(/^\d+%$/)).toBeNull();
-    expect(screen.getByRole('progressbar', {name:'图片 1 生成进度'}).hasAttribute('value')).toBe(false);
+    expect(screen.getByRole('progressbar', {name:'图片 1 生成进度'}).classList.contains('is-indeterminate')).toBe(true);
+    expect(screen.getAllByText(/暂未返回百分比/)).toHaveLength(4);
+    expect(screen.getByRole('progressbar', {name:'图片 1 生成进度'}).hasAttribute('aria-valuenow')).toBe(false);
     expect(generateImage).not.toHaveBeenCalled();
   });
   it('offers every managed MJ ratio and submits its fixed resolution without quality', async () => {

@@ -170,4 +170,9 @@
 
 .ig-mj-options {padding:12px 0;} .ig-mj-options p{font-size:12px;opacity:.75;} .ig-mj-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;padding:10px 0;} .ig-mj-fields label{display:flex;flex-direction:column;gap:5px;font-size:12px;} .ig-mj-fields input,.ig-mj-fields select{min-width:0;padding:8px;border:1px solid #d5d4c4;border-radius:6px;background:transparent;color:inherit;}
 
-.ig-task-progress { width: min(160px, 65%); height: 6px; accent-color: var(--ig-accent); }
+.image-studio .ig-task-progress { width:min(180px,65%); height:8px; flex-shrink:0; overflow:hidden; border-radius:999px; background:#dce2d4; }
+.image-studio .ig-task-progress-fill { display:block; height:100%; border-radius:inherit; background:#53694a; transition:width .6s ease; }
+.image-studio .ig-task-progress.is-indeterminate .ig-task-progress-fill { width:35%; animation:ig-progress-travel 1.5s ease-in-out infinite alternate; }
+.image-studio .ig-task-progress-caption { font-size:11px; color:#65715e; }
+@keyframes ig-progress-travel { from {transform:translateX(0);} to {transform:translateX(185%);} }
+@media (prefers-reduced-motion:reduce) { .image-studio .ig-task-progress.is-indeterminate .ig-task-progress-fill { animation:none; transform:translateX(90%); } }
