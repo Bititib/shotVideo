@@ -1,11 +1,11 @@
 import { migrateZonghengModelPrefix } from '../server/services/zonghengPrefixMigration';
 import { ZONGHENG_VIDEO_MODELS } from '../shared/zonghengVideo';
 import { V6K_SEEDANCE_20_MODEL, V6K_XX_SEEDANCE_20_MODEL } from '../shared/v6kSeedance2';
-import { getModelSpecification, saveModelSpecification, selectModelRoutes } from '../server/services/modelRoutingService';
+import { getModelSpecification, saveModelSpecification } from '../server/services/modelRoutingService';
 import { resumeSpecificationTasks } from '../server/services/specificationGenerationService';
 import { batchStore, tickVideoBatches } from '../server/services/videoBatchService';
 import { V6K_TT25_PRODUCTS } from '../shared/v6kTt25';
-import { V6K_TT_BB_FALLBACKS, isTtBbFallbackRoute } from '../shared/v6kTt25Fallback';
+import { removeTtBbFallbacks } from '../server/db/removeTtBbFallbacks';
 import { ensureV6kTt25Models, v6kTt25SaleId } from '../server/services/v6kTt25Catalog';
 import { quoteVideoRequest } from '../server/services/videoQuoteService';
 import { PricingService } from '../server/services/pricingService';
@@ -477,113 +477,25 @@ describe('V6K explicitly requested model sync allowlist',()=>{
   });
 });
 
-describe('TT priority and operator-controlled BB fallback',()=>{
-  async function install(enabled=true,allowed=[...V6K_TT25_PRODUCTS.map(p=>String(p.id)),...V6K_TT_BB_FALLBACKS.map(p=>String(p.upstream))]) {
-    await installTt25(true,allowed);
-    for(const p of V6K_TT_BB_FALLBACKS){const id='ZH-'+p.primary,s=getModelSpecification(id)!;
-      saveModelSpecification({...s,routes:s.routes.map(r=>isTtBbFallbackRoute(r)?{...r,enabled}:r)});}
-  }
-  const input=(resolution:string)=>({images:0,videos:1,audios:1,outputs:1,seconds:10,resolution,ratio:'16:9',firstFrame:false,lastFrame:false});
-  const body=(p:typeof V6K_TT_BB_FALLBACKS[number])=>({model:'ZH-'+p.primary,prompt:'备用线路保留所有参考素材',seconds:10,resolution:p.resolution,
-    reference_videos:['https://media.example/video.mp4'],audio_urls:['https://media.example/audio.wav']});
-  it('binds only exact authorized BB IDs as disabled internal routes, preserving retail prices and operator switches',async()=>{
-    await install(false);
-    for(const p of V6K_TT_BB_FALLBACKS){const s=getModelSpecification('ZH-'+p.primary)!;
-      expect(s.routes.find(isTtBbFallbackRoute)).toMatchObject({enabled:false,upstreamModel:p.upstream,limits:{maxImages:30,maxVideos:10,maxAudios:10}});
-      expect(db.select().from(models).all().some(m=>m.modelId.includes('BBseadanco'))).toBe(false);}
-    const prices=JSON.stringify(db.select().from(modelPricing).all()),c=db.select().from(channels).get()!;
-    const id='ZH-'+V6K_TT_BB_FALLBACKS[0].primary,s=getModelSpecification(id)!;
-    saveModelSpecification({...s,routes:s.routes.map(r=>isTtBbFallbackRoute(r)?{...r,enabled:true}:r)});
-    upstream=async()=>Response.json({data:[...V6K_TT25_PRODUCTS.map(p=>p.id),...V6K_TT_BB_FALLBACKS.map(p=>p.upstream),'BBseadanco2.5-480'].map(id=>({id}))});
-    await ChannelService.syncModels(c.id);
-    expect(getModelSpecification(id)!.routes.find(isTtBbFallbackRoute)?.enabled).toBe(true);
-    expect(JSON.stringify(db.select().from(modelPricing).all())).toBe(prices);
-    expect(getModelSpecification('ZH-TTseadanco2.5-1080')!.routes.some(isTtBbFallbackRoute)).toBe(false);
-  });
-  it('keeps TT first even when an operator enters a cheaper BB cost, and never crosses resolutions',async()=>{
-    await install();
-    for(const p of V6K_TT_BB_FALLBACKS){const id='ZH-'+p.primary,s=getModelSpecification(id)!;
-      saveModelSpecification({...s,routes:s.routes.map(r=>isTtBbFallbackRoute(r)?{...r,cost:0,priority:-100}:r)});
-      expect(selectModelRoutes(getModelSpecification(id)!,input(p.resolution)).map(t=>t.route.upstreamModel)).toEqual([p.primary,p.upstream]);}
-  });
-  it.each(V6K_TT_BB_FALLBACKS)('uses only $upstream when the authorized catalog no longer supplies TT and BB is enabled',async p=>{
-    await install(true,[p.upstream]);let posts=0;
-    upstream=async(_url,init)=>{posts++;const q=JSON.parse(init.body);expect(q).toMatchObject({model:p.upstream,resolution:p.resolution,seconds:10,videos:body(p).reference_videos,audios:body(p).audio_urls});return Response.json({id:'catalog_bb',status:'completed'});};
-    const r=await post('/api/video/generate',body(p));await r.text();
-    expect(latest().status).toBe('completed');expect(posts).toBe(1);expect(latest().cost).toBe(p.resolution==='480p'?2.8:4);
-  });
-  it.each(['/api/video/generate','/v1/videos'])('uses one order and one charge when TT explicitly rejects with 429 at %s',async endpoint=>{
-    await install();const p=V6K_TT_BB_FALLBACKS[1];const sent:string[]=[];
-    upstream=async(_url,init)=>{const q=JSON.parse(init.body);sent.push(q.model);return q.model===p.primary?Response.json({error:{code:'rate_limit_exceeded',message:'capacity limited'}},{status:429}):Response.json({id:'bb_original',status:'completed'});};
-    const r=await retryVideo(endpoint,body(p),'tt-bb-retry');const text=await r.text();
-    expect(sent).toEqual([p.primary,p.upstream]);expect(latest().status).toBe('completed');expect(latest().cost).toBe(4);expect(balance()).toBe(96);
-    expect(db.select().from(contents).all()).toHaveLength(1);expect(sqlite.prepare('SELECT count(*) AS n FROM billing_reservations').get()).toMatchObject({n:1});
-    expect(JSON.parse(latest().metadata)).toMatchObject({videoId:'bb_original',upstreamModel:p.upstream});
-    expect(findVideoSubmissionReceipt(latest().id)?.upstreamTaskId).toBe('bb_original');
-    if(endpoint==='/v1/videos'){const replay=await retryVideo('/v1/video/generations',body(p),'tt-bb-retry');expect((await replay.json() as any).id).toBe(JSON.parse(text).id);expect(sent).toHaveLength(2);expect(balance()).toBe(96);}
-  });
-  it.each(['timeout','503','504','unknown','failed-with-id'])('never submits BB after TT %s',async mode=>{
-    await install();const p=V6K_TT_BB_FALLBACKS[0];let posts=0,queries=0;
-    upstream=async(_url,init)=>{if(init.method==='POST'){posts++;expect(JSON.parse(init.body).model).toBe(p.primary);
-      if(mode==='timeout')throw new DOMException('timeout','TimeoutError');
-      if(['503','504'].includes(mode))return Response.json({error:{code:'service_unavailable',message:'capacity or response unknown'}},{status:Number(mode)});
-      return Response.json({id:'tt_original',status:mode==='unknown'?'unknown':'failed',error:mode==='unknown'?undefined:{code:'generation_failed',message:'original failed'}});}
-      queries++;return Response.json({id:'tt_original',status:queries===1?'unknown':'completed'});};
-    const r=await post('/api/video/generate',body(p));await r.text();expect(posts).toBe(1);
-    if(mode==='failed-with-id'){expect(latest()).toMatchObject({status:'failed',cost:0});expect(balance()).toBe(100);}
-    else if(mode==='unknown'){expect(latest().status).toBe('completed');expect(balance()).toBe(97.2);expect(queries).toBe(2);}
-    else{expect(['processing','review']).toContain(latest().status);expect(balance()).toBe(97.2);}
-  });
-  it('respects the BB switch and refunds a rejected TT only once when the backup is disabled',async()=>{
-    await install(false);let posts=0;upstream=async()=>{posts++;return Response.json({error:{message:'rate limited'}},{status:429});};
-    const r=await post('/api/video/generate',body(V6K_TT_BB_FALLBACKS[0]));await r.text();
-    expect(posts).toBe(1);expect(latest()).toMatchObject({status:'failed',cost:0});expect(balance()).toBe(100);
-    resumeSpecificationTasks();resumeSpecificationTasks();expect(balance()).toBe(100);expect(posts).toBe(1);
-  });
-  it('requires a fresh authenticated catalog after a Key change and does not infer permission from a public model square',async()=>{
-    await install();const c=db.select().from(channels).get()!,p=V6K_TT_BB_FALLBACKS[0];
-    ChannelService.updateChannel(c.id,{apiKey:'new-test-key'});
-    expect(selectModelRoutes(getModelSpecification('ZH-'+p.primary)!,input(p.resolution)).map(t=>t.route.upstreamModel)).toEqual([p.primary]);
-  });
-  it.each(['completed','failed','uncertain'])('settles BB %s exactly once and does not reuse the TT rejection as refund evidence',async outcome=>{
-    await install();const p=V6K_TT_BB_FALLBACKS[1];let posts=0;
-    upstream=async(_url,init)=>{posts++;const q=JSON.parse(init.body);
-      if(q.model===p.primary)return Response.json({error:{message:'TT rate limited'}},{status:429});
-      if(outcome==='uncertain')return new Response('<html>gateway timeout</html>',{status:504});
-      return Response.json({id:'bb_final_original',status:outcome,error:outcome==='failed'?{message:'BB failed'}:undefined});};
-    const r=await post('/api/video/generate',body(p));await r.text();resumeSpecificationTasks();resumeSpecificationTasks();
-    expect(posts).toBe(2);expect(latest().status).toBe(outcome==='uncertain'?'processing':outcome);
-    if(outcome==='uncertain')expect(JSON.parse(latest().metadata)).toMatchObject({requiresReview:true,videoSubmissionState:'unknown',upstreamModel:p.upstream});
-    expect(balance()).toBe(outcome==='failed'?100:96);expect(latest().cost).toBe(outcome==='failed'?0:4);
-  });
-  it('uses the same queued batch reservation across the TT rejection and BB acceptance',async()=>{
-    await install();const p=V6K_TT_BB_FALLBACKS[0];const sent:string[]=[];
-    const batchId=batchStore.create(1,crypto.randomUUID(),{name:'TT fallback batch',model:'ZH-'+p.primary,resolution:p.resolution,aspect_ratio:'16:9',video_length:10,autoRetry:false,maxRetries:0,creatives:[{prompt:'原批次',count:1,reference_images:[]}]},2.8,'https://app.example');
-    const item=batchStore.item(batchStore.detail(batchId,1).items[0].id);
-    upstream=async(url,init)=>{if(url==='http://127.0.0.1:9876/api/video/generate')return nativeFetch(origin+'/api/video/generate',init);
-      const q=JSON.parse(init.body);sent.push(q.model);return q.model===p.primary?Response.json({error:{message:'TT rate limited'}},{status:429}):Response.json({id:'bb_batch_original',status:'completed'});};
-    tickVideoBatches();await vi.waitFor(()=>expect(latest()?.status).toBe('completed'));tickVideoBatches();tickVideoBatches();resumeSpecificationTasks();
-    expect(sent).toEqual([p.primary,p.upstream]);expect(batchStore.item(item.id)).toMatchObject({status:'completed',billing_state:'charged',charged:2.8});expect(balance()).toBe(97.2);expect(latest().cost).toBe(2.8);
-  });
-  it('recovers the accepted BB task after its switch is closed and its catalog permission disappears, without another submission',async()=>{
-    await install();const p=V6K_TT_BB_FALLBACKS[1],c=db.select().from(channels).get()!;let posts=0,queries=0,clock=Date.now();
-    const time=vi.spyOn(Date,'now').mockImplementation(()=>clock);
-    try{
-      upstream=async(url,init)=>{if(init.method==='POST'){posts++;return JSON.parse(init.body).model===p.primary?Response.json({error:{message:'TT limited'}},{status:429}):Response.json({id:'accepted_bb_original',status:'queued'});}
-        queries++;clock+=2*60*60_000+1;return Response.json({id:'accepted_bb_original',status:'unknown'});};
-      await(await post('/api/video/generate',body(p))).text();
-      await vi.waitFor(()=>expect(Number(JSON.parse(latest().metadata).v6kQueryResumeAt)).toBeGreaterThan(clock));
-      const id=latest().id,receipt=findVideoSubmissionReceipt(id),s=getModelSpecification('ZH-'+p.primary)!;
-      saveModelSpecification({...s,routes:s.routes.map(r=>isTtBbFallbackRoute(r)?{...r,enabled:false}:r)});
-      upstream=async(url,init)=>{if(url.endsWith('/v1/models'))return Response.json({data:[{id:p.primary}]});
-        expect(init.method).not.toBe('POST');queries++;expect(url).toBe('https://www.v6k.top/v1/videos/accepted_bb_original');return Response.json({id:'accepted_bb_original',status:'completed'});};
-      await ChannelService.syncModels(c.id);expect(findVideoSubmissionReceipt(id)).toEqual(receipt);
-      clock+=120_000;resumeSpecificationTasks();resumeSpecificationTasks();
-      await vi.waitFor(()=>expect(latest().status).toBe('completed'));
-      expect(posts).toBe(2);expect(queries).toBe(2);expect(balance()).toBe(96);expect(latest().cost).toBe(4);
-      expect(JSON.parse(latest().metadata)).toMatchObject({videoId:'accepted_bb_original',upstreamModel:p.upstream});
-    }finally{time.mockRestore();}
-  });
+it('removes saved BB fallback configuration while recovering its already accepted original task and reservation',async()=>{
+  await installTt25(true);const id='ZH-TTseadanco2.5-720',spec=getModelSpecification(id)!;
+  const bb={...spec.routes[0],id:'v6k-tt-bb-1-720p',upstreamModel:'BBseadanco-720'};
+  saveModelSpecification({...spec,routes:[bb]});
+  let posts=0,queries=0,clock=Date.now();const time=vi.spyOn(Date,'now').mockImplementation(()=>clock);
+  try{
+    upstream=async(url,init)=>{if(init.method==='POST'){posts++;expect(JSON.parse(init.body).model).toBe('BBseadanco-720');return Response.json({id:'accepted_bb_before_removal',status:'queued'});}
+      queries++;clock+=2*60*60_000+1;return Response.json({id:'accepted_bb_before_removal',status:'unknown'});};
+    await(await post('/api/video/generate',{model:id,prompt:'old accepted order',seconds:10,resolution:'720p'})).text();
+    await vi.waitFor(()=>expect(Number(JSON.parse(latest().metadata).v6kQueryResumeAt)).toBeGreaterThan(clock));
+    const original=latest(),receipt=findVideoSubmissionReceipt(original.id),balanceBefore=balance();
+    expect(removeTtBbFallbacks(sqlite)).toBe(1);expect(getModelSpecification(id)!.routes).toEqual([]);
+    expect(findVideoSubmissionReceipt(original.id)).toEqual(receipt);expect(balance()).toBe(balanceBefore);
+    upstream=async(url,init)=>{expect(init.method).not.toBe('POST');queries++;expect(url).toBe('https://www.v6k.top/v1/videos/accepted_bb_before_removal');return Response.json({id:'accepted_bb_before_removal',status:'completed'});};
+    clock+=120_000;resumeSpecificationTasks();resumeSpecificationTasks();
+    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    expect(posts).toBe(1);expect(queries).toBe(2);expect(latest().cost).toBe(4);expect(balance()).toBe(96);
+    expect(JSON.parse(latest().metadata)).toMatchObject({videoId:'accepted_bb_before_removal',upstreamModel:'BBseadanco-720'});
+  }finally{time.mockRestore();}
 });
 
 describe('API request retry protection before order creation and charging',()=>{

@@ -220,15 +220,4 @@ describe('model specification loading failures', () => {
     expect(screen.getByRole('button', { name: '管理线路' })).toBeVisible();
     expect(screen.queryByText('开始管理模型线路')).toBeNull();
   });
-  it('shows the TT-first BB backup policy and persists its independent switch', async () => {
-    const id='ZH-TTseadanco2.5-720', tt={...structuredClone(spec),modelId:id,displayName:'TT 720p',routes:[{...structuredClone(spec.routes[0]),executionModel:id,upstreamModel:'BBseadanco-720',enabled:false}]};
-    vi.mocked(adminApi.getModelSpecifications).mockResolvedValue([tt]);
-    vi.mocked(adminApi.getModels).mockResolvedValue([{...models[0],modelId:id}]);
-    mount();fireEvent.click(await screen.findByRole('button',{name:'管理线路'}));
-    expect(screen.getByText('渠道 A · BB 备用')).toBeVisible();
-    expect(screen.getByText(/满足参数时优先 TT/)).toBeVisible();
-    const toggle=screen.getByLabelText('启用这条模型线路');expect(toggle).not.toBeChecked();
-    fireEvent.click(toggle);fireEvent.click(screen.getByRole('button',{name:'保存规格与线路'}));
-    await waitFor(()=>expect(adminApi.saveModelSpecification).toHaveBeenCalledWith(expect.objectContaining({modelId:id,routes:[expect.objectContaining({upstreamModel:'BBseadanco-720',enabled:true})]})));
-  });
 });

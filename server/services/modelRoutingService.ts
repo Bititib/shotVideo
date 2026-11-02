@@ -1,6 +1,4 @@
 import { HUSS_MJ_MODEL } from '../../shared/hussMidjourney.js';
-import { isTtBbFallbackRoute, ttBbFallbackProduct } from '../../shared/v6kTt25Fallback.js';
-import { v6kTtBbUnavailable } from './v6kTt25Fallback.js';
 import type { ModelAvailability } from '../../shared/upstreamAvailability.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
@@ -116,14 +114,12 @@ export function inspectModelRoutes(spec: ModelSpecification, input?: RoutingInpu
   return spec.routes.map(route => {
     const retired = [spec.modelId,route.executionModel,route.upstreamModel].some(isRetiredVideoModel);
     const executions = activeChannels.filter(c => c.id === route.channelId && Boolean(String(c.apiKey || '').trim()) && (c.supportedModels.includes(route.executionModel) || c.supportedModels.includes('*')));
-    const permitted = executions.filter(c => !v6kTtBbUnavailable(sqlite, route, c));
-    const catalogReason = executions.map(c => v6kTtBbUnavailable(sqlite, route, c)).find(Boolean);
     const execution = registry.find(m => m.modelId === route.executionModel);
-    const reason = execution?.isActive === 0 && execution.modelId !== MJ_OVERFLOW_VIDEO_MODEL ? ['执行模型已禁用'] : !spec.enabled || model?.isActive !== 1 ? ['规格已禁用'] : !route.enabled ? ['模型线路已禁用'] : !permitted.length ? [catalogReason || '渠道或 Key 已禁用 / 未配置'] : [];
+    const reason = execution?.isActive === 0 && execution.modelId !== MJ_OVERFLOW_VIDEO_MODEL ? ['执行模型已禁用'] : !spec.enabled || model?.isActive !== 1 ? ['规格已禁用'] : !route.enabled ? ['模型线路已禁用'] : !executions.length ? ['渠道或 Key 已禁用 / 未配置'] : [];
     if (retired) reason.push(RETIRED_VIDEO_MODEL_MESSAGE);
     const matches = input ? routingMismatches(route.limits, input, spec.kind) : [];
     if (input && route.executionModel === SI_YUE_TIAN_MINIMAX_MODEL) matches.push(...siYueTianMinimaxInputErrors(input));
-    const targets = permitted.map(channel => ({ route, channel, cost: input ? routeRequestCost(route, input) : null, healthKey: routeHealthKey(route, channel.apiKeyId) }));
+    const targets = executions.map(channel => ({ route, channel, cost: input ? routeRequestCost(route, input) : null, healthKey: routeHealthKey(route, channel.apiKeyId) }));
     return { route, reasons: [...reason, ...matches],
       cost: input ? routeRequestCost(route, input) : null, health: targets.map(t => ({ key: t.healthKey, ...(health[t.healthKey] || { state: 'healthy' }) })), candidates: targets };
   });
@@ -133,8 +129,7 @@ export function selectModelRoutes(spec: ModelSpecification, input: RoutingInput)
   if (spec.modelId === SI_YUE_TIAN_MINIMAX_MODEL) reasons.push(...siYueTianMinimaxInputErrors(input));
   if (reasons.length) throw error(reasons.join('；'));
   return inspectModelRoutes(spec, input).filter(item => !item.reasons.length).flatMap(item => item.candidates)
-    .sort((a, b) => (ttBbFallbackProduct(spec.modelId) ? Number(isTtBbFallbackRoute(a.route)) - Number(isTtBbFallbackRoute(b.route)) : 0)
-      || (a.cost ?? Infinity) - (b.cost ?? Infinity) || a.route.priority - b.route.priority || a.channel.priority - b.channel.priority || a.channel.id - b.channel.id);
+    .sort((a, b) => (a.cost ?? Infinity) - (b.cost ?? Infinity) || a.route.priority - b.route.priority || a.channel.priority - b.channel.priority || a.channel.id - b.channel.id);
 }
 export function specificationAvailability(spec: ModelSpecification): ModelAvailability {
   const routes = inspectModelRoutes(spec);
@@ -163,7 +158,6 @@ export function routeUnavailableReason(modelId: string, target: RouteCandidate, 
   const candidates = ChannelService.getActiveChannels().filter(c => c.id === target.channel.id);
   if (!candidates.length) return '提交前检查：渠道已禁用或没有启用的 Key';
   const original = candidates.find(c => c.apiKeyId === target.channel.apiKeyId);
-  if (original) { const unavailable = v6kTtBbUnavailable(sqlite, route, original); if (unavailable) return unavailable; }
   if (!original || !original.apiKey) return '提交前检查：原 Key 已禁用或未配置';
   if (original.apiKey !== target.channel.apiKey || original.baseUrl !== target.channel.baseUrl) return '提交前检查：原渠道地址或 Key 已变更';
   if (!original.supportedModels.includes(route.executionModel) && !original.supportedModels.includes('*')) return '提交前检查：渠道不再关联当前执行模型';
