@@ -1,8 +1,7 @@
-import { isApipathChannel, apipathBase } from './apipathAdapter.js';
 import { configuredSyncBindings } from './modelSyncScope.js';
+import { isSupportedChannelType } from '../../shared/channelTypes.js';
 import { GOOGLE_SYNC_MODEL_IDS } from '../../shared/googleSyncModels.js';
 import { SNUMOM_VIDEO_MODELS } from './snumomWanAdapter.js';
-import { apipathKeys, saveApipathKeys, apipathExecutions, apipathKeyForReceipt } from './apipathKeyService.js';
 import { isMegabyChannel, megabyBaseUrl, fetchMegabyVideoModels } from './megabyVideoAdapter.js';
 import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
 import { isRetiredVideoModel } from '../../shared/retiredVideoModels.js';
@@ -16,9 +15,9 @@ import { HUSS_CHANNEL_TYPE, hussApiBase, isHussChannel, fetchHussVideoModels } f
 import { HAYA_MODEL_IDS, HAYA_XG_SEEDANCE_20_MODEL, getHayaVideoSpec, hayaPublicModelId, hayaUpstreamModelId } from '../../shared/hayaVideo.js';
 import { isHayaChannel, hayaApiBaseUrl } from './hayaVideoAdapter.js';
 import { db, sqlite } from '../db/index.js';
+import { channelApiKeys, channels, models, modelPricing } from '../db/schema.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL, isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
 import { ensureSiYueTianMinimaxModel } from './siYueTianMinimaxCatalog.js';
-import { channelApiKeys, channels, models, modelPricing, apipathChannelKeys } from '../db/schema.js';
 import { and, desc, eq } from 'drizzle-orm';
 import { hmStudioPoolConfig, hmStudioPoolKey, hmStudioQueue } from './hmStudioQueueService.js';
 import {
@@ -219,10 +218,6 @@ export class ChannelService {
 
       return {
         ...channel,
-        ...(channel.type === 'apipath' ? {
-          apipathImageKey: maskApiKey(apipathKeys(channel.id).find(k => k.kind === 'image' && k.status === 1)?.apiKey || ''),
-          apipathVideoKey: maskApiKey(apipathKeys(channel.id).find(k => k.kind === 'video' && k.status === 1)?.apiKey || ''),
-        } : {}),
         modelMapping: parseJsonObject(channel.modelMapping),
         supportedModels: parseJsonArray(channel.supportedModels),
         apiKey: channel.type === 'hmstudio'
@@ -242,11 +237,7 @@ export class ChannelService {
   /** 获取渠道执行配置；HM Studio 可锁定到任务创建时选中的 Key。 */
   static getChannelRaw(id: number, apiKeyId?: number | null) {
     const channel = db.select().from(channels).where(eq(channels.id, id)).get();
-    if (!channel) return channel;
-    if (channel.type === 'apipath' && apiKeyId) {
-      const key = apipathKeyForReceipt(id, apiKeyId);
-      return key ? { ...channel, apiKey: key.apiKey, apiKeyId: key.id } : undefined;
-    }
+    if (!channel || !isSupportedChannelType(channel.type)) return undefined;
     if (channel.type !== 'hmstudio') return { ...channel, apiKeyId: null };
 
     const keys = db.select().from(channelApiKeys)
@@ -282,13 +273,13 @@ export class ChannelService {
     syncHmStudioPools(channelRows);
 
     return channelRows.flatMap(channel => {
+      if (!isSupportedChannelType(channel.type)) return [];
       const base = {
         ...channel,
         apiKeyId: null as number | null,
         modelMapping: parseJsonObject(channel.modelMapping),
         supportedModels: parseJsonArray(channel.supportedModels),
       };
-      if (channel.type === 'apipath') return apipathExecutions(base);
       if (channel.type !== 'hmstudio') return [base];
       return hmKeys
         .filter(key => key.channelId === channel.id)
@@ -404,7 +395,6 @@ export class ChannelService {
 
   static createChannel(data: any) {
     let { name, type, baseUrl, apiKey, modelMapping, supportedModels, priority, weight, maxRetries, timeout } = data;
-    if (type === 'apipath') { baseUrl = apipathBase(baseUrl || 'https://online.apipath.top'); maxRetries = 0; }
     if (type === 'blobdraw') {
       const alreadyHuss = isHussChannel({ baseUrl });
       type = HUSS_CHANNEL_TYPE;
@@ -446,11 +436,6 @@ export class ChannelService {
         : 0,
     }).run();
     const channelId = Number(result.lastInsertRowid);
-
-    if (type === 'apipath') {
-      try { saveApipathKeys(channelId, data); }
-      catch (error) { db.delete(channels).where(eq(channels.id, channelId)).run(); throw error; }
-    }
 
     if (type === 'hmstudio') {
       const entries = Array.isArray(data.apiKeys) ? data.apiKeys : (apiKey ? [{ apiKey, concurrencyLimit: data.concurrencyLimit }] : []);
@@ -545,7 +530,6 @@ export class ChannelService {
     }
     updates.updatedAt = new Date().toISOString();
 
-    if (nextType === 'apipath') { updates.maxRetries = 0; updates.baseUrl = apipathBase(String(data.baseUrl ?? channel.baseUrl)); }
     if (nextType === 'hmstudio') {
       if (Array.isArray(data.apiKeys)) {
         saveHmStudioKeys(id, data.apiKeys, true);
@@ -554,14 +538,12 @@ export class ChannelService {
       }
     }
     sqlite.transaction(() => {
-      if (nextType === 'apipath') saveApipathKeys(id, data);
       db.update(channels).set(updates).where(eq(channels.id, id)).run();
     })();
     syncHmStudioPools();
   }
 
   static deleteChannel(id: number) {
-    db.delete(apipathChannelKeys).where(eq(apipathChannelKeys.channelId, id)).run();
     db.delete(channelApiKeys).where(eq(channelApiKeys.channelId, id)).run();
     db.delete(channels).where(eq(channels.id, id)).run();
     syncHmStudioPools();
@@ -570,16 +552,10 @@ export class ChannelService {
   static async testChannel(id: number): Promise<{ success: boolean; message: string; durationMs: number }> {
     const channel = this.getChannelRaw(id);
     if (!channel) throw { status: 404, message: '渠道不存在' };
-    if (!channel.apiKey && !(isApipathChannel(channel) && apipathKeys(id).some(k => k.status === 1))) throw { status: 400, message: '请先为渠道添加 API Key' };
 
+    if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
     const start = Date.now();
     try {
-      if (isApipathChannel(channel)) {
-        const catalog = await (await import('./apipathCatalogService.js')).fetchApipathCatalog(channel);
-        const message = '通联连接成功；' + catalog.summaries.join('；');
-        db.update(channels).set({ lastTestAt: new Date().toISOString(), lastTestResult: message }).where(eq(channels.id, id)).run();
-        return { success: true, message, durationMs: Date.now() - start };
-      }
       if (isMegabyChannel(channel) || isMjChannel(channel) || isAsyncVideoChannel(channel) || isHussChannel(channel) || isFunAiChannel(channel)) {
         let catalogSummary = '';
         if (isMegabyChannel(channel)) {
@@ -642,7 +618,6 @@ export class ChannelService {
   static async syncModels(id: number): Promise<{ count: number; added: number; models: string[]; warnings?: string[] }> {
     const channel = this.getChannelRaw(id);
     if (!channel) throw { status: 404, message: '渠道不存在' };
-    if (isApipathChannel(channel)) return (await import('./apipathCatalogService.js')).syncApipathModels(channel);
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
     // Pidoi's /v1/models endpoint is a general catalog and currently returns video
     // products for the same account. This channel is deliberately image-only; a

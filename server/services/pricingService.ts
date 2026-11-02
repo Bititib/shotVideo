@@ -1,4 +1,3 @@
-import { archivedApipathModelIds } from './apipathModelArchive.js';
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { db, sqlite } from '../db/index.js';
 import { ensureUserModelTables } from '../db/userModelMigration.js';
@@ -259,8 +258,7 @@ export class PricingService {
 
   /** 获取规则，并补充模型名称与业务分类；可供管理页搜索及筛选。 */
   static getPricingRules(query: { category?: string; billingType?: string; search?: string; modelId?: string; scope?: 'all' | 'active' | 'models' } = {}) {
-    const archived = archivedApipathModelIds();
-    const modelRows = db.select().from(models).all().filter(model => !archived.has(model.modelId));
+    const modelRows = db.select().from(models).all();
     const modelMap = new Map(modelRows.map(model => [model.modelId, model]));
     const search = String(query.search || '').trim().toLowerCase();
 
@@ -310,7 +308,6 @@ export class PricingService {
     }
 
     return result
-      .filter(rule => !archived.has(rule.modelPattern))
       .filter(rule => !query.modelId || rule.modelPattern === query.modelId)
       .filter(rule => !query.category || query.category === 'all' || rule.category === query.category)
       .filter(rule => !query.billingType || query.billingType === 'all' || rule.billingType === query.billingType)

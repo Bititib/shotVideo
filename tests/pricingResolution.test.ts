@@ -22,7 +22,7 @@ describe('pricing resolution fields', () => {
     });
   });
 
-  it.each(['gpt-image-2-mingfei', 'gpt-image-2-5-sunburst'])('exposes %s 1K, 2K and 4K prices independently', model => {
+  it.each(['gpt-image-2-mingfei'])('exposes %s 1K, 2K and 4K prices independently', model => {
     expect(pricingResolutionFields(model, { category: 'image' })).toEqual({
       keys: ['1K', '2K', '4K'],
       values: { '1K': '', '2K': '', '4K': '' },

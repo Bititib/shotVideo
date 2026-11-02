@@ -10,7 +10,7 @@ export default function ChannelDetails({ channel, tab, onTabChange, busy, testin
   onEdit: () => void; onTest: () => void; onSync: () => void; children: ReactNode;
 }) {
   const modelCount = channel.supportedModels?.length || 0;
-  const provider = channel.type === 'apipath' ? '通联' : channel.type === 'megaby' ? 'Megaby' : channel.type === 'mj' ? 'MJ' : channel.type === 'async-video' ? 'Vx-乐2.0fast' : channel.type === 'funai' ? 'FunAI' : ['zongheng', 'zongheng-v6k'].includes(channel.type) ? '纵横科技 V6K' : channel.type === 'hmstudio' ? 'HM Studio' : channel.type;
+  const provider = channel.type === 'megaby' ? 'Megaby' : channel.type === 'mj' ? 'MJ' : channel.type === 'async-video' ? 'Vx-乐2.0fast' : channel.type === 'funai' ? 'FunAI' : ['zongheng', 'zongheng-v6k'].includes(channel.type) ? '纵横科技 V6K' : channel.type === 'hmstudio' ? 'HM Studio' : channel.type;
   const currentFeedback = feedback?.channelId === channel.id ? feedback : null;
   return (
     <div className="channel-details">
@@ -50,11 +50,7 @@ export default function ChannelDetails({ channel, tab, onTabChange, busy, testin
         <section><h3>连接配置</h3><dl>
           <div><dt>渠道类型</dt><dd>{provider}</dd></div>
           <div><dt>接口地址</dt><dd className="channel-details-url">{channel.baseUrl || '默认接口'}</dd></div>
-          {channel.type === 'apipath' ? <>
-            <div><dt>图片 API Key</dt><dd>{channel.apipathImageKey ? '已配置' : '未配置'}</dd></div>
-            <div><dt>视频 API Key</dt><dd>{channel.apipathVideoKey ? '已配置' : '未配置'}</dd></div>
-            {channel.apiKey && <div><dt>旧版通用 Key</dt><dd>已保留</dd></div>}
-          </> : <div><dt>API Key</dt><dd>{channel.apiKey || channel.apiKeyCount ? '已配置' : '未配置'}</dd></div>}
+          <div><dt>API Key</dt><dd>{channel.apiKey || channel.apiKeyCount ? '已配置' : '未配置'}</dd></div>
         </dl></section>
         <section><h3>调度与运行</h3><dl>
           <div><dt>优先级</dt><dd>{channel.priority ?? 0}</dd></div>

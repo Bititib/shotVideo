@@ -1,5 +1,4 @@
 import { responseDiagnostic, upstreamDiagnostic } from './upstreamDiagnostic.js';
-import { isApipathChannel } from './apipathAdapter.js';
 import { isHussChannel, fetchHussVideoContent, HussApiError } from './hussVideoAdapter.js';
 import { isMegabyChannel, megabyContentUrl, fetchMegabyVideoContent, readMegabyJson } from './megabyVideoAdapter.js';
 import { zonghengTaskUrl } from './zonghengAdapter.js';
@@ -51,8 +50,7 @@ export async function downloadAndLocalizeVideo(
   const channel = exactChannel || ChannelService.findChannelForModel(model);
   const authenticatedV6kContent = channel && isZonghengChannel(channel) && url === zonghengTaskUrl(channel.baseUrl, videoId) + '/content';
   const headers: Record<string, string> = {};
-  // Apipath returns an object-storage media URL, not an authenticated API route.
-  const maySendAuthorization = isApipathChannel(channel) ? false : isHussChannel(channel) ? false : isMegabyChannel(channel) ? false : isAsyncVideoChannel(channel) ? false : isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isZonghengChannel(channel) ? Boolean(authenticatedV6kContent) : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
+  const maySendAuthorization = isHussChannel(channel) ? false : isMegabyChannel(channel) ? false : isAsyncVideoChannel(channel) ? false : isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isZonghengChannel(channel) ? Boolean(authenticatedV6kContent) : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
     ? shouldSendHmStudioAuthorization(url, channel.baseUrl)
     : isWxHaidiYueChannel(channel)
       ? shouldSendWxHaidiYueAuthorization(url, channel.baseUrl)
@@ -120,7 +118,6 @@ export async function downloadAndLocalizeVideo(
   if (isHussChannel(channel) && response.status === 202) {
     throw new Error(await responseDiagnostic('HUSS', '原任务下载仍在准备，继续查询原任务', response, channel.apiKey));
   }
-  if (!response.ok && isApipathChannel(channel)) throw new Error(await responseDiagnostic('通联', '成品下载', response, channel.apiKey));
   if (!response.ok) throw new Error(`Failed to fetch video from upstream: ${response.status} ${response.statusText}`);
 
   const buffer = Buffer.from(await response.arrayBuffer());
