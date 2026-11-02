@@ -11,7 +11,7 @@ export function selectedHssSource(): 'A' | 'B' | undefined {
 }
 export function switchHssSource(source: unknown) {
   const invalid = (message:string) => Object.assign(new Error(message),{status:400});
-  if(bbHssKkManaged(sqlite,HUSS_HSS_MODEL))throw Object.assign(new Error('HSS 已改由 KK 生成，不再使用旧渠道 A/B 切换'),{status:409});
+  if(bbHssKkManaged(sqlite,HUSS_HSS_MODEL))throw Object.assign(new Error('请使用 BB/HSS 来源切换，选择渠道并验证模型权限'),{status:409});
   if (source !== 'A' && source !== 'B') throw invalid('请选择原渠道B或新渠道A');
   return sqlite.transaction(() => {
     const spec = getModelSpecification(HUSS_HSS_MODEL);

@@ -749,7 +749,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
   const spec = getModelSpecification(suppliedId);
   const modelId = spec?.modelId || suppliedId;
   if (!spec && bbHssKkManaged(sqlite,suppliedId)) {
-    res.status(503).json({error:'BB/HSS 的 KK 规格配置缺失，请在后台恢复对应规格；未提交或扣费'});return true;
+    res.status(503).json({error:'BB/HSS 的规格配置缺失，请在后台恢复对应规格；未提交或扣费'});return true;
   }
   if (suppliedId === SI_YUE_TIAN_MINIMAX_MODEL && !spec) {
     res.status(503).json({ error: '四月天 MiniMax H3 尚未关联模型规格与渠道，请在后台同步该渠道模型' }); return true;

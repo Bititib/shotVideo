@@ -1,5 +1,7 @@
 import { selectedHssSource } from './hssSourceService.js';
 import { bbHssKkManaged } from './bbHssKkMigration.js';
+import { readBbHssSources } from './bbHssSourcePolicy.js';
+import { BB_HSS_SOURCES } from '../../shared/bbHssSources.js';
 import { HUSS_MJ_MODEL, hussMjLimits } from '../../shared/hussMidjourney.js';
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
@@ -35,6 +37,10 @@ export async function syncHussModels(channel: HussChannel & { id: number; name: 
         }) : [...spec.routes, route];
         saveModelSpecification({ ...spec, ...(upstreamId === HUSS_BB_A_MODEL ? {limits} : {}), routes });
       }
+    }
+    // Synchronization cannot replace an explicit source choice or its switches/limits.
+    for (const [id, selection] of Object.entries(readBbHssSources(sqlite))) {
+      if (selection.channelId === channel.id && selection.source !== 'KK' && bbHssKkManaged(sqlite,id)) mapping[id] = BB_HSS_SOURCES[selection.source].upstreamModel;
     }
     db.update(channels).set({ type: 'huss', supportedModels: JSON.stringify(Object.keys(mapping)), modelMapping: JSON.stringify(mapping), updatedAt: new Date().toISOString() }).where(eq(channels.id, channel.id)).run();
   })();

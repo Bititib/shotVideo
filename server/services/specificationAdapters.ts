@@ -33,7 +33,7 @@ import { prepareHayaMedia } from './hayaMediaService.js';
 import { generateMingFeiImage, isMingFeiImageChannel, mingFeiImageContentUrl } from './mingFeiImageAdapter.js';
 import { generateSiYueTianImage, isSiYueTianImageChannel, siYueTianImageContentUrl } from './siYueTianImageAdapter.js';
 import { publishReferenceUrl } from './publicReferenceService.js';
-import { isHussChannel, submitHussVideo, pollHussVideo, HussApiError } from './hussVideoAdapter.js';
+import { isHussChannel, submitHussVideo, pollHussVideo, HussApiError, hussVideoParameters } from './hussVideoAdapter.js';
 import { registerUpload } from './uploadAccess.js';
 import { isSnumomSubmissionRejection } from './snumomSubmissionRejection.js';
 import { videoErrorTaskId, videoRequestNotSent, explicitVideoCreateError } from './videoSubmissionErrors.js';
@@ -46,6 +46,10 @@ export type SpecificationRequest = { prompt: string; input: RoutingInput; images
 /** Validate extra-parameter/media combinations before reserving money or creating a task. */
 export function validateSpecificationVideoParameters(request: SpecificationRequest, candidates: RouteCandidate[]) {
   for (const target of candidates) {
+    if (isHussChannel(target.channel)) hussVideoParameters({ model: target.route.upstreamModel, prompt: request.prompt,
+      seconds: request.input.seconds, ratio: request.input.ratio, resolution: request.input.resolution,
+      images: request.images, videos: request.videos, audios: request.audios, firstFrame: request.firstFrame,
+      lastFrame: request.lastFrame, publicBaseUrl: request.publicBaseUrl, idempotencyKey: 'input-validation' });
     if (isFunAiChannel(target.channel)) validateFunAiReferenceMode(target.route.upstreamModel, request);
     if (target.channel.type === 'hmstudio' && request.body.function_mode !== undefined) {
       const error = validateHmStudioAdditionalVideoInput(getHmStudioPublicVideoModel(target.route.upstreamModel), {

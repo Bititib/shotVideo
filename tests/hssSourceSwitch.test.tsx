@@ -1,28 +1,35 @@
 // @vitest-environment jsdom
 import React from 'react';
 import {it,expect,vi,afterEach} from 'vitest';
-import {render,screen,fireEvent,waitFor,cleanup} from '@testing-library/react';
+import {render,screen,fireEvent,cleanup} from '@testing-library/react';
 import HssSourceSwitch from '../client/src/components/HssSourceSwitch';
 import {adminApi} from '../client/src/api/admin';
-vi.mock('../client/src/api/admin',()=>({adminApi:{getModelSpecifications:vi.fn(),switchHssSource:vi.fn()}}));
+import {BB_HSS_SOURCES} from '../shared/bbHssSources';
+vi.mock('../client/src/api/admin',()=>({adminApi:{getVideoSources:vi.fn(),switchVideoSource:vi.fn()}}));
 afterEach(()=>{cleanup();vi.clearAllMocks();});
-it('shows KK after the cutover and removes the obsolete HUSS A/B controls',async()=>{
- vi.mocked(adminApi.getModelSpecifications).mockResolvedValue([{modelId:'hss-2.5-301010',generationSource:'kkseadanco2.5',routes:[]}]);
- render(<HssSourceSwitch/>);await screen.findByText('新任务使用 KK');
- expect(screen.queryByRole('button',{name:'原渠道B'})).toBeNull();
- expect(screen.queryByRole('button',{name:'新渠道A'})).toBeNull();
- expect(adminApi.switchHssSource).not.toHaveBeenCalled();
+const options=Object.entries(BB_HSS_SOURCES).map(([source,v],i)=>({source,label:v.label,channelId:i+1,channelName:'配置渠道'+(i+1),ready:true,upstreamModel:v.upstreamModel,limits:v.limits()}));
+const initial={current:{source:'KK',channelId:1},options};
+it.each(['bb-2.5-301010','hss-2.5-301010'])('switches %s independently and only displays the confirmed source',async modelId=>{
+ vi.mocked(adminApi.getVideoSources).mockResolvedValue(initial);
+ let finish!:(v:any)=>void;vi.mocked(adminApi.switchVideoSource).mockImplementation(()=>new Promise(resolve=>finish=resolve));
+ render(<HssSourceSwitch modelId={modelId}/>);
+ await screen.findByText('当前：KK · 配置渠道1');
+ expect(adminApi.getVideoSources).toHaveBeenCalledExactlyOnceWith(modelId);
+ fireEvent.change(screen.getByRole('combobox'),{target:{value:'A:2'}});fireEvent.click(screen.getByRole('button',{name:'切换来源'}));
+ expect(adminApi.switchVideoSource).toHaveBeenCalledExactlyOnceWith(modelId,'A',2);
+ expect(screen.getByText('当前：KK · 配置渠道1')).toBeTruthy();
+ finish({...initial,current:{source:'A',channelId:2}});
+ await screen.findByText('当前：HUSS 渠道 A · 配置渠道2');await screen.findByText('已保存，仅对新订单生效');
+ expect(screen.getByRole('button',{name:'切换来源'}).hasAttribute('disabled')).toBe(true);
+ vi.mocked(adminApi.switchVideoSource).mockRejectedValue(new Error('未开放，原配置保留'));
+ fireEvent.change(screen.getByRole('combobox'),{target:{value:'B:3'}});fireEvent.click(screen.getByRole('button',{name:'切换来源'}));
+ await screen.findByRole('alert');expect(screen.getByText('当前：HUSS 渠道 A · 配置渠道2')).toBeTruthy();
 });
-it('switches immediately and displays only the confirmed saved source',async()=>{
- vi.mocked(adminApi.getModelSpecifications).mockResolvedValue([{modelId:'hss-2.5-301010',routes:[{upstreamModel:'bb-2.5-301010-渠道A'}]}]);
- vi.mocked(adminApi.switchHssSource).mockResolvedValue({routes:[{upstreamModel:'hss-2.5-301010-渠道B'}]});
- render(<HssSourceSwitch/>);
- await screen.findByRole('button',{name:'新渠道A · 当前'});
- fireEvent.click(screen.getByRole('button',{name:'原渠道B'}));
- await screen.findByRole('button',{name:'原渠道B · 当前'});
- expect(adminApi.switchHssSource).toHaveBeenCalledExactlyOnceWith('B');
- vi.mocked(adminApi.switchHssSource).mockRejectedValue(new Error('保存失败'));
- fireEvent.click(screen.getByRole('button',{name:'新渠道A'}));
- await waitFor(()=>expect(screen.getByRole('alert').textContent).toBe('保存失败'));
- expect(screen.getByRole('button',{name:'原渠道B · 当前'}).getAttribute('aria-pressed')).toBe('true');
+it('disables unconfigured sources, shows source-specific limits and never requests a generation',async()=>{
+ vi.mocked(adminApi.getVideoSources).mockResolvedValue({...initial,options:options.map(v=>({...v,ready:v.source!=='B'}))});
+ render(<HssSourceSwitch/>);await screen.findByText('当前：KK · 配置渠道1');
+ expect(screen.getByRole('option',{name:/HUSS 渠道 B/}).hasAttribute('disabled')).toBe(true);
+ fireEvent.change(screen.getByRole('combobox'),{target:{value:'A:2'}});
+ expect(screen.getByText(/素材合计最多30个/)).toBeTruthy();
+ expect(adminApi.switchVideoSource).not.toHaveBeenCalled();
 });

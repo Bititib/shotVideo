@@ -327,10 +327,10 @@ export default function ModelsPage({ channelId, onEditingChange }: { channelId?:
       {/* Edit Modal */}
       {edit && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={closeEdit}>
-          <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
+          <div className="bg-[#1a1a1a] border border-white/10 rounded-2xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <p role="alert" className="text-red-500">{error}</p><h3 className="text-lg font-semibold text-white mb-5">{edit.isNew ? '添加新模型' : `编辑: ${edit.displayName}`}</h3>
             <div className="space-y-4">
-              {edit.modelId === 'hss-2.5-301010' && !edit.isNew && <HssSourceSwitch/>}
+              {['bb-2.5-301010','hss-2.5-301010'].includes(edit.modelId) && !edit.isNew && <HssSourceSwitch modelId={edit.modelId}/>}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs text-zinc-400 mb-1.5">供应商</label>

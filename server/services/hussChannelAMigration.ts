@@ -4,6 +4,7 @@ import { channels, models, settings } from '../db/schema.js';
 import { HUSS_BB_A_MODEL, HUSS_BB_PUBLIC_MODEL, HUSS_HSS_MODEL, hussBbAModelLimits } from '../../shared/hussBbVideo.js';
 import { isHussChannel } from './hussVideoAdapter.js';
 import { getModelSpecification, saveModelSpecification } from './modelRoutingService.js';
+import { bbHssKkManaged } from './bbHssKkMigration.js';
 
 const KEY = 'migration_huss_bb_channel_a_v1';
 /** Switch new requests only. Never rewrite contents, original payloads, or billing. */
@@ -14,6 +15,7 @@ export function migrateHussChannelA() {
       const supported: string[] = JSON.parse(channel.supportedModels || '[]');
       const mapping = JSON.parse(channel.modelMapping || '{}');
       for (const publicId of [HUSS_BB_PUBLIC_MODEL, HUSS_HSS_MODEL]) {
+        if (bbHssKkManaged(sqlite, publicId)) continue;
         const spec = getModelSpecification(publicId);
         const related = spec?.routes.some(r => r.channelId === channel.id);
         if (!related && !supported.includes(publicId) && !mapping[publicId]) continue;

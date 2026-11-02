@@ -1,6 +1,6 @@
 import { HUSS_MJ_MODEL } from '../../shared/hussMidjourney.js';
 import { bbHssKkManaged } from './bbHssKkMigration.js';
-import { V6K_KK25_MODEL } from '../../shared/zonghengVideo.js';
+import { matchesBbHssSource } from './bbHssSourcePolicy.js';
 import type { ModelAvailability } from '../../shared/upstreamAvailability.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
@@ -69,7 +69,7 @@ export function saveModelSpecification(value: ModelSpecification): ModelSpecific
   const routes = value.routes.map(r => {
     validateLimits(r.limits);
     const ch = channelRows.find(c => c.id === r.channelId);
-    if(bbHssKkManaged(sqlite,value.modelId)&&(ch?.type!=='zongheng-v6k'||r.upstreamModel!==V6K_KK25_MODEL||r.executionModel!==value.modelId))throw error('BB/HSS 的新请求仅可关联 KK 线路');
+    if(bbHssKkManaged(sqlite,value.modelId)&&!matchesBbHssSource(sqlite,value.modelId,r,ch?.type))throw error('BB/HSS 线路与当前来源不一致，请先使用来源切换保存');
     if (!ch || typeof r.executionModel !== 'string' || !r.executionModel.trim() || typeof r.upstreamModel !== 'string' || !r.upstreamModel.trim()) throw error('线路渠道、执行模型和上游模型不能为空');
     if (typeof r.enabled !== 'boolean' || !Number.isFinite(r.priority)) throw error('线路开关或顺序无效');
     if (!['per_call', 'per_second', 'per_image', 'unknown'].includes(r.costUnit) || (r.cost !== null && (!Number.isFinite(r.cost) || r.cost < 0))) throw error('线路成本无效');
@@ -120,7 +120,7 @@ export function inspectModelRoutes(spec: ModelSpecification, input?: RoutingInpu
     const execution = registry.find(m => m.modelId === route.executionModel);
     const reason = execution?.isActive === 0 && execution.modelId !== MJ_OVERFLOW_VIDEO_MODEL ? ['执行模型已禁用'] : !spec.enabled || model?.isActive !== 1 ? ['规格已禁用'] : !route.enabled ? ['模型线路已禁用'] : !executions.length ? ['渠道或 Key 已禁用 / 未配置'] : [];
     if (retired) reason.push(RETIRED_VIDEO_MODEL_MESSAGE);
-    if(bbHssKkManaged(sqlite,spec.modelId)&&(route.upstreamModel!==V6K_KK25_MODEL||executions.some(c=>c.type!=='zongheng-v6k')))reason.push('BB/HSS 的新请求仅可使用 KK');
+    if(bbHssKkManaged(sqlite,spec.modelId)&&!matchesBbHssSource(sqlite,spec.modelId,route,activeChannels.find(c=>c.id===route.channelId)?.type))reason.push('线路与当前选择的生成来源不一致');
     const matches = input ? routingMismatches(route.limits, input, spec.kind) : [];
     if (input && route.executionModel === SI_YUE_TIAN_MINIMAX_MODEL) matches.push(...siYueTianMinimaxInputErrors(input));
     const targets = executions.map(channel => ({ route, channel, cost: input ? routeRequestCost(route, input) : null, healthKey: routeHealthKey(route, channel.apiKeyId) }));
@@ -162,7 +162,7 @@ export function routeUnavailableReason(modelId: string, target: RouteCandidate, 
   const candidates = ChannelService.getActiveChannels().filter(c => c.id === target.channel.id);
   if (!candidates.length) return '提交前检查：渠道已禁用或没有启用的 Key';
   const original = candidates.find(c => c.apiKeyId === target.channel.apiKeyId);
-  if(bbHssKkManaged(sqlite,modelId)&&(original?.type!=='zongheng-v6k'||route.upstreamModel!==V6K_KK25_MODEL))return 'BB/HSS 的新请求仅可使用 KK';
+  if(bbHssKkManaged(sqlite,modelId)&&!matchesBbHssSource(sqlite,modelId,route,original?.type))return '提交前检查：生成来源已切换';
   if (!original || !original.apiKey) return '提交前检查：原 Key 已禁用或未配置';
   if (original.apiKey !== target.channel.apiKey || original.baseUrl !== target.channel.baseUrl) return '提交前检查：原渠道地址或 Key 已变更';
   if (!original.supportedModels.includes(route.executionModel) && !original.supportedModels.includes('*')) return '提交前检查：渠道不再关联当前执行模型';

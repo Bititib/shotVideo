@@ -1,5 +1,8 @@
 import { switchHssSource } from '../services/hssSourceService.js';
 import { bbHssKkManaged } from '../services/bbHssKkMigration.js';
+import { getBbHssVideoSources, switchBbHssVideoSource } from '../services/bbHssSourceService.js';
+import { readBbHssSources } from '../services/bbHssSourcePolicy.js';
+import { BB_HSS_SOURCES } from '../../shared/bbHssSources.js';
 import { createVideoAliasChecker, createModelSalePriceResolver } from '../services/modelSaleService.js';
 import { suggestedModelSpecifications } from '../services/modelSpecificationPresets.js';
 import { Router } from 'express';
@@ -16,7 +19,8 @@ router.get('/', (_req, res, next) => {
     const registry = db.select().from(models).all(), checkAlias = createVideoAliasChecker(), modelSalePrice = createModelSalePriceResolver();
     res.json(getModelSpecifications().map(spec => {
       const details = inspectModelRoutes(spec);
-      return { ...spec, generationSource: bbHssKkManaged(sqlite,spec.modelId)?'kkseadanco2.5':undefined, displayName: registry.find(m => m.modelId === spec.modelId)?.displayName || spec.modelId,
+      const selected = readBbHssSources(sqlite)[spec.modelId];
+      return { ...spec, generationSource: bbHssKkManaged(sqlite,spec.modelId)?BB_HSS_SOURCES[selected?.source || 'KK'].upstreamModel:undefined, displayName: registry.find(m => m.modelId === spec.modelId)?.displayName || spec.modelId,
         salePrice: modelSalePrice(spec.modelId, spec.limits.resolutions),
         aliasIssues: spec.aliases.flatMap(modelId => { const reason = checkAlias(spec, modelId); return reason ? [{ modelId, reason }] : []; }),
         channelCount: new Set(spec.routes.map(r => r.channelId)).size,
@@ -26,6 +30,8 @@ router.get('/', (_req, res, next) => {
   } catch (e) { next(e); }
 });
 router.post('/:modelId/hss-source', (req,res,next)=>{ try { if(req.params.modelId !== 'hss-2.5-301010') return res.status(400).json({error:'仅支持 hss-2.5-301010'}); res.json(switchHssSource(req.body?.source)); } catch(e){next(e);} });
+router.get('/:modelId/video-sources', (req,res,next) => { try { res.json(getBbHssVideoSources(req.params.modelId)); } catch(e) { next(e); } });
+router.post('/:modelId/video-sources', async (req,res,next) => { try { res.json(await switchBbHssVideoSource(req.params.modelId, req.body?.source, req.body?.channelId)); } catch(e) { next(e); } });
 router.put('/:modelId', (req, res, next) => {
   try {
     if (req.params.modelId !== req.body?.modelId) return res.status(400).json({ error: '规格 ID 不一致' });

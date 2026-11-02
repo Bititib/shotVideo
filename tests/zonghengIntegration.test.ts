@@ -10,6 +10,9 @@ import { removeTtBbFallbacks } from '../server/db/removeTtBbFallbacks';
 import { ensureBbHssKkMapping } from '../server/services/bbHssKkMigration';
 import { BB_HSS_KK_ENTRIES, bbHssKkLimits } from '../shared/bbHssKk';
 import { switchHssSource } from '../server/services/hssSourceService';
+import { switchBbHssVideoSource, getBbHssVideoSources } from '../server/services/bbHssSourceService';
+import { BB_HSS_SOURCES } from '../shared/bbHssSources';
+import { routeUnavailableReason, selectModelRoutes } from '../server/services/modelRoutingService';
 import { hussHssModelLimits, hussBbAModelLimits } from '../shared/hussBbVideo';
 import { syncHussModels } from '../server/services/hussCatalogService';
 import { ensureV6kTt25Models, v6kTt25SaleId } from '../server/services/v6kTt25Catalog';
@@ -100,7 +103,10 @@ beforeAll(async()=>{
   reference='data:image/png;base64,'+(await sharp({create:{width:300,height:300,channels:3,background:'#ffffff'}}).png().toBuffer()).toString('base64');
   video=await import('../server/routes/video');
   const v1=await import('../server/routes/v1'), image=await import('../server/routes/imageGen');
+  const adminSpecs=await import('../server/routes/modelSpecifications');
   const app=express(); app.use(express.json({limit:'5mb'}));app.use('/api/video',video.default);app.use('/api/image-gen',image.default);app.use('/v1',v1.default);
+  app.use('/test/admin/model-specifications',adminSpecs.default);
+  app.use((e:any,_req:any,res:any,_next:any)=>res.status(e.status||500).json({error:e.message}));
   server=await new Promise<Server>(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});origin='http://127.0.0.1:'+(server.address() as AddressInfo).port;
   intervalSpy.mockRestore();
 });
@@ -556,13 +562,99 @@ describe('BB and HSS new requests retargeted to KK',()=>{
       expect(getPublicDeveloperModels().items.find(m=>m.id===id)).toMatchObject({available:true,pricing:{billing_type:'per_call',unit_price:6.5}});}
     const before=BB_HSS_KK_ENTRIES.map(id=>getModelSpecification(id));
     upstream=async()=>Response.json({data:[{id:'bb-2.5-301010-渠道A'}]});await syncHussModels(ChannelService.getChannelRaw(old)!);
-    expect(BB_HSS_KK_ENTRIES.map(id=>getModelSpecification(id))).toEqual(before);expect(()=>switchHssSource('A')).toThrow('KK');
+    expect(BB_HSS_KK_ENTRIES.map(id=>getModelSpecification(id))).toEqual(before);expect(()=>switchHssSource('A')).toThrow('来源切换');
     expect(ChannelService.getChannelRaw(old)?.apiKey).toBe('original-huss-key');
   });
   it.each(BB_HSS_KK_ENTRIES.flatMap(id=>['/api/video/generate','/v1/videos'].map(endpoint=>({id,endpoint}))))('submits $id at $endpoint to KK at 6.5 per task for 5 and 30 seconds',async({id,endpoint})=>{
     await install();let posts=0;upstream=async(url,init)=>{posts++;expect(url).toBe('https://www.v6k.top/v1/videos');const q=JSON.parse(init.body);expect(q).toMatchObject({model:'kkseadanco2.5',resolution:'720p'});expect(q.videos).toHaveLength(10);expect(q.audios).toHaveLength(10);return Response.json({id:'retargeted_'+posts,status:'completed'});};
     for(const seconds of [5,30]){await(await post(endpoint,{model:id,prompt:'new alias request',seconds,resolution:'720p',reference_videos:Array(10).fill('https://media.example/v.mp4'),audio_urls:Array(10).fill('https://media.example/a.wav')})).text();await vi.waitFor(()=>expect(latest().status).toBe('completed'));expect(latest().cost).toBe(6.5);expect(latest().modelId).toBe(id);}
     expect(posts).toBe(2);expect(balance()).toBe(87);expect(JSON.parse(latest().metadata)).toMatchObject({upstreamModel:'kkseadanco2.5',actualChannel:'zongheng-v6k'});
+  });
+  it.each(BB_HSS_KK_ENTRIES.flatMap(id=>(['A','B'] as const).flatMap(source=>['/api/video/generate','/v1/videos'].map(endpoint=>({id,source,endpoint})))))('independently switches $id to $source then submits at $endpoint and settles the original sale once',async({id,source,endpoint})=>{
+    const old=await install(), other=BB_HSS_KK_ENTRIES.find(x=>x!==id)!, untouched=structuredClone(getModelSpecification(other));
+    upstream=async()=>Response.json({data:[{id:BB_HSS_SOURCES[source].upstreamModel}]});
+    const saved=await post('/test/admin/model-specifications/'+id+'/video-sources',{source,channelId:old});
+    expect(saved.status).toBe(200);expect((await saved.json() as any).current).toEqual({source,channelId:old});
+    expect(getModelSpecification(other)).toEqual(untouched);
+    const front=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
+    expect(front.find(x=>x.id===id)).toMatchObject({available:true,routingLimits:BB_HSS_SOURCES[source].limits(),billingType:'per_call',rates:{'720p':6.5}});
+    let posts=0;upstream=async(url,init)=>{expect(url).toBe('https://www.huss.top/v1/videos');expect(init.method).toBe('POST');posts++;
+      expect(JSON.parse(init.body)).toMatchObject({model:BB_HSS_SOURCES[source].upstreamModel,duration:source==='A'?5:4,resolution:'720p',ratio:'21:9'});
+      return Response.json({id:'original_switched',status:'completed',url:'https://media.example/result.mp4'});};
+    const body={model:id,prompt:'selected source',seconds:source==='A'?5:4,resolution:'720p',aspect_ratio:'21:9'};
+    const first=await retryVideo(endpoint,body,'switched-stable');await first.text();await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    expect(posts).toBe(1);expect(latest().cost).toBe(6.5);expect(balance()).toBe(93.5);
+    expect(JSON.parse(latest().metadata)).toMatchObject({channelId:old,upstreamModel:BB_HSS_SOURCES[source].upstreamModel,videoId:'original_switched'});
+    if(endpoint==='/v1/videos'){await(await retryVideo(endpoint,body,'switched-stable')).text();expect(posts).toBe(1);expect(balance()).toBe(93.5);}
+    resumeSpecificationTasks();resumeSpecificationTasks();expect(posts).toBe(1);expect(balance()).toBe(93.5);
+  });
+  it('preserves the selected source through both catalog synchronizations and startup, then switches back to KK without changing prices or disabled switches',async()=>{
+    const old=await install(),id=BB_HSS_KK_ENTRIES[0];upstream=async()=>Response.json({data:[{id:BB_HSS_SOURCES.A.upstreamModel}]});
+    await switchBbHssVideoSource(id,'A',old);
+    const spec=getModelSpecification(id)!;saveModelSpecification({...spec,enabled:false,routes:spec.routes.map(r=>({...r,enabled:false}))});
+    const before=structuredClone(getModelSpecification(id));await syncHussModels(ChannelService.getChannelRaw(old)!);
+    await syncV6kEntries(['kkseadanco2.5']);ensureBbHssKkMapping(sqlite);
+    expect(getModelSpecification(id)).toEqual(before);expect(JSON.parse(ChannelService.getChannelRaw(old)!.modelMapping)[id]).toBe(BB_HSS_SOURCES.A.upstreamModel);
+    const kk=getModelSpecification(BB_HSS_KK_ENTRIES[1])!.routes[0].channelId;
+    upstream=async()=>Response.json({data:[{id:'kkseadanco2.5'}]});await switchBbHssVideoSource(id,'KK',kk);
+    expect(getModelSpecification(id)).toMatchObject({enabled:false,limits:bbHssKkLimits(),routes:[{enabled:false,upstreamModel:'kkseadanco2.5'}]});
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,id)).get()).toMatchObject({inputPrice:6.5,billingType:'per_call'});
+    expect(balance()).toBe(100);expect(db.select().from(contents).all()).toHaveLength(0);
+  });
+  it('rejects missing permissions, unavailable channels and concurrent configuration edits without touching old jobs, wallets or prices',async()=>{
+    const old=await install(),id=BB_HSS_KK_ENTRIES[0],before=JSON.stringify(getModelSpecification(id));
+    const money=JSON.stringify(db.select().from(modelPricing).all());
+    upstream=async()=>Response.json({data:[]});await expect(switchBbHssVideoSource(id,'B',old)).rejects.toThrow('未开放');
+    upstream=async()=>new Response('bad gateway',{status:504});await expect(switchBbHssVideoSource(id,'A',old)).rejects.toThrow('原配置保留');
+    ChannelService.updateChannel(old,{status:0});await expect(switchBbHssVideoSource(id,'A',old)).rejects.toThrow('未启用');ChannelService.updateChannel(old,{status:1});
+    upstream=async()=>{ChannelService.updateChannel(old,{apiKey:'changed-key'});return Response.json({data:[{id:BB_HSS_SOURCES.A.upstreamModel}]});};
+    await expect(switchBbHssVideoSource(id,'A',old)).rejects.toThrow('查询期间配置已变化');
+    expect(JSON.stringify(getModelSpecification(id))).toBe(before);expect(JSON.stringify(db.select().from(modelPricing).all())).toBe(money);
+    expect(balance()).toBe(100);expect(db.select().from(contents).all()).toHaveLength(0);
+    expect(JSON.stringify(getBbHssVideoSources(id))).not.toContain('changed-key');
+  });
+  it('rejects a channel A combined asset overflow before creating an order or reserving money',async()=>{
+    const old=await install(),id=BB_HSS_KK_ENTRIES[0];upstream=async()=>Response.json({data:[{id:BB_HSS_SOURCES.A.upstreamModel}]});await switchBbHssVideoSource(id,'A',old);
+    vi.mocked(fetch).mockClear();
+    const r=await post('/api/video/generate',{model:id,prompt:'combined overflow',seconds:5,resolution:'720p',reference_images:Array(30).fill(reference),reference_videos:['https://media.example/v.mp4']});
+    expect(r.status).toBe(400);expect(await r.text()).toContain('合计最多30');expect(fetch).not.toHaveBeenCalled();expect(balance()).toBe(100);expect(db.select().from(contents).all()).toHaveLength(0);
+  });
+  it('allows only one concurrent switch and preserves administrator limits on an identical repeated selection',async()=>{
+    const old=await install(),id=BB_HSS_KK_ENTRIES[0];
+    const replies:((r:Response)=>void)[]=[];upstream=async()=>new Promise<Response>(resolve=>replies.push(resolve));
+    const first=switchBbHssVideoSource(id,'A',old), second=switchBbHssVideoSource(id,'B',old);
+    replies[0](Response.json({data:[{id:BB_HSS_SOURCES.A.upstreamModel}]}));await first;
+    const rejected=expect(second).rejects.toThrow('查询期间配置已变化');replies[1](Response.json({data:[{id:BB_HSS_SOURCES.B.upstreamModel}]}));await rejected;
+    const spec=getModelSpecification(id)!;saveModelSpecification({...spec,limits:{...spec.limits,maxImages:20}});
+    upstream=async()=>Response.json({data:[{id:BB_HSS_SOURCES.A.upstreamModel}]});await switchBbHssVideoSource(id,'A',old);
+    expect(getModelSpecification(id)!.limits.maxImages).toBe(20);expect(getBbHssVideoSources(id).current).toEqual({source:'A',channelId:old});
+    const specAfter=getModelSpecification(id)!;expect(()=>saveModelSpecification({...specAfter,routes:specAfter.routes.map(r=>({...r,upstreamModel:BB_HSS_SOURCES.B.upstreamModel}))})).toThrow('来源不一致');
+    expect(balance()).toBe(100);expect(db.select().from(contents).all()).toHaveLength(0);
+  });
+  it.each(['A','B'] as const)('refunds a confirmed failed task from selected source %s once, including API retries and worker scans',async source=>{
+    const old=await install(),id=BB_HSS_KK_ENTRIES[1];upstream=async()=>Response.json({data:[{id:BB_HSS_SOURCES[source].upstreamModel}]});await switchBbHssVideoSource(id,source,old);
+    let posts=0;upstream=async()=>{posts++;return Response.json({id:'switched_failed_original',status:'failed',error:{code:'video_generation_failed',message:'original provider task failed'}});};
+    const body={model:id,prompt:'failed selected task',seconds:5,resolution:'720p'};
+    const first=await(await retryVideo('/v1/videos',body,'switched-failed')).json() as any;await vi.waitFor(()=>expect(latest().status).toBe('failed'));
+    await(await retryVideo('/v1/videos',body,'switched-failed')).text();resumeSpecificationTasks();resumeSpecificationTasks();
+    expect(JSON.parse(latest().metadata)).toMatchObject({videoId:'switched_failed_original',billingStatus:'refunded',upstreamModel:BB_HSS_SOURCES[source].upstreamModel});
+    expect(posts).toBe(1);expect(balance()).toBe(100);expect(latest().cost).toBe(0);expect(first.id).toBeTruthy();
+  });
+  it('does not dispatch a stale queued selection after a source switch, while an accepted old KK task still resumes at its original channel',async()=>{
+    const old=await install(),id=BB_HSS_KK_ENTRIES[0],input={images:0,videos:0,audios:0,outputs:1,seconds:5,ratio:'16:9',resolution:'720p',quality:'',firstFrame:false,lastFrame:false};
+    const candidate=selectModelRoutes(getModelSpecification(id)!,input)[0];
+    // Seed an already accepted task using a real order/reservation, leaving its first query temporarily unknown.
+    let generationPosts=0;upstream=async(_url,init)=>{if(init.method==='POST'){generationPosts++;return Response.json({id:'original_kk_before_switch',status:'unknown'});}return Response.json({id:'original_kk_before_switch',status:'unknown'});};
+    const body={model:id,prompt:'accepted before switch',seconds:5,resolution:'720p'};
+    const response=await retryVideo('/v1/videos',body,'before-source-switch');const original=await response.json() as any;
+    await vi.waitFor(()=>expect(JSON.parse(latest().metadata).videoId).toBe('original_kk_before_switch'));
+    upstream=async url=>url.endsWith('/models')?Response.json({data:[{id:BB_HSS_SOURCES.A.upstreamModel}]}):Response.json({id:'original_kk_before_switch',status:'completed'});
+    await switchBbHssVideoSource(id,'A',old);
+    expect(routeUnavailableReason(id,candidate,input)).toContain('原线路已删除');
+    resumeSpecificationTasks();await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    expect(JSON.parse(latest().metadata)).toMatchObject({channelId:candidate.channel.id,upstreamModel:'kkseadanco2.5',videoId:'original_kk_before_switch'});
+    const replay=await(await retryVideo('/v1/videos',body,'before-source-switch')).json() as any;expect(replay.id).toBe(original.id);
+    expect(generationPosts).toBe(1);expect(balance()).toBe(93.5);expect(db.select().from(contents).all()).toHaveLength(1);
   });
   it.each(BB_HSS_KK_ENTRIES)('rejects obsolete 4 second and wide-ratio inputs for %s before order creation and charging',async id=>{
     await install();vi.mocked(fetch).mockClear();upstream=async()=>{throw Error('Not allowed');};

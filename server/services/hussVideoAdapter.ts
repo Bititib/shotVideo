@@ -77,9 +77,14 @@ async function hussRequest(channel: HussChannel, endpoint: string, body?: unknow
   return payload;
 }
 export function hussBbModelLimits(): ModelInputLimits { return { maxImages: 30, maxVideos: 10, maxAudios: 10, maxOutputs: 1, minImages: 0, resolutions: ['720p'], ratios: ['16:9', '9:16', '1:1'], qualities: [], firstFrame: false, lastFrame: false, duration: { mode: 'range', min: 10, max: 30, step: 1, values: [] } }; }
+export async function fetchHussModelIds(channel: HussChannel): Promise<string[]> {
+  const raw = await hussRequest(channel, '/models');
+  const candidates = Array.isArray(raw) ? raw : raw?.data ?? raw?.models;
+  if (!Array.isArray(candidates)) throw new HussApiError('HUSS 模型权限查询未返回有效列表，已保留原配置', 502);
+  return candidates.map((item: any) => typeof item === 'string' ? item : item?.id).filter((id: unknown): id is string => typeof id === 'string' && Boolean(id.trim()));
+}
 export async function fetchHussVideoModels(channel: HussChannel): Promise<HussVideoModel[]> {
-  const raw = await hussRequest(channel, '/models'); const candidates = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : Array.isArray(raw?.models) ? raw.models : [];
-  const allowed = new Set(candidates.map((item: any) => typeof item === 'string' ? item : item?.id));
+  const allowed = new Set(await fetchHussModelIds(channel));
   const selected = [HUSS_MJ_MODEL, HUSS_BB_A_MODEL].filter(id => allowed.has(id));
   if (!selected.length) throw new Error('HUSS 当前 API Key 未开放已接入的模型');
   return selected.map(id => ({ id, name: id, type: id === HUSS_MJ_MODEL ? 'image' as const : 'video' as const, config: { limits: id === HUSS_MJ_MODEL ? hussMjLimits() : id === HUSS_BB_A_MODEL ? hussBbAModelLimits() : isHussHssModel(id) ? hussHssModelLimits() : hussBbModelLimits() } }));

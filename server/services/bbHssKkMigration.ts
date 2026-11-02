@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import { BB_HSS_KK_ENTRIES, bbHssKkLimits, isBbHssKkEntry } from '../../shared/bbHssKk.js';
 import { V6K_KK25_MODEL } from '../../shared/zonghengVideo.js';
 import type { ModelSpecification } from '../../shared/modelRouting.js';
+import { readBbHssSources } from './bbHssSourcePolicy.js';
 const KEY='bb_hss_kk_source_v1', CONFIG='model_specification_routes_v1';
 const read=(d:Database.Database,key:string,fallback:any)=>{const r=d.prepare('SELECT value FROM settings WHERE key=?').get(key) as any;return r?JSON.parse(r.value):fallback;};
 const write=(d:Database.Database,key:string,value:any)=>d.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,JSON.stringify(value));
@@ -9,7 +10,7 @@ export function bbHssKkManaged(d:Database.Database,id:string):boolean {return is
 /** One-time authorized retail/spec migration, then additive authenticated route binding only. No order or wallet writes. */
 export function ensureBbHssKkMapping(d:Database.Database,authorizedChannelId?:number) {
   return d.transaction(()=>{
-    const state=read(d,KEY,{products:{}}),specs:ModelSpecification[]=read(d,CONFIG,[]);
+    const state=read(d,KEY,{products:{}}),specs:ModelSpecification[]=read(d,CONFIG,[]),selections=readBbHssSources(d);
     const channels=d.prepare('SELECT id,type,supported_models,model_mapping FROM channels').all() as any[];
     let changed=false;
     for(const id of BB_HSS_KK_ENTRIES){
@@ -30,6 +31,8 @@ export function ensureBbHssKkMapping(d:Database.Database,authorizedChannelId?:nu
         changed=true;
       }
       if(!spec)continue; // A later administrator deletion must not be silently undone.
+      // An explicit operator choice owns its routes. Neither startup nor catalog sync may rebind them.
+      if(selections[id])continue;
       const kk=specs.find(s=>s.modelId===V6K_KK25_MODEL);
       const verified=authorizedChannelId===undefined?(kk?.routes||[]).filter(r=>r.upstreamModel===V6K_KK25_MODEL).map(r=>r.channelId):[authorizedChannelId];
       for(const channelId of new Set(verified)){
@@ -47,8 +50,9 @@ export function ensureBbHssKkMapping(d:Database.Database,authorizedChannelId?:nu
     // Keep old channels/keys for original task recovery, but remove these sales from new HUSS selection.
     for(const channel of channels.filter(c=>c.type==='huss')){
       const supported=JSON.parse(channel.supported_models||'[]'),mapping=JSON.parse(channel.model_mapping||'{}');
-      const kept=supported.filter((id:string)=>!isBbHssKkEntry(id));let altered=kept.length!==supported.length;
-      for(const id of BB_HSS_KK_ENTRIES)if(Object.hasOwn(mapping,id)){delete mapping[id];altered=true;}
+      const remove=(id:string)=>isBbHssKkEntry(id)&&!(selections[id]?.source!=='KK'&&selections[id]?.channelId===channel.id);
+      const kept=supported.filter((id:string)=>!remove(id));let altered=kept.length!==supported.length;
+      for(const id of BB_HSS_KK_ENTRIES)if(remove(id)&&Object.hasOwn(mapping,id)){delete mapping[id];altered=true;}
       if(altered)d.prepare('UPDATE channels SET supported_models=?,model_mapping=? WHERE id=?').run(JSON.stringify(kept),JSON.stringify(mapping),channel.id);
     }
     if(changed)write(d,CONFIG,specs);write(d,KEY,state);
