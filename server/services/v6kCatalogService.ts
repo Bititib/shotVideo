@@ -9,6 +9,8 @@ import { ensureV6kSeedance20Models, bindV6kSeedance20Routes } from './v6kSeedanc
 import { v6kTt25Product, v6kTt25Description } from '../../shared/v6kTt25.js';
 import { ensureV6kTt25Models, bindV6kTt25Routes, v6kTt25SaleId } from './v6kTt25Catalog.js';
 import { isV6kSyncModel } from '../../shared/v6kSyncModels.js';
+import { V6K_TT_BB_FALLBACKS } from '../../shared/v6kTt25Fallback.js';
+import { bindV6kTtBbFallbacks } from './v6kTt25Fallback.js';
 
 export async function syncV6kVideoModels(channel: { id: number; baseUrl: string; apiKey: string; timeout?: number; type?: string }) {
   const base = zonghengBaseUrl(channel.baseUrl);
@@ -29,6 +31,8 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     if (!id) continue;
     if (!isV6kSyncModel(id)) { ignored.add(id); continue; }
     if (!authorizedIds.includes(id)) authorizedIds.push(id);
+    // BB is an internal alternative for the matching TT product, never a new retail entry.
+    if (V6K_TT_BB_FALLBACKS.some(p => p.upstream === id)) continue;
     const spec = getZonghengVideoSpec(id);
     const publicId = zonghengPublicModelId(id);
     const product = v6kSeedance20Product(id);
@@ -39,7 +43,7 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     imported.set(publicId, { id: publicId, upstream: id, description });
   }
   const warnings = ['仅同步已指定接入的白名单型号；忽略其他型号 ' + ignored.size + ' 个，保留现有配置。'];
-  if (!imported.size) return { count: 0, added: 0, models: [] as string[], warnings: [...warnings, '当前 Key 未返回白名单型号，本次未修改配置。'] };
+  if (!imported.size && !authorizedIds.some(id => V6K_TT_BB_FALLBACKS.some(p => p.upstream === id))) return { count: 0, added: 0, models: [] as string[], warnings: [...warnings, '当前 Key 未返回白名单型号，本次未修改配置。'] };
   return db.transaction(tx => {
     const current = tx.select().from(channels).where(eq(channels.id, channel.id)).get();
     if (!current || current.apiKey !== channel.apiKey || current.baseUrl !== channel.baseUrl || channel.type && current.type !== channel.type)
@@ -71,6 +75,17 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
       updatedAt: new Date().toISOString() }).where(eq(channels.id, channel.id)).run();
     bindV6kSeedance20Routes(sqlite, channel.id, authorizedIds);
     bindV6kTt25Routes(sqlite, channel.id, authorizedIds);
+    bindV6kTtBbFallbacks(sqlite, channel, authorizedIds);
+    for (const product of V6K_TT_BB_FALLBACKS) if (authorizedIds.includes(product.upstream)) {
+      const id = v6kTt25SaleId(sqlite, product.primary);
+      if (!supported.includes(id)) supported.push(id);
+      if (!Object.hasOwn(mapping, id)) mapping[id] = product.primary;
+      if (!ids.includes(id)) ids.push(id);
+    }
+    tx.update(channels).set({ supportedModels: JSON.stringify(supported), modelMapping: JSON.stringify(mapping) }).where(eq(channels.id, channel.id)).run();
+    if (authorizedIds.some(id => V6K_TT_BB_FALLBACKS.some(p => p.upstream === id))) warnings.push('BB 已作为对应 TT 的备用线路绑定；新增备用默认关闭，请在模型路由中开启。');
+    const missingBackups = V6K_TT_BB_FALLBACKS.filter(p => !authorizedIds.includes(p.upstream)).map(p => p.upstream);
+    if (missingBackups.length) warnings.push('当前 Key 未返回以下备用型号，未新增对应备用：' + missingBackups.join('、'));
     return { count: ids.length, added: ids.filter(id => !previouslyPresent.has(id)).length, models: ids, warnings };
   });
 }

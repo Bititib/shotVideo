@@ -7,6 +7,8 @@ export const V6K_SYNC_UPSTREAM_MODELS = [
   'TTseadanco2.5-480',
   'TTseadanco2.5-720',
   'TTseadanco2.5-1080',
+  'BBseadanco-480',
+  'BBseadanco-720',
 ] as const;
 
 const allowed = new Set<string>(V6K_SYNC_UPSTREAM_MODELS);
