@@ -1,7 +1,28 @@
 import type Database from 'better-sqlite3';
 import type { ModelSpecification } from '../../shared/modelRouting.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL, isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
-import { siYueTianManagedVideoSpec } from '../../shared/siYueTianManagedVideo.js';
+import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS, siYueTianManagedVideoSpec } from '../../shared/siYueTianManagedVideo.js';
+
+export class SiYueTianCatalogConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SiYueTianCatalogConflictError';
+  }
+}
+
+/** An optional catalog association must not take the entire application offline. */
+export function ensureSiYueTianVideoModelsOnStartup(sqlite: Database.Database) {
+  for (const model of SI_YUE_TIAN_MANAGED_VIDEO_MODELS) {
+    try {
+      ensureSiYueTianMinimaxModel(sqlite, undefined, model);
+    } catch (error) {
+      // Each model's transaction has rolled back. Keep explicit sync strict and
+      // continue only for known ownership/mapping conflicts, never database errors.
+      if (!(error instanceof SiYueTianCatalogConflictError)) throw error;
+      console.warn(`[四月天启动目录] 跳过 ${model} 自动关联：${error.message}；保留原配置，其他服务继续启动`);
+    }
+  }
+}
 
 /** One-time association per channel; subsequent boots preserve operator removals and switches. */
 export function ensureSiYueTianMinimaxModel(sqlite: Database.Database, syncedChannelId?: number, model = SI_YUE_TIAN_MINIMAX_MODEL) {
@@ -10,7 +31,7 @@ export function ensureSiYueTianMinimaxModel(sqlite: Database.Database, syncedCha
   const MODEL = product.id;
   return sqlite.transaction(() => {
     const existing = sqlite.prepare('SELECT provider FROM models WHERE model_id=?').get(MODEL) as { provider: string } | undefined;
-    if (existing && existing.provider !== 'siyuetian') throw new Error(`${MODEL} 已被其他产品占用，未修改原配置`);
+    if (existing && existing.provider !== 'siyuetian') throw new SiYueTianCatalogConflictError(`${MODEL} 已被其他产品占用，未修改原配置`);
     const added = sqlite.prepare(`INSERT OR IGNORE INTO models
       (provider,model_id,display_name,description,capabilities,is_active) VALUES('siyuetian',?,?,?,'["video"]',0)`)
       .run(MODEL, product.name, product.description).changes;
@@ -29,7 +50,7 @@ export function ensureSiYueTianMinimaxModel(sqlite: Database.Database, syncedCha
       const supported: string[] = JSON.parse(channel.supported_models || '[]');
       const mapping = JSON.parse(channel.model_mapping || '{}');
       if (!supported.includes(MODEL)) supported.push(MODEL);
-      if (mapping[MODEL] && mapping[MODEL] !== MODEL) throw new Error(`${MODEL} 的现有映射不同，未覆盖配置`);
+      if (mapping[MODEL] && mapping[MODEL] !== MODEL) throw new SiYueTianCatalogConflictError(`${MODEL} 的现有映射不同，未覆盖配置`);
       mapping[MODEL] = MODEL;
       sqlite.prepare('UPDATE channels SET supported_models=?,model_mapping=? WHERE id=?').run(JSON.stringify(supported), JSON.stringify(mapping), channel.id);
       let spec = specs.find(s => s.modelId === MODEL);
