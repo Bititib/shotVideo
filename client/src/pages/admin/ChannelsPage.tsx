@@ -17,7 +17,7 @@ import { FUNAI_BASE_URL } from '../../../../shared/funAi';
 import { ASYNC_VIDEO_BASE_URL } from '../../../../shared/asyncVideo';
 
 const HM_STUDIO_BASE_URL = 'https://dnyovzpgyokm.sealosbja.site';
-const HAYA_BASE_URL = 'https://hayaai.fun';
+const HAYA_BASE_URL = 'https://hayaai.cc';
 const HUSS_BASE_URL = 'https://www.huss.top';
 const MIAOWU_BASE_URL = 'https://api.miaowuai.store';
 

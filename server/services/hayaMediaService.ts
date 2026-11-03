@@ -10,7 +10,7 @@ const mimeByExtension: Record<string, string> = {
   '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
   '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.ogg': 'audio/ogg',
 };
-export interface HayaMediaOptions { baseUrl: string; apiKey: string; publicBaseUrl: string; uploadsRoot?: string }
+export interface HayaMediaOptions { baseUrl: string; apiKey: string; publicBaseUrl: string; uploadsRoot?: string; maxFileBytes?: number; imageDimensions?: boolean }
 
 function publicMediaUrl(value: string): string {
   const url = new URL(value);
@@ -24,6 +24,9 @@ function publicMediaUrl(value: string): string {
 
 /** Resolve only this application's uploads, never arbitrary local paths or remote URLs. */
 async function readMedia(source: string, kind: HayaMediaKind, options: HayaMediaOptions) {
+  source = source.replace(/^\/api\/uploads\//, '/uploads/');
+  const maxBytes = options.maxFileBytes ?? HAYA_MAX_FILE_BYTES;
+  const maxLabel = maxBytes / 1024 / 1024 + ' MB';
   let mime = '';
   let bytes: Buffer;
   let filename = '';
@@ -31,7 +34,7 @@ async function readMedia(source: string, kind: HayaMediaKind, options: HayaMedia
     const match = /^data:([^;,]+);base64,([a-zA-Z0-9+/=\s]+)$/.exec(source);
     if (!match) throw new Error('素材 Base64 格式不正确');
     mime = match[1].toLowerCase();
-    if (match[2].length > HAYA_MAX_FILE_BYTES * 1.4) throw new Error('素材超过 20 MB');
+    if (match[2].length > maxBytes * 1.4) throw new Error('素材超过 ' + maxLabel);
     bytes = Buffer.from(match[2], 'base64');
     const extension = Object.entries(mimeByExtension).find(([, type]) => type === mime)?.[0];
     if (!extension) throw new Error(`不支持的素材类型 ${mime}`);
@@ -40,7 +43,7 @@ async function readMedia(source: string, kind: HayaMediaKind, options: HayaMedia
     let pathname = source.split('?')[0];
     if (!source.startsWith('/uploads/')) {
       const url = new URL(source);
-      if (options.publicBaseUrl && url.origin === new URL(options.publicBaseUrl).origin && url.pathname.startsWith('/uploads/')) pathname = url.pathname;
+      if (options.publicBaseUrl && url.origin === new URL(options.publicBaseUrl).origin && /^\/(?:api\/)?uploads\//.test(url.pathname)) pathname = url.pathname.replace(/^\/api\/uploads\//, '/uploads/');
       else return { url: publicMediaUrl(source) };
     }
     const root = fs.realpathSync(options.uploadsRoot || path.join(process.cwd(), 'data/uploads'));
@@ -49,16 +52,17 @@ async function readMedia(source: string, kind: HayaMediaKind, options: HayaMedia
     const real = fs.realpathSync(candidate);
     if (!real.startsWith(`${root}${path.sep}`)) throw new Error('素材路径不安全');
     const stat = fs.statSync(real);
-    if (!stat.isFile() || stat.size > HAYA_MAX_FILE_BYTES) throw new Error('素材不是文件或超过 20 MB');
+    if (!stat.isFile() || stat.size > maxBytes) throw new Error('素材不是文件或超过 ' + maxLabel);
     mime = mimeByExtension[path.extname(real).toLowerCase()] || '';
     filename = path.basename(real);
     bytes = await fs.promises.readFile(real);
   }
   if (!mime.startsWith(`${kind}/`)) throw new Error(`素材类型必须是 ${kind}`);
-  if (!bytes.length || bytes.length > HAYA_MAX_FILE_BYTES) throw new Error('素材为空或超过 20 MB');
+  if (!bytes.length || bytes.length > maxBytes) throw new Error('素材为空或超过 ' + maxLabel);
   if (kind === 'image') {
     const info = await sharp(bytes, { limitInputPixels: 36_000_000 }).metadata();
-    if (!info.width || !info.height || info.width < 300 || info.height < 300 || info.width > 6000 || info.height > 6000) {
+    if (!info.width || !info.height) throw new Error('无法读取图片尺寸');
+    if (options.imageDimensions !== false && (info.width < 300 || info.height < 300 || info.width > 6000 || info.height > 6000)) {
       throw new Error('Haya 图片宽高必须分别在 300–6000 像素之间');
     }
   }

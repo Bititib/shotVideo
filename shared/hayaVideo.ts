@@ -1,5 +1,5 @@
 /** Initial catalog from the supplied Haya model cards, not a permanent upstream catalog. */
-export const HAYA_BASE_URL = 'https://hayaai.fun';
+export const HAYA_BASE_URL = 'https://hayaai.cc';
 export const HAYA_XG_SEEDANCE_20_MODEL = 'Seedance-2.0-720';
 export const HAYA_XG_SEEDANCE_20_UPSTREAM_MODEL = 'XG-Seedance-2.0-720';
 export function hayaPublicModelId(id: string): string {

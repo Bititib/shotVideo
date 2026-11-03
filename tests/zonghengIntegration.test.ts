@@ -12,6 +12,7 @@ import { BB_HSS_KK_ENTRIES, bbHssKkLimits } from '../shared/bbHssKk';
 import { switchHssSource } from '../server/services/hssSourceService';
 import { switchBbHssVideoSource, getBbHssVideoSources } from '../server/services/bbHssSourceService';
 import { BB_HSS_SOURCES } from '../shared/bbHssSources';
+import { ensureBbHssMoMapping } from '../server/services/bbHssMoMigration';
 import { routeUnavailableReason, selectModelRoutes } from '../server/services/modelRoutingService';
 import { pruneUnapprovedV6kBindings } from '../server/services/v6kApprovedBindings';
 import { hussHssModelLimits, hussBbAModelLimits } from '../shared/hussBbVideo';
@@ -670,7 +671,7 @@ describe('BB and HSS new requests retargeted to KK',()=>{
     expect(JSON.parse(latest().metadata)).toMatchObject({videoId:'switched_failed_original',billingStatus:'refunded',upstreamModel:BB_HSS_SOURCES[source].upstreamModel});
     expect(posts).toBe(1);expect(balance()).toBe(100);expect(latest().cost).toBe(0);expect(first.id).toBeTruthy();
   });
-  it('does not dispatch a stale queued selection after a source switch, while an accepted old KK task still resumes at its original channel',async()=>{
+  it('does not dispatch a stale queued selection after Mo replacement, while an accepted old KK task still resumes at its original channel',async()=>{
     const old=await install(),id=BB_HSS_KK_ENTRIES[0],input={images:0,videos:0,audios:0,outputs:1,seconds:5,ratio:'16:9',resolution:'720p',quality:'',firstFrame:false,lastFrame:false};
     const candidate=selectModelRoutes(getModelSpecification(id)!,input)[0];
     // Seed an already accepted task using a real order/reservation, leaving its first query temporarily unknown.
@@ -680,6 +681,7 @@ describe('BB and HSS new requests retargeted to KK',()=>{
     await vi.waitFor(()=>expect(JSON.parse(latest().metadata).videoId).toBe('original_kk_before_switch'));
     upstream=async url=>url.endsWith('/models')?Response.json({data:[{id:BB_HSS_SOURCES.A.upstreamModel}]}):Response.json({id:'original_kk_before_switch',status:'completed'});
     await switchBbHssVideoSource(id,'A',old);
+    ensureBbHssMoMapping(sqlite);
     expect(routeUnavailableReason(id,candidate,input)).toContain('原线路已删除');
     resumeSpecificationTasks();await vi.waitFor(()=>expect(latest().status).toBe('completed'));
     expect(JSON.parse(latest().metadata)).toMatchObject({channelId:candidate.channel.id,upstreamModel:'kkseadanco2.5',videoId:'original_kk_before_switch'});

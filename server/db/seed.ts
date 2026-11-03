@@ -12,6 +12,7 @@ import { ensureV6kSeedance20Models } from '../services/v6kSeedance2Catalog.js';
 import { ensureV6kTt25Models } from '../services/v6kTt25Catalog.js';
 import { ensureV6kKk25Model } from '../services/v6kKk25Catalog.js';
 import { ensureBbHssKkMapping } from '../services/bbHssKkMigration.js';
+import { ensureBbHssMoMapping } from '../services/bbHssMoMigration.js';
 import { removeTtBbFallbacks } from './removeTtBbFallbacks.js';
 import { ensureSiYueTianVideoModelsOnStartup } from '../services/siYueTianMinimaxCatalog.js';
 import { HAYA_VIDEO_MODELS, HAYA_XG_SEEDANCE_20_MODEL, hayaVideoSeconds } from '../../shared/hayaVideo.js';
@@ -2065,6 +2066,7 @@ export async function initDatabase() {
   ensureV6kSeedance20Models(sqlite);
   ensureV6kTt25Models(sqlite);
   ensureV6kKk25Model(sqlite);
+  ensureBbHssMoMapping(sqlite);
   ensureBbHssKkMapping(sqlite);
   pruneUnapprovedV6kBindings(sqlite);
   removeTtBbFallbacks(sqlite);

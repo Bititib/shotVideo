@@ -7,6 +7,8 @@ import { readBbHssSources } from './bbHssSourcePolicy.js';
 import { bbHssKkManaged } from './bbHssKkMigration.js';
 import { fetchHussModelIds } from './hussVideoAdapter.js';
 import { zonghengBaseUrl } from './zonghengAdapter.js';
+import { bbHssMoManaged, bbHssMoInitialRouteEnabled } from './bbHssMoMigration.js';
+import { hayaApiBaseUrl } from './hayaVideoAdapter.js';
 
 const CONFIG = 'model_specification_routes_v1';
 const failure = (message: string, status = 400) => Object.assign(new Error(message), { status });
@@ -29,7 +31,7 @@ export function getBbHssVideoSources(id: string) {
     return source ? { source, channelId: routes[0].channelId } : null;
   })();
   return { modelId: id, current, specEnabled: spec?.enabled ?? false,
-    options: (Object.entries(BB_HSS_SOURCES) as [BbHssSource, typeof BB_HSS_SOURCES[BbHssSource]][]).flatMap(([source, value]) =>
+    options: (Object.entries(BB_HSS_SOURCES) as [BbHssSource, typeof BB_HSS_SOURCES[BbHssSource]][]).filter(([source]) => !bbHssMoManaged(sqlite, id) || source === 'MO').flatMap(([source, value]) =>
       channels.filter(c => c.type === value.type).map(c => ({ source, label: value.label, channelId: c.id, channelName: c.name,
         ready: ready(c), upstreamModel: value.upstreamModel, limits: value.limits() }))),
   };
@@ -39,6 +41,7 @@ export function getBbHssVideoSources(id: string) {
 export async function switchBbHssVideoSource(id: string, source: unknown, channelId: unknown) {
   checkEntry(id);
   if (typeof source !== 'string' || !Object.hasOwn(BB_HSS_SOURCES, source) || !Number.isInteger(channelId)) throw failure('请选择生成来源和渠道');
+  if (bbHssMoManaged(sqlite, id) && source !== 'MO') throw failure('BB、HSS 已改为仅使用 Mo，请选择 Haya 渠道');
   if (!bbHssKkManaged(sqlite, id)) throw failure('入口尚未完成来源迁移，请先更新并初始化服务', 409);
   const target = BB_HSS_SOURCES[source as BbHssSource], before = config(), beforeSelections = JSON.stringify(readBbHssSources(sqlite));
   const spec = (JSON.parse(before || '[]') as ModelSpecification[]).find(s => s.modelId === id);
@@ -50,16 +53,17 @@ export async function switchBbHssVideoSource(id: string, source: unknown, channe
     if (target.type === 'huss') {
       ids = await fetchHussModelIds({ baseUrl: channel.base_url, apiKey: channel.api_key, timeout: 20_000 });
     } else {
-      const response = await fetch(zonghengBaseUrl(channel.base_url) + '/v1/models', {
+      const label = target.type === 'haya' ? 'Haya' : 'V6K';
+      const response = await fetch((target.type === 'haya' ? hayaApiBaseUrl(channel.base_url) : zonghengBaseUrl(channel.base_url)) + '/v1/models', {
         headers: { Authorization: 'Bearer ' + channel.api_key, 'Cache-Control': 'no-cache' },
         redirect: 'error', signal: AbortSignal.timeout(20_000),
       });
       const text = await response.text();
       let payload: any;
-      try { payload = JSON.parse(text); } catch { throw failure('V6K 模型权限查询返回非 JSON，HTTP ' + response.status, 502); }
-      if (!response.ok) throw failure('V6K 模型权限查询 HTTP ' + response.status + '：' + sanitizedGenerationReason(payload), 502);
+      try { payload = JSON.parse(text); } catch { throw failure(label + ' 模型权限查询返回非 JSON，HTTP ' + response.status, 502); }
+      if (!response.ok) throw failure(label + ' 模型权限查询 HTTP ' + response.status + '：' + sanitizedGenerationReason(payload), 502);
       const items = Array.isArray(payload) ? payload : payload?.data ?? payload?.models;
-      if (!Array.isArray(items)) throw failure('V6K 模型权限查询未返回有效列表', 502);
+      if (!Array.isArray(items)) throw failure(label + ' 模型权限查询未返回有效列表', 502);
       ids = items.map((item: any) => typeof item === 'string' ? item : item?.id || item?.model || item?.model_id);
     }
   } catch (e: any) {
@@ -76,13 +80,14 @@ export async function switchBbHssVideoSource(id: string, source: unknown, channe
     if (saved?.source === source && saved.channelId === channelId && oldRoute && current.routes.length === 1) return;
     const limits = target.limits();
     const route = oldRoute || { id: 'source-' + source + '-' + channelId + '-' + id, channelId: channelId as number,
-      executionModel: id, upstreamModel: target.upstreamModel, enabled: !current.routes.length || current.routes.some(r => r.enabled), limits,
-      cost: source === 'KK' ? 5.5 : null, costUnit: source === 'KK' ? 'per_call' as const : 'unknown' as const, resolutionCosts: {}, priority: 0 };
+      executionModel: id, upstreamModel: target.upstreamModel,
+      enabled: current.routes.length ? current.routes.some(r => r.enabled) : bbHssMoInitialRouteEnabled(sqlite, id), limits,
+      cost: source === 'MO' ? 5 : source === 'KK' ? 5.5 : null, costUnit: ['KK','MO'].includes(source) ? 'per_call' as const : 'unknown' as const, resolutionCosts: {}, priority: 0 };
     current.limits = limits;
     current.routes = [{ ...route, limits }];
     // A public entry has exactly one selected source. Other products and old receipt credentials remain intact.
     for (const c of channelRows()) {
-      if (!['huss', 'zongheng-v6k'].includes(c.type)) continue;
+      if (!['huss', 'zongheng-v6k', 'haya'].includes(c.type)) continue;
       const supported: string[] = JSON.parse(c.supported_models || '[]'), mapping = JSON.parse(c.model_mapping || '{}');
       const kept = supported.filter(item => item !== id);
       delete mapping[id];

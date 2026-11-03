@@ -7,6 +7,7 @@ import { getHmStudioAdditionalVideoModel, getHmStudioPublicVideoModel } from '..
 import { HUSS_BB_PUBLIC_MODEL, HUSS_HSS_MODEL } from '../../shared/hussBbVideo.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL } from '../../shared/siYueTianMinimax.js';
 import { HAYA_XG_SEEDANCE_20_MODEL } from '../../shared/hayaVideo.js';
+import { HAYA_MO_MODEL } from '../../shared/hayaMoVideo.js';
 import { isLongxiaModel } from '../../shared/longxiaVideo.js';
 import { SNUMOM_WAN_NSFW_MODEL, SNUMOM_OUTPUT_ONLY_MODELS, isSnumomWanVideoModel } from '../../shared/snumomWanNsfw.js';
 
@@ -74,7 +75,8 @@ export function videoCapabilities(modelId: string, specification?: ModelSpecific
   const properties = Object.fromEntries(Object.entries(first.properties).filter(([key, rule]) =>
     schemas.every(schema => JSON.stringify(schema.properties[key]) === JSON.stringify(rule))));
   return { canonical_id: publicApiModelId(modelId), capabilityVersion: 1,
-    routingLimits, parameterNote: ids.length === 1 ? parameterNotes[ids[0]] : undefined,
+    routingLimits, parameterNote: spec?.routes.some(r => r.upstreamModel === HAYA_MO_MODEL)
+      ? '图片、视频和音频合计最多16项；提示词最多45000字符；单个素材最多30 MiB。' : ids.length === 1 ? parameterNotes[ids[0]] : undefined,
     parameterEnumLabels: Object.fromEntries(Object.entries(properties).filter(([, rule]) => rule.enumLabels).map(([key, rule]) => [key, rule.enumLabels])),
     parameterSchema: { ...emptySchema(), properties: Object.fromEntries(Object.entries(properties).map(([key, { enumLabels, ...rule }]) => [key, rule])), required: first.required.filter(k => k in properties) } };
 }

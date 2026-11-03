@@ -1,8 +1,10 @@
 import { HAYA_BASE_URL, HAYA_XG_SEEDANCE_20_MODEL, hayaPublicModelId, hayaUpstreamModelId, validateHayaVideoInput } from '../../shared/hayaVideo.js';
+import { HAYA_MO_MODEL, hayaMoLimits } from '../../shared/hayaMoVideo.js';
+import { routingMismatches } from '../../shared/modelRouting.js';
 
 export function isHayaChannel(channel: { type?: string | null; baseUrl?: string | null } | null | undefined): boolean {
   if (channel?.type === 'haya') return true;
-  try { return new URL(channel?.baseUrl || '').hostname === new URL(HAYA_BASE_URL).hostname; } catch { return false; }
+  try { return ['hayaai.fun', 'hayaai.cc'].includes(new URL(channel?.baseUrl || '').hostname); } catch { return false; }
 }
 export function hayaApiBaseUrl(baseUrl: string): string { return baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, ''); }
 export function hayaTaskUrl(baseUrl: string, taskId: string): string {
@@ -24,7 +26,7 @@ export function normalizeHayaTask(payload: any, baseUrl: string, taskId: string)
   // Do not interpret a transient error envelope as a terminal task failure.
   if (!['queued', 'in_progress', 'completed', 'failed'].includes(status)) throw new Error(upstreamDiagnostic('Haya', '查询响应未包含有效任务状态 task_id=' + taskId, payload));
   const code = String(payload.error?.code || '');
-  const message = String(payload.error?.message || '');
+  const message = String(payload.error?.message || (typeof payload.error === 'string' ? payload.error : '') || payload.message || '');
   return {
     status,
     progress: Math.max(0, Math.min(100, Number(payload.progress) || 0)),
@@ -38,7 +40,16 @@ export interface HayaVideoInput {
   model: string; prompt: string; seconds: number; ratio: string; resolution: string;
   images: string[]; videos: string[]; audios: string[]; metadata?: Record<string, unknown>;
 }
+export function validateHayaMoInput(input: HayaVideoInput & { firstFrame?: unknown; lastFrame?: unknown; content?: unknown }) {
+  const reasons = routingMismatches(hayaMoLimits(), { images: input.images.length, videos: input.videos.length, audios: input.audios.length,
+    outputs: 1, seconds: input.seconds, ratio: input.ratio, resolution: input.resolution,
+    firstFrame: Boolean(input.firstFrame), lastFrame: Boolean(input.lastFrame) }, 'video');
+  if (!input.prompt.trim() || Array.from(input.prompt).length > 45_000) reasons.push('Mo 提示词必须为 1–45000 个字符');
+  if (input.metadata?.content !== undefined || input.content !== undefined) reasons.push('Mo 素材请使用 images/videos/audios 或对应参考素材参数，不支持 content');
+  if (reasons.length) throw new Error(reasons.join('；'));
+}
 export function buildHayaVideoPayload(input: HayaVideoInput) {
+  if (input.model === HAYA_MO_MODEL) validateHayaMoInput(input);
   if (hayaPublicModelId(input.model) === HAYA_XG_SEEDANCE_20_MODEL) {
     const error = validateHayaVideoInput(input.model, { ...input, imageCount: input.images.length, videoCount: input.videos.length, audioCount: input.audios.length });
     if (error) throw new Error(error);

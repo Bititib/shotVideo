@@ -30,7 +30,7 @@ export default function HssSourceSwitch({ modelId = 'hss-2.5-301010' }: { modelI
         finally {setBusy(false);}
       }}>切换来源</button>
     </div>
-    {option && <p className="text-xs">{option.upstreamModel} · 720P · {option.limits.duration.min}–{option.limits.duration.max} 秒 · 最多30图、10视频、10音频{option.source==='A'?'，素材合计最多30个':''}。切换前会查询该 Key 的模型权限；不可用时保留原来源。</p>}
+    {option && <p className="text-xs">{option.upstreamModel} · 720P · {option.limits.duration.min}–{option.limits.duration.max} 秒 · 最多{option.limits.maxImages}图、{option.limits.maxVideos}视频、{option.limits.maxAudios}音频{option.limits.maxReferences !== undefined ? `，素材合计最多${option.limits.maxReferences}项` : option.source==='A'?'，素材合计最多30个':''}。切换前会查询该 Key 的模型权限；不可用时保留原来源。</p>}
     {busy && <p role="status">正在读取或核对来源权限…</p>}
     {error && <p role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}

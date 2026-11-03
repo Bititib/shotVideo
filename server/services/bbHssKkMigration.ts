@@ -3,10 +3,11 @@ import { BB_HSS_KK_ENTRIES, bbHssKkLimits, isBbHssKkEntry } from '../../shared/b
 import { V6K_KK25_MODEL } from '../../shared/zonghengVideo.js';
 import type { ModelSpecification } from '../../shared/modelRouting.js';
 import { readBbHssSources } from './bbHssSourcePolicy.js';
+import { bbHssMoManaged } from './bbHssMoMigration.js';
 const KEY='bb_hss_kk_source_v1', CONFIG='model_specification_routes_v1';
 const read=(d:Database.Database,key:string,fallback:any)=>{const r=d.prepare('SELECT value FROM settings WHERE key=?').get(key) as any;return r?JSON.parse(r.value):fallback;};
 const write=(d:Database.Database,key:string,value:any)=>d.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,JSON.stringify(value));
-export function bbHssKkManaged(d:Database.Database,id:string):boolean {return isBbHssKkEntry(id)&&Boolean(read(d,KEY,{}).products?.[id]);}
+export function bbHssKkManaged(d:Database.Database,id:string):boolean {return isBbHssKkEntry(id)&&(bbHssMoManaged(d,id)||Boolean(read(d,KEY,{}).products?.[id]));}
 /** One-time authorized retail/spec migration, then additive authenticated route binding only. No order or wallet writes. */
 export function ensureBbHssKkMapping(d:Database.Database,authorizedChannelId?:number) {
   return d.transaction(()=>{
@@ -14,6 +15,7 @@ export function ensureBbHssKkMapping(d:Database.Database,authorizedChannelId?:nu
     const channels=d.prepare('SELECT id,type,supported_models,model_mapping FROM channels').all() as any[];
     let changed=false;
     for(const id of BB_HSS_KK_ENTRIES){
+      if(bbHssMoManaged(d,id))continue;
       let model=d.prepare('SELECT * FROM models WHERE model_id=?').get(id) as any;
       let spec=specs.find(s=>s.modelId===id);
       if(!state.products[id]){

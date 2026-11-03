@@ -15,6 +15,9 @@ import { isZonghengChannel, zonghengBaseUrl, ZONGHENG_MODEL_PREFIX } from './zon
 import { HUSS_CHANNEL_TYPE, hussApiBase, isHussChannel, fetchHussVideoModels } from './hussVideoAdapter.js';
 import { HAYA_MODEL_IDS, HAYA_XG_SEEDANCE_20_MODEL, getHayaVideoSpec, hayaPublicModelId, hayaUpstreamModelId } from '../../shared/hayaVideo.js';
 import { isHayaChannel, hayaApiBaseUrl } from './hayaVideoAdapter.js';
+import { HAYA_MO_MODEL } from '../../shared/hayaMoVideo.js';
+import { BB_HSS_KK_ENTRIES, isBbHssKkEntry } from '../../shared/bbHssKk.js';
+import { ensureBbHssMoMapping } from './bbHssMoMigration.js';
 import { db, sqlite } from '../db/index.js';
 import { channelApiKeys, channels, models, modelPricing } from '../db/schema.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL, isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
@@ -713,6 +716,7 @@ export class ChannelService {
     if (isHayaChannel(channel)) {
       bindings.clear();
       for (const id of HAYA_MODEL_IDS) bindings.set(id, hayaUpstreamModelId(id));
+      for (const id of BB_HSS_KK_ENTRIES) bindings.set(id, HAYA_MO_MODEL);
     } else if (isLongxiaChannel(channel)) {
       bindings.clear(); for (const id of LONGXIA_MODELS) bindings.set(id, id);
     } else if (isMiaowuChannel(channel)) {
@@ -742,7 +746,7 @@ export class ChannelService {
             ? 'image'
             : 'text';
       return approved.map(([id]) => ({ modelId: id, displayName: id === rawModelId ? displayName || id : id, capability }));
-    }).filter((item: any) => item.modelId && !isRetiredVideoModel(item.modelId) && (!isHayaChannel(channel) || HAYA_MODEL_IDS.includes(item.modelId)));
+    }).filter((item: any) => item.modelId && !isRetiredVideoModel(item.modelId) && (!isHayaChannel(channel) || HAYA_MODEL_IDS.includes(item.modelId) || isBbHssKkEntry(item.modelId)));
 
     const unique = [...new Map(normalized.map((item: any) => [item.modelId, item])).values()] as Array<{
       modelId: string; displayName: string; capability: string;
@@ -789,6 +793,7 @@ export class ChannelService {
         modelMapping: JSON.stringify(mapping),
         updatedAt: new Date().toISOString(),
       }).where(eq(channels.id, id)).run();
+      if (isHayaChannel(channel) && modelIds.some(isBbHssKkEntry)) ensureBbHssMoMapping(sqlite, channel.id);
       return { count: modelIds.length, added, models: modelIds, warnings };
     });
   }

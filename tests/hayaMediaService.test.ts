@@ -12,6 +12,14 @@ afterAll(() => { vi.unstubAllEnvs(); fs.rmSync(temp, { recursive: true, force: t
 afterEach(() => vi.unstubAllGlobals());
 const image = async (width: number) => 'data:image/png;base64,' + (await sharp({ create: { width, height: 300, channels: 3, background: 'red' } }).png().toBuffer()).toString('base64');
 describe('Haya public URL references', () => {
+  it('applies Mo-specific 30 MiB intake without imposing other Haya models image dimensions', async () => {
+    const mo = { ...options, maxFileBytes: 30 * 1024 * 1024, imageDimensions: false };
+    await expect(validateHayaMedia([await image(299)], 'image', mo)).resolves.toBeUndefined();
+    const video = 'data:video/mp4;base64,' + Buffer.alloc(21 * 1024 * 1024).toString('base64');
+    await expect(validateHayaMedia([video], 'video', mo)).resolves.toBeUndefined();
+    await expect(validateHayaMedia([video], 'video', options)).rejects.toThrow('20 MB');
+    await expect(validateHayaMedia(['data:video/mp4;base64,' + Buffer.alloc(30 * 1024 * 1024 + 1).toString('base64')], 'video', mo)).rejects.toThrow('30 MB');
+  });
   it('publishes images on the site without uploading a file to the upstream', async () => {
     vi.stubGlobal('fetch', vi.fn());
     const urls = await prepareHayaMedia([await image(300), await image(400)], 'image', options);

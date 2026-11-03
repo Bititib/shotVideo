@@ -1,12 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HAYA_MODEL_IDS, HAYA_VIDEO_MODELS, HAYA_XG_SEEDANCE_20_MODEL, HAYA_XG_SEEDANCE_20_UPSTREAM_MODEL, validateHayaVideoInput } from '../shared/hayaVideo';
 import { buildHayaVideoPayload, hayaPollDelay, hayaTaskId, hayaTaskUrl, isHayaChannel, normalizeHayaTask, shouldSendHayaAuthorization, submitHayaVideo } from '../server/services/hayaVideoAdapter';
+import { HAYA_MO_MODEL } from '../shared/hayaMoVideo';
 
 afterEach(() => vi.unstubAllGlobals());
 const input = { model: HAYA_MODEL_IDS[0], prompt: ' 测试 ', seconds: 15, ratio: '9:16', resolution: '720p',
   images: ['https://media.example/a.png'], videos: [], audios: ['https://media.example/b.wav'] };
 
 describe('Haya protocol and catalog', () => {
+  it('uses the independently documented Mo arrays, combined cap, prompt and auto ratio', () => {
+    const mo = { ...input, model: HAYA_MO_MODEL, seconds: 5, ratio: 'auto', images: Array(6).fill(input.images[0]), videos: Array(5).fill('https://media.example/v.mp4?signature=a%2Fb'), audios: Array(5).fill(input.audios[0]) };
+    expect(buildHayaVideoPayload(mo)).toEqual({ model: HAYA_MO_MODEL, prompt: '测试', seconds: 5, ratio: 'auto', resolution: '720p', images: mo.images, videos: mo.videos, audios: mo.audios });
+    for (const patch of [{ seconds: 4 },{ seconds:31 },{seconds:5.5},{resolution:'480p'},{ratio:'adaptive'},
+      { images: Array(7).fill(input.images[0]) },{videos:Array(11).fill(mo.videos[0])},{prompt:'a'.repeat(45001)},{metadata:{content:[]}}])
+      expect(() => buildHayaVideoPayload({...mo,...patch})).toThrow();
+  });
   it('preserves exact IDs and applies the requested markup and billing units', () => {
     expect(HAYA_MODEL_IDS).toEqual(['bz-seedance2.5-720p', 'F-seedance-2.5-480p', 'F-seedance-2.5-720p',
       'XG-seedance-2.5-720', 'y-seedance-2.5-1080p', 'y-seedance-2.5-480p', 'y-seedance-2.5-720p', 'Seedance-2.0-720']);

@@ -3,6 +3,10 @@ import { HUSS_MJ_MODEL, hussMjOptions } from '../../shared/hussMidjourney.js';
 import { submitHussImage, queryHussImage, HussImageError } from './hussImageAdapter.js';
 import { isHussPersistentVideoModel } from '../../shared/hussBbVideo.js';
 import { bbHssKkManaged } from './bbHssKkMigration.js';
+import { isBbHssKkEntry } from '../../shared/bbHssKk.js';
+import { HAYA_MO_MODEL } from '../../shared/hayaMoVideo.js';
+import { isHayaChannel } from './hayaVideoAdapter.js';
+import { validateHayaMedia } from './hayaMediaService.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { activeSpecificationTasks } from './videoRecoveryAction.js';
 import { normalizeSiYueTianMinimaxTask } from './siYueTianMinimaxAdapter.js';
@@ -79,7 +83,7 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
   if (body.mask !== undefined) throw fail('当前统一规格未配置蒙版编辑，请使用支持蒙版的独立入口');
   if (body.response_format && !['url', 'b64_json'].includes(body.response_format)) throw fail('response_format 仅支持 url 或 b64_json');
   const images = list(body, ['reference_images', 'image_urls', 'image_url', 'images', ...(siYueTianMinimax ? ['image_refs'] : [])]);
-  const videos = list(body, ['reference_videos', 'reference_video', 'video_urls', 'video_url', ...(siYueTianMinimax ? ['video_refs'] : [])]);
+  const videos = list(body, ['reference_videos', 'reference_video', 'video_urls', 'video_url', ...(isBbHssKkEntry(body.model) ? ['videos'] : []), ...(siYueTianMinimax ? ['video_refs'] : [])]);
   const audios = list(body, ['audio_urls', 'audio_url', 'reference_audios', 'audios', ...(siYueTianMinimax ? ['audio_refs'] : [])]);
   const firstFrame = body.first_frame || body.first_frame_url || '';
   const lastFrame = body.last_frame || body.last_frame_url || body.end_frame_url || '';
@@ -100,6 +104,14 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
       firstFrame: Boolean(firstFrame), lastFrame: Boolean(lastFrame), quality: body.quality } };
 }
 export async function prepareSpecificationReferenceImages(request: SpecificationRequest, candidates: RouteCandidate[], trustedOrigins: string[]) {
+  if (candidates.length && candidates.every(t => isHayaChannel(t.channel) && t.route.upstreamModel === HAYA_MO_MODEL)) {
+    const options = { baseUrl: candidates[0].channel.baseUrl, apiKey: candidates[0].channel.apiKey,
+      publicBaseUrl: request.publicBaseUrl, maxFileBytes: 30 * 1024 * 1024, imageDimensions: false };
+    await validateHayaMedia(request.images, 'image', options);
+    await validateHayaMedia(request.videos, 'video', options);
+    await validateHayaMedia(request.audios, 'audio', options);
+    return;
+  }
   const count = request.images.length;
   const sources = [...request.images, ...(request.firstFrame ? [request.firstFrame] : []), ...(request.lastFrame ? [request.lastFrame] : [])];
   const normalized = candidates.some(target => isHmStudioChannel(target.channel))

@@ -29,7 +29,8 @@ import { buildSnumomWanPayload, normalizeSnumomWanTask, isSnumomWanChannel, extr
 import { buildSudaShuiVideoPayload, sudaShuiVideoCreateUrl } from './sudaShuiAdapter.js';
 import { buildNewTokenVideoPayload, newTokenVideoCreateUrl, isNewTokenChannel } from './newTokenAdapter.js';
 import { buildJulunMinimaxH3Payload, isJulunMinimaxH3Model } from './julunMinimaxAdapter.js';
-import { submitHayaVideo, HayaSubmissionError, hayaTaskUrl, normalizeHayaTask, isHayaChannel } from './hayaVideoAdapter.js';
+import { submitHayaVideo, HayaSubmissionError, hayaTaskUrl, normalizeHayaTask, isHayaChannel, validateHayaMoInput } from './hayaVideoAdapter.js';
+import { HAYA_MO_MODEL } from '../../shared/hayaMoVideo.js';
 import { prepareHayaMedia } from './hayaMediaService.js';
 import { generateMingFeiImage, isMingFeiImageChannel, mingFeiImageContentUrl } from './mingFeiImageAdapter.js';
 import { generateSiYueTianImage, isSiYueTianImageChannel, siYueTianImageContentUrl } from './siYueTianImageAdapter.js';
@@ -46,6 +47,9 @@ export type SpecificationRequest = { prompt: string; input: RoutingInput; images
 /** Validate extra-parameter/media combinations before reserving money or creating a task. */
 export function validateSpecificationVideoParameters(request: SpecificationRequest, candidates: RouteCandidate[]) {
   for (const target of candidates) {
+    if (isHayaChannel(target.channel) && target.route.upstreamModel === HAYA_MO_MODEL) validateHayaMoInput({ ...request,
+      ...request.input, images: request.images, videos: request.videos, audios: request.audios,
+      model: HAYA_MO_MODEL, metadata: request.body.metadata, content: request.body.content });
     if (isHussChannel(target.channel)) hussVideoParameters({ model: target.route.upstreamModel, prompt: request.prompt,
       seconds: request.input.seconds, ratio: request.input.ratio, resolution: request.input.resolution,
       images: request.images, videos: request.videos, audios: request.audios, firstFrame: request.firstFrame,
@@ -263,9 +267,11 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
     url = hmStudioCreateUrl(c.baseUrl, 'video');
   } else if (isHayaChannel(c)) {
     if (hayaPublicModelId(model) === HAYA_XG_SEEDANCE_20_MODEL && request.body.content !== undefined) unsupported('此规格入口请使用 reference_images 和 audio_urls 传递素材');
-    const validation = validateHayaVideoInput(model, { seconds: i.seconds, resolution: i.resolution, ratio: i.ratio, imageCount: request.images.length, videoCount: request.videos.length, audioCount: request.audios.length, firstFrame: request.firstFrame, lastFrame: request.lastFrame, metadata: request.body.metadata });
+    if (model === HAYA_MO_MODEL) validateHayaMoInput({ ...request, ...i, model, images: request.images, videos: request.videos, audios: request.audios, metadata: request.body.metadata, content: request.body.content });
+    const validation = model === HAYA_MO_MODEL ? null : validateHayaVideoInput(model, { seconds: i.seconds, resolution: i.resolution, ratio: i.ratio, imageCount: request.images.length, videoCount: request.videos.length, audioCount: request.audios.length, firstFrame: request.firstFrame, lastFrame: request.lastFrame, metadata: request.body.metadata });
     if (validation) unsupported(validation);
-    const options = { baseUrl: c.baseUrl, apiKey: c.apiKey, publicBaseUrl: request.publicBaseUrl };
+    const options = { baseUrl: c.baseUrl, apiKey: c.apiKey, publicBaseUrl: request.publicBaseUrl,
+      ...(model === HAYA_MO_MODEL ? { maxFileBytes: 30 * 1024 * 1024, imageDimensions: false } : {}) };
     const input = { model, prompt: request.prompt, seconds: i.seconds, ratio: i.ratio, resolution: i.resolution,
       images: await prepareHayaMedia(request.images, 'image', options), videos: await prepareHayaMedia(request.videos, 'video', options),
       audios: await prepareHayaMedia(request.audios, 'audio', options) };
@@ -378,13 +384,13 @@ export async function pollSpecificationVideo(channel: any, taskId: string, execu
   const response = await fetch(url, { headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(await responseDiagnostic(channel.type || 'custom', '视频查询 task_id=' + taskId, response, channel.apiKey));
   const raw = await diagnosticJson(channel.type || 'OpenAI-compatible', '视频查询 task_id=' + taskId, response, channel.apiKey);
+  if (isHayaChannel(channel)) return normalizeHayaTask(raw, channel.baseUrl, taskId);
   if (isVideoQueryErrorPayload(raw)) throw new Error(upstreamDiagnostic(channel.type || 'OpenAI-compatible', '视频查询异常 task_id=' + taskId, raw, channel.apiKey, response.status));
   if (isSnumomWanChannel(channel)) {
     const responseTaskId = extractSnumomTaskId(raw);
     if (responseTaskId && responseTaskId !== taskId) throw new Error('上游查询任务编号不一致，继续核实原任务');
   }
   if (channel.type === 'hmstudio') return normalizeHmStudioTask(raw, channel.baseUrl);
-  if (isHayaChannel(channel)) return normalizeHayaTask(raw, channel.baseUrl, taskId);
   if (isWxHaidiYueChannel(channel)) return normalizeWxHaidiYueTask(raw, channel.baseUrl);
   if (isLongxiaChannel(channel)) return normalizeLongxiaVideoTask(raw);
   if (isMiaowuChannel(channel)) return normalizeMiaowuVideoTask(raw, channel.baseUrl, taskId);

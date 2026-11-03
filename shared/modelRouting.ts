@@ -1,6 +1,8 @@
 export type MediaKind = 'image' | 'video';
 export type DurationRule = { mode: 'range' | 'fixed' | 'options'; min: number; max: number; step: number; values: number[] };
 export type ModelInputLimits = {
+  /** Optional combined cap across all reference types. */
+  maxReferences?: number;
   /** A native image task produces this many results with one upstream submission. */
   outputsPerTask?: number;
   maxImages: number; maxVideos: number; maxAudios: number; maxOutputs: number; minImages: number;
@@ -33,6 +35,7 @@ export function routingMismatches(l: ModelInputLimits, i: RoutingInput, kind: Me
   if (images < l.minImages || images > l.maxImages) reasons.push('图片数量需为 ' + l.minImages + '–' + l.maxImages);
   if (i.videos > l.maxVideos) reasons.push('视频最多 ' + l.maxVideos + ' 个');
   if (i.audios > l.maxAudios) reasons.push('音频最多 ' + l.maxAudios + ' 段');
+  if (l.maxReferences !== undefined && images + i.videos + i.audios > l.maxReferences) reasons.push('图片、视频和音频合计最多 ' + l.maxReferences + ' 项');
   if (i.outputs > l.maxOutputs) reasons.push('输出最多 ' + l.maxOutputs + ' 个');
   if (l.outputsPerTask && i.outputs !== l.outputsPerTask) reasons.push('每次任务固定返回 ' + l.outputsPerTask + ' 张图片');
   if (i.firstFrame && !l.firstFrame) reasons.push('不支持独立首帧');

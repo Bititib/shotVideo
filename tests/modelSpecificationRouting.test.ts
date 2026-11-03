@@ -4,6 +4,7 @@ import { ensureV6kKk25Model } from '../server/services/v6kKk25Catalog.js';
 import { hussHssModelLimits, hussBbAModelLimits } from '../shared/hussBbVideo.js';
 import { PricingService } from '../server/services/pricingService.js';
 import { HAYA_XG_SEEDANCE_20_MODEL, HAYA_XG_SEEDANCE_20_UPSTREAM_MODEL } from '../shared/hayaVideo';
+import { ensureBbHssMoMapping } from '../server/services/bbHssMoMigration';
 import { beforeAll, beforeEach, afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../server/db/index.js', async () => {
   const { default: Database } = await import('better-sqlite3');
@@ -861,6 +862,8 @@ describe('pre-cutover HSS protocol and original receipt recovery', () => {
   function setupHss() {
     // Reconstruct the previous deployment for historical protocol/recovery tests.
     db.delete(settings).where(eq(settings.key,'bb_hss_kk_source_v1')).run();
+    db.delete(settings).where(eq(settings.key,'bb_hss_mo_source_v1')).run();
+    db.delete(settings).where(eq(settings.key,'bb_hss_video_sources_v1')).run();
     const l = hussHssModelLimits();
     db.insert(models).values({ modelId: model, provider: 'huss', displayName: model, capabilities: '["video"]', isActive: 1 }).onConflictDoNothing().run();
     db.update(models).set({isActive:1,provider:'huss'}).where(eq(models.modelId,model)).run();
@@ -884,15 +887,16 @@ describe('pre-cutover HSS protocol and original receipt recovery', () => {
     saveModelSpecification({modelId:publicId,kind:'video',enabled:true,aliases:[],limits:l,routes:[{...route(1),executionModel:publicId,upstreamModel:'bb-2.5-301010-渠道A',limits:l}]});
     req.body.model=publicId;req.body.seconds=5;return req;
   }
-  it('after the KK cutover recovers an accepted 4-second 21:9 HUSS task with its original price and ID, without posting again',async()=>{
+  it.each(['KK','Mo'])('after the %s cutover recovers an accepted 4-second 21:9 HUSS task with its original price and ID, without posting again',async source=>{
     const req=setupHss();let posts=0,queries=0,clock=Date.now();const time=vi.spyOn(Date,'now').mockImplementation(()=>clock);
     try{
       vi.stubGlobal('fetch',vi.fn(async(_url,init:any)=>{if(init.method==='POST'){posts++;return Response.json({id:'huss_pre_cutover',status:'queued'});}queries++;clock+=2*60*60_000+1;return Response.json({id:'huss_pre_cutover',status:'processing'});}));
       await handleSpecificationGeneration(req,response(),'video');expect(posts).toBe(1);
       const original=last(),metadataBefore=original.metadata;
-      ensureV6kKk25Model(sqlite);ensureBbHssKkMapping(sqlite);
+      if(source==='Mo')ensureBbHssMoMapping(sqlite);
+      else{ensureV6kKk25Model(sqlite);ensureBbHssKkMapping(sqlite);}
       expect(last().metadata).toBe(metadataBefore);expect(last().cost).toBe(6);
-      expect(PricingService.quote(model,{resolution:'720p'},false).cost).toBe(6.5);
+      expect(PricingService.quote(model,{resolution:'720p'},false).cost).toBe(source==='Mo'?6:6.5);
       vi.stubGlobal('fetch',vi.fn(async(url,init:any)=>{expect(init?.method).not.toBe('POST');queries++;expect(String(url)).toContain('huss_pre_cutover');return Response.json({id:'huss_pre_cutover',status:'completed',storage_status:'ready'});}));
       clock+=120_000;resumeSpecificationTasks();resumeSpecificationTasks();
       await vi.waitFor(()=>expect(last().status).toBe('completed'));

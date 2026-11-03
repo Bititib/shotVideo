@@ -66,6 +66,13 @@ import { batchStore, tickVideoBatches } from '../server/services/videoBatchServi
 import { ChannelService } from '../server/services/channelService';
 import { VideoRecoveryService } from '../server/services/videoRecoveryService';
 import { PricingService } from '../server/services/pricingService';
+import { BB_HSS_KK_ENTRIES } from '../shared/bbHssKk';
+import { HAYA_MO_MODEL, hayaMoLimits } from '../shared/hayaMoVideo';
+import { ensureBbHssMoMapping } from '../server/services/bbHssMoMigration';
+import { ensureBbHssKkMapping } from '../server/services/bbHssKkMigration';
+import { getModelSpecification } from '../server/services/modelRoutingService';
+import { getBbHssVideoSources, switchBbHssVideoSource } from '../server/services/bbHssSourceService';
+import { resumeSpecificationTasks } from '../server/services/specificationGenerationService';
 
 let video: typeof import('../server/routes/video');
 let server: Server;
@@ -377,5 +384,109 @@ describe('Haya in both application entry points (isolated in-memory database)', 
       metadata: JSON.stringify({ channelId, hayaSubmissionStarted: 'before restart' }) }).run();
     video.resumeAllPendingVideoTasks();
     expect(latest().status).toBe('review'); expect(balance()).toBe(100); expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('BB/HSS replacement with Mo', () => {
+  beforeEach(() => {
+    sqlite.exec('CREATE UNIQUE INDEX IF NOT EXISTS test_mo_settings_key ON settings(key)');
+    sqlite.exec('DELETE FROM settings; DELETE FROM api_tokens; DROP TABLE IF EXISTS billing_reservations');
+    sqlite.prepare("INSERT INTO api_tokens(id,user_id,token_key,balance) VALUES(1,1,'test',-1)").run();
+    vi.mocked(setTimeout).mockImplementation(((fn: any, ms: number, ...args: any[]) => nativeSetTimeout(fn, ms >= 1000 && ms <= 300000 ? 5 : ms, ...args)) as any);
+  });
+  const refs = { reference_images: Array.from({length: 4},(_,i)=>`https://media.example/i${i}.png?signature=a%2Fb`), reference_videos: Array.from({length: 6},(_,i)=>`https://media.example/v${i}.mp4?signature=a%2Fb`), audio_urls: Array.from({length:6},(_,i)=>`https://media.example/a${i}.wav`) };
+  async function install() {
+    for (const id of BB_HSS_KK_ENTRIES) {
+      db.insert(models).values({modelId:id,displayName:'retained '+id,provider:'huss',capabilities:'["video"]',isActive:1}).run();
+      db.insert(modelPricing).values({modelPattern:id,billingType:'per_call',inputPrice:7.3,extraParams:'{"720p":7.3}'}).run();
+    }
+    const c = db.select().from(channels).get()!;
+    ChannelService.updateChannel(c.id,{baseUrl:'https://hayaai.cc'});
+    ensureBbHssMoMapping(sqlite);
+    upstream=async()=>Response.json({data:[{id:HAYA_MO_MODEL},{id:'SS-seedance-2.5-720p'}]});
+    expect(await ChannelService.syncModels(c.id)).toMatchObject({models:[...BB_HSS_KK_ENTRIES]});
+    expect(db.select().from(models).all().some(m=>m.modelId===HAYA_MO_MODEL||m.modelId.startsWith('SS-'))).toBe(false);
+    vi.mocked(fetch).mockClear();
+    return c.id;
+  }
+  it('preserves both public entries and prices, only advertises Mo, and survives restart/sync without rebinding', async () => {
+    const channelId=await install();
+    const list=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
+    for(const id of BB_HSS_KK_ENTRIES){
+      expect(list.find(m=>m.id===id)).toMatchObject({available:true,routingLimits:hayaMoLimits(),rates:{'720p':7.3}});
+      expect(getBbHssVideoSources(id)).toMatchObject({current:{source:'MO',channelId},options:[{source:'MO'}]});
+      await expect(switchBbHssVideoSource(id,'KK',channelId)).rejects.toThrow('仅使用 Mo');
+    }
+    const before=BB_HSS_KK_ENTRIES.map(getModelSpecification);
+    ensureBbHssMoMapping(sqlite);ensureBbHssKkMapping(sqlite,channelId);
+    await ChannelService.syncModels(channelId);
+    expect(BB_HSS_KK_ENTRIES.map(getModelSpecification)).toEqual(before);
+    expect(balance()).toBe(100);
+  });
+  it.each(BB_HSS_KK_ENTRIES.flatMap(model=>['/api/video/generate','/v1/videos'].map(endpoint=>({model,endpoint}))))('sends $model through Mo at $endpoint and retains every signed reference',async({model,endpoint})=>{
+    const channelId=await install();let posts=0;
+    upstream=async(url,init)=>{
+      if(init.method==='POST'){
+        posts++;expect(url).toBe('https://hayaai.cc/v1/videos');
+        expect(JSON.parse(init.body)).toEqual({model:HAYA_MO_MODEL,prompt:'Mo references',seconds:30,ratio:'auto',resolution:'720p',images:refs.reference_images,videos:refs.reference_videos,audios:refs.audio_urls});
+        return Response.json({id:'task_mo_'+posts,status:'queued'});
+      }
+      expect(JSON.parse(latest().metadata)).toMatchObject({channelId,upstreamModel:HAYA_MO_MODEL,videoId:'task_mo_1'});
+      return Response.json({status:'completed',metadata:{url:'https://media.example/mo-result.mp4'}});
+    };
+    await(await post(endpoint,{model,prompt:'Mo references',seconds:30,ratio:'auto',resolution:'720p',...refs})).text();
+    await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    expect(latest().modelId).toBe(model);expect(latest().cost).toBe(7.3);expect(balance()).toBe(92.7);expect(posts).toBe(1);
+    resumeSpecificationTasks();expect(posts).toBe(1);
+  });
+  it.each(['/api/video/generate','/api/video/validate','/v1/videos'])('rejects combined cap, unsupported duration and resolution before billing at %s',async endpoint=>{
+    await install();upstream=async()=>{throw Error('Must not send');};
+    for(const patch of [{seconds:4},{seconds:31},{resolution:'1080p'},{ratio:'adaptive'},
+      {...refs,audio_urls:[...refs.audio_urls,'https://media.example/extra.wav']}]){
+      const r=await post(endpoint,{model:BB_HSS_KK_ENTRIES[0],prompt:'invalid',seconds:5,resolution:'720p',...patch});
+      expect(r.status).toBe(400);await r.text();
+    }
+    expect(fetch).not.toHaveBeenCalled();expect(balance()).toBe(100);expect(db.select().from(contents).all()).toHaveLength(0);
+  });
+  it.each(['rejected','failed','uncertain'])('retains the API logical request and settles %s exactly once',async outcome=>{
+    await install();let posts=0;
+    upstream=async(_url,init)=>{
+      if(init.method==='POST'){
+        posts++;
+        if(outcome==='rejected')return Response.json({error:{code:'invalid_input',message:'Mo invalid reference'}},{status:400});
+        if(outcome==='uncertain')return Response.json({error:{code:'submission_status_unknown',message:'Mo timeout'}},{status:504});
+        return Response.json({id:'task_mo_failed'});
+      }
+      return Response.json({status:'failed',error:{code:'service_unavailable',message:'Mo original failure'}});
+    };
+    const request={method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer test','Idempotency-Key':'mo-same-order'},body:JSON.stringify({model:BB_HSS_KK_ENTRIES[1],prompt:'Mo outcome',seconds:5})};
+    const first=await(await nativeFetch(origin+'/v1/videos',request)).json() as any;
+    await vi.waitFor(()=>expect(JSON.parse(latest().metadata).billingStatus).toBe(outcome==='uncertain'?'review':'refunded'));
+    const again=await(await nativeFetch(origin+'/v1/videos',request)).json() as any;
+    expect(again.id).toBe(first.id);resumeSpecificationTasks();resumeSpecificationTasks();
+    expect(posts).toBe(1);expect(balance()).toBe(outcome==='uncertain'?92.7:100);
+    expect(db.select().from(contents).all()).toHaveLength(1);
+  });
+  it.each(['completed','rejected','uncertain'])('uses the real batch dispatcher and settles Mo %s once',async outcome=>{
+    await install();let posts=0;
+    const batchId=batchStore.create(1,crypto.randomUUID(),{name:'Mo batch',model:BB_HSS_KK_ENTRIES[0],resolution:'720p',aspect_ratio:'21:9',video_length:5,autoRetry:false,maxRetries:0,creatives:[{prompt:'Mo batch',count:1,...refs}]},7.3,'https://site.example');
+    upstream=async(url,init)=>{
+      if(url.startsWith('http://127.0.0.1:9876/'))return nativeFetch(url.replace('http://127.0.0.1:9876',origin),init);
+      if(init.method==='POST'){
+        posts++;expect(JSON.parse(init.body)).toMatchObject({model:HAYA_MO_MODEL,seconds:5,images:refs.reference_images,videos:refs.reference_videos,audios:refs.audio_urls});
+        if(outcome==='rejected')return Response.json({error:{code:'invalid_input',message:'Mo invalid reference'}},{status:400});
+        if(outcome==='uncertain')throw Error('network timeout');
+        return Response.json({id:'task_mo_batch'});
+      }
+      return Response.json({status:'completed',metadata:{url:'https://media.example/mo-batch.mp4'}});
+    };
+    await tickVideoBatches();
+    await vi.waitFor(()=>{
+      if(outcome==='uncertain')expect(JSON.parse(latest()?.metadata || '{}').requiresReview).toBe(true);
+      else expect(latest()?.status).toBe(outcome==='completed'?'completed':'failed');
+    });
+    await tickVideoBatches();await tickVideoBatches();
+    expect(batchStore.detail(batchId,1).items[0].billing_state).toBe(outcome==='completed'?'charged':outcome==='rejected'?'refunded':'reserved');
+    expect(posts).toBe(1);expect(balance()).toBe(outcome==='rejected'?100:92.7);
   });
 });
