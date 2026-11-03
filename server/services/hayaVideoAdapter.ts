@@ -59,7 +59,8 @@ export function buildHayaVideoPayload(input: HayaVideoInput) {
         ...input.audios.map(url => ({ type: 'audio_url', audio_url: { url } }))],
       ...(input.metadata ? { metadata: input.metadata } : {}) };
   }
-  return { model: input.model, prompt: input.prompt.trim(), seconds: input.seconds, ratio: input.ratio, resolution: input.resolution,
+  // Mo's live gateway rejects numeric seconds with HTTP 400 invalid_json, despite the numeric documentation sample.
+  return { model: input.model, prompt: input.prompt.trim(), seconds: input.model === HAYA_MO_MODEL ? String(input.seconds) : input.seconds, ratio: input.ratio, resolution: input.resolution,
     ...(input.images.length ? { images: input.images } : {}), ...(input.videos.length ? { videos: input.videos } : {}),
     ...(input.audios.length ? { audios: input.audios } : {}), ...(input.metadata ? { metadata: input.metadata } : {}) };
 }

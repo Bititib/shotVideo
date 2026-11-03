@@ -6,7 +6,7 @@
 
 读取 [Mo 专用接入文档](https://hayaai.cc/docs/models/mo-seedance-2.5-720p/) 和 [通用文档](https://hayaai.cc/docs/)。模型广场的 API 页签仍是通用聊天模板，不作为视频字段依据。旧域名 `hayaai.fun` 返回 `domain_retired` 并指向 `hayaai.cc`，新建渠道默认使用新地址；不静默改写已有渠道地址。
 
-- Bearer 鉴权，`POST /v1/videos`，JSON 字段 `model/prompt/seconds/resolution/ratio`。数字秒数 5–30，固定 720p；默认 16:9，支持 auto、1:1、3:4、4:3、9:16、16:9、21:9。提示词必填，最多 45000 字符。
+- Bearer 鉴权，`POST /v1/videos`，JSON 字段 `model/prompt/seconds/resolution/ratio`。内部校验整数秒数 5–30，向 Mo 网关发送字符串，例如 `"seconds":"5"`。固定 720p；默认 16:9，支持 auto、1:1、3:4、4:3、9:16、16:9、21:9。提示词必填，最多 45000 字符。
 - 素材使用根级 `images/videos/audios`，每类最多 30/10/10，**三类合计最多16项**。专用文档明确要求总量16，不能用卡片“50全参”推算50项。
 - 每项为公网可匿名读取的 HTTPS 文件地址，单文件最多30 MiB。Mo 无专用素材上传接口；不向它提交通用的 asset 引用、multipart 或 Base64。本站本地上传转换为本站公开 HTTPS 素材链接；外部 URL 及签名原样传递，外部内容/大小由上游检验，不由本站任意抓取。
 - 创建响应读取 `task_id` 或 `id` 的 `task_…` 标识，先持久化再查询 `GET /v1/videos/{id}`。queued/in_progress 继续查询，completed 读取 metadata.url 或统一 content 下载入口，failed 保留 error/message 并结束原订单。
@@ -28,4 +28,10 @@ Haya 渠道鉴权同步 `/v1/models` 确认当前 Key 包含精确 Mo ID 后，�
 
 ## 验证范围
 
-15 个测试文件、473 项回归通过，TypeScript 检查和前端构建通过。隔离数据库及模拟上游验证：两个入口的网站/API提交，16项混合素材和签名保留，17项拒绝、5–30秒与720p限制、实际批量队列、明确失败仅退款一次、未知受理不重发、API同逻辑请求重试、迁移不改价格/身份/历史任务、重复同步不覆盖设置、旧KK及HUSS受理任务按原渠道恢复。未执行 VPS 部署或真实付费生成，未宣称上游素材效果已验证。
+### 2026-11-03 Mo 秒数字段修复
+
+用户提供线上创建回执：HTTP 400、`code=invalid_json`，具体原因为 `json: cannot unmarshal number into Go struct field .Alias.seconds of type string`。重新读取专用文档仍是数字示例，与实际网关解析类型不符；以该真实回执修正 Mo 的传输格式为字符串，内部参数校验与按秒计算仍使用数字。网站、外部 API 和批量队列共用 `submitHayaVideo → buildHayaVideoPayload`，其他型号的字段格式保持原样。
+
+该具体 400 无受理编号，沿现有明确拒绝流程结束并幂等退款，不轮询、不自动补发。新增网站两入口回归，并将 API 同逻辑请求与真实批量队列的拒绝样本替换为此回执；验证只发送一次、原错误保留、资金恢复一次。修复前字段类型回归已复现失败；修复后 4 个相关测试文件、73 项通过，TypeScript 检查及差异格式检查通过。未自动重试生产失败任务或执行付费生成，修复尚需 VPS 拉取重建。
+
+此前初次接入验证：15 个测试文件、473 项回归通过，TypeScript 检查和前端构建通过。隔离数据库及模拟上游验证：两个入口的网站/API提交，16项混合素材和签名保留，17项拒绝、5–30秒与720p限制、实际批量队列、明确失败仅退款一次、未知受理不重发、API同逻辑请求重试、迁移不改价格/身份/历史任务、重复同步不覆盖设置、旧KK及HUSS受理任务按原渠道恢复。该次验证未执行 VPS 部署或真实付费生成，未宣称上游素材效果已验证。

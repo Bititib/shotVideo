@@ -10,7 +10,7 @@ const input = { model: HAYA_MODEL_IDS[0], prompt: ' 测试 ', seconds: 15, ratio
 describe('Haya protocol and catalog', () => {
   it('uses the independently documented Mo arrays, combined cap, prompt and auto ratio', () => {
     const mo = { ...input, model: HAYA_MO_MODEL, seconds: 5, ratio: 'auto', images: Array(6).fill(input.images[0]), videos: Array(5).fill('https://media.example/v.mp4?signature=a%2Fb'), audios: Array(5).fill(input.audios[0]) };
-    expect(buildHayaVideoPayload(mo)).toEqual({ model: HAYA_MO_MODEL, prompt: '测试', seconds: 5, ratio: 'auto', resolution: '720p', images: mo.images, videos: mo.videos, audios: mo.audios });
+    expect(buildHayaVideoPayload(mo)).toEqual({ model: HAYA_MO_MODEL, prompt: '测试', seconds: '5', ratio: 'auto', resolution: '720p', images: mo.images, videos: mo.videos, audios: mo.audios });
     for (const patch of [{ seconds: 4 },{ seconds:31 },{seconds:5.5},{resolution:'480p'},{ratio:'adaptive'},
       { images: Array(7).fill(input.images[0]) },{videos:Array(11).fill(mo.videos[0])},{prompt:'a'.repeat(45001)},{metadata:{content:[]}}])
       expect(() => buildHayaVideoPayload({...mo,...patch})).toThrow();

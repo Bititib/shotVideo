@@ -388,6 +388,7 @@ describe('Haya in both application entry points (isolated in-memory database)', 
 });
 
 describe('BB/HSS replacement with Mo', () => {
+  const invalidSeconds = 'invalid_json: json: cannot unmarshal number into Go struct field .Alias.seconds of type string';
   beforeEach(() => {
     sqlite.exec('CREATE UNIQUE INDEX IF NOT EXISTS test_mo_settings_key ON settings(key)');
     sqlite.exec('DELETE FROM settings; DELETE FROM api_tokens; DROP TABLE IF EXISTS billing_reservations');
@@ -428,7 +429,7 @@ describe('BB/HSS replacement with Mo', () => {
     upstream=async(url,init)=>{
       if(init.method==='POST'){
         posts++;expect(url).toBe('https://hayaai.cc/v1/videos');
-        expect(JSON.parse(init.body)).toEqual({model:HAYA_MO_MODEL,prompt:'Mo references',seconds:30,ratio:'auto',resolution:'720p',images:refs.reference_images,videos:refs.reference_videos,audios:refs.audio_urls});
+        expect(JSON.parse(init.body)).toEqual({model:HAYA_MO_MODEL,prompt:'Mo references',seconds:'30',ratio:'auto',resolution:'720p',images:refs.reference_images,videos:refs.reference_videos,audios:refs.audio_urls});
         return Response.json({id:'task_mo_'+posts,status:'queued'});
       }
       expect(JSON.parse(latest().metadata)).toMatchObject({channelId,upstreamModel:HAYA_MO_MODEL,videoId:'task_mo_1'});
@@ -453,7 +454,7 @@ describe('BB/HSS replacement with Mo', () => {
     upstream=async(_url,init)=>{
       if(init.method==='POST'){
         posts++;
-        if(outcome==='rejected')return Response.json({error:{code:'invalid_input',message:'Mo invalid reference'}},{status:400});
+        if(outcome==='rejected')return Response.json({error:{code:'invalid_json',message:invalidSeconds}},{status:400});
         if(outcome==='uncertain')return Response.json({error:{code:'submission_status_unknown',message:'Mo timeout'}},{status:504});
         return Response.json({id:'task_mo_failed'});
       }
@@ -466,6 +467,22 @@ describe('BB/HSS replacement with Mo', () => {
     expect(again.id).toBe(first.id);resumeSpecificationTasks();resumeSpecificationTasks();
     expect(posts).toBe(1);expect(balance()).toBe(outcome==='uncertain'?92.7:100);
     expect(db.select().from(contents).all()).toHaveLength(1);
+    if(outcome==='rejected'){
+      expect(latest().status).toBe('failed');
+      expect(JSON.parse(latest().metadata)).toMatchObject({requiresReview:false});
+      expect(JSON.parse(latest().metadata).error).toContain(invalidSeconds);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    }
+  });
+  it.each(BB_HSS_KK_ENTRIES)('ends %s website invalid_json rejection without polling, replay, or a second refund', async model => {
+    await install();
+    upstream=async()=>Response.json({error:{code:'invalid_json',message:invalidSeconds}},{status:400});
+    await(await post('/api/video/generate',{model,prompt:'Mo rejection',seconds:5})).text();
+    await vi.waitFor(()=>expect(latest().status).toBe('failed'));
+    expect(JSON.parse(latest().metadata)).toMatchObject({billingStatus:'refunded',requiresReview:false});
+    expect(JSON.parse(latest().metadata).error).toContain(invalidSeconds);
+    resumeSpecificationTasks();resumeSpecificationTasks();
+    expect(balance()).toBe(100);expect(fetch).toHaveBeenCalledTimes(1);
   });
   it.each(['completed','rejected','uncertain'])('uses the real batch dispatcher and settles Mo %s once',async outcome=>{
     await install();let posts=0;
@@ -473,8 +490,8 @@ describe('BB/HSS replacement with Mo', () => {
     upstream=async(url,init)=>{
       if(url.startsWith('http://127.0.0.1:9876/'))return nativeFetch(url.replace('http://127.0.0.1:9876',origin),init);
       if(init.method==='POST'){
-        posts++;expect(JSON.parse(init.body)).toMatchObject({model:HAYA_MO_MODEL,seconds:5,images:refs.reference_images,videos:refs.reference_videos,audios:refs.audio_urls});
-        if(outcome==='rejected')return Response.json({error:{code:'invalid_input',message:'Mo invalid reference'}},{status:400});
+        posts++;expect(JSON.parse(init.body)).toMatchObject({model:HAYA_MO_MODEL,seconds:'5',ratio:'21:9',images:refs.reference_images,videos:refs.reference_videos,audios:refs.audio_urls});
+        if(outcome==='rejected')return Response.json({error:{code:'invalid_json',message:invalidSeconds}},{status:400});
         if(outcome==='uncertain')throw Error('network timeout');
         return Response.json({id:'task_mo_batch'});
       }
