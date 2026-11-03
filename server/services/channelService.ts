@@ -1,3 +1,4 @@
+import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS } from '../../shared/siYueTianManagedVideo.js';
 import { configuredSyncBindings } from './modelSyncScope.js';
 import { isSupportedChannelType } from '../../shared/channelTypes.js';
 import { GOOGLE_SYNC_MODEL_IDS } from '../../shared/googleSyncModels.js';
@@ -717,7 +718,7 @@ export class ChannelService {
     } else if (isMiaowuChannel(channel)) {
       bindings.clear(); for (const id of MIAOWU_DEFAULT_VIDEO_MODELS) bindings.set(id, id);
     }
-    if (isSiYueTianVideoHost(channel.baseUrl)) bindings.set(SI_YUE_TIAN_MINIMAX_MODEL, SI_YUE_TIAN_MINIMAX_MODEL);
+    if (isSiYueTianVideoHost(channel.baseUrl)) for (const model of SI_YUE_TIAN_MANAGED_VIDEO_MODELS) bindings.set(model, model);
     let ignored = 0;
     const normalized = rawModels.flatMap((item: any) => {
       const value = typeof item === 'string' ? item : item?.id || item?.model || item?.model_id;
@@ -753,8 +754,10 @@ export class ChannelService {
       if (!current || current.apiKey !== channel.apiKey || current.baseUrl !== channel.baseUrl || current.type !== channel.type
         || current.supportedModels !== channel.supportedModels || current.modelMapping !== channel.modelMapping)
         throw { status: 409, message: '同步期间渠道配置已变化，原配置未修改，请重新同步' };
-      let added = isSiYueTianVideoHost(channel.baseUrl) && unique.some(item => item.modelId === SI_YUE_TIAN_MINIMAX_MODEL)
-        ? ensureSiYueTianMinimaxModel(sqlite, channel.id) : 0;
+      let added = 0;
+      if (isSiYueTianVideoHost(channel.baseUrl)) for (const model of SI_YUE_TIAN_MANAGED_VIDEO_MODELS) {
+        if (unique.some(item => item.modelId === model)) added += ensureSiYueTianMinimaxModel(sqlite, channel.id, model);
+      }
       for (const item of unique) {
         if (isHayaChannel(channel) && item.modelId === HAYA_XG_SEEDANCE_20_MODEL
           && !db.select().from(modelPricing).where(eq(modelPricing.modelPattern, item.modelId)).get()) {

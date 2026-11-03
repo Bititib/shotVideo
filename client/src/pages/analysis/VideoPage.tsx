@@ -1,6 +1,6 @@
+import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../../../shared/siYueTianManagedVideo.js';
 import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
 import { isSnumomWanVideoModel } from '../../../../shared/snumomWanNsfw';
-import { SI_YUE_TIAN_MINIMAX_MODEL, siYueTianMinimaxInputErrors } from '../../../../shared/siYueTianMinimax';
 import { videoReviewLabel, videoReviewMessage } from '../../../../shared/videoReview';
 import { publicGenerationError, generationProblemSummary } from '../../../../shared/generationMessages';
 import { HUSS_BB_PUBLIC_MODEL, HUSS_HSS_MODEL } from '../../../../shared/hussBbVideo';
@@ -349,6 +349,7 @@ const ALL_ASPECT_RATIOS = [
   { value: '3:2', label: '3:2', icon: RectangleHorizontal },
   { value: '2:3', label: '2:3', icon: Smartphone },
   { value: '21:9', label: '21:9', icon: RectangleHorizontal },
+  { value: 'adaptive', label: '自适应', icon: Monitor },
 ];
 const ALL_DURATIONS = [
   { value: 1, label: '1 秒' }, { value: 2, label: '2 秒' },
@@ -1117,7 +1118,7 @@ export default function VideoPage() {
       ? [{ value: '720p', label: '720p' }, { value: '1080p', label: '1080p' }]
       : [{ value: '480p', label: '480p' }, { value: '720p', label: '720p' }];
 
-  const ASPECT_RATIOS = currentModel?.routingLimits ? ALL_ASPECT_RATIOS.filter(r => currentModel.routingLimits!.ratios.includes(r.value)) : getHmStudioAdditionalVideoModel(selectedModel)?.ratios
+  const ASPECT_RATIOS = currentModel?.routingLimits ? [...ALL_ASPECT_RATIOS, { value: 'adaptive', label: '自适应', icon: Monitor }].filter(r => currentModel.routingLimits!.ratios.includes(r.value)) : getHmStudioAdditionalVideoModel(selectedModel)?.ratios
     ? ALL_ASPECT_RATIOS.filter(ratio => getHmStudioAdditionalVideoModel(selectedModel)!.ratios!.includes(ratio.value))
     : isLongxiaModel(selectedModel)
     ? ALL_ASPECT_RATIOS.filter(ratio => LONGXIA_RATIOS.includes(ratio.value))
@@ -1473,8 +1474,8 @@ export default function VideoPage() {
     if (!prompt.trim()) return;
     if (!guard()) return;
     if (!videoQuote.quote || videoQuote.loading) { setError(videoQuote.error || '正在预估费用，请稍候'); return; }
-    if (selectedModel === SI_YUE_TIAN_MINIMAX_MODEL) {
-      const errors = siYueTianMinimaxInputErrors({ images: referenceImages.length, videos: referenceVideos.length, audios: referenceAudios.length,
+    if (isSiYueTianManagedVideoModel(selectedModel)) {
+      const errors = siYueTianManagedVideoInputErrors(selectedModel, { images: referenceImages.length, videos: referenceVideos.length, audios: referenceAudios.length,
         outputs: 1, seconds: duration, resolution, ratio: aspectRatio, firstFrame: Boolean(firstFrame), lastFrame: Boolean(lastFrame) });
       if (errors.length) { setError(errors.join('；')); return; }
     }

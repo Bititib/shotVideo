@@ -1,6 +1,6 @@
+import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
 import { isHussChannel } from './hussVideoAdapter.js';
 import { isMegabyChannel, megabyTaskUrl, normalizeMegabyTask, readMegabyJson } from './megabyVideoAdapter.js';
-import { SI_YUE_TIAN_MINIMAX_MODEL } from '../../shared/siYueTianMinimax.js';
 import { normalizeSiYueTianMinimaxTask } from './siYueTianMinimaxAdapter.js';
 import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
 import { canWithdrawTaskSupplement } from '../../shared/videoTaskSupplement.js';
@@ -316,7 +316,7 @@ export class VideoRecoveryService {
       throw { status: 503, message: '原任务渠道当前不可用' };
     }
 
-    const siYueTianMinimax = (metadata.actualModel || record.modelId) === SI_YUE_TIAN_MINIMAX_MODEL;
+    const siYueTianMinimax = isSiYueTianManagedVideoModel(metadata.actualModel || record.modelId);
     const completedReceipt = siYueTianMinimax ? metadata.siYueTianMinimaxCompletedReceipt : metadata.megabyCompletedReceipt;
     if ((isMegabyChannel(channel) || siYueTianMinimax) && completedReceipt?.taskId === videoId && completedReceipt.resultUrl) {
       const task = siYueTianMinimax ? normalizeSiYueTianMinimaxTask({ status: 'completed', video_url: completedReceipt.resultUrl }, channel, videoId)

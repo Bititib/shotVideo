@@ -1,10 +1,10 @@
+import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
 import { HUSS_MJ_MODEL, hussMjOptions } from '../../shared/hussMidjourney.js';
 import { submitHussImage, queryHussImage, HussImageError } from './hussImageAdapter.js';
 import { isHussPersistentVideoModel } from '../../shared/hussBbVideo.js';
 import { bbHssKkManaged } from './bbHssKkMigration.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { activeSpecificationTasks } from './videoRecoveryAction.js';
-import { SI_YUE_TIAN_MINIMAX_MODEL } from '../../shared/siYueTianMinimax.js';
 import { normalizeSiYueTianMinimaxTask } from './siYueTianMinimaxAdapter.js';
 import { isMegabyChannel, normalizeMegabyTask, validateMegabyVideoInput, validateMegabyReferenceDurations } from './megabyVideoAdapter.js';
 import { isHussChannel, recoverHussSubmission, normalizeHussTask } from './hussVideoAdapter.js';
@@ -70,7 +70,7 @@ function list(body: any, keys: string[]): string[] {
   return value;
 }
 export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: string): SpecificationRequest {
-  const siYueTianMinimax = kind === 'video' && body.model === SI_YUE_TIAN_MINIMAX_MODEL;
+  const siYueTianMinimax = kind === 'video' && isSiYueTianManagedVideoModel(body.model);
   if (siYueTianMinimax || body.model === SNUMOM_WAN_NSFW_MODEL) {
     const seconds = [body.seconds, body.duration, body.video_length, ...(body.model === SNUMOM_WAN_NSFW_MODEL ? [body.parameters?.duration,body.duration_seconds] : [])].filter(value => value !== undefined).map(Number);
     if (seconds.some(value => !Number.isFinite(value)) || new Set(seconds).size > 1) throw fail('seconds、duration、video_length 必须一致且为有效数字');
@@ -248,7 +248,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       const hussReceipt = isHussChannel(channel) ? hussMeta.hussCompletedReceipt ||
         (hussMeta.upstreamStatus === 'completed' && hussMeta.upstreamResultUrl && (hussMeta.videoId || hussMeta.upstreamTaskId) === taskId
           ? { taskId, resultUrl: hussMeta.upstreamResultUrl } : null) : null;
-      const siYueTianReceipt = metadata(id).actualModel === SI_YUE_TIAN_MINIMAX_MODEL ? metadata(id).siYueTianMinimaxCompletedReceipt : null;
+      const siYueTianReceipt = isSiYueTianManagedVideoModel(metadata(id).actualModel) ? metadata(id).siYueTianMinimaxCompletedReceipt : null;
       const completedReceipt = hussReceipt || metadata(id).megabyCompletedReceipt || siYueTianReceipt;
       if (hussInitial && ['completed','failed','cancelled','canceled'].includes(hussInitial.status)) {
         localCompletion = true;
@@ -265,14 +265,14 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
           if (isZonghengChannel(channel) && initial) { task = normalizeZonghengTask(initial, channel.baseUrl, 'v6k', taskId); patch(id, { zonghengInitialTask: undefined }); }
           else {
             const meta = metadata(id);
-            if (meta.actualModel === SI_YUE_TIAN_MINIMAX_MODEL && meta.siYueTianMinimaxInitialTask) {
+            if (isSiYueTianManagedVideoModel(meta.actualModel) && meta.siYueTianMinimaxInitialTask) {
               task = normalizeSiYueTianMinimaxTask(meta.siYueTianMinimaxInitialTask, channel, taskId);
               patch(id, { siYueTianMinimaxInitialTask: null });
             } else if (meta.snumomReferenceBilling && isSnumomWanChannel(channel)) {
               if (meta.snumomInitialTask) { task=normalizeSnumomWanTask(meta.snumomInitialTask,meta.referenceVideoSeconds || 0,meta.actualModel);patch(id,{snumomInitialTask:null}); }
               else task = await pollSpecificationVideo(channel,taskId,meta.actualModel,meta.referenceVideoSeconds || 0);
             }
-            else task = meta.actualModel === SI_YUE_TIAN_MINIMAX_MODEL
+            else task = isSiYueTianManagedVideoModel(meta.actualModel)
               ? await pollSpecificationVideo(channel, taskId, meta.actualModel) : await pollSpecificationVideo(channel, taskId);
           }
         }
@@ -304,7 +304,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       try {
         patch(id, { upstreamResultUrl: task.resultUrl,
           ...(metadata(id).snumomReferenceBilling && task.billingUsage ? { upstreamBillingUsage:task.billingUsage } : {}),
-          ...(metadata(id).actualModel === SI_YUE_TIAN_MINIMAX_MODEL ? { siYueTianMinimaxCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}),
+          ...(isSiYueTianManagedVideoModel(metadata(id).actualModel) ? { siYueTianMinimaxCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}),
           ...(isHussChannel(channel) ? { hussCompletedReceipt: { taskId, resultUrl: task.resultUrl }, upstreamGenerated: true, upstreamDeliveryPending: true } : {}),
           ...(isMegabyChannel(channel) ? { megabyCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}) });
         const { downloadAndLocalizeVideo } = await import('./videoLocalizationService.js');
@@ -349,7 +349,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
     patch(id, { hussQueryResumeAt: Date.now() + 60_000 });
     return; // Resume the original ID/download in the next worker cycle, not a permanent review.
   }
-  if (metadata(id).actualModel === SI_YUE_TIAN_MINIMAX_MODEL) {
+  if (isSiYueTianManagedVideoModel(metadata(id).actualModel)) {
     patch(id, { siYueTianMinimaxResumeAt: Date.now() + 60_000, progressText: '原任务尚未结束，将在后台继续查询，请勿重复提交' });
     return;
   }
@@ -751,8 +751,8 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
   if (!spec && bbHssKkManaged(sqlite,suppliedId)) {
     res.status(503).json({error:'BB/HSS 的规格配置缺失，请在后台恢复对应规格；未提交或扣费'});return true;
   }
-  if (suppliedId === SI_YUE_TIAN_MINIMAX_MODEL && !spec) {
-    res.status(503).json({ error: '四月天 MiniMax H3 尚未关联模型规格与渠道，请在后台同步该渠道模型' }); return true;
+  if (isSiYueTianManagedVideoModel(suppliedId) && !spec) {
+    res.status(503).json({ error: '四月天视频尚未关联模型规格与渠道，请在后台同步该渠道模型' }); return true;
   }
   if (!spec) return false;
   let id: number | undefined;
@@ -1022,7 +1022,7 @@ export function resumeSpecificationTasks() {
       void continueHussImages(row.id, req, () => {}).catch((e: any) => holdForReview(row.id,e.message,'local')).finally(() => active.delete(row.id));
       continue;
     }
-    if (meta.actualModel === SI_YUE_TIAN_MINIMAX_MODEL && Number(meta.siYueTianMinimaxResumeAt) > Date.now()) continue;
+    if (isSiYueTianManagedVideoModel(meta.actualModel) && Number(meta.siYueTianMinimaxResumeAt) > Date.now()) continue;
     if (meta.zonghengProtocol === 'v6k' && Number(meta.v6kQueryResumeAt) > Date.now()) continue;
     if (row.type === 'video' && videoSubmissionPending(row.id, meta)) continue;
     if (row.type === 'video' && !meta.videoId && !meta.upstreamTaskId && meta.hussIdempotencyKey && !meta.billingShortfall

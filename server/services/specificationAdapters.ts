@@ -1,3 +1,4 @@
+import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
 import { isHussPersistentVideoModel } from '../../shared/hussBbVideo.js';
 import { V6K_SEEDANCE_20_MODEL } from '../../shared/v6kSeedance2.js';
 import { isMegabyChannel, buildMegabyVideoPayload, submitMegabyVideo, pollMegabyVideo, validateMegabyReferenceDurations, MegabyApiError } from './megabyVideoAdapter.js';
@@ -39,7 +40,6 @@ import { isSnumomSubmissionRejection } from './snumomSubmissionRejection.js';
 import { videoErrorTaskId, videoRequestNotSent, explicitVideoCreateError } from './videoSubmissionErrors.js';
 import { isVideoQueryErrorPayload } from './videoFailureService.js';
 import { classifyHmSubmission } from './hmStudioSubmission.js';
-import { SI_YUE_TIAN_MINIMAX_MODEL } from '../../shared/siYueTianMinimax.js';
 import { submitSiYueTianMinimax, pollSiYueTianMinimax, SiYueTianMinimaxError } from './siYueTianMinimaxAdapter.js';
 
 export type SpecificationRequest = { prompt: string; input: RoutingInput; images: string[]; videos: string[]; audios: string[]; firstFrame: string; lastFrame: string; body: Record<string, any>; publicBaseUrl: string };
@@ -151,9 +151,9 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
 }
 export async function submitSpecificationVideo(target: RouteCandidate, request: SpecificationRequest, onStarting: (metadata?: Record<string, unknown>) => void) {
   const c = { ...target.channel, videoSubmission: true }, model = target.route.upstreamModel, exec = target.route.executionModel, i = request.input;
-  if (exec === SI_YUE_TIAN_MINIMAX_MODEL) {
-    if (model !== SI_YUE_TIAN_MINIMAX_MODEL) throw new SpecificationUpstreamError('四月天 MiniMax H3 上游模型映射不一致', false, false, false, 0, true);
-    try { return await submitSiYueTianMinimax(c, request, url => publishSpecificationAsset(url, request.publicBaseUrl), onStarting); }
+  if (isSiYueTianManagedVideoModel(exec)) {
+    if (model !== exec) throw new SpecificationUpstreamError('四月天视频上游模型映射不一致', false, false, false, 0, true);
+    try { return await submitSiYueTianMinimax(c, request, url => publishSpecificationAsset(url, request.publicBaseUrl), onStarting, exec); }
     catch (error) {
       if (error instanceof SiYueTianMinimaxError) throw new SpecificationUpstreamError(error.message, false, error.uncertain, false, error.status, !error.uncertain);
       throw error;
@@ -358,7 +358,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   return String(id);
 }
 export async function pollSpecificationVideo(channel: any, taskId: string, executionModel?: string, referenceVideoSeconds = 0) {
-  if (executionModel === SI_YUE_TIAN_MINIMAX_MODEL) return pollSiYueTianMinimax(channel, taskId);
+  if (isSiYueTianManagedVideoModel(executionModel)) return pollSiYueTianMinimax(channel, taskId);
   if (isZonghengChannel(channel)) {
     const response = await fetchVideoTaskResponse(zonghengTaskUrl(channel.baseUrl, taskId), { headers: { Authorization: 'Bearer ' + channel.apiKey, 'Cache-Control': 'no-cache, no-store' }, cache: 'no-store', redirect: 'error' });
     return normalizeZonghengTask(await readZonghengTaskResponse(response, channel.baseUrl, taskId, channel.apiKey), channel.baseUrl, 'v6k', taskId);

@@ -95,7 +95,7 @@ describe('四月天 MiniMax H3 integration', () => {
     await handleSpecificationGeneration(request(), response(), 'video');
     expect(record()).toMatchObject({ status: 'completed', cost: 2, resultUrl: '/uploads/h3.mp4' });
     expect(balance()).toBe(98); expect(fetch).toHaveBeenCalledTimes(2);
-    expect(downloadAndLocalizeVideo).toHaveBeenCalledWith(base + '/v1/videos/' + taskId + '/content', taskId, MODEL, channelId, null);
+    expect(downloadAndLocalizeVideo).toHaveBeenCalledWith(base + '/v1/videos/' + taskId + '/content', taskId, MODEL, channelId, null, expect.any(Function));
   });
   it('batch validation uses the registered model limits rather than legacy defaults', () => {
     const input = { model: MODEL, resolution: '2K', aspect_ratio: '21:9', video_length: 15, autoRetry: false, maxRetries: 0,
