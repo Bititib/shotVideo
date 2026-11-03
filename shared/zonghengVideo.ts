@@ -1,5 +1,6 @@
 import { v6kSeedance20Product, V6K_SEEDANCE_20_MODEL } from './v6kSeedance2.js';
 import { v6kTt25Product } from './v6kTt25.js';
+import { V6K_STABLE_720_MODEL, V6K_STABLE_720_UPSTREAM } from './v6kStableVideo.js';
 /** V6K model-square specifications checked on 2026-10-24. No retired-site models or prices. */
 export const ZONGHENG_MODEL_PREFIX = 'ZH-';
 export const LEGACY_ZONGHENG_MODEL_PREFIX = 'zongheng-';
@@ -9,6 +10,7 @@ export const V6K_TTT_720_DESCRIPTION = '30图10音10视/720P/5-30秒/全天稳�
 export const V6K_KK25_MODEL = 'kkseadanco2.5';
 export const V6K_KK25_DESCRIPTION = '30图10音10视/720P/5-30秒/全天稳定10分钟出片';
 export function zonghengPublicModelId(upstreamId: string): string {
+  if (upstreamId === V6K_STABLE_720_UPSTREAM) return V6K_STABLE_720_MODEL;
   return v6kSeedance20Product(upstreamId)?.id || v6kTt25Product(upstreamId)?.id || ([V6K_TTT_720_MODEL,V6K_KK25_MODEL].includes(upstreamId) ? upstreamId : ZONGHENG_MODEL_PREFIX + upstreamId);
 }
 /** Preserve old API/canvas IDs while publishing the new namespace. */
@@ -34,7 +36,7 @@ export const ZONGHENG_VIDEO_MODELS = [
 ] as const;
 export function getZonghengVideoSpec(model: string) {
   const canonical = canonicalZonghengModelId(model);
-  const id = canonical === V6K_SEEDANCE_20_MODEL ? 'Asedanco2.0' : canonical.startsWith(ZONGHENG_MODEL_PREFIX) ? canonical.slice(ZONGHENG_MODEL_PREFIX.length) : canonical;
+  const id = canonical === V6K_STABLE_720_MODEL ? V6K_STABLE_720_UPSTREAM : canonical === V6K_SEEDANCE_20_MODEL ? 'Asedanco2.0' : canonical.startsWith(ZONGHENG_MODEL_PREFIX) ? canonical.slice(ZONGHENG_MODEL_PREFIX.length) : canonical;
   return ZONGHENG_VIDEO_MODELS.find(spec => spec.id === id);
 }
 /** Confirmed reference limits; other families retain their existing capabilities. */

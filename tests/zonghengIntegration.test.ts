@@ -25,6 +25,8 @@ import { ensureV6kTttModel } from '../server/services/v6kTttModel';
 import { V6K_SYNC_UPSTREAM_MODELS } from '../shared/v6kSyncModels';
 import { getKkVideoRouting, saveKkVideoRouting } from '../server/services/kkVideoRoutingService';
 import { KK_VIDEO_SOURCES } from '../shared/kkVideoRouting';
+import { V6K_STABLE_720_MODEL as WD, V6K_STABLE_720_UPSTREAM as STABLE, v6kStable720Limits } from '../shared/v6kStableVideo';
+import { ensureV6kStable720Model, enableV6kStable720Entry } from '../server/services/v6kStable720Catalog';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import express from 'express';
@@ -434,13 +436,13 @@ describe('V6K explicitly requested model sync allowlist',()=>{
       expect(JSON.parse(latest().metadata)).toMatchObject({videoId:'original_old_dola',upstreamModel:'dola2.0',billingStatus:terminal==='completed'?'settled':'refunded'});
     }finally{time.mockRestore();}
   });
-  it('imports only eight approved upstream IDs as seven entries and never expands scope from video metadata or similar names',async()=>{
+  it('imports only approved upstream IDs as eight entries and never expands scope from video metadata or similar names',async()=>{
     ensureV6kTttModel(sqlite);
     const unrelated=['TTseadanco2.5-720YT','XXsedanco2.0S','dola2.0','grok--1.5','QQsedanco2.5/720','KKseadanco2.5X','Asedanco2.0-extra','ttseadanco2.5-480','brand-new-video'];
     const result=await syncV6kEntries([...V6K_SYNC_UPSTREAM_MODELS.map(id=>({id})),...unrelated.map(id=>({id,type:'video',supported_endpoint_types:['openai-video']})),{id:'Asedanco2.0'}]);
-    const expected=['kkseadanco2.5','TTTseadanco2.5/720',V6K_SEEDANCE_20_MODEL,V6K_XX_SEEDANCE_20_MODEL,...V6K_TT25_PRODUCTS.map(p=>p.id)];
-    expect(result.count).toBe(7);expect(new Set(result.models)).toEqual(new Set(expected));
-    expect(db.select().from(models).all().filter(m=>expected.includes(m.modelId))).toHaveLength(7);
+    const expected=['kkseadanco2.5',WD,'TTTseadanco2.5/720',V6K_SEEDANCE_20_MODEL,V6K_XX_SEEDANCE_20_MODEL,...V6K_TT25_PRODUCTS.map(p=>p.id)];
+    expect(result.count).toBe(8);expect(new Set(result.models)).toEqual(new Set(expected));
+    expect(db.select().from(models).all().filter(m=>expected.includes(m.modelId))).toHaveLength(8);
     expect(db.select().from(models).all().filter(m=>unrelated.some(id=>m.modelId===id||m.modelId==='ZH-'+id))).toEqual([]);
     expect(expected.every(id=>db.select().from(models).all().find(m=>m.modelId===id)!.isActive===0)).toBe(true);
     const channel=db.select().from(channels).get()!;
@@ -543,6 +545,100 @@ it('removes saved BB fallback configuration while recovering its already accepte
   }finally{time.mockRestore();}
 });
 
+describe('independent stable 720P public entry',()=>{
+  async function install(){
+    await syncV6kEntries([STABLE]);
+    await enableV6kStable720Entry(sqlite,db.select().from(channels).get()!.id);
+    sqlite.prepare("INSERT INTO api_tokens(id,user_id,token_key,balance) VALUES(1,1,'test',-1)").run();
+  }
+  it('seeds disabled, then syncs only the exact upstream into the unprefixed public ID and price',async()=>{
+    ensureV6kStable720Model(sqlite);
+    expect(db.select().from(models).all().find(m=>m.modelId===WD)).toMatchObject({isActive:0});
+    expect(getModelSpecification(WD)).toMatchObject({enabled:false,routes:[],limits:v6kStable720Limits()});
+    const result=await syncV6kEntries([STABLE,'unrequested-video']);
+    expect(result.models).toEqual([WD]);
+    const c=db.select().from(channels).get()!;
+    expect(JSON.parse(c.modelMapping)[WD]).toBe(STABLE);expect(JSON.parse(c.supportedModels)).toContain(WD);
+    expect(getModelSpecification(WD)).toMatchObject({enabled:false,routes:[{executionModel:WD,upstreamModel:STABLE,enabled:true}]});
+    expect(db.select().from(models).all().some(m=>m.modelId.includes('稳定'))).toBe(false);
+    expect(PricingService.quote(WD,{resolution:'720p',seconds:30,count:1}).cost).toBe(6.5);
+    expect(balance()).toBe(100);expect(db.select().from(contents).all()).toEqual([]);
+  });
+  it('activates only after an authenticated GET and leaves KK policy, historical tasks and balances intact',async()=>{
+    await syncV6kEntries(['kkseadanco2.5',STABLE]);
+    const channelId=db.select().from(channels).get()!.id;
+    upstream=async(url,init)=>{expect(url).toBe('https://www.v6k.top/v1/models');expect(init.method).not.toBe('POST');expect(init.headers.Authorization).toBe('Bearer test-key');return Response.json({data:[{id:STABLE},{id:'kkseadanco2.5'}]});};
+    await saveKkVideoRouting('kkseadanco2.5',{primary:'stable',fallback:true,channelId},getKkVideoRouting('kkseadanco2.5').version);
+    db.insert(contents).values({userId:1,type:'video',modelId:'kkseadanco2.5',cost:6.5,status:'processing',metadata:JSON.stringify({channelId,videoId:'existing_stable_receipt',upstreamModel:STABLE,billingStatus:'reserved',pricingSnapshot:{inputPrice:6.5}})}).run();
+    const before=JSON.stringify(db.select().from(contents).all()),kk=JSON.stringify(getModelSpecification('kkseadanco2.5'));
+    const result=await enableV6kStable720Entry(sqlite,channelId);
+    expect(result).toMatchObject({model:WD,upstreamModel:STABLE,modelEnabled:true,specEnabled:true,routeEnabled:true,pricing:{billing_type:'per_call',input_price:6.5}});
+    expect(JSON.stringify(getModelSpecification('kkseadanco2.5'))).toBe(kk);expect(JSON.stringify(db.select().from(contents).all())).toBe(before);expect(balance()).toBe(100);
+    const saved=getModelSpecification(WD)!;saveModelSpecification({...saved,enabled:false,routes:saved.routes.map(r=>({...r,enabled:false}))});
+    db.update(models).set({isActive:0}).where(eq(models.modelId,WD)).run();db.update(modelPricing).set({inputPrice:7.5,extraParams:'{"720P":8}'}).where(eq(modelPricing.modelPattern,WD)).run();
+    const snapshot=syncConfiguration();await syncV6kEntries([STABLE,'kkseadanco2.5']);ensureV6kStable720Model(sqlite);pruneUnapprovedV6kBindings(sqlite);
+    expect(syncConfiguration()).toEqual(snapshot);
+  });
+  it('does not change data when stable permission is missing or the channel changes during the GET',async()=>{
+    await syncV6kEntries([STABLE]);const channelId=db.select().from(channels).get()!.id,before=syncConfiguration();
+    upstream=async()=>Response.json({data:[{id:'kkseadanco2.5'}]});
+    await expect(enableV6kStable720Entry(sqlite,channelId)).rejects.toThrow('未开放');expect(syncConfiguration()).toEqual(before);
+    upstream=async()=>{ChannelService.updateChannel(channelId,{apiKey:'new-key'});return Response.json({data:[{id:STABLE}]});};
+    await expect(enableV6kStable720Entry(sqlite,channelId)).rejects.toThrow('配置已变化');
+    expect(getModelSpecification(WD)!.enabled).toBe(false);expect(balance()).toBe(100);expect(db.select().from(contents).all()).toEqual([]);
+  });
+  it('publishes matching website/API names, limits and per-task prices without combining the entry into KK',async()=>{
+    await install();
+    const list=await(await nativeFetch(origin+'/api/video/models')).json() as any[],item=list.find(x=>x.id===WD);
+    expect(item).toMatchObject({id:WD,available:true,billingType:'per_call',rates:{'720p':6.5},routingLimits:{maxImages:30,maxAudios:10,maxVideos:10,resolutions:['720p'],duration:{min:5,max:30,step:1}}});
+    expect(getPublicDeveloperModels().items.find(x=>x.id===WD)).toMatchObject({id:WD,available:true,endpoints:['/v1/videos'],pricing:{billing_type:'per_call',unit:'request',unit_price:6.5}});
+    expect(quoteVideoRequest({model:WD,resolution:'720p',seconds:5},1)).toMatchObject({model:WD,cost:6.5,billingType:'per_call'});
+    expect(quoteVideoRequest({model:WD,resolution:'720p',seconds:30},1)).toMatchObject({cost:6.5});
+  });
+  it.each(['/api/video/generate','/v1/videos'])('submits the real stable ID at 5 and 30 seconds without changing materials or the public ID at %s',async endpoint=>{
+    await install();vi.stubEnv('BACKEND_URL','https://app.example');let posts=0;
+    upstream=async(url,init)=>{posts++;expect(url).toBe('https://www.v6k.top/v1/videos');const q=JSON.parse(init.body);
+      expect(q).toMatchObject({model:STABLE,resolution:'720p'});expect(q.images).toHaveLength(1);expect(q.videos).toHaveLength(10);expect(q.audios).toHaveLength(10);
+      return Response.json({id:'stable_standalone_'+posts,status:'completed'});};
+    for(const seconds of [5,30]){await(await post(endpoint,{model:WD,prompt:'stable entry',seconds,resolution:'720p',reference_images:[reference],reference_videos:Array(10).fill('https://media.example/v.mp4'),audio_urls:Array(10).fill('https://media.example/a.wav')})).text();await vi.waitFor(()=>expect(latest().status).toBe('completed'));expect(latest().modelId).toBe(WD);expect(latest().cost).toBe(6.5);expect(JSON.parse(latest().metadata)).toMatchObject({upstreamModel:STABLE,resolution:'720p'});}
+    expect(posts).toBe(2);expect(balance()).toBe(87);resumeSpecificationTasks();expect(posts).toBe(2);
+  });
+  it.each(['rejected','failed','uncertain'])('returns the original order and settles %s only once, never using the KK backup',async outcome=>{
+    await install();let posts=0;
+    upstream=async(_url,init)=>{posts++;expect(JSON.parse(init.body).model).toBe(STABLE);if(outcome==='uncertain')return new Response('timeout',{status:504});if(outcome==='rejected')return Response.json({error:{code:'rate_limit_exceeded',message:'busy'}},{status:429});return Response.json({id:'stable_failed_receipt',status:'failed',error:{message:'original failed'}});};
+    const body={model:WD,prompt:'one original',seconds:30,resolution:'720p'},key='stable-original';
+    const first=await(await retryVideo('/v1/videos',body,key)).json() as any;
+    await vi.waitFor(()=>expect(JSON.parse(latest().metadata).billingStatus).toBe(outcome==='uncertain'?'review':'refunded'));
+    const again=await(await retryVideo('/v1/video/generations',body,key)).json() as any;expect(again.id).toBe(first.id);
+    resumeSpecificationTasks();resumeSpecificationTasks();expect(posts).toBe(1);expect(balance()).toBe(outcome==='uncertain'?93.5:100);expect(db.select().from(contents).all()).toHaveLength(1);
+    expect(sqlite.prepare('SELECT count(*) AS n FROM billing_reservations').get()).toMatchObject({n:1});
+    if(outcome==='failed')expect(JSON.parse(latest().metadata).videoId).toBe('stable_failed_receipt');
+  });
+  it.each(['completed','failed'])('keeps the stable original ID through unknown state and a query error until %s',async status=>{
+    await install();let posts=0,queries=0;
+    upstream=async(url,init)=>{if(init.method==='POST'){posts++;return Response.json({id:'stable_unknown_original',status:'unknown'});}
+      expect(url).toContain('/v1/videos/stable_unknown_original');expect(JSON.parse(latest().metadata)).toMatchObject({upstreamModel:STABLE,videoId:'stable_unknown_original'});
+      if(++queries===1)return Response.json({error:{code:'temporary_error',message:'busy'}},{status:503});
+      return Response.json({id:'stable_unknown_original',status,error:status==='failed'?{message:'upstream failed'}:undefined});};
+    await(await post('/api/video/generate',{model:WD,prompt:'query original',seconds:5,resolution:'720p'})).text();expect(latest().status).toBe(status);expect(posts).toBe(1);expect(queries).toBe(2);expect(balance()).toBe(status==='completed'?93.5:100);
+    resumeSpecificationTasks();resumeSpecificationTasks();expect(posts).toBe(1);
+  });
+  it('rejects unsupported limits before creating orders or reserving money',async()=>{
+    await install();upstream=async()=>{throw Error('must not submit');};vi.mocked(fetch).mockClear();
+    for(const patch of [{resolution:'480p'},{resolution:'1080p'},{seconds:4},{seconds:31},{reference_images:Array(31).fill(reference)},{reference_videos:Array(11).fill('https://media.example/v.mp4')},{audio_urls:Array(11).fill('https://media.example/a.wav')},{first_frame:reference}]){
+      const r=await post('/api/video/generate',{model:WD,prompt:'invalid',seconds:5,resolution:'720p',...patch});expect(r.status).toBe(400);await r.text();
+    }
+    expect(fetch).not.toHaveBeenCalled();expect(balance()).toBe(100);expect(db.select().from(contents).all()).toEqual([]);
+  });
+  it('uses the persistent batch bridge and charges 6.5 once for the independent stable entry',async()=>{
+    await install();let posts=0;const batchId=batchStore.create(1,crypto.randomUUID(),{name:'stable batch',model:WD,resolution:'720p',aspect_ratio:'16:9',video_length:30,autoRetry:false,maxRetries:0,creatives:[{prompt:'stable batch',count:1,reference_images:[]}]},6.5,'https://app.example');
+    const item=batchStore.detail(batchId,1).items[0];
+    upstream=async(url,init)=>{if(url==='http://127.0.0.1:9876/api/video/generate')return nativeFetch(origin+'/api/video/generate',init);posts++;expect(JSON.parse(init.body)).toMatchObject({model:STABLE,seconds:30,resolution:'720p'});return Response.json({id:'stable_batch_original',status:'completed'});};
+    tickVideoBatches();await vi.waitFor(()=>expect(latest()?.status).toBe('completed'));tickVideoBatches();tickVideoBatches();resumeSpecificationTasks();
+    expect(batchStore.item(item.id)).toMatchObject({status:'completed',billing_state:'charged',charged:6.5});expect(latest().modelId).toBe(WD);expect(balance()).toBe(93.5);expect(posts).toBe(1);
+  });
+});
+
 describe('new KK 2.5 product, fixed per-task price',()=>{
   const id='kkseadanco2.5';
   async function install(){await syncV6kEntries([id]);db.update(models).set({isActive:1}).where(eq(models.modelId,id)).run();saveModelSpecification({...getModelSpecification(id)!,enabled:true});sqlite.prepare("INSERT INTO api_tokens(id,user_id,token_key,balance) VALUES(1,1,'test',-1)").run();}
@@ -607,13 +703,14 @@ describe('new KK 2.5 product, fixed per-task price',()=>{
     expect(posts).toBe(1);expect(latest().id).toBe(original.id);expect(balance()).toBe(held||outcome==='receipt'?93.5:100);
     if(['receipt','failed'].includes(outcome))expect(JSON.parse(latest().metadata).videoId).toBe('stable_original');
   });
-  it('preserves KK policy, switches and price across sync and startup cleanup without publishing a stable sale entry',async()=>{
+  it('preserves KK policy, switches and price across sync and startup cleanup alongside the independent stable entry',async()=>{
     await install();await configure(true,'kk');const current=getModelSpecification(id)!;
     saveModelSpecification({...current,routes:current.routes.map(r=>({...r,cost:r.upstreamModel===id?99:0,costUnit:'per_call',enabled:r.upstreamModel===id}))});
     const before=getModelSpecification(id)!;pruneUnapprovedV6kBindings(sqlite);
     await syncV6kEntries(Object.values(KK_VIDEO_SOURCES));
     expect(getModelSpecification(id)).toEqual(before);
     expect(db.select().from(models).all().some(m=>m.modelId.includes('稳定'))).toBe(false);
+    expect(getModelSpecification(WD)).toMatchObject({enabled:false,routes:[{upstreamModel:STABLE}]});
     expect(PricingService.quote(id,{seconds:30,resolution:'720p',count:1}).cost).toBe(6.5);
     expect(selectModelRoutes(before,{images:0,videos:0,audios:0,outputs:1,seconds:5,resolution:'720p',ratio:'16:9',firstFrame:false,lastFrame:false})[0].route.upstreamModel).toBe(id);
   });

@@ -13,6 +13,8 @@ import { V6K_KK25_MODEL, V6K_KK25_DESCRIPTION } from '../../shared/zonghengVideo
 import { ensureV6kKk25Model } from './v6kKk25Catalog.js';
 import { ensureBbHssKkMapping } from './bbHssKkMigration.js';
 import { pruneUnapprovedV6kBindings } from './v6kApprovedBindings.js';
+import { V6K_STABLE_720_UPSTREAM } from '../../shared/v6kStableVideo.js';
+import { ensureV6kStable720Model } from './v6kStable720Catalog.js';
 
 export async function syncV6kVideoModels(channel: { id: number; baseUrl: string; apiKey: string; timeout?: number; type?: string }) {
   const base = zonghengBaseUrl(channel.baseUrl);
@@ -33,7 +35,6 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     if (!id) continue;
     if (!isV6kSyncModel(id)) { ignored.add(id); continue; }
     if (!authorizedIds.includes(id)) authorizedIds.push(id);
-    if (id === '稳定seadanco2.5-720') continue; // Configured through the KK routing control, not a new public model.
     const spec = getZonghengVideoSpec(id);
     const publicId = zonghengPublicModelId(id);
     const product = v6kSeedance20Product(id);
@@ -77,6 +78,7 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     bindV6kSeedance20Routes(sqlite, channel.id, authorizedIds);
     bindV6kTt25Routes(sqlite, channel.id, authorizedIds);
     if (authorizedIds.includes(V6K_KK25_MODEL)) { ensureV6kKk25Model(sqlite, channel.id); ensureBbHssKkMapping(sqlite, channel.id); }
+    if (authorizedIds.includes(V6K_STABLE_720_UPSTREAM)) ensureV6kStable720Model(sqlite, channel.id);
     const retired = pruneUnapprovedV6kBindings(sqlite, channel.id);
     return { count: ids.length, added: ids.filter(id => !previouslyPresent.has(id)).length, models: ids,
       warnings: [...warnings, ...(retired.removedBindings || retired.removedRoutes ? ['已归档并解除未接入型号的旧渠道关联 ' + retired.removedBindings + ' 项、旧规格线路 ' + retired.removedRoutes + ' 条；原订单、价格和启用记录保留。'] : [])] };
