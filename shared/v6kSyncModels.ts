@@ -1,6 +1,7 @@
 /** Only these explicitly requested new-site models may be added by automatic channel sync. */
 export const V6K_SYNC_UPSTREAM_MODELS = [
   'kkseadanco2.5',
+  '稳定seadanco2.5-720', // Internal KK route only; never a separate sale entry.
   'TTTseadanco2.5/720',
   'Asedanco2.0',
   'Asedanco2.05',

@@ -21,6 +21,7 @@ const seconds = (min: number, max: number) => Array.from({ length: max - min + 1
 export const ZONGHENG_VIDEO_MODELS = [
   { id: V6K_TTT_720_MODEL, family: 'seedance', references: { images: 30, videos: 10, audios: 10 }, resolution: '720p', seconds: seconds(5, 30) },
   { id: V6K_KK25_MODEL, family: 'seedance', references: { images: 30, videos: 10, audios: 10 }, resolution: '720p', seconds: seconds(5, 30) },
+  { id: '稳定seadanco2.5-720', family: 'seedance', references: { images: 30, videos: 10, audios: 10 }, resolution: '720p', seconds: seconds(5, 30) },
   ...['TTseadanco2.5-480', 'TTseadanco2.5-480YT'].map(id => ({ id, family: 'seedance', references: SEEDANCE_25_REFERENCES, resolution: '480p', seconds: seconds(5, 30) })),
   ...['TTseadanco2.5-720', 'TTseadanco2.5-720YT', 'TTseadanco2.5AT', 'JJsedanco2.54', 'JJseadanco2.52'].map(id => ({ id, family: 'seedance', references: SEEDANCE_25_REFERENCES, resolution: '720p', seconds: seconds(5, 30) })),
   ...['TTseadanco2.5-1080', 'TTseadanco2.5-1080YT'].map(id => ({ id, family: 'seedance', references: SEEDANCE_25_REFERENCES, resolution: '1080p', seconds: seconds(5, 30) })),

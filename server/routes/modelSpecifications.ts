@@ -1,4 +1,5 @@
 import { switchHssSource } from '../services/hssSourceService.js';
+import { getKkVideoRouting, saveKkVideoRouting } from '../services/kkVideoRoutingService.js';
 import { bbHssKkManaged } from '../services/bbHssKkMigration.js';
 import { getBbHssVideoSources, switchBbHssVideoSource } from '../services/bbHssSourceService.js';
 import { readBbHssSources } from '../services/bbHssSourcePolicy.js';
@@ -13,6 +14,8 @@ import { getModelSpecifications, getModelSpecification, saveModelSpecification, 
 import { specificationRequest } from '../services/specificationGenerationService.js';
 import { routingMismatches } from '../../shared/modelRouting.js';
 const router = Router();
+router.get('/:modelId/kk-routing', (req,res,next) => { try { res.json(getKkVideoRouting(req.params.modelId)); } catch(e) { next(e); } });
+router.post('/:modelId/kk-routing', async (req,res,next) => { try { res.json(await saveKkVideoRouting(req.params.modelId,req.body?.routing,req.body?.version)); } catch(e) { next(e); } });
 router.get('/suggestions', (_req, res, next) => { try { const modelSalePrice = createModelSalePriceResolver(); res.json(suggestedModelSpecifications().map(spec => ({ ...spec, salePrice: modelSalePrice(spec.modelId, spec.limits.resolutions) }))); } catch (error) { next(error); } });
 router.get('/', (_req, res, next) => {
   try {

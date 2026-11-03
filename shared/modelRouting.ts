@@ -15,6 +15,7 @@ export type ModelRoute = {
   resolutionCosts: Record<string, number>; priority: number;
 };
 export type ModelSpecification = {
+  kkRouting?: import('./kkVideoRouting.js').KkVideoRouting;
   /** Image siblings share a model family and legacy aliases; each has one output resolution. */
   imageFamily?: string;
   modelId: string; kind: MediaKind; enabled: boolean; aliases: string[]; limits: ModelInputLimits; routes: ModelRoute[];

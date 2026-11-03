@@ -33,6 +33,7 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     if (!id) continue;
     if (!isV6kSyncModel(id)) { ignored.add(id); continue; }
     if (!authorizedIds.includes(id)) authorizedIds.push(id);
+    if (id === '稳定seadanco2.5-720') continue; // Configured through the KK routing control, not a new public model.
     const spec = getZonghengVideoSpec(id);
     const publicId = zonghengPublicModelId(id);
     const product = v6kSeedance20Product(id);

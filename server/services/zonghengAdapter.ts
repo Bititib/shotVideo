@@ -25,7 +25,7 @@ export function zonghengError(payload: any): string {
 }
 export interface ZonghengSubmissionDiagnostics {
   reason: 'http_error' | 'invalid_task_response' | 'invalid_json' | 'timeout' | 'network_error' | 'receipt_persistence_error';
-  httpStatus?: number; elapsedMs: number; networkCode?: string; requestNotSent?: boolean;
+  httpStatus?: number; elapsedMs: number; networkCode?: string; requestNotSent?: boolean; safeRateLimitRejection?: boolean;
 }
 export class ZonghengSubmissionError extends Error {
   constructor(message: string, readonly uncertain: boolean, readonly diagnostics?: ZonghengSubmissionDiagnostics) { super(message); }
@@ -155,8 +155,10 @@ export async function submitZonghengVideo(base: string, apiKey: string, input: Z
       return { taskId, pollDelay: 20_000, initialTask, warning };
     }
     if (!response.ok) throw new ZonghengSubmissionError(upstreamDiagnostic('V6K', '提交', { error_code: job?.error_code ?? job?.error?.code ?? job?.code, error_detail: job?.error_detail, error: job?.error, message: job?.message }, apiKey, response.status, response.headers.get('x-request-id') || undefined),
-      Boolean(videoErrorTaskId(job, response.headers)) || response.status === 408 || response.status >= 500,
-      { reason: 'http_error', httpStatus, elapsedMs: Date.now() - startedAt });
+      Boolean(videoErrorTaskId(job, response.headers)) || ['queued','in_progress','completed','failed','unknown'].includes(job?.status) || response.status === 408 || response.status >= 500,
+      { reason: 'http_error', httpStatus, elapsedMs: Date.now() - startedAt,
+        safeRateLimitRejection: response.status === 429 && job?.status === undefined && !videoErrorTaskId(job, response.headers)
+          && typeof job?.error?.code === 'string' && Boolean(job.error.code.trim()) && typeof job?.error?.message === 'string' });
     const explicitError = !videoErrorTaskId(job, response.headers) && !['queued','in_progress','completed','unknown'].includes(job?.status) && (Boolean(job?.error) || job?.success === false
       || job?.code !== undefined && ![0,200,'0','200','success','ok'].includes(job.code));
     throw new ZonghengSubmissionError(explicitError ? zonghengError(job).split(apiKey).join('[REDACTED]') : '未返回有效任务 ID 或状态，请核实原订单', !explicitError,

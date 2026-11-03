@@ -1,4 +1,5 @@
 import HssSourceSwitch from '../../components/HssSourceSwitch';
+import KkVideoRoutingControl from '../../components/KkVideoRoutingControl';
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import AdminDrawer from '../../components/AdminDrawer';
 import AdminCollection from '../../components/AdminCollection';
@@ -21,6 +22,7 @@ export default function ModelsPage({ channelId, onEditingChange }: { channelId?:
   const [statsError, setStatsError] = useState('');
   const [priceError, setPriceError] = useState('');
   const [priceModel, setPriceModel] = useState<string | null>(null);
+  const [kkRoutingOpen, setKkRoutingOpen] = useState(false), [kkRoutingBusy, setKkRoutingBusy] = useState(false);
   const [priceSearchParams] = useSearchParams();
   const priceTarget = priceSearchParams.get('priceModel');
   useEffect(() => { if (!channelId && priceTarget) setPriceModel(priceTarget); }, [channelId, priceTarget]);
@@ -36,7 +38,7 @@ export default function ModelsPage({ channelId, onEditingChange }: { channelId?:
   const [saving, setSaving] = useState(false);
   const [pendingId, setPendingId] = useState<number | null>(null);
   const { edit, setEdit, close: closeEdit, restore, available } = useEditDraft(`models:${channelId || 'all'}`, saving || batchBusy);
-  useEffect(() => { onEditingChange?.(Boolean(edit) || Boolean(priceModel) || batchBusy); }, [edit, priceModel, batchBusy, onEditingChange]);
+  useEffect(() => { onEditingChange?.(Boolean(edit) || Boolean(priceModel) || kkRoutingOpen || batchBusy); }, [edit, priceModel, kkRoutingOpen, batchBusy, onEditingChange]);
   const [loading, setLoading] = useState(() => !getAdminCached('/admin/models?view=config'));
   useAdminScroll(!loading && !channelId);
 
@@ -231,7 +233,7 @@ export default function ModelsPage({ channelId, onEditingChange }: { channelId?:
           { title: '渠道', render: m => channels.filter(c => getChannelModels(c).includes(m.modelId)).map(c => c.name).join('、') || '独立配置' },
           { title: '价格 / 来源', sort: m => prices.find(p => p.modelPattern === m.modelId)?.inputPrice ?? -1, render: m => { const rule = prices.find(p => p.modelPattern === m.modelId); return <><div>{priceSummary(rule)}</div><small>{priceSource(rule)}</small></>; } },
           { title: '状态 / 统计', sort: m => m.isActive, render: m => <><div>{m.isActive ? '启用' : '停用'}</div><small>{m.totalCalls === undefined ? '统计加载中' : `${m.totalCalls} 次 · 成功 ${m.successRate}%`}</small></> },
-          { title: '操作', render: m => <div className="flex flex-wrap gap-2 text-xs"><button disabled={pendingId !== null || batchBusy} aria-label={`${m.isActive ? '停用' : '启用'} ${m.displayName}`} onClick={() => toggleActive(m)}>{m.isActive ? '停用' : '启用'}</button><button disabled={batchBusy} onClick={() => openEdit(m)}>编辑</button><button disabled={batchBusy} onClick={() => { setPriceEditing(false); setPriceModel(m.modelId); }}>管理价格</button><button disabled={batchBusy} onClick={() => handleDelete(m.id)}>删除</button></div> },
+          { title: '操作', render: m => <div className="flex flex-wrap gap-2 text-xs"><button disabled={pendingId !== null || batchBusy} aria-label={`${m.isActive ? '停用' : '启用'} ${m.displayName}`} onClick={() => toggleActive(m)}>{m.isActive ? '停用' : '启用'}</button><button disabled={batchBusy} onClick={() => openEdit(m)}>编辑</button><button disabled={batchBusy} onClick={() => { setPriceEditing(false); setPriceModel(m.modelId); }}>管理价格</button>{m.modelId === 'kkseadanco2.5' && <button disabled={batchBusy} onClick={() => setKkRoutingOpen(true)}>分流设置</button>}<button disabled={batchBusy} onClick={() => handleDelete(m.id)}>删除</button></div> },
         ]}>{visibleModels => <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {visibleModels.map(m => (
             <div
@@ -311,6 +313,7 @@ export default function ModelsPage({ channelId, onEditingChange }: { channelId?:
                 </div>
 
                 <div className="flex gap-2 w-full">
+                  {m.modelId === 'kkseadanco2.5' && <button disabled={batchBusy} onClick={() => setKkRoutingOpen(true)} className="flex-1 py-1.5 rounded-lg text-xs bg-green-500/10">分流设置</button>}
                   <button disabled={batchBusy} onClick={() => openEdit(m)} className="flex-1 py-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-xs text-zinc-300 transition-colors">编辑</button>
                   <button disabled={batchBusy} onClick={() => { setPriceEditing(false); setPriceModel(m.modelId); }} className="flex-1 py-1.5 text-center rounded-lg text-xs bg-blue-500/10">管理价格</button>
                   <button disabled={pendingId !== null || batchBusy} onClick={() => handleDelete(m.id)} className="py-1.5 px-3 bg-red-500/10 hover:bg-red-500/20 rounded-lg text-xs text-red-400 transition-colors">删除</button>
@@ -321,6 +324,7 @@ export default function ModelsPage({ channelId, onEditingChange }: { channelId?:
         </div>}</AdminCollection>
       )}
 
+      {kkRoutingOpen && <AdminDrawer title="KK · 分流设置" blocked={kkRoutingBusy} onClose={() => setKkRoutingOpen(false)}><KkVideoRoutingControl disabled={batchBusy} onSaved={load} onBusyChange={setKkRoutingBusy}/></AdminDrawer>}
       {priceModel && <AdminDrawer title={priceModel + ' · 价格详情'} blocked={priceEditing} onClose={() => { setPriceModel(null); void loadPrices(); }}>
         <Suspense fallback={<p role="status" className="p-6">正在加载价格…</p>}><PricingPage key={priceModel} modelId={priceModel} onEditingChange={setPriceEditing} /></Suspense>
       </AdminDrawer>}

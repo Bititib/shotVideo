@@ -21,6 +21,8 @@ const api = {
 
 export const adminApi = {
   getVideoSources(id: string) { return api.get<any>('/admin/model-specifications/' + encodeURIComponent(id) + '/video-sources'); },
+  getKkRouting() { return api.get<any>('/admin/model-specifications/kkseadanco2.5/kk-routing'); },
+  saveKkRouting(routing: import('../../../shared/kkVideoRouting').KkVideoRouting, version: string) { return api.post<any>('/admin/model-specifications/kkseadanco2.5/kk-routing', { routing, version }); },
   switchVideoSource(id: string, source: string, channelId: number) { return api.post<any>('/admin/model-specifications/' + encodeURIComponent(id) + '/video-sources', {source,channelId}); },
   getModelSpecificationSuggestions() { return api.get<any[]>('/admin/model-specifications/suggestions'); },
   switchHssSource(source: 'A' | 'B') { return api.post<any>('/admin/model-specifications/hss-2.5-301010/hss-source', {source}); },

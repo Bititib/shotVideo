@@ -23,6 +23,8 @@ import { PricingService } from '../server/services/pricingService';
 import { TokenService } from '../server/services/tokenService';
 import { ensureV6kTttModel } from '../server/services/v6kTttModel';
 import { V6K_SYNC_UPSTREAM_MODELS } from '../shared/v6kSyncModels';
+import { getKkVideoRouting, saveKkVideoRouting } from '../server/services/kkVideoRoutingService';
+import { KK_VIDEO_SOURCES } from '../shared/kkVideoRouting';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import express from 'express';
@@ -544,6 +546,138 @@ it('removes saved BB fallback configuration while recovering its already accepte
 describe('new KK 2.5 product, fixed per-task price',()=>{
   const id='kkseadanco2.5';
   async function install(){await syncV6kEntries([id]);db.update(models).set({isActive:1}).where(eq(models.modelId,id)).run();saveModelSpecification({...getModelSpecification(id)!,enabled:true});sqlite.prepare("INSERT INTO api_tokens(id,user_id,token_key,balance) VALUES(1,1,'test',-1)").run();}
+  async function configure(fallback=true,primary:'stable'|'kk'='stable') {
+    upstream=async()=>Response.json({data:Object.values(KK_VIDEO_SOURCES).map(id=>({id}))});
+    await saveKkVideoRouting(id,{primary,fallback,channelId:db.select().from(channels).get()!.id},getKkVideoRouting(id).version);
+  }
+  it('saves the administrator switch atomically, preserves price/switches and rejects stale or unauthorized configuration',async()=>{
+    await install(); const before=db.select().from(modelPricing).all();
+    const settings=await(await nativeFetch(origin+'/test/admin/model-specifications/'+id+'/kk-routing')).json() as any;
+    expect(JSON.stringify(settings)).not.toContain('test-key');
+    upstream=async()=>Response.json({data:Object.values(KK_VIDEO_SOURCES).map(id=>({id}))});
+    const response=await post('/test/admin/model-specifications/'+id+'/kk-routing',{routing:{primary:'stable',fallback:true,channelId:settings.channels[0].id},version:settings.version});
+    expect(response.status).toBe(200); expect((await response.json() as any).current).toMatchObject({primary:'stable',fallback:true});
+    expect(db.select().from(modelPricing).all()).toEqual(before);expect(balance()).toBe(100);expect(db.select().from(contents).all()).toEqual([]);
+    const old=getModelSpecification(id)!;
+    await expect(saveKkVideoRouting(id,{primary:'kk',fallback:false,channelId:settings.channels[0].id},settings.version)).rejects.toMatchObject({status:409});
+    upstream=async()=>Response.json({data:[{id}]});
+    await expect(saveKkVideoRouting(id,{primary:'stable',fallback:true,channelId:settings.channels[0].id},getKkVideoRouting(id).version)).rejects.toThrow('未开放');
+    expect(getModelSpecification(id)).toEqual(old);
+    await expect(saveKkVideoRouting('hss-2.5-301010',{primary:'kk',fallback:false,channelId:settings.channels[0].id},'')).rejects.toThrow('仅支持 KK');
+  });
+  it.each(['/api/video/generate','/v1/videos'])('falls back only after a definite 429 with one logical key and one reservation at %s',async endpoint=>{
+    await install();await configure();let calls:string[]=[],keys:string[]=[];
+    upstream=async(url,init)=>{expect(url).toBe('https://www.v6k.top/v1/videos');const p=JSON.parse(init.body);calls.push(p.model);keys.push(init.headers['Idempotency-Key']);
+      return p.model===KK_VIDEO_SOURCES.stable?Response.json({error:{code:'rate_limit_exceeded',message:'busy'}},{status:429}):Response.json({id:'kk_backup_original',status:'completed'});};
+    const body={model:id,prompt:'fallback',seconds:30,resolution:'720p'},key='kk-fallback-once';
+    await(await retryVideo(endpoint,body,key)).text();await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+    expect(calls).toEqual([KK_VIDEO_SOURCES.stable,id]);expect(new Set(keys).size).toBe(1);expect(keys[0]).toBeTruthy();
+    expect(balance()).toBe(93.5);expect(latest().cost).toBe(6.5);expect(sqlite.prepare('SELECT COUNT(*) AS n FROM billing_reservations').get()).toMatchObject({n:1});
+    expect(JSON.parse(latest().metadata)).toMatchObject({videoId:'kk_backup_original',upstreamModel:id,videoSubmissionState:'accepted',billingStatus:'settled'});
+    if(endpoint==='/v1/videos'){await(await retryVideo(endpoint,body,key)).text();expect(db.select().from(contents).all()).toHaveLength(1);}
+    resumeSpecificationTasks();resumeSpecificationTasks();expect(calls).toHaveLength(2);expect(balance()).toBe(93.5);
+  });
+  it.each(['off','disabled','changed'])('honors %s fallback before dispatch',async mode=>{
+    await install();await configure(mode!=='off');
+    if(mode==='disabled'){const spec=getModelSpecification(id)!;saveModelSpecification({...spec,routes:spec.routes.map(r=>({...r,enabled:r.upstreamModel!==KK_VIDEO_SOURCES.stable}))});await configure(false);}
+    let calls:string[]=[];upstream=async(_url,init)=>{calls.push(JSON.parse(init.body).model);
+      if(mode==='changed'){const spec=getModelSpecification(id)!;spec.kkRouting!.fallback=false;sqlite.prepare('UPDATE settings SET value=? WHERE key=?').run(JSON.stringify([spec]),'model_specification_routes_v1');}
+      return Response.json({error:{code:'rate_limit_exceeded',message:'busy'}},{status:429});};
+    const response=await post('/api/video/generate',{model:id,prompt:'switch',seconds:5,resolution:'720p'});await response.text();
+    expect(calls).toEqual(mode==='disabled'?[]:[KK_VIDEO_SOURCES.stable]);expect(balance()).toBe(100);
+  });
+  it.each(['401','400','503','504','unknown','receipt','failed','html429','pending429'])('never re-posts KK after %s and does not duplicate refunds',async outcome=>{
+    await install();await configure();let posts=0;
+    upstream=async(_url,init)=>{
+      if(init.method!=='POST')return Response.json({id:'stable_original',status:'completed'});
+      posts++;expect(JSON.parse(init.body).model).toBe(KK_VIDEO_SOURCES.stable);
+      if(outcome==='unknown')return new Response('not json',{status:200});
+      if(outcome==='html429')return new Response('<html>rate limited</html>',{status:429});
+      if(outcome==='pending429')return Response.json({status:'queued',error:{code:'rate_limit_exceeded',message:'busy'}},{status:429});
+      if(outcome==='receipt')return Response.json({id:'stable_original',status:'queued',error:{code:'authentication_error'}},{status:401});
+      if(outcome==='failed')return Response.json({id:'stable_original',status:'failed',error:{message:'generation failed'}});
+      return Response.json({error:{code:'provider_error',message:'specific failure'}},{status:Number(outcome)});
+    };
+    const body={model:id,prompt:'single receipt',seconds:5,resolution:'720p'},key='stable-safe-'+outcome;
+    await(await retryVideo('/v1/videos',body,key)).text();
+    const held=['503','504','unknown','pending429'].includes(outcome);
+    await vi.waitFor(()=>expect(JSON.parse(latest().metadata).billingStatus).toBe(held?'review':outcome==='receipt'?'settled':'refunded'));
+    if(held)expect(JSON.parse(latest().metadata)).toMatchObject({requiresReview:true,reviewKind:'submission',videoSubmissionState:'unknown'});
+    const original=latest();await(await retryVideo('/v1/videos',body,key)).text();resumeSpecificationTasks();resumeSpecificationTasks();
+    expect(posts).toBe(1);expect(latest().id).toBe(original.id);expect(balance()).toBe(held||outcome==='receipt'?93.5:100);
+    if(['receipt','failed'].includes(outcome))expect(JSON.parse(latest().metadata).videoId).toBe('stable_original');
+  });
+  it('preserves KK policy, switches and price across sync and startup cleanup without publishing a stable sale entry',async()=>{
+    await install();await configure(true,'kk');const current=getModelSpecification(id)!;
+    saveModelSpecification({...current,routes:current.routes.map(r=>({...r,cost:r.upstreamModel===id?99:0,costUnit:'per_call',enabled:r.upstreamModel===id}))});
+    const before=getModelSpecification(id)!;pruneUnapprovedV6kBindings(sqlite);
+    await syncV6kEntries(Object.values(KK_VIDEO_SOURCES));
+    expect(getModelSpecification(id)).toEqual(before);
+    expect(db.select().from(models).all().some(m=>m.modelId.includes('稳定'))).toBe(false);
+    expect(PricingService.quote(id,{seconds:30,resolution:'720p',count:1}).cost).toBe(6.5);
+    expect(selectModelRoutes(before,{images:0,videos:0,audios:0,outputs:1,seconds:5,resolution:'720p',ratio:'16:9',firstFrame:false,lastFrame:false})[0].route.upstreamModel).toBe(id);
+  });
+  it('selects the chosen primary before a cheaper backup and skips a manually disabled primary only with fallback on',async()=>{
+    await install();await configure();const input={images:0,videos:0,audios:0,outputs:1,seconds:5,resolution:'720p',ratio:'16:9',firstFrame:false,lastFrame:false};
+    const spec=getModelSpecification(id)!;saveModelSpecification({...spec,routes:spec.routes.map(r=>({...r,cost:r.upstreamModel===id?0:99,costUnit:'per_call'}))});
+    expect(selectModelRoutes(getModelSpecification(id)!,input).map(t=>t.route.upstreamModel)).toEqual([KK_VIDEO_SOURCES.stable,id]);
+    const current=getModelSpecification(id)!;saveModelSpecification({...current,routes:current.routes.map(r=>({...r,enabled:r.upstreamModel===id}))});
+    expect(selectModelRoutes(getModelSpecification(id)!,input).map(t=>t.route.upstreamModel)).toEqual([id]);
+  });
+  it.each(['rejected','failed'])('refunds one reservation when the backup is %s',async outcome=>{
+    await install();await configure();let posts=0;
+    upstream=async()=>{posts++;if(posts===1||outcome==='rejected')return Response.json({error:{code:'rate_limit_exceeded',message:'busy'}},{status:429});return Response.json({id:'backup_failed_original',status:'failed',error:{message:'backup failed'}});};
+    const body={model:id,prompt:'both fail',seconds:5,resolution:'720p'};
+    await(await retryVideo('/v1/videos',body,'both-failed')).text();await vi.waitFor(()=>expect(latest().status).toBe('failed'));
+    await(await retryVideo('/v1/video/generations',body,'both-failed')).text();resumeSpecificationTasks();resumeSpecificationTasks();
+    expect(posts).toBe(2);expect(balance()).toBe(100);expect(latest().cost).toBe(0);
+    expect(sqlite.prepare('SELECT state,actual FROM billing_reservations').all()).toEqual([{state:'refunded',actual:0}]);
+    if(outcome==='failed')expect(JSON.parse(latest().metadata).videoId).toBe('backup_failed_original');
+  });
+  it('keeps polling the accepted original after an administrator switches the primary',async()=>{
+    await install();await configure();let posts=0,queries=0;
+    upstream=async(url,init)=>{
+      if(url.endsWith('/v1/models'))return Response.json({data:Object.values(KK_VIDEO_SOURCES).map(id=>({id}))});
+      if(init.method==='POST'){posts++;return Response.json({id:'retained_stable_task',status:'queued'});}
+      queries++;expect(url).toContain('/v1/videos/retained_stable_task');
+      await saveKkVideoRouting(id,{primary:'kk',fallback:false,channelId:db.select().from(channels).get()!.id},getKkVideoRouting(id).version);
+      return Response.json({id:'retained_stable_task',status:'completed'});
+    };
+    await(await post('/api/video/generate',{model:id,prompt:'original',seconds:5,resolution:'720p'})).text();
+    expect(posts).toBe(1);expect(queries).toBe(1);expect(balance()).toBe(93.5);
+    expect(JSON.parse(latest().metadata)).toMatchObject({videoId:'retained_stable_task',upstreamModel:KK_VIDEO_SOURCES.stable});
+    expect(getModelSpecification(id)!.kkRouting).toMatchObject({primary:'kk',fallback:false});
+  });
+  it('uses the batch queue with one prepayment when stable rejects and KK accepts',async()=>{
+    await install();await configure();let calls:string[]=[];
+    const batchId=batchStore.create(1,crypto.randomUUID(),{name:'KK fallback batch',model:id,resolution:'720p',aspect_ratio:'16:9',video_length:30,autoRetry:false,maxRetries:0,creatives:[{prompt:'KK batch',count:1,reference_images:[]}]},6.5,'https://app.example');
+    const item=batchStore.detail(batchId,1).items[0];
+    upstream=async(url,init)=>{if(url==='http://127.0.0.1:9876/api/video/generate')return nativeFetch(origin+'/api/video/generate',init);
+      const model=JSON.parse(init.body).model;calls.push(model);return model===KK_VIDEO_SOURCES.stable?Response.json({error:{code:'rate_limit_exceeded',message:'busy'}},{status:429}):Response.json({id:'backup_batch_task',status:'completed'});};
+    tickVideoBatches();await vi.waitFor(()=>expect(latest()?.status).toBe('completed'));tickVideoBatches();tickVideoBatches();resumeSpecificationTasks();
+    expect(batchStore.item(item.id)).toMatchObject({status:'completed',billing_state:'charged',charged:6.5});expect(balance()).toBe(93.5);expect(calls).toEqual([KK_VIDEO_SOURCES.stable,id]);
+  });
+  it.each(['ECONNREFUSED','UND_ERR_HEADERS_TIMEOUT'])('uses connection evidence rather than retrying every transport error: %s',async code=>{
+    await install();await configure();let calls:string[]=[];
+    upstream=async(_url,init)=>{const model=JSON.parse(init.body).model;calls.push(model);if(model===KK_VIDEO_SOURCES.stable)throw Object.assign(Error('network'),{cause:{code}});return Response.json({id:'connection_backup',status:'completed'});};
+    await(await post('/api/video/generate',{model:id,prompt:'network',seconds:5,resolution:'720p'})).text();
+    expect(calls).toEqual(code==='ECONNREFUSED'?[KK_VIDEO_SOURCES.stable,id]:[KK_VIDEO_SOURCES.stable]);
+    expect(JSON.parse(latest().metadata).billingStatus).toBe(code==='ECONNREFUSED'?'settled':'review');expect(balance()).toBe(93.5);
+  });
+  it('returns the same original task during concurrent API retry while failover is still pending',async()=>{
+    await install();await configure();let posts=0,release:(()=>void)|undefined;
+    upstream=async(_url,init)=>{posts++;if(JSON.parse(init.body).model===KK_VIDEO_SOURCES.stable){await new Promise<void>(resolve=>release=resolve);return Response.json({error:{code:'rate_limit_exceeded',message:'busy'}},{status:429});}return Response.json({id:'concurrent_backup',status:'completed'});};
+    const body={model:id,prompt:'concurrent fallback',seconds:5,resolution:'720p'},key='pending-fallback';
+    try {
+      const first=await(await retryVideo('/v1/videos',body,key)).json() as any;
+      await vi.waitFor(()=>expect(release).toBeTypeOf('function'));
+      const retry=await(await retryVideo('/v1/video/generations',body,key)).json() as any;
+      expect(retry.id).toBe(first.id);expect(posts).toBe(1);expect(balance()).toBe(93.5);
+      release!();await vi.waitFor(()=>expect(latest().status).toBe('completed'));
+      expect(posts).toBe(2);expect(balance()).toBe(93.5);expect(db.select().from(contents).all()).toHaveLength(1);
+      expect(sqlite.prepare('SELECT count(*) AS n FROM billing_reservations').get()).toMatchObject({n:1});
+    } finally { release?.(); }
+  });
   it('publishes the exact unprefixed ID, native limits and 6.5 per-task price on website and public API catalog',async()=>{
     await install();const list=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
     expect(list.find(m=>m.id===id)).toMatchObject({available:true,billingType:'per_call',rates:{'720p':6.5},routingLimits:{maxImages:30,maxVideos:10,maxAudios:10,resolutions:['720p']}});

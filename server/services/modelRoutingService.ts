@@ -1,4 +1,5 @@
 import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
+import { KK_VIDEO_MODEL, KK_VIDEO_SOURCES } from '../../shared/kkVideoRouting.js';
 import { HUSS_MJ_MODEL } from '../../shared/hussMidjourney.js';
 import { bbHssKkManaged } from './bbHssKkMigration.js';
 import { matchesBbHssSource } from './bbHssSourcePolicy.js';
@@ -82,7 +83,8 @@ export function saveModelSpecification(value: ModelSpecification): ModelSpecific
     if (ids.has(id)) throw error('线路 ID 重复');
     ids.add(id); return { ...r, id };
   });
-  const result: ModelSpecification = { ...(value.imageFamily ? { imageFamily: value.imageFamily.trim() } : {}), modelId: value.modelId, kind: value.kind, enabled: value.enabled, limits: value.limits, aliases: [...new Set(value.aliases)].filter(id => id !== value.modelId), routes };
+  if (JSON.stringify(value.kkRouting) !== JSON.stringify(previous?.kkRouting)) throw error('请使用 KK 分流设置修改首选线路和分流开关');
+  const result: ModelSpecification = { ...(previous?.kkRouting ? { kkRouting: previous.kkRouting } : {}), ...(value.imageFamily ? { imageFamily: value.imageFamily.trim() } : {}), modelId: value.modelId, kind: value.kind, enabled: value.enabled, limits: value.limits, aliases: [...new Set(value.aliases)].filter(id => id !== value.modelId), routes };
   sqlite.transaction(() => write(CONFIG_KEY, [...other, result]))(); return result;
 }
 export function deleteModelSpecification(modelId: string) { write(CONFIG_KEY, getModelSpecifications().filter(s => s.modelId !== modelId)); }
@@ -120,6 +122,11 @@ export function inspectModelRoutes(spec: ModelSpecification, input?: RoutingInpu
     const executions = activeChannels.filter(c => c.id === route.channelId && Boolean(String(c.apiKey || '').trim()) && (c.supportedModels.includes(route.executionModel) || c.supportedModels.includes('*')));
     const execution = registry.find(m => m.modelId === route.executionModel);
     const reason = execution?.isActive === 0 && execution.modelId !== MJ_OVERFLOW_VIDEO_MODEL ? ['执行模型已禁用'] : !spec.enabled || model?.isActive !== 1 ? ['规格已禁用'] : !route.enabled ? ['模型线路已禁用'] : !executions.length ? ['渠道或 Key 已禁用 / 未配置'] : [];
+    if (spec.modelId === KK_VIDEO_MODEL && spec.kkRouting) {
+      const policy = spec.kkRouting;
+      if (route.channelId !== policy.channelId || route.executionModel !== KK_VIDEO_MODEL || !Object.values(KK_VIDEO_SOURCES).includes(route.upstreamModel as any)) reason.push('线路不属于当前 KK 分流配置');
+      else if (!policy.fallback && route.upstreamModel !== KK_VIDEO_SOURCES[policy.primary]) reason.push('自动分流已关闭，仅使用首选线路');
+    }
     if (retired) reason.push(RETIRED_VIDEO_MODEL_MESSAGE);
     if(bbHssKkManaged(sqlite,spec.modelId)&&!matchesBbHssSource(sqlite,spec.modelId,route,activeChannels.find(c=>c.id===route.channelId)?.type))reason.push('线路与当前选择的生成来源不一致');
     const matches = input ? routingMismatches(route.limits, input, spec.kind) : [];
@@ -134,7 +141,9 @@ export function selectModelRoutes(spec: ModelSpecification, input: RoutingInput)
   if (isSiYueTianManagedVideoModel(spec.modelId)) reasons.push(...siYueTianManagedVideoInputErrors(spec.modelId, input));
   if (reasons.length) throw error(reasons.join('；'));
   return inspectModelRoutes(spec, input).filter(item => !item.reasons.length).flatMap(item => item.candidates)
-    .sort((a, b) => (a.cost ?? Infinity) - (b.cost ?? Infinity) || a.route.priority - b.route.priority || a.channel.priority - b.channel.priority || a.channel.id - b.channel.id);
+    .sort((a, b) => (spec.modelId === KK_VIDEO_MODEL && spec.kkRouting
+      ? Number(a.route.upstreamModel !== KK_VIDEO_SOURCES[spec.kkRouting.primary]) - Number(b.route.upstreamModel !== KK_VIDEO_SOURCES[spec.kkRouting.primary]) : 0)
+      || (a.cost ?? Infinity) - (b.cost ?? Infinity) || a.route.priority - b.route.priority || a.channel.priority - b.channel.priority || a.channel.id - b.channel.id);
 }
 export function specificationAvailability(spec: ModelSpecification): ModelAvailability {
   const routes = inspectModelRoutes(spec);
@@ -152,6 +161,10 @@ export function routeUnavailableReason(modelId: string, target: RouteCandidate, 
   if (!spec.enabled) return '提交前检查：模型规格已禁用';
   if (!route) return '提交前检查：原线路已删除';
   if (!route.enabled) return '提交前检查：模型线路已禁用';
+  if (modelId === KK_VIDEO_MODEL && spec.kkRouting) {
+    if (route.channelId !== spec.kkRouting.channelId || route.executionModel !== KK_VIDEO_MODEL || !Object.values(KK_VIDEO_SOURCES).includes(route.upstreamModel as any)) return '提交前检查：KK 分流配置已变更';
+    if (!spec.kkRouting.fallback && route.upstreamModel !== KK_VIDEO_SOURCES[spec.kkRouting.primary]) return '提交前检查：自动分流已关闭';
+  }
   if (JSON.stringify(route) !== JSON.stringify(target.route)) return '提交前检查：线路配置已变更，请重新核对参数';
   const mismatches = [...routingMismatches(spec.limits, input, spec.kind), ...routingMismatches(route.limits, input, spec.kind)];
   if (isSiYueTianManagedVideoModel(route.executionModel)) mismatches.push(...siYueTianManagedVideoInputErrors(route.executionModel, input));

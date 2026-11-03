@@ -1,0 +1,10 @@
+.kk-routing-control { padding: 24px; display: grid; gap: 24px; }
+.kk-routing-control strong { font-size: 18px; }
+.kk-routing-control p { font-size: 13px; line-height: 1.7; margin-top: 10px; color: var(--earth-text-muted, #68715e); }
+.kk-routing-control [role="alert"] { color: var(--earth-danger, #a8423d); }
+.kk-routing-control fieldset { border: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.kk-routing-control label { font-size: 13px; display: grid; gap: 8px; min-width: 0; }
+.kk-routing-control select, .kk-routing-control button { border: 1px solid var(--earth-line, #cfd2c4); border-radius: 10px; padding: 12px; background: var(--earth-surface, #fffdf7); color: inherit; }
+.kk-routing-control [aria-checked="true"], .kk-routing-control .is-primary { background: var(--earth-primary, #516448); color: #fff; }
+.kk-routing-control :disabled { opacity: .55; cursor: not-allowed; }
+@media (max-width: 560px) { .kk-routing-control { padding: 16px; } .kk-routing-control fieldset { grid-template-columns: 1fr; } }

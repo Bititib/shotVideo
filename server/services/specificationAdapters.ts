@@ -3,6 +3,7 @@ import { SNUMOM_MUSE_MODEL } from '../../shared/snumomMuse.js';
 import { normalizeSnumomMuseRequestBody, validateSnumomMuseInput } from './snumomWanAdapter.js';
 import { isHussPersistentVideoModel } from '../../shared/hussBbVideo.js';
 import { V6K_SEEDANCE_20_MODEL } from '../../shared/v6kSeedance2.js';
+import { KK_VIDEO_MODEL, KK_VIDEO_SOURCES } from '../../shared/kkVideoRouting.js';
 import { isMegabyChannel, buildMegabyVideoPayload, submitMegabyVideo, pollMegabyVideo, validateMegabyReferenceDurations, MegabyApiError } from './megabyVideoAdapter.js';
 import { isZonghengChannel, submitZonghengVideo, normalizeZonghengTask, readZonghengTaskResponse, zonghengTaskUrl, ZonghengSubmissionError } from './zonghengAdapter.js';
 import { zonghengProtocol, zonghengProtocolSnapshot } from './zonghengProtocol.js';
@@ -45,7 +46,7 @@ import { isVideoQueryErrorPayload } from './videoFailureService.js';
 import { classifyHmSubmission } from './hmStudioSubmission.js';
 import { submitSiYueTianMinimax, pollSiYueTianMinimax, SiYueTianMinimaxError } from './siYueTianMinimaxAdapter.js';
 
-export type SpecificationRequest = { prompt: string; input: RoutingInput; images: string[]; videos: string[]; audios: string[]; firstFrame: string; lastFrame: string; body: Record<string, any>; publicBaseUrl: string };
+export type SpecificationRequest = { prompt: string; input: RoutingInput; images: string[]; videos: string[]; audios: string[]; firstFrame: string; lastFrame: string; body: Record<string, any>; publicBaseUrl: string; submissionKey?: string };
 /** Validate extra-parameter/media combinations before reserving money or creating a task. */
 export function validateSpecificationVideoParameters(request: SpecificationRequest, candidates: RouteCandidate[]) {
   for (const target of candidates) {
@@ -175,7 +176,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   if (isZonghengChannel(c)) {
     let acceptedTaskId = '';
     try {
-      const protocol = zonghengProtocol(c), snapshot = zonghengProtocolSnapshot(c), orderId = randomUUID();
+      const protocol = zonghengProtocol(c), snapshot = zonghengProtocolSnapshot(c), orderId = exec === KK_VIDEO_MODEL && request.submissionKey ? request.submissionKey : randomUUID();
       const options = { ...c, publicBaseUrl: request.publicBaseUrl, protocol };
       const images = await prepareZonghengMedia(request.images, 'image', options);
       const videos = await prepareZonghengMedia(request.videos, 'video', options);
@@ -199,7 +200,9 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
         // 5xx and every saved receipt remain on the original request, never fail over.
         const status = error.diagnostics?.httpStatus || 0;
         const aRoute = exec === V6K_SEEDANCE_20_MODEL && ['Asedanco2.0', 'Asedanco2.05'].includes(model);
-        const retrySafe = aRoute && !error.uncertain && (error.diagnostics?.requestNotSent === true || [401, 403, 429].includes(status));
+        const kkRoute = exec === KK_VIDEO_MODEL && Object.values(KK_VIDEO_SOURCES).includes(model as any);
+        const retrySafe = !error.uncertain && (aRoute && (error.diagnostics?.requestNotSent === true || [401, 403, 429].includes(status))
+          || kkRoute && (error.diagnostics?.requestNotSent === true || error.diagnostics?.safeRateLimitRejection === true));
         throw new SpecificationUpstreamError(error.message, retrySafe, error.uncertain, false, status, !error.uncertain);
       }
       throw new SpecificationUpstreamError(error.message, true);

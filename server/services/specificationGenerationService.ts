@@ -24,6 +24,8 @@ import { publicGenerationError, publicGenerationEvent } from '../../shared/gener
 import { isFunAiChannel } from './funAiAdapter.js';
 import { validateSpecificationVideoParameters } from './specificationAdapters.js';
 import { SNUMOM_MUSE_MODEL } from '../../shared/snumomMuse.js';
+import { KK_VIDEO_MODEL } from '../../shared/kkVideoRouting.js';
+import { randomUUID } from 'node:crypto';
 import { createVideoAliasChecker } from './modelSaleService.js';
 import { assertExpectedVideoCost } from './videoQuoteService.js';
 import { assertUserModelAccess } from './userModelAccessService.js';
@@ -400,7 +402,7 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
       let pollingStarted = false;
       try {
         if (!markBatchSubmitting(id)) throw fail('任务已停止', 409);
-        taskId = await submitSpecificationVideo(target, request, submissionMetadata => {
+        taskId = await submitSpecificationVideo(target, metadata(id).kkLogicalRequestId ? { ...request, submissionKey: metadata(id).kkLogicalRequestId } : request, submissionMetadata => {
           if (!claimed) {
             try { claimVideoSubmission(id, target.channel.timeout || 120_000); claimed = true; }
             catch (error: any) { throw new SpecificationUpstreamError(error.message, false, true); }
@@ -839,6 +841,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     const create = () => ContentService.save({ userId, orgId: (req as any).orgId || null, type: kind, modelId,
       title: request.prompt.slice(0, 200), inputText: request.prompt, status: 'queued', cost: batch ? 0 : quote.cost,
       metadata: { managedSpecification: true, requestedModel: modelId, model: modelId, count: request.input.outputs, nativeImageOutputs,
+        ...(modelId === KK_VIDEO_MODEL ? { kkLogicalRequestId: randomUUID() } : {}),
         ...snumomBilling,
         ...(kind === 'video' ? videoSubmissionPreparation() : {}),
         pricingSnapshot: quote.pricingSnapshot,
