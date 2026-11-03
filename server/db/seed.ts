@@ -6,6 +6,7 @@ import { migrateZonghengToV6k } from '../services/zonghengV6kMigration.js';
 import { ensureFundLedger } from './fundLedger.js';
 import { migratePidoiImageTimeout } from './imageTimeoutMigration.js';
 import { migrateV6kCatalog } from '../services/v6kCatalogMigration.js';
+import { pruneUnapprovedV6kBindings } from '../services/v6kApprovedBindings.js';
 import { ensureV6kTttModel } from '../services/v6kTttModel.js';
 import { ensureV6kSeedance20Models } from '../services/v6kSeedance2Catalog.js';
 import { ensureV6kTt25Models } from '../services/v6kTt25Catalog.js';
@@ -2065,6 +2066,7 @@ export async function initDatabase() {
   ensureV6kTt25Models(sqlite);
   ensureV6kKk25Model(sqlite);
   ensureBbHssKkMapping(sqlite);
+  pruneUnapprovedV6kBindings(sqlite);
   removeTtBbFallbacks(sqlite);
   ensureSiYueTianMinimaxModel(sqlite);
   ensureFundLedger(sqlite);

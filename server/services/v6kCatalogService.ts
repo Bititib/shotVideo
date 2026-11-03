@@ -12,6 +12,7 @@ import { isV6kSyncModel } from '../../shared/v6kSyncModels.js';
 import { V6K_KK25_MODEL, V6K_KK25_DESCRIPTION } from '../../shared/zonghengVideo.js';
 import { ensureV6kKk25Model } from './v6kKk25Catalog.js';
 import { ensureBbHssKkMapping } from './bbHssKkMigration.js';
+import { pruneUnapprovedV6kBindings } from './v6kApprovedBindings.js';
 
 export async function syncV6kVideoModels(channel: { id: number; baseUrl: string; apiKey: string; timeout?: number; type?: string }) {
   const base = zonghengBaseUrl(channel.baseUrl);
@@ -41,7 +42,7 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     if (imported.has(publicId) && id !== product?.upstreamModels[0].id) continue;
     imported.set(publicId, { id: publicId, upstream: id, description });
   }
-  const warnings = ['仅同步已指定接入的白名单型号；忽略其他型号 ' + ignored.size + ' 个，保留现有配置。'];
+  const warnings = ['仅同步已指定接入的白名单型号；忽略其他型号 ' + ignored.size + ' 个，保留已接入型号的现有价格和开关。'];
   if (!imported.size) return { count: 0, added: 0, models: [] as string[], warnings: [...warnings, '当前 Key 未返回白名单型号，本次未修改配置。'] };
   return db.transaction(tx => {
     const current = tx.select().from(channels).where(eq(channels.id, channel.id)).get();
@@ -75,6 +76,8 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     bindV6kSeedance20Routes(sqlite, channel.id, authorizedIds);
     bindV6kTt25Routes(sqlite, channel.id, authorizedIds);
     if (authorizedIds.includes(V6K_KK25_MODEL)) { ensureV6kKk25Model(sqlite, channel.id); ensureBbHssKkMapping(sqlite, channel.id); }
-    return { count: ids.length, added: ids.filter(id => !previouslyPresent.has(id)).length, models: ids, warnings };
+    const retired = pruneUnapprovedV6kBindings(sqlite, channel.id);
+    return { count: ids.length, added: ids.filter(id => !previouslyPresent.has(id)).length, models: ids,
+      warnings: [...warnings, ...(retired.removedBindings || retired.removedRoutes ? ['已归档并解除未接入型号的旧渠道关联 ' + retired.removedBindings + ' 项、旧规格线路 ' + retired.removedRoutes + ' 条；原订单、价格和启用记录保留。'] : [])] };
   });
 }

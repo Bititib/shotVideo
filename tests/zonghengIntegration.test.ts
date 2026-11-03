@@ -13,6 +13,7 @@ import { switchHssSource } from '../server/services/hssSourceService';
 import { switchBbHssVideoSource, getBbHssVideoSources } from '../server/services/bbHssSourceService';
 import { BB_HSS_SOURCES } from '../shared/bbHssSources';
 import { routeUnavailableReason, selectModelRoutes } from '../server/services/modelRoutingService';
+import { pruneUnapprovedV6kBindings } from '../server/services/v6kApprovedBindings';
 import { hussHssModelLimits, hussBbAModelLimits } from '../shared/hussBbVideo';
 import { syncHussModels } from '../server/services/hussCatalogService';
 import { ensureV6kTt25Models, v6kTt25SaleId } from '../server/services/v6kTt25Catalog';
@@ -402,6 +403,34 @@ function syncConfiguration() {
 }
 
 describe('V6K explicitly requested model sync allowlist',()=>{
+  it.each(['completed','failed'])('unlinks historical unapproved models but still resumes their accepted original to %s and settles once',async terminal=>{
+    await installSeedance20();const c=db.select().from(channels).get()!,id='ZH-dola2.0';
+    db.insert(models).values({modelId:id,displayName:'historical Dola',provider:'zongheng-v6k',capabilities:'["video"]',isActive:1}).run();
+    db.insert(modelPricing).values({modelPattern:id,billingType:'per_call',inputPrice:2}).run();
+    ChannelService.updateChannel(c.id,{supportedModels:[...JSON.parse(c.supportedModels),id],modelMapping:{...JSON.parse(c.modelMapping),[id]:'dola2.0'}});
+    const originalSpec=getModelSpecification(V6K_SEEDANCE_20_MODEL)!;
+    saveModelSpecification({...originalSpec,modelId:id,routes:[{...originalSpec.routes[0],id:'old-dola-route',executionModel:id,upstreamModel:'dola2.0'}]});
+    let posts=0,clock=Date.now();const time=vi.spyOn(Date,'now').mockImplementation(()=>clock);
+    try{
+      upstream=async(url,init)=>{if(init.method==='POST'){posts++;expect(JSON.parse(init.body).model).toBe('dola2.0');return Response.json({id:'original_old_dola',status:'queued'});}
+        expect(url).toBe('https://www.v6k.top/v1/videos/original_old_dola');clock+=2*60*60_000+1;return Response.json({id:'original_old_dola',status:'unknown'});};
+      await(await post('/api/video/generate',{model:id,prompt:'accepted before cleanup',seconds:15,resolution:'720p'})).text();
+      await vi.waitFor(()=>expect(Number(JSON.parse(latest().metadata).v6kQueryResumeAt)).toBeGreaterThan(clock));
+      const original=latest(),receipt=findVideoSubmissionReceipt(original.id),meta=JSON.parse(original.metadata);
+      const reservation=sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(meta.billingReservationId);
+      expect(pruneUnapprovedV6kBindings(sqlite,c.id)).toEqual({removedBindings:1,removedRoutes:1});
+      expect(latest()).toEqual(original);expect(findVideoSubmissionReceipt(original.id)).toEqual(receipt);
+      expect(sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(meta.billingReservationId)).toEqual(reservation);
+      expect(JSON.parse(ChannelService.getChannelRaw(c.id)!.supportedModels)).not.toContain(id);
+      expect(db.select().from(models).where(eq(models.modelId,id)).get()).toMatchObject({displayName:'historical Dola',isActive:1});
+      const rejected=await post('/api/video/generate',{model:id,prompt:'new unapproved request',seconds:15,resolution:'720p'});expect(rejected.status).toBe(503);await rejected.text();expect(posts).toBe(1);expect(balance()).toBe(98);
+      upstream=async(url,init)=>{expect(init.method).not.toBe('POST');expect(url).toBe('https://www.v6k.top/v1/videos/original_old_dola');return Response.json({id:'original_old_dola',status:terminal,error:terminal==='failed'?{code:'video_generation_failed',message:'original generation failed'}:undefined});};
+      clock+=120_000;resumeSpecificationTasks();resumeSpecificationTasks();await vi.waitFor(()=>expect(latest().status).toBe(terminal));
+      resumeSpecificationTasks();pruneUnapprovedV6kBindings(sqlite);resumeSpecificationTasks();
+      expect(posts).toBe(1);expect(balance()).toBe(terminal==='completed'?98:100);expect(latest().cost).toBe(terminal==='completed'?2:0);
+      expect(JSON.parse(latest().metadata)).toMatchObject({videoId:'original_old_dola',upstreamModel:'dola2.0',billingStatus:terminal==='completed'?'settled':'refunded'});
+    }finally{time.mockRestore();}
+  });
   it('imports only eight approved upstream IDs as seven entries and never expands scope from video metadata or similar names',async()=>{
     ensureV6kTttModel(sqlite);
     const unrelated=['TTseadanco2.5-720YT','XXsedanco2.0S','dola2.0','grok--1.5','QQsedanco2.5/720','KKseadanco2.5X','Asedanco2.0-extra','ttseadanco2.5-480','brand-new-video'];
@@ -412,13 +441,14 @@ describe('V6K explicitly requested model sync allowlist',()=>{
     expect(db.select().from(models).all().filter(m=>unrelated.some(id=>m.modelId===id||m.modelId==='ZH-'+id))).toEqual([]);
     expect(expected.every(id=>db.select().from(models).all().find(m=>m.modelId===id)!.isActive===0)).toBe(true);
     const channel=db.select().from(channels).get()!;
-    expect(JSON.parse(channel.supportedModels)).toEqual(expect.arrayContaining(['ZH-video-public','ZH-image-public','ZH-gpt-public',...expected]));
-    expect(JSON.parse(channel.modelMapping)).toMatchObject({'ZH-video-public':'video-public','ZH-image-public':'image-public','ZH-gpt-public':'gpt-public'});
+    expect(JSON.parse(channel.supportedModels)).toEqual(expect.arrayContaining(expected));
+    for(const id of ['ZH-video-public','ZH-image-public','ZH-gpt-public']){expect(JSON.parse(channel.supportedModels)).not.toContain(id);expect(JSON.parse(channel.modelMapping)).not.toHaveProperty(id);}
+    expect(sqlite.prepare('SELECT count(*) AS n FROM v6k_unapproved_binding_archive').get()).toMatchObject({n:expect.any(Number)});
     expect(result.warnings?.join('')).toContain('其他型号 9 个');
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(db.select().from(contents).all()).toEqual([]);expect(balance()).toBe(100);
   });
-  it('preserves existing prices, names, switches, mappings, route objects and legacy non-whitelisted models across full and partial repeated syncs',async()=>{
+  it('preserves existing prices, names, switches and approved routes across full and partial repeated syncs after retiring obsolete associations',async()=>{
     ensureV6kTttModel(sqlite);await syncV6kEntries([...V6K_SYNC_UPSTREAM_MODELS]);
     db.update(models).set({displayName:'administrator name',description:'administrator description',isActive:1}).run();
     db.update(models).set({isActive:0}).where(eq(models.modelId,V6K_XX_SEEDANCE_20_MODEL)).run();

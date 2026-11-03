@@ -40,6 +40,29 @@ afterEach(() => { sqlite.exec('ROLLBACK TO sync_scope; RELEASE sync_scope'); env
 afterAll(async () => { await new Promise<void>(resolve => server.close(() => resolve())); sqlite.close(); });
 
 describe('actual admin model sync scope', () => {
+  it('removes historical unapproved V6K associations from the actual admin channel list after sync',async()=>{
+    const id='ZH-dola2.0',c=channel({type:'zongheng-v6k',baseUrl:'https://www.v6k.top',supportedModels:JSON.stringify([id]),modelMapping:JSON.stringify({[id]:'dola2.0'})});
+    model(id,'zongheng-v6k');db.insert(modelPricing).values({modelPattern:id,billingType:'per_call',inputPrice:6.5}).run();
+    catalog={data:['dola2.0','Asedanco2.0']};const result=await sync(c.id);
+    expect(result).toMatchObject({status:200,body:{models:['zh-seedance.2.0']}});
+    expect(result.body.warnings.join('')).toContain('解除未接入');
+    const list=await(await nativeFetch(origin+'/channels')).json() as any[];
+    const current=list.find(row=>row.id===c.id),supported=typeof current.supportedModels==='string'?JSON.parse(current.supportedModels):current.supportedModels;
+    expect(supported).not.toContain(id);expect(supported).toContain('zh-seedance.2.0');
+    expect(db.select().from(models).where(eq(models.modelId,id)).get()).toMatchObject({displayName:'管理员名称',isActive:0});
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,id)).get()?.inputPrice).toBe(6.5);
+  });
+  it('clears unapproved V6K bindings on actual startup while retaining the old order, reservation, price and model switch',async()=>{
+    const id='ZH-dola2.0',c=channel({type:'zongheng-v6k',baseUrl:'https://www.v6k.top',supportedModels:JSON.stringify([id]),modelMapping:JSON.stringify({[id]:'dola2.0'})});
+    model(id,'zongheng-v6k');db.insert(modelPricing).values({modelPattern:id,billingType:'per_call',inputPrice:6.5}).run();
+    const user=db.select().from(users).get()!;db.update(users).set({balance:100}).where(eq(users.id,user.id)).run();reserveUserCharge(user.id,6.5,'startup-cleanup');
+    db.insert(contents).values({userId:user.id,type:'video',modelId:id,status:'processing',cost:6.5,metadata:JSON.stringify({channelId:c.id,videoId:'original-on-startup',zonghengProtocol:'v6k'})}).run();
+    const before=JSON.stringify([db.select().from(contents).all(),sqlite.prepare('SELECT * FROM billing_reservations').all(),db.select().from(users).all()]);
+    await initDatabase();
+    expect(ChannelService.getChannelRaw(c.id)!.supportedModels).toBe('[]');
+    expect(JSON.stringify([db.select().from(contents).all(),sqlite.prepare('SELECT * FROM billing_reservations').all(),db.select().from(users).all()])).toBe(before);
+    expect(db.select().from(models).where(eq(models.modelId,id)).get()).toMatchObject({isActive:0});expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,id)).get()?.inputPrice).toBe(6.5);
+  });
   it('does not treat a wildcard, an arbitrary upstream name or another channel binding as approval', async () => {
     const c = channel({ supportedModels: '["*"]' });
     channel({ supportedModels: '["foreign-image"]' }); model('foreign-image');
