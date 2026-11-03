@@ -277,6 +277,116 @@ for(const [newModel,definition] of Object.entries(SNUMOM_OUTPUT_ONLY_MODELS)) {
   });
 }
 
+function setupMuse(spec:boolean) {
+  const id='muse-video';
+  db.update(models).set({modelId:id,displayName:'operator Muse',isActive:1}).run();
+  db.update(modelPricing).set({modelPattern:id,billingType:'per_call',inputPrice:4}).run();
+  db.update(channels).set({supportedModels:JSON.stringify([id])}).run();
+  if(spec){const limits=existingModelLimits(id,'video')!;saveModelSpecification({modelId:id,kind:'video',enabled:true,aliases:[],limits,routes:[{id:'muse-route',channelId:1,executionModel:id,upstreamModel:id,enabled:true,limits,cost:0.4,costUnit:'per_call',resolutionCosts:{},priority:0}]});}
+  return {model:id,prompt:'Muse test',seconds:10,video_length:10,resolution:'720p',aspect_ratio:'16:9',reference_images:Array.from({length:8},(_,i)=>`https://assets.invalid/${i}.jpg`)};
+}
+for(const endpoint of ['/api/video/generate','/v1/videos'])for(const spec of [false,true]) {
+  it.each(['completed','failed','rejected','timeout','malformed','missing-id','immediate-completed','immediate-failed'])(`Muse ${endpoint} managed=${spec} %s uses one submission and original per-call settlement`,async state=>{
+    const input=setupMuse(spec);const payloads:any[]=[];
+    vi.stubGlobal('fetch',vi.fn(async(_url:any,o:any)=>{
+      if(o?.method==='POST'){
+        payloads.push(JSON.parse(o.body));
+        if(state==='timeout')throw new DOMException('connection interrupted','TimeoutError');
+        if(state==='rejected')return Response.json({error:{message:'No available channel for model muse-video under group default (distributor)'}},{status:503});
+        if(state==='malformed')return new Response('{broken');
+        if(state==='missing-id')return Response.json({status:'queued'});
+        return Response.json({id:'task_muse_test',status:state==='immediate-completed'?'completed':state==='immediate-failed'?'failed':'queued',...(state==='immediate-completed'?{url:'https://media.invalid/muse.mp4'}:state==='immediate-failed'?{error:{code:'DataInspectionFailed',message:'image rejected'}}:{})});
+      }
+      if(state.startsWith('immediate-'))throw new Error('must consume saved initial terminal state');
+      return Response.json({id:'task_muse_test',status:state,error:state==='failed'?{code:'DataInspectionFailed',message:'image rejected'}:undefined,url:state==='completed'?'https://media.invalid/muse.mp4':undefined});
+    }));
+    await(await post(endpoint,input)).text();
+    const unknown=['timeout','malformed','missing-id'].includes(state),failed=['failed','rejected','immediate-failed'].includes(state);
+    await vi.waitFor(()=>{if(unknown)expect(meta().billingStatus).toBe('review');else expect(row()?.status).toBe(failed?'failed':'completed');});
+    expect(payloads).toHaveLength(1);expect(payloads[0]).toMatchObject({model:'muse-video',seconds:'10',size:'720P'});expect(payloads[0].reference_images).toHaveLength(8);
+    expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBe(failed?100:96);
+    if(endpoint.startsWith('/v1'))expect(db.select().from(apiTokens).get()!.usedAmount).toBe(failed?0:4);
+    video.resumeAllPendingVideoTasks();resumeSpecificationTasks();
+    expect(payloads).toHaveLength(1);expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBe(failed?100:96);
+    expect(probes.video).not.toHaveBeenCalled();expect(probes.audio).not.toHaveBeenCalled();
+    if(state.startsWith('immediate-'))expect(meta().videoId||meta().upstreamTaskId).toBe('task_muse_test');
+  });
+  it.each([{seconds:15},{resolution:'1080p'},{reference_images:Array(9).fill('https://assets.invalid/9.jpg')},{reference_videos:['https://assets.invalid/a.mp4']},{reference_audios:['https://assets.invalid/a.mp3']},{first_frame:'https://assets.invalid/f.jpg'}])(`Muse ${endpoint} managed=${spec} rejects %j before debit`,async patch=>{
+    const input=setupMuse(spec);vi.stubGlobal('fetch',vi.fn());
+    const response=await post(endpoint,{...input,...patch});expect(response.status).toBe(400);await response.text();
+    expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);expect(db.select().from(contents).all()).toHaveLength(0);expect(fetch).not.toHaveBeenCalled();
+  });
+}
+
+it.each([false,true].flatMap(spec=>['completed','failed'].map(status=>({spec,status}))))('Muse batch managed=$spec $status: one per-call debit/refund per item and same-key replay is safe',async({spec,status})=>{
+  const input=setupMuse(spec);let submissions=0;
+  vi.stubGlobal('fetch',vi.fn(async(url:any,o:any)=>{
+    if(String(url).startsWith('http://127.0.0.1:9876/'))return nativeFetch(origin+new URL(String(url)).pathname,o);
+    if(o?.method==='POST')return Response.json({id:'task_muse_batch_'+(++submissions)});
+    return Response.json({id:String(url).split('/').at(-1),status,...(status==='completed'?{url:'https://media.invalid/muse.mp4'}:{error:{code:'DataInspectionFailed',message:'image rejected'}})});
+  }));
+  const batchInput={...input,requestKey:'muse-batch-repeat-test',expectedUnitCost:4,name:'muse batch',autoRetry:false,maxRetries:0,
+    creatives:[{prompt:'Muse test',count:2,reference_images:input.reference_images,reference_videos:[],audio_urls:[]}]};
+  const response=await post('/api/video-batches',batchInput);expect(response.status,await response.clone().text()).toBe(200);const batch:any=await response.json();
+  await vi.waitFor(()=>{tickVideoBatches();expect(db.select().from(contents).all()).toHaveLength(2);expect(db.select().from(contents).all().every(r=>r.status===status)).toBe(true);});
+  tickVideoBatches();expect(wallet()).toBe(status==='completed'?92:100);expect(submissions).toBe(2);
+  expect(batchStore.detail(batch.id,1)).toMatchObject({spent:status==='completed'?8:0,refunded:status==='failed'?8:0,reserved:0});
+  const replay=await post('/api/video-batches',batchInput);expect((await replay.json()).id).toBe(batch.id);tickVideoBatches();
+  expect(wallet()).toBe(status==='completed'?92:100);expect(submissions).toBe(2);
+});
+
+it.each([false,true].flatMap(spec=>['completed','failed'].map(status=>({spec,status}))))('Muse API managed=$spec $status: identical idempotency keys with unlimited Token charge and refund only once',async({spec,status})=>{
+  const input=setupMuse(spec);db.update(apiTokens).set({balance:-1}).run();const key='muse-identical-request';
+  vi.stubGlobal('fetch',vi.fn(async(_url:any,o:any)=>o?.method==='POST'?Response.json({id:'task_muse_once'}):Response.json({id:'task_muse_once',status,...(status==='completed'?{url:'https://media.invalid/muse.mp4'}:{error:{message:'image rejected'}})})));
+  const send=()=>nativeFetch(origin+'/v1/videos',{method:'POST',headers:{Authorization:'Bearer '+tokenKey,'Content-Type':'application/json','Idempotency-Key':key},body:JSON.stringify(input)});
+  await Promise.all([send().then(r=>r.text()),send().then(r=>r.text())]);
+  await vi.waitFor(()=>expect(row()?.status).toBe(status));
+  expect(wallet()).toBe(status==='failed'?100:96);expect(tokenWallet()).toBe(-1);expect(db.select().from(apiTokens).get()!.usedAmount).toBe(status==='failed'?0:4);
+  expect(db.select().from(contents).all()).toHaveLength(1);expect(vi.mocked(fetch).mock.calls.filter(([,o])=>o?.method==='POST')).toHaveLength(1);
+  await(await send()).text();expect(wallet()).toBe(status==='failed'?100:96);expect(db.select().from(apiTokens).get()!.usedAmount).toBe(status==='failed'?0:4);
+});
+
+for(const spec of [false,true])for(const endpoint of ['/api/video/generate','/v1/videos']) {
+  it(`Muse ${endpoint} managed=${spec}: recovery scanner cannot fail/refund an in-flight submission or repeat a POST`,async()=>{
+    const input=setupMuse(spec),reply=deferred<Response>();let submissions=0,queries=0;
+    vi.stubGlobal('fetch',vi.fn(async(_url:any,o:any)=>{
+      if(o?.method==='POST'){submissions++;return reply.promise;}
+      if(++queries===1)return Response.json({error:{message:'temporary query issue'}},{status:503});
+      return Response.json({id:'task_muse_race',status:'completed',url:'https://media.invalid/muse.mp4'});
+    }));
+    const pending=post(endpoint,input).then(r=>r.text());
+    await vi.waitFor(()=>expect(submissions).toBe(1));video.resumeAllPendingVideoTasks();resumeSpecificationTasks();
+    expect(['failed','review']).not.toContain(row().status);expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBe(96);
+    reply.resolve(Response.json({id:'task_muse_race',status:'queued'}));await pending;
+    await vi.waitFor(()=>expect(row().status).toBe('completed'));
+    expect(meta().videoId||meta().upstreamTaskId).toBe('task_muse_race');expect(submissions).toBe(1);
+    expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBe(96);
+  });
+  it(`Muse ${endpoint} managed=${spec}: per-second pricing is rejected without changing the price or funds`,async()=>{
+    const input=setupMuse(spec);db.update(modelPricing).set({billingType:'per_second',inputPrice:9}).run();
+    vi.stubGlobal('fetch',vi.fn());const response=await post(endpoint,input);expect(await response.text()).toContain('按次售价');
+    expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);expect(db.select().from(contents).all()).toHaveLength(0);expect(fetch).not.toHaveBeenCalled();
+    expect(db.select().from(modelPricing).get()).toMatchObject({billingType:'per_second',inputPrice:9});
+  });
+}
+
+it.each(['/v1/videos','/v1/videos/generations','/v1/video/generations','/api/video/generate'])('Muse %s: display-name aliases and omitted defaults preserve all images',async endpoint=>{
+  setupMuse(false);let payload:any;
+  vi.stubGlobal('fetch',vi.fn(async(_url:any,o:any)=>{if(o?.method==='POST'){payload=JSON.parse(o.body);return Response.json({id:'task_muse_alias'});}return Response.json({id:'task_muse_alias',status:'completed',url:'https://media.invalid/muse.mp4'});}));
+  await(await post(endpoint,{model:'operator Muse',prompt:'test',image_urls:['https://assets.invalid/1.jpg']})).text();
+  await vi.waitFor(()=>expect(row().status).toBe('completed'));
+  expect(payload).toMatchObject({model:'muse-video',seconds:'10',size:'720P',reference_images:[{url:expect.any(String)}]});
+  expect(endpoint.startsWith('/v1')?tokenWallet():wallet()).toBe(96);
+});
+
+it('Muse website model list exposes fixed 10s/720p, eight images, no video/audio/frames and per-call pricing',async()=>{
+  setupMuse(false);
+  const response=await nativeFetch(origin+'/api/video/models');expect(response.status).toBe(200);
+  const all:any=await response.json();const muse=all.find((m:any)=>m.id==='muse-video');
+  expect(muse).toMatchObject({allowedSeconds:[10],rates:{'720p':4},billingType:'per_call',routingLimits:{maxImages:8,maxVideos:0,maxAudios:0,firstFrame:false,lastFrame:false,resolutions:['720p'],duration:{mode:'fixed',min:10,max:10}}});
+  expect(Object.keys(muse.rates)).toEqual(['720p']);
+});
+
 for (const retired of RETIRED_VIDEO_MODELS) {
   it.each([false,true])(`retired ${retired} managed=%s: all website/API aliases and batch entrances reject before debit or POST`,async spec=>{
     db.update(models).set({modelId:retired,displayName:'old operator name'}).run();

@@ -1,6 +1,7 @@
 import { migrateHmDdlongNaming } from './hmDdlongNamingMigration.js';
 import { GOOGLE_SYNC_MODEL_IDS } from '../../shared/googleSyncModels.js';
 import { SNUMOM_WAN_NSFW_MODEL, SNUMOM_OUTPUT_ONLY_MODELS } from '../../shared/snumomWanNsfw.js';
+import { SNUMOM_MUSE_CATALOG } from '../../shared/snumomMuse.js';
 import { MEGABY_BASE_URL, MEGABY_CHANNEL_TYPE } from '../../shared/megabyVideo.js';
 import { migrateZonghengToV6k } from '../services/zonghengV6kMigration.js';
 import { ensureFundLedger } from './fundLedger.js';
@@ -252,6 +253,7 @@ export async function syncModelsFromAPI() {
     { provider: 'julun', modelId: JULUN_MINIMAX_H3_MODEL, displayName: 'MiniMax H3 768p（933）', description: '巨轮 MiniMax H3；固定768p；仅支持10秒或15秒；最多9图、3视频、3音频参考；按秒计费 ¥0.18/秒', capabilities: JSON.stringify(['video']), isActive: 1 },
     // New models stay disabled; upstream USD costs are not customer RMB prices.
     ...Object.entries(SNUMOM_OUTPUT_ONLY_MODELS).map(([modelId,spec])=>({provider:'snumom',modelId,displayName:modelId,description:`${spec.resolution}；支持${spec.seconds.join('/')}秒；最多10图、5视频、5音频；仅输出时长计费，参考视频不计费`,capabilities:JSON.stringify(['video']),isActive:0})),
+    SNUMOM_MUSE_CATALOG,
     { provider: 'snumom', modelId: SNUMOM_WAN_NSFW_MODEL, displayName: 'Wan 3.0 Video NSFW', description: '支持2-30秒、480P/720P/1080P；最多10图、5视频、5音频参考；输出与参考视频时长计费，音频不计费；售价以管理员配置为准', capabilities: JSON.stringify(['video']), isActive: 0 },
     { provider: 'snumom', modelId: SNUMOM_GROK_IMAGINE_VIDEO_MODEL, displayName: 'Grok Imagine Video 1.5', description: '支持1-15秒、480P/720P；最多7张参考图；不支持参考视频或音频；按次计费 ¥0.60/次', capabilities: JSON.stringify(['video']), isActive: 1 },
     { provider: 'snumom', modelId: SNUMOM_SD_MINI_MODEL, displayName: 'Seedance 2.0 Mini', description: '支持9图、3视频、3音频参考，不卡脸；480p支持15秒，720p仅支持10秒；按次计费 ¥0.60/次', capabilities: JSON.stringify(['video']), isActive: 1 },

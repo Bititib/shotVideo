@@ -1,4 +1,6 @@
 import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
+import { SNUMOM_MUSE_MODEL } from '../../shared/snumomMuse.js';
+import { normalizeSnumomMuseRequestBody, validateSnumomMuseInput } from './snumomWanAdapter.js';
 import { isHussPersistentVideoModel } from '../../shared/hussBbVideo.js';
 import { V6K_SEEDANCE_20_MODEL } from '../../shared/v6kSeedance2.js';
 import { isMegabyChannel, buildMegabyVideoPayload, submitMegabyVideo, pollMegabyVideo, validateMegabyReferenceDurations, MegabyApiError } from './megabyVideoAdapter.js';
@@ -47,6 +49,13 @@ export type SpecificationRequest = { prompt: string; input: RoutingInput; images
 /** Validate extra-parameter/media combinations before reserving money or creating a task. */
 export function validateSpecificationVideoParameters(request: SpecificationRequest, candidates: RouteCandidate[]) {
   for (const target of candidates) {
+    if ([request.body.model,target.route.executionModel,target.route.upstreamModel].includes(SNUMOM_MUSE_MODEL)) {
+      if (!isSnumomWanChannel(target.channel) || target.route.executionModel !== SNUMOM_MUSE_MODEL || target.route.upstreamModel !== SNUMOM_MUSE_MODEL) throw new Error('Muse Video 必须关联对应型号的 snumom 线路');
+      normalizeSnumomMuseRequestBody({...request.body,model:SNUMOM_MUSE_MODEL});
+      validateSnumomMuseInput({model:SNUMOM_MUSE_MODEL,prompt:request.prompt,seconds:request.input.seconds,resolution:request.input.resolution,aspectRatio:request.input.ratio,
+        images:[...request.images.map(url=>({url})),...(request.firstFrame?[{url:request.firstFrame,role:'first_frame' as const}]:[]),...(request.lastFrame?[{url:request.lastFrame,role:'last_frame' as const}]:[])],
+        videos:request.videos.map(url=>({url})),audios:request.audios.map(url=>({url}))});
+    }
     if (isHayaChannel(target.channel) && target.route.upstreamModel === HAYA_MO_MODEL) validateHayaMoInput({ ...request,
       ...request.input, images: request.images, videos: request.videos, audios: request.audios,
       model: HAYA_MO_MODEL, metadata: request.body.metadata, content: request.body.content });
@@ -360,7 +369,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   const id = isSnumomWanChannel(c) ? extractSnumomTaskId(job, taskHeaders)
     : job.task_id || job.taskId || job.id || job.data?.task_id || job.data?.id || job.request_id;
   if (!id) throw new SpecificationUpstreamError(upstreamDiagnostic(c.type || 'OpenAI-compatible', '上游未返回任务 ID，提交结果待核实，请勿重复提交', job, c.apiKey, undefined, taskHeaders?.get('x-request-id') || undefined), false, true);
-  if (isSnumomWanVideoModel(exec) && isSnumomWanChannel(c) && ['completed','failed'].includes(String(job.status).toLowerCase())) onStarting({videoId:String(id),upstreamTaskId:String(id),snumomInitialTask:job});
+  if ((isSnumomWanVideoModel(exec) || exec === SNUMOM_MUSE_MODEL) && isSnumomWanChannel(c) && ['completed','failed'].includes(String(job.status).toLowerCase())) onStarting({videoId:String(id),upstreamTaskId:String(id),snumomInitialTask:job});
   return String(id);
 }
 export async function pollSpecificationVideo(channel: any, taskId: string, executionModel?: string, referenceVideoSeconds = 0) {

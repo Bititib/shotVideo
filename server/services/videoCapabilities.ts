@@ -10,6 +10,7 @@ import { HAYA_XG_SEEDANCE_20_MODEL } from '../../shared/hayaVideo.js';
 import { HAYA_MO_MODEL } from '../../shared/hayaMoVideo.js';
 import { isLongxiaModel } from '../../shared/longxiaVideo.js';
 import { SNUMOM_WAN_NSFW_MODEL, SNUMOM_OUTPUT_ONLY_MODELS, isSnumomWanVideoModel } from '../../shared/snumomWanNsfw.js';
+import { SNUMOM_MUSE_MODEL } from '../../shared/snumomMuse.js';
 
 export type ParameterRule = {
   type: 'string' | 'integer' | 'number' | 'boolean'; title: string; description?: string;
@@ -54,7 +55,7 @@ export function videoCapabilities(modelId: string, specification?: ModelSpecific
   if (!spec && limits) {
     // Preset drafts inherit generic ratios. Publish only adapter-confirmed ratios.
     const hm = getHmStudioAdditionalVideoModel(modelId);
-    const explicitRatios = [HUSS_BB_PUBLIC_MODEL, HUSS_HSS_MODEL, SI_YUE_TIAN_MINIMAX_MODEL, HAYA_XG_SEEDANCE_20_MODEL].includes(modelId) || isLongxiaModel(modelId) || isSnumomWanVideoModel(modelId);
+    const explicitRatios = [SNUMOM_MUSE_MODEL, HUSS_BB_PUBLIC_MODEL, HUSS_HSS_MODEL, SI_YUE_TIAN_MINIMAX_MODEL, HAYA_XG_SEEDANCE_20_MODEL].includes(modelId) || isLongxiaModel(modelId) || isSnumomWanVideoModel(modelId);
     limits = { ...limits, ratios: hm?.ratios ? [...hm.ratios] : explicitRatios ? limits.ratios : [] };
   }
   if (!limits && modelId.startsWith(FUNAI_MODEL_PREFIX) && funAiModelKind(publicApiModelId(modelId)) === 'video') {

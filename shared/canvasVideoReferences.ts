@@ -1,6 +1,7 @@
 import { siYueTianManagedVideoSpec } from './siYueTianManagedVideo';
 import { getZonghengVideoReferenceLimits } from './zonghengVideo';
 import { isSnumomWanVideoModel } from './snumomWanNsfw';
+import { SNUMOM_MUSE_MODEL } from './snumomMuse';
 import { getHayaVideoSpec, HAYA_XG_SEEDANCE_20_MODEL } from './hayaVideo';
 import { getSiYueTianC2Model } from './siYueTianVideoC2';
 import { getHmStudioAdditionalVideoModel, isHmStudioNovaVideoModel, isHmStudioDefaultV20Model } from './hmStudioVideo';
@@ -26,5 +27,6 @@ export function canvasVideoReferenceLimits(model: string): VideoReferenceLimits 
   if (['ad-seedance-2.5-480p', 'td-seedance-2.5-720p'].includes(model)) return { images: 30, videos: 10, audios: 10 };
   if (['vd-seedance-2.5-480p', 'vd-seedance-2.5-720p'].includes(model)) return { images: 9, videos: 3, audios: 0 };
   if (['Minimax-H3-768p-933-10s-15s', 'sd-mini'].includes(model)) return { images: 9, videos: 3, audios: 3 };
+  if (model === SNUMOM_MUSE_MODEL) return {images:8,videos:0,audios:0,wavOnly:false};
   if (model === 'wan3.0th' || isSnumomWanVideoModel(model)) return { images: 10, videos: 5, audios: 5, wavOnly: model === 'wan3.0th' };
 }

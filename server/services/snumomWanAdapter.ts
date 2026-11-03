@@ -1,5 +1,6 @@
 import { SNUMOM_WAN_NSFW_MODEL, SNUMOM_OUTPUT_ONLY_MODELS, snumomOutputOnlySpec, isSnumomWanVideoModel } from '../../shared/snumomWanNsfw.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { SNUMOM_MUSE_MODEL, SNUMOM_MUSE_RATIOS } from '../../shared/snumomMuse.js';
 export const SNUMOM_BASE_URL = 'https://snumom.com';
 export const SNUMOM_CHANNEL_TYPE = 'snumom';
 export const SNUMOM_GROK_IMAGINE_VIDEO_MODEL = 'grok-imagine-video-1.5';
@@ -12,6 +13,7 @@ export const SNUMOM_SD_MINI_MAX_IMAGES = 9;
 export const SNUMOM_SD_MINI_MAX_VIDEOS = 3;
 export const SNUMOM_SD_MINI_MAX_AUDIOS = 3;
 export const SNUMOM_VIDEO_MODELS = [
+  SNUMOM_MUSE_MODEL,
   SNUMOM_WAN_NSFW_MODEL,
   ...Object.keys(SNUMOM_OUTPUT_ONLY_MODELS),
   SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
@@ -103,7 +105,49 @@ export function normalizeSnumomResolution(resolution: string): '480P' | '720P' |
   return '720P';
 }
 
+export function validateSnumomMuseInput(input: SnumomWanPayloadInput): void {
+  if (input.seconds !== 10 || input.smartDuration) throw new Error('Muse Video 仅支持10秒');
+  if (String(input.resolution).toLowerCase() !== '720p') throw new Error('Muse Video 仅支持720p');
+  if (!SNUMOM_MUSE_RATIOS.includes(input.aspectRatio)) throw new Error('Muse Video 画面比例不支持');
+  if ((input.images || []).length > 8) throw new Error('Muse Video 最多8张参考图');
+  if ((input.images || []).some(i=>!i?.url || i.role && i.role !== 'reference_image')) throw new Error('Muse Video 仅支持普通参考图，不支持独立首尾帧');
+  if (input.videos?.length || input.audios?.length || input.inputMedia?.length) throw new Error('Muse Video 不支持参考视频、音频或文档');
+  if (input.promptExtend !== undefined) throw new Error('Muse Video 不支持 prompt_extend');
+}
+
+/** Normalize the existing website/API aliases once, without silently dropping input. */
+export function normalizeSnumomMuseRequestBody(value: any): any {
+  if (value?.model !== SNUMOM_MUSE_MODEL) return value;
+  const body = {...value};
+  const durations=[body.seconds,body.duration,body.video_length,body.parameters?.duration,body.duration_seconds].filter(v=>v!==undefined).map(Number);
+  if(durations.some(v=>v!==10))throw new Error('Muse Video 仅支持10秒，时长参数必须一致');
+  const resolutions=[body.resolution,body.resolution_name,body.size].filter(v=>v!==undefined).map(v=>String(v).toLowerCase());
+  if(resolutions.some(v=>v!=='720p'))throw new Error('Muse Video 仅支持720p');
+  const ratios=[body.ratio,body.aspect_ratio].filter(v=>v!==undefined);
+  if(new Set(ratios).size>1)throw new Error('画面比例参数必须一致');
+  const nonempty=(v:any)=>v!==undefined&&v!==null&&v!==''&&(!Array.isArray(v)||v.length>0);
+  for(const key of ['reference_videos','video_urls','video_url','reference_video','videos','video_refs','reference_audios','audio_urls','audio_url','reference_audio','audios','audio_refs','first_frame','first_frame_url','start_frame','last_frame','last_frame_url','end_frame','end_frame_url','content']) {
+    if(nonempty(body[key]))throw new Error('Muse Video 仅支持普通参考图，不支持视频、音频或独立首尾帧');
+  }
+  if(nonempty(body.input?.media)||nonempty(body.metadata?.content))throw new Error('Muse Video 参考图请使用 reference_images');
+  const keys=['reference_images','image_urls','images','Ingredients_images','image_refs','input_reference','image','image_url'].filter(k=>nonempty(body[k]));
+  if(keys.length>1)throw new Error('参考图请只使用一个素材字段，避免丢失或重复');
+  let values=keys.length?body[keys[0]]:[];
+  if(typeof values==='string'&&values.trim().startsWith('[')){try{values=JSON.parse(values);}catch{throw new Error('参考图列表不是有效JSON');}}
+  if(!Array.isArray(values))values=[values];
+  const images=values.map((v:any)=>{
+    if(v?.role&&v.role!=='reference_image')throw new Error('Muse Video 不支持独立首尾帧');
+    const url=typeof v==='string'?v:v?.url;
+    if(typeof url!=='string'||!url.trim())throw new Error('参考图片地址无效');
+    return {url};
+  });
+  validateSnumomMuseInput({model:body.model,prompt:body.prompt,seconds:10,resolution:'720p',aspectRatio:ratios[0]||'16:9',images,promptExtend:body.parameters?.prompt_extend??body.prompt_extend});
+  for(const key of keys)delete body[key];
+  return {...body,seconds:10,video_length:10,resolution:'720p',aspect_ratio:ratios[0]||'16:9',reference_images:images.map((i:any)=>i.url)};
+}
+
 export function buildSnumomWanPayload(input: SnumomWanPayloadInput): Record<string, unknown> {
+  if (input.model === SNUMOM_MUSE_MODEL) validateSnumomMuseInput(input);
   if (isRetiredVideoModel(input.model)) throw new Error(RETIRED_VIDEO_MODEL_MESSAGE);
   if (isSnumomWanVideoModel(input.model)) validateSnumomNsfwInput(input);
   const images = (input.images || []).filter(item => item?.url);
@@ -156,6 +200,7 @@ function finiteNonNegative(value: unknown): number | undefined {
 
 /** Normalize documented NSFW media objects before either entry can reserve funds. */
 export function normalizeSnumomNsfwRequestBody(value: any): any {
+  if (value?.model === SNUMOM_MUSE_MODEL) return normalizeSnumomMuseRequestBody(value);
   if (!isSnumomWanVideoModel(value?.model)) return value;
   const body = {...value};
   const resolutions=[body.resolution,body.resolution_name,body.size].filter(v=>v!==undefined).map(v=>String(v).toLowerCase());

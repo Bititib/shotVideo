@@ -2,8 +2,9 @@ import { publicApiModelId } from '../../shared/funAi.js';
 import { videoCapabilities, normalizeVideoParameters } from '../services/videoCapabilities.js';
 import { zonghengProtocol, zonghengProtocolSnapshot } from '../services/zonghengProtocol.js';
 import { publicGenerationError } from '../../shared/generationMessages.js';
-import { normalizeSnumomNsfwRequestBody } from '../services/snumomWanAdapter.js';
+import { normalizeSnumomNsfwRequestBody, validateSnumomMuseInput } from '../services/snumomWanAdapter.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { SNUMOM_MUSE_MODEL } from '../../shared/snumomMuse.js';
 import { generationErrorResponse } from '../middleware/generationErrorResponse.js';
 import { getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, zonghengBaseUrl, buildZonghengVideoPayload, validateZonghengVideoAliases, buildZonghengImagePayload, validateZonghengImageReferences, zonghengImageSize, submitZonghengVideo, ZonghengSubmissionError } from '../services/zonghengAdapter.js';
@@ -2160,6 +2161,10 @@ async function handleVideoCreation(req: Request, res: Response) {
     }
   }
 
+  if (model === SNUMOM_MUSE_MODEL) {
+    try { validateSnumomMuseInput({model,prompt,seconds,resolution,aspectRatio:ratio,images:image_urls.map(url=>({url})),videos:video_urls.map(url=>({url})),audios:audio_urls.map(url=>({url}))}); }
+    catch(error:any){cleanupFiles(req.files);return res.status(400).json({error:error.message});}
+  }
   if (model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL) {
     if (!SNUMOM_GROK_IMAGINE_VIDEO_SECONDS.includes(Number(seconds))) {
       cleanupFiles(req.files);
@@ -2192,10 +2197,11 @@ async function handleVideoCreation(req: Request, res: Response) {
     : null;
   let channel = model === SI_YUE_TIAN_PRIMARY_VIDEO_MODEL
     ? siYueTianSelection?.channel || null
-    : ChannelService.findChannelForModel(model, isSnumomWanVideoModel(model)
+    : ChannelService.findChannelForModel(model, isSnumomWanVideoModel(model) || model === SNUMOM_MUSE_MODEL
       ? ChannelService.getActiveChannels().filter(isSnumomWanChannel)
       : undefined);
   let executionModel = siYueTianSelection?.executionModel || model;
+  if (model === SNUMOM_MUSE_MODEL && channel?.modelMapping?.[model] && channel.modelMapping[model] !== SNUMOM_MUSE_MODEL) { cleanupFiles(req.files); return res.status(400).json({error:'Muse Video 上游型号映射不一致，本次未扣费'}); }
   let failoverReason = siYueTianSelection?.reason || '';
   let failoverFrom = siYueTianSelection?.kind === 'julun' ? 'siyuetian' : '';
   let upstreamModel = model;
@@ -2374,6 +2380,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   const billableSeconds = snumomWanBillableSeconds(model, billingOutputSeconds, referenceVideoSeconds);
   const pricingQuote = PricingService.quote(model, { resolution, seconds: billableSeconds, count: 1 }, false, token.userId ?? null);
   if (isSnumomWanVideoModel(model) && pricingQuote.billingType !== 'per_second') { cleanupFiles(req.files); return res.status(400).json({error:'Wan 3.0 NSFW 需配置按秒售价，本次未扣费'}); }
+  if (model === SNUMOM_MUSE_MODEL && pricingQuote.billingType !== 'per_call') { cleanupFiles(req.files); return res.status(400).json({error:'Muse Video 需配置按次售价，本次未扣费'}); }
   if (!pricingQuote.billingType) {
     cleanupFiles(req.files);
     return res.status(400).json({ error: `Model ${model} has no pricing rule. Configure it in Admin > Pricing.` });
@@ -3038,7 +3045,7 @@ async function handleVideoCreation(req: Request, res: Response) {
         status_url: `${req.protocol}://${req.get('host')}/v1/videos/task_${contentId}` });
     }
 
-    if(isSnumomWanVideoModel(model)){
+    if(isSnumomWanVideoModel(model) || model === SNUMOM_MUSE_MODEL){
       const immediateId=extractSnumomTaskId(responseBody,upstreamRes.headers);
       if(immediateId)acceptVideoSubmission(contentId!,immediateId,{channelId:Number(channel.id)||null,channelApiKeyId:Number(channel.apiKeyId)||null,provider:'snumom'});
     }
@@ -3089,7 +3096,7 @@ async function handleVideoCreation(req: Request, res: Response) {
     } catch { /* keep the submission metadata below */ }
     const localMeta = {
       ...persistedMeta,
-      ...(isSnumomWanVideoModel(model) && responseBody?.status==='completed'?{snumomInitialTask:responseBody}:{}),
+      ...((isSnumomWanVideoModel(model) || model === SNUMOM_MUSE_MODEL) && responseBody?.status==='completed'?{snumomInitialTask:responseBody}:{}),
       model,
       prompt,
       seconds: billingOutputSeconds,

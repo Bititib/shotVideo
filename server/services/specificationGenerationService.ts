@@ -23,6 +23,7 @@ import { startSseHeartbeat } from './sseHeartbeat.js';
 import { publicGenerationError, publicGenerationEvent } from '../../shared/generationMessages.js';
 import { isFunAiChannel } from './funAiAdapter.js';
 import { validateSpecificationVideoParameters } from './specificationAdapters.js';
+import { SNUMOM_MUSE_MODEL } from '../../shared/snumomMuse.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
 import { assertExpectedVideoCost } from './videoQuoteService.js';
 import { assertUserModelAccess } from './userModelAccessService.js';
@@ -280,7 +281,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
             if (isSiYueTianManagedVideoModel(meta.actualModel) && meta.siYueTianMinimaxInitialTask) {
               task = normalizeSiYueTianMinimaxTask(meta.siYueTianMinimaxInitialTask, channel, taskId);
               patch(id, { siYueTianMinimaxInitialTask: null });
-            } else if (meta.snumomReferenceBilling && isSnumomWanChannel(channel)) {
+              } else if ((meta.snumomReferenceBilling || meta.actualModel === SNUMOM_MUSE_MODEL) && isSnumomWanChannel(channel)) {
               if (meta.snumomInitialTask) { task=normalizeSnumomWanTask(meta.snumomInitialTask,meta.referenceVideoSeconds || 0,meta.actualModel);patch(id,{snumomInitialTask:null}); }
               else task = await pollSpecificationVideo(channel,taskId,meta.actualModel,meta.referenceVideoSeconds || 0);
             }
@@ -826,6 +827,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     const quote = batch?.pricingSnapshot ? { ...PricingService.quoteSnapshot(batch.pricingSnapshot, usage), pricingSnapshot: batch.pricingSnapshot }
       : PricingService.quote(modelId, usage, false, userId || null);
     if (!quote.billingType) throw fail('该规格尚未配置用户售价');
+    if ((modelId === SNUMOM_MUSE_MODEL || candidates.some(t=>t.route.upstreamModel===SNUMOM_MUSE_MODEL)) && quote.billingType !== 'per_call') throw fail('Muse Video 需配置按次售价，本次未扣费');
     if (nativeImageOutputs && quote.billingType !== 'per_call') throw fail('MJ 图片任务请配置按次售价，完整保留原结果');
     if (kind === 'video') {
       if (!['per_call', 'per_second'].includes(quote.billingType)) throw fail('视频用户售价必须按条或按秒配置');

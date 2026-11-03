@@ -74,6 +74,7 @@ describe('snumom Wan 3.0 adapter', () => {
   it('declares the Grok per-request model and its advertised limits', () => {
     expect(SNUMOM_GROK_IMAGINE_VIDEO_MODEL).toBe('grok-imagine-video-1.5');
     expect(SNUMOM_VIDEO_MODELS).toEqual([
+      'muse-video',
       'wan3.0-video-nsfw',
       ...Object.keys(SNUMOM_OUTPUT_ONLY_MODELS),
       SNUMOM_GROK_IMAGINE_VIDEO_MODEL,

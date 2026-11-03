@@ -50,6 +50,16 @@ describe('数据库 Schema', () => {
 
 // ============ 种子数据测试 ============
 describe('种子数据完整性', () => {
+  it('registers Muse disabled with a channel binding but without imposing a customer price', () => {
+    const id = 'muse-video';
+    expect(db.select().from(models).where(eq(models.modelId,id)).get()).toMatchObject({provider:'snumom',isActive:0});
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,id)).get()).toBeUndefined();
+    expect(getEnabledPublicModels('video').some(m=>m.modelId===id)).toBe(false);
+    const channel=db.select().from(channels).where(eq(channels.type,'snumom')).get()!;
+    expect(JSON.parse(channel.supportedModels)).toContain(id);
+    expect(JSON.parse(channel.modelMapping)).toHaveProperty(id,id);
+    expect(()=>quoteVideoRequest({model:id,seconds:10,resolution:'720p'})).toThrow('未开放');
+  });
   it('registers the confirmed NSFW catalog identity disabled without copying an upstream cost into the customer price', () => {
     const before = db.select({ id: users.id, balance: users.balance }).from(users).all();
     const model = db.select().from(models).where(eq(models.modelId, SNUMOM_WAN_NSFW_MODEL)).get();
@@ -156,12 +166,14 @@ describe('种子数据完整性', () => {
     expect(channel).toBeDefined();
     expect(channel!.baseUrl).toBe('https://snumom.com');
     expect(JSON.parse(channel!.supportedModels)).toEqual([
+      'muse-video',
       SNUMOM_WAN_NSFW_MODEL,
       ...Object.keys(SNUMOM_OUTPUT_ONLY_MODELS),
       SNUMOM_GROK_IMAGINE_VIDEO_MODEL,
       SNUMOM_SD_MINI_MODEL,
     ]);
     expect(JSON.parse(channel!.modelMapping)).toEqual({
+      'muse-video': 'muse-video',
       [SNUMOM_WAN_NSFW_MODEL]: SNUMOM_WAN_NSFW_MODEL,
       ...Object.fromEntries(Object.keys(SNUMOM_OUTPUT_ONLY_MODELS).map(id=>[id,id])),
       [SNUMOM_GROK_IMAGINE_VIDEO_MODEL]: SNUMOM_GROK_IMAGINE_VIDEO_MODEL,

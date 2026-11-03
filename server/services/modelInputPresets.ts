@@ -9,6 +9,7 @@ import { getHayaVideoSpec, hayaVideoSeconds, HAYA_XG_SEEDANCE_20_MODEL, HAYA_XG_
 import { isLongxiaModel, longxiaResolution, LONGXIA_RATIOS } from '../../shared/longxiaVideo.js';
 import { getSiYueTianC2Model, getSiYueTianSeedance25VideoSpec } from './siYueTianVideoModels.js';
 import { SNUMOM_WAN_NSFW_MODEL, snumomOutputOnlySpec } from '../../shared/snumomWanNsfw.js';
+import { SNUMOM_MUSE_MODEL, SNUMOM_MUSE_RATIOS } from '../../shared/snumomMuse.js';
 
 
 /** Capability drafts come from existing adapters, never from the spelling of a display name. */
@@ -21,6 +22,7 @@ export function existingModelLimits(id: string, kind: 'image' | 'video'): ModelI
     return { ...l, maxImages: textOnly ? 0 : id === 'gpt-image-2-mingfei' ? 16 : 10, maxOutputs: 4, resolutions: id === 'gpt-image-2' ? ['1K','4K'] : ['1K','2K','4K'], ratios: ['1:1','16:9','9:16','4:3','3:4','3:2','2:3'] };
   }
   if (isBbHssKkEntry(id)) return bbHssKkLimits();
+  if (id === SNUMOM_MUSE_MODEL) return {...video(8,0,0,'720p',10,10),ratios:[...SNUMOM_MUSE_RATIOS],firstFrame:false,lastFrame:false,duration:{mode:'fixed',min:10,max:10,step:1,values:[]}};
   if (siYueTianManagedVideoSpec(id)) return siYueTianManagedVideoSpec(id)!.limits;
   if ([V6K_TTT_720_MODEL,V6K_KK25_MODEL].includes(id)) return video(30,10,10,'720p',5,30);
   const v6kSeedance20 = v6kSeedance20Limits(id);
