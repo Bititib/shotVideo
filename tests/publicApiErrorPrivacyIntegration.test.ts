@@ -35,7 +35,7 @@ beforeEach(async () => {
   for (const { name } of sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[]) sqlite.exec(`DELETE FROM "${name}"`);
   db.insert(users).values({ id: 1, username: 'privacy-admin', email: 'privacy@example.test', passwordHash: 'unused', role: 'admin', balance: 100 }).run();
   db.insert(apiTokens).values({ id: 1, userId: 1, name: 'privacy-test', tokenKey: userKey, balance: 100 }).run();
-  upstream = vi.fn(async () => Response.json({ data: [{ id: 'gemini-omni-flash' }, { id: 'gpt-image-2' }] }));
+  upstream = vi.fn(async () => Response.json({ data: [{ id: 'omniomni-flash-1.1' }, { id: 'gpt-image-2' }] }));
   vi.stubGlobal('fetch', upstream);
   channelId = ChannelService.createChannel({ name: 'Private Orion Channel', type: 'funai', baseUrl: 'https://private-provider.invalid', apiKey: providerKey });
   await ChannelService.syncModels(channelId);
@@ -63,6 +63,27 @@ function enableChat() {
 }
 
 describe('real user API routes keep channel diagnostics administrator-only', () => {
+  it('keeps the public Omni identity while submitting the new upstream model and charging the configured sale price once', async () => {
+    upstream.mockImplementation(async (url, init) => {
+      if (init?.method === 'POST') {
+        expect(String(url)).toBe('https://private-provider.invalid/v1/videos');
+        expect(JSON.parse(init.body)).toMatchObject({ model: 'omniomni-flash-1.1', seconds: 10, aspect_ratio: '9:16' });
+        return Response.json({ id: 'new-omni-task', status: 'queued' });
+      }
+      expect(String(url)).toBe('https://private-provider.invalid/v1/videos/new-omni-task');
+      expect(JSON.parse(lastContent().metadata)).toMatchObject({ videoId: 'new-omni-task', upstreamModel: 'omniomni-flash-1.1' });
+      return Response.json({ status: 'completed', url: 'https://cdn.example/omni.mp4' });
+    });
+    const first = await (await api('/v1/videos', video)).json() as any;
+    const result = await pollUntilSettled(first.id);
+    expect(result).toMatchObject({ model: 'gemini-omni-flash', status: 'completed' });
+    expect(balance()).toBe(99.4);
+    await api('/v1/videos', video); await api('/v1/videos/' + first.id);
+    expect(upstream.mock.calls.filter(call => call[1]?.method === 'POST')).toHaveLength(1);
+    expect(balance()).toBe(99.4);
+    assertPrivate(result);
+  });
+
   it('handles the screenshot quota rejection, replay and polling with one refund and complete admin diagnostics', async () => {
     upstream.mockImplementation(async () => Response.json({ error: { code: 'insufficient_user_quota', message: '用户额度不足，剩余额度 ¥0.000000' } }, { status: 403 }));
     const first = await (await api('/v1/videos', video)).json() as any;

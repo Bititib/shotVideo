@@ -1,7 +1,7 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { request as httpsRequest } from 'node:https';
-import { funAiModelKind, funAiModelLimits, isFunAiGeminiImage } from '../../shared/funAi.js';
+import { funAiModelKind, funAiModelLimits, isFunAiGeminiImage, isFunAiOmniFlash } from '../../shared/funAi.js';
 import { routingMismatches } from '../../shared/modelRouting.js';
 import { detectedMediaMime } from './privateMediaStore.js';
 import type { SpecificationRequest } from './specificationAdapters.js';
@@ -48,7 +48,7 @@ function reference(value: string) {
 export function validateFunAiReferenceMode(model: string, request: SpecificationRequest) {
   const mode = request.body.reference_mode;
   if (mode === undefined) return;
-  if (model !== 'gemini-omni-flash' || !['frame', 'style', 'element'].includes(mode)) throw new Error('此模型的参考图用途不支持');
+  if (!isFunAiOmniFlash(model) || !['frame', 'style', 'element'].includes(mode)) throw new Error('此模型的参考图用途不支持');
   if (request.firstFrame && mode !== 'frame') throw new Error('独立首帧不能同时指定风格或元素参考用途');
   if (!request.images.length && !request.firstFrame) throw new Error('选择参考图用途后必须提供图片');
   if (mode === 'frame' && request.images.length > 1) throw new Error('Omni Flash 首帧模式最多 1 张图片');
@@ -100,7 +100,7 @@ export function buildFunAiVideoPayload(model: string, request: SpecificationRequ
     if (videos.length) { payload.video_references = videos; delete payload.seconds; }
   } else if (model === 'gemini-omni') {
     if (images.length) payload.reference_images = images;
-  } else if (model === 'gemini-omni-flash') {
+  } else if (isFunAiOmniFlash(model)) {
     const mode = request.body.reference_mode;
     if (images.length + Number(Boolean(first)) + videos.length > 4) throw new Error('Omni Flash 参考素材合计最多 4 项');
     if (first) payload.input_reference = first;

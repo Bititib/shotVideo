@@ -1,14 +1,14 @@
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { channels, models } from '../db/schema.js';
-import { FUNAI_MODEL_PREFIX, funAiModelKind, funAiModelLimits } from '../../shared/funAi.js';
+import { FUNAI_MODEL_PREFIX, FUNAI_OMNI_FLASH_ENTRY, FUNAI_OMNI_FLASH_11_MODEL, funAiSaleModel, funAiModelKind, funAiModelLimits } from '../../shared/funAi.js';
 import { imageSpecificationId, type ModelSpecification } from '../../shared/modelRouting.js';
 import { fetchFunAiModels, type FunAiChannel } from './funAiAdapter.js';
 import { getModelSpecification, saveModelSpecification } from './modelRoutingService.js';
 
 export async function syncFunAiModels(channel: FunAiChannel & { id: number; name: string; priority: number }) {
   const discovered = await fetchFunAiModels(channel);
-  const entries = discovered.filter(id => funAiModelKind(id)).map(upstream => ({ upstream, execution: FUNAI_MODEL_PREFIX + upstream,
+  const entries = discovered.filter(id => funAiModelKind(id) && id !== FUNAI_OMNI_FLASH_ENTRY).map(upstream => ({ upstream, execution: FUNAI_MODEL_PREFIX + funAiSaleModel(upstream),
     kind: funAiModelKind(upstream)!, limits: funAiModelLimits(upstream) }));
   const saleEntries = entries.flatMap(entry => (entry.kind === 'image' ? entry.limits.resolutions : ['']).map(resolution => ({ ...entry, resolution,
     saleId: resolution ? imageSpecificationId(entry.execution, resolution) : entry.execution })));
@@ -28,7 +28,14 @@ export async function syncFunAiModels(channel: FunAiChannel & { id: number; name
         const { saleId, resolution } = entry;
         const existing = getModelSpecification(saleId);
         // Never overwrite administrator limits, switches, custom mappings or costs.
-        if (existing?.routes.some(route => route.channelId === channel.id)) continue;
+        const configured = existing?.routes.find(route => route.channelId === channel.id);
+        if (configured) {
+          if (entry.upstream === FUNAI_OMNI_FLASH_11_MODEL && configured.upstreamModel === FUNAI_OMNI_FLASH_ENTRY) {
+            configured.upstreamModel = FUNAI_OMNI_FLASH_11_MODEL;
+            saveModelSpecification(existing!);
+          }
+          continue;
+        }
         const limits = { ...structuredClone(entry.limits), ...(resolution ? { resolutions: [resolution] } : {}) };
         const route = { id: 'funai-' + channel.id + '-' + entry.upstream + (resolution ? '-' + resolution.toLowerCase() : ''),
           channelId: channel.id, executionModel: saleId, upstreamModel: entry.upstream, enabled: true,
@@ -39,5 +46,7 @@ export async function syncFunAiModels(channel: FunAiChannel & { id: number; name
         saveModelSpecification(spec);
     }
   })();
-  return { count: saleEntries.length, added, models: saleEntries.map(e => e.saleId), skipped: discovered.filter(id => !funAiModelKind(id)).length };
+  return { count: saleEntries.length, added, models: saleEntries.map(e => e.saleId), skipped: discovered.filter(id => !funAiModelKind(id) || id === FUNAI_OMNI_FLASH_ENTRY).length,
+    ...(!discovered.includes(FUNAI_OMNI_FLASH_11_MODEL) && discovered.includes(FUNAI_OMNI_FLASH_ENTRY)
+      ? { warnings: ['当前 Key 的模型目录未包含 omniomni-flash-1.1，Omni 入口未加入可用模型；请核对模型授权。'] } : {}) };
 }

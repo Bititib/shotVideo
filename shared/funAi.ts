@@ -2,6 +2,15 @@ import { defaultRoutingLimits, type ModelInputLimits } from './modelRouting.js';
 
 export const FUNAI_BASE_URL = 'https://ztyunjuan.com';
 export const FUNAI_MODEL_PREFIX = 'funai-';
+export const FUNAI_OMNI_FLASH_11_MODEL = 'omniomni-flash-1.1';
+export const FUNAI_OMNI_FLASH_ENTRY = 'gemini-omni-flash';
+/** Keep the existing sale/API identity while changing only its execution model. */
+export function funAiSaleModel(model: string) {
+  return model === FUNAI_OMNI_FLASH_11_MODEL ? FUNAI_OMNI_FLASH_ENTRY : model;
+}
+export function isFunAiOmniFlash(model: string) {
+  return model === FUNAI_OMNI_FLASH_ENTRY || model === FUNAI_OMNI_FLASH_11_MODEL;
+}
 export const FUNAI_IMAGE_MODELS = [
   'gpt-image-2', 'gpt-image-medium', 'nano-banana', 'gemini-2.5-flash-image',
   'nano-banana-pro', 'gemini-3-pro-image', 'gemini-3-pro-image-preview',
@@ -16,6 +25,7 @@ export const FUNAI_VIDEO_MODELS = [
 const imageRatios = ['1:1', '5:4', '9:16', '21:9', '16:9', '3:2', '4:3', '4:5', '3:4', '2:3'];
 const wideRatios = ['16:9', '9:16'];
 export function funAiModelKind(model: string): 'image' | 'video' | null {
+  if (model === FUNAI_OMNI_FLASH_11_MODEL) return 'video';
   return (FUNAI_IMAGE_MODELS as readonly string[]).includes(model) ? 'image'
     : (FUNAI_VIDEO_MODELS as readonly string[]).includes(model) ? 'video' : null;
 }
@@ -24,6 +34,9 @@ export function isFunAiGeminiImage(model: string) {
 }
 /** Public docs checked 2026-10-12; discovery controls availability, never guessed IDs. */
 export function funAiModelLimits(model: string): ModelInputLimits {
+  // These are the retained sale's input restrictions, not a claim that the
+  // newly listed upstream has independently verified identical capabilities.
+  model = funAiSaleModel(model);
   const kind = funAiModelKind(model);
   if (!kind) throw new Error('FunAI 尚未适配此模型，请核对文档');
   const l = defaultRoutingLimits();

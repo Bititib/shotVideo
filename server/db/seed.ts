@@ -16,6 +16,7 @@ import { ensureBbHssKkMapping } from '../services/bbHssKkMigration.js';
 import { ensureBbHssMoMapping } from '../services/bbHssMoMigration.js';
 import { removeTtBbFallbacks } from './removeTtBbFallbacks.js';
 import { ensureSiYueTianVideoModelsOnStartup } from '../services/siYueTianMinimaxCatalog.js';
+import { migrateFunAiOmniFlash11 } from '../services/funAiOmniMigration.js';
 import { HAYA_VIDEO_MODELS, HAYA_XG_SEEDANCE_20_MODEL, hayaVideoSeconds } from '../../shared/hayaVideo.js';
 import { ASYNC_VIDEO_BASE_URL, ASYNC_VIDEO_CHANNEL_TYPE } from '../../shared/asyncVideo.js';
 import { LONGXIA_MODELS, LONGXIA_BASE_URL, isLongxiaChannel, longxiaRate, longxiaResolution } from '../services/longxiaVideoAdapter.js';
@@ -2073,6 +2074,7 @@ export async function initDatabase() {
   pruneUnapprovedV6kBindings(sqlite);
   removeTtBbFallbacks(sqlite);
   ensureSiYueTianVideoModelsOnStartup(sqlite);
+  migrateFunAiOmniFlash11(sqlite);
   ensureFundLedger(sqlite);
   retireRemovedVideoModels(sqlite);
   console.log('✅ 数据库初始化完成');
