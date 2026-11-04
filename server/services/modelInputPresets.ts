@@ -2,6 +2,7 @@ import { siYueTianManagedVideoSpec } from '../../shared/siYueTianManagedVideo.js
 import { isBbHssKkEntry, bbHssKkLimits } from '../../shared/bbHssKk.js';
 import { V6K_TTT_720_MODEL, V6K_KK25_MODEL } from '../../shared/zonghengVideo.js';
 import { V6K_STABLE_720_MODEL, v6kStable720Limits } from '../../shared/v6kStableVideo.js';
+import { V6K_FULL_720_MODEL, v6kFull720Limits } from '../../shared/v6kFullReferenceVideo.js';
 import { v6kSeedance20Limits } from '../../shared/v6kSeedance2.js';
 import { v6kTt25Limits } from '../../shared/v6kTt25.js';
 import { defaultRoutingLimits, type ModelInputLimits } from '../../shared/modelRouting.js';
@@ -24,6 +25,7 @@ export function existingModelLimits(id: string, kind: 'image' | 'video'): ModelI
   }
   if (isBbHssKkEntry(id)) return bbHssKkLimits();
   if (id === V6K_STABLE_720_MODEL) return v6kStable720Limits();
+  if (id === V6K_FULL_720_MODEL) return v6kFull720Limits();
   if (id === SNUMOM_MUSE_MODEL) return {...video(8,0,0,'720p',10,10),ratios:[...SNUMOM_MUSE_RATIOS],firstFrame:false,lastFrame:false,duration:{mode:'fixed',min:10,max:10,step:1,values:[]}};
   if (siYueTianManagedVideoSpec(id)) return siYueTianManagedVideoSpec(id)!.limits;
   if ([V6K_TTT_720_MODEL,V6K_KK25_MODEL].includes(id)) return video(30,10,10,'720p',5,30);

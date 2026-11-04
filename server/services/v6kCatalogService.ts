@@ -15,6 +15,8 @@ import { ensureBbHssKkMapping } from './bbHssKkMigration.js';
 import { pruneUnapprovedV6kBindings } from './v6kApprovedBindings.js';
 import { V6K_STABLE_720_UPSTREAM } from '../../shared/v6kStableVideo.js';
 import { ensureV6kStable720Model } from './v6kStable720Catalog.js';
+import { V6K_FULL_720_UPSTREAM, V6K_FULL_720_DESCRIPTION } from '../../shared/v6kFullReferenceVideo.js';
+import { ensureV6kFull720Model } from './v6kFull720Catalog.js';
 
 export async function syncV6kVideoModels(channel: { id: number; baseUrl: string; apiKey: string; timeout?: number; type?: string }) {
   const base = zonghengBaseUrl(channel.baseUrl);
@@ -38,7 +40,7 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     const spec = getZonghengVideoSpec(id);
     const publicId = zonghengPublicModelId(id);
     const product = v6kSeedance20Product(id);
-    const description = id === V6K_KK25_MODEL ? V6K_KK25_DESCRIPTION : product?.description || v6kTt25Description(id) || (id === V6K_TTT_720_MODEL ? V6K_TTT_720_DESCRIPTION : spec ? `${spec.resolution}；${spec.seconds.join('、')}秒；最多${spec.references.images}图、${spec.references.videos}视频、${spec.references.audios}音频`
+    const description = id === V6K_FULL_720_UPSTREAM ? V6K_FULL_720_DESCRIPTION : id === V6K_KK25_MODEL ? V6K_KK25_DESCRIPTION : product?.description || v6kTt25Description(id) || (id === V6K_TTT_720_MODEL ? V6K_TTT_720_DESCRIPTION : spec ? `${spec.resolution}；${spec.seconds.join('、')}秒；最多${spec.references.images}图、${spec.references.videos}视频、${spec.references.audios}音频`
       : '已接入视频模型');
     // Both A variants share one execution ID; the specification stores each actual upstream ID.
     if (imported.has(publicId) && id !== product?.upstreamModels[0].id) continue;
@@ -79,6 +81,7 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     bindV6kTt25Routes(sqlite, channel.id, authorizedIds);
     if (authorizedIds.includes(V6K_KK25_MODEL)) { ensureV6kKk25Model(sqlite, channel.id); ensureBbHssKkMapping(sqlite, channel.id); }
     if (authorizedIds.includes(V6K_STABLE_720_UPSTREAM)) ensureV6kStable720Model(sqlite, channel.id);
+    if (authorizedIds.includes(V6K_FULL_720_UPSTREAM)) ensureV6kFull720Model(sqlite, channel.id);
     const retired = pruneUnapprovedV6kBindings(sqlite, channel.id);
     return { count: ids.length, added: ids.filter(id => !previouslyPresent.has(id)).length, models: ids,
       warnings: [...warnings, ...(retired.removedBindings || retired.removedRoutes ? ['已归档并解除未接入型号的旧渠道关联 ' + retired.removedBindings + ' 项、旧规格线路 ' + retired.removedRoutes + ' 条；原订单、价格和启用记录保留。'] : [])] };

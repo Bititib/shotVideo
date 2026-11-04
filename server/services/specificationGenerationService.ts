@@ -25,6 +25,7 @@ import { isFunAiChannel } from './funAiAdapter.js';
 import { validateSpecificationVideoParameters } from './specificationAdapters.js';
 import { SNUMOM_MUSE_MODEL } from '../../shared/snumomMuse.js';
 import { KK_VIDEO_MODEL } from '../../shared/kkVideoRouting.js';
+import { V6K_FULL_720_MODEL, normalizeFull720VideoInput } from '../../shared/v6kFullReferenceVideo.js';
 import { randomUUID } from 'node:crypto';
 import { createVideoAliasChecker } from './modelSaleService.js';
 import { assertExpectedVideoCost } from './videoQuoteService.js';
@@ -77,6 +78,7 @@ function list(body: any, keys: string[]): string[] {
   return value;
 }
 export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: string): SpecificationRequest {
+  if (kind === 'video') { try { normalizeFull720VideoInput(body); } catch (error: any) { throw fail(error.message); } }
   const siYueTianMinimax = kind === 'video' && isSiYueTianManagedVideoModel(body.model);
   if (siYueTianMinimax || body.model === SNUMOM_WAN_NSFW_MODEL) {
     const seconds = [body.seconds, body.duration, body.video_length, ...(body.model === SNUMOM_WAN_NSFW_MODEL ? [body.parameters?.duration,body.duration_seconds] : [])].filter(value => value !== undefined).map(Number);
@@ -85,7 +87,7 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
   if (body.resolution && body.output_resolution && String(body.resolution).toLowerCase() !== String(body.output_resolution).toLowerCase()) throw fail('resolution 与 output_resolution 不一致');
   if (body.mask !== undefined) throw fail('当前统一规格未配置蒙版编辑，请使用支持蒙版的独立入口');
   if (body.response_format && !['url', 'b64_json'].includes(body.response_format)) throw fail('response_format 仅支持 url 或 b64_json');
-  const images = list(body, ['reference_images', 'image_urls', 'image_url', 'images', ...(siYueTianMinimax ? ['image_refs'] : [])]);
+  const images = list(body, ['reference_images', 'image_urls', 'image_url', 'images', ...(body.model === V6K_FULL_720_MODEL ? ['image_refs','reference_image_urls','Ingredients_images'] : siYueTianMinimax ? ['image_refs'] : [])]);
   const videos = list(body, ['reference_videos', 'reference_video', 'video_urls', 'video_url', ...(isBbHssKkEntry(body.model) ? ['videos'] : []), ...(siYueTianMinimax ? ['video_refs'] : [])]);
   const audios = list(body, ['audio_urls', 'audio_url', 'reference_audios', 'audios', ...(siYueTianMinimax ? ['audio_refs'] : [])]);
   const firstFrame = body.first_frame || body.first_frame_url || '';
@@ -802,6 +804,10 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
       if (req.is?.('multipart/form-data') && ['true','false'].includes(body.tile)) body.tile = body.tile === 'true';
       if (body.n !== undefined && Number(body.n) !== 1) throw fail('Midjourney V8.2 每次只能提交一次生成');
       try { hussMjOptions(body); } catch (e: any) { throw fail(e.message); }
+    }
+    if (kind === 'video' && modelId === V6K_FULL_720_MODEL) {
+      body.model = modelId;
+      try { normalizeFull720VideoInput(body); } catch (error: any) { throw fail(error.message); }
     }
     if (nativeImageOutputs && body.n !== undefined && ![1, 4].includes(Number(body.n))) throw fail('MJ 每次仅提交一次任务，图片数量以上游实际结果为准');
     const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (modelId === SNUMOM_WAN_NSFW_MODEL ? body.parameters?.duration ?? body.duration_seconds : undefined) ?? (model.provider === 'megaby' ? 5 : spec.limits.duration.mode === 'fixed' ? spec.limits.duration.min : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'));
