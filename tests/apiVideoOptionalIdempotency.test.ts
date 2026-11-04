@@ -57,14 +57,16 @@ describe('optional video idempotency through real routes and isolated billing', 
     const response = await api(paths[0], video, key);
     expect(response.status).toBe(400); expect(rows()).toEqual([]); expect(posts).toBe(0); expect(balance()).toBe(100);
   });
-  it.each(paths)('%s creates fresh concurrent tasks for identical unkeyed requests and queries never charge again', async path => {
+  it.each(paths)('%s deduplicates concurrent unkeyed requests and lost successful responses without charging again', async path => {
     const [first, second] = await Promise.all([api(path, video), api(path, video)]);
-    expect(first.body.id).not.toBe(second.body.id); expect(first.replayed).toBeNull(); expect(second.replayed).toBeNull();
+    expect(first.body.id).toBe(second.body.id); expect([first.replayed, second.replayed]).toContain('true');
     expect(await settled(first.body.id)).toMatchObject({ status: 'completed', billing_status: 'settled' });
     expect(await settled(second.body.id)).toMatchObject({ status: 'completed', billing_status: 'settled' });
-    expect(posts).toBe(2); expect(rows()).toHaveLength(2); expect(balance()).toBeCloseTo(98.8);
+    const terminalRetry = await api(paths[2], video);
+    expect(terminalRetry.body.id).toBe(first.body.id); expect(terminalRetry.replayed).toBe('true');
+    expect(posts).toBe(1); expect(rows()).toHaveLength(1); expect(balance()).toBeCloseTo(99.4);
     await api('/v1/videos/' + first.body.id); await api('/v1/videos/' + second.body.id); resumeSpecificationTasks();
-    expect(posts).toBe(2); expect(balance()).toBeCloseTo(98.8);
+    expect(posts).toBe(1); expect(balance()).toBeCloseTo(99.4);
   });
   it('does not replay the historical body-hash quota failure, and preserves its original refund record', async () => {
     upstream.mockImplementationOnce(async () => { posts++; return Response.json({ error: { code: 'insufficient_user_quota', message: '额度不足' } }, { status: 403 }); });
@@ -72,7 +74,7 @@ describe('optional video idempotency through real routes and isolated billing', 
     expect(await settled(first.body.id)).toMatchObject({ status: 'failed', billing_status: 'refunded', refund_amount: 0.6 });
     expect(balance()).toBe(100);
     const legacy = sqlite.prepare('SELECT fingerprint FROM api_video_requests WHERE id=?').get(first.body.id) as any;
-    sqlite.prepare('UPDATE api_video_requests SET key_hash=? WHERE id=?').run(createHash('sha256').update('body:' + legacy.fingerprint).digest('hex'), first.body.id);
+    sqlite.prepare("UPDATE api_video_requests SET key_hash=?,request_mode='legacy' WHERE id=?").run(createHash('sha256').update('body:' + legacy.fingerprint).digest('hex'), first.body.id);
     const original = rows()[0];
     const second = await api('/v1/videos', video);
     expect(second.body.id).not.toBe(first.body.id);
@@ -95,23 +97,51 @@ describe('optional video idempotency through real routes and isolated billing', 
     const conflict = await api(paths[0], { ...video, seconds: 5 }, key);
     expect(conflict.status).toBe(409); expect(conflict.body.error.code).toBe('idempotency_conflict'); expect(posts).toBe(1);
   });
-  it('keeps explicit-key unknown acceptance reserved across replays and worker recovery without resending', async () => {
+  it.each([undefined, 'unknown-request'])('keeps unknown acceptance reserved across replays and worker recovery without resending, key=%s', async key => {
     upstream.mockImplementation(async () => { posts++; throw new Error('response lost'); });
-    const first = await api(paths[0], video, 'unknown-request');
+    const first = await api(paths[0], video, key);
     expect(await settled(first.body.id)).toMatchObject({ requires_review: true, billing_status: 'review' });
-    expect((await api(paths[1], video, 'unknown-request')).body.id).toBe(first.body.id);
+    sqlite.prepare("UPDATE api_video_requests SET created_at='2000-01-01' WHERE id=?").run(first.body.id);
+    expect((await api(paths[1], video, key)).body.id).toBe(first.body.id);
     resumeSpecificationTasks(); resumeSpecificationTasks();
     expect(posts).toBe(1); expect(rows()).toHaveLength(1); expect(balance()).toBeCloseTo(99.4);
   });
-  it('refunds a rejected new unkeyed task without refunding or resending the earlier unknown task', async () => {
+  it('refunds a different new unkeyed task without refunding or resending the earlier unknown task', async () => {
     upstream.mockImplementationOnce(async () => { posts++; throw new Error('response lost'); });
     const first = await api(paths[0], video);
     expect(await settled(first.body.id)).toMatchObject({ requires_review: true, billing_status: 'review' });
     upstream.mockImplementationOnce(async () => { posts++; return Response.json({ error: { code: 'insufficient_user_quota', message: '额度不足' } }, { status: 403 }); });
-    const second = await api(paths[0], video);
+    expect((await api(paths[1], video)).body.id).toBe(first.body.id);
+    const second = await api(paths[0], { ...video, prompt: 'a different new request' });
     expect(second.body.id).not.toBe(first.body.id);
     expect(await settled(second.body.id)).toMatchObject({ status: 'failed', billing_status: 'refunded' });
     expect((await api('/v1/videos/' + first.body.id)).body).toMatchObject({ requires_review: true, billing_status: 'review' });
     resumeSpecificationTasks(); expect(posts).toBe(2); expect(balance()).toBeCloseTo(99.4);
+  });
+  it('starts a new identical task after the successful retry window without changing the old order or ledger', async () => {
+    const first = await api(paths[0], video); await settled(first.body.id);
+    const original = rows()[0], metadata = JSON.parse(original.metadata!);
+    metadata.completedAt = new Date(Date.now() - 11 * 60_000).toISOString();
+    sqlite.prepare('UPDATE contents SET metadata=? WHERE id=?').run(JSON.stringify(metadata), original.id);
+    const old = rows()[0];
+    const second = await api(paths[1], video);
+    expect(second.body.id).not.toBe(first.body.id); await settled(second.body.id);
+    expect(rows()[0]).toEqual(old); expect(posts).toBe(2); expect(balance()).toBeCloseTo(98.8);
+  });
+  it('does not resend a persisted active task when the client loses its create response', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    upstream.mockImplementation(async (_url, init) => {
+      if (init?.method === 'POST') { posts++; await gate; return Response.json({ id: 'response-lost-task' }); }
+      return Response.json({ status: 'completed', url: 'https://cdn.invalid/result.mp4' });
+    });
+    // Deliberately discard the first HTTP response, as a caller with a lost response would.
+    await api(paths[0], video);
+    try {
+      const retry = await api(paths[1], video);
+      expect(retry.replayed).toBe('true'); expect(rows()).toHaveLength(1); expect(posts).toBe(1);
+      release(); expect(await settled(retry.body.id)).toMatchObject({ status: 'completed', billing_status: 'settled' });
+      expect(balance()).toBeCloseTo(99.4);
+    } finally { release(); }
   });
 });

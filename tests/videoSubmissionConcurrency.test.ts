@@ -346,6 +346,28 @@ it.each([false,true].flatMap(spec=>['completed','failed'].map(status=>({spec,sta
   await(await send()).text();expect(wallet()).toBe(status==='failed'?100:96);expect(db.select().from(apiTokens).get()!.usedAmount).toBe(status==='failed'?0:4);
 });
 
+it.each([false, true])('Muse API managed=%s: a disconnected unkeyed client retries the original persisted task with one debit', async spec => {
+  const input = setupMuse(spec), reply = deferred<Response>(), controller = new AbortController();
+  let submissions = 0;
+  vi.stubGlobal('fetch', vi.fn(async (_url: any, options: any) => {
+    if (options?.method === 'POST') { submissions++; return reply.promise; }
+    return Response.json({ id: 'task_muse_auto_retry', status: 'completed', url: 'https://media.invalid/muse.mp4' });
+  }));
+  const send = (endpoint: string, signal?: AbortSignal) => nativeFetch(origin + endpoint, { method: 'POST', signal,
+    headers: { Authorization: 'Bearer ' + tokenKey, 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+  const disconnected = send('/v1/videos', controller.signal).then(r => r.text()).catch(() => 'connection lost');
+  try {
+    await vi.waitFor(() => expect(submissions).toBe(1)); controller.abort(); await disconnected;
+    const retry = await send('/v1/videos/generations'), body = await retry.json() as any;
+    expect(retry.headers.get('x-idempotency-replayed')).toBe('true'); expect(body.id).toMatch(/^task_req_/);
+    expect(db.select().from(contents).all()).toHaveLength(1); expect(tokenWallet()).toBe(96);
+    reply.resolve(Response.json({ id: 'task_muse_auto_retry' }));
+    await vi.waitFor(() => expect(row().status).toBe('completed'));
+    expect((await (await send('/v1/video/generations')).json()).id).toBe(body.id);
+    expect(submissions).toBe(1); expect(tokenWallet()).toBe(96);
+  } finally { reply.resolve(Response.json({ id: 'task_muse_auto_retry' })); }
+});
+
 for(const spec of [false,true])for(const endpoint of ['/api/video/generate','/v1/videos']) {
   it(`Muse ${endpoint} managed=${spec}: recovery scanner cannot fail/refund an in-flight submission or repeat a POST`,async()=>{
     const input=setupMuse(spec),reply=deferred<Response>();let submissions=0,queries=0;

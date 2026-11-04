@@ -43,7 +43,7 @@ export function modelExample(model: DeveloperModel, endpoint: DeveloperEndpoint,
   }
   const json = JSON.stringify(payload, null, 2);
   const video = endpoint === '/v1/videos';
-  const poll = model.id === HUSS_MJ_MODEL ? '\n# 返回 202 时保存 task_id，使用同一 Key GET /v1/images/tasks/{task_id}；完成后读取全部 data[]。不要自动重发图片 POST。' : video ? '\n# 每次 POST 创建新任务并分别计费。保存 task_id，通过 GET /v1/videos/{task_id} 查询最新状态。\n# 可选：需要安全重试时发送 Idempotency-Key，同一任务复用原键和原参数。' : '';
+  const poll = model.id === HUSS_MJ_MODEL ? '\n# 返回 202 时保存 task_id，使用同一 Key GET /v1/images/tasks/{task_id}；完成后读取全部 data[]。不要自动重发图片 POST。' : video ? '\n# 无需额外请求头：同一 Key、相同参数和素材自动复用进行中或待核实任务，成功后保护10分钟（缺少完成时间时从首次核实成功计时）。\n# 明确失败退款后或成功保护期结束后，再次 POST 会新建并独立计费。保存 task_id，通过 GET /v1/videos/{task_id} 查询最新状态。\n# 可选：需要长期安全重试时发送 Idempotency-Key，同一任务复用原键和原参数，勿换键重试未知任务。' : '';
   if (language === 'curl') return `curl ${shellQuote(url)} \\\n  -H "Authorization: Bearer sk-YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d ${shellQuote(json)}${poll}`;
   return `import requests\n\nresponse = requests.post(\n    ${JSON.stringify(url)},\n    headers={"Authorization": "Bearer sk-YOUR_API_KEY"},\n    json=${json},\n    timeout=180,\n)\nresponse.raise_for_status()\nprint(response.json())${poll}`;
 }

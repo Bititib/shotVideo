@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import type { Request, Response } from 'express';
 import { sqlite } from '../db/index.js';
@@ -34,10 +34,9 @@ export async function claimApiVideoRequest(req: Request, token: { id: number; us
   if (key !== undefined && !/^[\x21-\x7e]{1,200}$/.test(key))
     throw Object.assign(new Error('Idempotency-Key 必须为1–200个可见 ASCII 字符'), { status: 400 });
   const fingerprint = await apiVideoFingerprint(req);
-  // Each unkeyed POST is a new task. Persist it before charging/sending so
-  // original-ID recovery stays protected; explicit keys keep their namespace.
-  const keyHash = createHash('sha256').update(key === undefined ? 'request:' + randomUUID() : 'header:' + key).digest('hex');
-  const claim = store().claim(Number(token.id), Number(token.userId) || 0, keyHash, fingerprint);
+  const requests = store(), tokenId = Number(token.id), userId = Number(token.userId) || 0;
+  const claim = key === undefined ? requests.claimAutomatic(tokenId, userId, fingerprint)
+    : requests.claim(tokenId, userId, createHash('sha256').update('header:' + key).digest('hex'), fingerprint);
   if (claim.mismatch) throw Object.assign(new Error('同一个 Idempotency-Key 已用于不同参数或素材，请为新任务使用新的键'), { status: 409, code: 'idempotency_conflict' });
   if (claim.fresh) (req as VideoRequest)[context] = claim.record.id;
   return claim;

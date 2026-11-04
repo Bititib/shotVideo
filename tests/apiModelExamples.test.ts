@@ -12,7 +12,9 @@ describe('model-specific API examples', () => {
     expect(code).toContain("'\"'\"'");
     expect(code).toContain('GET /v1/videos/{task_id}');
     expect(code).not.toContain('-H "Idempotency-Key:');
-    expect(code).toContain('每次 POST 创建新任务并分别计费');
+    expect(code).toContain('自动复用进行中或待核实任务');
+    expect(code).toContain('成功后保护10分钟');
+    expect(code).toContain('成功保护期结束后，再次 POST 会新建并独立计费');
     const python = modelExample(model, '/v1/videos', 'https://test.invalid', 'python');
     expect(python).not.toContain('import uuid');
     expect(python).not.toContain('"Idempotency-Key":');

@@ -16,14 +16,15 @@ function database(filename = ':memory:') {
   return db;
 }
 describe('durable API video request identities', () => {
-  it('creates independent identities for identical unkeyed POSTs, but reuses an explicit key', async () => {
+  it('reuses identical unkeyed POSTs before dispatch and keeps explicit requests independent', async () => {
     const body = { model: 'video', seconds: 5, prompt: 'same' };
     const req = (key?: string) => ({ body, get: () => key }) as any;
     const [first, second] = await Promise.all([claimApiVideoRequest(req(), { id: 610 }), claimApiVideoRequest(req(), { id: 610 })]);
-    expect(first.fresh).toBe(true); expect(second.fresh).toBe(true);
-    expect(second.record.id).not.toBe(first.record.id);
+    expect(first.fresh).toBe(true); expect(second.fresh).toBe(false);
+    expect(second.record.id).toBe(first.record.id);
     const key = crypto.randomUUID();
     const original = await claimApiVideoRequest(req(key), { id: 610 });
+    expect(original.record.id).not.toBe(first.record.id);
     expect(await claimApiVideoRequest(req(key), { id: 610 })).toMatchObject({ fresh: false, record: { id: original.record.id } });
   });
   it('claims only once across database connections and a fresh process/store, without expiring the original key', () => {
