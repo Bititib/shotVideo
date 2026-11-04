@@ -258,9 +258,9 @@ print(resp.json()["data"][0]["url"])`,
       title: '统一视频任务创建 (Unified Video Entry)',
       method: 'POST',
       path: '/v1/videos',
-      description: '统一视频生成入口。请在请求头携带 Idempotency-Key，同一逻辑任务的所有网络重试复用原键和原参数；需要主动新生成时换新键。同键不同参数返回409，不创建任务或扣费。未带键时，同一 API Key 下相同参数和素材会返回原任务。去重记录持久保存，重启或超时不会触发重新生成。三个提交地址 /v1/videos、/v1/videos/generations、/v1/video/generations 共享去重记录。',
+      description: '统一视频生成入口。不传 Idempotency-Key 时，每次 POST 都创建新任务，即使参数相同也不会返回历史成功或失败结果；每个新任务分别计费。保存返回的 task_id，通过 GET 查询该任务最新状态。需要防止网络重试重复创建时，可选传入 Idempotency-Key；同一任务重试复用原键和原参数，同键不同参数返回409。三个提交地址 /v1/videos、/v1/videos/generations、/v1/video/generations 共享显式键的去重记录；历史任务仍按原 ID 查询和恢复。',
       parameters: [
-        { name: 'Idempotency-Key', type: 'header', required: false, description: '推荐。1–200个可见 ASCII 字符，如持久保存的 UUID。重试复用原键；主动创建新任务必须使用新键。' },
+        { name: 'Idempotency-Key', type: 'header', required: false, description: '可选的重试去重标识，1–200个可见 ASCII 字符。不传则每次 POST 新建任务；传入时同键同参数复用原任务，主动新建任务才换新键。' },
         { name: 'model', type: 'string', required: true, description: '从 GET /v1/models 获取的视频模型 ID；当前示例：seedance_v2.5、wan3.0th、veo-3-1' },
         { name: 'prompt', type: 'string', required: true, description: '视频画面的文字描述词' },
         { name: 'seconds', type: 'integer', required: false, defaultVal: '6', description: '视频时长（秒），支持别名 duration' },
@@ -272,7 +272,6 @@ print(resp.json()["data"][0]["url"])`,
       ],
       curlExample: `curl -X POST "${getBaseUrl()}/videos" \\
   -H "Authorization: Bearer sk-你的令牌Key" \\
-  -H "Idempotency-Key: REPLACE-WITH-A-UNIQUE-TASK-KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "seedance_v2.5",
@@ -283,15 +282,10 @@ print(resp.json()["data"][0]["url"])`,
     "image_urls": ["https://cdn.example.com/character.jpg"]
   }'`,
       pythonExample: `import requests
-import uuid
-
-# 新任务创建一次并保存；网络重试复用此值，不重新生成 UUID。
-request_key = str(uuid.uuid4())
 
 url = "${getBaseUrl()}/videos"
 headers = {
     "Authorization": "Bearer sk-你的令牌Key",
-    "Idempotency-Key": request_key,
     "Content-Type": "application/json"
 }
 payload = {

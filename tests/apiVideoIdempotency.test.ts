@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createApiVideoRequestStore } from '../server/services/apiVideoRequestStore';
 vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
-import { apiVideoFingerprint } from '../server/services/apiVideoIdempotency';
+import { apiVideoFingerprint, claimApiVideoRequest } from '../server/services/apiVideoIdempotency';
 import { TokenService } from '../server/services/tokenService';
 
 const open: Database.Database[] = [];
@@ -16,6 +16,16 @@ function database(filename = ':memory:') {
   return db;
 }
 describe('durable API video request identities', () => {
+  it('creates independent identities for identical unkeyed POSTs, but reuses an explicit key', async () => {
+    const body = { model: 'video', seconds: 5, prompt: 'same' };
+    const req = (key?: string) => ({ body, get: () => key }) as any;
+    const [first, second] = await Promise.all([claimApiVideoRequest(req(), { id: 610 }), claimApiVideoRequest(req(), { id: 610 })]);
+    expect(first.fresh).toBe(true); expect(second.fresh).toBe(true);
+    expect(second.record.id).not.toBe(first.record.id);
+    const key = crypto.randomUUID();
+    const original = await claimApiVideoRequest(req(key), { id: 610 });
+    expect(await claimApiVideoRequest(req(key), { id: 610 })).toMatchObject({ fresh: false, record: { id: original.record.id } });
+  });
   it('claims only once across database connections and a fresh process/store, without expiring the original key', () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'api-video-request-')), filename = path.join(directory, 'test.db');
     try {

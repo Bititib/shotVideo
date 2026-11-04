@@ -57,6 +57,7 @@ function assertPrivate(body: any) {
   expect(JSON.stringify(body)).not.toMatch(/funai|private-provider|Private Orion|上游诊断|sk-provider|upstream_task_id|routingAttempts/i);
 }
 const video = { model: 'gemini-omni-flash', prompt: 'cinematic camera movement', seconds: 10, ratio: '9:16' };
+const retryHeaders = { 'Idempotency-Key': 'privacy-original-video' };
 function enableChat() {
   db.update(channels).set({ supportedModels: '["chat-public"]', modelMapping: '{"chat-public":"private-chat"}' }).where(eq(channels.id, channelId)).run();
   db.insert(models).values({ modelId: 'chat-public', displayName: 'Chat', provider: 'funai', capabilities: '["chat"]', isActive: 1 }).run();
@@ -74,11 +75,11 @@ describe('real user API routes keep channel diagnostics administrator-only', () 
       expect(JSON.parse(lastContent().metadata)).toMatchObject({ videoId: 'new-omni-task', upstreamModel: 'omniomni-flash-1.1' });
       return Response.json({ status: 'completed', url: 'https://cdn.example/omni.mp4' });
     });
-    const first = await (await api('/v1/videos', video)).json() as any;
+    const first = await (await api('/v1/videos', video, retryHeaders)).json() as any;
     const result = await pollUntilSettled(first.id);
     expect(result).toMatchObject({ model: 'gemini-omni-flash', status: 'completed' });
     expect(balance()).toBe(99.4);
-    await api('/v1/videos', video); await api('/v1/videos/' + first.id);
+    await api('/v1/videos', video, retryHeaders); await api('/v1/videos/' + first.id);
     expect(upstream.mock.calls.filter(call => call[1]?.method === 'POST')).toHaveLength(1);
     expect(balance()).toBe(99.4);
     assertPrivate(result);
@@ -86,14 +87,14 @@ describe('real user API routes keep channel diagnostics administrator-only', () 
 
   it('handles the screenshot quota rejection, replay and polling with one refund and complete admin diagnostics', async () => {
     upstream.mockImplementation(async () => Response.json({ error: { code: 'insufficient_user_quota', message: '用户额度不足，剩余额度 ¥0.000000' } }, { status: 403 }));
-    const first = await (await api('/v1/videos', video)).json() as any;
+    const first = await (await api('/v1/videos', video, retryHeaders)).json() as any;
     assertPrivate(first); expect(first.id).toMatch(/^task_req_/);
     const result = await pollUntilSettled(first.id);
     assertPrivate(result);
     expect(result).toMatchObject({ status: 'failed', billing_status: 'refunded', refund_amount: 0.6 });
     for (const field of ['error', 'error_message', 'progress_text']) expect(result[field]).toContain('insufficient_user_quota');
     expect(balance()).toBe(100);
-    const replay = await (await api('/v1/videos', video)).json(); assertPrivate(replay);
+    const replay = await (await api('/v1/videos', video, retryHeaders)).json(); assertPrivate(replay);
     await api('/v1/videos/' + first.id);
     expect(upstream).toHaveBeenCalledOnce(); expect(balance()).toBe(100);
     const record = lastContent(), meta = JSON.parse(record.metadata);
@@ -107,11 +108,11 @@ describe('real user API routes keep channel diagnostics administrator-only', () 
 
   it('keeps an uncertain submission pending without a new POST or refund while hiding the internal provider', async () => {
     upstream.mockImplementation(async () => { throw new Error('socket disconnected'); });
-    const first = await (await api('/v1/videos', video)).json() as any;
+    const first = await (await api('/v1/videos', video, retryHeaders)).json() as any;
     const result = await pollUntilSettled(first.id); assertPrivate(result);
     expect(result).toMatchObject({ requires_review: true, billing_status: 'review' });
     expect(result.status).not.toBe('failed'); expect(balance()).toBe(99.4);
-    await api('/v1/videos', video); await api('/v1/videos/' + first.id);
+    await api('/v1/videos', video, retryHeaders); await api('/v1/videos/' + first.id);
     expect(upstream).toHaveBeenCalledOnce(); expect(balance()).toBe(99.4);
     expect(JSON.parse(lastContent().metadata).error).toContain('funai');
   });

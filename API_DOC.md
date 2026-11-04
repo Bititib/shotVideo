@@ -238,14 +238,15 @@ Content-Type: application/json 或 multipart/form-data
 
 兼容别名：`POST /v1/video/generations`、`POST /v1/videos/generations`。
 
-三个提交地址共享持久化去重。推荐请求头 `Idempotency-Key`（1–200个可见 ASCII 字符）：为新任务创建并保存一次，网络重试复用原键和原参数。相同键返回原任务，同键不同参数/素材返回409。未发送键时，同一 API Key 下相同参数和素材默认返回原任务；主动再生成同样内容时必须使用新键。成功、失败退款、超时或服务重启均不会让原请求重新生成或扣退款。
+不传 `Idempotency-Key` 时，每次 POST 都创建新任务并分别计费，即使参数和素材相同，也不会返回历史成功或失败任务。保存响应中的 `task_id`，通过 GET 查询该任务最新状态；不要用再次 POST 代替查询。
 
-任务 ID 是不透明字符串，新请求可返回 `task_req_...`；请原样保存 `task_id` 并调用 `status_url`，不要截取数字。订单创建前的并发重试返回202和同一请求ID；额度已用完但仍有效的 Key 可以继续查询原任务，新任务仍执行原余额检查。去重从新版本首次接收请求开始，不能追溯识别旧版已经提交且没有去重记录的请求。
+需要安全重试时，可选传入 `Idempotency-Key`（1–200个可见 ASCII 字符）：为新逻辑任务创建并保存一次，网络重试复用原键和原参数。三个提交地址共享显式键的持久化去重记录：相同键返回原任务，同键不同参数/素材返回409。成功、失败退款、超时或服务重启均不会让这个原任务重新生成或扣退款。无键请求不会覆盖、清理或重新执行旧的去重记录。
+
+任务 ID 是不透明字符串，新请求可返回 `task_req_...`；请原样保存 `task_id` 并调用 `status_url`，不要截取数字。使用相同显式键、订单尚未创建的并发重试返回202和同一请求ID；额度已用完但仍有效的 Key 可以继续查询原任务，新任务仍执行原余额检查。显式键去重从首次接收该键的请求开始，不能追溯识别没有关联该键的请求。
 
 ```bash
 curl -X POST "https://你的域名/v1/videos" \
   -H "Authorization: Bearer sk-你的APIKey" \
-  -H "Idempotency-Key: REPLACE-WITH-A-UNIQUE-TASK-KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "sd2.5",
