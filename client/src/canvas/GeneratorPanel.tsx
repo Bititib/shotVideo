@@ -28,8 +28,12 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
   const [search, setSearch] = useState('');
   const modelTrigger = useRef<HTMLButtonElement>(null);
   const paramsTrigger = useRef<HTMLButtonElement>(null);
-  const popup = useRef<HTMLDivElement>(null);
-  const [popupStyle, setPopupStyle] = useState<CSSProperties>({});
+  const modelPopup = useRef<HTMLDivElement>(null);
+  const paramsPopup = useRef<HTMLDivElement>(null);
+  const popup = menu === 'models' ? modelPopup : paramsPopup;
+  // The first render must already be out of flow. Otherwise measuring the
+  // trigger includes the menu's height and the composer then moves underneath it.
+  const [popupStyle, setPopupStyle] = useState<CSSProperties>({ position: 'fixed' });
   useLayoutEffect(() => {
     if (!menu) return;
     const position = () => {
@@ -39,14 +43,21 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
       const above = rect.top - 20, below = window.innerHeight - rect.bottom - 20;
       const up = above >= Math.min(320, below);
       setPopupStyle({position:'fixed', width, left:Math.max(12,Math.min(rect.left,window.innerWidth-width-12)),
-        top:up ? undefined : rect.bottom+8, bottom:up ? window.innerHeight-rect.top+8 : undefined,
+        top:up ? undefined : Math.max(12,rect.bottom+8), bottom:up ? Math.max(12,window.innerHeight-rect.top+8) : undefined,
         maxHeight:Math.max(80,Math.min(360,up ? above : below))});
     };
     position(); window.addEventListener('resize',position); window.addEventListener('scroll',position,true);
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(position);
+    const trigger = (menu === 'models' ? modelTrigger : paramsTrigger).current;
+    if (trigger) {
+      observer?.observe(trigger);
+      const composer = trigger.closest('.studio-composer-anchor') || trigger.closest('.studio-inspector');
+      if (composer) observer?.observe(composer);
+    }
     const dismiss = (e: PointerEvent) => { const target=e.target as Node; if (!popup.current?.contains(target) && !modelTrigger.current?.contains(target) && !paramsTrigger.current?.contains(target)) setMenu(null); };
     const escape = (e: KeyboardEvent) => { if(e.key === 'Escape') {e.preventDefault();e.stopPropagation();setMenu(null);(menu === 'models' ? modelTrigger : paramsTrigger).current?.focus();} };
     document.addEventListener('pointerdown',dismiss); document.addEventListener('keydown',escape,true);
-    return () => { window.removeEventListener('resize',position);window.removeEventListener('scroll',position,true);document.removeEventListener('pointerdown',dismiss);document.removeEventListener('keydown',escape,true); };
+    return () => { observer?.disconnect();window.removeEventListener('resize',position);window.removeEventListener('scroll',position,true);document.removeEventListener('pointerdown',dismiss);document.removeEventListener('keydown',escape,true); };
   }, [menu]);
   const user = useAuthStore(s => s.user);
   const [kind, setKind] = useState<GenerationDraft['kind']>(draft?.kind ?? (selected?.kind === 'video' ? 'video' : selected?.kind === 'audio' ? 'audio' : 'image'));
@@ -148,7 +159,7 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
       {missingRef && <p className="studio-inline-error">此模型需要参考图，请先选中或连接一张图片。</p>}
     </div><div className="studio-prompt-count" aria-label="提示词字数">{prompt.length} 字符</div><div className="studio-composer-tools"><select onPointerDown={() => setMenu(null)} aria-label="创作类型" value={kind} onChange={e => setKind(e.target.value as GenerationDraft['kind'])}><option value="image">图像生成</option><option value="video">视频生成</option><option value="audio">音频生成</option></select><button ref={modelTrigger} className="studio-model-trigger" aria-label="生成模型" aria-haspopup="listbox" aria-expanded={menu === 'models'} title={activeModel?.name || '选择模型'} disabled={loading || !models.length} onClick={() => {setSearch('');setMenu(menu === 'models' ? null : 'models');}}><span>{loading ? '加载模型…' : activeModel?.name || '暂无可用模型'}</span><span aria-hidden="true">⌄</span></button><button ref={paramsTrigger} className="studio-params-trigger" aria-label="生成参数" aria-expanded={menu === 'params'} onClick={() => setMenu(menu === 'params' ? null : 'params')}>{kind === 'audio' ? voice : ratio+' · '+resolution+' · '+(kind === 'video' ? seconds+' 秒' : isMj ? '4 张候选图' : count+' 张')} ⌄</button>
       {menu === 'models' && <div ref={popup} className="studio-floating-menu studio-model-menu" style={popupStyle} data-canvas-ui onKeyDown={e => {if(e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return; e.preventDefault(); const options: HTMLButtonElement[]=Array.from(popup.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') || []);const index=options.indexOf(document.activeElement as HTMLButtonElement);options[(index+(e.key === 'ArrowDown' ? 1 : -1)+options.length)%options.length]?.focus();}}><input autoFocus aria-label="搜索模型" placeholder="搜索模型…" value={search} onChange={e => setSearch(e.target.value)}/><div role="listbox" aria-label="可用生成模型">{models.filter(m => (m.name+' '+m.id+' '+(m.description || '')).toLowerCase().includes(search.toLowerCase())).map(m => <button role="option" aria-label={m.name} aria-description={m.description?.trim() || '后台暂未填写模型说明'} aria-selected={model === m.id} key={m.id} onClick={() => {setModel(m.id);setMenu(null);modelTrigger.current?.focus();}}><span className="studio-model-copy"><span className="studio-model-name">{m.name}{!m.available ? ' · 暂不可用' : ''}</span><span className="studio-model-description" title={m.description?.trim() || undefined}>{m.description?.trim() || '后台暂未填写模型说明'}</span></span>{model === m.id && <span className="studio-model-check" aria-hidden="true">✓</span>}</button>)}</div>{!models.some(m => (m.name+' '+m.id+' '+(m.description || '')).toLowerCase().includes(search.toLowerCase())) && <p>未找到匹配模型</p>}</div>}
-      <div ref={menu === 'params' ? popup : undefined} hidden={menu !== 'params'} role="dialog" aria-label="生成参数设置" className="studio-floating-menu studio-parameter-popover" style={menu === 'params' ? popupStyle : undefined} data-canvas-ui>
+      <div ref={paramsPopup} hidden={menu !== 'params'} role="dialog" aria-label="生成参数设置" className="studio-floating-menu studio-parameter-popover" style={menu === 'params' ? popupStyle : undefined} data-canvas-ui>
       {kind !== 'audio' && <div className="studio-field-grid"><label className="studio-field">画面比例<select value={ratio} onChange={e => setRatio(e.target.value)}>{ratios.map(r => <option key={r}>{r}</option>)}</select></label><label className="studio-field">{kind === 'image' && managedLimits?.resolutions.length === 1 ? '输出分辨率（固定）' : '清晰度'}<select disabled={kind === 'image' && managedLimits?.resolutions.length === 1} value={resolution} onChange={e => setResolution(e.target.value)}>{resolutions.map(r => <option key={r}>{r}</option>)}</select></label></div>}
       {kind === 'audio' && !voices.length && <p role="status">上游尚未返回音色列表，暂时无法选择音色。</p>}{kind === 'audio' && <label className="studio-field">音色<select value={voice} onChange={e => setVoice(e.target.value)}>{voices.map(v => <option key={v}>{v}</option>)}</select></label>}
       {isMj && <><HussMidjourneySettings mjOptions={mjOptions} setMjOptions={setMjOptions}/><label className="studio-field">质量<select value={String(mjOptions.quality ?? '')} onChange={e=>setMjOptions(v=>({...v,quality:e.target.value}))}><option value="">默认</option>{['0.25','0.5','1','2'].map(q=><option key={q} value={q}>{q}</option>)}</select></label>{mjError && <p role="alert">{mjError}</p>}</>}

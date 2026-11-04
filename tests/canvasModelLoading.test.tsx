@@ -16,7 +16,7 @@ beforeEach(() => {
   localStorage.setItem('token', `canvas-account-${identity}`);
   useAuthStore.setState({ user: { id: identity } as any, isAuthenticated: true, isLoading: false });
 });
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 async function mount(kind: 'image' | 'video' | 'audio' = 'video') {
   const view = render(<MemoryRouter><GeneratorPanel draft={{kind,prompt:'test',model:'',ratio:'16:9',resolution:'720p',seconds:5,count:1,videoMode:'reference'}} references={[]} busy={false} onClose={()=>{}} onGenerate={()=>{}} onConnect={()=>{}} /></MemoryRouter>);
   await act(async () => {});
@@ -25,6 +25,52 @@ async function mount(kind: 'image' | 'video' | 'audio' = 'video') {
 const trigger = () => screen.getByRole('button', { name: '生成模型' });
 async function switchTo(kind: string) { await act(async () => { fireEvent.change(screen.getByLabelText('创作类型'), { target: { value: kind } }); }); }
 describe('canvas catalog recovery through the real model API clients', () => {
+  it('measures the first model menu without moving the composer through normal document flow', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json([video])));
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      // A normal-flow menu makes the bottom-anchored composer grow before
+      // the layout effect measures the trigger, as observed in Chrome.
+      const floating = document.querySelector<HTMLElement>('.studio-model-menu');
+      const top = floating && floating.style.position !== 'fixed' ? 900 : 500;
+      return { x: 100, y: top, left: 100, top, right: 360, bottom: top + 36, width: 260, height: 36, toJSON() {} };
+    });
+    await mount();
+    fireEvent.click(trigger());
+    const menu = screen.getByRole('listbox').parentElement!;
+    expect(Number.parseFloat(menu.style.bottom)).toBe(window.innerHeight - 500 + 8);
+    expect(Number.parseFloat(menu.style.bottom)).toBeGreaterThan(0);
+  });
+  it('keeps model search interactive after switching from the parameter menu', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json([video])));
+    await mount();
+    fireEvent.click(screen.getByRole('button', { name: '生成参数' }));
+    fireEvent.click(trigger());
+    fireEvent.pointerDown(screen.getByRole('textbox', { name: '搜索模型' }));
+    expect(screen.getByRole('listbox')).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole('textbox', { name: '搜索模型' }), { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(screen.getByRole('option', { name: '可用视频' }));
+  });
+  it('repositions an open menu after composer resizing and disconnects its observer on close', async () => {
+    let top = 500;
+    const observers: Array<{ callback: ResizeObserverCallback; targets: Element[]; disconnect: ReturnType<typeof vi.fn> }> = [];
+    vi.stubGlobal('ResizeObserver', class {
+      targets: Element[] = []; disconnect = vi.fn();
+      constructor(public callback: ResizeObserverCallback) { observers.push(this); }
+      observe(target: Element) { this.targets.push(target); }
+      unobserve() {}
+    });
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({ x: 100, y: top, left: 100, top, right: 360, bottom: top + 36, width: 260, height: 36, toJSON() {} }));
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json([video])));
+    await mount(); fireEvent.click(trigger());
+    const observer = observers.find(item => item.targets.includes(trigger()))!;
+    expect(observer).toBeTruthy();
+    top = 300;
+    act(() => observer.callback([], observer as any));
+    expect(screen.getByRole('listbox').parentElement!.style.top).toBe(top + 36 + 8 + 'px');
+    expect(screen.getByRole('listbox').parentElement!.style.bottom).toBe('');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(observer.disconnect).toHaveBeenCalledOnce();
+  });
   it('selects video while the previous image request hangs, and ignores its later failure', async () => {
     let finish!: (res: Response) => void;
     const fetcher = vi.fn((url: string) => url.includes('image-gen') ? new Promise<Response>(resolve => { finish = resolve; }) : Promise.resolve(Response.json([video])));
