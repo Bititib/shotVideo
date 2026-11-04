@@ -450,7 +450,9 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
       failTask(id, e.message || '生成失败'); onEvent({ type: 'error', message: e.message || '生成失败' }); return;
     }
   }
-  const reasons = [...new Set<string>((metadata(id).routingAttempts || []).map((attempt: any) => publicGenerationError(attempt.reason)).filter(Boolean))];
+  // Preserve the original per-route diagnostics for administrators. Public
+  // response/event boundaries are responsible for projecting safe messages.
+  const reasons = [...new Set<string>((metadata(id).routingAttempts || []).map((attempt: any) => attempt.reason).filter(Boolean))];
   const reason = reasons.length ? '所有候选线路均未完成提交：' + reasons.join('；') : '没有可用且满足参数的线路（未记录到提交尝试，请检查规格及渠道配置）';
   failTask(id, reason); onEvent({ type: 'error', message: reason });
 }
@@ -880,7 +882,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
       finally {
         active.delete(id!);
         if (apiContext) { const record = db.select().from(contents).where(eq(contents.id, id!)).get();
-          if (record) { const meta = JSON.parse(record.metadata); try { db.insert(apiLogs).values({ tokenId: token.id, channelId: meta.channelId, model: modelId, upstreamModel: meta.upstreamModel, cost: record.cost, status: record.status === 'completed' ? 'success' : 'error', durationMs: Date.now() - meta.startedAt }).run(); } catch (error: any) { console.warn('[specification] api log failed', id, error.message); } }
+          if (record) { const meta = JSON.parse(record.metadata); try { db.insert(apiLogs).values({ tokenId: token.id, channelId: meta.channelId, model: modelId, upstreamModel: meta.upstreamModel, cost: record.cost, status: record.status === 'completed' ? 'success' : 'error', errorMessage: record.status === 'completed' ? null : meta.error || meta.upstreamQueryError || null, durationMs: Date.now() - meta.startedAt }).run(); } catch (error: any) { console.warn('[specification] api log failed', id, error.message); } }
         }
       }
     };

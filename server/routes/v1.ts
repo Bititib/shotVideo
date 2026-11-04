@@ -5,7 +5,9 @@ import { publicGenerationError } from '../../shared/generationMessages.js';
 import { normalizeSnumomNsfwRequestBody, validateSnumomMuseInput } from '../services/snumomWanAdapter.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { SNUMOM_MUSE_MODEL } from '../../shared/snumomMuse.js';
-import { generationErrorResponse } from '../middleware/generationErrorResponse.js';
+import { publicApiErrorResponse } from '../middleware/publicApiErrorResponse.js';
+import { publicApiDiagnostics } from '../services/publicApiDiagnostics.js';
+import { upstreamDiagnostic } from '../services/upstreamDiagnostic.js';
 import { getZonghengVideoSpec, normalizeZonghengVideoResolution } from '../../shared/zonghengVideo.js';
 import { isZonghengChannel, zonghengBaseUrl, buildZonghengVideoPayload, validateZonghengVideoAliases, buildZonghengImagePayload, validateZonghengImageReferences, zonghengImageSize, submitZonghengVideo, ZonghengSubmissionError } from '../services/zonghengAdapter.js';
 import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghengMediaService.js';
@@ -32,7 +34,7 @@ import { userModelDenied } from '../services/userModelAccessService.js';
 import { extractImageUpstreamTaskId } from '../services/imageTaskMetadataService.js';
 import { BalanceService, type BalanceDeduction } from '../services/balanceService.js';
 import { db, sqlite } from '../db/index.js';
-import { apiLogs, settings, models, contents, apiTokens } from '../db/schema.js';
+import { apiLogs, settings, models, contents, apiTokens, channels } from '../db/schema.js';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import multer from 'multer';
 import os from 'os';
@@ -161,7 +163,12 @@ import { refundUnreservedVideo } from '../services/directVideoBillingService.js'
 import { claimApiVideoRequest, captureApiVideoResponse, linkApiVideoRequest, isApiVideoRequestId, getApiVideoRequest, respondPendingApiVideoRequest } from '../services/apiVideoIdempotency.js';
 
 const router = Router();
-router.use(['/videos', '/video/generations', '/images'], generationErrorResponse);
+const privateChannelNames = () => db.select({ name: channels.name, type: channels.type, baseUrl: channels.baseUrl }).from(channels).all()
+  .flatMap(channel => {
+    let hostname = ''; try { hostname = new URL(channel.baseUrl).hostname; } catch {}
+    return [channel.name, channel.type, hostname].filter(Boolean);
+  });
+router.use(publicApiErrorResponse(privateChannelNames));
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
 
 function persistVideoContentFailure(
@@ -912,27 +919,31 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
       let totalCompletionTokens = 0;
       let sawUsage = false;
       let pending = "";
+      let streamError: string | undefined;
 
       try {
         while (true) {
           const { done, value } = await reader.read();
           const chunk = done ? decoder.decode() : decoder.decode(value, { stream: true });
-          res.write(chunk);
-
           pending += chunk;
           const lines = pending.split('\n');
           pending = done ? '' : lines.pop()!;
           for (const line of lines) {
-            if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-              try {
-                const data = JSON.parse(line.slice(6));
-                if (data.usage) {
-                  sawUsage = true;
-                  totalPromptTokens = data.usage.prompt_tokens || 0;
-                  totalCompletionTokens = data.usage.completion_tokens || 0;
-                }
-              } catch { }
+            let forwarded = line;
+            if (line.startsWith('data:') && line.slice(5).trim() !== '[DONE]') {
+              let data: any;
+              try { data = JSON.parse(line.slice(5).trim()); } catch { }
+              if (data?.error) {
+                streamError = upstreamDiagnostic(channel.type || 'OpenAI-compatible', '响应流', data, channel.apiKey);
+                forwarded = 'data: ' + JSON.stringify(publicApiDiagnostics(data, privateChannelNames()));
+              }
+              if (data?.usage) {
+                sawUsage = true;
+                totalPromptTokens = data.usage.prompt_tokens || 0;
+                totalCompletionTokens = data.usage.completion_tokens || 0;
+              }
             }
+            res.write(forwarded + '\n');
           }
           if (done) break;
         }
@@ -948,7 +959,7 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
         tokenId: token.id, channelId: channel.id, model, upstreamModel,
         promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens,
         totalTokens: totalPromptTokens + totalCompletionTokens,
-        cost, durationMs: Date.now() - startTime, status: sawUsage && cost <= reservedCost ? 'success' : 'billing_review', clientIp,
+        cost, durationMs: Date.now() - startTime, status: streamError ? 'error' : sawUsage && cost <= reservedCost ? 'success' : 'billing_review', errorMessage: streamError, clientIp,
       }).run();
       return;
     }
@@ -3445,7 +3456,8 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
     res.setHeader('Content-Type', videoDeliveryContentType(downloadPath));
     return res.sendFile(downloadPath);
   } catch (err: any) {
-    res.status(502).send(`Video localization failed: ${err.message}`);
+    console.warn('[v1/videos/content] Delivery failed:', upstreamDiagnostic('video', '结果交付', { message: err.message }));
+    res.status(502).json({ error: `Video localization failed: ${err.message}` });
   }
 });
 
@@ -3478,7 +3490,8 @@ router.get('/files/video', async (req: Request, res: Response) => {
     res.type(videoDeliveryContentType(compatiblePath));
     return res.sendFile(compatiblePath);
   } catch (err: any) {
-    res.status(502).send(`Video stream failed: ${err.message}`);
+    console.warn('[v1/files/video] Delivery failed:', upstreamDiagnostic('video', '结果交付', { message: err.message }));
+    res.status(502).json({ error: `Video stream failed: ${err.message}` });
   }
 });
 

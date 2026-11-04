@@ -113,7 +113,7 @@ describe('FunAI channel in website generation and billing workflows', () => {
     const record = db.select().from(contents).all().at(-1)!;
     expect(record, JSON.stringify(res.body)).toMatchObject({ status: 'completed', resultUrl: '/uploads/funai-result.mp4', cost: 2 });
     expect(JSON.parse(record.metadata)).toMatchObject({ upstreamTaskId: 'video/opaque', channelId, billingStatus: 'settled', actualChannel: 'funai' });
-    expect(downloadAndLocalizeVideo).toHaveBeenCalledWith('https://cdn.example/result.mp4', 'video/opaque', 'funai-veo-3.1', channelId, null);
+    expect(downloadAndLocalizeVideo).toHaveBeenCalledWith('https://cdn.example/result.mp4', 'video/opaque', 'funai-veo-3.1', channelId, null, expect.any(Function));
     expect(db.select().from(users).where(eq(users.id, userId)).get()?.balance).toBe(98);
   });
   it.each(['funai-gpt-image-2-2k', 'funai-nano-banana2-2k'])('generates %s through the website with result saving and image billing', async id => {
