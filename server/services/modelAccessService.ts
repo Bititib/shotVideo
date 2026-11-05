@@ -17,7 +17,7 @@ export function filterRoutableModels(modelIds: string[], activeChannels: Array<{
 
 /** Shared discovery policy for external API clients and the developer catalog. */
 export function getAccessibleModels(token: { allowedModels: string[]; userId?: number | null }, includeLegacy = false) {
-  const registeredModels = filterUserModels(token.userId, getEnabledPublicModels());
+  const registeredModels = filterUserModels(token.userId, getEnabledPublicModels(undefined, token.userId));
   const activeChannels = ChannelService.getActiveChannels().filter(channel => Boolean(channel.apiKey?.trim()));
   const specs = getModelSpecifications();
   const specMap = new Map(specs.map(spec => [spec.modelId, spec]));

@@ -13,6 +13,26 @@ import {
 } from '../server/services/contentService.js';
 
 describe('content routing privacy', () => {
+  it.each([true, false])('keeps Zhiying receipts and upstream identifiers private in detail and list responses (json=%s)', json => {
+    const original = { model: 'sd-2.5-fullblood-line2', resolution: '720p', billingStatus: 'review', requiresReview: true, reviewKind: 'query',
+      progress: 42, reference_images: ['/api/uploads/mine.jpg'], zhiyingOrder: true, actualChannel: 'zhiying',
+      zhiyingKey: 'original-key', zhiyingCredential: 'secret-fingerprint', zhiyingPayload: { prompt: 'paid-body' },
+      zhiyingFutureSnapshot: { file: 'file_1234567890123456' }, upstreamResultUrl: 'https://signed.invalid/?sig=secret',
+      videoId: 'zy-original-task', upstreamTaskId: 'zy-original-task', zhiyingCompletedReceipt: { secret: 'signed-receipt' },
+      error: '智赢 QUERY_LIMIT task_id=zy-original-task', upstreamQueryError: 'HTTP 429 request_id=req-123',
+      progressText: '智赢在查询 zy-original-task', tokenId: 12, billingReservationId: 'private-bill', pricingSnapshot: { ruleId: 107 } };
+    const item = { id: 5, type: 'video', status: 'review', metadata: json ? JSON.stringify(original) : original };
+    for (const projection of [sanitizeContentRoutingForClient(item), compactContentForList(item)]) {
+      const value = JSON.stringify(projection);
+      expect(value).not.toMatch(/zhiying|智赢|secret|original-key|paid-body|file_123|zy-original-task|signed|private-bill|req-123|ruleId/i);
+      expect(value).toContain('QUERY_LIMIT');
+      expect(value).toContain('429');
+      expect(value).toContain('/api/uploads/mine.jpg');
+      expect(value).toContain('720p');
+    }
+    expect(original.zhiyingKey).toBe('original-key');
+    expect(original.upstreamQueryError).toContain('req-123');
+  });
   it.each(['query', 'settlement', 'local'] as const)('preserves %s review cause without exposing credentials or private channel names', reviewKind => {
     const result = sanitizeContentRoutingForClient({ status: 'review', metadata: {
       reviewKind, requiresReview: true, channelName: 'private supplier', error: 'private supplier QUOTA_17 sk-test-secret', progressText: 'private supplier https://private.invalid' } });

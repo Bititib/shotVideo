@@ -1,6 +1,8 @@
 export type MediaKind = 'image' | 'video';
 export type DurationRule = { mode: 'range' | 'fixed' | 'options'; min: number; max: number; step: number; values: number[] };
 export type ModelInputLimits = {
+  /** Documented default used when a caller omits the video duration. */
+  defaultSeconds?: number;
   /** Optional combined cap across all reference types. */
   maxReferences?: number;
   /** A native image task produces this many results with one upstream submission. */
@@ -30,6 +32,12 @@ export const defaultRoutingLimits = (): ModelInputLimits => ({
   duration: { mode: 'range', min: 4, max: 30, step: 1, values: [] },
   firstFrame: false, lastFrame: false, qualities: [],
 });
+export function allowsDuration(rule: DurationRule, seconds: number): boolean {
+  if (rule.mode === 'fixed') return seconds === rule.min;
+  if (rule.mode === 'options') return rule.values.includes(seconds);
+  const steps = (seconds - rule.min) / rule.step;
+  return seconds >= rule.min && seconds <= rule.max && Math.abs(steps - Math.round(steps)) < 1e-8;
+}
 export function routingMismatches(l: ModelInputLimits, i: RoutingInput, kind: MediaKind): string[] {
   const reasons: string[] = [];
   const images = i.images + Number(i.firstFrame) + Number(i.lastFrame);
@@ -44,12 +52,7 @@ export function routingMismatches(l: ModelInputLimits, i: RoutingInput, kind: Me
   if (l.resolutions.length && !l.resolutions.some(r => r.toLowerCase() === i.resolution.toLowerCase())) reasons.push('分辨率不匹配');
   if (l.ratios.length && !l.ratios.includes(i.ratio)) reasons.push('宽高比不匹配');
   if (i.quality && l.qualities.length && !l.qualities.includes(i.quality)) reasons.push('质量档位不匹配');
-  if (kind === 'video') {
-    const d = l.duration;
-    const valid = d.mode === 'fixed' ? i.seconds === d.min : d.mode === 'options' ? d.values.includes(i.seconds)
-      : i.seconds >= d.min && i.seconds <= d.max && Math.abs((i.seconds - d.min) / d.step - Math.round((i.seconds - d.min) / d.step)) < 1e-8;
-    if (!valid) reasons.push('时长不匹配');
-  }
+  if (kind === 'video' && !allowsDuration(l.duration, i.seconds)) reasons.push('时长不匹配');
   return reasons;
 }
 export function routeRequestCost(route: ModelRoute, input: RoutingInput): number | null {

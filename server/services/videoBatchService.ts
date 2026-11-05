@@ -50,7 +50,7 @@ export function recordBatchFailure(contentId: number, message: string, confirmed
   const item = batchStore.item(meta.batchItemId);
   if (row.status === 'completed' || item?.content_id !== contentId || item?.billing_state !== 'reserved') return true;
   // Explicit submission rejection is safe; 408/5xx/network exceptions remain unknown.
-  const rejected = /(?:提交失败|创建视频任务失败).*\((?:400|401|403|404|413|415|422|429)\)/i.test(message);
+  const rejected = !meta.zhiyingOrder && /(?:提交失败|创建视频任务失败).*\((?:400|401|403|404|413|415|422|429)\)/i.test(message);
   confirmed = confirmed || rejected;
   meta.error = message;
   meta.batchConfirmedFailure = confirmed;
@@ -156,7 +156,10 @@ function reconcile() {
         sqlite.prepare('UPDATE contents SET cost=?,metadata=? WHERE id=?').run(i.unit_cost, JSON.stringify(meta), c.id);
       });
     } else if (c.status === 'failed') {
-      batchStore.fail(i.id, meta.error || '上游生成失败', meta.batchConfirmedFailure === true);
+      const confirmed = meta.batchConfirmedFailure === true;
+      // A confirmed Zhiying rejection or terminal task ends this paid generation.
+      // Batch retry_wait creates a new content ID/key, which cannot recover the original job.
+      batchStore.fail(i.id, meta.error || '上游生成失败', confirmed && !meta.zhiyingOrder, confirmed && meta.zhiyingOrder);
       const settled = batchStore.item(i.id);
       const refunded = settled.billing_state === 'refunded';
       if (!refunded) {
@@ -221,6 +224,7 @@ export function startVideoBatchWorker() {
     WHERE i.billing_state='reserved' AND c.status IN ('processing','queued')`).all() as any[];
   for (const c of interrupted) {
     const meta = JSON.parse(c.metadata || '{}');
+    if (meta.zhiyingOrder) continue; // Original-key / original-ID recovery owns these reservations.
     if (meta.batchSubmissionStarted && !meta.videoId) recordBatchFailure(c.id, '服务器重启前的提交未能保存上游任务 ID，请联系管理员核实');
     else if (!meta.batchSubmissionStarted && !meta.videoId && c.status !== 'queued') {
       batchStore.fail(meta.batchItemId, '服务器重启，任务尚未提交上游，已退款', false, true);

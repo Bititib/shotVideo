@@ -1,4 +1,7 @@
 import { publicApiModelId } from '../../shared/funAi.js';
+import { isZhiyingVideoModel, ZHIYING_CHANNEL_TYPE } from '../../shared/zhiyingVideo.js';
+import { resolvePrivateReferences } from '../middleware/privateReferences.js';
+import { publicApiModelMetadata } from '../services/publicModelMetadataService.js';
 import { videoCapabilities, normalizeVideoParameters } from '../services/videoCapabilities.js';
 import { zonghengProtocol, zonghengProtocolSnapshot } from '../services/zonghengProtocol.js';
 import { publicGenerationError } from '../../shared/generationMessages.js';
@@ -148,7 +151,7 @@ import { prepareMiaowuPublicMediaUrls } from '../services/miaowuMediaService.js'
 import { enqueueHmStudioVideoContent, resumePollForTask, holdHayaSubmission, releaseHayaSubmission, holdZonghengSubmission, releaseZonghengSubmission } from './video.js';
 import { localizeGeneratedImage } from './imageGen.js';
 import { extractVideoFailureMessage, isVideoFailurePayload, withVideoFailureMetadata } from '../services/videoFailureService.js';
-import { ContentService } from '../services/contentService.js';
+import { ContentService, sanitizeContentRoutingForClient } from '../services/contentService.js';
 import { prepareVideoForDelivery, cacheVideoForDelivery, videoDeliveryContentType } from '../services/videoCompatibilityService.js';
 import { validateAndNormalizeImageReferences } from '../services/imageReferenceValidationService.js';
 import { prepareHmReferenceImages } from '../services/hmStudioReferenceService.js';
@@ -645,7 +648,8 @@ router.get('/models', (req: Request, res: Response) => {
       id: callableModelId(model),
       name: callableModelId(model),
       canonical_id: callableModelId(model),
-      ...(JSON.parse(model.capabilities || '[]').includes('video') ? { ...videoCapabilities(model.modelId), description: model.description || '' } : {}),
+      ...(JSON.parse(model.capabilities || '[]').includes('video') ? { ...videoCapabilities(model.modelId),
+        description: model.provider === ZHIYING_CHANNEL_TYPE ? publicApiModelMetadata(model).description : model.description || '' } : {}),
       object: 'model',
       created: Math.floor(Date.now() / 1000),
       owned_by: 'system',
@@ -1694,6 +1698,16 @@ async function handleVideoCreation(req: Request, res: Response) {
   }
 
   if (typeof req.body?.model === 'string') req.body.model = canonicalSnumomVideoModel(req.body.model);
+  if (isZhiyingVideoModel(req.body?.model)) {
+    try {
+      const ownerId = Number(token!.userId);
+      const active = sqlite.prepare('SELECT is_active FROM users WHERE id=?').get(ownerId) as {is_active:number} | undefined;
+      req.body = resolvePrivateReferences(req.body, () => active?.is_active ? ownerId : undefined);
+    } catch (error) {
+      cleanupFiles(req.files);
+      return res.status(400).json({error:(error as Error).message});
+    }
+  }
   if (!normalizeApiModel(req, res)) return;
   if (isRetiredVideoModel(req.body?.model)) { cleanupFiles(req.files);return res.status(410).json({error:RETIRED_VIDEO_MODEL_MESSAGE}); }
   // Discovery hides disabled models; direct video submissions must honor that same switch.
@@ -3256,6 +3270,9 @@ async function handleVideoQuery(req: Request, res: Response) {
     let metadata: Record<string, any> = {};
     try {
       metadata = JSON.parse(record.metadata || '{}');
+      if (metadata.zhiyingOrder || metadata.actualChannel === ZHIYING_CHANNEL_TYPE) {
+        metadata = sanitizeContentRoutingForClient({ status, metadata }).metadata;
+      }
       progress = status === 'completed' ? 100 : (metadata.progress || 0);
     } catch {}
 
@@ -3420,7 +3437,8 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
     let metadata: any = {};
     try { metadata = JSON.parse(record.metadata || '{}'); } catch { }
 
-    if (isLocalFile && !fs.existsSync(localFilePath) && !metadata.upstreamResultUrl) {
+    const zhiying = metadata.zhiyingOrder || metadata.actualChannel === ZHIYING_CHANNEL_TYPE;
+    if (isLocalFile && !metadata.upstreamResultUrl && !zhiying) {
       try {
         metadata.upstreamResultUrl = await recoverHmStudioVideoUrl(metadata);
       } catch (error) {
@@ -3432,15 +3450,14 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
     }
 
     const { downloadAndLocalizeVideo } = await import('./video.js');
-    const sourceUrl = isLocalFile && !fs.existsSync(localFilePath) && metadata.upstreamResultUrl
-      ? metadata.upstreamResultUrl
-      : url;
+    const sourceUrl = isLocalFile ? (metadata.upstreamResultUrl || metadata.zhiyingCompletedReceipt?.resultUrl || '') : url;
     const localizedUrl = await downloadAndLocalizeVideo(
       sourceUrl,
-      idParam,
+      zhiying ? String(metadata.videoId || metadata.upstreamTaskId || metadata.zhiyingCompletedReceipt?.taskId || '') : idParam,
       record.modelId || metadata.model || 'video',
       metadata.channelId,
       metadata.channelApiKeyId,
+      ...(zhiying ? [undefined, metadata.zhiyingCredential] as const : []),
     );
     const cleanPath = localizedUrl.replace(/^.*\/uploads\//, '');
     const localizedPath = path.join(process.cwd(), 'data', 'uploads', cleanPath);

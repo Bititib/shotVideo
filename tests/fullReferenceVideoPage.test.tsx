@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { MemoryRouter } from 'react-router-dom';
 import { V6K_FULL_720_MODEL as FULL, v6kFull720Limits } from '../shared/v6kFullReferenceVideo';
 import { V6K_STABLE_720_MODEL as WD, v6kStable720Limits } from '../shared/v6kStableVideo';
+import { ZHIYING_VIDEO_MODELS, zhiyingVideoSpec } from '../shared/zhiyingVideo';
 import { canvasVideoReferenceLimits } from '../shared/canvasVideoReferences';
 import { videoInputError } from '../client/src/canvas/videoInputs';
 import { newNode } from '../shared/canvasModel';
@@ -55,4 +56,25 @@ it('restores and sends all 30 images, 10 videos and 10 audios with the independe
   const submit=screen.getByRole('button',{name:'开始生成视频'});await waitFor(()=>expect(submit).toBeEnabled());fireEvent.click(submit);
   await waitFor(()=>expect(mocks.generate).toHaveBeenCalledTimes(1));expect(mocks.generate.mock.calls[0][0]).toMatchObject({model:FULL,video_length:30,resolution:'720p',expectedCost:5.8,reference_images:images});
   expect(mocks.generate.mock.calls[0][0].reference_videos).toEqual(videos);expect(mocks.generate.mock.calls[0][0].audio_urls).toEqual(audios);
+});
+
+it('uses each Zhiying model default on selection and exposes only its supported references', async () => {
+  mocks.list.mockResolvedValue(ZHIYING_VIDEO_MODELS.map(id => {
+    const { displayName, limits } = zhiyingVideoSpec(id);
+    return { id, name: displayName, available: true, routingLimits: limits, allowedSeconds: Array.from({length:26}, (_,i)=>i+5),
+      rates: { [limits.resolutions[0]]:2 }, billingType:'per_call' };
+  }));
+  render(<MemoryRouter><VideoPage/></MemoryRouter>);
+  for (const id of ZHIYING_VIDEO_MODELS) {
+    const { displayName, limits } = zhiyingVideoSpec(id);
+    const card = (await screen.findByText(displayName, {selector:'button.earth-model-card p'})).closest('button')!;
+    fireEvent.click(card);
+    expect(screen.getByRole('button', {name:`上传参考图片，最多 ${limits.maxImages} 张`})).toBeVisible();
+    expect(screen.queryByRole('button', {name:/上传参考视频，最多/}) !== null).toBe(limits.maxVideos > 0);
+    fireEvent.change(document.querySelector('textarea')!, {target:{value:'光影'}});
+    fireEvent.click(screen.getByRole('button', {name:'开始生成视频'}));
+    await waitFor(() => expect(mocks.generate.mock.calls.at(-1)?.[0]).toMatchObject({
+      model:id, resolution:limits.resolutions[0], video_length:30,
+    }));
+  }
 });

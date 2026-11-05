@@ -20,11 +20,11 @@ export function isPublicImageAddress(address: string): boolean {
   return isIP(address) === 6 && /^[23][0-9a-f]{3}:/i.test(address) && !blocked.check(address, 'ipv6');
 }
 
-async function resolveImageHost(url: URL, signal: AbortSignal) {
+async function resolveMediaHost(url: URL, signal: AbortSignal, label: string) {
   const host = url.hostname.replace(/^\[|\]$/g, '');
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password
     || (url.port && url.port !== (url.protocol === 'https:' ? '443' : '80'))
-    || /(^|\.)(localhost|local|internal)$/i.test(host)) throw new Error('图片地址必须是无账号密码的公网 HTTP/HTTPS 地址（标准端口）');
+    || /(^|\.)(localhost|local|internal)$/i.test(host)) throw new Error(label + '地址必须是无账号密码的公网 HTTP/HTTPS 地址（标准端口）');
   signal.throwIfAborted();
   const addresses = await new Promise<{ address: string; family: number }[]>((resolve, reject) => {
     const abort = () => reject(signal.reason);
@@ -32,22 +32,29 @@ async function resolveImageHost(url: URL, signal: AbortSignal) {
     const pending = isIP(host) ? Promise.resolve([{ address: host, family: isIP(host) }]) : lookup(host, { all: true, verbatim: true });
     pending.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
   });
-  if (!addresses.length || addresses.some(item => !isPublicImageAddress(item.address))) throw new Error('禁止下载内网或非公网地址的图片');
+  if (!addresses.length || addresses.some(item => !isPublicImageAddress(item.address))) throw new Error('禁止下载内网或非公网地址的' + label);
   return addresses[0];
 }
 
 /** Each redirect gets its own DNS check; the actual socket uses that checked IP.
  * No cookies, channel authorization, proxy environment, or original URL in errors. */
 export async function downloadPublicReferenceImage(source: string, signal: AbortSignal, maxBytes = 20 * 1024 * 1024): Promise<Buffer> {
+  return downloadPublicMedia(source, signal, maxBytes, 'image');
+}
+
+export async function downloadPublicMedia(source: string, signal: AbortSignal, maxBytes: number, kind: 'image' | 'video' | 'audio', httpsOnly = false): Promise<Buffer> {
+  const label = { image: '图片', video: '视频', audio: '音频' }[kind];
+  const sizeError = () => new Error(label + '超过 ' + maxBytes + ' 字节上限' + (kind === 'image' ? '（图片默认上限 20 MB）' : ''));
   let url: URL;
-  try { url = new URL(source); } catch { throw new Error('图片 URL 格式无效'); }
+  try { url = new URL(source); } catch { throw new Error(label + ' URL 格式无效'); }
   try {
     for (let hop = 0; hop <= 3; hop++) {
-      const address = await resolveImageHost(url, signal);
+      if (httpsOnly && url.protocol !== 'https:') throw new Error(label + '结果链接和重定向必须使用 HTTPS');
+      const address = await resolveMediaHost(url, signal, label);
       const result = await new Promise<{ location?: string; bytes?: Buffer }>((resolve, reject) => {
         const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)(url, {
           signal, agent: false,
-          headers: { Accept: 'image/*', 'Accept-Encoding': 'identity', 'User-Agent': 'shotVideo-reference-fetcher/1.0' },
+          headers: { Accept: kind + '/*', 'Accept-Encoding': 'identity', 'User-Agent': 'shotVideo-reference-fetcher/1.0' },
           lookup: ((_host: string, options: any, cb: any) => options?.all
             ? cb(null, [address]) : cb(null, address.address, address.family)) as any,
         }, response => {
@@ -55,25 +62,25 @@ export async function downloadPublicReferenceImage(source: string, signal: Abort
           if ([301, 302, 303, 307, 308].includes(status)) {
             const location = response.headers.location;
             response.destroy();
-            if (!location) reject(new Error('图片下载重定向缺少目标地址'));
+            if (!location) reject(new Error(label + '下载重定向缺少目标地址'));
             else resolve({ location });
             return;
           }
-          if (status !== 200) { response.destroy(); reject(new Error(`图片下载失败（HTTP ${status}）`)); return; }
+          if (status !== 200) { response.destroy(); reject(Object.assign(new Error(`${label}下载失败（HTTP ${status}）`), { httpStatus: status })); return; }
           if (Number(response.headers['content-length']) > maxBytes) {
-            response.destroy(); reject(new Error('图片超过 20 MB 上限')); return;
+            response.destroy(); reject(sizeError()); return;
           }
           let size = 0;
           const chunks: Buffer[] = [];
           response.on('error', reject);
-          response.on('aborted', () => reject(new Error('图片下载连接中断，文件不完整')));
+          response.on('aborted', () => reject(new Error(label + '下载连接中断，文件不完整')));
           response.on('data', (chunk: Buffer) => {
             size += chunk.length;
-            if (size > maxBytes) { response.destroy(); reject(new Error('图片超过 20 MB 上限')); return; }
+            if (size > maxBytes) { response.destroy(); reject(sizeError()); return; }
             chunks.push(chunk);
           });
           response.on('end', () => {
-            if (!response.complete) reject(new Error('图片下载连接中断，文件不完整'));
+            if (!response.complete) reject(new Error(label + '下载连接中断，文件不完整'));
             else resolve({ bytes: Buffer.concat(chunks, size) });
           });
         });
@@ -81,15 +88,15 @@ export async function downloadPublicReferenceImage(source: string, signal: Abort
         request.end();
       });
       if (result.bytes) return result.bytes;
-      if (hop === 3) throw new Error('图片下载重定向超过 3 次');
+      if (hop === 3) throw new Error(label + '下载重定向超过 3 次');
       url = new URL(result.location!, url);
     }
   } catch (error: any) {
-    if (signal.aborted) throw new Error('图片下载超时');
+    if (signal.aborted) throw new Error(label + '下载超时');
     // System error messages can include signed URLs/addresses. Only expose code.
-    if (error?.code) throw new Error(`图片下载连接失败（${String(error.code).replace(/[^A-Z0-9_]/g, '').slice(0, 60)}）`);
-    if (error instanceof TypeError) throw new Error('图片下载地址或重定向无效');
+    if (error?.code) throw new Error(`${label}下载连接失败（${String(error.code).replace(/[^A-Z0-9_]/g, '').slice(0, 60)}）`);
+    if (error instanceof TypeError) throw new Error(label + '下载地址或重定向无效');
     throw error;
   }
-  throw new Error('图片下载未取得完整文件');
+  throw new Error(label + '下载未取得完整文件');
 }

@@ -1,4 +1,7 @@
 import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
+import { isZhiyingVideoModel, validateZhiyingVideoInput } from '../../shared/zhiyingVideo.js';
+import { prepareZhiyingVideo, createZhiyingVideo, pollZhiyingVideo, ZhiyingApiError } from './zhiyingVideoAdapter.js';
+import { zhiyingCredentialFingerprint, zhiyingPayloadHash } from './zhiyingVideoExecution.js';
 import { SNUMOM_MUSE_MODEL } from '../../shared/snumomMuse.js';
 import { normalizeSnumomMuseRequestBody, validateSnumomMuseInput } from './snumomWanAdapter.js';
 import { isHussPersistentVideoModel } from '../../shared/hussBbVideo.js';
@@ -46,10 +49,18 @@ import { isVideoQueryErrorPayload } from './videoFailureService.js';
 import { classifyHmSubmission } from './hmStudioSubmission.js';
 import { submitSiYueTianMinimax, pollSiYueTianMinimax, SiYueTianMinimaxError } from './siYueTianMinimaxAdapter.js';
 
-export type SpecificationRequest = { prompt: string; input: RoutingInput; images: string[]; videos: string[]; audios: string[]; firstFrame: string; lastFrame: string; body: Record<string, any>; publicBaseUrl: string; submissionKey?: string };
+export type SpecificationRequest = { prompt: string; input: RoutingInput; images: string[]; videos: string[]; audios: string[]; firstFrame: string; lastFrame: string; body: Record<string, any>; publicBaseUrl: string; submissionKey?: string; ownerId?: number };
 /** Validate extra-parameter/media combinations before reserving money or creating a task. */
 export function validateSpecificationVideoParameters(request: SpecificationRequest, candidates: RouteCandidate[]) {
+  if (isZhiyingVideoModel(request.body.model)) {
+    const problems = validateZhiyingVideoInput(request.body.model, request.prompt, request.input);
+    if (problems.length) throw new Error(problems.join('；'));
+  }
   for (const target of candidates) {
+    if (target.channel.type === 'zhiying' || [request.body.model, target.route.upstreamModel, target.route.executionModel].some(isZhiyingVideoModel)) {
+      if (target.channel.type !== 'zhiying' || !isZhiyingVideoModel(request.body.model)
+        || request.body.model !== target.route.upstreamModel || request.body.model !== target.route.executionModel) throw new Error('智赢视频规格与该型号的上游映射不一致');
+    }
     if ([request.body.model,target.route.executionModel,target.route.upstreamModel].includes(SNUMOM_MUSE_MODEL)) {
       if (!isSnumomWanChannel(target.channel) || target.route.executionModel !== SNUMOM_MUSE_MODEL || target.route.upstreamModel !== SNUMOM_MUSE_MODEL) throw new Error('Muse Video 必须关联对应型号的 snumom 线路');
       normalizeSnumomMuseRequestBody({...request.body,model:SNUMOM_MUSE_MODEL});
@@ -165,6 +176,26 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
 }
 export async function submitSpecificationVideo(target: RouteCandidate, request: SpecificationRequest, onStarting: (metadata?: Record<string, unknown>) => void) {
   const c = { ...target.channel, videoSubmission: true }, model = target.route.upstreamModel, exec = target.route.executionModel, i = request.input;
+  if (c.type === 'zhiying') {
+    if (!isZhiyingVideoModel(model) || model !== exec || model !== request.body.model) throw new SpecificationUpstreamError('智赢视频型号映射不一致', false, false, false, 0, true);
+    let payload: Awaited<ReturnType<typeof prepareZhiyingVideo>>;
+    try {
+      payload = await prepareZhiyingVideo(c, { model, prompt: request.prompt, input: { ...i, images: request.images, videos: request.videos, audios: request.audios },
+        publicBaseUrl: request.publicBaseUrl }, { userId: request.ownerId });
+      if (request.body.reference_mode === 'multi_reference') payload.reference_mode = 'multi_reference';
+      if (request.body.reference_image_processing === 'direct') payload.reference_image_processing = 'direct';
+    } catch (error: any) { throw new SpecificationUpstreamError(error.message, false, false, false, error.status || 0, true); }
+    const key = randomUUID();
+    onStarting({ zhiyingKey: key, zhiyingPayload: payload, zhiyingPayloadHash: zhiyingPayloadHash(key, payload), zhiyingCredential: zhiyingCredentialFingerprint(c) });
+    let task;
+    try { task = await createZhiyingVideo(c, payload, key); }
+    catch (error) {
+      if (error instanceof ZhiyingApiError) throw new SpecificationUpstreamError(error.message, false, !error.confirmedFailure, false, error.status, error.confirmedFailure);
+      throw error;
+    }
+    onStarting({ zhiyingInitialTask: task });
+    return task.taskId;
+  }
   if (isSiYueTianManagedVideoModel(exec)) {
     if (model !== exec) throw new SpecificationUpstreamError('四月天视频上游模型映射不一致', false, false, false, 0, true);
     try { return await submitSiYueTianMinimax(c, request, url => publishSpecificationAsset(url, request.publicBaseUrl), onStarting, exec); }
@@ -376,6 +407,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   return String(id);
 }
 export async function pollSpecificationVideo(channel: any, taskId: string, executionModel?: string, referenceVideoSeconds = 0) {
+  if (channel.type === 'zhiying') return pollZhiyingVideo(channel, taskId, isZhiyingVideoModel(executionModel) ? executionModel : undefined);
   if (isSiYueTianManagedVideoModel(executionModel)) return pollSiYueTianMinimax(channel, taskId);
   if (isZonghengChannel(channel)) {
     const response = await fetchVideoTaskResponse(zonghengTaskUrl(channel.baseUrl, taskId), { headers: { Authorization: 'Bearer ' + channel.apiKey, 'Cache-Control': 'no-cache, no-store' }, cache: 'no-store', redirect: 'error' });

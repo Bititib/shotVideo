@@ -1,4 +1,5 @@
 import { generationProblemSummary } from '../../../../shared/generationMessages';
+import { zhiyingVideoDisplayName } from '../../../../shared/zhiyingVideo';
 import { useAdminFilters } from '../../hooks/useAdminView';
 import { formatProductDetail, isProductDetailCopy } from '../../../../shared/copywriting';
 import { startPolling } from '../../utils/polling';
@@ -316,7 +317,7 @@ export default function HistoryPage() {
                   <em className={config.tone}><TypeIcon />{config.label}</em>
                   <span><Clock3 />{formatDate(item.createdAt)}</span>
                   {item.type === 'video' && <span>生成耗时：{formatVideoGenerationTime(item)}</span>}
-                  <span>{item.modelId || '未记录模型'}</span>
+                  <span>{zhiyingVideoDisplayName(item.modelId) || item.modelId || '未记录模型'}</span>
                   {item.cost > 0 && <span className="history-cost">¥{Number(item.cost).toFixed(3)}</span>}
                 </span>
                 {item.inputText && item.inputText !== item.title && <span className="history-prompt">{item.inputText}</span>}
@@ -395,7 +396,7 @@ export default function HistoryPage() {
                   <h3>任务信息</h3>
                   <dl>
                     <div><dt>内容类型</dt><dd>{config.label}</dd></div>
-                    <div><dt>使用模型</dt><dd>{selected.modelId || '未记录'}</dd></div>
+                    <div><dt>使用模型</dt><dd>{zhiyingVideoDisplayName(selected.modelId) || selected.modelId || '未记录'}</dd></div>
                     <div><dt>费用</dt><dd>¥{Number(selected.cost || 0).toFixed(3)}</dd></div>
                     <div><dt>调用来源</dt><dd>{metadata.source === 'api' ? 'API' : '网页工作台'}</dd></div>
                     {selected.type === 'video' && <div><dt>生成耗时（含排队和保存）</dt><dd>{formatVideoGenerationTime(selected)}</dd></div>}

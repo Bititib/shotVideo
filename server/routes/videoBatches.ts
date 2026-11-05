@@ -1,3 +1,4 @@
+import { isZhiyingVideoModel } from '../../shared/zhiyingVideo.js';
 import { getModelSpecification } from '../services/modelRoutingService.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import type { PricingSnapshot } from '../services/pricingService.js';
@@ -51,6 +52,12 @@ export function validateBatchInput(body: any): VideoBatchInput {
   if (!body || typeof body.model !== 'string' || !body.model) throw new Error('请选择视频模型');
   // Preserve typed extras through quote, durable batch settings and worker dispatch.
   // The normal /video/validate preflight checks the current model schema before reservation.
+  const zhiying = isZhiyingVideoModel(body.model);
+  if (zhiying) {
+    const allowed = ['name','model','aspect_ratio','video_length','resolution','autoRetry','maxRetries','model_parameters','creatives','requestKey','expectedUnitCost'];
+    const unsupported = Object.keys(body).find(key => !allowed.includes(key));
+    if (unsupported) throw new Error('此批量入口不支持参数：' + unsupported);
+  }
   const extras = body.model_parameters;
   if (extras !== undefined && (!extras || typeof extras !== 'object' || Array.isArray(extras) || Object.keys(extras).length > 48
     || Object.values(extras).some(v => !['string','number','boolean'].includes(typeof v) || typeof v === 'number' && !Number.isFinite(v)))) throw new Error('model_parameters 必须为标量参数对象');
@@ -61,20 +68,27 @@ export function validateBatchInput(body: any): VideoBatchInput {
   if (!(limits?.resolutions || ['480p', '720p', '1080p', '2k', '4k']).includes(body.resolution)) throw new Error('请选择正确分辨率');
   if (typeof body.autoRetry !== 'boolean' || !Number.isInteger(body.maxRetries) || body.maxRetries < 0 || body.maxRetries > 3) throw new Error('自动重试最多 3 次');
   if (!Array.isArray(body.creatives) || body.creatives.length < 1 || body.creatives.length > 20) throw new Error('每个批次支持 1–20 组创意');
-  const media = (value: unknown, max: number, images: boolean): string[] => {
+  const media = (value: unknown, max: number, kind: 'image' | 'video' | 'audio'): string[] => {
     if (value === undefined) return [];
     if (Array.isArray(value)) value = value.filter(v => typeof v !== 'string' || v.trim()).map(v => typeof v === 'string' ? v.trim() : v);
-    if (!Array.isArray(value) || value.length > max || value.some(v => typeof v !== 'string' || v.length > 20_000_000 ||
-      !( /^https?:\/\//i.test(v) || (images && /^data:image\//i.test(v)) || /^\/(?:api\/)?uploads\//.test(v)))) throw new Error('素材格式或数量不正确，请使用图片文件或可访问的素材链接');
+    const accepts = (v: unknown) => typeof v === 'string' && v.length <= 20_000_000 && (
+      /^https?:\/\//i.test(v) || /^\/(?:api\/)?uploads\//.test(v)
+      || ((kind === 'image' || zhiying) && v.slice(0, kind.length + 6).toLowerCase() === 'data:' + kind + '/')
+      || (zhiying && /^\/api\/media\/[a-f0-9-]{36}$/.test(v)));
+    if (!Array.isArray(value) || value.length > max || !value.every(accepts)) throw new Error('素材格式或数量不正确，请使用支持的文件或可访问的素材链接');
     return value;
   };
   const creatives = body.creatives.map((c: any, index: number) => {
+    if (zhiying && c) {
+      const unsupported = Object.keys(c).find(key => !['prompt','count','reference_images','reference_videos','audio_urls'].includes(key));
+      if (unsupported) throw new Error(`创意 ${index + 1} 不支持参数：${unsupported}`);
+    }
     const error = validateVideoPrompt(c?.prompt);
     if (error) throw new Error(`创意 ${index + 1}：${error}`);
     if (!Number.isInteger(c.count) || c.count < 1 || c.count > 100) throw new Error('每组生成数量需为 1–100 的整数');
     const maxImages = limits?.maxImages ?? (body.model === WX_HAIDIYUE_MULTIMODAL_MODEL ? WX_HAIDIYUE_MULTIMODAL_MAX_IMAGES : 10);
-    return { prompt: c.prompt, count: c.count, reference_images: media(c.reference_images, maxImages, true),
-      reference_videos: media(c.reference_videos, limits?.maxVideos ?? 10, false), audio_urls: media(c.audio_urls, limits?.maxAudios ?? 10, false) };
+    return { prompt: c.prompt, count: c.count, reference_images: media(c.reference_images, maxImages, 'image'),
+      reference_videos: media(c.reference_videos, limits?.maxVideos ?? 10, 'video'), audio_urls: media(c.audio_urls, limits?.maxAudios ?? 10, 'audio') };
   });
   if (creatives.reduce((n, c) => n + c.count, 0) > 100) throw new Error('单批次最多生成 100 条视频');
   return { name: typeof body.name === 'string' ? body.name.slice(0, 80) || '批量视频' : '批量视频',
@@ -92,10 +106,13 @@ async function preflight(req: TierRequest, input: VideoBatchInput) {
   let pricingSnapshot: PricingSnapshot | undefined;
   const { creatives, ...config } = input;
   for (let index = 0; index < creatives.length; index++) {
+    const { name, autoRetry, maxRetries, ...generationConfig } = config;
+    const { count, ...creative } = creatives[index];
+    const payload = isZhiyingVideoModel(config.model) ? { ...generationConfig, ...creative } : { ...config, ...creatives[index] };
     const response = await fetch(`http://127.0.0.1:${env.PORT}/api/video/validate`, {
       method: 'POST', headers: { Authorization: req.headers.authorization!, 'Content-Type': 'application/json',
         Host: new URL(originFor(req)).host, 'X-Forwarded-Proto': new URL(originFor(req)).protocol.slice(0, -1) },
-      body: JSON.stringify({ ...config, ...creatives[index] }), signal: AbortSignal.timeout(120000),
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(120000),
     });
     const result: any = await response.json();
     if (!response.ok) throw new Error(`创意 ${index + 1}：${result.error || '参数校验失败'}`);

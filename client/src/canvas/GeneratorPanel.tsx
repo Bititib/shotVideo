@@ -109,7 +109,14 @@ export default function GeneratorPanel({ document: canvasDocument, projects, onM
     : video?.allowedSeconds?.length ? video.allowedSeconds : [5, 10, 15].filter(n => !video?.maxSeconds || n <= video.maxSeconds);
   useEffect(() => { if (!loading && !models.some(m => m.id === model)) setModel(models.find(m => m.id === selected?.model)?.id || models.find(m => m.available)?.id || models[0]?.id || ''); }, [kind, videoMode, images, videos, audios, model, loading]);
   useEffect(() => { if (!loading && !resolutions.includes(resolution)) setResolution(resolutions[0] || (kind === 'image' ? '1K' : '720p')); }, [kind, model, resolutions.join(','), loading]);
-  useEffect(() => { if (!loading && !durations.includes(seconds)) setSeconds(durations[0] || 5); }, [model, resolution, durations.join(','), loading]);
+  const durationModel = useRef(draft?.seconds != null || selected?.settings?.seconds != null ? model : undefined);
+  useEffect(() => {
+    if (loading || !video) return;
+    const newModel = durationModel.current !== video.id;
+    durationModel.current = video.id;
+    if (newModel && managedLimits?.defaultSeconds !== undefined) setSeconds(managedLimits.defaultSeconds);
+    else if (!durations.includes(seconds)) setSeconds(durations[0] || 5);
+  }, [video?.id, model, resolution, durations.join(','), loading]);
   const ratios = managedLimits ? managedLimits.ratios : kind === 'video' && videoMode === 'edit' ? ['16:9', '9:16'] : ['16:9', '9:16', '1:1', '4:3', '3:4'];
   useEffect(() => { if (!ratios.includes(ratio)) setRatio(ratios[0]); }, [kind, videoMode, ratio, ratios.join(',')]);
   const imageRefs = references.filter(n => n.kind === 'image' && n.src);

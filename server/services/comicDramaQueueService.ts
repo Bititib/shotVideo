@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { isZhiyingVideoModel } from '../../shared/zhiyingVideo.js';
 import { sqlite } from '../db/index.js';
 import { env } from '../config/env.js';
 
@@ -178,7 +179,9 @@ async function runProject(projectId: number) {
         const storyboard = sqlite.prepare("SELECT result_url FROM comic_drama_tasks WHERE episode_id=? AND kind='storyboard' AND entity_key=?").get(task.episode_id, task.entity_key) as any;
         updateTask(task, { status: 'running', attempts: task.attempts + 1 });
         try {
-          const requested = Number(payload.shot?.duration || 5); const duration = Math.abs(requested - 5) <= Math.abs(requested - 10) ? 5 : 10;
+          const requested = Number(payload.shot?.duration || 5);
+          const duration = isZhiyingVideoModel(videoModel) ? payload.shot?.duration
+            : Math.abs(requested - 5) <= Math.abs(requested - 10) ? 5 : 10;
           let prompt = [payload.shot?.videoPrompt, `开始状态：${payload.shot?.continuityStart || '承接上一镜'}`, `结束状态：${payload.shot?.continuityEnd || '动作完整收束'}`].filter(Boolean).join('。');
           let url = ''; let report: any; let reviewUnavailable = false;
           for (let attempt = 0; attempt <= (qualityEnabled ? qualityRetries : 0); attempt++) {

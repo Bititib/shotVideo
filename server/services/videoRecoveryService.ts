@@ -1,4 +1,6 @@
 import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
+import { assertZhiyingOriginalChannel } from './zhiyingVideoExecution.js';
+import { pollZhiyingVideo } from './zhiyingVideoAdapter.js';
 import { isHussChannel } from './hussVideoAdapter.js';
 import { isMegabyChannel, megabyTaskUrl, normalizeMegabyTask, readMegabyJson } from './megabyVideoAdapter.js';
 import { normalizeSiYueTianMinimaxTask } from './siYueTianMinimaxAdapter.js';
@@ -310,6 +312,18 @@ export class VideoRecoveryService {
     const configuredChannel = metadata.channelId
       ? ChannelService.getChannelRaw(Number(metadata.channelId), Number(metadata.channelApiKeyId) || null)
       : ChannelService.findChannelForModel(record.modelId || metadata.model || '');
+    if (metadata.zhiyingOrder) {
+      assertZhiyingOriginalChannel(configuredChannel, metadata);
+      if (candidateTaskId && candidateTaskId !== (upstreamTaskId(metadata) || receipt?.upstreamTaskId)) throw { status: 409, message: '智赢仅允许查询已关联的原任务' };
+      const context = { videoId, channelId: configuredChannel!.id, channelApiKeyId: configuredChannel!.apiKeyId };
+      const completed = metadata.zhiyingCompletedReceipt;
+      if (completed?.taskId === videoId && completed.resultUrl) return { ...context, status: 'completed', progress: 100, message: '原任务已生成，继续保存成品', upstreamResultUrl: completed.resultUrl };
+      const task = await pollZhiyingVideo(configuredChannel!, videoId, metadata.actualModel);
+      if (task.status === 'completed' && task.resultUrl) return { ...context, status: 'completed', message: '原任务已生成', progress: 100, upstreamResultUrl: task.resultUrl };
+      if (metadata.upstreamGenerated || task.status === 'completed') return { ...context, status: 'processing', message: '原任务已生成，正在等待成品地址' };
+      if (task.status === 'failed') return { ...context, status: 'failed', message: task.error || '智赢未返回任务失败详情' };
+      return { ...context, status: 'processing', message: '智赢原任务状态：' + task.upstreamStatus };
+    }
     if (configuredChannel && isZonghengChannel(configuredChannel) && isRetiredZonghengTask(metadata)) throw { status: 409, message: RETIRED_ZONGHENG_MESSAGE };
     const channel = configuredChannel && isZonghengChannel(configuredChannel) ? zonghengTaskChannel(configuredChannel, metadata) : configuredChannel;
     if (!channel) {
@@ -489,7 +503,7 @@ export class VideoRecoveryService {
     const original = db.select().from(contents).where(eq(contents.id, contentId)).get();
     const originalMeta = parseMetadata(original?.metadata);
     // Dispatch BEFORE the legacy inspector: provider protocol and ledger belong to the original executor.
-    if (originalMeta.managedSpecification && !originalMeta.batchItemId) {
+    if (originalMeta.managedSpecification && (!originalMeta.batchItemId || originalMeta.zhiyingOrder)) {
       const { recoverSpecificationVideo } = await import('./specificationGenerationService.js');
       return recoverSpecificationVideo(contentId);
     }

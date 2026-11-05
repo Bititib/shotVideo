@@ -53,7 +53,7 @@ export default function VideoBatchPage() {
       setModels(data);
       setInput(previous => ({ ...previous, model: previous.model || data[0]?.id || '',
         resolution: Object.keys(data[0]?.rates || { '720p': 0 })[0],
-        video_length: data[0]?.allowedSeconds?.[0] || 6 }));
+        video_length: data[0]?.routingLimits?.defaultSeconds ?? data[0]?.allowedSeconds?.[0] ?? 6 }));
     }).catch(e => setError(e.message));
   }, []);
   useEffect(() => {
@@ -191,7 +191,7 @@ export default function VideoBatchPage() {
           <label>批次名称<input value={input.name} maxLength={80} placeholder="例如：秋季新品带货 · 第一批" onChange={e => edit({ name: e.target.value })} /></label>
           <label>视频模型<select value={input.model} onChange={e => {
             const m = models.find(v => v.id === e.target.value);
-            edit({ model: e.target.value, aspect_ratio: m?.routingLimits?.ratios.includes(input.aspect_ratio) === false ? m.routingLimits.ratios[0] : input.aspect_ratio, resolution: Object.keys(m?.rates || { '720p': 0 })[0], video_length: m?.allowedSeconds?.[0] || Math.min(6, m?.maxSeconds || 6) });
+            edit({ model: e.target.value, aspect_ratio: m?.routingLimits?.ratios.includes(input.aspect_ratio) === false ? m.routingLimits.ratios[0] : input.aspect_ratio, resolution: Object.keys(m?.rates || { '720p': 0 })[0], video_length: m?.routingLimits?.defaultSeconds ?? m?.allowedSeconds?.[0] ?? Math.min(6, m?.maxSeconds || 6) });
           }}><option value="" disabled>请选择模型</option>{models.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
           {model && <><VideoModelStatusIndicator status={model.modelStatus} /><p className="vb-help">{model.description}</p></>}
           <div className="vb-three">

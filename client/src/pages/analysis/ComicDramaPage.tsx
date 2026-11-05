@@ -1,4 +1,5 @@
 import { generationProblemSummary } from '../../../../shared/generationMessages';
+import { isZhiyingVideoModel } from '../../../../shared/zhiyingVideo';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown, ArrowUp, Bot, Check, ChevronDown, ChevronRight, Circle, Clapperboard, Download, FileText, Image as ImageIcon,
@@ -465,7 +466,8 @@ export default function ComicDramaPage() {
   const videoOnce = (task: ShotTask) => new Promise<string>((resolve, reject) => {
     const model = videoModels.find(m => m.id === videoModel);
     const allowed = model?.allowedSeconds?.length ? model.allowedSeconds : [5, 10];
-    const duration = allowed.reduce((best, n) => Math.abs(n - task.shot.duration) < Math.abs(best - task.shot.duration) ? n : best, allowed[0] || 5);
+    const duration = isZhiyingVideoModel(videoModel) ? task.shot.duration
+      : allowed.reduce((best, n) => Math.abs(n - task.shot.duration) < Math.abs(best - task.shot.duration) ? n : best, allowed[0] || 5);
     const prompt = [task.shot.videoPrompt, `开始状态：${task.shot.continuityStart || '承接上一镜'}`, `结束状态：${task.shot.continuityEnd || '动作完整收束'}`].join('。');
     abortRef.current = generateVideo({ prompt, model: videoModel || undefined, aspect_ratio: '9:16', video_length: duration, reference_images: task.imageUrl ? [task.imageUrl] : [] }, event => {
       if (event.type === 'complete' && event.videoUrl) resolve(event.videoUrl);

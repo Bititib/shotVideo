@@ -12,7 +12,7 @@ import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { channels, models, settings } from '../db/schema.js';
 import { ChannelService } from './channelService.js';
-import { routingMismatches, routeRequestCost, canShareImageAliases, type ModelSpecification, type ModelRoute, type RoutingInput, type ModelInputLimits } from '../../shared/modelRouting.js';
+import { allowsDuration, routingMismatches, routeRequestCost, canShareImageAliases, type ModelSpecification, type ModelRoute, type RoutingInput, type ModelInputLimits } from '../../shared/modelRouting.js';
 
 const CONFIG_KEY = 'model_specification_routes_v1';
 const HEALTH_KEY = 'model_specification_health_v1';
@@ -50,6 +50,7 @@ function validateLimits(l: ModelInputLimits) {
   if (!d || !['range', 'fixed', 'options'].includes(d.mode) || ![d.min, d.max, d.step].every(Number.isFinite)
     || (d.max - d.min) / d.step > 3600 || d.min <= 0 || d.max < d.min || d.max > 3600 || d.step <= 0 || !Array.isArray(d.values)
     || !d.values.every(v => Number.isFinite(v) && v > 0 && v <= 3600) || (d.mode === 'options' && !d.values.length)) throw error('时长规则无效');
+  if (l.defaultSeconds !== undefined && !allowsDuration(d, l.defaultSeconds)) throw error('默认时长必须属于允许的时长范围');
 }
 export function saveModelSpecification(value: ModelSpecification): ModelSpecification {
   if (!value || typeof value.modelId !== 'string' || !['image', 'video'].includes(value.kind) || typeof value.enabled !== 'boolean') throw error('规格定义无效');

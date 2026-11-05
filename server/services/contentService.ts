@@ -71,6 +71,17 @@ const INTERNAL_VIDEO_ROUTING_FIELDS = [
   'routingRouteId', 'routingHealthKey', 'routingAttempts', 'submissionStartedAt', 'managedSpecification', 'imageJobs', 'imageSubmissionIndex',
 ];
 
+/** Content responses and live events use the same projection of provider diagnostics. */
+export function publicZhiyingDiagnostic(message: string, metadata: Record<string, any>): string {
+  if (metadata.actualChannel !== 'zhiying' && !Object.keys(metadata).some(key => key.startsWith('zhiying'))) return message;
+  for (const id of [metadata.videoId, metadata.upstreamTaskId, metadata.upstreamRequestId, metadata.zhiyingKey, metadata.zhiyingCredential]) {
+    if (typeof id === 'string' && id.length >= 3) message = message.split(id).join('[编号已隐藏]');
+  }
+  return message.replace(/智赢(?:\s*AI)?|\bzhiying\b/gi, '[服务]')
+    .replace(/\bfile_[a-zA-Z0-9_-]{16,100}\b/g, '[素材编号已隐藏]')
+    .replace(/\b(?:task_id|request_id)=[\w.-]+/gi, '[编号已隐藏]');
+}
+
 /** Remove administrator-only channel and failover details from ordinary content responses. */
 export function sanitizeContentRoutingForClient<T extends { metadata?: string | Record<string, any> | null }>(item: T): T {
   let metadata: Record<string, any> = {};
@@ -82,10 +93,13 @@ export function sanitizeContentRoutingForClient<T extends { metadata?: string | 
     metadata = {};
   }
 
+  const zhiyingFields = Object.keys(metadata).filter(key => key.startsWith('zhiying'));
+  const zhiyingOrder = zhiyingFields.length > 0 || metadata.actualChannel === 'zhiying';
   const state = (item as { status?: string }).status;
   const needsReview = state === 'review' || metadata.requiresReview || metadata.hayaNeedsReview;
   const privateNames = [metadata.channelName, metadata.actualChannel].filter((v): v is string => typeof v === 'string');
-  const publicFailure = (value: unknown) => needsReview ? videoReviewMessage(metadata) : publicGenerationError(value, privateNames);
+  const hideZhiyingDetails = (message: string) => publicZhiyingDiagnostic(message, metadata);
+  const publicFailure = (value: unknown) => hideZhiyingDetails(needsReview ? videoReviewMessage(metadata) : publicGenerationError(value, privateNames));
   const reviewKind = videoReviewKind(metadata);
   if (reviewKind) metadata.reviewKind = reviewKind;
   for (const field of ['error', 'errorMessage', 'failureReason', 'errorDetail', 'resultSaveError']) {
@@ -97,13 +111,19 @@ export function sanitizeContentRoutingForClient<T extends { metadata?: string | 
   if (metadata.progressText && (['failed', 'error', 'review'].includes(state || '') || metadata.requiresReview || metadata.hayaNeedsReview)) {
     metadata.progressText = publicFailure(metadata.progressText);
   } else if (metadata.progressText) {
-    metadata.progressText = publicGenerationStatus(metadata.progressText);
+    metadata.progressText = hideZhiyingDetails(publicGenerationStatus(metadata.progressText));
   }
   const publicItem = { ...item } as T & Record<string, any>;
   for (const field of ['error', 'errorMessage', 'failureReason']) {
     if (publicItem[field]) (publicItem as Record<string, any>)[field] = publicFailure(publicItem[field]);
   }
   const wasRouted = Boolean(metadata.fallbackFrom || metadata.fallbackReason || metadata.actualChannel === 'wx-haidiyue');
+  if (zhiyingOrder) {
+    if (metadata.upstreamQueryError) metadata.upstreamQueryError = hideZhiyingDetails(publicGenerationError(metadata.upstreamQueryError, privateNames));
+    for (const field of [...zhiyingFields, 'upstreamResultUrl', 'videoId', 'upstreamTaskId',
+      'upstreamRequestId', 'submissionId', 'upstreamCreateResponse', 'upstreamTransportError',
+      'billingReservationId', 'pricingSnapshot', 'queueUserKey', 'tokenId', 'publicBaseUrl']) delete metadata[field];
+  }
   for (const field of INTERNAL_VIDEO_ROUTING_FIELDS) delete metadata[field];
   if (wasRouted && !needsReview && !['failed', 'error', 'review'].includes(state || '') && typeof metadata.progressText === 'string') {
     metadata.progressText = '视频生成中';

@@ -1,4 +1,5 @@
 import { MEGABY_BASE_URL } from '../../../../shared/megabyVideo';
+import { ZHIYING_BASE_URL, ZHIYING_CHANNEL_TYPE, ZHIYING_VIDEO_MODELS, zhiyingVideoDisplayName } from '../../../../shared/zhiyingVideo';
 import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import AdminCollection from '../../components/AdminCollection';
 import ChannelListItem from '../../components/ChannelListItem';
@@ -256,7 +257,7 @@ export default function ChannelsPage() {
     try {
       const result = await adminApi.syncChannelModels(ch.id);
       const message = `同步完成：上游 ${result.count} 个模型，新增 ${result.added} 个模型配置`
-        + (result.count === 0 ? '。请检查渠道 Key 的模型授权。' : ['zongheng', 'zongheng-v6k', 'funai', 'mj', 'megaby', 'hmstudio'].includes(ch.type) ? '。新模型默认停用，请配置价格后启用。' : '。')
+        + (result.count === 0 ? '。请检查渠道 Key 的模型授权。' : ['zongheng', 'zongheng-v6k', 'funai', 'mj', 'megaby', 'hmstudio', ZHIYING_CHANNEL_TYPE].includes(ch.type) ? '。新模型默认停用，请配置价格后启用。' : '。')
         + (Array.isArray(result.warnings) ? result.warnings.map((warning: string) => ` ${warning}`).join('') : '');
       setNotice(message);
       setChannelFeedback({ channelId: ch.id, kind: 'success', message });
@@ -499,14 +500,15 @@ export default function ChannelsPage() {
                     <select value={edit.type} onChange={e => setEdit({
                       ...edit,
                       type: e.target.value,
+                      apiKey: [edit.type, e.target.value].includes(ZHIYING_CHANNEL_TYPE) ? '' : edit.apiKey,
                       faceSplitEnabled: e.target.value === 'wx-haidiyue' && edit.type !== 'wx-haidiyue'
                         ? 1
                         : edit.faceSplitEnabled,
                       apiKeys: e.target.value === 'hmstudio' && (!edit.apiKeys || edit.apiKeys.length === 0)
                         ? [newHmKey()]
                         : edit.apiKeys,
-                      maxRetries: ['zongheng-v6k', 'funai', 'megaby', 'async-video', 'mj', 'huss'].includes(e.target.value) ? 0 : edit.maxRetries,
-                      baseUrl: e.target.value === 'megaby' && !edit.baseUrl ? MEGABY_BASE_URL : e.target.value === 'async-video' && !edit.baseUrl
+                      maxRetries: ['zongheng-v6k', 'funai', 'megaby', 'async-video', 'mj', 'huss', ZHIYING_CHANNEL_TYPE].includes(e.target.value) ? 0 : edit.maxRetries,
+                      baseUrl: e.target.value === ZHIYING_CHANNEL_TYPE ? ZHIYING_BASE_URL : e.target.value === 'megaby' && !edit.baseUrl ? MEGABY_BASE_URL : e.target.value === 'async-video' && !edit.baseUrl
                         ? ASYNC_VIDEO_BASE_URL
                         : e.target.value === 'funai' && !edit.baseUrl
                         ? FUNAI_BASE_URL
@@ -542,6 +544,7 @@ export default function ChannelsPage() {
                       <option value="miaowu">喵呜 API（视频异步任务）</option>
                       <option value="huss">HUSS（视频 / Midjourney 图片）</option>
                       <option value="megaby">Megaby（视频生成）</option>
+                      <option value={ZHIYING_CHANNEL_TYPE}>智赢 AI（视频生成）</option>
                       <option value="mingfei">MingFei（GPT Image 2 异步任务）</option>
                       <option value="gemini">Gemini（分析服务）</option>
                       <option value="grok2api">Grok2API（视频/图片生成）</option>
@@ -562,6 +565,7 @@ export default function ChannelsPage() {
                 </div>
               )}
               {edit.type === 'huss' && <p className="text-xs leading-5 text-zinc-400">使用 HUSS API Key，同步该 Key 可用的已接入视频型号与 Midjourney V8.2。Midjourney 支持 1K/2K、一张普通参考图及风格参数；新模型需配置售价后启用。</p>}
+              {edit.type === ZHIYING_CHANNEL_TYPE && <p className="text-xs leading-5 text-zinc-400">保存智赢 API Key 后可同步 {ZHIYING_VIDEO_MODELS.map(zhiyingVideoDisplayName).join(' 和 ')}。新模型配置本站售价后可启用。</p>}
               {edit.type === 'mj' && <p className="text-xs leading-5 text-zinc-400">保存密钥后同步 MJ 图片模型，配置按次售价后启用。支持 1K、最多 6 张参考图；一次任务返回 4 张图片，仅收一次费用，结果自动保存到素材库。</p>}
               {edit.type === 'funai' && <p className="text-xs leading-5 text-zinc-400">保存密钥后同步图片与视频模型。新模型默认停用，配置售价后启用；图片按 1K、2K、4K 分别建立入口。生成结果不确定时保留原任务，避免重复扣费。</p>}
               {edit.type === 'zongheng-v6k' && <p className="text-xs leading-5 text-zinc-400">填写 V6K 新站令牌并同步当前可用视频模型。新模型默认停用，请核对时长、清晰度及参考素材限制，并配置本站售价后启用；不导入旧站型号和旧站售价。</p>}
@@ -673,7 +677,7 @@ export default function ChannelsPage() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div><label className="block text-xs text-zinc-400 mb-1.5">优先级</label><input type="number" value={edit.priority} onChange={e => setEdit({ ...edit, priority: parseInt(e.target.value) || 0 })} className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none" /></div>
                 <div><label className="block text-xs text-zinc-400 mb-1.5">权重</label><input type="number" value={edit.weight} onChange={e => setEdit({ ...edit, weight: parseInt(e.target.value) || 1 })} className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none" /></div>
-                <div><label className="block text-xs text-zinc-400 mb-1.5">重试次数</label><input type="number" value={edit.maxRetries} onChange={e => setEdit({ ...edit, maxRetries: parseInt(e.target.value) || 3 })} className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none" /></div>
+                <div><label className="block text-xs text-zinc-400 mb-1.5">重试次数</label><input type="number" value={edit.maxRetries} disabled={edit.type === ZHIYING_CHANNEL_TYPE} onChange={e => setEdit({ ...edit, maxRetries: parseInt(e.target.value) || 3 })} className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none" /></div>
                 <div><label className="block text-xs text-zinc-400 mb-1.5">超时(ms)</label><input type="number" value={edit.timeout} onChange={e => setEdit({ ...edit, timeout: parseInt(e.target.value) || 120000 })} className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none" /></div>
               </div>
               </div>

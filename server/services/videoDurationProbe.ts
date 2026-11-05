@@ -138,6 +138,26 @@ export async function probeVideoDurationSeconds(source: string, options: MediaPr
   return pending;
 }
 
+/** Probe the already authorized bytes being uploaded. Only accept standalone video containers. */
+export async function probeVideoBufferDuration(bytes: Buffer): Promise<number> {
+  const file = path.join(os.tmpdir(), 'video-duration-' + crypto.randomUUID() + '.bin');
+  await fs.writeFile(file, bytes, { flag: 'wx', mode: 0o600 });
+  try {
+    const { stdout } = await run('ffprobe', ['-v', 'error', '-protocol_whitelist', 'file', '-format_whitelist', 'mov,matroska,webm',
+      '-select_streams', 'v:0', '-show_entries', 'stream=duration:format=duration', '-of', 'json', file],
+    { timeout: 30_000, maxBuffer: 1024 * 1024, windowsHide: true });
+    const info = JSON.parse(stdout);
+    const seconds = Number(info?.format?.duration || info?.streams?.[0]?.duration);
+    if (!info?.streams?.length || !Number.isFinite(seconds) || seconds <= 0) throw new Error('参考视频缺少有效视频流或时长');
+    return Math.round(seconds * 1000) / 1000;
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') throw new Error('未安装读取参考视频时长所需的 ffprobe');
+    throw new Error('无法读取参考视频的有效视频流和时长');
+  } finally {
+    await fs.rm(file, { force: true });
+  }
+}
+
 export async function probeAudioDurationSeconds(source: string, options: MediaProbeOptions = {}): Promise<number> {
   if (!source || typeof source !== 'string') throw new Error('参考音频地址无效');
   const key = `audio:${Boolean(options.allowHttp)}:${options.maxBytes ?? MAX_AUDIO_BYTES}:${crypto.createHash('sha256').update(source).digest('hex')}`;

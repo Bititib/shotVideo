@@ -19,7 +19,7 @@ export function modelExample(model: DeveloperModel, endpoint: DeveloperEndpoint,
   else payload.prompt = '温暖晨光中的山谷，电影质感';
   if (endpoint === '/v1/videos') {
     if (limits) {
-      payload.seconds = limits.duration.mode === 'options' ? limits.duration.values[0] : limits.duration.min;
+      payload.seconds = limits.defaultSeconds ?? (limits.duration.mode === 'options' ? limits.duration.values[0] : limits.duration.min);
       if (limits.resolutions[0]) payload.resolution = limits.resolutions[0];
       if (limits.ratios[0]) payload.ratio = limits.ratios[0];
       if (limits.minImages) payload.image_urls = Array.from({ length: limits.minImages }, (_, index) => `https://example.com/reference-${index + 1}.png`);

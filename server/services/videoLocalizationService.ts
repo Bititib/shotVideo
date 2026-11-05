@@ -1,4 +1,7 @@
 import { isHussChannel } from './hussVideoAdapter.js';
+import { fetchZhiyingVideoContent } from './zhiyingVideoAdapter.js';
+import { isZhiyingVideoModel } from '../../shared/zhiyingVideo.js';
+import { assertZhiyingOriginalChannel } from './zhiyingVideoExecution.js';
 import { isMegabyChannel, megabyContentUrl, fetchMegabyVideoContent, readMegabyJson } from './megabyVideoAdapter.js';
 import { zonghengTaskUrl } from './zonghengAdapter.js';
 import { fetchV6kVideoContent } from './v6kVideoContent.js';
@@ -40,18 +43,21 @@ export async function downloadAndLocalizeVideo(
   channelId?: number | null,
   channelApiKeyId?: number | null,
   onProgress?: (progress: HussDownloadProgress) => void,
+  originalCredential?: string,
 ): Promise<string> {
-  if (!url) throw new Error('Upstream completed without a video URL');
-  if (url.startsWith('/uploads/')) {
+  if (!url && !isZhiyingVideoModel(model)) throw new Error('Upstream completed without a video URL');
+  if (url.startsWith('/uploads/') && !isZhiyingVideoModel(model)) {
     const { resolveBatchArchiveFile } = await import('./videoBatchArchive.js');
     return localVideoUrl(await prepareVideoForDelivery(resolveBatchArchiveFile(url, path.resolve('data/uploads'))));
   }
 
   const exactChannel = channelId ? ChannelService.getChannelRaw(channelId, channelApiKeyId) : null;
+  if (isZhiyingVideoModel(model) && exactChannel?.type !== 'zhiying') throw new Error('智赢原任务渠道不可用，停止下载原结果');
   const channel = exactChannel || ChannelService.findChannelForModel(model);
+  if (channel?.type === 'zhiying') assertZhiyingOriginalChannel(channel, { channelId, zhiyingCredential:originalCredential });
   const authenticatedV6kContent = channel && isZonghengChannel(channel) && url === zonghengTaskUrl(channel.baseUrl, videoId) + '/content';
   const headers: Record<string, string> = {};
-  const maySendAuthorization = isHussChannel(channel) ? false : isMegabyChannel(channel) ? false : isAsyncVideoChannel(channel) ? false : isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isZonghengChannel(channel) ? Boolean(authenticatedV6kContent) : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
+  const maySendAuthorization = channel?.type === 'zhiying' ? false : isHussChannel(channel) ? false : isMegabyChannel(channel) ? false : isAsyncVideoChannel(channel) ? false : isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isZonghengChannel(channel) ? Boolean(authenticatedV6kContent) : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
     ? shouldSendHmStudioAuthorization(url, channel.baseUrl)
     : isWxHaidiYueChannel(channel)
       ? shouldSendWxHaidiYueAuthorization(url, channel.baseUrl)
@@ -63,7 +69,9 @@ export async function downloadAndLocalizeVideo(
   const uploadDir = path.join(process.cwd(), 'data', 'uploads', 'videos');
   fs.mkdirSync(uploadDir, { recursive: true });
 
-  const safeId = `${model}_${videoId}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 160);
+  const safeId = channel?.type === 'zhiying'
+    ? 'zhiying_' + channel.id + '_' + crypto.createHash('sha256').update(JSON.stringify([originalCredential, videoId])).digest('hex')
+    : `${model}_${videoId}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 160);
   for (const extension of ['mp4', 'webm']) {
     const existingName = `video_${safeId}.${extension}`;
     const existingPath = path.join(uploadDir, existingName);
@@ -76,30 +84,35 @@ export async function downloadAndLocalizeVideo(
     return localVideoUrl(await saveHussVideo({ ...channel, id: channelId || undefined, apiKeyId: channelApiKeyId }, videoId,
       path.join(uploadDir, `video_${safeId}`), onProgress));
   }
-  let response = authenticatedV6kContent ? await fetchV6kVideoContent(channel, videoId) : isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
-  if (isMegabyChannel(channel) && [401, 403, 404].includes(response.status) && url !== megabyContentUrl(channel.baseUrl, videoId)) response = await fetchMegabyVideoContent(channel, megabyContentUrl(channel.baseUrl, videoId), videoId);
-  if (!response.ok && isMegabyChannel(channel)) await readMegabyJson(channel, response, 'query');
-  if (isAsyncVideoChannel(channel) && [401, 403, 404].includes(response.status)) {
-    const freshUrl = await resolveAsyncVideoUrl(channel, videoId);
-    response = await fetch(freshUrl, { signal: AbortSignal.timeout(300_000), redirect: 'error' });
-  }
-  // Expired signatures are not failed generations. Retry the authenticated content endpoint.
-  if (isHayaChannel(channel) && [401, 403, 409].includes(response.status)) {
-    response = await fetch(hayaTaskUrl(channel.baseUrl, videoId) + '/content', {
-      headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(300_000),
-    });
-  }
-  if (isFunAiChannel(channel) && [401, 403, 404].includes(response.status) && url !== funAiTaskUrl(channel.baseUrl, videoId) + '/content') {
-    response = await fetch(funAiTaskUrl(channel.baseUrl, videoId) + '/content', {
-      headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(300_000), redirect: 'error',
-    });
-  }
-  if (!response.ok) throw new Error(`Failed to fetch video from upstream: ${response.status} ${response.statusText}`);
+  let buffer: Buffer;
+  let contentType = '';
+  if (channel?.type === 'zhiying') {
+    buffer = await fetchZhiyingVideoContent(channel, videoId, url, model);
+  } else {
+    let response = authenticatedV6kContent ? await fetchV6kVideoContent(channel, videoId) : isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000) });
+    if (isMegabyChannel(channel) && [401, 403, 404].includes(response.status) && url !== megabyContentUrl(channel.baseUrl, videoId)) response = await fetchMegabyVideoContent(channel, megabyContentUrl(channel.baseUrl, videoId), videoId);
+    if (!response.ok && isMegabyChannel(channel)) await readMegabyJson(channel, response, 'query');
+    if (isAsyncVideoChannel(channel) && [401, 403, 404].includes(response.status)) {
+      const freshUrl = await resolveAsyncVideoUrl(channel, videoId);
+      response = await fetch(freshUrl, { signal: AbortSignal.timeout(300_000), redirect: 'error' });
+    }
+    // Expired signatures are not failed generations. Retry the authenticated content endpoint.
+    if (isHayaChannel(channel) && [401, 403, 409].includes(response.status)) {
+      response = await fetch(hayaTaskUrl(channel.baseUrl, videoId) + '/content', {
+        headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(300_000),
+      });
+    }
+    if (isFunAiChannel(channel) && [401, 403, 404].includes(response.status) && url !== funAiTaskUrl(channel.baseUrl, videoId) + '/content') {
+      response = await fetch(funAiTaskUrl(channel.baseUrl, videoId) + '/content', {
+        headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(300_000), redirect: 'error',
+      });
+    }
+    if (!response.ok) throw new Error(`Failed to fetch video from upstream: ${response.status} ${response.statusText}`);
 
-  const buffer = Buffer.from(await response.arrayBuffer());
+    buffer = Buffer.from(await response.arrayBuffer());
+    contentType = (response.headers.get('content-type') || '').toLowerCase();
+  }
   if (buffer.length === 0) throw new Error('Upstream returned an empty video file');
-
-  const contentType = (response.headers.get('content-type') || '').toLowerCase();
   const isMp4 = buffer.length >= 12 && buffer.subarray(4, 8).toString('ascii') === 'ftyp';
   const isWebm = buffer.length >= 4
     && buffer[0] === 0x1a && buffer[1] === 0x45 && buffer[2] === 0xdf && buffer[3] === 0xa3;

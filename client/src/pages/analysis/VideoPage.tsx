@@ -11,6 +11,7 @@ import { videoTaskNeedsReview, shouldPollVideoTask, videoTaskDatabaseId } from '
 import { getZonghengVideoSpec, getZonghengVideoReferenceLimits } from '../../../../shared/zonghengVideo';
 import { getHayaVideoSpec, HAYA_XG_SEEDANCE_20_MODEL } from '../../../../shared/hayaVideo';
 import { getHmStudioAdditionalVideoModel, HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS } from '../../../../shared/hmStudioVideo';
+import { isZhiyingVideoModel, zhiyingVideoDisplayName } from '../../../../shared/zhiyingVideo';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -193,7 +194,17 @@ const GROUP_ORDER = [
   '其他模型'
 ];
 
+function readReferenceData(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error(`无法读取素材 ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
 const getModelGroup = (modelId: string) => {
+  if (isZhiyingVideoModel(modelId)) return 'Seedance 系列';
   if (modelId === HUSS_HSS_MODEL || modelId === HUSS_BB_PUBLIC_MODEL || modelId === HAYA_XG_SEEDANCE_20_MODEL) return 'Seedance 系列';
   const zongheng = getZonghengVideoSpec(modelId);
   if (zongheng) return ({ seedance: 'Seedance 系列', grok: 'Grok 系列' } as Record<string, string>)[zongheng.family] || '其他模型';
@@ -469,7 +480,8 @@ export default function VideoPage() {
   const [expandedModelGroups, setExpandedModelGroups] = useState<Set<string>>(new Set(['Seedance 系列']));
   const [prompt, setPrompt] = useState('');
   const [aspectRatio, setAspectRatio] = useState('16:9');
-  const [duration, setDuration] = useState(6);
+  const [duration, setDuration] = useState(() => models[0]?.routingLimits?.defaultSeconds ?? 6);
+  const durationModel = useRef(models[0]?.id);
   const [resolution, setResolution] = useState('720p');
   const modelCards = React.useMemo(() => groupTt25ModelCards(models, selectedModel, resolution), [models, selectedModel, resolution]);
   const groupedModels = React.useMemo(() => {
@@ -734,6 +746,9 @@ export default function VideoPage() {
 
   const handleConfirmSlice = (sliced: string[]) => {
     if (slicingImageIndex !== null) {
+      if (isZhiyingVideoModel(selectedModel) && referenceImages.length - 1 + sliced.length > maxRefs) {
+        setError(`切分后的参考图超过 ${maxRefs} 张，请减少选择`); return;
+      }
       const sourceWasProcessed = Boolean(slicingImageUrl && locallyProcessedImages.has(slicingImageUrl));
       setReferenceImages(prev => {
         const next = [...prev];
@@ -1144,7 +1159,11 @@ export default function VideoPage() {
   useEffect(() => {
     // Replication restores the model and assets together after the initial render.
     if (searchParams.get('replicate') || replicatedModelRef.current === selectedModel) return;
-    if (selectedModel === SNUMOM_SD_MINI_MODEL && duration !== sdMiniRequiredSeconds) {
+    const newModel = currentModel && durationModel.current !== currentModel.id;
+    if (currentModel) durationModel.current = currentModel.id;
+    if (newModel && currentModel.routingLimits?.defaultSeconds !== undefined) {
+      setDuration(currentModel.routingLimits.defaultSeconds);
+    } else if (selectedModel === SNUMOM_SD_MINI_MODEL && duration !== sdMiniRequiredSeconds) {
       setDuration(sdMiniRequiredSeconds);
     } else if (currentModel?.allowedSeconds && !currentModel.allowedSeconds.includes(duration)) {
       setDuration(currentModel.allowedSeconds[0]);
@@ -1203,7 +1222,7 @@ export default function VideoPage() {
       setFirstFrame(null);
       setLastFrame(null);
     }
-  }, [selectedModel, resolution]);
+  }, [selectedModel, resolution, currentModel?.id]);
 
   /** 标准化手机参考图：HEIC/HEIF 按需解码，其余格式统一缩放为 JPEG。 */
   const compressImage = async (file: File, maxSize = 768, quality = 0.7): Promise<string> => {
@@ -1220,6 +1239,7 @@ export default function VideoPage() {
     if (!files) return;
     const remaining = maxRefs - referenceImages.length;
     if (remaining <= 0) { setError(`当前模型最多支持 ${maxRefs} 张参考图`); return; }
+    if (isZhiyingVideoModel(selectedModel) && files.length > remaining) { setError(`当前还可添加 ${remaining} 张参考图，请重新选择`); return; }
     const valid = Array.from(files).filter(isSupportedImageFile).slice(0, remaining);
     if (valid.length === 0) return;
     if (valid.find(f => f.size > 20 * 1024 * 1024)) { setError('参考图超过 20MB'); return; }
@@ -1260,27 +1280,8 @@ export default function VideoPage() {
       setError('参考视频不能超过 ' + maxVideoMB + 'MB');
       return;
     }
-    const readFile = (f: File) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result as string;
-        setReferenceVideos(prev => {
-          if (prev.length >= maxRefVideos) return prev;
-          return [...prev, dataUrl];
-        });
-        const newAsset: Asset = {
-          id: `vid_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
-          name: f.name,
-          dataUrl,
-          type: 'video',
-          createdAt: Date.now()
-        };
-        saveAsset(newAsset).then(() => setMyAssets(prev => [newAsset, ...prev])).catch(() => { });
-      };
-      reader.onerror = () => setError('读取视频失败');
-      reader.readAsDataURL(f);
-    };
     const remaining = maxRefVideos - referenceVideos.length;
+    if (isZhiyingVideoModel(selectedModel) && files.length > remaining) { setError(`当前还可添加 ${remaining} 段参考视频，请重新选择`); return; }
     const filesToRead = Array.from(files).filter(f => f.type.startsWith('video/')).slice(0, remaining > 0 ? remaining : 0);
     if (filesToRead.length === 0 && remaining <= 0) {
       setError(`最多只能上传 ${maxRefVideos} 个参考视频`);
@@ -1309,13 +1310,19 @@ export default function VideoPage() {
           URL.revokeObjectURL(objectUrl);
         }
       }
-      readFile(f);
+      try {
+        const dataUrl = await readReferenceData(f);
+        setReferenceVideos(prev => prev.length < maxRefVideos ? [...prev, dataUrl] : prev);
+        const newAsset: Asset = { id: `vid_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`, name: f.name, dataUrl, type: 'video', createdAt: Date.now() };
+        saveAsset(newAsset).then(() => setMyAssets(prev => [newAsset, ...prev])).catch(() => {});
+      } catch (error) { setError((error as Error).message); }
     }
   };
 
   const handleAudioSelect = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const remaining = maxRefAudios - referenceAudios.length;
+    if (isZhiyingVideoModel(selectedModel) && files.length > remaining) { setError(`当前还可添加 ${remaining} 段参考音频，请重新选择`); return; }
     const selectedFiles = Array.from(files);
     if (isLongxiaModel(selectedModel) && selectedFiles.some(file => !['audio/mpeg', 'audio/mp3'].includes(file.type) || file.size > 15 * 1024 * 1024)) {
       setError('LongXia 参考音频仅支持 MP3，单段不超过 15 MiB');
@@ -1337,17 +1344,11 @@ export default function VideoPage() {
         setError('参考音频不能超过 20MB');
         continue;
       }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result as string;
-        setReferenceAudios(prev => {
-          if (prev.length >= maxRefAudios) return prev;
-          return [...prev, dataUrl];
-        });
-        setReferenceAudioNames(prev => [...prev, file.name]);
-      };
-      reader.onerror = () => setError('读取音频失败');
-      reader.readAsDataURL(file);
+      try {
+        const dataUrl = await readReferenceData(file);
+        setReferenceAudios(prev => prev.length < maxRefAudios ? [...prev, dataUrl] : prev);
+        setReferenceAudioNames(prev => prev.length < maxRefAudios ? [...prev, file.name] : prev);
+      } catch (error) { setError((error as Error).message); }
     }
   };
 
@@ -1417,7 +1418,10 @@ export default function VideoPage() {
 
     if (sourceMetadata) {
       const meta = sourceMetadata;
-      if (meta.model || sourceItem.modelId) setSelectedModel(meta.model || sourceItem.modelId || '');
+      if (meta.model || sourceItem.modelId) {
+        durationModel.current = meta.model || sourceItem.modelId;
+        setSelectedModel(durationModel.current!);
+      }
       if (meta.resolution) setResolution(meta.resolution);
       if (meta.seconds) setDuration(meta.seconds);
       if (meta.aspect_ratio || meta.ratio) setAspectRatio(meta.aspect_ratio || meta.ratio || '16:9');
@@ -1738,7 +1742,15 @@ export default function VideoPage() {
                           <button key={m.displayKey || m.id} type="button" aria-pressed={isSelected} onClick={() => {
                             const variant = m.resolutionModels?.[resolution]?.available ? m.resolutionModels[resolution]
                               : Object.values<VideoModel>(m.resolutionModels || {}).find(model => model.available);
-                            setSelectedModel(variant?.id || m.id);
+                            const next = variant || m;
+                            if (isZhiyingVideoModel(next.id) && next.routingLimits) {
+                              const limits = next.routingLimits;
+                              if (referenceImages.length > limits.maxImages || referenceVideos.length > limits.maxVideos || referenceAudios.length > limits.maxAudios || firstFrame || lastFrame) {
+                                setError(`${next.name} 支持 ${limits.maxImages} 张图片、${limits.maxVideos} 段视频和 ${limits.maxAudios} 段音频。请先移除超限素材和独立首尾帧。`);
+                                return;
+                              }
+                            }
+                            setSelectedModel(next.id);
                             if (variant) setResolution(tt25Resolution(variant.id)!);
                           }}
                             className={`earth-model-card w-full text-left px-4 py-3 rounded-xl border transition-all relative overflow-hidden ${isSelected
@@ -2473,7 +2485,7 @@ export default function VideoPage() {
               <div className="rounded-xl border border-[#dec5a7] bg-[#fbf2e7] p-4">
                 <div className="flex items-center justify-between gap-3 text-xs">
                   <span className="font-medium text-[#725442]">失败模型</span>
-                  <code className="max-w-[70%] truncate rounded-md bg-[#ead8c4] px-2 py-1 text-[11px] text-[#7c3f29]">{feedbackTask.metadata.model}</code>
+                  <code className="max-w-[70%] truncate rounded-md bg-[#ead8c4] px-2 py-1 text-[11px] text-[#7c3f29]">{zhiyingVideoDisplayName(feedbackTask.metadata.model) ?? feedbackTask.metadata.model}</code>
                 </div>
                 <p className="mt-3 max-h-24 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-[#a04432]">{generationProblemSummary(feedbackTask.error)}</p>
               </div>

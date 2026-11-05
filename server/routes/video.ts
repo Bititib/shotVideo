@@ -18,6 +18,9 @@ import { patchZonghengTask, reviewZonghengTask, zonghengOrder, recordZonghengSub
 import videoQuotes from './videoQuotes.js';
 import { assertExpectedVideoCost } from '../services/videoQuoteService.js';
 import { resolvePublicModelId } from '../services/publicModelNameService.js';
+import { normalizeZhiyingRequest } from '../services/zhiyingVideoExecution.js';
+import { isZhiyingVideoModel } from '../../shared/zhiyingVideo.js';
+import { publicApiModelMetadata } from '../services/publicModelMetadataService.js';
 import { handleSpecificationGeneration, resumeSpecificationTasks, prepareSpecificationReferenceImages } from '../services/specificationGenerationService.js';
 import { getModelSpecification, specificationAvailable, selectModelRoutes } from '../services/modelRoutingService.js';
 import { specificationRequest } from '../services/specificationGenerationService.js';
@@ -481,8 +484,8 @@ router.get('/models', optionalAuthMiddleware, (req: AuthRequest, res: Response) 
     return res.json(videoModelsResponseCache.data);
   }
 
-  const publicSourceModels = filterUserModels(req.userId, getEnabledPublicModels('video'))
-    .map(m => ({ id: m.modelId, name: m.displayName, description: m.description }));
+  const publicSourceModels = filterUserModels(req.userId, getEnabledPublicModels('video', req.userId))
+    .map(m => ({ id: m.modelId, name: m.displayName, description: m.provider === 'zhiying' ? publicApiModelMetadata(m).description : m.description }));
 
   // Read settings, pricing, channels, and recent statistics once per request.
   // Previously these tables were queried again for every model, making this
@@ -777,7 +780,11 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   try { req.body=normalizeSnumomNsfwRequestBody(req.body); } catch(error:any) { return res.status(400).json({error:error.message}); }
   if (req.path === '/validate' && !isSnumomWanVideoModel(req.body?.model) && getModelSpecification(resolvePublicModelId(req.body?.model || ''))) {
     try { const spec = getModelSpecification(resolvePublicModelId(req.body.model))!;
-      const body = { ...req.body, resolution: req.body.resolution || spec.limits.resolutions[0], video_length: req.body.video_length ?? req.body.seconds ?? req.body.duration ?? (spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) };
+      if (isZhiyingVideoModel(spec.modelId)) {
+        req.body = { ...req.body, model: spec.modelId };
+        normalizeZhiyingRequest(req.body, spec.limits.defaultSeconds);
+      }
+      const body = { ...req.body, model: spec.modelId, resolution: req.body.resolution || spec.limits.resolutions[0], video_length: req.body.video_length ?? req.body.seconds ?? req.body.duration ?? spec.limits.defaultSeconds ?? (spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) };
       const origin = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
       const request = specificationRequest(body, 'video', origin), input = request.input;
       const candidates = selectModelRoutes(spec, input); const quote = PricingService.quote(spec.modelId, { resolution: input.resolution, seconds: input.seconds, count: 1 }, false, req.userId);

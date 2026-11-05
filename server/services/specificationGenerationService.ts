@@ -1,4 +1,8 @@
 import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
+import { isZhiyingVideoModel } from '../../shared/zhiyingVideo.js';
+import { normalizeZhiyingRequest, assertZhiyingOriginalChannel, zhiyingPayloadHash } from './zhiyingVideoExecution.js';
+import { createZhiyingVideo } from './zhiyingVideoAdapter.js';
+import { findVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
 import { HUSS_MJ_MODEL, hussMjOptions } from '../../shared/hussMidjourney.js';
 import { submitHussImage, queryHussImage, HussImageError } from './hussImageAdapter.js';
 import { isHussPersistentVideoModel } from '../../shared/hussBbVideo.js';
@@ -37,7 +41,7 @@ import type { Request, Response } from 'express';
 import { eq, inArray } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { contents, models, apiLogs } from '../db/schema.js';
-import { ContentService } from './contentService.js';
+import { ContentService, publicZhiyingDiagnostic } from './contentService.js';
 import { ChannelService } from './channelService.js';
 import { PricingService } from './pricingService.js';
 import { BalanceService } from './balanceService.js';
@@ -78,6 +82,9 @@ function list(body: any, keys: string[]): string[] {
   return value;
 }
 export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: string): SpecificationRequest {
+  if (kind === 'video' && isZhiyingVideoModel(body.model)) {
+    try { normalizeZhiyingRequest(body); } catch (error: any) { throw fail(error.message); }
+  }
   if (kind === 'video') { try { normalizeFull720VideoInput(body); } catch (error: any) { throw fail(error.message); } }
   const siYueTianMinimax = kind === 'video' && isSiYueTianManagedVideoModel(body.model);
   if (siYueTianMinimax || body.model === SNUMOM_WAN_NSFW_MODEL) {
@@ -109,6 +116,9 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
       firstFrame: Boolean(firstFrame), lastFrame: Boolean(lastFrame), quality: body.quality } };
 }
 export async function prepareSpecificationReferenceImages(request: SpecificationRequest, candidates: RouteCandidate[], trustedOrigins: string[]) {
+  // Upload the original bytes through the dedicated files endpoint. The generic
+  // image normalizer recompresses references as JPEG before submission.
+  if (candidates.length && candidates.every(t => t.channel.type === 'zhiying')) return;
   if (candidates.length && candidates.every(t => isHayaChannel(t.channel) && t.route.upstreamModel === HAYA_MO_MODEL)) {
     const options = { baseUrl: candidates[0].channel.baseUrl, apiKey: candidates[0].channel.apiKey,
       publicBaseUrl: request.publicBaseUrl, maxFileBytes: 30 * 1024 * 1024, imageDimensions: false };
@@ -249,6 +259,8 @@ function failContent(id: number, message: string) {
   db.update(contents).set({ cost: 0 }).where(eq(contents.id, id)).run();
 }
 async function pollVideo(id: number, channel: any, taskId: string, onEvent: (data: any) => void) {
+  const zhiying = channel.type === 'zhiying';
+  if (zhiying || metadata(id).zhiyingOrder) assertZhiyingOriginalChannel(channel, metadata(id));
   if (isZonghengChannel(channel) && isRetiredZonghengTask(metadata(id))) { holdForReview(id, RETIRED_ZONGHENG_MESSAGE, 'query'); return; }
   if (isZonghengChannel(channel)) channel = zonghengTaskChannel(channel, metadata(id));
   if (isZonghengChannel(channel)) patch(id, { v6kQueryResumeAt: null });
@@ -267,7 +279,16 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
           ? { taskId, resultUrl: hussMeta.upstreamResultUrl } : null) : null;
       const siYueTianReceipt = isSiYueTianManagedVideoModel(metadata(id).actualModel) ? metadata(id).siYueTianMinimaxCompletedReceipt : null;
       const completedReceipt = hussReceipt || metadata(id).megabyCompletedReceipt || siYueTianReceipt;
-      if (hussInitial && ['completed','failed','cancelled','canceled'].includes(hussInitial.status)) {
+      if (zhiying && hussMeta.zhiyingInitialTask) {
+        task = hussMeta.zhiyingInitialTask;
+        if (task.taskId !== taskId) throw new Error('智赢原创建回执编号与已保存任务不符');
+        // A completed job may publish its signed result later. Requery the original ID.
+        if (!['failed','cancelled','canceled'].includes(task.status) && !(task.status === 'completed' && task.resultUrl)) {
+          patch(id, { zhiyingInitialTask: null, ...(task.status === 'completed' ? { upstreamGenerated:true, upstreamDeliveryPending:true } : {}) });
+        }
+      } else if (zhiying && hussMeta.zhiyingCompletedReceipt?.taskId === taskId) {
+        task = { status: 'completed', progress: 100, resultUrl: hussMeta.zhiyingCompletedReceipt.resultUrl };
+      } else if (hussInitial && ['completed','failed','cancelled','canceled'].includes(hussInitial.status)) {
         localCompletion = true;
         task = normalizeHussTask(hussInitial, channel.baseUrl, taskId);
         patch(id, { hussInitialTask: null });
@@ -289,7 +310,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
               if (meta.snumomInitialTask) { task=normalizeSnumomWanTask(meta.snumomInitialTask,meta.referenceVideoSeconds || 0,meta.actualModel);patch(id,{snumomInitialTask:null}); }
               else task = await pollSpecificationVideo(channel,taskId,meta.actualModel,meta.referenceVideoSeconds || 0);
             }
-            else task = isSiYueTianManagedVideoModel(meta.actualModel)
+            else task = zhiying || isSiYueTianManagedVideoModel(meta.actualModel)
               ? await pollSpecificationVideo(channel, taskId, meta.actualModel) : await pollSpecificationVideo(channel, taskId);
           }
         }
@@ -300,19 +321,33 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       const message = transportDiagnostic(channel.type || 'OpenAI-compatible', '任务查询 task_id=' + taskId + '；正在重试，请勿重复提交', error, channel.apiKey);
       patch(id, { progressText: message, upstreamQueryError: message, lastQueryAt: new Date().toISOString(), lastQueryStatus: status, queryFailures: ++queryFailures });
       onEvent({ type: 'status', message, contentId: id });
-      await wait(isZonghengChannel(channel) ? v6kQueryRetryDelay(queryFailures, error?.retryAfter) : isHussChannel(channel) ? Math.max(12_000, Number(error?.retryAfterMs) || 0) : 12_000); continue;
+      await wait(zhiying ? Math.max(8_000, Number(error?.retryAfterMs) || 0) : isZonghengChannel(channel) ? v6kQueryRetryDelay(queryFailures, error?.retryAfter) : isHussChannel(channel) ? Math.max(12_000, Number(error?.retryAfterMs) || 0) : 12_000); continue;
     }
     queryFailures = 0;
+    if (zhiying) {
+      const points = Object.fromEntries(['costPoints','chargedPoints','refundedPoints','refunded'].filter(key => task[key] !== undefined).map(key => [key, task[key]]));
+      if (Object.keys(points).length) patch(id, { zhiyingUpstreamBilling: { ...metadata(id).zhiyingUpstreamBilling, ...points } });
+    }
+    if (zhiying && task.status === 'completed') patch(id, { upstreamGenerated: true, upstreamDeliveryPending: true });
+    if (zhiying && metadata(id).upstreamGenerated && task.status !== 'completed') {
+      patch(id, { upstreamQueryError: '智赢已确认生成，后续查询状态为 ' + task.upstreamStatus + '；继续核对原任务交付',
+        progressText: '原视频已生成，正在核对成品地址' });
+      await wait(8_000); continue;
+    }
     patch(id, { upstreamQueryError: null });
     const progressKnown = task.progressKnown ?? (typeof task.progress === 'number' && Number.isFinite(task.progress));
-    const message = (isZonghengChannel(channel) || isHussChannel(channel)) && task.progressText ? task.progressText : isHussChannel(channel) && task.storagePending ? 'HUSS 已生成，正在保存成品；继续查询原任务' : task.status === 'queued' ? '渠道已受理，正在排队'
+    const message = zhiying && task.status === 'completed' && !task.resultUrl ? '上游已生成，正在等待原任务的成品地址'
+      : zhiying && task.upstreamStatus === 'review' ? '上游正在核对原任务，继续查询'
+      : zhiying && task.error ? task.error
+      : (isZonghengChannel(channel) || isHussChannel(channel)) && task.progressText ? task.progressText : isHussChannel(channel) && task.storagePending ? 'HUSS 已生成，正在保存成品；继续查询原任务' : task.status === 'queued' ? '渠道已受理，正在排队'
       : ['completed', 'success', 'succeeded', 'done'].includes(task.status) ? '视频已生成，正在保存到本站存储'
       : progressKnown ? '视频生成中' : '视频生成中，渠道暂未提供百分比';
-    patch(id, { progress: task.progress, progressKnown, upstreamStatus: isZonghengChannel(channel) ? task.upstreamStatus || task.status : task.status, progressText: message,
+    patch(id, { progress: task.progress, progressKnown, upstreamStatus: isZonghengChannel(channel) || zhiying ? task.upstreamStatus || task.status : task.status, progressText: message,
       ...(!localCompletion ? { lastQueryAt: new Date().toISOString(), lastQueryStatus: 200, queryFailures: 0 } : {}) });
     onEvent({ type: 'progress', progress: task.progress, progressKnown, message, contentId: id });
     if (['failed', 'error', 'cancelled', 'canceled', 'failure'].includes(task.status)) {
       const meta = metadata(id);
+      if (zhiying) patch(id, { zhiyingFailure: { taskId, message: task.error || '智赢未提供任务失败详情' } });
       if (!/content|policy|审核|敏感|违规/i.test(task.error || '')) noteRouteResult(meta.routingHealthKey, false, task.error || '上游生成失败', false, true);
       failTask(id, task.error || '上游生成失败'); onEvent({ type: 'error', message: task.error || '上游生成失败' }); return;
     }
@@ -320,6 +355,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       let localized = '';
       try {
         patch(id, { upstreamResultUrl: task.resultUrl,
+          ...(zhiying ? { zhiyingCompletedReceipt: { taskId, resultUrl: task.resultUrl }, zhiyingInitialTask: null, upstreamGenerated: true, upstreamDeliveryPending: true } : {}),
           ...(metadata(id).snumomReferenceBilling && task.billingUsage ? { upstreamBillingUsage:task.billingUsage } : {}),
           ...(isSiYueTianManagedVideoModel(metadata(id).actualModel) ? { siYueTianMinimaxCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}),
           ...(isHussChannel(channel) ? { hussCompletedReceipt: { taskId, resultUrl: task.resultUrl }, upstreamGenerated: true, upstreamDeliveryPending: true } : {}),
@@ -331,14 +367,14 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
             : progress.phase === 'retrying' ? `下载中断，已保留 ${mb(progress.bytes)} MB；等待恢复原任务`
             : `视频下载中：${mb(progress.bytes)}${progress.total ? ' / ' + mb(progress.total) : ''} MB${progress.resumable ? '（支持安全续传）' : ''}`;
           patch(id, { downloadProgress: { ...progress, updatedAt: new Date().toISOString() }, progressText: message });
-        });
+        }, ...(zhiying ? [metadata(id).zhiyingCredential] : []));
       } catch (error: any) {
         if (recordV6kDeliveryUnavailable(id, error)) {
           onEvent({ type: 'status', message: publicGenerationError(error.message, ['V6K']), contentId: id }); return;
         }
         console.warn('[specification] result save failed', id, error.message);
         const detail = transportDiagnostic(channel.type, '上游已完成，结果保存失败；正在重试保存', error, channel.apiKey);
-        patch(id, isMegabyChannel(channel) || isHussChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
+        patch(id, zhiying || isMegabyChannel(channel) || isHussChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
         if (isHussChannel(channel)) {
           saveRetryMs = Math.max(60_000, Number(error?.retryAfterMs) || 0);
           onEvent({ type: 'status', message: detail, contentId: id });
@@ -361,6 +397,10 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       }
     }
     await wait(saveRetryMs || (isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : isHussChannel(channel) ? 15_000 : 8_000));
+  }
+  if (zhiying) {
+    patch(id, { zhiyingResumeAt: Date.now() + 8_000, progressText: '正在后台继续查询或保存智赢原任务' });
+    return;
   }
   if (isHussChannel(channel)) {
     patch(id, { hussQueryResumeAt: Date.now() + 60_000 });
@@ -403,8 +443,38 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
       let dispatchPrepared = false;
       let pollingStarted = false;
       try {
-        if (!markBatchSubmitting(id)) throw fail('任务已停止', 409);
+        if (target.channel.type !== 'zhiying' && !markBatchSubmitting(id)) throw fail('任务已停止', 409);
         taskId = await submitSpecificationVideo(target, metadata(id).kkLogicalRequestId ? { ...request, submissionKey: metadata(id).kkLogicalRequestId } : request, submissionMetadata => {
+          if (target.channel.type === 'zhiying') {
+            if (submissionMetadata?.zhiyingInitialTask) {
+              const task = submissionMetadata.zhiyingInitialTask as { taskId: string };
+              taskId = task.taskId;
+              sqlite.transaction(() => {
+                acceptVideoSubmission(id, taskId, { provider: 'zhiying', channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId });
+                patch(id, submissionMetadata);
+              }).immediate();
+              return;
+            }
+            const changedRoute = unavailable();
+            if (changedRoute) throw new SpecificationUpstreamError(changedRoute, false, false, false, 0, true);
+            if (metadata(id).cancelledBeforeSubmission) throw new SpecificationUpstreamError('任务已取消，尚未向智赢发送生成请求', false, false, false, 0, true);
+            try {
+              assertZhiyingOriginalChannel(ChannelService.getChannelRaw(target.channel.id), { ...submissionMetadata, channelId: target.channel.id });
+            } catch (error: any) { throw new SpecificationUpstreamError(error.message, false, false, false, 0, true); }
+            try {
+              sqlite.transaction(() => {
+                if (!markBatchSubmitting(id)) throw fail('批量任务已提交或停止', 409);
+                claimVideoSubmission(id, target.channel.timeout || 120_000);
+                claimed = true;
+                patch(id, { ...submissionMetadata, submissionStartedAt: new Date().toISOString() });
+              }).immediate();
+            } catch (error: any) {
+              if (claimed) { releaseVideoSubmission(id); claimed = false; }
+              throw new SpecificationUpstreamError(error.message, false, true);
+            }
+            dispatchPrepared = true;
+            return;
+          }
           if (!claimed) {
             try { claimVideoSubmission(id, target.channel.timeout || 120_000); claimed = true; }
             catch (error: any) { throw new SpecificationUpstreamError(error.message, false, true); }
@@ -425,8 +495,18 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
       } catch (e: any) {
         const uncertain = Boolean(taskId) || e instanceof SpecificationUpstreamError && e.uncertain
           || dispatchPrepared && !(e instanceof SpecificationUpstreamError && (e.retrySafe || e.confirmedFailure));
-        if (claimed) endVideoSubmission(id, uncertain ? 'unknown' : 'rejected');
+        if (claimed && target.channel.type === 'zhiying' && !uncertain && e instanceof SpecificationUpstreamError && e.confirmedFailure) {
+          // A crash between evidence and refund must never turn a rejected POST into a new generation.
+          sqlite.transaction(() => {
+            endVideoSubmission(id, 'rejected');
+            patch(id, { zhiyingFailure: { message:e.message, httpStatus:e.upstreamStatus } });
+          }).immediate();
+        } else if (claimed) endVideoSubmission(id, uncertain ? 'unknown' : 'rejected');
         if (uncertain) {
+          if (target.channel.type === 'zhiying' && !taskId) {
+            patch(id, { zhiyingResumeAt: Date.now() + 8_000,
+              ...(e instanceof SpecificationUpstreamError && e.upstreamStatus === 409 ? { zhiyingReplayStopped: true } : {}) });
+          }
           const message = e.message + '；' + (taskId ? '原任务处理异常，请勿重复提交' : '提交结果待核实，请勿重复提交');
           noteRouteResult(target.healthKey, false, e.message); holdForReview(id, message, taskId ? pollingStarted ? 'query' : 'local' : 'submission'); onEvent({ type: 'status', message }); return;
         }
@@ -766,6 +846,9 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
   catch (error: any) { res.status(error.status || 400).json({ error:error.message }); return true; }
   if (isRetiredVideoModel(suppliedId)) { res.status(410).json({ error:RETIRED_VIDEO_MODEL_MESSAGE }); return true; }
   const spec = getModelSpecification(suppliedId);
+  if (!spec && isZhiyingVideoModel(suppliedId)) {
+    res.status(503).json({ error: '智赢视频缺少模型规格与原渠道映射，请先同步渠道模型' }); return true;
+  }
   const modelId = spec?.modelId || suppliedId;
   if (!spec && bbHssKkManaged(sqlite,suppliedId)) {
     res.status(503).json({error:'BB/HSS 的规格配置缺失，请在后台恢复对应规格；未提交或扣费'});return true;
@@ -784,13 +867,19 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     const userId = token?.userId ?? (req as any).userId ?? 0;
     assertUserModelAccess(userId, modelId);
     if (token?.allowedModels?.length && !token.allowedModels.includes(modelId) && !spec.aliases.some(alias => token.allowedModels.includes(alias) && !checkAlias(spec, alias))) throw fail('Token 无权调用此模型', 403);
-    const body = { ...req.body, aspect_ratio: req.body.aspect_ratio || req.body.ratio || (spec.limits.ratios.includes(kind === 'image' ? '1:1' : '16:9') ? (kind === 'image' ? '1:1' : '16:9') : spec.limits.ratios[0]) };
+    const body = { ...req.body };
     if (kind === 'video') normalizeVideoParameters(body, videoCapabilities(modelId, spec).parameterSchema, Boolean(req.is?.('multipart/form-data')));
+    if (isZhiyingVideoModel(modelId)) {
+      body.model = modelId;
+      try { normalizeZhiyingRequest(body, spec.limits.defaultSeconds); } catch (error: any) { throw fail(error.message); }
+    }
+    body.aspect_ratio = body.aspect_ratio || body.ratio || (spec.limits.ratios.includes(kind === 'image' ? '1:1' : '16:9') ? (kind === 'image' ? '1:1' : '16:9') : spec.limits.ratios[0]);
     const files = Array.isArray(req.files) ? req.files : [];
     const fields: Record<string, string[]> = { reference_images: ['image', 'image[]', 'images', 'input_reference[]', 'reference_images'], reference_videos: ['video', 'video[]', 'videos', 'reference_video', 'reference_videos'], audio_urls: ['audio', 'audio[]', 'audios', 'audio_urls'], first_frame: ['first_frame', 'first_frame_url'], last_frame: ['last_frame', 'last_frame_url'] };
     for (const file of files) {
       const field = Object.keys(fields).find(key => fields[key].includes(file.fieldname));
       if (!field) throw fail('不支持的上传字段：' + file.fieldname);
+      if (isZhiyingVideoModel(modelId) && field.endsWith('_frame')) throw fail('该型号不支持独立首尾帧，请使用普通参考图');
       const expected = field === 'reference_videos' ? 'video/' : field === 'audio_urls' ? 'audio/' : 'image/';
       if (!file.mimetype.startsWith(expected)) throw fail('上传素材类型与字段不一致');
       const data = 'data:' + file.mimetype + ';base64,' + (file.buffer || fs.readFileSync(file.path)).toString('base64');
@@ -812,6 +901,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     if (nativeImageOutputs && body.n !== undefined && ![1, 4].includes(Number(body.n))) throw fail('MJ 每次仅提交一次任务，图片数量以上游实际结果为准');
     const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (modelId === SNUMOM_WAN_NSFW_MODEL ? body.parameters?.duration ?? body.duration_seconds : undefined) ?? (model.provider === 'megaby' ? 5 : spec.limits.duration.mode === 'fixed' ? spec.limits.duration.min : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'));
     let snumomBilling: Awaited<ReturnType<typeof prepareSnumomNsfwReferences>> | undefined;
+    if (isZhiyingVideoModel(modelId)) request.ownerId = userId;
     try { snumomBilling = kind === 'video' && isSnumomWanVideoModel(modelId) ? await prepareSnumomNsfwReferences(request) : undefined; }
     catch(error:any) { throw fail(error.message); }
     const mismatch = routingMismatches(spec.limits, request.input, kind);
@@ -849,6 +939,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     const create = () => ContentService.save({ userId, orgId: (req as any).orgId || null, type: kind, modelId,
       title: request.prompt.slice(0, 200), inputText: request.prompt, status: 'queued', cost: batch ? 0 : quote.cost,
       metadata: { managedSpecification: true, requestedModel: modelId, model: modelId, count: request.input.outputs, nativeImageOutputs,
+        ...(isZhiyingVideoModel(modelId) ? { zhiyingOrder: true } : {}),
         ...(modelId === KK_VIDEO_MODEL ? { kkLogicalRequestId: randomUUID() } : {}),
         ...snumomBilling,
         ...(kind === 'video' ? videoSubmissionPreparation() : {}),
@@ -872,6 +963,8 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
       if (apiContext) return;
       const current = db.select().from(contents).where(eq(contents.id, id!)).get();
       const event = publicGenerationEvent({ ...data, ...(kind === 'video' ? { canCancel: canCancelVideoContent(current) } : {}) });
+      if (isZhiyingVideoModel(modelId) && typeof event.message === 'string' && current)
+        event.message = publicZhiyingDiagnostic(event.message, JSON.parse(current.metadata || '{}'));
       recordCanvasEvent(req, event);
       if (!res.writableEnded && !res.destroyed) res.write('data: ' + JSON.stringify(event) + '\n\n');
     };
@@ -1032,6 +1125,91 @@ async function resumeHussReceipt(id: number, channel: any, key: string) {
   }
 }
 
+// Never replay against a replaced or already settled reservation, including a batch retry.
+function assertZhiyingReservation(id: number, meta: Record<string, any>) {
+  const row = db.select().from(contents).where(eq(contents.id, id)).get();
+  if (!row || !['processing','review','queued'].includes(row.status) || meta.queueRefunded || meta.refundPending || meta.billingShortfall
+    || ['settled','charged','refunded'].includes(meta.billingStatus)) throw new Error('原订单已结束或费用待核对，停止恢复智赢任务');
+  if (meta.batchItemId) {
+    const item = batchStore.item(meta.batchItemId);
+    if (!item || item.content_id !== id || item.user_id !== row.userId || item.attempts !== meta.batchAttempt || item.billing_state !== 'reserved'
+      || !['running','review'].includes(item.status) || item.unit_cost !== meta.batchReservedAmount) throw new Error('批量原订单或预扣已改变，停止恢复智赢任务');
+  } else {
+    const reservation = sqlite.prepare('SELECT state,amount,context FROM billing_reservations WHERE id=?').get(meta.billingReservationId || '') as any;
+    const context = reservation && JSON.parse(reservation.context);
+    if (!context || !['reserved','review'].includes(reservation.state) || reservation.amount !== meta.reservedCost
+      || Number(context.contentId) !== id || Number(context.userId) !== Number(row.userId)
+      || Number(context.tokenId || 0) !== Number(meta.tokenId || 0)) throw new Error('智赢原订单、预扣金额或归属不匹配，停止恢复');
+  }
+}
+
+async function resumeZhiyingOrder(id: number) {
+  const meta = metadata(id);
+  assertZhiyingReservation(id, meta);
+  const receipt = findVideoSubmissionReceipt(id);
+  const taskId = meta.videoId || meta.upstreamTaskId || receipt?.upstreamTaskId;
+  if (receipt && (receipt.upstreamTaskId !== taskId || receipt.channelId !== meta.channelId || receipt.provider !== 'zhiying')) {
+    throw new Error('智赢已保存的任务回执与订单不一致，请核对原记录');
+  }
+  if (meta.zhiyingFailure?.message && (meta.zhiyingFailure.taskId ? meta.zhiyingFailure.taskId === taskId : !taskId && meta.videoSubmissionState === 'rejected')) {
+    failTask(id, meta.zhiyingFailure.message); return;
+  }
+  if (meta.zhiyingFailure || meta.videoSubmissionState === 'rejected') throw new Error('智赢拒绝回执与原订单不一致，保留原单核对');
+  // The claim and frozen payload commit together before the first paid POST.
+  if (!taskId && !meta.zhiyingKey && !meta.submissionStartedAt && meta.videoSubmissionState === 'preparing') {
+    failTask(id, '服务重启时仍在准备智赢请求，尚未发送生成任务'); return;
+  }
+  const channel = ChannelService.getChannelRaw(Number(meta.channelId));
+  assertZhiyingOriginalChannel(channel, meta);
+  if (taskId) {
+    patch(id, { videoId: taskId, error: null, requiresReview: false, reviewKind: null }, 'processing');
+    await pollVideo(id, channel, taskId, () => {}); return;
+  }
+  if (!meta.zhiyingKey || !meta.zhiyingPayload || meta.zhiyingPayload.model !== meta.upstreamModel
+    || zhiyingPayloadHash(meta.zhiyingKey, meta.zhiyingPayload) !== meta.zhiyingPayloadHash)
+    throw new Error('智赢原请求快照或幂等键缺失或不一致，无法安全恢复原提交');
+  if (meta.zhiyingReplayStopped) throw new Error(meta.error || '智赢原提交需要核对，已停止自动重放');
+  // The upstream documents same-key retries but gives no retention period.
+  // Only recent lost acknowledgements get automatic replay; known IDs are GET-only at any age.
+  const replayClaim = sqlite.transaction(() => {
+    const latest = metadata(id);
+    assertZhiyingReservation(id, latest);
+    const now = Date.now();
+    if (latest.videoId || latest.upstreamTaskId || findVideoSubmissionReceipt(id) || Number(latest.zhiyingReplayLeaseUntil || 0) > now) return false;
+    const sentAt = Date.parse(latest.submissionStartedAt || '');
+    const count = Number(latest.zhiyingReplayCount || 0);
+    if (!Number.isFinite(sentAt) || now < sentAt || now - sentAt > 10 * 60_000 || !Number.isSafeInteger(count) || count < 0 || count >= 3) {
+      patch(id, { zhiyingReplayStopped:true });
+      return 'stopped';
+    }
+    patch(id, { zhiyingReplayCount:count + 1, zhiyingReplayLeaseUntil:now + Math.max(120_000, Number(channel!.timeout) || 0) + 30_000 });
+    return true;
+  }).immediate();
+  if (!replayClaim) return;
+  if (replayClaim === 'stopped') throw new Error('智赢原提交仍无任务编号，已达到本站自动核对范围（首次发送后10分钟内、最多3次同键恢复）；保留预扣，请核实原单');
+  let original;
+  try { original = await createZhiyingVideo(channel!, meta.zhiyingPayload, meta.zhiyingKey); }
+  finally { patch(id, { zhiyingReplayLeaseUntil: null }); }
+  sqlite.transaction(() => {
+    assertZhiyingReservation(id, metadata(id));
+    acceptVideoSubmission(id, original.taskId, { provider:'zhiying', channelId:channel!.id, channelApiKeyId:channel!.apiKeyId });
+    patch(id, { zhiyingInitialTask: original, error: null, reviewKind: null, requiresReview: false });
+  }).immediate();
+  await pollVideo(id, channel, original.taskId, () => {});
+}
+
+function scheduleZhiyingRecovery(id: number) {
+  active.add(id);
+  patch(id, { zhiyingResumeAt: Date.now() + 60_000 });
+  void resumeZhiyingOrder(id).catch((error: any) => {
+    const meta = metadata(id);
+    // A rejection of the recovery call is not proof that the original POST was rejected.
+    const hasId = Boolean(meta.videoId || meta.upstreamTaskId);
+    if (!hasId && Number(error?.status) === 409) patch(id, { zhiyingReplayStopped: true });
+    holdForReview(id, error.message, hasId ? 'query' : 'submission');
+  }).finally(() => active.delete(id));
+}
+
 export function resumeSpecificationTasks() {
   restoreLegacyMjCompletedImages();
   for (const row of db.select().from(contents).where(inArray(contents.status, ['processing', 'queued', 'review'])).all()) {
@@ -1050,6 +1228,11 @@ export function resumeSpecificationTasks() {
     if (isSiYueTianManagedVideoModel(meta.actualModel) && Number(meta.siYueTianMinimaxResumeAt) > Date.now()) continue;
     if (meta.zonghengProtocol === 'v6k' && Number(meta.v6kQueryResumeAt) > Date.now()) continue;
     if (row.type === 'video' && videoSubmissionPending(row.id, meta)) continue;
+    if (row.type === 'video' && meta.zhiyingOrder) {
+      if ((!meta.zhiyingReplayStopped || meta.videoId || meta.upstreamTaskId) && !meta.refundPending && !meta.billingShortfall && meta.reviewKind !== 'settlement' && Number(meta.zhiyingResumeAt || 0) <= Date.now())
+        scheduleZhiyingRecovery(row.id);
+      continue;
+    }
     if (row.type === 'video' && !meta.videoId && !meta.upstreamTaskId && meta.hussIdempotencyKey && !meta.billingShortfall
       && (!meta.reviewKind || meta.reviewKind === 'submission')) {
       const channel = ChannelService.getChannelRaw(Number(meta.channelId), Number(meta.channelApiKeyId) || null);
@@ -1104,12 +1287,26 @@ export function recoverSpecificationVideo(id: number) {
   const row = db.select().from(contents).where(eq(contents.id, id)).get();
   if (!row || row.type !== 'video') throw fail('视频任务不存在', 404);
   const meta = metadata(id);
-  if (!meta.managedSpecification || meta.batchItemId) throw fail('该记录不属于单条规格视频任务', 409);
+  if (!meta.managedSpecification || meta.batchItemId && !meta.zhiyingOrder) throw fail('该记录不属于单条规格视频任务', 409);
   if (row.status === 'completed') return { status: 'completed', message: '任务已完成，未重复扣费', item: row, chargedAmount: 0 };
   if (active.has(id)) return { status: 'processing', message: '原任务正在查询或保存结果，未重复启动' +
     (meta.upstreamQueryError || meta.resultSaveError || meta.progressText ? '\n' + (meta.upstreamQueryError || meta.resultSaveError || meta.progressText) : ''), chargedAmount: 0 };
   if (['failed', 'cancelled', 'canceled'].includes(row.status) || meta.billingStatus === 'refunded' || meta.queueRefunded)
     throw fail('该任务已结束或退款，不能按原预扣自动恢复，请先核查账单', 409);
+  if (meta.zhiyingOrder) {
+    try {
+      assertZhiyingReservation(id, meta);
+      if (meta.zhiyingReplayStopped && !meta.videoId && !meta.upstreamTaskId) throw new Error(meta.error || '智赢原提交存在冲突，请核实原请求');
+      if (meta.zhiyingKey || meta.videoId) assertZhiyingOriginalChannel(ChannelService.getChannelRaw(Number(meta.channelId)), meta);
+      if (meta.reviewKind === 'settlement') {
+        if (!row.resultUrl) throw new Error('智赢原任务费用处理待核对，保留原单');
+        complete(id, [row.resultUrl]);
+        return { status: 'completed', message: '原视频已保存，已按原预扣完成结算', chargedAmount: 0 };
+      }
+    } catch (error: any) { throw fail(error.message, 409); }
+    if (!videoSubmissionPending(id, meta)) scheduleZhiyingRecovery(id);
+    return { status: 'processing', message: '正在核对智赢原提交及任务回执', chargedAmount: 0 };
+  }
   const reservation = meta.billingReservationId
     ? sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(meta.billingReservationId) as any : null;
   const context = reservation ? JSON.parse(reservation.context || '{}') : {};

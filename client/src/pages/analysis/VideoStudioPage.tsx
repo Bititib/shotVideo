@@ -1,5 +1,6 @@
 import { getHmStudioAdditionalVideoModel, HM_STUDIO_ADDITIONAL_VIDEO_MODEL_IDS } from '../../../../shared/hmStudioVideo';
 import { generationProblemSummary } from '../../../../shared/generationMessages';
+import { isZhiyingVideoModel, validateZhiyingVideoInput, zhiyingVideoDisplayName } from '../../../../shared/zhiyingVideo';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Film, Play, Square, Download, Loader2, AlertCircle, ArrowLeft, Plus, Trash2, FastForward, Upload, X, Pause, SkipForward, PackageOpen, Scissors, ScanFace, HelpCircle } from 'lucide-react';
@@ -88,6 +89,8 @@ const HM_STUDIO_VIDEO_MODEL_IDS = new Set([
 const isHmStudioVideoModel = (modelId: string) => HM_STUDIO_VIDEO_MODEL_IDS.has(modelId);
 
 const getMaxReferenceImages = (modelId: string, models: VideoModel[]) => {
+  const managed = models.find(m => m.id === modelId)?.routingLimits;
+  if (managed) return managed.maxImages;
   const hmSpec = getHmStudioAdditionalVideoModel(modelId);
   if (hmSpec) return hmSpec.maxImages;
   if (modelId === SNUMOM_SD_MINI_MODEL) return 9;
@@ -117,12 +120,6 @@ export default function VideoStudioPage() {
   const [referenceImages, setReferenceImages] = useState<string[]>([]);
   const [locallyProcessedImages, setLocallyProcessedImages] = useState<Set<string>>(() => new Set());
   const maxRefs = getMaxReferenceImages(selectedModel, models);
-
-  useEffect(() => {
-    if (referenceImages.length > maxRefs) {
-      setReferenceImages(prev => prev.slice(0, maxRefs));
-    }
-  }, [selectedModel, maxRefs]);
   
   // 切分分镜拼图相关状态
   const [slicingImageUrl, setSlicingImageUrl] = useState<string | null>(null);
@@ -132,11 +129,15 @@ export default function VideoStudioPage() {
 
   const handleConfirmSlice = (sliced: string[]) => {
     if (slicingImageIndex !== null) {
+      if (referenceImages.length - 1 + sliced.length > maxRefs) {
+        setError(`切分后超过 ${maxRefs} 张参考图，请减少切分数量`);
+        setSlicingImageUrl(null); setSlicingImageIndex(null); return;
+      }
       const sourceWasProcessed = Boolean(slicingImageUrl && locallyProcessedImages.has(slicingImageUrl));
       setReferenceImages(prev => {
         const next = [...prev];
         next.splice(slicingImageIndex, 1, ...sliced);
-        return next.slice(0, maxRefs);
+        return next;
       });
       if (sourceWasProcessed) setLocallyProcessedImages(prev => {
         const next = new Set(prev);
@@ -174,7 +175,14 @@ export default function VideoStudioPage() {
 
   // Dynamic duration filtering based on model's allowedSeconds
   const currentModel = models.find(m => m.id === selectedModel);
-  const DURATIONS = selectedModel === SNUMOM_SD_MINI_MODEL
+  const zhiying = isZhiyingVideoModel(selectedModel);
+  const limits = zhiying ? currentModel?.routingLimits : undefined;
+  const projectResolution = project?.resolution || '720p', projectRatio = project?.aspectRatio || '16:9';
+  // Existing segments define the project format. A new project's first segment can use the chosen model's defaults.
+  const resolution = !segments.length && limits && !limits.resolutions.includes(projectResolution) ? limits.resolutions[0] : projectResolution;
+  const ratio = !segments.length && limits && !limits.ratios.includes(projectRatio) ? limits.ratios[0] : projectRatio;
+  const DURATIONS = limits && currentModel?.allowedSeconds
+    ? currentModel.allowedSeconds.map(value => ({ value, label: value + 's' })) : selectedModel === SNUMOM_SD_MINI_MODEL
     ? ALL_DURATIONS.filter(d => d.value === 10)
     : currentModel?.allowedSeconds
     ? ALL_DURATIONS.filter(d => currentModel.allowedSeconds!.includes(d.value))
@@ -182,12 +190,14 @@ export default function VideoStudioPage() {
 
   // Auto-correct duration when model changes
   useEffect(() => {
-    if (selectedModel === SNUMOM_SD_MINI_MODEL && duration !== 10) {
+    if (limits?.defaultSeconds && currentModel?.allowedSeconds?.includes(limits.defaultSeconds)) {
+      setDuration(limits.defaultSeconds);
+    } else if (selectedModel === SNUMOM_SD_MINI_MODEL && duration !== 10) {
       setDuration(10);
     } else if (currentModel?.allowedSeconds && !currentModel.allowedSeconds.includes(duration)) {
       setDuration(currentModel.allowedSeconds[0]);
     }
-  }, [selectedModel]);
+  }, [selectedModel, limits?.defaultSeconds]);
 
   const readFileAsDataURL = async (file: File): Promise<string> => {
     const normalized = await normalizeImageFile(file, {
@@ -218,7 +228,8 @@ export default function VideoStudioPage() {
     if (!files) return;
     const remaining = maxRefs - referenceImages.length;
     if (remaining <= 0) { setError(`当前模型最多支持 ${maxRefs} 张参考图`); return; }
-    const valid = Array.from(files).filter(isSupportedImageFile).slice(0, remaining);
+    const valid = Array.from(files).filter(isSupportedImageFile);
+    if (valid.length > remaining) { setError(`当前还可添加 ${remaining} 张参考图，请减少本次选择的数量`); return; }
     if (valid.length === 0) return;
     if (valid.find(f => f.size > 20 * 1024 * 1024)) { setError('参考图超过 20MB'); return; }
     try {
@@ -266,6 +277,13 @@ export default function VideoStudioPage() {
   const handleGenerate = useCallback(async () => {
     if (!prompt.trim() || isGenerating) return;
     if (!guard()) return;
+    if (!currentModel?.available) { setError('所选模型当前不可用，请选择可用模型'); return; }
+    if (referenceImages.length > maxRefs) { setError(`当前模型最多支持 ${maxRefs} 张参考图，请移除多余图片`); return; }
+    if (isZhiyingVideoModel(selectedModel)) {
+      const reasons = validateZhiyingVideoInput(selectedModel, prompt.trim(), { images: referenceImages.length, videos: 0,
+        audios: 0, outputs: 1, seconds: duration, ratio, resolution, firstFrame: false, lastFrame: false });
+      if (reasons.length) { setError(reasons.join('；')); return; }
+    }
     const unreadableImageIndexes = await findUnreadableImageIndexes(referenceImages);
     if (unreadableImageIndexes.length > 0) {
       setError(`参考图 ${unreadableImageIndexes.map(index => index + 1).join('、')} 已失效或格式损坏，请删除后重新上传`);
@@ -280,7 +298,7 @@ export default function VideoStudioPage() {
     if (!activeProjectId) { createProject(); return; }
     setIsGenerating(true); setProgress(0); setError(null); setStatusMsg(isExtendMode ? '续写生成中...' : '生成中...');
     const ctrl = generateVideo(
-      { prompt: prompt.trim(), model: selectedModel, aspect_ratio: project?.aspectRatio || '16:9', video_length: duration, resolution: project?.resolution || '720p', reference_images: referenceImages.length > 0 ? referenceImages : undefined, face_processing: isHmStudioVideoModel(selectedModel) ? false : undefined, local_face_processed: isHmStudioVideoModel(selectedModel) ? false : allImagesLocallyProcessed },
+      { prompt: prompt.trim(), model: selectedModel, aspect_ratio: ratio, video_length: duration, resolution, reference_images: referenceImages.length > 0 ? referenceImages : undefined, face_processing: isHmStudioVideoModel(selectedModel) ? false : undefined, local_face_processed: isHmStudioVideoModel(selectedModel) ? false : allImagesLocallyProcessed },
       (ev: VideoSSEEvent) => {
         switch (ev.type) {
           case 'queue': setStatusMsg(ev.message || `HM Studio 排队中：前方 ${Math.max(0, (ev.position || 1) - 1)} 项`); break;
@@ -290,7 +308,7 @@ export default function VideoStudioPage() {
             setIsGenerating(false); setProgress(100); setStatusMsg('');
             if (ev.videoUrl) {
               const seg: Segment = { id: Date.now().toString(), prompt: prompt.trim(), videoUrl: ev.videoUrl, duration, model: selectedModel };
-              updateProject(p => ({ ...p, segments: [...p.segments, seg] }));
+              updateProject(p => ({ ...p, ...(p.segments.length ? {} : { aspectRatio: ratio, resolution }), segments: [...p.segments, seg] }));
               setPlayingIdx(segments.length);
               setPrompt(''); setReferenceImages([]); setLocallyProcessedImages(new Set()); setIsExtendMode(false);
             }
@@ -300,7 +318,7 @@ export default function VideoStudioPage() {
       },
     );
     abortRef.current = ctrl;
-  }, [prompt, selectedModel, duration, isGenerating, referenceImages, activeProjectId, project, isExtendMode, segments.length, locallyProcessedImages]);
+  }, [prompt, selectedModel, currentModel, duration, ratio, resolution, maxRefs, isGenerating, referenceImages, activeProjectId, project, isExtendMode, segments.length, locallyProcessedImages]);
 
   const startExtend = useCallback(async () => {
     const last = segments[segments.length - 1];
@@ -489,11 +507,24 @@ export default function VideoStudioPage() {
           {/* 输入区 */}
           <div className="border-t border-white/5 p-3 shrink-0 bg-black/60">
             <div className="max-w-3xl mx-auto">
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex flex-wrap items-center gap-2 mb-2">
               <CustomSelect value={duration} onChange={(v: number) => setDuration(v)} options={DURATIONS} />
               {models.length > 0 && (
-                <CustomSelect value={selectedModel} onChange={(v: string) => setSelectedModel(v)} options={models.map(m => ({ value: m.id, label: m.name }))} />
+                <CustomSelect value={selectedModel} onChange={(v: string) => {
+                  const candidate = models.find(m => m.id === v);
+                  if (candidate?.available === false) { setError('所选模型当前不可用'); return; }
+                  if (referenceImages.length > getMaxReferenceImages(v, models)) { setError('所选模型容量不足，请先移除多余参考图'); return; }
+                  if (segments.length && isZhiyingVideoModel(v) && candidate?.routingLimits
+                    && (!candidate.routingLimits.resolutions.includes(projectResolution) || !candidate.routingLimits.ratios.includes(projectRatio))) {
+                    setError(`所选模型不支持当前项目的 ${projectResolution} / ${projectRatio}，请更换模型或新建项目`); return;
+                  }
+                  setSelectedModel(v); setError(null);
+                }} options={models.map(m => ({ value: m.id, label: m.name }))} />
               )}
+              {limits && <><span className="text-[11px] text-zinc-300">{resolution}</span>
+                {segments.length ? <span className="text-[11px] text-zinc-300">{ratio}</span>
+                  : <CustomSelect value={ratio} onChange={(aspectRatio: string) => updateProject(p => ({ ...p, aspectRatio }))}
+                      options={limits.ratios.map(value => ({ value, label: value }))} />}</>}
               <button onClick={() => fileRef.current?.click()} className="flex items-center gap-1 bg-white/[0.03] hover:bg-white/[0.05] rounded-lg px-2 py-1.5 text-[11px] text-zinc-300 border border-transparent hover:border-white/10">
                 <Upload className="w-3 h-3 text-indigo-400" /> 参考图 ({referenceImages.length}/{maxRefs})
               </button>
@@ -600,7 +631,7 @@ export default function VideoStudioPage() {
                   <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-[10px] font-bold shrink-0 ${i === playingIdx ? 'bg-indigo-500 text-white' : 'bg-white/5 text-zinc-500'}`}>{i + 1}</div>
                   <div className="flex-1 min-w-0">
                     <p className="text-[11px] text-zinc-300 leading-relaxed line-clamp-2">{seg.prompt}</p>
-                    <p className="text-[10px] text-zinc-600 mt-1">{seg.duration}秒 · {seg.model.split('-').pop()}</p>
+                    <p className="text-[10px] text-zinc-600 mt-1">{seg.duration}秒 · {zhiyingVideoDisplayName(seg.model) ?? seg.model.split('-').pop()}</p>
                   </div>
                   {seg.lastFrame && <img src={seg.lastFrame} className="w-10 h-7 rounded object-cover shrink-0 border border-white/5" />}
                 </div>

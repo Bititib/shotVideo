@@ -1,6 +1,7 @@
 import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS } from '../../shared/siYueTianManagedVideo.js';
 import { configuredSyncBindings } from './modelSyncScope.js';
 import { isSupportedChannelType } from '../../shared/channelTypes.js';
+import { isZhiyingVideoModel, ZHIYING_CHANNEL_TYPE, zhiyingApiBase } from '../../shared/zhiyingVideo.js';
 import { GOOGLE_SYNC_MODEL_IDS } from '../../shared/googleSyncModels.js';
 import { SNUMOM_VIDEO_MODELS } from './snumomWanAdapter.js';
 import { isMegabyChannel, megabyBaseUrl, fetchMegabyVideoModels } from './megabyVideoAdapter.js';
@@ -284,6 +285,9 @@ export class ChannelService {
         modelMapping: parseJsonObject(channel.modelMapping),
         supportedModels: parseJsonArray(channel.supportedModels),
       };
+      if (channel.type === ZHIYING_CHANNEL_TYPE) {
+        return [{ ...base, supportedModels: base.supportedModels.filter(isZhiyingVideoModel) }];
+      }
       if (channel.type !== 'hmstudio') return [base];
       return hmKeys
         .filter(key => key.channelId === channel.id)
@@ -399,6 +403,10 @@ export class ChannelService {
 
   static createChannel(data: any) {
     let { name, type, baseUrl, apiKey, modelMapping, supportedModels, priority, weight, maxRetries, timeout } = data;
+    if (type === ZHIYING_CHANNEL_TYPE) {
+      baseUrl = zhiyingApiBase(baseUrl);
+      maxRetries = 0;
+    }
     if (type === 'blobdraw') {
       const alreadyHuss = isHussChannel({ baseUrl });
       type = HUSS_CHANNEL_TYPE;
@@ -461,6 +469,12 @@ export class ChannelService {
     if (data.type === 'blobdraw') data = { ...data, type: HUSS_CHANNEL_TYPE, baseUrl: 'https://www.huss.top',
       ...(isHussChannel({ baseUrl: data.baseUrl ?? channel.baseUrl }) ? {} : { apiKey: '' }), maxRetries: 0 };
     const nextType = data.type ?? channel.type;
+    if (nextType === ZHIYING_CHANNEL_TYPE) {
+      data = { ...data, baseUrl: zhiyingApiBase(data.baseUrl ?? channel.baseUrl), maxRetries: 0 };
+    }
+    if (nextType !== channel.type && [nextType, channel.type].includes(ZHIYING_CHANNEL_TYPE) && !data.apiKey) {
+      data = { ...data, apiKey: '' };
+    }
     if (isMegabyChannel({ type: nextType, baseUrl: data.baseUrl ?? channel.baseUrl })) {
       data = { ...data, type: 'megaby', baseUrl: megabyBaseUrl(data.baseUrl ?? channel.baseUrl), maxRetries: 0 };
     }
@@ -560,9 +574,14 @@ export class ChannelService {
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
     const start = Date.now();
     try {
-      if (isMegabyChannel(channel) || isMjChannel(channel) || isAsyncVideoChannel(channel) || isHussChannel(channel) || isFunAiChannel(channel)) {
+      if (channel.type === ZHIYING_CHANNEL_TYPE || isMegabyChannel(channel) || isMjChannel(channel) || isAsyncVideoChannel(channel) || isHussChannel(channel) || isFunAiChannel(channel)) {
         let catalogSummary = '';
-        if (isMegabyChannel(channel)) {
+        if (channel.type === ZHIYING_CHANNEL_TYPE) {
+          const { fetchZhiyingVideoModels } = await import('./zhiyingCatalogService.js');
+          const ids = await fetchZhiyingVideoModels(channel);
+          if (!ids.length) throw new Error('智赢模型目录已返回，此 Key 暂无已接入的视频型号');
+          catalogSummary = '可用型号：' + ids.join('、');
+        } else if (isMegabyChannel(channel)) {
           if (!(await fetchMegabyVideoModels(channel)).length) throw new Error('该 Key 未开放 Megaby 视频模型，请检查模型授权');
         } else if (isMjChannel(channel)) {
           if (!(await fetchMjModels(channel)).length) throw new Error('该 Key 未提供 mj_imagine 模型，请检查模型授权');
@@ -609,7 +628,7 @@ export class ChannelService {
       return result;
     } catch (error: any) {
       const durationMs = Date.now() - start;
-      const message = isAsyncVideoChannel(channel) && error instanceof AsyncVideoCatalogError
+      const message = (isAsyncVideoChannel(channel) && error instanceof AsyncVideoCatalogError) || (channel.type === ZHIYING_CHANNEL_TYPE && error instanceof Error)
         ? error.message : transportDiagnostic(channel.type, '测试连接', error, channel.apiKey);
       db.update(channels).set({
         lastTestAt: new Date().toISOString(),
@@ -623,6 +642,10 @@ export class ChannelService {
     const channel = this.getChannelRaw(id);
     if (!channel) throw { status: 404, message: '渠道不存在' };
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
+    if (channel.type === ZHIYING_CHANNEL_TYPE) {
+      const { syncZhiyingModels } = await import('./zhiyingCatalogService.js');
+      return syncZhiyingModels(channel);
+    }
     // Pidoi's /v1/models endpoint is a general catalog and currently returns video
     // products for the same account. This channel is deliberately image-only; a
     // generic replacement would remove gpt-image-2 and disable image generation.
