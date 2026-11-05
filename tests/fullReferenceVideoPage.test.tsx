@@ -30,22 +30,29 @@ beforeEach(()=>{
   mocks.list.mockResolvedValue([FULL,WD].map(id=>({id,name:id,description:'720P/5-30秒/按条计费',available:true,billingType:'per_call',allowedSeconds:Array.from({length:26},(_,i)=>i+5),rates:{'720p':id===FULL?5.8:6.5},routingLimits:id===FULL?v6kFull720Limits():v6kStable720Limits()})));
 });
 afterEach(()=>{cleanup();vi.unstubAllGlobals();useAuthStore.setState({user:null,isAuthenticated:false});});
-it('shows the requested full-model name and price separately from WD and hides unsupported video/audio references',async()=>{
+it('shows the requested full-model name and price separately from WD and shows supported video/audio references',async()=>{
   render(<MemoryRouter><VideoPage/></MemoryRouter>);
   const toggle=await screen.findByRole('button',{name:/Seedance 系列/});if(toggle.getAttribute('aria-expanded')!=='true')fireEvent.click(toggle);
   const panel=document.getElementById(toggle.getAttribute('aria-controls')!)!,entry=within(panel).getByText(FULL).closest('button')!;
   expect(within(panel).getByText(WD)).toBeVisible();expect(entry).toHaveTextContent('5.80');fireEvent.click(entry);
-  expect(screen.getByRole('button',{name:'上传参考图片，最多 30 张'})).toBeVisible();expect(screen.queryByRole('button',{name:/上传参考视频/})).toBeNull();expect(screen.queryByRole('button',{name:/上传参考音频/})).toBeNull();
-  expect(canvasVideoReferenceLimits(FULL)).toEqual({images:30,videos:0,audios:0});
+  expect(screen.getByRole('button',{name:'上传参考图片，最多 30 张'})).toBeVisible();expect(screen.getByRole('button',{name:'上传参考视频，最多 10 个'})).toBeVisible();expect(screen.getByRole('button',{name:'上传参考音频，最多 10 段'})).toBeVisible();
+  expect(canvasVideoReferenceLimits(FULL)).toEqual({images:30,videos:10,audios:10});
   const images=Array.from({length:30},()=>({...newNode('image',{x:0,y:0}),src:'https://media.example/ref.jpg'}));
   expect(videoInputError({kind:'video',videoMode:'reference',model:FULL,ratio:'16:9',seconds:30,resolution:'720p'},images,v6kFull720Limits())).toBe('');
+  const videos=Array.from({length:10},()=>({...newNode('video',{x:0,y:0}),src:'https://media.example/ref.mp4'}));
+  const audios=Array.from({length:10},()=>({...newNode('audio',{x:0,y:0}),src:'https://media.example/ref.mp3'}));
+  const options={kind:'video',videoMode:'multimodal',model:FULL,ratio:'16:9',seconds:30,resolution:'720p'} as const;
+  expect(videoInputError(options,[...images,...videos,...audios],v6kFull720Limits())).toBe('');
+  expect(videoInputError(options,[...images,...videos,...audios,videos[0]],v6kFull720Limits())).not.toBe('');
+  expect(videoInputError(options,[...images,...videos,...audios,audios[0]],v6kFull720Limits())).not.toBe('');
   expect(mocks.generate).not.toHaveBeenCalled();
 });
-it('restores and sends all 30 reference images with the independent public ID and flat 5.8 quote',async()=>{
+it('restores and sends all 30 images, 10 videos and 10 audios with the independent public ID and flat 5.8 quote',async()=>{
   const images=Array.from({length:30},(_,i)=>'https://media.example/image'+i+'.jpg');
-  mocks.detail.mockResolvedValue({id:42,metadata:{model:FULL,prompt:'满血图片参考',seconds:30,resolution:'720p',aspect_ratio:'16:9',reference_images:images}});
+  const videos=Array.from({length:10},(_,i)=>'https://media.example/video'+i+'.mp4'),audios=Array.from({length:10},(_,i)=>'https://media.example/audio'+i+'.mp3');
+  mocks.detail.mockResolvedValue({id:42,metadata:{model:FULL,prompt:'极速音视频参考',seconds:30,resolution:'720p',aspect_ratio:'16:9',reference_images:images,reference_videos:videos,audio_urls:audios}});
   render(<MemoryRouter initialEntries={['/app/video?replicate=42']}><VideoPage/></MemoryRouter>);
   const submit=screen.getByRole('button',{name:'开始生成视频'});await waitFor(()=>expect(submit).toBeEnabled());fireEvent.click(submit);
   await waitFor(()=>expect(mocks.generate).toHaveBeenCalledTimes(1));expect(mocks.generate.mock.calls[0][0]).toMatchObject({model:FULL,video_length:30,resolution:'720p',expectedCost:5.8,reference_images:images});
-  expect(mocks.generate.mock.calls[0][0].reference_videos).toBeUndefined();expect(mocks.generate.mock.calls[0][0].audio_urls).toBeUndefined();
+  expect(mocks.generate.mock.calls[0][0].reference_videos).toEqual(videos);expect(mocks.generate.mock.calls[0][0].audio_urls).toEqual(audios);
 });

@@ -2,7 +2,7 @@
 export const V6K_SYNC_UPSTREAM_MODELS = [
   'kkseadanco2.5',
   '稳定seadanco2.5-720', // Independent wd entry and optional internal KK route.
-  '稳定极速seadanco2.5-720-30图',
+  '稳定极速seadnco2.5-720',
   'TTTseadanco2.5/720',
   'Asedanco2.0',
   'Asedanco2.05',

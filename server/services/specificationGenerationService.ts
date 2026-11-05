@@ -88,8 +88,8 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
   if (body.mask !== undefined) throw fail('当前统一规格未配置蒙版编辑，请使用支持蒙版的独立入口');
   if (body.response_format && !['url', 'b64_json'].includes(body.response_format)) throw fail('response_format 仅支持 url 或 b64_json');
   const images = list(body, ['reference_images', 'image_urls', 'image_url', 'images', ...(body.model === V6K_FULL_720_MODEL ? ['image_refs','reference_image_urls','Ingredients_images'] : siYueTianMinimax ? ['image_refs'] : [])]);
-  const videos = list(body, ['reference_videos', 'reference_video', 'video_urls', 'video_url', ...(isBbHssKkEntry(body.model) ? ['videos'] : []), ...(siYueTianMinimax ? ['video_refs'] : [])]);
-  const audios = list(body, ['audio_urls', 'audio_url', 'reference_audios', 'audios', ...(siYueTianMinimax ? ['audio_refs'] : [])]);
+  const videos = list(body, ['reference_videos', 'reference_video', 'video_urls', 'video_url', ...(isBbHssKkEntry(body.model) ? ['videos'] : []), ...(body.model === V6K_FULL_720_MODEL ? ['videos','video','video_refs','reference_video_urls'] : siYueTianMinimax ? ['video_refs'] : [])]);
+  const audios = list(body, ['audio_urls', 'audio_url', 'reference_audios', 'audios', ...(body.model === V6K_FULL_720_MODEL ? ['audio','reference_audio','audio_refs','reference_audio_urls'] : siYueTianMinimax ? ['audio_refs'] : [])]);
   const firstFrame = body.first_frame || body.first_frame_url || '';
   const lastFrame = body.last_frame || body.last_frame_url || body.end_frame_url || '';
   const outputs = Number(body.n ?? 1), seconds = Number(body.video_length ?? body.seconds ?? body.duration ?? (body.model === SNUMOM_WAN_NSFW_MODEL ? body.parameters?.duration ?? body.duration_seconds : undefined) ?? 6);

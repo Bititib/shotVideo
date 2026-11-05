@@ -1,22 +1,21 @@
 import { defaultRoutingLimits, type ModelInputLimits } from './modelRouting.js';
 
 export const V6K_FULL_720_MODEL = 'seadanco2.5-720-30';
-export const V6K_FULL_720_UPSTREAM = '稳定极速seadanco2.5-720-30图';
-export const V6K_FULL_720_DESCRIPTION = '30图/720P/5-30秒/不支持音频和视频参考/满参满血/按条计费';
+export const V6K_FULL_720_LEGACY_UPSTREAM = '稳定极速seadanco2.5-720-30图';
+export const V6K_FULL_720_LEGACY_DESCRIPTION = '30图/720P/5-30秒/不支持音频和视频参考/满参满血/按条计费';
+// Exact provider spelling; the similarly named legacy model accepts images only.
+export const V6K_FULL_720_UPSTREAM = '稳定极速seadnco2.5-720';
+export const V6K_FULL_720_DESCRIPTION = '30图10音10视/720P/5-30秒/极速/按条计费';
 export function v6kFull720Limits(): ModelInputLimits {
-  return { ...defaultRoutingLimits(), maxImages: 30, maxVideos: 0, maxAudios: 0, resolutions: ['720p'],
+  return { ...defaultRoutingLimits(), maxImages: 30, maxVideos: 10, maxAudios: 10, resolutions: ['720p'],
     duration: { mode: 'range', min: 5, max: 30, step: 1, values: [] } };
 }
 
-/** Reject unsupported input before reservation; never silently drop video/audio aliases. */
+/** Validate unsupported input before reservation; material aliases are counted by specificationRequest. */
 export function normalizeFull720VideoInput(body: Record<string, any>): void {
   if (body.model !== V6K_FULL_720_MODEL) return;
   const supplied = (key: string) => body[key] !== undefined && body[key] !== null && body[key] !== ''
     && (!Array.isArray(body[key]) || body[key].length > 0);
-  const videos = ['videos','video','reference_videos','reference_video','video_urls','video_url','video_refs','reference_video_urls'];
-  const audios = ['audios','audio','reference_audios','reference_audio','audio_urls','audio_url','audio_refs','reference_audio_urls'];
-  if (videos.some(supplied)) throw new Error('该型号仅支持图片参考，不支持视频参考');
-  if (audios.some(supplied)) throw new Error('该型号仅支持图片参考，不支持音频参考');
   if (['first_frame','first_frame_url','first_image','start_frame','last_frame','last_frame_url','last_image','end_frame','end_frame_url'].some(supplied))
     throw new Error('该型号不支持独立首尾帧，请使用普通参考图片');
   if (['content','input_reference','image'].some(supplied) || body.metadata?.content !== undefined)

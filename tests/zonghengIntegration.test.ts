@@ -27,7 +27,7 @@ import { getKkVideoRouting, saveKkVideoRouting } from '../server/services/kkVide
 import { KK_VIDEO_SOURCES } from '../shared/kkVideoRouting';
 import { V6K_STABLE_720_MODEL as WD, V6K_STABLE_720_UPSTREAM as STABLE, v6kStable720Limits } from '../shared/v6kStableVideo';
 import { ensureV6kStable720Model, enableV6kStable720Entry } from '../server/services/v6kStable720Catalog';
-import { V6K_FULL_720_MODEL as FULL, V6K_FULL_720_UPSTREAM as FULL_UPSTREAM, V6K_FULL_720_DESCRIPTION, v6kFull720Limits } from '../shared/v6kFullReferenceVideo';
+import { V6K_FULL_720_MODEL as FULL, V6K_FULL_720_UPSTREAM as FULL_UPSTREAM, V6K_FULL_720_DESCRIPTION, V6K_FULL_720_LEGACY_UPSTREAM as OLD_FULL, V6K_FULL_720_LEGACY_DESCRIPTION, v6kFull720Limits } from '../shared/v6kFullReferenceVideo';
 import { ensureV6kFull720Model, enableV6kFull720Entry } from '../server/services/v6kFull720Catalog';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -547,15 +547,25 @@ it('removes saved BB fallback configuration while recovering its already accepte
   }finally{time.mockRestore();}
 });
 
-describe('full 30-image-only 720P entry',()=>{
+describe('full multimodal 720P entry',()=>{
+  async function legacyEntry() {
+    await syncV6kEntries([FULL_UPSTREAM]);
+    const channelId=db.select().from(channels).get()!.id,spec=getModelSpecification(FULL)!;
+    const limits={...v6kFull720Limits(),maxVideos:0,maxAudios:0};
+    saveModelSpecification({...spec,enabled:true,limits,routes:spec.routes.map(r=>({...r,upstreamModel:OLD_FULL,limits,cost:4.5,costUnit:'per_call',priority:7}))});
+    const c=db.select().from(channels).get()!;
+    ChannelService.updateChannel(channelId,{modelMapping:{...JSON.parse(c.modelMapping),[FULL]:OLD_FULL}});
+    db.update(models).set({isActive:1,description:V6K_FULL_720_LEGACY_DESCRIPTION}).where(eq(models.modelId,FULL)).run();
+    return channelId;
+  }
   async function install(){
     await syncV6kEntries([FULL_UPSTREAM]);
     await enableV6kFull720Entry(sqlite,db.select().from(channels).get()!.id);
     sqlite.prepare("INSERT INTO api_tokens(id,user_id,token_key,balance) VALUES(1,1,'test',-1)").run();
   }
-  it('registers a disabled independent public entry at 5.8 per task without importing the similarly named multimodal model',async()=>{
+  it('registers a disabled independent public entry at 5.8 per task without importing the retired image-only model',async()=>{
     ensureV6kFull720Model(sqlite);
-    const result=await syncV6kEntries([FULL_UPSTREAM,'稳定极速seadnco2.5-720']);
+    const result=await syncV6kEntries([FULL_UPSTREAM,OLD_FULL]);
     expect(result.models).toEqual([FULL]);
     expect(getModelSpecification(FULL)).toMatchObject({enabled:false,limits:v6kFull720Limits(),routes:[{executionModel:FULL,upstreamModel:FULL_UPSTREAM,enabled:true}]});
     const row=db.select().from(models).all().find(m=>m.modelId===FULL)!;
@@ -564,6 +574,46 @@ describe('full 30-image-only 720P entry',()=>{
     expect(PricingService.quote(FULL,{resolution:'720p',seconds:30,count:1}).cost).toBe(5.8);
     expect(balance()).toBe(100);expect(db.select().from(contents).all()).toEqual([]);
   });
+  it.each([V6K_FULL_720_LEGACY_DESCRIPTION,'管理员自定义描述'])('replaces only the authorized old binding while preserving price, switches and orders: %s',async description=>{
+    await legacyEntry();const old=getModelSpecification(FULL)!;
+    saveModelSpecification({...old,enabled:false,routes:old.routes.map(r=>({...r,enabled:false}))});
+    db.update(models).set({isActive:0,displayName:'管理员名称',description}).where(eq(models.modelId,FULL)).run();
+    db.update(modelPricing).set({inputPrice:6,extraParams:'{"720P":6.2}'}).where(eq(modelPricing.modelPattern,FULL)).run();
+    db.insert(contents).values({userId:1,type:'video',modelId:FULL,status:'queued',cost:5.8,metadata:JSON.stringify({videoId:'old_image_task',upstreamModel:OLD_FULL,pricingSnapshot:{inputPrice:5.8},billingStatus:'reserved'})}).run();
+    const tasks=JSON.stringify(db.select().from(contents).all()),prices=JSON.stringify(db.select().from(modelPricing).all());
+    await syncV6kEntries([FULL_UPSTREAM,OLD_FULL]);
+    expect(getModelSpecification(FULL)).toMatchObject({enabled:false,limits:v6kFull720Limits(),routes:[{...old.routes[0],enabled:false,upstreamModel:FULL_UPSTREAM,limits:v6kFull720Limits()}]});
+    expect(db.select().from(models).all().find(m=>m.modelId===FULL)).toMatchObject({isActive:0,displayName:'管理员名称',description:description===V6K_FULL_720_LEGACY_DESCRIPTION?V6K_FULL_720_DESCRIPTION:description});
+    expect(JSON.parse(db.select().from(channels).get()!.modelMapping)[FULL]).toBe(FULL_UPSTREAM);
+    expect(JSON.stringify(db.select().from(contents).all())).toBe(tasks);expect(JSON.stringify(db.select().from(modelPricing).all())).toBe(prices);expect(balance()).toBe(100);
+    const before=syncConfiguration();await syncV6kEntries([FULL_UPSTREAM,OLD_FULL]);expect(syncConfiguration()).toEqual(before);
+  });
+  it('does not replace a legacy configuration without exact model permission or overwrite a custom mapping',async()=>{
+    const channelId=await legacyEntry(),before=syncConfiguration();
+    upstream=async()=>Response.json({data:[{id:OLD_FULL}]});
+    await expect(enableV6kFull720Entry(sqlite,channelId)).rejects.toThrow('未开放');expect(syncConfiguration()).toEqual(before);
+    const c=db.select().from(channels).get()!;ChannelService.updateChannel(channelId,{modelMapping:{...JSON.parse(c.modelMapping),[FULL]:'administrator-other-model'}});
+    const customized=syncConfiguration();upstream=async()=>Response.json({data:[{id:FULL_UPSTREAM}]});
+    await expect(enableV6kFull720Entry(sqlite,channelId)).rejects.toThrow('其他上游');expect(syncConfiguration()).toEqual(customized);expect(balance()).toBe(100);
+  });
+  it.each(['completed','failed'])('recovers the accepted image-only original to %s after startup pruning and replacement, without reposting or repricing',async terminal=>{
+    const channelId=await legacyEntry();let posts=0,queries=0,clock=Date.now();const time=vi.spyOn(Date,'now').mockImplementation(()=>clock);
+    try{
+      upstream=async(url,init)=>{if(init.method==='POST'){posts++;expect(JSON.parse(init.body).model).toBe(OLD_FULL);return Response.json({id:'legacy_full_original',status:'queued'});}queries++;clock+=2*60*60_000+1;return Response.json({id:'legacy_full_original',status:'unknown'});};
+      await(await post('/api/video/generate',{model:FULL,prompt:'accepted before upgrade',seconds:30,resolution:'720p'})).text();
+      await vi.waitFor(()=>expect(Number(JSON.parse(latest().metadata).v6kQueryResumeAt)).toBeGreaterThan(clock));
+      const original=latest(),receipt=findVideoSubmissionReceipt(original.id),m=JSON.parse(original.metadata),reservation=sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(m.billingReservationId),balanceBefore=balance();
+      pruneUnapprovedV6kBindings(sqlite);expect(getModelSpecification(FULL)!.routes).toEqual([]);
+      upstream=async(url,init)=>{expect(init.method).not.toBe('POST');if(url.endsWith('/v1/models'))return Response.json({data:[{id:FULL_UPSTREAM}]});queries++;expect(url).toBe('https://www.v6k.top/v1/videos/legacy_full_original');return Response.json({id:'legacy_full_original',status:terminal,error:terminal==='failed'?{message:'original failed'}:undefined});};
+      await enableV6kFull720Entry(sqlite,channelId);
+      expect(getModelSpecification(FULL)).toMatchObject({enabled:true,limits:v6kFull720Limits(),routes:[{enabled:true,upstreamModel:FULL_UPSTREAM,limits:v6kFull720Limits()}]});
+      expect(latest()).toEqual(original);expect(findVideoSubmissionReceipt(original.id)).toEqual(receipt);expect(sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(m.billingReservationId)).toEqual(reservation);expect(balance()).toBe(balanceBefore);
+      clock+=120_000;resumeSpecificationTasks();resumeSpecificationTasks();await vi.waitFor(()=>expect(latest().status).toBe(terminal));resumeSpecificationTasks();
+      expect(posts).toBe(1);expect(queries).toBe(2);expect(balance()).toBeCloseTo(terminal==='completed'?94.2:100);
+      expect(JSON.parse(latest().metadata)).toMatchObject({videoId:'legacy_full_original',upstreamModel:OLD_FULL,pricingSnapshot:m.pricingSnapshot});
+      expect(sqlite.prepare('SELECT count(*) AS n FROM billing_reservations').get()).toMatchObject({n:1});
+    }finally{time.mockRestore();}
+  });
   it('enables only after an authenticated GET, preserves KK/WD and existing tasks, and keeps administrator edits across sync',async()=>{
     await syncV6kEntries([FULL_UPSTREAM,STABLE,'kkseadanco2.5']);
     const channelId=db.select().from(channels).get()!.id;
@@ -571,7 +621,7 @@ describe('full 30-image-only 720P entry',()=>{
     await saveKkVideoRouting('kkseadanco2.5',{primary:'stable',fallback:true,channelId},getKkVideoRouting('kkseadanco2.5').version);
     db.insert(contents).values({userId:1,type:'video',modelId:WD,cost:6.5,status:'processing',metadata:JSON.stringify({channelId,videoId:'existing_wd_receipt',upstreamModel:STABLE,billingStatus:'reserved',pricingSnapshot:{inputPrice:6.5}})}).run();
     const tasks=JSON.stringify(db.select().from(contents).all()),others=JSON.stringify([getModelSpecification(WD),getModelSpecification('kkseadanco2.5')]);
-    expect(await enableV6kFull720Entry(sqlite,channelId)).toMatchObject({model:FULL,upstreamModel:FULL_UPSTREAM,modelEnabled:true,specEnabled:true,routeEnabled:true,pricing:{billing_type:'per_call',input_price:5.8}});
+    expect(await enableV6kFull720Entry(sqlite,channelId)).toMatchObject({model:FULL,upstreamModel:FULL_UPSTREAM,modelEnabled:true,specEnabled:true,routeEnabled:true,limits:v6kFull720Limits(),description:V6K_FULL_720_DESCRIPTION,pricing:{billing_type:'per_call',input_price:5.8}});
     expect(JSON.stringify(db.select().from(contents).all())).toBe(tasks);expect(JSON.stringify([getModelSpecification(WD),getModelSpecification('kkseadanco2.5')])).toBe(others);expect(balance()).toBe(100);
     const saved=getModelSpecification(FULL)!;saveModelSpecification({...saved,enabled:false,routes:saved.routes.map(r=>({...r,enabled:false,cost:4.25,costUnit:'per_call'}))});
     db.update(models).set({isActive:0,description:'管理员描述'}).where(eq(models.modelId,FULL)).run();db.update(modelPricing).set({inputPrice:6,extraParams:'{"720P":6.2}'}).where(eq(modelPricing.modelPattern,FULL)).run();
@@ -579,28 +629,39 @@ describe('full 30-image-only 720P entry',()=>{
   });
   it('does not enable or bind without exact authorization or after a channel configuration race',async()=>{
     await syncV6kEntries([FULL_UPSTREAM]);const channelId=db.select().from(channels).get()!.id,before=syncConfiguration();
-    upstream=async()=>Response.json({data:[{id:'稳定极速seadnco2.5-720'}]});await expect(enableV6kFull720Entry(sqlite,channelId)).rejects.toThrow('未开放');expect(syncConfiguration()).toEqual(before);
+    upstream=async()=>Response.json({data:[{id:OLD_FULL}]});await expect(enableV6kFull720Entry(sqlite,channelId)).rejects.toThrow('未开放');expect(syncConfiguration()).toEqual(before);
     upstream=async()=>{ChannelService.updateChannel(channelId,{apiKey:'changed-key'});return Response.json({data:[{id:FULL_UPSTREAM}]});};
     await expect(enableV6kFull720Entry(sqlite,channelId)).rejects.toThrow('配置已变化');expect(getModelSpecification(FULL)!.enabled).toBe(false);expect(balance()).toBe(100);
   });
-  it('exposes the requested name, full description, image-only limits and 5.8 per-call price on website and API catalogs',async()=>{
+  it('exposes the requested name, full description, multimodal limits and 5.8 per-call price on website and API catalogs',async()=>{
     await install();const list=await(await nativeFetch(origin+'/api/video/models')).json() as any[];
-    expect(list.find(m=>m.id===FULL)).toMatchObject({id:FULL,name:FULL,description:V6K_FULL_720_DESCRIPTION,available:true,billingType:'per_call',rates:{'720p':5.8},routingLimits:{maxImages:30,maxVideos:0,maxAudios:0,resolutions:['720p'],duration:{min:5,max:30,step:1}}});
-    expect(getPublicDeveloperModels().items.find(m=>m.id===FULL)).toMatchObject({id:FULL,name:FULL,description:V6K_FULL_720_DESCRIPTION,available:true,limits:{maxImages:30,maxVideos:0,maxAudios:0},pricing:{billing_type:'per_call',unit:'request',unit_price:5.8}});
+    expect(list.find(m=>m.id===FULL)).toMatchObject({id:FULL,name:FULL,description:V6K_FULL_720_DESCRIPTION,available:true,billingType:'per_call',rates:{'720p':5.8},routingLimits:{maxImages:30,maxVideos:10,maxAudios:10,resolutions:['720p'],duration:{min:5,max:30,step:1}}});
+    expect(getPublicDeveloperModels().items.find(m=>m.id===FULL)).toMatchObject({id:FULL,name:FULL,description:V6K_FULL_720_DESCRIPTION,available:true,limits:{maxImages:30,maxVideos:10,maxAudios:10},pricing:{billing_type:'per_call',unit:'request',unit_price:5.8}});
     for(const seconds of [5,30])expect(quoteVideoRequest({model:FULL,resolution:'720p',seconds},1)).toMatchObject({model:FULL,billingType:'per_call',cost:5.8});
   });
-  it.each(['/api/video/generate','/v1/videos'])('sends all 30 images to the exact upstream, retaining a flat 5.8 price at %s',async endpoint=>{
+  it.each(['/api/video/generate','/v1/videos'])('sends all 30 images, 10 videos and 10 audios to the exact upstream, retaining a flat 5.8 price at %s',async endpoint=>{
     await install();vi.stubEnv('BACKEND_URL','https://app.example');let posts=0;
-    upstream=async(url,init)=>{posts++;expect(url).toBe('https://www.v6k.top/v1/videos');expect(init.headers.Authorization).toBe('Bearer test-key');const q=JSON.parse(init.body);expect(q).toMatchObject({model:FULL_UPSTREAM,resolution:'720p'});expect(q.images).toHaveLength(30);expect(q.videos).toBeUndefined();expect(q.audios).toBeUndefined();return Response.json({id:'full_30_image_'+posts,status:'completed'});};
-    for(const seconds of [5,30]){await(await post(endpoint,{model:FULL,prompt:'full image only',seconds,resolution:'720p',reference_images:Array(30).fill(reference)})).text();await vi.waitFor(()=>expect(latest().status).toBe('completed'));expect(latest().modelId).toBe(FULL);expect(latest().cost).toBe(5.8);expect(JSON.parse(latest().metadata)).toMatchObject({upstreamModel:FULL_UPSTREAM,videoId:'full_30_image_'+posts});}
+    upstream=async(url,init)=>{posts++;expect(url).toBe('https://www.v6k.top/v1/videos');expect(init.headers.Authorization).toBe('Bearer test-key');const q=JSON.parse(init.body);expect(q).toMatchObject({model:FULL_UPSTREAM,resolution:'720p'});expect(q.images).toHaveLength(30);expect(q.videos).toEqual(Array(10).fill('https://media.example/ref.mp4'));expect(q.audios).toEqual(Array(10).fill('https://media.example/ref.mp3'));return Response.json({id:'full_30_image_'+posts,status:'completed'});};
+    for(const seconds of [5,30]){await(await post(endpoint,{model:FULL,prompt:'full multimodal',seconds,resolution:'720p',reference_images:Array(30).fill(reference),reference_videos:Array(10).fill('https://media.example/ref.mp4'),audio_urls:Array(10).fill('https://media.example/ref.mp3')})).text();await vi.waitFor(()=>expect(latest().status).toBe('completed'));expect(latest().modelId).toBe(FULL);expect(latest().cost).toBe(5.8);expect(JSON.parse(latest().metadata)).toMatchObject({upstreamModel:FULL_UPSTREAM,videoId:'full_30_image_'+posts});}
     expect(posts).toBe(2);expect(balance()).toBeCloseTo(88.4);resumeSpecificationTasks();resumeSpecificationTasks();expect(posts).toBe(2);
   });
-  it.each(['/api/video/generate','/v1/videos'])('rejects video/audio aliases and unsupported inputs before charging at %s',async endpoint=>{
+  it.each(['/api/video/generate','/v1/videos'])('rejects excess counts, conflicting material aliases and unsupported inputs before charging at %s',async endpoint=>{
     await install();vi.mocked(fetch).mockClear();upstream=async()=>{throw Error('unexpected generation');};
     const invalid=[{resolution:'480p'},{resolution:'1080p'},{seconds:4},{seconds:31},{seconds:5.5},{seconds:30,duration:5},{reference_images:Array(31).fill(reference)},{image_refs:Array(31).fill(reference)},{reference_image_urls:Array(31).fill(reference)},{content:[{type:'video_url',video_url:{url:'https://media.example/v.mp4'}}]},{first_image:reference},{start_frame:reference}];
-    for(const field of ['videos','video','reference_videos','reference_video','video_urls','video_url','video_refs','reference_video_urls','audios','audio','reference_audios','reference_audio','audio_urls','audio_url','audio_refs','reference_audio_urls'])invalid.push({[field]:['https://media.example/ref.mp4']} as any);
+    for(const field of ['videos','video','reference_videos','reference_video','video_urls','video_url','video_refs','reference_video_urls','audios','audio','reference_audios','reference_audio','audio_urls','audio_url','audio_refs','reference_audio_urls'])invalid.push({[field]:Array(11).fill('https://media.example/ref.mp4')} as any);
+    invalid.push({videos:['https://media.example/a.mp4'],video_refs:['https://media.example/b.mp4']} as any,{audios:['https://media.example/a.mp3'],audio_refs:['https://media.example/b.mp3']} as any,{videos:{url:'https://media.example/a.mp4'}} as any);
     for(const patch of invalid){const response=await post(endpoint,{model:FULL,prompt:'invalid material',seconds:5,resolution:'720p',...patch});expect(response.status).toBe(400);await response.text();}
     expect(fetch).not.toHaveBeenCalled();expect(balance()).toBe(100);expect(db.select().from(contents).all()).toEqual([]);
+  });
+  it.each(['/api/video/generate','/v1/videos'])('preserves supported video/audio aliases and duration_seconds at %s',async endpoint=>{
+    await install();let posts=0;const video='https://media.example/v.mp4',audio='https://media.example/a.mp3';
+    upstream=async(_url,init)=>{posts++;expect(JSON.parse(init.body)).toMatchObject({model:FULL_UPSTREAM,seconds:30,videos:[video],audios:[audio]});return Response.json({id:'full_alias_'+posts,status:'completed'});};
+    const videos=['videos','video','reference_videos','reference_video','video_urls','video_url','video_refs','reference_video_urls'],audios=['audios','audio','reference_audios','reference_audio','audio_urls','audio_url','audio_refs','reference_audio_urls'];
+    for(let i=0;i<videos.length;i++){
+      await(await post(endpoint,{model:FULL,prompt:'alias '+i,duration_seconds:30,resolution:'720p',[videos[i]]:i===0?JSON.stringify([video]):[video],[audios[i]]:[audio]})).text();
+      await vi.waitFor(()=>expect(latest().status).toBe('completed'));expect(latest().cost).toBe(5.8);
+    }
+    expect(posts).toBe(8);expect(balance()).toBeCloseTo(53.6);
   });
   it.each(['400','401','429','503','504','failed'])('settles %s safely and returns the original API request on retry without new generation',async outcome=>{
     await install();let posts=0;upstream=async(_url,init)=>{posts++;expect(JSON.parse(init.body).model).toBe(FULL_UPSTREAM);return outcome==='failed'?Response.json({id:'full_failed_original',status:'failed',error:{message:'generation failed'}}):Response.json({error:{code:'test_error',message:'specific upstream error'}},{status:Number(outcome)});};
@@ -615,8 +676,10 @@ describe('full 30-image-only 720P entry',()=>{
     await(await post('/api/video/generate',{model:FULL,prompt:'unknown original',seconds:5,resolution:'720p'})).text();expect(latest().status).toBe(status);expect(posts).toBe(1);expect(queries).toBe(2);expect(balance()).toBeCloseTo(status==='completed'?94.2:100);resumeSpecificationTasks();expect(posts).toBe(1);
   });
   it('uses the batch queue with one 5.8 prepayment and preserves the requested public model ID',async()=>{
-    await install();let posts=0;const batchId=batchStore.create(1,crypto.randomUUID(),{name:'full image batch',model:FULL,resolution:'720p',aspect_ratio:'16:9',video_length:30,autoRetry:false,maxRetries:0,creatives:[{prompt:'full batch',count:1,reference_images:[]}]},5.8,'https://app.example'),item=batchStore.detail(batchId,1).items[0];
-    upstream=async(url,init)=>{if(url==='http://127.0.0.1:9876/api/video/generate')return nativeFetch(origin+'/api/video/generate',init);posts++;expect(JSON.parse(init.body)).toMatchObject({model:FULL_UPSTREAM,seconds:30,resolution:'720p'});return Response.json({id:'full_batch_original',status:'completed'});};
+    await install();vi.stubEnv('BACKEND_URL','https://app.example');let posts=0;
+    const images=Array(30).fill(reference),videos=Array(10).fill('https://media.example/batch.mp4'),audios=Array(10).fill('https://media.example/batch.mp3');
+    const batchId=batchStore.create(1,crypto.randomUUID(),{name:'full multimodal batch',model:FULL,resolution:'720p',aspect_ratio:'16:9',video_length:30,autoRetry:false,maxRetries:0,creatives:[{prompt:'full batch',count:1,reference_images:images,reference_videos:videos,audio_urls:audios}]},5.8,'https://app.example'),item=batchStore.detail(batchId,1).items[0];
+    upstream=async(url,init)=>{if(url==='http://127.0.0.1:9876/api/video/generate')return nativeFetch(origin+'/api/video/generate',init);posts++;const payload=JSON.parse(init.body);expect(payload).toMatchObject({model:FULL_UPSTREAM,seconds:30,resolution:'720p',videos,audios});expect(payload.images).toHaveLength(30);return Response.json({id:'full_batch_original',status:'completed'});};
     tickVideoBatches();await vi.waitFor(()=>expect(latest()?.status).toBe('completed'));tickVideoBatches();tickVideoBatches();resumeSpecificationTasks();expect(batchStore.item(item.id)).toMatchObject({status:'completed',billing_state:'charged',charged:5.8});expect(latest().modelId).toBe(FULL);expect(balance()).toBeCloseTo(94.2);expect(posts).toBe(1);
   });
 });
