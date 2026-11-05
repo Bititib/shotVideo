@@ -1,4 +1,12 @@
 import { isTaskIdPlaceholder } from './upstreamTaskId.js';
+import { videoReviewKind } from './videoReview.js';
+
+export function canDownloadV6kOriginal(record: { type: string; status: string }, meta: Record<string, any>): boolean {
+  return record.type === 'video' && meta.managedSpecification === true && meta.zonghengProtocol === 'v6k'
+    && Boolean(meta.channelId) && !meta.batchItemId
+    && (['failed', 'error', 'review'].includes(record.status)
+      || record.status === 'processing' && videoReviewKind(meta) === 'submission');
+}
 
 /** Only an unverified manual addition over a missing ID can be withdrawn. */
 export function canWithdrawTaskSupplement(record: { type: string; status: string; resultUrl?: unknown }, meta: Record<string, any>): boolean {

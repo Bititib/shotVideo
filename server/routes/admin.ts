@@ -4,6 +4,8 @@ import { sqlite as ledgerDb } from '../db/index.js';
 import modelSpecificationRoutes from './modelSpecifications.js';
 import pidoiImageAdminRoutes from './pidoiImageAdmin.js';
 import { Router, Response } from 'express';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
 import { AdminService } from '../services/adminService.js';
@@ -380,6 +382,24 @@ router.put('/contents/:id/recovery-task-id', async (req: AuthRequest, res: Respo
     res.json(await VideoRecoveryService.supplementTaskId(Number(req.params.id), req.userId!, req.body?.taskId));
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '补录上游任务 ID 失败' });
+  }
+});
+
+router.get('/contents/:id/v6k-original-video', async (req: AuthRequest, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const { downloadV6kAdminOriginalVideo } = await import('../services/v6kAdminOriginalVideo.js');
+    const { body, contentType } = await downloadV6kAdminOriginalVideo(id, req.query.taskId);
+    res.set({
+      'Content-Type': contentType,
+      'Content-Disposition': `attachment; filename="original-video-${id}.mp4"`,
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    await pipeline(Readable.fromWeb(body as any), res);
+  } catch (err: any) {
+    if (res.headersSent || res.destroyed) { res.destroy(); return; }
+    res.status(err.status || 502).json({ error: err.status ? err.message : '原视频传输失败，请核对上游成品是否可下载' });
   }
 });
 

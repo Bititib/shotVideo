@@ -5,11 +5,12 @@ const API_BASE = '/api';
 interface RequestOptions extends RequestInit {
   skipAuth?: boolean;
   timeoutMs?: number;
+  responseType?: 'blob';
 }
 
 class ApiClient {
   async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
-    const { skipAuth, headers: customHeaders, timeoutMs, ...rest } = options;
+    const { skipAuth, headers: customHeaders, timeoutMs, responseType, ...rest } = options;
     const session = getAuthSession();
 
     const headers: Record<string, string> = {
@@ -54,7 +55,7 @@ class ApiClient {
       throw error;
     }
 
-    return await response.json();
+    return responseType === 'blob' ? await response.blob() as T : await response.json();
     } catch (error) {
       if (controller.signal.aborted && !rest.signal?.aborted) {
         throw new Error(rest.method === 'GET' ? '加载超时，请重试' : '请求超时，请先刷新核实操作结果，避免重复提交');

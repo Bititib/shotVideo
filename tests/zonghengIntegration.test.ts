@@ -62,7 +62,14 @@ vi.mock('../server/db/index.js', async () => {
   return { sqlite, db: drizzle(sqlite, { schema }) };
 });
 vi.mock('../server/config/env.js', () => ({ env: { NODE_ENV: 'test', JWT_SECRET: 'test', VIDEO_TASK_POLL_TIMEOUT_MS: 1, PORT: 9876 } }));
-vi.mock('../server/middleware/auth.js', () => ({ authMiddleware: (req: any, _res: any, next: any) => { req.userId = 1; next(); }, optionalAuthMiddleware: (_req: any, _res: any, next: any) => next() }));
+vi.mock('../server/middleware/auth.js', () => ({
+  authMiddleware: (req: any, _res: any, next: any) => {
+    req.userId = 1;
+    if (req.headers.authorization === 'Bearer test-admin') req.userRole = 'super_admin';
+    next();
+  },
+  optionalAuthMiddleware: (_req: any, _res: any, next: any) => next(),
+}));
 vi.mock('../server/middleware/tier.js', () => ({ tierMiddleware: () => (_req: any, _res: any, next: any) => next() }));
 vi.mock('../server/middleware/quota.js', () => ({ quotaMiddleware: (_req: any, _res: any, next: any) => next(), logUsage: vi.fn() }));
 vi.mock('../server/services/tokenService.js', () => ({ TokenService: {
@@ -112,8 +119,10 @@ beforeAll(async()=>{
   video=await import('../server/routes/video');
   const v1=await import('../server/routes/v1'), image=await import('../server/routes/imageGen');
   const adminSpecs=await import('../server/routes/modelSpecifications');
+  const admin=await import('../server/routes/admin');
   const app=express(); app.use(express.json({limit:'5mb'}));app.use('/api/video',video.default);app.use('/api/image-gen',image.default);app.use('/v1',v1.default);
   app.use('/test/admin/model-specifications',adminSpecs.default);
+  app.use('/api/admin',admin.default);
   app.use((e:any,_req:any,res:any,_next:any)=>res.status(e.status||500).json({error:e.message}));
   server=await new Promise<Server>(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});origin='http://127.0.0.1:'+(server.address() as AddressInfo).port;
   intervalSpy.mockRestore();
@@ -785,6 +794,61 @@ describe('new KK 2.5 product, fixed per-task price',()=>{
     upstream=async()=>Response.json({data:Object.values(KK_VIDEO_SOURCES).map(id=>({id}))});
     await saveKkVideoRouting(id,{primary,fallback,channelId:db.select().from(channels).get()!.id},getKkVideoRouting(id).version);
   }
+  it.each([false,true])('lets only administrators download a V6K original without resubmitting or changing funds (refunded=%s)',async refunded=>{
+    await install();
+    upstream=async(url,init)=>{
+      expect(url).toBe('https://www.v6k.top/v1/videos');
+      expect(init.method).toBe('POST');
+      return Response.json({error:{code:'service_unavailable',message:'受理检查暂时不可用'}},{status:503});
+    };
+    await(await post('/api/video/generate',{model:id,prompt:'Recover original video',seconds:30,resolution:'720p'})).text();
+    await vi.waitFor(()=>expect(JSON.parse(latest().metadata).reviewKind).toBe('submission'));
+    if(refunded) confirmReviewedVideoFailureAndRefund(latest().id,1,true);
+    const original=latest();
+    expect(original.status).toBe(refunded?'failed':'processing');
+    const reservation=sqlite.prepare('SELECT * FROM billing_reservations').all();
+    const originalBalance=balance();
+    expect(findVideoSubmissionReceipt(original.id)).toBeNull();
+    const taskId='task_original_kk';
+    const url='https://www.v6k.top/v1/videos/'+taskId;
+    const endpoint=origin+'/api/admin/contents/'+original.id+'/v6k-original-video?taskId='+taskId;
+    const headers={Authorization:'Bearer test-admin'};
+    const calls:string[]=[];
+    let returnedModel='稳定极速seadnco2.5-720', returnedStatus='completed';
+    upstream=async(requestUrl,init)=>{
+      expect(init.method).toBe('GET');
+      expect(init.headers.Authorization).toBe('Bearer test-key');
+      calls.push(requestUrl);
+      if(requestUrl===url) return Response.json({id:taskId,model:returnedModel,status:returnedStatus});
+      expect(requestUrl).toBe(url+'/content');
+      return new Response('original video bytes',{headers:{'Content-Type':'video/mp4'}});
+    };
+
+    expect((await nativeFetch(endpoint)).status).toBe(403);
+    expect(calls).toEqual([]);
+    const wrongModel=await nativeFetch(endpoint,{headers});
+    expect(wrongModel.status).toBe(409);
+    expect(await wrongModel.text()).toContain('上游模型与原订单不一致');
+    returnedModel=id;
+    returnedStatus='in_progress';
+    const processing=await nativeFetch(endpoint,{headers});
+    expect(processing.status).toBe(409);
+    expect(await processing.text()).toContain('in_progress');
+    returnedStatus='completed';
+    const download=await nativeFetch(endpoint,{headers});
+    expect(download.status).toBe(200);
+    expect(download.headers.get('content-type')).toBe('video/mp4');
+    expect(await download.text()).toBe('original video bytes');
+    sqlite.prepare('INSERT INTO video_submission_receipts(content_id,upstream_task_id) VALUES(?,?)').run(original.id+1000,taskId);
+    const conflict=await nativeFetch(endpoint,{headers});
+    expect(conflict.status).toBe(409);
+    expect(await conflict.text()).toContain('已有回执冲突');
+    expect(calls).toEqual([url,url,url,url+'/content']);
+    expect(latest()).toEqual(original);
+    expect(findVideoSubmissionReceipt(original.id)).toBeNull();
+    expect(sqlite.prepare('SELECT * FROM billing_reservations').all()).toEqual(reservation);
+    expect(balance()).toBe(originalBalance);
+  });
   it('saves the administrator switch atomically, preserves price/switches and rejects stale or unauthorized configuration',async()=>{
     await install(); const before=db.select().from(modelPricing).all();
     const settings=await(await nativeFetch(origin+'/test/admin/model-specifications/'+id+'/kk-routing')).json() as any;

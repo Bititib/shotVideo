@@ -10,6 +10,7 @@ vi.mock('../client/src/api/admin', () => ({ adminApi: {
   saveContentRecoveryTaskId: vi.fn(),
   withdrawContentRecoveryTaskId: vi.fn(),
   recoverContentUpstream: vi.fn(),
+  downloadContentOriginalV6k: vi.fn(),
 } }));
 
 import { adminApi } from '../client/src/api/admin';
@@ -95,6 +96,26 @@ it('does not start recovery when candidate verification fails and leaves the inp
   await waitFor(()=>expect(window.alert).toHaveBeenCalledWith('上游查询 HTTP 404'));
   expect(adminApi.recoverContentUpstream).not.toHaveBeenCalled();
   expect(within(dialog).getByLabelText('补录上游任务 ID')).toBeTruthy();
+});
+
+it.each(['failed', 'processing'])('uses only the read-only V6K download for a missing ID on a %s specification order', async status => {
+  const order = { ...item, status, metadata: JSON.stringify({
+    managedSpecification: true, zonghengProtocol: 'v6k', channelId: 21,
+    requiresReview: status === 'processing', reviewKind: 'submission',
+  }) };
+  vi.mocked(adminApi.getContents).mockResolvedValue({ items: [order], total: 1 } as any);
+  vi.mocked(adminApi.getContent).mockResolvedValue(order as any);
+  vi.mocked(adminApi.downloadContentOriginalV6k).mockRejectedValueOnce(new Error('上游任务状态为 in_progress'));
+  render(<MemoryRouter><ContentsPage /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: '查看本地记录 13360 详情' }));
+  const dialog = await screen.findByRole('dialog');
+  expect(within(dialog).queryByRole('button', { name: '补录并重新获取' })).toBeNull();
+  fireEvent.change(within(dialog).getByLabelText('V6K 原任务 ID'), { target: { value: 'task_original' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: '只下载原视频' }));
+  await waitFor(() => expect(window.alert).toHaveBeenCalledWith('上游任务状态为 in_progress'));
+  expect(adminApi.downloadContentOriginalV6k).toHaveBeenCalledWith(13360, 'task_original');
+  expect(adminApi.saveContentRecoveryTaskId).not.toHaveBeenCalled();
+  expect(adminApi.recoverContentUpstream).not.toHaveBeenCalled();
 });
 
 it.each(['wrong-id','未取得上游任务 ID'])('withdraws an old unverified manual ID %s, then exposes supplement and confirmed refund without charging', async taskId => {

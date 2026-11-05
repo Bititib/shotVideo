@@ -1,6 +1,6 @@
 import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
 import { isTaskIdPlaceholder } from '../../../../shared/upstreamTaskId';
-import { canWithdrawTaskSupplement } from '../../../../shared/videoTaskSupplement';
+import { canDownloadV6kOriginal, canWithdrawTaskSupplement } from '../../../../shared/videoTaskSupplement';
 import { videoReviewKind, videoReviewLabel } from '../../../../shared/videoReview';
 import React, { useState, useEffect, useCallback } from 'react';
 import { PidoiImageReviewActions } from '../../components/PidoiImageReviewActions';
@@ -118,6 +118,7 @@ export default function ContentsPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [recoveringId, setRecoveringId] = useState<number | null>(null);
   const [recoveryTaskIdInput, setRecoveryTaskIdInput] = useState('');
+  const [downloadingOriginalId, setDownloadingOriginalId] = useState<number | null>(null);
   const [confirmingUnacceptedId, setConfirmingUnacceptedId] = useState<number | null>(null);
   const [bulkPreviewing, setBulkPreviewing] = useState(false);
   const [bulkRecovering, setBulkRecovering] = useState(false);
@@ -224,6 +225,23 @@ export default function ContentsPage() {
       window.alert(result.alreadyResolved ? '该记录已处理，未重复退款' : `已标记失败，已退回 ¥${Number(result.refundedAmount).toFixed(2)}`);
     } catch (error: any) { window.alert(error.message || '标记失败并退款失败'); }
     finally { setConfirmingUnacceptedId(null); }
+  };
+
+  const handleDownloadOriginalV6k = async (item: ContentItem, taskId: string) => {
+    setDownloadingOriginalId(item.id);
+    try {
+      const blob = await adminApi.downloadContentOriginalV6k(item.id, taskId);
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = href;
+      link.download = `original-video-${item.id}.mp4`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(href), 1000);
+    } catch (error: any) {
+      window.alert(error.message || '原视频下载失败');
+    } finally {
+      setDownloadingOriginalId(null);
+    }
   };
 
   const handleRecoverUpstream = async (item: ContentItem, supplementedTaskId = '') => {
@@ -430,6 +448,9 @@ export default function ContentsPage() {
     meta.resolution || '',
     meta.aspect_ratio || meta.ratio || '',
   ].filter(Boolean).join(' · ') || '—';
+
+  const previewMeta = previewItem ? parseMeta(previewItem.metadata) : {};
+  const showV6kOriginalDownload = previewItem && canDownloadV6kOriginal(previewItem, previewMeta);
 
   return (
     <div className="p-6 space-y-6">
@@ -876,7 +897,24 @@ export default function ContentsPage() {
                           {fallback.taskId && <div className="break-all font-mono">{fallback.taskId}</div>}
                         </div>)}</div>;
                       })()}
-                      {previewItem.type === 'video'
+                      {showV6kOriginalDownload && !getUpstreamTaskId(previewMeta) && (
+                        <div className="mt-3 space-y-2 rounded-lg border border-indigo-400/20 bg-indigo-500/[0.06] p-3">
+                          <div className="font-medium text-indigo-300">只读取回 V6K 原视频</div>
+                          <p className="text-[11px] leading-relaxed text-zinc-400">请填写 V6K 确认属于原订单的任务编号。只下载已完成的成品，不绑定编号或更改账务。</p>
+                          <input aria-label="V6K 原任务 ID" placeholder="task_…"
+                            value={recoveryTaskIdInput}
+                            onChange={event => setRecoveryTaskIdInput(event.target.value)}
+                            disabled={downloadingOriginalId !== null}
+                            className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm" />
+                          <button type="button"
+                            disabled={downloadingOriginalId !== null || !/^task_[A-Za-z0-9_-]{1,250}$/.test(recoveryTaskIdInput.trim())}
+                            onClick={() => { void handleDownloadOriginalV6k(previewItem, recoveryTaskIdInput.trim()); }}
+                            className="rounded-lg border border-indigo-400/25 bg-indigo-500/15 px-3 py-2 text-xs text-indigo-300 disabled:opacity-40">
+                            {downloadingOriginalId === previewItem.id ? '正在查询和下载…' : '只下载原视频'}
+                          </button>
+                        </div>
+                      )}
+                      {!showV6kOriginalDownload && previewItem.type === 'video'
                         && ['failed', 'error', 'review'].includes(previewItem.status)
                         && !getUpstreamTaskId(parseMeta(previewItem.metadata)) && (
                           <div className="mt-3 space-y-2 rounded-lg border border-indigo-400/20 bg-indigo-500/[0.06] p-3">
