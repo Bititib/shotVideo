@@ -124,6 +124,36 @@ describe('智赢渠道目录', () => {
     expect(ChannelService.findChannelsForModel('manual')).toEqual([]);
   });
 
+  it('writes the confirmed line even if the other line has an inconsistent catalog entry, and restores it on a later sync', async () => {
+    const inconsistent = catalog();
+    inconsistent.data[1].status = 'unavailable';
+    fetchPage.mockImplementationOnce(async () => Response.json(inconsistent, { headers: { 'x-request-id': 'req-line2' } }));
+
+    const partial = await ChannelService.syncModels(channelId);
+    expect(partial).toMatchObject({ count: 1, added: 1, models: [line1] });
+    expect(partial.warnings?.join(' ')).toContain(`${line2} data 返回 media_type="video"、status="unavailable"`);
+    expect(partial.warnings?.join(' ')).toContain('req-line2');
+    expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping)).toEqual({ [line1]: line1 });
+    expect(getModelSpecification(line2)).toBeUndefined();
+
+    const complete = catalog();
+    complete.data.push({ ...complete.data[1] });
+    fetchPage.mockImplementationOnce(async () => Response.json(complete));
+    expect(await ChannelService.syncModels(channelId)).toEqual({ count: 2, added: 1, models: [line1, line2] });
+    expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping)).toEqual({ [line1]: line1, [line2]: line2 });
+    expect(getModelSpecification(line2)?.routes[0].upstreamModel).toBe(line2);
+  });
+
+  it('blocks only the line present in both lists and accepts a documented video in data with no explicit status', async () => {
+    fetchPage.mockImplementationOnce(async () => Response.json({
+      data: [{ id: line1, media_type: 'video' }, ...catalog([line2]).data],
+      unavailable: [{ id: line2 }],
+    }));
+    const result = await ChannelService.syncModels(channelId);
+    expect(result.models).toEqual([line1]);
+    expect(result.warnings?.join(' ')).toContain(`${line2} 同时出现在 data 和 unavailable`);
+  });
+
   it('does not take over the public ID for a historical prefixed model', async () => {
     sqlite.prepare("INSERT INTO models(provider,model_id,display_name,capabilities) VALUES('funai',?,?,'[\"video\"]')")
       .run('funai-' + line2, '既有产品');

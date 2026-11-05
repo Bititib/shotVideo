@@ -36,6 +36,19 @@ const open = async () => {
 };
 
 describe('channel details and model sync workflow', () => {
+  it('shows the managed Zhiying upstream mappings and distinguishes saved links from pending ones', async () => {
+    const id = 'sd-2.5-fullblood';
+    vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, name: 'Vx-智赢', type: 'zhiying',
+      baseUrl: 'https://zhiyingai.xyz', supportedModels: [id], modelMapping: { [id]: id } }]);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: '查看Vx-智赢详情' }));
+    fireEvent.click(await screen.findByRole('button', { name: '编辑配置' }));
+    const mappings = screen.getByRole('region', { name: '智赢模型映射' });
+    expect(within(mappings).getByRole('row', { name: 'Lx-Seedance2.5-1 sd-2.5-fullblood 已关联' })).toBeVisible();
+    expect(within(mappings).getByRole('row', { name: 'Lx-Seedance2.5-2 sd-2.5-fullblood-line2 待同步' })).toBeVisible();
+    expect(screen.queryByPlaceholderText(/grok-imagine-video/)).toBeNull();
+  });
+
   it('opens HM synced nova pricing with independent resolution inputs and preserves blank fallback values', async () => {
     const id = 'sd2.5-301010';
     vi.mocked(adminApi.getChannels).mockImplementation(async () => [{ ...base, name: 'HM Studio', type: 'hmstudio',

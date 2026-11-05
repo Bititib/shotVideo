@@ -12,7 +12,7 @@ import { transportDiagnostic, upstreamDiagnostic } from './upstreamDiagnostic.js
 type Channel = typeof channels.$inferSelect;
 const conflict = (message: string) => Object.assign(new Error(message), { status: 409 });
 
-export async function fetchZhiyingVideoModels(channel: Pick<Channel, 'baseUrl' | 'apiKey' | 'timeout'>): Promise<ZhiyingVideoModel[]> {
+export async function fetchZhiyingVideoModels(channel: Pick<Channel, 'baseUrl' | 'apiKey' | 'timeout'>) {
   const url = zhiyingApiBase(channel.baseUrl) + '/v1/models';
   let response: Response;
   try {
@@ -30,24 +30,33 @@ export async function fetchZhiyingVideoModels(channel: Pick<Channel, 'baseUrl' |
       detail: typeof error?.type === 'string' ? error.type : undefined }, error?.request_id);
   }
   if (!Array.isArray(raw?.data)) throw failure('响应缺少 data 模型列表，原配置未修改');
+  if (raw.unavailable !== undefined && !Array.isArray(raw.unavailable)) {
+    throw failure('unavailable 不是列表，原配置未修改');
+  }
   const available = new Set<ZhiyingVideoModel>();
+  const blocked = new Map<ZhiyingVideoModel, string>();
   for (const row of raw.data) {
     if (typeof row?.id !== 'string' || !row.id.trim()) throw failure('模型目录含无效 ID，原配置未修改');
     if (!isZhiyingVideoModel(row.id)) continue;
-    if (row.media_type !== 'video' || row.status !== 'available' || available.has(row.id)) {
-      throw failure(`data 中 ${row.id} 的类型、状态或唯一性与可用视频目录不符，原配置未修改`);
+    // The provider defines data as the available list. An explicit non-available
+    // status or a mismatched media type overrides membership in that list.
+    if (row.media_type !== 'video' || (row.status !== undefined && row.status !== 'available')) {
+      const field = (value: unknown) => typeof value === 'string' ? JSON.stringify(value.slice(0, 80)) : '缺失或格式异常';
+      blocked.set(row.id, `data 返回 media_type=${field(row.media_type)}、status=${field(row.status)}`);
+      continue;
     }
     available.add(row.id);
   }
-  if (raw.unavailable !== undefined && (!Array.isArray(raw.unavailable)
-    || raw.unavailable.some((item: { id?: unknown } | null) => isZhiyingVideoModel(item?.id) && available.has(item.id)))) {
-    throw failure('不可用列表与模型目录矛盾，原配置未修改');
+  for (const row of raw.unavailable ?? []) {
+    if (!isZhiyingVideoModel(row?.id)) continue;
+    blocked.set(row.id, available.has(row.id) ? '同时出现在 data 和 unavailable' : '出现在 unavailable 列表');
   }
-  return ZHIYING_VIDEO_MODELS.filter(id => available.has(id));
+  const warnings = [...blocked].map(([id, reason]) => failure(`${id} ${reason}，暂不接收该线路的新任务`).message);
+  return { available: ZHIYING_VIDEO_MODELS.filter(id => available.has(id) && !blocked.has(id)), warnings };
 }
 
 export async function syncZhiyingModels(channel: Channel) {
-  const available = await fetchZhiyingVideoModels(channel);
+  const { available, warnings } = await fetchZhiyingVideoModels(channel);
   return sqlite.transaction(() => {
     const current = db.select().from(channels).where(eq(channels.id, channel.id)).get();
     if (!current || current.type !== ZHIYING_CHANNEL_TYPE || current.apiKey !== channel.apiKey || current.baseUrl !== channel.baseUrl
@@ -89,6 +98,6 @@ export async function syncZhiyingModels(channel: Channel) {
     const supported = [...new Set([...previous.filter(id => !isZhiyingVideoModel(id)), ...available])];
     db.update(channels).set({ supportedModels: JSON.stringify(supported), modelMapping: JSON.stringify(mapping),
       updatedAt: new Date().toISOString() }).where(eq(channels.id, current.id)).run();
-    return { count: available.length, added, models: available };
+    return { count: available.length, added, models: available, ...(warnings.length ? { warnings } : {}) };
   })();
 }

@@ -578,9 +578,9 @@ export class ChannelService {
         let catalogSummary = '';
         if (channel.type === ZHIYING_CHANNEL_TYPE) {
           const { fetchZhiyingVideoModels } = await import('./zhiyingCatalogService.js');
-          const ids = await fetchZhiyingVideoModels(channel);
-          if (!ids.length) throw new Error('智赢模型目录已返回，此 Key 暂无已接入的视频型号');
-          catalogSummary = '可用型号：' + ids.join('、');
+          const { available, warnings } = await fetchZhiyingVideoModels(channel);
+          if (!available.length) throw new Error(warnings.join(' ') || '智赢模型目录已返回，此 Key 暂无已接入的视频型号');
+          catalogSummary = '可用型号：' + available.join('、') + (warnings.length ? '。' + warnings.join(' ') : '');
         } else if (isMegabyChannel(channel)) {
           if (!(await fetchMegabyVideoModels(channel)).length) throw new Error('该 Key 未开放 Megaby 视频模型，请检查模型授权');
         } else if (isMjChannel(channel)) {

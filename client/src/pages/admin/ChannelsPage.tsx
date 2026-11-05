@@ -188,7 +188,7 @@ export default function ChannelsPage() {
 
       const data: any = {
         name: edit.name, type: edit.type, baseUrl: edit.baseUrl,
-        modelMapping, supportedModels,
+        ...(edit.type === ZHIYING_CHANNEL_TYPE ? {} : { modelMapping, supportedModels }),
         priority: edit.priority, weight: edit.weight,
         maxRetries: edit.maxRetries, timeout: edit.timeout,
       };
@@ -662,6 +662,21 @@ export default function ChannelsPage() {
                   </div>
                 </section>
               )}
+              {edit.type === ZHIYING_CHANNEL_TYPE ? (
+                <section className="space-y-2 text-xs leading-5 text-zinc-400" aria-label="智赢模型映射">
+                  <p>模型映射由「同步模型」写入。下表列出两条专线的对应关系。</p>
+                  <table className="w-full text-left">
+                    <thead><tr><th>前端名称</th><th>API 调用 ID / 智赢上游 ID</th><th>映射状态</th></tr></thead>
+                    <tbody>{ZHIYING_VIDEO_MODELS.map(id => {
+                      const mapped = edit.mappingText.split('\n').includes(`${id}:${id}`);
+                      return <tr key={id}>
+                        <td>{zhiyingVideoDisplayName(id)}</td><td><code>{id}</code></td>
+                        <td>{!mapped ? '待同步' : edit.modelsText.split('\n').includes(id) ? '已关联' : '暂不可用'}</td>
+                      </tr>;
+                    })}</tbody>
+                  </table>
+                </section>
+              ) : <>
               <div>
                 <label className="block text-xs text-zinc-400 mb-1.5">支持的模型名（每行一个，对外暴露的名字）</label>
                 <textarea value={edit.modelsText} onChange={e => setEdit({ ...edit, modelsText: e.target.value })} rows={3}
@@ -674,6 +689,7 @@ export default function ChannelsPage() {
                   placeholder="grok-4:grok-4.20-0309-super\ngrok-video:grok-imagine-video"
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono resize-none" />
               </div>
+              </>}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div><label className="block text-xs text-zinc-400 mb-1.5">优先级</label><input type="number" value={edit.priority} onChange={e => setEdit({ ...edit, priority: parseInt(e.target.value) || 0 })} className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none" /></div>
                 <div><label className="block text-xs text-zinc-400 mb-1.5">权重</label><input type="number" value={edit.weight} onChange={e => setEdit({ ...edit, weight: parseInt(e.target.value) || 1 })} className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none" /></div>
