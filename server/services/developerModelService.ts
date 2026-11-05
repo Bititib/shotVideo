@@ -23,15 +23,21 @@ export function getDeveloperModels(userId: number, tokenId: number): DeveloperMo
     { id: token.id, name: token.name || 'API Key', maskedKey: owned.tokenKey.slice(0, 6) + '****' + owned.tokenKey.slice(-4) });
 }
 
-/** Anonymous discovery exposes public metadata and standard prices, never personal or upstream data. */
+/** Anonymous discovery uses structured metadata because free-text descriptions may quote prices. */
 export function getPublicDeveloperModels(): DeveloperModelCatalog {
+  return buildDeveloperCatalog(getAccessibleModels({ allowedModels: [], userId: null }), null, null, false);
+}
+
+export function getStandardDeveloperModels(): DeveloperModelCatalog {
   return buildDeveloperCatalog(getAccessibleModels({ allowedModels: [], userId: null }), null, null);
 }
 
-function buildDeveloperCatalog(models: ReturnType<typeof getAccessibleModels>, userId: number | null, token: DeveloperModelCatalog['token']): DeveloperModelCatalog {
+function buildDeveloperCatalog(models: ReturnType<typeof getAccessibleModels>, userId: number | null, token: DeveloperModelCatalog['token'], includePricing = true): DeveloperModelCatalog {
   const activeChannels = ChannelService.getActiveChannels();
   const hmOverflow = hasHmStudioOverflowChannel(activeChannels);
-  const prices = new Map(PricingService.getPublicPricingForModels(models.map(model => model.modelId), userId).map(price => [price.model, price]));
+  const prices = new Map(includePricing
+    ? PricingService.getPublicPricingForModels(models.map(model => model.modelId), userId).map(price => [price.model, price] as const)
+    : []);
   return {
     token,
     checkedAt: new Date().toISOString(),
@@ -58,7 +64,8 @@ function buildDeveloperCatalog(models: ReturnType<typeof getAccessibleModels>, u
       const recent = kinds.includes('video') ? db.select({ id: contents.id, status: contents.status, resultUrl: contents.resultUrl, createdAt: contents.createdAt })
         .from(contents).where(eq(contents.modelId, model.modelId)).orderBy(desc(contents.id)).limit(20).all() : [];
       return {
-        ...publicApiModelMetadata(model, activeChannels.map(channel => channel.name || '')), canonicalId: callableModelId(model), kinds, endpoints, limits,
+        ...publicApiModelMetadata(includePricing ? model : { ...model, description: null }, activeChannels.map(channel => channel.name || '')),
+        canonicalId: callableModelId(model), kinds, endpoints, limits,
         // Explicit allowlist: never serialize upstream costs, routes or credentials.
         pricing: price ? { currency: price.currency, billing_type: price.billing_type, unit: price.unit,
           unit_price: price.unit_price, output_unit_price: price.output_unit_price, resolution_prices: price.resolution_prices } : null,

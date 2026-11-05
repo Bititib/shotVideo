@@ -15,7 +15,7 @@ const endpointLabels: Record<DeveloperEndpoint, string> = {
   '/v1/chat/completions': '对话补全', '/v1/images/generations': '图片生成', '/v1/images/edits': '图片编辑', '/v1/videos': '视频生成',
 };
 
-function ModelDetails({ model, onClose, onCopy, notice }: { model: DeveloperModel; onClose: () => void; onCopy: (value: string) => void; notice: string }) {
+function ModelDetails({ model, onClose, onCopy, notice, onLogin }: { model: DeveloperModel; onClose: () => void; onCopy: (value: string) => void; notice: string; onLogin?: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [endpoint, setEndpoint] = useState<DeveloperEndpoint>(model.endpoints[0]);
   const [language, setLanguage] = useState<'curl' | 'python'>('curl');
@@ -30,8 +30,10 @@ function ModelDetails({ model, onClose, onCopy, notice }: { model: DeveloperMode
       <div className="api-model-detail-body">
         <p className="api-model-muted">{model.description || '查看模型规格和调用方式。'}</p>
         <div className="api-model-id"><code>{model.id}</code><button className="api-model-icon" onClick={() => onCopy(model.id)} aria-label="复制调用 ID"><Copy size={16} /></button></div>
-        <section><h3>价格</h3><p>{formatModelPrice(model.pricing)}</p>
+        <section><h3>价格</h3>{onLogin ? <button className="api-model-link" onClick={onLogin}>登录后查看价格</button> : <>
+          <p>{formatModelPrice(model.pricing)}</p>
           {model.pricing && Object.keys(model.pricing.resolution_prices).length > 0 && <dl className="api-model-specs">{Object.entries(model.pricing.resolution_prices).map(([resolution, rate]) => <div key={resolution}><dt>{resolution}</dt><dd>{formatModelPrice({ ...model.pricing!, unit_price: rate })}</dd></div>)}</dl>}
+        </>}
         </section>
         <section><h3>输入与输出规格</h3>{limits ? <dl className="api-model-specs">
           <div><dt>分辨率</dt><dd>{limits.resolutions.join(' / ') || '以接口文档为准'}</dd></div>
@@ -60,7 +62,7 @@ export default function ApiModelsPage({ embedded = false }: { embedded?: boolean
   const { isAuthenticated, openLoginModal } = useAuthStore();
   const [keys, setKeys] = useState<KeyOption[]>([]);
   const [tokenId, setTokenId] = useState('');
-  const [catalog, setCatalog] = useState<DeveloperModelCatalog | null>(null);
+  const [catalogResult, setCatalogResult] = useState<{ data: DeveloperModelCatalog; authenticated: boolean } | null>(null);
   const [keysLoading, setKeysLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [keysError, setKeysError] = useState('');
@@ -68,7 +70,7 @@ export default function ApiModelsPage({ embedded = false }: { embedded?: boolean
   const [revision, setRevision] = useState(0);
   const [search, setSearch] = useState('');
   const [kind, setKind] = useState('all');
-  const [selected, setSelected] = useState<DeveloperModel | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
   const keyCatalogReady = !tokenId || isAuthenticated && !keysLoading && !keysError;
   const noticeTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -96,11 +98,12 @@ export default function ApiModelsPage({ embedded = false }: { embedded?: boolean
   }, [revision, isAuthenticated]);
   useEffect(() => {
     const controller = new AbortController();
-    setCatalog(null); setSelected(null); setError('');
+    setCatalogResult(null); setSelectedId(null); setError('');
     if (!keyCatalogReady) { setLoading(false); return; }
     setLoading(true);
-    const request = tokenId ? developerApi.getModels(Number(tokenId), controller.signal) : developerApi.getPublicModels(controller.signal);
-    request.then(result => { if (!controller.signal.aborted) setCatalog(result); })
+    const request = tokenId ? developerApi.getModels(Number(tokenId), controller.signal)
+      : isAuthenticated ? developerApi.getStandardModels(controller.signal) : developerApi.getPublicModels(controller.signal);
+    request.then(data => { if (!controller.signal.aborted) setCatalogResult({ data, authenticated: isAuthenticated }); })
       .catch(err => { if (!controller.signal.aborted) setError(err.message || '模型列表加载失败'); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
@@ -110,18 +113,21 @@ export default function ApiModelsPage({ embedded = false }: { embedded?: boolean
     catch { setNotice('复制失败，请手动选择并复制'); }
     clearTimeout(noticeTimer.current); noticeTimer.current = setTimeout(() => setNotice(''), 2500);
   }
+  const catalog = catalogResult?.authenticated === isAuthenticated ? catalogResult.data : null;
   const activeCatalog = tokenId ? isAuthenticated && catalog?.token?.id === Number(tokenId) && !keysLoading ? catalog : null : catalog?.token === null ? catalog : null;
   const items = activeCatalog?.items || [];
+  const selected = items.find(model => model.canonicalId === selectedId);
+  const loginForPrices = () => { setSelectedId(null); openLoginModal(); };
   const query = search.trim().toLowerCase();
   const filtered = items.filter(model => (kind === 'all' || model.kinds.includes(kind as DeveloperModelKind))
     && `${model.name} ${model.id} ${model.canonicalId} ${model.description}`.toLowerCase().includes(query));
   const busy = Boolean(tokenId && keysLoading) || loading;
   return <div className="api-model-page">
-    {!embedded && <header className="api-model-heading"><div><p className="api-model-eyebrow">API MODEL CATALOG</p><h1>模型列表</h1><p className="api-model-muted">支持 API 调用的公开模型、标准价格、规格与接入示例，无需登录或 API Key 即可查看。</p></div><Link className="api-model-button" to="/app/docs?tab=docs"><FileText size={16} />接口文档<ArrowRight size={14} /></Link></header>}
+    {!embedded && <header className="api-model-heading"><div><p className="api-model-eyebrow">API MODEL CATALOG</p><h1>模型列表</h1><p className="api-model-muted">浏览支持 API 调用的模型、规格和接入示例。登录后可查看标准价格。</p></div><Link className="api-model-button" to="/app/docs?tab=docs"><FileText size={16} />接口文档<ArrowRight size={14} /></Link></header>}
     <div className={`api-model-connection ${embedded ? 'is-embedded' : ''}`}>{!embedded && <div><span className="api-model-eyebrow">BASE URL</span><div className="api-model-base"><code>{window.location.origin}/v1</code><button className="api-model-icon" aria-label="复制 Base URL" onClick={() => copy(`${window.location.origin}/v1`)}><Copy size={15} /></button></div></div>}
-      {isAuthenticated ? <label className="api-model-key"><span><KeyRound size={14} />当前 API Key</span><select aria-label="当前 API Key" value={tokenId} disabled={keysLoading} onChange={event => { setSelected(null); setTokenId(event.target.value); }}>
+      {isAuthenticated ? <label className="api-model-key"><span><KeyRound size={14} />当前 API Key</span><select aria-label="当前 API Key" value={tokenId} disabled={keysLoading} onChange={event => { setSelectedId(null); setTokenId(event.target.value); }}>
         <option value="">公开模型（无需 API Key）</option>{keys.map(key => <option key={key.id} value={key.id}>{key.name || 'API Key'} · {key.tokenKeyMasked}{key.status === 0 ? '（已停用）' : key.expiresAt && new Date(key.expiresAt) < new Date() ? '（已过期）' : ''}</option>)}
-      </select></label> : <p className="api-model-muted">公开模型与标准价格 · 无需登录或 API Key</p>}<button className="api-model-button" disabled={busy} onClick={() => setRevision(value => value + 1)}><RefreshCw size={15} className={busy ? 'animate-spin' : ''} />刷新</button>
+      </select></label> : <button className="api-model-button" onClick={loginForPrices}><KeyRound size={14} />登录后查看价格</button>}<button className="api-model-button" disabled={busy} onClick={() => setRevision(value => value + 1)}><RefreshCw size={15} className={busy ? 'animate-spin' : ''} />刷新</button>
     </div>
     <div className="api-model-toolbar"><div className="api-model-filters" aria-label="模型类型">{(['all', 'text', 'image', 'video', 'tts', 'other'] as const).filter(value => value === 'all' || items.some(model => model.kinds.includes(value))).map(value => <button key={value} aria-pressed={kind === value} onClick={() => setKind(value)}>{value === 'all' ? '全部模型' : labels[value]}<span>{value === 'all' ? items.length : items.filter(model => model.kinds.includes(value)).length}</span></button>)}</div>
       <label className="api-model-search"><Search size={16} /><input aria-label="搜索模型" placeholder="搜索模型名称或 ID" value={search} onChange={event => setSearch(event.target.value)} /></label></div>
@@ -132,14 +138,14 @@ export default function ApiModelsPage({ embedded = false }: { embedded?: boolean
       <tbody>{filtered.map(model => <tr key={model.canonicalId}>
         <td className="api-model-name-cell"><h2>{model.name}</h2><div className="api-model-row-id"><code>{model.id}</code><button className="api-model-icon" aria-label={`复制 ${model.name} 的调用 ID`} onClick={() => copy(model.id)}><Copy size={14} /></button></div>{model.description && <p className="api-model-row-description">{model.description}</p>}</td>
         <td className="api-model-type-cell"><div className="api-model-badges">{model.kinds.map(value => <span key={value}>{labels[value]}</span>)}</div></td>
-        <td className="api-model-price-cell" data-label="调用价格"><strong>{formatModelPrice(model.pricing)}</strong>{model.pricing && Object.keys(model.pricing.resolution_prices).length > 0 && <small>分辨率价格见详情</small>}</td>
+        <td className="api-model-price-cell" data-label="调用价格">{isAuthenticated ? <><strong>{formatModelPrice(model.pricing)}</strong>{model.pricing && Object.keys(model.pricing.resolution_prices).length > 0 && <small>分辨率价格见详情</small>}</> : <span className="api-model-muted">登录后可见</span>}</td>
         <td className="api-model-state-cell"><span className={`api-model-status ${model.available ? 'is-available' : ''}`}><i />{model.available ? '可用' : model.endpoints.length ? '暂不可用' : 'API 暂未开放'}</span>{model.health && <small>{healthLabels[model.health.state]}</small>}</td>
-        <td className="api-model-action-cell"><button className="api-model-link" onClick={() => setSelected(model)}>详情与示例<ArrowRight size={15} /></button></td>
+        <td className="api-model-action-cell"><button className="api-model-link" onClick={() => setSelectedId(model.canonicalId)}>详情与示例<ArrowRight size={15} /></button></td>
       </tr>)}</tbody>
     </table></div>}
-    {activeCatalog && !busy && <footer className="api-model-footer"><span>展示 {filtered.length} / {items.length} 个模型 · {tokenId ? '按当前 Key 权限筛选' : '公开目录与标准价格'}</span><span>更新于 {new Date(activeCatalog.checkedAt).toLocaleTimeString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })}（北京时间）</span></footer>}
+    {activeCatalog && !busy && <footer className="api-model-footer"><span>展示 {filtered.length} / {items.length} 个模型 · {tokenId ? '按当前 Key 权限筛选' : '公开模型目录'}</span><span>更新于 {new Date(activeCatalog.checkedAt).toLocaleTimeString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' })}（北京时间）</span></footer>}
     {!isAuthenticated ? <button className="api-model-link" onClick={() => openLoginModal()}>登录 / 注册后创建 API Key</button> : <Link className="api-model-link" to="/app/profile">管理 API Key</Link>}
     <div className="api-model-notice" role="status" aria-live="polite">{notice && <span><Check size={15} />{notice}</span>}</div>
-    {selected && <ModelDetails model={selected} onClose={() => setSelected(null)} onCopy={copy} notice={notice} />}
+    {selected && <ModelDetails model={selected} onClose={() => setSelectedId(null)} onCopy={copy} notice={notice} onLogin={isAuthenticated ? undefined : loginForPrices} />}
   </div>;
 }

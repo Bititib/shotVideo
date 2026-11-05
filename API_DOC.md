@@ -44,9 +44,9 @@ X-API-Key: sk-xxxxxxxxxxxxxxxx
 
 ## 2. 获取可用模型
 
-网站内的 **开发者中心** 位于 `/app/docs`，可切换“接口文档”和“API 模型”。模型列表位于 `/app/docs?tab=models`，可选择自己的 API Key，查看对应模型、价格、规格及调用示例；旧地址 `/app/models` 会跳转到此标签。示例使用占位密钥，复制后需要自行替换。
+网站的模型列表位于 `/app/models`，也可从 `/app/docs?tab=models` 打开。访客可以查看公开型号、规格和调用示例。登录后即可查看标准价格，也可以选择自己的 API Key 查看其授权模型和个人价格。示例使用占位密钥，复制后需要自行替换。
 
-该页面使用 `GET /api/developer/models?tokenId={id}` 聚合数据，携带网站登录 JWT，并校验 Key 归属、启用状态、有效期和额度。响应只包含公开模型信息与脱敏 Key，不包含完整密钥、上游渠道或成本。外部客户端继续使用下方 `/v1/models` 与 `/v1/pricing` 接口。
+访客目录使用 `GET /api/developer/models/public`。`GET /api/developer/models/standard` 验证网站登录会话后返回标准价格。`GET /api/developer/models?tokenId={id}` 还校验 Key 归属、启用状态、有效期和额度，返回授权目录和脱敏 Key。外部客户端凭 API Key 使用下方 `/v1/models` 与 `/v1/pricing` 接口。
 
 ```http
 GET /v1/models

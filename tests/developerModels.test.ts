@@ -50,23 +50,43 @@ afterAll(async () => {
 });
 
 describe('developer model catalog authorization and public data', () => {
-  it('serves anonymous public metadata and standard pricing without a website session or API Key', async () => {
+  it('serves anonymous model specs and endpoints without returning prices', async () => {
     TokenService.updateToken(keyId, { allowedModels: ['catalog-chat'] });
-    const response = await fetch(`${baseUrl}/api/developer/models/public`);
+    db.update(models).set({ description: '原生 4K，每张 ¥0.20' }).where(eq(models.modelId, 'gpt-image-2')).run();
+    const response = await fetch(`${baseUrl}/api/developer/models/public?includePricing=true`);
     expect(response.status).toBe(200);
     const catalog = await response.json() as any;
     expect(catalog.token).toBeNull();
-    expect(catalog.items.find((m:any)=>m.id==='gpt-image-2')).toMatchObject({pricing:{unit_price:.1,resolution_prices:{'4K':.2}}});
+    expect(catalog.items.find((m: any) => m.id === 'gpt-image-2')).toMatchObject({
+      endpoints: expect.arrayContaining(['/v1/images/generations']), limits: expect.any(Object), pricing: null, description: '',
+    });
+    expect(catalog.items.every((m: any) => m.pricing === null && m.description === '')).toBe(true);
     for(const secret of ['private-model-secret','private-channel-secret','tokenKey','upstreamModel','channelId','resolutionCosts'])expect(JSON.stringify(catalog)).not.toContain(secret);
     expect((await fetch(`${baseUrl}/api/developer/models?tokenId=${keyId}`)).status).toBe(401);
   });
-  it('uses global public prices and excludes disabled models regardless of a visiting users private rules', async () => {
+  it('returns standard prices to a signed-in account without a key and keeps personal pricing separate', async () => {
     const model=db.select().from(models).where(eq(models.modelId,'gpt-image-2')).get()!;
     sqlite.prepare('INSERT INTO user_model_pricing(user_id,model_id,billing_type,input_price,output_price,extra_params) VALUES(?,?,?,?,?,?)').run(1,model.id,'per_call',.009,0,'{}');
     expect(getDeveloperModels(1,keyId).items.find(m=>m.id==='gpt-image-2')!.pricing!.unit_price).toBe(.009);
-    expect(getPublicDeveloperModels().items.find(m=>m.id==='gpt-image-2')!.pricing!.unit_price).toBe(.1);
+    db.delete(apiTokens).run();
+    const response = await fetch(`${baseUrl}/api/developer/models/standard`, { headers });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+    const catalog = await response.json();
+    expect(catalog.token).toBeNull();
+    expect(catalog.items.find((m: any) => m.id === 'gpt-image-2')).toMatchObject({
+      description: '公开说明', pricing: { unit_price: .1, resolution_prices: { '4K': .2 } },
+    });
     db.update(models).set({isActive:0}).where(eq(models.id,model.id)).run();
     expect(getPublicDeveloperModels().items.some(m=>m.id==='gpt-image-2')).toBe(false);
+  });
+  it('rejects anonymous, expired and disabled sessions on the standard price catalog', async () => {
+    const url = `${baseUrl}/api/developer/models/standard`;
+    const expired = jwt.sign({ userId: 1, role: 'user' }, env.JWT_SECRET, { expiresIn: -1 });
+    expect((await fetch(url)).status).toBe(401);
+    expect((await fetch(url, { headers: { Authorization: `Bearer ${expired}` } })).status).toBe(401);
+    db.update(users).set({ isActive: 0 }).where(eq(users.id, 1)).run();
+    expect((await fetch(url, { headers })).status).toBe(401);
   });
   it.each(['veo-3.1', 'veo-3.1-lite', 'nano-banana2-2k'])('publishes %s without the channel prefix while retaining internal routing', id => {
     const internal = 'funai-' + id;

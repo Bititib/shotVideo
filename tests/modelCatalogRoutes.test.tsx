@@ -4,12 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-const mocks = vi.hoisted(() => ({ settings: vi.fn(), publicModels: vi.fn(), privateModels: vi.fn(), tokens: vi.fn(), docs: vi.fn() }));
+const mocks = vi.hoisted(() => ({ settings: vi.fn(), publicModels: vi.fn(), standardModels: vi.fn(), privateModels: vi.fn(), tokens: vi.fn(), docs: vi.fn() }));
 const auth = vi.hoisted(() => ({ user: null as any, isAuthenticated: false, isLoading: false, showLoginModal: false,
   checkAuth: vi.fn(), openLoginModal: vi.fn(), closeLoginModal: vi.fn(), logout: vi.fn(), login: vi.fn(), register: vi.fn() }));
 vi.mock('../client/src/stores/authStore', () => ({ useAuthStore: (selector?: any) => selector ? selector(auth) : auth }));
 vi.mock('../client/src/api/admin', () => ({ getPublicSettings: mocks.settings }));
-vi.mock('../client/src/api/developer', () => ({ developerApi: { getPublicModels: mocks.publicModels, getModels: mocks.privateModels } }));
+vi.mock('../client/src/api/developer', () => ({ developerApi: { getPublicModels: mocks.publicModels, getStandardModels: mocks.standardModels, getModels: mocks.privateModels } }));
 vi.mock('../client/src/api/tokens', () => ({ tokensApi: { getTokens: mocks.tokens } }));
 vi.mock('../client/src/pages/DocsPage', () => ({ default: () => { mocks.docs(); return <h2>接口文档内容</h2>; } }));
 import App from '../client/src/App';
@@ -19,11 +19,13 @@ function open(url: string) { render(<MemoryRouter initialEntries={[url]}><App />
 beforeEach(() => {
   vi.clearAllMocks(); auth.user = null; auth.isAuthenticated = false;
   mocks.settings.mockResolvedValue({}); mocks.tokens.mockResolvedValue({ items: [], total: 0 });
-  mocks.publicModels.mockResolvedValue({ token: null, checkedAt: '2026-10-31T10:00:00Z', items: [{
+  const catalog = { token: null, checkedAt: '2026-10-31T10:00:00Z', items: [{
     id: 'ZH-TTseadanco2.5-480', canonicalId: 'ZH-TTseadanco2.5-480', name: 'TT 480P API', description: '支持视频 API',
     kinds: ['video'], endpoints: ['/v1/videos'], available: true, limits: null, health: null,
     pricing: { currency: 'CNY', billing_type: 'per_second', unit: 'second', unit_price: .28, output_unit_price: 0, resolution_prices: { '480p': .28 } },
-  }] });
+  }] };
+  mocks.standardModels.mockResolvedValue(catalog);
+  mocks.publicModels.mockResolvedValue({ ...catalog, items: catalog.items.map(model => ({ ...model, description: '', pricing: null })) });
 });
 afterEach(cleanup);
 
@@ -32,7 +34,8 @@ describe('standalone public API model catalog routes', () => {
     open(url);
     expect(await screen.findByRole('heading', { name: '模型列表', level: 1 })).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: 'TT 480P API' })).toBeInTheDocument();
-    expect(screen.getByRole('table', { name: 'API 模型列表' })).toHaveTextContent('¥0.28 / 秒');
+    expect(screen.getByRole('table', { name: 'API 模型列表' })).toHaveTextContent('登录后可见');
+    expect(mocks.standardModels).not.toHaveBeenCalled();
     expect(screen.getByLabelText('当前页面地址')).toHaveTextContent('/app/models');
     expect(screen.queryByRole('heading', { name: 'API 文档' })).not.toBeInTheDocument();
     expect(mocks.docs).not.toHaveBeenCalled(); expect(mocks.tokens).not.toHaveBeenCalled(); expect(mocks.privateModels).not.toHaveBeenCalled();
@@ -69,6 +72,7 @@ describe('standalone public API model catalog routes', () => {
     open('/app/models');
     expect(await screen.findByRole('heading', { name: 'TT 480P API' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: '当前 API Key' })).toHaveValue('');
+    expect(screen.getByRole('table', { name: 'API 模型列表' })).toHaveTextContent('¥0.28 / 秒');
     expect(screen.getByRole('link', { name: '管理 API Key' })).toHaveAttribute('href', '/app/profile');
     expect(mocks.privateModels).not.toHaveBeenCalled(); expect(auth.openLoginModal).not.toHaveBeenCalled();
   });

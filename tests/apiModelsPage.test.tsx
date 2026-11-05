@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { MemoryRouter } from 'react-router-dom';
 vi.mock('../client/src/api/tokens', () => ({ tokensApi: { getTokens: vi.fn() } }));
-vi.mock('../client/src/api/developer', () => ({ developerApi: { getModels: vi.fn(), getPublicModels: vi.fn() } }));
+vi.mock('../client/src/api/developer', () => ({ developerApi: { getModels: vi.fn(), getPublicModels: vi.fn(), getStandardModels: vi.fn() } }));
 const auth = vi.hoisted(() => ({ isAuthenticated: true, openLoginModal: vi.fn() }));
 vi.mock('../client/src/stores/authStore', () => ({ useAuthStore: () => auth }));
 import { tokensApi } from '../client/src/api/tokens';
@@ -17,7 +17,8 @@ const keys = [{ id: 1, name: 'First key', tokenKeyMasked: 'sk-fir****1234', stat
 function catalog(id: number, name: string): DeveloperModelCatalog {
   return { token: { id, name: 'Key', maskedKey: '****' }, checkedAt: new Date().toISOString(), items: [{ id: name, canonicalId: 'model-' + id, name, description: '模型说明', kinds: ['video'], endpoints: ['/v1/videos'], limits: null, pricing: null, available: true, health: null }] };
 }
-const open = () => render(<MemoryRouter><ApiModelsPage /></MemoryRouter>);
+const page = () => <MemoryRouter><ApiModelsPage /></MemoryRouter>;
+const open = () => render(page());
 beforeEach(() => {
   vi.clearAllMocks();
   auth.isAuthenticated = true;
@@ -27,6 +28,7 @@ beforeEach(() => {
   vi.mocked(tokensApi.getTokens).mockResolvedValue({ items: keys, total: 2 });
   vi.mocked(developerApi.getModels).mockImplementation(async id => catalog(id, id === 1 ? 'First model' : 'Second model'));
   vi.mocked(developerApi.getPublicModels).mockResolvedValue({ ...catalog(0, 'Public model'), token: null });
+  vi.mocked(developerApi.getStandardModels).mockResolvedValue({ ...catalog(0, 'Public model'), token: null });
 });
 afterEach(cleanup);
 
@@ -87,8 +89,39 @@ describe('API model catalog page', () => {
     expect(screen.getByRole('heading', { name: '模型列表', level: 1 })).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: 'Public model' })).toBeInTheDocument();
     expect(tokensApi.getTokens).not.toHaveBeenCalled(); expect(developerApi.getModels).not.toHaveBeenCalled();
+    expect(developerApi.getStandardModels).not.toHaveBeenCalled();
     expect(auth.openLoginModal).not.toHaveBeenCalled();
     expect(screen.queryByRole('combobox', { name: '当前 API Key' })).not.toBeInTheDocument();
+  });
+  it('offers login in the guest details, loads standard prices after login, and removes them on logout', async () => {
+    auth.isAuthenticated = false;
+    const signedInCatalog = { ...catalog(0, 'Public model'), token: null };
+    signedInCatalog.items[0].pricing = { currency: 'CNY', billing_type: 'per_call', unit: 'request',
+      unit_price: 6, output_unit_price: 0, resolution_prices: { '720p': 7 } };
+    vi.mocked(developerApi.getStandardModels).mockResolvedValue(signedInCatalog);
+    vi.mocked(tokensApi.getTokens).mockResolvedValue({ items: [], total: 0 });
+    const { rerender } = open();
+    await screen.findByRole('heading', { name: 'Public model' });
+    expect(screen.getByText('登录后可见')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '详情与示例' }));
+    const guestDialog = screen.getByRole('dialog');
+    expect(guestDialog).toHaveTextContent('调用示例');
+    fireEvent.click(within(guestDialog).getByRole('button', { name: '登录后查看价格' }));
+    expect(auth.openLoginModal).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    auth.isAuthenticated = true;
+    rerender(page());
+    expect(await screen.findByText(/¥6(?:\.00)? \/ 次/)).toBeInTheDocument();
+    expect(developerApi.getStandardModels).toHaveBeenCalledWith(expect.any(AbortSignal));
+    fireEvent.click(screen.getByRole('button', { name: '详情与示例' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent(/¥7(?:\.00)? \/ 次/);
+
+    auth.isAuthenticated = false;
+    rerender(page());
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByText(/¥[67]/)).not.toBeInTheDocument();
+    expect(await screen.findByText('登录后可见')).toBeInTheDocument();
   });
   it('keeps the public directory usable when loading account keys fails', async () => {
     vi.mocked(tokensApi.getTokens).mockRejectedValue(new Error('密钥暂不可用'));

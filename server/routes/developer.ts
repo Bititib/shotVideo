@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
-import { getDeveloperModels, getPublicDeveloperModels } from '../services/developerModelService.js';
+import { getDeveloperModels, getPublicDeveloperModels, getStandardDeveloperModels } from '../services/developerModelService.js';
 
 const router = Router();
 router.get('/models/public', (_req, res, next) => {
@@ -8,6 +8,10 @@ router.get('/models/public', (_req, res, next) => {
   try { res.json(getPublicDeveloperModels()); } catch (error) { next(error); }
 });
 router.use(authMiddleware);
+router.get('/models/standard', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try { res.json(getStandardDeveloperModels()); } catch (error) { next(error); }
+});
 router.get('/models', (req: AuthRequest, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   const value = req.query.tokenId;
