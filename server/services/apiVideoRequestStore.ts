@@ -31,10 +31,10 @@ export function createApiVideoRequestStore(database: Database.Database) {
   }).immediate();
   const projection = 'id,token_id AS tokenId,user_id AS userId,fingerprint,content_id AS contentId,response_status AS responseStatus,response_body AS responseBody,completed_seen_at AS completedSeenAt';
   const get = (id: string) => database.prepare(`SELECT ${projection} FROM api_video_requests WHERE id=?`).get(id) as ApiVideoRequestRecord | undefined;
-  const claim = database.transaction((tokenId: number, userId: number, keyHash: string, fingerprint: string) => {
+  const claim = database.transaction((tokenId: number, userId: number, keyHash: string, fingerprint: string, alternate?: string) => {
     const existing = database.prepare(`SELECT ${projection} FROM api_video_requests WHERE token_id=? AND user_id=? AND key_hash=?`)
       .get(tokenId, userId, keyHash) as ApiVideoRequestRecord | undefined;
-    if (existing) return { fresh: false, mismatch: existing.fingerprint !== fingerprint, record: existing };
+    if (existing) return { fresh: false, mismatch: existing.fingerprint !== fingerprint && existing.fingerprint !== alternate, record: existing };
     const id = 'task_req_' + randomBytes(16).toString('hex');
     database.prepare("INSERT INTO api_video_requests(id,token_id,user_id,key_hash,fingerprint,request_mode) VALUES(?,?,?,?,?,'explicit')").run(id, tokenId, userId, keyHash, fingerprint);
     return { fresh: true, mismatch: false, record: get(id)! };
@@ -62,9 +62,9 @@ export function createApiVideoRequestStore(database: Database.Database) {
     if (record.completedSeenAt === null) database.prepare('UPDATE api_video_requests SET completed_seen_at=? WHERE id=?').run(completedAt, record.id);
     return now - completedAt < AUTOMATIC_VIDEO_RETRY_WINDOW_MS ? 'completed' : undefined;
   }
-  const claimAutomatic = database.transaction((tokenId: number, userId: number, fingerprint: string, now: number) => {
-    const candidates = database.prepare(`SELECT ${projection} FROM api_video_requests WHERE token_id=? AND user_id=? AND fingerprint=? AND request_mode<>'explicit' ORDER BY rowid DESC`)
-      .all(tokenId, userId, fingerprint) as ApiVideoRequestRecord[];
+  const claimAutomatic = database.transaction((tokenId: number, userId: number, fingerprint: string, now: number, alternate?: string) => {
+    const candidates = database.prepare(`SELECT ${projection} FROM api_video_requests WHERE token_id=? AND user_id=? AND fingerprint IN (?,?) AND request_mode<>'explicit' ORDER BY rowid DESC`)
+      .all(tokenId, userId, fingerprint, alternate ?? fingerprint) as ApiVideoRequestRecord[];
     let completed: ApiVideoRequestRecord | undefined;
     for (const record of candidates) {
       const protection = automaticProtection(record, now);
@@ -93,5 +93,6 @@ export function createApiVideoRequestStore(database: Database.Database) {
       .run(status, body, id);
   };
   return { get, claim: (...args: Parameters<typeof claim>) => claim.immediate(...args),
-    claimAutomatic: (tokenId: number, userId: number, fingerprint: string, now = Date.now()) => claimAutomatic.immediate(tokenId, userId, fingerprint, now), link, finishWithoutContent };
+    claimAutomatic: (tokenId: number, userId: number, fingerprint: string, now = Date.now(), alternate?: string) =>
+      claimAutomatic.immediate(tokenId, userId, fingerprint, now, alternate), link, finishWithoutContent };
 }

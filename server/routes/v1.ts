@@ -1,4 +1,4 @@
-import { publicApiModelId } from '../../shared/funAi.js';
+import { publicApiModelId } from '../../shared/publicApiModelId.js';
 import { isZhiyingVideoModel, ZHIYING_CHANNEL_TYPE } from '../../shared/zhiyingVideo.js';
 import { resolvePrivateReferences } from '../middleware/privateReferences.js';
 import { publicApiModelMetadata } from '../services/publicModelMetadataService.js';
@@ -687,14 +687,14 @@ router.get('/pricing/:model', (req: Request, res: Response) => {
   const accessibleModels = getAccessibleModelIds(token);
   if (!accessibleModels.includes(modelId)) {
     return res.status(404).json({
-      error: { message: `Model '${modelId}' is not available`, type: 'invalid_request_error' },
+      error: { message: `Model '${publicApiModelId(modelId)}' is not available`, type: 'invalid_request_error' },
     });
   }
 
   const pricing = PricingService.getPublicPricingForModels([modelId], token.userId ?? null)[0];
   if (!pricing) {
     return res.status(404).json({
-      error: { message: `Model '${modelId}' has no pricing rule`, type: 'invalid_request_error' },
+      error: { message: `Model '${publicApiModelId(modelId)}' has no pricing rule`, type: 'invalid_request_error' },
     });
   }
 
@@ -1698,6 +1698,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   }
 
   if (typeof req.body?.model === 'string') req.body.model = canonicalSnumomVideoModel(req.body.model);
+  if (!normalizeApiModel(req, res)) return;
   if (isZhiyingVideoModel(req.body?.model)) {
     try {
       const ownerId = Number(token!.userId);
@@ -1708,7 +1709,6 @@ async function handleVideoCreation(req: Request, res: Response) {
       return res.status(400).json({error:(error as Error).message});
     }
   }
-  if (!normalizeApiModel(req, res)) return;
   if (isRetiredVideoModel(req.body?.model)) { cleanupFiles(req.files);return res.status(410).json({error:RETIRED_VIDEO_MODEL_MESSAGE}); }
   // Discovery hides disabled models; direct video submissions must honor that same switch.
   const registeredVideoModel = db.select().from(models).where(eq(models.modelId, String(req.body?.model || ''))).get();

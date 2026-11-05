@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 
 vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
@@ -130,15 +131,32 @@ it('checks each dedicated line and rejects unsupported batch assets before reser
   expect(tokenBalance()).toBe(100);
 });
 it('preserves the external task ID and charges once for repeated submissions', async () => {
-  const input = { model:line2, prompt:'test', seconds:7, ratio:'21:9' };
+  const input = { model:'Lx-Seedance2.5-2', prompt:'test', seconds:7, ratio:'21:9' };
+  db.update(apiTokens).set({allowedModels:'["Lx-Seedance2.5-2"]'}).run();
   const first = await (await call('/v1/videos',input,'site-idem-01')).json() as any;
   expect(first.id).toMatch(/^task_req_/);
+  expect(first.model).toBe(input.model);
   await vi.waitFor(() => expect(db.select().from(contents).get()?.status).toBe('completed'));
-  const repeat = await call('/v1/videos',input,'site-idem-01');
+  const repeat = await call('/v1/videos',{...input,model:line2},'site-idem-01');
   expect(repeat.headers.get('X-Idempotency-Replayed')).toBe('true');
-  expect(await repeat.json()).toMatchObject({id:first.id,status:'completed'});
+  expect(await repeat.json()).toMatchObject({id:first.id,status:'completed',model:input.model});
   expect(created).toHaveLength(1);
   expect(created[0].payload).toMatchObject({model:line2,duration:7,aspect_ratio:'21:9'});
+  expect(tokenBalance()).toBe(98);
+});
+
+it.each([undefined, 'preexisting-key'])('reuses a saved display-name fingerprint across API ID forms (key %s)', async key => {
+  const body = {model:'Lx-Seedance2.5-1', prompt:'同一原任务'};
+  const first = await (await call('/v1/videos',body,key)).json() as any;
+  await vi.waitFor(() => expect(db.select().from(contents).get()?.status).toBe('completed'));
+
+  // Before this release, a request using the display name hashed that literal ID.
+  const oldHash = createHash('sha256').update(JSON.stringify({body,files:{}})).digest('hex');
+  sqlite.prepare('UPDATE api_video_requests SET fingerprint=? WHERE id=?').run(oldHash, first.id);
+  const replay = await call('/v1/videos',{...body,model:line1},key);
+  expect(replay.headers.get('X-Idempotency-Replayed')).toBe('true');
+  expect(await replay.json()).toMatchObject({id:first.id,model:body.model,status:'completed'});
+  expect(created).toHaveLength(1);
   expect(tokenBalance()).toBe(98);
 });
 it('carries a documented rejection through the real batch dispatcher and refunds exactly once', async () => {
@@ -167,7 +185,7 @@ it('keeps private API materials scoped to the token owner, even when no login co
   const mine = store.put(1, bytes, 'image/png', 'mine.png');
   const theirs = store.put(2, bytes, 'image/png', 'theirs.png');
   try {
-    const body = { model: line1, prompt: '傍晚', reference_images: ['/api/media/' + theirs.id] };
+    const body = { model: 'Lx-Seedance2.5-1', prompt: '傍晚', reference_images: ['/api/media/' + theirs.id] };
     expect((await call('/v1/videos', body)).status).toBe(400);
     expect(uploaded).toHaveLength(0);
     const accepted = await call('/v1/videos', {...body, reference_images: ['/api/media/' + mine.id]});

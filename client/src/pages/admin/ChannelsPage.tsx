@@ -666,7 +666,7 @@ export default function ChannelsPage() {
                 <section className="space-y-2 text-xs leading-5 text-zinc-400" aria-label="智赢模型映射">
                   <p>模型映射由「同步模型」写入。下表列出两条专线的对应关系。</p>
                   <table className="w-full text-left">
-                    <thead><tr><th>前端名称</th><th>API 调用 ID / 智赢上游 ID</th><th>映射状态</th></tr></thead>
+                    <thead><tr><th>前端名称 / 本站 API ID</th><th>智赢上游 ID</th><th>映射状态</th></tr></thead>
                     <tbody>{ZHIYING_VIDEO_MODELS.map(id => {
                       const mapped = edit.mappingText.split('\n').includes(`${id}:${id}`);
                       return <tr key={id}>

@@ -1,4 +1,4 @@
-import { publicApiModelId } from '../../shared/funAi.js';
+import { publicApiModelId } from '../../shared/publicApiModelId.js';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { settings } from '../db/schema.js';

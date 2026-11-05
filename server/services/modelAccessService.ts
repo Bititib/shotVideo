@@ -1,4 +1,4 @@
-import { publicApiModelId } from '../../shared/funAi.js';
+import { publicApiModelId } from '../../shared/publicApiModelId.js';
 import { resolvePublicModelId } from './publicModelNameService.js';
 import { ChannelService } from './channelService.js';
 import { filterUserModels } from './userModelAccessService.js';
@@ -8,6 +8,7 @@ import { createVideoAliasChecker } from './modelSaleService.js';
 import { isReviewedPublicModel, reviewedPublicModelIds } from './publicModelMetadataService.js';
 import { hasHmStudioOverflowChannel } from './hmStudioOverflowChannelService.js';
 import { HM_STUDIO_PRIMARY_VIDEO_MODEL } from './videoFailoverService.js';
+import { ZHIYING_CHANNEL_TYPE } from '../../shared/zhiyingVideo.js';
 
 export function filterRoutableModels(modelIds: string[], activeChannels: Array<{ supportedModels: string[] }>): string[] {
   if (activeChannels.some(channel => channel.supportedModels.includes('*'))) return modelIds;
@@ -37,6 +38,7 @@ export function getAccessibleModels(token: { allowedModels: string[]; userId?: n
       return spec ? inspectModelRoutes(spec, undefined, activeChannels).some(route => !route.reasons.length) : routable.has(model.modelId);
     })
     .filter(model => (token.allowedModels.length === 0 || token.allowedModels.includes(model.modelId)
+      || model.provider === ZHIYING_CHANNEL_TYPE && token.allowedModels.includes(publicApiModelId(model.modelId))
       || specMap.get(model.modelId)?.aliases.some(alias => token.allowedModels.includes(alias) && !checkAlias(specMap.get(model.modelId)!, alias))));
 }
 

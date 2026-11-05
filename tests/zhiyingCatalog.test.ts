@@ -80,6 +80,7 @@ describe('智赢渠道目录', () => {
     saveModelSpecification(spec);
     expect((await ChannelService.syncModels(channelId)).added).toBe(0);
     expect(resolveApiModelId('运营专线一')).toBe(line1);
+    expect(resolveApiModelId('Lx-Seedance2.5-1')).toBe(line1);
     expect(getEnabledPublicModels('video')).toEqual([
       expect.objectContaining({ modelId:line1, displayName:'Lx-Seedance2.5-1' }),
     ]);
@@ -216,20 +217,26 @@ describe('智赢渠道目录', () => {
       };
       sqlite.prepare('INSERT INTO model_pricing(model_pattern,billing_type,input_price) VALUES(?,?,?)').run('*', 'per_call', 0);
       expect(await read('/api/video/models')).not.toContainEqual(expect.objectContaining({ id: line1 }));
-      expect((await read('/v1/models')).data).not.toContainEqual(expect.objectContaining({ id: line1 }));
-      expect(getPublicDeveloperModels().items).not.toContainEqual(expect.objectContaining({ id: line1 }));
+      expect((await read('/v1/models')).data).not.toContainEqual(expect.objectContaining({ id: 'Lx-Seedance2.5-1' }));
+      expect(getPublicDeveloperModels().items).not.toContainEqual(expect.objectContaining({ id: 'Lx-Seedance2.5-1' }));
       sqlite.prepare('INSERT INTO model_pricing(model_pattern,billing_type,input_price) VALUES(?,?,?)').run(line1, 'per_second', 0.07);
-      const publicModel = getPublicDeveloperModels().items.find(item => item.id === line1);
+      const publicId = 'Lx-Seedance2.5-1';
+      const publicModel = getPublicDeveloperModels().items.find(item => item.id === publicId);
       expect(publicModel).toMatchObject({ name: 'Lx-Seedance2.5-1', pricing: null });
-      const model = getStandardDeveloperModels().items.find(item => item.id === line1)!;
-      expect(model).toMatchObject({ name: 'Lx-Seedance2.5-1', canonicalId: line1, limits: { maxImages: 30, defaultSeconds: 30 },
+      const model = getStandardDeveloperModels().items.find(item => item.id === publicId)!;
+      expect(model).toMatchObject({ name: publicId, canonicalId: publicId, limits: { maxImages: 30, defaultSeconds: 30 },
         pricing: { billing_type: 'per_second', unit_price: 0.07 } });
-      expect(modelExample(model, '/v1/videos', 'https://platform.example', 'curl')).toContain(`"model": "${line1}"`);
+      expect(modelExample(model, '/v1/videos', 'https://platform.example', 'curl')).toContain(`"model": "${publicId}"`);
       const site = await read('/api/video/models'), api = await read('/v1/models');
       expect(site).toEqual(expect.arrayContaining([expect.objectContaining({ id: line1, name: 'Lx-Seedance2.5-1' })]));
-      expect(api.data).toEqual(expect.arrayContaining([expect.objectContaining({ id: line1, name: line1 })]));
+      expect(api.data).toContainEqual(expect.objectContaining({ id: publicId, name: publicId, canonical_id: publicId }));
+      expect(api.data).not.toContainEqual(expect.objectContaining({ id: line1 }));
+      const price = { model: publicId, display_name: publicId, canonical_id: publicId, unit_price: 0.07 };
+      expect((await read('/v1/pricing')).data).toContainEqual(expect.objectContaining(price));
+      expect(await read('/v1/pricing/' + publicId)).toMatchObject(price);
+      expect(await read('/v1/pricing/' + line1)).toMatchObject(price);
       const task = await read('/v1/videos/task_' + lastInsertRowid);
-      expect(task).toMatchObject({ id: 'task_' + lastInsertRowid, status: 'failed', model: line1 });
+      expect(task).toMatchObject({ id: 'task_' + lastInsertRowid, status: 'failed', model: publicId });
       expect(task.error_message).toContain('QUERY_17');
       expect(JSON.stringify([site, api, task, model])).not.toMatch(/zhiying|智赢|zy-task-private|upstream_task_id|test-catalog-secret/);
     } finally {

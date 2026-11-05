@@ -16,7 +16,7 @@ import { activeSpecificationTasks } from './videoRecoveryAction.js';
 import { normalizeSiYueTianMinimaxTask } from './siYueTianMinimaxAdapter.js';
 import { isMegabyChannel, normalizeMegabyTask, validateMegabyVideoInput, validateMegabyReferenceDurations } from './megabyVideoAdapter.js';
 import { isHussChannel, recoverHussSubmission, normalizeHussTask } from './hussVideoAdapter.js';
-import { publicApiModelId } from '../../shared/funAi.js';
+import { publicApiModelId } from '../../shared/publicApiModelId.js';
 import { videoCapabilities, normalizeVideoParameters } from './videoCapabilities.js';
 import { isZonghengChannel, normalizeZonghengTask } from './zonghengAdapter.js';
 import { acceptZonghengVideoReceipt } from './zonghengTaskService.js';
@@ -866,7 +866,9 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     const token = apiContext?.token, checkAlias = createVideoAliasChecker();
     const userId = token?.userId ?? (req as any).userId ?? 0;
     assertUserModelAccess(userId, modelId);
-    if (token?.allowedModels?.length && !token.allowedModels.includes(modelId) && !spec.aliases.some(alias => token.allowedModels.includes(alias) && !checkAlias(spec, alias))) throw fail('Token 无权调用此模型', 403);
+    if (token?.allowedModels?.length && !token.allowedModels.includes(modelId)
+      && !(isZhiyingVideoModel(modelId) && token.allowedModels.includes(publicApiModelId(modelId)))
+      && !spec.aliases.some(alias => token.allowedModels.includes(alias) && !checkAlias(spec, alias))) throw fail('Token 无权调用此模型', 403);
     const body = { ...req.body };
     if (kind === 'video') normalizeVideoParameters(body, videoCapabilities(modelId, spec).parameterSchema, Boolean(req.is?.('multipart/form-data')));
     if (isZhiyingVideoModel(modelId)) {

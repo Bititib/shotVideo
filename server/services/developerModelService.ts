@@ -1,5 +1,4 @@
 import { desc, eq } from 'drizzle-orm';
-import { zhiyingVideoDisplayName, ZHIYING_CHANNEL_TYPE } from '../../shared/zhiyingVideo.js';
 import { db } from '../db/index.js';
 import { contents } from '../db/schema.js';
 import type { DeveloperModelCatalog, DeveloperModelKind, DeveloperEndpoint } from '../../shared/developerModels.js';
@@ -65,9 +64,8 @@ function buildDeveloperCatalog(models: ReturnType<typeof getAccessibleModels>, u
       const recent = kinds.includes('video') ? db.select({ id: contents.id, status: contents.status, resultUrl: contents.resultUrl, createdAt: contents.createdAt })
         .from(contents).where(eq(contents.modelId, model.modelId)).orderBy(desc(contents.id)).limit(20).all() : [];
       const metadata = publicApiModelMetadata(includePricing ? model : { ...model, description: null }, activeChannels.map(channel => channel.name || ''));
-      const displayName = model.provider === ZHIYING_CHANNEL_TYPE ? zhiyingVideoDisplayName(model.modelId) : undefined;
       return {
-        ...metadata, name: displayName ?? metadata.name, canonicalId: callableModelId(model), kinds, endpoints, limits,
+        ...metadata, canonicalId: callableModelId(model), kinds, endpoints, limits,
         // Explicit allowlist: never serialize upstream costs, routes or credentials.
         pricing: price ? { currency: price.currency, billing_type: price.billing_type, unit: price.unit,
           unit_price: price.unit_price, output_unit_price: price.output_unit_price, resolution_prices: price.resolution_prices } : null,

@@ -27,6 +27,10 @@ export function zhiyingVideoDisplayName(id: unknown): string | undefined {
   return isZhiyingVideoModel(id) ? products[id].displayName : undefined;
 }
 
+export function zhiyingVideoInternalId(id: unknown): ZhiyingVideoModel | undefined {
+  return isZhiyingVideoModel(id) ? id : ZHIYING_VIDEO_MODELS.find(model => products[model].displayName === id);
+}
+
 export function zhiyingVideoSpec(id: ZhiyingVideoModel) {
   const defaultDuration = 30;
   const limits: ModelInputLimits = {

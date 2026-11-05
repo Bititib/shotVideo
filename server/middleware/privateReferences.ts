@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { mediaUser, privateMediaStore } from '../routes/media.js';
 import { ownsUpload, uploadPath, canReviewResultUrl } from '../services/uploadAccess.js';
 import { validMediaSignature } from '../services/mediaSignature.js';
-import { isZhiyingVideoModel } from '../../shared/zhiyingVideo.js';
+import { zhiyingVideoInternalId } from '../../shared/zhiyingVideo.js';
 
 /** Resolve owned stable media IDs before provider adapters; never forward a login token. */
 export function resolvePrivateReferences(body: unknown, getOwner: () => number | undefined) {
@@ -36,7 +36,7 @@ export function resolvePrivateReferences(body: unknown, getOwner: () => number |
 export const privateReferences: RequestHandler = (req,res,next) => {
   if(req.method!=='POST'||!req.body) {next();return;}
   // These routes resolve assets after API-key authentication, including multipart fields.
-  if (req.baseUrl === '/v1' && isZhiyingVideoModel(req.body.model)
+  if (req.baseUrl === '/v1' && zhiyingVideoInternalId(req.body.model)
     && /^\/(?:videos|videos\/generations|video\/generations)\/?$/.test(req.path)) return next();
   try {req.body=resolvePrivateReferences(req.body, () => mediaUser(req));next();}catch(e){res.status(400).json({error:(e as Error).message});}
 };

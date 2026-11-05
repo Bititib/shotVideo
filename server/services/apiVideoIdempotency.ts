@@ -4,6 +4,7 @@ import type { Request, Response } from 'express';
 import { sqlite } from '../db/index.js';
 import { createApiVideoRequestStore, type ApiVideoRequestRecord } from './apiVideoRequestStore.js';
 import { publicGenerationError } from '../../shared/generationMessages.js';
+import { zhiyingVideoDisplayName, zhiyingVideoInternalId } from '../../shared/zhiyingVideo.js';
 
 const context = Symbol('apiVideoRequest');
 type VideoRequest = Request & { [context]?: string };
@@ -18,7 +19,7 @@ function canonical(value: any): string {
 }
 
 /** Hash file bytes, never multer's random disk paths, multipart boundaries, or credentials. */
-export async function apiVideoFingerprint(req: Request): Promise<string> {
+async function apiVideoFingerprints(req: Request) {
   const files: Record<string, Array<{ type: string; sha256: string }>> = Object.create(null);
   for (const file of Array.isArray(req.files) ? req.files : []) {
     const hash = createHash('sha256');
@@ -26,17 +27,29 @@ export async function apiVideoFingerprint(req: Request): Promise<string> {
     else for await (const chunk of createReadStream(file.path)) hash.update(chunk);
     (files[file.fieldname] ??= []).push({ type: file.mimetype, sha256: hash.digest('hex') });
   }
-  return createHash('sha256').update(canonical({ body: req.body || {}, files })).digest('hex');
+  const body = req.body || {};
+  const hashBody = (value: unknown) => createHash('sha256').update(canonical({ body: value, files })).digest('hex');
+  const internal = zhiyingVideoInternalId(body.model);
+  if (!internal) return { fingerprint: hashBody(body) };
+  return {
+    fingerprint: hashBody({ ...body, model: internal }),
+    // Existing requests may already have used the model's display name.
+    alternate: hashBody({ ...body, model: zhiyingVideoDisplayName(internal) }),
+  };
+}
+
+export async function apiVideoFingerprint(req: Request): Promise<string> {
+  return (await apiVideoFingerprints(req)).fingerprint;
 }
 
 export async function claimApiVideoRequest(req: Request, token: { id: number; userId?: number | null }) {
   const key = req.get('Idempotency-Key');
   if (key !== undefined && !/^[\x21-\x7e]{1,200}$/.test(key))
     throw Object.assign(new Error('Idempotency-Key 必须为1–200个可见 ASCII 字符'), { status: 400 });
-  const fingerprint = await apiVideoFingerprint(req);
+  const { fingerprint, alternate } = await apiVideoFingerprints(req);
   const requests = store(), tokenId = Number(token.id), userId = Number(token.userId) || 0;
-  const claim = key === undefined ? requests.claimAutomatic(tokenId, userId, fingerprint)
-    : requests.claim(tokenId, userId, createHash('sha256').update('header:' + key).digest('hex'), fingerprint);
+  const claim = key === undefined ? requests.claimAutomatic(tokenId, userId, fingerprint, Date.now(), alternate)
+    : requests.claim(tokenId, userId, createHash('sha256').update('header:' + key).digest('hex'), fingerprint, alternate);
   if (claim.mismatch) throw Object.assign(new Error('同一个 Idempotency-Key 已用于不同参数或素材，请为新任务使用新的键'), { status: 409, code: 'idempotency_conflict' });
   if (claim.fresh) (req as VideoRequest)[context] = claim.record.id;
   return claim;

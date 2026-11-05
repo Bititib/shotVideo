@@ -74,7 +74,7 @@ export async function syncZhiyingModels(channel: Channel) {
       if (existing && (existing.provider !== ZHIYING_CHANNEL_TYPE || !JSON.parse(existing.capabilities).includes('video'))) {
         throw conflict(`公开模型 ID ${id} 已被其他产品占用，原配置未修改`);
       }
-      validatePublicModelName(id, existing?.displayName || displayName, existing?.id);
+      validatePublicModelName(id, displayName, existing?.id);
       if (!existing && (resolveApiModelId(id) !== id || resolveApiModelId(displayName) !== displayName || getModelSpecification(id))) {
         throw conflict(`公开模型 ID ${id} 已由原有别名或规格使用，原配置未修改`);
       }

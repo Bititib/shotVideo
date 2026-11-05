@@ -1,4 +1,5 @@
 import { FUNAI_MODEL_PREFIX } from '../../shared/funAi.js';
+import { zhiyingVideoDisplayName, ZHIYING_CHANNEL_TYPE } from '../../shared/zhiyingVideo.js';
 import { isRetiredVideoModel } from '../../shared/retiredVideoModels.js';
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { normalizeMjModelId } from '../../shared/mj.js';
@@ -10,6 +11,10 @@ import { models, settings } from '../db/schema.js';
 
 const ALIAS_KEY = 'public_model_name_aliases_v1';
 type Model = typeof models.$inferSelect;
+
+function fixedPublicName(model: Model) {
+  return model.provider === ZHIYING_CHANNEL_TYPE ? zhiyingVideoDisplayName(model.modelId) : undefined;
+}
 
 function aliases(database = db): Record<string, number> {
   const row = database.select().from(settings).where(eq(settings.key, ALIAS_KEY)).get();
@@ -28,7 +33,8 @@ export function resolvePublicModelId(value: string, input: { resolution?: unknow
   value = normalizeMjModelId(value);
   const rows = db.select().from(models).all();
   const oldAlias = aliases()[value];
-  let matches = rows.filter(row => row.modelId === value || row.modelId === canonicalZonghengModelId(value) || row.displayName === value || row.id === oldAlias);
+  let matches = rows.filter(row => row.modelId === value || row.modelId === canonicalZonghengModelId(value)
+    || row.displayName === value || fixedPublicName(row) === value || row.id === oldAlias);
   // Existing names own their namespace; only resolve an unclaimed public name.
   if (!matches.length && !value.startsWith(FUNAI_MODEL_PREFIX)) {
     matches = rows.filter(row => row.modelId === FUNAI_MODEL_PREFIX + value);
@@ -61,7 +67,7 @@ export function validatePublicModelName(modelId: string, name: string, excludeId
   const rows = db.select().from(models).all();
   const saved = aliases();
   for (const value of new Set([modelId, name])) {
-    if (rows.some(row => row.id !== excludeId && (row.modelId === value || row.displayName === value))
+    if (rows.some(row => row.id !== excludeId && (row.modelId === value || row.displayName === value || fixedPublicName(row) === value))
       || (saved[value] !== undefined && saved[value] !== excludeId)) {
       throw new PublicModelNameError(`名称或 ID“${value}”已被其他模型或历史别名使用`);
     }

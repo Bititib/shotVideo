@@ -1,4 +1,5 @@
-import { publicApiModelId, funAiModelKind, funAiModelLimits, FUNAI_MODEL_PREFIX } from '../../shared/funAi.js';
+import { funAiModelKind, funAiModelLimits, FUNAI_MODEL_PREFIX } from '../../shared/funAi.js';
+import { publicApiModelId } from '../../shared/publicApiModelId.js';
 import type { ModelSpecification } from '../../shared/modelRouting.js';
 import { getZonghengVideoSpec } from '../../shared/zonghengVideo.js';
 import { existingModelLimits } from './modelInputPresets.js';
