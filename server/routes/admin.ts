@@ -3,6 +3,7 @@ import { withFundContext } from '../db/fundLedger.js';
 import { sqlite as ledgerDb } from '../db/index.js';
 import modelSpecificationRoutes from './modelSpecifications.js';
 import pidoiImageAdminRoutes from './pidoiImageAdmin.js';
+import { canCancelLegacyPidoiImage } from '../services/legacyPidoiImageCancellation.js';
 import { Router, Response } from 'express';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -338,7 +339,9 @@ router.get('/contents/:id', async (req: AuthRequest, res: Response) => {
     const contentId = parseInt(req.params.id);
     const { ContentService, withAdminChannelName } = await import('../services/contentService.js');
     const item = ContentService.materializeAssetsForContent(contentId);
-    res.json(withAdminChannelName(item));
+    res.json({ ...withAdminChannelName(item),
+      canCancelLegacyPidoiImage: item.type === 'image' && canCancelLegacyPidoiImage(contentId),
+    });
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '获取内容失败' });
   }

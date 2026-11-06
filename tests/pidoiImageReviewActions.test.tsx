@@ -3,11 +3,23 @@ import React from 'react';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { beforeEach, afterEach, it, expect, vi } from 'vitest';
 import { PidoiImageReviewActions } from '../client/src/components/PidoiImageReviewActions';
-vi.mock('../client/src/api/admin',()=>({adminApi:{recheckPidoiImage:vi.fn(),confirmPidoiImageFailure:vi.fn(),supplementPidoiImageResults:vi.fn(),supplementPidoiImageTask:vi.fn()}}));
+vi.mock('../client/src/api/admin',()=>({adminApi:{recheckPidoiImage:vi.fn(),confirmPidoiImageFailure:vi.fn(),supplementPidoiImageResults:vi.fn(),supplementPidoiImageTask:vi.fn(),cancelLegacyPidoiImage:vi.fn()}}));
 import { adminApi } from '../client/src/api/admin';
 const props={id:13186,status:'review',cost:0.22,metadata:{imageProtocol:'pidoi-async-v1'},hasResult:false,onResolved:vi.fn().mockResolvedValue(undefined)};
 beforeEach(()=>{vi.clearAllMocks();vi.spyOn(window,'confirm').mockReturnValue(true);vi.spyOn(window,'prompt').mockReturnValue('已核对上游任务，无成功图片');});
 afterEach(()=>{cleanup();vi.restoreAllMocks();});
+it('后台允许取消的旧记录可直接原路退款并刷新', async () => {
+  vi.mocked(adminApi.cancelLegacyPidoiImage).mockResolvedValue({ refundedAmount: 0.22, alreadyResolved: false });
+  render(<PidoiImageReviewActions {...props} status="processing" metadata={{}} canCancelLegacy />);
+  const button = screen.getByRole('button', { name: '取消并原路退款' });
+  fireEvent.click(button);
+  fireEvent.click(button);
+  await screen.findByText('已退回 ¥0.22');
+  expect(adminApi.cancelLegacyPidoiImage).toHaveBeenCalledExactlyOnceWith(props.id);
+  expect(window.confirm).not.toHaveBeenCalled();
+  expect(window.prompt).not.toHaveBeenCalled();
+  expect(props.onResolved).toHaveBeenCalledOnce();
+});
 it('补录任务 ID 查询鉴权失败后仍能修改重查，退款按钮保持可用',async()=>{
   vi.mocked(adminApi.supplementPidoiImageTask).mockRejectedValueOnce(new Error('HTTP 401 Invalid token，未绑定该编号'))
     .mockResolvedValueOnce({message:'原图片已保存，未重复扣费'});

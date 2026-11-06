@@ -28,6 +28,7 @@ interface ContentItem {
   createdAt: string;
   userEmail: string | null;
   userName: string | null;
+  canCancelLegacyPidoiImage?: boolean;
 }
 
 type AdminRoutingInfo = {
@@ -189,7 +190,9 @@ export default function ContentsPage() {
 
   const loadFullContent = async (item: ContentItem): Promise<ContentItem> => {
     const metadata = parseMeta(item.metadata);
-    if (!metadata.listAssetsCompacted && !metadata.listResultCompacted) return item;
+    const needsLegacyRefundCheck = item.type === 'image' && item.modelId === 'gpt-image-2' && !metadata.imageProtocol
+      && ['processing', 'queued', 'review'].includes(item.status);
+    if (!needsLegacyRefundCheck && !metadata.listAssetsCompacted && !metadata.listResultCompacted) return item;
     return adminApi.getContent(item.id);
   };
 
@@ -759,6 +762,7 @@ export default function ContentsPage() {
                     }} />}
                   {previewItem.type === 'image' && <PidoiImageReviewActions key={previewItem.id}
                     id={previewItem.id} status={previewItem.status} cost={previewItem.cost}
+                    canCancelLegacy={previewItem.canCancelLegacyPidoiImage}
                     metadata={parseMeta(previewItem.metadata)} hasResult={Boolean(previewItem.resultUrl)}
                     onResolved={async () => {
                       const refreshed = await adminApi.getContent(previewItem.id);

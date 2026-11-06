@@ -1,9 +1,15 @@
 import { Router } from 'express';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
+import { cancelLegacyPidoiImage } from '../services/legacyPidoiImageCancellation.js';
 import { confirmPidoiImageFailure, recheckPidoiImage, supplementPidoiImageResults, supplementPidoiImageTask } from '../services/pidoiImageResolutionService.js';
 const router = Router();
 router.use(authMiddleware, adminMiddleware);
+router.post('/:id/image-cancel-legacy', (req: AuthRequest, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.json(cancelLegacyPidoiImage(Number(req.params.id), req.userId!)); }
+  catch (error: any) { res.status(error.status || 500).json({ error: error.message || '取消并退款失败' }); }
+});
 router.post('/:id/image-supplement-task', async (req: AuthRequest, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try { res.json(await supplementPidoiImageTask(Number(req.params.id), req.userId!, req.body?.taskId)); }

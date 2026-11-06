@@ -132,6 +132,7 @@ export const adminApi = {
     return mutate(() => client.post<{message:string;alreadyResolved:boolean}>(`/admin/contents/${id}/image-supplement-result`, {urls}, {timeoutMs:660000}));
   },
   confirmPidoiImageFailure(id: number, note: string) { return api.post<{refundedAmount:number;alreadyResolved:boolean}>(`/admin/contents/${id}/image-confirm-failure`, {confirmedFailure:true,note}); },
+  cancelLegacyPidoiImage(id: number) { return api.post<{refundedAmount:number;alreadyResolved:boolean}>(`/admin/contents/${id}/image-cancel-legacy`); },
   previewRecentFailedVideoRecovery(days = 3) { return api.get<any>(`/admin/contents/recovery/preview?days=${days}`); },
   recoverRecentFailedVideos(days = 3) { return api.post<any>('/admin/contents/recovery/run', { days }); },
   recheckContentUpstream(id: number) { return api.post<any>(`/admin/contents/${id}/recheck-upstream`); },

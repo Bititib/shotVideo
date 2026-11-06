@@ -29,6 +29,8 @@ import { recoverPidoiImage, pidoiImageActive } from '../server/services/pidoiIma
 import { generateSpecificationImage } from '../server/services/specificationAdapters.js';
 import { confirmPidoiImageFailure, recheckPidoiImage, supplementPidoiImageResults, supplementPidoiImageTask } from '../server/services/pidoiImageResolutionService.js';
 import adminRouter from '../server/routes/pidoiImageAdmin.js';
+import { canCancelLegacyPidoiImage } from '../server/services/legacyPidoiImageCancellation.js';
+import { reserveUserCharge } from '../server/services/billingReservation.js';
 
 function row() { return sqlite.prepare('SELECT * FROM contents ORDER BY id DESC LIMIT 1').get() as any; }
 function balance() { return (sqlite.prepare('SELECT balance FROM users WHERE id=1').get() as any).balance; }
@@ -51,6 +53,75 @@ beforeEach(() => {
 afterEach(async () => {
   await vi.waitFor(() => expect(pidoiImageActive.size).toBe(0));
   vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.clearAllMocks();
+});
+
+describe('旧版 Pidoi 图片后台取消退款', () => {
+  function legacyOrder(metadata: object = {}, channelUrl = 'https://pidoi.com', organization = false) {
+    sqlite.prepare('INSERT OR REPLACE INTO channels(id,base_url) VALUES(6,?)').run(channelUrl);
+    if (organization) {
+      sqlite.exec('INSERT OR REPLACE INTO organizations(id,balance) VALUES(7,10); UPDATE users SET org_id=7 WHERE id=1;');
+    }
+    const charge = reserveUserCharge(1, 0.22, 'generate_image');
+    return Number(sqlite.prepare(`INSERT INTO contents(user_id,type,model_id,status,cost,metadata,created_at)
+      VALUES(1,'image','gpt-image-2','processing',0.22,?,datetime('now','-2 days'))`).run(JSON.stringify({
+      channelId: 6, billingReservationId: charge.id, billingStatus: 'reserved', imageUrls: [''], ...metadata,
+    })).lastInsertRowid);
+  }
+
+  function cancel(id: number, adminId = 9) {
+    const layer = adminRouter.stack.find((layer: any) => layer.route?.path === '/:id/image-cancel-legacy') as any;
+    const response = { setHeader: vi.fn(), json: vi.fn(), status: vi.fn().mockReturnThis() };
+    layer.route.stack.at(-1).handle({ userId: adminId, params: { id: String(id) } }, response);
+    return response;
+  }
+
+  it.each([false, true])('结案并原路退费一次，组织扣款 %s', organization => {
+    const id = legacyOrder({}, 'https://pidoi.com', organization);
+    expect(canCancelLegacyPidoiImage(id)).toBe(true);
+    expect(cancel(id).json).toHaveBeenCalledWith({ id, status: 'failed', refundedAmount: 0.22, alreadyResolved: false });
+    expect(cancel(id).json).toHaveBeenCalledWith({ id, status: 'failed', refundedAmount: 0.22, alreadyResolved: true });
+    expect(canCancelLegacyPidoiImage(id)).toBe(false);
+    expect(row()).toMatchObject({ status: 'failed', cost: 0 });
+    expect(reservation()).toMatchObject({ state: 'refunded', actual: 0 });
+    expect(balance()).toBeCloseTo(100);
+    if (organization) expect(sqlite.prepare('SELECT balance FROM organizations WHERE id=7').get()).toEqual({ balance: 10 });
+    expect(JSON.parse(row().metadata)).toMatchObject({
+      refundTarget: organization ? 'organization_balance' : 'user_balance',
+      legacyPidoiFailureResolution: { adminId: 9, note: expect.stringContaining('上游结果未确认') },
+    });
+  });
+
+  it.each([
+    { metadata: { upstreamTaskId: 'task_accepted' }, channel: 'https://pidoi.com' },
+    { metadata: { imageUrls: ['https://cdn.test/original.png'] }, channel: 'https://pidoi.com' },
+    { metadata: { imageProtocol: 'pidoi-async-v1' }, channel: 'https://pidoi.com' },
+    { metadata: {}, channel: 'https://another-channel.test' },
+  ])('拒绝不符合条件的订单 %j', ({ metadata, channel }) => {
+    const id = legacyOrder(metadata, channel);
+    expect(canCancelLegacyPidoiImage(id)).toBe(false);
+    expect(cancel(id).status).toHaveBeenCalledWith(409);
+    expect(row().status).toBe('processing');
+    expect(reservation().state).toBe('reserved');
+    expect(balance()).toBeCloseTo(99.78);
+  });
+
+  it('拒绝非管理员和正在执行的任务，写入失败时回滚退款', () => {
+    const id = legacyOrder();
+    expect(cancel(id, 1).status).toHaveBeenCalledWith(403);
+    pidoiImageActive.add(id);
+    expect(cancel(id).status).toHaveBeenCalledWith(409);
+    pidoiImageActive.delete(id);
+    sqlite.exec(`CREATE TRIGGER block_legacy_failure BEFORE UPDATE OF status ON contents
+      WHEN NEW.status='failed' BEGIN SELECT RAISE(ABORT,'test write failure'); END;`);
+    try {
+      expect(cancel(id).status).toHaveBeenCalledWith(500);
+      expect(row().status).toBe('processing');
+      expect(reservation().state).toBe('reserved');
+      expect(balance()).toBeCloseTo(99.78);
+    } finally {
+      sqlite.exec('DROP TRIGGER block_legacy_failure');
+    }
+  });
 });
 
 describe('Pidoi 网页提交到保存和结算', () => {
