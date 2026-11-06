@@ -1,4 +1,4 @@
-import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
+import { isSiYueTianManagedVideoModel, siYueTianManagedVideoUpstreamModel } from '../../shared/siYueTianManagedVideo.js';
 import { isZhiyingVideoModel, validateZhiyingVideoInput } from '../../shared/zhiyingVideo.js';
 import { prepareZhiyingVideo, createZhiyingVideo, pollZhiyingVideo, ZhiyingApiError } from './zhiyingVideoAdapter.js';
 import { zhiyingCredentialFingerprint, zhiyingPayloadHash } from './zhiyingVideoExecution.js';
@@ -197,7 +197,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
     return task.taskId;
   }
   if (isSiYueTianManagedVideoModel(exec)) {
-    if (model !== exec) throw new SpecificationUpstreamError('四月天视频上游模型映射不一致', false, false, false, 0, true);
+    if (model !== siYueTianManagedVideoUpstreamModel(exec)) throw new SpecificationUpstreamError('四月天视频上游模型映射不一致', false, false, false, 0, true);
     try { return await submitSiYueTianMinimax(c, request, url => publishSpecificationAsset(url, request.publicBaseUrl), onStarting, exec); }
     catch (error) {
       if (error instanceof SiYueTianMinimaxError) throw new SpecificationUpstreamError(error.message, false, error.uncertain, false, error.status, !error.uncertain);

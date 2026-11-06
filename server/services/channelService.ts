@@ -1,4 +1,4 @@
-import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS } from '../../shared/siYueTianManagedVideo.js';
+import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS, siYueTianManagedVideoUpstreamModel } from '../../shared/siYueTianManagedVideo.js';
 import { configuredSyncBindings } from './modelSyncScope.js';
 import { isSupportedChannelType } from '../../shared/channelTypes.js';
 import { isZhiyingVideoModel, ZHIYING_CHANNEL_TYPE, zhiyingApiBase } from '../../shared/zhiyingVideo.js';
@@ -745,7 +745,9 @@ export class ChannelService {
     } else if (isMiaowuChannel(channel)) {
       bindings.clear(); for (const id of MIAOWU_DEFAULT_VIDEO_MODELS) bindings.set(id, id);
     }
-    if (isSiYueTianVideoHost(channel.baseUrl)) for (const model of SI_YUE_TIAN_MANAGED_VIDEO_MODELS) bindings.set(model, model);
+    if (isSiYueTianVideoHost(channel.baseUrl)) {
+      for (const model of SI_YUE_TIAN_MANAGED_VIDEO_MODELS) bindings.set(model, siYueTianManagedVideoUpstreamModel(model));
+    }
     let ignored = 0;
     const normalized = rawModels.flatMap((item: any) => {
       const value = typeof item === 'string' ? item : item?.id || item?.model || item?.model_id;

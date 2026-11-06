@@ -1,6 +1,6 @@
 import { sqlite } from '../db/index.js';
 
-/** Explicit channel bindings are approval; an upstream catalog or '*' is not. */
+/** Only an explicit mapping or a saved route approves a configured model for sync. */
 export function configuredSyncBindings(channel: { id: number; supportedModels?: string; modelMapping?: string | null }) {
   const supported = JSON.parse(channel.supportedModels || '[]');
   const mapping = JSON.parse(channel.modelMapping || '{}');
@@ -10,8 +10,10 @@ export function configuredSyncBindings(channel: { id: number; supportedModels?: 
     throw { status: 409, message: '渠道模型关联格式无效，原配置未修改' };
   }
   const bindings = new Map<string, string>();
-  for (const id of new Set<string>([...supported, ...Object.keys(mapping)])) {
-    if (id && id !== '*' && mapping[id] !== '*') bindings.set(id, mapping[id] || id);
+  for (const [id, upstream] of Object.entries(mapping)) {
+    if (typeof upstream === 'string' && id.trim() && upstream.trim() && id.trim() !== '*' && upstream.trim() !== '*') {
+      bindings.set(id, upstream);
+    }
   }
   const row = sqlite.prepare('SELECT value FROM settings WHERE key=?').get('model_specification_routes_v1') as { value: string } | undefined;
   const specs = JSON.parse(row?.value || '[]');

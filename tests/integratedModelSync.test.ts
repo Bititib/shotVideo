@@ -72,6 +72,15 @@ describe('actual admin model sync scope', () => {
     expect(ChannelService.getChannelRaw(c.id)).toEqual(before);
     expect(db.select().from(models).where(eq(models.modelId, 'future-video')).get()).toBeUndefined();
   });
+  it.each(['openai', 'hmstudio', 'async-video'])('ignores an unmapped legacy supported-model entry on %s', async type => {
+    const c = channel({ type, supportedModels: '["unmapped-video"]', modelMapping: '{}' });
+    if (type === 'hmstudio') db.insert(channelApiKeys).values({ channelId: c.id, name: 'test', apiKey: 'test' }).run();
+    catalog = { data: type === 'async-video' ? [{ name: 'unmapped-video' }] : [{ id: 'unmapped-video', type: 'video' }] };
+    const before = ChannelService.getChannelRaw(c.id);
+    expect(await sync(c.id)).toMatchObject({ status: 200, body: { count: 0, added: 0, models: [] } });
+    expect(ChannelService.getChannelRaw(c.id)).toEqual(before);
+    expect(db.select().from(models).where(eq(models.modelId, 'unmapped-video')).get()).toBeUndefined();
+  });
   it('matches the configured upstream ID to its public alias and leaves orders, reservations, wallets and prices untouched', async () => {
     const c = channel({ supportedModels: '["approved-sale","unlisted-sale"]', modelMapping: '{"approved-sale":"upstream-v1","unlisted-sale":"absent"}' });
     model('approved-sale');
@@ -117,7 +126,7 @@ describe('actual admin model sync scope', () => {
     expect(db.select().from(models).where(eq(models.modelId, 'route-only')).get()?.isActive).toBe(0);
   });
   it('retains concurrent administrator changes instead of overwriting them after the HTTP response', async () => {
-    const c = channel({ supportedModels: '["approved"]' });
+    const c = channel({ supportedModels: '["approved"]', modelMapping: '{"approved":"approved"}' });
     vi.stubGlobal('fetch', vi.fn(async () => {
       db.update(channels).set({ supportedModels: '["admin-new"]' }).where(eq(channels.id, c.id)).run();
       return Response.json({ data: ['approved'] });

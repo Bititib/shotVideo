@@ -10,7 +10,7 @@ import { getModelSpecification } from '../server/services/modelRoutingService.js
 import { handleSpecificationGeneration, resumeSpecificationTasks } from '../server/services/specificationGenerationService.js';
 import { downloadAndLocalizeVideo } from '../server/services/videoLocalizationService.js';
 import { reserveUserCharge } from '../server/services/billingReservation.js';
-import { SI_YUE_TIAN_SEEDANCE_C4_MODEL as MODEL, siYueTianManagedVideoSpec } from '../shared/siYueTianManagedVideo.js';
+import { SI_YUE_TIAN_SEEDANCE_C4_MODEL as MODEL, SI_YUE_TIAN_SEEDANCE_C5_MODEL as C5, SI_YUE_TIAN_SEEDANCE_C5_UPSTREAM_MODEL as C5_UPSTREAM, siYueTianManagedVideoSpec } from '../shared/siYueTianManagedVideo.js';
 const siYueTianMinimaxLimits = () => siYueTianManagedVideoSpec(MODEL)!.limits;
 const ensureSiYueTianMinimaxModel = (sqlite: any) => ensureModel(sqlite, undefined, MODEL);
 import { canvasVideoReferenceLimits } from '../shared/canvasVideoReferences.js';
@@ -45,6 +45,54 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
 afterAll(() => sqlite.close());
+
+describe('四月天 S4-seedance2.5 integration', () => {
+  it('syncs the upstream name into the disabled public model and preserves an edited price', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [{ id: C5_UPSTREAM }, { id: 'unintegrated-siyuetian-video' }] })));
+    expect(await ChannelService.syncModels(channelId)).toMatchObject({ models: [C5] });
+    expect(db.select().from(models).where(eq(models.modelId, C5)).get()).toMatchObject({
+      displayName: C5, isActive: 0, capabilities: '["video"]',
+    });
+    expect(getModelSpecification(C5)?.routes[0]).toMatchObject({ executionModel: C5, upstreamModel: C5_UPSTREAM, cost: 4.5 });
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, C5)).get()).toMatchObject({ billingType: 'per_call', inputPrice: 5.5 });
+    db.update(modelPricing).set({ inputPrice: 6.5 }).where(eq(modelPricing.modelPattern, C5)).run();
+    await ChannelService.syncModels(channelId);
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, C5)).get()?.inputPrice).toBe(6.5);
+    expect(db.select().from(models).where(eq(models.modelId, C5_UPSTREAM)).get()).toBeUndefined();
+  });
+
+  it('generates under the public name at ¥5.50 using the upstream C5 ID and all reference media', async () => {
+    ensureModel(sqlite, undefined, C5);
+    db.update(models).set({ isActive: 1 }).where(eq(models.modelId, C5)).run();
+    completed();
+    vi.spyOn(referenceValidation, 'validateAndNormalizeImageReferences').mockImplementation(async images => images);
+    const images = Array.from({ length: 30 }, (_, i) => `https://cdn.example/${i}.png`);
+    const videos = Array.from({ length: 10 }, (_, i) => `https://cdn.example/${i}.mp4`);
+    const audios = Array.from({ length: 10 }, (_, i) => `https://cdn.example/${i}.mp3`);
+    await handleSpecificationGeneration(request({
+      model: C5, seconds: 5, reference_images: images, video_urls: videos, audio_urls: audios,
+    }), response(), 'video');
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)).toMatchObject({
+      model: C5_UPSTREAM, duration: 5, aspect_ratio: '21:9', image_refs: images, video_refs: videos, audio_refs: audios,
+    });
+    expect(record()).toMatchObject({ modelId: C5, status: 'completed', cost: 5.5 });
+    expect(balance()).toBe(94.5);
+  });
+
+  it.each([{ seconds: 4 }, { aspect_ratio: 'adaptive' }, { first_frame: 'https://cdn.example/start.png' }])(
+    'rejects unlisted C5 capabilities before charging or submitting: %j', async body => {
+      ensureModel(sqlite, undefined, C5);
+      db.update(models).set({ isActive: 1 }).where(eq(models.modelId, C5)).run();
+      const upstream = vi.fn();
+      vi.stubGlobal('fetch', upstream);
+      const res = response();
+      await handleSpecificationGeneration(request({ model: C5, ...body }), res, 'video');
+      expect(res.statusCode).toBe(400);
+      expect(upstream).not.toHaveBeenCalled();
+      expect(balance()).toBe(100);
+    },
+  );
+});
 
 describe('四月天 Seedance C4 integration', () => {
   it('supports 30-second adaptive requests at the confirmed per-call price', async () => {

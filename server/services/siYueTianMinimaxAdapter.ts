@@ -1,4 +1,4 @@
-import { siYueTianManagedVideoSpec, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
+import { siYueTianManagedVideoSpec, siYueTianManagedVideoInputErrors, siYueTianManagedVideoUpstreamModel } from '../../shared/siYueTianManagedVideo.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL, siYueTianMinimaxInputErrors, isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
 import type { SpecificationRequest } from './specificationAdapters.js';
 import { fetchVideoTaskResponse } from './videoPollDeadline.js';
@@ -19,7 +19,7 @@ export class SiYueTianMinimaxError extends Error {
 export function buildSiYueTianMinimaxPayload(request: SpecificationRequest, publish: (url: string) => string, model = SI_YUE_TIAN_MINIMAX_MODEL) {
   const errors = siYueTianManagedVideoInputErrors(model, request.input);
   if (errors.length) throw new SiYueTianMinimaxError(errors.join('；'), false);
-  return { model, prompt: request.prompt, duration: request.input.seconds,
+  return { model: siYueTianManagedVideoUpstreamModel(model), prompt: request.prompt, duration: request.input.seconds,
     // The fixed-2K model follows the supplied image's ratio; no competing ratio is sent.
     ...(!siYueTianManagedVideoSpec(model)?.followImageRatio || !request.images.length && !request.firstFrame && !request.lastFrame ? { aspect_ratio: request.input.ratio } : {}),
     ...(request.images.length ? { image_refs: request.images.map(publish) } : {}),

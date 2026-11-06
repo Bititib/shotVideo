@@ -726,7 +726,8 @@ describe('HM administrator sync → pricing → real quote workflow', () => {
     expect(db.select().from(channels).where(eq(channels.id, channelId)).get()).toEqual(before);
   });
   it('does not apply HM aliases or retail pricing to another provider', async () => {
-    const other = db.insert(channels).values({ name: 'Other', type: 'openai', baseUrl: 'https://example.test', apiKey: 'test', supportedModels: '["30-10-10"]' }).returning().get();
+    const other = db.insert(channels).values({ name: 'Other', type: 'openai', baseUrl: 'https://example.test', apiKey: 'test',
+      supportedModels: '["30-10-10"]', modelMapping: '{"30-10-10":"30-10-10"}' }).returning().get();
     responseBody = { data: ['30-10-10'] };
     const response = await post(`/api/admin/channels/${other.id}/sync-models`, {});
     expect(await response.json()).toMatchObject({ models: ['30-10-10'] });

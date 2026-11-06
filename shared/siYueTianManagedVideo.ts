@@ -2,7 +2,9 @@ import { defaultRoutingLimits, routingMismatches, type RoutingInput } from './mo
 import { SI_YUE_TIAN_MINIMAX_MODEL, SI_YUE_TIAN_MINIMAX_DESCRIPTION, SI_YUE_TIAN_MINIMAX_PRICE, siYueTianMinimaxLimits } from './siYueTianMinimax.js';
 
 export const SI_YUE_TIAN_SEEDANCE_C4_MODEL = 'seedance-2.5-720p-c4';
-export const SI_YUE_TIAN_MANAGED_VIDEO_MODELS = [SI_YUE_TIAN_MINIMAX_MODEL, SI_YUE_TIAN_SEEDANCE_C4_MODEL];
+export const SI_YUE_TIAN_SEEDANCE_C5_MODEL = 'S4-seedance2.5';
+export const SI_YUE_TIAN_SEEDANCE_C5_UPSTREAM_MODEL = 'seedance-2.5-720p-c5';
+export const SI_YUE_TIAN_MANAGED_VIDEO_MODELS = [SI_YUE_TIAN_MINIMAX_MODEL, SI_YUE_TIAN_SEEDANCE_C4_MODEL, SI_YUE_TIAN_SEEDANCE_C5_MODEL];
 export function siYueTianManagedVideoSpec(model: string) {
   if (model === SI_YUE_TIAN_MINIMAX_MODEL) return { id: model, name: 'MiniMax H3 2K · 四月天',
     description: SI_YUE_TIAN_MINIMAX_DESCRIPTION, price: SI_YUE_TIAN_MINIMAX_PRICE, cost: 1,
@@ -14,10 +16,31 @@ export function siYueTianManagedVideoSpec(model: string) {
     limits: { ...defaultRoutingLimits(), maxImages: 30, maxVideos: 10, maxAudios: 10, firstFrame: true, lastFrame: true,
       resolutions: ['720p'], ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'],
       duration: { mode: 'range' as const, min: 4, max: 30, step: 1, values: [] } } };
+  // Four-month public /api/pricing catalog, checked 2026-11-06.
+  if (model === SI_YUE_TIAN_SEEDANCE_C5_MODEL) return {
+    id: model,
+    name: SI_YUE_TIAN_SEEDANCE_C5_MODEL,
+    description: 'Seedance 2.5 C5 · 四月天，固定720p，5–30秒，最多30图/10视频/10音频，按条计费',
+    price: 5.5,
+    cost: 4.5,
+    marker: 'catalog_siyuetian_seedance_c5_',
+    route: 'siyuetian-seedance-c5-',
+    followImageRatio: false,
+    limits: {
+      ...defaultRoutingLimits(),
+      maxImages: 30, maxVideos: 10, maxAudios: 10,
+      resolutions: ['720p'],
+      ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
+      duration: { mode: 'range' as const, min: 5, max: 30, step: 1, values: [] },
+    },
+  };
   return null;
 }
 export function isSiYueTianManagedVideoModel(model: unknown): boolean {
   return typeof model === 'string' && SI_YUE_TIAN_MANAGED_VIDEO_MODELS.includes(model);
+}
+export function siYueTianManagedVideoUpstreamModel(model: string): string {
+  return model === SI_YUE_TIAN_SEEDANCE_C5_MODEL ? SI_YUE_TIAN_SEEDANCE_C5_UPSTREAM_MODEL : model;
 }
 export function siYueTianManagedVideoInputErrors(model: string, input: RoutingInput): string[] {
   const spec = siYueTianManagedVideoSpec(model);

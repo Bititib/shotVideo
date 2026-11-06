@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import type { ModelSpecification } from '../../shared/modelRouting.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL, isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
-import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS, siYueTianManagedVideoSpec } from '../../shared/siYueTianManagedVideo.js';
+import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS, siYueTianManagedVideoSpec, siYueTianManagedVideoUpstreamModel } from '../../shared/siYueTianManagedVideo.js';
 
 export class SiYueTianCatalogConflictError extends Error {
   constructor(message: string) {
@@ -29,6 +29,7 @@ export function ensureSiYueTianMinimaxModel(sqlite: Database.Database, syncedCha
   const product = siYueTianManagedVideoSpec(model);
   if (!product) throw new Error('未配置此四月天视频型号');
   const MODEL = product.id;
+  const upstreamModel = siYueTianManagedVideoUpstreamModel(MODEL);
   return sqlite.transaction(() => {
     const existing = sqlite.prepare('SELECT provider FROM models WHERE model_id=?').get(MODEL) as { provider: string } | undefined;
     if (existing && existing.provider !== 'siyuetian') throw new SiYueTianCatalogConflictError(`${MODEL} 已被其他产品占用，未修改原配置`);
@@ -50,8 +51,8 @@ export function ensureSiYueTianMinimaxModel(sqlite: Database.Database, syncedCha
       const supported: string[] = JSON.parse(channel.supported_models || '[]');
       const mapping = JSON.parse(channel.model_mapping || '{}');
       if (!supported.includes(MODEL)) supported.push(MODEL);
-      if (mapping[MODEL] && mapping[MODEL] !== MODEL) throw new SiYueTianCatalogConflictError(`${MODEL} 的现有映射不同，未覆盖配置`);
-      mapping[MODEL] = MODEL;
+      if (mapping[MODEL] && mapping[MODEL] !== upstreamModel) throw new SiYueTianCatalogConflictError(`${MODEL} 的现有映射不同，未覆盖配置`);
+      mapping[MODEL] = upstreamModel;
       sqlite.prepare('UPDATE channels SET supported_models=?,model_mapping=? WHERE id=?').run(JSON.stringify(supported), JSON.stringify(mapping), channel.id);
       let spec = specs.find(s => s.modelId === MODEL);
       if (!spec) {
@@ -60,7 +61,7 @@ export function ensureSiYueTianMinimaxModel(sqlite: Database.Database, syncedCha
       }
       if (!spec.routes.some(route => route.channelId === channel.id)) {
         spec.routes.push({ id: product.route + channel.id, channelId: channel.id, executionModel: MODEL,
-          upstreamModel: MODEL, enabled: true, limits: structuredClone(product.limits), cost: product.cost, costUnit: 'per_call', resolutionCosts: {}, priority: channel.priority });
+          upstreamModel, enabled: true, limits: structuredClone(product.limits), cost: product.cost, costUnit: 'per_call', resolutionCosts: {}, priority: channel.priority });
         changed = true;
       }
       sqlite.prepare('INSERT OR IGNORE INTO settings(key,value,label) VALUES(?,\'1\',\'四月天视频初始关联\')').run(marker);

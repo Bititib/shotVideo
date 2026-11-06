@@ -149,8 +149,7 @@ export async function syncModelsFromAPI() {
   const apiKey = env.GEMINI_API_KEY;
 
   let allVerified: ModelEntry[] = [];
-  const allowedGoogleModels = new Set<string>([...GOOGLE_SYNC_MODEL_IDS,
-    ...existingModels.filter(model => model.provider === 'google').map(model => model.modelId)]);
+  const allowedGoogleModels = new Set<string>(GOOGLE_SYNC_MODEL_IDS);
 
   if (!apiKey) {
     console.warn('⚠️ 未配置 API Key，使用默认模型');
