@@ -8,6 +8,8 @@ import { ensureFundLedger } from './fundLedger.js';
 import { migratePidoiImageTimeout } from './imageTimeoutMigration.js';
 import { migrateV6kCatalog } from '../services/v6kCatalogMigration.js';
 import { pruneUnapprovedV6kBindings } from '../services/v6kApprovedBindings.js';
+import { pruneSiYueTianCatalogBindings, SI_YUE_TIAN_LEGACY_CATALOG_MODELS } from '../services/siYueTianApprovedBindings.js';
+import { MJ_NEW_API_CATALOG_BINDINGS, pruneAllChannelCatalogBindings, SUDA_SHUI_CATALOG_MODELS } from '../services/channelCatalogBindings.js';
 import { ensureV6kTttModel } from '../services/v6kTttModel.js';
 import { ensureV6kSeedance20Models } from '../services/v6kSeedance2Catalog.js';
 import { ensureV6kTt25Models } from '../services/v6kTt25Catalog.js';
@@ -1356,13 +1358,7 @@ export async function initDatabase() {
 
   // 9) 自动向已存在且包含 sudashuiapi.com 或 pidoi.com 的渠道添加支持的模型 ID，防止路由错误
   try {
-    const sdaModels = [
-      'sdas-my-seedance-2.0-fast-720p',
-      'ld-sdas-cvk-pro-933-720p',
-      'sdas-mj-minimax-h3-2k',
-      'sdas-bl-sd2.0-933-pro-720p',
-      'sdas-bl-sd2.0-933-pro-noface-720p'
-    ];
+    const sdaModels = SUDA_SHUI_CATALOG_MODELS;
     const pidoiModels: string[] = [];
     const allChannels = db.select().from(channels).all();
     for (const c of allChannels) {
@@ -1457,7 +1453,7 @@ export async function initDatabase() {
     const existingChre3 = db.select().from(channels).all().find(channel =>
       channel.name === '4月天 渠道' || channel.baseUrl === 'https://llm.chre3.com'
     );
-    const chre3Models = ['seedance-2.0', 'sd2-mini', ...SI_YUE_TIAN_C2_MODELS.map(spec => spec.id), ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS, ...SI_YUE_TIAN_IMAGE_MODELS];
+    const chre3Models = SI_YUE_TIAN_LEGACY_CATALOG_MODELS;
     if (!existingChre3) {
       db.insert(channels).values({
         name: '4月天 渠道',
@@ -1477,7 +1473,7 @@ export async function initDatabase() {
       db.update(channels)
         .set({
           name: '4月天 渠道',
-          supportedModels: JSON.stringify(chre3Models),
+          supportedModels: JSON.stringify([...new Set([...JSON.parse(existingChre3.supportedModels || '[]'), ...chre3Models])]),
           modelMapping: JSON.stringify({
             ...(() => { try { return JSON.parse(existingChre3.modelMapping || '{}'); } catch { return {}; } })(),
             'gpt-image-2-siyuetian': 'gpt-image-2',
@@ -1679,24 +1675,8 @@ export async function initDatabase() {
   // 15) MJNewAPI 渠道 - 整合所有 Seedance 系列模型
   try {
     const existingMj = db.select().from(channels).where(eq(channels.name, 'MJNewAPI 渠道')).get();
-    const mjModels = [
-      'cd-seedance-2.0-720p',
-      'nd-seedance-2.0-480p',
-      'ad-seedance-2.5-480p',
-      'vd-seedance-2.5-480p',
-      'vd-seedance-2.5-720p',
-      'td-seedance-2.5-720p',
-      'xd-seedance-2.5-720p'
-    ];
-    const mjMapping = {
-      'cd-seedance-2.0-720p': 'cd-seedance 2.0 720p',
-      'nd-seedance-2.0-480p': 'nd-seedance-2.0 480p',
-      'ad-seedance-2.5-480p': 'ad-seedance-2.5-480p',
-      'vd-seedance-2.5-480p': 'vd-seedance-2.5-480p',
-      'vd-seedance-2.5-720p': 'vd-seedance-2.5-720p',
-      'td-seedance-2.5-720p': 'td-seedance-2.5-720p',
-      'xd-seedance-2.5-720p': 'xd-seedance-2.5-720p'
-    };
+    const mjMapping = MJ_NEW_API_CATALOG_BINDINGS;
+    const mjModels = Object.keys(mjMapping);
 
     if (!existingMj) {
       db.insert(channels).values({
@@ -2073,6 +2053,8 @@ export async function initDatabase() {
   pruneUnapprovedV6kBindings(sqlite);
   removeTtBbFallbacks(sqlite);
   ensureSiYueTianVideoModelsOnStartup(sqlite);
+  pruneSiYueTianCatalogBindings(sqlite);
+  pruneAllChannelCatalogBindings(sqlite);
   migrateFunAiOmniFlash11(sqlite);
   ensureFundLedger(sqlite);
   retireRemovedVideoModels(sqlite);

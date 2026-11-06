@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMemoryDatabase } from './helpers/memoryDatabase.js';
 import { ensureSiYueTianMinimaxModel, ensureSiYueTianVideoModelsOnStartup, SiYueTianCatalogConflictError } from '../server/services/siYueTianMinimaxCatalog.js';
-import { SI_YUE_TIAN_SEEDANCE_C4_MODEL as C4 } from '../shared/siYueTianManagedVideo.js';
+import { SI_YUE_TIAN_SEEDANCE_C4_MODEL as C4, SI_YUE_TIAN_SEEDANCE_C5_MODEL as C5 } from '../shared/siYueTianManagedVideo.js';
 
 let database: ReturnType<typeof createMemoryDatabase>;
 beforeEach(() => { database = createMemoryDatabase(); });
@@ -17,6 +17,7 @@ describe('Siyuetian optional startup catalog transactions', () => {
     add.run('first', 'https://llm.chre3.com', '{}');
     add.run('second', 'https://llm.domie.studio', JSON.stringify({ [C4]: 'operator-upstream' }));
     ensureSiYueTianMinimaxModel(sqlite);
+    ensureSiYueTianMinimaxModel(sqlite, undefined, C5);
     const before = catalogSnapshot();
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
 

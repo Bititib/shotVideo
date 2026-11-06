@@ -111,7 +111,7 @@ describe('智赢渠道目录', () => {
     expect(() => quoteVideoRequest({ model: line1, resolution: '720p', video_length: 30 }, 7)).toThrow(/售价/);
   });
 
-  it('preserves unrelated bindings and withdraws only new routing to an unavailable model, keeping its original mapping', async () => {
+  it('archives unrelated bindings and withdraws new routing to an unavailable integrated model, keeping its mapping', async () => {
     ChannelService.updateChannel(channelId, { supportedModels: ['manual'], modelMapping: { manual: 'unrelated' } });
     await ChannelService.syncModels(channelId);
     sqlite.prepare('UPDATE models SET is_active=1 WHERE model_id=?').run(line1);
@@ -119,8 +119,9 @@ describe('智赢渠道目录', () => {
     fetchPage.mockImplementation(async () => Response.json({ ...catalog([line2, excluded]), unavailable: [{ id: line1 }] }));
     expect((await ChannelService.syncModels(channelId)).models).toEqual([line2]);
     const saved = ChannelService.getChannelRaw(channelId)!;
-    expect(JSON.parse(saved.modelMapping)).toMatchObject({ manual: 'unrelated', [line1]: line1 });
-    expect(JSON.parse(saved.supportedModels)).toEqual(['manual', line2]);
+    expect(JSON.parse(saved.modelMapping)).toMatchObject({ [line1]: line1 });
+    expect(JSON.parse(saved.modelMapping)).not.toHaveProperty('manual');
+    expect(JSON.parse(saved.supportedModels)).toEqual([line2]);
     expect(selectModelRoutes(getModelSpecification(line1)!, request)).toEqual([]);
     expect(ChannelService.findChannelsForModel('manual')).toEqual([]);
   });

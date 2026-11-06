@@ -4,7 +4,7 @@ import { channels, models } from '../db/schema.js';
 import { fetchAsyncVideoModels, type AsyncVideoChannel, type AsyncVideoModel } from './asyncVideoAdapter.js';
 import { VX_LE_SEEDANCE_MODEL, LEGACY_VX_LE_SEEDANCE_MODEL, asyncVideoConfirmedLimits, asyncVideoPublicModelId } from '../../shared/asyncVideo.js';
 import { getModelSpecification, saveModelSpecification } from './modelRoutingService.js';
-import { configuredSyncBindings } from './modelSyncScope.js';
+import { channelCatalogBindings } from './channelCatalogBindings.js';
 
 type CatalogChannel = AsyncVideoChannel & { id: number; name: string; priority: number };
 
@@ -14,7 +14,8 @@ export function ensureVxLeSeedanceModel(channel: CatalogChannel) {
 }
 
 export async function syncAsyncVideoModels(channel: CatalogChannel) {
-  const configured = configuredSyncBindings(channel);
+  const saved = db.select().from(channels).where(eq(channels.id, channel.id)).get();
+  const configured = saved ? channelCatalogBindings(sqlite, saved) ?? new Map<string, string>() : new Map<string, string>();
   const allowed = new Set([VX_LE_SEEDANCE_MODEL, ...configured.values()]);
   const upstream = await fetchAsyncVideoModels(channel);
   const approved = upstream.filter(entry => allowed.has(entry.name));
@@ -26,7 +27,8 @@ export async function syncAsyncVideoModels(channel: CatalogChannel) {
 function registerAsyncVideoModels(channel: CatalogChannel, upstream: AsyncVideoModel[], replace: boolean) {
   let added = 0;
   return sqlite.transaction(() => {
-    const configured = configuredSyncBindings(channel);
+    const saved = db.select().from(channels).where(eq(channels.id, channel.id)).get();
+    const configured = saved ? channelCatalogBindings(sqlite, saved) ?? new Map<string, string>() : new Map<string, string>();
     const legacyModelId = asyncVideoPublicModelId(channel.id, LEGACY_VX_LE_SEEDANCE_MODEL);
     const legacyModel = db.select().from(models).where(eq(models.modelId, legacyModelId)).get();
     // Keep the existing public ID so saved access rules, prices and tasks retain their bindings.

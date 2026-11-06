@@ -1,8 +1,9 @@
-import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS, siYueTianManagedVideoUpstreamModel } from '../../shared/siYueTianManagedVideo.js';
+import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS } from '../../shared/siYueTianManagedVideo.js';
+import { pruneSiYueTianCatalogBindings, siYueTianApprovedBindings } from './siYueTianApprovedBindings.js';
+import { channelCatalogBindings, pruneChannelCatalogBindings } from './channelCatalogBindings.js';
 import { configuredSyncBindings } from './modelSyncScope.js';
 import { isSupportedChannelType } from '../../shared/channelTypes.js';
 import { isZhiyingVideoModel, ZHIYING_CHANNEL_TYPE, zhiyingApiBase } from '../../shared/zhiyingVideo.js';
-import { GOOGLE_SYNC_MODEL_IDS } from '../../shared/googleSyncModels.js';
 import { SNUMOM_VIDEO_MODELS } from './snumomWanAdapter.js';
 import { isMegabyChannel, megabyBaseUrl, fetchMegabyVideoModels } from './megabyVideoAdapter.js';
 import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
@@ -16,13 +17,12 @@ import { isZonghengChannel, zonghengBaseUrl, ZONGHENG_MODEL_PREFIX } from './zon
 import { HUSS_CHANNEL_TYPE, hussApiBase, isHussChannel, fetchHussVideoModels } from './hussVideoAdapter.js';
 import { HAYA_MODEL_IDS, HAYA_XG_SEEDANCE_20_MODEL, getHayaVideoSpec, hayaPublicModelId, hayaUpstreamModelId } from '../../shared/hayaVideo.js';
 import { isHayaChannel, hayaApiBaseUrl } from './hayaVideoAdapter.js';
-import { HAYA_MO_MODEL } from '../../shared/hayaMoVideo.js';
-import { BB_HSS_KK_ENTRIES, isBbHssKkEntry } from '../../shared/bbHssKk.js';
+import { isBbHssKkEntry } from '../../shared/bbHssKk.js';
 import { ensureBbHssMoMapping } from './bbHssMoMigration.js';
 import { db, sqlite } from '../db/index.js';
 import { channelApiKeys, channels, models, modelPricing } from '../db/schema.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL, isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
-import { ensureSiYueTianMinimaxModel } from './siYueTianMinimaxCatalog.js';
+import { ensureSiYueTianMinimaxModel, SiYueTianCatalogConflictError } from './siYueTianMinimaxCatalog.js';
 import { and, desc, eq } from 'drizzle-orm';
 import { hmStudioPoolConfig, hmStudioPoolKey, hmStudioQueue } from './hmStudioQueueService.js';
 import {
@@ -639,6 +639,18 @@ export class ChannelService {
   }
 
   static async syncModels(id: number): Promise<{ count: number; added: number; models: string[]; warnings?: string[] }> {
+    const result = await this.syncChannelModels(id);
+    const saved = this.getChannelRaw(id);
+    if (!saved) return result;
+    const removed = pruneChannelCatalogBindings(sqlite, saved);
+    if (!removed.length) return result;
+    const supported: string[] = JSON.parse(this.getChannelRaw(id)!.supportedModels);
+    const models = result.models.filter(model => supported.includes(model));
+    return { ...result, count: models.length, models, warnings: [...(result.warnings || []),
+      `已归档并解除 ${removed.length} 个未接入型号的旧关联：${removed.slice(0, 8).join('、')}${removed.length > 8 ? '等' : ''}`] };
+  }
+
+  private static async syncChannelModels(id: number): Promise<{ count: number; added: number; models: string[]; warnings?: string[] }> {
     const channel = this.getChannelRaw(id);
     if (!channel) throw { status: 404, message: '渠道不存在' };
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
@@ -728,26 +740,9 @@ export class ChannelService {
     }
     if (!Array.isArray(payload) && !Array.isArray(payload?.data) && !Array.isArray(payload?.models))
       throw { status: 502, message: '同步模型响应缺少模型列表，原配置未修改' };
-    const bindings = configuredSyncBindings(channel);
-    if (channel.type === 'gemini') for (const modelId of GOOGLE_SYNC_MODEL_IDS) {
-      if (!bindings.has(modelId)) bindings.set(modelId, modelId);
-    }
-    if (channel.type === 'snumom') for (const modelId of SNUMOM_VIDEO_MODELS) {
-      if (!bindings.has(modelId)) bindings.set(modelId, modelId);
-    }
-    // These dedicated adapters already have exact, reviewed product definitions.
-    if (isHayaChannel(channel)) {
-      bindings.clear();
-      for (const id of HAYA_MODEL_IDS) bindings.set(id, hayaUpstreamModelId(id));
-      for (const id of BB_HSS_KK_ENTRIES) bindings.set(id, HAYA_MO_MODEL);
-    } else if (isLongxiaChannel(channel)) {
-      bindings.clear(); for (const id of LONGXIA_MODELS) bindings.set(id, id);
-    } else if (isMiaowuChannel(channel)) {
-      bindings.clear(); for (const id of MIAOWU_DEFAULT_VIDEO_MODELS) bindings.set(id, id);
-    }
-    if (isSiYueTianVideoHost(channel.baseUrl)) {
-      for (const model of SI_YUE_TIAN_MANAGED_VIDEO_MODELS) bindings.set(model, siYueTianManagedVideoUpstreamModel(model));
-    }
+    const isSiYueTian = isSiYueTianVideoHost(channel.baseUrl);
+    const bindings = isSiYueTian ? siYueTianApprovedBindings(sqlite, channel.id)
+      : channelCatalogBindings(sqlite, channel) ?? configuredSyncBindings(channel);
     let ignored = 0;
     const normalized = rawModels.flatMap((item: any) => {
       const value = typeof item === 'string' ? item : item?.id || item?.model || item?.model_id;
@@ -776,18 +771,32 @@ export class ChannelService {
     const unique = [...new Map(normalized.map((item: any) => [item.modelId, item])).values()] as Array<{
       modelId: string; displayName: string; capability: string;
     }>;
-    const warnings = [`仅同步已接入或明确配置的型号，忽略其他型号 ${ignored} 个；保留现有价格、启用状态和关联。`];
-    if (!unique.length) return { count: 0, added: 0, models: [], warnings };
+    const warnings = [`仅同步已接入或明确配置的型号，忽略其他型号 ${ignored} 个；保留现有价格和启用状态。`];
+    if (!unique.length && !isSiYueTian) return { count: 0, added: 0, models: [], warnings };
     return db.transaction(tx => {
       const current = tx.select().from(channels).where(eq(channels.id, id)).get();
       if (!current || current.apiKey !== channel.apiKey || current.baseUrl !== channel.baseUrl || current.type !== channel.type
         || current.supportedModels !== channel.supportedModels || current.modelMapping !== channel.modelMapping)
         throw { status: 409, message: '同步期间渠道配置已变化，原配置未修改，请重新同步' };
       let added = 0;
-      if (isSiYueTianVideoHost(channel.baseUrl)) for (const model of SI_YUE_TIAN_MANAGED_VIDEO_MODELS) {
-        if (unique.some(item => item.modelId === model)) added += ensureSiYueTianMinimaxModel(sqlite, channel.id, model);
+      if (isSiYueTian) {
+        const removed = pruneSiYueTianCatalogBindings(sqlite, channel.id);
+        if (removed.length) warnings.push(`已归档并解除 ${removed.length} 个未接入型号的渠道关联：${removed.join('、')}`);
       }
-      for (const item of unique) {
+      const skipped = new Set<string>();
+      if (isSiYueTianVideoHost(channel.baseUrl)) for (const model of SI_YUE_TIAN_MANAGED_VIDEO_MODELS) {
+        if (!unique.some(item => item.modelId === model)) continue;
+        try {
+          added += ensureSiYueTianMinimaxModel(sqlite, channel.id, model);
+        } catch (error) {
+          if (!(error instanceof SiYueTianCatalogConflictError)) throw error;
+          skipped.add(model);
+          warnings.push(`已跳过 ${model}：${error.message}`);
+        }
+      }
+      const synced = unique.filter(item => !skipped.has(item.modelId));
+      if (!synced.length) return { count: 0, added: 0, models: [], warnings };
+      for (const item of synced) {
         if (isHayaChannel(channel) && item.modelId === HAYA_XG_SEEDANCE_20_MODEL
           && !db.select().from(modelPricing).where(eq(modelPricing.modelPattern, item.modelId)).get()) {
           const spec = getHayaVideoSpec(item.modelId)!;
@@ -810,11 +819,12 @@ export class ChannelService {
         }
       }
 
-      const modelIds = unique.map(item => item.modelId);
-      const mapping = JSON.parse(current.modelMapping || '{}');
+      const modelIds = synced.map(item => item.modelId);
+      const saved = tx.select().from(channels).where(eq(channels.id, id)).get()!;
+      const mapping = JSON.parse(saved.modelMapping || '{}');
       for (const modelId of modelIds) if (!Object.hasOwn(mapping, modelId)) mapping[modelId] = bindings.get(modelId)!;
       db.update(channels).set({
-        supportedModels: JSON.stringify([...new Set([...JSON.parse(current.supportedModels), ...modelIds])]),
+        supportedModels: JSON.stringify([...new Set([...JSON.parse(saved.supportedModels), ...modelIds])]),
         modelMapping: JSON.stringify(mapping),
         updatedAt: new Date().toISOString(),
       }).where(eq(channels.id, id)).run();

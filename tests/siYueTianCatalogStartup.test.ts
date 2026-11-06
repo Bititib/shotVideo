@@ -127,20 +127,21 @@ describe('actual database startup with Siyuetian catalog conflicts', () => {
     expect(network).not.toHaveBeenCalled();
   });
 
-  it('keeps explicit channel sync strict and rolls back the earlier healthy model on a C4 collision', async () => {
+  it('isolates a C4 collision from healthy models during explicit channel sync', async () => {
     db.insert(models).values({ modelId: C4, provider: 'operator-provider', displayName: '原 C4', isActive: 1 }).run();
     db.insert(modelPricing).values({ modelPattern: C4, billingType: 'per_call', inputPrice: 9.5 }).run();
     const channel = db.insert(channels).values({ name: '四月天同步', type: 'openai', baseUrl: 'https://llm.chre3.com',
       apiKey: 'test-only-key', supportedModels: '[]', modelMapping: '{}' }).returning().get();
-    const snapshot = () => JSON.stringify(['models', 'model_pricing', 'channels', 'settings'].map(table => sqlite.prepare(`SELECT * FROM ${table}`).all()));
-    const before = snapshot();
+    const before = product(C4);
     const catalog = vi.fn(async (_url: unknown, _init?: RequestInit) => Response.json({ data: [{ id: MINIMAX }, { id: C4 }] }));
     vi.stubGlobal('fetch', catalog);
 
-    await expect(ChannelService.syncModels(channel.id)).rejects.toBeInstanceOf(SiYueTianCatalogConflictError);
-
-    expect(snapshot()).toBe(before);
-    expect(product(MINIMAX)).toBeUndefined();
+    const result = await ChannelService.syncModels(channel.id);
+    expect(result).toMatchObject({ models: [MINIMAX], added: 1 });
+    expect(result.warnings).toContainEqual(expect.stringContaining(`已跳过 ${C4}`));
+    expect(product(C4)).toEqual(before);
+    expect(price(C4)?.inputPrice).toBe(9.5);
+    expect(product(MINIMAX)).toBeDefined();
     expect(catalog).toHaveBeenCalledOnce();
     expect(catalog.mock.calls[0][1]?.method).not.toBe('POST');
   });

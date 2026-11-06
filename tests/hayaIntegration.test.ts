@@ -194,7 +194,8 @@ describe('Haya in both application entry points (isolated in-memory database)', 
     } finally { env.GEMINI_API_KEY = previousKey; }
   });
   it('classifies synchronized TTS models and repairs old text classification without enabling disabled models', async () => {
-    const channel = ChannelService.createChannel({ name: 'AIStudio2API test', type: 'gemini', baseUrl: 'https://tts.invalid', apiKey: 'test-key', supportedModels: ['gemini-3.8-flash-tts'] });
+    const channel = ChannelService.createChannel({ name: 'AIStudio2API test', type: 'gemini', baseUrl: 'https://tts.invalid', apiKey: 'test-key',
+      supportedModels: ['gemini-3.8-flash-tts'], modelMapping: { 'gemini-3.8-flash-tts': 'gemini-3.8-flash-tts' } });
     db.insert(models).values({ modelId: 'gemini-3.8-flash-tts', displayName: 'Custom name', provider: 'google', capabilities: '["text"]', isActive: 0 }).run();
     upstream = async () => Response.json({ data: [{ id: 'gemini-3.8-flash-tts' }, { id: 'new-tts' }] });
     await ChannelService.syncModels(channel);

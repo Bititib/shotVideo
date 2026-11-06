@@ -2,7 +2,7 @@ import { migrateHmDdlongNaming } from '../db/hmDdlongNamingMigration.js';
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { channels, modelPricing, models } from '../db/schema.js';
-import { configuredSyncBindings } from './modelSyncScope.js';
+import { channelCatalogBindings } from './channelCatalogBindings.js';
 import {
   getHmStudioAdditionalVideoModel, getHmStudioPublicVideoModel,
   getHmStudioUpstreamVideoModel, HM_STUDIO_UPSTREAM_VIDEO_MODEL_MAP,
@@ -13,7 +13,7 @@ import {
 export function registerHmStudioCatalog(channel: { id: number; name: string }, rawModels: unknown[]) {
   const saved = db.select().from(channels).where(eq(channels.id, channel.id)).get();
   if (!saved) throw { status: 404, message: '渠道不存在' };
-  const configured = configuredSyncBindings(saved);
+  const configured = channelCatalogBindings(sqlite, saved) ?? new Map<string, string>();
   let ignored = 0;
   const entries = rawModels.map((raw: any) => {
     const id = typeof raw === 'string' ? raw : raw?.id || raw?.model || raw?.model_id;

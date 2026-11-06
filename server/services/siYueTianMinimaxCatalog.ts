@@ -3,6 +3,21 @@ import type { ModelSpecification } from '../../shared/modelRouting.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL, isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
 import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS, siYueTianManagedVideoSpec, siYueTianManagedVideoUpstreamModel } from '../../shared/siYueTianManagedVideo.js';
 
+type CatalogChannel = { id: number; type: string; base_url: string; priority: number; supported_models: string; model_mapping: string };
+
+function ownsLegacyModel(model: string, upstream: string, provider: string, channels: CatalogChannel[], specs: ModelSpecification[]) {
+  const related = channels.filter(channel =>
+    JSON.parse(channel.supported_models || '[]').includes(model)
+    || Object.hasOwn(JSON.parse(channel.model_mapping || '{}'), model));
+  const owners = related.filter(channel => isSiYueTianVideoHost(channel.base_url)
+    && JSON.parse(channel.model_mapping || '{}')[model] === upstream);
+  if (!owners.some(channel => channel.type === provider) || related.length !== owners.length) return false;
+  const ownerIds = new Set(owners.map(channel => channel.id));
+  return specs.every(spec => spec.routes.every(route =>
+    (spec.modelId !== model && route.executionModel !== model)
+    || (ownerIds.has(route.channelId) && route.executionModel === model && route.upstreamModel === upstream)));
+}
+
 export class SiYueTianCatalogConflictError extends Error {
   constructor(message: string) {
     super(message);
@@ -16,7 +31,7 @@ export function ensureSiYueTianVideoModelsOnStartup(sqlite: Database.Database) {
     try {
       ensureSiYueTianMinimaxModel(sqlite, undefined, model);
     } catch (error) {
-      // Each model's transaction has rolled back. Keep explicit sync strict and
+      // Each model's transaction has rolled back. Skip known conflicts only and
       // continue only for known ownership/mapping conflicts, never database errors.
       if (!(error instanceof SiYueTianCatalogConflictError)) throw error;
       console.warn(`[四月天启动目录] 跳过 ${model} 自动关联：${error.message}；保留原配置，其他服务继续启动`);
@@ -32,19 +47,25 @@ export function ensureSiYueTianMinimaxModel(sqlite: Database.Database, syncedCha
   const upstreamModel = siYueTianManagedVideoUpstreamModel(MODEL);
   return sqlite.transaction(() => {
     const existing = sqlite.prepare('SELECT provider FROM models WHERE model_id=?').get(MODEL) as { provider: string } | undefined;
-    if (existing && existing.provider !== 'siyuetian') throw new SiYueTianCatalogConflictError(`${MODEL} 已被其他产品占用，未修改原配置`);
+    const key = 'model_specification_routes_v1';
+    const row = sqlite.prepare('SELECT value FROM settings WHERE key=?').get(key) as { value: string } | undefined;
+    const specs: ModelSpecification[] = row ? JSON.parse(row.value) : [];
+    if (!Array.isArray(specs)) throw new Error('模型规格配置无效，未修改原配置');
+    const channels = sqlite.prepare('SELECT id,type,base_url,priority,supported_models,model_mapping FROM channels').all() as CatalogChannel[];
+    if (existing && existing.provider !== 'siyuetian') {
+      if (!ownsLegacyModel(MODEL, upstreamModel, existing.provider, channels, specs)) {
+        throw new SiYueTianCatalogConflictError(`${MODEL} 已被其他产品占用，未修改原配置`);
+      }
+      sqlite.prepare("UPDATE models SET provider='siyuetian',capabilities=? WHERE model_id=?").run('["video"]', MODEL);
+    }
     const added = sqlite.prepare(`INSERT OR IGNORE INTO models
       (provider,model_id,display_name,description,capabilities,is_active) VALUES('siyuetian',?,?,?,'["video"]',0)`)
       .run(MODEL, product.name, product.description).changes;
     sqlite.prepare(`INSERT INTO model_pricing (model_pattern,billing_type,input_price,output_price,extra_params)
       SELECT ?,'per_call',?,0,'{"category":"video"}' WHERE NOT EXISTS (SELECT 1 FROM model_pricing WHERE model_pattern=?)`)
       .run(MODEL, product.price, MODEL);
-    const key = 'model_specification_routes_v1';
-    const row = sqlite.prepare('SELECT value FROM settings WHERE key=?').get(key) as { value: string } | undefined;
-    const specs: ModelSpecification[] = row ? JSON.parse(row.value) : [];
-    if (!Array.isArray(specs)) throw new Error('模型规格配置无效，未修改原配置');
     let changed = false;
-    for (const channel of sqlite.prepare('SELECT id,base_url,priority,supported_models,model_mapping FROM channels').all() as any[]) {
+    for (const channel of channels) {
       if (!isSiYueTianVideoHost(channel.base_url) || syncedChannelId !== undefined && channel.id !== syncedChannelId) continue;
       const marker = product.marker + channel.id;
       if (syncedChannelId === undefined && sqlite.prepare('SELECT 1 FROM settings WHERE key=?').get(marker)) continue;

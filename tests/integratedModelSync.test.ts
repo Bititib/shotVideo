@@ -40,6 +40,82 @@ afterEach(() => { sqlite.exec('ROLLBACK TO sync_scope; RELEASE sync_scope'); env
 afterAll(async () => { await new Promise<void>(resolve => server.close(() => resolve())); sqlite.close(); });
 
 describe('actual admin model sync scope', () => {
+  it.each([
+    { type: 'openai', baseUrl: 'https://julun.cc', known: 'wan3.0th' },
+    { type: 'snumom', baseUrl: 'https://snumom.com', known: 'sd-mini' },
+    { type: 'hmstudio', baseUrl: 'https://hm.invalid', known: 'SD2.0MINI503' },
+  ])('archives stale mapped entries and retains the actual $type mapping on repeat sync', async ({ type, baseUrl, known }) => {
+    const stale = 'old-catalog-only';
+    const c = channel({ type, baseUrl, supportedModels: JSON.stringify([known, stale]),
+      modelMapping: JSON.stringify({ [known]: known, [stale]: stale }) });
+    if (type === 'hmstudio') db.insert(channelApiKeys).values({ channelId: c.id, name: 'test', apiKey: 'test' }).run();
+    model(stale);
+    catalog = { data: [known, stale] };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(await sync(c.id)).toMatchObject({ status: 200, body: { models: [known] } });
+      expect(ChannelService.getChannelRaw(c.id)).toMatchObject({
+        supportedModels: JSON.stringify([known]), modelMapping: JSON.stringify({ [known]: known }),
+      });
+    }
+    expect(db.select().from(models).where(eq(models.modelId, stale)).get()).toBeDefined();
+  });
+
+  it('detaches an old auto-generated async route while keeping its completed task and price', async () => {
+    const c = channel({ type: 'async-video' });
+    const upstream = 'old-unverified-async';
+    const stale = asyncVideoPublicModelId(c.id, upstream);
+    const limits = defaultRoutingLimits();
+    model(stale, 'async-video');
+    db.update(models).set({ capabilities: '["video"]' }).where(eq(models.modelId, stale)).run();
+    db.insert(modelPricing).values({ modelPattern: stale, inputPrice: 6 }).run();
+    db.update(channels).set({ supportedModels: JSON.stringify([stale]), modelMapping: JSON.stringify({ [stale]: upstream }) }).where(eq(channels.id, c.id)).run();
+    saveModelSpecification({ modelId: stale, kind: 'video', enabled: true, aliases: [], limits,
+      routes: [{ id: 'async-video-' + c.id + '-1', channelId: c.id, executionModel: stale, upstreamModel: upstream,
+        enabled: true, limits, cost: null, costUnit: 'unknown', resolutionCosts: {}, priority: 0 }] });
+    const user = db.select().from(users).get()!;
+    const task = db.insert(contents).values({ userId: user.id, type: 'video', title: '原任务', modelId: stale, status: 'completed',
+      metadata: JSON.stringify({ channelId: c.id, upstreamTaskId: 'original' }) }).returning().get();
+    catalog = { data: [{ name: upstream }] };
+    expect(await sync(c.id)).toMatchObject({ status: 200, body: { count: 0, models: [] } });
+    expect(ChannelService.getChannelRaw(c.id)).toMatchObject({ supportedModels: '[]', modelMapping: '{}' });
+    expect(getModelSpecification(stale)?.routes).toEqual([]);
+    expect(db.select().from(contents).where(eq(contents.id, task.id)).get()).toEqual(task);
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, stale)).get()?.inputPrice).toBe(6);
+  });
+
+  it('removes historical Siyuetian catalog-only bindings even if still advertised upstream', async () => {
+    const stale = 'seedance-2.0-fast-480p-c3';
+    const known = 'seedance-2.0-mini-720p';
+    const c = channel({ baseUrl: 'https://llm.domie.studio', supportedModels: JSON.stringify([known, stale]),
+      modelMapping: JSON.stringify({ [known]: known, [stale]: stale }) });
+    model(stale);
+    db.insert(modelPricing).values({ modelPattern: stale, inputPrice: 7 }).run();
+    catalog = { data: [known, stale] };
+    const result = await sync(c.id);
+    expect(result).toMatchObject({ status: 200, body: { models: [known] } });
+    expect(result.body.warnings).toContainEqual(expect.stringContaining(stale));
+    expect(ChannelService.getChannelRaw(c.id)).toMatchObject({
+      supportedModels: JSON.stringify([known]), modelMapping: JSON.stringify({ [known]: known }),
+    });
+    expect(db.select().from(models).where(eq(models.modelId, stale)).get()).toBeDefined();
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, stale)).get()?.inputPrice).toBe(7);
+    await sync(c.id);
+    const archive = sqlite.prepare('SELECT value FROM settings WHERE key=?').get('siyuetian_removed_catalog_bindings_' + c.id) as { value: string };
+    expect(JSON.parse(archive.value)).toEqual([{ supportedModels: [stale], modelMapping: { [stale]: stale } }]);
+  });
+
+  it('cleans historical mappings on startup and retains managed Siyuetian bindings on subsequent boots', async () => {
+    const c = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get()!;
+    const stale = 'seedance-2.0-480p-c3';
+    const mapping = JSON.parse(c.modelMapping);
+    expect(mapping['S4-seedance2.5']).toBe('seedance-2.5-720p-c5');
+    db.update(channels).set({ modelMapping: JSON.stringify({ ...mapping, [stale]: stale }) }).where(eq(channels.id, c.id)).run();
+    await initDatabase();
+    const saved = ChannelService.getChannelRaw(c.id)!;
+    expect(JSON.parse(saved.modelMapping)).not.toHaveProperty(stale);
+    expect(JSON.parse(saved.modelMapping)['S4-seedance2.5']).toBe('seedance-2.5-720p-c5');
+    expect(JSON.parse(saved.supportedModels)).toContain('S4-seedance2.5');
+  });
   it('removes historical unapproved V6K associations from the actual admin channel list after sync',async()=>{
     const id='ZH-dola2.0',c=channel({type:'zongheng-v6k',baseUrl:'https://www.v6k.top',supportedModels:JSON.stringify([id]),modelMapping:JSON.stringify({[id]:'dola2.0'})});
     model(id,'zongheng-v6k');db.insert(modelPricing).values({modelPattern:id,billingType:'per_call',inputPrice:6.5}).run();
@@ -72,13 +148,12 @@ describe('actual admin model sync scope', () => {
     expect(ChannelService.getChannelRaw(c.id)).toEqual(before);
     expect(db.select().from(models).where(eq(models.modelId, 'future-video')).get()).toBeUndefined();
   });
-  it.each(['openai', 'hmstudio', 'async-video'])('ignores an unmapped legacy supported-model entry on %s', async type => {
+  it.each(['openai', 'hmstudio', 'async-video'])('archives an unmapped legacy supported-model entry on %s', async type => {
     const c = channel({ type, supportedModels: '["unmapped-video"]', modelMapping: '{}' });
     if (type === 'hmstudio') db.insert(channelApiKeys).values({ channelId: c.id, name: 'test', apiKey: 'test' }).run();
     catalog = { data: type === 'async-video' ? [{ name: 'unmapped-video' }] : [{ id: 'unmapped-video', type: 'video' }] };
-    const before = ChannelService.getChannelRaw(c.id);
     expect(await sync(c.id)).toMatchObject({ status: 200, body: { count: 0, added: 0, models: [] } });
-    expect(ChannelService.getChannelRaw(c.id)).toEqual(before);
+    expect(ChannelService.getChannelRaw(c.id)).toMatchObject({ supportedModels: '[]', modelMapping: '{}' });
     expect(db.select().from(models).where(eq(models.modelId, 'unmapped-video')).get()).toBeUndefined();
   });
   it('matches the configured upstream ID to its public alias and leaves orders, reservations, wallets and prices untouched', async () => {
@@ -101,7 +176,7 @@ describe('actual admin model sync scope', () => {
     expect(db.select().from(models).where(eq(models.modelId, 'new-video')).get()).toBeUndefined();
   });
   it.each([{ data: [] }, { data: ['unapproved'] }, {}, { data: [null] }])('preserves exact channel configuration when no import is possible: %j', async body => {
-    const c = channel({ supportedModels: '["approved"]' }); const before = ChannelService.getChannelRaw(c.id);
+    const c = channel({ supportedModels: '["approved"]', modelMapping: '{"approved":"approved"}' }); const before = ChannelService.getChannelRaw(c.id);
     catalog = body; const result = await sync(c.id);
     expect(result.status).toBe(body.data && body.data[0] !== null ? 200 : 502);
     expect(ChannelService.getChannelRaw(c.id)).toEqual(before);

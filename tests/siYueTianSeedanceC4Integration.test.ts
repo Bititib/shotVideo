@@ -95,6 +95,32 @@ describe('四月天 S4-seedance2.5 integration', () => {
 });
 
 describe('四月天 Seedance C4 integration', () => {
+  it('adopts an old generic C4 record already mapped exclusively to Siyuetian, preserving price and activation', async () => {
+    enable();
+    db.update(models).set({ provider: 'openai', displayName: '旧四月天 C4' }).where(eq(models.modelId, MODEL)).run();
+    db.update(modelPricing).set({ inputPrice: 7 }).where(eq(modelPricing.modelPattern, MODEL)).run();
+    db.delete(settings).where(eq(settings.key, 'model_specification_routes_v1')).run();
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [{ id: MODEL }] })));
+    expect(await ChannelService.syncModels(channelId)).toMatchObject({ count: 1, added: 0, models: [MODEL] });
+    expect(db.select().from(models).where(eq(models.modelId, MODEL)).get()).toMatchObject({
+      provider: 'siyuetian', displayName: '旧四月天 C4', isActive: 1,
+    });
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, MODEL)).get()?.inputPrice).toBe(7);
+    expect(getModelSpecification(MODEL)?.routes[0]).toMatchObject({ channelId, upstreamModel: MODEL });
+  });
+
+  it('reports a competing C4 binding without blocking C5 or replacing the existing record', async () => {
+    db.update(models).set({ provider: 'openai' }).where(eq(models.modelId, MODEL)).run();
+    db.insert(channels).values({ name: 'Other', type: 'openai', baseUrl: 'https://other.invalid',
+      supportedModels: JSON.stringify([MODEL]), modelMapping: JSON.stringify({ [MODEL]: MODEL }) }).run();
+    const before = db.select().from(models).where(eq(models.modelId, MODEL)).get();
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [{ id: MODEL }, { id: C5_UPSTREAM }] })));
+    const result = await ChannelService.syncModels(channelId);
+    expect(result).toMatchObject({ count: 1, added: 1, models: [C5] });
+    expect(result.warnings).toContainEqual(expect.stringContaining(`已跳过 ${MODEL}`));
+    expect(db.select().from(models).where(eq(models.modelId, MODEL)).get()).toEqual(before);
+    expect(getModelSpecification(C5)?.routes[0]).toMatchObject({ channelId, upstreamModel: C5_UPSTREAM });
+  });
   it('supports 30-second adaptive requests at the confirmed per-call price', async () => {
     enable(); completed();
     await handleSpecificationGeneration(request({ seconds: 30, aspect_ratio: 'adaptive' }), response(), 'video');
