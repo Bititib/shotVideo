@@ -1,5 +1,5 @@
 import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS } from '../../shared/siYueTianManagedVideo.js';
-import { pruneSiYueTianCatalogBindings, siYueTianApprovedBindings } from './siYueTianApprovedBindings.js';
+import { pruneSiYueTianCatalogBindings, siYueTianMappedBindings } from './siYueTianApprovedBindings.js';
 import { channelCatalogBindings, pruneChannelCatalogBindings } from './channelCatalogBindings.js';
 import { configuredSyncBindings } from './modelSyncScope.js';
 import { isSupportedChannelType } from '../../shared/channelTypes.js';
@@ -741,7 +741,7 @@ export class ChannelService {
     if (!Array.isArray(payload) && !Array.isArray(payload?.data) && !Array.isArray(payload?.models))
       throw { status: 502, message: '同步模型响应缺少模型列表，原配置未修改' };
     const isSiYueTian = isSiYueTianVideoHost(channel.baseUrl);
-    const bindings = isSiYueTian ? siYueTianApprovedBindings(sqlite, channel.id)
+    const bindings = isSiYueTian ? siYueTianMappedBindings(sqlite, channel.id, channel.modelMapping)
       : channelCatalogBindings(sqlite, channel) ?? configuredSyncBindings(channel);
     let ignored = 0;
     const normalized = rawModels.flatMap((item: any) => {
@@ -771,7 +771,7 @@ export class ChannelService {
     const unique = [...new Map(normalized.map((item: any) => [item.modelId, item])).values()] as Array<{
       modelId: string; displayName: string; capability: string;
     }>;
-    const warnings = [`仅同步已接入或明确配置的型号，忽略其他型号 ${ignored} 个；保留现有价格和启用状态。`];
+    const warnings = [`${isSiYueTian ? '仅同步已有有效模型映射的型号' : '仅同步已接入或明确配置的型号'}，忽略其他型号 ${ignored} 个；保留现有价格和启用状态。`];
     if (!unique.length && !isSiYueTian) return { count: 0, added: 0, models: [], warnings };
     return db.transaction(tx => {
       const current = tx.select().from(channels).where(eq(channels.id, id)).get();

@@ -1326,14 +1326,6 @@ export async function initDatabase() {
       }).where(eq(modelPricing.id, existingPricing.id)).run();
     }
 
-    const siYueTian = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get();
-    if (siYueTian) {
-      db.update(channels).set({
-        supportedModels: JSON.stringify(['seedance-2.0', 'sd2-mini']),
-        updatedAt: new Date().toISOString(),
-      }).where(eq(channels.id, siYueTian.id)).run();
-    }
-
     const existingRate = db.select().from(settings).where(eq(settings.key, 'seedance_2_0_rate')).get();
     if (!existingRate) {
       db.insert(settings).values({
@@ -1448,41 +1440,29 @@ export async function initDatabase() {
     console.error('⚠️ 初始化 NewToken 渠道出错:', err.message);
   }
 
-  // 11) 四月天退出公开 sd2.5，仅保留其他专属模型。
+  // 11) 四月天仅在首次创建默认渠道时建立默认映射。
+  let newSiYueTianChannelId: number | undefined;
   try {
     const existingChre3 = db.select().from(channels).all().find(channel =>
       channel.name === '4月天 渠道' || channel.baseUrl === 'https://llm.chre3.com'
     );
     const chre3Models = SI_YUE_TIAN_LEGACY_CATALOG_MODELS;
     if (!existingChre3) {
-      db.insert(channels).values({
+      const result = db.insert(channels).values({
         name: '4月天 渠道',
         type: 'openai',
         baseUrl: 'https://llm.chre3.com',
         apiKey: process.env.SI_YUE_TIAN_API_KEY?.trim() || '',
         supportedModels: JSON.stringify(chre3Models),
-        modelMapping: JSON.stringify({ 'gpt-image-2-siyuetian': 'gpt-image-2' }),
+        modelMapping: JSON.stringify({ ...Object.fromEntries(chre3Models.map(id => [id, id])), 'gpt-image-2-siyuetian': 'gpt-image-2' }),
         status: process.env.SI_YUE_TIAN_API_KEY?.trim() ? 1 : 0,
         priority: 0,
         weight: 1,
         maxRetries: 3,
         timeout: 120000,
       }).run();
-      console.log('📦 已自动迁移：成功创建 4月天 渠道并绑定 sd2 和 seedance-720p 系列模型 (已启用)');
-    } else {
-      db.update(channels)
-        .set({
-          name: '4月天 渠道',
-          supportedModels: JSON.stringify([...new Set([...JSON.parse(existingChre3.supportedModels || '[]'), ...chre3Models])]),
-          modelMapping: JSON.stringify({
-            ...(() => { try { return JSON.parse(existingChre3.modelMapping || '{}'); } catch { return {}; } })(),
-            'gpt-image-2-siyuetian': 'gpt-image-2',
-          }),
-          updatedAt: new Date().toISOString()
-        })
-        .where(eq(channels.id, existingChre3.id))
-        .run();
-      console.log('🔄 已自动迁移：更新 4月天 渠道并将其标记为启用状态');
+      newSiYueTianChannelId = Number(result.lastInsertRowid);
+      console.log('📦 已创建 4月天默认渠道及模型映射');
     }
   } catch (err: any) {
     console.error('⚠️ 初始化 4月天 渠道出错:', err.message);
@@ -2052,7 +2032,7 @@ export async function initDatabase() {
   ensureBbHssKkMapping(sqlite);
   pruneUnapprovedV6kBindings(sqlite);
   removeTtBbFallbacks(sqlite);
-  ensureSiYueTianVideoModelsOnStartup(sqlite);
+  ensureSiYueTianVideoModelsOnStartup(sqlite, newSiYueTianChannelId);
   pruneSiYueTianCatalogBindings(sqlite);
   pruneAllChannelCatalogBindings(sqlite);
   migrateFunAiOmniFlash11(sqlite);

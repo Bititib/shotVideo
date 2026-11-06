@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { ModelSpecification } from '../../shared/modelRouting.js';
-import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS, siYueTianManagedVideoUpstreamModel } from '../../shared/siYueTianManagedVideo.js';
+import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS } from '../../shared/siYueTianManagedVideo.js';
 import { isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
 import { SI_YUE_TIAN_C2_MODELS, SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS } from './siYueTianVideoModels.js';
 import { SI_YUE_TIAN_IMAGE_MODELS } from './siYueTianImageAdapter.js';
@@ -10,19 +10,25 @@ export const SI_YUE_TIAN_LEGACY_CATALOG_MODELS = [
   ...SI_YUE_TIAN_SEEDANCE_25_VIDEO_MODELS, ...SI_YUE_TIAN_IMAGE_MODELS,
 ];
 
-export function siYueTianApprovedBindings(sqlite: Database.Database, channelId: number) {
-  const bindings = new Map<string, string>(SI_YUE_TIAN_LEGACY_CATALOG_MODELS.map(id => [id, id]));
-  bindings.set('gpt-image-2-siyuetian', 'gpt-image-2');
-  for (const id of SI_YUE_TIAN_MANAGED_VIDEO_MODELS) bindings.set(id, siYueTianManagedVideoUpstreamModel(id));
+function siYueTianIntegratedModelIds(sqlite: Database.Database, channelId: number) {
+  const modelIds = new Set([...SI_YUE_TIAN_LEGACY_CATALOG_MODELS, ...SI_YUE_TIAN_MANAGED_VIDEO_MODELS]);
   const row = sqlite.prepare("SELECT value FROM settings WHERE key='model_specification_routes_v1'").get() as { value: string } | undefined;
   const specs: ModelSpecification[] = JSON.parse(row?.value || '[]');
   for (const spec of specs) for (const route of spec.routes) {
     if (route.channelId === channelId && route.executionModel && route.executionModel !== '*'
-      && route.upstreamModel && route.upstreamModel !== '*' && !bindings.has(route.executionModel)) {
-      bindings.set(route.executionModel, route.upstreamModel);
+      && route.upstreamModel && route.upstreamModel !== '*') {
+      modelIds.add(route.executionModel);
     }
   }
-  return bindings;
+  return modelIds;
+}
+
+/** The integration list checks eligibility, but cannot create a channel mapping. */
+export function siYueTianMappedBindings(sqlite: Database.Database, channelId: number, modelMapping: string) {
+  const mapping: Record<string, string> = JSON.parse(modelMapping || '{}');
+  const approved = siYueTianIntegratedModelIds(sqlite, channelId);
+  return new Map(Object.entries(mapping).filter(([id, upstream]) =>
+    approved.has(id) && typeof upstream === 'string' && upstream.trim() && upstream.trim() !== '*'));
 }
 
 /** Detach catalog leftovers and retain a credential-free snapshot for review. */
@@ -33,7 +39,7 @@ export function pruneSiYueTianCatalogBindings(sqlite: Database.Database, channel
     const removed = new Set<string>();
     for (const row of rows) {
       if (!isSiYueTianVideoHost(row.base_url) || (channelId !== undefined && channelId !== row.id)) continue;
-      const approved = siYueTianApprovedBindings(sqlite, row.id);
+      const approved = siYueTianMappedBindings(sqlite, row.id, row.model_mapping);
       const supported: string[] = JSON.parse(row.supported_models || '[]');
       const mapping: Record<string, string> = JSON.parse(row.model_mapping || '{}');
       const stale = [...new Set([...supported, ...Object.keys(mapping)])].filter(id => !approved.has(id));

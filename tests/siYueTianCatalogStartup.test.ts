@@ -131,7 +131,7 @@ describe('actual database startup with Siyuetian catalog conflicts', () => {
     db.insert(models).values({ modelId: C4, provider: 'operator-provider', displayName: '原 C4', isActive: 1 }).run();
     db.insert(modelPricing).values({ modelPattern: C4, billingType: 'per_call', inputPrice: 9.5 }).run();
     const channel = db.insert(channels).values({ name: '四月天同步', type: 'openai', baseUrl: 'https://llm.chre3.com',
-      apiKey: 'test-only-key', supportedModels: '[]', modelMapping: '{}' }).returning().get();
+      apiKey: 'test-only-key', supportedModels: '[]', modelMapping: JSON.stringify({ [MINIMAX]: MINIMAX, [C4]: C4 }) }).returning().get();
     const before = product(C4);
     const catalog = vi.fn(async (_url: unknown, _init?: RequestInit) => Response.json({ data: [{ id: MINIMAX }, { id: C4 }] }));
     vi.stubGlobal('fetch', catalog);

@@ -104,17 +104,40 @@ describe('actual admin model sync scope', () => {
     expect(JSON.parse(archive.value)).toEqual([{ supportedModels: [stale], modelMapping: { [stale]: stale } }]);
   });
 
-  it('cleans historical mappings on startup and retains managed Siyuetian bindings on subsequent boots', async () => {
+  it('does not recreate removed Siyuetian mappings or unmapped old associations on repeated startup and sync', async () => {
     const c = db.select().from(channels).where(eq(channels.baseUrl, 'https://llm.chre3.com')).get()!;
+    const kept = 'seedance-2.0-mini-720p';
+    const c5 = 'S4-seedance2.5';
+    const unmapped = 'gpt-image-2-siyuetian';
     const stale = 'seedance-2.0-480p-c3';
-    const mapping = JSON.parse(c.modelMapping);
-    expect(mapping['S4-seedance2.5']).toBe('seedance-2.5-720p-c5');
-    db.update(channels).set({ modelMapping: JSON.stringify({ ...mapping, [stale]: stale }) }).where(eq(channels.id, c.id)).run();
-    await initDatabase();
-    const saved = ChannelService.getChannelRaw(c.id)!;
-    expect(JSON.parse(saved.modelMapping)).not.toHaveProperty(stale);
-    expect(JSON.parse(saved.modelMapping)['S4-seedance2.5']).toBe('seedance-2.5-720p-c5');
-    expect(JSON.parse(saved.supportedModels)).toContain('S4-seedance2.5');
+    const savedMapping = { [kept]: kept };
+    expect(getModelSpecification(c5)?.routes[0]).toMatchObject({ channelId: c.id, upstreamModel: 'seedance-2.5-720p-c5' });
+    sqlite.prepare('DELETE FROM settings WHERE key=?').run('catalog_siyuetian_seedance_c5_' + c.id);
+    db.update(channels).set({ apiKey: 'test', supportedModels: JSON.stringify([kept, c5, unmapped, stale]),
+      modelMapping: JSON.stringify({ ...savedMapping, [stale]: stale }) }).where(eq(channels.id, c.id)).run();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await initDatabase();
+      catalog = { data: [kept, 'seedance-2.5-720p-c5', 'gpt-image-2', stale] };
+      expect(await sync(c.id)).toMatchObject({ status: 200, body: { models: [kept] } });
+      expect(ChannelService.getChannelRaw(c.id)).toMatchObject({
+        supportedModels: JSON.stringify([kept]), modelMapping: JSON.stringify(savedMapping),
+      });
+    }
+  });
+  it('uses the saved upstream ID, while the same local model without a mapping cannot sync on another Siyuetian channel', async () => {
+    const id = 'nano-banana-2.1';
+    const upstream = 'operator-image-upstream';
+    const mapped = channel({ baseUrl: 'https://llm.domie.studio', modelMapping: JSON.stringify({ [id]: upstream }) });
+    const unmapped = channel({ baseUrl: 'https://llm.domie.studio', supportedModels: JSON.stringify([id]) });
+    catalog = { data: [id] };
+    expect(await sync(mapped.id)).toMatchObject({ status: 200, body: { models: [] } });
+    catalog = { data: [id, upstream] };
+    expect(await sync(mapped.id)).toMatchObject({ status: 200, body: { models: [id] } });
+    expect(await sync(unmapped.id)).toMatchObject({ status: 200, body: { models: [] } });
+    expect(ChannelService.getChannelRaw(mapped.id)).toMatchObject({
+      supportedModels: JSON.stringify([id]), modelMapping: JSON.stringify({ [id]: upstream }),
+    });
+    expect(ChannelService.getChannelRaw(unmapped.id)).toMatchObject({ supportedModels: '[]', modelMapping: '{}' });
   });
   it('removes historical unapproved V6K associations from the actual admin channel list after sync',async()=>{
     const id='ZH-dola2.0',c=channel({type:'zongheng-v6k',baseUrl:'https://www.v6k.top',supportedModels:JSON.stringify([id]),modelMapping:JSON.stringify({[id]:'dola2.0'})});

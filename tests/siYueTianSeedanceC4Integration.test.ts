@@ -40,7 +40,8 @@ beforeEach(() => {
   if (sqlite.prepare("SELECT name FROM sqlite_master WHERE name='video_submission_receipts'").get()) sqlite.exec('DELETE FROM video_submission_receipts');
   db.delete(contents).run(); db.delete(settings).run(); db.delete(models).run(); db.delete(channels).run(); db.delete(modelPricing).run(); db.delete(users).run();
   db.insert(users).values({ id: 1, email: 'h3@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
-  channelId = ChannelService.createChannel({ name: '四月天', type: 'openai', baseUrl: base + '/v1/', apiKey: 'test-only-key' });
+  channelId = ChannelService.createChannel({ name: '四月天', type: 'openai', baseUrl: base + '/v1/', apiKey: 'test-only-key',
+    modelMapping: { [MODEL]: MODEL, [C5]: C5_UPSTREAM } });
   ensureSiYueTianMinimaxModel(sqlite);
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });

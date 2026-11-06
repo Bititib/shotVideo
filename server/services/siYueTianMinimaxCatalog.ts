@@ -26,10 +26,10 @@ export class SiYueTianCatalogConflictError extends Error {
 }
 
 /** An optional catalog association must not take the entire application offline. */
-export function ensureSiYueTianVideoModelsOnStartup(sqlite: Database.Database) {
+export function ensureSiYueTianVideoModelsOnStartup(sqlite: Database.Database, newChannelId?: number) {
   for (const model of SI_YUE_TIAN_MANAGED_VIDEO_MODELS) {
     try {
-      ensureSiYueTianMinimaxModel(sqlite, undefined, model);
+      ensureSiYueTianMinimaxModel(sqlite, undefined, model, newChannelId);
     } catch (error) {
       // Each model's transaction has rolled back. Skip known conflicts only and
       // continue only for known ownership/mapping conflicts, never database errors.
@@ -40,7 +40,7 @@ export function ensureSiYueTianVideoModelsOnStartup(sqlite: Database.Database) {
 }
 
 /** One-time association per channel; subsequent boots preserve operator removals and switches. */
-export function ensureSiYueTianMinimaxModel(sqlite: Database.Database, syncedChannelId?: number, model = SI_YUE_TIAN_MINIMAX_MODEL) {
+export function ensureSiYueTianMinimaxModel(sqlite: Database.Database, syncedChannelId?: number, model = SI_YUE_TIAN_MINIMAX_MODEL, newChannelId?: number) {
   const product = siYueTianManagedVideoSpec(model);
   if (!product) throw new Error('未配置此四月天视频型号');
   const MODEL = product.id;
@@ -71,6 +71,7 @@ export function ensureSiYueTianMinimaxModel(sqlite: Database.Database, syncedCha
       if (syncedChannelId === undefined && sqlite.prepare('SELECT 1 FROM settings WHERE key=?').get(marker)) continue;
       const supported: string[] = JSON.parse(channel.supported_models || '[]');
       const mapping = JSON.parse(channel.model_mapping || '{}');
+      if (!Object.hasOwn(mapping, MODEL) && channel.id !== newChannelId) continue;
       if (!supported.includes(MODEL)) supported.push(MODEL);
       if (mapping[MODEL] && mapping[MODEL] !== upstreamModel) throw new SiYueTianCatalogConflictError(`${MODEL} 的现有映射不同，未覆盖配置`);
       mapping[MODEL] = upstreamModel;
