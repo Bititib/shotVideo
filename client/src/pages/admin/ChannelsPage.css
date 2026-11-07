@@ -36,9 +36,10 @@
 .channel-list-runtime { display:flex; flex-wrap:wrap; gap:10px; color:var(--earth-subtle); font-size:11px; white-space:nowrap; }
 .channel-list-runtime > span { display:flex; align-items:center; gap:4px; }.channel-list-runtime strong { color:var(--earth-muted); font-weight:500; font-variant-numeric:tabular-nums; }
 .channel-list-runtime i { width:5px; height:5px; margin-right:2px; border-radius:50%; background:#bdc3b5; }.channel-list-runtime i.is-busy { background:#78955b; }
-.channel-list-actions { display:flex; align-items:center; justify-content:flex-end; gap:6px; }
+.channel-list-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:6px; }
 .channels-page .channel-list-actions > button,.channels-page .channel-list-more summary { display:flex; align-items:center; justify-content:center; min-height:36px; gap:6px; border:1px solid var(--earth-line); border-radius:8px; background:transparent; color:var(--earth-muted); cursor:pointer; }
 .channels-page .channel-list-sync { padding:8px 10px; font-size:11px; white-space:nowrap; }
+.channels-page .channel-list-configure { padding:8px 10px; font-size:11px; white-space:nowrap; background:var(--earth-primary-soft); color:var(--earth-primary); }
 .channels-page .channel-list-action,.channels-page .channel-list-more summary { width:34px; padding:8px; border-color:transparent; }
 .channel-list-actions svg { width:14px; height:14px; flex-shrink:0; }
 .channel-list-actions > button:hover:not(:disabled),.channel-list-more summary:hover { background:var(--earth-primary-soft); color:var(--earth-primary); }

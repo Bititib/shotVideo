@@ -452,6 +452,7 @@ export default function ChannelsPage() {
         { title: '模型数量', sort: ch => ch.supportedModels?.length || 0, render: ch => ch.supportedModels?.length || 0 },
       ]} listHeader={<div className="channel-list-header" aria-hidden="true"><span>渠道</span><span>状态</span><span>关联模型</span><span>实时任务</span><span>操作</span></div>}
         listItem={ch => <ChannelListItem channel={ch} syncing={syncing} testing={testing} pending={pendingId !== null}
+          onConfigureModels={ch.type === 'zongheng-v6k' ? () => setV6kEditor(ch.id) : undefined}
           onOpen={() => { setDetailEditing(false); setDetailTab('models'); setDetail(ch); }}
           onSync={() => { setDetailEditing(false); setDetailTab('models'); setDetail(ch); void syncModels(ch); }}
           onEdit={() => openEdit(ch)} onToggle={() => { void toggleStatus(ch); }}

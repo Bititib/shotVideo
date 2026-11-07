@@ -12,6 +12,7 @@ vi.mock('../client/src/api/admin', () => ({ adminApi: {
   getModelSpecifications: vi.fn().mockResolvedValue([]), getChannels: vi.fn(), getSettings: vi.fn(), getModels: vi.fn(), getModelStatistics: vi.fn(),
   getPricing: vi.fn(), updatePricing: vi.fn(), syncChannelModels: vi.fn(), testChannel: vi.fn(), deleteChannel: vi.fn(),
   createChannel: vi.fn(), updateChannel: vi.fn(),
+  getV6kModelConfigurations: vi.fn(),
 } }));
 const ids = ['ZH-Cseadanco2.5K', 'ZH-Xminimex-h3', 'ZH-wan-1080', 'ZH-A-SD2.0'];
 const base = { id: 9, name: '纵横渠道', type: 'zongheng', status: 1, baseUrl: 'https://example.invalid',
@@ -36,6 +37,28 @@ const open = async () => {
 };
 
 describe('channel details and model sync workflow', () => {
+  it('opens V6K model configuration directly from the channel row without opening details or syncing models', async () => {
+    vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, id: 21, name: 'qq-往生普', type: 'zongheng-v6k' }]);
+    vi.mocked(adminApi.getV6kModelConfigurations).mockResolvedValue([]);
+    mount();
+    const button = await screen.findByRole('button', { name: 'V6K 模型与参数', exact: true });
+    expect(button.closest('.channel-list-actions')).not.toBeNull();
+    expect(button).toBeVisible();
+    fireEvent.click(button);
+    const panel = await screen.findByRole('dialog', { name: '纵横 V6K · 模型与参数' });
+    await waitFor(() => expect(within(panel).getByRole('button', { name: '添加模型' })).toBeEnabled());
+    expect(adminApi.getV6kModelConfigurations).toHaveBeenCalledExactlyOnceWith(21);
+    expect(screen.queryByRole('dialog', { name: 'qq-往生普 · 渠道详情' })).toBeNull();
+    expect(adminApi.syncChannelModels).not.toHaveBeenCalled();
+    expect(adminApi.updateChannel).not.toHaveBeenCalled();
+  });
+
+  it('keeps the V6K configuration action off other channel rows', async () => {
+    mount();
+    await screen.findByRole('button', { name: '查看纵横渠道详情' });
+    expect(screen.queryByRole('button', { name: 'V6K 模型与参数', exact: true })).toBeNull();
+  });
+
   it('shows the managed Zhiying upstream mappings and distinguishes saved links from pending ones', async () => {
     const id = 'sd-2.5-fullblood';
     vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, name: 'Vx-智赢', type: 'zhiying',
