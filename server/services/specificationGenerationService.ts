@@ -65,6 +65,7 @@ import { saveMjImageBatch, restoreCachedMjOriginal, type MjImageBatch } from './
 import { resolvePublicModelId } from './publicModelNameService.js';
 import { batchContextForRequest, batchStore, markBatchSubmitting, recordBatchFailure } from './videoBatchService.js';
 import { claimVideoSubmission, acceptVideoSubmission, endVideoSubmission, releaseVideoSubmission, videoSubmissionPending, videoSubmissionPreparation } from './videoSubmissionGuard.js';
+import { v6kManualBinding } from './v6kApprovedBindings.js';
 import { isSnumomWanChannel, normalizeSnumomWanTask } from './snumomWanAdapter.js';
 import { canCancelVideoContent } from './videoCancellationEligibility.js';
 
@@ -81,11 +82,13 @@ function list(body: any, keys: string[]): string[] {
   if (!Array.isArray(value) || !value.every(item => typeof item === 'string' && item.trim())) throw fail('素材必须为有效 URL 或 Base64 数组');
   return value;
 }
-export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: string): SpecificationRequest {
+export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: string, v6kConfigured = false): SpecificationRequest {
+  if (v6kConfigured && body.aspect_ratio && body.ratio && body.aspect_ratio !== body.ratio)
+    throw fail('aspect_ratio 与 ratio 不一致');
   if (kind === 'video' && isZhiyingVideoModel(body.model)) {
     try { normalizeZhiyingRequest(body); } catch (error: any) { throw fail(error.message); }
   }
-  if (kind === 'video') { try { normalizeFull720VideoInput(body); } catch (error: any) { throw fail(error.message); } }
+  if (kind === 'video') { try { normalizeFull720VideoInput(body, v6kConfigured); } catch (error: any) { throw fail(error.message); } }
   const siYueTianMinimax = kind === 'video' && isSiYueTianManagedVideoModel(body.model);
   if (siYueTianMinimax || body.model === SNUMOM_WAN_NSFW_MODEL) {
     const seconds = [body.seconds, body.duration, body.video_length, ...(body.model === SNUMOM_WAN_NSFW_MODEL ? [body.parameters?.duration,body.duration_seconds] : [])].filter(value => value !== undefined).map(Number);
@@ -94,9 +97,10 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
   if (body.resolution && body.output_resolution && String(body.resolution).toLowerCase() !== String(body.output_resolution).toLowerCase()) throw fail('resolution 与 output_resolution 不一致');
   if (body.mask !== undefined) throw fail('当前统一规格未配置蒙版编辑，请使用支持蒙版的独立入口');
   if (body.response_format && !['url', 'b64_json'].includes(body.response_format)) throw fail('response_format 仅支持 url 或 b64_json');
-  const images = list(body, ['reference_images', 'image_urls', 'image_url', 'images', ...(body.model === V6K_FULL_720_MODEL ? ['image_refs','reference_image_urls','Ingredients_images'] : siYueTianMinimax ? ['image_refs'] : [])]);
-  const videos = list(body, ['reference_videos', 'reference_video', 'video_urls', 'video_url', ...(isBbHssKkEntry(body.model) ? ['videos'] : []), ...(body.model === V6K_FULL_720_MODEL ? ['videos','video','video_refs','reference_video_urls'] : siYueTianMinimax ? ['video_refs'] : [])]);
-  const audios = list(body, ['audio_urls', 'audio_url', 'reference_audios', 'audios', ...(body.model === V6K_FULL_720_MODEL ? ['audio','reference_audio','audio_refs','reference_audio_urls'] : siYueTianMinimax ? ['audio_refs'] : [])]);
+  const fullV6k = body.model === V6K_FULL_720_MODEL || v6kConfigured;
+  const images = list(body, ['reference_images', 'image_urls', 'image_url', 'images', ...(fullV6k ? ['image_refs','reference_image_urls','Ingredients_images'] : siYueTianMinimax ? ['image_refs'] : [])]);
+  const videos = list(body, ['reference_videos', 'reference_video', 'video_urls', 'video_url', ...(fullV6k ? ['videos','video','video_refs','reference_video_urls'] : isBbHssKkEntry(body.model) ? ['videos'] : siYueTianMinimax ? ['video_refs'] : [])]);
+  const audios = list(body, ['audio_urls', 'audio_url', 'reference_audios', 'audios', ...(fullV6k ? ['audio','reference_audio','audio_refs','reference_audio_urls'] : siYueTianMinimax ? ['audio_refs'] : [])]);
   const firstFrame = body.first_frame || body.first_frame_url || '';
   const lastFrame = body.last_frame || body.last_frame_url || body.end_frame_url || '';
   const outputs = Number(body.n ?? 1), seconds = Number(body.video_length ?? body.seconds ?? body.duration ?? (body.model === SNUMOM_WAN_NSFW_MODEL ? body.parameters?.duration ?? body.duration_seconds : undefined) ?? 6);
@@ -110,7 +114,7 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
   if (kind === 'image' && body.size && !sizeRatios[body.size]) throw fail('此规格不支持该 size，请使用 aspect_ratio 和 resolution');
   if (kind === 'image' && body.size && (body.aspect_ratio || body.ratio) && sizeRatios[body.size] !== (body.aspect_ratio || body.ratio)) throw fail('size 与宽高比不一致');
   const ratio = String(body.aspect_ratio || body.ratio || (sizeRatios[body.size] ? sizeRatios[body.size] : kind === 'image' ? '1:1' : '16:9'));
-  return { prompt: body.prompt.trim(), images, videos, audios, firstFrame, lastFrame, body, publicBaseUrl,
+  return { prompt: body.prompt.trim(), images, videos, audios, firstFrame, lastFrame, body, publicBaseUrl, v6kConfigured,
     input: { images: images.length, videos: videos.length, audios: audios.length, outputs, seconds,
       resolution, ratio,
       firstFrame: Boolean(firstFrame), lastFrame: Boolean(lastFrame), quality: body.quality } };
@@ -850,6 +854,11 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     res.status(503).json({ error: '智赢视频缺少模型规格与原渠道映射，请先同步渠道模型' }); return true;
   }
   const modelId = spec?.modelId || suppliedId;
+  const v6kBinding = kind === 'video' ? v6kManualBinding(sqlite, modelId) : undefined;
+  const v6kConfigured = Boolean(v6kBinding);
+  if (!spec && v6kBinding) {
+    res.status(503).json({ error: '此模型缺少 V6K 线路规格，请在渠道后台恢复配置' }); return true;
+  }
   if (!spec && bbHssKkManaged(sqlite,suppliedId)) {
     res.status(503).json({error:'BB/HSS 的规格配置缺失，请在后台恢复对应规格；未提交或扣费'});return true;
   }
@@ -875,7 +884,8 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
       body.model = modelId;
       try { normalizeZhiyingRequest(body, spec.limits.defaultSeconds); } catch (error: any) { throw fail(error.message); }
     }
-    body.aspect_ratio = body.aspect_ratio || body.ratio || (spec.limits.ratios.includes(kind === 'image' ? '1:1' : '16:9') ? (kind === 'image' ? '1:1' : '16:9') : spec.limits.ratios[0]);
+    const preferredRatio = kind === 'image' ? '1:1' : '16:9';
+    body.aspect_ratio = body.aspect_ratio || body.ratio || (!v6kConfigured && spec.limits.ratios.includes(preferredRatio) ? preferredRatio : spec.limits.ratios[0]);
     const files = Array.isArray(req.files) ? req.files : [];
     const fields: Record<string, string[]> = { reference_images: ['image', 'image[]', 'images', 'input_reference[]', 'reference_images'], reference_videos: ['video', 'video[]', 'videos', 'reference_video', 'reference_videos'], audio_urls: ['audio', 'audio[]', 'audios', 'audio_urls'], first_frame: ['first_frame', 'first_frame_url'], last_frame: ['last_frame', 'last_frame_url'] };
     for (const file of files) {
@@ -896,12 +906,14 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
       if (body.n !== undefined && Number(body.n) !== 1) throw fail('Midjourney V8.2 每次只能提交一次生成');
       try { hussMjOptions(body); } catch (e: any) { throw fail(e.message); }
     }
-    if (kind === 'video' && modelId === V6K_FULL_720_MODEL) {
+    if (kind === 'video' && (modelId === V6K_FULL_720_MODEL || v6kConfigured)) {
       body.model = modelId;
-      try { normalizeFull720VideoInput(body); } catch (error: any) { throw fail(error.message); }
+      try { normalizeFull720VideoInput(body, v6kConfigured); } catch (error: any) { throw fail(error.message); }
     }
     if (nativeImageOutputs && body.n !== undefined && ![1, 4].includes(Number(body.n))) throw fail('MJ 每次仅提交一次任务，图片数量以上游实际结果为准');
-    const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (modelId === SNUMOM_WAN_NSFW_MODEL ? body.parameters?.duration ?? body.duration_seconds : undefined) ?? (model.provider === 'megaby' ? 5 : spec.limits.duration.mode === 'fixed' ? spec.limits.duration.min : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'));
+    const defaultSeconds = (v6kConfigured ? spec.limits.defaultSeconds : undefined)
+      ?? (model.provider === 'megaby' ? 5 : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min);
+    const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (modelId === SNUMOM_WAN_NSFW_MODEL ? body.parameters?.duration ?? body.duration_seconds : undefined) ?? defaultSeconds }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'), v6kConfigured);
     let snumomBilling: Awaited<ReturnType<typeof prepareSnumomNsfwReferences>> | undefined;
     if (isZhiyingVideoModel(modelId)) request.ownerId = userId;
     try { snumomBilling = kind === 'video' && isSnumomWanVideoModel(modelId) ? await prepareSnumomNsfwReferences(request) : undefined; }
@@ -911,6 +923,8 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     request.input.resolution = spec.limits.resolutions.find(r => r.toLowerCase() === request.input.resolution.toLowerCase()) || request.input.resolution;
     const candidates = selectModelRoutes(spec, request.input);
     if (!candidates.length) throw fail(modelAvailabilityMessage(specificationAvailability(spec)) || '该规格暂时没有满足参数的可用线路', 503);
+    if (v6kBinding && candidates.some(target => target.route.channelId !== v6kBinding.channelId
+      || target.route.upstreamModel !== v6kBinding.upstreamModel)) throw fail('V6K 线路与后台核对的型号不一致，请重新保存配置', 503);
     if (kind === 'video') { try { validateSpecificationVideoParameters(request, candidates); } catch (error: any) { throw fail(error.message); } }
     if (snumomBilling && !candidates.every(t => isSnumomWanChannel(t.channel) && t.route.upstreamModel === modelId && t.route.executionModel === modelId)) throw fail('Wan 3.0 必须关联对应型号的 snumom 线路，未扣费');
     if (kind === 'video' && candidates.every(target => isMegabyChannel(target.channel))) {

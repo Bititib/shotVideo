@@ -2,12 +2,14 @@ import type Database from 'better-sqlite3';
 import { V6K_TTT_720_MODEL, V6K_TTT_720_DESCRIPTION } from '../../shared/zonghengVideo.js';
 import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
 import type { ModelInputLimits, ModelSpecification } from '../../shared/modelRouting.js';
+import { v6kManualBindings } from './v6kApprovedBindings.js';
 
 /** Correct only this product's old resolution configuration; never modify task snapshots. */
 function correctTttResolution(sqlite: Database.Database) {
   sqlite.prepare('UPDATE models SET description=? WHERE model_id=? AND description=?')
     .run(V6K_TTT_720_DESCRIPTION, V6K_TTT_720_MODEL, '30图10音10视/480P/5-30秒/全天稳定10分钟出片');
   if (!sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'").get()) return;
+  if (v6kManualBindings(sqlite).some(binding => binding.modelId === V6K_TTT_720_MODEL)) return;
   const key = 'model_specification_routes_v1';
   const row = sqlite.prepare('SELECT value FROM settings WHERE key=?').get(key) as { value: string } | undefined;
   if (!row) return;

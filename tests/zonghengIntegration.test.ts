@@ -23,6 +23,7 @@ import { PricingService } from '../server/services/pricingService';
 import { TokenService } from '../server/services/tokenService';
 import { ensureV6kTttModel } from '../server/services/v6kTttModel';
 import { V6K_SYNC_UPSTREAM_MODELS } from '../shared/v6kSyncModels';
+import type { V6kModelConfiguration, V6kModelDraft } from '../shared/v6kModelConfiguration';
 import { getKkVideoRouting, saveKkVideoRouting } from '../server/services/kkVideoRoutingService';
 import { KK_VIDEO_SOURCES } from '../shared/kkVideoRouting';
 import { V6K_STABLE_720_MODEL as WD, V6K_STABLE_720_UPSTREAM as STABLE, v6kStable720Limits } from '../shared/v6kStableVideo';
@@ -120,9 +121,11 @@ beforeAll(async()=>{
   const v1=await import('../server/routes/v1'), image=await import('../server/routes/imageGen');
   const adminSpecs=await import('../server/routes/modelSpecifications');
   const admin=await import('../server/routes/admin');
+  const adminChannels=await import('../server/routes/channels');
   const app=express(); app.use(express.json({limit:'5mb'}));app.use('/api/video',video.default);app.use('/api/image-gen',image.default);app.use('/v1',v1.default);
   app.use('/test/admin/model-specifications',adminSpecs.default);
   app.use('/api/admin',admin.default);
+  app.use('/api/admin/channels',adminChannels.default);
   app.use((e:any,_req:any,res:any,_next:any)=>res.status(e.status||500).json({error:e.message}));
   server=await new Promise<Server>(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});origin='http://127.0.0.1:'+(server.address() as AddressInfo).port;
   intervalSpy.mockRestore();
@@ -690,6 +693,288 @@ describe('full multimodal 720P entry',()=>{
     const batchId=batchStore.create(1,crypto.randomUUID(),{name:'full multimodal batch',model:FULL,resolution:'720p',aspect_ratio:'16:9',video_length:30,autoRetry:false,maxRetries:0,creatives:[{prompt:'full batch',count:1,reference_images:images,reference_videos:videos,audio_urls:audios}]},5.8,'https://app.example'),item=batchStore.detail(batchId,1).items[0];
     upstream=async(url,init)=>{if(url==='http://127.0.0.1:9876/api/video/generate')return nativeFetch(origin+'/api/video/generate',init);posts++;const payload=JSON.parse(init.body);expect(payload).toMatchObject({model:FULL_UPSTREAM,seconds:30,resolution:'720p',videos,audios});expect(payload.images).toHaveLength(30);return Response.json({id:'full_batch_original',status:'completed'});};
     tickVideoBatches();await vi.waitFor(()=>expect(latest()?.status).toBe('completed'));tickVideoBatches();tickVideoBatches();resumeSpecificationTasks();expect(batchStore.item(item.id)).toMatchObject({status:'completed',billing_state:'charged',charged:5.8});expect(latest().modelId).toBe(FULL);expect(balance()).toBeCloseTo(94.2);expect(posts).toBe(1);
+  });
+});
+
+describe('V6K admin model configuration', () => {
+  const replacement = '运营配置的新模型';
+  const admin = (channelId: number, path = '', method = 'GET', body?: unknown, token = 'test-admin') =>
+    nativeFetch(origin + '/api/admin/channels/' + channelId + '/v6k-models' + path, {
+      method, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  const replacementDraft = (configuration: V6kModelConfiguration): V6kModelDraft => ({
+    modelId: configuration.modelId, displayName: '新的显示名称', upstreamModel: replacement,
+    enabled: configuration.enabled, routeEnabled: configuration.routeEnabled,
+    limits: { ...configuration.limits, resolutions: ['1080p'], ratios: ['9:16', '16:9'], defaultSeconds: 15,
+      duration: { mode: 'options', min: 10, max: 15, step: 1, values: [10, 15] }, maxVideos: 1, maxAudios: 1 },
+  });
+
+  async function install() {
+    await syncV6kEntries([STABLE]);
+    const channelId = db.select().from(channels).get()!.id;
+    await enableV6kStable720Entry(sqlite, channelId);
+    sqlite.prepare("INSERT INTO api_tokens(id,user_id,token_key,balance) VALUES(1,1,'test',-1)").run();
+    const response = await admin(channelId);
+    expect(response.status).toBe(200);
+    const configurations: V6kModelConfiguration[] = await response.json();
+    return { channelId, configuration: configurations.find(item => item.modelId === WD)! };
+  }
+
+  it('previews the real wire body without touching the provider or billing and saves only an authorized exact ID', async () => {
+    const { channelId, configuration } = await install(), draft = replacementDraft(configuration);
+    vi.mocked(fetch).mockClear();
+    const before = syncConfiguration();
+    expect((await admin(channelId, '', 'GET', undefined, 'test')).status).toBe(403);
+    const preview = await admin(channelId, '/preview', 'POST', { draft, sample: { videos: 1, audios: 1 } });
+    expect(preview.status).toBe(200);
+    expect(await preview.json()).toEqual({ method: 'POST', path: '/v1/videos', body: {
+      model: replacement, prompt: '请求体预览示例', seconds: 15, ratio: '9:16', resolution: '1080p',
+      videos: ['https://example.invalid/video-1.mp4'], audios: ['https://example.invalid/audio-1.mp3'],
+    } });
+    expect((await admin(channelId, '/preview', 'POST', { draft, sample: { videos: 2 } })).status).toBe(400);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(syncConfiguration()).toEqual(before);
+
+    upstream = async (url, init) => {
+      expect(url).toBe('https://www.v6k.top/v1/models');
+      expect(init.method).not.toBe('POST');
+      expect(init.headers.Authorization).toBe('Bearer test-key');
+      return Response.json({ data: [{ id: replacement + '-extra' }] });
+    };
+    expect((await admin(channelId, '', 'PUT', { draft, version: configuration.version })).status).toBe(409);
+    expect(syncConfiguration()).toEqual(before);
+    upstream = async () => Response.json({ data: [{ id: replacement }] });
+    const saved = await admin(channelId, '', 'PUT', { draft, version: configuration.version });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject(draft);
+    expect((await admin(channelId, '', 'PUT', { draft, version: configuration.version })).status).toBe(409);
+    expect(getModelSpecification(WD)).toMatchObject({ enabled: true, limits: draft.limits, routes: [
+      { id: JSON.parse((before.specifications as any).value).find((item: any) => item.modelId === WD).routes[0].id,
+        executionModel: WD, upstreamModel: replacement, channelId, limits: draft.limits },
+    ] });
+    expect(db.select().from(modelPricing).all()).toEqual(before.prices);
+    expect(balance()).toBe(100);
+  });
+
+  it('creates an explicitly selected disabled model and keeps manual mappings during sync and startup pruning', async () => {
+    const { channelId, configuration } = await install();
+    const draft = replacementDraft(configuration);
+    upstream = async () => Response.json({ data: [{ id: replacement }, { id: STABLE }, { id: 'unrequested' }] });
+    expect((await admin(channelId, '', 'PUT', { draft, version: configuration.version })).status).toBe(200);
+    const newId = 'ops-video';
+    expect((await admin(channelId, '', 'PUT', { draft: { ...draft, modelId: newId }, version: null })).status).toBe(200);
+    expect(db.select().from(models).where(eq(models.modelId, newId)).get()).toMatchObject({ isActive: 0 });
+    expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern, newId)).get()).toBeUndefined();
+    const snapshot = syncConfiguration();
+    expect((await ChannelService.syncModels(channelId)).models).toEqual(expect.arrayContaining([WD, newId]));
+    expect(pruneUnapprovedV6kBindings(sqlite, channelId)).toEqual({ removedBindings: 0, removedRoutes: 0 });
+    expect(syncConfiguration()).toEqual(snapshot);
+    expect(getModelSpecification(WD)?.routes.map(route => route.upstreamModel)).toEqual([replacement]);
+    expect(db.select().from(contents).all()).toEqual([]);
+  });
+
+  it('preserves a newer admin edit made during the model permission lookup', async () => {
+    const { channelId, configuration } = await install(), draft = replacementDraft(configuration);
+    upstream = async () => {
+      const channel = ChannelService.getChannelRaw(channelId)!;
+      const mapping = JSON.parse(channel.modelMapping);
+      db.update(channels).set({ modelMapping: JSON.stringify({ ...mapping, [WD]: 'concurrent-change' }) })
+        .where(eq(channels.id, channelId)).run();
+      return Response.json({ data: [{ id: replacement }] });
+    };
+    const response = await admin(channelId, '', 'PUT', { draft, version: configuration.version });
+    expect(response.status).toBe(409);
+    expect(getModelSpecification(WD)?.routes[0].upstreamModel).toBe(STABLE);
+    expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping)[WD]).toBe('concurrent-change');
+    expect(balance()).toBe(100);
+  });
+
+  it('ends a scheduled old batch retry after replacement and releases its original prepayment once', async () => {
+    const { channelId, configuration } = await install(), draft = replacementDraft(configuration);
+    const batchId = batchStore.create(1, crypto.randomUUID(), { name: '旧线路待重试批次', model: WD, resolution: '720p',
+      aspect_ratio: '16:9', video_length: 5, autoRetry: true, maxRetries: 3,
+      creatives: [{ prompt: '旧任务', count: 1, reference_images: [], reference_videos: [], audio_urls: [] }],
+    }, 6.5, 'https://app.example');
+    const itemId = batchStore.detail(batchId, 1).items[0].id;
+    let posts = 0;
+    upstream = async (url, init) => {
+      if (url === 'http://127.0.0.1:9876/api/video/generate') return nativeFetch(origin + '/api/video/generate', init);
+      if (url.endsWith('/v1/models')) return Response.json({ data: [{ id: replacement }] });
+      expect(init.method).toBe('POST'); posts++;
+      return Response.json({ id: 'old_failed_before_cutover', status: 'failed', error: { message: 'temporary server failure' } });
+    };
+    tickVideoBatches();
+    await vi.waitFor(() => {
+      tickVideoBatches();
+      expect(batchStore.item(itemId)).toMatchObject({ status: 'retry_wait', billing_state: 'reserved' });
+    });
+    expect((await admin(channelId, '', 'PUT', { draft, version: configuration.version })).status).toBe(200);
+    sqlite.prepare('UPDATE video_batch_items SET next_run=0 WHERE id=?').run(itemId);
+    tickVideoBatches(); tickVideoBatches(); resumeSpecificationTasks();
+    expect(batchStore.item(itemId)).toMatchObject({ status: 'failed', billing_state: 'refunded', attempts: 1 });
+    expect(posts).toBe(1);
+    expect(balance()).toBe(100);
+  });
+
+  it('rechecks queued batches before sending, submits compatible input once and refunds an incompatible item once', async () => {
+    const { channelId, configuration } = await install();
+    const draft = replacementDraft(configuration);
+    draft.limits.resolutions = ['720p'];
+    const create = (seconds: number) => {
+      const batchId = batchStore.create(1, crypto.randomUUID(), { name: '换型前创建的批次', model: WD, resolution: '720p',
+        aspect_ratio: '16:9', video_length: seconds, autoRetry: true, maxRetries: 3,
+        creatives: [{ prompt: '预排队 ' + seconds, count: 1, reference_images: [], reference_videos: [], audio_urls: [] }],
+      }, 6.5, 'https://app.example');
+      return batchStore.detail(batchId, 1).items[0].id;
+    };
+    const compatible = create(10), incompatible = create(5);
+    let posts = 0;
+    upstream = async (url, init) => {
+      if (url.endsWith('/v1/models')) return Response.json({ data: [{ id: replacement }] });
+      if (url === 'http://127.0.0.1:9876/api/video/generate') return nativeFetch(origin + '/api/video/generate', init);
+      expect(init.method).toBe('POST'); posts++;
+      expect(JSON.parse(init.body)).toMatchObject({ model: replacement, seconds: 10, resolution: '720p' });
+      return Response.json({ id: 'cutover_batch_original', status: 'completed' });
+    };
+    expect((await admin(channelId, '', 'PUT', { draft, version: configuration.version })).status).toBe(200);
+    tickVideoBatches(); tickVideoBatches();
+    await vi.waitFor(() => {
+      tickVideoBatches();
+      expect(batchStore.item(compatible)).toMatchObject({ status: 'completed', billing_state: 'charged', charged: 6.5 });
+      expect(batchStore.item(incompatible)).toMatchObject({ status: 'failed', billing_state: 'refunded', charged: 0 });
+    });
+    tickVideoBatches(); resumeSpecificationTasks(); tickVideoBatches();
+    expect(posts).toBe(1);
+    expect(balance()).toBeCloseTo(93.5);
+  });
+
+  it('refunds a failed accepted batch after switching with automatic retries enabled', async () => {
+    const { channelId, configuration } = await install(), draft = replacementDraft(configuration);
+    const batchId = batchStore.create(1, crypto.randomUUID(), { name: '换型前已接单的批次', model: WD, resolution: '720p',
+      aspect_ratio: '16:9', video_length: 5, autoRetry: true, maxRetries: 3,
+      creatives: [{ prompt: '原批次', count: 1, reference_images: [], reference_videos: [], audio_urls: [] }],
+    }, 6.5, 'https://app.example');
+    const item = batchStore.detail(batchId, 1).items[0];
+    let posts = 0, clock = Date.now(), failed = false;
+    const time = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    upstream = async (url, init) => {
+      if (url === 'http://127.0.0.1:9876/api/video/generate') return nativeFetch(origin + '/api/video/generate', init);
+      if (url.endsWith('/v1/models')) return Response.json({ data: [{ id: replacement }] });
+      if (init.method === 'POST') {
+        posts++;
+        expect(JSON.parse(init.body).model).toBe(STABLE);
+        return Response.json({ id: 'original_batch_task', status: 'queued' });
+      }
+      expect(url).toBe('https://www.v6k.top/v1/videos/original_batch_task');
+      if (!failed) {
+        clock += 2 * 60 * 60_000 + 1;
+        return Response.json({ id: 'original_batch_task', status: 'unknown' });
+      }
+      return Response.json({ id: 'original_batch_task', status: 'failed', error: { message: 'temporary generation failure' } });
+    };
+    try {
+      tickVideoBatches();
+      await vi.waitFor(() => expect(Number(JSON.parse(latest().metadata).v6kQueryResumeAt)).toBeGreaterThan(clock));
+      expect((await admin(channelId, '', 'PUT', { draft, version: configuration.version })).status).toBe(200);
+      failed = true;
+      clock += 120_000;
+      resumeSpecificationTasks();
+      await vi.waitFor(() => {
+        tickVideoBatches();
+        expect(batchStore.item(item.id)).toMatchObject({ status: 'failed', billing_state: 'refunded', attempts: 1 });
+      });
+      tickVideoBatches(); resumeSpecificationTasks();
+      expect(posts).toBe(1);
+      expect(balance()).toBeCloseTo(100);
+    } finally {
+      time.mockRestore();
+    }
+  });
+
+  it('keeps a prior unknown submission held across a switch and returns it to a retry', async () => {
+    const { channelId, configuration } = await install(), draft = replacementDraft(configuration);
+    let posts = 0;
+    upstream = async (url, init) => {
+      if (url.endsWith('/v1/models')) return Response.json({ data: [{ id: replacement }] });
+      expect(init.method).toBe('POST'); posts++;
+      expect(JSON.parse(init.body).model).toBe(STABLE);
+      return Response.json({ error: { code: 'service_unavailable', message: 'temporary upstream error' } }, { status: 503 });
+    };
+    const body = { model: WD, prompt: '提交结果未知', seconds: 5, resolution: '720p' };
+    const first = await (await retryVideo('/v1/videos', body, 'unknown-cutover')).json() as any;
+    await vi.waitFor(() => expect(JSON.parse(latest().metadata).billingStatus).toBe('review'));
+    const original = latest();
+    expect((await admin(channelId, '', 'PUT', { draft, version: configuration.version })).status).toBe(200);
+    resumeSpecificationTasks(); resumeSpecificationTasks();
+    const again = await (await retryVideo('/v1/videos', body, 'unknown-cutover')).json() as any;
+    expect(again.id).toBe(first.id);
+    expect(posts).toBe(1);
+    expect(latest()).toEqual(original);
+    expect(balance()).toBeCloseTo(93.5);
+  });
+
+  it.each(['completed', 'failed'])('finishes the accepted original to %s after changing the upstream, with one settlement and no replay', async terminal => {
+    const { channelId, configuration } = await install(), draft = replacementDraft(configuration);
+    const submissions: any[] = [], queried: string[] = [];
+    let clock = Date.now(), oldStatus = 'unknown';
+    const time = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+    upstream = async (url, init) => {
+      if (url.endsWith('/v1/models')) return Response.json({ data: [{ id: replacement }, { id: STABLE }] });
+      if (init.method === 'POST') {
+        const payload = JSON.parse(init.body); submissions.push(payload);
+        const old = payload.model === STABLE;
+        return Response.json({ id: old ? 'original_before_cutover' : 'new_after_cutover_' + submissions.length, status: old ? 'queued' : 'completed' });
+      }
+      queried.push(url);
+      expect(url).toBe('https://www.v6k.top/v1/videos/original_before_cutover');
+      if (oldStatus === 'unknown') clock += 2 * 60 * 60_000 + 1;
+      return Response.json({ id: 'original_before_cutover', status: oldStatus,
+        error: oldStatus === 'failed' ? { code: 'failed', message: 'original failed' } : undefined });
+    };
+    try {
+      const oldRequest = { model: WD, prompt: '换型前任务', seconds: 5, resolution: '720p' };
+      const first = await (await retryVideo('/v1/videos', oldRequest, 'cutover-original')).json() as any;
+      await vi.waitFor(() => expect(Number(JSON.parse(latest().metadata).v6kQueryResumeAt)).toBeGreaterThan(clock));
+      const original = latest(), receipt = findVideoSubmissionReceipt(original.id);
+      expect(receipt?.upstreamTaskId).toBe('original_before_cutover');
+      expect((await admin(channelId, '', 'PUT', { draft, version: configuration.version })).status).toBe(200);
+      expect(latest()).toEqual(original);
+      const retry = await (await retryVideo('/v1/videos', oldRequest, 'cutover-original')).json() as any;
+      expect(retry.id).toBe(first.id);
+      expect(submissions).toHaveLength(1);
+
+      const websiteModels: any[] = await (await nativeFetch(origin + '/api/video/models')).json();
+      expect(websiteModels.find(item => item.id === WD)).toMatchObject({ name: draft.displayName, available: true,
+        routingLimits: { resolutions: ['1080p'], defaultSeconds: 15, maxVideos: 1 } });
+      expect(getPublicDeveloperModels().items.find(item => item.id === WD)).toMatchObject({ available: true,
+        limits: { resolutions: ['1080p'], maxVideos: 1 } });
+      const media = 'https://media.example/ref.mp4';
+      for (const endpoint of ['/api/video/generate', '/v1/videos']) {
+        const response = await post(endpoint, { model: WD, prompt: '新任务 ' + endpoint, videos: [media] });
+        expect(response.status).toBe(200);
+        await response.text();
+        await vi.waitFor(() => expect(latest().status).toBe('completed'));
+        expect(latest()).toMatchObject({ modelId: WD, cost: 6.5 });
+      }
+      expect(submissions.slice(1)).toEqual([
+        { model: replacement, prompt: '新任务 /api/video/generate', seconds: 15, ratio: '9:16', resolution: '1080p', videos: [media] },
+        { model: replacement, prompt: '新任务 /v1/videos', seconds: 15, ratio: '9:16', resolution: '1080p', videos: [media] },
+      ]);
+      oldStatus = terminal;
+      clock += 120_000;
+      resumeSpecificationTasks(); resumeSpecificationTasks();
+      await vi.waitFor(() => expect(db.select().from(contents).where(eq(contents.id, original.id)).get()?.status).toBe(terminal));
+      resumeSpecificationTasks();
+      const order = db.select().from(contents).where(eq(contents.id, original.id)).get()!;
+      expect(JSON.parse(order.metadata)).toMatchObject({ upstreamModel: STABLE, videoId: 'original_before_cutover',
+        billingStatus: terminal === 'completed' ? 'settled' : 'refunded' });
+      expect(findVideoSubmissionReceipt(original.id)).toEqual(receipt);
+      expect(queried).toHaveLength(2);
+      expect(submissions).toHaveLength(3);
+      expect(balance()).toBeCloseTo(terminal === 'completed' ? 80.5 : 87);
+      expect(sqlite.prepare('SELECT count(*) AS n FROM billing_reservations').get()).toEqual({ n: 3 });
+    } finally { time.mockRestore(); }
   });
 });
 

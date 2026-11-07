@@ -3,17 +3,17 @@ import { ZHIYING_BASE_URL, ZHIYING_CHANNEL_TYPE, ZHIYING_VIDEO_MODELS, zhiyingVi
 import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import AdminCollection from '../../components/AdminCollection';
 import ChannelListItem from '../../components/ChannelListItem';
+import V6kModelConfigurationPanel from '../../components/V6kModelConfigurationPanel';
 import './ChannelsPage.css';
 import AdminDrawer from '../../components/AdminDrawer';
 import ChannelDetails, { type ChannelFeedback } from '../../components/ChannelDetails';
 import '../../components/ChannelDetails.css';
 import { useEditDraft } from '../../hooks/useEditDraft';
 import { startPolling } from '../../utils/polling';
-import { Link } from 'react-router-dom';
 import { useAdminFilters, useAdminScroll } from '../../hooks/useAdminView';
 import { getAdminCached } from '../../api/adminCache';
 import { adminApi } from '../../api/admin';
-import { Plus, Radio, Trash2, Pencil, Zap, Loader2, Power, PowerOff, RefreshCw, KeyRound, Activity, CircleCheck, CircleX, Timer, ScanFace } from 'lucide-react';
+import { Plus, Radio, Trash2, RefreshCw, KeyRound, Activity, CircleCheck, CircleX, Timer, ScanFace } from 'lucide-react';
 import { FUNAI_BASE_URL } from '../../../../shared/funAi';
 import { ASYNC_VIDEO_BASE_URL } from '../../../../shared/asyncVideo';
 
@@ -33,6 +33,7 @@ export default function ChannelsPage() {
   const [notice, setNotice] = useState('');
   const [channelFeedback, setChannelFeedback] = useState<ChannelFeedback | null>(null);
   const [modelsRevision, setModelsRevision] = useState(0);
+  const [v6kEditor, setV6kEditor] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [pendingId, setPendingId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
@@ -469,7 +470,7 @@ export default function ChannelsPage() {
         </div>
       </AdminDrawer>}
 
-      {detail && <AdminDrawer wide title={detail.name + ' · 渠道详情'} blocked={detailEditing || Boolean(edit) || syncing === detail.id || testing === detail.id} onClose={() => { setDetail(null); void loadChannels(); }}>
+      {detail && <AdminDrawer wide title={detail.name + ' · 渠道详情'} blocked={v6kEditor !== null || detailEditing || Boolean(edit) || syncing === detail.id || testing === detail.id} onClose={() => { setDetail(null); void loadChannels(); }}>
         <ChannelDetails channel={channels.find(ch => ch.id === detail.id) || detail}
           tab={detailTab} onTabChange={setDetailTab}
           busy={detailEditing || Boolean(edit) || syncing !== null || testing !== null}
@@ -477,11 +478,15 @@ export default function ChannelsPage() {
           onEdit={() => openEdit(channels.find(ch => ch.id === detail.id) || detail)}
           onTest={() => { void handleTest(detail.id); }}
           onSync={() => { void syncModels(channels.find(ch => ch.id === detail.id) || detail); }}>
+          {detail.type === 'zongheng-v6k' && <button type="button" className="mb-3 rounded-lg border px-3 py-2 text-sm"
+            disabled={detailEditing || syncing === detail.id} onClick={() => setV6kEditor(detail.id)}>V6K 模型与参数</button>}
           <Suspense fallback={<p role="status">正在加载关联模型…</p>}>
             <ModelsPage key={detail.id + ':' + modelsRevision} channelId={String(detail.id)} onEditingChange={setDetailEditing} />
           </Suspense>
         </ChannelDetails>
       </AdminDrawer>}
+      {v6kEditor !== null && <V6kModelConfigurationPanel channelId={v6kEditor} onClose={() => setV6kEditor(null)}
+        onSaved={() => { setModelsRevision(value => value + 1); void loadChannels(); }} />}
       {/* Edit Modal */}
       {edit && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={closeEdit}>

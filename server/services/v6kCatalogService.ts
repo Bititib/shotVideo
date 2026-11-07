@@ -12,7 +12,7 @@ import { isV6kSyncModel } from '../../shared/v6kSyncModels.js';
 import { V6K_KK25_MODEL, V6K_KK25_DESCRIPTION } from '../../shared/zonghengVideo.js';
 import { ensureV6kKk25Model } from './v6kKk25Catalog.js';
 import { ensureBbHssKkMapping } from './bbHssKkMigration.js';
-import { pruneUnapprovedV6kBindings } from './v6kApprovedBindings.js';
+import { pruneUnapprovedV6kBindings, v6kManualBindings } from './v6kApprovedBindings.js';
 import { V6K_STABLE_720_UPSTREAM } from '../../shared/v6kStableVideo.js';
 import { ensureV6kStable720Model } from './v6kStable720Catalog.js';
 import { V6K_FULL_720_UPSTREAM, V6K_FULL_720_DESCRIPTION } from '../../shared/v6kFullReferenceVideo.js';
@@ -30,13 +30,12 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
   // Permission comes from this Key's response, and scope comes from the explicit allowlist.
   // Public-square metadata and a broad video endpoint can never expand this list.
   const imported = new Map<string, { id: string; upstream: string; description: string }>();
-  const authorizedIds: string[] = [];
-  const ignored = new Set<string>();
+  const discovered = new Set<string>();
   for (const entry of entries) {
     const id = String(typeof entry === 'string' ? entry : entry?.id || entry?.model || entry?.model_id || '').trim();
     if (!id) continue;
-    if (!isV6kSyncModel(id)) { ignored.add(id); continue; }
-    if (!authorizedIds.includes(id)) authorizedIds.push(id);
+    discovered.add(id);
+    if (!isV6kSyncModel(id)) continue;
     const spec = getZonghengVideoSpec(id);
     const publicId = zonghengPublicModelId(id);
     const product = v6kSeedance20Product(id);
@@ -46,8 +45,6 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     if (imported.has(publicId) && id !== product?.upstreamModels[0].id) continue;
     imported.set(publicId, { id: publicId, upstream: id, description });
   }
-  const warnings = ['仅同步已指定接入的白名单型号；忽略其他型号 ' + ignored.size + ' 个，保留已接入型号的现有价格和开关。'];
-  if (!imported.size) return { count: 0, added: 0, models: [] as string[], warnings: [...warnings, '当前 Key 未返回白名单型号，本次未修改配置。'] };
   return db.transaction(tx => {
     const current = tx.select().from(channels).where(eq(channels.id, channel.id)).get();
     if (!current || current.apiKey !== channel.apiKey || current.baseUrl !== channel.baseUrl || channel.type && current.type !== channel.type)
@@ -55,14 +52,25 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
     const supported = JSON.parse(current.supportedModels || '[]'), mapping = JSON.parse(current.modelMapping || '{}');
     if (!Array.isArray(supported) || !mapping || typeof mapping !== 'object' || Array.isArray(mapping))
       throw { status: 409, message: '渠道原模型关联格式无效，已保留原配置' };
+    const manual = v6kManualBindings(sqlite);
+    const managedIds = new Set(manual.map(item => item.modelId));
+    const onChannel = manual.filter(item => item.channelId === channel.id && supported.includes(item.modelId)
+      && Object.hasOwn(mapping, item.modelId) && mapping[item.modelId] === item.upstreamModel);
+    const manualIds = onChannel.filter(item => discovered.has(item.upstreamModel)).map(item => item.modelId);
+    const ignored = [...discovered].filter(id => !isV6kSyncModel(id) && !onChannel.some(item => item.upstreamModel === id)).length;
+    const warnings = ['仅同步已指定接入的型号；忽略其他型号 ' + ignored + ' 个，保留已接入型号的现有价格和开关。'];
+    const saleId = (id: string) => {
+      const tt25 = v6kTt25Product(id);
+      return tt25 ? v6kTt25SaleId(sqlite, tt25.id) : zonghengPublicModelId(id);
+    };
+    const authorizedIds = [...discovered].filter(id => isV6kSyncModel(id) && !managedIds.has(saleId(id)));
+    const items = [...imported.values()].map(item => ({ ...item, id: saleId(item.upstream) }))
+      .filter(item => !managedIds.has(item.id));
+    if (!items.length) return { count: manualIds.length, added: 0, models: manualIds, warnings: manualIds.length ? warnings
+      : [...warnings, '当前 Key 未返回已接入型号，本次未修改配置。'] };
     const previouslyPresent = new Set(tx.select({ id: models.modelId }).from(models).all().map(row => row.id));
     ensureV6kSeedance20Models(sqlite);
     ensureV6kTt25Models(sqlite);
-    // Resolve existing TT product identities while holding the configuration transaction.
-    const items = [...imported.values()].map(item => {
-      const tt25 = v6kTt25Product(item.upstream);
-      return tt25 ? { ...item, id: v6kTt25SaleId(sqlite, tt25.id) } : item;
-    });
     for (const item of items) {
       const existing = tx.select().from(models).where(eq(models.modelId, item.id)).get();
       if (!existing) {
@@ -73,7 +81,7 @@ export async function syncV6kVideoModels(channel: { id: number; baseUrl: string;
       if (!supported.includes(item.id)) supported.push(item.id);
       if (!Object.hasOwn(mapping, item.id)) mapping[item.id] = item.upstream;
     }
-    const ids = items.map(item => item.id);
+    const ids = [...new Set([...items.map(item => item.id), ...manualIds])];
     tx.update(channels).set({ supportedModels: JSON.stringify(supported),
       modelMapping: JSON.stringify(mapping),
       updatedAt: new Date().toISOString() }).where(eq(channels.id, channel.id)).run();

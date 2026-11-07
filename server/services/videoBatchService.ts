@@ -8,6 +8,7 @@ import { BalanceService } from './balanceService.js';
 import { captureFundEntries } from '../db/fundLedger.js';
 import { VideoBatchStore } from './videoBatchStore.js';
 import type { TierRequest } from '../middleware/tier.js';
+import { v6kManualBinding } from './v6kApprovedBindings.js';
 
 export const batchStore = new VideoBatchStore(sqlite, {
   deduct: (userId, amount) => {
@@ -158,8 +159,10 @@ function reconcile() {
     } else if (c.status === 'failed') {
       const confirmed = meta.batchConfirmedFailure === true;
       // A confirmed Zhiying rejection or terminal task ends this paid generation.
-      // Batch retry_wait creates a new content ID/key, which cannot recover the original job.
-      batchStore.fail(i.id, meta.error || '上游生成失败', confirmed && !meta.zhiyingOrder, confirmed && meta.zhiyingOrder);
+      // Configured V6K routes can change between attempts. Settle the original
+      // failure without creating another provider request on the edited route.
+      const finishOriginal = Boolean(meta.zhiyingOrder || v6kManualBinding(sqlite, c.model_id));
+      batchStore.fail(i.id, meta.error || '上游生成失败', confirmed && !finishOriginal, confirmed && finishOriginal);
       const settled = batchStore.item(i.id);
       const refunded = settled.billing_state === 'refunded';
       if (!refunded) {
@@ -205,9 +208,14 @@ export function tickVideoBatches() {
     // capacity, while the existing HM queue enforces key/pool/user limits.
     const running = sqlite.prepare(`SELECT i.user_id,b.model FROM video_batch_items i JOIN video_batches b ON b.id=i.batch_id
       WHERE i.status IN ('dispatching','running','review')`).all() as any[];
-    const pending = sqlite.prepare(`SELECT i.id,i.user_id,b.model FROM video_batch_items i JOIN video_batches b ON b.id=i.batch_id
+    const pending = sqlite.prepare(`SELECT i.id,i.user_id,i.status,i.error,c.model_id AS previous_model,b.model
+      FROM video_batch_items i JOIN video_batches b ON b.id=i.batch_id LEFT JOIN contents c ON c.id=i.content_id
       WHERE i.status IN ('queued','retry_wait') AND i.next_run<=? ORDER BY i.next_run,i.id`).all(Date.now()) as any[];
     for (const p of pending) {
+      if (p.status === 'retry_wait' && v6kManualBinding(sqlite, p.previous_model || p.model)) {
+        batchStore.finishScheduledRetry(p.id, p.error || '原任务失败，已停止自动重试');
+        continue;
+      }
       if (running.length >= maxActive) break;
       if (running.filter(r => r.user_id === p.user_id).length >= maxPerUser) continue;
       const claimed = batchStore.claim(p.id);

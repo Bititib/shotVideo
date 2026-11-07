@@ -12,8 +12,8 @@ export function v6kFull720Limits(): ModelInputLimits {
 }
 
 /** Validate unsupported input before reservation; material aliases are counted by specificationRequest. */
-export function normalizeFull720VideoInput(body: Record<string, any>): void {
-  if (body.model !== V6K_FULL_720_MODEL) return;
+export function normalizeFull720VideoInput(body: Record<string, any>, configured = false): void {
+  if (!configured && body.model !== V6K_FULL_720_MODEL) return;
   const supplied = (key: string) => body[key] !== undefined && body[key] !== null && body[key] !== ''
     && (!Array.isArray(body[key]) || body[key].length > 0);
   if (['first_frame','first_frame_url','first_image','start_frame','last_frame','last_frame_url','last_image','end_frame','end_frame_url'].some(supplied))

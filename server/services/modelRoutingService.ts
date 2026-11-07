@@ -34,7 +34,7 @@ export function hiddenRouteModelIds(): Set<string> {
   const check = createVideoAliasChecker();
   return new Set(specs.flatMap(spec => spec.aliases.filter(id => !check(spec, id))).filter(id => !publicIds.has(id)));
 }
-function validateLimits(l: ModelInputLimits) {
+export function validateLimits(l: ModelInputLimits) {
   if (!l || typeof l !== 'object') throw error('必须填写输入限制');
   if (l.maxReferences !== undefined && (!Number.isInteger(l.maxReferences) || l.maxReferences < 0 || l.maxReferences > 300)) throw error('素材合计上限必须为 0–300 的整数');
   if (l.outputsPerTask !== undefined && (!Number.isInteger(l.outputsPerTask) || l.outputsPerTask < 1 || l.outputsPerTask > 4 || l.maxOutputs !== l.outputsPerTask)) throw error('原生图片任务的输出数量必须为 1–4，且与输出上限一致');

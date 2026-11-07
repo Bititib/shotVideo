@@ -2,6 +2,7 @@ import { api as client } from './client';
 import { api as contentApiClient } from './client';
 import { cachedAdminGet, invalidateAdminCache } from './adminCache';
 import type { UserModelSetting } from '../../../shared/userModelSettings';
+import type { V6kModelConfiguration, V6kModelDraft, V6kRequestSample } from '../../../shared/v6kModelConfiguration';
 
 // Cache only configuration lists; runtime status and operational statistics stay live.
 const cacheable = new Set(['/admin/models?view=config', '/admin/pricing?scope=models', '/admin/models', '/admin/channels', '/admin/pricing', '/admin/tiers']);
@@ -72,6 +73,13 @@ export const adminApi = {
   deleteChannel(id: number) { return api.delete<any>(`/admin/channels/${id}`); },
   testChannel(id: number) { return api.post<any>(`/admin/channels/${id}/test`); },
   syncChannelModels(id: number) { return api.post<any>(`/admin/channels/${id}/sync-models`); },
+  getV6kModelConfigurations(id: number) { return api.get<V6kModelConfiguration[]>(`/admin/channels/${id}/v6k-models`); },
+  previewV6kModel(id: number, draft: V6kModelDraft, sample: V6kRequestSample) {
+    return client.post<{ method: string; path: string; body: object }>(`/admin/channels/${id}/v6k-models/preview`, { draft, sample });
+  },
+  saveV6kModel(id: number, draft: V6kModelDraft, version: string | null) {
+    return api.put<V6kModelConfiguration>(`/admin/channels/${id}/v6k-models`, { draft, version });
+  },
 
   // Token 管理
   getTokens(params: { page?: number; pageSize?: number; search?: string } = {}) {

@@ -17,9 +17,8 @@ import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghen
 import { patchZonghengTask, reviewZonghengTask, zonghengOrder, recordZonghengSubmissionError, acceptZonghengVideoReceipt } from '../services/zonghengTaskService.js';
 import { generateZonghengImages } from '../services/zonghengImageService.js';
 import { handleSpecificationGeneration } from '../services/specificationGenerationService.js';
-import { getModelSpecifications, getModelSpecification } from '../services/modelRoutingService.js';
 import { resolveApiModelId } from '../services/publicModelNameService.js';
-import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
+import { issueUploadUrl } from '../services/uploadAccess.js';
 import { publishReferenceUrl } from '../services/publicReferenceService.js';
 import { reserveCharge } from '../services/billingReservation.js';
 import { withFundContext } from '../db/fundLedger.js';
@@ -37,7 +36,7 @@ import { userModelDenied } from '../services/userModelAccessService.js';
 import { extractImageUpstreamTaskId } from '../services/imageTaskMetadataService.js';
 import { BalanceService, type BalanceDeduction } from '../services/balanceService.js';
 import { db, sqlite } from '../db/index.js';
-import { apiLogs, settings, models, contents, apiTokens, channels } from '../db/schema.js';
+import { apiLogs, settings, models, contents, channels } from '../db/schema.js';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import multer from 'multer';
 import os from 'os';
@@ -99,7 +98,6 @@ import {
 import { normalizeHmStudioVideoResolution, validateHmStudioAdditionalVideoInput } from '../services/hmStudioVideoModels.js';
 import {
   findHmStudioOverflowPlan,
-  hasHmStudioOverflowChannel,
 } from '../services/hmStudioOverflowChannelService.js';
 import {
   findSiYueTianOverflowPlan,

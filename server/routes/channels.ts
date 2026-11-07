@@ -6,6 +6,7 @@ import { authMiddleware, AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
 import { ChannelService } from '../services/channelService.js';
 import { VideoRoutingStatsService, type VideoRoutingStatsPeriod } from '../services/videoRoutingStatsService.js';
+import { listV6kModelConfigurations, previewV6kModelRequest, saveV6kModelConfiguration } from '../services/v6kModelConfigurationService.js';
 
 const router = Router();
 router.use(authMiddleware, adminMiddleware);
@@ -86,6 +87,21 @@ function channelOperationError(res: Response, error: any) {
   }
   return res.status(error.status || 500).json({ error: error.message });
 }
+
+router.get('/:id/v6k-models', (req, res) => {
+  try { res.json(listV6kModelConfigurations(Number(req.params.id))); }
+  catch (error) { channelOperationError(res, error); }
+});
+
+router.post('/:id/v6k-models/preview', (req, res) => {
+  try { res.json(previewV6kModelRequest(Number(req.params.id), req.body?.draft, req.body?.sample)); }
+  catch (error) { channelOperationError(res, error); }
+});
+
+router.put('/:id/v6k-models', async (req, res) => {
+  try { res.json(await saveV6kModelConfiguration(Number(req.params.id), req.body?.draft, req.body?.version)); }
+  catch (error) { channelOperationError(res, error); }
+});
 
 // 测试渠道连通性
 router.post('/:id/test', async (req: AuthRequest, res: Response) => {

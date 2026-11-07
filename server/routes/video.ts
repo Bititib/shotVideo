@@ -3,6 +3,7 @@ import { zonghengProtocol, zonghengProtocolSnapshot, zonghengTaskChannel, v6kQue
 import { normalizeSnumomNsfwRequestBody } from '../services/snumomWanAdapter.js';
 import { normalizeVideoParameters } from '../services/videoCapabilities.js';
 import { validateSpecificationVideoParameters } from '../services/specificationAdapters.js';
+import { v6kManualBinding } from '../services/v6kApprovedBindings.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { SNUMOM_MUSE_MODEL } from '../../shared/snumomMuse.js';
 import { VideoPollTimeout, withVideoPollDeadline, fetchVideoTaskResponse } from '../services/videoPollDeadline.js';
@@ -25,13 +26,12 @@ import { handleSpecificationGeneration, resumeSpecificationTasks, prepareSpecifi
 import { getModelSpecification, specificationAvailable, selectModelRoutes } from '../services/modelRoutingService.js';
 import { specificationRequest } from '../services/specificationGenerationService.js';
 import { protectVideoSource } from '../middleware/uploadAccess.js';
-import { issueUploadUrl, registerUpload, ownsUpload, uploadPath } from '../services/uploadAccess.js';
+import { issueUploadUrl, uploadPath } from '../services/uploadAccess.js';
 import { publishReferenceUrl } from '../services/publicReferenceService.js';
 import { prepareHmReferenceImages } from '../services/hmStudioReferenceService.js';
 import { canvasRequestMiddleware, recordCanvasEvent } from '../middleware/canvasRequest.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { hayaVideoSeconds, HAYA_VIDEO_MODELS, HAYA_XG_SEEDANCE_20_MODEL, getHayaVideoSpec, validateHayaVideoInput } from '../../shared/hayaVideo.js';
-import { existingModelLimits } from '../services/modelInputPresets.js';
 import { videoCapabilities } from '../services/videoCapabilities.js';
 import { isHayaChannel, hayaTaskUrl, normalizeHayaTask, hayaPollDelay, submitHayaVideo, HayaSubmissionError } from '../services/hayaVideoAdapter.js';
 import { prepareHayaMedia, validateHayaMedia } from '../services/hayaMediaService.js';
@@ -43,7 +43,7 @@ import { filterUserModels } from '../services/userModelAccessService.js';
 import { tierMiddleware, TierRequest } from '../middleware/tier.js';
 import { quotaMiddleware, logUsage } from '../middleware/quota.js';
 import { ChannelService } from '../services/channelService.js';
-import { BalanceService, type BalanceDeduction } from '../services/balanceService.js';
+import type { BalanceDeduction } from '../services/balanceService.js';
 import { protectsVideoPolling, noteVideoQueryProblem, clearVideoQueryProblem } from '../services/videoPollingSafety.js';
 import { finalizeReservedContent } from '../services/contentBillingService.js';
 import { ContentService } from '../services/contentService.js';
@@ -187,12 +187,11 @@ import { validateVideoPrompt } from '../services/videoPromptValidation.js';
 import { parseUtcTimestamp } from '../../shared/time.js';
 export { downloadAndLocalizeVideo } from '../services/videoLocalizationService.js';
 import { env } from '../config/env.js';
-import { db } from '../db/index.js';
-import { models, settings, contents } from '../db/schema.js';
-import { eq, like, and, inArray, gte, sql } from 'drizzle-orm';
+import { db, sqlite } from '../db/index.js';
+import { settings, contents } from '../db/schema.js';
+import { eq, and, inArray, gte, sql } from 'drizzle-orm';
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
 
 const router = Router();
 router.use(['/generate', '/validate'], generationErrorResponse);
@@ -277,58 +276,6 @@ function convertBase64ToPublicUrl(dataUrl: string, prefix: string, requestOrBase
  */
 async function uploadToSudaShui(source: string, publicBaseUrl: string): Promise<string> {
   return source ? publishReferenceUrl(source, publicBaseUrl) : '';
-}
-
-/** 上传素材到 Pidoi（Sora V3 Pro）文件存储 */
-async function uploadToPidoi(dataUrl: string, apiKey: string, baseUrl?: string): Promise<string> {
-  if (!dataUrl) return '';
-  if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
-    return dataUrl;
-  }
-  try {
-    const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-    if (!matches) throw new Error('Invalid data URL format');
-    const mimeType = matches[1];
-    const base64Data = matches[2];
-    const buffer = Buffer.from(base64Data, 'base64');
-
-    let ext = mimeType.split('/')[1] || 'jpg';
-    if (mimeType === 'audio/mpeg') ext = 'mp3';
-    else if (mimeType.includes('wav')) ext = 'wav';
-    else if (mimeType.includes('mp4')) ext = 'mp4';
-
-    const formData = new FormData();
-    const blob = new Blob([buffer], { type: mimeType });
-    formData.append('file', blob, `file_${Date.now()}.${ext}`);
-
-    const uploadBase = baseUrl ? baseUrl.replace(/\/v1\/?$/, '') : 'https://pidoi.com';
-    const resp = await fetch(`${uploadBase}/seedance-assets/upload`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: formData,
-      signal: AbortSignal.timeout(60000)
-    });
-
-    if (!resp.ok) {
-      const errTxt = await resp.text().catch(() => '');
-      throw new Error(`Pidoi upload failed: ${resp.status} ${errTxt}`);
-    }
-
-    // 防御性检查：网关可能以 200 返回 HTML 页面（鉴权失败等情况）
-    const contentType = resp.headers.get('content-type') || '';
-    if (contentType.includes('text/html')) {
-      const htmlSnippet = await resp.text().catch(() => '');
-      throw new Error(`Pidoi upload 返回了 HTML 而非 JSON（可能是鉴权失败或地址错误）: ${htmlSnippet.slice(0, 200)}`);
-    }
-
-    const data = await resp.json() as any;
-    return data.url || data.assetUrl;
-  } catch (err: any) {
-    console.error('[video] uploadToPidoi 失败:', err.message);
-    throw err;
-  }
 }
 
 /** 模型系列信息：计费、时长限制、是否强制参考图 */
@@ -784,10 +731,16 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
         req.body = { ...req.body, model: spec.modelId };
         normalizeZhiyingRequest(req.body, spec.limits.defaultSeconds);
       }
-      const body = { ...req.body, model: spec.modelId, resolution: req.body.resolution || spec.limits.resolutions[0], video_length: req.body.video_length ?? req.body.seconds ?? req.body.duration ?? spec.limits.defaultSeconds ?? (spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) };
+      const v6kBinding = v6kManualBinding(sqlite, spec.modelId);
+      const body = { ...req.body, model: spec.modelId, resolution: req.body.resolution || req.body.output_resolution || spec.limits.resolutions[0],
+        video_length: req.body.video_length ?? req.body.seconds ?? req.body.duration ?? (v6kBinding ? req.body.duration_seconds : undefined) ?? spec.limits.defaultSeconds
+          ?? (spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) };
+      if (v6kBinding && !body.aspect_ratio && !body.ratio) body.aspect_ratio = spec.limits.ratios[0];
       const origin = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
-      const request = specificationRequest(body, 'video', origin), input = request.input;
+      const request = specificationRequest(body, 'video', origin, Boolean(v6kBinding)), input = request.input;
       const candidates = selectModelRoutes(spec, input); const quote = PricingService.quote(spec.modelId, { resolution: input.resolution, seconds: input.seconds, count: 1 }, false, req.userId);
+      if (v6kBinding && candidates.some(target => target.route.channelId !== v6kBinding.channelId
+        || target.route.upstreamModel !== v6kBinding.upstreamModel)) throw Object.assign(new Error('V6K 线路与后台核对的型号不一致'), { status: 503 });
       validateSpecificationVideoParameters(request, candidates);
       if ((canonicalSnumomVideoModel(body.model) === SNUMOM_MUSE_MODEL || candidates.some(t=>t.route.upstreamModel === SNUMOM_MUSE_MODEL)) && quote.billingType !== 'per_call') throw new Error('Muse Video 需配置按次售价，本次未扣费');
       if (!quote.billingType) throw Object.assign(new Error('该规格尚未配置用户售价'), { status: 400 });

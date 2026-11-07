@@ -21,7 +21,7 @@ import { isBbHssKkEntry } from '../../shared/bbHssKk.js';
 import { ensureBbHssMoMapping } from './bbHssMoMigration.js';
 import { db, sqlite } from '../db/index.js';
 import { channelApiKeys, channels, models, modelPricing } from '../db/schema.js';
-import { SI_YUE_TIAN_MINIMAX_MODEL, isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
+import { isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
 import { ensureSiYueTianMinimaxModel, SiYueTianCatalogConflictError } from './siYueTianMinimaxCatalog.js';
 import { and, desc, eq } from 'drizzle-orm';
 import { hmStudioPoolConfig, hmStudioPoolKey, hmStudioQueue } from './hmStudioQueueService.js';

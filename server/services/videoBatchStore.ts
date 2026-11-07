@@ -152,6 +152,12 @@ export class VideoBatchStore {
       } else this.release(i, 'failed', error);
     }).immediate();
   }
+  finishScheduledRetry(id: number, error: string) {
+    this.sql.transaction(() => {
+      const item = this.item(id);
+      if (item?.status === 'retry_wait' && item.billing_state === 'reserved') this.release(item, 'failed', error);
+    }).immediate();
+  }
   complete(id: number, contentId: number, resultUrl: string, updateContent: () => void) {
     this.sql.transaction(() => {
       const i = this.item(id);

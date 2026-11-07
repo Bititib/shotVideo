@@ -25,12 +25,11 @@ import { LONGXIA_MODELS, LONGXIA_BASE_URL, isLongxiaChannel, longxiaRate, longxi
 import { db, sqlite } from './index.js';
 import { DEFAULT_TTS_CHARACTER_RATE } from '../../shared/tts.js';
 import { migrateTtsPricing } from './ttsPricingMigration.js';
-import { tiers, users, models, tierModelAccess, settings, channels, channelApiKeys, apiTokens, modelPricing, organizations, orgMembers, contents } from './schema.js';
+import { tiers, users, models, tierModelAccess, settings, channels, channelApiKeys, apiTokens, modelPricing } from './schema.js';
 import { eq, like } from 'drizzle-orm';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
-import { env, getApiKeys } from '../config/env.js';
-import { GoogleGenAI } from '@google/genai';
+import { env } from '../config/env.js';
 import { JULUN_MINIMAX_H3_MODEL } from '../services/julunMinimaxAdapter.js';
 import {
   WX_HAIDIYUE_CHANNEL_NAME,
@@ -85,22 +84,6 @@ function generateTokenKey(): string {
   return 'sk-' + crypto.randomBytes(24).toString('hex');
 }
 
-/** 不适合做内容分析 或 免费 Key 无法使用的模型关键词（排除） */
-const EXCLUDED_KEYWORDS = ['embedding', 'tts', 'robotics', 'live', 'audio', 'computer-use', 'customtools', 'pro'];
-
-/** 排除别名和版本号变体 */
-const EXCLUDED_PATTERNS = [
-  /^gemini-(flash|pro|flash-lite)-(latest)$/,
-  /^gemini-[\d.]+-flash-\d{3}$/,
-  /^gemini-[\d.]+-flash-lite-\d{3}$/,
-];
-
-/** 验证单个模型是否真正可用（区分限流 vs 真正不支持 vs 超时） */
-async function verifyModel(ai: GoogleGenAI, modelId: string, isImage: boolean): Promise<'ok' | 'rate_limited' | 'unsupported' | 'timeout'> {
-  // 本地开发直接信任发现的模型列表，避免因网络挂起导致服务启动失败
-  return 'ok';
-}
-
 type ModelEntry = { provider: string; modelId: string; displayName: string; description?: string | null; capabilities: string; isActive?: number };
 
 export function shouldRemoveMissingGoogleModel(
@@ -110,44 +93,10 @@ export function shouldRemoveMissingGoogleModel(
   return model.provider === 'google' && !verifiedIds.has(model.modelId);
 }
 
-/** 使用单个 Key 串行验证一批模型（同 Key 内间隔 2s 防限流） */
-async function verifyBatch(
-  apiKey: string, keyIndex: number,
-  batch: (ModelEntry & { isImage: boolean })[],
-  existingModelIds: Set<string>,
-): Promise<{ verified: ModelEntry[]; log: string[] }> {
-  const ai = new GoogleGenAI({ apiKey });
-  const verified: ModelEntry[] = [];
-  const log: string[] = [];
-
-  for (const c of batch) {
-    if (existingModelIds.has(c.modelId)) {
-      verified.push({ provider: c.provider, modelId: c.modelId, displayName: c.displayName, capabilities: c.capabilities });
-      continue;
-    }
-    const result = await verifyModel(ai, c.modelId, c.isImage);
-    if (result === 'ok') {
-      log.push(`   ✅ ${c.modelId} (key#${keyIndex + 1})`);
-      verified.push({ provider: c.provider, modelId: c.modelId, displayName: c.displayName, capabilities: c.capabilities });
-    } else if (result === 'timeout') {
-      log.push(`   ❌ ${c.modelId} — 网络请求超时，停止后续验证 (key#${keyIndex + 1})`);
-      break;
-    } else {
-      log.push(`   ❌ ${c.modelId} — ${result === 'rate_limited' ? '配额不足' : '不支持'} (key#${keyIndex + 1})`);
-    }
-    await new Promise(r => setTimeout(r, 2000));
-  }
-  return { verified, log };
-}
-
-/**
- * 从 Google API 动态发现可用模型，多 Key 并发验证后同步到数据库
- * N 个 Key = 验证速度提升 N 倍，运行时请求也自动轮询分散限速
- */
+/** 同步 Google 代理目录中已接入的模型。 */
 export async function syncModelsFromAPI() {
   migrateHmDdlongNaming(sqlite);
   const existingModels = db.select().from(models).all();
-  const existingModelIds = new Set(existingModels.map(m => m.modelId));
   const apiKey = env.GEMINI_API_KEY;
 
   let allVerified: ModelEntry[] = [];

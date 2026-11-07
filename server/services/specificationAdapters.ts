@@ -8,7 +8,7 @@ import { isHussPersistentVideoModel } from '../../shared/hussBbVideo.js';
 import { V6K_SEEDANCE_20_MODEL } from '../../shared/v6kSeedance2.js';
 import { KK_VIDEO_MODEL, KK_VIDEO_SOURCES } from '../../shared/kkVideoRouting.js';
 import { isMegabyChannel, buildMegabyVideoPayload, submitMegabyVideo, pollMegabyVideo, validateMegabyReferenceDurations, MegabyApiError } from './megabyVideoAdapter.js';
-import { isZonghengChannel, submitZonghengVideo, normalizeZonghengTask, readZonghengTaskResponse, zonghengTaskUrl, ZonghengSubmissionError } from './zonghengAdapter.js';
+import { buildZonghengVideoPayload, isZonghengChannel, submitZonghengVideo, normalizeZonghengTask, readZonghengTaskResponse, zonghengTaskUrl, ZonghengSubmissionError } from './zonghengAdapter.js';
 import { zonghengProtocol, zonghengProtocolSnapshot } from './zonghengProtocol.js';
 import { prepareZonghengMedia } from './zonghengMediaService.js';
 import { fetchVideoTaskResponse } from './videoPollDeadline.js';
@@ -49,7 +49,7 @@ import { isVideoQueryErrorPayload } from './videoFailureService.js';
 import { classifyHmSubmission } from './hmStudioSubmission.js';
 import { submitSiYueTianMinimax, pollSiYueTianMinimax, SiYueTianMinimaxError } from './siYueTianMinimaxAdapter.js';
 
-export type SpecificationRequest = { prompt: string; input: RoutingInput; images: string[]; videos: string[]; audios: string[]; firstFrame: string; lastFrame: string; body: Record<string, any>; publicBaseUrl: string; submissionKey?: string; ownerId?: number };
+export type SpecificationRequest = { prompt: string; input: RoutingInput; images: string[]; videos: string[]; audios: string[]; firstFrame: string; lastFrame: string; body: Record<string, any>; publicBaseUrl: string; submissionKey?: string; ownerId?: number; v6kConfigured?: boolean };
 /** Validate extra-parameter/media combinations before reserving money or creating a task. */
 export function validateSpecificationVideoParameters(request: SpecificationRequest, candidates: RouteCandidate[]) {
   if (isZhiyingVideoModel(request.body.model)) {
@@ -57,6 +57,10 @@ export function validateSpecificationVideoParameters(request: SpecificationReque
     if (problems.length) throw new Error(problems.join('；'));
   }
   for (const target of candidates) {
+    if (request.v6kConfigured) {
+      if (!isZonghengChannel(target.channel)) throw new Error('此模型须使用已配置的 V6K 线路');
+      buildZonghengVideoPayload(zonghengSpecificationInput(target.route.upstreamModel, request, request));
+    }
     if (target.channel.type === 'zhiying' || [request.body.model, target.route.upstreamModel, target.route.executionModel].some(isZhiyingVideoModel)) {
       if (target.channel.type !== 'zhiying' || !isZhiyingVideoModel(request.body.model)
         || request.body.model !== target.route.upstreamModel || request.body.model !== target.route.executionModel) throw new Error('智赢视频规格与该型号的上游映射不一致');
@@ -174,6 +178,14 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
   onParsed?.(result, response.headers);
   return result;
 }
+function zonghengSpecificationInput(model: string, request: SpecificationRequest,
+  media: Pick<SpecificationRequest, 'images' | 'videos' | 'audios'> & { firstFrame?: string; lastFrame?: string }) {
+  const { seconds, ratio, resolution } = request.input;
+  return { model, prompt: request.prompt, seconds, ratio, resolution, images: media.images, videos: media.videos, audios: media.audios,
+    firstFrame: media.firstFrame || undefined, lastFrame: media.lastFrame || undefined,
+    quality: request.body.quality, negativePrompt: request.body.negative_prompt, generateAudio: request.body.generate_audio };
+}
+
 export async function submitSpecificationVideo(target: RouteCandidate, request: SpecificationRequest, onStarting: (metadata?: Record<string, unknown>) => void) {
   const c = { ...target.channel, videoSubmission: true }, model = target.route.upstreamModel, exec = target.route.executionModel, i = request.input;
   if (c.type === 'zhiying') {
@@ -213,9 +225,8 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
       const videos = await prepareZonghengMedia(request.videos, 'video', options);
       const audios = await prepareZonghengMedia(request.audios, 'audio', options);
       const frames = await prepareZonghengMedia([request.firstFrame, request.lastFrame].filter(Boolean), 'image', options);
-      const job = await submitZonghengVideo(c.baseUrl, c.apiKey, { model, prompt: request.prompt, seconds: i.seconds,
-        ratio: i.ratio, resolution: i.resolution, images, videos, audios, firstFrame: frames[0], lastFrame: frames[1],
-        quality: request.body.quality, negativePrompt: request.body.negative_prompt, generateAudio: request.body.generate_audio }, orderId,
+      const job = await submitZonghengVideo(c.baseUrl, c.apiKey, zonghengSpecificationInput(model, request,
+        { images, videos, audios, firstFrame: frames[0], lastFrame: frames[1] }), orderId,
         () => onStarting({ ...snapshot, zonghengOrderId: orderId }), c.timeout, protocol, taskId => {
           acceptedTaskId = taskId;
           onStarting({ ...snapshot, videoId: taskId });
