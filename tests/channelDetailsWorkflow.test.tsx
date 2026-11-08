@@ -46,7 +46,7 @@ describe('channel details and model sync workflow', () => {
     expect(button).toBeVisible();
     fireEvent.click(button);
     const panel = await screen.findByRole('dialog', { name: '纵横 V6K · 模型与参数' });
-    await waitFor(() => expect(within(panel).getByRole('button', { name: '添加模型' })).toBeEnabled());
+    await waitFor(() => expect(within(panel).getByRole('button', { name: '添加新模型' })).toBeEnabled());
     expect(adminApi.getV6kModelConfigurations).toHaveBeenCalledExactlyOnceWith(21);
     expect(screen.queryByRole('dialog', { name: 'qq-往生普 · 渠道详情' })).toBeNull();
     expect(adminApi.syncChannelModels).not.toHaveBeenCalled();
