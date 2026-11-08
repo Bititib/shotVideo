@@ -460,13 +460,6 @@ function CustomSelect({ value, options, onChange }: any) {
   );
 }
 
-const getRefFilename = (dataUrl: string, index: number) => {
-  const mimeMatch = dataUrl.match(/^data:([^;]+);/);
-  const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-  const ext = mimeType.includes('png') ? 'png' : 'jpg';
-  return `ref_${index}.${ext}`;
-};
-
 export default function VideoPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1509,18 +1502,7 @@ export default function VideoPage() {
     }
     setError(null);
 
-    // 将 prompt 中的 @图1, @图2, @视频, @音频 翻译回后端 API 支持的 [ref_0.jpg], [ref_video], [ref_audio] 格式
-    let finalPrompt = prompt.trim();
-    if (isLongxiaModel(selectedModel)) {
-      finalPrompt = finalPrompt.replace(/[@＠]图(\d+)/g, '@image$1');
-    }
-    referenceImages.forEach((img, idx) => {
-      const refName = getRefFilename(img, idx);
-      const userRefLabelPattern = new RegExp(`[@＠]图${idx + 1}\\b|[@＠]图${idx + 1}`, 'g');
-      finalPrompt = finalPrompt.replace(userRefLabelPattern, `[${refName}]`);
-    });
-    finalPrompt = finalPrompt.replace(/[@＠]视频(\d+)?/g, (_, n) => `[ref_video_${n || '1'}]`);
-    finalPrompt = finalPrompt.replace(/[@＠]音频(\d+)?/g, (_, n) => `[ref_audio_${n || '1'}]`);
+    const finalPrompt = restorePrompt(prompt.trim());
 
     const taskId = `task_${Date.now()}`;
     const newTask: VideoTask = {
@@ -2201,40 +2183,40 @@ export default function VideoPage() {
                           {referenceImages.map((img, idx) => (
                             <div
                               key={`uploaded_img_${idx}`}
-                              onClick={() => insertTextAtCursor(`@图${idx + 1} `)}
+                              onClick={() => insertTextAtCursor(`@Image${idx + 1} `)}
                               className="flex items-center gap-3 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-[#f1dfcd] group transition-all text-xs text-[#5d4638] hover:text-[#8e472e]"
-                              title={`点击在光标处插入 @图${idx + 1}`}
+                              title={`点击在光标处插入 @Image${idx + 1}`}
                             >
                               <img src={img} className="w-8 h-8 rounded-lg object-cover border border-[#d8b995]" />
-                              <span className="font-medium group-hover:text-[#8e472e]">@图{idx + 1}</span>
+                              <span className="font-medium group-hover:text-[#8e472e]">@Image{idx + 1}</span>
                             </div>
                           ))}
 
                           {referenceVideos.map((vid, idx) => (
                             <div
                               key={`uploaded_vid_${idx}`}
-                              onClick={() => insertTextAtCursor(`@视频${idx + 1} `)}
+                              onClick={() => insertTextAtCursor(`@Video${idx + 1} `)}
                               className="flex items-center gap-3 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-[#f1dfcd] group transition-all text-xs text-[#6d5140] hover:text-[#8e472e]"
-                              title={`点击在光标处插入 @视频${idx + 1}`}
+                              title={`点击在光标处插入 @Video${idx + 1}`}
                             >
                               <div className="w-8 h-8 rounded-lg overflow-hidden border border-[#d8b995] bg-[#f2e3d2] shrink-0 flex items-center justify-center">
                                 <Film className="w-4 h-4 text-[#a45736]" />
                               </div>
-                              <span className="font-medium group-hover:text-purple-400">@视频{idx + 1}</span>
+                              <span className="font-medium group-hover:text-purple-400">@Video{idx + 1}</span>
                             </div>
                           ))}
 
                           {referenceAudios.map((aud, idx) => (
                             <div
                               key={`uploaded_aud_${idx}`}
-                              onClick={() => insertTextAtCursor(`@音频${idx + 1} `)}
+                              onClick={() => insertTextAtCursor(`@Audio${idx + 1} `)}
                               className="flex items-center gap-3 px-2 py-1.5 rounded-lg cursor-pointer hover:bg-[#edf0df] group transition-all text-xs text-[#65704b] hover:text-[#4f6136]"
-                              title={`点击在光标处插入 @音频${idx + 1}`}
+                              title={`点击在光标处插入 @Audio${idx + 1}`}
                             >
                               <div className="w-8 h-8 rounded-lg overflow-hidden border border-[#bcc59e] bg-[#edf0df] shrink-0 flex items-center justify-center">
                                 <span className="text-sm">🔊</span>
                               </div>
-                              <span className="font-medium group-hover:text-emerald-400">@音频{idx + 1} {referenceAudioNames[idx] ? `(${referenceAudioNames[idx]})` : ''}</span>
+                              <span className="font-medium group-hover:text-emerald-400">@Audio{idx + 1} {referenceAudioNames[idx] ? `(${referenceAudioNames[idx]})` : ''}</span>
                             </div>
                           ))}
                         </div>
@@ -2266,7 +2248,7 @@ export default function VideoPage() {
                                     }
                                     const vidIdx = referenceVideos.length;
                                     setReferenceVideos(prev => [...prev, asset.dataUrl]);
-                                    insertTextAtCursor(`@视频${vidIdx + 1} `);
+                                    insertTextAtCursor(`@Video${vidIdx + 1} `);
                                   } else {
                                     let idx = referenceImages.indexOf(asset.dataUrl);
                                     if (idx === -1) {
@@ -2279,8 +2261,8 @@ export default function VideoPage() {
                                       setReferenceImages(prev => [...prev, asset.dataUrl]);
                                     }
 
-                                    // 插入对应的 @图${idx + 1} 到文本中
-                                    insertTextAtCursor(`@图${idx + 1} `);
+                                    // 插入对应的 @Image${idx + 1} 到文本中
+                                    insertTextAtCursor(`@Image${idx + 1} `);
                                   }
                                 }}>
                                 {asset.type === 'image' ? (
@@ -2339,7 +2321,7 @@ export default function VideoPage() {
                         {!isHmStudioVideoModel(selectedModel) && locallyProcessedImages.has(img) && <div className="absolute bottom-0 right-0 rounded-tl bg-emerald-600/95 px-1 py-0.5 text-[8px] font-medium leading-none text-white">已拆脸</div>}
                         {/* 索引代号角标 */}
                         <div className="absolute top-0 left-0 bg-[#8f4a31]/90 text-white text-[9px] px-1.5 py-1 rounded-br-lg font-mono leading-none pointer-events-none">
-                          ref_{idx}
+                          @Image{idx + 1}
                         </div>
                         <button
                           type="button"

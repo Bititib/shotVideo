@@ -47,6 +47,7 @@ describe('complete admin video replication',()=>{
     await waitFor(()=>expect(mocks.generate).toHaveBeenCalledOnce());
     expect(mocks.generate.mock.calls[0][0]).toMatchObject({
       model:metadata.model,video_length:10,resolution:'720p',aspect_ratio:'9:16',
+      prompt:'@Image2 @Video2 @Audio2\n\n@Image1 @Video1 @Audio1 一起跳舞',
       reference_images:metadata.reference_images,reference_videos:metadata.reference_videos,
       audio_urls:metadata.audio_urls,first_frame:metadata.first_frame,last_frame:metadata.last_frame,
     });

@@ -1,3 +1,4 @@
+import { restoreVideoPromptRefs } from '../../utils/videoPromptRefs';
 import { generationProblemSummary } from '../../../../shared/generationMessages';
 import { getZonghengVideoReferenceLimits } from '../../../../shared/zonghengVideo';
 import { getHayaVideoSpec } from '../../../../shared/hayaVideo';
@@ -130,10 +131,11 @@ export default function VideoBatchPage() {
       creativeEdit(index, { reference_images: [...input.creatives[index].reference_images, ...urls] });
     } catch (e: any) { setError(e.message); } finally { setBusy(false); }
   }
+  const submissionInput = () => ({...input, creatives:input.creatives.map(c => ({...c,prompt:restoreVideoPromptRefs(c.prompt)}))});
   async function estimate() {
     if (!guard()) return;
     setBusy(true); setError(''); setNotice('');
-    try { setQuote(await api.post<Quote>('/video-batches/quote', input)); }
+    try { setQuote(await api.post<Quote>('/video-batches/quote', submissionInput())); }
     catch (e: any) { setError(e.message); }
     finally { setBusy(false); }
   }
@@ -143,7 +145,7 @@ export default function VideoBatchPage() {
     setBusy(true); setError('');
     if (!requestKey.current) requestKey.current = crypto.randomUUID();
     try {
-      const result = await api.post<VideoBatchDetail>('/video-batches', { ...input, expectedUnitCost: quote.unitCost, requestKey: requestKey.current });
+      const result = await api.post<VideoBatchDetail>('/video-batches', { ...submissionInput(), expectedUnitCost: quote.unitCost, requestKey: requestKey.current });
       setBatches(old => [result, ...old.filter(b => b.id !== result.id)]);
       setSelected(result.id); setDetail(result); setQuote(null);
       requestKey.current = '';

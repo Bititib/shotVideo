@@ -47,7 +47,7 @@ describe('batch page form and prepaid confirmation', () => {
   it('keeps the same idempotency key when submitting again after a lost response', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     render(<VideoBatchPage />); await screen.findByText('测试视频模型');
-    fireEvent.change(screen.getByLabelText('原始提示词'), { target: { value: '用户原词' } });
+    fireEvent.change(screen.getByLabelText('原始提示词'), { target: { value: '用户原词 @图10 @视频2 @音频1' } });
     mocks.post.mockResolvedValueOnce({ unitCost: 1.5, total: 10, totalCost: 15 });
     fireEvent.click(screen.getByRole('button', { name: /校验并预估/ }));
     const submit = await screen.findByRole('button', { name: /确认预扣/ });
@@ -60,5 +60,6 @@ describe('batch page form and prepaid confirmation', () => {
     expect(mocks.post.mock.calls[1][1].requestKey).toBeTruthy();
     expect(mocks.post.mock.calls[2][1].requestKey).toBe(mocks.post.mock.calls[1][1].requestKey);
     expect(mocks.post.mock.calls[2][1].expectedUnitCost).toBe(1.5);
+    for (const [, body] of mocks.post.mock.calls) expect(body.creatives[0].prompt).toBe('用户原词 @Image10 @Video2 @Audio1');
   });
 });
