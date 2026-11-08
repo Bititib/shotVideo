@@ -1173,6 +1173,57 @@ describe('cross-project prompt references',()=>{
 });
 
 
+describe('canvas image enlargement', () => {
+  it('opens the original from a node, zooms and pans without moving the canvas, and closes with Escape', () => {
+    const photo = { ...newNode('image', {x:100,y:100}), title:'查看细节', src:'/api/media/original-photo' };
+    const board = mount({...newDocument(),nodes:[photo]});
+    const before = board.current();
+    fireEvent.click(screen.getByRole('button',{name:'放大查看 查看细节'}));
+    const dialog = screen.getByRole('dialog',{name:'图片放大预览'});
+    const image = within(dialog).getByRole('img',{hidden:true}) as HTMLImageElement;
+    expect(image.getAttribute('src')).toBe(photo.src);
+    const viewport = within(dialog).getByLabelText('图片查看区域');
+    vi.spyOn(viewport,'getBoundingClientRect').mockReturnValue({width:800,height:600,left:0,top:0} as DOMRect);
+    Object.defineProperties(image,{naturalWidth:{value:2400},naturalHeight:{value:1800}});
+    fireEvent.load(image);
+    expect(within(dialog).getByLabelText('图片缩放比例').textContent).toBe('33%');
+    fireEvent.click(within(dialog).getByRole('button',{name:'原始尺寸'}));
+    expect(within(dialog).getByLabelText('图片缩放比例').textContent).toBe('100%');
+    fireEvent.pointerDown(viewport,{button:0,pointerId:10,clientX:400,clientY:300});
+    fireEvent.pointerMove(viewport,{pointerId:10,clientX:450,clientY:330});
+    fireEvent.pointerUp(viewport,{pointerId:10});
+    expect(image.style.transform).toContain('translate(50px, 30px)');
+    fireEvent.wheel(viewport,{deltaY:-100,clientX:400,clientY:300});
+    expect(Number.parseInt(within(dialog).getByLabelText('图片缩放比例').textContent!)).toBeGreaterThan(100);
+    fireEvent.click(within(dialog).getByRole('button',{name:'原始尺寸'}));
+    fireEvent.pointerDown(viewport,{button:0,pointerId:20,clientX:300,clientY:300});
+    fireEvent.pointerDown(viewport,{button:0,pointerId:21,clientX:500,clientY:300});
+    fireEvent.pointerMove(viewport,{pointerId:21,clientX:700,clientY:300});
+    expect(within(dialog).getByLabelText('图片缩放比例').textContent).toBe('200%');
+    fireEvent.pointerCancel(viewport,{pointerId:20});
+    fireEvent.pointerCancel(viewport,{pointerId:21});
+    fireEvent.click(within(dialog).getByRole('button',{name:'适应屏幕'}));
+    expect(image.style.transform).toContain('translate(0px, 0px)');
+    expect(board.current()).toEqual(before);
+    fireEvent.keyDown(window,{key:'Escape'});
+    expect(screen.queryByRole('dialog',{name:'图片放大预览'})).toBeNull();
+  });
+
+  it('opens connected reference images and reports an original image load error', async () => {
+    const photo = {...newNode('image',{x:0,y:0}),title:'参考原图',src:'/api/media/reference-photo'};
+    const target = {...newNode('video',{x:400,y:0}),title:'创作目标'};
+    mount({...newDocument(),nodes:[photo,target],edges:[{id:'ref',from:photo.id,to:target.id}]});
+    fireEvent.doubleClick(screen.getByRole('article',{name:target.title}));
+    fireEvent.click(await screen.findByRole('button',{name:'放大参考图 参考原图'}));
+    const dialog = screen.getByRole('dialog',{name:'图片放大预览'});
+    fireEvent.error(within(dialog).getByRole('img',{hidden:true}));
+    expect(within(dialog).getByRole('alert').textContent).toContain('原图加载失败');
+    expect((within(dialog).getByRole('button',{name:'放大图片'}) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(within(dialog).getByRole('button',{name:'关闭预览'}));
+    expect(screen.getByLabelText('创作面板')).toBeTruthy();
+  });
+});
+
 describe('composer node anchoring',()=>{
   it.each([false,true])('opens creation by double-clicking a node (has media: %s)', async hasMedia => {
     const node={...newNode('image',{x:100,y:100}),title:'双击创作',src:hasMedia ? '/image.png' : undefined};

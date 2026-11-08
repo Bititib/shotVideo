@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import os from 'node:os';
 import fs from 'fs';
 import path from 'path';
+import { bindReferences, resolveReferenceMentions } from '../client/src/canvas/referenceMentions';
+import { newNode } from '../client/src/canvas/model';
 const publicDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-public-refs-'));
 beforeAll(() => { vi.stubEnv('PUBLIC_REFERENCE_DIR', publicDir); vi.stubEnv('BACKEND_URL', 'https://studio.test'); });
 afterAll(() => { vi.unstubAllEnvs(); fs.rmSync(publicDir, { recursive: true, force: true }); });
@@ -17,6 +19,27 @@ import {
 } from '../server/services/hmStudioAdapter.js';
 
 describe('HM Studio adapter', () => {
+  it('binds reordered canvas image, video and audio mentions to the exact outgoing HM materials', () => {
+    const original = (['image','video','audio'] as const).flatMap(kind => [1,2].map(index => ({
+      ...newNode(kind,{x:0,y:0}), id:kind+index, src:`https://example.test/${kind}${index}`,
+    })));
+    const bindings = bindReferences({}, original);
+    const reordered = [...original].reverse();
+    const resolved = resolveReferenceMentions('@图片1 @图片2 @视频1 @视频2 @音频1 @音频2', bindings, reordered, {kind:'video',videoMode:'multimodal'});
+    expect(resolved.error).toBe('');
+    const form = buildHmStudioVideoForm({ model:'sd2.5-301010',prompt:resolved.prompt,duration:15,ratio:'16:9',resolution:'720p',functionMode:'omni_reference',
+      imageSources:reordered.filter(n=>n.kind==='image').map(n=>n.src),videoSources:reordered.filter(n=>n.kind==='video').map(n=>n.src),audioSources:reordered.filter(n=>n.kind==='audio').map(n=>n.src) });
+    expect(form.get('prompt')).toBe('@Image2 @Image1 @Video2 @Video1 @Audio2 @Audio1');
+    const materials = JSON.parse(String(form.get('materials')));
+    for (const [kind,name] of [['image','Image'],['video','Video'],['audio','Audio']]) {
+      expect(materials.find((m:any)=>m.name===name+'2').url).toBe(`https://example.test/${kind}1`);
+      expect(materials.find((m:any)=>m.name===name+'1').url).toBe(`https://example.test/${kind}2`);
+    }
+  });
+  it('does not invent missing references or partially match multi-digit canvas indexes', () => {
+    const form = buildHmStudioVideoForm({model:'sd2.5-301010',prompt:'参考图片10 参考音频0 参考音频12 普通音频说明 @Audio1',duration:15,ratio:'16:9',resolution:'720p',functionMode:'omni_reference',imageSources:['https://example.test/image'],audioSources:['https://example.test/audio']});
+    expect(form.get('prompt')).toBe('参考图片10 参考音频0 参考音频12 普通音频说明 @Audio1');
+  });
   it('maps the nova public ID and preserves all reference URLs and prompt markers', () => {
     const form = buildHmStudioVideoForm({ model: 'sd2.5-933', prompt: '[ref_9] [ref_video_3] [ref_audio_3]',
       duration: 30, ratio: '9:16', resolution: '720p', upstreamChannel: 'lumen',

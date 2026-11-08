@@ -95,8 +95,17 @@ function appendFileOrUrl(
   if (source) form.append(urlField, publishReferenceUrl(source, localMediaBaseUrl));
 }
 
-function replaceReferenceMarkers(prompt: string): string {
+function replaceReferenceMarkers(prompt: string, options: HmPromptOptions): string {
   return prompt
+    // Canvas resolves stable node bindings to the submitted per-kind order.
+    // HM materials use these exact case-sensitive names; legacy [ref_N]
+    // image numbering below deliberately retains its existing semantics.
+    .replace(/参考(图片|视频|音频)(\d+)(?!\d)/g, (marker, kind: string, rawIndex: string) => {
+      const index = Number(rawIndex);
+      const [name, sources] = kind === '图片' ? ['Image', options.imageSources] as const
+        : kind === '视频' ? ['Video', options.videoSources] as const : ['Audio', options.audioSources] as const;
+      return index >= 1 && index <= (sources || []).filter(Boolean).length ? `@${name}${index}` : marker;
+    })
     .replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (_match, rawIndex) => {
       const parsed = Number(rawIndex);
       const index = parsed === 0 ? 1 : parsed;
@@ -162,7 +171,7 @@ function hmVideoMode(options: HmPromptOptions): string {
 /** Preserve existing marker formatting; prompt limits are decided by HM. */
 function formatHmStudioVideoPrompt(options: HmPromptOptions): string {
   const raw = options.prompt.trim();
-  const prompt = hmVideoMode(options) === 'omni_reference' ? replaceReferenceMarkers(raw) : raw;
+  const prompt = hmVideoMode(options) === 'omni_reference' ? replaceReferenceMarkers(raw, options) : raw;
   return prompt;
 }
 
