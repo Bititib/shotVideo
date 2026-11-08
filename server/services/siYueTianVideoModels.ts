@@ -1,3 +1,4 @@
+import { mapCanvasReferenceMarkers } from './canvasReferenceMarkers.js';
 import { getSiYueTianC2Model } from '../../shared/siYueTianVideoC2.js';
 export { getSiYueTianC2Model, SI_YUE_TIAN_C2_MODELS } from '../../shared/siYueTianVideoC2.js';
 export const SI_YUE_TIAN_SEEDANCE_25_MAX_IMAGES = 30;
@@ -67,7 +68,7 @@ export function buildSiYueTianSeedance25VideoPayload(input: {
 }) {
   return {
     model: input.model,
-    prompt: input.prompt,
+    prompt: mapCanvasReferenceMarkers(input.prompt, { image: 'Image', video: 'Video', audio: 'Audio' }),
     duration: input.seconds,
     aspect_ratio: input.aspectRatio,
     image_refs: input.imageUrls.length > 0 ? input.imageUrls : undefined,

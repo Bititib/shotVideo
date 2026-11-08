@@ -1,3 +1,4 @@
+import { mapCanvasReferenceMarkers } from './canvasReferenceMarkers.js';
 import { isLongxiaModel, longxiaResolution, LONGXIA_RATIOS } from '../../shared/longxiaVideo.js';
 export { isLongxiaModel, longxiaResolution, longxiaRate, LONGXIA_MODELS, LONGXIA_SECONDS } from '../../shared/longxiaVideo.js';
 
@@ -50,7 +51,7 @@ function asset(category: 'image' | 'audio', source: string): Record<string, stri
 
 /** Translate the application's reference labels and append any missing references. */
 function referencePrompt(prompt: string, counts: Record<string, number>): string {
-  let result = prompt.replace(/[@＠](?:图片|图)(\d+)/g, '@image$1')
+  let result = mapCanvasReferenceMarkers(prompt, { image: 'image', video: 'video', audio: 'audio' }).replace(/[@＠](?:图片|图)(\d+)/g, '@image$1')
     .replace(/[@＠]视频(\d+)?/g, (_, n) => `@video${n || '1'}`)
     .replace(/[@＠]音频(\d+)?/g, (_, n) => `@audio${n || '1'}`)
     .replace(/\[ref_(\d+)\.(?:jpg|jpeg|png|webp)\]/gi, (_, n) => `@image${Number(n) + 1}`)

@@ -1,3 +1,4 @@
+import { mapCanvasReferenceMarkers } from './canvasReferenceMarkers.js';
 export const SUDASHUI_VIDEO_CREATE_PATH = '/v1/video/generations';
 
 export interface SudaShuiVideoPayloadInput {
@@ -16,7 +17,7 @@ function nonEmptyUrls(urls: string[] | undefined): string[] {
 
 /** Convert the placeholders accepted by our public APIs into SudaShui references. */
 export function normalizeSudaShuiPrompt(prompt: string): string {
-  return String(prompt || '')
+  return mapCanvasReferenceMarkers(String(prompt || ''), { image: 'image', video: 'video', audio: 'audio' })
     .trim()
     .replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (_match, index) => `@image${Number(index) + 1}`)
     .replace(/\[ref_video_(\d+)\]/g, '@video$1')

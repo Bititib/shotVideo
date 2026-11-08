@@ -1,3 +1,4 @@
+import { mapCanvasReferenceMarkers } from './canvasReferenceMarkers.js';
 export interface MjNewApiChannelLike {
   baseUrl?: string | null;
 }
@@ -23,7 +24,7 @@ export function isMjNewApiChannel(channel: MjNewApiChannelLike | null | undefine
 }
 
 export function normalizeMjNewApiPrompt(prompt: string): string {
-  return prompt
+  return mapCanvasReferenceMarkers(prompt, { image: 'Image', video: 'Video', audio: 'Audio' })
     .replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (_match, idxStr) => `@Image${Number(idxStr) + 1}`)
     .replace(/\[ref_video_(\d+)\]/g, (_match, idxStr) => `@Video${Number(idxStr)}`)
     .replace(/\[ref_video\]/g, '@Video1')

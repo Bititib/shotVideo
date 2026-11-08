@@ -1,3 +1,4 @@
+import { mapCanvasReferenceMarkers } from '../services/canvasReferenceMarkers.js';
 import { isHussChannel } from '../services/hussVideoAdapter.js';
 import { zonghengProtocol, zonghengProtocolSnapshot, zonghengTaskChannel, v6kQueryRetryDelay, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE } from '../services/zonghengProtocol.js';
 import { normalizeSnumomNsfwRequestBody } from '../services/snumomWanAdapter.js';
@@ -2520,7 +2521,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         if (url) audioRefUrls.push(url);
       }
 
-      let finalPrompt = prompt.trim();
+      let finalPrompt = mapCanvasReferenceMarkers(prompt.trim(), { image: 'Image', video: 'Video', audio: 'Audio' });
       finalPrompt = finalPrompt.replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (match, idxStr) => {
         const idx = parseInt(idxStr, 10);
         return `@Image${idx + 1}`;
