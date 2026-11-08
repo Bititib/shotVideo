@@ -117,7 +117,36 @@ it.each([[line1, 'Lx-Seedance2.5-1'], [line2, 'Lx-Seedance2.5-2']])('uses the ad
   expect(created[0].key?.length).toBeGreaterThanOrEqual(8);
   expect(accountBalance()).toBe(98);
 });
+it.each([line1, line2].flatMap(model => ['/api/video/generate','/v1/videos'].map(endpoint => ({model,endpoint}))))('keeps two distinct audio uploads and numbered prompt through $model $endpoint', async ({model,endpoint}) => {
+  const audio2 = Buffer.from('ID3second-speaker');
+  const audio1 = Buffer.from('ID3first-speaker');
+  const prompt = '参考音频2用于甲的音色，参考音频1用于乙的音色';
+  const result = await call(endpoint, {model,prompt,audio_urls:[audio2,audio1].map(bytes => 'data:audio/mpeg;base64,' + bytes.toString('base64'))});
+  expect(result.ok).toBe(true);
+  await result.text();
+  await vi.waitFor(() => expect(created).toHaveLength(1));
+  expect(uploaded).toEqual([audio2,audio1]);
+  expect(created[0].payload).toMatchObject({model,prompt,reference_audios:['file_1','file_2']});
+  await vi.waitFor(() => expect(db.select().from(contents).get()?.status).toBe('completed'));
+  const metadata = JSON.parse(db.select().from(contents).get()!.metadata);
+  expect(metadata.zhiyingPayload).toMatchObject({prompt,reference_audios:['file_1','file_2']});
+});
+it.each([line1, line2].flatMap(model => ['/api/video/generate','/v1/videos'].flatMap(endpoint => [0,1].map(count => ({model,endpoint,count})))))('rejects dangling audio references before charging: $model $endpoint $count audio', async ({model,endpoint,count}) => {
+  const audio = 'data:audio/mpeg;base64,' + Buffer.from('ID3speaker').toString('base64');
+  const result = await call(endpoint, {model,prompt:'参考音频1用于甲，参考音频2用于乙',audio_urls:Array(count).fill(audio)});
+  expect(result.status).toBe(400);
+  expect(await result.text()).toContain('没有对应素材');
+  expect(uploaded).toHaveLength(0);
+  expect(created).toHaveLength(0);
+  expect(accountBalance()).toBe(100);
+  expect(tokenBalance()).toBe(100);
+});
 it('checks each dedicated line and rejects unsupported batch assets before reservation', async () => {
+  for (const prompt of ['参考图片1', '参考视频1', '参考音频0', '参考音频10', '音色参考参考音频2']) {
+    const response = await call('/api/video/validate', {model:line1,prompt});
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain('没有对应素材');
+  }
   const prompt = '山'.repeat(20001);
   expect((await call('/api/video/validate', {model:line1,prompt})).status).toBe(400);
   expect((await call('/api/video/validate', {model:line2,prompt})).status).toBe(200);

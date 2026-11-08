@@ -50,5 +50,16 @@ export function validateZhiyingVideoInput(model: ZhiyingVideoModel, prompt: stri
   const reasons = routingMismatches(limits, input, 'video');
   if (!prompt.trim()) reasons.push('请输入视频描述');
   if (Array.from(prompt).length > promptMax) reasons.push(`${model} 提示词最多 ${promptMax} 个字符`);
+  // Canvas emits these one-based labels after resolving stable node bindings.
+  // Copied prompts can retain a label after its media was removed; never submit
+  // that dangling reference as if uploading the remaining files made it valid.
+  const counts = { 图片: input.images, 视频: input.videos, 音频: input.audios };
+  for (const match of prompt.matchAll(/参考(图片|视频|音频)(\d+)(?!\d)/g)) {
+    const kind = match[1] as keyof typeof counts, index = Number(match[2]);
+    if (!Number.isSafeInteger(index) || index < 1 || index > counts[kind]) {
+      const reason = `提示词中的${match[0]}没有对应素材，本次实际提交${counts[kind]}个${kind}参考。请补齐素材或修正引用编号。`;
+      if (!reasons.includes(reason)) reasons.push(reason);
+    }
+  }
   return reasons;
 }
