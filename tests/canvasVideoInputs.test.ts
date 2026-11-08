@@ -3,10 +3,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { newNode, parseDocument, newDocument } from '../client/src/canvas/model';
 import { readVideoDuration, connectionError, videoInputError, VIDEO_EDIT_MODEL } from '../client/src/canvas/videoInputs';
 import { canvasVideoReferenceLimits } from '../shared/canvasVideoReferences';
+import { defaultRoutingLimits } from '../shared/modelRouting';
 const options = { kind: 'video' as const, videoMode: 'edit' as const, model: VIDEO_EDIT_MODEL, ratio: '16:9', seconds: 10 };
 const video = { ...newNode('video', { x: 0, y: 0 }), src: '/original.mp4' };
 afterEach(() => vi.restoreAllMocks());
 describe('canvas video editing constraints', () => {
+  it('rejects audio in managed edit mode before the submit path can omit it', () => {
+    const audio = { ...newNode('audio', { x: 0, y: 0 }), src: '/voice.mp3' };
+    const limits = { ...defaultRoutingLimits(), maxAudios: 3 };
+    expect(videoInputError(options, [video, audio], limits)).toContain('多模态模式');
+  });
   it('uses model-specific reference image caps and keeps unknown models at ten', () => {
     const image={...newNode('image',{x:0,y:0}),src:'/image.jpg'};
     const ref={...options,videoMode:'reference' as const,model:'sd2.5-933'};

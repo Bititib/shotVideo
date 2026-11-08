@@ -10,6 +10,14 @@ afterEach(() => vi.unstubAllGlobals());
 const input = { model:'公开模型',prompt:' 产品展示 ',seconds:10,ratio:'9:16',resolution:'720p',images:['https://example.com/i.jpg'],videos:['https://example.com/v.mp4'],audios:['https://example.com/a.wav'] };
 const options = {baseUrl:'https://channel.invalid/v1/',apiKey:'test-key',publicBaseUrl:'https://our.invalid'};
 describe('Zongheng public protocol', () => {
+  it.each(ZONGHENG_VIDEO_MODELS)('preserves canvas reference order without borrowing another protocol for $id', spec => {
+    const media = (kind: string, count: number) => Array.from({length: Math.min(count, 2)}, (_, i) => `https://media.example/${kind}${2-i}`);
+    const data = {...input, model: spec.id, prompt: '参考图片2 参考图片1 参考视频1 参考音频1', seconds: spec.seconds[0], resolution: spec.resolution,
+      images: media('image', spec.references.images), videos: media('video', spec.references.videos), audios: media('audio', spec.references.audios)};
+    const payload = buildZonghengVideoPayload(data);
+    expect(payload.prompt).toBe(data.prompt);
+    for (const kind of ['images', 'videos', 'audios'] as const) if (data[kind].length) expect(payload[kind]).toEqual(data[kind]);
+  });
   it.each(ZONGHENG_VIDEO_MODELS)('validates confirmed parameters for $id and preserves the exact public ID', spec => {
     expect(getZonghengVideoSpec('ZH-' + spec.id)).toBe(spec);
     expect(getZonghengVideoSpec('zongheng-' + spec.id)).toBe(spec);

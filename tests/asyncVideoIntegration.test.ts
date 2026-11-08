@@ -35,7 +35,8 @@ beforeEach(async () => {
   db.insert(users).values({ id: 1, email: 'async@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
   vi.stubGlobal('fetch', vi.fn(async () => discovery()));
   channelId = ChannelService.createChannel({ name: '异步视频测试', type: 'async-video', baseUrl: 'http://provider.invalid:8080/v1/', apiKey: key });
-  const approvedId = asyncVideoPublicModelId(channelId, 'seedance-video');
+  // Generic discovery needs an explicit custom alias; generated legacy IDs are not approval.
+  const approvedId = 'custom-seedance-video';
   ChannelService.updateChannel(channelId, { supportedModels: [approvedId], modelMapping: { [approvedId]: 'seedance-video' } });
   modelId = (await ChannelService.syncModels(channelId)).models[0];
 });
@@ -107,6 +108,8 @@ describe('documented async video channel', () => {
     const spec = getModelSpecification(modelId)!;
     spec.enabled = false; spec.limits.maxImages = 3; spec.routes[0].enabled = false;
     spec.routes[0].upstreamModel = 'custom-name'; saveModelSpecification(spec);
+    ChannelService.updateChannel(channelId, { modelMapping: { [modelId]: 'custom-name' } });
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({data:[{name:'custom-name',ratio:'9:16,16:9,1:1',seconds:'5,10,15'}]})));
     await ChannelService.syncModels(channelId);
     expect(getModelSpecification(modelId)).toMatchObject({ enabled: false, limits: { maxImages: 3 }, routes: [{ enabled: false, upstreamModel: 'custom-name' }] });
     expect(db.select().from(modelPricing).all()[0].inputPrice).toBe(2);
@@ -155,7 +158,7 @@ describe('documented async video channel', () => {
     const record = db.select().from(contents).all().at(-1)!;
     expect(record, JSON.stringify(res.body)).toMatchObject({ status, cost: status === 'completed' ? 2 : 0 });
     expect(db.select().from(users).all()[0].balance).toBe(status === 'completed' ? 98 : 100);
-    if (status === 'completed') expect(downloadAndLocalizeVideo).toHaveBeenCalledWith('https://cdn.example/video.mp4', '12345', modelId, channelId, null);
+    if (status === 'completed') expect(downloadAndLocalizeVideo).toHaveBeenCalledWith('https://cdn.example/video.mp4', '12345', modelId, channelId, null, expect.any(Function));
   });
   it.each([{ seconds: 6 }, { video_urls: ['https://cdn.example/ref.mp4'] }, { audio_urls: ['https://cdn.example/ref.mp3'] }])('rejects unsupported inputs before submission or billing: %j', async body => {
     enable(); const upstream = vi.fn(); vi.stubGlobal('fetch', upstream);
@@ -254,10 +257,10 @@ describe('documented async video channel', () => {
       : String(url).endsWith('/url') ? { url: 'https://cdn.example/video.mp4' } : { status: 'completed' }));
     vi.stubGlobal('fetch', upstream);
     try {
-      const res = response(); await handleSpecificationGeneration(request({ seconds: undefined, reference_images: images }), res, 'video');
+      const res = response(); await handleSpecificationGeneration(request({ prompt: '参考图片9 与参考图片1', seconds: undefined, reference_images: images }), res, 'video');
       expect(db.select().from(contents).all().at(-1), JSON.stringify(res.body)).toMatchObject({ status: 'completed', cost: 2 });
       const payload = JSON.parse((upstream.mock.calls[0] as any)[1].body);
-      expect(payload).toEqual({ model: '2.0B', prompt: '海浪拍打礁石', seconds: 15, aspect_ratio: '9:16', reference_images: images });
+      expect(payload).toEqual({ model: '2.0B', prompt: '参考图片9 与参考图片1', seconds: 15, aspect_ratio: '9:16', reference_images: images });
       expect(payload.reference_images).toHaveLength(9);
     } finally { validate.mockRestore(); }
   });

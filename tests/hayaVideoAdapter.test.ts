@@ -8,6 +8,18 @@ const input = { model: HAYA_MODEL_IDS[0], prompt: ' 测试 ', seconds: 15, ratio
   images: ['https://media.example/a.png'], videos: [], audios: ['https://media.example/b.wav'] };
 
 describe('Haya protocol and catalog', () => {
+  it.each([HAYA_MO_MODEL, 'XG-seedance-2.5-720', HAYA_XG_SEEDANCE_20_MODEL])('keeps per-kind canvas order for %s', model => {
+    const data = {...input, model, prompt: '参考图片2 参考图片1 参考视频1 参考音频2',
+      images: ['https://media.example/second.png', 'https://media.example/first.png'], videos: ['https://media.example/v.mp4'], audios: ['https://media.example/second.wav', 'https://media.example/first.wav']};
+    const payload = buildHayaVideoPayload(data);
+    expect(payload.prompt).toBe(data.prompt);
+    if (model === HAYA_XG_SEEDANCE_20_MODEL) expect(payload.content).toEqual([
+      ...data.images.map(url => ({type:'image_url', image_url:{url}})),
+      ...data.videos.map(url => ({type:'video_url', video_url:{url}})),
+      ...data.audios.map(url => ({type:'audio_url', audio_url:{url}})),
+    ]);
+    else expect(payload).toMatchObject({images:data.images, videos:data.videos, audios:data.audios});
+  });
   it('uses the independently documented Mo arrays, combined cap, prompt and auto ratio', () => {
     const mo = { ...input, model: HAYA_MO_MODEL, seconds: 5, ratio: 'auto', images: Array(6).fill(input.images[0]), videos: Array(5).fill('https://media.example/v.mp4?signature=a%2Fb'), audios: Array(5).fill(input.audios[0]) };
     expect(buildHayaVideoPayload(mo)).toEqual({ model: HAYA_MO_MODEL, prompt: '测试', seconds: '5', ratio: 'auto', resolution: '720p', images: mo.images, videos: mo.videos, audios: mo.audios });

@@ -55,6 +55,21 @@ function req(model: string, body: any = {}) {
   return { userId, headers: {}, body: { model, prompt: 'product camera movement', ...body }, protocol: 'https', get: () => 'app.example' } as any;
 }
 describe('FunAI channel in website generation and billing workflows', () => {
+  it('submits canvas Kling O3 markers through the actual specification route', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({data:[{id:'kling-o3'}]})));
+    await ChannelService.syncModels(channelId);
+    price('funai-kling-o3');
+    const spec = getModelSpecification('funai-kling-o3')!;
+    const images = ['https://media.example/second.png','https://media.example/first.png'];
+    const routing = {...input(), images:2, seconds:spec.limits.duration.min, resolution:spec.limits.resolutions[0], ratio:spec.limits.ratios[0]};
+    let posted: any;
+    vi.stubGlobal('fetch', vi.fn(async (_url, init) => { posted = JSON.parse(String(init?.body)); return Response.json({id:'reference-task',status:'queued'}); }));
+    await submitSpecificationVideo(selectModelRoutes(spec,routing)[0], {
+      prompt:'参考图片2 与参考图片1', input:routing, images,videos:[],audios:[],firstFrame:'',lastFrame:'',body:{},publicBaseUrl:'https://app.example',
+    }, vi.fn());
+    expect(posted).toMatchObject({model:'kling-o3',prompt:'@Image2 与@Image1',reference_images:images});
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it('imports only discovered media models, creates independent resolution entries, and keeps new sales disabled', async () => {
     expect(await ChannelService.testChannel(channelId)).toMatchObject({ success: true });
     const synced = await ChannelService.syncModels(channelId);

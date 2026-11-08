@@ -14,6 +14,7 @@ export function videoInputError(options: Pick<GenerationDraft, 'kind' | 'videoMo
   if (managedLimits && options.kind === 'image') return routingMismatches(managedLimits, { images: references.filter(n => n.kind === 'image').length, videos: references.filter(n => n.kind === 'video').length, audios: references.filter(n => n.kind === 'audio').length, outputs: options.count || 1, seconds: 1, resolution: options.resolution || managedLimits.resolutions[0] || '', ratio: options.ratio, firstFrame: false, lastFrame: false }, 'image').join('；');
   if (options.kind !== 'video') return references.some(n => n.kind === 'video' || n.kind === 'audio') ? '此模式不支持视频或音频参考，请移除对应连线或切换视频编辑。' : '';
   if (managedLimits) {
+    if (options.videoMode === 'edit' && references.some(n => n.kind === 'audio')) return '音频参考请切换多模态模式，视频编辑模式不会提交音频素材。';
     if (!['multimodal', 'edit'].includes(options.videoMode) && references.some(n => ['video','audio'].includes(n.kind))) return '视频或音频参考请切换多模态模式';
     const frames = options.videoMode === 'frames';
     const images = frames ? 0 : references.filter(n => n.kind === 'image' && n.src).length;

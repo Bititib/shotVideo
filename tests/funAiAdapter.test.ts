@@ -13,6 +13,15 @@ function request(model: string, overrides: Partial<SpecificationRequest> = {}): 
 }
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe('FunAI documented protocol', () => {
+  it('maps only Kling O3 element references, retaining style images and other model protocols', () => {
+    const images = [url(4),url(3),url(2),url(1)];
+    const prompt = '参考图片2 参考图片1 参考图片3 参考图片4 参考图片10 @Image1';
+    const result = buildFunAiVideoPayload('kling-o3',request('kling-o3',{prompt,images}));
+    expect(result.prompt).toBe('@Image2 @Image1 @Image3 参考图片4 参考图片10 @Image1');
+    expect(result.reference_images).toEqual(images);
+    const omni=buildFunAiVideoPayload('gemini-omni-flash',request('gemini-omni-flash',{prompt,images:[url(1)]}));
+    expect(omni.prompt).toBe(prompt);
+  });
   it.each(['veo-3.1','veo-3.1-lite'])('passes the documented %s result-audio flag without dropping false', model => {
     expect(buildFunAiVideoPayload(model, request(model,{body:{audio:false}}))).toMatchObject({audio:false});
     expect(buildFunAiVideoPayload(model, request(model))).not.toHaveProperty('audio');

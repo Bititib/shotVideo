@@ -64,7 +64,14 @@ export function buildFunAiVideoPayload(model: string, request: SpecificationRequ
   if ((request.firstFrame || request.lastFrame) && request.images.length) throw new Error('FunAI 首尾帧不能与普通参考图同时使用');
   const images = request.images.map(reference), videos = request.videos.map(reference), audios = request.audios.map(reference);
   const first = request.firstFrame ? reference(request.firstFrame) : '', last = request.lastFrame ? reference(request.lastFrame) : '';
-  const payload: Record<string, any> = { model, prompt: request.prompt, seconds: i.seconds, aspect_ratio: i.ratio,
+  // FunAI's Kling O3 names only the first three element images. Further
+  // ordinary images are style references, not @Image4..6. Other models have
+  // distinct role fields and must not inherit Kling's mention syntax.
+  const prompt = model === 'kling-o3' ? request.prompt.replace(/参考图片(\d+)(?!\d)/g, (marker, rawIndex) => {
+    const index = Number(rawIndex);
+    return index >= 1 && index <= Math.min(3, images.length) ? `@Image${index}` : marker;
+  }) : request.prompt;
+  const payload: Record<string, any> = { model, prompt, seconds: i.seconds, aspect_ratio: i.ratio,
     resolution: model === 'minimax-h3' ? '1440P' : i.resolution, n: 1 };
   if (request.body.audio !== undefined) {
     if (typeof request.body.audio !== 'boolean') throw new Error('FunAI audio 必须为布尔值');

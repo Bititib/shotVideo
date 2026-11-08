@@ -24,6 +24,17 @@ import { roundUpVideoDurationTenths } from '../server/services/videoDurationProb
 import { SNUMOM_OUTPUT_ONLY_MODELS } from '../shared/snumomWanNsfw';
 
 describe('snumom Wan 3.0 adapter', () => {
+  it.each(SNUMOM_VIDEO_MODELS)('preserves ordered references for configured model %s without Seedance-specific syntax', model => {
+    const imageOnly = model === 'muse-video' || model === SNUMOM_GROK_IMAGINE_VIDEO_MODEL;
+    const images = [{url:'https://media.example/second.png'}, {url:'https://media.example/first.png'}];
+    const videos = imageOnly ? [] : [{url:'https://media.example/ref.mp4'}];
+    const audios = imageOnly ? [] : [{url:'https://media.example/ref.mp3'}];
+    const prompt = '参考图片2 与参考图片1' + (imageOnly ? '' : ' 参考视频1 参考音频1');
+    const fixed = SNUMOM_OUTPUT_ONLY_MODELS[model as keyof typeof SNUMOM_OUTPUT_ONLY_MODELS];
+    const payload = buildSnumomWanPayload({model,prompt,seconds:fixed?.seconds[0] || 10,resolution:fixed?.resolution || '720p',aspectRatio:'16:9',images,videos,audios});
+    expect(payload).toMatchObject({prompt, reference_images:images});
+    if (!imageOnly) expect(payload).toMatchObject({reference_videos:videos, reference_audios:audios});
+  });
   it.each(Object.entries(SNUMOM_OUTPUT_ONLY_MODELS))('%s enforces its exact resolution/duration and never adds reference seconds', (model,spec)=>{
     for(const seconds of spec.seconds)expect(buildSnumomWanPayload({model,prompt:'风景',seconds,resolution:spec.resolution,aspectRatio:'16:9',videos:[{url:'https://example.com/ref.mp4'}]})).toMatchObject({seconds:String(seconds),size:spec.resolution.toUpperCase()});
     for(const seconds of [-1,4,31,...(model.includes('prime')?[5,20]:[])])expect(()=>buildSnumomWanPayload({model,prompt:'风景',seconds,resolution:spec.resolution,aspectRatio:'16:9'})).toThrow();
