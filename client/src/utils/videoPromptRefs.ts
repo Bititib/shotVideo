@@ -1,3 +1,4 @@
+import { renderMediaReferences } from '../../../shared/mediaReferences';
 export interface VideoReferenceCounts {
   images: number;
   videos: number;
@@ -67,13 +68,7 @@ export function getVideoReferenceCounts(metadata: unknown): VideoReferenceCounts
 
 export function restoreVideoPromptRefs(targetPrompt: string): string {
   if (!targetPrompt) return '';
-  return targetPrompt
-    .replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (_match, idxStr) => `@Image${Number(idxStr) + 1}`)
-    .replace(/\[ref_video_(\d+)\]/g, (_match, idxStr) => `@Video${Number(idxStr)}`)
-    .replace(/\[ref_video\]/g, '@Video1')
-    .replace(/\[ref_audio_(\d+)\]/g, (_match, idxStr) => `@Audio${Number(idxStr)}`)
-    .replace(/\[ref_audio\]/g, '@Audio1')
-    .replace(/[@＠](图片|图|视频|音频)(\d*)/g, (_, kind: string, index: string) => '@' + ({图片:'Image',图:'Image',视频:'Video',音频:'Audio'} as Record<string,string>)[kind] + (index || '1'));
+  return renderMediaReferences(targetPrompt,{include:ref=>ref.syntax!=='bare'});
 }
 
 export type VideoPromptReferenceLabel = '图' | '视频' | '音频';

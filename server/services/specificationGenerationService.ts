@@ -1,3 +1,4 @@
+import { prepareMediaSubmission } from '../../shared/mediaReferences.js';
 import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
 import { isZhiyingVideoModel } from '../../shared/zhiyingVideo.js';
 import { normalizeZhiyingRequest, assertZhiyingOriginalChannel, zhiyingPayloadHash } from './zhiyingVideoExecution.js';
@@ -114,7 +115,15 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
   if (kind === 'image' && body.size && !sizeRatios[body.size]) throw fail('此规格不支持该 size，请使用 aspect_ratio 和 resolution');
   if (kind === 'image' && body.size && (body.aspect_ratio || body.ratio) && sizeRatios[body.size] !== (body.aspect_ratio || body.ratio)) throw fail('size 与宽高比不一致');
   const ratio = String(body.aspect_ratio || body.ratio || (sizeRatios[body.size] ? sizeRatios[body.size] : kind === 'image' ? '1:1' : '16:9'));
-  return { prompt: body.prompt.trim(), images, videos, audios, firstFrame, lastFrame, body, publicBaseUrl, v6kConfigured,
+  let media = { prompt: body.prompt.trim(), images, videos, audios };
+  if (kind === 'video') {
+    try {
+      media = prepareMediaSubmission(media.prompt, media, Number(Boolean(firstFrame)) + Number(Boolean(lastFrame)));
+    } catch (error: any) {
+      throw fail(error.message);
+    }
+  }
+  return { ...media, firstFrame, lastFrame, body, publicBaseUrl, v6kConfigured,
     input: { images: images.length, videos: videos.length, audios: audios.length, outputs, seconds,
       resolution, ratio,
       firstFrame: Boolean(firstFrame), lastFrame: Boolean(lastFrame), quality: body.quality } };

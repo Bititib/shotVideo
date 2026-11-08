@@ -1,4 +1,4 @@
-import { mapCanvasReferenceMarkers } from './canvasReferenceMarkers.js';
+import { renderMediaReferences } from '../../shared/mediaReferences.js';
 export interface MjNewApiChannelLike {
   baseUrl?: string | null;
 }
@@ -23,13 +23,8 @@ export function isMjNewApiChannel(channel: MjNewApiChannelLike | null | undefine
   }
 }
 
-export function normalizeMjNewApiPrompt(prompt: string): string {
-  return mapCanvasReferenceMarkers(prompt, { image: 'Image', video: 'Video', audio: 'Audio' })
-    .replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (_match, idxStr) => `@Image${Number(idxStr) + 1}`)
-    .replace(/\[ref_video_(\d+)\]/g, (_match, idxStr) => `@Video${Number(idxStr)}`)
-    .replace(/\[ref_video\]/g, '@Video1')
-    .replace(/\[ref_audio_(\d+)\]/g, (_match, idxStr) => `@Audio${Number(idxStr)}`)
-    .replace(/\[ref_audio\]/g, '@Audio1');
+export function normalizeMjNewApiPrompt(prompt:string):string {
+  return renderMediaReferences(prompt,{include:ref=>ref.syntax!=='bare'});
 }
 
 export function buildMjNewApiVideoPayload(input: MjNewApiVideoPayloadInput): Record<string, unknown> {

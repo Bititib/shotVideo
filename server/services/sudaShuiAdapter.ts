@@ -1,4 +1,4 @@
-import { mapCanvasReferenceMarkers } from './canvasReferenceMarkers.js';
+import { renderMediaReferences } from '../../shared/mediaReferences.js';
 export const SUDASHUI_VIDEO_CREATE_PATH = '/v1/video/generations';
 
 export interface SudaShuiVideoPayloadInput {
@@ -16,14 +16,8 @@ function nonEmptyUrls(urls: string[] | undefined): string[] {
 }
 
 /** Convert the placeholders accepted by our public APIs into SudaShui references. */
-export function normalizeSudaShuiPrompt(prompt: string): string {
-  return mapCanvasReferenceMarkers(String(prompt || ''), { image: 'image', video: 'video', audio: 'audio' })
-    .trim()
-    .replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (_match, index) => `@image${Number(index) + 1}`)
-    .replace(/\[ref_video_(\d+)\]/g, '@video$1')
-    .replace(/\[ref_video\]/g, '@video1')
-    .replace(/\[ref_audio_(\d+)\]/g, '@audio$1')
-    .replace(/\[ref_audio\]/g, '@audio1');
+export function normalizeSudaShuiPrompt(prompt:string):string {
+  return renderMediaReferences(String(prompt || '').trim(),{names:{image:'image',video:'video',audio:'audio'},include:ref=>ref.syntax!=='bare'});
 }
 
 /** Build the exact JSON body accepted by POST /v1/video/generations. */

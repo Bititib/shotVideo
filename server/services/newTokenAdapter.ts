@@ -1,4 +1,4 @@
-import { mapCanvasReferenceMarkers } from './canvasReferenceMarkers.js';
+import { renderMediaReferences } from '../../shared/mediaReferences.js';
 export const NEWTOKEN_VIDEO_MODELS = [
   'veo-omni-flash',
   'veo-omni-flash-video-edit',
@@ -24,15 +24,7 @@ export function newTokenVideoCreateUrl(baseUrl: string): string {
 }
 
 function mapReferencePrompt(prompt: string, videoCount: number, audioCount: number): string {
-  let result = mapCanvasReferenceMarkers(prompt, { image: 'Image', video: 'Video', audio: 'Audio' }).replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (_match, index) => `@Image${Number(index) + 1}`);
-  for (let index = 0; index < videoCount; index++) {
-    result = result.replace(new RegExp(`\\[ref_video_${index + 1}\\]`, 'g'), `@Video${index + 1}`);
-  }
-  result = result.replace(/\[ref_video\]/g, '@Video1');
-  for (let index = 0; index < audioCount; index++) {
-    result = result.replace(new RegExp(`\\[ref_audio_${index + 1}\\]`, 'g'), `@Audio${index + 1}`);
-  }
-  return result.replace(/\[ref_audio\]/g, '@Audio1');
+  return renderMediaReferences(prompt,{include:ref=>ref.syntax!=='bare' && (ref.syntax!=='legacy' || !ref.numbered || ref.kind==='image' || ref.index <= (ref.kind==='video'?videoCount:audioCount))});
 }
 
 export function buildNewTokenVideoPayload(input: {

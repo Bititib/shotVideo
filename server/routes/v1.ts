@@ -1,3 +1,4 @@
+import { prepareMediaSubmission } from '../../shared/mediaReferences.js';
 import { publicApiModelId } from '../../shared/publicApiModelId.js';
 import { isZhiyingVideoModel, ZHIYING_CHANNEL_TYPE } from '../../shared/zhiyingVideo.js';
 import { resolvePrivateReferences } from '../middleware/privateReferences.js';
@@ -1745,7 +1746,7 @@ async function handleVideoCreation(req: Request, res: Response) {
   const body = req.body || {};
 
   const model = body.model;
-  const prompt = body.prompt;
+  let prompt = body.prompt;
 
   if (!model) {
     cleanupFiles(req.files);
@@ -1909,6 +1910,14 @@ async function handleVideoCreation(req: Request, res: Response) {
     if (uploadedAudios.length > 0) {
       audio_urls = [...audio_urls, ...uploadedAudios];
     }
+  }
+
+  try {
+    prompt = prepareMediaSubmission(prompt, { images: image_urls, videos: video_urls, audios: audio_urls },
+      Number(Boolean(body.first_frame || body.first_frame_url)) + Number(Boolean(body.last_frame || body.last_frame_url))).prompt;
+  } catch (error: any) {
+    cleanupFiles(req.files);
+    return res.status(400).json({ error: error.message });
   }
 
   // 动态查找支持该模型的渠道 (从后台注册的渠道中选取)

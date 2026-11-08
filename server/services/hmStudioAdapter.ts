@@ -1,3 +1,4 @@
+import { renderMediaReferences } from '../../shared/mediaReferences.js';
 import { publishReferenceUrl } from './publicReferenceService.js';
 import { HmSubmissionError } from './hmStudioSubmission.js';
 import { transportDiagnostic } from './upstreamDiagnostic.js';
@@ -96,25 +97,11 @@ function appendFileOrUrl(
 }
 
 function replaceReferenceMarkers(prompt: string, options: HmPromptOptions): string {
-  return prompt
-    // Canvas resolves stable node bindings to the submitted per-kind order.
-    // HM materials use these exact case-sensitive names; legacy [ref_N]
-    // image numbering below deliberately retains its existing semantics.
-    .replace(/参考(图片|视频|音频)(\d+)(?!\d)/g, (marker, kind: string, rawIndex: string) => {
-      const index = Number(rawIndex);
-      const [name, sources] = kind === '图片' ? ['Image', options.imageSources] as const
-        : kind === '视频' ? ['Video', options.videoSources] as const : ['Audio', options.audioSources] as const;
-      return index >= 1 && index <= (sources || []).filter(Boolean).length ? `@${name}${index}` : marker;
-    })
-    .replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (_match, rawIndex) => {
-      const parsed = Number(rawIndex);
-      const index = parsed === 0 ? 1 : parsed;
-      return `@Image${index}`;
-    })
-    .replace(/\[ref_video_(\d+)\]/g, (_match, rawIndex) => `@Video${Number(rawIndex) || 1}`)
-    .replace(/\[ref_video\]/g, '@Video1')
-    .replace(/\[ref_audio_(\d+)\]/g, (_match, rawIndex) => `@Audio${Number(rawIndex) || 1}`)
-    .replace(/\[ref_audio\]/g, '@Audio1');
+  const counts={image:(options.imageSources || []).filter(Boolean).length,video:(options.videoSources || []).filter(Boolean).length,audio:(options.audioSources || []).filter(Boolean).length};
+  return renderMediaReferences(prompt,{
+    include:ref=>ref.syntax==='legacy' || ref.syntax==='canvas' && ref.index<=counts[ref.kind],
+    index:ref=>ref.syntax==='legacy' ? ref.kind==='image' ? Math.max(1,Number(ref.rawIndex)) : ref.index || 1 : ref.index,
+  });
 }
 
 function supportsHmStudioOmniReference(model: string): boolean {

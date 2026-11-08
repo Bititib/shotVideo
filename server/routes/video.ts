@@ -1,4 +1,4 @@
-import { mapCanvasReferenceMarkers } from '../services/canvasReferenceMarkers.js';
+import { prepareMediaSubmission, renderMediaReferences } from '../../shared/mediaReferences.js';
 import { isHussChannel } from '../services/hussVideoAdapter.js';
 import { zonghengProtocol, zonghengProtocolSnapshot, zonghengTaskChannel, v6kQueryRetryDelay, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE } from '../services/zonghengProtocol.js';
 import { normalizeSnumomNsfwRequestBody } from '../services/snumomWanAdapter.js';
@@ -762,7 +762,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     if (durations.length) req.body.video_length = durations[0];
   }
   const {
-    prompt,
+    prompt: rawPrompt,
     model = 'nd-seedance-2.0-720p',
     aspect_ratio = '16:9',
     video_length = getZonghengVideoSpec(model)?.seconds[0] || 6,
@@ -804,6 +804,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
     snumomPromptExtend = promptExtend;
   }
 
+  let prompt = rawPrompt;
   const promptValidationError = validateVideoPrompt(prompt);
   if (promptValidationError) {
     return res.status(400).json({ error: promptValidationError });
@@ -814,6 +815,12 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   }
 
   const meta = MODEL_META[model];
+  try {
+    prompt = prepareMediaSubmission(prompt, { images: reference_images, videos: finalVideos, audios: finalAudios },
+      Number(Boolean(first_frame)) + Number(Boolean(last_frame))).prompt;
+  } catch (error: any) {
+    return res.status(400).json({ error: error.message });
+  }
   const c2Error = validateSiYueTianSeedance20C2Input(model, reference_images.length, finalVideos.length, finalAudios.length);
   if (c2Error) return res.status(400).json({ error: c2Error });
   if (getSiYueTianC2Model(model) && resolution !== '720p') {
@@ -2521,19 +2528,7 @@ sendEvent({ type: 'status', message: 'Haya 提交结果待核实，费用保留�
         if (url) audioRefUrls.push(url);
       }
 
-      let finalPrompt = mapCanvasReferenceMarkers(prompt.trim(), { image: 'Image', video: 'Video', audio: 'Audio' });
-      finalPrompt = finalPrompt.replace(/\[ref_(\d+)(?:\.[a-zA-Z0-9]+)?\]/g, (match, idxStr) => {
-        const idx = parseInt(idxStr, 10);
-        return `@Image${idx + 1}`;
-      });
-      for (let i = 0; i < videoRefUrls.length; i++) {
-        finalPrompt = finalPrompt.replace(new RegExp(`\\[ref_video_${i + 1}\\]`, 'g'), `@Video${i + 1}`);
-      }
-      finalPrompt = finalPrompt.replace(/\[ref_video\]/g, '@Video1');
-      for (let i = 0; i < audioRefUrls.length; i++) {
-        finalPrompt = finalPrompt.replace(new RegExp(`\\[ref_audio_${i + 1}\\]`, 'g'), `@Audio${i + 1}`);
-      }
-      finalPrompt = finalPrompt.replace(/\[ref_audio\]/g, '@Audio1');
+      const finalPrompt = renderMediaReferences(prompt.trim(),{include:ref=>ref.syntax!=='bare' && (ref.syntax!=='legacy' || !ref.numbered || ref.kind==='image' || ref.index <= (ref.kind==='video'?videoRefUrls.length:audioRefUrls.length))});
 
       const payload: Record<string, any> = {
         model: upstreamModel,
