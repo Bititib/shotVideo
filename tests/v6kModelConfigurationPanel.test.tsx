@@ -39,7 +39,8 @@ it('keeps the public ID read-only, previews the unsaved draft and saves it with 
   fireEvent.click(screen.getByRole('button', { name: '请求体样例' }));
   fireEvent.change(screen.getByLabelText('示例视频数量'), { target: { value: '1' } });
   fireEvent.click(screen.getByRole('button', { name: '预览实际请求体' }));
-  await screen.findByText('POST /v1/videos');
+  await screen.findByText('/v1/videos');
+  expect(screen.getByText('POST')).toBeVisible();
   expect(api.preview).toHaveBeenCalledWith(21, expect.objectContaining({ modelId: 'public-video', upstreamModel: 'new-provider-model',
     limits: expect.objectContaining({ resolutions: ['1080p'], maxVideos: 10 }) }), { videos: 1 });
   expect(api.save).not.toHaveBeenCalled();
