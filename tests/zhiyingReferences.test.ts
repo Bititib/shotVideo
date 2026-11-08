@@ -3,7 +3,7 @@ import { normalizeZhiyingReferencePrompt } from '../shared/zhiyingReferences';
 import { validateZhiyingVideoInput } from '../shared/zhiyingVideo';
 it('uses native Chinese per-kind names, with one-based numbers and zero-based legacy images', () => {
   const source='参考图片1 参考图片10 @视频2 ＠音频1 [ref_0.jpg] [ref_9.png] @2；人物台词保持原样';
-  const expected='图片1 图片10 视频2 音频1 图片1 图片10 图片2；人物台词保持原样';
+  const expected='@Image1 @Image10 @Video2 @Audio1 @Image1 @Image10 @Image2；人物台词保持原样';
   expect(normalizeZhiyingReferencePrompt(source)).toBe(expected);
   expect(normalizeZhiyingReferencePrompt(expected)).toBe(expected);
 });

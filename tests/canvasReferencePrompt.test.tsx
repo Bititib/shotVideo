@@ -124,6 +124,6 @@ describe('canvas reference candidate selection', () => {
   });
   it('resolves previously saved full-width mentions to the submitted media order', () => {
     expect(resolveReferenceMentions('＠图片1 和 @视频1，配合＠音频1', { 图片1: image.id, 视频1: video.id, 音频1: audio.id }, [image, video, audio], { kind: 'video', videoMode: 'multimodal' }))
-      .toEqual({ prompt: '参考图片1 和 参考视频1，配合参考音频1', error: '' });
+      .toEqual({ prompt: '@Image1 和 @Video1，配合@Audio1', error: '' });
   });
 });

@@ -2,6 +2,8 @@ import type { CanvasNode, GenerationDraft } from './model';
 
 export type ReferenceBindings = Record<string, string>;
 export const referenceKinds = { image: '图片', video: '视频', audio: '音频' } as const;
+const nativeNames = { 图片: 'Image', 视频: 'Video', 音频: 'Audio' } as const;
+const chineseNames = { Image: '图片', Video: '视频', Audio: '音频' } as const;
 export function bindReferences(previous: ReferenceBindings = {}, nodes: CanvasNode[]): ReferenceBindings {
   const next = { ...previous };
   for (const node of nodes) {
@@ -14,17 +16,18 @@ export function bindReferences(previous: ReferenceBindings = {}, nodes: CanvasNo
   return next;
 }
 export function referenceLabel(bindings: ReferenceBindings, id: string) {
-  return Object.keys(bindings).find(key => bindings[key] === id);
+  return Object.keys(bindings).find(key => bindings[key] === id)?.replace(/^(图片|视频|音频)/, kind => nativeNames[kind as keyof typeof nativeNames]);
 }
 export function insertReference(prompt: string, start: number, end: number, label: string) {
-  const token = '@' + label + ' ';
+  const token = '@' + label.replace(/^(图片|视频|音频)/, kind => nativeNames[kind as keyof typeof nativeNames]) + ' ';
   return { prompt: prompt.slice(0, start) + token + prompt.slice(end), caret: start + token.length };
 }
 /** Match the per-media order actually submitted by CanvasStudio, not visual position. */
 export function resolveReferenceMentions(prompt: string, bindings: ReferenceBindings, nodes: CanvasNode[], options: Pick<GenerationDraft, 'kind' | 'videoMode' | 'firstFrameId' | 'lastFrameId'>) {
   let error = '';
-  const resolved = prompt.replace(/[@＠](图片|视频|音频)(\d+)(?!\d)/g, (token, kind, number) => {
-    const node = nodes.find(n => n.id === bindings[kind + number]);
+  const resolved = prompt.replace(/[@＠](图片|视频|音频|Image|Video|Audio)(\d+)(?!\d)/g, (token, kind, number) => {
+    const bindingKind = chineseNames[kind as keyof typeof chineseNames] || kind;
+    const node = nodes.find(n => n.id === (bindings[bindingKind + number] || bindings[kind + number]));
     if (!node?.src || node.kind === 'text' || node.job?.status === 'running') {
       error ||= `${token} 的素材已断开或不可用，请重新引用或删除提示词中的标记。`;
       return token;
@@ -36,7 +39,7 @@ export function resolveReferenceMentions(prompt: string, bindings: ReferenceBind
       return token;
     }
     const list = nodes.filter(n => n.kind === node.kind && n.src);
-    return `参考${referenceKinds[node.kind]}${list.findIndex(n => n.id === node.id) + 1}`;
+    return `@${nativeNames[referenceKinds[node.kind]]}${list.findIndex(n => n.id === node.id) + 1}`;
   });
   return { prompt: resolved, error };
 }

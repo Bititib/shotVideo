@@ -64,6 +64,9 @@ export function buildFunAiVideoPayload(model: string, request: SpecificationRequ
   if ((request.firstFrame || request.lastFrame) && request.images.length) throw new Error('FunAI 首尾帧不能与普通参考图同时使用');
   const images = request.images.map(reference), videos = request.videos.map(reference), audios = request.audios.map(reference);
   const first = request.firstFrame ? reference(request.firstFrame) : '', last = request.lastFrame ? reference(request.lastFrame) : '';
+  if (model === 'kling-o3' && Array.from(request.prompt.matchAll(/@Image(\d+)(?!\d)/g)).some(m => Number(m[1]) < 1 || Number(m[1]) > Math.min(3, images.length))) {
+    throw new Error('FunAI Kling O3 的 @Image 标记只能引用已上传的前三张元素图，第四张起为风格参考，请调整引用。');
+  }
   // FunAI's Kling O3 names only the first three element images. Further
   // ordinary images are style references, not @Image4..6. Other models have
   // distinct role fields and must not inherit Kling's mention syntax.

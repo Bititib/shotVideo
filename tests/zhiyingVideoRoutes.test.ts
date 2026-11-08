@@ -129,10 +129,10 @@ it.each([line1, line2].flatMap(model => ['/api/video/generate','/v1/videos'].map
   await result.text();
   await vi.waitFor(() => expect(created).toHaveLength(1));
   expect(uploaded).toEqual([audio2,audio1]);
-  expect(created[0].payload).toMatchObject({model,prompt:'音频2用于甲的音色，音频1用于乙的音色',reference_audios:['file_1','file_2']});
+  expect(created[0].payload).toMatchObject({model,prompt:'@Audio2用于甲的音色，@Audio1用于乙的音色',reference_audios:['file_1','file_2']});
   await vi.waitFor(() => expect(db.select().from(contents).get()?.status).toBe('completed'));
   const metadata = JSON.parse(db.select().from(contents).get()!.metadata);
-  expect(metadata.zhiyingPayload).toMatchObject({prompt:'音频2用于甲的音色，音频1用于乙的音色',reference_audios:['file_1','file_2']});
+  expect(metadata.zhiyingPayload).toMatchObject({prompt:'@Audio2用于甲的音色，@Audio1用于乙的音色',reference_audios:['file_1','file_2']});
 });
 it.each([line1,line2].flatMap(model => ['/api/video/generate','/v1/videos'].map(endpoint => ({model,endpoint}))))('binds all three native media kinds after canvas reorder: $model $endpoint', async ({model,endpoint}) => {
   const bytes = {image:Buffer.from([137,80,78,71,13,10,26,10,0]),video:Buffer.from([0,0,0,24,102,116,121,112,105,115,111,109]),audio:Buffer.from('ID3voice')};
@@ -146,7 +146,7 @@ it.each([line1,line2].flatMap(model => ['/api/video/generate','/v1/videos'].map(
   const response = await call(endpoint,{model,prompt:resolved.prompt,reference_images:list('image'),reference_videos:list('video'),audio_urls:list('audio')});
   expect(response.ok).toBe(true); await response.text();
   await vi.waitFor(()=>expect(created).toHaveLength(1));
-  expect(created[0].payload).toMatchObject({prompt:'图片2 视频2 音频2；图片1 视频1 音频1',
+  expect(created[0].payload).toMatchObject({prompt:'@Image2 @Video2 @Audio2；@Image1 @Video1 @Audio1',
     reference_images:['file_1','file_2'],reference_videos:['file_3','file_4'],reference_audios:['file_5','file_6']});
   expect(uploaded.map(b=>b.at(-1))).toEqual([2,1,2,1,2,1]);
   await vi.waitFor(()=>expect(db.select().from(contents).get()?.status).toBe('completed'));

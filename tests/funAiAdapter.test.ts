@@ -19,6 +19,7 @@ describe('FunAI documented protocol', () => {
     const result = buildFunAiVideoPayload('kling-o3',request('kling-o3',{prompt,images}));
     expect(result.prompt).toBe('@Image2 @Image1 @Image3 参考图片4 参考图片10 @Image1');
     expect(result.reference_images).toEqual(images);
+    expect(() => buildFunAiVideoPayload('kling-o3',request('kling-o3',{prompt:'@Image4',images}))).toThrow('前三张元素图');
     const omni=buildFunAiVideoPayload('gemini-omni-flash',request('gemini-omni-flash',{prompt,images:[url(1)]}));
     expect(omni.prompt).toBe(prompt);
   });

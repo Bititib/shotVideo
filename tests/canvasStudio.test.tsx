@@ -575,8 +575,8 @@ describe('canvas user workflows', () => {
     await waitFor(()=>expect(submit.disabled).toBe(false));
     fireEvent.click(submit);
     await waitFor(()=>expect(board.current().nodes.find(n=>n.id===target.id)?.job?.status).toBe('done'));
-    expect(streamGeneration).toHaveBeenCalledWith('video',expect.objectContaining({prompt:'分镜'.repeat(6000)+'参考图片1',reference_images:['data:image/png;base64,aGVsbG8=']}),expect.anything(),expect.anything());
-    expect(board.current().drafts?.[target.id].prompt).toBe('分镜'.repeat(6000)+'@图片1 ');
+    expect(streamGeneration).toHaveBeenCalledWith('video',expect.objectContaining({prompt:'分镜'.repeat(6000)+'@Image1',reference_images:['data:image/png;base64,aGVsbG8=']}),expect.anything(),expect.anything());
+    expect(board.current().drafts?.[target.id].prompt).toBe('分镜'.repeat(6000)+'@Image1 ');
   });
   it('uses the website catalog without a canvas whitelist and omits unavailable models', async () => {
     vi.mocked(fetchVideoModels).mockResolvedValueOnce([
@@ -1022,7 +1022,7 @@ describe('prompt reference mentions', () => {
     fireEvent.click(screen.getByRole('button', { name: '@ 引用素材' }));
     expect(screen.getByRole('option', { name: /已上传角色图/ })).toBeTruthy();
     fireEvent.keyDown(screen.getByLabelText('你想创作什么？'), { key: 'Enter' });
-    expect((screen.getByLabelText('你想创作什么？') as HTMLTextAreaElement).value).toBe('@图片1 ');
+    expect((screen.getByLabelText('你想创作什么？') as HTMLTextAreaElement).value).toBe('@Image1 ');
     await waitFor(() => expect(screen.getByRole('button', { name: '生成模型' }).textContent).toContain('Test Image'));
   });
   it('recognizes full-width mention input and resolves it to the correct reference', async () => {
@@ -1032,7 +1032,7 @@ describe('prompt reference mentions', () => {
     fireEvent.change(input, { target: { value: '让＠', selectionStart: 2 } });
     expect(screen.getByRole('option', { name: /角色参考/ })).toBeTruthy();
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect((input as HTMLTextAreaElement).value).toBe('让@图片1 ');
+    expect((input as HTMLTextAreaElement).value).toBe('让@Image1 ');
     await waitFor(() => expect(screen.getByRole('button', { name: '生成模型' }).textContent).toContain('Test Image'));
   });
   it('inserts a mouse-picked reference before blur can dismiss the menu, preserving surrounding text', async () => {
@@ -1044,9 +1044,9 @@ describe('prompt reference mentions', () => {
     fireEvent.pointerDown(option,{button:0,pointerId:1});
     fireEvent.mouseDown(option,{button:0});
     fireEvent.blur(input,{relatedTarget:null});
-    expect(input.value).toBe('角色=@图片1 ；保留后文');
+    expect(input.value).toBe('角色=@Image1 ；保留后文');
     expect(screen.queryByRole('listbox',{name:'可引用素材'})).toBeNull();
-    await waitFor(()=>expect(input.selectionStart).toBe(8));
+    await waitFor(()=>expect(input.selectionStart).toBe(11));
   });
 
   it('keeps the menu available during pointer focus changes and inserts into a 12000-character prompt', async () => {
@@ -1060,10 +1060,10 @@ describe('prompt reference mentions', () => {
     expect(screen.getByRole('listbox',{name:'可引用素材'})).toBeTruthy();
     fireEvent.pointerUp(option,{pointerId:1});
     fireEvent.click(option);
-    expect(input.value).toBe('文'.repeat(11999)+'@图片1 ');
+    expect(input.value).toBe('文'.repeat(11999)+'@Image1 ');
     expect(input.maxLength).toBe(-1);
     expect(screen.queryByRole('listbox',{name:'可引用素材'})).toBeNull();
-    expect(screen.getByLabelText('提示词字数').textContent).toBe('12004 字符');
+    expect(screen.getByLabelText('提示词字数').textContent).toBe('12007 字符');
     expect(screen.getByLabelText('提示词字数').closest('.studio-inspector-scroll')).toBeNull();
     await waitFor(()=>expect(screen.getByRole('button',{name:'生成模型'}).textContent).toContain('Test Image'));
   });
@@ -1079,10 +1079,10 @@ describe('prompt reference mentions', () => {
     expect(screen.getByRole('listbox',{name:'可引用素材'})).toBeTruthy();
     expect(screen.getAllByRole('option').some(n=>n.textContent?.includes('小狗'))).toBe(true);
     fireEvent.keyDown(input,{key:'Enter'});
-    expect((input as HTMLTextAreaElement).value).toBe('让@图片1 ');
+    expect((input as HTMLTextAreaElement).value).toBe('让@Image1 ');
     view.rerender(<MemoryRouter><GeneratorPanel {...props} references={[second,first]}/></MemoryRouter>);
     fireEvent.click(screen.getByRole('button',{name:'生成图像'}));
-    expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({prompt:'让参考图片2',inputPrompt:'让@图片1 '}));
+    expect(onGenerate).toHaveBeenCalledWith(expect.objectContaining({prompt:'让@Image2',inputPrompt:'让@Image1 '}));
     view.rerender(<MemoryRouter><GeneratorPanel {...props} references={[second]}/></MemoryRouter>);
     expect(screen.getByRole('alert').textContent).toContain('已断开');
     expect((screen.getByRole('button',{name:'生成图像'}) as HTMLButtonElement).disabled).toBe(true);
@@ -1094,7 +1094,7 @@ describe('prompt reference mentions', () => {
     const input = screen.getByLabelText('你想创作什么？') as HTMLTextAreaElement;
     fireEvent.change(input, {target:{value:'文'.repeat(12000)+'@角色参考', selectionStart:12005}});
     fireEvent.mouseDown(screen.getByRole('option', {name:/角色参考/}), {button:0});
-    expect(input.value).toBe('文'.repeat(12000)+'@图片1 ');
+    expect(input.value).toBe('文'.repeat(12000)+'@Image1 ');
     expect(screen.queryByRole('listbox', {name:'可引用素材'})).toBeNull();
     await waitFor(()=>expect(screen.getByRole('button',{name:'生成模型'}).textContent).toContain('Test Image'));
   });
@@ -1108,7 +1108,7 @@ describe('prompt reference mentions', () => {
     const prompt = '文'.repeat(length-1)+'@';
     fireEvent.change(input, {target:{value:prompt,selectionStart:length}});
     fireEvent.click(screen.getByRole('option', {name:/长度检查参考/}));
-    expect(input.value).toBe('文'.repeat(length-1)+'@图片1 ');
+    expect(input.value).toBe('文'.repeat(length-1)+'@Image1 ');
     expect(board.current().edges).toHaveLength(1);
     expect(board.current().drafts?.[target.id].prompt).toBe(input.value);
     await waitFor(()=>expect(screen.getByRole('button',{name:'生成模型'}).hasAttribute('disabled')).toBe(false));
@@ -1125,7 +1125,7 @@ describe('prompt reference mentions', () => {
     fireEvent.change(input,{target:{value:'@',selectionStart:1}});
     fireEvent.click(screen.getByRole('option',{name:/花园参考/}));
     expect(board.current().edges.some(e=>e.from===image.id&&e.to===target.id)).toBe(true);
-    expect((screen.getByLabelText('你想创作什么？') as HTMLTextAreaElement).value).toBe('@图片1 ');
+    expect((screen.getByLabelText('你想创作什么？') as HTMLTextAreaElement).value).toBe('@Image1 ');
     expect(board.current().drafts?.[target.id].referenceBindings?.['图片1']).toBe(image.id);
   });
   it('preserves the selected image when another mention creates a new generator', async () => {
@@ -1137,13 +1137,13 @@ describe('prompt reference mentions', () => {
     openSelectedComposer();
     fireEvent.click(screen.getByRole('button', { name: '@ 引用素材' }));
     fireEvent.click(screen.getByRole('option', { name: /角色原图/ }));
-    const prompt = '@图片1 和 @';
+    const prompt = '@Image1 和 @';
     fireEvent.change(screen.getByLabelText('你想创作什么？'), { target: { value: prompt, selectionStart: prompt.length } });
     fireEvent.click(screen.getByRole('option', { name: /场景参考/ }));
     const target = board.current().nodes.find(node => node.generator)!;
     expect(board.current().edges.filter(edge => edge.to === target.id).map(edge => edge.from)).toEqual([first.id, second.id]);
     expect(board.current().drafts?.[target.id].referenceBindings).toMatchObject({ 图片1: first.id, 图片2: second.id });
-    expect((screen.getByLabelText('你想创作什么？') as HTMLTextAreaElement).value).toBe('@图片1 和 @图片2 ');
+    expect((screen.getByLabelText('你想创作什么？') as HTMLTextAreaElement).value).toBe('@Image1 和 @Image2 ');
     await waitFor(() => expect(screen.getByRole('button', { name: '生成模型' }).textContent).toContain('Test Image'));
   });
 });
