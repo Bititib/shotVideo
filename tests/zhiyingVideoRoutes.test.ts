@@ -23,6 +23,9 @@ import { privateReferences } from '../server/middleware/privateReferences.js';
 import { privateMediaStore } from '../server/routes/media.js';
 import { downloadAndLocalizeVideo } from '../server/services/videoLocalizationService.js';
 import { ZHIYING_BASE_URL, ZHIYING_VIDEO_MODELS } from '../shared/zhiyingVideo.js';
+import { bindReferences, resolveReferenceMentions } from '../client/src/canvas/referenceMentions';
+import { newNode } from '../client/src/canvas/model';
+vi.mock('../server/services/videoDurationProbe.js', () => ({ probeVideoBufferDuration: vi.fn(async () => 1) }));
 
 const localFetch = globalThis.fetch;
 const token = 'sk-zhiying-local-test';
@@ -126,10 +129,27 @@ it.each([line1, line2].flatMap(model => ['/api/video/generate','/v1/videos'].map
   await result.text();
   await vi.waitFor(() => expect(created).toHaveLength(1));
   expect(uploaded).toEqual([audio2,audio1]);
-  expect(created[0].payload).toMatchObject({model,prompt,reference_audios:['file_1','file_2']});
+  expect(created[0].payload).toMatchObject({model,prompt:'音频2用于甲的音色，音频1用于乙的音色',reference_audios:['file_1','file_2']});
   await vi.waitFor(() => expect(db.select().from(contents).get()?.status).toBe('completed'));
   const metadata = JSON.parse(db.select().from(contents).get()!.metadata);
-  expect(metadata.zhiyingPayload).toMatchObject({prompt,reference_audios:['file_1','file_2']});
+  expect(metadata.zhiyingPayload).toMatchObject({prompt:'音频2用于甲的音色，音频1用于乙的音色',reference_audios:['file_1','file_2']});
+});
+it.each([line1,line2].flatMap(model => ['/api/video/generate','/v1/videos'].map(endpoint => ({model,endpoint}))))('binds all three native media kinds after canvas reorder: $model $endpoint', async ({model,endpoint}) => {
+  const bytes = {image:Buffer.from([137,80,78,71,13,10,26,10,0]),video:Buffer.from([0,0,0,24,102,116,121,112,105,115,111,109]),audio:Buffer.from('ID3voice')};
+  const mime = {image:'image/png',video:'video/mp4',audio:'audio/mpeg'};
+  const original = (['image','video','audio'] as const).flatMap(kind => [1,2].map(n => ({...newNode(kind,{x:0,y:0}),id:kind+n,
+    src:`data:${mime[kind]};base64,${Buffer.concat([bytes[kind],Buffer.from([n])]).toString('base64')}`})));
+  const nodes = [...original].reverse();
+  const resolved = resolveReferenceMentions('@图片1 @视频1 @音频1；@图片2 @视频2 @音频2',bindReferences({},original),nodes,{kind:'video',videoMode:'multimodal'});
+  expect(resolved.error).toBe('');
+  const list = (kind:string) => nodes.filter(n=>n.kind===kind).map(n=>n.src);
+  const response = await call(endpoint,{model,prompt:resolved.prompt,reference_images:list('image'),reference_videos:list('video'),audio_urls:list('audio')});
+  expect(response.ok).toBe(true); await response.text();
+  await vi.waitFor(()=>expect(created).toHaveLength(1));
+  expect(created[0].payload).toMatchObject({prompt:'图片2 视频2 音频2；图片1 视频1 音频1',
+    reference_images:['file_1','file_2'],reference_videos:['file_3','file_4'],reference_audios:['file_5','file_6']});
+  expect(uploaded.map(b=>b.at(-1))).toEqual([2,1,2,1,2,1]);
+  await vi.waitFor(()=>expect(db.select().from(contents).get()?.status).toBe('completed'));
 });
 it.each([line1, line2].flatMap(model => ['/api/video/generate','/v1/videos'].flatMap(endpoint => [0,1].map(count => ({model,endpoint,count})))))('rejects dangling audio references before charging: $model $endpoint $count audio', async ({model,endpoint,count}) => {
   const audio = 'data:audio/mpeg;base64,' + Buffer.from('ID3speaker').toString('base64');

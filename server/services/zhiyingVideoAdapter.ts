@@ -13,6 +13,7 @@ import { upstreamDiagnostic } from './upstreamDiagnostic.js';
 import { probeVideoBufferDuration } from './videoDurationProbe.js';
 
 type Channel = { baseUrl: string; apiKey: string; timeout?: number | null; type?: string };
+import { normalizeZhiyingReferencePrompt } from '../../shared/zhiyingReferences.js';
 type Kind = 'image' | 'video' | 'audio';
 type Stage = '上传素材' | '创建任务' | '查询原任务' | '保存原结果';
 type Input = Partial<Omit<RoutingInput, 'images' | 'videos' | 'audios'>> & { images?: string[]; videos?: string[]; audios?: string[] };
@@ -170,7 +171,7 @@ export async function prepareZhiyingVideo(channel: Channel, request: Request, op
   const invalid = validateZhiyingVideoInput(model, prompt, { ...input, seconds: duration, resolution, ratio, outputs: input.outputs ?? 1,
     firstFrame: input.firstFrame ?? false, lastFrame: input.lastFrame ?? false, images: images.length, videos: videos.length, audios: audios.length });
   if (invalid.length) throw new Error(invalid.join('；'));
-  const payload: Payload = { model, prompt, resolution, duration, aspect_ratio: ratio };
+  const payload: Payload = { model, prompt: normalizeZhiyingReferencePrompt(prompt), resolution, duration, aspect_ratio: ratio };
   let videoSeconds = 0;
   for (const [kind, values, field] of [
     ['image', images, 'reference_images'], ['video', videos, 'reference_videos'], ['audio', audios, 'reference_audios'],

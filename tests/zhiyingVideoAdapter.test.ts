@@ -127,10 +127,10 @@ it('uploads sequentially, preserves order, detects video seconds from exact uplo
   expect(payload).toMatchObject({model:'sd-2.5-fullblood', duration:30, resolution:'720p', aspect_ratio:'16:9',
     reference_images:['file_1','file_2'],reference_videos:['file_3'],reference_audios:['file_4'],reference_video_duration_total:1.234});
   expect(files.map(x => x.bytes)).toEqual([img,image2,video,audio]);
-  expect(payload.prompt).toBe(prompt);
+  expect(payload.prompt).toBe('图片2 与图片1，视频1，音频1');
   request.mockResolvedValueOnce(json({id, status:'queued'},202));
   await createZhiyingVideo(channel, payload, key);
-  expect(JSON.parse(String(request.mock.calls.at(-1)?.[1]?.body))).toMatchObject({prompt,
+  expect(JSON.parse(String(request.mock.calls.at(-1)?.[1]?.body))).toMatchObject({prompt:'图片2 与图片1，视频1，音频1',
     reference_images:['file_1','file_2'],reference_videos:['file_3'],reference_audios:['file_4']});
   expect(probeVideoBufferDuration).toHaveBeenCalledWith(video);
   await expect(prepareZhiyingVideo(channel,{model:'sd-2.5-fullblood-line2',prompt:'test',input:{videos:[inline('video/mp4',video)]}})).resolves.not.toHaveProperty('reference_video_duration_total');
