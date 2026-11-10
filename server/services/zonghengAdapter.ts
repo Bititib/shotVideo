@@ -1,4 +1,5 @@
 import { videoErrorTaskId } from './videoSubmissionErrors.js';
+import { submissionTransportTrace, type SubmissionTransportEvidence } from './submissionTransportTrace.js';
 import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
 import { normalizeZonghengVideoResolution, validateZonghengVideoSpec, validateZonghengVideoReferences, validateZonghengVideoRatio } from '../../shared/zonghengVideo.js';
 import { sanitizedGenerationReason } from '../../shared/generationErrorPrivacy.js';
@@ -26,6 +27,7 @@ export function zonghengError(payload: any): string {
 export interface ZonghengSubmissionDiagnostics {
   reason: 'http_error' | 'invalid_task_response' | 'invalid_json' | 'timeout' | 'network_error' | 'receipt_persistence_error';
   httpStatus?: number; elapsedMs: number; networkCode?: string; requestNotSent?: boolean; safeRateLimitRejection?: boolean;
+  transport?: SubmissionTransportEvidence;
 }
 export class ZonghengSubmissionError extends Error {
   constructor(message: string, readonly uncertain: boolean, readonly diagnostics?: ZonghengSubmissionDiagnostics) { super(message); }
@@ -130,11 +132,19 @@ export async function submitZonghengVideo(base: string, apiKey: string, input: Z
   if (!idempotencyKey) throw new Error('缺少业务订单号，停止提交');
   beforeSubmit();
   const startedAt = Date.now(); let httpStatus: number | undefined;
+  const trace = submissionTransportTrace(timeout, Buffer.byteLength(body));
+  const transport = () => {
+    const evidence = trace.snapshot();
+    if (evidence.requestId === apiKey) delete evidence.requestId;
+    return evidence;
+  };
   try {
-    const response = await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
-      body, signal: AbortSignal.timeout(timeout), redirect: 'error' });
+    const response = await trace.run(() => fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + apiKey, 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+      body, signal: AbortSignal.timeout(timeout), redirect: 'error' }));
     httpStatus = response.status;
+    trace.response(response);
     const text = await response.text(); let job: any;
+    trace.bodyComplete();
     try { job = JSON.parse(text); }
     catch { throw new ZonghengSubmissionError(upstreamDiagnostic('V6K', '提交 非 JSON 响应；请勿重复提交', text, apiKey, response.status, response.headers.get('x-request-id') || undefined), response.ok || response.status === 408 || response.status >= 500,
       { reason: response.ok ? 'invalid_json' : 'http_error', httpStatus, elapsedMs: Date.now() - startedAt }); }
@@ -164,12 +174,23 @@ export async function submitZonghengVideo(base: string, apiKey: string, input: Z
     throw new ZonghengSubmissionError(explicitError ? zonghengError(job).split(apiKey).join('[REDACTED]') : '未返回有效任务 ID 或状态，请核实原订单', !explicitError,
       { reason: explicitError ? 'http_error' : 'invalid_task_response', httpStatus, elapsedMs: Date.now() - startedAt });
   } catch (error: any) {
-    if (error instanceof ZonghengSubmissionError) throw error;
+    if (error instanceof ZonghengSubmissionError) {
+      if (error.diagnostics) error.diagnostics.transport = transport();
+      throw error;
+    }
     const code = String(error?.cause?.code || error?.code || '');
     const reason = ['TimeoutError','AbortError'].includes(error?.name) ? 'timeout' : 'network_error';
     const requestNotSent = zonghengRequestNotSent(error, httpStatus);
     throw new ZonghengSubmissionError(transportDiagnostic('V6K', requestNotSent ? '连接失败，请求未发送' : '提交结果待核实，请勿重复创建任务', error, apiKey), !requestNotSent,
-      { reason, httpStatus, elapsedMs: Date.now() - startedAt, requestNotSent, networkCode: code || undefined });
+      { reason, httpStatus, elapsedMs: Date.now() - startedAt, requestNotSent, networkCode: code || undefined, transport: transport() });
+  } finally {
+    trace.close();
+    try {
+      console.info('[v6k-submit-transport]', JSON.stringify({
+        orderId: /^[a-f0-9-]{36}$/i.test(idempotencyKey) && idempotencyKey !== apiKey ? idempotencyKey : undefined,
+        ...transport(),
+      }));
+    } catch { /* Logging must never change the submission outcome. */ }
   }
 }
 export function zonghengImageSize(ratio: string, resolution: string): string {

@@ -91,6 +91,7 @@ export function validateSpecificationVideoParameters(request: SpecificationReque
   }
 }
 export class SpecificationUpstreamError extends Error {
+  zonghengSubmissionError?: ZonghengSubmissionError;
   constructor(message: string, public readonly retrySafe: boolean, public readonly uncertain = false, public readonly blocked = false, public readonly upstreamStatus = 0, public readonly confirmedFailure = false) { super(message); }
 }
 export function submissionFailure(status: number, text: string, channel?: { type?: string | null; baseUrl?: string | null }, videoSubmission = false, headers?: Pick<Headers, 'get'>): SpecificationUpstreamError {
@@ -235,7 +236,11 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
         ...(job.warning ? { zonghengSubmissionDiagnostics: { ...job.warning.diagnostics, message: job.warning.message, recordedAt: new Date().toISOString() } } : {}) });
       return job.taskId;
     } catch (error: any) {
-      if (acceptedTaskId) throw new SpecificationUpstreamError(error.message, false, true);
+      if (acceptedTaskId) {
+        const wrapped = new SpecificationUpstreamError(error.message, false, true);
+        if (error instanceof ZonghengSubmissionError) wrapped.zonghengSubmissionError = error;
+        throw wrapped;
+      }
       if (error instanceof SpecificationUpstreamError) throw error;
       if (error instanceof ZonghengSubmissionError) {
         // V6K auth/rate-limit rejections have no accepted task. Socket/body errors,
@@ -245,7 +250,9 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
         const kkRoute = exec === KK_VIDEO_MODEL && Object.values(KK_VIDEO_SOURCES).includes(model as any);
         const retrySafe = !error.uncertain && (aRoute && (error.diagnostics?.requestNotSent === true || [401, 403, 429].includes(status))
           || kkRoute && (error.diagnostics?.requestNotSent === true || error.diagnostics?.safeRateLimitRejection === true));
-        throw new SpecificationUpstreamError(error.message, retrySafe, error.uncertain, false, status, !error.uncertain);
+        const wrapped = new SpecificationUpstreamError(error.message, retrySafe, error.uncertain, false, status, !error.uncertain);
+        wrapped.zonghengSubmissionError = error;
+        throw wrapped;
       }
       throw new SpecificationUpstreamError(error.message, true);
     }

@@ -20,7 +20,7 @@ import { isHussChannel, recoverHussSubmission, normalizeHussTask } from './hussV
 import { publicApiModelId } from '../../shared/publicApiModelId.js';
 import { videoCapabilities, normalizeVideoParameters } from './videoCapabilities.js';
 import { isZonghengChannel, normalizeZonghengTask } from './zonghengAdapter.js';
-import { acceptZonghengVideoReceipt } from './zonghengTaskService.js';
+import { acceptZonghengVideoReceipt, recordZonghengSubmissionError } from './zonghengTaskService.js';
 import { recordV6kDeliveryUnavailable } from './v6kDeliveryState.js';
 import { zonghengProtocol, zonghengTaskChannel, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE, v6kQueryRetryDelay } from './zonghengProtocol.js';
 import { modelAvailabilityMessage } from '../../shared/upstreamAvailability.js';
@@ -506,6 +506,7 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
         pollingStarted = true;
         await pollVideo(id, target.channel, taskId, onEvent);
       } catch (e: any) {
+        if (e instanceof SpecificationUpstreamError && e.zonghengSubmissionError) recordZonghengSubmissionError(id, e.zonghengSubmissionError);
         const uncertain = Boolean(taskId) || e instanceof SpecificationUpstreamError && e.uncertain
           || dispatchPrepared && !(e instanceof SpecificationUpstreamError && (e.retrySafe || e.confirmedFailure));
         if (claimed && target.channel.type === 'zhiying' && !uncertain && e instanceof SpecificationUpstreamError && e.confirmedFailure) {

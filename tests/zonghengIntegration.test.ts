@@ -1079,6 +1079,18 @@ describe('new KK 2.5 product, fixed per-task price',()=>{
     upstream=async()=>Response.json({data:Object.values(KK_VIDEO_SOURCES).map(id=>({id}))});
     await saveKkVideoRouting(id,{primary,fallback,channelId:db.select().from(channels).get()!.id},getKkVideoRouting(id).version);
   }
+  it.each(['/api/video/generate','/v1/videos'].flatMap(endpoint=>['timeout','503'].map(outcome=>({endpoint,outcome}))))('persists V6K diagnostics through the specification entry $endpoint ($outcome), without replay or refund',async({endpoint,outcome})=>{
+    await install();let posts=0;
+    upstream=async()=>{posts++;if(outcome==='timeout')throw new DOMException('The operation was aborted due to timeout','TimeoutError');
+      return Response.json({error:{code:'service_unavailable',message:'provider busy'}},{status:503,headers:{'x-request-id':'trace_spec_503'}});};
+    await(await post(endpoint,{model:id,prompt:'diagnostic audit',seconds:5,resolution:'720p'})).text();
+    await vi.waitFor(()=>expect(JSON.parse(latest().metadata).requiresReview).toBe(true));
+    const meta=JSON.parse(latest().metadata);
+    expect(meta.zonghengSubmissionDiagnostics).toMatchObject({reason:outcome==='timeout'?'timeout':'http_error',transport:{requestObserved:false,timeoutMs:expect.any(Number)}});
+    if(outcome==='503')expect(meta.zonghengSubmissionDiagnostics.transport).toMatchObject({httpStatus:503,requestId:'trace_spec_503'});
+    expect(meta.videoSubmissionState).toBe('unknown');expect(meta.billingStatus).toBe('review');
+    resumeSpecificationTasks();expect(posts).toBe(1);expect(balance()).toBe(93.5);
+  });
   it.each([false,true])('lets only administrators download a V6K original without resubmitting or changing funds (refunded=%s)',async refunded=>{
     await install();
     upstream=async(url,init)=>{
