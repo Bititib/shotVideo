@@ -920,7 +920,7 @@ describe('reference order controls', () => {
 
 
 describe('composer popups', () => {
-  it('shows model prices before selection while retaining descriptions and selection', async () => {
+  it('shows two-line model prices with hover descriptions and selection', async () => {
     vi.mocked(fetchImageModels).mockResolvedValueOnce([
       {id:'price-a',name:'按张模型',description:'适合插画',available:true,rate:0.15},
       {id:'price-b',name:'高清模型',description:'适合细节',available:true,resolutionPrices:{'1K':0.3,'4K':0.8}},
@@ -931,7 +931,10 @@ describe('composer popups', () => {
     expect(within(screen.getByRole('option',{name:'按张模型'})).getByText('¥0.15/张')).toBeTruthy();
     const option=screen.getByRole('option',{name:'高清模型'});
     expect(within(option).getByText('1K ¥0.30/张 · 4K ¥0.80/张')).toBeTruthy();
-    expect(within(option).getByText('适合细节')).toBeTruthy();
+    expect(within(option).queryByText('适合细节')).toBeNull();
+    expect(option.getAttribute('title')).toContain('适合细节');
+    expect(option.getAttribute('aria-description')).toContain('适合细节');
+    expect(option.querySelector('.studio-model-copy')?.children).toHaveLength(2);
     fireEvent.click(option);
     expect(screen.getByLabelText('生成模型').textContent).toContain('高清模型');
     expect(screen.queryByRole('listbox')).toBeNull();

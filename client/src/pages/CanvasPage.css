@@ -371,7 +371,7 @@
 .studio-model-menu{display:flex;flex-direction:column;gap:8px}
 .studio-model-menu input{flex-shrink:0;width:100%;box-sizing:border-box;padding:8px 10px;border-radius:7px;background:#8881;color:inherit;border:1px solid #8884;font-size:12px}
 .studio-model-menu [role="listbox"]{overflow:auto;min-height:0;overscroll-behavior:contain}
-.studio-model-menu [role="option"]{display:flex;justify-content:space-between;gap:12px;width:100%;border:0;border-radius:7px;background:transparent;color:inherit;padding:10px;text-align:left;font-size:12px;cursor:pointer;white-space:normal}
+.studio-model-menu [role="option"]{display:flex;justify-content:space-between;gap:12px;width:100%;border:0;border-radius:7px;background:transparent;color:inherit;padding:8px 10px;text-align:left;font-size:12px;cursor:pointer;white-space:normal}
 .studio-model-menu [role="option"]:is(:hover,:focus-visible),.studio-model-menu [aria-selected="true"]{background:#8fa58130;outline:0}
 .studio-model-menu p{font-size:12px;margin:8px}
 .studio-floating-menu.studio-parameter-popover{right:auto}
@@ -414,10 +414,9 @@
 
 .project-library-folder{padding:12px 10px}.project-library-content{scrollbar-width:thin;scrollbar-color:#68715e55 transparent}.project-library-content::-webkit-scrollbar{width:5px}.project-library-content::-webkit-scrollbar-thumb{background:#68715e55;border-radius:5px}
 
-.studio-model-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:5px}
-.studio-model-name{font-weight:600;line-height:1.5;overflow-wrap:anywhere}
-.studio-model-price{font-size:12px;font-weight:600;line-height:1.65;color:var(--s-text);overflow-wrap:anywhere}
-.studio-model-description{font-size:11px;line-height:1.65;opacity:.7;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.studio-model-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}
+.studio-model-name{font-weight:600;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.studio-model-price{font-size:12px;font-weight:600;line-height:1.65;color:var(--s-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .studio-model-check{flex-shrink:0;align-self:flex-start;line-height:1.5}
 
 .studio-logo, .studio-welcome-mark { background: transparent; border: 0; box-shadow: none; transform: none; }
