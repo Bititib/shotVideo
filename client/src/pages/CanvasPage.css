@@ -416,6 +416,7 @@
 
 .studio-model-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:5px}
 .studio-model-name{font-weight:600;line-height:1.5;overflow-wrap:anywhere}
+.studio-model-price{font-size:12px;font-weight:600;line-height:1.65;color:var(--s-text);overflow-wrap:anywhere}
 .studio-model-description{font-size:11px;line-height:1.65;opacity:.7;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
 .studio-model-check{flex-shrink:0;align-self:flex-start;line-height:1.5}
 

@@ -920,6 +920,22 @@ describe('reference order controls', () => {
 
 
 describe('composer popups', () => {
+  it('shows model prices before selection while retaining descriptions and selection', async () => {
+    vi.mocked(fetchImageModels).mockResolvedValueOnce([
+      {id:'price-a',name:'按张模型',description:'适合插画',available:true,rate:0.15},
+      {id:'price-b',name:'高清模型',description:'适合细节',available:true,resolutionPrices:{'1K':0.3,'4K':0.8}},
+    ]);
+    render(<MemoryRouter><GeneratorPanel references={[]} busy={false} onClose={vi.fn()} onGenerate={vi.fn()} onConnect={vi.fn()} /></MemoryRouter>);
+    await waitFor(()=>expect(screen.getByText('按张模型',{exact:true})).toBeTruthy());
+    fireEvent.click(screen.getByLabelText('生成模型'));
+    expect(within(screen.getByRole('option',{name:'按张模型'})).getByText('¥0.15/张')).toBeTruthy();
+    const option=screen.getByRole('option',{name:'高清模型'});
+    expect(within(option).getByText('1K ¥0.30/张 · 4K ¥0.80/张')).toBeTruthy();
+    expect(within(option).getByText('适合细节')).toBeTruthy();
+    fireEvent.click(option);
+    expect(screen.getByLabelText('生成模型').textContent).toContain('高清模型');
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
   it('opens only one popup, searches models and dismisses on Escape', async () => {
     render(<MemoryRouter><GeneratorPanel references={[]} busy={false} onClose={vi.fn()} onGenerate={vi.fn()} onConnect={vi.fn()} /></MemoryRouter>);
     await waitFor(()=>expect(screen.getByText('Test Image',{exact:true})).toBeTruthy());
