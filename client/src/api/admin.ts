@@ -152,10 +152,6 @@ export const adminApi = {
     return client.get<Blob>(`/admin/contents/${id}/v6k-original-video?taskId=${encodeURIComponent(taskId)}`,
       { responseType: 'blob', timeoutMs: 330_000, cache: 'no-store' });
   },
-  restoreContentOriginalVideo(id: number, taskId: string) {
-    return mutate(() => client.post<{ id: number; status: 'completed'; resultUrl: string; taskId: string; message: string }>(
-      `/admin/contents/${id}/original-video/restore`, { taskId, confirmedOriginal: true, confirmedSettlement: true }, { timeoutMs: 330_000 }));
-  },
   withdrawContentRecoveryTaskId(id: number, taskId: string) { return api.post<{message:string}>(`/admin/contents/${id}/withdraw-recovery-task-id`, { taskId }); },
 
   // 模型故障反馈

@@ -1,7 +1,6 @@
 // The application runs queue/recovery workers in this process. Prevent an admin
 // refund or a second mutation while a read-only candidate verification awaits I/O.
 const verifying = new Set<number>();
-export const taskIdVerificationActive = (contentId: number) => verifying.has(contentId);
 export function assertNoTaskIdVerification(contentId: number): void {
   if (verifying.has(contentId)) throw {status:409,message:'正在核验补录编号，请等待查询结束后再操作'};
 }

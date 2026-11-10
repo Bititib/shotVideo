@@ -13,7 +13,7 @@ import { HAYA_MO_MODEL } from '../../shared/hayaMoVideo.js';
 import { isHayaChannel } from './hayaVideoAdapter.js';
 import { validateHayaMedia } from './hayaMediaService.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
-import { activeSpecificationTasks, taskIdVerificationActive } from './videoRecoveryAction.js';
+import { activeSpecificationTasks } from './videoRecoveryAction.js';
 import { normalizeSiYueTianMinimaxTask } from './siYueTianMinimaxAdapter.js';
 import { isMegabyChannel, normalizeMegabyTask, validateMegabyVideoInput, validateMegabyReferenceDurations } from './megabyVideoAdapter.js';
 import { isHussChannel, recoverHussSubmission, normalizeHussTask } from './hussVideoAdapter.js';
@@ -1239,7 +1239,7 @@ export function resumeSpecificationTasks() {
   restoreLegacyMjCompletedImages();
   for (const row of db.select().from(contents).where(inArray(contents.status, ['processing', 'queued', 'review'])).all()) {
     let meta: any; try { meta = JSON.parse(row.metadata || '{}'); } catch { continue; }
-    if (!meta.managedSpecification || active.has(row.id) || taskIdVerificationActive(row.id)) continue;
+    if (!meta.managedSpecification || active.has(row.id)) continue;
     if (row.type === 'image' && meta.hussImage && meta.upstreamTaskId) {
       if (meta.hussImageStopped && !meta.nativeImageBatch?.sourceUrls?.length) continue;
       if (meta.hussImageStopped) patch(row.id,{hussImageStopped:false});

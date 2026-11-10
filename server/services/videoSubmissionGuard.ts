@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { sqlite } from '../db/index.js';
 import { persistVideoSubmissionReceipt, findVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
-import { taskIdVerificationActive } from './videoRecoveryAction.js';
 
 const submitting = new Set<number>();
 export class VideoSubmissionConflictError extends Error {
@@ -17,7 +16,6 @@ export function videoSubmissionPending(id: number, meta: Record<string, any>): b
 
 /** Claim before the first await that can send a paid generation request. */
 export function claimVideoSubmission(id: number, timeoutMs = 120_000): void {
-  if (taskIdVerificationActive(id)) throw new VideoSubmissionConflictError('正在核验原任务，暂停提交');
   sqlite.transaction(() => {
     const row = sqlite.prepare('SELECT status,metadata FROM contents WHERE id=?').get(id) as any;
     if (!row || ['completed', 'failed'].includes(row.status)) throw new Error('任务已结束，禁止重复提交');

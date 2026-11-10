@@ -25,7 +25,7 @@ function blockedAddress(address: string): boolean {
   return ip === '::' || ip === '::1' || ip.startsWith('::ffff:') || /^(fc|fd|fe[89ab]|ff)/.test(ip);
 }
 
-export async function assertPublicMediaUrl(url: URL, kind: MediaKind, allowHttp = false) {
+async function assertPublicMediaUrl(url: URL, kind: MediaKind, allowHttp = false) {
   const host = url.hostname.replace(/^\[|\]$/g, '');
   if (!(url.protocol === 'https:' || allowHttp && url.protocol === 'http:') || url.username || url.password || host === 'localhost' || /\.(local|localhost)$/i.test(host)) {
     throw new Error(`参考${kind === 'video' ? '视频' : '音频'}须为本站上传文件或公网 ${allowHttp ? 'HTTP/HTTPS' : 'HTTPS'} 直链`);

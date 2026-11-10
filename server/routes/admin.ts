@@ -388,21 +388,10 @@ router.put('/contents/:id/recovery-task-id', async (req: AuthRequest, res: Respo
   }
 });
 
-router.post(['/contents/:id/original-video/restore', '/contents/:id/v6k-original-video/restore'], async (req: AuthRequest, res: Response) => {
-  try {
-    if (req.body?.confirmedSettlement !== true) throw { status: 400, message: '请刷新页面并确认原订单结算规则：原预扣不重复扣款，已退款按原金额补扣一次' };
-    const { restoreAdminOriginalVideo } = await import('../services/adminOriginalVideoService.js');
-    res.json(await restoreAdminOriginalVideo(Number(req.params.id), req.userId!, req.body?.taskId, req.body?.confirmedOriginal,
-      req.path.endsWith('/v6k-original-video/restore')));
-  } catch (err: any) {
-    res.status(err.status || 502).json({ error: err.status ? err.message : '原视频恢复失败，请稍后查询原任务' });
-  }
-});
-
 router.get('/contents/:id/v6k-original-video', async (req: AuthRequest, res: Response) => {
   try {
     const id = Number(req.params.id);
-    const { downloadV6kAdminOriginalVideo } = await import('../services/adminOriginalVideoService.js');
+    const { downloadV6kAdminOriginalVideo } = await import('../services/v6kAdminOriginalVideo.js');
     const { body, contentType } = await downloadV6kAdminOriginalVideo(id, req.query.taskId);
     res.set({
       'Content-Type': contentType,

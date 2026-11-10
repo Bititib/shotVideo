@@ -8,21 +8,6 @@ export function canDownloadV6kOriginal(record: { type: string; status: string },
       || record.status === 'processing' && videoReviewKind(meta) === 'submission');
 }
 
-export function canRestoreOriginalVideo(record: { type: string; status: string; resultUrl?: unknown }, meta: Record<string, any>): boolean {
-  if (record.type === 'video' && record.status === 'completed' && record.resultUrl && (meta.originalVideoRestoration || meta.v6kOriginalRestoration))
-    return meta.originalVideoBillingPending === true || !meta.originalVideoBilling;
-  return record.type === 'video' && !record.resultUrl
-    && (['failed', 'error', 'review'].includes(record.status)
-      || record.status === 'processing' && Boolean(videoReviewKind(meta) || meta.videoDeliveryUnavailable));
-}
-
-export function recordedVideoTaskIds(meta: Record<string, any>): string[] {
-  return [meta.videoId, meta.upstreamTaskId, meta.upstream_task_id, meta.taskId, meta.task_id,
-    ...(Array.isArray(meta.upstreamTaskIds) ? meta.upstreamTaskIds : [])]
-    .map(value => typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '')
-    .filter(value => value && !isTaskIdPlaceholder(value));
-}
-
 /** Only an unverified manual addition over a missing ID can be withdrawn. */
 export function canWithdrawTaskSupplement(record: { type: string; status: string; resultUrl?: unknown }, meta: Record<string, any>): boolean {
   const audit = Array.isArray(meta.recoveryAudit) ? [...meta.recoveryAudit].reverse().find(a => a?.action === 'supplement_task_id') : null;

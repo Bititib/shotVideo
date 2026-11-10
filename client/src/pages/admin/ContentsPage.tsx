@@ -1,6 +1,6 @@
 import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
 import { isTaskIdPlaceholder } from '../../../../shared/upstreamTaskId';
-import { canDownloadV6kOriginal, canRestoreOriginalVideo, canWithdrawTaskSupplement, recordedVideoTaskIds } from '../../../../shared/videoTaskSupplement';
+import { canDownloadV6kOriginal, canWithdrawTaskSupplement } from '../../../../shared/videoTaskSupplement';
 import { videoReviewKind, videoReviewLabel } from '../../../../shared/videoReview';
 import React, { useState, useEffect, useCallback } from 'react';
 import { PidoiImageReviewActions } from '../../components/PidoiImageReviewActions';
@@ -247,32 +247,14 @@ export default function ContentsPage() {
     }
   };
 
-  const handleRestoreOriginalVideo = async (item: ContentItem, taskId: string) => {
-    if (!window.confirm(`确认上游已核实该编号属于订单 #${item.id}？将取回原视频供用户查看和下载，然后结算原订单。已有预扣不重复扣款；已退款按原金额补扣原账户。重复操作不再扣费。`)) return;
-    setRecoveringId(item.id);
-    try {
-      const result = await adminApi.restoreContentOriginalVideo(item.id, taskId);
-      setPreviewItem(current => current?.id === item.id ? { ...current, status: result.status, resultUrl: result.resultUrl } : current);
-      window.alert(result.message);
-      try {
-        const refreshed = await adminApi.getContent(item.id);
-        setPreviewItem(current => current?.id === refreshed.id ? { ...current, ...refreshed } : current);
-        await fetchContents();
-      } catch { /* A refresh failure does not undo a completed restoration. */ }
-    } catch (error: any) {
-      window.alert(error.message || '原视频恢复失败');
-    } finally {
-      setRecoveringId(null);
-    }
-  };
-
-  const handleRecoverUpstream = async (item: ContentItem) => {
+  const handleRecoverUpstream = async (item: ContentItem, supplementedTaskId = '') => {
     const isBatch = Boolean(parseMeta(item.metadata).batchItemId);
     if (!window.confirm(isBatch
       ? '将查询批量任务的原上游结果；成功使用原预扣费用结算，不重复扣费；确认失败按批次设置重试或退款。是否继续？'
-      : '将查询原上游任务。已扣费且未退款的任务不再扣费；已退款任务确认仍在生成或已成功后，按原退款金额补扣原账户。余额不足或查询失败不扣费；不会重新生成。是否继续？')) return;
+      : `${supplementedTaskId ? `将补录上游任务 ID“${supplementedTaskId}”并查询原任务。` : '将查询原上游任务。'}已扣费且未退款的任务不再扣费；已退款任务确认仍在生成或已成功后，按原退款金额补扣原账户。余额不足或查询失败不扣费；不会重新生成。是否继续？`)) return;
     setRecoveringId(item.id);
     try {
+      if (supplementedTaskId) await adminApi.saveContentRecoveryTaskId(item.id, supplementedTaskId);
       const result = await adminApi.recoverContentUpstream(item.id);
       if (result.status === 'processing') {
         window.alert(`${result.message}${result.progress ? `（${result.progress}%）` : ''}`);
@@ -472,9 +454,6 @@ export default function ContentsPage() {
 
   const previewMeta = previewItem ? parseMeta(previewItem.metadata) : {};
   const showV6kOriginalDownload = previewItem && canDownloadV6kOriginal(previewItem, previewMeta);
-  const showOriginalRestoration = previewItem && canRestoreOriginalVideo(previewItem, previewMeta);
-  const savedOriginalTaskId = recordedVideoTaskIds(previewMeta)[0];
-  const originalTaskIdInput = savedOriginalTaskId || recoveryTaskIdInput.trim();
 
   return (
     <div className="p-6 space-y-6">
@@ -497,7 +476,7 @@ export default function ContentsPage() {
             {bulkPreviewing || bulkRecovering
               ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
               : <RefreshCw className="h-3.5 w-3.5" />}
-            {bulkPreviewing ? '正在统计…' : bulkRecovering ? '正在批量恢复…' : '批量恢复近三天失败视频（按原规则结算）'}
+            {bulkPreviewing ? '正在统计…' : bulkRecovering ? '正在批量恢复…' : '一键恢复近三天失败视频'}
           </button>
           <div className="text-xs text-zinc-500">
             {loading ? '正在加载…' : loadError ? '记录数暂不可用' : `共 ${total} 条记录`}
@@ -849,7 +828,7 @@ export default function ContentsPage() {
                       </div>
                     );
                   })()}
-                  {!showOriginalRestoration && previewItem.type === 'video'
+                  {previewItem.type === 'video'
                     && ['queued', 'processing', 'failed', 'error', 'review'].includes(previewItem.status)
                     && getUpstreamTaskId(parseMeta(previewItem.metadata)) && (
                       <button
@@ -922,32 +901,48 @@ export default function ContentsPage() {
                           {fallback.taskId && <div className="break-all font-mono">{fallback.taskId}</div>}
                         </div>)}</div>;
                       })()}
-                      {showOriginalRestoration && (
+                      {showV6kOriginalDownload && !getUpstreamTaskId(previewMeta) && (
                         <div className="mt-3 space-y-2 rounded-lg border border-indigo-400/20 bg-indigo-500/[0.06] p-3">
-                          <div className="font-medium text-indigo-300">原视频恢复</div>
-                          <p className="text-[11px] leading-relaxed text-zinc-400">填写属于本单的原任务编号。完整取回后交付到用户订单，并结算原费用：已有预扣不再扣款，已退款按原金额补扣一次。归属于其他订单的编号不能使用。</p>
-                          {previewMeta.originalVideoBillingPending && <p className="text-xs text-amber-500">视频已交付，费用待结算：{previewMeta.originalVideoBillingError}。再次操作仅重试结算。</p>}
-                          {!savedOriginalTaskId && <input aria-label="补录上游任务 ID" placeholder="粘贴上游任务 ID"
+                          <div className="font-medium text-indigo-300">只读取回 V6K 原视频</div>
+                          <p className="text-[11px] leading-relaxed text-zinc-400">请填写 V6K 确认属于原订单的任务编号。只下载已完成的成品，不绑定编号或更改账务。</p>
+                          <input aria-label="V6K 原任务 ID" placeholder="task_…"
                             value={recoveryTaskIdInput}
                             onChange={event => setRecoveryTaskIdInput(event.target.value)}
-                            disabled={downloadingOriginalId !== null || recoveringId === previewItem.id}
-                            className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm" />}
-                          <div className="flex flex-wrap gap-2">
-                            <button type="button"
-                              disabled={recoveringId !== null || downloadingOriginalId !== null || confirmingUnacceptedId === previewItem.id || !originalTaskIdInput || isTaskIdPlaceholder(originalTaskIdInput)}
-                              onClick={() => { void handleRestoreOriginalVideo(previewItem, originalTaskIdInput); }}
-                              className="rounded-lg border border-indigo-400/30 bg-indigo-500/20 px-3 py-2 text-xs font-medium text-indigo-200 disabled:opacity-40">
-                              {recoveringId === previewItem.id ? '正在处理…' : previewMeta.originalVideoBillingPending ? '重试原订单结算' : savedOriginalTaskId ? '恢复原视频到订单' : '补录并恢复到订单'}
-                            </button>
-                            {showV6kOriginalDownload && <button type="button"
-                              disabled={downloadingOriginalId !== null || recoveringId === previewItem.id || !/^task_[A-Za-z0-9_-]{1,250}$/.test(originalTaskIdInput)}
-                              onClick={() => { void handleDownloadOriginalV6k(previewItem, originalTaskIdInput); }}
-                              className="rounded-lg border border-indigo-400/25 bg-indigo-500/15 px-3 py-2 text-xs text-indigo-300 disabled:opacity-40">
-                              {downloadingOriginalId === previewItem.id ? '正在查询和下载…' : '仅管理员下载（不结算）'}
-                            </button>}
-                          </div>
+                            disabled={downloadingOriginalId !== null}
+                            className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm" />
+                          <button type="button"
+                            disabled={downloadingOriginalId !== null || !/^task_[A-Za-z0-9_-]{1,250}$/.test(recoveryTaskIdInput.trim())}
+                            onClick={() => { void handleDownloadOriginalV6k(previewItem, recoveryTaskIdInput.trim()); }}
+                            className="rounded-lg border border-indigo-400/25 bg-indigo-500/15 px-3 py-2 text-xs text-indigo-300 disabled:opacity-40">
+                            {downloadingOriginalId === previewItem.id ? '正在查询和下载…' : '只下载原视频'}
+                          </button>
                         </div>
                       )}
+                      {!showV6kOriginalDownload && previewItem.type === 'video'
+                        && ['failed', 'error', 'review'].includes(previewItem.status)
+                        && !getUpstreamTaskId(parseMeta(previewItem.metadata)) && (
+                          <div className="mt-3 space-y-2 rounded-lg border border-indigo-400/20 bg-indigo-500/[0.06] p-3">
+                            <div className="font-medium text-indigo-300">管理员补录与恢复</div>
+                            <p className="text-[11px] leading-relaxed text-zinc-400">从上游任务记录复制对应任务 ID。系统先查询核验，成功后才保存编号；查询失败不写入、不扣费，不会重新生成。</p>
+                            <input
+                              aria-label="补录上游任务 ID"
+                              value={recoveryTaskIdInput}
+                              onChange={event => setRecoveryTaskIdInput(event.target.value)}
+                              disabled={recoveringId === previewItem.id}
+                              placeholder="粘贴上游任务 ID"
+                              className="w-full rounded-lg border border-white/10 bg-black/20 p-2 text-xs text-white placeholder:text-zinc-600"
+                            />
+                            <button
+                              type="button"
+                              disabled={recoveringId === previewItem.id || confirmingUnacceptedId === previewItem.id || !recoveryTaskIdInput.trim() || isTaskIdPlaceholder(recoveryTaskIdInput)}
+                              onClick={() => { void handleRecoverUpstream(previewItem, recoveryTaskIdInput.trim()); }}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-400/25 bg-indigo-500/15 px-3 py-1.5 text-xs font-medium text-indigo-300 transition-colors hover:bg-indigo-500/25 disabled:opacity-40"
+                            >
+                              {recoveringId === previewItem.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                              {recoveringId === previewItem.id ? '正在查询…' : '补录并重新获取'}
+                            </button>
+                          </div>
+                        )}
                     </div>
                     <div className="bg-white/[0.03] rounded-lg p-3">
                       <div className="text-zinc-500 mb-1">本地记录 ID</div>
