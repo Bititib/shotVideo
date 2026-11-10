@@ -374,7 +374,7 @@
 .studio-model-menu [role="option"]{position:relative;display:flex;flex-shrink:0;justify-content:space-between;gap:12px;width:100%;border:0;border-radius:7px;background:transparent;color:inherit;padding:8px 28px 8px 10px;text-align:left;font-size:12px;cursor:pointer;white-space:normal}
 .studio-model-menu [role="option"]:not(:last-child)::after{content:"";position:absolute;left:10px;right:10px;bottom:-3px;height:1px;background:var(--s-border);opacity:.7;pointer-events:none}
 .studio-model-menu [role="option"]:hover{background:#88888812}
-.studio-model-menu [role="option"][aria-selected="true"]{background:var(--s-light);box-shadow:inset 2px 0 var(--s-green)}
+.studio-model-menu [role="option"][aria-selected="true"]{background:var(--s-light)}
 .studio-model-menu [role="option"]:focus-visible{outline:1px solid var(--s-green);outline-offset:-1px}
 .studio-model-menu p{font-size:12px;margin:8px}
 .studio-floating-menu.studio-parameter-popover{right:auto}
