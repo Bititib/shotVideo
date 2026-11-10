@@ -11,6 +11,7 @@ vi.mock('../client/src/api/admin', () => ({ adminApi: {
   withdrawContentRecoveryTaskId: vi.fn(),
   recoverContentUpstream: vi.fn(),
   downloadContentOriginalV6k: vi.fn(),
+  restoreContentOriginalV6k: vi.fn(),
 } }));
 
 import { adminApi } from '../client/src/api/admin';
@@ -98,7 +99,7 @@ it('does not start recovery when candidate verification fails and leaves the inp
   expect(within(dialog).getByLabelText('补录上游任务 ID')).toBeTruthy();
 });
 
-it.each(['failed', 'processing'])('uses only the read-only V6K download for a missing ID on a %s specification order', async status => {
+it.each(['failed', 'processing'])('keeps the read-only V6K download separate from restoration on a %s specification order', async status => {
   const order = { ...item, status, metadata: JSON.stringify({
     managedSpecification: true, zonghengProtocol: 'v6k', channelId: 21,
     requiresReview: status === 'processing', reviewKind: 'submission',
@@ -114,6 +115,30 @@ it.each(['failed', 'processing'])('uses only the read-only V6K download for a mi
   fireEvent.click(within(dialog).getByRole('button', { name: '只下载原视频' }));
   await waitFor(() => expect(window.alert).toHaveBeenCalledWith('上游任务状态为 in_progress'));
   expect(adminApi.downloadContentOriginalV6k).toHaveBeenCalledWith(13360, 'task_original');
+  expect(adminApi.restoreContentOriginalV6k).not.toHaveBeenCalled();
+  expect(adminApi.saveContentRecoveryTaskId).not.toHaveBeenCalled();
+  expect(adminApi.recoverContentUpstream).not.toHaveBeenCalled();
+});
+
+it('restores a verified V6K original through the dedicated endpoint and refreshes the order preview', async () => {
+  const order = { ...item, status: 'processing', metadata: JSON.stringify({
+    managedSpecification: true, zonghengProtocol: 'v6k', channelId: 21, requiresReview: true, reviewKind: 'submission',
+  }) };
+  const restored = { ...order, status: 'completed', resultUrl: '/uploads/videos/original.mp4' };
+  vi.mocked(adminApi.getContents).mockResolvedValue({ items: [order], total: 1 } as any);
+  vi.mocked(adminApi.getContent).mockResolvedValue(order as any);
+  vi.mocked(adminApi.restoreContentOriginalV6k).mockImplementation(async () => {
+    vi.mocked(adminApi.getContent).mockResolvedValue(restored as any);
+    return { id: order.id, status: 'completed', resultUrl: restored.resultUrl, taskId: 'task_original', message: '原视频已恢复' };
+  });
+  render(<MemoryRouter><ContentsPage /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: '查看本地记录 13360 详情' }));
+  const dialog = await screen.findByRole('dialog');
+  fireEvent.change(within(dialog).getByLabelText('V6K 原任务 ID'), { target: { value: 'task_original' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: '补录并恢复到订单' }));
+  await waitFor(() => expect(dialog.querySelector('video')).not.toBeNull());
+  expect(adminApi.restoreContentOriginalV6k).toHaveBeenCalledExactlyOnceWith(13360, 'task_original');
+  expect(adminApi.downloadContentOriginalV6k).not.toHaveBeenCalled();
   expect(adminApi.saveContentRecoveryTaskId).not.toHaveBeenCalled();
   expect(adminApi.recoverContentUpstream).not.toHaveBeenCalled();
 });

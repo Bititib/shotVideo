@@ -247,6 +247,25 @@ export default function ContentsPage() {
     }
   };
 
+  const handleRestoreOriginalV6k = async (item: ContentItem, taskId: string) => {
+    if (!window.confirm(`确认 V6K 已核实该编号属于订单 #${item.id}？将把已完成的原视频和任务编号保存到该订单，账务沿用原记录。`)) return;
+    setRecoveringId(item.id);
+    try {
+      const result = await adminApi.restoreContentOriginalV6k(item.id, taskId);
+      setPreviewItem(current => current?.id === item.id ? { ...current, status: result.status, resultUrl: result.resultUrl } : current);
+      window.alert(result.message);
+      try {
+        const refreshed = await adminApi.getContent(item.id);
+        setPreviewItem(current => current?.id === refreshed.id ? { ...current, ...refreshed } : current);
+        await fetchContents();
+      } catch { /* A refresh failure does not undo a completed restoration. */ }
+    } catch (error: any) {
+      window.alert(error.message || '原视频恢复失败');
+    } finally {
+      setRecoveringId(null);
+    }
+  };
+
   const handleRecoverUpstream = async (item: ContentItem, supplementedTaskId = '') => {
     const isBatch = Boolean(parseMeta(item.metadata).batchItemId);
     if (!window.confirm(isBatch
@@ -903,19 +922,27 @@ export default function ContentsPage() {
                       })()}
                       {showV6kOriginalDownload && !getUpstreamTaskId(previewMeta) && (
                         <div className="mt-3 space-y-2 rounded-lg border border-indigo-400/20 bg-indigo-500/[0.06] p-3">
-                          <div className="font-medium text-indigo-300">只读取回 V6K 原视频</div>
-                          <p className="text-[11px] leading-relaxed text-zinc-400">请填写 V6K 确认属于原订单的任务编号。只下载已完成的成品，不绑定编号或更改账务。</p>
+                          <div className="font-medium text-indigo-300">V6K 原视频恢复</div>
+                          <p className="text-[11px] leading-relaxed text-zinc-400">填写 V6K 核实过的原订单任务编号。恢复会将已完成的视频和编号保存到本单，账务沿用原记录。</p>
                           <input aria-label="V6K 原任务 ID" placeholder="task_…"
                             value={recoveryTaskIdInput}
                             onChange={event => setRecoveryTaskIdInput(event.target.value)}
-                            disabled={downloadingOriginalId !== null}
+                            disabled={downloadingOriginalId !== null || recoveringId === previewItem.id}
                             className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm" />
-                          <button type="button"
-                            disabled={downloadingOriginalId !== null || !/^task_[A-Za-z0-9_-]{1,250}$/.test(recoveryTaskIdInput.trim())}
-                            onClick={() => { void handleDownloadOriginalV6k(previewItem, recoveryTaskIdInput.trim()); }}
-                            className="rounded-lg border border-indigo-400/25 bg-indigo-500/15 px-3 py-2 text-xs text-indigo-300 disabled:opacity-40">
-                            {downloadingOriginalId === previewItem.id ? '正在查询和下载…' : '只下载原视频'}
-                          </button>
+                          <div className="flex flex-wrap gap-2">
+                            <button type="button"
+                              disabled={recoveringId !== null || downloadingOriginalId !== null || confirmingUnacceptedId === previewItem.id || !/^task_[A-Za-z0-9_-]{1,250}$/.test(recoveryTaskIdInput.trim())}
+                              onClick={() => { void handleRestoreOriginalV6k(previewItem, recoveryTaskIdInput.trim()); }}
+                              className="rounded-lg border border-indigo-400/30 bg-indigo-500/20 px-3 py-2 text-xs font-medium text-indigo-200 disabled:opacity-40">
+                              {recoveringId === previewItem.id ? '正在恢复原视频…' : '补录并恢复到订单'}
+                            </button>
+                            <button type="button"
+                              disabled={downloadingOriginalId !== null || recoveringId === previewItem.id || !/^task_[A-Za-z0-9_-]{1,250}$/.test(recoveryTaskIdInput.trim())}
+                              onClick={() => { void handleDownloadOriginalV6k(previewItem, recoveryTaskIdInput.trim()); }}
+                              className="rounded-lg border border-indigo-400/25 bg-indigo-500/15 px-3 py-2 text-xs text-indigo-300 disabled:opacity-40">
+                              {downloadingOriginalId === previewItem.id ? '正在查询和下载…' : '只下载原视频'}
+                            </button>
+                          </div>
                         </div>
                       )}
                       {!showV6kOriginalDownload && previewItem.type === 'video'

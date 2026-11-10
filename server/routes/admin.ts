@@ -388,6 +388,15 @@ router.put('/contents/:id/recovery-task-id', async (req: AuthRequest, res: Respo
   }
 });
 
+router.post('/contents/:id/v6k-original-video/restore', async (req: AuthRequest, res: Response) => {
+  try {
+    const { restoreV6kAdminOriginalVideo } = await import('../services/v6kAdminOriginalVideo.js');
+    res.json(await restoreV6kAdminOriginalVideo(Number(req.params.id), req.userId!, req.body?.taskId, req.body?.confirmedOriginal));
+  } catch (err: any) {
+    res.status(err.status || 502).json({ error: err.status ? err.message : '原视频恢复失败，请稍后查询原任务' });
+  }
+});
+
 router.get('/contents/:id/v6k-original-video', async (req: AuthRequest, res: Response) => {
   try {
     const id = Number(req.params.id);

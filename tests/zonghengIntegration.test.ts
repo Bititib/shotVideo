@@ -1134,6 +1134,123 @@ describe('new KK 2.5 product, fixed per-task price',()=>{
     expect(sqlite.prepare('SELECT * FROM billing_reservations').all()).toEqual(reservation);
     expect(balance()).toBe(originalBalance);
   });
+  it.each([false, true])('restores an admin-confirmed V6K original to the order without touching funds (refunded=%s)', async refunded => {
+    await install();
+    upstream = async (url, init) => {
+      expect(url).toBe('https://www.v6k.top/v1/videos');
+      expect(init.method).toBe('POST');
+      return Response.json({ error: { code: 'service_unavailable', message: '提交响应异常' } }, { status: 503 });
+    };
+    await (await post('/api/video/generate', { model: id, prompt: 'Restore original', seconds: 30, resolution: '720p' })).text();
+    await vi.waitFor(() => expect(JSON.parse(latest().metadata).reviewKind).toBe('submission'));
+    if (refunded) confirmReviewedVideoFailureAndRefund(latest().id, 1, true);
+    const original = latest();
+    const originalMeta = JSON.parse(original.metadata);
+    const reservation = sqlite.prepare('SELECT * FROM billing_reservations').all();
+    const ledger = sqlite.prepare('SELECT * FROM fund_ledger').all();
+    const originalBalance = balance();
+    const taskId = 'task_restore_original_kk';
+    const url = 'https://www.v6k.top/v1/videos/' + taskId;
+    const endpoint = origin + '/api/admin/contents/' + original.id + '/v6k-original-video/restore';
+    const requestRestore = (confirmedOriginal: boolean, admin = true) => nativeFetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: admin ? 'Bearer test-admin' : 'Bearer test' },
+      body: JSON.stringify({ taskId, confirmedOriginal }),
+    });
+    const bytes = Buffer.from('00000014667479706d703432000000006d703432', 'hex');
+    const calls: string[] = [];
+    let returnedModel = id;
+    let returnedStatus = 'completed';
+    let corrupt = false;
+    let interrupted = false;
+    let acquireOtherReceipt = false;
+    const otherId = original.id + 1000;
+    upstream = async (requestUrl, init) => {
+      expect(init.method).toBe('GET');
+      expect(init.headers.Authorization).toBe('Bearer test-key');
+      calls.push(requestUrl);
+      if (requestUrl === url) return Response.json({ id: taskId, model: returnedModel, status: returnedStatus });
+      expect(requestUrl).toBe(url + '/content');
+      if (acquireOtherReceipt) sqlite.prepare('INSERT INTO video_submission_receipts(content_id,upstream_task_id) VALUES(?,?)').run(otherId, taskId);
+      if (interrupted) {
+        let started = false;
+        const body = new ReadableStream({
+          pull(controller) {
+            if (started) controller.error(new Error('upstream connection closed'));
+            else controller.enqueue(new Uint8Array(bytes));
+            started = true;
+          },
+        });
+        return new Response(body, { headers: { 'Content-Type': 'video/mp4' } });
+      }
+      return new Response(corrupt ? 'not a video' : new Uint8Array(bytes), { headers: { 'Content-Type': 'video/mp4' } });
+    };
+    expect((await requestRestore(true, false)).status).toBe(403);
+    expect((await requestRestore(false)).status).toBe(400);
+    expect(calls).toEqual([]);
+
+    if (!refunded) {
+      // A legacy metadata-only owner is still an owner.
+      db.insert(contents).values({ ...original, id: otherId, status: 'completed', metadata: JSON.stringify({ videoId: taskId }) }).run();
+      const oldOwner = await requestRestore(true);
+      expect(oldOwner.status).toBe(409);
+      expect(await oldOwner.text()).toContain('#' + otherId);
+      expect(calls).toEqual([]);
+      db.delete(contents).where(eq(contents.id, otherId)).run();
+
+      returnedModel = STABLE;
+      expect((await requestRestore(true)).status).toBe(409);
+      returnedModel = id;
+      returnedStatus = 'in_progress';
+      const pending = await requestRestore(true);
+      expect(pending.status).toBe(409);
+      expect(await pending.text()).toContain('in_progress');
+      expect(calls).toEqual([url, url]);
+      returnedStatus = 'completed';
+      corrupt = true;
+      expect((await requestRestore(true)).status).toBe(502);
+      corrupt = false;
+      interrupted = true;
+      const incomplete = await requestRestore(true);
+      expect(incomplete.status).toBe(502);
+      expect(await incomplete.text()).toContain('原视频未完整保存');
+      interrupted = false;
+
+      acquireOtherReceipt = true;
+      const race = await requestRestore(true);
+      expect(race.status).toBe(409);
+      expect(await race.text()).toContain('已有回执冲突');
+      acquireOtherReceipt = false;
+      sqlite.prepare('DELETE FROM video_submission_receipts WHERE content_id=?').run(otherId);
+      expect(latest()).toEqual(original);
+      expect(findVideoSubmissionReceipt(original.id)).toBeNull();
+      expect(sqlite.prepare('SELECT * FROM billing_reservations').all()).toEqual(reservation);
+      expect(balance()).toBe(originalBalance);
+      calls.length = 0;
+    }
+
+    const response = await requestRestore(true);
+    const restored = await response.json() as any;
+    expect(response.status, JSON.stringify(restored)).toBe(200);
+    expect(restored).toMatchObject({ id: original.id, status: 'completed', taskId, alreadyRestored: false });
+    const file = path.resolve('data', restored.resultUrl.slice(1));
+    expect(fs.readFileSync(file)).toEqual(bytes);
+    expect(latest()).toMatchObject({ status: 'completed', resultUrl: restored.resultUrl, cost: original.cost });
+    expect(JSON.parse(latest().metadata)).toMatchObject({
+      videoId: taskId, upstreamTaskId: taskId, upstreamStatus: 'completed', requiresReview: false,
+      billingStatus: originalMeta.billingStatus, billingReservationId: originalMeta.billingReservationId,
+      v6kOriginalRestoration: { taskId, actorId: 1 },
+    });
+    expect(findVideoSubmissionReceipt(original.id)).toMatchObject({ upstreamTaskId: taskId, channelId: originalMeta.channelId });
+    const repeated = await requestRestore(true);
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toMatchObject({ alreadyRestored: true, resultUrl: restored.resultUrl });
+    resumeSpecificationTasks();
+    expect(calls).toEqual([url, url + '/content']);
+    expect(sqlite.prepare('SELECT * FROM billing_reservations').all()).toEqual(reservation);
+    expect(sqlite.prepare('SELECT * FROM fund_ledger').all()).toEqual(ledger);
+    expect(balance()).toBe(originalBalance);
+  });
   it('saves the administrator switch atomically, preserves price/switches and rejects stale or unauthorized configuration',async()=>{
     await install(); const before=db.select().from(modelPricing).all();
     const settings=await(await nativeFetch(origin+'/test/admin/model-specifications/'+id+'/kk-routing')).json() as any;
