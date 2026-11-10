@@ -46,8 +46,8 @@ export function zhiyingVideoSpec(id: ZhiyingVideoModel) {
   return { ...products[id], defaultDuration, limits };
 }
 
-export function validateZhiyingVideoInput(model: ZhiyingVideoModel, prompt: string, input: RoutingInput): string[] {
-  const { limits, promptMax } = zhiyingVideoSpec(model);
+export function validateZhiyingVideoInput(model: string, prompt: string, input: RoutingInput, profile?: { limits: ModelInputLimits; promptMax: number }): string[] {
+  const { limits, promptMax } = profile ?? zhiyingVideoSpec(model as ZhiyingVideoModel);
   const reasons = routingMismatches(limits, input, 'video');
   if (!prompt.trim()) reasons.push('请输入视频描述');
   if (Array.from(prompt).length > promptMax) reasons.push(`${model} 提示词最多 ${promptMax} 个字符`);

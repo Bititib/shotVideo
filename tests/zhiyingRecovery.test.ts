@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 
 vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
@@ -13,7 +13,11 @@ import { acceptVideoSubmission } from '../server/services/videoSubmissionGuard.j
 import { cancelVideoContent } from '../server/services/videoCancellationService.js';
 import { ZHIYING_BASE_URL } from '../shared/zhiyingVideo.js';
 
-const model = 'sd-2.5-fullblood-line2';
+import { manualId, manualUpstream, manualCatalogRow, installManualZhiying } from './helpers/zhiyingManualModel.js';
+afterAll(() => sqlite.close());
+describe.each(['builtin', 'manual'])('%s registration', mode => {
+const model = mode === 'manual' ? manualId : 'sd-2.5-fullblood-line2';
+const upstream = mode === 'manual' ? manualUpstream : model;
 const taskId = 'video_original_abcdefghijklmn';
 const balance = () => db.select().from(users).get()!.balance;
 const order = () => db.select().from(contents).get()!;
@@ -25,14 +29,13 @@ beforeEach(async () => {
   for (const { name } of sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[]) sqlite.exec('DELETE FROM "' + name + '"');
   sent.length = 0;
   db.insert(users).values({ id: 1, username:'test', email:'recover@example.test', passwordHash:'unused', balance:100 }).run();
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [{ id:model, media_type:'video', status:'available' }] })));
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [mode === 'manual' ? manualCatalogRow : { id:model, media_type:'video', status:'available' }] })));
   channelId = ChannelService.createChannel({ name:'智赢', type:'zhiying', baseUrl:ZHIYING_BASE_URL, apiKey:'original-secret' });
-  await ChannelService.syncModels(channelId);
+  if (mode === 'manual') await installManualZhiying(channelId); else await ChannelService.syncModels(channelId);
   db.update(models).set({ isActive:1 }).where(eq(models.modelId,model)).run();
   db.insert(modelPricing).values({ modelPattern:model, billingType:'per_call', inputPrice:2, outputPrice:0 }).run();
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
-afterAll(() => sqlite.close());
 
 async function sendOrder(body: Record<string, unknown> = {}) {
   const req: any = { userId:1, headers:{}, protocol:'https', get:()=>'app.test', body:{model,prompt:'雨过天晴',seconds:7,...body} };
@@ -85,7 +88,7 @@ it('allows local cancellation while uploading and never submits the paid POST af
   expect(balance()).toBe(100);
 });
 function task(status:string) {
-  return Response.json({ id:taskId, object:'video',model,status,...(status === 'succeeded' ? {result_url:'https://media.example.test/clip.mp4'} : {}) },{status:202});
+  return Response.json({ id:taskId, object:'video',model:upstream,status,...(status === 'succeeded' ? {result_url:'https://media.example.test/clip.mp4'} : {}) },{status:202});
 }
 
 it('recovers a lost receipt with exactly the same payload and key and settles once across concurrent scans', async () => {
@@ -143,6 +146,21 @@ function storeAcceptedOriginal(extra: Record<string, unknown> = {}) {
     zhiyingReplayStopped:true, zhiyingResumeAt:0, ...extra})}).where(eq(contents.id,order().id)).run();
 }
 
+it('queries the saved upstream identity after the administrator changes the mapping', async () => {
+  if (mode !== 'manual') return;
+  await loseFirstReceipt(); storeAcceptedOriginal();
+  const { listZhiyingModelConfigurations, saveZhiyingModelConfiguration } = await import('../server/services/zhiyingModelConfigurationService.js');
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [{ ...manualCatalogRow, id: 'another-video', create_endpoint: '/v1/generations' }] })));
+  const config = listZhiyingModelConfigurations(channelId)[0];
+  await saveZhiyingModelConfiguration(channelId, { ...config, upstreamModel: 'another-video' }, config.version);
+  const wire = vi.fn(async () => task('succeeded')); vi.stubGlobal('fetch', wire);
+  resumeSpecificationTasks();
+  await vi.waitFor(() => expect(order().status).toBe('completed'));
+  expect(wire).toHaveBeenCalledOnce(); expect(wire.mock.calls[0][0]).toBe(ZHIYING_BASE_URL + '/v1/generations/' + taskId);
+  expect(downloadAndLocalizeVideo).toHaveBeenCalledWith(expect.any(String), taskId, upstream, channelId, null, expect.any(Function), expect.any(String));
+  expect(balance()).toBe(98);
+});
+
 it('finishes a rejection recorded just before a restart without issuing the paid POST again', async () => {
   await loseFirstReceipt();
   db.update(contents).set({metadata:JSON.stringify({...meta(),videoSubmissionState:'rejected',
@@ -161,7 +179,7 @@ it('queries an old accepted ID through a transport error and upstream review, th
   vi.useFakeTimers();
   const wire = vi.fn().mockResolvedValueOnce(new Response('gateway timeout',{status:504}))
     .mockResolvedValueOnce(task('review'))
-    .mockResolvedValueOnce(Response.json({id:taskId,model,object:'video',status:'failed',error:{code:'test_declined',message:'原素材审核未通过'}}));
+    .mockResolvedValueOnce(Response.json({id:taskId,model:upstream,object:'video',status:'failed',error:{code:'test_declined',message:'原素材审核未通过'}}));
   vi.stubGlobal('fetch',wire);
   resumeSpecificationTasks(); resumeSpecificationTasks();
   await vi.advanceTimersByTimeAsync(50);
@@ -200,4 +218,6 @@ it('retains the completed receipt through a delivery failure and settles only af
   expect(balance()).toBe(98);
   expect(wire).not.toHaveBeenCalled();
   expect(downloadAndLocalizeVideo).toHaveBeenCalledTimes(2);
+});
+
 });

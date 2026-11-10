@@ -1,3 +1,4 @@
+import { configuredZhiyingProfile } from './zhiyingModelRegistry.js';
 import { funAiModelKind, funAiModelLimits, FUNAI_MODEL_PREFIX } from '../../shared/funAi.js';
 import { publicApiModelId } from '../../shared/publicApiModelId.js';
 import type { ModelSpecification } from '../../shared/modelRouting.js';
@@ -76,7 +77,9 @@ export function videoCapabilities(modelId: string, specification?: ModelSpecific
   const first = schemas[0] || emptySchema();
   const properties = Object.fromEntries(Object.entries(first.properties).filter(([key, rule]) =>
     schemas.every(schema => JSON.stringify(schema.properties[key]) === JSON.stringify(rule))));
+  const zhiyingProfile = configuredZhiyingProfile(modelId);
   return { canonical_id: publicApiModelId(modelId), capabilityVersion: 1,
+    ...(zhiyingProfile ? { strictReferences: true, promptMax: zhiyingProfile.promptMax } : {}),
     routingLimits, parameterNote: spec?.routes.some(r => r.upstreamModel === HAYA_MO_MODEL)
       ? '图片、视频和音频合计最多16项；提示词最多45000字符；单个素材最多30 MiB。' : ids.length === 1 ? parameterNotes[ids[0]] : undefined,
     parameterEnumLabels: Object.fromEntries(Object.entries(properties).filter(([, rule]) => rule.enumLabels).map(([key, rule]) => [key, rule.enumLabels])),

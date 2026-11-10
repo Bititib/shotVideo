@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { sanitizedGenerationReason } from '../../shared/generationErrorPrivacy.js';
+import type { ZhiyingModelProfile } from '../../shared/zhiyingModelConfiguration.js';
 import type { RoutingInput } from '../../shared/modelRouting.js';
 import {
   isZhiyingVideoModel, validateZhiyingVideoInput, zhiyingApiBase, zhiyingVideoSpec, type ZhiyingVideoModel,
@@ -10,7 +11,7 @@ import { downloadPublicMedia } from './publicImageDownload.js';
 import { publicReferenceRoot } from './publicReferenceService.js';
 import { ownsUpload, uploadPath } from './uploadAccess.js';
 import { upstreamDiagnostic } from './upstreamDiagnostic.js';
-import { probeVideoBufferDuration } from './videoDurationProbe.js';
+import { probeVideoBufferDuration, probeAudioBufferDuration } from './videoDurationProbe.js';
 
 type Channel = { baseUrl: string; apiKey: string; timeout?: number | null; type?: string };
 import { normalizeZhiyingReferencePrompt } from '../../shared/zhiyingReferences.js';
@@ -19,7 +20,7 @@ type Stage = '上传素材' | '创建任务' | '查询原任务' | '保存原结
 type Input = Partial<Omit<RoutingInput, 'images' | 'videos' | 'audios'>> & { images?: string[]; videos?: string[]; audios?: string[] };
 type Request = { model: string; prompt: string; input: Input; publicBaseUrl?: string };
 type Payload = {
-  model: ZhiyingVideoModel; prompt: string; duration: number; resolution: string; aspect_ratio: string;
+  model: string; prompt: string; duration: number; resolution: string; aspect_ratio: string;
   reference_images?: string[]; reference_videos?: string[]; reference_audios?: string[];
   reference_video_duration_total?: number;
   reference_mode?: 'multi_reference'; reference_image_processing?: 'direct';
@@ -160,31 +161,36 @@ async function readReference(source: string, kind: Kind, limit: number, publicBa
 }
 
 /** Upload only user-authorized bytes. No upstream file ID supplied by a user may cross the shared channel account. */
-export async function prepareZhiyingVideo(channel: Channel, request: Request, options: { userId?: number } = {}): Promise<Payload> {
+export async function prepareZhiyingVideo(channel: Channel, request: Request, options: { userId?: number; profile?: ZhiyingModelProfile } = {}): Promise<Payload> {
   const { model, prompt, input } = request;
-  if (!isZhiyingVideoModel(model)) throw new Error('智赢未接入该型号');
-  const { limits, defaultDuration } = zhiyingVideoSpec(model);
+  if (!options.profile && !isZhiyingVideoModel(model)) throw new Error('智赢未接入该型号');
+  const profile = options.profile;
+  const { limits } = profile ?? zhiyingVideoSpec(model as ZhiyingVideoModel);
+  const defaultDuration = limits.defaultSeconds;
   const images = input.images ?? [], videos = input.videos ?? [], audios = input.audios ?? [];
   for (const group of [images, videos, audios]) if (!Array.isArray(group) || group.some(item => typeof item !== 'string' || !item)) throw new Error('参考素材列表无效');
   const resolution = (input.resolution ?? limits.resolutions[0]).toLowerCase();
-  const duration = input.seconds ?? defaultDuration, ratio = input.ratio ?? '16:9';
+  const duration = input.seconds ?? defaultDuration, ratio = input.ratio ?? limits.ratios[0];
   const invalid = validateZhiyingVideoInput(model, prompt, { ...input, seconds: duration, resolution, ratio, outputs: input.outputs ?? 1,
-    firstFrame: input.firstFrame ?? false, lastFrame: input.lastFrame ?? false, images: images.length, videos: videos.length, audios: audios.length });
+    firstFrame: input.firstFrame ?? false, lastFrame: input.lastFrame ?? false, images: images.length, videos: videos.length, audios: audios.length }, profile);
   if (invalid.length) throw new Error(invalid.join('；'));
   const payload: Payload = { model, prompt: normalizeZhiyingReferencePrompt(prompt), resolution, duration, aspect_ratio: ratio };
-  let videoSeconds = 0;
+  let videoSeconds = 0, avSeconds = 0;
   for (const [kind, values, field] of [
     ['image', images, 'reference_images'], ['video', videos, 'reference_videos'], ['audio', audios, 'reference_audios'],
   ] as const) {
     if (!values.length) continue;
     const fileIds: string[] = [];
-    const maxBytes = kind === 'image' ? 20 * MiB : 100 * MiB;
+    const maxBytes = profile?.fileMaxBytes[kind] ?? (kind === 'image' ? 20 * MiB : 100 * MiB);
     for (const [index, source] of values.entries()) {
       try {
         const { bytes, mime } = await readReference(source, kind, maxBytes, request.publicBaseUrl, options.userId);
-        if (kind === 'video' && model === 'sd-2.5-fullblood') {
+        if (kind === 'video' && (profile?.videoDurationTotal ?? model === 'sd-2.5-fullblood') || kind !== 'image' && profile?.avDurationMax) {
           // Probe the bytes being uploaded, never a second fetch of a possibly changed URL.
-          videoSeconds += await probeVideoBufferDuration(bytes);
+          const seconds = await (kind === 'audio' ? probeAudioBufferDuration(bytes) : probeVideoBufferDuration(bytes));
+          if (kind === 'video') videoSeconds += seconds;
+          avSeconds += seconds;
+          if (profile?.avDurationMax && avSeconds > profile.avDurationMax) throw new Error('参考音视频总时长不能超过 ' + profile.avDurationMax + ' 秒');
         }
         const form = new FormData();
         form.set('file', new Blob([new Uint8Array(bytes)], { type: mime }), 'reference.' + extensions[mime]);
@@ -203,7 +209,7 @@ export async function prepareZhiyingVideo(channel: Channel, request: Request, op
     }
     payload[field] = fileIds;
   }
-  if (videoSeconds > 0) payload.reference_video_duration_total = Math.round(videoSeconds * 1000) / 1000;
+  if (videoSeconds > 0 && (profile?.videoDurationTotal ?? model === 'sd-2.5-fullblood')) payload.reference_video_duration_total = Math.round(videoSeconds * 1000) / 1000;
   return payload;
 }
 
@@ -221,7 +227,7 @@ function signedResult(raw: unknown, base: string): string | undefined {
 function parseTask(channel: Channel, stage: Stage, response: Response, raw: any, expectedId?: string, model?: string): ZhiyingVideoTask {
   const id = raw?.id;
   const identified = validTaskId(id) && (!expectedId || id === expectedId) && (!raw.object || raw.object === 'video') &&
-    (!raw.model || (isZhiyingVideoModel(raw.model) && (!model || raw.model === model)));
+    (!raw.model || (model ? raw.model === model : isZhiyingVideoModel(raw.model)));
   // An upstream or gateway error may carry a valid task envelope. Retain the receipt and ask
   // that task for its authoritative state. A 409 may name a different request with the same key.
   if (stage === '创建任务' && identified && !response.ok && response.status !== 409 && raw.object === 'video' && typeof raw.status === 'string') {
@@ -259,8 +265,8 @@ function parseTask(channel: Channel, stage: Stage, response: Response, raw: any,
   return task;
 }
 
-export async function createZhiyingVideo(channel: Channel, payload: Payload, key: string) {
-  if (!isZhiyingVideoModel(payload?.model) || typeof key !== 'string' || !/^[\x21-\x7e]{8,200}$/.test(key)) throw new ZhiyingApiError('智赢提交型号或幂等键无效', 0, true);
+export async function createZhiyingVideo(channel: Channel, payload: Payload, key: string, approvedModel?: string) {
+  if ((!isZhiyingVideoModel(payload?.model) && (!approvedModel || payload?.model !== approvedModel)) || typeof payload?.model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/.test(payload.model) || typeof key !== 'string' || !/^[\x21-\x7e]{8,200}$/.test(key)) throw new ZhiyingApiError('智赢提交型号或幂等键无效', 0, true);
   const { response, raw } = await api(channel, '创建任务', '/v1/generations', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify(payload),
   });

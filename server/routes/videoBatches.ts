@@ -1,4 +1,4 @@
-import { isZhiyingVideoModel } from '../../shared/zhiyingVideo.js';
+import { isConfiguredZhiyingModel as isZhiyingVideoModel } from '../services/zhiyingModelRegistry.js';
 import { getModelSpecification } from '../services/modelRoutingService.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import type { PricingSnapshot } from '../services/pricingService.js';

@@ -27,6 +27,7 @@ import { bindReferences, resolveReferenceMentions } from '../client/src/canvas/r
 import { newNode } from '../client/src/canvas/model';
 vi.mock('../server/services/videoDurationProbe.js', () => ({ probeVideoBufferDuration: vi.fn(async () => 1) }));
 
+import { manualId, manualUpstream, manualCatalogRow, installManualZhiying } from './helpers/zhiyingManualModel.js';
 const localFetch = globalThis.fetch;
 const token = 'sk-zhiying-local-test';
 const websiteToken = jwt.sign({ userId: 1, role: 'user' }, env.JWT_SECRET);
@@ -47,6 +48,13 @@ function call(path: string, body?: object, key?: string) {
 }
 const accountBalance = () => db.select().from(users).get()!.balance;
 const tokenBalance = () => db.select().from(apiTokens).get()!.balance;
+
+async function enableManual() {
+  const channel = ChannelService.getChannels().find(c => c.type === 'zhiying')!;
+  await installManualZhiying(channel.id);
+  db.update(models).set({ isActive: 1 }).where(eq(models.modelId, manualId)).run();
+  db.insert(modelPricing).values({ modelPattern: manualId, billingType: 'per_call', inputPrice: 2 }).run();
+}
 
 beforeAll(async () => {
   const app = express();
@@ -74,7 +82,7 @@ beforeEach(async () => {
     const target = new URL(url);
     if (target.origin === origin) return localFetch(url, init);
     if (target.origin !== ZHIYING_BASE_URL) throw new Error('Unexpected test destination: ' + target.origin);
-    if (target.pathname === '/v1/models') return Response.json({ data: ZHIYING_VIDEO_MODELS.map(id => ({id, media_type:'video', status:'available'})) });
+    if (target.pathname === '/v1/models') return Response.json({ data: [...ZHIYING_VIDEO_MODELS.map(id => ({id, media_type:'video', status:'available'})), manualCatalogRow] });
     if (target.pathname === '/v1/files' && init?.method === 'POST') {
       const file = (init.body as FormData).get('file') as Blob;
       uploaded.push(Buffer.from(await file.arrayBuffer()));
@@ -282,4 +290,55 @@ it('uses the upstream receipt and original credential to recover a missing API d
   expect(localize).toHaveBeenCalledWith('', 'video_task_abcdefghijklmn', line2,meta.channelId,meta.channelApiKeyId,undefined,meta.zhiyingCredential);
   expect(created).toHaveLength(1);
   expect(tokenBalance()).toBe(98);
+});
+
+it.each(['/api/video/generate', '/v1/videos'])('dispatches a backend-added model through %s with matching public names and the mapped upstream', async endpoint => {
+  await enableManual();
+  const catalog = await (await call('/api/video/models')).json() as any[];
+  expect(catalog.find(row => row.id === manualId)).toMatchObject({ name: manualId, strictReferences: true, routingLimits: { defaultSeconds: 5 } });
+  const apiCatalog = await (await call('/v1/models')).json() as any;
+  expect(apiCatalog.data).toContainEqual(expect.objectContaining({ id: manualId }));
+  expect(JSON.stringify(apiCatalog)).not.toContain(manualUpstream);
+  const pricing = await (await call('/v1/pricing')).json() as any;
+  expect(pricing.data).toContainEqual(expect.objectContaining({ model: manualId }));
+  db.update(apiTokens).set({ allowedModels: JSON.stringify([manualId]) }).run();
+  const response = await call(endpoint, { model: manualId, prompt: 'sea' }, 'manual-idem-1');
+  expect(response.ok).toBe(true);
+  const responseBody = endpoint.startsWith('/v1') ? await response.json() as any : await response.text();
+  await vi.waitFor(() => expect(db.select().from(contents).get()?.status).toBe('completed'));
+  expect(created[0].payload).toMatchObject({ model: manualUpstream, duration: 5 });
+  const meta = JSON.parse(db.select().from(contents).get()!.metadata);
+  expect(meta).toMatchObject({ zhiyingOrder: true, upstreamModel: manualUpstream, actualModel: manualId });
+  if (endpoint.startsWith('/v1')) {
+    expect(responseBody.model).toBe(manualId);
+    expect(await (await call('/v1/videos/' + responseBody.id)).json()).toMatchObject({ model: manualId, status: 'completed' });
+    const repeated = await call(endpoint, { model: manualId, prompt: 'sea' }, 'manual-idem-1');
+    expect(repeated.headers.get('X-Idempotency-Replayed')).toBe('true');
+    expect(created).toHaveLength(1); expect(tokenBalance()).toBe(98);
+  } else expect(accountBalance()).toBe(98);
+});
+
+it('refunds a backend-added batch model rejection once and preserves the specific reason', async () => {
+  await enableManual(); reject = true;
+  const batch = { name: 'manual', model: manualId, resolution: '720p', aspect_ratio: '16:9', video_length: 5,
+    autoRetry: false, maxRetries: 0, creatives: [{ prompt: 'sea', count: 1 }], requestKey: 'manual-batch-001', expectedUnitCost: 2 };
+  const result = await (await call('/api/video-batches', batch)).json() as any;
+  expect(result.items).toHaveLength(1);
+  await vi.waitFor(() => { tickVideoBatches(); expect(batchStore.item(result.items[0].id)).toMatchObject({ status: 'failed', billing_state: 'refunded', attempts: 1 }); });
+  tickVideoBatches(); expect(accountBalance()).toBe(100); expect(created).toHaveLength(1);
+  expect(created[0].payload.model).toBe(manualUpstream);
+  expect(JSON.parse(db.select().from(contents).get()!.metadata).error).toContain('测试渠道积分不足');
+});
+
+it('keeps a backend-added API model private media scoped to its token owner', async () => {
+  await enableManual();
+  const store = privateMediaStore(), bytes = Buffer.from([137,80,78,71,13,10,26,10,32]);
+  const mine = store.put(1, bytes, 'image/png', 'mine.png'), theirs = store.put(2, bytes, 'image/png', 'theirs.png');
+  try {
+    expect((await call('/v1/videos', { model: manualId, prompt: 'sea', reference_images: ['/api/media/' + theirs.id] })).status).toBe(400);
+    expect(created).toHaveLength(0);
+    expect((await call('/v1/videos', { model: manualId, prompt: 'sea', reference_images: ['/api/media/' + mine.id] })).ok).toBe(true);
+    await vi.waitFor(() => expect(db.select().from(contents).get()?.status).toBe('completed'));
+    expect(uploaded).toEqual([bytes]); expect(created[0].payload.model).toBe(manualUpstream);
+  } finally { fs.rmSync(store.filePath(mine), { force: true }); fs.rmSync(store.filePath(theirs), { force: true }); }
 });

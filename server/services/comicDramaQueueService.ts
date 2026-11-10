@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { isZhiyingVideoModel } from '../../shared/zhiyingVideo.js';
+import { isConfiguredZhiyingModel as isZhiyingVideoModel } from './zhiyingModelRegistry.js';
 import { sqlite } from '../db/index.js';
 import { env } from '../config/env.js';
 

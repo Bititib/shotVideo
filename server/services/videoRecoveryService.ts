@@ -318,7 +318,7 @@ export class VideoRecoveryService {
       const context = { videoId, channelId: configuredChannel!.id, channelApiKeyId: configuredChannel!.apiKeyId };
       const completed = metadata.zhiyingCompletedReceipt;
       if (completed?.taskId === videoId && completed.resultUrl) return { ...context, status: 'completed', progress: 100, message: '原任务已生成，继续保存成品', upstreamResultUrl: completed.resultUrl };
-      const task = await pollZhiyingVideo(configuredChannel!, videoId, metadata.actualModel);
+      const task = await pollZhiyingVideo(configuredChannel!, videoId, metadata.upstreamModel || metadata.actualModel);
       if (task.status === 'completed' && task.resultUrl) return { ...context, status: 'completed', message: '原任务已生成', progress: 100, upstreamResultUrl: task.resultUrl };
       if (metadata.upstreamGenerated || task.status === 'completed') return { ...context, status: 'processing', message: '原任务已生成，正在等待成品地址' };
       if (task.status === 'failed') return { ...context, status: 'failed', message: task.error || '智赢未返回任务失败详情' };

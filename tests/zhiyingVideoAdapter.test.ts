@@ -4,11 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { createZhiyingVideo, fetchZhiyingVideoContent, pollZhiyingVideo, prepareZhiyingVideo } from '../server/services/zhiyingVideoAdapter.js';
 import { downloadPublicMedia } from '../server/services/publicImageDownload.js';
-import { probeVideoBufferDuration } from '../server/services/videoDurationProbe.js';
+import { probeVideoBufferDuration, probeAudioBufferDuration } from '../server/services/videoDurationProbe.js';
+import type { ZhiyingModelProfile } from '../shared/zhiyingModelConfiguration.js';
+import { defaultRoutingLimits } from '../shared/modelRouting.js';
 import { signedMediaUrl } from '../server/services/mediaSignature.js';
 
 vi.mock('../server/services/publicImageDownload.js', () => ({ downloadPublicMedia: vi.fn() }));
-vi.mock('../server/services/videoDurationProbe.js', () => ({ probeVideoBufferDuration: vi.fn() }));
+vi.mock('../server/services/videoDurationProbe.js', () => ({ probeVideoBufferDuration: vi.fn(), probeAudioBufferDuration: vi.fn() }));
 const channel = { baseUrl: 'https://zhiyingai.xyz/v1', apiKey: 'example-private-channel-key', type: 'zhiying' };
 const createData = { model: 'sd-2.5-fullblood-line2' as const, prompt: '海浪', duration: 30, resolution: '720p', aspect_ratio: '16:9' };
 const id = 'video_original_123', key = 'request-original-123';
@@ -41,6 +43,28 @@ it('sends only the two configured models to the configured official host', async
   await expect(createZhiyingVideo(channel, createData, 'short')).rejects.toMatchObject({confirmedFailure:true});
   await expect(createZhiyingVideo({...channel,baseUrl:'https://example.test'},createData,key)).rejects.toThrow('渠道地址');
   expect(request).not.toHaveBeenCalled();
+});
+
+it('uses the configured contract for a new upstream model and measures original audio/video bytes against its combined limit', async () => {
+  const profile: ZhiyingModelProfile = { limits: { ...defaultRoutingLimits(), defaultSeconds: 5, maxImages: 30, maxVideos: 30, maxAudios: 30, maxReferences: 30 },
+    promptMax: 20000, videoDurationTotal: false, avDurationMax: 30, referenceMode: true, directProcessing: true,
+    fileMaxBytes: { image: 33554432, video: 33554432, audio: 33554432 } };
+  const audio = Buffer.from('ID3voice');
+  vi.mocked(probeVideoBufferDuration).mockResolvedValue(12);
+  vi.mocked(probeAudioBufferDuration).mockResolvedValue(18);
+  request.mockImplementation(async () => json({ id: 'file_abcdefghijklmnop' }, 201));
+  const input = { videos: [inline('video/mp4', video)], audios: [inline('audio/mpeg', audio)] };
+  const payload = await prepareZhiyingVideo(channel, { model: 'sd-2.5-fullblood-line3', prompt: 'sea', input }, { profile });
+  expect(payload).toMatchObject({ model: 'sd-2.5-fullblood-line3', duration: 5 });
+  expect(payload.reference_video_duration_total).toBeUndefined();
+  expect(probeVideoBufferDuration).toHaveBeenCalledWith(video); expect(probeAudioBufferDuration).toHaveBeenCalledWith(audio);
+  vi.mocked(probeAudioBufferDuration).mockResolvedValue(19);
+  await expect(prepareZhiyingVideo(channel, { model: payload.model, prompt: 'sea', input }, { profile })).rejects.toMatchObject({ confirmedFailure: true, message: expect.stringContaining('30 秒') });
+  expect(request.mock.calls.every(([url]) => String(url).endsWith('/v1/files'))).toBe(true);
+  request.mockResolvedValueOnce(json({ id, status: 'queued', model: payload.model, object: 'video' }, 202));
+  expect(await createZhiyingVideo(channel, payload, key, payload.model)).toMatchObject({ taskId: id, status: 'pending' });
+  request.mockResolvedValueOnce(json({ id, status: 'succeeded', model: 'another-model', object: 'video' }));
+  await expect(pollZhiyingVideo(channel, id, payload.model)).rejects.toMatchObject({ confirmedFailure: false });
 });
 it.each(['review','processing','queued','created','brand_new_state'])('preserves the receipt when state=%s', async status => {
   request.mockResolvedValueOnce(json({id, status}, 202));

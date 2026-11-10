@@ -1,3 +1,4 @@
+import { getCachedVideoModels } from '../api/video';
 import { isZhiyingVideoModel, zhiyingVideoDisplayName } from '../../../shared/zhiyingVideo';
 import { HUSS_MJ_MODEL } from '../../../shared/hussMidjourney';
 import { publicGenerationError } from '../../../shared/generationMessages';
@@ -363,7 +364,8 @@ export default function CanvasStudio({ initial, projects, status, onSync, onImpo
     if (importing) return;
     const target = docRef.current.nodes.find(node => node.id === targetId);
     const selectedModel = target && (docRef.current.drafts[target.id]?.model || target.model);
-    const importLimit = isZhiyingVideoModel(selectedModel) ? 50 : 20;
+    const registeredModel = getCachedVideoModels().find(m => m.id === selectedModel);
+    const importLimit = registeredModel?.strictReferences ? registeredModel.routingLimits?.maxReferences ?? 50 : isZhiyingVideoModel(selectedModel) ? 50 : 20;
     if (files.length > importLimit) { setNotice(`每次最多导入 ${importLimit} 个素材，请分批选择。`); return; }
     const selectionAtStart = selectedRef.current.join(',');
     setImporting(true);

@@ -1,6 +1,7 @@
 import { prepareMediaSubmission } from '../../shared/mediaReferences.js';
 import { publicApiModelId } from '../../shared/publicApiModelId.js';
-import { isZhiyingVideoModel, ZHIYING_CHANNEL_TYPE } from '../../shared/zhiyingVideo.js';
+import { ZHIYING_CHANNEL_TYPE } from '../../shared/zhiyingVideo.js';
+import { isConfiguredZhiyingModel as isZhiyingVideoModel } from '../services/zhiyingModelRegistry.js';
 import { resolvePrivateReferences } from '../middleware/privateReferences.js';
 import { publicApiModelMetadata } from '../services/publicModelMetadataService.js';
 import { videoCapabilities, normalizeVideoParameters } from '../services/videoCapabilities.js';
@@ -3461,7 +3462,7 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
     const localizedUrl = await downloadAndLocalizeVideo(
       sourceUrl,
       zhiying ? String(metadata.videoId || metadata.upstreamTaskId || metadata.zhiyingCompletedReceipt?.taskId || '') : idParam,
-      record.modelId || metadata.model || 'video',
+      zhiying ? metadata.upstreamModel || metadata.actualModel : record.modelId || metadata.model || 'video',
       metadata.channelId,
       metadata.channelApiKeyId,
       ...(zhiying ? [undefined, metadata.zhiyingCredential] as const : []),

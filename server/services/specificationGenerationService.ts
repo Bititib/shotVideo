@@ -1,6 +1,6 @@
 import { prepareMediaSubmission } from '../../shared/mediaReferences.js';
 import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
-import { isZhiyingVideoModel } from '../../shared/zhiyingVideo.js';
+import { isConfiguredZhiyingModel as isZhiyingVideoModel } from './zhiyingModelRegistry.js';
 import { normalizeZhiyingRequest, assertZhiyingOriginalChannel, zhiyingPayloadHash } from './zhiyingVideoExecution.js';
 import { createZhiyingVideo } from './zhiyingVideoAdapter.js';
 import { findVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
@@ -324,7 +324,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
               else task = await pollSpecificationVideo(channel,taskId,meta.actualModel,meta.referenceVideoSeconds || 0);
             }
             else task = zhiying || isSiYueTianManagedVideoModel(meta.actualModel)
-              ? await pollSpecificationVideo(channel, taskId, meta.actualModel) : await pollSpecificationVideo(channel, taskId);
+              ? await pollSpecificationVideo(channel, taskId, zhiying ? meta.upstreamModel : meta.actualModel) : await pollSpecificationVideo(channel, taskId);
           }
         }
       }
@@ -374,7 +374,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
           ...(isHussChannel(channel) ? { hussCompletedReceipt: { taskId, resultUrl: task.resultUrl }, upstreamGenerated: true, upstreamDeliveryPending: true } : {}),
           ...(isMegabyChannel(channel) ? { megabyCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}) });
         const { downloadAndLocalizeVideo } = await import('./videoLocalizationService.js');
-        localized = await downloadAndLocalizeVideo(task.resultUrl, taskId, metadata(id).actualModel, channel.id, channel.apiKeyId, progress => {
+        localized = await downloadAndLocalizeVideo(task.resultUrl, taskId, zhiying ? metadata(id).upstreamModel : metadata(id).actualModel, channel.id, channel.apiKeyId, progress => {
           const mb = (n: number) => (n / 1048576).toFixed(2);
           const message = progress.phase === 'validating' ? '视频已下载，正在校验或转换播放格式'
             : progress.phase === 'retrying' ? `下载中断，已保留 ${mb(progress.bytes)} MB；等待恢复原任务`
@@ -1214,7 +1214,7 @@ async function resumeZhiyingOrder(id: number) {
   if (!replayClaim) return;
   if (replayClaim === 'stopped') throw new Error('智赢原提交仍无任务编号，已达到本站自动核对范围（首次发送后10分钟内、最多3次同键恢复）；保留预扣，请核实原单');
   let original;
-  try { original = await createZhiyingVideo(channel!, meta.zhiyingPayload, meta.zhiyingKey); }
+  try { original = await createZhiyingVideo(channel!, meta.zhiyingPayload, meta.zhiyingKey, meta.upstreamModel); }
   finally { patch(id, { zhiyingReplayLeaseUntil: null }); }
   sqlite.transaction(() => {
     assertZhiyingReservation(id, metadata(id));

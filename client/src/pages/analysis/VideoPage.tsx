@@ -739,7 +739,7 @@ export default function VideoPage() {
 
   const handleConfirmSlice = (sliced: string[]) => {
     if (slicingImageIndex !== null) {
-      if (isZhiyingVideoModel(selectedModel) && referenceImages.length - 1 + sliced.length > maxRefs) {
+      if ((isZhiyingVideoModel(selectedModel) || models.find(m => m.id === selectedModel)?.strictReferences) && referenceImages.length - 1 + sliced.length > maxRefs) {
         setError(`切分后的参考图超过 ${maxRefs} 张，请减少选择`); return;
       }
       const sourceWasProcessed = Boolean(slicingImageUrl && locallyProcessedImages.has(slicingImageUrl));
@@ -1232,7 +1232,7 @@ export default function VideoPage() {
     if (!files) return;
     const remaining = maxRefs - referenceImages.length;
     if (remaining <= 0) { setError(`当前模型最多支持 ${maxRefs} 张参考图`); return; }
-    if (isZhiyingVideoModel(selectedModel) && files.length > remaining) { setError(`当前还可添加 ${remaining} 张参考图，请重新选择`); return; }
+    if ((isZhiyingVideoModel(selectedModel) || models.find(m => m.id === selectedModel)?.strictReferences) && files.length > remaining) { setError(`当前还可添加 ${remaining} 张参考图，请重新选择`); return; }
     const valid = Array.from(files).filter(isSupportedImageFile).slice(0, remaining);
     if (valid.length === 0) return;
     if (valid.find(f => f.size > 20 * 1024 * 1024)) { setError('参考图超过 20MB'); return; }
@@ -1274,7 +1274,7 @@ export default function VideoPage() {
       return;
     }
     const remaining = maxRefVideos - referenceVideos.length;
-    if (isZhiyingVideoModel(selectedModel) && files.length > remaining) { setError(`当前还可添加 ${remaining} 段参考视频，请重新选择`); return; }
+    if ((isZhiyingVideoModel(selectedModel) || models.find(m => m.id === selectedModel)?.strictReferences) && files.length > remaining) { setError(`当前还可添加 ${remaining} 段参考视频，请重新选择`); return; }
     const filesToRead = Array.from(files).filter(f => f.type.startsWith('video/')).slice(0, remaining > 0 ? remaining : 0);
     if (filesToRead.length === 0 && remaining <= 0) {
       setError(`最多只能上传 ${maxRefVideos} 个参考视频`);
@@ -1315,7 +1315,7 @@ export default function VideoPage() {
   const handleAudioSelect = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const remaining = maxRefAudios - referenceAudios.length;
-    if (isZhiyingVideoModel(selectedModel) && files.length > remaining) { setError(`当前还可添加 ${remaining} 段参考音频，请重新选择`); return; }
+    if ((isZhiyingVideoModel(selectedModel) || models.find(m => m.id === selectedModel)?.strictReferences) && files.length > remaining) { setError(`当前还可添加 ${remaining} 段参考音频，请重新选择`); return; }
     const selectedFiles = Array.from(files);
     if (isLongxiaModel(selectedModel) && selectedFiles.some(file => !['audio/mpeg', 'audio/mp3'].includes(file.type) || file.size > 15 * 1024 * 1024)) {
       setError('LongXia 参考音频仅支持 MP3，单段不超过 15 MiB');
@@ -1725,7 +1725,7 @@ export default function VideoPage() {
                             const variant = m.resolutionModels?.[resolution]?.available ? m.resolutionModels[resolution]
                               : Object.values<VideoModel>(m.resolutionModels || {}).find(model => model.available);
                             const next = variant || m;
-                            if (isZhiyingVideoModel(next.id) && next.routingLimits) {
+                            if ((isZhiyingVideoModel(next.id) || next.strictReferences) && next.routingLimits) {
                               const limits = next.routingLimits;
                               if (referenceImages.length > limits.maxImages || referenceVideos.length > limits.maxVideos || referenceAudios.length > limits.maxAudios || firstFrame || lastFrame) {
                                 setError(`${next.name} 支持 ${limits.maxImages} 张图片、${limits.maxVideos} 段视频和 ${limits.maxAudios} 段音频。请先移除超限素材和独立首尾帧。`);

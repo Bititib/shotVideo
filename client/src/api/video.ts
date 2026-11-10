@@ -4,6 +4,8 @@ import type { ModelInputLimits } from '../../../shared/modelRouting';
 import type { VideoModelStatus } from '../../../shared/videoModelStatus';
 
 export interface VideoModel {
+  strictReferences?: boolean;
+  promptMax?: number;
   routingLimits?: ModelInputLimits;
   id: string;
   name: string;

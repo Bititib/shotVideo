@@ -21,7 +21,7 @@ import videoQuotes from './videoQuotes.js';
 import { assertExpectedVideoCost } from '../services/videoQuoteService.js';
 import { resolvePublicModelId } from '../services/publicModelNameService.js';
 import { normalizeZhiyingRequest } from '../services/zhiyingVideoExecution.js';
-import { isZhiyingVideoModel } from '../../shared/zhiyingVideo.js';
+import { isConfiguredZhiyingModel as isZhiyingVideoModel } from '../services/zhiyingModelRegistry.js';
 import { publicApiModelMetadata } from '../services/publicModelMetadataService.js';
 import { handleSpecificationGeneration, resumeSpecificationTasks, prepareSpecificationReferenceImages } from '../services/specificationGenerationService.js';
 import { getModelSpecification, specificationAvailable, selectModelRoutes } from '../services/modelRoutingService.js';

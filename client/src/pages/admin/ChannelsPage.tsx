@@ -3,6 +3,7 @@ import { ZHIYING_BASE_URL, ZHIYING_CHANNEL_TYPE, ZHIYING_VIDEO_MODELS, zhiyingVi
 import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import AdminCollection from '../../components/AdminCollection';
 import ChannelListItem from '../../components/ChannelListItem';
+import ZhiyingModelConfigurationPanel from '../../components/ZhiyingModelConfigurationPanel';
 import V6kModelConfigurationPanel from '../../components/V6kModelConfigurationPanel';
 import './ChannelsPage.css';
 import AdminDrawer from '../../components/AdminDrawer';
@@ -33,6 +34,7 @@ export default function ChannelsPage() {
   const [notice, setNotice] = useState('');
   const [channelFeedback, setChannelFeedback] = useState<ChannelFeedback | null>(null);
   const [modelsRevision, setModelsRevision] = useState(0);
+  const [zhiyingEditor, setZhiyingEditor] = useState<number | null>(null);
   const [v6kEditor, setV6kEditor] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [pendingId, setPendingId] = useState<number | null>(null);
@@ -452,7 +454,7 @@ export default function ChannelsPage() {
         { title: '模型数量', sort: ch => ch.supportedModels?.length || 0, render: ch => ch.supportedModels?.length || 0 },
       ]} listHeader={<div className="channel-list-header" aria-hidden="true"><span>渠道</span><span>状态</span><span>关联模型</span><span>实时任务</span><span>操作</span></div>}
         listItem={ch => <ChannelListItem channel={ch} syncing={syncing} testing={testing} pending={pendingId !== null}
-          onConfigureModels={ch.type === 'zongheng-v6k' ? () => setV6kEditor(ch.id) : undefined}
+          onConfigureModels={ch.type === 'zongheng-v6k' ? () => setV6kEditor(ch.id) : ch.type === ZHIYING_CHANNEL_TYPE ? () => setZhiyingEditor(ch.id) : undefined}
           onOpen={() => { setDetailEditing(false); setDetailTab('models'); setDetail(ch); }}
           onSync={() => { setDetailEditing(false); setDetailTab('models'); setDetail(ch); void syncModels(ch); }}
           onEdit={() => openEdit(ch)} onToggle={() => { void toggleStatus(ch); }}
@@ -481,6 +483,7 @@ export default function ChannelsPage() {
           onSync={() => { void syncModels(channels.find(ch => ch.id === detail.id) || detail); }}>
           {detail.type === 'zongheng-v6k' && <button type="button" className="mb-3 rounded-lg border px-3 py-2 text-sm"
             disabled={detailEditing || syncing === detail.id} onClick={() => setV6kEditor(detail.id)}>V6K 模型与参数</button>}
+          {detail.type === ZHIYING_CHANNEL_TYPE && <button type="button" className="mb-3 rounded-lg border px-3 py-2 text-sm" disabled={detailEditing || syncing === detail.id} onClick={() => setZhiyingEditor(detail.id)}>智赢模型与参数</button>}
           <Suspense fallback={<p role="status">正在加载关联模型…</p>}>
             <ModelsPage key={detail.id + ':' + modelsRevision} channelId={String(detail.id)} onEditingChange={setDetailEditing} />
           </Suspense>
@@ -488,6 +491,7 @@ export default function ChannelsPage() {
       </AdminDrawer>}
       {v6kEditor !== null && <V6kModelConfigurationPanel channelId={v6kEditor} onClose={() => setV6kEditor(null)}
         onSaved={() => { setModelsRevision(value => value + 1); void loadChannels(); }} />}
+      {zhiyingEditor !== null && <ZhiyingModelConfigurationPanel channelId={zhiyingEditor} onClose={() => setZhiyingEditor(null)} onSaved={() => { setModelsRevision(value => value + 1); void loadChannels(); }} />}
       {/* Edit Modal */}
       {edit && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={closeEdit}>
@@ -670,13 +674,14 @@ export default function ChannelsPage() {
               )}
               {edit.type === ZHIYING_CHANNEL_TYPE ? (
                 <section className="space-y-2 text-xs leading-5 text-zinc-400" aria-label="智赢模型映射">
-                  <p>模型映射由「同步模型」写入。下表列出两条专线的对应关系。</p>
+                  <p>原有专线可通过同步关联；新增型号请使用「智赢模型与参数」。下表为本站名称与上游的对应关系。</p>
                   <table className="w-full text-left">
                     <thead><tr><th>前端名称 / 本站 API ID</th><th>智赢上游 ID</th><th>映射状态</th></tr></thead>
-                    <tbody>{ZHIYING_VIDEO_MODELS.map(id => {
-                      const mapped = edit.mappingText.split('\n').includes(`${id}:${id}`);
+                    <tbody>{[...new Set([...ZHIYING_VIDEO_MODELS, ...edit.mappingText.split('\n').map((line: string) => line.split(':')[0]).filter(Boolean)])].map(id => {
+                      const upstream = edit.mappingText.split('\n').find((line: string) => line.startsWith(id + ':'))?.slice(id.length + 1);
+                      const mapped = Boolean(upstream);
                       return <tr key={id}>
-                        <td>{zhiyingVideoDisplayName(id)}</td><td><code>{id}</code></td>
+                        <td>{zhiyingVideoDisplayName(id) || id}</td><td><code>{upstream || id}</code></td>
                         <td>{!mapped ? '待同步' : edit.modelsText.split('\n').includes(id) ? '已关联' : '暂不可用'}</td>
                       </tr>;
                     })}</tbody>

@@ -1,6 +1,7 @@
 import { getModelSpecifications, hiddenRouteModelIds } from './modelRoutingService.js';
 import { isRetiredVideoModel } from '../../shared/retiredVideoModels.js';
 import { isZhiyingVideoModel, ZHIYING_CHANNEL_TYPE, zhiyingVideoSpec } from '../../shared/zhiyingVideo.js';
+import { configuredZhiyingProfile } from './zhiyingModelRegistry.js';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { models } from '../db/schema.js';
@@ -23,9 +24,11 @@ export function getEnabledPublicModels(capability?: string, userId?: number | nu
     })
     .filter(model => {
       if (model.provider !== ZHIYING_CHANNEL_TYPE) return true;
-      if (!isZhiyingVideoModel(model.modelId)) return false;
+      const profile = configuredZhiyingProfile(model.modelId);
+      if (!profile) return false;
       exactPrice ??= PricingService.createQuoteResolver(false, userId);
-      const { limits, defaultDuration } = zhiyingVideoSpec(model.modelId);
+      const { limits } = profile;
+      const defaultDuration = limits.defaultSeconds;
       const quote = exactPrice(model.modelId, { count: 1, resolution: limits.resolutions[0], seconds: defaultDuration });
       return (quote.billingType === 'per_call' || quote.billingType === 'per_second') && Number.isFinite(quote.cost) && quote.cost >= 0;
     })

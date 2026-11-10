@@ -2,6 +2,7 @@ import { api as client } from './client';
 import { api as contentApiClient } from './client';
 import { cachedAdminGet, invalidateAdminCache } from './adminCache';
 import type { UserModelSetting } from '../../../shared/userModelSettings';
+import type { ZhiyingModelConfiguration, ZhiyingModelDraft, ZhiyingCatalogOption } from '../../../shared/zhiyingModelConfiguration';
 import type { V6kModelConfiguration, V6kModelDraft, V6kRequestSample } from '../../../shared/v6kModelConfiguration';
 
 // Cache only configuration lists; runtime status and operational statistics stay live.
@@ -80,6 +81,11 @@ export const adminApi = {
   saveV6kModel(id: number, draft: V6kModelDraft, version: string | null) {
     return api.put<V6kModelConfiguration>(`/admin/channels/${id}/v6k-models`, { draft, version });
   },
+
+  getZhiyingModelConfigurations(id: number) { return api.get<ZhiyingModelConfiguration[]>(`/admin/channels/${id}/zhiying-models`); },
+  getZhiyingModelCatalog(id: number) { return api.get<{options: ZhiyingCatalogOption[]; warnings: string[]}>(`/admin/channels/${id}/zhiying-models/catalog`); },
+  previewZhiyingModel(id: number, draft: ZhiyingModelDraft) { return client.post<{method: string; path: string; body: object}>(`/admin/channels/${id}/zhiying-models/preview`, { draft }); },
+  saveZhiyingModel(id: number, draft: ZhiyingModelDraft, version: string | null) { return api.put<ZhiyingModelConfiguration>(`/admin/channels/${id}/zhiying-models`, { draft, version }); },
 
   // Token 管理
   getTokens(params: { page?: number; pageSize?: number; search?: string } = {}) {

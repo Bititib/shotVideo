@@ -1,3 +1,4 @@
+import { zhiyingBindings } from './zhiyingModelBindings.js';
 import type Database from 'better-sqlite3';
 import type { ModelSpecification } from '../../shared/modelRouting.js';
 import { imageSpecificationId } from '../../shared/modelRouting.js';
@@ -55,7 +56,7 @@ export const SUDA_SHUI_CATALOG_MODELS = [
 ];
 
 function dedicatedBindings(sqlite: Database.Database, c: Channel): Map<string, string> | undefined {
-  if (c.type === ZHIYING_CHANNEL_TYPE) return identity(ZHIYING_VIDEO_MODELS);
+  if (c.type === ZHIYING_CHANNEL_TYPE) return new Map([...identity(ZHIYING_VIDEO_MODELS), ...zhiyingBindings(sqlite).filter(row => row.channelId === c.id).map(row => [row.modelId, row.upstreamModel] as [string, string])]);
   if (isDedicatedPidoiImageChannel(c)) return identity([PIDOI_IMAGE_MODEL]);
   if (isPidoiImageChannel(c)) return new Map();
   if (isMingFeiImageChannel(c)) return new Map([[MINGFEI_IMAGE_MODEL, MINGFEI_UPSTREAM_IMAGE_MODEL]]);

@@ -3,7 +3,8 @@ import { pruneSiYueTianCatalogBindings, siYueTianMappedBindings } from './siYueT
 import { channelCatalogBindings, pruneChannelCatalogBindings } from './channelCatalogBindings.js';
 import { configuredSyncBindings } from './modelSyncScope.js';
 import { isSupportedChannelType } from '../../shared/channelTypes.js';
-import { isZhiyingVideoModel, ZHIYING_CHANNEL_TYPE, zhiyingApiBase } from '../../shared/zhiyingVideo.js';
+import { isConfiguredZhiyingModel as isZhiyingVideoModel } from './zhiyingModelRegistry.js';
+import { ZHIYING_CHANNEL_TYPE, zhiyingApiBase } from '../../shared/zhiyingVideo.js';
 import { SNUMOM_VIDEO_MODELS } from './snumomWanAdapter.js';
 import { isMegabyChannel, megabyBaseUrl, fetchMegabyVideoModels } from './megabyVideoAdapter.js';
 import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
@@ -578,7 +579,7 @@ export class ChannelService {
         let catalogSummary = '';
         if (channel.type === ZHIYING_CHANNEL_TYPE) {
           const { fetchZhiyingVideoModels } = await import('./zhiyingCatalogService.js');
-          const { available, warnings } = await fetchZhiyingVideoModels(channel);
+          const { available, warnings } = await fetchZhiyingVideoModels(channel, true);
           if (!available.length) throw new Error(warnings.join(' ') || '智赢模型目录已返回，此 Key 暂无已接入的视频型号');
           catalogSummary = '可用型号：' + available.join('、') + (warnings.length ? '。' + warnings.join(' ') : '');
         } else if (isMegabyChannel(channel)) {

@@ -8,6 +8,8 @@ import { ChannelService } from '../services/channelService.js';
 import { VideoRoutingStatsService, type VideoRoutingStatsPeriod } from '../services/videoRoutingStatsService.js';
 import { listV6kModelConfigurations, previewV6kModelRequest, saveV6kModelConfiguration } from '../services/v6kModelConfigurationService.js';
 
+import { listZhiyingModelConfigurations, listZhiyingCatalogOptions, previewZhiyingModelRequest, saveZhiyingModelConfiguration } from '../services/zhiyingModelConfigurationService.js';
+
 const router = Router();
 router.use(authMiddleware, adminMiddleware);
 
@@ -100,6 +102,23 @@ router.post('/:id/v6k-models/preview', (req, res) => {
 
 router.put('/:id/v6k-models', async (req, res) => {
   try { res.json(await saveV6kModelConfiguration(Number(req.params.id), req.body?.draft, req.body?.version)); }
+  catch (error) { channelOperationError(res, error); }
+});
+
+router.get('/:id/zhiying-models', (req, res) => {
+  try { res.json(listZhiyingModelConfigurations(Number(req.params.id))); }
+  catch (error) { channelOperationError(res, error); }
+});
+router.get('/:id/zhiying-models/catalog', async (req, res) => {
+  try { res.json(await listZhiyingCatalogOptions(Number(req.params.id))); }
+  catch (error) { channelOperationError(res, error); }
+});
+router.post('/:id/zhiying-models/preview', async (req, res) => {
+  try { res.json(await previewZhiyingModelRequest(Number(req.params.id), req.body?.draft)); }
+  catch (error) { channelOperationError(res, error); }
+});
+router.put('/:id/zhiying-models', async (req, res) => {
+  try { res.json(await saveZhiyingModelConfiguration(Number(req.params.id), req.body?.draft, req.body?.version)); }
   catch (error) { channelOperationError(res, error); }
 });
 

@@ -175,7 +175,7 @@ export default function VideoStudioPage() {
 
   // Dynamic duration filtering based on model's allowedSeconds
   const currentModel = models.find(m => m.id === selectedModel);
-  const zhiying = isZhiyingVideoModel(selectedModel);
+  const zhiying = (isZhiyingVideoModel(selectedModel) || currentModel?.strictReferences);
   const limits = zhiying ? currentModel?.routingLimits : undefined;
   const projectResolution = project?.resolution || '720p', projectRatio = project?.aspectRatio || '16:9';
   // Existing segments define the project format. A new project's first segment can use the chosen model's defaults.
@@ -279,9 +279,9 @@ export default function VideoStudioPage() {
     if (!guard()) return;
     if (!currentModel?.available) { setError('所选模型当前不可用，请选择可用模型'); return; }
     if (referenceImages.length > maxRefs) { setError(`当前模型最多支持 ${maxRefs} 张参考图，请移除多余图片`); return; }
-    if (isZhiyingVideoModel(selectedModel)) {
+    if ((isZhiyingVideoModel(selectedModel) || currentModel?.strictReferences)) {
       const reasons = validateZhiyingVideoInput(selectedModel, prompt.trim(), { images: referenceImages.length, videos: 0,
-        audios: 0, outputs: 1, seconds: duration, ratio, resolution, firstFrame: false, lastFrame: false });
+        audios: 0, outputs: 1, seconds: duration, ratio, resolution, firstFrame: false, lastFrame: false }, currentModel?.promptMax && currentModel.routingLimits ? { limits: currentModel.routingLimits, promptMax: currentModel.promptMax } : undefined);
       if (reasons.length) { setError(reasons.join('；')); return; }
     }
     const unreadableImageIndexes = await findUnreadableImageIndexes(referenceImages);
@@ -514,7 +514,7 @@ export default function VideoStudioPage() {
                   const candidate = models.find(m => m.id === v);
                   if (candidate?.available === false) { setError('所选模型当前不可用'); return; }
                   if (referenceImages.length > getMaxReferenceImages(v, models)) { setError('所选模型容量不足，请先移除多余参考图'); return; }
-                  if (segments.length && isZhiyingVideoModel(v) && candidate?.routingLimits
+                  if (segments.length && (isZhiyingVideoModel(v) || candidate?.strictReferences) && candidate?.routingLimits
                     && (!candidate.routingLimits.resolutions.includes(projectResolution) || !candidate.routingLimits.ratios.includes(projectRatio))) {
                     setError(`所选模型不支持当前项目的 ${projectResolution} / ${projectRatio}，请更换模型或新建项目`); return;
                   }

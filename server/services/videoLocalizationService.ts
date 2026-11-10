@@ -1,6 +1,6 @@
 import { isHussChannel } from './hussVideoAdapter.js';
 import { fetchZhiyingVideoContent } from './zhiyingVideoAdapter.js';
-import { isZhiyingVideoModel } from '../../shared/zhiyingVideo.js';
+import { isConfiguredZhiyingModel as isZhiyingVideoModel } from './zhiyingModelRegistry.js';
 import { assertZhiyingOriginalChannel } from './zhiyingVideoExecution.js';
 import { isMegabyChannel, megabyContentUrl, fetchMegabyVideoContent, readMegabyJson } from './megabyVideoAdapter.js';
 import { zonghengTaskUrl } from './zonghengAdapter.js';
@@ -45,14 +45,15 @@ export async function downloadAndLocalizeVideo(
   onProgress?: (progress: HussDownloadProgress) => void,
   originalCredential?: string,
 ): Promise<string> {
-  if (!url && !isZhiyingVideoModel(model)) throw new Error('Upstream completed without a video URL');
-  if (url.startsWith('/uploads/') && !isZhiyingVideoModel(model)) {
+  const originalZhiying = Boolean(originalCredential) || isZhiyingVideoModel(model);
+  if (!url && !originalZhiying) throw new Error('Upstream completed without a video URL');
+  if (url?.startsWith('/uploads/') && !originalZhiying) {
     const { resolveBatchArchiveFile } = await import('./videoBatchArchive.js');
     return localVideoUrl(await prepareVideoForDelivery(resolveBatchArchiveFile(url, path.resolve('data/uploads'))));
   }
 
   const exactChannel = channelId ? ChannelService.getChannelRaw(channelId, channelApiKeyId) : null;
-  if (isZhiyingVideoModel(model) && exactChannel?.type !== 'zhiying') throw new Error('智赢原任务渠道不可用，停止下载原结果');
+  if (originalZhiying && exactChannel?.type !== 'zhiying') throw new Error('智赢原任务渠道不可用，停止下载原结果');
   const channel = exactChannel || ChannelService.findChannelForModel(model);
   if (channel?.type === 'zhiying') assertZhiyingOriginalChannel(channel, { channelId, zhiyingCredential:originalCredential });
   const authenticatedV6kContent = channel && isZonghengChannel(channel) && url === zonghengTaskUrl(channel.baseUrl, videoId) + '/content';

@@ -6,7 +6,8 @@ import { normalizeMjModelId } from '../../shared/mj.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
 import { getModelSpecifications } from './modelRoutingService.js';
 import { eq } from 'drizzle-orm';
-import { db } from '../db/index.js';
+import { db, sqlite } from '../db/index.js';
+import { zhiyingBindings } from './zhiyingModelBindings.js';
 import { models, settings } from '../db/schema.js';
 
 const ALIAS_KEY = 'public_model_name_aliases_v1';
@@ -64,6 +65,8 @@ export function publicModelName(model: Pick<Model, 'modelId' | 'displayName'>): 
 
 export function validatePublicModelName(modelId: string, name: string, excludeId?: number) {
   if (typeof name !== 'string' || !name.trim()) throw new PublicModelNameError('模型名称必须是非空文本');
+  if (name !== modelId && modelId.startsWith('Lx-') && zhiyingBindings(sqlite).some(row => row.modelId === modelId))
+    throw new PublicModelNameError('智赢后台添加的模型名称必须与本站 API 模型 ID 一致');
   const rows = db.select().from(models).all();
   const saved = aliases();
   for (const value of new Set([modelId, name])) {
