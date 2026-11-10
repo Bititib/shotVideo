@@ -94,7 +94,11 @@ vi.mock('../server/services/contentService.js', async () => {
   const { db } = await import('../server/db/index.js'); const { contents } = await import('../server/db/schema');
   return { ContentService: { save: (input: any) => Number(db.insert(contents).values({ ...input, metadata: JSON.stringify(input.metadata) }).run().lastInsertRowid) } };
 });
-vi.mock('../server/services/videoLocalizationService.js', () => ({ downloadAndLocalizeVideo: vi.fn(async () => '/uploads/videos/zongheng-test.mp4'), preferredVideoDownloadPath: (p: string) => p }));
+vi.mock('../server/services/videoLocalizationService.js', async importOriginal => {
+  const real = await importOriginal<typeof import('../server/services/videoLocalizationService.js')>();
+  return { downloadAndLocalizeVideo: vi.fn<typeof real.downloadAndLocalizeVideo>(async (...args) =>
+    args[7] ? real.downloadAndLocalizeVideo(...args) : '/uploads/videos/zongheng-test.mp4'), preferredVideoDownloadPath: (p: string) => p };
+});
 
 
 import { db, sqlite } from '../server/db/index';
@@ -151,7 +155,7 @@ beforeEach(()=>{
 afterEach(()=>{
   for(const row of db.select().from(contents).all()){
     const meta=JSON.parse(row.metadata||'{}');
-    for(const url of [row.resultUrl,...(meta.imageUrls||[])])if(typeof url==='string'&&url.includes('zongheng_')&&/\/(?:api\/)?uploads\//.test(url)){
+    for(const url of [row.resultUrl,...(meta.imageUrls||[])])if(typeof url==='string'&&/zongheng_|original_restore_/.test(url)&&/\/(?:api\/)?uploads\//.test(url)){
       const file=path.resolve('data',new URL(url,'http://local.invalid').pathname.replace(/^\/(?:api\/)?/,''));
       if(file.startsWith(path.resolve('data/uploads')+path.sep)&&fs.existsSync(file))fs.unlinkSync(file);
     }
@@ -1134,6 +1138,69 @@ describe('new KK 2.5 product, fixed per-task price',()=>{
     expect(sqlite.prepare('SELECT * FROM billing_reservations').all()).toEqual(reservation);
     expect(balance()).toBe(originalBalance);
   });
+  it.each(['huss', 'hmstudio', 'openai', 'batch-refunded', 'batch-reserved'])('restores %s originals via the site-wide endpoint without billing', async kind => {
+    const isBatch = kind.startsWith('batch-');
+    const type = isBatch ? 'openai' : kind;
+    const billingState = kind === 'batch-reserved' ? 'reserved' : 'refunded';
+    const base = type === 'huss' ? 'https://www.huss.top' : 'https://8.8.8.8';
+    const channelId = ChannelService.createChannel({ name: 'Original channel', type, baseUrl: base, apiKey: 'original-key',
+      ...(type === 'hmstudio' ? { apiKeys: [{ apiKey: 'other-key' }, { apiKey: 'original-key' }] } : {}) });
+    const channelApiKeyId = type === 'hmstudio' ? (sqlite.prepare('SELECT id FROM channel_api_keys WHERE channel_id=? AND api_key=?')
+      .get(channelId, 'original-key') as { id: number }).id : undefined;
+    const taskId = 'original-task-123';
+    const model = 'original-model';
+    const batchItemId = isBatch ? 902 : undefined;
+    const meta = { channelId, channelApiKeyId, actualChannel: type, upstreamModel: model, managedSpecification: kind !== 'openai',
+      billingStatus: billingState, batchItemId, ...(kind === 'openai' ? { videoId: taskId } : {}) };
+    const contentId = Number(db.insert(contents).values({ type: 'video', title: 'Original', userId: 1, status: 'failed',
+      modelId: model, cost: 0, metadata: JSON.stringify(meta) }).run().lastInsertRowid);
+    const endpoint = origin + '/api/admin/contents/' + contentId + '/original-video/restore';
+    const restore = (candidate = kind === 'openai' ? '' : taskId) => nativeFetch(endpoint, { method: 'POST',
+      headers: { Authorization: 'Bearer test-admin', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId: candidate, confirmedOriginal: true }) });
+    const batchState = () => sqlite.prepare('SELECT status, billing_state, charged, result_url FROM video_batch_items WHERE id=?').get(batchItemId);
+    if (batchItemId) {
+      sqlite.prepare(`INSERT INTO video_batch_items(id,batch_id,user_id,creative_index,ordinal,status,unit_cost,billing_state,receipt,content_id)
+        VALUES(?,1,1,0,0,'failed',?,?,'{}',?)`).run(batchItemId, 6, billingState, contentId + 1);
+      expect((await restore()).status).toBe(409);
+      sqlite.prepare('UPDATE video_batch_items SET content_id=? WHERE id=?').run(contentId, batchItemId);
+    }
+    const original = latest();
+    const before = balance();
+    const bytes = Buffer.from('00000014667479706d703432000000006d703432', 'hex');
+    const taskUrl = base + (type === 'hmstudio' ? '/v1/tasks/' : '/v1/videos/') + taskId;
+    const contentUrl = type === 'hmstudio' ? 'https://1.1.1.1/original.mp4' : taskUrl + '/content';
+    let state = 'failed';
+    const reads: string[] = [];
+    upstream = async (url, init) => {
+      expect(init.method ?? 'GET').toBe('GET');
+      expect(init.headers.Authorization).toBe(type === 'hmstudio' && url === contentUrl ? undefined : 'Bearer original-key');
+      reads.push(url);
+      if (url === taskUrl) return Response.json({ id: taskId, model, status: state, url: contentUrl });
+      expect(url).toBe(contentUrl);
+      return new Response(new Uint8Array(bytes), { headers: { 'Content-Type': 'video/mp4' } });
+    };
+    if (kind === 'openai') expect((await restore('different-task')).status).toBe(409);
+    expect((await restore()).status).toBe(409);
+    expect(latest()).toEqual(original);
+    expect(reads).toEqual([taskUrl]);
+    state = 'completed';
+    const response = await restore();
+    const result = await response.json() as any;
+    expect(response.status, JSON.stringify(result)).toBe(200);
+    expect(fs.readFileSync(path.resolve('data', result.resultUrl.slice(1)))).toEqual(bytes);
+    expect(latest()).toMatchObject({ status: 'completed', cost: 0, resultUrl: result.resultUrl });
+    expect(findVideoSubmissionReceipt(contentId)).toMatchObject({ upstreamTaskId: taskId, channelId });
+    expect(JSON.parse(latest().metadata)).toMatchObject({ billingStatus: billingState });
+    expect(await (await restore()).json()).toMatchObject({ alreadyRestored: true, resultUrl: result.resultUrl });
+    if (batchItemId) {
+      tickVideoBatches();
+      expect(batchState()).toMatchObject({ status: 'completed', billing_state: billingState, charged: 0, result_url: result.resultUrl });
+    }
+    expect(reads).toEqual([taskUrl, taskUrl, contentUrl]);
+    expect(balance()).toBe(before);
+  });
+
   it.each([false, true])('restores an admin-confirmed V6K original to the order without touching funds (refunded=%s)', async refunded => {
     await install();
     upstream = async (url, init) => {

@@ -6,18 +6,23 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { db, sqlite } from '../db/index.js';
 import { contents } from '../db/schema.js';
-import { canDownloadV6kOriginal } from '../../shared/videoTaskSupplement.js';
+import { canDownloadV6kOriginal, canRestoreOriginalVideo, recordedVideoTaskIds } from '../../shared/videoTaskSupplement.js';
 import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
 import { ChannelService } from './channelService.js';
 import { fetchVideoTaskResponse } from './videoPollDeadline.js';
 import { normalizeZonghengTask, readZonghengTaskResponse, zonghengTaskMetadata, zonghengTaskUrl } from './zonghengAdapter.js';
 import { zonghengTaskChannel, V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
 import { responseDiagnostic, transportDiagnostic } from './upstreamDiagnostic.js';
-import { persistVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
+import { findVideoSubmissionReceipt, persistVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
 import { videoSubmissionPending } from './videoSubmissionGuard.js';
+import { pollSpecificationVideo } from './specificationAdapters.js';
+import { assertZhiyingOriginalChannel } from './zhiyingVideoExecution.js';
+import { downloadAndLocalizeVideo } from './videoLocalizationService.js';
+import { isSnumomWanChannel, snumomContentUrl } from './snumomWanAdapter.js';
+import { isJulunChannel } from './julunMinimaxAdapter.js';
+import { activeSpecificationTasks, beginTaskIdVerification } from './videoRecoveryAction.js';
 
 const fail = (status: number, message: string) => Object.assign(new Error(message), { status });
-const restoring = new Set<number>();
 
 function originalTaskId(contentId: number, candidate: unknown) {
   const taskId = typeof candidate === 'string' ? candidate.trim() : '';
@@ -38,11 +43,48 @@ function assertEligible({ row, meta }: ReturnType<typeof originalOrder>) {
     throw fail(409, '该订单缺少原 V6K 渠道、接口地址或模型记录');
 }
 
-function savedTaskIds(meta: Record<string, any>): string[] {
-  return [meta.videoId, meta.upstreamTaskId, meta.upstream_task_id, meta.taskId, meta.task_id,
-    ...(Array.isArray(meta.upstreamTaskIds) ? meta.upstreamTaskIds : [])]
-    .filter(value => typeof value === 'string' && value.trim() && !isTaskIdPlaceholder(value))
-    .map(value => value.trim());
+function originalChannel(contentId: number, meta: Record<string, any>) {
+  const receipt = findVideoSubmissionReceipt(contentId);
+  const channelId = Number(receipt?.channelId ?? meta.channelId);
+  const keyId = Number(receipt?.channelApiKeyId ?? meta.channelApiKeyId) || null;
+  if ((meta.channelId && Number(meta.channelId) !== channelId)
+    || (meta.channelApiKeyId && Number(meta.channelApiKeyId) !== keyId))
+    throw fail(409, '原订单与回执的渠道或密钥记录不一致');
+  const channel = ChannelService.getChannelRaw(channelId, keyId);
+  if (!channel?.apiKey || (channel.type === 'hmstudio' && !keyId)
+    || (keyId && channel.apiKeyId !== keyId))
+    throw fail(409, '缺少可核验的原渠道或执行密钥');
+  if (meta.actualChannel && meta.actualChannel !== channel.type && !(meta.actualChannel === 'julun' && isJulunChannel(channel)))
+    throw fail(409, '原订单的渠道协议与当前配置不一致');
+  if (channel.type === 'zhiying' || meta.zhiyingOrder) assertZhiyingOriginalChannel(channel, meta);
+  return { channel, receipt };
+}
+
+function currentBatchItem(order: ReturnType<typeof originalOrder>) {
+  if (!order.meta.batchItemId) return null;
+  const item = sqlite.prepare('SELECT content_id,user_id,status,result_url FROM video_batch_items WHERE id=?')
+    .get(order.meta.batchItemId) as { content_id: number; user_id: number; status: string; result_url: string | null } | undefined;
+  if (!item || item.content_id !== order.row.id || item.user_id !== order.row.userId
+    || !['review', 'failed'].includes(item.status) || item.result_url)
+    throw fail(409, '批量子任务仍在运行、已有成品或已被新尝试替换，请核对当前订单');
+  return item;
+}
+
+async function saveChannelOriginal(order: ReturnType<typeof originalOrder>,
+  channel: NonNullable<ReturnType<typeof ChannelService.getChannelRaw>>, taskId: string, fileId: string) {
+  const { row, meta } = order;
+  const model = meta.actualModel || row.modelId || '';
+  try {
+    const task = await pollSpecificationVideo(channel, taskId, model, meta.referenceVideoSeconds || 0,
+      { upstreamModel: meta.upstreamModel, legacy: !meta.managedSpecification });
+    if (!['completed', 'success', 'succeeded', 'done'].includes(task.status))
+      throw fail(409, '上游原任务尚无已完成成品' + (task.error ? '：' + task.error : '（' + (task.status || '状态未知') + '）'));
+    const source = task.resultUrl || (isSnumomWanChannel(channel) ? snumomContentUrl(channel.baseUrl, taskId) : '');
+    if (!source) throw fail(409, '上游已完成，但尚未返回原视频地址');
+    return await downloadAndLocalizeVideo(source, taskId, model, channel.id, channel.apiKeyId, undefined, meta.zhiyingCredential, { channel, fileId });
+  } catch (error: any) {
+    throw fail(error?.status === 409 ? 409 : 502, transportDiagnostic(channel.type, '查询并取回原视频', error, channel.apiKey));
+  }
 }
 
 function assertOwnership(contentId: number, taskId: string, meta: Record<string, any>) {
@@ -53,7 +95,7 @@ function assertOwnership(contentId: number, taskId: string, meta: Record<string,
     if (receipts.some(r => r.content_id !== contentId || r.upstream_task_id !== taskId))
       throw fail(409, '编号与本站已有回执冲突，请核对任务归属');
   }
-  if (savedTaskIds(meta).some(value => value !== taskId))
+  if (recordedVideoTaskIds(meta).some(value => value !== taskId))
     throw fail(409, '该订单已有不同的上游任务编号');
 
   // Older orders may only have the ID in their metadata.
@@ -67,14 +109,13 @@ function assertOwnership(contentId: number, taskId: string, meta: Record<string,
       trim(json_extract(meta, '$.upstream_task_id')), trim(json_extract(meta, '$.taskId')),
       trim(json_extract(meta, '$.task_id'))
     ) OR (json_type(meta, '$.upstreamTaskIds') = 'array' AND EXISTS (
-      SELECT 1 FROM json_each(meta, '$.upstreamTaskIds') WHERE type = 'text' AND trim(value) = @taskId
+      SELECT 1 FROM json_each(meta, '$.upstreamTaskIds') WHERE type IN ('text', 'integer') AND trim(value) = @taskId
     )) LIMIT 1
   `).get({ contentId, taskId }) as { id: number } | undefined;
   if (other) throw fail(409, '该编号已登记在本站订单 #' + other.id + '，请核对任务归属');
 }
 
-async function requestCompletedOriginal(meta: Record<string, any>, taskId: string) {
-  const configured = ChannelService.getChannelRaw(Number(meta.channelId));
+async function requestCompletedOriginal(meta: Record<string, any>, taskId: string, configured = ChannelService.getChannelRaw(Number(meta.channelId))) {
   if (configured?.type !== V6K_CHANNEL_TYPE || !configured.apiKey) throw fail(409, '原 V6K 渠道或密钥不可用');
   const channel = zonghengTaskChannel(configured, meta);
   const base = new URL(channel.baseUrl);
@@ -125,69 +166,107 @@ function videoExtension(file: string): 'mp4' | 'webm' {
 }
 
 /** Store the already completed original and its receipt, outside the billing executor. */
-export async function restoreV6kAdminOriginalVideo(contentId: number, actorId: number, candidate: unknown, confirmed: unknown) {
-  const taskId = originalTaskId(contentId, candidate);
+export async function restoreAdminOriginalVideo(contentId: number, actorId: number, candidate: unknown, confirmed: unknown, v6kOnly = false) {
+  if (!Number.isSafeInteger(contentId) || contentId <= 0) throw fail(400, '订单编号无效');
   if (!Number.isSafeInteger(actorId) || actorId <= 0 || confirmed !== true)
-    throw fail(400, '请先确认该 V6K 编号确实属于原订单');
+    throw fail(400, '请先确认该上游编号确实属于原订单');
   const order = originalOrder(contentId);
   const { row, meta } = order;
+  const entered = typeof candidate === 'string' ? candidate.trim() : '';
+  const taskId = entered || recordedVideoTaskIds(meta)[0] || findVideoSubmissionReceipt(contentId)?.upstreamTaskId || '';
+  if (!/^[A-Za-z0-9_.:-]{1,256}$/.test(taskId) || ['.', '..'].includes(taskId) || isTaskIdPlaceholder(taskId))
+    throw fail(400, '请输入上游核实过的原任务编号');
   const result = (resultUrl: string, alreadyRestored: boolean) => ({
     id: contentId, status: 'completed' as const, taskId, resultUrl, alreadyRestored,
     message: alreadyRestored ? '原视频已恢复到该订单' : '已将原视频恢复到该订单，账务沿用原记录',
   });
   assertOwnership(contentId, taskId, meta);
-  if (row.status === 'completed' && row.resultUrl && meta.v6kOriginalRestoration?.taskId === taskId)
+  if (row.status === 'completed' && row.resultUrl && (meta.originalVideoRestoration || meta.v6kOriginalRestoration)?.taskId === taskId)
     return result(row.resultUrl, true);
-  assertEligible(order);
-  if (row.resultUrl || savedTaskIds(meta).length || videoSubmissionPending(contentId, meta) || restoring.has(contentId))
-    throw fail(409, '该订单已有结果、任务编号或正在处理，请刷新后核对');
+  if (!canRestoreOriginalVideo({ ...row, status: row.status || '' }, meta)
+    || videoSubmissionPending(contentId, meta) || activeSpecificationTasks.has(contentId))
+    throw fail(409, '该订单已有成品、仍在处理或当前状态不可恢复');
+  const batch = currentBatchItem(order);
+  const { channel, receipt } = originalChannel(contentId, meta);
+  const v6k = channel.type === V6K_CHANNEL_TYPE;
+  if (v6kOnly && !v6k) throw fail(409, '该订单不属于 V6K 渠道');
+  if (v6k) {
+    originalTaskId(contentId, taskId);
+    if (meta.zonghengProtocol !== 'v6k' || !meta.upstreamModel || !meta.zonghengBaseUrl)
+      throw fail(409, '该订单缺少原 V6K 接口地址或模型记录');
+  }
 
-  restoring.add(contentId);
-  const fileBase = 'zongheng_restore_' + contentId + '_' + randomUUID();
+  const release = beginTaskIdVerification(contentId);
+  const fileBase = (v6k ? 'zongheng_restore_' : 'original_restore_') + contentId + '_' + randomUUID();
   const directory = path.resolve('data/uploads/videos');
   const temp = path.join(directory, fileBase + '.part');
   let published = '';
   let committed = false;
   try {
+    const { activePolls } = await import('../routes/video.js');
+    if (activePolls.has(contentId)) throw fail(409, '后台仍在查询或保存此任务，请稍后刷新');
     await fs.promises.mkdir(directory, { recursive: true });
-    const { body, taskMetadata } = await requestCompletedOriginal(meta, taskId);
-    try {
-      await pipeline(Readable.fromWeb(body as any), fs.createWriteStream(temp, { flags: 'wx' }));
-    } catch (error: any) {
-      throw fail(502, '原视频未完整保存' + (typeof error?.code === 'string' ? '（' + error.code + '）' : ''));
+    let taskMetadata = {};
+    let resultUrl: string;
+    if (v6k) {
+      const original = await requestCompletedOriginal(meta, taskId, channel);
+      taskMetadata = original.taskMetadata;
+      try {
+        await pipeline(Readable.fromWeb(original.body as any), fs.createWriteStream(temp, { flags: 'wx' }));
+      } catch (error: any) {
+        throw fail(502, '原视频未完整保存' + (typeof error?.code === 'string' ? '（' + error.code + '）' : ''));
+      }
+      resultUrl = '/uploads/videos/' + fileBase + '.' + videoExtension(temp);
+    } else {
+      resultUrl = await saveChannelOriginal(order, channel, taskId, fileBase);
+      const name = path.posix.basename(resultUrl);
+      if (!resultUrl.startsWith('/uploads/videos/video_' + fileBase + '.') || resultUrl !== '/uploads/videos/' + name)
+        throw fail(502, '原视频未保存到独立的成品文件');
+      published = path.join(directory, name);
+      videoExtension(published);
     }
-    const name = fileBase + '.' + videoExtension(temp);
-    const resultUrl = '/uploads/videos/' + name;
     const restored = sqlite.transaction(() => {
       const current = originalOrder(contentId);
       assertOwnership(contentId, taskId, current.meta);
-      if (current.row.status === 'completed' && current.row.resultUrl && current.meta.v6kOriginalRestoration?.taskId === taskId)
+      if (current.row.status === 'completed' && current.row.resultUrl && (current.meta.originalVideoRestoration || current.meta.v6kOriginalRestoration)?.taskId === taskId)
         return result(current.row.resultUrl, true);
       if (current.row.metadata !== row.metadata || current.row.status !== row.status
         || current.row.cost !== row.cost || current.row.resultUrl !== row.resultUrl || videoSubmissionPending(contentId, current.meta))
         throw fail(409, '保存期间原订单已变化，请刷新后核对');
+      currentBatchItem(current);
+      const liveChannel = originalChannel(contentId, current.meta).channel;
+      if (liveChannel.id !== channel.id || liveChannel.type !== channel.type || liveChannel.baseUrl !== channel.baseUrl
+        || liveChannel.apiKey !== channel.apiKey || liveChannel.apiKeyId !== channel.apiKeyId)
+        throw fail(409, '保存期间原渠道配置已变化，请刷新后核对');
 
       const at = new Date().toISOString();
-      persistVideoSubmissionReceipt({ contentId, upstreamTaskId: taskId, provider: V6K_CHANNEL_TYPE,
-        channelId: Number(meta.channelId), channelApiKeyId: Number(meta.channelApiKeyId) || null });
+      persistVideoSubmissionReceipt({ contentId, upstreamTaskId: taskId, provider: receipt?.provider || channel.type,
+        channelId: channel.id, channelApiKeyId: channel.apiKeyId });
       const updated = {
         ...current.meta, ...taskMetadata, videoId: taskId, upstreamTaskId: taskId, videoSubmissionState: 'accepted',
+        channelId: channel.id, channelApiKeyId: channel.apiKeyId,
+        upstreamGenerated: true, upstreamStatus: 'completed', upstreamDeliveryPending: false,
         progress: 100, progresses: [100], completedAt: at,
         requiresReview: false, reviewKind: null, missingTaskIdReview: false, queueStatus: 'completed',
         videoDeliveryUnavailable: false, resultSaveError: null,
         recoveryPreviousError: meta.error || meta.recoveryPreviousError, error: null, failureReason: null,
-        progressText: '原视频已恢复', v6kOriginalRestoration: { taskId, actorId, at },
+        progressText: '原视频已恢复', originalVideoRestoration: { taskId, actorId, at },
+        ...(v6k ? { v6kOriginalRestoration: { taskId, actorId, at } } : {}),
       };
-      const destination = path.join(directory, name);
-      fs.renameSync(temp, destination);
-      published = destination;
+      if (v6k) {
+        const destination = path.join(directory, path.posix.basename(resultUrl));
+        fs.renameSync(temp, destination);
+        published = destination;
+      }
       db.update(contents).set({ status: 'completed', resultUrl, metadata: JSON.stringify(updated) }).where(eq(contents.id, contentId)).run();
+      if (batch) sqlite.prepare("UPDATE video_batch_items SET status='completed', result_url=?, error=NULL, finished_at=datetime('now') WHERE id=?")
+        .run(resultUrl, current.meta.batchItemId);
       return result(resultUrl, false);
     }).immediate();
-    committed = true;
+    committed = !restored.alreadyRestored;
     return restored;
   } finally {
-    restoring.delete(contentId);
+    release();
     await fs.promises.rm(temp, { force: true }).catch(() => {});
     if (!committed && published) await fs.promises.rm(published, { force: true }).catch(() => {});
   }

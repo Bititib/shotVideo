@@ -417,7 +417,8 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   if ((isSnumomWanVideoModel(exec) || exec === SNUMOM_MUSE_MODEL) && isSnumomWanChannel(c) && ['completed','failed'].includes(String(job.status).toLowerCase())) onStarting({videoId:String(id),upstreamTaskId:String(id),snumomInitialTask:job});
   return String(id);
 }
-export async function pollSpecificationVideo(channel: any, taskId: string, executionModel?: string, referenceVideoSeconds = 0) {
+export async function pollSpecificationVideo(channel: any, taskId: string, executionModel?: string, referenceVideoSeconds = 0,
+  original?: { upstreamModel?: string; legacy?: boolean }) {
   if (channel.type === 'zhiying') return pollZhiyingVideo(channel, taskId, isZhiyingVideoModel(executionModel) ? executionModel : undefined);
   if (isSiYueTianManagedVideoModel(executionModel)) return pollSiYueTianMinimax(channel, taskId);
   if (isZonghengChannel(channel)) {
@@ -436,9 +437,18 @@ export async function pollSpecificationVideo(channel: any, taskId: string, execu
     : isMiaowuChannel(channel) ? miaowuVideoTaskUrl(channel.baseUrl, taskId)
     : /sudashuiapi\.com/i.test(base) || channel.type === 'sudashui' ? base + '/v1/video/generations/' + encodeURIComponent(taskId)
     : base + '/v1/videos/' + encodeURIComponent(taskId);
-  const response = await fetch(url, { headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(30_000) });
+  const response = await fetch(url, { headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(30_000),
+    ...(original ? { redirect: 'error' as const } : {}) });
   if (!response.ok) throw new Error(await responseDiagnostic(channel.type || 'custom', '视频查询 task_id=' + taskId, response, channel.apiKey));
   const raw = await diagnosticJson(channel.type || 'OpenAI-compatible', '视频查询 task_id=' + taskId, response, channel.apiKey);
+  if (original) {
+    const data = raw?.data && !Array.isArray(raw.data) ? raw.data : raw;
+    const returnedId = data?.task_id ?? data?.taskId ?? data?.id ?? raw?.task_id ?? raw?.id;
+    if (returnedId != null && String(returnedId) !== taskId) throw new Error('上游返回的原任务编号不一致');
+    const returnedModel = data?.model ?? raw?.model;
+    if (original.upstreamModel && typeof returnedModel === 'string' && returnedModel !== original.upstreamModel)
+      throw new Error('上游返回的模型与原订单不一致');
+  }
   if (isHayaChannel(channel)) return normalizeHayaTask(raw, channel.baseUrl, taskId);
   if (isVideoQueryErrorPayload(raw)) throw new Error(upstreamDiagnostic(channel.type || 'OpenAI-compatible', '视频查询异常 task_id=' + taskId, raw, channel.apiKey, response.status));
   if (isSnumomWanChannel(channel)) {
@@ -451,8 +461,11 @@ export async function pollSpecificationVideo(channel: any, taskId: string, execu
   if (isMiaowuChannel(channel)) return normalizeMiaowuVideoTask(raw, channel.baseUrl, taskId);
   if (isSnumomWanChannel(channel)) return normalizeSnumomWanTask(raw, referenceVideoSeconds, executionModel);
   const data = raw.data && !Array.isArray(raw.data) ? raw.data : raw;
-  return { status: String(data.status || raw.status || '').toLowerCase(), progress: Number(data.progress || data.progress_pct || 0),
-    resultUrl: String(data.url || data.video_url || data.result_url || data.output?.url || data.output?.video_url || data.metadata?.url || data.result?.url || data.result?.video_url || (Array.isArray(data.data) ? data.data[0]?.url : '') || ''),
+  const status = String(data.status || raw.status || '').toLowerCase();
+  const legacyContent = original?.legacy && ['completed', 'success'].includes(status) && !url.includes('/v1/video/generations/')
+    ? base + '/v1/files/video?id=' + encodeURIComponent(taskId) : '';
+  return { status, progress: Number(data.progress || data.progress_pct || 0),
+    resultUrl: String(data.url || data.video_url || data.result_url || data.output?.url || data.output?.video_url || data.metadata?.url || data.result?.url || data.result?.video_url || (Array.isArray(data.data) ? data.data[0]?.url : '') || legacyContent),
     error: data.error || data.message || data.error_code || data.code ? upstreamDiagnostic(channel.type || 'OpenAI-compatible', '任务 task_id=' + taskId, data, channel.apiKey, response.status, response.headers.get('x-request-id') || undefined) : '' };
 }
 function mjResponseEvidence(payload: any, headers: Headers, httpStatus: number,

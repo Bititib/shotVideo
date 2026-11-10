@@ -30,18 +30,18 @@ async function checkResponse(response: Response, channel: HussChannel) {
 
 /** One writer per original task in this app process. Persistent checkpoints survive app restart. */
 export function saveHussVideo(channel: HussChannel & { id?: number; apiKeyId?: number | null }, taskId: string,
-  finalPrefix: string, onProgress?: (progress: HussDownloadProgress) => void): Promise<string> {
+  finalPrefix: string, onProgress?: (progress: HussDownloadProgress) => void, originalOnly = false): Promise<string> {
   const identity = crypto.createHash('sha256').update(JSON.stringify([channel.baseUrl, channel.id, channel.apiKeyId, taskId, finalPrefix])).digest('hex');
   const existing = active.get(identity);
   if (existing) return existing;
-  const pending = save(channel, taskId, finalPrefix, identity, onProgress);
+  const pending = save(channel, taskId, finalPrefix, identity, onProgress, originalOnly);
   active.set(identity, pending);
   void pending.finally(() => { if (active.get(identity) === pending) active.delete(identity); }).catch(() => {});
   return pending;
 }
 
 async function save(channel: HussChannel, taskId: string, finalPrefix: string, identity: string,
-  onProgress?: (progress: HussDownloadProgress) => void): Promise<string> {
+  onProgress: ((progress: HussDownloadProgress) => void) | undefined, originalOnly: boolean): Promise<string> {
   const directory = path.resolve('data/video-downloads'); // Not under publicly served uploads.
   fs.mkdirSync(directory, { recursive: true });
   const part = path.join(directory, `${identity}.part`);
@@ -63,7 +63,7 @@ async function save(channel: HussChannel, taskId: string, finalPrefix: string, i
   };
   for (const extension of ['mp4', 'webm']) {
     const final = finalPrefix + '.' + extension;
-    if (fs.existsSync(final) && fs.statSync(final).size > 0) return prepareVideoForDelivery(final);
+    if (fs.existsSync(final) && fs.statSync(final).size > 0) return originalOnly ? final : prepareVideoForDelivery(final);
   }
   try {
     if (!(receipt.complete && receipt.total === size())) {
@@ -126,13 +126,14 @@ async function save(channel: HussChannel, taskId: string, finalPrefix: string, i
       receipt.complete = false; receipt.etag = null; persist();
       throw new Error('HUSS 成品下载未返回可识别的视频文件');
     }
-    const playable = await prepareVideoForDelivery(part);
+    const playable = originalOnly ? part : await prepareVideoForDelivery(part);
     const final = finalPrefix + (webm && playable === part ? '.webm' : '.mp4');
     fs.renameSync(playable, final);
     fs.rmSync(part, { force: true }); fs.rmSync(checkpoint, { force: true });
     return final;
   } catch (error) {
     report('retrying');
+    if (originalOnly) await Promise.allSettled([part, checkpoint, checkpoint + '.tmp'].map(file => fs.promises.rm(file, { force: true })));
     throw error; // The existing worker backoff retries this same task; never POST or settle/refund here.
   }
 }

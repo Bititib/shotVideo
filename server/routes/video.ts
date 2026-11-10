@@ -114,6 +114,7 @@ import { videoRequestNotSent, explicitVideoCreateError } from '../services/video
 import { isSnumomSubmissionRejection } from '../services/snumomSubmissionRejection.js';
 import { readVideoRecoveryState, reviewMissingVideoTaskId, reviewUncertainVideoTask, savedVideoTaskId } from '../services/videoRecoveryState.js';
 import { claimVideoSubmission, acceptVideoSubmission, endVideoSubmission, releaseVideoSubmission, videoSubmissionPending, videoSubmissionPreparation } from '../services/videoSubmissionGuard.js';
+import { taskIdVerificationActive } from '../services/videoRecoveryAction.js';
 import { canCancelVideoContent } from '../services/videoCancellationEligibility.js';
 import {
   buildSudaShuiVideoPayload,
@@ -3565,6 +3566,7 @@ function adoptHmStudioProcessingContent(contentId: number, record: any): HmStudi
 }
 
 export function resumePollForTask(contentId: number, record: any): Promise<void> {
+  if (taskIdVerificationActive(contentId)) return Promise.resolve();
   if (liveVideoRequests.has(contentId)) return Promise.resolve();
   if (hayaLiveRequests.has(contentId) || zonghengLiveRequests.has(contentId)) return Promise.resolve();
   record = readVideoRecoveryState(contentId);
@@ -4146,6 +4148,7 @@ export function resumeAllPendingVideoTasks() {
 
     pendingTasks.forEach((record: any) => {
       const contentId = record.id;
+      if (taskIdVerificationActive(contentId)) return;
       if (liveVideoRequests.has(contentId)) return;
       if (hayaLiveRequests.has(contentId) || zonghengLiveRequests.has(contentId)) return;
       record = readVideoRecoveryState(contentId);
