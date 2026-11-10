@@ -248,7 +248,7 @@ export default function ContentsPage() {
   };
 
   const handleRestoreOriginalVideo = async (item: ContentItem, taskId: string) => {
-    if (!window.confirm(`确认上游已核实该编号属于订单 #${item.id}？将把已完成的原视频和任务编号保存到该订单，账务沿用原记录。`)) return;
+    if (!window.confirm(`确认上游已核实该编号属于订单 #${item.id}？将取回原视频供用户查看和下载，然后结算原订单。已有预扣不重复扣款；已退款按原金额补扣原账户。重复操作不再扣费。`)) return;
     setRecoveringId(item.id);
     try {
       const result = await adminApi.restoreContentOriginalVideo(item.id, taskId);
@@ -925,7 +925,8 @@ export default function ContentsPage() {
                       {showOriginalRestoration && (
                         <div className="mt-3 space-y-2 rounded-lg border border-indigo-400/20 bg-indigo-500/[0.06] p-3">
                           <div className="font-medium text-indigo-300">原视频恢复</div>
-                          <p className="text-[11px] leading-relaxed text-zinc-400">使用上游核实过的原订单任务编号。恢复会将已完成的视频和编号保存到本单，账务沿用原记录。</p>
+                          <p className="text-[11px] leading-relaxed text-zinc-400">填写属于本单的原任务编号。完整取回后交付到用户订单，并结算原费用：已有预扣不再扣款，已退款按原金额补扣一次。归属于其他订单的编号不能使用。</p>
+                          {previewMeta.originalVideoBillingPending && <p className="text-xs text-amber-500">视频已交付，费用待结算：{previewMeta.originalVideoBillingError}。再次操作仅重试结算。</p>}
                           {!savedOriginalTaskId && <input aria-label="补录上游任务 ID" placeholder="粘贴上游任务 ID"
                             value={recoveryTaskIdInput}
                             onChange={event => setRecoveryTaskIdInput(event.target.value)}
@@ -936,13 +937,13 @@ export default function ContentsPage() {
                               disabled={recoveringId !== null || downloadingOriginalId !== null || confirmingUnacceptedId === previewItem.id || !originalTaskIdInput || isTaskIdPlaceholder(originalTaskIdInput)}
                               onClick={() => { void handleRestoreOriginalVideo(previewItem, originalTaskIdInput); }}
                               className="rounded-lg border border-indigo-400/30 bg-indigo-500/20 px-3 py-2 text-xs font-medium text-indigo-200 disabled:opacity-40">
-                              {recoveringId === previewItem.id ? '正在恢复原视频…' : savedOriginalTaskId ? '恢复原视频到订单' : '补录并恢复到订单'}
+                              {recoveringId === previewItem.id ? '正在处理…' : previewMeta.originalVideoBillingPending ? '重试原订单结算' : savedOriginalTaskId ? '恢复原视频到订单' : '补录并恢复到订单'}
                             </button>
                             {showV6kOriginalDownload && <button type="button"
                               disabled={downloadingOriginalId !== null || recoveringId === previewItem.id || !/^task_[A-Za-z0-9_-]{1,250}$/.test(originalTaskIdInput)}
                               onClick={() => { void handleDownloadOriginalV6k(previewItem, originalTaskIdInput); }}
                               className="rounded-lg border border-indigo-400/25 bg-indigo-500/15 px-3 py-2 text-xs text-indigo-300 disabled:opacity-40">
-                              {downloadingOriginalId === previewItem.id ? '正在查询和下载…' : '只下载原视频'}
+                              {downloadingOriginalId === previewItem.id ? '正在查询和下载…' : '仅管理员下载（不结算）'}
                             </button>}
                           </div>
                         </div>

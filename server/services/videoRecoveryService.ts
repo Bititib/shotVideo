@@ -96,7 +96,7 @@ function upstreamTaskId(metadata: Record<string, any>): string {
 
 /** Must run inside the same transaction as the content transition. Never move a
  * recovered charge to another balance just because the user changed organization. */
-function chargeRefundedVideo(record: any, metadata: Record<string, any>, amount: number) {
+export function chargeRefundedVideo(record: any, metadata: Record<string, any>, amount: number) {
   return withFundContext(sqlite, { kind: 'charge', contentId: record.id, operation: 'generate_video_recovery' },
     () => chargeOriginalRefundSource(record, metadata, amount));
 }
@@ -109,6 +109,7 @@ function chargeOriginalRefundSource(record: any, metadata: Record<string, any>, 
   if (target === 'api_token') {
     const token = db.select().from(apiTokens).where(eq(apiTokens.id, tokenId)).get();
     if (!token || token.userId !== record.userId) throw { status: 409, message: '原 API Token 不存在或归属不一致' };
+    if (token.balance === -1) throw { status: 409, message: '原 API Token 计费方式已变化，停止补扣' };
     TokenService.deductBalance(tokenId, amount);
     metadata.billingSource = 'token';
   } else {
@@ -138,7 +139,7 @@ function normalizeRecoveryDays(value: unknown): number {
   return Math.min(30, Math.max(1, days));
 }
 
-function recoveryChargeAmount(record: any, metadata: Record<string, any>): number {
+export function recoveryChargeAmount(record: any, metadata: Record<string, any>): number {
   if (metadata.queueRefunded !== true && metadata.billingStatus !== 'refunded')
     throw { status: 409, message: '缺少明确退款凭据，停止补扣；请核实原任务账务' };
   const refundedAmount = Number(metadata.refundAmount);

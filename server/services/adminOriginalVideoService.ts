@@ -21,6 +21,7 @@ import { downloadAndLocalizeVideo } from './videoLocalizationService.js';
 import { isSnumomWanChannel, snumomContentUrl } from './snumomWanAdapter.js';
 import { isJulunChannel } from './julunMinimaxAdapter.js';
 import { activeSpecificationTasks, beginTaskIdVerification } from './videoRecoveryAction.js';
+import { settleOriginalVideoBilling } from './originalVideoBilling.js';
 
 const fail = (status: number, message: string) => Object.assign(new Error(message), { status });
 
@@ -92,8 +93,10 @@ function assertOwnership(contentId: number, taskId: string, meta: Record<string,
     const receipts = sqlite.prepare(
       'SELECT content_id,upstream_task_id FROM video_submission_receipts WHERE content_id=? OR upstream_task_id=?'
     ).all(contentId, taskId) as { content_id: number; upstream_task_id: string }[];
-    if (receipts.some(r => r.content_id !== contentId || r.upstream_task_id !== taskId))
-      throw fail(409, '编号与本站已有回执冲突，请核对任务归属');
+    const owner = receipts.find(r => r.upstream_task_id === taskId && r.content_id !== contentId);
+    if (owner) throw fail(409, `编号与本站已有回执冲突：该任务已登记在订单 #${owner.content_id}，不能恢复到 #${contentId}。请打开 #${owner.content_id} 查看原视频，或核对本单的正确任务编号。`);
+    const existing = receipts.find(r => r.content_id === contentId && r.upstream_task_id !== taskId);
+    if (existing) throw fail(409, `订单 #${contentId} 已保存另一任务编号 ${existing.upstream_task_id}，不能覆盖原回执。请使用已保存的编号恢复。`);
   }
   if (recordedVideoTaskIds(meta).some(value => value !== taskId))
     throw fail(409, '该订单已有不同的上游任务编号');
@@ -165,7 +168,25 @@ function videoExtension(file: string): 'mp4' | 'webm' {
   throw fail(502, 'V6K 成品文件为空或格式无效');
 }
 
-/** Store the already completed original and its receipt, outside the billing executor. */
+function settleDeliveredOriginal(row: ReturnType<typeof originalOrder>['row'], updated: Record<string, any>, resultUrl: string) {
+  let cost = row.cost, chargedAmount = 0;
+  try {
+    const settled = settleOriginalVideoBilling(row, updated);
+    updated = settled.metadata; cost = settled.cost; chargedAmount = settled.chargedAmount;
+    Object.assign(updated, { originalVideoBillingPending: false, originalVideoBillingError: null, requiresReview: false, reviewKind: null });
+  } catch (error: any) {
+    // Keep the completed file and receipt; an accounting problem must not lose the video.
+    Object.assign(updated, { originalVideoBillingPending: true, originalVideoBillingError: error.message || '原订单结算失败',
+      requiresReview: true, reviewKind: 'settlement', progressText: '原视频已恢复，费用待结算' });
+  }
+  db.update(contents).set({ status: 'completed', cost, resultUrl, metadata: JSON.stringify(updated) }).where(eq(contents.id, row.id)).run();
+  if (updated.batchItemId) sqlite.prepare("UPDATE video_batch_items SET status='completed',result_url=?,error=NULL,finished_at=datetime('now') WHERE id=?")
+    .run(resultUrl, updated.batchItemId);
+  return { billingPending: updated.originalVideoBillingPending === true, chargedAmount, cost,
+    billingError: updated.originalVideoBillingError || null };
+}
+
+/** Restore only the original, then settle its original ledger once the file is available. */
 export async function restoreAdminOriginalVideo(contentId: number, actorId: number, candidate: unknown, confirmed: unknown, v6kOnly = false) {
   if (!Number.isSafeInteger(contentId) || contentId <= 0) throw fail(400, '订单编号无效');
   if (!Number.isSafeInteger(actorId) || actorId <= 0 || confirmed !== true)
@@ -176,17 +197,31 @@ export async function restoreAdminOriginalVideo(contentId: number, actorId: numb
   const taskId = entered || recordedVideoTaskIds(meta)[0] || findVideoSubmissionReceipt(contentId)?.upstreamTaskId || '';
   if (!/^[A-Za-z0-9_.:-]{1,256}$/.test(taskId) || ['.', '..'].includes(taskId) || isTaskIdPlaceholder(taskId))
     throw fail(400, '请输入上游核实过的原任务编号');
-  const result = (resultUrl: string, alreadyRestored: boolean) => ({
+  const result = (resultUrl: string, alreadyRestored: boolean, billing?: ReturnType<typeof settleDeliveredOriginal>) => ({
     id: contentId, status: 'completed' as const, taskId, resultUrl, alreadyRestored,
-    message: alreadyRestored ? '原视频已恢复到该订单' : '已将原视频恢复到该订单，账务沿用原记录',
+    ...billing,
+    message: billing?.billingPending ? '视频已恢复到用户订单，费用待结算：' + billing.billingError
+      : alreadyRestored ? '原视频已恢复并结算，无需重复扣费'
+      : '原视频已恢复到用户订单，' + (billing?.chargedAmount ? `已按原金额补扣 ¥${billing.chargedAmount.toFixed(2)}` : '已使用原扣款结算，未重复扣费'),
   });
   assertOwnership(contentId, taskId, meta);
-  if (row.status === 'completed' && row.resultUrl && (meta.originalVideoRestoration || meta.v6kOriginalRestoration)?.taskId === taskId)
-    return result(row.resultUrl, true);
+  if (row.status === 'completed' && row.resultUrl && (meta.originalVideoRestoration || meta.v6kOriginalRestoration)?.taskId === taskId) {
+    const release = beginTaskIdVerification(contentId);
+    try {
+      return sqlite.transaction(() => {
+        const current = originalOrder(contentId);
+        assertOwnership(contentId, taskId, current.meta);
+        if (current.meta.originalVideoBilling && !current.meta.originalVideoBillingPending) return result(row.resultUrl!, true);
+        if (!/^\/uploads\/videos\/(?:zongheng_restore_|video_original_restore_)\w[\w.-]*\.(?:mp4|webm)$/.test(row.resultUrl!)
+          || !fs.existsSync(path.resolve('data', row.resultUrl!.slice(1)))) throw fail(409, '已恢复的本地原视频文件不存在，请先核对文件');
+        return result(row.resultUrl!, false, settleDeliveredOriginal(current.row, current.meta, row.resultUrl!));
+      }).immediate();
+    } finally { release(); }
+  }
   if (!canRestoreOriginalVideo({ ...row, status: row.status || '' }, meta)
     || videoSubmissionPending(contentId, meta) || activeSpecificationTasks.has(contentId))
     throw fail(409, '该订单已有成品、仍在处理或当前状态不可恢复');
-  const batch = currentBatchItem(order);
+  currentBatchItem(order);
   const { channel, receipt } = originalChannel(contentId, meta);
   const v6k = channel.type === V6K_CHANNEL_TYPE;
   if (v6kOnly && !v6k) throw fail(409, '该订单不属于 V6K 渠道');
@@ -258,10 +293,7 @@ export async function restoreAdminOriginalVideo(contentId: number, actorId: numb
         fs.renameSync(temp, destination);
         published = destination;
       }
-      db.update(contents).set({ status: 'completed', resultUrl, metadata: JSON.stringify(updated) }).where(eq(contents.id, contentId)).run();
-      if (batch) sqlite.prepare("UPDATE video_batch_items SET status='completed', result_url=?, error=NULL, finished_at=datetime('now') WHERE id=?")
-        .run(resultUrl, current.meta.batchItemId);
-      return result(resultUrl, false);
+      return result(resultUrl, false, settleDeliveredOriginal(current.row, updated, resultUrl));
     }).immediate();
     committed = !restored.alreadyRestored;
     return restored;

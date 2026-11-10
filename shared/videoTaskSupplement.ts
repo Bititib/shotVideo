@@ -9,6 +9,8 @@ export function canDownloadV6kOriginal(record: { type: string; status: string },
 }
 
 export function canRestoreOriginalVideo(record: { type: string; status: string; resultUrl?: unknown }, meta: Record<string, any>): boolean {
+  if (record.type === 'video' && record.status === 'completed' && record.resultUrl && (meta.originalVideoRestoration || meta.v6kOriginalRestoration))
+    return meta.originalVideoBillingPending === true || !meta.originalVideoBilling;
   return record.type === 'video' && !record.resultUrl
     && (['failed', 'error', 'review'].includes(record.status)
       || record.status === 'processing' && Boolean(videoReviewKind(meta) || meta.videoDeliveryUnavailable));

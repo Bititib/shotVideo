@@ -113,7 +113,7 @@ it.each(['failed', 'processing'])('keeps the read-only V6K download separate fro
   const dialog = await screen.findByRole('dialog');
   expect(within(dialog).queryByRole('button', { name: '补录并重新获取' })).toBeNull();
   fireEvent.change(within(dialog).getByLabelText('补录上游任务 ID'), { target: { value: 'task_original' } });
-  fireEvent.click(within(dialog).getByRole('button', { name: '只下载原视频' }));
+  fireEvent.click(within(dialog).getByRole('button', { name: '仅管理员下载（不结算）' }));
   await waitFor(() => expect(window.alert).toHaveBeenCalledWith('上游任务状态为 in_progress'));
   expect(adminApi.downloadContentOriginalV6k).toHaveBeenCalledWith(13360, 'task_original');
   expect(adminApi.restoreContentOriginalVideo).not.toHaveBeenCalled();
@@ -138,10 +138,29 @@ it('restores a verified V6K original through the dedicated endpoint and refreshe
   fireEvent.change(within(dialog).getByLabelText('补录上游任务 ID'), { target: { value: 'task_original' } });
   fireEvent.click(within(dialog).getByRole('button', { name: '补录并恢复到订单' }));
   await waitFor(() => expect(dialog.querySelector('video')).not.toBeNull());
+  expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('已退款按原金额补扣原账户'));
   expect(adminApi.restoreContentOriginalVideo).toHaveBeenCalledExactlyOnceWith(13360, 'task_original');
   expect(adminApi.downloadContentOriginalV6k).not.toHaveBeenCalled();
   expect(adminApi.saveContentRecoveryTaskId).not.toHaveBeenCalled();
   expect(adminApi.recoverContentUpstream).not.toHaveBeenCalled();
+});
+
+it('keeps a delivered video visible and exposes settlement retry when the original balance is insufficient', async () => {
+  const order = { ...item, status: 'completed', resultUrl: '/uploads/videos/original.mp4', metadata: JSON.stringify({
+    channelId: 21, videoId: 'task_original', originalVideoRestoration: { taskId: 'task_original' },
+    originalVideoBillingPending: true, originalVideoBillingError: '原退款账户余额不足',
+  }) };
+  vi.mocked(adminApi.getContents).mockResolvedValue({ items: [order], total: 1 } as any);
+  vi.mocked(adminApi.getContent).mockResolvedValue(order as any);
+  vi.mocked(adminApi.restoreContentOriginalVideo).mockResolvedValue({ id: item.id, status: 'completed', taskId: 'task_original', resultUrl: order.resultUrl, message: '已结算' });
+  render(<MemoryRouter><ContentsPage /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: '查看本地记录 13360 详情' }));
+  const dialog = await screen.findByRole('dialog');
+  expect(dialog.querySelector('video')).not.toBeNull();
+  expect(within(dialog).getByText(/原退款账户余额不足/)).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole('button', { name: '重试原订单结算' }));
+  await waitFor(() => expect(adminApi.restoreContentOriginalVideo).toHaveBeenCalledWith(item.id, 'task_original'));
+  expect(adminApi.downloadContentOriginalV6k).not.toHaveBeenCalled();
 });
 
 it.each(['wrong-id','未取得上游任务 ID'])('withdraws an old unverified manual ID %s, then exposes supplement and confirmed refund without charging', async taskId => {

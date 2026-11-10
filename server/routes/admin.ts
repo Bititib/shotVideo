@@ -390,6 +390,7 @@ router.put('/contents/:id/recovery-task-id', async (req: AuthRequest, res: Respo
 
 router.post(['/contents/:id/original-video/restore', '/contents/:id/v6k-original-video/restore'], async (req: AuthRequest, res: Response) => {
   try {
+    if (req.body?.confirmedSettlement !== true) throw { status: 400, message: '请刷新页面并确认原订单结算规则：原预扣不重复扣款，已退款按原金额补扣一次' };
     const { restoreAdminOriginalVideo } = await import('../services/adminOriginalVideoService.js');
     res.json(await restoreAdminOriginalVideo(Number(req.params.id), req.userId!, req.body?.taskId, req.body?.confirmedOriginal,
       req.path.endsWith('/v6k-original-video/restore')));

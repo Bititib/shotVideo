@@ -1131,14 +1131,14 @@ describe('new KK 2.5 product, fixed per-task price',()=>{
     sqlite.prepare('INSERT INTO video_submission_receipts(content_id,upstream_task_id) VALUES(?,?)').run(original.id+1000,taskId);
     const conflict=await nativeFetch(endpoint,{headers});
     expect(conflict.status).toBe(409);
-    expect(await conflict.text()).toContain('已有回执冲突');
+    expect(await conflict.text()).toContain('已登记在订单 #' + (original.id + 1000));
     expect(calls).toEqual([url,url,url,url+'/content']);
     expect(latest()).toEqual(original);
     expect(findVideoSubmissionReceipt(original.id)).toBeNull();
     expect(sqlite.prepare('SELECT * FROM billing_reservations').all()).toEqual(reservation);
     expect(balance()).toBe(originalBalance);
   });
-  it.each(['huss', 'hmstudio', 'openai', 'batch-refunded', 'batch-reserved'])('restores %s originals via the site-wide endpoint without billing', async kind => {
+  it.each(['huss', 'hmstudio', 'openai', 'batch-refunded', 'batch-reserved'])('restores %s originals and settles the original order once', async kind => {
     const isBatch = kind.startsWith('batch-');
     const type = isBatch ? 'openai' : kind;
     const billingState = kind === 'batch-reserved' ? 'reserved' : 'refunded';
@@ -1151,17 +1151,17 @@ describe('new KK 2.5 product, fixed per-task price',()=>{
     const model = 'original-model';
     const batchItemId = isBatch ? 902 : undefined;
     const meta = { channelId, channelApiKeyId, actualChannel: type, upstreamModel: model, managedSpecification: kind !== 'openai',
-      billingStatus: billingState, batchItemId, ...(kind === 'openai' ? { videoId: taskId } : {}) };
+      billingStatus: billingState, batchItemId, refundAmount: 6, refundTarget: 'user_balance', ...(kind === 'openai' ? { videoId: taskId } : {}) };
     const contentId = Number(db.insert(contents).values({ type: 'video', title: 'Original', userId: 1, status: 'failed',
       modelId: model, cost: 0, metadata: JSON.stringify(meta) }).run().lastInsertRowid);
     const endpoint = origin + '/api/admin/contents/' + contentId + '/original-video/restore';
     const restore = (candidate = kind === 'openai' ? '' : taskId) => nativeFetch(endpoint, { method: 'POST',
       headers: { Authorization: 'Bearer test-admin', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ taskId: candidate, confirmedOriginal: true }) });
+      body: JSON.stringify({ taskId: candidate, confirmedOriginal: true, confirmedSettlement: true }) });
     const batchState = () => sqlite.prepare('SELECT status, billing_state, charged, result_url FROM video_batch_items WHERE id=?').get(batchItemId);
     if (batchItemId) {
       sqlite.prepare(`INSERT INTO video_batch_items(id,batch_id,user_id,creative_index,ordinal,status,unit_cost,billing_state,receipt,content_id)
-        VALUES(?,1,1,0,0,'failed',?,?,'{}',?)`).run(batchItemId, 6, billingState, contentId + 1);
+        VALUES(?,1,1,0,0,'failed',?,?,'{"source":"user"}',?)`).run(batchItemId, 6, billingState, contentId + 1);
       expect((await restore()).status).toBe(409);
       sqlite.prepare('UPDATE video_batch_items SET content_id=? WHERE id=?').run(contentId, batchItemId);
     }
@@ -1189,19 +1189,19 @@ describe('new KK 2.5 product, fixed per-task price',()=>{
     const result = await response.json() as any;
     expect(response.status, JSON.stringify(result)).toBe(200);
     expect(fs.readFileSync(path.resolve('data', result.resultUrl.slice(1)))).toEqual(bytes);
-    expect(latest()).toMatchObject({ status: 'completed', cost: 0, resultUrl: result.resultUrl });
+    expect(latest()).toMatchObject({ status: 'completed', cost: 6, resultUrl: result.resultUrl });
     expect(findVideoSubmissionReceipt(contentId)).toMatchObject({ upstreamTaskId: taskId, channelId });
-    expect(JSON.parse(latest().metadata)).toMatchObject({ billingStatus: billingState });
+    expect(JSON.parse(latest().metadata)).toMatchObject({ billingStatus: 'settled', originalVideoBillingPending: false });
     expect(await (await restore()).json()).toMatchObject({ alreadyRestored: true, resultUrl: result.resultUrl });
     if (batchItemId) {
       tickVideoBatches();
-      expect(batchState()).toMatchObject({ status: 'completed', billing_state: billingState, charged: 0, result_url: result.resultUrl });
+      expect(batchState()).toMatchObject({ status: 'completed', billing_state: 'charged', charged: 6, result_url: result.resultUrl });
     }
     expect(reads).toEqual([taskUrl, taskUrl, contentUrl]);
-    expect(balance()).toBe(before);
+    expect(balance()).toBe(before - (billingState === 'refunded' ? 6 : 0));
   });
 
-  it.each([false, true])('restores an admin-confirmed V6K original to the order without touching funds (refunded=%s)', async refunded => {
+  it.each([false, true])('restores an admin-confirmed V6K original and settles only once (refunded=%s)', async refunded => {
     await install();
     upstream = async (url, init) => {
       expect(url).toBe('https://www.v6k.top/v1/videos');
@@ -1222,7 +1222,7 @@ describe('new KK 2.5 product, fixed per-task price',()=>{
     const requestRestore = (confirmedOriginal: boolean, admin = true) => nativeFetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: admin ? 'Bearer test-admin' : 'Bearer test' },
-      body: JSON.stringify({ taskId, confirmedOriginal }),
+      body: JSON.stringify({ taskId, confirmedOriginal, confirmedSettlement: true }),
     });
     const bytes = Buffer.from('00000014667479706d703432000000006d703432', 'hex');
     const calls: string[] = [];
@@ -1254,6 +1254,10 @@ describe('new KK 2.5 product, fixed per-task price',()=>{
     };
     expect((await requestRestore(true, false)).status).toBe(403);
     expect((await requestRestore(false)).status).toBe(400);
+    const staleClient = await nativeFetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-admin' },
+      body: JSON.stringify({ taskId, confirmedOriginal: true }) });
+    expect(staleClient.status).toBe(400);
+    expect(await staleClient.text()).toContain('请刷新页面');
     expect(calls).toEqual([]);
 
     if (!refunded) {
@@ -1302,10 +1306,10 @@ describe('new KK 2.5 product, fixed per-task price',()=>{
     expect(restored).toMatchObject({ id: original.id, status: 'completed', taskId, alreadyRestored: false });
     const file = path.resolve('data', restored.resultUrl.slice(1));
     expect(fs.readFileSync(file)).toEqual(bytes);
-    expect(latest()).toMatchObject({ status: 'completed', resultUrl: restored.resultUrl, cost: original.cost });
+    expect(latest()).toMatchObject({ status: 'completed', resultUrl: restored.resultUrl, cost: 6.5 });
     expect(JSON.parse(latest().metadata)).toMatchObject({
       videoId: taskId, upstreamTaskId: taskId, upstreamStatus: 'completed', requiresReview: false,
-      billingStatus: originalMeta.billingStatus, billingReservationId: originalMeta.billingReservationId,
+      billingStatus: 'settled', billingReservationId: originalMeta.billingReservationId,
       v6kOriginalRestoration: { taskId, actorId: 1 },
     });
     expect(findVideoSubmissionReceipt(original.id)).toMatchObject({ upstreamTaskId: taskId, channelId: originalMeta.channelId });
@@ -1314,9 +1318,74 @@ describe('new KK 2.5 product, fixed per-task price',()=>{
     expect(await repeated.json()).toMatchObject({ alreadyRestored: true, resultUrl: restored.resultUrl });
     resumeSpecificationTasks();
     expect(calls).toEqual([url, url + '/content']);
-    expect(sqlite.prepare('SELECT * FROM billing_reservations').all()).toEqual(reservation);
-    expect(sqlite.prepare('SELECT * FROM fund_ledger').all()).toEqual(ledger);
-    expect(balance()).toBe(originalBalance);
+    expect(sqlite.prepare('SELECT state,actual FROM billing_reservations').all()).toEqual([{ state: 'settled', actual: 6.5 }]);
+    const entries = sqlite.prepare('SELECT * FROM fund_ledger').all();
+    expect(entries.length).toBe(ledger.length + (refunded ? 1 : 0));
+    expect(balance()).toBe(originalBalance - (refunded ? 6.5 : 0));
+  });
+  it.each(['user', 'org', 'token', 'unlimited', 'insufficient', 'wrong-owner', 'changed-token', 'free'])
+    ('delivers the original and settles a refunded %s ledger, preserving files on settlement errors', async kind => {
+    const { ensureBillingReservations } = await import('../server/services/billingReservation');
+    ensureBillingReservations();
+    const token = ['token', 'unlimited', 'changed-token'].includes(kind);
+    const unlimited = kind === 'unlimited';
+    const realToken = (await vi.importActual<typeof import('../server/services/tokenService.js')>('../server/services/tokenService.js')).TokenService;
+    vi.mocked(TokenService.deductBalance).mockImplementation(realToken.deductBalance);
+    try {
+      if (token) sqlite.prepare('INSERT INTO api_tokens(id,user_id,token_key,balance,used_amount) VALUES(1,1,?, ?,0)').run('recovery-token', unlimited || kind === 'changed-token' ? -1 : 20);
+      if (kind === 'org') sqlite.exec("INSERT OR REPLACE INTO organizations(id,name,balance) VALUES(900,'Original org',20)");
+      if (kind === 'insufficient') sqlite.exec('UPDATE users SET balance=0 WHERE id=1');
+      const channelId = ChannelService.createChannel({ name: 'Original', type: 'zongheng-v6k', baseUrl: 'https://www.v6k.top', apiKey: 'original-key' });
+      const meta = { channelId, zonghengProtocol: 'v6k', zonghengBaseUrl: 'https://www.v6k.top',
+        upstreamModel: 'original-model', managedSpecification: true, billingStatus: 'refunded', billingReservationId: 'restore-billing' };
+      const contentId = Number(db.insert(contents).values({ userId: 1, type: 'video', title: 'Refunded original', status: 'failed', cost: 0, metadata: JSON.stringify(meta) }).run().lastInsertRowid);
+      const source = kind === 'org' ? { source: 'org', orgId: 900 } : { source: 'user' };
+      const context = { userId: kind === 'wrong-owner' ? 2 : 1, contentId, tokenId: token ? 1 : undefined, unlimitedToken: unlimited };
+      const receipt = token ? unlimited ? { target: 'user_balance', balanceDeduction: source } : { target: 'api_token' } : source;
+      const amount = kind === 'free' ? 0 : 4.5;
+      sqlite.prepare("INSERT INTO billing_reservations(id,amount,actual,state,context,receipt) VALUES(?,?,0,'refunded',?,?)")
+        .run('restore-billing', amount, JSON.stringify(context), JSON.stringify(receipt));
+      const taskId = 'task_billing_original';
+      const calls: string[] = [];
+      let unblock!: () => void;
+      const barrier = new Promise<void>(resolve => { unblock = resolve; });
+      upstream = async (url, init) => {
+        expect(init.method).toBe('GET'); calls.push(url);
+        if (!url.endsWith('/content')) return Response.json({ id: taskId, model: 'original-model', status: 'completed' });
+        await barrier;
+        return new Response(new Uint8Array(Buffer.from('00000014667479706d703432000000006d703432', 'hex')), { headers: { 'Content-Type': 'video/mp4' } });
+      };
+      const restore = () => nativeFetch(origin + `/api/admin/contents/${contentId}/original-video/restore`, {
+        method: 'POST', headers: { Authorization: 'Bearer test-admin', 'Content-Type': 'application/json' }, body: JSON.stringify({ taskId, confirmedOriginal: true, confirmedSettlement: true }),
+      });
+      const pending = restore();
+      await vi.waitFor(() => expect(calls).toHaveLength(2));
+      expect((await restore()).status).toBe(409); // Concurrent clicks do not query or charge twice.
+      unblock();
+      const first = await pending, result = await first.json() as any;
+      expect(first.status, JSON.stringify(result)).toBe(200);
+      const blocked = ['insufficient', 'wrong-owner', 'changed-token'].includes(kind);
+      expect(result.billingPending).toBe(blocked);
+      expect(fs.existsSync(path.resolve('data', result.resultUrl.slice(1)))).toBe(true);
+      expect(latest()).toMatchObject({ status: 'completed', resultUrl: result.resultUrl, cost: blocked ? 0 : amount });
+      expect(findVideoSubmissionReceipt(contentId)?.upstreamTaskId).toBe(taskId);
+      expect((sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get('restore-billing') as any).state).toBe(blocked ? 'refunded' : 'settled');
+      expect(balance()).toBe(kind === 'insufficient' ? 0 : ['user', 'unlimited'].includes(kind) ? 95.5 : 100);
+      if (kind === 'org') expect((sqlite.prepare('SELECT balance FROM organizations WHERE id=900').get() as any).balance).toBe(15.5);
+      if (token) expect(sqlite.prepare('SELECT balance,used_amount FROM api_tokens WHERE id=1').get()).toMatchObject({
+        balance: unlimited || kind === 'changed-token' ? -1 : 15.5, used_amount: kind === 'changed-token' ? 0 : 4.5,
+      });
+      if (kind === 'insufficient') sqlite.exec('UPDATE users SET balance=10 WHERE id=1');
+      const repeated = await (await restore()).json() as any;
+      expect(repeated.resultUrl).toBe(result.resultUrl);
+      if (kind === 'insufficient') { expect(repeated.billingPending).toBe(false); expect(balance()).toBe(5.5); }
+      const snapshot = { row: latest(), balance: balance(), reservation: sqlite.prepare('SELECT * FROM billing_reservations').all() };
+      await restore();
+      expect({ row: latest(), balance: balance(), reservation: sqlite.prepare('SELECT * FROM billing_reservations').all() }).toEqual(snapshot);
+      expect(calls).toHaveLength(2); // Settlement retry uses the saved original, no upstream request.
+      resumeSpecificationTasks(); tickVideoBatches();
+      expect(calls).toHaveLength(2);
+    } finally { vi.mocked(TokenService.deductBalance).mockReset(); }
   });
   it('saves the administrator switch atomically, preserves price/switches and rejects stale or unauthorized configuration',async()=>{
     await install(); const before=db.select().from(modelPricing).all();
