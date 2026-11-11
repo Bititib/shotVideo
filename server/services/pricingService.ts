@@ -155,6 +155,7 @@ export class PricingService {
         if (capabilities.includes('video')) return 'video';
         if (capabilities.includes('image')) return 'image';
         if (capabilities.includes('tts')) return 'tts';
+          if (capabilities.includes('music')) return 'other';
         if (capabilities.includes('text')) return 'text';
       } catch { /* fall through to model-name inference */ }
     }

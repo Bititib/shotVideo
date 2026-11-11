@@ -3,6 +3,7 @@ import { adminApi } from '../../api/admin';
 import { Plus, X } from 'lucide-react';
 
 const featureOptions = [
+  { id: 'music', label: '音乐生成' },
   { id: 'general', label: '通用分析' }, { id: 'ecommerce', label: '带货分析' }, { id: 'image', label: '图片逆向' },
   { id: 'copywriting', label: '电商文案' }, { id: 'account', label: '账号分析' }, { id: 'generate_image', label: 'AI生图' }, { id: 'video', label: 'AI视频' }, { id: 'modify_prompt', label: '换品' },
 ];

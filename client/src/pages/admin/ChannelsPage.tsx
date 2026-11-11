@@ -5,6 +5,7 @@ import AdminCollection from '../../components/AdminCollection';
 import ChannelListItem from '../../components/ChannelListItem';
 import ZhiyingModelConfigurationPanel from '../../components/ZhiyingModelConfigurationPanel';
 import V6kModelConfigurationPanel from '../../components/V6kModelConfigurationPanel';
+import MinikeyModelConfigurationPanel from '../../components/MinikeyModelConfigurationPanel';
 import './ChannelsPage.css';
 import AdminDrawer from '../../components/AdminDrawer';
 import ChannelDetails, { type ChannelFeedback } from '../../components/ChannelDetails';
@@ -36,6 +37,7 @@ export default function ChannelsPage() {
   const [modelsRevision, setModelsRevision] = useState(0);
   const [zhiyingEditor, setZhiyingEditor] = useState<number | null>(null);
   const [v6kEditor, setV6kEditor] = useState<number | null>(null);
+  const [minikeyEditor, setMinikeyEditor] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [pendingId, setPendingId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
@@ -454,7 +456,7 @@ export default function ChannelsPage() {
         { title: '模型数量', sort: ch => ch.supportedModels?.length || 0, render: ch => ch.supportedModels?.length || 0 },
       ]} listHeader={<div className="channel-list-header" aria-hidden="true"><span>渠道</span><span>状态</span><span>关联模型</span><span>实时任务</span><span>操作</span></div>}
         listItem={ch => <ChannelListItem channel={ch} syncing={syncing} testing={testing} pending={pendingId !== null}
-          onConfigureModels={ch.type === 'zongheng-v6k' ? () => setV6kEditor(ch.id) : ch.type === ZHIYING_CHANNEL_TYPE ? () => setZhiyingEditor(ch.id) : undefined}
+          onConfigureModels={ch.type === 'minikey' ? () => setMinikeyEditor(ch.id) : ch.type === 'zongheng-v6k' ? () => setV6kEditor(ch.id) : ch.type === ZHIYING_CHANNEL_TYPE ? () => setZhiyingEditor(ch.id) : undefined}
           onOpen={() => { setDetailEditing(false); setDetailTab('models'); setDetail(ch); }}
           onSync={() => { setDetailEditing(false); setDetailTab('models'); setDetail(ch); void syncModels(ch); }}
           onEdit={() => openEdit(ch)} onToggle={() => { void toggleStatus(ch); }}
@@ -473,7 +475,7 @@ export default function ChannelsPage() {
         </div>
       </AdminDrawer>}
 
-      {detail && <AdminDrawer wide title={detail.name + ' · 渠道详情'} blocked={v6kEditor !== null || detailEditing || Boolean(edit) || syncing === detail.id || testing === detail.id} onClose={() => { setDetail(null); void loadChannels(); }}>
+      {detail && <AdminDrawer wide title={detail.name + ' · 渠道详情'} blocked={minikeyEditor !== null || v6kEditor !== null || detailEditing || Boolean(edit) || syncing === detail.id || testing === detail.id} onClose={() => { setDetail(null); void loadChannels(); }}>
         <ChannelDetails channel={channels.find(ch => ch.id === detail.id) || detail}
           tab={detailTab} onTabChange={setDetailTab}
           busy={detailEditing || Boolean(edit) || syncing !== null || testing !== null}
@@ -484,6 +486,7 @@ export default function ChannelsPage() {
           {detail.type === 'zongheng-v6k' && <button type="button" className="mb-3 rounded-lg border px-3 py-2 text-sm"
             disabled={detailEditing || syncing === detail.id} onClick={() => setV6kEditor(detail.id)}>V6K 模型与参数</button>}
           {detail.type === ZHIYING_CHANNEL_TYPE && <button type="button" className="mb-3 rounded-lg border px-3 py-2 text-sm" disabled={detailEditing || syncing === detail.id} onClick={() => setZhiyingEditor(detail.id)}>智赢模型与参数</button>}
+          {detail.type === 'minikey' && <button type="button" className="mb-3 rounded-lg border px-3 py-2 text-sm" disabled={detailEditing || syncing === detail.id} onClick={() => setMinikeyEditor(detail.id)}>miniKey 模型与参数</button>}
           <Suspense fallback={<p role="status">正在加载关联模型…</p>}>
             <ModelsPage key={detail.id + ':' + modelsRevision} channelId={String(detail.id)} onEditingChange={setDetailEditing} />
           </Suspense>
@@ -492,6 +495,7 @@ export default function ChannelsPage() {
       {v6kEditor !== null && <V6kModelConfigurationPanel channelId={v6kEditor} onClose={() => setV6kEditor(null)}
         onSaved={() => { setModelsRevision(value => value + 1); void loadChannels(); }} />}
       {zhiyingEditor !== null && <ZhiyingModelConfigurationPanel channelId={zhiyingEditor} onClose={() => setZhiyingEditor(null)} onSaved={() => { setModelsRevision(value => value + 1); void loadChannels(); }} />}
+      {minikeyEditor !== null && <MinikeyModelConfigurationPanel channelId={minikeyEditor} onClose={() => setMinikeyEditor(null)} onSaved={() => { setModelsRevision(value => value + 1); void loadChannels(); }} />}
       {/* Edit Modal */}
       {edit && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={closeEdit}>
@@ -517,8 +521,8 @@ export default function ChannelsPage() {
                       apiKeys: e.target.value === 'hmstudio' && (!edit.apiKeys || edit.apiKeys.length === 0)
                         ? [newHmKey()]
                         : edit.apiKeys,
-                      maxRetries: ['zongheng-v6k', 'funai', 'megaby', 'async-video', 'mj', 'huss', ZHIYING_CHANNEL_TYPE].includes(e.target.value) ? 0 : edit.maxRetries,
-                      baseUrl: e.target.value === ZHIYING_CHANNEL_TYPE ? ZHIYING_BASE_URL : e.target.value === 'megaby' && !edit.baseUrl ? MEGABY_BASE_URL : e.target.value === 'async-video' && !edit.baseUrl
+                      maxRetries: ['minikey', 'zongheng-v6k', 'funai', 'megaby', 'async-video', 'mj', 'huss', ZHIYING_CHANNEL_TYPE].includes(e.target.value) ? 0 : edit.maxRetries,
+                      baseUrl: e.target.value === 'minikey' ? 'https://minikey.work' : e.target.value === ZHIYING_CHANNEL_TYPE ? ZHIYING_BASE_URL : e.target.value === 'megaby' && !edit.baseUrl ? MEGABY_BASE_URL : e.target.value === 'async-video' && !edit.baseUrl
                         ? ASYNC_VIDEO_BASE_URL
                         : e.target.value === 'funai' && !edit.baseUrl
                         ? FUNAI_BASE_URL
@@ -554,6 +558,7 @@ export default function ChannelsPage() {
                       <option value="miaowu">喵呜 API（视频异步任务）</option>
                       <option value="huss">HUSS（视频 / Midjourney 图片）</option>
                       <option value="megaby">Megaby（视频生成）</option>
+                      <option value="minikey">miniKey（可配置模型）</option>
                       <option value={ZHIYING_CHANNEL_TYPE}>智赢 AI（视频生成）</option>
                       <option value="mingfei">MingFei（GPT Image 2 异步任务）</option>
                       <option value="gemini">Gemini（分析服务）</option>

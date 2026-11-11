@@ -18,6 +18,7 @@ const VideoBatchPage = lazy(() => import('./pages/analysis/VideoBatchPage'));
 const VideoStudioPage = lazy(() => import('./pages/analysis/VideoStudioPage'));
 const ComicDramaPage = lazy(() => import('./pages/analysis/ComicDramaPage'));
 const ImageGenPage = lazy(() => import('./pages/analysis/ImageGenPage'));
+const MusicPage = lazy(() => import('./pages/analysis/MusicPage'));
 const TtsPage = lazy(() => import('./pages/analysis/TtsPage'));
 const HistoryPage = lazy(() => import('./pages/analysis/HistoryPage'));
 const ProfilePage = lazy(() => import('./pages/analysis/ProfilePage'));
@@ -97,6 +98,7 @@ export default function App() {
           <Route path="video-batch" element={<VideoBatchPage />} />
           <Route path="comic-drama" element={<ComicDramaPage />} />
           <Route path="image-gen" element={<ImageGenPage />} />
+          <Route path="music" element={<ProtectedRoute><MusicPage /></ProtectedRoute>} />
           <Route path="tts" element={<TtsPage />} />
           <Route path="history" element={<ApiKeyRoute><HistoryPage /></ApiKeyRoute>} />
           <Route path="docs" element={<DeveloperPage />} />

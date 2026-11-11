@@ -38,6 +38,22 @@ export default function DocsPage({ embedded = false }: { embedded?: boolean }) {
 
   const endpoints: EndpointDoc[] = [
     {
+      id:'music',title:'音乐生成',method:'POST',path:'/v1/music',
+      description:'异步创作歌曲或纯音乐，按次计费。返回 202 后保存 id；使用同一 API Key GET /v1/music/{id} 查询，completed 后 GET /v1/music/{id}/file 下载 MP3。GET /v1/music 查看最近 50 条任务。processing 表示处理中，review 表示原任务待核实，failed 表示已失败退款。断线重试须保留原 client_request_id 与参数，不要换编号重提。',
+      parameters:[
+        {name:'model',type:'string',required:true,description:'模型列表中已启用的音乐模型 ID'},
+        {name:'client_request_id',type:'string',required:true,description:'8–64 位字母、数字、下划线或连字符；每个新作品唯一，重试复用原编号'},
+        {name:'prompt',type:'string',required:true,description:'音乐描述，1–1000 字'},
+        {name:'lyrics',type:'string',required:false,description:'歌词，最多 3000 字'},
+        {name:'mode',type:'string',required:false,defaultVal:'song',description:'song 歌曲 / instrumental 纯音乐；纯音乐不能传歌词或指定人声'},
+        {name:'vocal',type:'string',required:false,defaultVal:'auto',description:'auto 自动 / m 男声 / f 女声'},
+        {name:'tags',type:'string[]',required:false,description:'最多 6 个标签，每个 1–12 字'},
+      ],
+      curlExample:'curl -X POST "'+getBaseUrl()+'/music" -H "Authorization: Bearer sk-YOUR_API_KEY" -H "Content-Type: application/json" -d \'{"model":"YOUR_MUSIC_MODEL","prompt":"温暖的民谣","client_request_id":"unique-request-001"}\'',
+      pythonExample:'import requests, uuid\nheaders = {"Authorization": "Bearer sk-YOUR_API_KEY"}\nbody = {"model": "YOUR_MUSIC_MODEL", "prompt": "温暖的民谣", "client_request_id": str(uuid.uuid4())}\n# 网络重试复用 body，不要重新生成编号\nr = requests.post("'+getBaseUrl()+'/music", headers=headers, json=body, timeout=180)\nr.raise_for_status()\nprint(r.json())',
+      responseExample:JSON.stringify({id:'local-task-uuid',model:'YOUR_MUSIC_MODEL',status:'processing',progress:0,result_url:null,cost:2,error:null},null,2),
+    },
+    {
       id: 'models',
       title: '获取可用模型列表',
       method: 'GET',

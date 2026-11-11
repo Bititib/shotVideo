@@ -1,3 +1,4 @@
+import { createMusicTask, getMusicTask, listMusicTasks, musicFile, processMusicTask, type MusicOwner } from '../services/musicGenerationService.js';
 import { prepareMediaSubmission } from '../../shared/mediaReferences.js';
 import { publicApiModelId } from '../../shared/publicApiModelId.js';
 import { ZHIYING_CHANNEL_TYPE } from '../../shared/zhiyingVideo.js';
@@ -826,6 +827,22 @@ function reserveApiCharge(token: any, cost: number, model: string, pricingSnapsh
   return reserveCharge(cost, amount => deductTokenOrUserBalance(token, amount, model),
     (amount, receipt) => { refundTokenOrUserBalance(token, amount, receipt); }, { tokenId: token.id, userId: token.userId, unlimitedToken: token.balance === -1, model, pricingSnapshot });
 }
+
+function musicApiOwner(req:Request):MusicOwner {
+  const key=extractToken(req);
+  const result=key ? TokenService.validateToken(key,{allowExhausted:true}) : null;
+  if(!result?.valid || !result.token) throw Object.assign(new Error(result?.error || 'Missing API key'),{status:401});
+  const token=result.token;
+  return {userId:token.userId,tokenId:token.id,allowedModels:token.allowedModels,
+    reserve:(cost,model,snapshot)=>{
+      if(!checkTokenOrUserBalance(token,cost).sufficient)throw Object.assign(new Error('余额不足'),{status:402});
+      return reserveApiCharge(token,cost,model,snapshot);
+    }};
+}
+router.post('/music',(req,res,next)=>{try{const task=createMusicTask(req.body,musicApiOwner(req));res.status(202).json({...task,result_url:task.result_url?'/v1/music/'+task.id+'/file':null});void processMusicTask(task.id);}catch(e){next(e);}});
+router.get('/music',(req,res,next)=>{try{res.json({data:listMusicTasks(musicApiOwner(req)).map(t=>({...t,result_url:t.result_url?'/v1/music/'+t.id+'/file':null}))});}catch(e){next(e);}});
+router.get('/music/:id/file',(req,res,next)=>{try{res.download(musicFile(req.params.id,musicApiOwner(req)),'music.mp3');}catch(e){next(e);}});
+router.get('/music/:id',(req,res,next)=>{try{const task=getMusicTask(req.params.id,musicApiOwner(req));res.json({...task,result_url:task.result_url?'/v1/music/'+task.id+'/file':null});}catch(e){next(e);}});
 
 router.post('/chat/completions', async (req: Request, res: Response) => {
   const startTime = Date.now();

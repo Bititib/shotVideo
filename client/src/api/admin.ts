@@ -1,4 +1,5 @@
 import { api as client } from './client';
+import type { MinikeyModelConfiguration, MinikeyModelDraft, MinikeyCatalogOption } from '../../../shared/minikeyModelConfiguration';
 import { api as contentApiClient } from './client';
 import { cachedAdminGet, invalidateAdminCache } from './adminCache';
 import type { UserModelSetting } from '../../../shared/userModelSettings';
@@ -83,6 +84,10 @@ export const adminApi = {
   },
 
   getZhiyingModelConfigurations(id: number) { return api.get<ZhiyingModelConfiguration[]>(`/admin/channels/${id}/zhiying-models`); },
+  getMinikeyModelConfigurations(id: number) { return api.get<MinikeyModelConfiguration[]>(`/admin/channels/${id}/minikey-models`); },
+  getMinikeyModelCatalog(id: number) { return api.get<MinikeyCatalogOption[]>(`/admin/channels/${id}/minikey-models/catalog`); },
+  previewMinikeyModel(id: number, draft: MinikeyModelDraft) { return client.post<object>(`/admin/channels/${id}/minikey-models/preview`, {draft}); },
+  saveMinikeyModel(id: number, draft: MinikeyModelDraft, version: string | null) { return api.put<MinikeyModelConfiguration>(`/admin/channels/${id}/minikey-models`, {draft,version}); },
   getZhiyingModelCatalog(id: number) { return api.get<{options: ZhiyingCatalogOption[]; warnings: string[]}>(`/admin/channels/${id}/zhiying-models/catalog`); },
   previewZhiyingModel(id: number, draft: ZhiyingModelDraft) { return client.post<{method: string; path: string; body: object}>(`/admin/channels/${id}/zhiying-models/preview`, { draft }); },
   saveZhiyingModel(id: number, draft: ZhiyingModelDraft, version: string | null) { return api.put<ZhiyingModelConfiguration>(`/admin/channels/${id}/zhiying-models`, { draft, version }); },

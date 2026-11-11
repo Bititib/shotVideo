@@ -9,10 +9,10 @@ import { formatModelPrice, modelExample } from '../utils/apiModelExamples';
 import './ApiModelsPage.css';
 
 interface KeyOption { id: number; name: string; tokenKeyMasked: string; status: number; expiresAt: string | null }
-const labels: Record<DeveloperModelKind, string> = { text: '文本', image: '图片', video: '视频', tts: '语音', other: '其他' };
+const labels: Record<DeveloperModelKind, string> = { text: '文本', image: '图片', video: '视频', tts: '语音', music: '音乐', other: '其他' };
 const healthLabels = { healthy: '近期正常', degraded: '近期有波动', unavailable: '近期异常', unknown: '样本不足' };
 const endpointLabels: Record<DeveloperEndpoint, string> = {
-  '/v1/chat/completions': '对话补全', '/v1/images/generations': '图片生成', '/v1/images/edits': '图片编辑', '/v1/videos': '视频生成',
+  '/v1/chat/completions': '对话补全', '/v1/images/generations': '图片生成', '/v1/images/edits': '图片编辑', '/v1/videos': '视频生成', '/v1/music': '音乐生成',
 };
 
 function ModelDetails({ model, onClose, onCopy, notice, onLogin }: { model: DeveloperModel; onClose: () => void; onCopy: (value: string) => void; notice: string; onLogin?: () => void }) {
@@ -129,7 +129,7 @@ export default function ApiModelsPage({ embedded = false }: { embedded?: boolean
         <option value="">公开模型（无需 API Key）</option>{keys.map(key => <option key={key.id} value={key.id}>{key.name || 'API Key'} · {key.tokenKeyMasked}{key.status === 0 ? '（已停用）' : key.expiresAt && new Date(key.expiresAt) < new Date() ? '（已过期）' : ''}</option>)}
       </select></label> : <button className="api-model-button" onClick={loginForPrices}><KeyRound size={14} />登录后查看价格</button>}<button className="api-model-button" disabled={busy} onClick={() => setRevision(value => value + 1)}><RefreshCw size={15} className={busy ? 'animate-spin' : ''} />刷新</button>
     </div>
-    <div className="api-model-toolbar"><div className="api-model-filters" aria-label="模型类型">{(['all', 'text', 'image', 'video', 'tts', 'other'] as const).filter(value => value === 'all' || items.some(model => model.kinds.includes(value))).map(value => <button key={value} aria-pressed={kind === value} onClick={() => setKind(value)}>{value === 'all' ? '全部模型' : labels[value]}<span>{value === 'all' ? items.length : items.filter(model => model.kinds.includes(value)).length}</span></button>)}</div>
+    <div className="api-model-toolbar"><div className="api-model-filters" aria-label="模型类型">{(['all', 'text', 'image', 'video', 'tts', 'music', 'other'] as const).filter(value => value === 'all' || items.some(model => model.kinds.includes(value))).map(value => <button key={value} aria-pressed={kind === value} onClick={() => setKind(value)}>{value === 'all' ? '全部模型' : labels[value]}<span>{value === 'all' ? items.length : items.filter(model => model.kinds.includes(value)).length}</span></button>)}</div>
       <label className="api-model-search"><Search size={16} /><input aria-label="搜索模型" placeholder="搜索模型名称或 ID" value={search} onChange={event => setSearch(event.target.value)} /></label></div>
     {keysError && <p role="status" className="api-model-muted">{keysError}，仍可浏览公开目录。<button className="api-model-link" onClick={() => setRevision(value => value + 1)}>重新加载密钥</button></p>}
     {error && <div className="api-model-error" role="alert"><p>{error}</p><button className="api-model-link" onClick={() => setRevision(value => value + 1)}>重新加载</button></div>}

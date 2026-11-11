@@ -1,3 +1,4 @@
+import { musicModelAvailable } from './musicModelRegistry.js';
 import { getModelSpecifications, hiddenRouteModelIds } from './modelRoutingService.js';
 import { isRetiredVideoModel } from '../../shared/retiredVideoModels.js';
 import { isZhiyingVideoModel, ZHIYING_CHANNEL_TYPE, zhiyingVideoSpec } from '../../shared/zhiyingVideo.js';
@@ -14,6 +15,7 @@ export function getEnabledPublicModels(capability?: string, userId?: number | nu
   let exactPrice: ReturnType<typeof PricingService.createQuoteResolver> | undefined;
   return db.select().from(models).where(eq(models.isActive, 1)).all()
     .filter(model => !isRetiredVideoModel(model.modelId))
+    .filter(model => !JSON.parse(model.capabilities || '[]').includes('music') || musicModelAvailable(model.modelId,userId))
     .filter(model => model.modelId !== MJ_OVERFLOW_VIDEO_MODEL && !hidden.has(model.modelId) && !disabled.has(model.modelId))
     .filter(model => {
       if (!capability) return true;

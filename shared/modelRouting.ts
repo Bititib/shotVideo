@@ -12,6 +12,7 @@ export type ModelInputLimits = {
   firstFrame: boolean; lastFrame: boolean; qualities: string[];
 };
 export type ModelRoute = {
+  minikey?: { upstreamChannel: number | null; imageProtocol: 'banana' | 'size' };
   id: string; channelId: number; executionModel: string; upstreamModel: string; enabled: boolean;
   limits: ModelInputLimits; cost: number | null; costUnit: 'per_call' | 'per_second' | 'per_image' | 'unknown';
   resolutionCosts: Record<string, number>; priority: number;

@@ -45,7 +45,7 @@ function buildDeveloperCatalog(models: ReturnType<typeof getAccessibleModels>, u
       let capabilities: string[] = [];
       try { const parsed = JSON.parse(model.capabilities); if (Array.isArray(parsed)) capabilities = parsed; } catch { /* unknown capability */ }
       const kinds: DeveloperModelKind[] = [...new Set(capabilities.map(value => value === 'image_gen' ? 'image' : value)
-        .filter((value): value is DeveloperModelKind => ['text', 'image', 'video', 'tts'].includes(value)))];
+        .filter((value): value is DeveloperModelKind => ['text', 'image', 'video', 'tts', 'music'].includes(value)))];
       if (!kinds.length) kinds.push('other');
       const spec = getModelSpecification(model.modelId);
       const limits = spec?.limits || (kinds.includes('video') ? existingModelLimits(model.modelId, 'video')
@@ -57,6 +57,7 @@ function buildDeveloperCatalog(models: ReturnType<typeof getAccessibleModels>, u
         if (limits && limits.maxImages > 0) endpoints.push('/v1/images/edits');
       }
       if (kinds.includes('video')) endpoints.push('/v1/videos');
+      if (kinds.includes('music')) endpoints.push('/v1/music');
       const available = endpoints.length > 0 && (spec ? specificationAvailable(spec)
         : ChannelService.findChannelsForModel(model.modelId, activeChannels).some(channel => Boolean(channel.apiKey?.trim()) && (!kinds.includes('image') || channel.type !== 'hmstudio'))
           || (model.modelId === HM_STUDIO_PRIMARY_VIDEO_MODEL && hmOverflow));

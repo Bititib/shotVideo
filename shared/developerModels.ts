@@ -1,8 +1,8 @@
 import type { ModelInputLimits } from './modelRouting.js';
 import type { VideoModelStatus } from './videoModelStatus.js';
 
-export type DeveloperModelKind = 'text' | 'image' | 'video' | 'tts' | 'other';
-export type DeveloperEndpoint = '/v1/chat/completions' | '/v1/images/generations' | '/v1/images/edits' | '/v1/videos';
+export type DeveloperModelKind = 'text' | 'image' | 'video' | 'tts' | 'music' | 'other';
+export type DeveloperEndpoint = '/v1/chat/completions' | '/v1/images/generations' | '/v1/images/edits' | '/v1/videos' | '/v1/music';
 export interface DeveloperModelPricing {
   currency: 'CNY';
   billing_type: 'per_call' | 'per_token' | 'per_second' | 'per_character';

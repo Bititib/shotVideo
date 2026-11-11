@@ -1,3 +1,4 @@
+import musicRoutes from './routes/music.js';
 import { protectUploads } from './middleware/uploadAccess.js';
 import { h264Uploads } from './middleware/h264Uploads.js';
 import { mediaPreviews } from './middleware/mediaPreviews.js';
@@ -83,6 +84,7 @@ export async function createApp() {
   app.use('/api/admin/channels', channelRoutes);
   app.use('/api/admin/tokens', tokenRoutes);
   app.use('/api/admin/pricing', pricingRoutes);
+  app.use('/api/music', musicRoutes);
   app.use('/api/video', privateReferences, videoRoutes);
   app.use('/api/video-batches', videoBatchRoutes);
   app.use('/api/image-gen', privateReferences, imageGenRoutes);

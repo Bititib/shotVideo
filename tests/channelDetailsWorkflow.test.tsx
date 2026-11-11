@@ -13,6 +13,7 @@ vi.mock('../client/src/api/admin', () => ({ adminApi: {
   getPricing: vi.fn(), updatePricing: vi.fn(), syncChannelModels: vi.fn(), testChannel: vi.fn(), deleteChannel: vi.fn(),
   createChannel: vi.fn(), updateChannel: vi.fn(),
   getV6kModelConfigurations: vi.fn(),
+  getMinikeyModelConfigurations: vi.fn(), getMinikeyModelCatalog: vi.fn(),
 } }));
 const ids = ['ZH-Cseadanco2.5K', 'ZH-Xminimex-h3', 'ZH-wan-1080', 'ZH-A-SD2.0'];
 const base = { id: 9, name: '纵横渠道', type: 'zongheng', status: 1, baseUrl: 'https://example.invalid',
@@ -35,6 +36,17 @@ const open = async () => {
   fireEvent.click(await screen.findByRole('button', { name: '查看纵横渠道详情' }));
   return screen.findByRole('dialog', { name: '纵横渠道 · 渠道详情' });
 };
+
+it('opens the miniKey model editor from the channel row', async () => {
+  vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, name:'miniKey 测试', type:'minikey' }]);
+  vi.mocked(adminApi.getMinikeyModelConfigurations).mockResolvedValue([]);
+  vi.mocked(adminApi.getMinikeyModelCatalog).mockResolvedValue([]);
+  mount();
+  fireEvent.click(await screen.findByRole('button',{name:'miniKey 模型与参数'}));
+  await screen.findByRole('dialog',{name:'miniKey · 模型与参数'});
+  await waitFor(()=>expect(screen.getByLabelText('本站模型 ID')).toBeEnabled());
+  expect(adminApi.getMinikeyModelConfigurations).toHaveBeenCalledWith(9);
+});
 
 describe('channel details and model sync workflow', () => {
   it('opens V6K model configuration directly from the channel row without opening details or syncing models', async () => {

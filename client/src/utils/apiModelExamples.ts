@@ -17,6 +17,7 @@ export function modelExample(model: DeveloperModel, endpoint: DeveloperEndpoint,
   const payload: Record<string, unknown> = { model: model.id };
   if (endpoint === '/v1/chat/completions') payload.messages = [{ role: 'user', content: '你好，请介绍一下自己。' }];
   else payload.prompt = '温暖晨光中的山谷，电影质感';
+  if (endpoint === '/v1/music') Object.assign(payload,{prompt:'温暖的民谣，木吉他，舒缓的节奏',mode:'song',client_request_id:'replace-with-a-unique-request-id'});
   if (endpoint === '/v1/videos') {
     if (limits) {
       payload.seconds = limits.defaultSeconds ?? (limits.duration.mode === 'options' ? limits.duration.values[0] : limits.duration.min);
@@ -43,7 +44,7 @@ export function modelExample(model: DeveloperModel, endpoint: DeveloperEndpoint,
   }
   const json = JSON.stringify(payload, null, 2);
   const video = endpoint === '/v1/videos';
-  const poll = model.id === HUSS_MJ_MODEL ? '\n# 返回 202 时保存 task_id，使用同一 Key GET /v1/images/tasks/{task_id}；完成后读取全部 data[]。不要自动重发图片 POST。' : video ? '\n# 无需额外请求头：同一 Key、相同参数和素材自动复用进行中或待核实任务，成功后保护10分钟（缺少完成时间时从首次核实成功计时）。\n# 明确失败退款后或成功保护期结束后，再次 POST 会新建并独立计费。保存 task_id，通过 GET /v1/videos/{task_id} 查询最新状态。\n# 可选：需要长期安全重试时发送 Idempotency-Key，同一任务复用原键和原参数，勿换键重试未知任务。' : '';
+  const poll = endpoint==='/v1/music' ? '\n# 每个新作品使用唯一 client_request_id；断线重试保留原编号与原参数。保存返回的 id，使用同一 Key GET /v1/music/{id} 查询；completed 后 GET /v1/music/{id}/file 下载 MP3。' : model.id === HUSS_MJ_MODEL ? '\n# 返回 202 时保存 task_id，使用同一 Key GET /v1/images/tasks/{task_id}；完成后读取全部 data[]。不要自动重发图片 POST。' : video ? '\n# 无需额外请求头：同一 Key、相同参数和素材自动复用进行中或待核实任务，成功后保护10分钟（缺少完成时间时从首次核实成功计时）。\n# 明确失败退款后或成功保护期结束后，再次 POST 会新建并独立计费。保存 task_id，通过 GET /v1/videos/{task_id} 查询最新状态。\n# 可选：需要长期安全重试时发送 Idempotency-Key，同一任务复用原键和原参数，勿换键重试未知任务。' : '';
   if (language === 'curl') return `curl ${shellQuote(url)} \\\n  -H "Authorization: Bearer sk-YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d ${shellQuote(json)}${poll}`;
   return `import requests\n\nresponse = requests.post(\n    ${JSON.stringify(url)},\n    headers={"Authorization": "Bearer sk-YOUR_API_KEY"},\n    json=${json},\n    timeout=180,\n)\nresponse.raise_for_status()\nprint(response.json())${poll}`;
 }

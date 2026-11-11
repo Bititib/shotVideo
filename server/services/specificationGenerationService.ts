@@ -1,3 +1,4 @@
+import { isMinikeyChannel, minikeyCredential } from './minikeyAdapter.js';
 import { prepareMediaSubmission } from '../../shared/mediaReferences.js';
 import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
 import { isConfiguredZhiyingModel as isZhiyingVideoModel } from './zhiyingModelRegistry.js';
@@ -281,6 +282,9 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
   let queryFailures = 0;
   if (isHussChannel(channel)) patch(id, { hussQueryResumeAt: null });
   while (Date.now() < end) {
+    if (metadata(id).minikeyCredential && (!isMinikeyChannel(channel) || metadata(id).minikeyCredential!==minikeyCredential(ChannelService.getChannelRaw(channel.id) || {baseUrl:'',apiKey:''}))) {
+      holdForReview(id,'miniKey 原渠道凭据已变化，恢复原凭据后继续查原任务','query');return;
+    }
     let task: any;
     let saveRetryMs = 0;
     let localCompletion = false;
@@ -292,7 +296,11 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
           ? { taskId, resultUrl: hussMeta.upstreamResultUrl } : null) : null;
       const siYueTianReceipt = isSiYueTianManagedVideoModel(metadata(id).actualModel) ? metadata(id).siYueTianMinimaxCompletedReceipt : null;
       const completedReceipt = hussReceipt || metadata(id).megabyCompletedReceipt || siYueTianReceipt;
-      if (zhiying && hussMeta.zhiyingInitialTask) {
+      const miniInitial=isMinikeyChannel(channel)?hussMeta.minikeyInitialTask:null;
+      const miniCompleted=isMinikeyChannel(channel)?hussMeta.minikeyCompletedReceipt:null;
+      if(miniInitial?.taskId===taskId) {task=miniInitial;localCompletion=true;}
+      else if(miniCompleted?.taskId===taskId) {task={status:'completed',progress:100,resultUrl:miniCompleted.resultUrl};localCompletion=true;}
+      else if (zhiying && hussMeta.zhiyingInitialTask) {
         task = hussMeta.zhiyingInitialTask;
         if (task.taskId !== taskId) throw new Error('智赢原创建回执编号与已保存任务不符');
         // A completed job may publish its signed result later. Requery the original ID.
@@ -368,6 +376,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       let localized = '';
       try {
         patch(id, { upstreamResultUrl: task.resultUrl,
+          ...(isMinikeyChannel(channel)?{minikeyCompletedReceipt:{taskId,resultUrl:task.resultUrl},minikeyInitialTask:null}:{}),
           ...(zhiying ? { zhiyingCompletedReceipt: { taskId, resultUrl: task.resultUrl }, zhiyingInitialTask: null, upstreamGenerated: true, upstreamDeliveryPending: true } : {}),
           ...(metadata(id).snumomReferenceBilling && task.billingUsage ? { upstreamBillingUsage:task.billingUsage } : {}),
           ...(isSiYueTianManagedVideoModel(metadata(id).actualModel) ? { siYueTianMinimaxCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}),
@@ -380,14 +389,14 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
             : progress.phase === 'retrying' ? `下载中断，已保留 ${mb(progress.bytes)} MB；等待恢复原任务`
             : `视频下载中：${mb(progress.bytes)}${progress.total ? ' / ' + mb(progress.total) : ''} MB${progress.resumable ? '（支持安全续传）' : ''}`;
           patch(id, { downloadProgress: { ...progress, updatedAt: new Date().toISOString() }, progressText: message });
-        }, ...(zhiying ? [metadata(id).zhiyingCredential] : []));
+        }, ...(zhiying ? [metadata(id).zhiyingCredential] : isMinikeyChannel(channel) ? [undefined,metadata(id).minikeyCredential] : []));
       } catch (error: any) {
         if (recordV6kDeliveryUnavailable(id, error)) {
           onEvent({ type: 'status', message: publicGenerationError(error.message, ['V6K']), contentId: id }); return;
         }
         console.warn('[specification] result save failed', id, error.message);
         const detail = transportDiagnostic(channel.type, '上游已完成，结果保存失败；正在重试保存', error, channel.apiKey);
-        patch(id, zhiying || isMegabyChannel(channel) || isHussChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
+        patch(id, zhiying || isMegabyChannel(channel) || isHussChannel(channel) || isMinikeyChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
         if (isHussChannel(channel)) {
           saveRetryMs = Math.max(60_000, Number(error?.retryAfterMs) || 0);
           onEvent({ type: 'status', message: detail, contentId: id });
@@ -566,7 +575,7 @@ async function runImages(id: number, candidates: RouteCandidate[], request: Spec
         const invoke = () => {
           if (!routeStillEnabled(metadata(id).requestedModel, target, request.input)) throw new SpecificationUpstreamError('线路已手动禁用或修改', true);
           return generateSpecificationImage(target, request, () => patch(id, { submissionStartedAt: new Date().toISOString(), imageSubmissionIndex: index }),
-            taskId => { accepted = true; taskIds.push(taskId); jobs.push({ index, taskId, channelId: target.channel.id, apiKeyId: target.channel.apiKeyId, healthKey: target.healthKey, status: 'pending' }); patch(id, { upstreamTaskIds: taskIds, upstreamTaskId: taskId, imageJobs: jobs }); },
+            taskId => { accepted = true; taskIds.push(taskId); jobs.push({ index, taskId, ...(isMinikeyChannel(target.channel)?{minikeyCredential:minikeyCredential(target.channel)}:{}), channelId: target.channel.id, apiKeyId: target.channel.apiKeyId, healthKey: target.healthKey, status: 'pending' }); patch(id, { upstreamTaskIds: taskIds, upstreamTaskId: taskId, imageJobs: jobs }); },
             evidence => {
               const meta = metadata(id), responses = [...(meta.upstreamResponses || [])];
               responses[index] = evidence;
@@ -1072,6 +1081,7 @@ async function recoverImages(id: number) {
     for (const job of jobs) {
       if (['completed','failed'].includes(job.status)) continue;
       const channel = ChannelService.getChannelRaw(job.channelId, job.apiKeyId || null);
+      if(job.minikeyCredential && (!isMinikeyChannel(channel) || !channel || job.minikeyCredential!==minikeyCredential(channel))) {holdForReview(id,'miniKey 原图片渠道凭据已变化，恢复原凭据后继续查原任务','query');return;}
       if (!channel) { holdForReview(id, '图片原渠道已删除，请管理员核实'); return; }
       try {
         if (!job.sourceUrl) {
@@ -1282,7 +1292,11 @@ export function resumeSpecificationTasks() {
       && !meta.billingShortfall && meta.billingStatus !== 'refunded' && !meta.queueRefunded
       && (!meta.reviewKind || ['query', 'submission'].includes(meta.reviewKind) || meta.reviewKind === 'local' && meta.hussCompletedReceipt);
     if (resumableHuss && Date.now() < Number(meta.hussQueryResumeAt || 0)) continue;
-    if (row.status === 'review' && !knownMjResult && !resumableMj && !resumableHuss) continue;
+    const miniReservation = (meta.minikeyCredential || meta.imageJobs?.some((j:any)=>j.minikeyCredential)) && meta.billingReservationId
+      ? sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(meta.billingReservationId) as any : null;
+    const resumableMini = miniReservation && ['reserved','review'].includes(miniReservation.state)
+      && ['query','local'].includes(meta.reviewKind) && !meta.billingShortfall && !meta.refundPending;
+    if (row.status === 'review' && !knownMjResult && !resumableMj && !resumableHuss && !resumableMini) continue;
     if (resumableHuss) {
       meta.videoId = meta.videoId || meta.upstreamTaskId;
       patch(row.id, { videoId: meta.videoId, requiresReview: false, reviewKind: null, error: null }, 'processing');

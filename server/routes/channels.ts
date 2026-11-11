@@ -1,3 +1,4 @@
+import { listMinikeyModelConfigurations, listMinikeyCatalogOptions, previewMinikeyModelRequest, saveMinikeyModelConfiguration } from '../services/minikeyModelConfigurationService.js';
 import { MegabyApiError } from '../services/megabyVideoAdapter.js';
 import { Router, Response } from 'express';
 import { HussApiError } from '../services/hussVideoAdapter.js';
@@ -12,6 +13,19 @@ import { listZhiyingModelConfigurations, listZhiyingCatalogOptions, previewZhiyi
 
 const router = Router();
 router.use(authMiddleware, adminMiddleware);
+
+router.get('/:id/minikey-models', (req,res) => {
+  try { res.json(listMinikeyModelConfigurations(Number(req.params.id))); } catch (e) { channelOperationError(res,e); }
+});
+router.get('/:id/minikey-models/catalog', async (req,res) => {
+  try { res.json(await listMinikeyCatalogOptions(Number(req.params.id))); } catch (e) { channelOperationError(res,e); }
+});
+router.post('/:id/minikey-models/preview', async (req,res) => {
+  try { res.json(await previewMinikeyModelRequest(Number(req.params.id),req.body?.draft)); } catch (e) { channelOperationError(res,e); }
+});
+router.put('/:id/minikey-models', async (req,res) => {
+  try { res.json(await saveMinikeyModelConfiguration(Number(req.params.id),req.body?.draft,req.body?.version)); } catch (e) { channelOperationError(res,e); }
+});
 
 // 获取渠道列表
 router.get('/', async (req: AuthRequest, res: Response) => {

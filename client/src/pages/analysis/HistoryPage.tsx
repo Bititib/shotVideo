@@ -57,6 +57,7 @@ const typeOptions = [
   { value: 'analysis', label: '分析' },
   { value: 'copywriting', label: '文案' },
   { value: 'audio', label: '语音' },
+  { value: 'music', label: '音乐' },
 ];
 
 const statusOptions = [
@@ -75,6 +76,7 @@ function getTypeConfig(type: string) {
     case 'video': return { label: '视频', icon: Film, tone: 'is-video' };
     case 'image': return { label: '图片', icon: ImageIcon, tone: 'is-image' };
     case 'copywriting': return { label: '文案', icon: FileText, tone: 'is-copy' };
+    case 'music': return { label: '音乐', icon: Music2, tone: 'is-audio' };
     case 'audio': case 'tts': return { label: '语音', icon: Music2, tone: 'is-audio' };
     default: return { label: '分析', icon: Sparkles, tone: 'is-analysis' };
   }

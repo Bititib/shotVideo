@@ -442,7 +442,7 @@ export class ChannelService {
       priority: priority ?? 0,
       weight: weight ?? 1,
       concurrencyLimit: DEFAULT_HM_CONCURRENCY,
-      maxRetries: isMegabyChannel({ type, baseUrl }) || isHussChannel({ type, baseUrl }) || isMjChannel({ type }) || isAsyncVideoChannel({ type }) || isHaya || isFunAiChannel({ type, baseUrl }) ? 0 : maxRetries ?? 3,
+      maxRetries: type === 'minikey' || isMegabyChannel({ type, baseUrl }) || isHussChannel({ type, baseUrl }) || isMjChannel({ type }) || isAsyncVideoChannel({ type }) || isHaya || isFunAiChannel({ type, baseUrl }) ? 0 : maxRetries ?? 3,
       timeout: timeout ?? 120000,
       faceSplitEnabled: isWxHaidiYue
         ? (data.faceSplitEnabled === 0 || data.faceSplitEnabled === false ? 0 : 1)
@@ -479,6 +479,7 @@ export class ChannelService {
     if (isMegabyChannel({ type: nextType, baseUrl: data.baseUrl ?? channel.baseUrl })) {
       data = { ...data, type: 'megaby', baseUrl: megabyBaseUrl(data.baseUrl ?? channel.baseUrl), maxRetries: 0 };
     }
+    if (nextType === 'minikey') data = { ...data, maxRetries: 0 };
 
     if (isMjChannel({ type: nextType })) {
       data = { ...data, type: 'mj', baseUrl: normalizeMjBaseUrl(data.baseUrl ?? channel.baseUrl), maxRetries: 0 };
@@ -575,6 +576,11 @@ export class ChannelService {
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
     const start = Date.now();
     try {
+      if (channel.type === 'minikey') {
+        const { listMinikeyCatalogOptions } = await import('./minikeyModelConfigurationService.js');
+        const entries = await listMinikeyCatalogOptions(id);
+        return { success:true,message:`miniKey 公开目录可访问，共 ${entries.length} 个型号；此检查不验证 Key 的生成权限。`,durationMs:Date.now()-start };
+      }
       if (channel.type === ZHIYING_CHANNEL_TYPE || isMegabyChannel(channel) || isMjChannel(channel) || isAsyncVideoChannel(channel) || isHussChannel(channel) || isFunAiChannel(channel)) {
         let catalogSummary = '';
         if (channel.type === ZHIYING_CHANNEL_TYPE) {
@@ -655,6 +661,12 @@ export class ChannelService {
     const channel = this.getChannelRaw(id);
     if (!channel) throw { status: 404, message: '渠道不存在' };
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
+    if (channel.type === 'minikey') {
+      const { listMinikeyModelConfigurations, listMinikeyCatalogOptions } = await import('./minikeyModelConfigurationService.js');
+      await listMinikeyCatalogOptions(id);
+      const saved = listMinikeyModelConfigurations(id).map(r=>r.modelId);
+      return {count:saved.length,added:0,models:saved,warnings:['请使用“模型与参数”添加或编辑 miniKey 型号。已有规格、售价和开关均保留；音乐配置目前仅为草稿。']};
+    }
     if (channel.type === ZHIYING_CHANNEL_TYPE) {
       const { syncZhiyingModels } = await import('./zhiyingCatalogService.js');
       return syncZhiyingModels(channel);

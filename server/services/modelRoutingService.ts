@@ -72,6 +72,8 @@ export function saveModelSpecification(value: ModelSpecification): ModelSpecific
   const routes = value.routes.map(r => {
     validateLimits(r.limits);
     const ch = channelRows.find(c => c.id === r.channelId);
+    if (r.minikey && (ch?.type !== 'minikey' || !['banana','size'].includes(r.minikey.imageProtocol)
+      || r.minikey.upstreamChannel !== null && (!Number.isSafeInteger(r.minikey.upstreamChannel) || r.minikey.upstreamChannel <= 0))) throw error('miniKey 线路参数无效');
     if(bbHssKkManaged(sqlite,value.modelId)&&!matchesBbHssSource(sqlite,value.modelId,r,ch?.type))throw error('BB/HSS 线路与当前来源不一致，请先使用来源切换保存');
     if (!ch || typeof r.executionModel !== 'string' || !r.executionModel.trim() || typeof r.upstreamModel !== 'string' || !r.upstreamModel.trim()) throw error('线路渠道、执行模型和上游模型不能为空');
     if (typeof r.enabled !== 'boolean' || !Number.isFinite(r.priority)) throw error('线路开关或顺序无效');

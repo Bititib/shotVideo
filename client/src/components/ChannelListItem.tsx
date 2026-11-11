@@ -28,8 +28,8 @@ export default function ChannelListItem({ channel: ch, syncing, testing, pending
     <div className="channel-list-actions">
       {onConfigureModels && <button type="button" className="channel-list-configure"
         disabled={pending || syncing !== null || testing !== null}
-        title={ch.name + ' · V6K 模型与参数'} onClick={onConfigureModels}>
-        <SlidersHorizontal aria-hidden="true" />V6K 模型与参数
+        title={ch.name + ' · 模型与参数'} onClick={onConfigureModels}>
+        <SlidersHorizontal aria-hidden="true" />{ch.type === 'minikey' ? 'miniKey' : ch.type === 'zhiying' ? '智赢' : 'V6K'} 模型与参数
       </button>}
       <button type="button" className="channel-list-sync" disabled={syncing !== null || testing !== null} onClick={onSync}><RefreshCw className={syncing === ch.id ? 'animate-spin' : ''} aria-hidden="true" />{syncing === ch.id ? '同步中…' : '同步模型'}</button>
       <button type="button" className="channel-list-action" aria-label={`编辑${ch.name}`} title="编辑渠道" onClick={onEdit}><Pencil aria-hidden="true" /></button>

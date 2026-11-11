@@ -1,3 +1,5 @@
+import { isMinikeyChannel, submitMinikey, pollMinikey, MinikeyError, minikeyCredential, normalizeMinikeyTask } from './minikeyAdapter.js';
+import { minikeyImageSize } from '../../shared/minikeyModelConfiguration.js';
 import { isSiYueTianManagedVideoModel, siYueTianManagedVideoUpstreamModel } from '../../shared/siYueTianManagedVideo.js';
 import { configuredZhiyingProfile, isConfiguredZhiyingModel as isZhiyingVideoModel } from './zhiyingModelRegistry.js';
 import { validateZhiyingVideoInput } from '../../shared/zhiyingVideo.js';
@@ -189,6 +191,20 @@ function zonghengSpecificationInput(model: string, request: SpecificationRequest
 }
 
 export async function submitSpecificationVideo(target: RouteCandidate, request: SpecificationRequest, onStarting: (metadata?: Record<string, unknown>) => void) {
+  if (isMinikeyChannel(target.channel)) {
+    if (request.firstFrame || request.lastFrame) throw new SpecificationUpstreamError('miniKey 不支持独立首尾帧字段', true);
+    const key = randomUUID(), form = new FormData();
+    if (target.route.minikey?.upstreamChannel) form.append('channel', String(target.route.minikey.upstreamChannel));
+    const refs = (items: string[]) => items.map(s => s.startsWith('data:') ? s : publishSpecificationAsset(s, request.publicBaseUrl));
+    for (const [k,v] of Object.entries({ model: target.route.upstreamModel, prompt: request.prompt, duration: request.input.seconds, ratio: request.input.ratio,
+      images: JSON.stringify(refs(request.images)), video_urls: JSON.stringify(refs(request.videos)), audio_urls: JSON.stringify(refs(request.audios)), client_request_id: key })) form.append(k, String(v));
+    try {
+      const submitted=await submitMinikey(target.channel,'videos',form,()=>onStarting({minikeyRequestId:key,minikeyCredential:minikeyCredential(target.channel)}),id=>onStarting({videoId:id,upstreamTaskId:id}));
+      try {const task=normalizeMinikeyTask(target.channel,'videos',submitted.id,submitted.raw);if(['completed','failed'].includes(task.status))onStarting({minikeyInitialTask:{...task,taskId:submitted.id}});}catch(error){if(!(error instanceof MinikeyError))throw error;}
+      return submitted.id;
+    }
+    catch (e) { if (e instanceof MinikeyError) throw new SpecificationUpstreamError(e.message, false, e.uncertain, false, e.httpStatus, e.confirmedFailure); throw e; }
+  }
   const c = { ...target.channel, videoSubmission: true }, model = target.route.upstreamModel, exec = target.route.executionModel, i = request.input;
   if (c.type === 'zhiying') {
     if (exec !== request.body.model || !configuredZhiyingProfile(exec, c.id, model)) throw new SpecificationUpstreamError('智赢视频型号映射不一致', false, false, false, 0, true);
@@ -426,6 +442,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   return String(id);
 }
 export async function pollSpecificationVideo(channel: any, taskId: string, executionModel?: string, referenceVideoSeconds = 0) {
+  if (isMinikeyChannel(channel)) return pollMinikey(channel, 'videos', taskId);
   if (channel.type === 'zhiying') return pollZhiyingVideo(channel, taskId, executionModel);
   if (isSiYueTianManagedVideoModel(executionModel)) return pollSiYueTianMinimax(channel, taskId);
   if (isZonghengChannel(channel)) {
@@ -547,6 +564,31 @@ export async function generateSpecificationImage(target: RouteCandidate, request
   onMjAsyncState: (state: MjAsyncImageState) => void = () => {}, checkMjReservation: () => void = () => {},
   onPidoiFallback?: (state: import('./pidoiImageAdapter.js').PidoiFallbackState) => void) {
   const c = { ...target.channel, timeout: imageGenerationTimeout(target.channel) }, model = target.route.upstreamModel, i = request.input;
+  if (isMinikeyChannel(c)) {
+    if (request.videos.length || request.audios.length || request.firstFrame || request.lastFrame || request.images.some(s => !s.startsWith('data:image/')))
+      throw new SpecificationUpstreamError('miniKey 图片仅支持已校验的 Base64 参考图片', true);
+    const protocol = target.route.minikey?.imageProtocol || (model === 'tt-image-2' ? 'size' : ['banana-2','banana-pro'].includes(model) ? 'banana' : undefined);
+    if (!protocol) throw new SpecificationUpstreamError('请先在后台配置 miniKey 图片参数格式', true);
+    const size = request.body.size || minikeyImageSize(i.ratio);
+    if (protocol === 'size' && (i.resolution.toUpperCase()!=='1K' || typeof size!=='string' || !/^\d+x\d+$/.test(size) || size.split('x').reduce((a,b)=>a*Number(b),1)>1500000))
+      throw new SpecificationUpstreamError('miniKey 像素尺寸格式当前仅支持 1K，size 不能超过 150 万像素', true);
+    const params = protocol === 'size' ? { size, quality: i.quality || 'auto', images: request.images, n: 1 }
+      : { aspectRatio: i.ratio, imageSize: i.resolution.toUpperCase(), images: request.images, n: 1 };
+    try {
+      const job = await submitMinikey(c, 'images', { model, prompt: request.prompt, params }, onStarting, onSubmitted);
+      const deadline = Date.now() + 20 * 60_000;
+      while (Date.now() < deadline) {
+        const task = await pollMinikey(c, 'images', job.id);
+        if (task.status === 'failed') throw new SpecificationUpstreamError(task.error, false, false, false, 200, true);
+        if (task.status === 'completed') return { imageUrl: task.imageUrl, reportedImageUrl: task.imageUrl, taskId: job.id, raw: {} };
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
+      throw new SpecificationUpstreamError('miniKey 原图片任务仍在处理中，保留原编号继续查询', false, true);
+    } catch (e) {
+      if (e instanceof MinikeyError) throw new SpecificationUpstreamError(e.message, false, !e.confirmedFailure, false, e.httpStatus, e.confirmedFailure);
+      throw e;
+    }
+  }
   let started = false;
   const trackedFetch: typeof fetch = async (url, init) => {
     init = { ...init, signal: init?.signal || AbortSignal.timeout(c.timeout || 120_000), redirect: 'error' };
@@ -699,6 +741,7 @@ export function imageSize(ratio: string) {
 
 /** Resume a previously accepted image job; this function never submits a POST. */
 export async function pollSpecificationImage(channel: any, taskId: string) {
+  if (isMinikeyChannel(channel)) return pollMinikey(channel, 'images', taskId);
   if (isPidoiImageChannel(channel)) return pollPidoiImage(channel, taskId);
   if (isFunAiChannel(channel)) {
     const task = await pollFunAiTask(channel, taskId, fetch, 'image');
