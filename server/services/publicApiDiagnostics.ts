@@ -50,11 +50,11 @@ export function publicApiDiagnostics(body: any, privateNames: readonly string[] 
   if (depth > 8) return undefined;
   if (Array.isArray(body)) return body.map(item => publicApiDiagnostics(item, privateNames, depth + 1));
   const names = [...privateNames, ...[body, body.error, body.metadata].filter(value => value && typeof value === 'object')
-    .flatMap(value => ['channel', 'channelName', 'channel_name', 'provider', 'actualChannel'].map(key => value[key]))
+    .flatMap(value => ['channel', 'channelName', 'channel_name', 'provider', 'actualChannel','upstreamModel','upstream_model','upstreamTaskId','upstream_task_id'].map(key => value[key]))
     .filter((value): value is string => typeof value === 'string')];
   const result = { ...body };
   for (const key of Object.keys(result)) {
-    if (INTERNAL_FIELDS.has(key) || /^(?:channel|upstream|routing)(?:_|[A-Z])/.test(key)) delete result[key];
+    if (INTERNAL_FIELDS.has(key) || /^(?:channel|upstream|routing|minikey|megaby|huss|zhiying|zongheng|snumom|haya|pidoi)(?:_|[A-Z])/.test(key)) delete result[key];
   }
   const reason = (value: unknown) => publicApiErrorReason(value, names);
   if (result.error) {
@@ -72,7 +72,13 @@ export function publicApiDiagnostics(body: any, privateNames: readonly string[] 
   // Usage/history lists and nested task envelopes can carry old diagnostics.
   // Do not traverse choices/output: those are user-generated content.
   for (const key of ['items', 'data', 'metadata']) {
-    if (result[key] && typeof result[key] === 'object') result[key] = publicApiDiagnostics(result[key], names, depth + 1);
+    if (key==='metadata' && typeof result[key]==='string') {
+      try {result[key]=JSON.parse(result[key]);}catch{result[key]={};}
+    }
+    if (result[key] && typeof result[key] === 'object') {
+      result[key] = publicApiDiagnostics(result[key], names, depth + 1);
+      if(key==='metadata') for(const field of ['videoId','submissionId','billingReservationId','pricingSnapshot','queueUserKey','tokenId','publicBaseUrl'])delete result[key][field];
+    }
   }
   return result;
 }

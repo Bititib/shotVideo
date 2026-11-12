@@ -98,11 +98,12 @@ export function sanitizeContentRoutingForClient<T extends { metadata?: string | 
   const zhiyingOrder = zhiyingFields.length > 0 || metadata.actualChannel === 'zhiying';
   const state = (item as { status?: string }).status;
   const needsReview = state === 'review' || metadata.requiresReview || metadata.hayaNeedsReview;
-  const privateNames = [metadata.channelName, metadata.actualChannel].filter((v): v is string => typeof v === 'string');
+  const privateNames = [metadata.channelName, metadata.actualChannel,metadata.upstreamModel,metadata.upstreamTaskId,metadata.videoId,metadata.upstreamRequestId].filter((v): v is string => typeof v === 'string');
   const hideZhiyingDetails = (message: string) => publicZhiyingDiagnostic(message, metadata);
   const publicFailure = (value: unknown) => hideZhiyingDetails(needsReview ? videoReviewMessage(metadata) : publicGenerationError(value, privateNames));
   const reviewKind = videoReviewKind(metadata);
   if (reviewKind) metadata.reviewKind = reviewKind;
+  if(metadata.upstreamQueryError) metadata.upstreamQueryError=publicGenerationError(metadata.upstreamQueryError,privateNames);
   for (const field of ['error', 'errorMessage', 'failureReason', 'errorDetail', 'resultSaveError']) {
     if (metadata[field]) metadata[field] = publicFailure(metadata[field]);
   }
@@ -126,6 +127,11 @@ export function sanitizeContentRoutingForClient<T extends { metadata?: string | 
       'billingReservationId', 'pricingSnapshot', 'queueUserKey', 'tokenId', 'publicBaseUrl']) delete metadata[field];
   }
   for (const field of INTERNAL_VIDEO_ROUTING_FIELDS) delete metadata[field];
+  for(const field of Object.keys(metadata)) {
+    if(['upstreamQueryError','upstreamGenerated','upstreamDeliveryPending'].includes(field))continue;
+    if (/^(?:upstream|channel|routing|minikey|megaby|huss|zhiying|zongheng|snumom|siYueTian|haya|pidoi|mj)(?:[A-Z_]|$)/.test(field)
+      || ['videoId','submissionId','billingReservationId','pricingSnapshot','queueUserKey','tokenId','publicBaseUrl'].includes(field)) delete metadata[field];
+  }
   if (wasRouted && !needsReview && !['failed', 'error', 'review'].includes(state || '') && typeof metadata.progressText === 'string') {
     metadata.progressText = '视频生成中';
   }

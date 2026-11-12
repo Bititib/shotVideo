@@ -11,6 +11,7 @@ import { captureFundEntries, withFundContext } from '../db/fundLedger.js';
 import { registerUpload } from './uploadAccess.js';
 import type { PricingSnapshot } from './pricingService.js';
 import { transportDiagnostic } from './upstreamDiagnostic.js';
+import { publicGenerationError } from '../../shared/generationMessages.js';
 
 export type MusicOwner = { userId?:number|null; tokenId?:number; allowedModels?:string[];
   reserve?:(cost:number,model:string,snapshot?:PricingSnapshot)=>{id:string} };
@@ -40,7 +41,7 @@ export function getMusicTask(id:string,owner:MusicOwner) {
   const meta=JSON.parse(c.metadata);
   const status=['processing','review'].includes(c.status) && ['settled','refunded'].includes(meta.billingStatus)?'resolved':c.status;
   return {id:row.id,model:c.model_id,prompt:c.input_text,status,progress:meta.progress || 0,
-    result_url:c.result_url || null,cost:c.cost,error:row.error || null,created_at:c.created_at};
+    result_url:c.result_url || null,cost:c.cost,error:row.error ? publicGenerationError(row.error,[row.upstream_id,JSON.parse(row.payload).model].filter(Boolean)) : null,created_at:c.created_at};
 }
 export function listMusicTasks(owner:MusicOwner) {
   ensureMusicJobs();

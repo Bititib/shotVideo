@@ -1,3 +1,4 @@
+import { CHANNEL_TYPES } from './channelTypes.js';
 /** Display-only projection. Never use this text to decide task or billing state. */
 const FALLBACK = '生成服务返回异常，暂未提供可展示的失败原因。';
 const PROVIDERS = /纵横科技|私有供应商[\w\u4e00-\u9fff]*|\b(?:snumom|hmstudio|haya|longxia)\b/gi;
@@ -69,4 +70,30 @@ export function sanitizedGenerationReason(value: unknown, privateNames: readonly
   const names = [...privateNames, ...['provider', 'channel', 'channelName', 'channel_name'].map(k => obj[k]).filter((v): v is string => typeof v === 'string')];
   const result = redact(extract(value), names);
   return !result || /^(?:unknown|unknown error|error|undefined|null)$/i.test(result) ? FALLBACK : result;
+}
+
+/** Public presentation only; administrator diagnostics retain their provider and receipt. */
+export function publicGenerationReason(value: unknown, privateNames: readonly string[] = []): string {
+  let text = sanitizedGenerationReason(value, privateNames);
+  // Remove arbitrary (including future) adapter names from diagnostic envelopes.
+  while (true) {
+    const start=text.search(/\[(?:上游诊断 |HUSS )/i);
+    if(start<0)break;
+    let depth=0,end=start;
+    for(;end<text.length;end++){if(text[end]==='[')depth++;if(text[end]===']'&&--depth===0)break;}
+    text=text.slice(0,start)+(end<text.length?text.slice(end+1):'');
+  }
+  const names=[...CHANNEL_TYPES.filter(n=>n!=='custom'), 'HM Studio','V6K','Fun AI','智赢 AI','智赢','纵横科技','四月天','苏打水','海底月','喵呜 API',...privateNames];
+  for(const name of names){
+    if(!name)continue;
+    const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    text=text.replace(new RegExp(/^[\w -]+$/.test(name)?'\\b'+escaped+'\\b':escaped,'gi'),'[服务]');
+  }
+  text=text.replace(/\b(?:mk|sk|sess)[_-][A-Za-z0-9_-]+/gi,'[密钥已隐藏]')
+    .replace(/\b(?:upstream[_ ]?model|execution[_ ]?model)\s*[:=]\s*[^\s,;；，]+/gi,'[内部型号已隐藏]')
+    .replace(/\b(?:request_?id|task_?id|video_?id|submission_?id)\s*[:=]\s*[^\s:：;；,，]+\s*/gi,'')
+    .replace(/\b[a-f0-9]{32}\b/gi,'[编号已隐藏]')
+    .replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi,'[编号已隐藏]')
+    .replace(/\s+/g,' ').replace(/^\s*[:：]\s*/,'').trim();
+  return text || FALLBACK;
 }

@@ -1,4 +1,4 @@
-import { sanitizedGenerationReason } from '../../../shared/generationErrorPrivacy';
+import { publicGenerationReason as sanitizedGenerationReason } from '../../../shared/generationErrorPrivacy';
 
 export type ContentFailureInfo = {
   message: string;

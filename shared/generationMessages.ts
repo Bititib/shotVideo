@@ -1,4 +1,4 @@
-import { sanitizedGenerationReason } from './generationErrorPrivacy.js';
+import { publicGenerationReason as sanitizedGenerationReason } from './generationErrorPrivacy.js';
 /** Display-only sanitization. Original diagnostics and state decisions stay unchanged. */
 const messages = {
   submission: '任务未提交成功，请稍后重试。',
