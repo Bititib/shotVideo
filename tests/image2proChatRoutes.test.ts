@@ -14,7 +14,7 @@ vi.mock('../server/db/index.js', async () => {
   return {sqlite,db:drizzle(sqlite,{schema})};
 });
 vi.mock('../server/routes/video.js',()=>({ enqueueHmStudioVideoContent:vi.fn(),resumePollForTask:vi.fn(),holdHayaSubmission:vi.fn(),releaseHayaSubmission:vi.fn() }));
-vi.mock('../server/services/channelService.js',()=>({ChannelService:{findChannelsForModel:()=>[{id:1,type:'image2pro',baseUrl:'https://api.image2pro.top/v1',apiKey:'fake',modelMapping:{}}],findChannelForModel:()=>({id:1,type:'image2pro',baseUrl:'https://api.image2pro.top/v1',apiKey:'fake',modelMapping:{},timeout:1000})}}));
+vi.mock('../server/services/channelService.js',()=>({ChannelService:{findChannelsForModel:()=>[{id:1,type:'image2pro',baseUrl:'https://nicolessss.com/v1',apiKey:'fake',modelMapping:{}}],findChannelForModel:()=>({id:1,type:'image2pro',baseUrl:'https://nicolessss.com/v1',apiKey:'fake',modelMapping:{},timeout:1000})}}));
 vi.mock('../server/services/pricingService.js',()=>({PricingService:{quote:(_model:string,params:any)=>({cost:(params.count || 1)*2}),createQuoteResolver:()=> (_model:string,usage:any)=>({cost:(usage.promptTokens+usage.completionTokens)/1000}),calculateCost:(_model:string,input:number,output:number)=>(input+output)/1000}}));
 vi.mock('../server/services/aiService.js',()=>({AIService:{generateTts:vi.fn(),generateImage:vi.fn(),getTtsVoiceCatalog:vi.fn(),clonedVoices:vi.fn()}}));
 vi.mock('../server/middleware/quota.js',()=>({quotaMiddleware:vi.fn(),logUsage:vi.fn()}));
@@ -51,7 +51,7 @@ beforeEach(()=>{
 afterEach(()=>{vi.unstubAllGlobals();vi.clearAllMocks();});
 
 it('normal chat uses one v1, stable saved reservation ID and settles usage',async()=>{
- const f=vi.fn(async(url:any,init:any)=>{expect(url).toBe('https://api.image2pro.top/v1/chat/completions');expect(init.headers['Idempotency-Key']).toBe(records()[0].id);return Response.json({choices:[{message:{content:'你好'}}],usage:{prompt_tokens:10,completion_tokens:20}});});vi.stubGlobal('fetch',f);
+ const f=vi.fn(async(url:any,init:any)=>{expect(url).toBe('https://nicolessss.com/v1/chat/completions');expect(init.headers['Idempotency-Key']).toBe(records()[0].id);return Response.json({choices:[{message:{content:'你好'}}],usage:{prompt_tokens:10,completion_tokens:20}});});vi.stubGlobal('fetch',f);
  const res=await invoke(apiRouter,'/chat/completions',{model:'test-chat',messages:[{role:'user',content:'hello'}]});expect(res.body.choices[0].message.content).toBe('你好');expect(records()[0].state).toBe('settled');expect(f).toHaveBeenCalledOnce();
 });
 it.each([400,401,402,429])('refunds explicit text rejection %s once',async status=>{

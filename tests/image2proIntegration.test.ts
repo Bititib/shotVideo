@@ -17,7 +17,7 @@ beforeEach(() => {
   if(sqlite.prepare("SELECT name FROM sqlite_master WHERE name='video_submission_receipts'").get())sqlite.exec('DELETE FROM video_submission_receipts');
   db.delete(contents).run(); db.delete(settings).run(); db.delete(models).run(); db.delete(channels).run(); db.delete(modelPricing).run(); db.delete(users).run();
   db.insert(users).values({ id: 1, email: 'mini@test.invalid', username: 'test', passwordHash: 'test', balance: 100 }).run();
-  const channelId = ChannelService.createChannel({ name: 'miniKey', type: 'image2pro', baseUrl: 'https://api.image2pro.top/v1', apiKey: 'mk_test', supportedModels: ['30video'], maxRetries: 3 });
+  const channelId = ChannelService.createChannel({ name: 'miniKey', type: 'image2pro', baseUrl: 'https://nicolessss.com/v1', apiKey: 'mk_test', supportedModels: ['30video'], maxRetries: 3 });
   db.insert(models).values({modelId:'30video',provider:'image2pro',displayName:'测试',capabilities:'["video"]',isActive:1}).run();
   db.insert(modelPricing).values({modelPattern:'30video',billingType:'per_call',inputPrice:2,outputPrice:0}).run();
   const limits = defaultRoutingLimits();

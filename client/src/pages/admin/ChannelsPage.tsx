@@ -522,7 +522,7 @@ export default function ChannelsPage() {
                         ? [newHmKey()]
                         : edit.apiKeys,
                       maxRetries: ['image2pro', 'minikey', 'zongheng-v6k', 'funai', 'megaby', 'async-video', 'mj', 'huss', ZHIYING_CHANNEL_TYPE].includes(e.target.value) ? 0 : edit.maxRetries,
-                      baseUrl: e.target.value === 'image2pro' ? 'https://api.image2pro.top/v1' : e.target.value === 'minikey' ? 'https://minikey.work' : e.target.value === ZHIYING_CHANNEL_TYPE ? ZHIYING_BASE_URL : e.target.value === 'megaby' && !edit.baseUrl ? MEGABY_BASE_URL : e.target.value === 'async-video' && !edit.baseUrl
+                      baseUrl: e.target.value === 'image2pro' ? 'https://nicolessss.com/v1' : e.target.value === 'minikey' ? 'https://minikey.work' : e.target.value === ZHIYING_CHANNEL_TYPE ? ZHIYING_BASE_URL : e.target.value === 'megaby' && !edit.baseUrl ? MEGABY_BASE_URL : e.target.value === 'async-video' && !edit.baseUrl
                         ? ASYNC_VIDEO_BASE_URL
                         : e.target.value === 'funai' && !edit.baseUrl
                         ? FUNAI_BASE_URL

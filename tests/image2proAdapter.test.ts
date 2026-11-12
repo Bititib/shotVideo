@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { submitImage2pro, pollImage2pro, normalizeImage2pro } from '../server/services/image2proAdapter.js';
-const c={baseUrl:'https://api.image2pro.top/v1',apiKey:'secret-test-key'}, id='a'.repeat(32), key='order-123456';
+const c={baseUrl:'https://nicolessss.com/v1',apiKey:'secret-test-key'}, id='a'.repeat(32), key='order-123456';
 it.each([400,401,402,403,404,405,413,415,429])('recognizes documented structured rejection %s',async status=>{
  await expect(submitImage2pro(c,'image',{},key,()=>{},()=>{},async()=>Response.json({error:{message:'具体原因',code:'test'}},{status}))).rejects.toMatchObject({confirmedFailure:true});
 });
