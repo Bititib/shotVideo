@@ -27,22 +27,27 @@ function sortResolutionKeys(keys: string[]): string[] {
 export function pricingResolutionFields(
   modelPattern: string,
   extraParams: Record<string, unknown> = {},
+  configuredResolutions?: string[],
 ): { keys: string[]; values: Record<string, string | number>; otherText: string } {
   const existingKeys = Object.keys(extraParams).filter(key => isResolutionPriceKey(key) && !isArchivedResolutionPrice(modelPattern, key));
   const hmSpec = getHmStudioAdditionalVideoModel(getHmStudioPublicVideoModel(modelPattern));
-  const keys = sortResolutionKeys(Array.from(new Set([
+  const defaults = [
     ...(snumomOutputOnlySpec(modelPattern) ? [snumomOutputOnlySpec(modelPattern)!.resolution] : []),
     ...(['wan3.0-video-nsfw'].includes(modelPattern) ? WAN_RESOLUTIONS : []),
     ...(modelPattern === 'gpt-image-2-mingfei' ? MINGFEI_RESOLUTIONS : []),
     ...(hmSpec?.resolutions || (hmSpec ? [hmSpec.resolution] : [])),
-    ...existingKeys,
-  ].map(key => existingKeys.find(existing => existing.toLowerCase() === key.toLowerCase()) || key))));
+  ];
+  const candidates = [...(configuredResolutions ?? defaults), ...existingKeys].map(key => key.trim()).filter(Boolean);
+  const storedKeys = Object.keys(extraParams);
+  const keys = sortResolutionKeys([...new Map(candidates.map(key => [key.toLowerCase(),
+    storedKeys.find(existing => existing.toLowerCase() === key.toLowerCase()) || key,
+  ])).values()]);
   const values: Record<string, string | number> = Object.fromEntries(keys.map(key => {
     const value = extraParams[key];
     return [key, typeof value === 'number' || typeof value === 'string' ? value : ''];
   }));
   const otherText = Object.entries(extraParams)
-    .filter(([key]) => key !== 'category' && !isResolutionPriceKey(key))
+    .filter(([key]) => key !== 'category' && !isResolutionPriceKey(key) && !keys.includes(key))
     .map(([key, value]) => `${key}: ${value}`)
     .join('\n');
   return { keys, values, otherText };

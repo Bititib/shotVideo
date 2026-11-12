@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { isResolutionPriceKey, pricingResolutionFields } from '../client/src/utils/pricingResolution.js';
 
 describe('pricing resolution fields', () => {
+  it('uses administrator specifications for arbitrary model IDs, preserving existing rates and extras', () => {
+    expect(pricingResolutionFields('SD-seedance2.5', {'720P':0, '1080p':.9, quality:2}, ['480p','720p','720P',' 1080p '])).toEqual({
+      keys:['480p','720P','1080p'],values:{'480p':'','720P':0,'1080p':.9},otherText:'quality: 2',
+    });
+    expect(pricingResolutionFields('wan3.0-video-nsfw', {}, ['720p']).keys).toEqual(['720p']);
+    expect(pricingResolutionFields('custom-video', {auto:1}, ['auto'])).toEqual({keys:['auto'],values:{auto:1},otherText:''});
+  });
   it('recognizes common resolution price keys', () => {
     expect(isResolutionPriceKey('480p')).toBe(true);
     expect(isResolutionPriceKey('1080P')).toBe(true);

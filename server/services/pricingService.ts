@@ -1,7 +1,7 @@
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { db, sqlite } from '../db/index.js';
 import { ensureUserModelTables } from '../db/userModelMigration.js';
-import { modelPricing, models } from '../db/schema.js';
+import { modelPricing, models, settings } from '../db/schema.js';
 import { eq, desc } from 'drizzle-orm';
 
 export const BILLING_TYPES = ['per_call', 'per_token', 'per_second', 'per_character'] as const;
@@ -261,6 +261,19 @@ export class PricingService {
   static getPricingRules(query: { category?: string; billingType?: string; search?: string; modelId?: string; scope?: 'all' | 'active' | 'models' } = {}) {
     const modelRows = db.select().from(models).all();
     const modelMap = new Map(modelRows.map(model => [model.modelId, model]));
+    // Read display metadata without importing the routing/execution service into billing.
+    // Disabled specifications still need prices before an administrator enables them.
+    const resolutionOptions = new Map<string, string[]>();
+    const specificationSetting = db.select({ value: settings.value }).from(settings).where(eq(settings.key, 'model_specification_routes_v1')).get();
+    if (specificationSetting) {
+      let specifications: unknown;
+      try { specifications = JSON.parse(specificationSetting.value); }
+      catch { /* Optional editor metadata must not block management of existing prices. */ }
+      if (Array.isArray(specifications)) for (const spec of specifications) {
+        if (typeof spec?.modelId !== 'string' || !Array.isArray(spec?.limits?.resolutions)) continue;
+        resolutionOptions.set(spec.modelId, spec.limits.resolutions.filter((value: unknown) => typeof value === 'string' && value.trim()));
+      }
+    }
     const search = String(query.search || '').trim().toLowerCase();
 
     const pricingRows = db.select().from(modelPricing).orderBy(desc(modelPricing.createdAt)).all();
@@ -312,7 +325,8 @@ export class PricingService {
       .filter(rule => !query.modelId || rule.modelPattern === query.modelId)
       .filter(rule => !query.category || query.category === 'all' || rule.category === query.category)
       .filter(rule => !query.billingType || query.billingType === 'all' || rule.billingType === query.billingType)
-      .filter(rule => !search || rule.modelPattern.toLowerCase().includes(search) || rule.displayName.toLowerCase().includes(search));
+      .filter(rule => !search || rule.modelPattern.toLowerCase().includes(search) || rule.displayName.toLowerCase().includes(search))
+      .map(rule => ({ ...rule, resolutionOptions: resolutionOptions.get(rule.modelPattern) }));
   }
 
   static createPricingRule(data: any) {

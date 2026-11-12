@@ -35,6 +35,7 @@ interface PricingRule {
   inputPrice: number;
   outputPrice: number;
   extraParams: Record<string, any>;
+  resolutionOptions?: string[];
   modelActive: boolean | null;
   configured: boolean;
   inherited: boolean;
@@ -130,21 +131,25 @@ export default function PricingPage({ modelId, onEditingChange }: { modelId?: st
     ? rules.length
     : rules.filter(rule => rule.category === value).length;
 
-  const openNew = () => setEdit({
-    modelPattern: modelId || '',
-    lockedModel: Boolean(modelId),
-    category: 'video',
-    billingType: 'per_call',
-    inputPrice: 0,
-    outputPrice: 0,
-    extraText: '',
-    resolutionKeys: [],
-    resolutionPrices: {},
-    isNew: true,
-  });
+  const openNew = () => {
+    const rule = rules.find(rule => rule.modelPattern === modelId);
+    if (rule) return openEdit(rule);
+    setEdit({
+      modelPattern: modelId || '',
+      lockedModel: Boolean(modelId),
+      category: 'video',
+      billingType: 'per_call',
+      inputPrice: 0,
+      outputPrice: 0,
+      extraText: '',
+      resolutionKeys: [],
+      resolutionPrices: {},
+      isNew: true,
+    });
+  };
 
   const openEdit = (rule: PricingRule) => {
-    const resolutionFields = pricingResolutionFields(rule.modelPattern, rule.extraParams || {});
+    const resolutionFields = pricingResolutionFields(rule.modelPattern, rule.extraParams || {}, rule.resolutionOptions);
     setEdit({
       ...rule,
       extraText: resolutionFields.otherText,
@@ -153,6 +158,12 @@ export default function PricingPage({ modelId, onEditingChange }: { modelId?: st
       isNew: !rule.configured,
       lockedModel: Boolean(modelId) || rule.modelActive === true,
     });
+  };
+
+  const changeModel = (modelPattern: string) => {
+    const rule = rules.find(rule => rule.modelPattern === modelPattern.trim());
+    const fields = pricingResolutionFields(modelPattern.trim(), edit.resolutionPrices || {}, rule?.resolutionOptions);
+    setEdit({ ...edit, modelPattern, resolutionKeys: fields.keys, resolutionPrices: fields.values });
   };
 
   const handleSave = async () => {
@@ -390,7 +401,7 @@ export default function PricingPage({ modelId, onEditingChange }: { modelId?: st
             <div className="space-y-4">
               <div>
                 <label htmlFor="pricing-model" className="block text-xs font-semibold text-zinc-400 mb-1.5">模型标识</label>
-                <input id="pricing-model" value={edit.modelPattern} onChange={event => setEdit({ ...edit, modelPattern: event.target.value })} disabled={edit.lockedModel} placeholder="例如：seedance-2.5-c1" className="w-full h-11 rounded-xl border px-4 text-sm font-mono focus:outline-none disabled:opacity-70 disabled:cursor-not-allowed" />
+                <input id="pricing-model" value={edit.modelPattern} onChange={event => changeModel(event.target.value)} disabled={edit.lockedModel} placeholder="例如：seedance-2.5-c1" className="w-full h-11 rounded-xl border px-4 text-sm font-mono focus:outline-none disabled:opacity-70 disabled:cursor-not-allowed" />
                 <p className="text-[10px] text-zinc-500 mt-1.5">必须与模型管理或 API 请求中的 model 完全一致；* 仅作为文本 Token 默认规则。</p>
               </div>
 
@@ -413,7 +424,7 @@ export default function PricingPage({ modelId, onEditingChange }: { modelId?: st
                 <div>
                   <label htmlFor="pricing-input" className="block text-xs font-semibold text-zinc-400 mb-1.5">{edit.billingType === 'per_token' ? '输入价格（¥/百万 Token）' : `${(edit.resolutionKeys || []).length > 0 ? '规格外兜底单价' : '单价'}（¥${pricingUnit(edit.billingType, edit.category) || ''}）`}</label>
                   <input id="pricing-input" type="number" min="0" step="0.001" value={edit.inputPrice} onChange={event => setEdit({ ...edit, inputPrice: event.target.value })} className="w-full h-11 rounded-xl border px-4 text-sm tabular-nums focus:outline-none" />
-                  {(edit.resolutionKeys || []).length > 0 && <p className="text-[10px] text-zinc-500 mt-1.5">仅在请求未匹配下方分辨率时使用。</p>}
+                  {(edit.resolutionKeys || []).length > 0 && <p className="text-[10px] text-zinc-500 mt-1.5">分辨率未单独设置价格时，使用此单价。</p>}
                 </div>
                 {edit.billingType === 'per_token' && (
                   <div>
@@ -425,7 +436,7 @@ export default function PricingPage({ modelId, onEditingChange }: { modelId?: st
 
               {(edit.resolutionKeys || []).length > 0 && (
                 <fieldset className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-                  <legend className="px-1 text-xs font-semibold text-zinc-300">分辨率单价</legend>
+                  <legend className="px-1 text-xs font-semibold text-zinc-300">分辨率单价（¥{pricingUnit(edit.billingType, edit.category)}）</legend>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-1">
                     {edit.resolutionKeys.map((resolutionKey: string) => (
                       <div key={resolutionKey}>

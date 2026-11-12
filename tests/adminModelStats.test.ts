@@ -12,6 +12,7 @@ vi.mock('../server/db/index.js', async () => {
     CREATE TABLE api_logs (model TEXT, status TEXT, duration_ms INTEGER);
     CREATE TABLE usage_logs (model_id INTEGER, status TEXT, duration_ms INTEGER);
     CREATE TABLE model_pricing (id INTEGER PRIMARY KEY, model_pattern TEXT, billing_type TEXT, input_price REAL, output_price REAL, extra_params TEXT, created_at TEXT);
+    CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     INSERT INTO models VALUES (1,'test','video-a','Video A',NULL,'secret-1234','["video"]',1,'2026-01-01');
     INSERT INTO models VALUES (2,'test','empty','Empty',NULL,NULL,'["text"]',1,'2026-01-01');
     INSERT INTO contents VALUES ('video-a','completed','/video','{"durationMs":120000}','2026-01-01');
@@ -69,11 +70,11 @@ describe('batched admin model statistics', () => {
       expect.objectContaining({ id: 1, modelPattern: 'video-a', modelActive: false, configured: true, inputPrice: 2.5 }),
     ]);
   });
-  it('builds all model price sources with only two queries', () => {
+  it('builds all model price sources and specification resolutions with three queries regardless of model count', () => {
     const select = vi.spyOn(db, 'select');
     const rows = PricingService.getPricingRules({ scope: 'models' });
     expect(rows.some(row => row.modelPattern === 'video-a')).toBe(true);
-    expect(select).toHaveBeenCalledTimes(2);
+    expect(select).toHaveBeenCalledTimes(3);
     select.mockRestore();
   });
 });
