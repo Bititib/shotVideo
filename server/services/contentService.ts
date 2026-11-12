@@ -51,6 +51,7 @@ interface GetContentsOptions {
 }
 
 const INTERNAL_VIDEO_ROUTING_FIELDS = [
+  'image2proRequest', 'image2proRequests', 'image2proInitialTask', 'image2proPollInterval',
   'minikeyCredential', 'minikeyRequestId', 'minikeyInitialTask', 'minikeyCompletedReceipt',
   'snumomInitialTask',
   'siYueTianMinimaxInitialTask', 'siYueTianMinimaxCompletedReceipt', 'siYueTianMinimaxResumeAt',

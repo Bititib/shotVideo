@@ -1,3 +1,4 @@
+import { image2proCredential } from './image2proAdapter.js';
 import { isMinikeyChannel, minikeyCredential } from './minikeyAdapter.js';
 import { prepareMediaSubmission } from '../../shared/mediaReferences.js';
 import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
@@ -282,6 +283,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
   let queryFailures = 0;
   if (isHussChannel(channel)) patch(id, { hussQueryResumeAt: null });
   while (Date.now() < end) {
+    if(channel.type==='image2pro' && metadata(id).image2proRequest?.credential!==image2proCredential(channel)){holdForReview(id,'Image2Pro 原渠道凭据已变化，请恢复原凭据后查原任务','query');return;}
     if (metadata(id).minikeyCredential && (!isMinikeyChannel(channel) || metadata(id).minikeyCredential!==minikeyCredential(ChannelService.getChannelRaw(channel.id) || {baseUrl:'',apiKey:''}))) {
       holdForReview(id,'miniKey 原渠道凭据已变化，恢复原凭据后继续查原任务','query');return;
     }
@@ -296,7 +298,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
           ? { taskId, resultUrl: hussMeta.upstreamResultUrl } : null) : null;
       const siYueTianReceipt = isSiYueTianManagedVideoModel(metadata(id).actualModel) ? metadata(id).siYueTianMinimaxCompletedReceipt : null;
       const completedReceipt = hussReceipt || metadata(id).megabyCompletedReceipt || siYueTianReceipt;
-      const miniInitial=isMinikeyChannel(channel)?hussMeta.minikeyInitialTask:null;
+      const miniInitial=channel.type==='image2pro'?hussMeta.image2proInitialTask:isMinikeyChannel(channel)?hussMeta.minikeyInitialTask:null;
       const miniCompleted=isMinikeyChannel(channel)?hussMeta.minikeyCompletedReceipt:null;
       if(miniInitial?.taskId===taskId) {task=miniInitial;localCompletion=true;}
       else if(miniCompleted?.taskId===taskId) {task={status:'completed',progress:100,resultUrl:miniCompleted.resultUrl};localCompletion=true;}
@@ -342,7 +344,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       const message = transportDiagnostic(channel.type || 'OpenAI-compatible', '任务查询 task_id=' + taskId + '；正在重试，请勿重复提交', error, channel.apiKey);
       patch(id, { progressText: message, upstreamQueryError: message, lastQueryAt: new Date().toISOString(), lastQueryStatus: status, queryFailures: ++queryFailures });
       onEvent({ type: 'status', message, contentId: id });
-      await wait(zhiying ? Math.max(8_000, Number(error?.retryAfterMs) || 0) : isZonghengChannel(channel) ? v6kQueryRetryDelay(queryFailures, error?.retryAfter) : isHussChannel(channel) ? Math.max(12_000, Number(error?.retryAfterMs) || 0) : 12_000); continue;
+      await wait(channel.type==='image2pro' ? Math.max(10000,error?.retryAfterMs||0) : zhiying ? Math.max(8_000, Number(error?.retryAfterMs) || 0) : isZonghengChannel(channel) ? v6kQueryRetryDelay(queryFailures, error?.retryAfter) : isHussChannel(channel) ? Math.max(12_000, Number(error?.retryAfterMs) || 0) : 12_000); continue;
     }
     queryFailures = 0;
     if (zhiying) {
@@ -418,7 +420,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         onEvent({ type: 'complete', videoUrl: localized, contentId: id }); return;
       }
     }
-    await wait(saveRetryMs || (isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : isHussChannel(channel) ? 15_000 : 8_000));
+    await wait(saveRetryMs || (channel.type==='image2pro' ? Math.max(10000,task.pollAfterMs||0,metadata(id).image2proPollInterval||0) : isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : isHussChannel(channel) ? 15_000 : 8_000));
   }
   if (zhiying) {
     patch(id, { zhiyingResumeAt: Date.now() + 8_000, progressText: '正在后台继续查询或保存智赢原任务' });
@@ -574,7 +576,7 @@ async function runImages(id: number, candidates: RouteCandidate[], request: Spec
         patch(id, { routingRouteId: target.route.id, routingHealthKey: target.healthKey, channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId, upstreamModel: target.route.upstreamModel, actualModel: target.route.executionModel, actualChannel: target.channel.type });
         const invoke = () => {
           if (!routeStillEnabled(metadata(id).requestedModel, target, request.input)) throw new SpecificationUpstreamError('线路已手动禁用或修改', true);
-          return generateSpecificationImage(target, request, () => patch(id, { submissionStartedAt: new Date().toISOString(), imageSubmissionIndex: index }),
+          return generateSpecificationImage(target, request, (receipt) => patch(id, { submissionStartedAt: new Date().toISOString(), imageSubmissionIndex: index, ...(receipt ? {image2proRequests:{...(metadata(id).image2proRequests || {}),[index]:receipt.image2proRequest}} : {}) }),
             taskId => { accepted = true; taskIds.push(taskId); jobs.push({ index, taskId, ...(isMinikeyChannel(target.channel)?{minikeyCredential:minikeyCredential(target.channel)}:{}), channelId: target.channel.id, apiKeyId: target.channel.apiKeyId, healthKey: target.healthKey, status: 'pending' }); patch(id, { upstreamTaskIds: taskIds, upstreamTaskId: taskId, imageJobs: jobs }); },
             evidence => {
               const meta = metadata(id), responses = [...(meta.upstreamResponses || [])];
@@ -1081,6 +1083,7 @@ async function recoverImages(id: number) {
     for (const job of jobs) {
       if (['completed','failed'].includes(job.status)) continue;
       const channel = ChannelService.getChannelRaw(job.channelId, job.apiKeyId || null);
+      if(channel?.type==='image2pro' && initial.image2proRequests?.[job.index]?.credential!==image2proCredential(channel)){holdForReview(id,'Image2Pro 原图片凭据已变化，请恢复原凭据后查原任务','query');return;}
       if(job.minikeyCredential && (!isMinikeyChannel(channel) || !channel || job.minikeyCredential!==minikeyCredential(channel))) {holdForReview(id,'miniKey 原图片渠道凭据已变化，恢复原凭据后继续查原任务','query');return;}
       if (!channel) { holdForReview(id, '图片原渠道已删除，请管理员核实'); return; }
       try {
@@ -1105,7 +1108,7 @@ async function recoverImages(id: number) {
       if (initial.submissionStartedAt && !jobs.some(j => j.index === initial.imageSubmissionIndex)) { holdForReview(id, '有一张图片的提交结果仍待核实，请勿重提'); return; }
       if (urls.length) complete(id, urls); else failTask(id, jobs.map(j => j.error).filter(Boolean).join('；') || '图片生成失败'); return;
     }
-    await wait(8000);
+    await wait(initial.image2proRequests ? 10000 : 8000);
   }
   holdForReview(id, '图片原任务仍在处理中，请勿重复提交');
 }

@@ -171,7 +171,7 @@ export async function localizeGeneratedImage(
   sourceUrl: string,
   prefix: string,
   req: Request,
-  channel?: { baseUrl?: string; apiKey?: string },
+  channel?: { baseUrl?: string; apiKey?: string; type?: string },
   options?: { relative?: boolean },
 ): Promise<string> {
   if (!sourceUrl) throw new Error('上游未返回图片 URL');
@@ -199,7 +199,7 @@ export async function localizeGeneratedImage(
   const absoluteSource = new URL(sourceUrl, channel?.baseUrl || siteBase);
   if (!['http:', 'https:'].includes(absoluteSource.protocol)) throw new Error('不支持的图片 URL 协议');
   const headers: Record<string, string> = {};
-  if (channel?.apiKey && channel.baseUrl && !isPidoiImageChannel(channel)) {
+  if (channel?.apiKey && channel.baseUrl && channel.type !== 'image2pro' && !isPidoiImageChannel(channel)) {
     try {
       const channelOrigin = new URL(channel.baseUrl).origin;
       const authorizedOrigins = new Set([channelOrigin]);
@@ -260,7 +260,7 @@ router.get('/download', authMiddleware, async (req: TierRequest, res: Response) 
 
     const headers: Record<string, string> = {};
     const channel = ownedRecord.modelId ? ChannelService.findChannelForModel(ownedRecord.modelId) : null;
-    if (channel?.apiKey) {
+    if (channel?.apiKey && channel.type !== 'image2pro') {
       try {
         if (new URL(channel.baseUrl).origin === requestUrl.origin) {
           headers.Authorization = `Bearer ${channel.apiKey}`;

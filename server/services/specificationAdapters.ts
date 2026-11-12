@@ -1,3 +1,4 @@
+import { image2proCredential, isImage2proChannel, submitImage2pro, pollImage2pro, normalizeImage2pro, image2proModels, Image2proError } from './image2proAdapter.js';
 import { isMinikeyChannel, submitMinikey, pollMinikey, MinikeyError, minikeyCredential, normalizeMinikeyTask } from './minikeyAdapter.js';
 import { minikeyImageSize } from '../../shared/minikeyModelConfiguration.js';
 import { isSiYueTianManagedVideoModel, siYueTianManagedVideoUpstreamModel } from '../../shared/siYueTianManagedVideo.js';
@@ -191,6 +192,45 @@ function zonghengSpecificationInput(model: string, request: SpecificationRequest
 }
 
 export async function submitSpecificationVideo(target: RouteCandidate, request: SpecificationRequest, onStarting: (metadata?: Record<string, unknown>) => void) {
+  if(isImage2proChannel(target.channel)) {
+
+    const model=(await image2proModels(target.channel)).find((m:any)=>m.id===target.route.upstreamModel);
+    if(!model || model.metadata.media_contract!==1 && typeof model.metadata.supports_frame_control!=='boolean' && !(Number.isInteger(model.metadata.duration_min)&&Number.isInteger(model.metadata.duration_max)))throw new SpecificationUpstreamError('Image2Pro 此视频型号尚未接入专属协议',true);
+    const md=model.metadata, standard=md.media_contract===1, flow=!standard&&typeof md.supports_frame_control==='boolean', legacy=!standard&&!flow;
+    const durations=md.durations || (Number.isInteger(md.duration_min)&&Number.isInteger(md.duration_max)&&md.duration_max>=md.duration_min&&md.duration_max<=120?Array.from({length:md.duration_max-md.duration_min+1},(_,i)=>md.duration_min+i):[]);
+    if(request.videos.length>(legacy?(md.max_video_references||0):0)||request.audios.length>(legacy?(md.max_audio_references||0):0))throw new SpecificationUpstreamError('Image2Pro 视频或音频参考数量不符合模型能力',true);
+    if((request.firstFrame||request.lastFrame)&&(request.videos.length||request.audios.length))throw new SpecificationUpstreamError('Image2Pro 首尾帧不能与视频音频混用',true);
+    if((request.firstFrame||request.lastFrame)&&(!(md.supports_frame_control||legacy&&md.modes?.includes('keyframe'))||flow&&!request.firstFrame||request.images.length))throw new SpecificationUpstreamError('Image2Pro 首尾帧组合不支持：必须有首帧且不能混用普通参考图',true);
+    if(flow && request.images.length && !md.supports_reference_images)throw new SpecificationUpstreamError('Image2Pro 此型号不支持普通参考图',true);
+    if(!durations.includes(request.input.seconds))throw new SpecificationUpstreamError('Image2Pro 时长与模型能力不符',true);
+    const payload:Record<string,unknown>={model:model.id,prompt:request.prompt,duration:request.input.seconds,images:request.images.map(s=>publishSpecificationAsset(s,request.publicBaseUrl))};
+    if(request.images.length<(md.min_images||0)||request.images.length>(md.max_images??(md.supports_reference_images?3:0)))throw new SpecificationUpstreamError('Image2Pro 参考图数量超出模型能力',true);
+    for(const [key,value,allowed] of [['ratio',request.input.ratio,md.aspect_ratios],['resolution',request.input.resolution,md.resolutions]] as const) {
+      if(Array.isArray(allowed)&&allowed.length){const selected=allowed.find((option:unknown)=>typeof option==='string'&&option.toLowerCase()===value.toLowerCase());if(!selected)throw new SpecificationUpstreamError('Image2Pro '+key+' 不支持所选值',true);payload[key]=selected;}
+    }
+    if(flow){
+      payload.reference_images=payload.images;delete payload.images;
+      if(payload.ratio){payload.aspect_ratio=payload.ratio;delete payload.ratio;}
+      if(request.firstFrame)payload.reference_images=[{url:publishSpecificationAsset(request.firstFrame,request.publicBaseUrl),role:'first_frame'},...(request.lastFrame?[{url:publishSpecificationAsset(request.lastFrame,request.publicBaseUrl),role:'last_frame'}]:[])];
+    }
+    if(legacy){
+      if(md.size && request.input.resolution!=='auto' && request.input.resolution.toLowerCase()!==String(md.size).toLowerCase())throw new SpecificationUpstreamError('Image2Pro 固定清晰度与所选规格不一致',true);
+      if(md.size)payload.size=md.size;
+      if(request.audios.length)payload.audios=request.audios.map(s=>publishSpecificationAsset(s,request.publicBaseUrl));
+      if(request.videos.length)payload.videos=request.videos.map(s=>({url:publishSpecificationAsset(s,request.publicBaseUrl)}));
+      if(request.firstFrame)payload.first_frame=publishSpecificationAsset(request.firstFrame,request.publicBaseUrl);
+      if(request.lastFrame)payload.last_frame=publishSpecificationAsset(request.lastFrame,request.publicBaseUrl);
+      if(Array.isArray(md.modes)){const mode=request.firstFrame||request.lastFrame?'keyframe':request.images.length||request.videos.length||request.audios.length?'reference':'text';if(!md.modes.includes(mode))throw new SpecificationUpstreamError('Image2Pro 此模型不支持 '+mode,true);payload.mode=mode;}
+    }
+    const key=randomUUID();
+    try {
+      const job=await submitImage2pro(target.channel,'video',payload,key,()=>onStarting({image2proRequest:{key,payload,credential:image2proCredential(target.channel)},image2proPollInterval:legacy&&Array.isArray(md.modes)?60000:10000}),id=>onStarting({videoId:id,upstreamTaskId:id}),fetch,standard);
+      const task=normalizeImage2pro(target.channel,'video',job.id,job.raw);
+      if(['completed','failed'].includes(task.status))onStarting({image2proInitialTask:{...task,taskId:job.id}});
+      return job.id;
+    }catch(e){if(e instanceof Image2proError)throw new SpecificationUpstreamError(e.message,false,e.uncertain,false,e.status,e.confirmedFailure);throw e;}
+  }
+
   if (isMinikeyChannel(target.channel)) {
     if (request.firstFrame || request.lastFrame) throw new SpecificationUpstreamError('miniKey 不支持独立首尾帧字段', true);
     const key = randomUUID(), form = new FormData();
@@ -442,6 +482,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   return String(id);
 }
 export async function pollSpecificationVideo(channel: any, taskId: string, executionModel?: string, referenceVideoSeconds = 0) {
+  if(isImage2proChannel(channel))return pollImage2pro(channel,'video',taskId);
   if (isMinikeyChannel(channel)) return pollMinikey(channel, 'videos', taskId);
   if (channel.type === 'zhiying') return pollZhiyingVideo(channel, taskId, executionModel);
   if (isSiYueTianManagedVideoModel(executionModel)) return pollSiYueTianMinimax(channel, taskId);
@@ -560,10 +601,34 @@ export async function pollMjSpecificationImage(channel: any, initial: MjAsyncIma
   throw new SpecificationUpstreamError('MJ 原任务查询超时，请核实原任务；不会重新生成', false, true);
 }
 
-export async function generateSpecificationImage(target: RouteCandidate, request: SpecificationRequest, onStarting: () => void, onSubmitted: (id: string) => void, onResponse?: (evidence: ImageResponseEvidence) => void,
+export async function generateSpecificationImage(target: RouteCandidate, request: SpecificationRequest, onStarting: (metadata?: Record<string, unknown>) => void, onSubmitted: (id: string) => void, onResponse?: (evidence: ImageResponseEvidence) => void,
   onMjAsyncState: (state: MjAsyncImageState) => void = () => {}, checkMjReservation: () => void = () => {},
   onPidoiFallback?: (state: import('./pidoiImageAdapter.js').PidoiFallbackState) => void) {
   const c = { ...target.channel, timeout: imageGenerationTimeout(target.channel) }, model = target.route.upstreamModel, i = request.input;
+  if(isImage2proChannel(c)) {
+    if(request.videos.length||request.audios.length||request.firstFrame||request.lastFrame)throw new SpecificationUpstreamError('Image2Pro 图片不接受视频音频或独立首尾帧',true);
+    for(const key of ['quality','background','output_format','output_compression','mask'])if(request.body[key]!==undefined)throw new SpecificationUpstreamError('Image2Pro 当前入口未接入 '+key,true);
+    const payload:Record<string,unknown>={model,prompt:request.prompt,n:1,response_format:'url'};
+    if(i.ratio&&i.ratio!=='auto')payload.aspect_ratio=i.ratio;if(i.resolution&&i.resolution!=='auto')payload.resolution=i.resolution;
+    if(request.body.size)payload.size=request.body.size;
+    if(request.images.length)payload.images=request.images.map(s=>publishSpecificationAsset(s,request.publicBaseUrl));
+    const key=randomUUID();
+    try {
+      const job=await submitImage2pro(c,'image',payload,key,()=>onStarting({image2proRequest:{key,payload,credential:image2proCredential(target.channel)}}),onSubmitted);
+      let task=normalizeImage2pro(c,'image',job.id,job.raw);
+      const deadline=Date.now()+20*60_000;
+      while(Date.now()<deadline){
+        if(task.status==='failed')throw new SpecificationUpstreamError(task.error,false,false,false,200,true);
+        if(task.status==='completed'){
+          if(task.imageUrls.length!==1)throw new SpecificationUpstreamError('Image2Pro 单图请求返回多图，保留原任务待完整恢复',false,true);
+          return {imageUrl:task.imageUrl,reportedImageUrl:task.imageUrl,taskId:job.id,raw:job.raw};
+        }
+        await new Promise(resolve=>setTimeout(resolve,Math.max(10000,task.pollAfterMs)));task=await pollImage2pro(c,'image',job.id);
+      }
+      throw new SpecificationUpstreamError('Image2Pro 原图片任务仍在处理中',false,true);
+    }catch(e){if(e instanceof Image2proError)throw new SpecificationUpstreamError(e.message,false,e.uncertain,false,e.status,e.confirmedFailure);throw e;}
+  }
+
   if (isMinikeyChannel(c)) {
     if (request.videos.length || request.audios.length || request.firstFrame || request.lastFrame || request.images.some(s => !s.startsWith('data:image/')))
       throw new SpecificationUpstreamError('miniKey 图片仅支持已校验的 Base64 参考图片', true);
@@ -741,6 +806,7 @@ export function imageSize(ratio: string) {
 
 /** Resume a previously accepted image job; this function never submits a POST. */
 export async function pollSpecificationImage(channel: any, taskId: string) {
+  if(isImage2proChannel(channel))return pollImage2pro(channel,'image',taskId);
   if (isMinikeyChannel(channel)) return pollMinikey(channel, 'images', taskId);
   if (isPidoiImageChannel(channel)) return pollPidoiImage(channel, taskId);
   if (isFunAiChannel(channel)) {
