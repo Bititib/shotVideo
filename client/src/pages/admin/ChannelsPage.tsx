@@ -521,8 +521,8 @@ export default function ChannelsPage() {
                       apiKeys: e.target.value === 'hmstudio' && (!edit.apiKeys || edit.apiKeys.length === 0)
                         ? [newHmKey()]
                         : edit.apiKeys,
-                      maxRetries: ['minikey', 'zongheng-v6k', 'funai', 'megaby', 'async-video', 'mj', 'huss', ZHIYING_CHANNEL_TYPE].includes(e.target.value) ? 0 : edit.maxRetries,
-                      baseUrl: e.target.value === 'minikey' ? 'https://minikey.work' : e.target.value === ZHIYING_CHANNEL_TYPE ? ZHIYING_BASE_URL : e.target.value === 'megaby' && !edit.baseUrl ? MEGABY_BASE_URL : e.target.value === 'async-video' && !edit.baseUrl
+                      maxRetries: ['image2pro', 'minikey', 'zongheng-v6k', 'funai', 'megaby', 'async-video', 'mj', 'huss', ZHIYING_CHANNEL_TYPE].includes(e.target.value) ? 0 : edit.maxRetries,
+                      baseUrl: e.target.value === 'image2pro' ? 'https://api.image2pro.top/v1' : e.target.value === 'minikey' ? 'https://minikey.work' : e.target.value === ZHIYING_CHANNEL_TYPE ? ZHIYING_BASE_URL : e.target.value === 'megaby' && !edit.baseUrl ? MEGABY_BASE_URL : e.target.value === 'async-video' && !edit.baseUrl
                         ? ASYNC_VIDEO_BASE_URL
                         : e.target.value === 'funai' && !edit.baseUrl
                         ? FUNAI_BASE_URL
@@ -558,6 +558,7 @@ export default function ChannelsPage() {
                       <option value="miaowu">喵呜 API（视频异步任务）</option>
                       <option value="huss">HUSS（视频 / Midjourney 图片）</option>
                       <option value="megaby">Megaby（视频生成）</option>
+                      <option value="image2pro">Image2Pro（文本 / 图片 / 视频）</option>
                       <option value="minikey">miniKey（可配置模型）</option>
                       <option value={ZHIYING_CHANNEL_TYPE}>智赢 AI（视频生成）</option>
                       <option value="mingfei">MingFei（GPT Image 2 异步任务）</option>

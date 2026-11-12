@@ -61,7 +61,7 @@ export async function downloadAndLocalizeVideo(
   if (channel?.type === 'zhiying') assertZhiyingOriginalChannel(channel, { channelId, zhiyingCredential:originalCredential });
   const authenticatedV6kContent = channel && isZonghengChannel(channel) && url === zonghengTaskUrl(channel.baseUrl, videoId) + '/content';
   const headers: Record<string, string> = {};
-  const maySendAuthorization = isMinikeyChannel(channel) ? false : channel?.type === 'zhiying' ? false : isHussChannel(channel) ? false : isMegabyChannel(channel) ? false : isAsyncVideoChannel(channel) ? false : isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isZonghengChannel(channel) ? Boolean(authenticatedV6kContent) : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
+  const maySendAuthorization = channel?.type==='image2pro' ? false : isMinikeyChannel(channel) ? false : channel?.type === 'zhiying' ? false : isHussChannel(channel) ? false : isMegabyChannel(channel) ? false : isAsyncVideoChannel(channel) ? false : isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isZonghengChannel(channel) ? Boolean(authenticatedV6kContent) : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
     ? shouldSendHmStudioAuthorization(url, channel.baseUrl)
     : isWxHaidiYueChannel(channel)
       ? shouldSendWxHaidiYueAuthorization(url, channel.baseUrl)

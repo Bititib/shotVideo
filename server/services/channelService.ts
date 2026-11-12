@@ -1,3 +1,4 @@
+import { image2proModels } from './image2proAdapter.js';
 import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS } from '../../shared/siYueTianManagedVideo.js';
 import { pruneSiYueTianCatalogBindings, siYueTianMappedBindings } from './siYueTianApprovedBindings.js';
 import { channelCatalogBindings, pruneChannelCatalogBindings } from './channelCatalogBindings.js';
@@ -442,7 +443,7 @@ export class ChannelService {
       priority: priority ?? 0,
       weight: weight ?? 1,
       concurrencyLimit: DEFAULT_HM_CONCURRENCY,
-      maxRetries: type === 'minikey' || isMegabyChannel({ type, baseUrl }) || isHussChannel({ type, baseUrl }) || isMjChannel({ type }) || isAsyncVideoChannel({ type }) || isHaya || isFunAiChannel({ type, baseUrl }) ? 0 : maxRetries ?? 3,
+      maxRetries: type === 'image2pro' || type === 'minikey' || isMegabyChannel({ type, baseUrl }) || isHussChannel({ type, baseUrl }) || isMjChannel({ type }) || isAsyncVideoChannel({ type }) || isHaya || isFunAiChannel({ type, baseUrl }) ? 0 : maxRetries ?? 3,
       timeout: timeout ?? 120000,
       faceSplitEnabled: isWxHaidiYue
         ? (data.faceSplitEnabled === 0 || data.faceSplitEnabled === false ? 0 : 1)
@@ -479,7 +480,7 @@ export class ChannelService {
     if (isMegabyChannel({ type: nextType, baseUrl: data.baseUrl ?? channel.baseUrl })) {
       data = { ...data, type: 'megaby', baseUrl: megabyBaseUrl(data.baseUrl ?? channel.baseUrl), maxRetries: 0 };
     }
-    if (nextType === 'minikey') data = { ...data, maxRetries: 0 };
+    if (nextType === 'image2pro' || nextType === 'minikey') data = { ...data, maxRetries: 0 };
 
     if (isMjChannel({ type: nextType })) {
       data = { ...data, type: 'mj', baseUrl: normalizeMjBaseUrl(data.baseUrl ?? channel.baseUrl), maxRetries: 0 };
@@ -576,6 +577,7 @@ export class ChannelService {
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
     const start = Date.now();
     try {
+      if(channel.type==='image2pro'){const entries=await image2proModels(channel);return {success:true,message:'Image2Pro 鉴权成功，共 '+entries.length+' 个文本、图片及视频模型',durationMs:Date.now()-start};}
       if (channel.type === 'minikey') {
         const { listMinikeyCatalogOptions } = await import('./minikeyModelConfigurationService.js');
         const entries = await listMinikeyCatalogOptions(id);
@@ -661,6 +663,7 @@ export class ChannelService {
     const channel = this.getChannelRaw(id);
     if (!channel) throw { status: 404, message: '渠道不存在' };
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
+    if(channel.type==='image2pro'){const {syncImage2proModels}=await import('./image2proCatalogService.js');return syncImage2proModels(channel);}
     if (channel.type === 'minikey') {
       const { listMinikeyModelConfigurations, listMinikeyCatalogOptions } = await import('./minikeyModelConfigurationService.js');
       await listMinikeyCatalogOptions(id);
