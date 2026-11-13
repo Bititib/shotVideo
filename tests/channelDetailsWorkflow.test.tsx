@@ -13,6 +13,7 @@ vi.mock('../client/src/api/admin', () => ({ adminApi: {
   getPricing: vi.fn(), updatePricing: vi.fn(), syncChannelModels: vi.fn(), testChannel: vi.fn(), deleteChannel: vi.fn(),
   createChannel: vi.fn(), updateChannel: vi.fn(),
   getV6kModelConfigurations: vi.fn(),
+  getSiYueTianModelConfigurations: vi.fn(), getSiYueTianVideoCatalog: vi.fn(),
   getMinikeyModelConfigurations: vi.fn(), getMinikeyModelCatalog: vi.fn(),
 } }));
 const ids = ['ZH-Cseadanco2.5K', 'ZH-Xminimex-h3', 'ZH-wan-1080', 'ZH-A-SD2.0'];
@@ -49,6 +50,20 @@ it('opens the miniKey model editor from the channel row', async () => {
 });
 
 describe('channel details and model sync workflow', () => {
+  it('opens the shared model editor from the Siyuetian row and loads the authorized video catalog on demand', async () => {
+    vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, name: '4月天 渠道', type: 'openai', baseUrl: 'https://llm.chre3.com' }]);
+    vi.mocked(adminApi.getSiYueTianModelConfigurations).mockResolvedValue([]);
+    vi.mocked(adminApi.getSiYueTianVideoCatalog).mockResolvedValue([{ id: 'new-video' }]);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: '四月天 模型与参数' }));
+    const panel = await screen.findByRole('dialog', { name: '四月天 · 模型与参数' });
+    await waitFor(() => expect(within(panel).getByLabelText('上游模型 ID')).toBeEnabled());
+    fireEvent.click(within(panel).getByRole('button', { name: '读取已授权的上游视频型号' }));
+    await waitFor(() => expect(within(panel).getByLabelText('上游模型 ID')).toHaveAttribute('list', 'siyuetian-video-catalog'));
+    expect(adminApi.getSiYueTianVideoCatalog).toHaveBeenCalledExactlyOnceWith(9);
+    expect(adminApi.syncChannelModels).not.toHaveBeenCalled();
+  });
+
   it('opens V6K model configuration directly from the channel row without opening details or syncing models', async () => {
     vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, id: 21, name: 'qq-往生普', type: 'zongheng-v6k' }]);
     vi.mocked(adminApi.getV6kModelConfigurations).mockResolvedValue([]);

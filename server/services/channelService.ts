@@ -731,7 +731,9 @@ export class ChannelService {
         ? longxiaApiBaseUrl(channel.baseUrl) + '/v1/models'
         : isMiaowuChannel(channel)
       ? miaowuVideoModelListUrl(channel.baseUrl)
-      : channel.baseUrl.replace(/\/+$/, '') + '/v1/models';
+      : isSiYueTianVideoHost(channel.baseUrl)
+        ? channel.baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, '') + '/v1/models'
+        : channel.baseUrl.replace(/\/+$/, '') + '/v1/models';
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${channel.apiKey}` },
       signal: AbortSignal.timeout(channel.timeout || 30_000),
@@ -830,7 +832,8 @@ export class ChannelService {
             isActive: 0,
           }).run();
           added++;
-        } else if (item.capability === 'tts' && existing.capabilities !== JSON.stringify(['tts'])) {
+        } else if (item.capability === 'tts' && existing.capabilities !== JSON.stringify(['tts'])
+          && !(isSiYueTian && existing.provider === 'siyuetian' && JSON.parse(existing.capabilities).includes('video'))) {
           db.update(models).set({ capabilities: JSON.stringify(['tts']) }).where(eq(models.id, existing.id)).run();
         }
       }

@@ -76,6 +76,14 @@ export const adminApi = {
   testChannel(id: number) { return api.post<any>(`/admin/channels/${id}/test`); },
   syncChannelModels(id: number) { return api.post<any>(`/admin/channels/${id}/sync-models`); },
   getV6kModelConfigurations(id: number) { return api.get<V6kModelConfiguration[]>(`/admin/channels/${id}/v6k-models`); },
+  getSiYueTianModelConfigurations(id: number) { return api.get<V6kModelConfiguration[]>(`/admin/channels/${id}/siyuetian-models`); },
+  getSiYueTianVideoCatalog(id: number) { return api.get<{ id: string }[]>(`/admin/channels/${id}/siyuetian-models/catalog`); },
+  previewSiYueTianModel(id: number, draft: V6kModelDraft, sample: V6kRequestSample) {
+    return client.post<{ method: string; path: string; body: object }>(`/admin/channels/${id}/siyuetian-models/preview`, { draft, sample });
+  },
+  saveSiYueTianModel(id: number, draft: V6kModelDraft, version: string | null) {
+    return api.put<V6kModelConfiguration>(`/admin/channels/${id}/siyuetian-models`, { draft, version });
+  },
   previewV6kModel(id: number, draft: V6kModelDraft, sample: V6kRequestSample) {
     return client.post<{ method: string; path: string; body: object }>(`/admin/channels/${id}/v6k-models/preview`, { draft, sample });
   },

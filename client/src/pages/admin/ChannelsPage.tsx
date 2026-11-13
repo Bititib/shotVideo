@@ -5,6 +5,7 @@ import AdminCollection from '../../components/AdminCollection';
 import ChannelListItem from '../../components/ChannelListItem';
 import ZhiyingModelConfigurationPanel from '../../components/ZhiyingModelConfigurationPanel';
 import V6kModelConfigurationPanel from '../../components/V6kModelConfigurationPanel';
+import { isSiYueTianVideoHost } from '../../../../shared/siYueTianMinimax';
 import MinikeyModelConfigurationPanel from '../../components/MinikeyModelConfigurationPanel';
 import './ChannelsPage.css';
 import AdminDrawer from '../../components/AdminDrawer';
@@ -37,6 +38,7 @@ export default function ChannelsPage() {
   const [modelsRevision, setModelsRevision] = useState(0);
   const [zhiyingEditor, setZhiyingEditor] = useState<number | null>(null);
   const [v6kEditor, setV6kEditor] = useState<number | null>(null);
+  const [siYueTianEditor, setSiYueTianEditor] = useState<number | null>(null);
   const [minikeyEditor, setMinikeyEditor] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [pendingId, setPendingId] = useState<number | null>(null);
@@ -456,7 +458,8 @@ export default function ChannelsPage() {
         { title: '模型数量', sort: ch => ch.supportedModels?.length || 0, render: ch => ch.supportedModels?.length || 0 },
       ]} listHeader={<div className="channel-list-header" aria-hidden="true"><span>渠道</span><span>状态</span><span>关联模型</span><span>实时任务</span><span>操作</span></div>}
         listItem={ch => <ChannelListItem channel={ch} syncing={syncing} testing={testing} pending={pendingId !== null}
-          onConfigureModels={ch.type === 'minikey' ? () => setMinikeyEditor(ch.id) : ch.type === 'zongheng-v6k' ? () => setV6kEditor(ch.id) : ch.type === ZHIYING_CHANNEL_TYPE ? () => setZhiyingEditor(ch.id) : undefined}
+          onConfigureModels={ch.type === 'minikey' ? () => setMinikeyEditor(ch.id) : ch.type === 'zongheng-v6k' ? () => setV6kEditor(ch.id) : ch.type === ZHIYING_CHANNEL_TYPE ? () => setZhiyingEditor(ch.id)
+            : ch.type === 'openai' && isSiYueTianVideoHost(ch.baseUrl) ? () => setSiYueTianEditor(ch.id) : undefined}
           onOpen={() => { setDetailEditing(false); setDetailTab('models'); setDetail(ch); }}
           onSync={() => { setDetailEditing(false); setDetailTab('models'); setDetail(ch); void syncModels(ch); }}
           onEdit={() => openEdit(ch)} onToggle={() => { void toggleStatus(ch); }}
@@ -475,7 +478,7 @@ export default function ChannelsPage() {
         </div>
       </AdminDrawer>}
 
-      {detail && <AdminDrawer wide title={detail.name + ' · 渠道详情'} blocked={minikeyEditor !== null || v6kEditor !== null || detailEditing || Boolean(edit) || syncing === detail.id || testing === detail.id} onClose={() => { setDetail(null); void loadChannels(); }}>
+      {detail && <AdminDrawer wide title={detail.name + ' · 渠道详情'} blocked={minikeyEditor !== null || v6kEditor !== null || siYueTianEditor !== null || detailEditing || Boolean(edit) || syncing === detail.id || testing === detail.id} onClose={() => { setDetail(null); void loadChannels(); }}>
         <ChannelDetails channel={channels.find(ch => ch.id === detail.id) || detail}
           tab={detailTab} onTabChange={setDetailTab}
           busy={detailEditing || Boolean(edit) || syncing !== null || testing !== null}
@@ -487,12 +490,16 @@ export default function ChannelsPage() {
             disabled={detailEditing || syncing === detail.id} onClick={() => setV6kEditor(detail.id)}>V6K 模型与参数</button>}
           {detail.type === ZHIYING_CHANNEL_TYPE && <button type="button" className="mb-3 rounded-lg border px-3 py-2 text-sm" disabled={detailEditing || syncing === detail.id} onClick={() => setZhiyingEditor(detail.id)}>智赢模型与参数</button>}
           {detail.type === 'minikey' && <button type="button" className="mb-3 rounded-lg border px-3 py-2 text-sm" disabled={detailEditing || syncing === detail.id} onClick={() => setMinikeyEditor(detail.id)}>miniKey 模型与参数</button>}
+          {detail.type === 'openai' && isSiYueTianVideoHost(detail.baseUrl) && <button type="button" className="mb-3 rounded-lg border px-3 py-2 text-sm"
+            disabled={detailEditing || syncing === detail.id} onClick={() => setSiYueTianEditor(detail.id)}>四月天模型与参数</button>}
           <Suspense fallback={<p role="status">正在加载关联模型…</p>}>
             <ModelsPage key={detail.id + ':' + modelsRevision} channelId={String(detail.id)} onEditingChange={setDetailEditing} />
           </Suspense>
         </ChannelDetails>
       </AdminDrawer>}
       {v6kEditor !== null && <V6kModelConfigurationPanel channelId={v6kEditor} onClose={() => setV6kEditor(null)}
+        onSaved={() => { setModelsRevision(value => value + 1); void loadChannels(); }} />}
+      {siYueTianEditor !== null && <V6kModelConfigurationPanel siYueTian channelId={siYueTianEditor} onClose={() => setSiYueTianEditor(null)}
         onSaved={() => { setModelsRevision(value => value + 1); void loadChannels(); }} />}
       {zhiyingEditor !== null && <ZhiyingModelConfigurationPanel channelId={zhiyingEditor} onClose={() => setZhiyingEditor(null)} onSaved={() => { setModelsRevision(value => value + 1); void loadChannels(); }} />}
       {minikeyEditor !== null && <MinikeyModelConfigurationPanel channelId={minikeyEditor} onClose={() => setMinikeyEditor(null)} onSaved={() => { setModelsRevision(value => value + 1); void loadChannels(); }} />}

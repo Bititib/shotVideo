@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { KeyRound, Loader2, MoreHorizontal, Pencil, Radio, RefreshCw, SlidersHorizontal, Trash2, Zap } from 'lucide-react';
+import { isSiYueTianVideoHost } from '../../../shared/siYueTianMinimax';
 
 export default function ChannelListItem({ channel: ch, syncing, testing, pending, onOpen, onSync, onEdit, onToggle, onTest, onAddKey, onDelete, onConfigureModels }: {
   channel: any; syncing: number | null; testing: number | null; pending: boolean;
@@ -29,7 +30,7 @@ export default function ChannelListItem({ channel: ch, syncing, testing, pending
       {onConfigureModels && <button type="button" className="channel-list-configure"
         disabled={pending || syncing !== null || testing !== null}
         title={ch.name + ' · 模型与参数'} onClick={onConfigureModels}>
-        <SlidersHorizontal aria-hidden="true" />{ch.type === 'minikey' ? 'miniKey' : ch.type === 'zhiying' ? '智赢' : 'V6K'} 模型与参数
+        <SlidersHorizontal aria-hidden="true" />{ch.type === 'minikey' ? 'miniKey' : ch.type === 'zhiying' ? '智赢' : isSiYueTianVideoHost(ch.baseUrl) ? '四月天' : 'V6K'} 模型与参数
       </button>}
       <button type="button" className="channel-list-sync" disabled={syncing !== null || testing !== null} onClick={onSync}><RefreshCw className={syncing === ch.id ? 'animate-spin' : ''} aria-hidden="true" />{syncing === ch.id ? '同步中…' : '同步模型'}</button>
       <button type="button" className="channel-list-action" aria-label={`编辑${ch.name}`} title="编辑渠道" onClick={onEdit}><Pencil aria-hidden="true" /></button>

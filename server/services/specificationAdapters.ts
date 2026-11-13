@@ -61,6 +61,9 @@ export function validateSpecificationVideoParameters(request: SpecificationReque
     if (problems.length) throw new Error(problems.join('；'));
   }
   for (const target of candidates) {
+    if (target.route.siYueTianVideo && (request.firstFrame || request.lastFrame)
+      && (request.images.length || request.videos.length || request.audios.length))
+      throw new Error('四月天独立首尾帧不能与普通参考素材混用');
     if (request.v6kConfigured) {
       if (!isZonghengChannel(target.channel)) throw new Error('此模型须使用已配置的 V6K 线路');
       buildZonghengVideoPayload(zonghengSpecificationInput(target.route.upstreamModel, request, request));
@@ -266,9 +269,9 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
     onStarting({ zhiyingInitialTask: task });
     return task.taskId;
   }
-  if (isSiYueTianManagedVideoModel(exec)) {
-    if (model !== siYueTianManagedVideoUpstreamModel(exec)) throw new SpecificationUpstreamError('四月天视频上游模型映射不一致', false, false, false, 0, true);
-    try { return await submitSiYueTianMinimax(c, request, url => publishSpecificationAsset(url, request.publicBaseUrl), onStarting, exec); }
+  if (target.route.siYueTianVideo || isSiYueTianManagedVideoModel(exec)) {
+    if (!target.route.siYueTianVideo && model !== siYueTianManagedVideoUpstreamModel(exec)) throw new SpecificationUpstreamError('四月天视频上游模型映射不一致', false, false, false, 0, true);
+    try { return await submitSiYueTianMinimax(c, request, url => publishSpecificationAsset(url, request.publicBaseUrl), onStarting, exec, target.route.siYueTianVideo ? model : undefined); }
     catch (error) {
       if (error instanceof SiYueTianMinimaxError) throw new SpecificationUpstreamError(error.message, false, error.uncertain, false, error.status, !error.uncertain);
       throw error;

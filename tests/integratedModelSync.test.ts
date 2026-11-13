@@ -40,6 +40,58 @@ afterEach(() => { sqlite.exec('ROLLBACK TO sync_scope; RELEASE sync_scope'); env
 afterAll(async () => { await new Promise<void>(resolve => server.close(() => resolve())); sqlite.close(); });
 
 describe('actual admin model sync scope', () => {
+  it('saves only the selected authorized Siyuetian video, then preserves its explicit mapping on sync and startup', async () => {
+    const c = channel({ baseUrl: 'https://llm.domie.studio' });
+    const path = origin + `/channels/${c.id}/siyuetian-models`;
+    const requests = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(init?.method).not.toBe('POST');
+      const authorization = new Headers(init?.headers).get('Authorization');
+      if (url.endsWith('/api/pricing')) {
+        expect(authorization).toBeNull();
+        return Response.json({ supported_endpoint: { 'openai-video': { method: 'POST', path: '/v1/videos' } },
+          data: [
+            { model_name: 'provider-video', supported_endpoint_types: ['openai-video'] },
+            { model_name: 'other-video', supported_endpoint_types: ['openai-video'] },
+            { model_name: 'image-only', supported_endpoint_types: ['image-generation'] },
+            { model_name: 'no-access', supported_endpoint_types: ['openai-video'] },
+          ] });
+      }
+      expect(authorization).toBe('Bearer test');
+      return Response.json({ data: ['provider-video', 'other-video', 'image-only'].map(id => ({ id })) });
+    });
+    vi.stubGlobal('fetch', requests);
+    const catalogResponse = await nativeFetch(path + '/catalog');
+    expect(await catalogResponse.json()).toEqual([{ id: 'other-video' }, { id: 'provider-video' }]);
+    const draft = { modelId: 'my-video', displayName: '管理员视频', upstreamModel: 'provider-video',
+      enabled: true, routeEnabled: true, limits: { ...defaultRoutingLimits(), maxImages: 2, maxAudios: 1 } };
+    const send = (method: string, suffix: string, body: unknown) => nativeFetch(path + suffix, {
+      method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const preview = await send('POST', '/preview', { draft, sample: { images: 2, audios: 1 } });
+    expect(await preview.json()).toMatchObject({ method: 'POST', path: '/v1/videos',
+      body: { model: 'provider-video', duration: 4, image_refs: ['https://example.invalid/1.jpg', 'https://example.invalid/2.jpg'],
+        audio_refs: ['https://example.invalid/1.mp3'] } });
+    expect(requests).toHaveBeenCalledTimes(2);
+    for (const upstreamModel of ['image-only', 'no-access']) {
+      expect((await send('PUT', '', { draft: { ...draft, upstreamModel }, version: null })).status).toBe(409);
+      expect(getModelSpecification(draft.modelId)).toBeUndefined();
+    }
+    const saved = await send('PUT', '', { draft, version: null });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({ modelId: draft.modelId, editable: true });
+    expect(db.select().from(models).where(eq(models.modelId, draft.modelId)).get()).toMatchObject({ provider: 'siyuetian', isActive: 0 });
+    expect(getModelSpecification(draft.modelId)?.routes).toMatchObject([
+      { channelId: c.id, upstreamModel: draft.upstreamModel, siYueTianVideo: true },
+    ]);
+    expect((await send('PUT', '', { draft, version: null })).status).toBe(409);
+    expect(await sync(c.id)).toMatchObject({ status: 200, body: { models: [draft.modelId] } });
+    await initDatabase();
+    expect(ChannelService.getChannelRaw(c.id)).toMatchObject({
+      supportedModels: '["my-video"]', modelMapping: '{"my-video":"provider-video"}',
+    });
+    expect(db.select().from(models).where(eq(models.modelId, 'other-video')).get()).toBeUndefined();
+  });
+
   it.each([
     { type: 'openai', baseUrl: 'https://julun.cc', known: 'wan3.0th' },
     { type: 'snumom', baseUrl: 'https://snumom.com', known: 'sd-mini' },

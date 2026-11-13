@@ -17,6 +17,8 @@ import { canvasVideoReferenceLimits } from '../shared/canvasVideoReferences.js';
 import * as referenceValidation from '../server/services/imageReferenceValidationService.js';
 import { VideoRecoveryService } from '../server/services/videoRecoveryService.js';
 import { validateBatchInput } from '../server/routes/videoBatches.js';
+import { defaultRoutingLimits } from '../shared/modelRouting.js';
+import { saveSiYueTianModelConfiguration } from '../server/services/siYueTianModelConfigurationService.js';
 
 let channelId: number;
 const base = 'https://llm.chre3.com', taskId = 'task_minimax_original';
@@ -46,6 +48,79 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
 afterAll(() => sqlite.close());
+
+it('executes a model saved from the Siyuetian editor, then recovers its original task after its mapping is removed', async () => {
+  const modelId = 'operator-video', upstreamModel = 'provider-video';
+  const mockFetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/api/pricing')) return Response.json({
+      supported_endpoint: { 'openai-video': { path: '/v1/videos', method: 'POST' } },
+      data: [{ model_name: upstreamModel, supported_endpoint_types: ['openai-video'] }],
+    });
+    if (url.endsWith('/v1/models')) return Response.json({ data: [{ id: upstreamModel }] });
+    if (init?.method === 'POST') {
+      expect(url).toBe(base + '/v1/videos');
+      expect(JSON.parse(String(init.body))).toEqual({
+        model: upstreamModel, prompt: '海边漫步', duration: 5, aspect_ratio: '21:9', audio_refs: ['https://cdn.example/a.mp3'],
+      });
+      return Response.json({ id: taskId, status: 'queued' });
+    }
+    expect(url).toBe(base + '/v1/videos/' + taskId);
+    expect(JSON.parse(record().metadata)).toMatchObject({ upstreamTaskId: taskId, channelId, siYueTianVideoCredential: expect.any(String) });
+    if (record().status === 'processing' && !JSON.parse(record().metadata).siYueTianMinimaxResumeAt) {
+      vi.setSystemTime(Date.now() + 2 * 60 * 60_000);
+      return Response.json({ id: taskId, status: 'in_progress' });
+    }
+    return Response.json({ id: taskId, status: 'succeeded' });
+  });
+  vi.stubGlobal('fetch', mockFetch);
+  await saveSiYueTianModelConfiguration(channelId, { modelId, upstreamModel, displayName: '后台配置视频',
+    enabled: true, routeEnabled: true, limits: { ...defaultRoutingLimits(), defaultSeconds: 5, ratios: ['21:9'], maxAudios: 1 } }, null);
+  db.update(models).set({ isActive: 1 }).where(eq(models.modelId, modelId)).run();
+  db.insert(modelPricing).values({ modelPattern: modelId, billingType: 'per_call', inputPrice: 3 }).run();
+  vi.useFakeTimers();
+  const submit = handleSpecificationGeneration(request({ model: modelId, seconds: undefined, audio_refs: ['https://cdn.example/a.mp3'] }), response(), 'video');
+  await vi.advanceTimersByTimeAsync(8_100);
+  await submit;
+  expect(record().status).toBe('processing');
+  expect(balance()).toBe(97);
+  ChannelService.updateChannel(channelId, { modelMapping: {}, supportedModels: [] });
+  await vi.advanceTimersByTimeAsync(60_100);
+  resumeSpecificationTasks(); resumeSpecificationTasks();
+  await vi.advanceTimersByTimeAsync(100);
+  expect(record()).toMatchObject({ status: 'completed', cost: 3 });
+  expect(balance()).toBe(97);
+  expect(mockFetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+  expect(mockFetch.mock.calls.filter(([url]) => url.endsWith('/v1/videos/' + taskId))).toHaveLength(2);
+});
+
+it('ends a confirmed failure on a configured Siyuetian API model and refunds the original reservation once', async () => {
+  const modelId = 'configured-api-video';
+  const mockFetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/api/pricing')) return Response.json({
+      supported_endpoint: { 'openai-video': { path: '/v1/videos', method: 'POST' } },
+      data: [{ model_name: modelId, supported_endpoint_types: ['openai-video'] }],
+    });
+    if (url.endsWith('/v1/models')) return Response.json({ data: [{ id: modelId }] });
+    expect(init?.method).toBe('POST');
+    return Response.json({ id: taskId, status: 'failed', error: { message: '素材被上游拒绝' } });
+  });
+  vi.stubGlobal('fetch', mockFetch);
+  await saveSiYueTianModelConfiguration(channelId, { modelId, upstreamModel: modelId, displayName: '后台 API 视频',
+    enabled: true, routeEnabled: true, limits: defaultRoutingLimits() }, null);
+  db.update(models).set({ isActive: 1 }).where(eq(models.modelId, modelId)).run();
+  db.insert(modelPricing).values({ modelPattern: modelId, billingType: 'per_call', inputPrice: 3 }).run();
+  const res = response();
+  await handleSpecificationGeneration(request({ model: modelId, aspect_ratio: '16:9' }), res, 'video', {
+    token: { id: 1, userId: 1, allowedModels: [] },
+    reserve: amount => reserveUserCharge(1, amount, 'api_test'),
+  });
+  expect(res.body).toMatchObject({ model: modelId, id: expect.stringMatching(/^task_\d+$/) });
+  await vi.waitFor(() => expect(record()).toMatchObject({ status: 'failed', cost: 0 }));
+  expect(JSON.parse(record().metadata)).toMatchObject({ upstreamTaskId: taskId, error: expect.stringContaining('素材被上游拒绝') });
+  resumeSpecificationTasks();
+  expect(balance()).toBe(100);
+  expect(mockFetch).toHaveBeenCalledTimes(3);
+});
 
 describe('四月天 S4-seedance2.5 integration', () => {
   it('syncs the upstream name into the disabled public model and preserves an edited price', async () => {

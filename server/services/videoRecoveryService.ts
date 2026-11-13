@@ -3,7 +3,7 @@ import { assertZhiyingOriginalChannel } from './zhiyingVideoExecution.js';
 import { pollZhiyingVideo } from './zhiyingVideoAdapter.js';
 import { isHussChannel } from './hussVideoAdapter.js';
 import { isMegabyChannel, megabyTaskUrl, normalizeMegabyTask, readMegabyJson } from './megabyVideoAdapter.js';
-import { normalizeSiYueTianMinimaxTask } from './siYueTianMinimaxAdapter.js';
+import { normalizeSiYueTianMinimaxTask, pollSiYueTianMinimax, siYueTianVideoCredential } from './siYueTianMinimaxAdapter.js';
 import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
 import { canWithdrawTaskSupplement } from '../../shared/videoTaskSupplement.js';
 import { assertNoTaskIdVerification, beginTaskIdVerification } from './videoRecoveryAction.js';
@@ -330,13 +330,25 @@ export class VideoRecoveryService {
       throw { status: 503, message: '原任务渠道当前不可用' };
     }
 
-    const siYueTianMinimax = isSiYueTianManagedVideoModel(metadata.actualModel || record.modelId);
+    const configuredSiYueTian = metadata.siYueTianVideoCredential;
+    if (configuredSiYueTian && (configuredSiYueTian !== siYueTianVideoCredential(channel)
+      || videoId !== (upstreamTaskId(metadata) || receipt?.upstreamTaskId))) {
+      throw { status: 409, message: '四月天仅允许使用原渠道配置查询已保存的任务' };
+    }
+    const siYueTianMinimax = Boolean(configuredSiYueTian) || isSiYueTianManagedVideoModel(metadata.actualModel || record.modelId);
     const completedReceipt = siYueTianMinimax ? metadata.siYueTianMinimaxCompletedReceipt : metadata.megabyCompletedReceipt;
     if ((isMegabyChannel(channel) || siYueTianMinimax) && completedReceipt?.taskId === videoId && completedReceipt.resultUrl) {
       const task = siYueTianMinimax ? normalizeSiYueTianMinimaxTask({ status: 'completed', video_url: completedReceipt.resultUrl }, channel, videoId)
         : normalizeMegabyTask({ status: 'completed', video_url: completedReceipt.resultUrl }, channel.baseUrl, videoId);
       return { status: 'completed', message: '原任务已完成，继续保存原结果', progress: 100,
         upstreamResultUrl: task.resultUrl, videoId, channelId: channel.id, channelApiKeyId: Number(channel.apiKeyId) || null };
+    }
+    if (configuredSiYueTian) {
+      const task = await pollSiYueTianMinimax(channel, videoId);
+      const status = ['completed', 'succeeded', 'success', 'done'].includes(task.status) ? 'completed'
+        : ['failed', 'failure', 'error', 'cancelled', 'canceled'].includes(task.status) ? 'failed' : 'processing';
+      return { status, progress: task.progress, message: task.error || '四月天原任务状态：' + task.status,
+        upstreamResultUrl: task.resultUrl || undefined, videoId, channelId: channel.id, channelApiKeyId: null };
     }
     const baseUrl = String(channel.baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '');
     const model = String(record.modelId || metadata.model || '');
@@ -626,6 +638,7 @@ export class VideoRecoveryService {
         beforeDownload.modelId || WX_HAIDIYUE_FACE_SPLIT_MODEL,
         inspection.channelId,
         inspection.channelApiKeyId,
+        ...(beforeMetadata.siYueTianVideoCredential ? [undefined, undefined, undefined, beforeMetadata.siYueTianVideoCredential] as const : [] as const),
       ), isHussChannel(ChannelService.getChannelRaw(inspection.channelId, inspection.channelApiKeyId)) ? 65 * 60_000 : 360_000, 'Video result storage');
       recoveryDownloads.set(downloadKey, download);
     }

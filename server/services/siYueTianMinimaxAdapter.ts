@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { siYueTianManagedVideoSpec, siYueTianManagedVideoInputErrors, siYueTianManagedVideoUpstreamModel } from '../../shared/siYueTianManagedVideo.js';
 import { SI_YUE_TIAN_MINIMAX_MODEL, siYueTianMinimaxInputErrors, isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
 import type { SpecificationRequest } from './specificationAdapters.js';
@@ -7,6 +8,15 @@ import { videoRequestNotSent } from './videoSubmissionErrors.js';
 
 const base = (url: string) => url.replace(/\/+$/, '').replace(/\/v1$/i, '');
 const dataOf = (raw: any) => raw?.data && !Array.isArray(raw.data) ? raw.data : raw;
+export function siYueTianVideoOrigin(baseUrl: string): string | undefined {
+  if (!isSiYueTianVideoHost(baseUrl)) return;
+  const url = new URL(baseUrl);
+  if (url.protocol === 'https:' && !url.username && !url.password && !url.port
+    && /^\/(?:v1\/?)?$/i.test(url.pathname) && !url.search && !url.hash) return url.origin;
+}
+export function siYueTianVideoCredential(channel: { baseUrl: string; apiKey: string }) {
+  return createHash('sha256').update(JSON.stringify([siYueTianVideoOrigin(channel.baseUrl), channel.apiKey])).digest('hex');
+}
 export function siYueTianMinimaxTaskId(raw: any): string {
   const data = dataOf(raw);
   const ids = [...new Set([raw?.task_id, raw?.taskId, raw?.id, data?.task_id, data?.taskId, data?.id].filter(id => typeof id === 'string' && /^task_[\w-]+$/.test(id)))];
@@ -19,9 +29,12 @@ export class SiYueTianMinimaxError extends Error {
 export function buildSiYueTianMinimaxPayload(request: SpecificationRequest, publish: (url: string) => string, model = SI_YUE_TIAN_MINIMAX_MODEL) {
   const errors = siYueTianManagedVideoInputErrors(model, request.input);
   if (errors.length) throw new SiYueTianMinimaxError(errors.join('；'), false);
-  return { model: siYueTianManagedVideoUpstreamModel(model), prompt: request.prompt, duration: request.input.seconds,
+  return buildSiYueTianVideoPayload(request, publish, siYueTianManagedVideoUpstreamModel(model), Boolean(siYueTianManagedVideoSpec(model)?.followImageRatio));
+}
+export function buildSiYueTianVideoPayload(request: SpecificationRequest, publish: (url: string) => string, upstreamModel: string, followImageRatio = false) {
+  return { model: upstreamModel, prompt: request.prompt, duration: request.input.seconds,
     // The fixed-2K model follows the supplied image's ratio; no competing ratio is sent.
-    ...(!siYueTianManagedVideoSpec(model)?.followImageRatio || !request.images.length && !request.firstFrame && !request.lastFrame ? { aspect_ratio: request.input.ratio } : {}),
+    ...(!followImageRatio || !request.images.length && !request.firstFrame && !request.lastFrame ? { aspect_ratio: request.input.ratio } : {}),
     ...(request.images.length ? { image_refs: request.images.map(publish) } : {}),
     ...(request.videos.length ? { video_refs: request.videos.map(publish) } : {}),
     ...(request.audios.length ? { audio_refs: request.audios.map(publish) } : {}),
@@ -44,13 +57,18 @@ export function normalizeSiYueTianMinimaxTask(raw: any, channel: any, taskId: st
     error: failure ? diagnostic : '' };
 }
 export async function submitSiYueTianMinimax(channel: any, request: SpecificationRequest,
-  publish: (url: string) => string, onStarting: (meta?: Record<string, unknown>) => void, model = SI_YUE_TIAN_MINIMAX_MODEL) {
-  if (!isSiYueTianVideoHost(channel.baseUrl)) throw new SiYueTianMinimaxError('MiniMax H3 此线路须使用四月天渠道', false);
-  const payload = buildSiYueTianMinimaxPayload(request, publish, model);
-  onStarting();
+  publish: (url: string) => string, onStarting: (meta?: Record<string, unknown>) => void, model = SI_YUE_TIAN_MINIMAX_MODEL,
+  configuredUpstreamModel?: string) {
+  if (!isSiYueTianVideoHost(channel.baseUrl)) throw new SiYueTianMinimaxError('此线路须使用四月天渠道', false);
+  const origin = configuredUpstreamModel ? siYueTianVideoOrigin(channel.baseUrl) : base(channel.baseUrl);
+  if (!origin) throw new SiYueTianMinimaxError('请使用四月天 HTTPS 渠道地址', false);
+  const payload = configuredUpstreamModel
+    ? buildSiYueTianVideoPayload(request, publish, configuredUpstreamModel)
+    : buildSiYueTianMinimaxPayload(request, publish, model);
+  onStarting(configuredUpstreamModel ? { siYueTianVideoCredential: siYueTianVideoCredential(channel) } : undefined);
   let response: Response;
   try {
-    response = await fetchVideoTaskResponse(base(channel.baseUrl) + '/v1/videos', { method: 'POST', redirect: 'error',
+    response = await fetchVideoTaskResponse(origin + '/v1/videos', { method: 'POST', redirect: 'error',
       headers: { Authorization: 'Bearer ' + channel.apiKey, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, channel.timeout || 120_000);
   } catch (error: any) { throw new SiYueTianMinimaxError(transportDiagnostic('四月天视频', '提交', error, channel.apiKey), !videoRequestNotSent(error)); }
   const text = await response.text();
@@ -81,6 +99,9 @@ export async function pollSiYueTianMinimax(channel: any, taskId: string) {
     headers: { Authorization: 'Bearer ' + channel.apiKey, 'Cache-Control': 'no-cache, no-store' }, cache: 'no-store', redirect: 'error' });
   const text = await response.text();
   let raw: any; try { raw = JSON.parse(text); } catch { raw = text; }
-  if (!response.ok || typeof raw !== 'object' || !raw) throw new Error(upstreamDiagnostic('四月天视频', '查询原任务 task_id=' + taskId, raw, channel.apiKey, response.status));
+  if (!response.ok || typeof raw !== 'object' || !raw) throw Object.assign(
+    new Error(upstreamDiagnostic('四月天视频', '查询原任务 task_id=' + taskId, raw, channel.apiKey, response.status)),
+    { upstreamStatus: response.status },
+  );
   return normalizeSiYueTianMinimaxTask(raw, channel, taskId);
 }

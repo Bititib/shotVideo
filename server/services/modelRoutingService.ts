@@ -1,4 +1,5 @@
 import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
+import { isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
 import { KK_VIDEO_MODEL, KK_VIDEO_SOURCES } from '../../shared/kkVideoRouting.js';
 import { HUSS_MJ_MODEL } from '../../shared/hussMidjourney.js';
 import { bbHssKkManaged } from './bbHssKkMigration.js';
@@ -72,6 +73,8 @@ export function saveModelSpecification(value: ModelSpecification): ModelSpecific
   const routes = value.routes.map(r => {
     validateLimits(r.limits);
     const ch = channelRows.find(c => c.id === r.channelId);
+    if (r.siYueTianVideo !== undefined && (r.siYueTianVideo !== true || value.kind !== 'video'
+      || ch?.type !== 'openai' || !isSiYueTianVideoHost(ch.baseUrl))) throw error('四月天异步视频线路配置无效');
     if (r.minikey && (ch?.type !== 'minikey' || !['banana','size'].includes(r.minikey.imageProtocol)
       || r.minikey.upstreamChannel !== null && (!Number.isSafeInteger(r.minikey.upstreamChannel) || r.minikey.upstreamChannel <= 0))) throw error('miniKey 线路参数无效');
     if(bbHssKkManaged(sqlite,value.modelId)&&!matchesBbHssSource(sqlite,value.modelId,r,ch?.type))throw error('BB/HSS 线路与当前来源不一致，请先使用来源切换保存');
@@ -122,7 +125,9 @@ export function inspectModelRoutes(spec: ModelSpecification, input?: RoutingInpu
   const health = getRouteHealth(), registry = db.select().from(models).all(), model = registry.find(m => m.modelId === spec.modelId);
   return spec.routes.map(route => {
     const retired = [spec.modelId,route.executionModel,route.upstreamModel].some(isRetiredVideoModel);
-    const executions = activeChannels.filter(c => c.id === route.channelId && Boolean(String(c.apiKey || '').trim()) && (c.supportedModels.includes(route.executionModel) || c.supportedModels.includes('*')));
+    const executions = activeChannels.filter(c => c.id === route.channelId && Boolean(String(c.apiKey || '').trim())
+      && (c.supportedModels.includes(route.executionModel) || c.supportedModels.includes('*'))
+      && (!route.siYueTianVideo || c.type === 'openai' && isSiYueTianVideoHost(c.baseUrl) && c.modelMapping?.[route.executionModel] === route.upstreamModel));
     const execution = registry.find(m => m.modelId === route.executionModel);
     const reason = execution?.isActive === 0 && execution.modelId !== MJ_OVERFLOW_VIDEO_MODEL ? ['执行模型已禁用'] : !spec.enabled || model?.isActive !== 1 ? ['规格已禁用'] : !route.enabled ? ['模型线路已禁用'] : !executions.length ? ['渠道或 Key 已禁用 / 未配置'] : [];
     if (spec.modelId === KK_VIDEO_MODEL && spec.kkRouting) {
@@ -183,6 +188,8 @@ export function routeUnavailableReason(modelId: string, target: RouteCandidate, 
   if (!original || !original.apiKey) return '提交前检查：原 Key 已禁用或未配置';
   if (original.apiKey !== target.channel.apiKey || original.baseUrl !== target.channel.baseUrl) return '提交前检查：原渠道地址或 Key 已变更';
   if (!original.supportedModels.includes(route.executionModel) && !original.supportedModels.includes('*')) return '提交前检查：渠道不再关联当前执行模型';
+  if (route.siYueTianVideo && (original.type !== 'openai' || original.modelMapping?.[route.executionModel] !== route.upstreamModel))
+    return '提交前检查：四月天上游模型映射已变更';
   return '';
 }
 export function routeStillEnabled(modelId: string, target: RouteCandidate, input: RoutingInput): boolean {

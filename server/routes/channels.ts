@@ -8,6 +8,8 @@ import { adminMiddleware } from '../middleware/admin.js';
 import { ChannelService } from '../services/channelService.js';
 import { VideoRoutingStatsService, type VideoRoutingStatsPeriod } from '../services/videoRoutingStatsService.js';
 import { listV6kModelConfigurations, previewV6kModelRequest, saveV6kModelConfiguration } from '../services/v6kModelConfigurationService.js';
+import { listSiYueTianModelConfigurations, listSiYueTianVideoCatalog,
+  previewSiYueTianModelRequest, saveSiYueTianModelConfiguration } from '../services/siYueTianModelConfigurationService.js';
 
 import { listZhiyingModelConfigurations, listZhiyingCatalogOptions, previewZhiyingModelRequest, saveZhiyingModelConfiguration } from '../services/zhiyingModelConfigurationService.js';
 
@@ -103,6 +105,23 @@ function channelOperationError(res: Response, error: any) {
   }
   return res.status(error.status || 500).json({ error: error.message });
 }
+
+router.get('/:id/siyuetian-models', (req, res) => {
+  try { res.json(listSiYueTianModelConfigurations(Number(req.params.id))); }
+  catch (error) { channelOperationError(res, error); }
+});
+router.get('/:id/siyuetian-models/catalog', async (req, res) => {
+  try { res.json(await listSiYueTianVideoCatalog(Number(req.params.id))); }
+  catch (error) { channelOperationError(res, error); }
+});
+router.post('/:id/siyuetian-models/preview', (req, res) => {
+  try { res.json(previewSiYueTianModelRequest(Number(req.params.id), req.body?.draft, req.body?.sample)); }
+  catch (error) { channelOperationError(res, error); }
+});
+router.put('/:id/siyuetian-models', async (req, res) => {
+  try { res.json(await saveSiYueTianModelConfiguration(Number(req.params.id), req.body?.draft, req.body?.version)); }
+  catch (error) { channelOperationError(res, error); }
+});
 
 router.get('/:id/v6k-models', (req, res) => {
   try { res.json(listV6kModelConfigurations(Number(req.params.id))); }

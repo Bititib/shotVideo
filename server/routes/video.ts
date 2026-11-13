@@ -736,7 +736,8 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
       const body = { ...req.body, model: spec.modelId, resolution: req.body.resolution || req.body.output_resolution || spec.limits.resolutions[0],
         video_length: req.body.video_length ?? req.body.seconds ?? req.body.duration ?? (v6kBinding ? req.body.duration_seconds : undefined) ?? spec.limits.defaultSeconds
           ?? (spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min) };
-      if (v6kBinding && !body.aspect_ratio && !body.ratio) body.aspect_ratio = spec.limits.ratios[0];
+      if ((v6kBinding || spec.routes.some(route => route.siYueTianVideo)) && !body.aspect_ratio && !body.ratio)
+        body.aspect_ratio = spec.limits.ratios[0];
       const origin = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
       const request = specificationRequest(body, 'video', origin, Boolean(v6kBinding)), input = request.input;
       const candidates = selectModelRoutes(spec, input); const quote = PricingService.quote(spec.modelId, { resolution: input.resolution, seconds: input.seconds, count: 1 }, false, req.userId);

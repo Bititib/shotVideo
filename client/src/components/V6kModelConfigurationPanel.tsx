@@ -22,10 +22,14 @@ function formValue(draft: V6kModelDraft, resolutions: string, ratios: string, se
     limits: { ...draft.limits, duration, resolutions: split(resolutions), ratios: split(ratios) } };
 }
 
-export default function V6kModelConfigurationPanel({ channelId, onClose, onSaved }: {
-  channelId: number; onClose: () => void; onSaved: () => void;
+export default function V6kModelConfigurationPanel({ channelId, onClose, onSaved, siYueTian = false }: {
+  channelId: number; onClose: () => void; onSaved: () => void; siYueTian?: boolean;
 }) {
+  const list = siYueTian ? adminApi.getSiYueTianModelConfigurations : adminApi.getV6kModelConfigurations;
+  const requestPreview = siYueTian ? adminApi.previewSiYueTianModel : adminApi.previewV6kModel;
+  const saveModel = siYueTian ? adminApi.saveSiYueTianModel : adminApi.saveV6kModel;
   const [models, setModels] = useState<V6kModelConfiguration[]>([]);
+  const [catalog, setCatalog] = useState<{ id: string }[] | null>(null);
   const [selected, setSelected] = useState<V6kModelConfiguration | null>(null);
   const [draft, setDraft] = useState(blank);
   const [resolutions, setResolutions] = useState('720p');
@@ -66,11 +70,11 @@ export default function V6kModelConfigurationPanel({ channelId, onClose, onSaved
 
   useEffect(() => {
     let active = true;
-    adminApi.getV6kModelConfigurations(channelId).then(rows => {
+    list(channelId).then(rows => {
       if (active) { setModels(rows); choose(rows.find(row => row.editable) ?? rows[0] ?? null); setLoaded(true); }
     }).catch((err: Error) => { if (active) setError(err.message); });
     return () => { active = false; };
-  }, [channelId]);
+  }, [channelId, list]);
 
   const update = (change: Partial<V6kModelDraft>) => { setDraft(value => ({ ...value, ...change })); setPreview(null); setNotice(''); };
   const limits = draft.limits;
@@ -102,7 +106,14 @@ export default function V6kModelConfigurationPanel({ channelId, onClose, onSaved
 
   async function generatePreview() {
     setBusy(true); setError(''); setPreview(null);
-    try { setPreview(await adminApi.previewV6kModel(channelId, config(), sample)); }
+    try { setPreview(await requestPreview(channelId, config(), sample)); }
+    catch (err) { setError((err as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function loadCatalog() {
+    setBusy(true); setError('');
+    try { setCatalog(await adminApi.getSiYueTianVideoCatalog(channelId)); }
     catch (err) { setError((err as Error).message); }
     finally { setBusy(false); }
   }
@@ -110,9 +121,9 @@ export default function V6kModelConfigurationPanel({ channelId, onClose, onSaved
   async function save() {
     setBusy(true); setError(''); setNotice('');
     try {
-      const result = await adminApi.saveV6kModel(channelId, config(), selected?.version ?? null);
+      const result = await saveModel(channelId, config(), selected?.version ?? null);
       let refreshed: V6kModelConfiguration[] | null = null;
-      try { refreshed = await adminApi.getV6kModelConfigurations(channelId); }
+      try { refreshed = await list(channelId); }
       catch { /* The save succeeded; keep its result even if refreshing the list fails. */ }
       const saved = refreshed?.find(row => row.modelId === result.modelId) ?? result;
       setModels(rows => {
@@ -130,7 +141,7 @@ export default function V6kModelConfigurationPanel({ channelId, onClose, onSaved
     finally { setBusy(false); }
   }
 
-  return <AdminDrawer modal panelClassName="v6k-model-dialog" title="纵横 V6K · 模型与参数" blocked={busy} onClose={() => navigate({ kind: 'close' })}>
+  return <AdminDrawer modal panelClassName="v6k-model-dialog" title={(siYueTian ? '四月天' : '纵横 V6K') + ' · 模型与参数'} blocked={busy} onClose={() => navigate({ kind: 'close' })}>
     <div className="v6k-workspace">
       <aside className="v6k-model-sidebar" aria-label="模型选择">
         <button type="button" className={button + ' v6k-button-primary v6k-add-model'} disabled={busy || !loaded}
@@ -195,8 +206,14 @@ export default function V6kModelConfigurationPanel({ channelId, onClose, onSaved
                 <label><span>显示名称</span><input className={field} value={draft.displayName} placeholder="填写前台展示名称"
                   onChange={event => update({ displayName: event.target.value })} /></label>
                 <label><span>上游模型 ID</span><input className={field} value={draft.upstreamModel} placeholder="粘贴上游复制的完整 ID"
+                  list={siYueTian && catalog ? 'siyuetian-video-catalog' : undefined}
                   onChange={event => update({ upstreamModel: event.target.value })} /></label>
               </div>
+              {siYueTian && <div className="v6k-model-switches">
+                <button type="button" className={button} onClick={() => void loadCatalog()}>读取已授权的上游视频型号</button>
+                {catalog && <datalist id="siyuetian-video-catalog">{catalog.map(item => <option key={item.id} value={item.id} />)}</datalist>}
+                {catalog && <span role="status">{catalog.length ? `已读取 ${catalog.length} 个型号，可在上游模型 ID 中选择。` : '此 Key 暂无兼容的异步视频型号。'}</span>}
+              </div>}
             </section>
             <section className="v6k-section" aria-labelledby="v6k-standard-parameters">
               <div className="v6k-section-heading"><h4 id="v6k-standard-parameters">规格参数</h4><p>按上游支持范围填写。</p></div>
@@ -216,14 +233,14 @@ export default function V6kModelConfigurationPanel({ channelId, onClose, onSaved
                   </div>}
               </div>
               <div className="v6k-spec-grid">
-                <label>可选分辨率<input className={field} value={resolutions} placeholder="例如 720p"
+                <label>{siYueTian ? '固定分辨率' : '可选分辨率'}<input className={field} value={resolutions} placeholder="例如 720p"
                   onChange={event => { setResolutions(event.target.value); setPreview(null); setNotice(''); }} /></label>
                 <label>可选比例<input className={field} value={ratios} placeholder="例如 16:9,9:16"
                   onChange={event => { setRatios(event.target.value); setPreview(null); setNotice(''); }} /></label>
                 <label>默认时长<input className={field} type="number" min="1" placeholder="留空取首个选项"
                   value={limits.defaultSeconds ?? ''} onChange={event => changeLimits({ defaultSeconds: event.target.value ? Number(event.target.value) : undefined })} /></label>
               </div>
-              <p className="v6k-field-help">多个分辨率或比例用逗号分隔；每次生成 1 条视频。</p>
+              <p className="v6k-field-help">{siYueTian ? '多个比例用逗号分隔。每次生成 1 条视频。' : '多个分辨率或比例用逗号分隔；每次生成 1 条视频。'}</p>
             </section>
             <section className="v6k-section" aria-labelledby="v6k-media-limits">
               <div className="v6k-section-heading"><h4 id="v6k-media-limits">素材限制</h4><p>上限为 0 表示不支持。</p></div>
@@ -238,6 +255,10 @@ export default function V6kModelConfigurationPanel({ channelId, onClose, onSaved
                 <label>素材合计上限<input className={field} type="number" min="0" value={limits.maxReferences ?? ''} placeholder="按各类型上限"
                   onChange={event => changeLimits({ maxReferences: event.target.value ? Number(event.target.value) : undefined })} /></label>
               </div></details>
+              {siYueTian && <div className="v6k-model-switches">
+                <label><input type="checkbox" checked={limits.firstFrame} onChange={event => changeLimits({ firstFrame: event.target.checked })} />支持独立首帧</label>
+                <label><input type="checkbox" checked={limits.lastFrame} onChange={event => changeLimits({ lastFrame: event.target.checked })} />支持独立尾帧</label>
+              </div>}
             </section>
             <div className="v6k-model-switches">
               <label><input type="checkbox" checked={draft.enabled}
@@ -262,7 +283,7 @@ export default function V6kModelConfigurationPanel({ channelId, onClose, onSaved
               : <div className="v6k-preview-empty"><strong>请求体预览</strong><p>填写模型信息和规格后，点击上方按钮查看实际提交字段。</p></div>}
           </div>}
           {tab === '线路配置 JSON' && <section className="v6k-code-panel"><div className="v6k-code-heading"><span>JSON</span><code>当前线路配置</code></div>
-            <pre>{JSON.stringify({ channelId, protocol: 'zongheng-v6k', ...config() }, null, 2)}</pre></section>}
+            <pre>{JSON.stringify({ channelId, protocol: siYueTian ? 'openai-video' : 'zongheng-v6k', ...config() }, null, 2)}</pre></section>}
         </div>
         <footer className="v6k-model-footer">
           <p>{selected ? '保存后，新提交使用此配置。' : '添加后先保持停用，再到关联模型列表设置售价并启用。'}</p>

@@ -54,7 +54,7 @@ const INTERNAL_VIDEO_ROUTING_FIELDS = [
   'image2proRequest', 'image2proRequests', 'image2proInitialTask', 'image2proPollInterval',
   'minikeyCredential', 'minikeyRequestId', 'minikeyInitialTask', 'minikeyCompletedReceipt',
   'snumomInitialTask',
-  'siYueTianMinimaxInitialTask', 'siYueTianMinimaxCompletedReceipt', 'siYueTianMinimaxResumeAt',
+  'siYueTianMinimaxInitialTask', 'siYueTianMinimaxCompletedReceipt', 'siYueTianMinimaxResumeAt', 'siYueTianVideoCredential',
   'zonghengProtocol', 'zonghengBaseUrl', 'zonghengInitialTask', 'zonghengLegacyTask',
   'videoSubmissionState', 'videoSubmissionDeadline', 'videoSubmissionStartedAt', 'videoSubmissionAttempt', 'submissionReceiptRecovered', 'missingTaskIdReview',
   'pidoiFallbacks', 'hussCompletedReceipt', 'hussInitialTask', 'hussPayload', 'hussIdempotencyKey', 'hussQueryResumeAt', 'hussReceiptRetryAt',
