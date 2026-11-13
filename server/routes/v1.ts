@@ -1,3 +1,4 @@
+import { videoApiProgress } from '../services/videoApiProgress.js';
 import { isImage2proChannel, image2proBase } from '../services/image2proAdapter.js';
 import { createMusicTask, getMusicTask, listMusicTasks, musicFile, processMusicTask, type MusicOwner } from '../services/musicGenerationService.js';
 import { prepareMediaSubmission } from '../../shared/mediaReferences.js';
@@ -310,21 +311,7 @@ export function videoTaskFailureDetails(metadata: Record<string, any>): {
   };
 }
 
-/** Keep the public async-video status contract stable across upstream providers. */
-export function normalizeVideoApiStatus(
-  localStatus: unknown,
-  upstreamStatus: unknown,
-  progress: number,
-): 'queued' | 'processing' | 'completed' | 'failed' {
-  const local = String(localStatus || '').trim().toLowerCase();
-  const upstream = String(upstreamStatus || '').trim().toLowerCase();
-  if (['completed', 'success', 'succeeded'].includes(local)) return 'completed';
-  if (['failed', 'failure', 'error', 'cancelled', 'canceled'].includes(local)) return 'failed';
-  if (local === 'queued') return 'queued';
-  if (['in_progress', 'processing', 'running'].includes(upstream)) return 'processing';
-  if (['queued', 'pending', 'submitted'].includes(upstream)) return 'queued';
-  return progress > 0 ? 'processing' : 'queued';
-}
+export { normalizeVideoApiStatus } from '../services/videoApiProgress.js';
 
 /** Queue/concurrency fields belong exclusively to locally queued HM Studio tasks. */
 export function videoTaskQueueDetails(
@@ -333,13 +320,15 @@ export function videoTaskQueueDetails(
   status: string,
 ): Record<string, number> {
   if (String(channelType || '').toLowerCase() !== 'hmstudio') return {};
-  return {
-    queue_position: status === 'queued' ? Number(metadata.queuePosition || 1) : 0,
-    queue_running: Number(metadata.queueRunning || 0),
-    queue_limit: Number(metadata.queueLimit || 10),
-    channel_running: Number(metadata.queuePoolRunning || 0),
-    channel_limit: Number(metadata.queuePoolLimit || 10),
-  };
+  const fields = { queue_position: 'queuePosition', queue_running: 'queueRunning', queue_limit: 'queueLimit',
+    channel_running: 'queuePoolRunning', channel_limit: 'queuePoolLimit' };
+  const result: Record<string, number> = {};
+  for (const [name, key] of Object.entries(fields)) {
+    const value = metadata[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) result[name] = value;
+  }
+  if (status !== 'queued') result.queue_position = 0;
+  return result;
 }
 
 /** 检查 Token 或关联用户的余额 */
@@ -2569,6 +2558,10 @@ async function handleVideoCreation(req: Request, res: Response) {
         model,
         status: queue.status === 'queued' ? 'queued' : 'processing',
         progress: 0,
+        progress_known: false,
+        phase: queue.status === 'queued' ? 'website_queue' : 'submitting',
+        queue_scope: queue.status === 'queued' ? 'website' : null,
+        progress_text: queue.status === 'queued' ? '等待网站生成名额' : '正在向生成服务提交',
         queue_position: queue.position,
         queue_running: queue.running,
         queue_limit: queue.concurrencyLimit,
@@ -2620,7 +2613,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       const record = db.select().from(contents).where(eq(contents.id, contentId!)).get();
       if (record) void resumePollForTask(contentId!, record);
       db.insert(apiLogs).values({ tokenId: token.id, channelId, model, upstreamModel, cost: totalCost, durationMs: Date.now() - startTime, status: 'success', clientIp }).run();
-      return res.status(202).json({ id: 'task_' + contentId, task_id: 'task_' + contentId, object: 'video', model, status: 'queued', progress: 0,
+      return res.status(202).json({ id: 'task_' + contentId, task_id: 'task_' + contentId, object: 'video', model, status: 'processing', phase: 'accepted', progress: 0, progress_known: false,
         status_url: req.protocol + '://' + req.get('host') + '/v1/videos/task_' + contentId, retry_after: job.pollDelay / 1000 });
     } catch (error: any) {
       recordZonghengSubmissionError(contentId!, error);
@@ -2665,7 +2658,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       db.insert(apiLogs).values({ tokenId: token.id, channelId, model, upstreamModel, cost: totalCost,
         durationMs: Date.now() - startTime, status: 'success', clientIp }).run();
       return res.status(202).json({ id: 'task_' + contentId, task_id: 'task_' + contentId, object: 'video', model,
-        status: 'queued', progress: 0, retry_after: 12 });
+        status: 'processing', phase: 'accepted', progress: 0, progress_known: false, retry_after: 12 });
     } catch (error: any) {
       releaseHayaSubmission(contentId!);
       if ((error instanceof HayaSubmissionError && error.uncertain) || submittedTaskId) {
@@ -3208,8 +3201,10 @@ async function handleVideoCreation(req: Request, res: Response) {
       task_id: `task_${contentId}`,
       object: 'video',
       model: publicApiModelId(model),
-      status: 'queued',
+      status: 'processing',
+      phase: 'accepted',
       progress: 0,
+      progress_known: false,
       status_url: `${req.protocol}://${req.get('host')}/v1/videos/task_${contentId}`,
       retry_after: 5,
     });
@@ -3307,17 +3302,17 @@ async function handleVideoQuery(req: Request, res: Response) {
     }
 
     const status = record.status;
-    let progress = 0;
     let metadata: Record<string, any> = {};
+    let displayProgress = videoApiProgress(status, metadata);
     try {
       metadata = JSON.parse(record.metadata || '{}');
+      displayProgress = videoApiProgress(status, metadata);
       if (metadata.zhiyingOrder || metadata.actualChannel === ZHIYING_CHANNEL_TYPE) {
         metadata = sanitizeContentRoutingForClient({ status, metadata }).metadata;
       }
-      progress = status === 'completed' ? 100 : (metadata.progress || 0);
     } catch {}
 
-    const mappedStatus = normalizeVideoApiStatus(status, metadata.upstreamStatus, progress);
+    const mappedStatus = displayProgress.status;
     const wasInternallyRouted = Boolean(
       metadata.fallbackFrom
       || metadata.fallbackReason
@@ -3340,8 +3335,7 @@ async function handleVideoQuery(req: Request, res: Response) {
       billing_status: metadata.billingStatus || undefined,
       generation_status: videoReviewKind(metadata) === 'settlement' ? (record.resultUrl ? 'completed' : metadata.upstreamStatus === 'failed' ? 'failed' : mappedStatus) : mappedStatus,
       ...(videoReviewKind(metadata) ? { message: videoReviewMessage(metadata) } : {}),
-      progress,
-      progress_pct: progress,
+      ...displayProgress,
       progress_text: videoReviewKind(metadata) ? videoReviewMessage(metadata) : mappedStatus === 'completed'
         ? undefined
         : (wasInternallyRouted ? '视频生成中' : (metadata.progressText || undefined)),
@@ -3353,7 +3347,7 @@ async function handleVideoQuery(req: Request, res: Response) {
     const persistedChannel = metadata.channelId
       ? ChannelService.getChannelRaw(Number(metadata.channelId), Number(metadata.channelApiKeyId) || null)
       : null;
-    Object.assign(responseJson, videoTaskQueueDetails(
+    if (displayProgress.phase === 'website_queue') Object.assign(responseJson, videoTaskQueueDetails(
       metadata,
       metadata.actualChannel || persistedChannel?.type,
       mappedStatus,

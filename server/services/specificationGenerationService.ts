@@ -1024,7 +1024,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     };
     if (apiContext && kind === 'video') {
       void run();
-      res.json({ id: 'task_' + id, task_id: 'task_' + id, object: 'video', model: publicApiModelId(modelId), status: 'queued', progress: 0,
+      res.json({ id: 'task_' + id, task_id: 'task_' + id, object: 'video', model: publicApiModelId(modelId), status: 'processing', phase: 'submitting', progress: 0, progress_known: false,
         status_url: req.protocol + '://' + req.get('host') + '/v1/videos/task_' + id });
     } else {
       await run();
