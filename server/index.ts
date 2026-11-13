@@ -1,4 +1,5 @@
 import { startMusicWorker } from './services/musicGenerationService.js';
+import { startImageAnalysisWorker } from './services/imageAnalysisJobs.js';
 import { migrateHussChannelA } from './services/hussChannelAMigration.js';
 import { migrateZonghengModelPrefix } from './services/zonghengPrefixMigration.js';
 import { retireBlobDrawChannels } from './services/blobDrawRetirementMigration.js';
@@ -27,6 +28,7 @@ async function main() {
     const { startVideoBatchWorker } = await import('./services/videoBatchService.js');
     startVideoBatchWorker();
     startMusicWorker();
+    startImageAnalysisWorker();
     const { resumePidoiImages } = await import('./services/pidoiImageWorker.js');
     void resumePidoiImages().catch(error => console.error('[pidoi-image-recover]', error.message));
     setInterval(() => { void resumePidoiImages().catch(error => console.error('[pidoi-image-recover]', error.message)); }, 10_000);

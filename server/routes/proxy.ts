@@ -93,21 +93,30 @@ router.post('/video', authMiddleware, async (req: Request, res: Response) => {
 
 // 图片提取代理
 router.post('/image', authMiddleware, async (req: Request, res: Response) => {
-  const { url } = req.body;
+  const { url, mode } = req.body;
   try {
+    let source: URL;
+    try { source = new URL(url); } catch { return res.status(400).json({ error: '请输入有效的图片或图文链接' }); }
+    if (!['http:', 'https:'].includes(source.protocol)) return res.status(400).json({ error: '仅支持 HTTP 或 HTTPS 链接' });
     let imageUrl = url;
+    let images: string[] = [url];
     let audioUrl = '';
     let audioTitle = '';
     let audioAuthor = '';
 
-    if (url.includes('tiktok.com') || url.includes('douyin.com')) {
-      const tikwmRes = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`);
+    if (['tiktok.com', 'douyin.com'].some(domain => source.hostname === domain || source.hostname.endsWith(`.${domain}`))) {
+      const tikwmRes = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(url)}`, { signal: AbortSignal.timeout(30000) });
+      if (!tikwmRes.ok) throw new Error(`图文链接解析失败 (HTTP ${tikwmRes.status})`);
       const tikwmData = await tikwmRes.json();
+      if (!tikwmData.data) throw new Error('图文链接解析未返回图片数据');
       if (tikwmData.data) {
         if (tikwmData.data.images?.length > 0) {
-          imageUrl = tikwmData.data.images[0];
+          if (!Array.isArray(tikwmData.data.images) || !tikwmData.data.images.every((value: unknown) => typeof value === 'string' && /^https?:\/\//i.test(value))) throw new Error('图文链接返回的图片列表格式不正确');
+          images = tikwmData.data.images;
+          imageUrl = images[0];
         } else if (tikwmData.data.cover) {
           imageUrl = tikwmData.data.cover;
+          images = [imageUrl];
         } else {
           throw new Error('无法解析该链接的图片。');
         }
@@ -121,6 +130,9 @@ router.post('/image', authMiddleware, async (req: Request, res: Response) => {
         }
       }
     }
+
+    // Listing is read-only: do not download or analyze a default first image.
+    if (mode === 'list') return res.json({ images, audioUrl, audioTitle, audioAuthor });
 
     const imageRes = await fetch(imageUrl, {
       headers: {

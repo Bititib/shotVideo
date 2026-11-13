@@ -1,4 +1,5 @@
 import { registerUpload } from '../services/uploadAccess.js';
+import { imageAnalysisJobsRouter } from './imageAnalysisJobs.js';
 import { prepareVideoForDelivery } from '../services/videoCompatibilityService.js';
 import { DEFAULT_TTS_CHARACTER_RATE } from '../../shared/tts.js';
 import { beijingDateKey, beijingDayBounds } from '../../shared/time.js';
@@ -29,6 +30,7 @@ import { pipeline } from 'stream/promises';
 import { resolveBatchArchiveFile, streamVideoZip } from '../services/videoBatchArchive.js';
 
 const router = Router();
+router.use('/image-jobs', imageAnalysisJobsRouter);
 const upload = multer({ dest: os.tmpdir(), limits: { fileSize: 150 * 1024 * 1024 } });
 const comicExportTickets = new Map<string, { expires: number; userId: number; projectId: number; projectTitle: string; files: { path: string; name: string }[] }>();
 

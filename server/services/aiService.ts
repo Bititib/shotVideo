@@ -224,7 +224,7 @@ export class AIService {
   }
 
   /** 核心接口调用：请求 Gemini 的 generateContent 端点 */
-  static async callGenerateContent(modelId: string, payload: any, modelConfig?: ModelConfig) {
+  static async callGenerateContent(modelId: string, payload: any, modelConfig?: ModelConfig, imageAnalysis = false) {
     const apiKey = getApiKey(modelConfig);
     const url = `${env.GEMINI_API_BASE_URL}/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
 
@@ -235,13 +235,17 @@ export class AIService {
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify(payload),
-    });
+      ...(imageAnalysis ? { signal: AbortSignal.timeout(180_000) } : {}),
+    }).catch(error => { if (imageAnalysis) error.imageOutcome = 'unknown'; throw error; });
 
     if (!res.ok) {
-      throw new Error(await responseDiagnostic('Gemini', '内容生成', res, apiKey));
+      const body = imageAnalysis ? await res.clone().json().catch(() => null) : null;
+      const rejected = body?.error?.code === res.status && ['INVALID_ARGUMENT', 'FAILED_PRECONDITION', 'UNAUTHENTICATED', 'PERMISSION_DENIED', 'NOT_FOUND', 'RESOURCE_EXHAUSTED'].includes(body?.error?.status);
+      throw Object.assign(new Error(await responseDiagnostic('Gemini', '内容生成', res, apiKey)), imageAnalysis ? { imageOutcome: rejected ? 'rejected' : 'unknown' } : {});
     }
 
-    return await diagnosticJson('Gemini', '内容生成响应', res, apiKey);
+    try { return await diagnosticJson('Gemini', '内容生成响应', res, apiKey); }
+    catch (error: any) { if (imageAnalysis) error.imageOutcome = 'unknown'; throw error; }
   }
 
   /** 通用短视频分析 */
@@ -301,7 +305,9 @@ export class AIService {
   /** 图片逆向分析 */
   static async analyzeImage(file: Express.Multer.File, requiresText: boolean, modelConfig?: ModelConfig) {
     const modelId = modelConfig?.modelId || 'gemini-2.5-flash';
-    const uploadedFile = await this.uploadAndWait(file, modelConfig);
+    let uploadedFile;
+    try { uploadedFile = await this.uploadAndWait(file, modelConfig, 60_000); }
+    catch (error: any) { error.imageOutcome = 'rejected'; throw error; } // Generation has not been sent.
     try {
       const prompt = imagePrompt(requiresText);
       const response = await this.callGenerateContent(modelId, {
@@ -316,12 +322,14 @@ export class AIService {
           responseMimeType: 'application/json',
           responseSchema: imageSchema,
         }
-      }, modelConfig);
+      }, modelConfig, true);
 
-      const text = response.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      const text = response.candidates?.[0]?.content?.parts?.filter((part: any) => typeof part.text === 'string').map((part: any) => part.text).join('') || '';
+      if (!text) throw new Error(upstreamDiagnostic('Gemini', '图片分析未返回文本', { error: response.error,
+        reason: response.promptFeedback?.blockReason, detail: response.candidates?.map((candidate: any) => ({ reason: candidate.finishReason, message: candidate.finishMessage })) }, getApiKey(modelConfig)));
       return JSON.parse(text);
     } finally {
-      await this.deleteUploadedFile(uploadedFile.name, modelConfig);
+      await this.deleteUploadedFile(uploadedFile.name, modelConfig, 10_000);
     }
   }
 
@@ -568,7 +576,7 @@ export class AIService {
 
   // === 内部工具函数 ===
 
-  private static async uploadAndWait(file: Express.Multer.File, modelConfig?: ModelConfig) {
+  private static async uploadAndWait(file: Express.Multer.File, modelConfig?: ModelConfig, timeoutMs?: number) {
     const apiKey = getApiKey(modelConfig);
     const filePath = file.path;
     const fileSize = fs.statSync(filePath).size;
@@ -579,6 +587,7 @@ export class AIService {
     const startUrl = `${env.GEMINI_API_BASE_URL}/upload/v1beta/files?key=${apiKey}`;
     const startRes = await fetch(startUrl, {
       method: 'POST',
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       headers: {
         'X-Goog-Upload-Protocol': 'resumable',
         'X-Goog-Upload-Command': 'start',
@@ -605,6 +614,7 @@ export class AIService {
     const fileBuffer = fs.readFileSync(filePath);
     const uploadRes = await fetch(uploadUrl, {
       method: 'POST',
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       headers: {
         'X-Goog-Upload-Offset': '0',
         'X-Goog-Upload-Command': 'upload, finalize',
@@ -674,13 +684,14 @@ export class AIService {
     return { uri: fileUri, name: fileName, mimeType };
   }
 
-  private static async deleteUploadedFile(fileName: string, modelConfig?: ModelConfig) {
+  private static async deleteUploadedFile(fileName: string, modelConfig?: ModelConfig, timeoutMs?: number) {
     try {
       const apiKey = getApiKey(modelConfig);
       const fileId = fileName.startsWith('files/') ? fileName.replace('files/', '') : fileName;
       const url = `${env.GEMINI_API_BASE_URL}/v1beta/files/${fileId}?key=${apiKey}`;
       await fetch(url, {
         method: 'DELETE',
+        ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
         headers: {
           'Authorization': `Bearer ${apiKey}`,
         },
