@@ -1,3 +1,4 @@
+import { SUNO_BASE_URL, SUNO_CHANNEL_TYPE } from '../../shared/sunoMusic.js';
 import { migrateHmDdlongNaming } from './hmDdlongNamingMigration.js';
 import { GOOGLE_SYNC_MODEL_IDS } from '../../shared/googleSyncModels.js';
 import { SNUMOM_WAN_NSFW_MODEL, SNUMOM_OUTPUT_ONLY_MODELS } from '../../shared/snumomWanNsfw.js';
@@ -595,6 +596,10 @@ export async function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_model_feedbacks_status ON model_feedbacks(status, created_at);
     CREATE INDEX IF NOT EXISTS idx_model_feedbacks_model ON model_feedbacks(model_id, created_at);
   `);
+
+  sqlite.prepare(`INSERT INTO channels (name,type,base_url,max_retries,status)
+    SELECT ?,?,?,0,0 WHERE NOT EXISTS (SELECT 1 FROM channels WHERE type=?)`)
+    .run('Suno（音乐）', SUNO_CHANNEL_TYPE, SUNO_BASE_URL, SUNO_CHANNEL_TYPE);
 
   // 增量迁移：为已有 users 表添加 balance 列（新建数据库已包含，此处兼容旧库）
   try {

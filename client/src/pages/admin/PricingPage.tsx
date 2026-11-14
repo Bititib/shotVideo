@@ -468,7 +468,7 @@ export default function PricingPage({ modelId, onEditingChange }: { modelId?: st
               <div>
                 <label htmlFor="pricing-extra" className="block text-xs font-semibold text-zinc-400 mb-1.5">其他规格价格（可选）</label>
                 <textarea id="pricing-extra" value={edit.extraText} onChange={event => setEdit({ ...edit, extraText: event.target.value })} rows={3} placeholder={'premium: 0.25\nlong_duration: 0.40'} className="w-full rounded-xl border px-4 py-3 text-sm font-mono resize-y focus:outline-none" />
-                <p className="text-[10px] text-zinc-500 mt-1.5">{edit.category === 'video' ? '视频报价使用基础单价与分辨率单价。不同固定时长售价的服务请保留独立入口，其他参数不会自动作为时长阶梯价。' : '填写额外配置，每行填写“规格: 单价”。'}</p>
+                <p className="text-[10px] text-zinc-500 mt-1.5">{edit.category === 'video' ? '视频报价使用基础单价与分辨率单价。不同固定时长售价的服务请保留独立入口，其他参数不会自动作为时长阶梯价。' : /^suno-v6(?:-mini|-wild)?$/.test(edit.modelPattern) ? '音乐操作单价每行填写一项：voice_generation（演唱音色生成）、enhanced_upload（强化上传）、enhanced_voice（强化克隆）。未配置的操作停用。' : '填写额外配置，每行填写“规格: 单价”。'}</p>
               </div>
             </div>
 

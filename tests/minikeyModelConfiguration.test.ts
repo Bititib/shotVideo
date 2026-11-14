@@ -40,14 +40,13 @@ it('rejects stale editors, occupied IDs and changes during catalog lookup',async
   await expect(saveMinikeyModelConfiguration(channelId,{...draft(),modelId:'race'},null)).rejects.toThrow('变化');
   expect(getModelSpecification('race')).toBeUndefined();
 });
-it('rejects unsupported durations and registers music without activating or pricing it',async()=>{
+it('rejects unsupported durations and closed miniKey music registrations',async()=>{
   await expect(saveMinikeyModelConfiguration(channelId,{...draft(),upstreamChannel:999},null)).rejects.toThrow('线路');
   const d=draft();d.limits.duration.values=[6];d.limits.defaultSeconds=6;
   await expect(saveMinikeyModelConfiguration(channelId,d,null)).rejects.toThrow('秒数');
-  const music=await saveMinikeyModelConfiguration(channelId,{...draft(),modelId:'music-new',kind:'music',upstreamModel:'suno-v6',upstreamChannel:22},null);
-  expect(music).toMatchObject({enabled:true,routeEnabled:true});
-  expect(sqlite.prepare('SELECT is_active FROM models WHERE model_id=?').get('music-new')).toEqual({is_active:0});
-  expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.supportedModels)).toContain('music-new');
+  await expect(saveMinikeyModelConfiguration(channelId,{...draft(),modelId:'music-new',kind:'music',upstreamModel:'suno-v6',upstreamChannel:22},null))
+    .rejects.toThrow('miniKey 音乐已关闭');
+  expect(sqlite.prepare('SELECT id FROM models WHERE model_id=?').get('music-new')).toBeUndefined();
 });
 it('uses the configured upstream model and line in the actual video submission entry',async()=>{
   await saveMinikeyModelConfiguration(channelId,draft(),null);

@@ -1,3 +1,5 @@
+import { SUNO_CHANNEL_TYPE } from '../../shared/sunoMusic.js';
+import { getSunoBalance, sunoBase } from './sunoMusicAdapter.js';
 import { image2proModels } from './image2proAdapter.js';
 import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS } from '../../shared/siYueTianManagedVideo.js';
 import { pruneSiYueTianCatalogBindings, siYueTianMappedBindings } from './siYueTianApprovedBindings.js';
@@ -342,10 +344,13 @@ export class ChannelService {
 
   static findChannelsForModel(modelName: string, activeChannels?: any[]) {
     if (isRetiredVideoModel(modelName)) return [];
+    const musicModel = sqlite.prepare("SELECT 1 FROM models WHERE model_id=? AND json_valid(capabilities) AND EXISTS(SELECT 1 FROM json_each(capabilities) WHERE value='music')").get(modelName);
+    if(musicModel)return [];
     modelName = canonicalZonghengModelId(modelName);
     const registered = modelName.startsWith(ZONGHENG_MODEL_PREFIX)
       ? db.select().from(models).where(eq(models.modelId, modelName)).get() : undefined;
     return (activeChannels || this.getActiveChannels())
+      .filter(channel=>channel.type!==SUNO_CHANNEL_TYPE)
       .filter(channel => !isRetiredVideoModel(channel.modelMapping?.[modelName]))
       .filter(channel => !modelName.startsWith(ZONGHENG_MODEL_PREFIX) || (isZonghengChannel(channel) && registered?.isActive === 1 && Boolean(channel.apiKey)))
       .filter(channel => !HAYA_MODEL_IDS.includes(modelName) || (isHayaChannel(channel) && Boolean(channel.apiKey)))
@@ -405,6 +410,7 @@ export class ChannelService {
 
   static createChannel(data: any) {
     let { name, type, baseUrl, apiKey, modelMapping, supportedModels, priority, weight, maxRetries, timeout } = data;
+    if(type===SUNO_CHANNEL_TYPE){baseUrl=sunoBase(baseUrl||'');apiKey=apiKey?.trim();maxRetries=0;}
     if (type === ZHIYING_CHANNEL_TYPE) {
       baseUrl = zhiyingApiBase(baseUrl);
       maxRetries = 0;
@@ -445,6 +451,7 @@ export class ChannelService {
       concurrencyLimit: DEFAULT_HM_CONCURRENCY,
       maxRetries: type === 'image2pro' || type === 'minikey' || isMegabyChannel({ type, baseUrl }) || isHussChannel({ type, baseUrl }) || isMjChannel({ type }) || isAsyncVideoChannel({ type }) || isHaya || isFunAiChannel({ type, baseUrl }) ? 0 : maxRetries ?? 3,
       timeout: timeout ?? 120000,
+      ...(type === SUNO_CHANNEL_TYPE ? { status: apiKey && data.status !== 0 ? 1 : 0 } : {}),
       faceSplitEnabled: isWxHaidiYue
         ? (data.faceSplitEnabled === 0 || data.faceSplitEnabled === false ? 0 : 1)
         : 0,
@@ -481,6 +488,8 @@ export class ChannelService {
       data = { ...data, type: 'megaby', baseUrl: megabyBaseUrl(data.baseUrl ?? channel.baseUrl), maxRetries: 0 };
     }
     if (nextType === 'image2pro' || nextType === 'minikey') data = { ...data, maxRetries: 0 };
+    if(nextType===SUNO_CHANNEL_TYPE) data={...data,baseUrl:sunoBase(data.baseUrl??channel.baseUrl),maxRetries:0,
+      ...(typeof data.apiKey==='string'?{apiKey:data.apiKey.trim()}:{})};
 
     if (isMjChannel({ type: nextType })) {
       data = { ...data, type: 'mj', baseUrl: normalizeMjBaseUrl(data.baseUrl ?? channel.baseUrl), maxRetries: 0 };
@@ -578,6 +587,13 @@ export class ChannelService {
     const start = Date.now();
     try {
       if(channel.type==='image2pro'){const entries=await image2proModels(channel);return {success:true,message:'Image2Pro 鉴权成功，共 '+entries.length+' 个文本、图片及视频模型',durationMs:Date.now()-start};}
+      if(channel.type===SUNO_CHANNEL_TYPE) {
+        const balance=await getSunoBalance(channel);
+        const message='鉴权成功，可用上游余额 ¥'+balance;
+        db.update(channels).set({lastTestAt:new Date().toISOString(),lastTestResult:message})
+          .where(eq(channels.id,id)).run();
+        return {success:true,message,durationMs:Date.now()-start};
+      }
       if (channel.type === 'minikey') {
         const { listMinikeyCatalogOptions } = await import('./minikeyModelConfigurationService.js');
         const entries = await listMinikeyCatalogOptions(id);
@@ -648,6 +664,12 @@ export class ChannelService {
   }
 
   static async syncModels(id: number): Promise<{ count: number; added: number; models: string[]; warnings?: string[] }> {
+    const original=this.getChannelRaw(id);
+    if(original?.type===SUNO_CHANNEL_TYPE) {
+      if(!original.apiKey?.trim())throw {status:400,message:'请先为渠道添加 API Key'};
+      const {syncSunoMusicModels}=await import('./musicModelRegistry.js');
+      return syncSunoMusicModels(original);
+    }
     const result = await this.syncChannelModels(id);
     const saved = this.getChannelRaw(id);
     if (!saved) return result;
@@ -668,7 +690,7 @@ export class ChannelService {
       const { listMinikeyModelConfigurations, listMinikeyCatalogOptions } = await import('./minikeyModelConfigurationService.js');
       await listMinikeyCatalogOptions(id);
       const saved = listMinikeyModelConfigurations(id).map(r=>r.modelId);
-      return {count:saved.length,added:0,models:saved,warnings:['请使用“模型与参数”添加或编辑 miniKey 型号。已有规格、售价和开关均保留；音乐配置目前仅为草稿。']};
+      return {count:saved.length,added:0,models:saved,warnings:['请使用“模型与参数”添加或编辑 miniKey 型号。已有图片和视频的规格、售价和开关均保留。']};
     }
     if (channel.type === ZHIYING_CHANNEL_TYPE) {
       const { syncZhiyingModels } = await import('./zhiyingCatalogService.js');

@@ -1,3 +1,4 @@
+import MusicOrderRecovery from '../../components/MusicOrderRecovery';
 import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
 import { isTaskIdPlaceholder } from '../../../../shared/upstreamTaskId';
 import { canDownloadV6kOriginal, canWithdrawTaskSupplement } from '../../../../shared/videoTaskSupplement';
@@ -400,6 +401,7 @@ export default function ContentsPage() {
     if (type === 'image') return '图片';
     if (type === 'analysis') return '分析';
     if (type === 'audio') return '音频';
+    if (type === 'music') return '音乐';
     return type || '未知';
   };
 
@@ -505,6 +507,7 @@ export default function ContentsPage() {
         >
           <option value="" className="bg-[#1a1a1a] text-white">全部类型</option>
           <option value="video" className="bg-[#1a1a1a] text-white">视频</option>
+          <option value="music" className="bg-[#1a1a1a] text-white">音乐</option>
           <option value="image" className="bg-[#1a1a1a] text-white">图片</option>
           <option value="analysis" className="bg-[#1a1a1a] text-white">分析</option>
         </select>
@@ -689,7 +692,7 @@ export default function ContentsPage() {
                 {previewLoading && <span className="text-[10px] text-zinc-500">正在按需加载完整素材…</span>}
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                {previewItem.type !== 'image' && (
+                {previewItem.type !== 'image' && previewItem.type !== 'music' && (
                   <button
                     onClick={() => { void handleReplicate(previewItem); }}
                     className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-xs text-indigo-400 border border-indigo-500/20 transition-colors"
@@ -709,7 +712,7 @@ export default function ContentsPage() {
                 onClick={() => setPreviewTab('video')}
                 className={`px-3 py-1.5 rounded-lg text-xs transition-colors ${previewTab === 'video' ? 'bg-white/10 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
               >
-                {previewItem.type === 'image' ? '图片与详情' : '视频与详情'}
+                {previewItem.type === 'image' ? '图片与详情' : previewItem.type === 'music' ? '音乐与详情' : '视频与详情'}
               </button>
               <button
                 onClick={() => setPreviewTab('refs')}
@@ -732,8 +735,11 @@ export default function ContentsPage() {
                   {previewItem.resultUrl && previewItem.resultUrl.trim() !== '' && (
                     previewItem.type === 'image'
                       ? <img src={previewItem.resultUrl} alt={previewItem.title || '生成图片'} className="content-detail-media" />
+                      : previewItem.type === 'music' ? <audio controls preload="none" src={previewItem.resultUrl} className="w-full" />
                       : <video src={getVideoPlayUrl(previewItem.resultUrl)} controls playsInline preload="metadata" className="content-detail-media" />
                   )}
+                  {previewItem.type==='music' && parseMeta(previewItem.metadata).musicOperation && parseMeta(previewItem.metadata).musicTaskId &&
+                    <MusicOrderRecovery id={parseMeta(previewItem.metadata).musicTaskId} onChange={()=>{void fetchContents();}}/>}
                   {!previewItem.resultUrl?.trim() && <div className="content-detail-empty">
                     <Film className="h-8 w-8" />
                     <span>{['failed', 'error'].includes(previewItem.status) ? '本次生成未获得结果' : '生成结果暂未就绪'}</span>

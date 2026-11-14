@@ -1,3 +1,4 @@
+import { SUNO_CHANNEL_TYPE } from '../../shared/sunoMusic.js';
 import { publicApiModelId } from '../../shared/publicApiModelId.js';
 import { resolvePublicModelId } from './publicModelNameService.js';
 import { ChannelService } from './channelService.js';
@@ -22,7 +23,7 @@ export function getAccessibleModels(token: { allowedModels: string[]; userId?: n
   const activeChannels = ChannelService.getActiveChannels().filter(channel => Boolean(channel.apiKey?.trim()));
   const specs = getModelSpecifications();
   const specMap = new Map(specs.map(spec => [spec.modelId, spec]));
-  const routingChannels: Array<{ supportedModels: string[] }> = [...activeChannels];
+  const routingChannels: Array<{ supportedModels: string[] }> = activeChannels.filter(c=>c.type!==SUNO_CHANNEL_TYPE);
   if (hasHmStudioOverflowChannel(activeChannels)) routingChannels.push({ supportedModels: [HM_STUDIO_PRIMARY_VIDEO_MODEL] });
   const checkAlias = createVideoAliasChecker();
   const routable = new Set(filterRoutableModels(registeredModels.map(model => model.modelId), routingChannels));
@@ -34,6 +35,7 @@ export function getAccessibleModels(token: { allowedModels: string[]; userId?: n
       try { return resolvePublicModelId(publicId) === model.modelId; } catch { return false; }
     })
     .filter(model => {
+      if(model.provider===SUNO_CHANNEL_TYPE&&JSON.parse(model.capabilities||'[]').includes('music'))return true;
       const spec = specMap.get(model.modelId);
       return spec ? inspectModelRoutes(spec, undefined, activeChannels).some(route => !route.reasons.length) : routable.has(model.modelId);
     })

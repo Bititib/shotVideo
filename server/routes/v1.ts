@@ -1,6 +1,9 @@
+import { createMusicResourceRouter } from './musicResources.js';
+import { songOperation, type MusicTask } from '../../shared/sunoMusic.js';
+import { musicBinding, musicPrices } from '../services/musicModelRegistry.js';
 import { videoApiProgress } from '../services/videoApiProgress.js';
 import { isImage2proChannel, image2proBase } from '../services/image2proAdapter.js';
-import { createMusicTask, getMusicTask, listMusicTasks, musicFile, processMusicTask, type MusicOwner } from '../services/musicGenerationService.js';
+import { createMusicTask, getMusicTask, getMusicTaskByRequest, listMusicTasks, musicFile, processMusicTask, type MusicOwner } from '../services/musicGenerationService.js';
 import { prepareMediaSubmission } from '../../shared/mediaReferences.js';
 import { publicApiModelId } from '../../shared/publicApiModelId.js';
 import { ZHIYING_CHANNEL_TYPE } from '../../shared/zhiyingVideo.js';
@@ -813,9 +816,9 @@ router.get('/billing/usage', (req: Request, res: Response) => {
 
 /** POST /v1/chat/completions — 核心对话代理转发 */
 
-function reserveApiCharge(token: any, cost: number, model: string, pricingSnapshot?: PricingSnapshot) {
+function reserveApiCharge(token: any, cost: number, model: string, pricingSnapshot?: PricingSnapshot, operation?: string) {
   return reserveCharge(cost, amount => deductTokenOrUserBalance(token, amount, model),
-    (amount, receipt) => { refundTokenOrUserBalance(token, amount, receipt); }, { tokenId: token.id, userId: token.userId, unlimitedToken: token.balance === -1, model, pricingSnapshot });
+    (amount, receipt) => { refundTokenOrUserBalance(token, amount, receipt); }, { tokenId: token.id, userId: token.userId, unlimitedToken: token.balance === -1, model, pricingSnapshot, operation });
 }
 
 function musicApiOwner(req:Request):MusicOwner {
@@ -824,15 +827,37 @@ function musicApiOwner(req:Request):MusicOwner {
   if(!result?.valid || !result.token) throw Object.assign(new Error(result?.error || 'Missing API key'),{status:401});
   const token=result.token;
   return {userId:token.userId,tokenId:token.id,allowedModels:token.allowedModels,
-    reserve:(cost,model,snapshot)=>{
+    reserve:(cost,model,snapshot,operation)=>{
       if(!checkTokenOrUserBalance(token,cost).sufficient)throw Object.assign(new Error('余额不足'),{status:402});
-      return reserveApiCharge(token,cost,model,snapshot);
+      return reserveApiCharge(token,cost,model,snapshot,operation);
     }};
 }
-router.post('/music',(req,res,next)=>{try{const task=createMusicTask(req.body,musicApiOwner(req));res.status(202).json({...task,result_url:task.result_url?'/v1/music/'+task.id+'/file':null});void processMusicTask(task.id);}catch(e){next(e);}});
-router.get('/music',(req,res,next)=>{try{res.json({data:listMusicTasks(musicApiOwner(req)).map(t=>({...t,result_url:t.result_url?'/v1/music/'+t.id+'/file':null}))});}catch(e){next(e);}});
-router.get('/music/:id/file',(req,res,next)=>{try{res.download(musicFile(req.params.id,musicApiOwner(req)),'music.mp3');}catch(e){next(e);}});
-router.get('/music/:id',(req,res,next)=>{try{const task=getMusicTask(req.params.id,musicApiOwner(req));res.json({...task,result_url:task.result_url?'/v1/music/'+task.id+'/file':null});}catch(e){next(e);}});
+const apiMusicResult=(task:MusicTask)=>({...task,result_url:task.result_url?'/v1/music/'+task.id+'/file':null,
+  results:task.results.map(result=>({...result,result_url:result.result_url?'/v1/music/'+task.id+'/results/'+result.id+'/file':null}))});
+router.use('/music',createMusicResourceRouter(musicApiOwner,(_req,_res,next)=>next()));
+router.get('/music/models',(req,res,next)=>{
+  try{
+    const owner=musicApiOwner(req);
+    res.json({data:getAccessibleModels({allowedModels:owner.allowedModels||[],userId:owner.userId}).filter(model=>JSON.parse(model.capabilities).includes('music'))
+      .map(model=>({id:model.modelId,prices:musicPrices(musicBinding(model.modelId,owner.userId),owner.userId)}))});
+  }catch(e){next(e);}
+});
+router.post('/music',(req,res,next)=>{
+  try{
+    const owner=musicApiOwner(req);
+    if(req.body?.operation!==undefined&&!songOperation(req.body.operation))return res.status(400).json({error:'请通过素材或音色接口提交'});
+    const {task}=createMusicTask(req.body,owner);res.status(202).json(apiMusicResult(task));void processMusicTask(task.id);
+  }catch(e){next(e);}
+});
+router.get('/music',(req,res,next)=>{try{res.json({data:listMusicTasks(musicApiOwner(req)).map(apiMusicResult)});}catch(e){next(e);}});
+router.get('/music/:id/results/:resultId/file',(req,res,next)=>{
+  try{res.setHeader('Cache-Control','private, no-store');res.download(musicFile(req.params.id,musicApiOwner(req),req.params.resultId),'music.mp3');}catch(e){next(e);}
+});
+router.get('/music/:id/file',(req,res,next)=>{
+  try{res.setHeader('Cache-Control','private, no-store');res.download(musicFile(req.params.id,musicApiOwner(req)),'music.mp3');}catch(e){next(e);}
+});
+router.get('/music/by-request/:key',(req,res,next)=>{try{res.json(apiMusicResult(getMusicTaskByRequest(req.params.key,musicApiOwner(req))));}catch(e){next(e);}});
+router.get('/music/:id',(req,res,next)=>{try{res.json(apiMusicResult(getMusicTask(req.params.id,musicApiOwner(req))));}catch(e){next(e);}});
 
 router.post('/chat/completions', async (req: Request, res: Response) => {
   const startTime = Date.now();

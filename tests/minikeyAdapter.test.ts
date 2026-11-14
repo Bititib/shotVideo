@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { submitMinikey, pollMinikey, normalizeMinikeyTask, buildMinikeyMusic, fetchMinikeyFile } from '../server/services/minikeyAdapter.js';
+import { submitMinikey, pollMinikey, normalizeMinikeyTask, fetchMinikeyFile } from '../server/services/minikeyAdapter.js';
 const c = { baseUrl: 'https://minikey.work', apiKey: 'mk_test' };
 const id = '3f2504e04f8941d39a0c0c8b7f2f1a6d';
 describe('miniKey independent protocol', () => {
@@ -36,8 +36,5 @@ describe('miniKey independent protocol', () => {
   it('rejects contradictory image receipts and mismatched IDs', () => {
     expect(() => normalizeMinikeyTask(c, 'images', id, {task_id:id,state:'failed',is_final:false})).toThrow('冲突');
     expect(() => normalizeMinikeyTask(c, 'music', id, {id:'a'.repeat(32),status:'failed'})).toThrow('编号');
-  });
-  it('does not silently discard lyrics in instrumental mode', () => {
-    expect(() => buildMinikeyMusic({model:'suno-v6',prompt:'主题',mode:'instrumental',lyrics:'歌词'})).toThrow('歌词');
   });
 });

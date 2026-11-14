@@ -602,7 +602,7 @@ export class ContentService {
     if (item.userId !== userId) throw { status: 403, message: '无权删除此内容' };
 
     assertVideoContentDeletable(item);
-    if (item.type==='music' && !['completed','failed','resolved'].includes(item.status)) throw {status:409,message:'音乐任务仍在生成或核实中，请等待结算后删除'};
+    if (item.type==='music' && !['completed','failed','resolved','cancelled'].includes(item.status)) throw {status:409,message:'音乐任务仍在生成或核实中，请等待结算后删除'};
 
     db.delete(contents).where(eq(contents.id, contentId)).run();
   }
@@ -614,7 +614,7 @@ export class ContentService {
     if (item.orgId !== orgId) throw { status: 403, message: '无权删除此内容' };
 
     assertVideoContentDeletable(item);
-    if (item.type==='music' && !['completed','failed','resolved'].includes(item.status)) throw {status:409,message:'音乐任务仍在生成或核实中，请等待结算后删除'};
+    if (item.type==='music' && !['completed','failed','resolved','cancelled'].includes(item.status)) throw {status:409,message:'音乐任务仍在生成或核实中，请等待结算后删除'};
 
     db.delete(contents).where(eq(contents.id, contentId)).run();
   }

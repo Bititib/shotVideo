@@ -28,7 +28,7 @@ function current(id: number, modelId: string) {
 }
 export function listMinikeyModelConfigurations(id: number): MinikeyModelConfiguration[] {
   channel(id);
-  return drafts(id).map(d => { const c=current(id,d.modelId); return {...d,
+  return drafts(id).filter(d=>d.kind!=='music').map(d => { const c=current(id,d.modelId); return {...d,
     ...(c.spec && c.route ? {limits:c.spec.limits,enabled:c.spec.enabled,routeEnabled:c.route!.enabled,upstreamModel:c.route!.upstreamModel,
       upstreamChannel:c.route!.minikey?.upstreamChannel ?? null,imageProtocol:c.route!.minikey?.imageProtocol ?? d.imageProtocol} : {}),
     editable:!c.reason,reason:c.reason,version:c.version}; });
@@ -39,28 +39,25 @@ export async function listMinikeyCatalogOptions(id: number): Promise<MinikeyCata
   if (!response.ok) throw fail('miniKey 模型目录 HTTP '+response.status,502);
   const data = await response.json() as any;
   if (!Array.isArray(data.models)) throw fail('miniKey 模型目录格式无效',502);
-  return data.models.filter((r:any)=>typeof r.model==='string' && !r.model.includes('@') && ['video','image','audio'].includes(r.category)).map((r:any)=>({
-    model:r.model,name:String(r.name || r.model),kind:r.category==='audio'?'music':r.category,maxImages:Number(r.maxImages)||0,
+  return data.models.filter((r:any)=>typeof r.model==='string' && !r.model.includes('@') && ['video','image'].includes(r.category)).map((r:any)=>({
+    model:r.model,name:String(r.name || r.model),kind:r.category,maxImages:Number(r.maxImages)||0,
     durations:Array.isArray(r.durations)?r.durations.filter((n:any)=>Number.isInteger(n)&&n>0):[],
     resolutions:Object.keys(r.prices || {}).filter(s=>/^(?:0\.5|1|2|4)K$/i.test(s)),
     channels:(Array.isArray(r.channels)?r.channels:[]).filter((c:any)=>Number.isSafeInteger(c.id)&&c.id>0).map((c:any)=>({id:c.id,name:String(c.name || c.id),prices:c.prices || {}}))
   }));
 }
 async function checked(id: number, input: MinikeyModelDraft) {
+  if(input?.kind==='music')throw fail('miniKey 音乐已关闭，请使用音乐渠道',409);
   if (!input || typeof input.modelId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/.test(input.modelId)
     || /^minikey[-_:]/i.test(input.modelId) || typeof input.upstreamModel!=='string' || !input.upstreamModel.trim()
-    || !['video','image','music'].includes(input.kind) || !['banana','size'].includes(input.imageProtocol)
+    || !['video','image'].includes(input.kind) || !['banana','size'].includes(input.imageProtocol)
     || typeof input.enabled!=='boolean' || typeof input.routeEnabled!=='boolean') throw fail('请填写有效本站模型 ID、上游型号与类型；本站 ID 无需渠道前缀');
   if (input.upstreamChannel!==null && (!Number.isSafeInteger(input.upstreamChannel)||input.upstreamChannel<=0)) throw fail('线路编号必须为正整数');
-  if (input.kind !== 'music') validateLimits(input.limits);
+  validateLimits(input.limits);
   const {limits:l}=input;
   if (l.firstFrame || l.lastFrame || l.outputsPerTask!==undefined) throw fail('miniKey 不支持独立首尾帧或固定多结果配置');
   const options=await listMinikeyCatalogOptions(id), option=options.find(r=>r.model===input.upstreamModel && r.kind===input.kind);
   if (!option) throw fail('上游当前目录没有此类型的型号',409);
-  if (input.kind==='music') {
-    if (input.upstreamChannel!==null && !option.channels.some(c=>c.id===input.upstreamChannel)) throw fail('音乐线路不在当前目录');
-    return input;
-  }
   if (l.maxImages>option.maxImages || l.maxVideos>10 || l.maxAudios>10) throw fail('素材数量超过 miniKey 文档上限');
   if (input.kind==='video') {
     const line=option.channels.find(c=>c.id===input.upstreamChannel);
@@ -78,13 +75,13 @@ async function checked(id: number, input: MinikeyModelDraft) {
 }
 export async function previewMinikeyModelRequest(id:number,draft:MinikeyModelDraft) {
   const d=await checked(id,structuredClone(draft));
-  return {method:'POST',path:'/openapi/v1/'+({video:'videos',image:'images',music:'music'}[d.kind]),
+  return {method:'POST',path:d.kind==='video'?'/openapi/v1/videos':'/openapi/v1/images',
     body:d.kind==='video'?{model:d.upstreamModel,channel:d.upstreamChannel,prompt:'示例提示词',duration:d.limits.defaultSeconds,ratio:d.limits.ratios[0],images:'["参考图地址"]',client_request_id:'<持久化请求编号>'}
-      :d.kind==='image'?{model:d.upstreamModel,prompt:'示例提示词',params:d.imageProtocol==='banana'?{aspectRatio:d.limits.ratios[0],imageSize:d.limits.resolutions[0].toUpperCase(),n:1}:{size:minikeyImageSize(d.limits.ratios[0]),quality:'auto',n:1}}
-      :{model:d.upstreamModel,prompt:'示例提示词',mode:'song',...(d.upstreamChannel?{chan:d.upstreamChannel}:{})}};
+      :{model:d.upstreamModel,prompt:'示例提示词',params:d.imageProtocol==='banana'?{aspectRatio:d.limits.ratios[0],imageSize:d.limits.resolutions[0].toUpperCase(),n:1}:{size:minikeyImageSize(d.limits.ratios[0]),quality:'auto',n:1}}};
 }
 export async function saveMinikeyModelConfiguration(id:number,value:MinikeyModelDraft,version:string|null) {
   const draft=structuredClone(value);
+  if(draft?.kind==='music')throw fail('miniKey 音乐已关闭，请使用音乐渠道',409);
   if (!draft || typeof draft.modelId!=='string') throw fail('请填写模型配置');
   const original=current(id,draft.modelId);
   if (original.reason) throw fail(original.reason,409);

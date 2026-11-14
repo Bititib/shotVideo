@@ -33,6 +33,14 @@ export function resolveBillingReservation(id: string, adminId: number, actual: n
     if (row.state === 'reserved') fail(409, '任务仍在预扣中，不能覆盖运行中的结算');
     if (actual > row.amount) fail(400, '实收不能超过原预扣金额，超额费用不自动追加扣款');
     const context = JSON.parse(row.context), receipt = JSON.parse(row.receipt);
+    let musicOrder=false;
+    if (sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='music_jobs'").get()) {
+      const contentId = reservationContentId(id, context);
+      const music = contentId ? sqlite.prepare('SELECT lease,lease_until FROM music_jobs WHERE content_id=?').get(contentId) as {lease:string|null;lease_until:number}|undefined : undefined;
+      if (music && music.lease && music.lease_until > Date.now()) fail(409, '音乐订单正在查询或保存，请等该步骤结束后核账');
+      musicOrder=Boolean(music);
+      if (music) sqlite.prepare("UPDATE music_jobs SET state='resolved' WHERE content_id=? AND state NOT IN ('completed','failed','cancelled')").run(contentId);
+    }
     const difference = Math.max(0, Math.round((row.amount - actual) * 1e6) / 1e6);
     if (difference) {
       withFundContext(sqlite, { contentId: reservationContentId(id,context), actorId: adminId, kind: 'refund' }, () => {
@@ -41,6 +49,7 @@ export function resolveBillingReservation(id: string, adminId: number, actual: n
       if (!context.tokenId || linked) {
         if (!Number.isSafeInteger(context.userId) || !['org','user'].includes(source?.source)) fail(409, '原扣款来源不完整，无法安全退款');
         if (!sqlite.prepare('SELECT id FROM users WHERE id=?').get(context.userId)) fail(409, '原用户已删除，请人工核对');
+        if(musicOrder&&source.source==='org'&&!sqlite.prepare('SELECT id FROM organizations WHERE id=?').get(source.orgId??null)) fail(409,'原扣款组织已删除，请人工核对');
         BalanceService.refundToSource(context.userId, difference, source.source, source.orgId, 'reconciliation_refund');
       }
       if (context.tokenId) {

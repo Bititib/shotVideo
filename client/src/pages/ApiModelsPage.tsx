@@ -1,3 +1,4 @@
+import { MUSIC_OPERATION_LABELS, type MusicOperation } from '../../../shared/sunoMusic';
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Check, Copy, FileText, KeyRound, Layers3, RefreshCw, Search, X } from 'lucide-react';
@@ -32,6 +33,7 @@ function ModelDetails({ model, onClose, onCopy, notice, onLogin }: { model: Deve
         <div className="api-model-id"><code>{model.id}</code><button className="api-model-icon" onClick={() => onCopy(model.id)} aria-label="复制调用 ID"><Copy size={16} /></button></div>
         <section><h3>价格</h3>{onLogin ? <button className="api-model-link" onClick={onLogin}>登录后查看价格</button> : <>
           <p>{formatModelPrice(model.pricing)}</p>
+          {model.pricing?.operation_prices && <dl className="api-model-specs">{Object.entries(model.pricing.operation_prices).map(([operation,rate]) => <div key={operation}><dt>{MUSIC_OPERATION_LABELS[operation as MusicOperation]}</dt><dd>{rate===0?'免费':formatModelPrice({...model.pricing!,unit_price:rate})}</dd></div>)}</dl>}
           {model.pricing && Object.keys(model.pricing.resolution_prices).length > 0 && <dl className="api-model-specs">{Object.entries(model.pricing.resolution_prices).map(([resolution, rate]) => <div key={resolution}><dt>{resolution}</dt><dd>{formatModelPrice({ ...model.pricing!, unit_price: rate })}</dd></div>)}</dl>}
         </>}
         </section>
@@ -138,7 +140,7 @@ export default function ApiModelsPage({ embedded = false }: { embedded?: boolean
       <tbody>{filtered.map(model => <tr key={model.canonicalId}>
         <td className="api-model-name-cell"><h2>{model.name}</h2><div className="api-model-row-id"><code>{model.id}</code><button className="api-model-icon" aria-label={`复制 ${model.name} 的调用 ID`} onClick={() => copy(model.id)}><Copy size={14} /></button></div>{model.description && <p className="api-model-row-description">{model.description}</p>}</td>
         <td className="api-model-type-cell"><div className="api-model-badges">{model.kinds.map(value => <span key={value}>{labels[value]}</span>)}</div></td>
-        <td className="api-model-price-cell" data-label="调用价格">{isAuthenticated ? <><strong>{formatModelPrice(model.pricing)}</strong>{model.pricing && Object.keys(model.pricing.resolution_prices).length > 0 && <small>分辨率价格见详情</small>}</> : <span className="api-model-muted">登录后可见</span>}</td>
+        <td className="api-model-price-cell" data-label="调用价格">{isAuthenticated ? <><strong>{formatModelPrice(model.pricing)}</strong>{model.pricing && Object.keys(model.pricing.resolution_prices).length > 0 && <small>分辨率价格见详情</small>}{model.pricing?.operation_prices&&<small>各操作价格见详情</small>}</> : <span className="api-model-muted">登录后可见</span>}</td>
         <td className="api-model-state-cell"><span className={`api-model-status ${model.available ? 'is-available' : ''}`}><i />{model.available ? '可用' : model.endpoints.length ? '暂不可用' : 'API 暂未开放'}</span>{model.health && <small>{healthLabels[model.health.state]}</small>}</td>
         <td className="api-model-action-cell"><button className="api-model-link" onClick={() => setSelectedId(model.canonicalId)}>详情与示例<ArrowRight size={15} /></button></td>
       </tr>)}</tbody>

@@ -70,12 +70,3 @@ export async function fetchMinikeyFile(c: MinikeyChannel, kind: 'videos' | 'musi
   }
   return response;
 }
-export function buildMinikeyMusic(input: { model: string; prompt: string; lyrics?: string; mode?: string; vocal?: string; tags?: string[]; chan?: number }) {
-  if (typeof input.model!=='string' || typeof input.prompt!=='string' || !input.model || !input.prompt.trim() || [...input.prompt].length > 1000) throw new Error('miniKey 音乐需要模型与 1–1000 字提示词');
-  if (input.lyrics!==undefined && typeof input.lyrics!=='string' || input.tags!==undefined && (!Array.isArray(input.tags)||input.tags.some(t=>typeof t!=='string'||!t.trim()))) throw new Error('歌词必须是文本，标签必须是非空文本数组');
-  if ([...(input.lyrics || '')].length > 3000) throw new Error('miniKey 歌词不能超过 3000 字');
-  if (!['song', 'instrumental'].includes(input.mode || 'song') || !['auto', 'm', 'f'].includes(input.vocal || 'auto')) throw new Error('miniKey 音乐模式或人声参数无效');
-  if ((input.tags || []).length > 6 || (input.tags || []).some(t => [...t].length > 12)) throw new Error('miniKey 最多 6 个标签，每个不超过 12 字');
-  if (input.mode === 'instrumental' && (input.lyrics || input.vocal && input.vocal !== 'auto')) throw new Error('纯音乐不能携带歌词或指定人声');
-  return { ...input };
-}

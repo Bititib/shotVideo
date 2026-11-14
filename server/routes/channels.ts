@@ -1,3 +1,5 @@
+import { configureSunoChannel } from '../services/musicModelRegistry.js';
+import { SunoError } from '../services/sunoMusicAdapter.js';
 import { listMinikeyModelConfigurations, listMinikeyCatalogOptions, previewMinikeyModelRequest, saveMinikeyModelConfiguration } from '../services/minikeyModelConfigurationService.js';
 import { MegabyApiError } from '../services/megabyVideoAdapter.js';
 import { Router, Response } from 'express';
@@ -96,6 +98,7 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
 
 // Upstream authentication is independent of the administrator's website session.
 function channelOperationError(res: Response, error: any) {
+  if (error instanceof SunoError) return res.status(502).json({ error: error.message });
   if (error instanceof MegabyApiError) return res.status(502).json({ error: error.message, code: error.code, upstreamStatus: error.upstreamStatus });
   if (error instanceof FunAiApiError) {
     return res.status(502).json({ error: error.message, code: 'UPSTREAM_ERROR', upstreamStatus: error.status });
@@ -153,6 +156,15 @@ router.post('/:id/zhiying-models/preview', async (req, res) => {
 router.put('/:id/zhiying-models', async (req, res) => {
   try { res.json(await saveZhiyingModelConfiguration(Number(req.params.id), req.body?.draft, req.body?.version)); }
   catch (error) { channelOperationError(res, error); }
+});
+
+router.put('/:id/suno-setup', async (req, res) => {
+  try {
+    const result = await configureSunoChannel(Number(req.params.id), req.body?.apiKey);
+    res.setHeader('Cache-Control', 'no-store').json(result);
+  } catch (error) {
+    channelOperationError(res, error);
+  }
 });
 
 // 测试渠道连通性

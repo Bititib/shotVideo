@@ -1,3 +1,4 @@
+import type { MusicOperation } from './sunoMusic.js';
 import type { ModelInputLimits } from './modelRouting.js';
 import type { VideoModelStatus } from './videoModelStatus.js';
 
@@ -10,6 +11,7 @@ export interface DeveloperModelPricing {
   unit_price: number;
   output_unit_price: number;
   resolution_prices: Record<string, number>;
+  operation_prices?: Partial<Record<MusicOperation,number>>;
 }
 export interface DeveloperModel {
   id: string;

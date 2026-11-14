@@ -48,7 +48,7 @@ export default function MinikeyModelConfigurationPanel({channelId,onClose,onSave
         <button className="v6k-button v6k-button-primary v6k-add-model" disabled={busy || !loaded} onClick={()=>navigate({})}>添加新模型</button>
         <div className="v6k-sidebar-heading"><h3>已有配置</h3><span>{rows.length} 个</span></div>
         <div className="v6k-model-list">{rows.map(row=><button key={row.modelId} className="v6k-model-list-item" disabled={busy} aria-current={selected?.modelId===row.modelId} onClick={()=>navigate({row})}>
-          <strong>{row.modelId}</strong><small>{row.upstreamModel}{row.kind==='music'?' · 音乐':''}</small></button>)}</div>
+          <strong>{row.modelId}</strong><small>{row.upstreamModel}</small></button>)}</div>
       </aside>
       <div className="min-w-0 overflow-y-auto p-6 space-y-5">
         <p className="text-sm">设置本站模型 ID、上游型号和可用规格。新模型默认停用，售价在关联模型中单独设置。</p>
@@ -64,7 +64,7 @@ export default function MinikeyModelConfigurationPanel({channelId,onClose,onSave
           <div className="grid gap-4 sm:grid-cols-2">
             <label>本站模型 ID<input className="v6k-field w-full" value={draft.modelId} disabled={Boolean(selected)} placeholder="例如 video-pro" onChange={e=>update({modelId:e.target.value})}/></label>
             <label>生成类型<select className="v6k-field w-full" value={draft.kind} disabled={Boolean(selected)} onChange={e=>update({...blankMinikeyModel(),modelId:draft.modelId,kind:e.target.value as MinikeyModelDraft['kind']})}>
-              <option value="video">视频</option><option value="image">图片</option><option value="music">音乐</option></select></label>
+              <option value="video">视频</option><option value="image">图片</option></select></label>
           </div>
           <label className="block">上游型号<select className="v6k-field w-full" value={draft.upstreamModel} onChange={e=>selectModel(e.target.value)}><option value="">请选择型号</option>
             {draft.upstreamModel && !option && <option value={draft.upstreamModel}>{draft.upstreamModel}（当前目录不可用）</option>}
@@ -73,7 +73,7 @@ export default function MinikeyModelConfigurationPanel({channelId,onClose,onSave
             const line=option?.channels.find(c=>c.id===Number(e.target.value)), seconds=Object.keys(line?.prices || {}).map(Number).filter(n=>n>0 && Number.isInteger(n));
             update({upstreamChannel:e.target.value?Number(e.target.value):null,...(draft.kind==='video' && seconds.length?{limits:{...l,defaultSeconds:seconds[0],duration:{mode:'options',min:Math.min(...seconds),max:Math.max(...seconds),step:1,values:seconds}}}:{})});
           }}><option value="">{draft.kind==='video'?'请选择固定线路':'默认线路'}</option>{option?.channels.map(c=><option key={c.id} value={c.id}>{c.id} · {c.name}</option>)}</select></label>}
-          {draft.kind==='music'?<p className="text-sm">音乐按次计费，支持歌曲和纯音乐。保存后请设置售价、启用模型，并在等级配置中开放音乐功能和模型权限。</p>:<>
+          <>
             {draft.kind==='image' && <label className="block">图片参数格式<select className="v6k-field w-full" value={draft.imageProtocol} onChange={e=>update({imageProtocol:e.target.value as 'banana'|'size'})}><option value="banana">比例与清晰度（Banana 格式）</option><option value="size">像素尺寸与质量（image-2 格式，仅 1K）</option></select></label>}
             <p className="text-sm">按所选线路填写素材上限和清晰度。上游目录中的模型总上限不一定适用于每条线路。</p>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -83,7 +83,7 @@ export default function MinikeyModelConfigurationPanel({channelId,onClose,onSave
                 <label>默认时长<input className="v6k-field w-full" type="number" value={l.defaultSeconds ?? ''} onChange={e=>limits({defaultSeconds:Number(e.target.value)})}/></label></>}
               {([['maxImages','参考图片上限'],...(draft.kind==='video'?[['maxVideos','参考视频上限'],['maxAudios','参考音频上限']]:[['maxOutputs','输出张数上限']])] as Array<[keyof typeof l,string]>).map(([k,label])=><label key={k}>{label}<input className="v6k-field w-full" type="number" min="0" value={Number(l[k])} onChange={e=>limits({[k]:Number(e.target.value)})}/></label>)}
             </div>
-          </>}
+          </>
             <div className="flex gap-5"><label><input type="checkbox" checked={draft.enabled} onChange={e=>update({enabled:e.target.checked})}/> 开放生成</label><label><input type="checkbox" checked={draft.routeEnabled} onChange={e=>update({routeEnabled:e.target.checked})}/> 开放线路</label></div>
           <div className="flex gap-3"><button type="button" className="v6k-button" onClick={()=>void act(false)} disabled={!option}>预览请求</button>
             <button type="button" className="v6k-button v6k-button-primary" onClick={()=>void act(true)} disabled={!option}>校验并保存</button></div>

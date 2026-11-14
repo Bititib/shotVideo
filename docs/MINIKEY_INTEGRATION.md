@@ -1,5 +1,7 @@
 # miniKey 接入记录
 
+音乐新提交已迁移至 [Suno 音乐](SUNO_MUSIC_INTEGRATION.md)。下文中的音乐流程为历史记录，仅保留原订单查询及交付。
+
 2026-11-11。实现位于独立工作区 `scratch/minikey-integration`，分支 `codex/minikey-integration`，基于 origin/main `982606c`。原目录与 `scratch/huss-final-publish` 的未提交改动未被覆盖。
 
 ## 协议与范围

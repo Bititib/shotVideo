@@ -1,3 +1,4 @@
+import { musicModelAvailable } from './musicModelRegistry.js';
 import { desc, eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { contents } from '../db/schema.js';
@@ -58,7 +59,7 @@ function buildDeveloperCatalog(models: ReturnType<typeof getAccessibleModels>, u
       }
       if (kinds.includes('video')) endpoints.push('/v1/videos');
       if (kinds.includes('music')) endpoints.push('/v1/music');
-      const available = endpoints.length > 0 && (spec ? specificationAvailable(spec)
+      const available = endpoints.length > 0 && (kinds.includes('music') ? musicModelAvailable(model.modelId,userId) : spec ? specificationAvailable(spec)
         : ChannelService.findChannelsForModel(model.modelId, activeChannels).some(channel => Boolean(channel.apiKey?.trim()) && (!kinds.includes('image') || channel.type !== 'hmstudio'))
           || (model.modelId === HM_STUDIO_PRIMARY_VIDEO_MODEL && hmOverflow));
       const price = prices.get(model.modelId);
@@ -69,7 +70,8 @@ function buildDeveloperCatalog(models: ReturnType<typeof getAccessibleModels>, u
         ...metadata, canonicalId: callableModelId(model), kinds, endpoints, limits,
         // Explicit allowlist: never serialize upstream costs, routes or credentials.
         pricing: price ? { currency: price.currency, billing_type: price.billing_type, unit: price.unit,
-          unit_price: price.unit_price, output_unit_price: price.output_unit_price, resolution_prices: price.resolution_prices } : null,
+          unit_price: price.unit_price, output_unit_price: price.output_unit_price, resolution_prices: price.resolution_prices,
+          ...(price.operation_prices?{operation_prices:price.operation_prices}:{}) } : null,
         available, health: kinds.includes('video') ? calculateVideoModelStatus(recent, available) : null,
       };
     }).filter(model => model.available),

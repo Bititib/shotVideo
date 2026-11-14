@@ -39,11 +39,9 @@ it('keeps failed edits and asks before abandoning them',async()=>{
   fireEvent.click(screen.getByText('添加新模型'));await screen.findByRole('alertdialog');
   fireEvent.click(screen.getByText('继续编辑'));expect(close).not.toHaveBeenCalled();
 });
-it('exposes music activation with pricing guidance',async()=>{
+it('does not offer miniKey music for new models',async()=>{
   render(<MinikeyModelConfigurationPanel channelId={7} onClose={vi.fn()} onSaved={vi.fn()}/>);
   await waitFor(()=>expect(screen.getByLabelText('生成类型')).toBeEnabled());
-  fireEvent.change(screen.getByLabelText('生成类型'),{target:{value:'music'}});
-  expect(screen.getByText(/音乐按次计费/)).toBeVisible();
+  expect(screen.queryByRole('option',{name:'音乐'})).not.toBeInTheDocument();
   expect(screen.getByText('开放线路')).toBeVisible();
-  expect(screen.getByText('校验并保存')).toBeDisabled();
 });

@@ -73,6 +73,12 @@ export const adminApi = {
   updateChannel(id: number, data: any) { return api.put<any>(`/admin/channels/${id}`, data); },
   setChannelApiKeyStatus(channelId: number, keyId: number, status: number) { return api.put<any>(`/admin/channels/${channelId}/api-keys/${keyId}/status`, { status }); },
   deleteChannel(id: number) { return api.delete<any>(`/admin/channels/${id}`); },
+  configureSunoChannel(id: number, apiKey: string) {
+    return api.put<{
+      balance: number; message: string; models: string[]; warnings: string[];
+      modelStatus: { model: string; enabled: boolean; priced: boolean }[];
+    }>(`/admin/channels/${id}/suno-setup`, { apiKey });
+  },
   testChannel(id: number) { return api.post<any>(`/admin/channels/${id}/test`); },
   syncChannelModels(id: number) { return api.post<any>(`/admin/channels/${id}/sync-models`); },
   getV6kModelConfigurations(id: number) { return api.get<V6kModelConfiguration[]>(`/admin/channels/${id}/v6k-models`); },

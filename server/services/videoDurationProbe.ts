@@ -151,7 +151,7 @@ async function probeMediaBufferDuration(bytes: Buffer, kind: MediaKind): Promise
   const file = path.join(os.tmpdir(), 'video-duration-' + crypto.randomUUID() + '.bin');
   await fs.writeFile(file, bytes, { flag: 'wx', mode: 0o600 });
   try {
-    const { stdout } = await run('ffprobe', ['-v', 'error', '-protocol_whitelist', 'file', '-format_whitelist', kind === 'video' ? 'mov,matroska,webm' : 'mov,matroska,webm,mp3,wav,ogg,aac',
+    const { stdout } = await run('ffprobe', ['-v', 'error', '-protocol_whitelist', 'file', '-format_whitelist', kind === 'video' ? 'mov,matroska,webm' : 'mov,matroska,webm,mp3,wav,ogg,aac,flac',
       '-select_streams', kind === 'video' ? 'v:0' : 'a:0', '-show_entries', 'stream=duration:format=duration', '-of', 'json', file],
     { timeout: 30_000, maxBuffer: 1024 * 1024, windowsHide: true });
     const info = JSON.parse(stdout);

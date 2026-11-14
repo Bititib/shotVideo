@@ -1,3 +1,4 @@
+import { SUNO_BASE_URL, SUNO_CHANNEL_TYPE } from '../../../../shared/sunoMusic';
 import { MEGABY_BASE_URL } from '../../../../shared/megabyVideo';
 import { ZHIYING_BASE_URL, ZHIYING_CHANNEL_TYPE, ZHIYING_VIDEO_MODELS, zhiyingVideoDisplayName } from '../../../../shared/zhiyingVideo';
 import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
@@ -177,7 +178,27 @@ export default function ChannelsPage() {
   const handleSave = async () => {
     if (!edit || saving) return;
     setSaving(true);
+    setError('');
     try {
+      if (edit.type === SUNO_CHANNEL_TYPE && edit.apiKey?.trim()) {
+        const id = edit.isNew ? (await adminApi.createChannel({
+          name: edit.name || 'Suno（音乐）', type: SUNO_CHANNEL_TYPE, baseUrl: SUNO_BASE_URL, status: 0,
+        })).id : edit.id;
+        // Keep the new channel ID if verification fails, so retries reuse it.
+        if (edit.isNew) setEdit({ ...edit, id, isNew: false });
+        const result = await adminApi.configureSunoChannel(id, edit.apiKey.trim());
+        await loadChannels();
+        const needsPricing = result.modelStatus.filter(model => !model.priced).map(model => model.model);
+        const count = result.modelStatus.filter(model => model.enabled).length;
+        const message = `${result.message}。已同步 ${result.models.join('、')}，已启用 ${count} 个模型。`
+          + (needsPricing.length ? `待设置本站按次售价：${needsPricing.join('、')}。` : '')
+          + result.warnings.join(' ');
+        setChannelFeedback({ channelId: id, kind: 'success', message });
+        setNotice(message);
+        setModelsRevision(revision => revision + 1);
+        setEdit(null);
+        return;
+      }
       const hmKeys = edit.type === 'hmstudio'
         ? (edit.apiKeys || []).filter((key: any) => key.id || String(key.apiKey || '').trim())
         : [];
@@ -195,7 +216,7 @@ export default function ChannelsPage() {
 
       const data: any = {
         name: edit.name, type: edit.type, baseUrl: edit.baseUrl,
-        ...(edit.type === ZHIYING_CHANNEL_TYPE ? {} : { modelMapping, supportedModels }),
+        ...([ZHIYING_CHANNEL_TYPE, SUNO_CHANNEL_TYPE].includes(edit.type) ? {} : { modelMapping, supportedModels }),
         priority: edit.priority, weight: edit.weight,
         maxRetries: edit.maxRetries, timeout: edit.timeout,
       };
@@ -239,7 +260,7 @@ export default function ChannelsPage() {
     setChannelFeedback(null);
     try {
       const result = await adminApi.testChannel(id);
-      const message = result.success ? `测试成功，耗时 ${result.durationMs}ms` : `测试失败：${result.message}`;
+      const message = result.success ? (channels.some(ch => ch.id === id && ch.type === SUNO_CHANNEL_TYPE) ? result.message : `测试成功，耗时 ${result.durationMs}ms`) : `测试失败：${result.message}`;
       setNotice(message);
       setChannelFeedback({ channelId: id, kind: result.success ? 'success' : 'error', message });
       loadChannels();
@@ -264,7 +285,7 @@ export default function ChannelsPage() {
     try {
       const result = await adminApi.syncChannelModels(ch.id);
       const message = `同步完成：上游 ${result.count} 个模型，新增 ${result.added} 个模型配置`
-        + (result.count === 0 ? '。请检查渠道 Key 的模型授权。' : ['zongheng', 'zongheng-v6k', 'funai', 'mj', 'megaby', 'hmstudio', ZHIYING_CHANNEL_TYPE].includes(ch.type) ? '。新模型默认停用，请配置价格后启用。' : '。')
+        + (result.count === 0 ? '。请检查渠道 Key 的模型授权。' : ['zongheng', 'zongheng-v6k', 'funai', 'mj', 'megaby', 'hmstudio', ZHIYING_CHANNEL_TYPE, SUNO_CHANNEL_TYPE].includes(ch.type) ? '。新模型默认停用，请配置价格后启用。' : '。')
         + (Array.isArray(result.warnings) ? result.warnings.map((warning: string) => ` ${warning}`).join('') : '');
       setNotice(message);
       setChannelFeedback({ channelId: ch.id, kind: 'success', message });
@@ -277,6 +298,7 @@ export default function ChannelsPage() {
     finally { setSyncing(null); }
   };
 
+  const sunoChannel = channels.find(channel => channel.type === SUNO_CHANNEL_TYPE);
   if (loading) return <div className="flex items-center justify-center h-full"><div className="w-8 h-8 border-2 border-white/10 border-t-white rounded-full animate-spin" /></div>;
 
   const filteredChannels = channels.filter(channel => {
@@ -302,6 +324,10 @@ export default function ChannelsPage() {
       <div className="channels-page-header flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
         <h1 className="channels-heading"><Radio aria-hidden="true" />渠道管理</h1>
         <div className="flex flex-wrap items-center gap-2">
+          {sunoChannel && <button type="button" onClick={() => openEdit(sunoChannel)}
+            className="h-11 flex items-center gap-2 rounded-xl border border-white/10 px-4 text-sm font-medium">
+            <KeyRound className="w-4 h-4" aria-hidden="true" /> 配置 Suno API Key
+          </button>}
           <button type="button" onClick={openNew} className="channels-add h-11 flex items-center gap-2 px-4 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
             <Plus className="w-4 h-4" /> 添加渠道
           </button>
@@ -513,23 +539,24 @@ export default function ChannelsPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs text-zinc-400 mb-1.5">渠道名称</label>
-                    <input type="text" value={edit.name} onChange={e => setEdit({ ...edit, name: e.target.value })} placeholder="如：Grok 主力渠道"
+                    <input type="text" value={edit.name} readOnly={edit.type === SUNO_CHANNEL_TYPE && !edit.isNew} onChange={e => setEdit({ ...edit, name: e.target.value })} placeholder="如：Grok 主力渠道"
                       className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
                   </div>
                   <div>
                     <label className="block text-xs text-zinc-400 mb-1.5">渠道类型</label>
-                    <select value={edit.type} onChange={e => setEdit({
+                    <select value={edit.type} disabled={edit.type === SUNO_CHANNEL_TYPE && !edit.isNew} onChange={e => setEdit({
                       ...edit,
                       type: e.target.value,
-                      apiKey: [edit.type, e.target.value].includes(ZHIYING_CHANNEL_TYPE) ? '' : edit.apiKey,
+                      name: e.target.value === SUNO_CHANNEL_TYPE && !edit.name ? 'Suno（音乐）' : edit.name,
+                      apiKey: [edit.type, e.target.value].some(type => [ZHIYING_CHANNEL_TYPE, SUNO_CHANNEL_TYPE].includes(type)) ? '' : edit.apiKey,
                       faceSplitEnabled: e.target.value === 'wx-haidiyue' && edit.type !== 'wx-haidiyue'
                         ? 1
                         : edit.faceSplitEnabled,
                       apiKeys: e.target.value === 'hmstudio' && (!edit.apiKeys || edit.apiKeys.length === 0)
                         ? [newHmKey()]
                         : edit.apiKeys,
-                      maxRetries: ['image2pro', 'minikey', 'zongheng-v6k', 'funai', 'megaby', 'async-video', 'mj', 'huss', ZHIYING_CHANNEL_TYPE].includes(e.target.value) ? 0 : edit.maxRetries,
-                      baseUrl: e.target.value === 'image2pro' ? 'https://nicolessss.com/v1' : e.target.value === 'minikey' ? 'https://minikey.work' : e.target.value === ZHIYING_CHANNEL_TYPE ? ZHIYING_BASE_URL : e.target.value === 'megaby' && !edit.baseUrl ? MEGABY_BASE_URL : e.target.value === 'async-video' && !edit.baseUrl
+                      maxRetries: ['image2pro', 'minikey', 'suno-api', 'zongheng-v6k', 'funai', 'megaby', 'async-video', 'mj', 'huss', ZHIYING_CHANNEL_TYPE].includes(e.target.value) ? 0 : edit.maxRetries,
+                      baseUrl: e.target.value === 'image2pro' ? 'https://nicolessss.com/v1' : e.target.value === SUNO_CHANNEL_TYPE ? SUNO_BASE_URL : e.target.value === 'minikey' ? 'https://minikey.work' : e.target.value === ZHIYING_CHANNEL_TYPE ? ZHIYING_BASE_URL : e.target.value === 'megaby' && !edit.baseUrl ? MEGABY_BASE_URL : e.target.value === 'async-video' && !edit.baseUrl
                         ? ASYNC_VIDEO_BASE_URL
                         : e.target.value === 'funai' && !edit.baseUrl
                         ? FUNAI_BASE_URL
@@ -566,7 +593,8 @@ export default function ChannelsPage() {
                       <option value="huss">HUSS（视频 / Midjourney 图片）</option>
                       <option value="megaby">Megaby（视频生成）</option>
                       <option value="image2pro">Image2Pro（文本 / 图片 / 视频）</option>
-                      <option value="minikey">miniKey（可配置模型）</option>
+                      <option value="minikey">miniKey（图片和视频）</option>
+                      <option value="suno-api">Suno（音乐）</option>
                       <option value={ZHIYING_CHANNEL_TYPE}>智赢 AI（视频生成）</option>
                       <option value="mingfei">MingFei（GPT Image 2 异步任务）</option>
                       <option value="gemini">Gemini（分析服务）</option>
@@ -577,16 +605,19 @@ export default function ChannelsPage() {
                 </div>
               <div>
                 <label className="block text-xs text-zinc-400 mb-1.5">Base URL（上游接口地址）</label>
-                <input type="text" value={edit.baseUrl} onChange={e => setEdit({ ...edit, baseUrl: e.target.value })} placeholder={edit.type === 'mj' ? '留空使用默认接口' : 'http://vps-ip:8080'}
+                <input type="text" value={edit.baseUrl} readOnly={edit.type === SUNO_CHANNEL_TYPE} onChange={e => setEdit({ ...edit, baseUrl: e.target.value })} placeholder={edit.type === 'mj' ? '留空使用默认接口' : 'http://vps-ip:8080'}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono" />
               </div>
               {edit.type !== 'hmstudio' && (
                 <div>
                   <label htmlFor="channel-api-key" className="block text-xs text-zinc-400 mb-1.5">API Key（上游密钥）</label>
-                  <input id="channel-api-key" type="password" value={edit.apiKey} onChange={e => setEdit({ ...edit, apiKey: e.target.value })} placeholder={edit.isNew ? '可选' : '留空=不修改'}
+                  <input id="channel-api-key" type="password" value={edit.apiKey} onChange={e => setEdit({ ...edit, apiKey: e.target.value })} autoComplete='off' placeholder={edit.type === SUNO_CHANNEL_TYPE ? '填写 Suno API Key' : edit.isNew ? '可选' : '留空=不修改'}
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
                 </div>
               )}
+              {edit.type === SUNO_CHANNEL_TYPE && <p className="text-sm leading-5 text-zinc-400">
+                填入 Suno API Key 后保存，会查询余额并同步该账号的 V6 系列模型。首次配置时，已有本站按次售价的模型会启用，其余模型可在关联模型与价格中设置。此操作只读取上游数据。
+              </p>}
               {edit.type === 'huss' && <p className="text-xs leading-5 text-zinc-400">使用 HUSS API Key，同步该 Key 可用的已接入视频型号与 Midjourney V8.2。Midjourney 支持 1K/2K、一张普通参考图及风格参数；新模型需配置售价后启用。</p>}
               {edit.type === ZHIYING_CHANNEL_TYPE && <p className="text-xs leading-5 text-zinc-400">保存智赢 API Key 后可同步 {ZHIYING_VIDEO_MODELS.map(zhiyingVideoDisplayName).join(' 和 ')}。新模型配置本站售价后可启用。</p>}
               {edit.type === 'mj' && <p className="text-xs leading-5 text-zinc-400">保存密钥后同步 MJ 图片模型，配置按次售价后启用。支持 1K、最多 6 张参考图；一次任务返回 4 张图片，仅收一次费用，结果自动保存到素材库。</p>}
@@ -700,7 +731,7 @@ export default function ChannelsPage() {
                     })}</tbody>
                   </table>
                 </section>
-              ) : <>
+              ) : edit.type === SUNO_CHANNEL_TYPE ? null : <>
               <div>
                 <label className="block text-xs text-zinc-400 mb-1.5">支持的模型名（每行一个，对外暴露的名字）</label>
                 <textarea value={edit.modelsText} onChange={e => setEdit({ ...edit, modelsText: e.target.value })} rows={3}
@@ -714,12 +745,12 @@ export default function ChannelsPage() {
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono resize-none" />
               </div>
               </>}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {edit.type !== SUNO_CHANNEL_TYPE && <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div><label className="block text-xs text-zinc-400 mb-1.5">优先级</label><input type="number" value={edit.priority} onChange={e => setEdit({ ...edit, priority: parseInt(e.target.value) || 0 })} className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none" /></div>
                 <div><label className="block text-xs text-zinc-400 mb-1.5">权重</label><input type="number" value={edit.weight} onChange={e => setEdit({ ...edit, weight: parseInt(e.target.value) || 1 })} className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none" /></div>
-                <div><label className="block text-xs text-zinc-400 mb-1.5">重试次数</label><input type="number" value={edit.maxRetries} disabled={edit.type === ZHIYING_CHANNEL_TYPE} onChange={e => setEdit({ ...edit, maxRetries: parseInt(e.target.value) || 3 })} className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none" /></div>
+                <div><label className="block text-xs text-zinc-400 mb-1.5">重试次数</label><input type="number" value={edit.maxRetries} disabled={[ZHIYING_CHANNEL_TYPE, SUNO_CHANNEL_TYPE].includes(edit.type)} onChange={e => setEdit({ ...edit, maxRetries: parseInt(e.target.value) || 3 })} className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none" /></div>
                 <div><label className="block text-xs text-zinc-400 mb-1.5">超时(ms)</label><input type="number" value={edit.timeout} onChange={e => setEdit({ ...edit, timeout: parseInt(e.target.value) || 120000 })} className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none" /></div>
-              </div>
+              </div>}
               </div>
             </div>
             <div className="shrink-0 flex gap-3 border-t border-[#e2ccb1] bg-[#fffaf2] px-5 py-4 md:px-6">

@@ -1,3 +1,4 @@
+import { MUSIC_OPERATIONS, SUNO_CHANNEL_TYPE, freeMusicOperation, musicPriceField, type MusicOperation } from '../../shared/sunoMusic.js';
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { db, sqlite } from '../db/index.js';
 import { ensureUserModelTables } from '../db/userModelMigration.js';
@@ -40,6 +41,7 @@ export interface PublicModelPricing {
   unit_price: number;
   output_unit_price: number;
   resolution_prices: Record<string, number>;
+  operation_prices?: Partial<Record<MusicOperation, number>>;
   matched_pattern: string;
   inherited: boolean;
 }
@@ -198,6 +200,32 @@ export class PricingService {
     return { modelPattern, billingType, inputPrice, outputPrice, extraParams };
   }
 
+  static musicOperationPrice(modelId:string, operation:MusicOperation, userId?:number|null, maxMode=false) {
+    if(freeMusicOperation(operation))return {cost:0,snapshot:undefined};
+    const quote=this.quote(modelId,{count:1},false,userId??null);
+    const field=musicPriceField(operation);
+    let value=quote.cost;
+    let snapshot=quote.pricingSnapshot;
+    if(field) {
+      const selected=snapshot?.extraParams?.[field];
+      // An existing user base-price override may omit the per-operation prices.
+      // Retain the administrator's operation price unless explicitly overridden.
+      const standard=selected===undefined?this.quote(modelId,{count:1},false,null).pricingSnapshot:undefined;
+      value=selected??standard?.extraParams?.[field];
+      if(standard)snapshot=standard;
+    }
+    if(quote.billingType!=='per_call'||typeof value!=='number'||!Number.isFinite(value)||value<0)return undefined;
+    const cost=roundCost(value*(maxMode?2:1));
+    return {cost,snapshot:snapshot&&{...snapshot,musicOperation:operation,maxMode,quotedCost:cost}};
+  }
+
+  static musicPrices(modelId:string,userId?:number|null) {
+    return Object.fromEntries(MUSIC_OPERATIONS.flatMap(operation=>{
+      const quote=this.musicOperationPrice(modelId,operation,userId);
+      return quote?[[operation,quote.cost]]:[];
+    })) as Partial<Record<MusicOperation,number>>;
+  }
+
   /** Build public pricing descriptors for externally visible model IDs. */
   static getPublicPricingForModels(modelNames: string[], userId?: number | null): PublicModelPricing[] {
     const uniqueModelNames = Array.from(new Set(modelNames));
@@ -234,7 +262,8 @@ export class PricingService {
         capabilities = [category];
       }
 
-      const resolutionPrices = Object.fromEntries(
+      const music=model?.provider===SUNO_CHANNEL_TYPE;
+      const resolutionPrices = music?{}:Object.fromEntries(
         Object.entries(extra)
           .filter(([key, value]) => key !== 'category' && Number.isFinite(Number(value)) && Number(value) >= 0)
           .map(([key, value]) => [key, Number(value)]),
@@ -251,6 +280,7 @@ export class PricingService {
         unit_price: rule.inputPrice,
         output_unit_price: rule.outputPrice,
         resolution_prices: resolutionPrices,
+        ...(music?{operation_prices:this.musicPrices(modelName,userId)}:{}),
         matched_pattern: rule.modelPattern,
         inherited: rule.modelPattern !== modelName,
       }];
