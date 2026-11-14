@@ -1,5 +1,6 @@
 import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
 import { isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
+import { CHANNEL_MODEL_ROUTE_PREFIX } from '../../shared/channelModelConfiguration.js';
 import { KK_VIDEO_MODEL, KK_VIDEO_SOURCES } from '../../shared/kkVideoRouting.js';
 import { HUSS_MJ_MODEL } from '../../shared/hussMidjourney.js';
 import { bbHssKkManaged } from './bbHssKkMigration.js';
@@ -13,6 +14,7 @@ import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { channels, models, settings } from '../db/schema.js';
 import { ChannelService } from './channelService.js';
+import { allowsStandardChannelModelConfiguration } from './channelCatalogBindings.js';
 import { allowsDuration, routingMismatches, routeRequestCost, canShareImageAliases, type ModelSpecification, type ModelRoute, type RoutingInput, type ModelInputLimits } from '../../shared/modelRouting.js';
 
 const CONFIG_KEY = 'model_specification_routes_v1';
@@ -127,7 +129,10 @@ export function inspectModelRoutes(spec: ModelSpecification, input?: RoutingInpu
     const retired = [spec.modelId,route.executionModel,route.upstreamModel].some(isRetiredVideoModel);
     const executions = activeChannels.filter(c => c.id === route.channelId && Boolean(String(c.apiKey || '').trim())
       && (c.supportedModels.includes(route.executionModel) || c.supportedModels.includes('*'))
-      && (!route.siYueTianVideo || c.type === 'openai' && isSiYueTianVideoHost(c.baseUrl) && c.modelMapping?.[route.executionModel] === route.upstreamModel));
+      && (!route.siYueTianVideo || c.type === 'openai' && isSiYueTianVideoHost(c.baseUrl) && c.modelMapping?.[route.executionModel] === route.upstreamModel)
+      && (!route.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX)
+        || c.modelMapping?.[route.executionModel] === route.upstreamModel
+        && allowsStandardChannelModelConfiguration(sqlite, { ...c, modelMapping: JSON.stringify(c.modelMapping) })));
     const execution = registry.find(m => m.modelId === route.executionModel);
     const reason = execution?.isActive === 0 && execution.modelId !== MJ_OVERFLOW_VIDEO_MODEL ? ['执行模型已禁用'] : !spec.enabled || model?.isActive !== 1 ? ['规格已禁用'] : !route.enabled ? ['模型线路已禁用'] : !executions.length ? ['渠道或 Key 已禁用 / 未配置'] : [];
     if (spec.modelId === KK_VIDEO_MODEL && spec.kkRouting) {
@@ -190,6 +195,10 @@ export function routeUnavailableReason(modelId: string, target: RouteCandidate, 
   if (!original.supportedModels.includes(route.executionModel) && !original.supportedModels.includes('*')) return '提交前检查：渠道不再关联当前执行模型';
   if (route.siYueTianVideo && (original.type !== 'openai' || original.modelMapping?.[route.executionModel] !== route.upstreamModel))
     return '提交前检查：四月天上游模型映射已变更';
+  if (route.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX)
+    && (original.modelMapping?.[route.executionModel] !== route.upstreamModel
+      || !allowsStandardChannelModelConfiguration(sqlite, { ...original, modelMapping: JSON.stringify(original.modelMapping) })))
+    return '提交前检查：渠道模型映射已变更';
   return '';
 }
 export function routeStillEnabled(modelId: string, target: RouteCandidate, input: RoutingInput): boolean {

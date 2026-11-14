@@ -37,7 +37,8 @@ import { isZonghengChannel } from './zonghengAdapter.js';
 import { readBbHssSources } from './bbHssSourcePolicy.js';
 import { bbHssKkManaged } from './bbHssKkMigration.js';
 
-type Channel = { id: number; name: string; type: string; baseUrl: string; supportedModels: string; modelMapping: string };
+type ChannelBindings = { id: number; name: string; type: string; baseUrl: string; modelMapping: string };
+type Channel = ChannelBindings & { supportedModels: string };
 const CONFIG = 'model_specification_routes_v1';
 class CatalogConfigurationError extends Error {}
 const identity = (ids: readonly string[]) => new Map(ids.map(id => [id, id]));
@@ -55,7 +56,7 @@ export const SUDA_SHUI_CATALOG_MODELS = [
   'sdas-bl-sd2.0-933-pro-720p', 'sdas-bl-sd2.0-933-pro-noface-720p',
 ];
 
-function dedicatedBindings(sqlite: Database.Database, c: Channel): Map<string, string> | undefined {
+function dedicatedBindings(sqlite: Database.Database, c: ChannelBindings): Map<string, string> | undefined {
   if (c.type === ZHIYING_CHANNEL_TYPE) return new Map([...identity(ZHIYING_VIDEO_MODELS), ...zhiyingBindings(sqlite).filter(row => row.channelId === c.id).map(row => [row.modelId, row.upstreamModel] as [string, string])]);
   if (isDedicatedPidoiImageChannel(c)) return identity([PIDOI_IMAGE_MODEL]);
   if (isPidoiImageChannel(c)) return new Map();
@@ -131,7 +132,7 @@ function supportsPair(channel: Channel, bindings: Map<string, string>, id: strin
   return isAsyncVideoChannel(channel) && expected === VX_LE_SEEDANCE_MODEL && upstream === LEGACY_VX_LE_SEEDANCE_MODEL;
 }
 
-export function channelCatalogBindings(sqlite: Database.Database, channel: Channel) {
+export function channelCatalogBindings(sqlite: Database.Database, channel: ChannelBindings) {
   const bindings = dedicatedBindings(sqlite, channel);
   if (!bindings) return undefined;
   const mapping: Record<string, string> = JSON.parse(channel.modelMapping || '{}');
@@ -143,6 +144,12 @@ export function channelCatalogBindings(sqlite: Database.Database, channel: Chann
     if (channel.type === 'gemini') bindings.set(id, upstream);
   }
   return bindings;
+}
+
+export function allowsStandardChannelModelConfiguration(sqlite: Database.Database, channel: ChannelBindings) {
+  return ['openai', 'custom'].includes(channel.type)
+    && !isSiYueTianVideoHost(channel.baseUrl) && !isZonghengChannel(channel)
+    && channelCatalogBindings(sqlite, channel) === undefined;
 }
 
 /** Keep the saved products and original task references. Only detach catalog associations and invalid routes. */

@@ -5,6 +5,7 @@ import { cachedAdminGet, invalidateAdminCache } from './adminCache';
 import type { UserModelSetting } from '../../../shared/userModelSettings';
 import type { ZhiyingModelConfiguration, ZhiyingModelDraft, ZhiyingCatalogOption } from '../../../shared/zhiyingModelConfiguration';
 import type { V6kModelConfiguration, V6kModelDraft, V6kRequestSample } from '../../../shared/v6kModelConfiguration';
+import type { ChannelModelConfigurations, ChannelModelDraft } from '../../../shared/channelModelConfiguration';
 
 // Cache only configuration lists; runtime status and operational statistics stay live.
 const cacheable = new Set(['/admin/models?view=config', '/admin/pricing?scope=models', '/admin/models', '/admin/channels', '/admin/pricing', '/admin/tiers']);
@@ -81,6 +82,11 @@ export const adminApi = {
   },
   testChannel(id: number) { return api.post<any>(`/admin/channels/${id}/test`); },
   syncChannelModels(id: number) { return api.post<any>(`/admin/channels/${id}/sync-models`); },
+  getChannelModelConfigurations(id: number) { return api.get<ChannelModelConfigurations>(`/admin/channels/${id}/model-configurations`); },
+  getAuthorizedChannelModels(id: number) { return api.get<string[]>(`/admin/channels/${id}/model-configurations/catalog`); },
+  saveChannelModelConfiguration(id: number, draft: ChannelModelDraft, version: string) {
+    return api.put<ChannelModelConfigurations>(`/admin/channels/${id}/model-configurations`, { draft, version });
+  },
   getV6kModelConfigurations(id: number) { return api.get<V6kModelConfiguration[]>(`/admin/channels/${id}/v6k-models`); },
   getSiYueTianModelConfigurations(id: number) { return api.get<V6kModelConfiguration[]>(`/admin/channels/${id}/siyuetian-models`); },
   getSiYueTianVideoCatalog(id: number) { return api.get<{ id: string }[]>(`/admin/channels/${id}/siyuetian-models/catalog`); },

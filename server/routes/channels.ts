@@ -12,6 +12,7 @@ import { VideoRoutingStatsService, type VideoRoutingStatsPeriod } from '../servi
 import { listV6kModelConfigurations, previewV6kModelRequest, saveV6kModelConfiguration } from '../services/v6kModelConfigurationService.js';
 import { listSiYueTianModelConfigurations, listSiYueTianVideoCatalog,
   previewSiYueTianModelRequest, saveSiYueTianModelConfiguration } from '../services/siYueTianModelConfigurationService.js';
+import { listAuthorizedChannelModels, listChannelModelConfigurations, saveChannelModelConfiguration } from '../services/channelModelConfigurationService.js';
 
 import { listZhiyingModelConfigurations, listZhiyingCatalogOptions, previewZhiyingModelRequest, saveZhiyingModelConfiguration } from '../services/zhiyingModelConfigurationService.js';
 
@@ -108,6 +109,21 @@ function channelOperationError(res: Response, error: any) {
   }
   return res.status(error.status || 500).json({ error: error.message });
 }
+
+router.get('/:id/model-configurations', (req, res) => {
+  try { res.json(listChannelModelConfigurations(Number(req.params.id))); }
+  catch (error) { channelOperationError(res, error); }
+});
+
+router.get('/:id/model-configurations/catalog', async (req, res) => {
+  try { res.json(await listAuthorizedChannelModels(Number(req.params.id))); }
+  catch (error) { channelOperationError(res, error); }
+});
+
+router.put('/:id/model-configurations', async (req, res) => {
+  try { res.json(await saveChannelModelConfiguration(Number(req.params.id), req.body?.draft, req.body?.version)); }
+  catch (error) { channelOperationError(res, error); }
+});
 
 router.get('/:id/siyuetian-models', (req, res) => {
   try { res.json(listSiYueTianModelConfigurations(Number(req.params.id))); }

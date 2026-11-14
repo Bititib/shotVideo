@@ -12,6 +12,7 @@ vi.mock('../client/src/api/admin', () => ({ adminApi: {
   getModelSpecifications: vi.fn().mockResolvedValue([]), getChannels: vi.fn(), getSettings: vi.fn(), getModels: vi.fn(), getModelStatistics: vi.fn(),
   getPricing: vi.fn(), updatePricing: vi.fn(), syncChannelModels: vi.fn(), testChannel: vi.fn(), deleteChannel: vi.fn(),
   createChannel: vi.fn(), updateChannel: vi.fn(),
+  getChannelModelConfigurations: vi.fn(), getAuthorizedChannelModels: vi.fn(), saveChannelModelConfiguration: vi.fn(),
   getV6kModelConfigurations: vi.fn(),
   getSiYueTianModelConfigurations: vi.fn(), getSiYueTianVideoCatalog: vi.fn(),
   getMinikeyModelConfigurations: vi.fn(), getMinikeyModelCatalog: vi.fn(),
@@ -86,6 +87,48 @@ describe('channel details and model sync workflow', () => {
     expect(screen.queryByRole('button', { name: 'V6K 模型与参数', exact: true })).toBeNull();
   });
 
+  it('opens model parameters for a stopped legacy channel from either the row or details', async () => {
+    vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, type: 'apipath', status: 0 }]);
+    vi.mocked(adminApi.getChannelModelConfigurations).mockResolvedValue({
+      models: [], canAdd: false, canSync: false, version: 'legacy',
+      addUnavailableReason: '当前版本未接入此渠道类型的生成协议。可以查看已有配置。',
+    });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: '模型与参数', exact: true }));
+    const panel = await screen.findByRole('dialog', { name: '纵横渠道 · 模型与参数' });
+    expect(await within(panel).findByText(/可以查看已有配置/)).toBeVisible();
+    expect(within(panel).queryByRole('button', { name: '添加新模型' })).toBeNull();
+    fireEvent.click(within(panel).getByRole('button', { name: '关联模型与价格' }));
+    const detail = await screen.findByRole('dialog', { name: '纵横渠道 · 渠道详情' });
+    fireEvent.click(within(detail).getByRole('button', { name: '模型与参数', exact: true }));
+    await screen.findByRole('dialog', { name: '纵横渠道 · 模型与参数' });
+    expect(adminApi.getChannelModelConfigurations).toHaveBeenCalledTimes(2);
+    expect(adminApi.syncChannelModels).not.toHaveBeenCalled();
+  });
+
+  it('adds a model and its specs directly in the compatible channel workspace', async () => {
+    vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, name: '通用线路', type: 'openai' }]);
+    const initial = { models: [], canAdd: true, canSync: true, version: 'v1' };
+    vi.mocked(adminApi.getChannelModelConfigurations).mockResolvedValue(initial);
+    vi.mocked(adminApi.saveChannelModelConfiguration).mockImplementation(async (_id, draft) => ({
+      ...initial, version: 'v2', models: [{ ...draft, capabilities: [draft.kind], enabled: false, editable: true }],
+    }));
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: '模型与参数', exact: true }));
+    const panel = await screen.findByRole('dialog', { name: '通用线路 · 模型与参数' });
+    fireEvent.click(await within(panel).findByRole('button', { name: '添加新模型' }));
+    for (const [label, value] of [['本站 API 模型 ID', 'video-one'], ['显示名称', '视频一'],
+      ['上游模型 ID', 'video-upstream'], ['可选分辨率', '720p'], ['可选比例', '16:9']]) {
+      fireEvent.change(within(panel).getByLabelText(label), { target: { value } });
+    }
+    fireEvent.click(within(panel).getByRole('button', { name: '校验授权并添加模型' }));
+    expect(await within(panel).findByText(/新模型已添加，默认停用/)).toBeVisible();
+    expect(adminApi.saveChannelModelConfiguration).toHaveBeenCalledExactlyOnceWith(9, expect.objectContaining({
+      modelId: 'video-one', displayName: '视频一', upstreamModel: 'video-upstream', kind: 'video',
+      limits: expect.objectContaining({ resolutions: ['720p'], ratios: ['16:9'] }),
+    }), 'v1');
+  });
+
   it('shows the managed Zhiying upstream mappings and distinguishes saved links from pending ones', async () => {
     const id = 'sd-2.5-fullblood';
     vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, name: 'Vx-智赢', type: 'zhiying',
@@ -111,7 +154,8 @@ describe('channel details and model sync workflow', () => {
     });
     vi.mocked(adminApi.getPricing).mockResolvedValue([{ id: 100, modelPattern: id, displayName: id,
       category: 'video', billingType: 'per_call', inputPrice: 9, outputPrice: 0,
-      extraParams: { category: 'video' }, modelActive: false, configured: true, inherited: false }]);
+      extraParams: { category: 'video' }, resolutionOptions: ['720p', '1080p'],
+      modelActive: false, configured: true, inherited: false }]);
     vi.mocked(adminApi.updatePricing).mockResolvedValue({});
     mount();
     fireEvent.click(await screen.findByRole('button', { name: '同步模型' }));

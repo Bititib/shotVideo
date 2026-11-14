@@ -25,6 +25,8 @@ import { prepareZonghengMedia, validateZonghengMedia } from '../services/zonghen
 import { patchZonghengTask, reviewZonghengTask, zonghengOrder, recordZonghengSubmissionError, acceptZonghengVideoReceipt } from '../services/zonghengTaskService.js';
 import { generateZonghengImages } from '../services/zonghengImageService.js';
 import { handleSpecificationGeneration } from '../services/specificationGenerationService.js';
+import { getModelSpecification } from '../services/modelRoutingService.js';
+import { CHANNEL_MODEL_ROUTE_PREFIX } from '../../shared/channelModelConfiguration.js';
 import { resolveApiModelId } from '../services/publicModelNameService.js';
 import { issueUploadUrl } from '../services/uploadAccess.js';
 import { publishReferenceUrl } from '../services/publicReferenceService.js';
@@ -872,6 +874,9 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
   if (!normalizeApiModel(req, res)) return;
   const { model, messages, stream = false, ...otherParams } = req.body;
   if (!model) return res.status(400).json({ error: { message: 'model is required', type: 'invalid_request_error' } });
+  if (getModelSpecification(model)?.routes.some(route => route.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX))) {
+    return res.status(400).json({ error: { message: '模型类型与聊天接口不匹配', type: 'invalid_request_error' } });
+  }
   if (!messages) return res.status(400).json({ error: { message: 'messages is required', type: 'invalid_request_error' } });
 
   if (userModelDenied(token.userId, model) || (token.allowedModels.length > 0 && !token.allowedModels.includes(model))) {

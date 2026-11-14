@@ -753,9 +753,7 @@ export class ChannelService {
         ? longxiaApiBaseUrl(channel.baseUrl) + '/v1/models'
         : isMiaowuChannel(channel)
       ? miaowuVideoModelListUrl(channel.baseUrl)
-      : isSiYueTianVideoHost(channel.baseUrl)
-        ? channel.baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, '') + '/v1/models'
-        : channel.baseUrl.replace(/\/+$/, '') + '/v1/models';
+      : channel.baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, '') + '/v1/models';
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${channel.apiKey}` },
       signal: AbortSignal.timeout(channel.timeout || 30_000),

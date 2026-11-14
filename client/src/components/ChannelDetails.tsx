@@ -1,13 +1,14 @@
 import ChannelRouteHealth from './ChannelRouteHealth';
 import type { ReactNode } from 'react';
-import { Activity, ArrowRight, CircleCheck, CircleX, Layers3, Loader2, Pencil, Radio, RefreshCw, Zap } from 'lucide-react';
+import { Activity, ArrowRight, CircleCheck, CircleX, Layers3, Loader2, Pencil, Radio, RefreshCw, SlidersHorizontal, Zap } from 'lucide-react';
 
 export type ChannelFeedback = { channelId: number; kind: 'success' | 'error'; message: string };
 
-export default function ChannelDetails({ channel, tab, onTabChange, busy, testing, syncing, feedback, onEdit, onTest, onSync, children }: {
+export default function ChannelDetails({ channel, tab, onTabChange, busy, testing, syncing, feedback, onEdit, onTest, onSync, onConfigureModels, modelEditorLabel, children }: {
   channel: any; tab: string; onTabChange: (tab: string) => void;
   busy: boolean; testing: boolean; syncing: boolean; feedback: ChannelFeedback | null;
-  onEdit: () => void; onTest: () => void; onSync: () => void; children: ReactNode;
+  onEdit: () => void; onTest: () => void; onSync: () => void;
+  onConfigureModels: () => void; modelEditorLabel: string; children: ReactNode;
 }) {
   const modelCount = channel.supportedModels?.length || 0;
   const provider = channel.type === 'zhiying' ? '智赢 AI' : channel.type === 'megaby' ? 'Megaby' : channel.type === 'mj' ? 'MJ' : channel.type === 'async-video' ? 'Vx-乐2.0fast' : channel.type === 'funai' ? 'FunAI' : ['zongheng', 'zongheng-v6k'].includes(channel.type) ? '纵横科技 V6K' : channel.type === 'hmstudio' ? 'HM Studio' : channel.type;
@@ -27,6 +28,7 @@ export default function ChannelDetails({ channel, tab, onTabChange, busy, testin
           <div><span>排队中</span><strong>{channel.concurrencyQueued || 0}<small>个任务</small></strong></div>
         </div>
         <div className="channel-details-actions">
+          <button type="button" disabled={busy} onClick={onConfigureModels}><SlidersHorizontal aria-hidden="true" />{modelEditorLabel}</button>
           <button type="button" className="channel-details-primary" disabled={busy} onClick={onSync}>
             {syncing ? <Loader2 className="animate-spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}{syncing ? '正在同步…' : '同步模型'}
           </button>

@@ -27,6 +27,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { RouteCandidate } from './modelRoutingService.js';
 import type { RoutingInput } from '../../shared/modelRouting.js';
+import { CHANNEL_MODEL_ROUTE_PREFIX } from '../../shared/channelModelConfiguration.js';
 import { buildHmStudioVideoPayload, buildHmStudioImageForm, hmStudioCreateUrl, hmStudioTaskUrl, normalizeHmStudioTask } from './hmStudioAdapter.js';
 import { HAYA_XG_SEEDANCE_20_MODEL, hayaPublicModelId, validateHayaVideoInput } from '../../shared/hayaVideo.js';
 import { buildSiYueTianSeedance25VideoPayload, getSiYueTianC2Model, getSiYueTianSeedance25VideoSpec } from './siYueTianVideoModels.js';
@@ -249,6 +250,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
     catch (e) { if (e instanceof MinikeyError) throw new SpecificationUpstreamError(e.message, false, e.uncertain, false, e.httpStatus, e.confirmedFailure); throw e; }
   }
   const c = { ...target.channel, videoSubmission: true }, model = target.route.upstreamModel, exec = target.route.executionModel, i = request.input;
+  const standard = target.route.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX);
   if (c.type === 'zhiying') {
     if (exec !== request.body.model || !configuredZhiyingProfile(exec, c.id, model)) throw new SpecificationUpstreamError('智赢视频型号映射不一致', false, false, false, 0, true);
     let payload: Awaited<ReturnType<typeof prepareZhiyingVideo>>;
@@ -269,7 +271,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
     onStarting({ zhiyingInitialTask: task });
     return task.taskId;
   }
-  if (target.route.siYueTianVideo || isSiYueTianManagedVideoModel(exec)) {
+  if (target.route.siYueTianVideo || !standard && isSiYueTianManagedVideoModel(exec)) {
     if (!target.route.siYueTianVideo && model !== siYueTianManagedVideoUpstreamModel(exec)) throw new SpecificationUpstreamError('四月天视频上游模型映射不一致', false, false, false, 0, true);
     try { return await submitSiYueTianMinimax(c, request, url => publishSpecificationAsset(url, request.publicBaseUrl), onStarting, exec, target.route.siYueTianVideo ? model : undefined); }
     catch (error) {
@@ -445,20 +447,20 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
       firstFrame: request.firstFrame ? publishSpecificationAsset(request.firstFrame, request.publicBaseUrl) : undefined, lastFrame: request.lastFrame ? publishSpecificationAsset(request.lastFrame, request.publicBaseUrl) : undefined,
       complianceEnabled: request.body.compliance_enabled, complianceMode: request.body.compliance_mode });
     url = newTokenVideoCreateUrl(c.baseUrl);
-  } else if (isJulunMinimaxH3Model(exec)) {
+  } else if (!standard && isJulunMinimaxH3Model(exec)) {
     if (request.images.length > 9 || request.videos.length > 3 || request.audios.length > 3 || i.resolution !== '768p' || ![10,15].includes(i.seconds)) unsupported('巨轮 H3 线路素材、时长或分辨率不匹配');
     payload = buildJulunMinimaxH3Payload({ model, prompt: request.prompt, seconds: i.seconds, ratio: i.ratio,
       imageUrls: refs(request.images), videoUrls: refs(request.videos), audioUrls: refs(request.audios) });
-  } else if (exec === 'wan3.0th') {
+  } else if (!standard && exec === 'wan3.0th') {
     if (request.audios.some(a => !/^data:audio\/(?:x-)?wav[;,]/i.test(a) && !a.split('?')[0].toLowerCase().endsWith('.wav'))) unsupported('WAN3.0 此线路音频仅支持 WAV');
     payload = { model, prompt: request.prompt, seconds: i.seconds, ratio: i.ratio, resolution: i.resolution, image_urls: refs(request.images), video_urls: refs(request.videos), audio_urls: refs(request.audios) };
-  } else if (getSiYueTianSeedance25VideoSpec(exec) || getSiYueTianC2Model(exec)) {
+  } else if (!standard && (getSiYueTianSeedance25VideoSpec(exec) || getSiYueTianC2Model(exec))) {
     payload = buildSiYueTianSeedance25VideoPayload({ model, prompt: normalizeMjNewApiPrompt(request.prompt), seconds: i.seconds, aspectRatio: i.ratio, imageUrls: refs(request.images), videoUrls: refs(request.videos), audioUrls: refs(request.audios) });
-  } else if (/^sora-v4-/.test(exec)) {
+  } else if (!standard && /^sora-v4-/.test(exec)) {
     if (request.audios.length || request.videos.length > 1 || (request.images.length && (request.firstFrame || request.lastFrame))) unsupported('Sora V4 素材组合不受支持');
     const frames = refs([request.firstFrame, request.lastFrame].filter(Boolean));
     payload = { model, prompt: request.prompt, duration: i.seconds, video_config: { aspect_ratio: i.ratio, resolution_name: i.resolution, reference_mode: request.lastFrame ? 'start_end' : request.firstFrame ? 'start_frame' : request.images.length ? 'image_reference' : 'auto' }, reference_images: frames.length ? frames : refs(request.images), ...(request.videos.length ? { reference_video: refs(request.videos)[0] } : {}) };
-  } else if (!/seedance|^sd2|^sd-mini/.test(exec)) {
+  } else if (standard || !/seedance|^sd2|^sd-mini/.test(exec)) {
     if (request.videos.length || request.audios.length || request.firstFrame || request.lastFrame) unsupported('此通用线路只配置了图片参考协议');
     const form = new FormData();
     for (const [key, value] of Object.entries({ model, prompt: request.prompt, seconds: i.seconds, size: ({ '16:9': '1280x720', '9:16': '720x1280', '1:1': '1024x1024', '4:3': '1024x768', '3:4': '768x1024' } as Record<string,string>)[i.ratio] || i.ratio, resolution_name: i.resolution })) form.append(key, String(value));
@@ -739,7 +741,7 @@ export async function generateSpecificationImage(target: RouteCandidate, request
     throw new SpecificationUpstreamError('图片任务仍在处理中', false, true);
   }
   const base = apiBase(c.baseUrl);
-  if (/gemini|banana/.test(target.route.executionModel) && !request.images.length) {
+  if (!target.route.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX) && /gemini|banana/.test(target.route.executionModel) && !request.images.length) {
     const response = await trackedFetch(base + '/v1/chat/completions', { method: 'POST', headers: { Authorization: 'Bearer ' + c.apiKey, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, messages: [{ role: 'user', content: request.prompt }], stream: true, image_config: { n: 1, size: request.body.size || imageSize(i.ratio), response_format: 'url' } }) });
     let content = '';
     try {
@@ -764,7 +766,7 @@ export async function generateSpecificationImage(target: RouteCandidate, request
     } catch (error: any) { throw new SpecificationUpstreamError(transportDiagnostic(c.type || 'OpenAI-compatible', '流式图片结果待核实，请勿重复提交', error, c.apiKey), false, true); }
   }
   let payload: any = { model, prompt: request.prompt, n: 1, size: request.body.size || imageSize(i.ratio), response_format: 'url' };
-  if (target.route.executionModel === 'gpt-image-2') {
+  if (!target.route.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX) && target.route.executionModel === 'gpt-image-2') {
     if (!['1k', '4k'].includes(i.resolution.toLowerCase())) throw new SpecificationUpstreamError('Pidoi 原生图片线路仅支持 1K / 4K', true);
     payload.quality = i.resolution.toLowerCase() === '1k' ? 'low' : 'high';
     if (i.quality && i.quality !== payload.quality) throw new SpecificationUpstreamError('质量档位与输出分辨率不匹配', true);
