@@ -1,0 +1,51 @@
+name: Release Docker image
+
+on:
+  push:
+    tags: ['image-*']
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Build app image
+        run: docker build --label "org.opencontainers.image.revision=$GITHUB_SHA" --tag shotvideo-app:latest .
+
+      - name: Verify app and channel editor
+        run: |
+          docker run --rm --network none --entrypoint sh shotvideo-app:latest -ec '
+            grep -q model-configurations /app/server/routes/channels.ts
+            grep -rq model-configurations /app/client/dist/assets
+          '
+          docker run -d --name shotvideo-smoke --network none \
+            -e JWT_SECRET="$(openssl rand -hex 32)" \
+            -e ADMIN_PASSWORD="$(openssl rand -hex 24)" \
+            -e BACKEND_URL=https://smoke.example.invalid shotvideo-app:latest
+          trap 'docker rm -f shotvideo-smoke >/dev/null' EXIT
+          for attempt in {1..30}; do
+            if docker exec shotvideo-smoke node -e "fetch('http://127.0.0.1:3000/api/health').then(async r => { if (!r.ok || (await r.json()).status !== 'ok') process.exit(1) }).catch(() => process.exit(1))"; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs shotvideo-smoke
+          exit 1
+
+      - name: Publish image archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          docker save shotvideo-app:latest | gzip -1 > shotvideo-linux-amd64.tar.gz
+          gh release create "$GITHUB_REF_NAME" shotvideo-linux-amd64.tar.gz \
+            --verify-tag --title "$GITHUB_REF_NAME" \
+            --notes "Prebuilt Linux x86_64 Docker image for commit $GITHUB_SHA."
