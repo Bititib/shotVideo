@@ -2,6 +2,7 @@ import { createMusicResourceRouter } from './musicResources.js';
 import { songOperation, type MusicTask } from '../../shared/sunoMusic.js';
 import { musicBinding, musicPrices } from '../services/musicModelRegistry.js';
 import { videoApiProgress } from '../services/videoApiProgress.js';
+import { sendVideoFile } from '../services/videoRangeDelivery.js';
 import { isImage2proChannel, image2proBase } from '../services/image2proAdapter.js';
 import { createMusicTask, getMusicTask, getMusicTaskByRequest, listMusicTasks, musicFile, processMusicTask, type MusicOwner } from '../services/musicGenerationService.js';
 import { prepareMediaSubmission } from '../../shared/mediaReferences.js';
@@ -3496,7 +3497,7 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
     if (isLocalFile && fs.existsSync(localFilePath)) {
       const downloadPath = await prepareVideoForDelivery(localFilePath);
       res.setHeader('Content-Type', videoDeliveryContentType(downloadPath));
-      return res.sendFile(downloadPath);
+      return await sendVideoFile(res, downloadPath);
     }
 
     let metadata: any = {};
@@ -3536,7 +3537,7 @@ router.get('/videos/:id/content', async (req: Request, res: Response) => {
 
     const downloadPath = await prepareVideoForDelivery(localizedPath);
     res.setHeader('Content-Type', videoDeliveryContentType(downloadPath));
-    return res.sendFile(downloadPath);
+    return await sendVideoFile(res, downloadPath);
   } catch (err: any) {
     console.warn('[v1/videos/content] Delivery failed:', upstreamDiagnostic('video', '结果交付', { message: err.message }));
     res.status(502).json({ error: `Video localization failed: ${err.message}` });
@@ -3570,7 +3571,7 @@ router.get('/files/video', async (req: Request, res: Response) => {
 
     const compatiblePath = await cacheVideoForDelivery(upstreamUrl, headers);
     res.type(videoDeliveryContentType(compatiblePath));
-    return res.sendFile(compatiblePath);
+    return await sendVideoFile(res, compatiblePath);
   } catch (err: any) {
     console.warn('[v1/files/video] Delivery failed:', upstreamDiagnostic('video', '结果交付', { message: err.message }));
     res.status(502).json({ error: `Video stream failed: ${err.message}` });

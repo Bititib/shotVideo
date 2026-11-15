@@ -16,7 +16,7 @@ import zipfile
 _plugin_fixture = tempfile.TemporaryDirectory(prefix='lingxu-release-tests-')
 _program = Path(_plugin_fixture.name)
 _release = Path(__file__).resolve().parents[2] / 'plugin-releases/video_plugin_site_api'
-with zipfile.ZipFile(_release / 'lingxu-video-1.1.4.zip') as archive:
+with zipfile.ZipFile(_release / 'lingxu-video-1.1.5.zip') as archive:
     for name in ('main.py', 'updater.py', 'info.json'):
         (_program / name).write_bytes(archive.read('video_plugin_site_api/' + name))
 spec = importlib.util.spec_from_file_location('site_plugin', _program / 'main.py')
@@ -68,6 +68,29 @@ class Handler(BaseHTTPRequestHandler):
             s['downloads'] = s.get('downloads', 0) + 1
             s.setdefault('download_headers', []).append(dict(self.headers))
             mode = s['download_sequence'].pop(0) if s.get('download_sequence') else ''
+            if s.get('resume_bytes'):
+                import hashlib
+                full = s['resume_bytes']
+                etag = '"sha256-' + hashlib.sha256(full).hexdigest() + '"'
+                if s.get('weak_etag'): etag = 'W/' + etag
+                start = 0
+                partial = self.headers.get('Range') and self.headers.get('If-Range') == etag and not s.get('ignore_range')
+                if partial:
+                    start = int(self.headers['Range'].split('=')[1].split('-')[0])
+                if mode == 'range416':
+                    return self.respond(416, {'error':'range invalid'})
+                self.send_response(206 if partial else 200)
+                self.send_header('ETag', etag)
+                self.send_header('Accept-Ranges', 'bytes')
+                self.send_header('Content-Length', str(len(full)-start))
+                if partial:
+                    range_start = start + 1 if mode == 'bad_range' else start
+                    self.send_header('Content-Range', f'bytes {range_start}-{len(full)-1}/{len(full)}')
+                self.end_headers()
+                body = full[start:]
+                if mode == 'break': body = body[:16]
+                self.wfile.write(body)
+                return
             if mode == 'disconnect':
                 self.connection.shutdown(socket.SHUT_RDWR)
                 self.connection.close()

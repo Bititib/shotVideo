@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "plugin_id": "video_plugin_site_api",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "min_updater": 1,
-  "archive": "/plugin-updates/video_plugin_site_api/lingxu-video-1.1.4.zip",
-  "size": 38605,
-  "sha256": "3a5d7cd2e9f2ca994dd23997892bda3bb8ca8043b4365f9b5c8a84679155151a",
-  "notes": "原视频下载失败自动重试，最多尝试 4 次；不重新生成或重复提交，下载成功后继续原分镜回填。保留用户配置和任务记录，安装后请重启字字动画。"
+  "archive": "/plugin-updates/video_plugin_site_api/lingxu-video-1.1.5.zip",
+  "size": 40988,
+  "sha256": "bf5351912bf5739ff969077abceae70d10bfd36dccf9bd37315a22982033a972",
+  "notes": "新增原视频断点续传，保留有效下载进度；文件变化或不支持续传时安全重下，不重新生成。安装后重启字字动画。"
 }
