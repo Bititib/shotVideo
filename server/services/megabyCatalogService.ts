@@ -2,17 +2,27 @@ import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { channels, models } from '../db/schema.js';
 import { MEGABY_CHANNEL_TYPE, MEGABY_VIDEO_MODELS, megabyPublicModelId, megabyVideoLimits } from '../../shared/megabyVideo.js';
-import { fetchMegabyVideoModels, type MegabyChannel } from './megabyVideoAdapter.js';
+import { fetchMegabyAuthorizedModels, type MegabyChannel } from './megabyVideoAdapter.js';
 import { getModelSpecification, saveModelSpecification } from './modelRoutingService.js';
+import { MEGABY_MODEL_ROUTE_PREFIX } from '../../shared/channelModelConfiguration.js';
+import { channelCatalogBindings } from './channelCatalogBindings.js';
 
 type CatalogChannel = MegabyChannel & { id: number; name: string; priority: number };
 export const ensureMegabyModels = (channel: CatalogChannel) => registerMegabyModels(channel, [...MEGABY_VIDEO_MODELS]);
 export async function syncMegabyModels(channel: CatalogChannel) {
-  return registerMegabyModels(channel, await fetchMegabyVideoModels(channel));
+  const authorized = await fetchMegabyAuthorizedModels(channel);
+  return registerMegabyModels(channel, authorized.filter(id => (MEGABY_VIDEO_MODELS as readonly string[]).includes(id)), authorized);
 }
-function registerMegabyModels(channel: CatalogChannel, upstreamModels: string[]) {
+function registerMegabyModels(channel: CatalogChannel, upstreamModels: string[], authorized?: string[]) {
   const entries = upstreamModels.map(name => ({ name, modelId: megabyPublicModelId(name) }));
   return sqlite.transaction(() => {
+    const saved = db.select().from(channels).where(eq(channels.id, channel.id)).get();
+    if (authorized && (!saved || saved.apiKey !== channel.apiKey || saved.baseUrl !== channel.baseUrl)) {
+      throw Object.assign(new Error('同步期间 Megaby 渠道地址或 Key 已变化，请重新同步'), { status: 409 });
+    }
+    const mappings = saved ? channelCatalogBindings(sqlite, saved) : undefined;
+    const manual = [...mappings ?? []].filter(([id, upstream]) => getModelSpecification(id)?.routes.some(route =>
+      route.channelId === channel.id && route.upstreamModel === upstream && route.id.startsWith(MEGABY_MODEL_ROUTE_PREFIX)));
     let added = 0;
     for (const entry of entries) {
       const occupied = db.select().from(models).where(eq(models.modelId, entry.modelId)).get();
@@ -32,9 +42,12 @@ function registerMegabyModels(channel: CatalogChannel, upstreamModels: string[])
       saveModelSpecification(existing ? { ...existing, routes: [...existing.routes, route] }
         : { modelId: entry.modelId, kind: 'video', enabled: true, aliases: [], limits, routes: [route] });
     }
-    db.update(channels).set({ type: MEGABY_CHANNEL_TYPE, supportedModels: JSON.stringify(entries.map(e => e.modelId)),
-      modelMapping: JSON.stringify(Object.fromEntries(entries.map(e => [e.modelId, e.name]))), updatedAt: new Date().toISOString(),
+    const previouslySupported: string[] = JSON.parse(saved?.supportedModels || '[]');
+    const allowedManual = manual.filter(([id, upstream]) => authorized ? authorized.includes(upstream) : previouslySupported.includes(id));
+    const supported = [...new Set([...entries.map(e => e.modelId), ...allowedManual.map(([id]) => id)])];
+    db.update(channels).set({ type: MEGABY_CHANNEL_TYPE, supportedModels: JSON.stringify(supported),
+      modelMapping: JSON.stringify(Object.fromEntries([...entries.map(e => [e.modelId, e.name]), ...manual])), updatedAt: new Date().toISOString(),
     }).where(eq(channels.id, channel.id)).run();
-    return { count: entries.length, added, models: entries.map(e => e.modelId) };
+    return { count: supported.length, added, models: supported };
   })();
 }

@@ -12,6 +12,8 @@ import { VideoRecoveryService } from '../server/services/videoRecoveryService.js
 import { downloadAndLocalizeVideo } from '../server/services/videoLocalizationService.js';
 import { fetchAsyncVideoModels } from '../server/services/asyncVideoAdapter.js';
 import { ensureVxLeSeedanceModel } from '../server/services/asyncVideoCatalogService.js';
+import { listAuthorizedChannelModels, listChannelModelConfigurations, saveChannelModelConfiguration } from '../server/services/channelModelConfigurationService.js';
+import { pruneChannelCatalogBindings } from '../server/services/channelCatalogBindings.js';
 import { VX_LE_SEEDANCE_MODEL, LEGACY_VX_LE_SEEDANCE_MODEL, asyncVideoPublicModelId } from '../shared/asyncVideo.js';
 import * as referenceValidation from '../server/services/imageReferenceValidationService.js';
 
@@ -48,6 +50,41 @@ function enable() {
 }
 
 describe('documented async video channel', () => {
+  it('registers only the selected catalog model and runs it through the website video flow', async () => {
+    const catalog = vi.fn(async (_url: string) => Response.json({ data: [
+      { id: 19, name: 'new-video', ratio: '9:16', seconds: '10,15' },
+      { id: 20, name: 'another-video', ratio: '16:9', seconds: '5' },
+    ] }));
+    vi.stubGlobal('fetch', catalog);
+    const config = listChannelModelConfigurations(channelId);
+    expect(config).toMatchObject({ canAdd: true, protocol: 'async-video' });
+    const options = await listAuthorizedChannelModels(channelId);
+    const draft = { modelId: 'new-video', displayName: 'New video', kind: 'video' as const, upstreamModel: 'new-video',
+      limits: { ...options[0].limits!, maxImages: 2 } };
+    await expect(saveChannelModelConfiguration(channelId, { ...draft, upstreamModel: '19' }, config.version)).rejects.toMatchObject({ status: 409 });
+    const saved = await saveChannelModelConfiguration(channelId, draft, config.version);
+    expect(saved.models.find(row => row.modelId === 'new-video')).toMatchObject({
+      upstreamModel: 'new-video', enabled: false, editable: true, limits: { maxImages: 2, ratios: ['9:16'], duration: { values: [10, 15] } },
+    });
+    expect(catalog.mock.calls.map(([url]) => url)).toEqual(Array(3).fill('http://provider.invalid:8080/v1/models'));
+    expect(pruneChannelCatalogBindings(sqlite, ChannelService.getChannelRaw(channelId)!)).toEqual([]);
+    await expect(ChannelService.syncModels(channelId)).resolves.toMatchObject({ models: ['new-video'], added: 0 });
+    expect(getModelSpecification('another-video')).toBeUndefined();
+    expect(db.select().from(modelPricing).all()).toEqual([]);
+
+    modelId = draft.modelId;
+    enable();
+    const upstream = vi.fn(async (url: string, init?: RequestInit) => Response.json(init?.method === 'POST' ? { task_id: 321 }
+      : url.endsWith('/url') ? { url: 'https://cdn.example/video.mp4' } : { status: 'completed' }));
+    vi.stubGlobal('fetch', upstream);
+    await handleSpecificationGeneration(request(), response(), 'video');
+    expect(upstream.mock.calls.map(([url]) => url)).toEqual([
+      'http://provider.invalid:8080/v1/videos/generations', 'http://provider.invalid:8080/v1/tasks/321', 'http://provider.invalid:8080/v1/tasks/321/url',
+    ]);
+    expect(JSON.parse(String(upstream.mock.calls[0][1]?.body))).toEqual({ model: 'new-video', prompt: '海浪拍打礁石', seconds: 10, aspect_ratio: '9:16' });
+    expect(db.select().from(contents).all()).toEqual([expect.objectContaining({ modelId, status: 'completed', cost: 2 })]);
+  });
+
   it('discovers by name, retains advertised constraints and imports disabled models without assumed prices', async () => {
     expect(await ChannelService.testChannel(channelId)).toMatchObject({ success: true, message: expect.stringContaining('seedance-video') });
     expect(ChannelService.getChannelRaw(channelId)).toMatchObject({ baseUrl: 'http://provider.invalid:8080', maxRetries: 0 });

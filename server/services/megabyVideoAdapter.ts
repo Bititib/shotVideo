@@ -66,9 +66,9 @@ function publicMediaUrl(source: string): string {
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Megaby 参考素材必须使用公网 HTTP/HTTPS 链接');
   return source;
 }
-export function validateMegabyVideoInput(input: MegabyVideoInput): void {
+export function validateMegabyVideoInput(input: MegabyVideoInput, configuredModel = false): void {
   const limits = megabyVideoLimits();
-  if (!(MEGABY_VIDEO_MODELS as readonly string[]).includes(input.model)) throw new Error('Megaby 视频模型不受支持');
+  if (!configuredModel && !(MEGABY_VIDEO_MODELS as readonly string[]).includes(input.model)) throw new Error('Megaby 视频模型不受支持');
   if (!input.prompt.trim()) throw new Error('请输入视频提示词');
   if (input.firstFrame || input.lastFrame) throw new Error('Megaby 暂不支持独立首尾帧，请使用普通参考图');
   if (!Number.isInteger(input.seconds) || input.seconds < 4 || input.seconds > 15) throw new Error('Megaby 视频时长必须为 4–15 秒整数');
@@ -76,8 +76,8 @@ export function validateMegabyVideoInput(input: MegabyVideoInput): void {
   if (!limits.resolutions.includes(input.resolution)) throw new Error('Megaby 仅支持 720p、480p');
   if (input.images.length > 9 || input.videos.length > 3 || input.audios.length > 3) throw new Error('Megaby 最多支持 9 张参考图、3 个参考视频和 3 个参考音频');
 }
-export function buildMegabyVideoPayload(input: MegabyVideoInput) {
-  validateMegabyVideoInput(input);
+export function buildMegabyVideoPayload(input: MegabyVideoInput, configuredModel = false) {
+  validateMegabyVideoInput(input, configuredModel);
   return { model: input.model, prompt: input.prompt.trim(), duration: input.seconds, ratio: input.ratio, resolution: input.resolution,
     ...(input.images.length ? { referenceImages: input.images.map(publicMediaUrl) } : {}),
     ...(input.videos.length ? { referenceVideos: input.videos.map(publicMediaUrl) } : {}),
@@ -101,12 +101,15 @@ async function getJson(channel: MegabyChannel, url: string, fetchImpl: typeof fe
     signal: AbortSignal.timeout(channel.timeout || 30_000), redirect: 'error' }, 'query', fetchImpl);
   return readUpstreamJson(channel, response, 'query');
 }
-export async function fetchMegabyVideoModels(channel: MegabyChannel, fetchImpl: typeof fetch = fetch): Promise<string[]> {
+export async function fetchMegabyVideoModels(channel: MegabyChannel, fetchImpl: typeof fetch = fetch, supported: readonly string[] = MEGABY_VIDEO_MODELS): Promise<string[]> {
+  return (await fetchMegabyAuthorizedModels(channel, fetchImpl)).filter(id => supported.includes(id));
+}
+export async function fetchMegabyAuthorizedModels(channel: MegabyChannel, fetchImpl: typeof fetch = fetch): Promise<string[]> {
   const raw = await getJson(channel, megabyBaseUrl(channel.baseUrl) + '/v1/models', fetchImpl);
   if (!Array.isArray(raw?.data) || raw.data.some((item: any) => typeof item?.id !== 'string' || !item.id.trim())) {
     throw upstreamProtocolError(channel, 'INVALID_MODEL_LIST', 'Megaby 模型列表格式无效', 'query');
   }
-  return [...new Set<string>(raw.data.map((item: any) => item.id))].filter(id => (MEGABY_VIDEO_MODELS as readonly string[]).includes(id));
+  return [...new Set<string>(raw.data.map((item: any) => item.id))];
 }
 export function normalizeMegabyTask(raw: any, baseUrl: string, taskId: string, secret = '') {
   const channel = { type: MEGABY_CHANNEL_TYPE, baseUrl };

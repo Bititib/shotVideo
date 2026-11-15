@@ -27,18 +27,18 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { RouteCandidate } from './modelRoutingService.js';
 import type { RoutingInput } from '../../shared/modelRouting.js';
-import { CHANNEL_MODEL_ROUTE_PREFIX } from '../../shared/channelModelConfiguration.js';
+import { CHANNEL_MODEL_ROUTE_PREFIX, MEGABY_MODEL_ROUTE_PREFIX, MJ_NEW_API_MODEL_ROUTE_PREFIX, NEW_TOKEN_MODEL_ROUTE_PREFIX } from '../../shared/channelModelConfiguration.js';
 import { buildHmStudioVideoPayload, buildHmStudioImageForm, hmStudioCreateUrl, hmStudioTaskUrl, normalizeHmStudioTask } from './hmStudioAdapter.js';
 import { HAYA_XG_SEEDANCE_20_MODEL, hayaPublicModelId, validateHayaVideoInput } from '../../shared/hayaVideo.js';
 import { buildSiYueTianSeedance25VideoPayload, getSiYueTianC2Model, getSiYueTianSeedance25VideoSpec } from './siYueTianVideoModels.js';
 import { getHmStudioUpstreamVideoModel, getHmStudioPublicVideoModel, getHmStudioAdditionalVideoModel, validateHmStudioAdditionalVideoInput } from '../../shared/hmStudioVideo.js';
 import { buildWxHaidiYueVideoPayload, wxHaidiYueCreateUrl, wxHaidiYueTaskUrl, normalizeWxHaidiYueTask, isWxHaidiYueChannel } from './wxHaidiYueAdapter.js';
-import { buildMjNewApiVideoPayload, normalizeMjNewApiPrompt, isMjNewApiChannel } from './mjNewApiAdapter.js';
+import { buildMjNewApiVideoPayload, findInvalidMjNewApiMaterialUrls, normalizeMjNewApiPrompt, isMjNewApiChannel } from './mjNewApiAdapter.js';
 import { buildLongxiaVideoPayload, longxiaVideoCreateUrl, longxiaVideoTaskUrl, normalizeLongxiaVideoTask, isLongxiaChannel } from './longxiaVideoAdapter.js';
 import { buildMiaowuVideoPayload, miaowuVideoCreateUrl, miaowuVideoTaskUrl, normalizeMiaowuVideoTask, isMiaowuChannel } from './miaowuVideoAdapter.js';
 import { buildSnumomWanPayload, normalizeSnumomWanTask, isSnumomWanChannel, extractSnumomTaskId } from './snumomWanAdapter.js';
 import { buildSudaShuiVideoPayload, sudaShuiVideoCreateUrl } from './sudaShuiAdapter.js';
-import { buildNewTokenVideoPayload, newTokenVideoCreateUrl, isNewTokenChannel } from './newTokenAdapter.js';
+import { buildNewTokenVideoPayload, newTokenVideoCreateUrl, isNewTokenChannel, NEWTOKEN_SEEDANCE_PROTOCOL_MODEL } from './newTokenAdapter.js';
 import { buildJulunMinimaxH3Payload, isJulunMinimaxH3Model } from './julunMinimaxAdapter.js';
 import { submitHayaVideo, HayaSubmissionError, hayaTaskUrl, normalizeHayaTask, isHayaChannel, validateHayaMoInput } from './hayaVideoAdapter.js';
 import { HAYA_MO_MODEL } from '../../shared/hayaMoVideo.js';
@@ -195,6 +195,11 @@ function zonghengSpecificationInput(model: string, request: SpecificationRequest
     quality: request.body.quality, negativePrompt: request.body.negative_prompt, generateAudio: request.body.generate_audio };
 }
 
+export function standardVideoFormFields(model: string, prompt: string, input: Pick<RoutingInput, 'seconds' | 'ratio' | 'resolution'>) {
+  const sizes: Record<string, string> = { '16:9': '1280x720', '9:16': '720x1280', '1:1': '1024x1024', '4:3': '1024x768', '3:4': '768x1024' };
+  return { model, prompt, seconds: String(input.seconds), size: sizes[input.ratio] || input.ratio, resolution_name: input.resolution };
+}
+
 export async function submitSpecificationVideo(target: RouteCandidate, request: SpecificationRequest, onStarting: (metadata?: Record<string, unknown>) => void) {
   if(isImage2proChannel(target.channel)) {
 
@@ -325,7 +330,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
       if (request.body.first_image !== undefined || request.body.last_image !== undefined) throw new Error('Megaby 暂不支持独立首尾帧');
       const refs = (sources: string[]) => sources.map(source => publishSpecificationAsset(source, request.publicBaseUrl));
       payload = buildMegabyVideoPayload({ ...request, model, seconds: i.seconds, ratio: i.ratio, resolution: i.resolution,
-        images: refs(request.images), videos: refs(request.videos), audios: refs(request.audios) });
+        images: refs(request.images), videos: refs(request.videos), audios: refs(request.audios) }, target.route.id.startsWith(MEGABY_MODEL_ROUTE_PREFIX));
       await validateMegabyReferenceDurations(request.videos, request.audios);
     } catch (error: any) { throw new SpecificationUpstreamError(error.message, true); }
     try { return await submitMegabyVideo(c, payload, onStarting); }
@@ -423,8 +428,12 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
       imageUrls: refs(request.images), videoUrls: refs(request.videos), audioUrls: refs(request.audios) });
     url = miaowuVideoCreateUrl(c.baseUrl);
   } else if (isMjNewApiChannel(c)) {
+    const images = refs(request.images), videos = refs(request.videos), audios = refs(request.audios);
+    if (target.route.id.startsWith(MJ_NEW_API_MODEL_ROUTE_PREFIX) && findInvalidMjNewApiMaterialUrls(images, videos, audios).length) {
+      unsupported('MJNewAPI 参考素材必须使用公网 HTTPS 链接');
+    }
     payload = buildMjNewApiVideoPayload({ model, prompt: request.prompt, duration: i.seconds, aspectRatio: i.ratio, resolution: i.resolution,
-      images: refs(request.images), videos: refs(request.videos), audios: refs(request.audios) });
+      images, videos, audios });
   } else if (isSnumomWanChannel(c)) {
     payload = buildSnumomWanPayload({ model, prompt: request.prompt, seconds: i.seconds, aspectRatio: i.ratio, resolution: i.resolution,
       ...(isSnumomWanVideoModel(model) ? { smartDuration:Number(request.body.parameters?.duration ?? request.body.duration_seconds ?? request.body.video_length ?? request.body.seconds ?? request.body.duration) === -1,
@@ -438,11 +447,12 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
       imageUrls: refs(request.images), videoUrls: refs(request.videos), audioUrls: refs(request.audios) });
     url = sudaShuiVideoCreateUrl(c.baseUrl);
   } else if (isNewTokenChannel(c)) {
+    const profile = target.route.id.startsWith(NEW_TOKEN_MODEL_ROUTE_PREFIX) ? NEWTOKEN_SEEDANCE_PROTOCOL_MODEL : exec;
     if (!['16:9', '9:16'].includes(i.ratio)) unsupported('NewToken 此线路只支持 16:9 / 9:16');
-    if (exec.startsWith('veo-')) {
+    if (profile.startsWith('veo-')) {
       if (i.seconds !== (exec === 'veo-3-1' ? 8 : 10) || request.audios.length || (exec !== 'veo-omni-flash-video-edit' && request.videos.length) || request.images.length > 9) unsupported('Veo 线路时长或素材不匹配');
     } else if (request.images.length > 9 || request.videos.length > 3 || request.audios.length > 3 || request.firstFrame || request.lastFrame) unsupported('NewToken Seedance 素材超限或首尾帧不受支持');
-    payload = buildNewTokenVideoPayload({ model: exec, upstreamModel: model, prompt: request.prompt, duration: i.seconds, aspectRatio: i.ratio,
+    payload = buildNewTokenVideoPayload({ model: profile, upstreamModel: model, prompt: request.prompt, duration: i.seconds, aspectRatio: i.ratio,
       images: refs(request.images), videos: refs(request.videos), audios: refs(request.audios),
       firstFrame: request.firstFrame ? publishSpecificationAsset(request.firstFrame, request.publicBaseUrl) : undefined, lastFrame: request.lastFrame ? publishSpecificationAsset(request.lastFrame, request.publicBaseUrl) : undefined,
       complianceEnabled: request.body.compliance_enabled, complianceMode: request.body.compliance_mode });
@@ -463,7 +473,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   } else if (standard || !/seedance|^sd2|^sd-mini/.test(exec)) {
     if (request.videos.length || request.audios.length || request.firstFrame || request.lastFrame) unsupported('此通用线路只配置了图片参考协议');
     const form = new FormData();
-    for (const [key, value] of Object.entries({ model, prompt: request.prompt, seconds: i.seconds, size: ({ '16:9': '1280x720', '9:16': '720x1280', '1:1': '1024x1024', '4:3': '1024x768', '3:4': '768x1024' } as Record<string,string>)[i.ratio] || i.ratio, resolution_name: i.resolution })) form.append(key, String(value));
+    for (const [key, value] of Object.entries(standardVideoFormFields(model, request.prompt, i))) form.append(key, value);
     for (const source of request.images) { const match = source.match(/^data:([^;]+);base64,(.+)$/s); if (!match) unsupported('参考图未完成校验'); form.append('input_reference[]', new Blob([Buffer.from(match![2], 'base64')], { type: match![1] }), 'reference.jpg'); }
     payload = form;
   } else {

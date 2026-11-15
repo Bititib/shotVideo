@@ -607,7 +607,10 @@ export class ChannelService {
           if (!available.length) throw new Error(warnings.join(' ') || '智赢模型目录已返回，此 Key 暂无已接入的视频型号');
           catalogSummary = '可用型号：' + available.join('、') + (warnings.length ? '。' + warnings.join(' ') : '');
         } else if (isMegabyChannel(channel)) {
-          if (!(await fetchMegabyVideoModels(channel)).length) throw new Error('该 Key 未开放 Megaby 视频模型，请检查模型授权');
+          const bindings = channelCatalogBindings(sqlite, channel);
+          if (!(await fetchMegabyVideoModels(channel, fetch, bindings && [...bindings.values()])).length) {
+            throw new Error('该 Key 未开放已配置的 Megaby 视频模型，请检查模型授权');
+          }
         } else if (isMjChannel(channel)) {
           if (!(await fetchMjModels(channel)).length) throw new Error('该 Key 未提供 mj_imagine 模型，请检查模型授权');
         } else if (isAsyncVideoChannel(channel)) {

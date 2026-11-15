@@ -18,6 +18,7 @@ import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/r
 import { activeSpecificationTasks } from './videoRecoveryAction.js';
 import { normalizeSiYueTianMinimaxTask, pollSiYueTianMinimax, siYueTianVideoCredential } from './siYueTianMinimaxAdapter.js';
 import { isMegabyChannel, normalizeMegabyTask, validateMegabyVideoInput, validateMegabyReferenceDurations } from './megabyVideoAdapter.js';
+import { MEGABY_MODEL_ROUTE_PREFIX } from '../../shared/channelModelConfiguration.js';
 import { isHussChannel, recoverHussSubmission, normalizeHussTask } from './hussVideoAdapter.js';
 import { publicApiModelId } from '../../shared/publicApiModelId.js';
 import { videoCapabilities, normalizeVideoParameters } from './videoCapabilities.js';
@@ -945,7 +946,8 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     if (nativeImageOutputs && body.n !== undefined && ![1, 4].includes(Number(body.n))) throw fail('MJ 每次仅提交一次任务，图片数量以上游实际结果为准');
     if (configuredSiYueTian) body.model = modelId;
     const defaultSeconds = (v6kConfigured || configuredSiYueTian ? spec.limits.defaultSeconds : undefined)
-      ?? (model.provider === 'megaby' ? 5 : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min);
+      ?? (model.provider === 'megaby' && !spec.routes.some(route => route.id.startsWith(MEGABY_MODEL_ROUTE_PREFIX)) ? 5
+        : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min);
     const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (modelId === SNUMOM_WAN_NSFW_MODEL ? body.parameters?.duration ?? body.duration_seconds : undefined) ?? defaultSeconds }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'), v6kConfigured);
     let snumomBilling: Awaited<ReturnType<typeof prepareSnumomNsfwReferences>> | undefined;
     if (isZhiyingVideoModel(modelId)) request.ownerId = userId;
@@ -964,7 +966,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
       try {
         if (body.first_image !== undefined || body.last_image !== undefined) throw new Error('Megaby 暂不支持独立首尾帧');
         for (const target of candidates) validateMegabyVideoInput({ ...request, model: target.route.upstreamModel,
-          seconds: request.input.seconds, ratio: request.input.ratio, resolution: request.input.resolution });
+          seconds: request.input.seconds, ratio: request.input.ratio, resolution: request.input.resolution }, target.route.id.startsWith(MEGABY_MODEL_ROUTE_PREFIX));
         await validateMegabyReferenceDurations(request.videos, request.audios);
       }
       catch (error: any) { throw fail(error.message); }

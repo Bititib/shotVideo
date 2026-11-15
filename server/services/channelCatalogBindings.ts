@@ -1,6 +1,7 @@
 import { zhiyingBindings } from './zhiyingModelBindings.js';
 import type Database from 'better-sqlite3';
 import type { ModelSpecification } from '../../shared/modelRouting.js';
+import { channelVideoProtocols, type ChannelVideoProtocol } from '../../shared/channelModelConfiguration.js';
 import { imageSpecificationId } from '../../shared/modelRouting.js';
 import { GOOGLE_SYNC_MODEL_IDS } from '../../shared/googleSyncModels.js';
 import { HAYA_MODEL_IDS, hayaUpstreamModelId } from '../../shared/hayaVideo.js';
@@ -132,10 +133,29 @@ function supportsPair(channel: Channel, bindings: Map<string, string>, id: strin
   return isAsyncVideoChannel(channel) && expected === VX_LE_SEEDANCE_MODEL && upstream === LEGACY_VX_LE_SEEDANCE_MODEL;
 }
 
+export function getChannelVideoProtocol(channel: ChannelBindings): ChannelVideoProtocol | undefined {
+  if (isAsyncVideoChannel(channel)) return 'async-video';
+  if (isMegabyChannel(channel)) return 'megaby';
+  if (isMjNewApiChannel(channel)) return 'mjnewapi';
+  if (isNewTokenChannel(channel) && /^https:\/\/newtoken\.club(?:\/v1)?\/?$/i.test(channel.baseUrl)) return 'newtoken';
+}
+
 export function channelCatalogBindings(sqlite: Database.Database, channel: ChannelBindings) {
   const bindings = dedicatedBindings(sqlite, channel);
   if (!bindings) return undefined;
   const mapping: Record<string, string> = JSON.parse(channel.modelMapping || '{}');
+  const protocol = getChannelVideoProtocol(channel);
+  if (protocol) {
+    for (const spec of loadRoutes(sqlite)) {
+      for (const route of spec.routes) {
+        if (spec.kind === 'video' && route.channelId === channel.id && route.id.startsWith(channelVideoProtocols[protocol].prefix)
+          && spec.modelId === route.executionModel && mapping[spec.modelId] === route.upstreamModel
+          && !isRetiredVideoModel(spec.modelId) && !isRetiredVideoModel(route.upstreamModel) && !bindings.has(spec.modelId)) {
+          bindings.set(spec.modelId, route.upstreamModel);
+        }
+      }
+    }
+  }
   for (const [id, upstream] of Object.entries(mapping)) {
     if (!id || id === '*' || !upstream || upstream === '*' || isRetiredVideoModel(id) || bindings.has(id)) continue;
     // A separately named custom alias is an explicit mapping, unlike old auto-imported IDs.
@@ -150,6 +170,12 @@ export function allowsStandardChannelModelConfiguration(sqlite: Database.Databas
   return ['openai', 'custom'].includes(channel.type)
     && !isSiYueTianVideoHost(channel.baseUrl) && !isZonghengChannel(channel)
     && channelCatalogBindings(sqlite, channel) === undefined;
+}
+
+export function allowsChannelModelConfigurationRoute(sqlite: Database.Database, channel: ChannelBindings, routeId: string) {
+  const expected = (Object.keys(channelVideoProtocols) as ChannelVideoProtocol[])
+    .find(protocol => routeId.startsWith(channelVideoProtocols[protocol].prefix));
+  return expected ? getChannelVideoProtocol(channel) === expected : allowsStandardChannelModelConfiguration(sqlite, channel);
 }
 
 /** Keep the saved products and original task references. Only detach catalog associations and invalid routes. */

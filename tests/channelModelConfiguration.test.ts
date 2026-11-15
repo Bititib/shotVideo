@@ -5,17 +5,20 @@ import jwt from 'jsonwebtoken';
 import type { ChannelModelDraft } from '../shared/channelModelConfiguration.js';
 import { defaultRoutingLimits } from '../shared/modelRouting.js';
 import { db, sqlite } from '../server/db/index.js';
-import { channels, models, modelPricing, users } from '../server/db/schema.js';
+import { channels, contents, models, modelPricing, users } from '../server/db/schema.js';
 import { env } from '../server/config/env.js';
 import channelRoutes from '../server/routes/channels.js';
 import apiRoutes from '../server/routes/v1.js';
 import { ChannelService } from '../server/services/channelService.js';
 import { TokenService } from '../server/services/tokenService.js';
-import { listChannelModelConfigurations, saveChannelModelConfiguration } from '../server/services/channelModelConfigurationService.js';
+import { listChannelModelConfigurations, previewChannelModelRequest, saveChannelModelConfiguration } from '../server/services/channelModelConfigurationService.js';
+import { pruneChannelCatalogBindings } from '../server/services/channelCatalogBindings.js';
 import { getModelSpecification, routeUnavailableReason, selectModelRoutes } from '../server/services/modelRoutingService.js';
 import { generateSpecificationImage, submitSpecificationVideo } from '../server/services/specificationAdapters.js';
+import { handleSpecificationGeneration } from '../server/services/specificationGenerationService.js';
 
 vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
+vi.mock('../server/services/videoLocalizationService.js', () => ({ downloadAndLocalizeVideo: vi.fn(async () => '/uploads/channel-config-result.mp4') }));
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 afterAll(() => sqlite.close());
@@ -92,6 +95,49 @@ it('uses image generation rather than chat for a standard image mapping with a B
   expect(JSON.parse(String(options?.body))).toMatchObject({ model: draft.upstreamModel, size: '1024x1024' });
 });
 
+it.each([
+  { name: 'MJNewAPI', protocol: 'mjnewapi', baseUrl: 'https://mjnewapi.diwdiw.cn', model: 'mj-custom-seedance', fields: ['images', 'videos', 'audios'] },
+  { name: 'NewToken', protocol: 'newtoken', baseUrl: 'https://newtoken.club/v1', model: 'nd-seedance-variant', fields: ['image_refs', 'video_refs', 'audio_refs'] },
+])('registers a new $name model and uses its actual submission protocol', async ({ name, protocol, baseUrl, model, fields }) => {
+  const id = addChannel(name, baseUrl);
+  const draft = { ...makeDraft(model), upstreamModel: model, routeEnabled: false,
+    limits: { ...makeDraft(model).limits, ratios: ['16:9'], maxImages: 2, maxVideos: 1, maxAudios: 1 } };
+  const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({ data: [{ id: model }, { id: 'other-seedance' }, { id: 'some-chat' }] }));
+  vi.stubGlobal('fetch', fetcher);
+  const first = listChannelModelConfigurations(id);
+  expect(first).toMatchObject({ protocol, canAdd: true });
+  const preview = previewChannelModelRequest(id, draft, { seconds: 5, images: 1, videos: 1, audios: 1 });
+  expect(preview).toMatchObject({ path: '/v1/videos', body: { model, duration: 5, aspect_ratio: '16:9' } });
+  expect(fetcher).not.toHaveBeenCalled();
+  const saved = await saveChannelModelConfiguration(id, draft, first.version);
+  expect(saved.models).toEqual([expect.objectContaining({ modelId: model, enabled: false, routeEnabled: false })]);
+  expect(pruneChannelCatalogBindings(sqlite, ChannelService.getChannelRaw(id)!)).toEqual([]);
+  await expect(ChannelService.syncModels(id)).resolves.toMatchObject({ models: [model], added: 0 });
+  expect(getModelSpecification('other-seedance')).toBeUndefined();
+  await saveChannelModelConfiguration(id, { ...draft, routeEnabled: true }, listChannelModelConfigurations(id).version);
+  db.update(models).set({ isActive: 1 }).where(eq(models.modelId, model)).run();
+  const input = request('720p');
+  const [target] = selectModelRoutes(getModelSpecification(model)!, { ...input.input, ratio: '16:9' });
+  fetcher.mockImplementationOnce(async () => Response.json({ task_id: 'channel-new-task' }));
+  await expect(submitSpecificationVideo(target, {
+    ...input, input: { ...input.input, ratio: '16:9', images: 1, videos: 1, audios: 1 },
+    images: ['https://example.invalid/jpg-1.jpg'], videos: ['https://example.invalid/mp4-1.mp4'], audios: ['https://example.invalid/wav-1.wav'],
+  }, vi.fn())).resolves.toBe('channel-new-task');
+  const [url, options] = fetcher.mock.calls.at(-1)!;
+  const body = JSON.parse(String(options?.body));
+  expect(url).toBe(baseUrl.replace(/\/v1$/, '') + preview.path);
+  expect(fields.map(field => body[field])).toEqual(fields.map(field => preview.body[field]));
+  expect(body.model).toBe(model);
+  db.insert(modelPricing).values({ modelPattern: model, billingType: 'per_call', inputPrice: 2 }).run();
+  const userId = Number(db.insert(users).values({ username: protocol, email: protocol + '@site.example', passwordHash: 'unused', balance: 10 }).run().lastInsertRowid);
+  fetcher.mockImplementation(async (_url, init) => Response.json(init?.method === 'POST' ? { task_id: protocol + '-website' }
+    : { status: 'completed', video_url: 'https://example.invalid/finished.mp4' }));
+  const res = { status: vi.fn(), json: vi.fn(), setHeader: vi.fn(), flushHeaders: vi.fn(), write: vi.fn(), end: vi.fn() };
+  await handleSpecificationGeneration({ userId, headers: {}, protocol: 'https', get: () => 'site.example',
+    body: { model, prompt: 'website test', video_length: 5, aspect_ratio: '16:9' } } as any, res as any, 'video');
+  expect(db.select().from(contents).where(eq(contents.modelId, model)).get()).toMatchObject({ status: 'completed', cost: 2 });
+});
+
 it('exposes fixed and removed channels for inspection and rejects unsupported additions without making a request', async () => {
   const fixed = addChannel('Pidoi 图片渠道', 'https://pidoi.com');
   const removed = addChannel('已停用旧渠道', 'https://removed.example.test', 'apipath');
@@ -154,6 +200,11 @@ it('exposes the channel config API only to administrators and saves a disabled m
       body: JSON.stringify({ draft, version: configuration.version }),
     });
     expect((await put(member)).status).toBe(403);
+    expect(upstream).not.toHaveBeenCalled();
+    const preview = await localFetch(url + '/preview', {
+      method: 'POST', headers: { Authorization: admin, 'Content-Type': 'application/json' }, body: JSON.stringify({ draft }),
+    });
+    expect(await preview.json()).toMatchObject({ path: '/v1/videos', body: { model: draft.upstreamModel, resolution_name: '720p' } });
     expect(upstream).not.toHaveBeenCalled();
     const saved = await put(admin);
     expect(saved.status).toBe(200);

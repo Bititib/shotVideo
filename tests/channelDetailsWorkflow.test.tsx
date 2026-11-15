@@ -3,6 +3,7 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
+import { defaultRoutingLimits } from '../shared/modelRouting';
 import { MemoryRouter } from 'react-router-dom';
 import { adminApi } from '../client/src/api/admin';
 import ChannelsPage from '../client/src/pages/admin/ChannelsPage';
@@ -12,7 +13,7 @@ vi.mock('../client/src/api/admin', () => ({ adminApi: {
   getModelSpecifications: vi.fn().mockResolvedValue([]), getChannels: vi.fn(), getSettings: vi.fn(), getModels: vi.fn(), getModelStatistics: vi.fn(),
   getPricing: vi.fn(), updatePricing: vi.fn(), syncChannelModels: vi.fn(), testChannel: vi.fn(), deleteChannel: vi.fn(),
   createChannel: vi.fn(), updateChannel: vi.fn(),
-  getChannelModelConfigurations: vi.fn(), getAuthorizedChannelModels: vi.fn(), saveChannelModelConfiguration: vi.fn(),
+  getChannelModelConfigurations: vi.fn(), getAuthorizedChannelModels: vi.fn(), previewChannelModelRequest: vi.fn(), saveChannelModelConfiguration: vi.fn(),
   getV6kModelConfigurations: vi.fn(),
   getSiYueTianModelConfigurations: vi.fn(), getSiYueTianVideoCatalog: vi.fn(),
   getMinikeyModelConfigurations: vi.fn(), getMinikeyModelCatalog: vi.fn(),
@@ -127,6 +128,48 @@ describe('channel details and model sync workflow', () => {
       modelId: 'video-one', displayName: '视频一', upstreamModel: 'video-upstream', kind: 'video',
       limits: expect.objectContaining({ resolutions: ['720p'], ratios: ['16:9'] }),
     }), 'v1');
+  });
+
+  it('opens an editable Vx-乐 model immediately and adds only the explicitly selected video option', async () => {
+    const limits = { ...defaultRoutingLimits(), resolutions: ['default'], ratios: ['9:16'], maxImages: 1,
+      duration: { mode: 'options' as const, min: 5, max: 10, step: 1, values: [5, 10] } };
+    const initial = { protocol: 'async-video' as const, canAdd: true, canSync: true, version: 'v1', models: [{
+      modelId: 'existing', displayName: '已有视频', upstreamModel: 'existing-upstream', capabilities: ['video'], enabled: true, editable: true, limits,
+    }] };
+    vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, name: 'Vx-乐', type: 'async-video' }]);
+    vi.mocked(adminApi.getChannelModelConfigurations).mockResolvedValue(initial);
+    vi.mocked(adminApi.getAuthorizedChannelModels).mockResolvedValue([{ id: 'existing-upstream', limits }, { id: 'new-upstream', limits }]);
+    vi.mocked(adminApi.previewChannelModelRequest).mockResolvedValue({ method: 'POST', path: '/v1/videos/generations', body: { model: 'new-upstream', seconds: 10 } });
+    vi.mocked(adminApi.saveChannelModelConfiguration).mockImplementation(async (_id, draft) => ({ ...initial,
+      models: [...initial.models, { ...draft, capabilities: ['video'], enabled: false, editable: true }], version: 'v2',
+    }));
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: '模型与参数', exact: true }));
+    const panel = within(await screen.findByRole('dialog', { name: 'Vx-乐 · 模型与参数' }));
+    expect(await panel.findByLabelText('显示名称')).toHaveValue('已有视频');
+    expect(panel.getByRole('button', { name: '同步已接入模型' })).toBeEnabled();
+    fireEvent.click(panel.getByRole('button', { name: '添加新模型' }));
+    fireEvent.click(panel.getByRole('button', { name: '读取已授权的上游型号' }));
+    await panel.findByRole('option', { name: 'new-upstream' });
+    expect(panel.queryByRole('option', { name: 'existing-upstream' })).toBeNull();
+    fireEvent.change(panel.getByLabelText('上游模型 ID'), { target: { value: 'new-upstream' } });
+    expect(panel.getByLabelText('可选时长')).toHaveValue('5,10');
+    fireEvent.change(panel.getByLabelText('本站 API 模型 ID'), { target: { value: 'new-video' } });
+    fireEvent.change(panel.getByLabelText('显示名称'), { target: { value: '新视频' } });
+    fireEvent.click(panel.getByRole('button', { name: '请求体样例' }));
+    fireEvent.change(panel.getByLabelText('样例时长'), { target: { value: 10 } });
+    fireEvent.click(panel.getByRole('button', { name: '生成请求体样例' }));
+    expect(await panel.findByText('/v1/videos/generations')).toBeVisible();
+    expect(adminApi.previewChannelModelRequest).toHaveBeenCalledWith(9, expect.objectContaining({ upstreamModel: 'new-upstream' }), { seconds: 10 });
+    expect(adminApi.saveChannelModelConfiguration).not.toHaveBeenCalled();
+    fireEvent.click(panel.getByRole('button', { name: '线路配置 JSON' }));
+    expect(panel.getByText(/"routeEnabled": true/)).toBeVisible();
+    fireEvent.click(panel.getByRole('button', { name: '参数与媒体' }));
+    fireEvent.click(panel.getByRole('button', { name: '校验授权并添加模型' }));
+    expect(await panel.findByText(/新模型已添加，默认停用/)).toBeVisible();
+    expect(adminApi.saveChannelModelConfiguration).toHaveBeenCalledExactlyOnceWith(9, {
+      modelId: 'new-video', displayName: '新视频', upstreamModel: 'new-upstream', kind: 'video', limits,
+    }, 'v1');
   });
 
   it('shows the managed Zhiying upstream mappings and distinguishes saved links from pending ones', async () => {

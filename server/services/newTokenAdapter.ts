@@ -8,10 +8,11 @@ export const NEWTOKEN_VIDEO_MODELS = [
 ] as const;
 
 const NEWTOKEN_VIDEO_MODEL_SET = new Set<string>(NEWTOKEN_VIDEO_MODELS);
+export const NEWTOKEN_SEEDANCE_PROTOCOL_MODEL = 'nd-seedance-2.0-720p';
 
 export function isNewTokenChannel(channel: { name?: string | null; baseUrl?: string | null } | null | undefined): boolean {
   if (!channel) return false;
-  const baseUrl = String(channel.baseUrl || '').replace(/\/+$/, '').toLowerCase();
+  const baseUrl = String(channel.baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/i, '').toLowerCase();
   return channel.name === 'NewToken 渠道' || baseUrl === 'https://newtoken.club';
 }
 
@@ -20,7 +21,7 @@ export function isNewTokenVideoModel(model: string): boolean {
 }
 
 export function newTokenVideoCreateUrl(baseUrl: string): string {
-  return `${baseUrl.replace(/\/+$/, '')}/v1/videos`;
+  return `${baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, '')}/v1/videos`;
 }
 
 function mapReferencePrompt(prompt: string, videoCount: number, audioCount: number): string {

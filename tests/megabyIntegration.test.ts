@@ -13,7 +13,8 @@ import { VideoRecoveryService } from '../server/services/videoRecoveryService.js
 import { downloadAndLocalizeVideo } from '../server/services/videoLocalizationService.js';
 import { probeVideoDurationSeconds, probeAudioDurationSeconds } from '../server/services/videoDurationProbe.js';
 import { ensureMegabyModels } from '../server/services/megabyCatalogService.js';
-import { MEGABY_BASE_URL, MEGABY_VIDEO_MODELS, megabyPublicModelId } from '../shared/megabyVideo.js';
+import { MEGABY_BASE_URL, MEGABY_VIDEO_MODELS, megabyPublicModelId, megabyVideoLimits } from '../shared/megabyVideo.js';
+import { listChannelModelConfigurations, previewChannelModelRequest, saveChannelModelConfiguration } from '../server/services/channelModelConfigurationService.js';
 import * as referenceValidation from '../server/services/imageReferenceValidationService.js';
 
 const key = 'private-megaby-integration-key';
@@ -78,6 +79,33 @@ describe('Megaby channel integration', () => {
     expect(db.select().from(modelPricing).all()).toEqual([]);
     ChannelService.updateChannel(channelId, { baseUrl: MEGABY_BASE_URL + '/v1/', maxRetries: 5 });
     expect(ChannelService.getChannelRaw(channelId)).toMatchObject({ baseUrl: MEGABY_BASE_URL, maxRetries: 0 });
+  });
+  it('adds an authorized model outside the built-in list and submits it with the documented video protocol', async () => {
+    const id = 'videos-special';
+    const draft = { modelId: id, displayName: 'Special video', upstreamModel: id, kind: 'video' as const,
+      limits: { ...megabyVideoLimits(), duration: { mode: 'fixed' as const, min: 10, max: 10, step: 1, values: [] } } };
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [...MEGABY_VIDEO_MODELS, id, 'videos-unconfigured'].map(id => ({ id })) })));
+    await saveChannelModelConfiguration(channelId, draft, listChannelModelConfigurations(channelId).version);
+    expect(previewChannelModelRequest(channelId, draft, { images: 1 }).body).toMatchObject({ model: id, duration: 10, referenceImages: expect.any(Array) });
+    expect((await ChannelService.syncModels(channelId)).models).toContain(id);
+    expect(ensureMegabyModels(ChannelService.getChannelRaw(channelId)!).models).toContain(id);
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ data: [{ id }] }));
+    expect(await ChannelService.testChannel(channelId)).toMatchObject({ success: true });
+    expect(getModelSpecification('videos-unconfigured')).toBeUndefined();
+    expect(db.select().from(models).where(eq(models.modelId, id)).get()?.isActive).toBe(0);
+    db.update(models).set({ isActive: 1 }).where(eq(models.modelId, id)).run();
+    db.insert(modelPricing).values({ modelPattern: id, billingType: 'per_call', inputPrice: 2 }).run();
+    const upstream = vi.fn(async (_url: string, init?: RequestInit) => Response.json(init?.method === 'POST'
+      ? { task_id: 'mg-special' } : { status: 'completed', video_url: 'https://cdn.example/video.mp4' }));
+    vi.stubGlobal('fetch', upstream);
+    await handleSpecificationGeneration(request({ model: id, seconds: undefined }), response(), 'video');
+    expect(JSON.parse(String(upstream.mock.calls[0][1]?.body))).toMatchObject({ model: id, duration: 10, ratio: '9:16' });
+    expect(db.select().from(contents).all().at(-1)).toMatchObject({ modelId: id, status: 'completed', cost: 2 });
+    vi.stubGlobal('fetch', vi.fn(async () => discovery()));
+    expect((await ChannelService.syncModels(channelId)).models).not.toContain(id);
+    expect(ensureMegabyModels(ChannelService.getChannelRaw(channelId)!).models).not.toContain(id);
+    expect(selectModelRoutes(getModelSpecification(id)!, { ...input, seconds: 10 })).toEqual([]);
+    expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping)[id]).toBe(id);
   });
   it('can register documented models without credentials or any network call for initial setup', () => {
     const upstream = vi.fn(); vi.stubGlobal('fetch', upstream);
