@@ -13,6 +13,7 @@ import { getVideoReferenceAssets } from '../../utils/videoPromptRefs';
 import { getContentFailureInfo } from '../../utils/contentFailure';
 import { formatBeijingTime } from '../../../../shared/time';
 import { formatContentGenerationTime } from '../../utils/videoTiming';
+import './ContentsPage.css';
 
 interface ContentItem {
   id: number;
@@ -550,8 +551,22 @@ export default function ContentsPage() {
         </div>
       ) : (
         <div className="overflow-hidden rounded-xl border border-white/10 bg-white/[0.02] shadow-sm">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1360px] border-collapse text-left">
+          <div className="contents-table-scroll overflow-x-auto" role="region" aria-label="内容任务列表" tabIndex={0}>
+            <table className="contents-table w-full border-collapse text-left">
+              <colgroup>
+                <col className="contents-col-time" />
+                <col className="contents-col-time" />
+                <col className="contents-col-status" />
+                <col className="contents-col-channel" />
+                <col className="contents-col-model" />
+                <col />
+                <col className="contents-col-cost" />
+                <col className="contents-col-user" />
+                <col className="contents-col-spec" />
+                <col className="contents-col-upstream" />
+                <col className="contents-col-record" />
+                <col className="contents-col-actions" />
+              </colgroup>
               <thead className="bg-black/20 text-xs text-zinc-500">
                 <tr className="border-b border-white/10">
                   <th className="px-4 py-3 font-medium">提交时间（北京时间）</th>
@@ -575,6 +590,8 @@ export default function ContentsPage() {
                   const upstreamTaskId = getUpstreamTaskId(meta);
                   const title = item.title || item.inputText || '(无提示词)';
                   const isVideo = item.type === 'video';
+                  const channel = getRowChannel(item, meta, routingInfo);
+                  const specification = getSpecification(meta);
 
                   return (
                     <tr key={item.id} className="group transition-colors hover:bg-white/[0.04]">
@@ -586,29 +603,31 @@ export default function ContentsPage() {
                       <td className="whitespace-nowrap px-3 py-3 text-sm text-zinc-400">{formatContentGenerationTime(item)}</td>
                       <td className="px-3 py-3">{getStatusBadge(displayStatus(item), item.metadata, item.type)}</td>
                       <td className="px-3 py-3">
-                        <div className="text-sm font-medium text-zinc-200">{getRowChannel(item, meta, routingInfo)}</div>
+                        <div className="truncate text-sm font-medium text-zinc-200" title={channel}>{channel}</div>
                         {routingInfo?.routed && <div className="mt-0.5 text-xs text-cyan-400">已分流</div>}
                       </td>
-                      <td className="max-w-52 px-3 py-3 text-sm text-zinc-200">
+                      <td className="px-3 py-3 text-sm text-zinc-200">
                         <span className="block truncate" title={item.modelId || '未知模型'}>{item.modelId || '未知模型'}</span>
                       </td>
-                      <td className="max-w-72 px-3 py-3">
+                      <td className="px-3 py-3">
                         <div className="text-sm font-medium text-zinc-200">{getTypeLabel(item.type)}{meta.source === 'api' ? ' · API' : ''}</div>
                         <div className="mt-0.5 truncate text-xs text-zinc-500" title={title}>{title}</div>
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 text-sm font-semibold text-amber-400">¥{item.cost.toFixed(2)}</td>
-                      <td className="max-w-44 px-3 py-3 text-sm text-zinc-400">
+                      <td className="px-3 py-3 text-sm text-zinc-400">
                         <span className="block truncate" title={item.userName || item.userEmail || `用户#${item.userId}`}>
                           {item.userName || item.userEmail || `用户#${item.userId}`}
                         </span>
                       </td>
-                      <td className="whitespace-nowrap px-3 py-3 text-sm text-zinc-400">{getSpecification(meta)}</td>
-                      <td className="max-w-40 px-3 py-3">
+                      <td className="px-3 py-3 text-sm text-zinc-400">
+                        <span className="block truncate" title={specification}>{specification}</span>
+                      </td>
+                      <td className="px-3 py-3">
                         {upstreamTaskId ? (
                           <button
                             type="button"
                             onClick={() => { void openPreview(item); }}
-                            className="block max-w-36 truncate font-mono text-xs text-violet-400 transition-colors hover:text-violet-300 hover:underline"
+                            className="block max-w-full truncate font-mono text-xs text-violet-400 transition-colors hover:text-violet-300 hover:underline"
                             title={upstreamTaskId}
                             aria-label={`查看上游任务 ${upstreamTaskId} 详情`}
                           >
@@ -628,7 +647,7 @@ export default function ContentsPage() {
                           #{item.id}
                         </button>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-3 py-3">
                         <div className="flex items-center justify-end gap-2">
                           <button
                             type="button"
@@ -641,7 +660,7 @@ export default function ContentsPage() {
                             <button
                               type="button"
                               onClick={() => { void handleReplicate(item); }}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-zinc-400 transition-colors hover:bg-white/10 hover:text-white"
+                              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-zinc-400 transition-colors hover:bg-white/10 hover:text-white"
                             >
                               <Copy className="h-3.5 w-3.5" /> 复刻
                             </button>

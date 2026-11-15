@@ -1,0 +1,20 @@
+.contents-table-scroll:focus-visible {
+  outline: 2px solid var(--earth-primary);
+  outline-offset: -2px;
+}
+
+.contents-table {
+  min-width: 89rem;
+  table-layout: fixed;
+}
+
+.contents-col-time { width: 6.25rem; }
+.contents-col-status { width: 4.75rem; }
+.contents-col-channel { width: 7.5rem; }
+.contents-col-model { width: 9.5rem; }
+.contents-col-cost { width: 4.25rem; }
+.contents-col-user { width: 7rem; }
+.contents-col-spec { width: 8rem; }
+.contents-col-upstream { width: 9.5rem; }
+.contents-col-record { width: 5.5rem; }
+.contents-col-actions { width: 11rem; }
