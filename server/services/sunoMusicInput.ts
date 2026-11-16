@@ -103,7 +103,7 @@ export function sunoSubmission(i:ReturnType<typeof parseSunoInput>, source?:Sour
   }
   if(operation==='voice_from_clip'&&source) return {operation,endpoint:'/api/music/voice-profile/create-from-clip',request:{source_song_id:source.clip,title:i.title}};
   if(!file)throw musicFailure('音频素材或音色未就绪');
-  if(operation==='upload')return {operation,endpoint:'/api/music/upload-source',request:{model:i.model,file_name:file.name},multipart:file};
+  if(operation==='upload')return {operation,endpoint:'/api/music/upload-source',request:{model:i.model,file_name:file.name,upload_type:'file_upload'},multipart:file};
   if(operation==='enhanced_upload')return {operation,endpoint:'/api/music/enhanced-upload',request:i.title?{title:i.title}:{},multipart:file};
   return {operation,endpoint:'/api/music/voice-profile/create',request:{...(i.title?{title:i.title}:{}),source_kind:i.sourceKind??'upload',
     ...(operation==='enhanced_voice'?{enhanced:true}:{})},multipart:file};

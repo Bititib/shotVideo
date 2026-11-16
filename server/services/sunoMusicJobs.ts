@@ -7,7 +7,7 @@ import { musicBinding, musicOperationQuote } from './musicModelRegistry.js';
 import { finishMusic, getMusicTask, holdMusic, musicMetadata, ownerKey, type MusicOwner } from './musicGenerationService.js';
 import { musicFailure, musicHash, musicLocalId, parseSunoInput, sunoSubmission } from './sunoMusicInput.js';
 import { cancelSunoUpload, deleteSunoVoice, fetchSunoAudio, findSunoEnhancedVoice, findSunoVoiceSongs, querySunoSongs, readSunoReceipt, submitSuno, sunoBase,
-  SunoError, sunoId, sunoSongTerminal, type SunoChannel, type SunoReceipt, type SunoSong, type SunoSubmission } from './sunoMusicAdapter.js';
+  isSunoUploadConnectionError, SunoError, SunoTransportError, sunoId, sunoSongTerminal, type SunoChannel, type SunoReceipt, type SunoSong, type SunoSubmission } from './sunoMusicAdapter.js';
 import { transportDiagnostic } from './upstreamDiagnostic.js';
 import { publicGenerationError } from '../../shared/generationMessages.js';
 import { MUSIC_OPERATION_LABELS, SUNO_CHANNEL_TYPE, freeMusicOperation, songOperation, voiceOperation, type MusicOperation, type MusicTask } from '../../shared/sunoMusic.js';
@@ -239,6 +239,7 @@ async function collectSongs(row:Row,channel:SunoChannel,receipt:Extract<SunoRece
 
 export async function processSunoMusicTask(row:Row,lease:string) {
   let stage='preparation';
+  let freeUpload=false;
   let channel:SunoChannel|undefined;
   try {
     const content=sqlite.prepare('SELECT * FROM contents WHERE id=?').get(row.content_id) as any;
@@ -253,8 +254,9 @@ export async function processSunoMusicTask(row:Row,lease:string) {
     } else if(meta.billingStatus!=='free') {holdMusic(row,'缺少音乐预扣凭证','settlement');return;}
     const spec=JSON.parse(row.payload) as StoredSpec;
     const hadSend=row.state!=='queued';
+    freeUpload=row.operation==='upload'&&meta.billingStatus==='free'&&!meta.billingReservationId;
     stage=hadSend?'configuration':'preparation';
-    channel=activeChannel(row,!hadSend);
+    channel=activeChannel(row,!hadSend||freeUpload&&!row.upstream_id);
     let r=readReceipt(row);
     const retryExactLookup=(message:string)=>{
       const attempts=Number(meta.musicLookupAttempts||0)+1;
@@ -277,12 +279,12 @@ export async function processSunoMusicTask(row:Row,lease:string) {
           if(!found){retryExactLookup('强化音色列表暂未找到精确追踪号，保留原订单核对');return;}
           stage='conflict';
           persistReceipt(row,found);row=job(row.id)!;r=readReceipt(row);
-        } else if(!['generate','voice','voice_from_clip'].includes(row.operation)||row.replayed) {
-          holdMusic(row,'提交期间连接中断，未确认上游是否受理','submission');return;
+        } else if((!freeUpload&&!['generate','voice','voice_from_clip'].includes(row.operation))||row.replayed||row.upstream_id) {
+          holdMusic(row,row.error||'提交期间连接中断，未确认上游是否受理','submission');return;
         }
       }
       if(!r) {
-        if(!hadSend) {
+        if(!hadSend||freeUpload) {
           musicBinding(content.model_id,content.user_id||null);
           if(spec.assetId)recheckAsset(row,requireAsset(spec.assetId,row.owner,'song'));
           if(spec.voiceId)recheckAsset(row,requireAsset(spec.voiceId,row.owner,'voice'));
@@ -351,6 +353,15 @@ export async function processSunoMusicTask(row:Row,lease:string) {
     const detail=error instanceof SunoError?error.message:transportDiagnostic('Suno',stage,error,channel?.apiKey||'');
     if(stage==='preparation'&&current.state==='queued' || stage==='submission'&&error instanceof SunoError&&error.confirmedRejection&&!current.upstream_id&&!current.replayed) {
       try{finishMusic(current,'failed',detail);}catch(e){holdMusic(current,transportDiagnostic('Suno','结算',e),'settlement');}
+      return;
+    }
+    // Suno documents retrying the free source upload; it does not start generation.
+    if(stage==='submission'&&freeUpload&&!current.upstream_id&&!current.replayed&&
+      error instanceof SunoTransportError&&isSunoUploadConnectionError(error.transportCode)) {
+      sqlite.transaction(()=>{
+        sqlite.prepare("UPDATE music_jobs SET state='submitting',error=?,next_poll=? WHERE id=?").run(detail,Date.now()+10000,row.id);
+        musicMetadata(row,{error:detail,reviewKind:null,requiresReview:false},'processing');
+      }).immediate();
       return;
     }
     if(stage==='submission'&&['generate','voice','voice_from_clip','voice_cover','sing','enhanced_voice'].includes(row.operation)&&
@@ -467,17 +478,23 @@ export function listSunoAssets(owner:MusicOwner,kind:'song'|'voice') {
     j.provider=? AND j.deleted<>1 AND j.operation IN (${kind==='song'?"'upload','enhanced_upload'":"'voice','enhanced_voice','voice_from_clip'"}) ORDER BY j.rowid DESC LIMIT 100`)
     .all(ownerKey(owner),SUNO_CHANNEL_TYPE) as {id:string}[]).map(r=>getMusicTask(r.id,owner));
 }
+function canRetryFreeUpload(row:Row,meta:{billingStatus?:string;billingReservationId?:string;reviewKind?:string}) {
+  const code=/^\[上游诊断 Suno 提交 upload\] code=(\w+)/.exec(row.error||'')?.[1];
+  return row.operation==='upload'&&row.state==='review'&&!row.replayed&&!row.upstream_id&&!row.receipt&&
+    meta.billingStatus==='free'&&!meta.billingReservationId&&meta.reviewKind==='submission'&&isSunoUploadConnectionError(code);
+}
 export function adminMusicDiagnostics(id:string) {
   const row=job(id);
   if(!row||row.provider!==SUNO_CHANNEL_TYPE)throw musicFailure('音乐订单不存在',404);
   const r=readReceipt(row);
   const results=tracks(id);
-  const c=sqlite.prepare("SELECT json_extract(metadata, '$.reviewKind') AS kind FROM contents WHERE id=?").get(row.content_id) as {kind?:string}|undefined;
-  return {id,allowsSupplement:r?.kind==='songs'&&!r.conflict&&results.length===1&&c?.kind==='partial',operation:row.operation,state:row.state,channelId:row.channel_id,submissionId:row.submission_key,
+  const c=sqlite.prepare("SELECT metadata FROM contents WHERE id=?").get(row.content_id) as {metadata:string}|undefined;
+  const meta=JSON.parse(c?.metadata||'{}');
+  return {id,canRetryUpload:canRetryFreeUpload(row,meta),allowsSupplement:r?.kind==='songs'&&!r.conflict&&results.length===1&&meta.reviewKind==='partial',operation:row.operation,state:row.state,channelId:row.channel_id,submissionId:row.submission_key,
     upstreamId:row.upstream_id,relatedTaskId:r?.kind==='voice'?r.taskId:undefined,receiptKind:r?.kind,providerStatus:r&&r.kind!=='songs'?r.status:undefined,
     error:row.error,results:results.map(t=>({id:t.id,upstreamId:t.upstream_id,status:t.status,error:t.error,saved:Boolean(t.saved)}))};
 }
-export async function adminRecoverMusic(id:string,adminId:number,input:{upstreamId?:unknown;evidence?:unknown;songIds?:unknown}) {
+export async function adminRecoverMusic(id:string,adminId:number,input:{upstreamId?:unknown;evidence?:unknown;songIds?:unknown;retryUpload?:unknown}) {
   const row=job(id);
   if(!row||row.provider!==SUNO_CHANNEL_TYPE)throw musicFailure('音乐订单不存在',404);
   if(!['review','accepted','submitting'].includes(row.state))throw musicFailure('该订单无需恢复',409);
@@ -488,10 +505,26 @@ export async function adminRecoverMusic(id:string,adminId:number,input:{upstream
     const current=job(id)!;
     const contentRow=sqlite.prepare('SELECT metadata FROM contents WHERE id=?').get(current.content_id) as any;
     if(!contentRow)throw musicFailure('原订单记录不存在',404);
-    const billing=JSON.parse(contentRow.metadata||'{}').billingStatus;
+    const meta=JSON.parse(contentRow.metadata||'{}');
+    const billing=meta.billingStatus;
+    if(input.retryUpload===true) {
+      if(!canRetryFreeUpload(current,meta)||upstreamId!==undefined||songIds!==undefined)throw musicFailure('该订单不能重试普通上传',409);
+      activeChannel(current,true);
+      const spec=JSON.parse(current.payload) as StoredSpec;
+      if(!spec.multipart||!await fs.stat(spec.multipart.file).then(stat=>stat.isFile()).catch(()=>false)) {
+        throw musicFailure('原音频文件已不可用，请重新上传',409);
+      }
+      sqlite.transaction(()=>{
+        sqlite.prepare("UPDATE music_jobs SET state='submitting',next_poll=0 WHERE id=?").run(id);
+        musicMetadata(current,{requiresReview:false,reviewKind:null},'processing');
+        sqlite.prepare('INSERT INTO music_recovery_audit(job_id,admin_id,evidence) VALUES(?,?,?)')
+          .run(id,adminId,'重试免费普通上传 · '+publicGenerationError(evidence));
+      }).immediate();
+      return;
+    }
     if(finalStates.has(current.state)||['settled','refunded'].includes(billing))throw musicFailure('该订单已结束',409);
     const prior=readReceipt(current);
-    const supplement=prior?.kind==='songs'&&!prior.conflict&&JSON.parse(contentRow.metadata||'{}').reviewKind==='partial'&&songIds!==undefined;
+    const supplement=prior?.kind==='songs'&&!prior.conflict&&meta.reviewKind==='partial'&&songIds!==undefined;
     if(current.upstream_id&&(upstreamId!==undefined||songIds!==undefined&&!supplement))throw musicFailure('订单已有回执，不允许更换原编号',409);
     let receipt:SunoReceipt|undefined;
     if(!current.upstream_id||supplement) {

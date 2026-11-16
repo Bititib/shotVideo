@@ -12,6 +12,11 @@ export const SUNO_SUBMIT_TIMEOUT = 310_000;
 export class SunoError extends Error {
   constructor(message: string, readonly confirmedRejection = false, readonly retryMs = 0) { super(message); }
 }
+export const isSunoUploadConnectionError = (code: unknown) =>
+  code === 'ECONNRESET' || code === 'EPIPE' || code === 'UND_ERR_SOCKET';
+export class SunoTransportError extends SunoError {
+  constructor(message: string, readonly transportCode: unknown) { super(message); }
+}
 const object = (value: any) => value && typeof value === 'object' && !Array.isArray(value);
 export function sunoId(value: unknown): string | undefined {
   return typeof value === 'string' && /^[A-Za-z0-9_-]{1,160}$/.test(value) ? value : undefined;
@@ -40,7 +45,11 @@ async function request(channel: SunoChannel, stage: string, endpoint: string, me
       headers: { Authorization: 'Bearer ' + channel.apiKey, ...(body && !multipart ? {'Content-Type':'application/json'} : {}), ...headers },
       body: multipart ? body : body ? JSON.stringify(body) : undefined,
     });
-  } catch (error) { throw new SunoError(transportDiagnostic('Suno', stage, error, channel.apiKey)); }
+  } catch (error) {
+    const networkError = error as { cause?: { code?: unknown }; code?: unknown };
+    throw new SunoTransportError(transportDiagnostic('Suno', stage, error, channel.apiKey),
+      networkError?.cause?.code ?? networkError?.code);
+  }
   const data = await diagnosticJson('Suno', stage, response, channel.apiKey);
   const trace = response.headers.get('x-oneapi-request-id') || response.headers.get('x-request-id') || undefined;
   return { response, data, trace, channel, stage };

@@ -34,6 +34,7 @@ generate 默认用灵感模式，传 prompt。专业模式传 custom=true、tags
 ## 上游协议与恢复
 
 - 普通素材：POST /api/music/upload-source。素材完成态为 complete，存 clip_id。普通翻唱使用 POST /api/music/generate-from-source 的 sourceClipId，强化素材另外带上游音频地址与标题。
+- 普通上传遇到连接重置、连接断管或 socket 中断且没有 clip_id 时，后台等待至少 10 秒，在同一订单、原 Key 和原音频上重试一次。连续断开保留最后一次错误待核实。此前已在待核实的普通上传，可在原订单填写原因后点「重试免费上传」，使用同一份留存文件。该操作只重试免费的素材上传；上游没有提供按本站订单号查找普通上传回执或请求去重的保证。
 - 强化上传：POST /api/music/enhanced-upload，先保存 task_id，再查询原任务。completed 后保存真实 song_id 及媒体。只有原队列确认取消才退款；取消响应中断后查询原任务。
 - 音色：POST /api/music/voice-profile/create（普通或 enhanced=true），或者 /create-from-clip。保存 voice_id 并查询到 ready。后续 POST /api/music/voice-profile/cover 检查 resolved_scene，按真实 song_id 保存两首结果。
 - 文字生成：POST /api/music/create 或 /create/custom 使用 accept_mode=async、上游 Idempotency-Key。持久化回执后查 /api/music/requests/{request_id}，再逐首用逗号分隔的 song_ids 查询。后台只允许一次同键、同参数、同凭据的受保护回放。普通创建音色及已有音频创建同样只在文档去重范围内使用原 client_request_id 回放。
