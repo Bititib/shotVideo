@@ -1,7 +1,7 @@
 import { configuredZhiyingProfile } from './zhiyingModelRegistry.js';
 import { funAiModelKind, funAiModelLimits, FUNAI_MODEL_PREFIX } from '../../shared/funAi.js';
 import { publicApiModelId } from '../../shared/publicApiModelId.js';
-import type { ModelSpecification } from '../../shared/modelRouting.js';
+import type { ModelInputLimits, ModelSpecification } from '../../shared/modelRouting.js';
 import { getZonghengVideoSpec } from '../../shared/zonghengVideo.js';
 import { existingModelLimits } from './modelInputPresets.js';
 import { getModelSpecification } from './modelRoutingService.js';
@@ -50,6 +50,26 @@ const parameterNotes: Record<string, string> = {
   'hss-2.5-301010-渠道B': '已核对 HUSS 统一视频契约：当前没有额外生成参数；使用上方基础规格和参考素材。',
   'grok-imagine-video-1.5': '已核对该渠道 Grok 1.5 文档：没有列出种子、负面提示词或音轨开关，不套用其他渠道参数。',
 };
+
+export function describeVideoModelLimits(limits: ModelInputLimits): string {
+  const { duration, resolutions, ratios, maxImages, maxVideos, maxAudios, maxReferences, firstFrame, lastFrame } = limits;
+  const resolution = resolutions.map(value => value === 'default' ? '分辨率由上游决定' : value).join(' / ');
+  let seconds = `${duration.min} 秒`;
+  if (duration.mode === 'options') {
+    const options = [...new Set(duration.values)].sort((a, b) => a - b);
+    seconds = options.length > 6
+      ? `${options[0]}–${options.at(-1)} 秒（${options.length} 档）`
+      : `${options.join(' / ')} 秒`;
+  } else if (duration.mode === 'range' && duration.min !== duration.max) {
+    seconds = `${duration.min}–${duration.max} 秒`;
+    if (duration.step !== 1) seconds += `（步长 ${duration.step} 秒）`;
+  }
+  const ratio = ratios.length ? `画幅 ${ratios.map(value => value === 'adaptive' ? '自适应' : value).join(' / ')}` : '';
+  const references = [maxImages > 0 && `${maxImages} 图`, maxVideos > 0 && `${maxVideos} 视频`, maxAudios > 0 && `${maxAudios} 音频`].filter(Boolean);
+  const frameMode = firstFrame && lastFrame ? '支持独立首尾帧' : firstFrame ? '支持独立首帧' : lastFrame ? '支持独立尾帧' : '';
+  return [resolution, seconds, ratio, references.length && `参考最多 ${references.join(' / ')}`,
+    maxReferences !== undefined && `素材合计最多 ${maxReferences} 项`, frameMode].filter(Boolean).join(' · ');
+}
 
 export function videoCapabilities(modelId: string, specification?: ModelSpecification | null) {
   const spec = specification === undefined ? getModelSpecification(modelId) : specification;

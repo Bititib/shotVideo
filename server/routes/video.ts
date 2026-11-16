@@ -22,7 +22,7 @@ import { assertExpectedVideoCost } from '../services/videoQuoteService.js';
 import { resolvePublicModelId } from '../services/publicModelNameService.js';
 import { normalizeZhiyingRequest } from '../services/zhiyingVideoExecution.js';
 import { isConfiguredZhiyingModel as isZhiyingVideoModel } from '../services/zhiyingModelRegistry.js';
-import { publicApiModelMetadata } from '../services/publicModelMetadataService.js';
+import { isChannelSyncDescription, publicApiModelMetadata } from '../services/publicModelMetadataService.js';
 import { handleSpecificationGeneration, resumeSpecificationTasks, prepareSpecificationReferenceImages } from '../services/specificationGenerationService.js';
 import { getModelSpecification, specificationAvailable, selectModelRoutes } from '../services/modelRoutingService.js';
 import { specificationRequest } from '../services/specificationGenerationService.js';
@@ -33,7 +33,7 @@ import { prepareHmReferenceImages } from '../services/hmStudioReferenceService.j
 import { canvasRequestMiddleware, recordCanvasEvent } from '../middleware/canvasRequest.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { hayaVideoSeconds, HAYA_VIDEO_MODELS, HAYA_XG_SEEDANCE_20_MODEL, getHayaVideoSpec, validateHayaVideoInput } from '../../shared/hayaVideo.js';
-import { videoCapabilities } from '../services/videoCapabilities.js';
+import { describeVideoModelLimits, videoCapabilities } from '../services/videoCapabilities.js';
 import { isHayaChannel, hayaTaskUrl, normalizeHayaTask, hayaPollDelay, submitHayaVideo, HayaSubmissionError } from '../services/hayaVideoAdapter.js';
 import { prepareHayaMedia, validateHayaMedia } from '../services/hayaMediaService.js';
 import { patchHayaTask, reviewHayaTask } from '../services/hayaTaskService.js';
@@ -198,6 +198,7 @@ const router = Router();
 router.use(['/generate', '/validate'], generationErrorResponse);
 router.use('/quote', videoQuotes);
 const VIDEO_MODELS_CACHE_TTL_MS = 15_000;
+const DEFAULT_VIDEO_MODEL_DESCRIPTION = 'AI 视频生成服务';
 let videoModelsResponseCache: { expiresAt: number; data: any[] } | null = null;
 const HM_STUDIO_VIDEO_MODEL_ORDER = [
   HM_STUDIO_PRIMARY_VIDEO_MODEL,
@@ -672,11 +673,15 @@ router.get('/models', optionalAuthMiddleware, (req: AuthRequest, res: Response) 
     const successStats = calculateSuccessRate(successCalls, failureCalls);
     const available = managedSpec ? specificationAvailable(managedSpec) : findVideoChannel(m.id, activeVideoChannels) !== null
       || (m.id === HM_STUDIO_PRIMARY_VIDEO_MODEL && hmStudioOverflowAvailable);
+    let description = m.description?.trim();
+    if (managedSpec?.kind === 'video' && (!description || description === DEFAULT_VIDEO_MODEL_DESCRIPTION || isChannelSyncDescription(description))) {
+      description = describeVideoModelLimits(managedSpec.limits);
+    }
 
     return {
       id: m.id,
       name: m.name || preset?.name || m.id,
-      description: m.description || preset?.description || 'AI 视频生成服务',
+      description: description || preset?.description || DEFAULT_VIDEO_MODEL_DESCRIPTION,
       available,
       modelStatus: calculateVideoModelStatus(recentRowsByModel.get(m.id) || [], available),
       ...videoCapabilities(m.id, managedSpec || null),

@@ -9,6 +9,7 @@ import { channels, contents, models, modelPricing, users } from '../server/db/sc
 import { env } from '../server/config/env.js';
 import channelRoutes from '../server/routes/channels.js';
 import apiRoutes from '../server/routes/v1.js';
+import videoRoutes from '../server/routes/video.js';
 import { ChannelService } from '../server/services/channelService.js';
 import { TokenService } from '../server/services/tokenService.js';
 import { listChannelModelConfigurations, previewChannelModelRequest, saveChannelModelConfiguration } from '../server/services/channelModelConfigurationService.js';
@@ -168,7 +169,7 @@ it('does not create a model or mapping when the key has no authorization or chan
   expect(listChannelModelConfigurations(id).models).toEqual([]);
 });
 
-it('exposes the channel config API only to administrators and saves a disabled model through the real route', async () => {
+it('saves a disabled model through the admin route and describes its configured limits once enabled', async () => {
   const channelId = addChannel('后台接口线路');
   const createUser = (role: string) => Number(db.insert(users).values({
     username: role, email: role + '@example.test', role, passwordHash: 'unused',
@@ -180,6 +181,7 @@ it('exposes the channel config API only to administrators and saves a disabled m
   const app = express();
   app.use(express.json());
   app.use('/api/admin/channels', channelRoutes);
+  app.use('/api/video', videoRoutes);
   app.use('/v1', apiRoutes);
   const server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
@@ -218,6 +220,30 @@ it('exposes the channel config API only to administrators and saves a disabled m
     expect((await post('videos', { prompt: 'test' })).status).toBe(404);
     expect((await post('chat/completions', { messages: [{ role: 'user', content: 'test' }] })).status).toBe(400);
     expect(upstream).toHaveBeenCalledOnce();
+
+    async function listedModel() {
+      const response = await localFetch(origin + '/api/video/models');
+      expect(response.status).toBe(200);
+      return (await response.json() as { id: string; description: string }[]).find(model => model.id === draft.modelId);
+    }
+    expect(await listedModel()).toBeUndefined();
+    db.update(models).set({ isActive: 1 }).where(eq(models.modelId, draft.modelId)).run();
+    expect((await listedModel())?.description).toBe('720p · 4–30 秒 · 画幅 1:1');
+
+    const current = listChannelModelConfigurations(channelId);
+    const updated = await localFetch(url, {
+      method: 'PUT', headers: { Authorization: admin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: current.version, draft: { ...draft, limits: { ...draft.limits,
+        ratios: ['16:9', '9:16'], resolutions: ['720p', '1080p'], maxImages: 3,
+        duration: { mode: 'options', min: 5, max: 15, step: 1, values: [5, 10, 15] },
+      } } }),
+    });
+    expect(updated.status).toBe(200);
+    db.update(models).set({ description: 'AI 视频生成服务' }).where(eq(models.modelId, draft.modelId)).run();
+    expect((await listedModel())?.description).toBe('720p / 1080p · 5 / 10 / 15 秒 · 画幅 16:9 / 9:16 · 参考最多 3 图');
+
+    db.update(models).set({ description: '管理员填写的模型说明' }).where(eq(models.modelId, draft.modelId)).run();
+    expect((await listedModel())?.description).toBe('管理员填写的模型说明');
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
