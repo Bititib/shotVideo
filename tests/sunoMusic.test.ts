@@ -11,7 +11,7 @@ import { ensureFundLedger } from '../server/db/fundLedger.js';
 import { ChannelService } from '../server/services/channelService.js';
 import { getEnabledPublicModels } from '../server/services/modelCatalogService.js';
 import { createMusicTask, ensureMusicJobs, getMusicTask, getMusicTaskByRequest, musicFile, processMusicTask, resumeMusicTasks } from '../server/services/musicGenerationService.js';
-import { adminMusicDiagnostics, adminRecoverMusic, cancelMusicUpload, musicPrivateDir, removeMusicVoice } from '../server/services/sunoMusicJobs.js';
+import { adminMusicDiagnostics, adminRecoverMusic, cancelMusicUpload, musicPrivateDir, removeMusicVoice, recoverMusicSource } from '../server/services/sunoMusicJobs.js';
 import { resolveBillingReservation } from '../server/services/billingReconciliation.js';
 import channelRouter from '../server/routes/channels.js';
 import musicAdminRouter from '../server/routes/musicAdmin.js';
@@ -561,4 +561,191 @@ it('lets an admin recover a historical free upload with no receipt, once, from t
   expect(calls).toHaveBeenCalledTimes(1);
   expect(job(task.id)).toMatchObject({upstream_id:'recovered-historical-source',replayed:1});
   expect(ledger(task.id)).toEqual([]);
+});
+
+it('lets API upload owners observe retries and recover once under concurrent requests without charges',async()=>{
+  db.insert(apiTokens).values([
+    {id:11,tokenKey:'music-token',name:'music',userId:1,balance:30,allowedModels:'["suno-v6"]'},
+    {id:12,tokenKey:'another-token',name:'other',userId:1,balance:30,allowedModels:'["suno-v6"]'},
+  ]).run();
+  sqlite.prepare("UPDATE users SET role='user' WHERE id=1").run();
+  await withApp(async url=>{
+    const headers={Authorization:'Bearer music-token','Content-Type':'application/json'};
+    const spec=input('upload',{rights_confirmed:true});
+    const form=new FormData();
+    form.append('options',JSON.stringify(spec));
+    form.append('file',new Blob([wav()],{type:'audio/wav'}),'source.wav');
+    calls.mockRejectedValueOnce(uploadReset()).mockRejectedValueOnce(uploadReset());
+    const response=await localFetch(url+'/v1/music/assets',{
+      method:'POST',headers:{Authorization:headers.Authorization},body:form
+    });
+    expect(response.status).toBe(202);
+    const initial=await response.json();
+    expect(response.headers.get('location')).toBe(initial.status_url);
+    expect(initial).toMatchObject({status_url:'/v1/music/'+initial.id,client_request_id:spec.client_request_id});
+    await until(()=>Boolean(job(initial.id).error));
+    files.add(JSON.parse(job(initial.id).payload).multipart.file);
+    let current=await (await localFetch(url+initial.status_url,{headers})).json();
+    expect(current).toMatchObject({stage:'submitting',error_code:'ECONNRESET',can_recover:false});
+    expect(current.poll_after_seconds).toBeGreaterThan(0);
+    await run(initial.id);
+    current=await (await localFetch(url+initial.status_url,{headers})).json();
+    expect(current).toMatchObject({status:'review',can_recover:true,poll_after_seconds:null,
+      recovery_url:'/v1/music/'+initial.id+'/recover'});
+    const endpoint=url+current.recovery_url;
+    expect((await localFetch(endpoint,{method:'POST'})).status).toBe(401);
+    expect((await localFetch(endpoint,{method:'POST',headers:{Authorization:'Bearer another-token'}})).status).toBe(404);
+    expect((await localFetch(endpoint,{method:'POST',headers,body:'{"upstreamId":"foreign"}'})).status).toBe(400);
+    const limited=await localFetch(endpoint,{method:'POST',headers,body:'{}'});
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
+    due();
+    let complete!:()=>void;
+    calls.mockImplementationOnce(async(_url,init)=>{
+      const uploaded=await ((init.body as FormData).get('file') as File).arrayBuffer();
+      expect(Buffer.from(uploaded)).toEqual(wav());
+      await new Promise<void>(resolve=>{complete=resolve;});
+      return Response.json({clip_id:'api-recovered-source',status:'complete'});
+    });
+    const recovery=await localFetch(endpoint,{method:'POST',headers,body:'{}'});
+    expect(recovery.status).toBe(202);
+    await until(()=>Boolean(complete));
+    const duplicate=await localFetch(endpoint,{method:'POST',headers,body:'{}'});
+    expect(duplicate.status).toBe(202);
+    expect((await duplicate.json()).id).toBe(initial.id);
+    complete();
+    await until(()=>job(initial.id).state==='completed');
+    const final=await localFetch(url+initial.status_url,{headers});
+    expect(final.headers.get('cache-control')).toBe('no-store');
+    expect(await final.json()).toMatchObject({id:initial.id,asset_id:initial.id,status:'completed',
+      poll_after_seconds:null,can_recover:false,recovery_url:null,error:null});
+    expect((await localFetch(endpoint,{method:'POST',headers,body:'{}'})).status).toBe(200);
+    expect(calls).toHaveBeenCalledTimes(3);
+    expect(ledger(initial.id)).toEqual([]);
+    expect(sqlite.prepare('SELECT balance FROM api_tokens WHERE id=11').get()).toEqual({balance:30});
+  });
+});
+
+it('recovers an API voice from its exact original request via read-only lookup after restart',async()=>{
+  db.insert(apiTokens).values({id:11,tokenKey:'music-token',name:'music',userId:1,balance:30,allowedModels:'["suno-v6"]'}).run();
+  const apiOwner={userId:1,tokenId:11,allowedModels:[model]};
+  const task=createMusicTask(input('voice',{self_voice_confirmed:true}),apiOwner,await localFile()).task;
+  const row=job(task.id);
+  sqlite.prepare("UPDATE music_jobs SET state='review',replayed=1,error=? WHERE id=?")
+    .run('[上游诊断 Suno 提交 voice] code=ECONNRESET：read ECONNRESET',task.id);
+  sqlite.prepare("UPDATE contents SET status='review',metadata=json_set(metadata,'$.reviewKind','submission') WHERE id=?").run(row.content_id);
+  // Persist the recovery request, then let the startup scanner own execution.
+  await recoverMusicSource(task.id,apiOwner);
+  calls.mockResolvedValueOnce(Response.json({success:true,data:{items:[
+    {voice_id:'vp_unrelated',enhanced:false,client_request_id:'someone-else'},
+    {voice_id:'vp_recovered',enhanced:false,client_request_id:row.submission_key},
+  ]}})).mockResolvedValueOnce(voices('vp_recovered'));
+  await Promise.all([resumeMusicTasks(),processMusicTask(task.id)]);
+  await withApp(async url=>{
+    const headers={Authorization:'Bearer music-token'};
+    const r=await localFetch(url+'/v1/music/by-request/'+row.request_key,{headers});
+    expect(await r.json()).toMatchObject({id:task.id,voice_id:task.id,status:'completed',error:null,can_recover:false});
+    const list=await (await localFetch(url+'/v1/music/voices',{headers})).json();
+    expect(list[0]).toMatchObject({id:task.id,status_url:'/v1/music/'+task.id});
+  });
+  expect(calls.mock.calls.map(([url])=>url)).toEqual([base+'/api/music/voice-profile/list',base+'/api/music/voice-profile/vp_recovered']);
+  expect(calls.mock.calls.every(([,init])=>init.method==='GET')).toBe(true);
+  expect(ledger(task.id)).toEqual([]);
+});
+
+it('reuses the original voice idempotency key after lookup and blocks paid or missing-source recovery',async()=>{
+  const task=create(input('voice',{self_voice_confirmed:true}),await localFile());
+  calls.mockRejectedValueOnce(uploadReset());
+  await run(task.id);
+  calls.mockResolvedValueOnce(Response.json({success:true,data:{items:[]}}));
+  calls.mockImplementationOnce(async(url,init)=>{
+    expect(url).toBe(base+'/api/music/voice-profile/create');
+    expect((init.body as FormData).get('client_request_id')).toBe(job(task.id).submission_key);
+    throw uploadReset();
+  });
+  await run(task.id);
+  expect(getMusicTask(task.id,owner)).toMatchObject({can_recover:true,error_code:'ECONNRESET'});
+  due();
+  await recoverMusicSource(task.id,owner);
+  calls.mockResolvedValueOnce(Response.json({success:true,data:{items:[]}}));
+  calls.mockImplementationOnce(async(_url,init)=>{
+    expect((init.body as FormData).get('client_request_id')).toBe(job(task.id).submission_key);
+    return voices();
+  });
+  await resumeMusicTasks();
+  expect(getMusicTask(task.id,owner)).toMatchObject({status:'completed',voice_id:task.id});
+  expect(job(task.id).replayed).toBe(2);
+  expect(ledger(task.id)).toEqual([]);
+  const paid=create(input('enhanced_upload',{rights_confirmed:true,expected_cost:7}),await localFile());
+  await expect(recoverMusicSource(paid.id,owner)).rejects.toThrow('仅支持普通上传');
+  expect(ledger(paid.id).map((entry:any)=>entry.delta)).toEqual([-7]);
+  const missing=create(input('upload',{rights_confirmed:true}),await localFile());
+  calls.mockRejectedValueOnce(uploadReset()).mockRejectedValueOnce(uploadReset());
+  await run(missing.id);await run(missing.id);due();
+  await fs.rm(JSON.parse(job(missing.id).payload).multipart.file);
+  await expect(recoverMusicSource(missing.id,owner)).rejects.toThrow('原音频文件已不可用');
+  expect(job(missing.id).state).toBe('review');
+});
+
+it('returns queryable voice receipts through the upload API and recovers historic voice orders through its API',async()=>{
+  db.insert(apiTokens).values({id:11,tokenKey:'music-token',name:'music',userId:1,balance:30,allowedModels:'["suno-v6"]'}).run();
+  await withApp(async url=>{
+    const headers={Authorization:'Bearer music-token','Content-Type':'application/json'};
+    const spec=input('voice',{self_voice_confirmed:true});
+    const form=new FormData();
+    form.append('options',JSON.stringify(spec));
+    form.append('file',new Blob([wav()],{type:'audio/wav'}),'my-voice.wav');
+    calls.mockRejectedValueOnce(uploadReset());
+    const response=await localFetch(url+'/v1/music/voices',{
+      method:'POST',headers:{Authorization:headers.Authorization},body:form
+    });
+    expect(response.status).toBe(202);
+    const task=await response.json();
+    files.add(JSON.parse(job(task.id).payload).multipart.file);
+    await until(()=>Boolean(job(task.id).error));
+    // This is the historical state from a previous process which exhausted its replay.
+    sqlite.prepare("UPDATE music_jobs SET state='review',replayed=1,next_poll=0 WHERE id=?").run(task.id);
+    const current=await (await localFetch(url+task.status_url,{headers})).json();
+    expect(current).toMatchObject({can_recover:true,status:'review',poll_after_seconds:null,error_code:'ECONNRESET'});
+    calls.mockResolvedValueOnce(Response.json({success:true,data:{items:[
+      {voice_id:'vp_api_ready',enhanced:false,client_request_id:job(task.id).submission_key},
+    ]}})).mockResolvedValueOnce(voices('vp_api_ready'));
+    const recovered=await localFetch(url+current.recovery_url,{method:'POST',headers,body:'{}'});
+    expect(recovered.status).toBe(202);
+    await until(()=>job(task.id).state==='completed');
+    const completed=await (await localFetch(url+task.status_url,{headers})).json();
+    expect(completed).toMatchObject({voice_id:task.id,status:'completed',error:null,poll_after_seconds:null});
+    expect(calls).toHaveBeenCalledTimes(3);
+    expect(calls.mock.calls.slice(1).every(([,init])=>init.method==='GET')).toBe(true);
+    expect(ledger(task.id)).toEqual([]);
+  });
+});
+
+it('ends a free upload on a confirmed replay rejection and never resends a voice on ambiguous lookup',async()=>{
+  const upload=create(input('upload',{rights_confirmed:true}),await localFile());
+  calls.mockRejectedValueOnce(uploadReset()).mockRejectedValueOnce(uploadReset());
+  await run(upload.id);await run(upload.id);due();
+  await recoverMusicSource(upload.id,owner);
+  calls.mockResolvedValueOnce(Response.json({success:false,error_code:'invalid_request_error',message:'audio invalid'},{status:400}));
+  await resumeMusicTasks();
+  expect(getMusicTask(upload.id,owner)).toMatchObject({status:'failed',can_recover:false,poll_after_seconds:null});
+  expect(ledger(upload.id)).toEqual([]);
+  await expect(recoverMusicSource(upload.id,owner)).rejects.toThrow('不支持自助恢复');
+  const voice=create(input('voice',{self_voice_confirmed:true}),await localFile());
+  calls.mockRejectedValueOnce(uploadReset());
+  await run(voice.id);
+  calls.mockResolvedValueOnce(Response.json({success:true,data:{items:[
+    {voice_id:'vp_one',enhanced:false,client_request_id:job(voice.id).submission_key},
+    {voice_id:'vp_two',enhanced:false,client_request_id:job(voice.id).submission_key},
+  ]}}));
+  await run(voice.id);
+  expect(getMusicTask(voice.id,owner)).toMatchObject({status:'review',review_kind:'lookup'});
+  expect(job(voice.id).replayed).toBe(0);
+  expect(calls).toHaveBeenCalledTimes(5);
+  const previous=job(voice.id).state;
+  sqlite.prepare("UPDATE channels SET api_key='changed' WHERE id=?").run(channelId);
+  due();
+  await expect(recoverMusicSource(voice.id,owner)).rejects.toThrow('原音乐渠道凭据已变更');
+  expect(job(voice.id).state).toBe(previous);
+  expect(calls).toHaveBeenCalledTimes(5);
 });

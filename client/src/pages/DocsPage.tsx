@@ -21,6 +21,75 @@ interface EndpointDoc {
   responseExample: string;
 }
 
+
+function musicUploadExample(baseUrl:string,operation:'upload'|'voice',filename:string) {
+  return `import json, time, requests
+base = "__BASE__"
+headers = {"Authorization": "Bearer sk-YOUR_API_KEY"}
+# 每个新操作使用新编号。断线或恢复时保留原编号和原 API Key。
+request_id = "__OP__-unique-001"
+options = {"operation": "__OP__", "model": "suno-v6",
+           "client_request_id": request_id, "__CONFIRM__": True}
+task = None
+try:
+    with open("__FILE__", "rb") as audio:
+        r = requests.post(base + "/v1/music/__RESOURCE__", headers=headers,
+                          files={"file": audio}, data={"options": json.dumps(options)}, timeout=60)
+    r.raise_for_status()
+    task = r.json()
+except (requests.Timeout, requests.ConnectionError):
+    pass  # 按原编号查回本站已收到的订单
+deadline = time.monotonic() + 900
+recovered = False
+while time.monotonic() < deadline:
+    if task and task["status"] == "completed":
+        print(task["__RESULT__"])
+        break
+    if task:
+        print(task["id"], task["status"], task.get("stage"), task.get("error"))
+        delay = task.get("poll_after_seconds")
+        if delay is None:
+            if not task.get("can_recover") or recovered:
+                raise RuntimeError(json.dumps(task, ensure_ascii=False))
+            time.sleep(task.get("recovery_after_seconds") or 0)
+            try:
+                r = requests.post(base + task["recovery_url"], headers=headers, json={}, timeout=30)
+            except (requests.Timeout, requests.ConnectionError):
+                recovered = True  # 恢复可能已经受理，继续查询原订单
+            else:
+                if r.status_code == 429:
+                    time.sleep(int(r.headers.get("Retry-After", "8")))
+                else:
+                    r.raise_for_status()
+                    task = r.json()
+                    recovered = True
+                    continue
+        else:
+            time.sleep(delay)
+    url = base + (task["status_url"] if task else "/v1/music/by-request/" + request_id)
+    try:
+        r = requests.get(url, headers=headers, timeout=30)
+    except (requests.Timeout, requests.ConnectionError):
+        time.sleep(8)
+        continue
+    if r.status_code == 404 and task is None:
+        time.sleep(8)
+        continue
+    if r.status_code >= 500:
+        time.sleep(8)
+        continue
+    r.raise_for_status()
+    task = r.json()
+else:
+    raise TimeoutError("保留原请求编号继续查询：" + request_id)`
+    .replace('__BASE__',baseUrl.replace(/\/v1$/, ''))
+    .replaceAll('__OP__',operation)
+    .replace('__CONFIRM__',operation==='upload'?'rights_confirmed':'self_voice_confirmed')
+    .replace('__FILE__',filename)
+    .replace('__RESOURCE__',operation==='upload'?'assets':'voices')
+    .replace('__RESULT__',operation==='upload'?'asset_id':'voice_id');
+}
+
 export default function DocsPage({ embedded = false }: { embedded?: boolean }) {
   const [activeTab, setActiveTab] = useState<string>('getting-started');
   const [copiedText, setCopiedText] = useState<string | null>(null);
@@ -60,25 +129,33 @@ export default function DocsPage({ embedded = false }: { embedded?: boolean }) {
     },
     {
       id:'music-assets',title:'上传歌曲素材',method:'POST',path:'/v1/music/assets',
-      description:'multipart 上传一个 file 与 JSON 字符串 options。operation=upload 为免费上传，enhanced_upload 为授权歌曲强化上传。强化操作须传 expected_cost。完成后取得本站 asset_id。GET /v1/music/assets 查看素材，POST /v1/music/assets/{id}/cancel 可尝试取消仍在排队的强化上传。',
+      description:'multipart 上传 file 与 JSON 字符串 options。upload 免费，enhanced_upload 强化上传须传 expected_cost。202 表示本站已接收，按 status_url 和 poll_after_seconds 查询至 completed 后取 asset_id。error 保留具体原因，can_recover=true 时等待 recovery_after_seconds 后向 recovery_url POST 空对象恢复原订单。全程使用同一 API Key。',
       parameters:[
         {name:'file',type:'file',required:true,description:'可解码音乐文件，最大 40 MB'},
         {name:'options',type:'string',required:true,description:'JSON，包含 operation、model、client_request_id、rights_confirmed=true，可填 title'},
       ],
       curlExample:'curl "'+getBaseUrl()+'/music/assets" -H "Authorization: Bearer sk-YOUR_API_KEY" -F "file=@song.wav" -F \'options={"operation":"upload","model":"suno-v6","client_request_id":"upload-unique-001","rights_confirmed":true}\'',
-      pythonExample:'import json, requests\noptions = {"operation":"upload","model":"suno-v6","client_request_id":"upload-unique-001","rights_confirmed":True}\nwith open("song.wav", "rb") as audio:\n    response = requests.post("'+getBaseUrl()+'/music/assets", headers={"Authorization":"Bearer sk-YOUR_API_KEY"}, files={"file":audio}, data={"options":json.dumps(options)})\n    print(response.json())',
-      responseExample:JSON.stringify({id:'operation-id',operation:'upload',status:'processing',cost:0,results:[]},null,2),
+      pythonExample:musicUploadExample(getBaseUrl(),'upload','song.wav'),
+      responseExample:JSON.stringify({id:'operation-id',client_request_id:'upload-unique-001',operation:'upload',status:'processing',stage:'queued',status_url:'/v1/music/operation-id',poll_after_seconds:8,can_recover:false,recovery_url:null,error:null,error_code:null,cost:0,results:[]},null,2),
     },
     {
       id:'music-voices',title:'创建本人演唱音色',method:'POST',path:'/v1/music/voices',
-      description:'上传本人样本时使用 multipart，普通为 voice，强化为 enhanced_voice。强化须同时提供 rights_confirmed 与 expected_cost。已有合格素材可用 JSON 提交 voice_from_clip 和 asset_id。完成后使用本站 voice_id。GET /v1/music/voices 查看音色，DELETE /v1/music/voices/{id} 删除。',
+      description:'multipart 上传本人样本，voice 免费，enhanced_voice 强化克隆须传 rights_confirmed 与 expected_cost。202 后用同一 API Key 查询 status_url，completed 后取本站 voice_id。普通音色 can_recover=true 时可 POST recovery_url 恢复，服务器先查原请求对应的音色。已有素材支持 voice_from_clip。GET /v1/music/voices 查看音色。',
       parameters:[
         {name:'file',type:'file',required:false,description:'本人声音文件，至少 6 秒，最大 10 MB。从已有素材创建时省略'},
         {name:'options',type:'string',required:false,description:'文件上传用 JSON 字符串，包含 operation、model、client_request_id、self_voice_confirmed=true'},
       ],
       curlExample:'curl "'+getBaseUrl()+'/music/voices" -H "Authorization: Bearer sk-YOUR_API_KEY" -F "file=@my-voice.wav" -F \'options={"operation":"voice","model":"suno-v6","client_request_id":"voice-unique-001","self_voice_confirmed":true}\'',
-      pythonExample:'import json, requests\noptions = {"operation":"voice","model":"suno-v6","client_request_id":"voice-unique-001","self_voice_confirmed":True}\nwith open("my-voice.wav", "rb") as audio:\n    response = requests.post("'+getBaseUrl()+'/music/voices", headers={"Authorization":"Bearer sk-YOUR_API_KEY"}, files={"file":audio}, data={"options":json.dumps(options)})\n    print(response.json())',
-      responseExample:JSON.stringify({id:'operation-id',operation:'voice',status:'processing',cost:0,results:[]},null,2),
+      pythonExample:musicUploadExample(getBaseUrl(),'voice','my-voice.wav'),
+      responseExample:JSON.stringify({id:'operation-id',operation:'voice',status:'processing',stage:'queued',status_url:'/v1/music/operation-id',poll_after_seconds:8,can_recover:false,error:null,cost:0,results:[]},null,2),
+    },
+    {
+      id:'music-recovery',title:'恢复原上传或本人音色订单',method:'POST',path:'/v1/music/{id}/recover',
+      description:'仅支持免费 upload 和 voice，使用原 API Key。先 GET /v1/music/{id}，有 poll_after_seconds 时继续查询；can_recover=true 时等待 recovery_after_seconds，再发送空对象。恢复沿用原文件、原渠道和原请求编号。返回 202 后继续查询原订单，已完成返回 200。429 按 Retry-After 等待，409 查看具体原因。强化操作和付费生成由原任务查询及账单核对处理。',
+      parameters:[],
+      curlExample:'curl "'+getBaseUrl()+'/music/ORIGINAL_ORDER_ID/recover" -H "Authorization: Bearer sk-YOUR_API_KEY" -H "Content-Type: application/json" -d \'{}\'',
+      pythonExample:'import requests\nr = requests.post("'+getBaseUrl()+'/music/ORIGINAL_ORDER_ID/recover", headers={"Authorization": "Bearer sk-YOUR_API_KEY"}, json={}, timeout=30)\nr.raise_for_status()\nprint(r.json())\n# 使用上传示例的轮询流程继续查询 status_url',
+      responseExample:JSON.stringify({id:'original-order-id',operation:'upload',status:'processing',stage:'submitting',status_url:'/v1/music/original-order-id',poll_after_seconds:8,can_recover:false,cost:0},null,2),
     },
     {
       id: 'models',

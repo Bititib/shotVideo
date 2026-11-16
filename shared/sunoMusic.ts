@@ -20,4 +20,7 @@ export type MusicTask = {
   status: string; review_kind?: string | null; progress: number; result_url: string | null; results: MusicResult[];
   cost: number; refund_amount?: number; billing_status?: string; error: string | null; created_at: string;
   asset_id?: string; voice_id?: string; can_cancel?: boolean;
+  client_request_id?: string; stage?: string; error_code?: string | null;
+  poll_after_seconds?: number | null; can_recover?: boolean; recovery_after_seconds?: number | null;
+  status_url?: string; recovery_url?: string | null;
 };

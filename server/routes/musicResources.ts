@@ -4,12 +4,19 @@ import fs from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { createMusicTask, ensureMusicJobs, getMusicTask, processMusicTask, type MusicOwner } from '../services/musicGenerationService.js';
-import { cancelMusicUpload, listSunoAssets, musicPrivateDir, removeMusicVoice, sunoSourceFile } from '../services/sunoMusicJobs.js';
+import { cancelMusicUpload, listSunoAssets, musicPrivateDir, removeMusicVoice, recoverMusicSource, sunoSourceFile } from '../services/sunoMusicJobs.js';
+import type { MusicTask } from '../../shared/sunoMusic.js';
 import { probeAudioBufferDuration } from '../services/videoDurationProbe.js';
 import { detectedMediaMime } from '../services/privateMediaStore.js';
 import { musicFailure } from '../services/sunoMusicInput.js';
 
 type WebsitePermission=(req:Request,model:unknown)=>void;
+type PresentTask=(task:MusicTask)=>MusicTask;
+export const apiMusicResult:PresentTask=task=>({...task,
+  status_url:'/v1/music/'+task.id,
+  recovery_url:task.can_recover?'/v1/music/'+task.id+'/recover':null,
+  result_url:task.result_url?'/v1/music/'+task.id+'/file':null,
+  results:task.results.map(result=>({...result,result_url:result.result_url?'/v1/music/'+task.id+'/results/'+result.id+'/file':null}))});
 const upload=multer({storage:multer.diskStorage({
   destination(_req,_file,done){const dir=path.join(musicPrivateDir(),'sources');void fs.mkdir(dir,{recursive:true}).then(()=>done(null,dir),error=>done(error,dir));},
   filename(_req,_file,done){done(null,randomUUID());},
@@ -26,7 +33,7 @@ function assertOperation(input:any,kind:'asset'|'voice',file:boolean) {
   const allowed=kind==='asset'?['upload','enhanced_upload']:file?['voice','enhanced_voice']:['voice_from_clip'];
   if(!allowed.includes(input?.operation))throw musicFailure('请指定此入口支持的素材操作');
 }
-export async function createMusicResource(req:Request,res:Response,owner:MusicOwner,kind:'asset'|'voice',permission?:WebsitePermission) {
+export async function createMusicResource(req:Request,res:Response,owner:MusicOwner,kind:'asset'|'voice',permission?:WebsitePermission,present:PresentTask=task=>task) {
   let keep=false;
   try {
     const file=req.file;
@@ -56,23 +63,38 @@ export async function createMusicResource(req:Request,res:Response,owner:MusicOw
     }
     const {task,retainedFile}=createMusicTask(input,owner,prepared);
     keep=retainedFile;
-    res.status(202).json(task);void processMusicTask(task.id);
+    const response=present(task);
+    if(response.status_url)res.setHeader('Location',response.status_url);
+    res.status(202).json(response);void processMusicTask(task.id);
   } finally {if(req.file&&!keep)await fs.rm(req.file.path,{force:true}).catch(()=>{});}
 }
 export const requireMusicModel:WebsitePermission=(req,model)=>{
   const r=req as Request & {userRole?:string;availableModels?:{modelId:string}[]};
   if(!['admin','super_admin'].includes(r.userRole||'')&&!r.availableModels?.some(m=>m.modelId===model))throw musicFailure('当前等级无法使用此模型',403);
 };
-export function createMusicResourceRouter(ownerFor:(req:Request)=>MusicOwner,writeAuth:RequestHandler,permission?:WebsitePermission) {
+export function createMusicResourceRouter(ownerFor:(req:Request)=>MusicOwner,writeAuth:RequestHandler,permission?:WebsitePermission,present:PresentTask=task=>task) {
   const router=Router();
+  router.use((_req,res,next)=>{res.setHeader('Cache-Control','no-store');next();});
   const ownerMiddleware:RequestHandler=(req,res,next)=>{
     try {res.locals.musicOwner=ownerFor(req);res.setHeader('Cache-Control','no-store');next();}catch(error){next(error);}
   };
   const owner=(res:Response)=>res.locals.musicOwner as MusicOwner;
-  router.get('/assets',ownerMiddleware,(_req,res,next)=>{try{ensureMusicJobs();res.json(listSunoAssets(owner(res),'song'));}catch(e){next(e);}});
-  router.get('/voices',ownerMiddleware,(_req,res,next)=>{try{ensureMusicJobs();res.json(listSunoAssets(owner(res),'voice'));}catch(e){next(e);}});
-  router.post('/assets',writeAuth,ownerMiddleware,musicMultipart,(req,res,next)=>void createMusicResource(req,res,owner(res),'asset',permission).catch(next));
-  router.post('/voices',writeAuth,ownerMiddleware,musicMultipart,(req,res,next)=>void createMusicResource(req,res,owner(res),'voice',permission).catch(next));
+  router.get('/assets',ownerMiddleware,(_req,res,next)=>{try{ensureMusicJobs();res.json(listSunoAssets(owner(res),'song').map(present));}catch(e){next(e);}});
+  router.get('/voices',ownerMiddleware,(_req,res,next)=>{try{ensureMusicJobs();res.json(listSunoAssets(owner(res),'voice').map(present));}catch(e){next(e);}});
+  router.post('/assets',writeAuth,ownerMiddleware,musicMultipart,(req,res,next)=>void createMusicResource(req,res,owner(res),'asset',permission,present).catch(next));
+  router.post('/voices',writeAuth,ownerMiddleware,musicMultipart,(req,res,next)=>void createMusicResource(req,res,owner(res),'voice',permission,present).catch(next));
+  router.post('/:id/recover',ownerMiddleware,(req,res,next)=>{
+    if(req.body&&Object.keys(req.body).length)return next(musicFailure('恢复原订单请发送空对象，沿用原音频和请求标识'));
+    void recoverMusicSource(req.params.id,owner(res)).then(task=>{
+      const response=present(task);
+      if(response.status_url)res.setHeader('Location',response.status_url);
+      res.status(task.status==='completed'?200:202).json(response);
+      void processMusicTask(task.id);
+    }).catch(error=>{
+      if(error.retryAfter)res.setHeader('Retry-After',String(error.retryAfter));
+      next(error);
+    });
+  });
   router.get('/assets/:id/file',ownerMiddleware,(req,res,next)=>{
     try {
       const task=getMusicTask(req.params.id,owner(res));

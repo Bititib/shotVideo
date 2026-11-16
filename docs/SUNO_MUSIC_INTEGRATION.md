@@ -24,12 +24,23 @@
 | POST /music | generate 文字生成，cover 普通翻唱，sing 音色唱新歌，voice_cover 音色翻唱 |
 | GET /music、GET /music/{id} | 订单及逐首结果 |
 | GET /music/by-request/{client_request_id} | 按原请求编号查单 |
+| POST /music/{id}/recover | 使用原 API Key 和空 JSON 对象，恢复免费普通上传或本人音色原订单 |
 | GET /music/{id}/results/{resultId}/file | 下载或试听已保存的单首结果 |
 | GET /music/{id}/file | 兼容单文件客户端，返回首个已保存结果 |
 
 提交通用字段为 model、operation、client_request_id。强化操作必须提交已确认的 expected_cost；其他操作可提交该字段防止价格变动。上传素材须 rights_confirmed=true；音色操作须 self_voice_confirmed=true，强化音色另须 rights_confirmed=true。本站源音频上限 40 MB，音色样本上限 10 MB 且至少 6 秒。音色样本可上传文件或在网站录制 6–90 秒的 WAV。外部 API 可以用 source_kind=record 标记录制样本。素材使用本地文件或本站已授权素材 ID。
 
 generate 默认用灵感模式，传 prompt。专业模式传 custom=true、tags 和可选 lyrics、title；prompt 留空。cover 加本站 asset_id；专业翻唱需 tags 和 title。sing 用本站 voice_id；voice_cover 同时传 asset_id 和 voice_id。后者使用的歌曲素材不得等于创建音色的样本。生成返回 202 表示本站已入队，逐首读取 results[] 中的状态和结果地址。
+
+### API 上传后的查询与自助恢复
+
+素材和音色上传返回 202 及本站订单 id。API 响应提供 status_url，上传响应的 Location 也指向该地址。用原 API Key 查询，completed 时读取 asset_id 或 voice_id。API Key 之间的素材隔离也适用于同一用户的多个 Key。
+
+stage 表示队列阶段，client_request_id 为原调用编号，error 和 error_code 保留脱敏后的具体原因。poll_after_seconds 非空表示后台仍在处理或恢复，客户端按间隔查询。即使 status 为 review，只要该字段非空仍应查询原订单。poll_after_seconds 为空且 can_recover 为 true 时，等待 recovery_after_seconds 后 POST recovery_url，正文为 {}。成功返回 202 并继续查询同一订单，已完成的重复恢复返回 200。429 提供 Retry-After；409 的错误说明具体阻碍。查询响应禁用缓存。
+
+自助恢复限定免费 upload 和 voice，既有待核实订单同样适用。恢复请求通过原订单处理锁防并发，保持原文件、原凭据和原提交标识，持久化恢复意图后由后台执行。普通音色先从列表按精确 client_request_id 查找原音色并查询详情，找到后恢复原回执；未找到时按上游幂等约定使用同一个 client_request_id 提交。每次用户恢复最多重发一次，连续异常再次返回可查询的具体错误和恢复等待时间。普通上传的明确拒绝结束订单；音色已有未知受理历史时保留核对信息。原文件丢失、配置变化或回执冲突仍需要按具体错误处理。
+
+调用示例见站内 API 文档的上传歌曲素材、创建本人演唱音色和恢复原订单条目，包含上传、断线查单、轮询、一次自助恢复及最终素材编号读取。上述流程使用模拟上游验证，普通上传的生产 ECONNRESET 根因及 JSON base64 对照结果仍待现场确认。
 
 ## 上游协议与恢复
 
@@ -43,6 +54,8 @@ generate 默认用灵感模式，传 prompt。专业模式传 custom=true、tags
 - 管理员可 GET /api/admin/music/{id} 核对原回执和阶段，POST /api/admin/music/{id}/recover 提交 evidence。缺少回执时，强化／音色／文字生成传上游 upstreamId，普通或音色翻唱传经核实的 songIds；已有回执可提交 evidence 重新查询或保存；翻唱只收到一首且补查到第二首原单结果时，传入原单两首的 songIds。所有操作只读查上游原任务。账单核对页负责实收与退款。
 
 ## 验证范围
+
+本次 API 自助恢复修复通过 Suno、miniKey 历史音乐及音乐页面三个测试文件的 37 项回归，覆盖实际上传/查询/恢复入口、同用户不同 API Key 隔离、并发恢复、持久化后重启扫描、原音色只读找回、同键重提、连续断线、明确拒绝结束和免费操作无资金流水。两个 Python 示例通过模拟的上传、轮询和恢复流程，TypeScript 检查及生产构建通过。构建临时目录使用本地工作盘以避开 Windows 系统临时目录的文件删除权限错误。
 
 相关回归共 15 个测试文件、113 项通过，覆盖网站和外部 API、队列恢复、多人及组织资金、取消和部分结果。扩大到目录、渠道管理等共 19 个测试文件时，184 项通过，6 项既有失败在同一基线 8aa456e 复现。TypeScript 检查、生产构建和 git diff --check 通过。
 

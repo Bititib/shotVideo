@@ -1,5 +1,5 @@
-import { createMusicResourceRouter } from './musicResources.js';
-import { songOperation, type MusicTask } from '../../shared/sunoMusic.js';
+import { createMusicResourceRouter, apiMusicResult } from './musicResources.js';
+import { songOperation } from '../../shared/sunoMusic.js';
 import { musicBinding, musicPrices } from '../services/musicModelRegistry.js';
 import { videoApiProgress } from '../services/videoApiProgress.js';
 import { sendVideoFile } from '../services/videoRangeDelivery.js';
@@ -835,9 +835,7 @@ function musicApiOwner(req:Request):MusicOwner {
       return reserveApiCharge(token,cost,model,snapshot,operation);
     }};
 }
-const apiMusicResult=(task:MusicTask)=>({...task,result_url:task.result_url?'/v1/music/'+task.id+'/file':null,
-  results:task.results.map(result=>({...result,result_url:result.result_url?'/v1/music/'+task.id+'/results/'+result.id+'/file':null}))});
-router.use('/music',createMusicResourceRouter(musicApiOwner,(_req,_res,next)=>next()));
+router.use('/music',createMusicResourceRouter(musicApiOwner,(_req,_res,next)=>next(),undefined,apiMusicResult));
 router.get('/music/models',(req,res,next)=>{
   try{
     const owner=musicApiOwner(req);

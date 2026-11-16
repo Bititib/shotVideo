@@ -6,7 +6,7 @@ import { linkReservationContent, reserveUserCharge } from './billingReservation.
 import { musicBinding, musicOperationQuote } from './musicModelRegistry.js';
 import { finishMusic, getMusicTask, holdMusic, musicMetadata, ownerKey, type MusicOwner } from './musicGenerationService.js';
 import { musicFailure, musicHash, musicLocalId, parseSunoInput, sunoSubmission } from './sunoMusicInput.js';
-import { cancelSunoUpload, deleteSunoVoice, fetchSunoAudio, findSunoEnhancedVoice, findSunoVoiceSongs, querySunoSongs, readSunoReceipt, submitSuno, sunoBase,
+import { cancelSunoUpload, deleteSunoVoice, fetchSunoAudio, findSunoVoiceByRequest, findSunoVoiceSongs, querySunoSongs, readSunoReceipt, submitSuno, sunoBase,
   isSunoUploadConnectionError, SunoError, SunoTransportError, sunoId, sunoSongTerminal, type SunoChannel, type SunoReceipt, type SunoSong, type SunoSubmission } from './sunoMusicAdapter.js';
 import { transportDiagnostic } from './upstreamDiagnostic.js';
 import { publicGenerationError } from '../../shared/generationMessages.js';
@@ -255,6 +255,8 @@ export async function processSunoMusicTask(row:Row,lease:string) {
     const spec=JSON.parse(row.payload) as StoredSpec;
     const hadSend=row.state!=='queued';
     freeUpload=row.operation==='upload'&&meta.billingStatus==='free'&&!meta.billingReservationId;
+    const userRecovery=meta.musicRecoveryRequested===true&&meta.billingStatus==='free'&&
+      !meta.billingReservationId&&['upload','voice'].includes(row.operation);
     stage=hadSend?'configuration':'preparation';
     channel=activeChannel(row,!hadSend||freeUpload&&!row.upstream_id);
     let r=readReceipt(row);
@@ -275,23 +277,39 @@ export async function processSunoMusicTask(row:Row,lease:string) {
             r={kind:'songs',songs:found};persistReceipt(row,r);row=job(row.id)!;
           } else {retryExactLookup('上游翻唱回执暂未找到，保留原追踪号供核对');return;}
         } else if(row.operation==='enhanced_voice') {
-          const found=await findSunoEnhancedVoice(channel,row.submission_key);
+          const found=await findSunoVoiceByRequest(channel,row.submission_key);
           if(!found){retryExactLookup('强化音色列表暂未找到精确追踪号，保留原订单核对');return;}
           stage='conflict';
           persistReceipt(row,found);row=job(row.id)!;r=readReceipt(row);
-        } else if((!freeUpload&&!['generate','voice','voice_from_clip'].includes(row.operation))||row.replayed||row.upstream_id) {
+        } else if(row.operation==='voice') {
+          stage='lookup';
+          const found=await findSunoVoiceByRequest(channel,row.submission_key,false);
+          if(found) {
+            stage='conflict';persistReceipt(row,found);row=job(row.id)!;r=readReceipt(row);
+          } else if(row.replayed&&!userRecovery) {
+            holdMusic(row,row.error||'原音色回执暂未找到，可恢复原订单','submission');return;
+          }
+        } else if((!freeUpload&&!['generate','voice_from_clip'].includes(row.operation))||
+            row.replayed&&!userRecovery||row.upstream_id) {
           holdMusic(row,row.error||'提交期间连接中断，未确认上游是否受理','submission');return;
         }
       }
       if(!r) {
-        if(!hadSend||freeUpload) {
+        if(userRecovery) {
+          stage='configuration';
+          activeChannel(row,true);
+        }
+        if(!hadSend||freeUpload||userRecovery) {
           musicBinding(content.model_id,content.user_id||null);
           if(spec.assetId)recheckAsset(row,requireAsset(spec.assetId,row.owner,'song'));
           if(spec.voiceId)recheckAsset(row,requireAsset(spec.voiceId,row.owner,'voice'));
         }
         r=await submitSuno(channel,spec,row.submission_key,()=>{
-          const updated=sqlite.prepare("UPDATE music_jobs SET state='submitting',replayed=replayed+? WHERE id=? AND lease=?").run(hadSend?1:0,row.id,lease);
-          if(!updated.changes)throw new SunoError('订单处理权已转移');
+          sqlite.transaction(()=>{
+            const updated=sqlite.prepare("UPDATE music_jobs SET state='submitting',replayed=replayed+? WHERE id=? AND lease=?").run(hadSend?1:0,row.id,lease);
+            if(!updated.changes)throw new SunoError('订单处理权已转移');
+            if(userRecovery)musicMetadata(row,{musicRecoveryRequested:false});
+          }).immediate();
           stage='submission';
         });
         stage='conflict';
@@ -351,7 +369,8 @@ export async function processSunoMusicTask(row:Row,lease:string) {
     const current=job(row.id)!;
     if(current.lease!==lease||finalStates.has(current.state))return;
     const detail=error instanceof SunoError?error.message:transportDiagnostic('Suno',stage,error,channel?.apiKey||'');
-    if(stage==='preparation'&&current.state==='queued' || stage==='submission'&&error instanceof SunoError&&error.confirmedRejection&&!current.upstream_id&&!current.replayed) {
+    if(stage==='preparation'&&current.state==='queued' || stage==='submission'&&error instanceof SunoError&&error.confirmedRejection&&!current.upstream_id&&
+        (!current.replayed||freeUpload)) {
       try{finishMusic(current,'failed',detail);}catch(e){holdMusic(current,transportDiagnostic('Suno','结算',e),'settlement');}
       return;
     }
@@ -379,10 +398,18 @@ function publicError(error:string|null|undefined,ids:(string|null|undefined)[]=[
 }
 export function publicSunoFields(row:Row,c:any,meta:any):Partial<MusicTask> {
   const observed=readReceipt(row);
+  const recovering=canRecoverSource(row,meta);
+  const polling=['queued','submitting','accepted'].includes(row.state)&&!row.deleted&&
+    !['settled','refunded'].includes(meta.billingStatus);
   const results=tracks(row.id).map(t=>({id:t.id,status:t.saved?'completed':t.status==='completed'?'saving':t.status,
     title:publicError(t.title)||undefined,error:publicError(t.error,[t.upstream_id]),
     result_url:t.saved?'/api/music/'+row.id+'/results/'+t.id+'/file':null}));
   return {operation:row.operation,title:c.title,results,error:publicError(row.error,[row.upstream_id,...(observed?.kind==='songs'?observed.songs.map(s=>s.id):[])]),
+    client_request_id:row.request_key,stage:row.state,
+    error_code:/\bcode=([\w.-]{1,64})(?=[\s:：]|$)/.exec(publicError(row.error)||'')?.[1]??null,
+    poll_after_seconds:polling?Math.max(8,Math.min(60,Math.ceil((row.next_poll-Date.now())/1000))):null,
+    can_recover:recovering,
+    recovery_after_seconds:recovering?Math.max(0,Math.ceil((Math.max(row.next_poll,row.lease_until)-Date.now())/1000)):null,
     status:row.deleted===1?'deleted':row.deleted===2?'deleting':
       ['processing','review'].includes(c.status)&&['refunded','settled'].includes(meta.billingStatus)?'resolved':
       meta.reviewKind==='partial'&&results.some(t=>t.result_url)?'partial':c.status,
@@ -415,6 +442,47 @@ function claimAction(row:Row,staleMs=600000) {
   const claimed=sqlite.prepare('UPDATE music_jobs SET lease=?,lease_until=? WHERE id=? AND lease_until<?').run(lease,Date.now()+staleMs,row.id,Date.now());
   if(!claimed.changes)throw musicFailure('任务正在处理，请刷新后重试',409);
   return {lease,release:()=>sqlite.prepare('UPDATE music_jobs SET lease=NULL,lease_until=0 WHERE id=? AND lease=?').run(row.id,lease)};
+}
+function canRecoverSource(row:Row,meta:any) {
+  if(row.provider!==SUNO_CHANNEL_TYPE||!['upload','voice'].includes(row.operation)||row.deleted||
+      row.state!=='review'||meta.billingStatus!=='free'||meta.billingReservationId)return false;
+  if(row.operation==='voice'&&meta.reviewKind==='lookup')return true;
+  if(row.operation==='voice'&&row.upstream_id&&row.receipt&&meta.reviewKind==='query')return true;
+  const code=/\bcode=([\w.-]+)(?=[\s:：]|$)/.exec(row.error||'')?.[1];
+  return meta.reviewKind==='submission'&&!row.upstream_id&&!row.receipt&&
+    ['ECONNRESET','EPIPE','UND_ERR_SOCKET','ETIMEDOUT','UND_ERR_CONNECT_TIMEOUT',
+      'UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT','TimeoutError','AbortError','EAI_AGAIN'].includes(code||'');
+}
+export async function recoverMusicSource(id:string,owner:MusicOwner) {
+  const task=getMusicTask(id,owner);
+  const row=job(id)!;
+  if(row.provider!==SUNO_CHANNEL_TYPE||!['upload','voice'].includes(row.operation))
+    throw musicFailure('此恢复入口仅支持普通上传和普通本人音色',409);
+  if(row.deleted)throw musicFailure('素材已删除',409);
+  if(owner.allowedModels?.length&&!owner.allowedModels.includes(task.model))throw musicFailure('API Key 无此模型权限',403);
+  if(row.state==='completed'||['queued','submitting','accepted'].includes(row.state))return task;
+  const action=claimAction(row);
+  try {
+    const current=job(id)!;
+    const content=sqlite.prepare('SELECT metadata FROM contents WHERE id=?').get(current.content_id) as {metadata:string};
+    const meta=JSON.parse(content.metadata||'{}');
+    if(!canRecoverSource(current,meta))throw musicFailure('该原订单需核对回执或配置，当前错误不支持自助恢复',409);
+    if(current.next_poll>Date.now())throw Object.assign(musicFailure('请在恢复等待时间结束后查询原订单',429),
+      {retryAfter:Math.ceil((current.next_poll-Date.now())/1000)});
+    activeChannel(current);
+    if(current.operation==='upload') {
+      const spec=JSON.parse(current.payload) as StoredSpec;
+      if(!spec.multipart||!await fs.stat(spec.multipart.file).then(file=>file.isFile()).catch(()=>false))
+        throw musicFailure('原音频文件已不可用，请重新上传',409);
+    }
+    sqlite.transaction(()=>{
+      sqlite.prepare("UPDATE music_jobs SET state=?,next_poll=0 WHERE id=? AND lease=?")
+        .run(current.upstream_id?'accepted':'submitting',id,action.lease);
+      musicMetadata(current,{musicRecoveryRequested:true,musicRecoveryCount:Number(meta.musicRecoveryCount||0)+1,
+        requiresReview:false,reviewKind:null},'processing');
+    }).immediate();
+    return getMusicTask(id,owner);
+  } finally {action.release();}
 }
 export async function cancelMusicUpload(id:string,owner:MusicOwner) {
   getMusicTask(id,owner);
