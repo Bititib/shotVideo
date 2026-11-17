@@ -3,20 +3,30 @@ import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { tierMiddleware, type TierRequest } from '../middleware/tier.js';
 import { getEnabledPublicModels } from '../services/modelCatalogService.js';
 import { musicBinding, musicPrices } from '../services/musicModelRegistry.js';
-import { createMusicTask, getMusicTask, getMusicTaskByRequest, listMusicTasks, musicFile, musicHistoryFile, processMusicTask } from '../services/musicGenerationService.js';
+import { createMusicTask, getMusicTask, getMusicTaskByRequest, listMusicTasks, musicFile, musicHistoryFile, musicContentResults, processMusicTask } from '../services/musicGenerationService.js';
 import { createMusicResourceRouter, requireMusicModel } from './musicResources.js';
 import { songOperation } from '../../shared/sunoMusic.js';
 
 const router=Router();
 router.use(authMiddleware);
-router.get('/history/:contentId/file',(req:AuthRequest,res,next)=>{
-  try {
-    if(!/^[1-9]\d*$/.test(req.params.contentId))return res.status(400).json({error:'音乐记录编号无效'});
-    const file=musicHistoryFile(Number(req.params.contentId),req.userId!);
-    res.setHeader('Cache-Control','private, no-store');res.setHeader('X-Content-Type-Options','nosniff');
-    res.type('audio/mpeg').sendFile(file,{cacheControl:false},error=>{if(error)next(error);});
-  }catch(e){next(e);}
-});
+for(const scope of ['history','org'] as const) {
+  router.get('/'+scope+'/:contentId/results',(req:AuthRequest,res,next)=>{
+    try {
+      if(!/^[1-9]\d*$/.test(req.params.contentId))return res.status(400).json({error:'音乐记录编号无效'});
+      res.setHeader('Cache-Control','private, no-store');
+      res.json(musicContentResults(Number(req.params.contentId),req.userId!,scope));
+    }catch(e){next(e);}
+  });
+  router.get('/'+scope+'/:contentId/file',(req:AuthRequest,res,next)=>{
+    try {
+      if(!/^[1-9]\d*$/.test(req.params.contentId))return res.status(400).json({error:'音乐记录编号无效'});
+      if(req.query.result_id!==undefined && (typeof req.query.result_id!=='string'||!req.query.result_id))return res.status(400).json({error:'音乐结果编号无效'});
+      const file=musicHistoryFile(Number(req.params.contentId),req.userId!,req.query.result_id as string|undefined,scope);
+      res.setHeader('Cache-Control','private, no-store');res.setHeader('X-Content-Type-Options','nosniff');
+      res.type('audio/mpeg').sendFile(file,{cacheControl:false},error=>{if(error)next(error);});
+    }catch(e){next(e);}
+  });
+}
 router.use(createMusicResourceRouter(req=>({userId:(req as AuthRequest).userId}),tierMiddleware('music'),requireMusicModel));
 router.get('/models',tierMiddleware('music'),(req:TierRequest,res,next)=>{
   try {

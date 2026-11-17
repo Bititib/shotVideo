@@ -1,9 +1,11 @@
 import React, { useEffect, useState, useCallback } from 'react';
+import MusicContentResults from '../../components/MusicContentResults';
 import { contentApi } from '../../api/content';
 import { formatBeijingTime } from '../../../../shared/time';
-import { Video, Image, FileText, Megaphone, Search, ChevronLeft, ChevronRight, Trash2, ExternalLink } from 'lucide-react';
+import { Video, Image, FileText, Megaphone, Search, ChevronLeft, ChevronRight, Music, ExternalLink } from 'lucide-react';
 
 const typeConfig: Record<string, { icon: any; label: string; color: string }> = {
+  music: { icon: Music, label: '音乐', color: 'text-purple-400' },
   video: { icon: Video, label: '视频', color: 'text-indigo-400' },
   image: { icon: Image, label: '图片', color: 'text-pink-400' },
   analysis: { icon: FileText, label: '分析', color: 'text-blue-400' },
@@ -17,6 +19,7 @@ export default function OrgContentsPage() {
   const [typeFilter, setTypeFilter] = useState('');
   const [search, setSearch] = useState('');
   const pageSize = 20;
+  const [musicId,setMusicId]=useState<number|null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -82,7 +85,7 @@ export default function OrgContentsPage() {
                 </div>
               </div>
               <span className={`text-[10px] px-1.5 py-0.5 rounded-md ${cfg.color} bg-white/5`}>{cfg.label}</span>
-              {item.resultUrl && (
+              {item.type==='music' ? <button aria-label={'查看歌曲 '+(item.title||item.id)} onClick={()=>setMusicId(item.id)}>查看歌曲</button> : item.resultUrl && (
                 <a href={item.resultUrl} target="_blank" rel="noreferrer" className="p-1.5 hover:bg-white/10 rounded-lg transition-colors">
                   <ExternalLink className="w-3.5 h-3.5 text-zinc-400" />
                 </a>
@@ -91,6 +94,11 @@ export default function OrgContentsPage() {
           );
         })}
       </div>
+
+      {musicId!==null && <section className="mt-5 rounded-xl border p-4" aria-label="团队音乐详情">
+        <button onClick={()=>setMusicId(null)}>关闭歌曲</button>
+        <MusicContentResults contentId={musicId} scope="org"/>
+      </section>}
 
       {/* Pagination */}
       {totalPages > 1 && (

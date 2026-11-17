@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import express from 'express';
 import fs from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import jwt from 'jsonwebtoken';
@@ -10,7 +11,7 @@ import { apiTokens, organizations, users } from '../server/db/schema.js';
 import { ensureFundLedger } from '../server/db/fundLedger.js';
 import { ChannelService } from '../server/services/channelService.js';
 import { getEnabledPublicModels } from '../server/services/modelCatalogService.js';
-import { createMusicTask, ensureMusicJobs, getMusicTask, getMusicTaskByRequest, musicFile, processMusicTask, resumeMusicTasks } from '../server/services/musicGenerationService.js';
+import { createMusicTask, ensureMusicJobs, getMusicTask, getMusicTaskByRequest, musicFile, finishMusic, processMusicTask, resumeMusicTasks } from '../server/services/musicGenerationService.js';
 import { adminMusicDiagnostics, adminRecoverMusic, cancelMusicUpload, musicPrivateDir, removeMusicVoice, recoverMusicSource } from '../server/services/sunoMusicJobs.js';
 import { resolveBillingReservation } from '../server/services/billingReconciliation.js';
 import channelRouter from '../server/routes/channels.js';
@@ -23,7 +24,8 @@ const owner={userId:1};
 const model='suno-v6';
 const base='https://www.suno-api.io';
 const key='test-suno-credential';
-const mp3=()=>new Response(Buffer.from('ID3 mock song'),{headers:{'Content-Type':'audio/mpeg'}});
+const audioBytes=readFileSync(new URL('./fixtures/music-valid.mp3',import.meta.url));
+const mp3=()=>new Response(audioBytes,{headers:{'Content-Type':'audio/mpeg'}});
 const accepted=(tasks:any[]=[],status='queued')=>Response.json({success:true,data:{request_id:'ac_demo',status,tasks}},{status:202});
 const song=(id:string,status='completed',extra={})=>({song_id:id,status,song_title:id,...extra});
 const voices=(id='vp_owner',status='ready')=>Response.json({success:true,data:{voice_id:id,clip_id:status==='ready'?'voice_clip':undefined,status}});
@@ -135,7 +137,7 @@ it('runs the website queue, persists receipt before querying, transfers both MP3
     await run(taskId);
     const task=getMusicTask(taskId,owner);
     expect(task.status,JSON.stringify(adminMusicDiagnostics(task.id))).toBe('completed');expect(task.results).toHaveLength(2);
-    expect(await fs.readFile(musicFile(taskId,owner,task.results[1].id),'utf8')).toBe('ID3 mock song');
+    expect(await fs.readFile(musicFile(taskId,owner,task.results[1].id))).toEqual(audioBytes);
     const stranger=jwt.sign({userId:2},env.JWT_SECRET);
     expect((await localFetch(url+task.results[0].result_url,{headers:{Authorization:'Bearer '+stranger}})).status).toBe(404);
     await run(taskId);expect(balance()).toBe(98);
@@ -611,7 +613,7 @@ it('serves both saved API songs to admins and reports missing or zero-byte files
     for(const track of completed.results) {
       const response=await localFetch(endpoint(track.id),{headers});
       expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toContain('no-store');
-      expect(await response.text()).toBe('ID3 mock song');
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(audioBytes);
     }
     expect((await localFetch(endpoint(randomUUID()),{headers})).status).toBe(404);
     await fs.writeFile(musicFile(task.id,apiOwner,completed.results[0].id),'');
@@ -637,7 +639,7 @@ it('downloads API-created music in the account history with JWT while preserving
     const headers={Authorization:'Bearer '+web};
     const file=await localFetch(endpoint,{headers});
     expect(file.status).toBe(200);expect(file.headers.get('content-type')).toContain('audio/mpeg');
-    expect(file.headers.get('cache-control')).toContain('no-store');expect(await file.text()).toBe('ID3 mock song');
+    expect(file.headers.get('cache-control')).toContain('no-store');expect(Buffer.from(await file.arrayBuffer())).toEqual(audioBytes);
     expect((await localFetch(url+'/api/music/'+task.id+'/file',{headers})).status).toBe(404);
     expect(()=>getMusicTask(task.id,{userId:1,tokenId:12})).toThrow('不存在');
     sqlite.prepare('DELETE FROM contents WHERE id=?').run(before.content_id);
@@ -859,4 +861,59 @@ it('serializes API voice recovery lookups and keeps token ownership without any 
   });
   expect(calls).toHaveBeenCalledTimes(2);expect(calls.mock.calls.every(([,req])=>req.method==='GET')).toBe(true);
   expect(ledger(task.id)).toEqual([]);expect(sqlite.prepare('SELECT balance FROM api_tokens WHERE id=11').get()).toEqual({balance:30});
+});
+
+it('lists both API songs for their account and same-org managers, denies cross-org/member/foreign-result access',async()=>{
+  const apiOwner={userId:1,tokenId:11},task=createMusicTask(input(),apiOwner).task;
+  calls.mockResolvedValueOnce(accepted([song('scope_first'),song('scope_second')],'completed')).mockResolvedValueOnce(mp3()).mockResolvedValueOnce(mp3());
+  await run(task.id);const before=job(task.id),funds=ledger(task.id);
+  db.insert(organizations).values([{id:11,name:'One',slug:'one',ownerId:1},{id:12,name:'Two',slug:'two',ownerId:2}]).run();
+  sqlite.prepare('UPDATE contents SET org_id=11 WHERE id=?').run(before.content_id);
+  sqlite.prepare("UPDATE users SET org_id=11,role='org_admin' WHERE id=2").run();
+  calls.mockClear();
+  await withApp(async(url,web)=>{
+    const own={Authorization:'Bearer '+web},manager={Authorization:'Bearer '+jwt.sign({userId:2,orgId:11},env.JWT_SECRET)};
+    const basePath=url+'/api/music/',ownPath=basePath+'history/'+before.content_id,orgPath=basePath+'org/'+before.content_id;
+    const response=await localFetch(ownPath+'/results',{headers:own});expect(response.status).toBe(200);
+    const {results}=await response.json();expect(results).toHaveLength(2);expect(results.every((r:any)=>r.available)).toBe(true);
+    expect((await localFetch(ownPath+'/results',{headers:manager})).status).toBe(404);
+    expect((await localFetch(orgPath+'/results')).status).toBe(401);
+    expect((await localFetch(orgPath+'/results',{headers:manager})).status).toBe(200);
+    for(const r of results)for(const [prefix,headers] of [[ownPath,own],[orgPath,manager]] as const) {
+      const file=await localFetch(prefix+'/file?result_id='+r.id,{headers});expect(file.status).toBe(200);
+      expect(Buffer.from(await file.arrayBuffer())).toEqual(audioBytes);
+    }
+    expect((await localFetch(orgPath+'/file?result_id='+randomUUID(),{headers:manager})).status).not.toBe(200);
+    expect((await localFetch(ownPath+'/file?result_id[bad]=x',{headers:own})).status).toBe(400);
+    sqlite.prepare('UPDATE users SET org_id=12 WHERE id=2').run();
+    expect((await localFetch(orgPath+'/results',{headers:manager})).status).toBe(404);
+    expect((await localFetch(orgPath+'/file?result_id='+results[0].id,{headers:manager})).status).toBe(404);
+    sqlite.prepare("UPDATE users SET org_id=11,role='member' WHERE id=2").run();
+    expect((await localFetch(orgPath+'/results',{headers:manager})).status).toBe(404);
+  });
+  expect(job(task.id)).toEqual(before);expect(ledger(task.id)).toEqual(funds);expect(calls).not.toHaveBeenCalled();
+});
+it('holds corrupt audio at storage, recovers the same songs without resubmitting or refunding, and records terminal timing once',async()=>{
+  const task=create(input()),before=Date.now(),damaged=Buffer.from(audioBytes);damaged.fill(255,800,1200);
+  calls.mockResolvedValueOnce(accepted([song('validate_first'),song('validate_second')],'completed'))
+    .mockResolvedValueOnce(new Response(damaged,{headers:{'Content-Type':'audio/mpeg'}}));
+  await run(task.id);
+  expect(job(task.id).state).toBe('accepted');expect(getMusicTask(task.id,owner).status).toBe('review');
+  const readMeta=()=>JSON.parse((sqlite.prepare('SELECT metadata FROM contents WHERE id=?').get(job(task.id).content_id) as any).metadata);
+  expect(readMeta()).toMatchObject({reviewKind:'storage'});expect(readMeta().error).toContain('完整解码');expect(readMeta().completedAt).toBeUndefined();
+  expect(adminMusicDiagnostics(task.id).results.every((r:any)=>!r.saved)).toBe(true);expect(balance()).toBe(98);
+  calls.mockResolvedValueOnce(mp3()).mockResolvedValueOnce(mp3());
+  await run(task.id);
+  expect(getMusicTask(task.id,owner).status).toBe('completed');
+  const completed=readMeta();expect(Date.parse(completed.completedAt)).toBeGreaterThanOrEqual(before);expect(completed.durationMs).toBeGreaterThanOrEqual(0);
+  finishMusic(job(task.id),'completed');expect(readMeta().completedAt).toBe(completed.completedAt);
+  expect(calls.mock.calls.filter((call:any)=>call[1]?.method==='POST')).toHaveLength(1);
+  expect(ledger(task.id)).toEqual([{kind:'charge',delta:-2,account_type:'user'}]);
+  const failed=create(input());calls.mockResolvedValueOnce(Response.json({error:{code:'invalid_request_error',message:'拒绝'}},{status:400}));
+  await run(failed.id);const failedMeta=JSON.parse((sqlite.prepare('SELECT metadata FROM contents WHERE id=?').get(job(failed.id).content_id) as any).metadata);
+  expect(failedMeta.failedAt).toBeTruthy();expect(failedMeta.durationMs).toBeGreaterThanOrEqual(0);
+  finishMusic(job(failed.id),'failed');expect(ledger(failed.id).filter((entry:any)=>entry.kind==='refund')).toHaveLength(1);
+  const free=await readyVoice(),metaFree=JSON.parse((sqlite.prepare('SELECT metadata FROM contents WHERE id=?').get(job(free).content_id) as any).metadata);
+  expect(metaFree.completedAt).toBeTruthy();finishMusic(job(free),'completed');
+  expect(JSON.parse((sqlite.prepare('SELECT metadata FROM contents WHERE id=?').get(job(free).content_id) as any).metadata).completedAt).toBe(metaFree.completedAt);
 });

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { validateMusicAudioFile } from './musicAudioValidation.js';
 import { sqlite } from '../db/index.js';
 import { linkReservationContent, reserveUserCharge } from './billingReservation.js';
 import { musicBinding, musicOperationQuote } from './musicModelRegistry.js';
@@ -163,7 +164,11 @@ function continuePoll(row:Row,progress=0) {
 function outputFile(id:string,resultId:string) {return path.join(musicPrivateDir(),'results',id+'-'+resultId+'.mp3');}
 async function saveAudio(row:Row,channel:SunoChannel,resultId:string,upstreamId:string,source?:string) {
   const target=outputFile(row.id,resultId);
-  try { if((await fs.stat(target)).size>4)return; } catch(e:any){if(e.code!=='ENOENT')throw e;}
+  try {
+    await fs.access(target);
+    try { await validateMusicAudioFile(target); return; }
+    catch { /* Re-read only the original result if an interrupted save left invalid bytes. */ }
+  } catch(e:any){if(e.code!=='ENOENT')throw e;}
   const response=await fetchSunoAudio(channel,upstreamId,source);
   if(!response.ok||!response.body) { await response.body?.cancel(); throw new SunoError('音乐文件下载 HTTP '+response.status); }
   await fs.mkdir(path.dirname(target),{recursive:true});
@@ -182,6 +187,7 @@ async function saveAudio(row:Row,channel:SunoChannel,resultId:string,upstreamId:
     }
     if(total<4||!(head.subarray(0,3).toString()==='ID3'||head[0]===255&&(head[1]&224)===224))throw new SunoError('音乐下载结果不是 MP3 文件');
     await file.close();
+    await validateMusicAudioFile(temp);
     await fs.rename(temp,target);
   } finally {await reader.cancel().catch(()=>{});await file.close();await fs.rm(temp,{force:true});}
 }

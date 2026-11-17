@@ -121,3 +121,24 @@ HTTP 500 请求的上游编号为 202611170209519990845008268d9d6c2ovYkaJ。该�
 验证：三个相关测试文件共 41 项通过，TypeScript 检查通过。新增实际 API 上传/音色入口用例覆盖 HTTP 500 曲库拒绝、状态与错误反馈、停止重发及无资金变化；补测未知错误、提示词含相同文字、有效 clip_id 冲突、付费翻唱不误退款。生产断线根因仍需上游日志确认，没有新增真实上游或付费调用。
 
 协议：[灵感生成](https://www.suno-api.io/docs/current-music-create/) · [专业生成](https://www.suno-api.io/docs/current-music-create-custom/) · [普通上传](https://www.suno-api.io/docs/current-music-upload-source/) · [强化上传](https://www.suno-api.io/docs/current-music-enhanced-upload/) · [普通翻唱](https://www.suno-api.io/docs/current-music-generate-from-source/) · [音色](https://www.suno-api.io/docs/current-clone-voice/) · [歌曲查询](https://www.suno-api.io/docs/current-music-query/) · [免费 MP3 下载](https://www.suno-api.io/docs/current-music-media-download/) · [余额查询](https://www.suno-api.io/docs/current-user-balance/)
+
+
+## 2026-11-17 成品读取、校验与耗时修复
+
+- 生成记录详情读取 `GET /api/music/history/:contentId/results`，逐首列出已保存结果；每首独立使用带 JWT 的文件请求和本地 Blob 播放/下载。旧的第一首下载 URL 保持兼容，原 API Key 的任务查询/文件权限未扩大。
+- 团队内容音乐入口使用同一播放器，经 `/api/music/org/:contentId/results` 与 `/file?result_id=...` 读取。服务端校验当前数据库中的管理员角色及组织与内容 org_id 一致，不能依赖 JWT 中过期的组织信息。非音乐入口不变。
+- Suno 实际保存流程在标记 saved 前执行本地 ffprobe 音轨/正数时长检查，再完整 ffmpeg 解码，要求输出有效样本。已有未登记缓存也需通过检查才能复用。异常保留 storage 阶段和原歌曲编号，只下载原结果，不重新生成，不因下载异常自动退款。历史已完成文件不会被批量重写；先执行下面的只读检查。
+- 结算事务记录 completedAt / failedAt / cancelledAt 和从内容创建到终态的 durationMs，含排队和保存。重复结算不覆盖时间、不重复扣退费。没有可靠结束时间的旧订单继续显示“未记录”，不猜测补填。
+- 本地音频有效不等于上游原始内容完整：MP3 若在完整帧处被截断，仍可能正常解码。检查不能证明与上游源文件逐字节一致，也不能判断作品内容。
+
+只读诊断已打包到生产镜像的 server 目录。部署本次版本后执行：
+
+```sh
+docker exec -w /app shot-video node server/scripts/checkMusicAudio.cjs 16045
+```
+
+脚本以 readonly 和 query_only 打开 SQLite，查询原 music_jobs / music_results，关闭连接后逐首读取本地私有 MP3。输出每首大小、探测时长、解码时长、解码错误和本地/上游编号；总结果必须恰好两首且均通过。无应用服务导入、网络访问、上传、队列处理和数据库更新，不读取渠道密钥。
+
+验证：8 个相关测试文件共 63 项，涵盖用户与组织的真实页面/HTTP 入口、两首结果、跨账号/组织/令牌隔离、真实合成 MP3 探测/完整解码、损坏文件进入 storage 后仅恢复原结果、终态时间幂等、原退款与恢复、旧 miniKey 历史订单。诊断脚本测试验证正常、空、缺失文件及检查前后数据库字节不变。音频样本由本地 FFmpeg 合成 0.25 秒正弦波，不来自用户文件。TypeScript 检查、生产构建及 git diff --check 通过；没有真实上游或付费调用，#16045 生产文件情况须以 VPS 检查输出为准。
+
+工具依据：[FFmpeg 解码与错误退出](https://ffmpeg.org/ffmpeg.html) · [ffprobe 音轨信息](https://ffmpeg.org/ffprobe.html)。

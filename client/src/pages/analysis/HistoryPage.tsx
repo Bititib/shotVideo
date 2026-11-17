@@ -29,7 +29,8 @@ import {
 } from 'lucide-react';
 import { contentApi } from '../../api/content';
 import { api } from '../../api/client';
-import HistoryMusicAudio, { historyMusicFile } from '../../components/HistoryMusicAudio';
+import { historyMusicFile } from '../../components/HistoryMusicAudio';
+import MusicContentResults from '../../components/MusicContentResults';
 import { downloadGeneratedImage } from '../../api/imageGen';
 import { getContentFailureInfo } from '../../utils/contentFailure';
 import { formatBeijingTime as formatDate } from '../../../../shared/time';
@@ -376,7 +377,7 @@ export default function HistoryPage() {
               <div className="history-drawer-body">
                 <div className="history-detail-status"><StatusBadge status={selected.status} /><span><CalendarDays />{formatDate(selected.createdAt)}</span></div>
 
-                {mediaUrls.length > 0 && (
+                {selected.type==='music' ? <MusicContentResults contentId={selected.id}/> : mediaUrls.length > 0 && (
                   <section className="history-detail-media">
                     {mediaUrls.map((url, index) => (
                       <div key={url}>
@@ -384,7 +385,7 @@ export default function HistoryPage() {
                           ? <img src={url} alt={`${selected.title || '生成图片'} ${index + 1}`} />
                           : selected.type === 'video'
                             ? <video src={getVideoPlayUrl(url)} controls preload="metadata" />
-                            : selected.type==='music'?<HistoryMusicAudio id={selected.id}/>:<audio src={url} controls />}
+                            : <audio src={url} controls />}
                         <button disabled={downloadingId===selected.id} onClick={() => handleDownload(selected, url, index)}><Download />{downloadingId===selected.id?'下载中…':'下载'}{mediaUrls.length > 1 ? ` ${index + 1}` : ''}</button>
                       </div>
                     ))}

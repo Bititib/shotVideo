@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { parseUtcTimestamp } from '../../shared/time.js';
 import { sqlite } from '../db/index.js';
 import { createSunoMusicTask, ensureSunoMusicStorage, processSunoMusicTask, publicSunoFields, sunoMusicFile } from './sunoMusicJobs.js';
 import type { MusicTask } from '../../shared/sunoMusic.js';
@@ -64,14 +65,29 @@ export function musicFile(id:string,owner:MusicOwner,resultId?:string) {
 }
 /** Website history may read its account's API-created results without exposing
  * the API Key or changing the token-scoped music API's ownership rules. */
-export function musicHistoryFile(contentId:number,userId:number) {
+export type MusicContentScope = 'history'|'org';
+function musicContentOwner(contentId:number,userId:number,scope:MusicContentScope) {
   ensureMusicJobs();
-  const row=sqlite.prepare("SELECT j.id,j.owner FROM music_jobs j JOIN contents c ON c.id=j.content_id WHERE c.id=? AND c.user_id=? AND c.type='music'")
-    .get(contentId,userId) as {id:string;owner:string}|undefined;
+  const row=sqlite.prepare("SELECT j.id,j.owner,c.user_id,c.org_id FROM music_jobs j JOIN contents c ON c.id=j.content_id WHERE c.id=? AND c.type='music'")
+    .get(contentId) as {id:string;owner:string;user_id:number;org_id:number|null}|undefined;
   if(!row)throw fail('音乐记录不存在或无权访问',404);
+  if(scope==='org') {
+    const viewer=sqlite.prepare('SELECT org_id,role FROM users WHERE id=?').get(userId) as any;
+    if(!viewer?.org_id||viewer.org_id!==row.org_id||!['org_owner','org_admin','admin','super_admin'].includes(viewer.role))
+      throw fail('音乐记录不存在或无权访问',404);
+  } else if(row.user_id!==userId)throw fail('音乐记录不存在或无权访问',404);
   const token=/^token:(\d+)$/.exec(row.owner);
-  if(!token&&row.owner!=='user:'+userId)throw fail('音乐记录归属不一致',404);
-  return musicFile(row.id,token?{userId,tokenId:Number(token[1])}:{userId});
+  if(!token&&row.owner!=='user:'+row.user_id)throw fail('音乐记录归属不一致',404);
+  return {id:row.id,owner:token?{userId:row.user_id,tokenId:Number(token[1])}:{userId:row.user_id}};
+}
+export function musicHistoryFile(contentId:number,userId:number,resultId?:string,scope:MusicContentScope='history') {
+  const access=musicContentOwner(contentId,userId,scope);
+  return musicFile(access.id,access.owner,resultId);
+}
+export function musicContentResults(contentId:number,userId:number,scope:MusicContentScope='history') {
+  const access=musicContentOwner(contentId,userId,scope),task=getMusicTask(access.id,access.owner);
+  const results=task.operation?task.results:task.result_url?[{id:'default',title:'音乐',status:task.status,result_url:task.result_url}]:[];
+  return {results:results.map(result=>({id:result.id,title:result.title,status:result.status,available:!!result.result_url}))};
 }
 export function createMusicTask(input:unknown,owner:MusicOwner,file?:{path:string; name:string; mime:string; digest:string}) {
   ensureMusicJobs();
@@ -94,9 +110,13 @@ export function finishMusic(row:any,outcome:'completed'|'failed'|'cancelled',mes
   sqlite.transaction(()=>{
     const c=sqlite.prepare('SELECT * FROM contents WHERE id=?').get(row.content_id) as any, meta=JSON.parse(c.metadata);
     const r=sqlite.prepare('SELECT * FROM billing_reservations WHERE id=?').get(meta.billingReservationId??null) as any;
+    const end=Date.now(),start=parseUtcTimestamp(c.created_at);
+    const timingKey=outcome==='completed'?'completedAt':outcome==='failed'?'failedAt':'cancelledAt';
+    const timing={[timingKey]:new Date(end).toISOString(),...(Number.isFinite(start)&&end>=start?{durationMs:end-start}:{})};
+    if (!r && meta.billingStatus==='free' && ['completed','failed','cancelled'].includes(c.status)) return;
     if (!r && meta.billingStatus==='free' && !meta.billingReservationId) {
       sqlite.prepare('UPDATE contents SET status=?,cost=0,result_url=?,metadata=? WHERE id=?')
-        .run(outcome,resultUrl||null,JSON.stringify({...meta,error:message,requiresReview:false,reviewKind:null,progress:outcome==='completed'?100:0}),row.content_id);
+        .run(outcome,resultUrl||null,JSON.stringify({...meta,...timing,error:message,requiresReview:false,reviewKind:null,progress:outcome==='completed'?100:0}),row.content_id);
       sqlite.prepare('UPDATE music_jobs SET state=?,error=? WHERE id=?').run(outcome,message||null,row.id);
       return;
     }
@@ -126,7 +146,7 @@ export function finishMusic(row:any,outcome:'completed'|'failed'|'cancelled',mes
     }));
     const state=outcome==='completed'?'settled':'refunded';
     sqlite.prepare("UPDATE billing_reservations SET state=?,actual=?,context=?,settled_at=datetime('now') WHERE id=?").run(state,outcome==='completed'?r.amount:0,JSON.stringify({...context,fundLedgerEntryIds:[...new Set([...(context.fundLedgerEntryIds || []),...captured.entryIds])]}),r.id);
-    sqlite.prepare('UPDATE contents SET status=?,cost=?,result_url=?,metadata=? WHERE id=?').run(outcome,outcome==='completed'?r.amount:0,resultUrl || null,JSON.stringify({...meta,error:message,billingStatus:state,requiresReview:false,reviewKind:null,progress:outcome==='completed'?100:0,refundAmount:refund}),row.content_id);
+    sqlite.prepare('UPDATE contents SET status=?,cost=?,result_url=?,metadata=? WHERE id=?').run(outcome,outcome==='completed'?r.amount:0,resultUrl || null,JSON.stringify({...meta,...timing,error:message,billingStatus:state,requiresReview:false,reviewKind:null,progress:outcome==='completed'?100:0,refundAmount:refund}),row.content_id);
     sqlite.prepare('UPDATE music_jobs SET state=?,error=? WHERE id=?').run(outcome,message || null,row.id);
   }).immediate();
 }
