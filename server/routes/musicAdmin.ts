@@ -2,10 +2,22 @@ import { Router } from 'express';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
 import { ensureMusicJobs, processMusicTask } from '../services/musicGenerationService.js';
-import { adminMusicDiagnostics, adminRecoverMusic } from '../services/sunoMusicJobs.js';
+import { adminMusicDiagnostics, adminRecoverMusic, adminMusicSources, adminMusicSourceFile } from '../services/sunoMusicJobs.js';
 
 const router=Router();
 router.use(authMiddleware,adminMiddleware);
+router.use((_req,res,next)=>{res.setHeader('Cache-Control','private, no-store');next();});
+router.get('/:id/sources',(req,res,next)=>{
+  ensureMusicJobs();
+  void adminMusicSources(req.params.id).then(sources=>res.json(sources)).catch(next);
+});
+router.get('/:id/sources/:sourceId/file',(req,res,next)=>{
+  ensureMusicJobs();
+  void adminMusicSourceFile(req.params.id,req.params.sourceId).then(source=>{
+    res.setHeader('X-Content-Type-Options','nosniff');
+    res.type(source.mime).sendFile(source.file,{cacheControl:false},error=>{if(error)next(error);});
+  }).catch(next);
+});
 router.get('/:id', (req,res,next)=>{
   try{ensureMusicJobs();res.setHeader('Cache-Control','no-store').json(adminMusicDiagnostics(req.params.id));}catch(e){next(e);}
 });

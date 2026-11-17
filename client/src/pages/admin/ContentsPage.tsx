@@ -1,4 +1,5 @@
 import MusicOrderRecovery from '../../components/MusicOrderRecovery';
+import AdminMusicSources, { useAdminMusicSources } from '../../components/AdminMusicSources';
 import { videoTaskPhase } from '../../../../shared/videoTaskPhase';
 import { isTaskIdPlaceholder } from '../../../../shared/upstreamTaskId';
 import { canDownloadV6kOriginal, canWithdrawTaskSupplement } from '../../../../shared/videoTaskSupplement';
@@ -352,6 +353,9 @@ export default function ContentsPage() {
   const parseMeta = (metaStr: string) => {
     try { return JSON.parse(metaStr || '{}'); } catch { return {}; }
   };
+  const previewMusicId=previewItem?.type==='music'&&parseMeta(previewItem.metadata).musicOperation
+    ?parseMeta(previewItem.metadata).musicTaskId as string|undefined:undefined;
+  const musicSources=useAdminMusicSources(previewMusicId);
 
   const parseRefAssets = (metaStr: string) => {
     const assets = getVideoReferenceAssets(metaStr);
@@ -738,6 +742,7 @@ export default function ContentsPage() {
                 className={`px-3 py-1.5 rounded-lg text-xs transition-colors ${previewTab === 'refs' ? 'bg-white/10 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
               >
                 参考素材 ({(() => {
+                  if(previewMusicId)return musicSources.loading?'加载中':musicSources.error?'读取失败':musicSources.items.length;
                   const { refImgs, refVids, refAuds } = parseRefAssets(previewItem.metadata);
                   return refImgs.length + refVids.length + refAuds.length;
                 })()})
@@ -750,6 +755,7 @@ export default function ContentsPage() {
                 <div className="content-detail-layout">
                   <section className="content-detail-preview" aria-label="生成结果预览">
                   <div className="content-detail-section-heading"><span>生成结果</span><span>#{previewItem.id}</span></div>
+                  {previewMusicId&&<button className="mb-3 text-sm underline" onClick={()=>setPreviewTab('refs')}>查看用户上传音频</button>}
                   {/* Generated asset */}
                   {previewItem.resultUrl && previewItem.resultUrl.trim() !== '' && (
                     previewItem.type === 'image'
@@ -1046,7 +1052,7 @@ export default function ContentsPage() {
                   </div>
                   </section>
                 </div>
-              ) : (
+              ) : previewMusicId ? <div className="content-detail-references"><AdminMusicSources {...musicSources}/></div> : (
                 /* Reference Assets Tab */
                 (() => {
                   const { refImgs, refVids, refAuds } = parseRefAssets(previewItem.metadata);

@@ -562,6 +562,56 @@ export function adminMusicDiagnostics(id:string) {
     upstreamId:row.upstream_id,relatedTaskId:r?.kind==='voice'?r.taskId:undefined,receiptKind:r?.kind,providerStatus:r&&r.kind!=='songs'?r.status:undefined,
     error:row.error,results:results.map(t=>({id:t.id,upstreamId:t.upstream_id,status:t.status,error:t.error,saved:Boolean(t.saved)}))};
 }
+// Admin inspection reads original private inputs independently of upstream status.
+// Never reuse the completed-asset endpoint, or publish a private filesystem path.
+function adminSourceRows(id:string) {
+  const root=job(id);
+  if(!root||root.provider!==SUNO_CHANNEL_TYPE)throw musicFailure('音乐订单不存在',404);
+  const sources:{row:Row;file:NonNullable<StoredSpec['multipart']>;label:string}[]=[];
+  const seen=new Set<string>();
+  const visit=(row:Row,label:string)=>{
+    if(seen.has(row.id))return;
+    if(seen.size>=6)throw musicFailure('音乐素材关联异常',409);
+    seen.add(row.id);
+    const spec=JSON.parse(row.payload) as StoredSpec;
+    if(spec.multipart)sources.push({row,file:spec.multipart,label});
+    for(const [dependency,kind] of [[spec.assetId,'歌曲素材'],[spec.voiceId,'音色样本']] as const) {
+      if(!dependency)continue;
+      const related=job(dependency);
+      if(!related||related.provider!==SUNO_CHANNEL_TYPE||related.owner!==root.owner)
+        throw musicFailure('音乐素材关联不存在或归属不一致',409);
+      visit(related,kind);
+    }
+  };
+  visit(root,voiceOperation(root.operation)?'原始音色样本':'原始上传音频');
+  return sources;
+}
+async function inspectAdminSource(source:ReturnType<typeof adminSourceRows>[number]) {
+  if(source.row.deleted)throw musicFailure('该素材已删除',410);
+  const root=await fs.realpath(musicPrivateDir());
+  const file=await fs.realpath(source.file.file);
+  if(!file.startsWith(root+path.sep)||!['audio/wav','audio/mpeg','audio/mp4','audio/aac','audio/ogg','audio/flac'].includes(source.file.mime))
+    throw musicFailure('原音频文件位置或类型无效',409);
+  const stat=await fs.stat(file);
+  if(!stat.isFile()||!stat.size||stat.size>40*1024*1024)throw musicFailure('原音频文件无效',409);
+  return {file,mime:source.file.mime,bytes:stat.size};
+}
+export async function adminMusicSources(id:string) {
+  return Promise.all(adminSourceRows(id).map(async source=>{
+    let bytes:number|undefined,issue:string|undefined;
+    try {bytes=(await inspectAdminSource(source)).bytes;}
+    catch(error:any){issue=error.status?error.message:'原音频文件不存在或无法读取';}
+    return {id:source.row.id,label:source.label,name:path.basename(source.file.name),mime:source.file.mime,
+      bytes,available:!issue,issue,
+      url:issue?null:'/admin/music/'+id+'/sources/'+source.row.id+'/file'};
+  }));
+}
+export async function adminMusicSourceFile(id:string,sourceId:string) {
+  const source=adminSourceRows(id).find(item=>item.row.id===sourceId);
+  if(!source)throw musicFailure('该音频不属于此音乐订单',404);
+  try{return await inspectAdminSource(source);}
+  catch(error:any){if(error.status)throw error;throw musicFailure('原音频文件不存在或无法读取',404);}
+}
 export async function adminRecoverMusic(id:string,adminId:number,input:{upstreamId?:unknown;evidence?:unknown;songIds?:unknown;retryUpload?:unknown}) {
   const row=job(id);
   if(!row||row.provider!==SUNO_CHANNEL_TYPE)throw musicFailure('音乐订单不存在',404);

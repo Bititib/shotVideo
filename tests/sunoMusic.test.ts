@@ -295,6 +295,58 @@ it('returns a rejected external order to the original token balance',async()=>{
     expect(ledger(task.id).map((row:any)=>[row.account_type,row.delta])).toEqual([['token_usage',2],['token',-2],['token_usage',-2],['token',2]]);
   });
 });
+it.each(['upload','voice'])('lets admins inspect the original API %s in review without upstream calls or granting user access',async operation=>{
+  db.insert(apiTokens).values({id:11,tokenKey:'music-token',name:'music',userId:1,balance:30,allowedModels:'["suno-v6"]'}).run();
+  const task=createMusicTask(input(operation,operation==='upload'?{rights_confirmed:true}:{self_voice_confirmed:true}),
+    {userId:1,tokenId:11,allowedModels:[model]},await localFile()).task;
+  sqlite.prepare("UPDATE music_jobs SET state='review',replayed=1 WHERE id=?").run(task.id);
+  const previous=job(task.id);
+  await withApp(async(url,admin)=>{
+    const endpoint=url+'/api/admin/music/'+task.id+'/sources';
+    const headers={Authorization:'Bearer '+admin};
+    expect((await localFetch(endpoint)).status).toBe(401);
+    sqlite.prepare("UPDATE users SET role='user' WHERE id=2").run();
+    const regular={Authorization:'Bearer '+jwt.sign({userId:2},env.JWT_SECRET)};
+    expect((await localFetch(endpoint,{headers:regular})).status).toBe(403);
+    const response=await localFetch(endpoint,{headers});
+    expect(response.headers.get('cache-control')).toContain('no-store');
+    const sources=await response.json();
+    expect(sources).toHaveLength(1);
+    expect(sources[0]).toMatchObject({id:task.id,name:'sample.wav',available:true,bytes:wav().length});
+    expect(JSON.stringify(sources)).not.toContain(musicPrivateDir());
+    expect((await localFetch(url+'/api'+sources[0].url,{headers:regular})).status).toBe(403);
+    const audio=await localFetch(url+'/api'+sources[0].url,{headers});
+    expect(audio.status).toBe(200);expect(audio.headers.get('cache-control')).toContain('no-store');
+    expect(Buffer.from(await audio.arrayBuffer())).toEqual(wav());
+    expect((await localFetch(endpoint+'/'+randomUUID()+'/file',{headers})).status).toBe(404);
+    await fs.rm(JSON.parse(previous.payload).multipart.file);
+    expect(await (await localFetch(endpoint,{headers})).json()).toMatchObject([{available:false,url:null,issue:expect.stringContaining('不存在')}]);
+    expect((await localFetch(url+'/api'+sources[0].url,{headers})).status).toBe(404);
+  });
+  expect(job(task.id)).toEqual(previous);expect(ledger(task.id)).toEqual([]);
+  expect(calls).not.toHaveBeenCalled();
+});
+it('lists both original inputs for a combined order and prevents private path or cross-owner traversal',async()=>{
+  const asset=create(input('upload',{rights_confirmed:true}),await localFile());
+  calls.mockResolvedValueOnce(Response.json({clip_id:'source_clip',status:'complete'}));await run(asset.id);
+  const voice=await readyVoice();
+  const task=create(input('voice_cover',{asset_id:asset.id,voice_id:voice}));
+  calls.mockClear();
+  await withApp(async(url,admin)=>{
+    const headers={Authorization:'Bearer '+admin};
+    const endpoint=url+'/api/admin/music/'+task.id+'/sources';
+    const sources=await (await localFetch(endpoint,{headers})).json();
+    expect(sources.map((source:any)=>[source.id,source.label,source.available])).toEqual([[asset.id,'歌曲素材',true],[voice,'音色样本',true]]);
+    sqlite.prepare('UPDATE music_jobs SET deleted=1 WHERE id=?').run(voice);
+    expect((await localFetch(url+'/api'+sources[1].url,{headers})).status).toBe(410);
+    const spec=JSON.parse(job(asset.id).payload);spec.multipart.file=path.resolve('package.json');
+    sqlite.prepare('UPDATE music_jobs SET payload=? WHERE id=?').run(JSON.stringify(spec),asset.id);
+    expect((await localFetch(url+'/api'+sources[0].url,{headers})).status).toBe(409);
+    sqlite.prepare("UPDATE music_jobs SET owner='user:2' WHERE id=?").run(asset.id);
+    expect((await localFetch(endpoint,{headers})).status).toBe(409);
+  });
+  expect(calls).not.toHaveBeenCalled();
+});
 it.each(['upload','voice'])('exposes an explicit HTTP 500 catalog rejection through the %s API without retry or billing',async operation=>{
   db.insert(apiTokens).values({id:11,tokenKey:'music-token',name:'music',userId:1,balance:30,allowedModels:'["suno-v6"]'}).run();
   const message='This audio matches an existing recording in our catalog.';
