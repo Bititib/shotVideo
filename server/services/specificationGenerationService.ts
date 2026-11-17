@@ -277,6 +277,7 @@ function failContent(id: number, message: string) {
 }
 async function pollVideo(id: number, channel: any, taskId: string, onEvent: (data: any) => void) {
   const zhiying = channel.type === 'zhiying';
+  const wanfeng = channel.type === 'wanfeng';
   if (zhiying || metadata(id).zhiyingOrder) assertZhiyingOriginalChannel(channel, metadata(id));
   if (isZonghengChannel(channel) && isRetiredZonghengTask(metadata(id))) { holdForReview(id, RETIRED_ZONGHENG_MESSAGE, 'query'); return; }
   if (isZonghengChannel(channel)) channel = zonghengTaskChannel(channel, metadata(id));
@@ -285,6 +286,14 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
   let queryFailures = 0;
   if (isHussChannel(channel)) patch(id, { hussQueryResumeAt: null });
   while (Date.now() < end) {
+    const expectedWanfeng = metadata(id).wanfengCredential;
+    if (wanfeng || expectedWanfeng) {
+      const current = ChannelService.getChannelRaw(channel.id, channel.apiKeyId);
+      if (!current || !matchesWanfengCredential(current, expectedWanfeng) || !matchesWanfengCredential(channel, expectedWanfeng)) {
+        holdForReview(id, '晚风原渠道或 Key 已变化，恢复原配置后可继续查询', 'query');
+        return;
+      }
+    }
     if(channel.type==='image2pro' && metadata(id).image2proRequest?.credential!==image2proCredential(channel)){holdForReview(id,'Image2Pro 原渠道凭据已变化，请恢复原凭据后查原任务','query');return;}
     if (metadata(id).minikeyCredential && (!isMinikeyChannel(channel) || metadata(id).minikeyCredential!==minikeyCredential(ChannelService.getChannelRaw(channel.id) || {baseUrl:'',apiKey:''}))) {
       holdForReview(id,'miniKey 原渠道凭据已变化，恢复原凭据后继续查原任务','query');return;
@@ -308,7 +317,11 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       const completedReceipt = hussReceipt || metadata(id).megabyCompletedReceipt || siYueTianReceipt;
       const miniInitial=channel.type==='image2pro'?hussMeta.image2proInitialTask:isMinikeyChannel(channel)?hussMeta.minikeyInitialTask:null;
       const miniCompleted=isMinikeyChannel(channel)?hussMeta.minikeyCompletedReceipt:null;
-      if(miniInitial?.taskId===taskId) {task=miniInitial;localCompletion=true;}
+      const wanfengReceipt = wanfeng && hussMeta.wanfengReceipt;
+      if (wanfengReceipt?.id === taskId && (hussMeta.wanfengCompletedTask || wanfengReceipt.initial)) {
+        task = hussMeta.wanfengCompletedTask || wanfengReceipt.initial;
+        localCompletion = true;
+      } else if(miniInitial?.taskId===taskId) {task=miniInitial;localCompletion=true;}
       else if(miniCompleted?.taskId===taskId) {task={status:'completed',progress:100,resultUrl:miniCompleted.resultUrl};localCompletion=true;}
       else if (zhiying && hussMeta.zhiyingInitialTask) {
         task = hussMeta.zhiyingInitialTask;
@@ -388,6 +401,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       let localized = '';
       try {
         patch(id, { upstreamResultUrl: task.resultUrl,
+          ...(wanfeng ? { wanfengCompletedTask: task } : {}),
           ...(isMinikeyChannel(channel)?{minikeyCompletedReceipt:{taskId,resultUrl:task.resultUrl},minikeyInitialTask:null}:{}),
           ...(zhiying ? { zhiyingCompletedReceipt: { taskId, resultUrl: task.resultUrl }, zhiyingInitialTask: null, upstreamGenerated: true, upstreamDeliveryPending: true } : {}),
           ...(metadata(id).snumomReferenceBilling && task.billingUsage ? { upstreamBillingUsage:task.billingUsage } : {}),
@@ -402,14 +416,15 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
             : `视频下载中：${mb(progress.bytes)}${progress.total ? ' / ' + mb(progress.total) : ''} MB${progress.resumable ? '（支持安全续传）' : ''}`;
           patch(id, { downloadProgress: { ...progress, updatedAt: new Date().toISOString() }, progressText: message });
         }, ...(zhiying ? [metadata(id).zhiyingCredential] : isMinikeyChannel(channel) ? [undefined,metadata(id).minikeyCredential]
-          : metadata(id).siYueTianVideoCredential ? [undefined, undefined, metadata(id).siYueTianVideoCredential] : []));
+          : metadata(id).siYueTianVideoCredential ? [undefined, undefined, metadata(id).siYueTianVideoCredential]
+            : wanfeng ? [undefined, undefined, undefined, metadata(id).wanfengCredential] : []));
       } catch (error: any) {
         if (recordV6kDeliveryUnavailable(id, error)) {
           onEvent({ type: 'status', message: publicGenerationError(error.message, ['V6K']), contentId: id }); return;
         }
         console.warn('[specification] result save failed', id, error.message);
         const detail = transportDiagnostic(channel.type, '上游已完成，结果保存失败；正在重试保存', error, channel.apiKey);
-        patch(id, zhiying || isMegabyChannel(channel) || isHussChannel(channel) || isMinikeyChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
+        patch(id, wanfeng || zhiying || isMegabyChannel(channel) || isHussChannel(channel) || isMinikeyChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
         if (isHussChannel(channel)) {
           saveRetryMs = Math.max(60_000, Number(error?.retryAfterMs) || 0);
           onEvent({ type: 'status', message: detail, contentId: id });
@@ -421,7 +436,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         }
       }
       if (localized) {
-        try { complete(id, [localized]); if (isMegabyChannel(channel) || isHussChannel(channel)) patch(id, { resultSaveError: null, upstreamDeliveryPending:false }); }
+        try { complete(id, [localized]); if (wanfeng || isMegabyChannel(channel) || isHussChannel(channel)) patch(id, { resultSaveError: null, upstreamDeliveryPending:false }); }
         catch (error: any) {
           db.update(contents).set({ resultUrl: localized }).where(eq(contents.id, id)).run();
           holdForReview(id, error.message || '生成结果已保留，费用结算待核实', 'settlement');
@@ -449,6 +464,10 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
     const message = '原任务尚未结束，将在后台继续查询，请勿重复提交';
     patch(id, { progressText: message, v6kQueryResumeAt: Date.now() + v6kQueryRetryDelay(Math.max(1, queryFailures)) });
     onEvent({ type: 'status', message }); return;
+  }
+  if (wanfeng) {
+    patch(id, { wanfengResumeAt: Date.now() + 60_000 });
+    return;
   }
   const reviewMessage = (metadata(id).upstreamQueryError || '') + '；原任务查询达到时限，费用保留，请核查原任务，请勿重复提交';
   holdForReview(id, reviewMessage, 'query');
@@ -514,6 +533,15 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
             try { claimVideoSubmission(id, target.channel.timeout || 120_000); claimed = true; }
             catch (error: any) { throw new SpecificationUpstreamError(error.message, false, true); }
           }
+          if (target.channel.type === 'wanfeng' && submissionMetadata?.wanfengReceipt) {
+            const receipt = submissionMetadata.wanfengReceipt as { id: string };
+            taskId = receipt.id;
+            sqlite.transaction(() => {
+              acceptVideoSubmission(id, receipt.id, { provider: 'wanfeng', channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId });
+              patch(id, submissionMetadata);
+            }).immediate();
+            return;
+          }
           if (isZonghengChannel(target.channel) && typeof submissionMetadata?.videoId === 'string') {
             taskId = submissionMetadata.videoId;
             acceptZonghengVideoReceipt(id, taskId, { channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId });
@@ -521,8 +549,10 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
           patch(id, { ...submissionMetadata, submissionStartedAt: new Date().toISOString() });
           dispatchPrepared = true;
         });
-        acceptVideoSubmission(id, taskId, { provider: isSnumomWanChannel(target.channel) ? 'snumom' : target.channel.type || '',
-          channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId });
+        if (target.channel.type !== 'wanfeng') {
+          acceptVideoSubmission(id, taskId, { provider: isSnumomWanChannel(target.channel) ? 'snumom' : target.channel.type || '',
+            channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId });
+        }
         patch(id, { videoId: taskId, upstreamTaskId: taskId, progressKnown: false, progressText: '渠道已受理，正在查询任务状态', requiresReview: false });
         onEvent({ type: 'progress', progress: 0, progressKnown: false, message: '渠道已受理，正在查询任务状态', contentId: id });
         pollingStarted = true;
@@ -531,7 +561,12 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
         if (e instanceof SpecificationUpstreamError && e.zonghengSubmissionError) recordZonghengSubmissionError(id, e.zonghengSubmissionError);
         const uncertain = Boolean(taskId) || e instanceof SpecificationUpstreamError && e.uncertain
           || dispatchPrepared && !(e instanceof SpecificationUpstreamError && (e.retrySafe || e.confirmedFailure));
-        if (claimed && target.channel.type === 'zhiying' && !uncertain && e instanceof SpecificationUpstreamError && e.confirmedFailure) {
+        if (claimed && target.channel.type === 'wanfeng' && !uncertain && e instanceof SpecificationUpstreamError && e.confirmedFailure) {
+          sqlite.transaction(() => {
+            endVideoSubmission(id, 'rejected');
+            patch(id, { wanfengRejection: e.message });
+          }).immediate();
+        } else if (claimed && target.channel.type === 'zhiying' && !uncertain && e instanceof SpecificationUpstreamError && e.confirmedFailure) {
           // A crash between evidence and refund must never turn a rejected POST into a new generation.
           sqlite.transaction(() => {
             endVideoSubmission(id, 'rejected');
@@ -1281,6 +1316,14 @@ export function resumeSpecificationTasks() {
     if ((meta.siYueTianVideoCredential || isSiYueTianManagedVideoModel(meta.actualModel)) && Number(meta.siYueTianMinimaxResumeAt) > Date.now()) continue;
     if (meta.zonghengProtocol === 'v6k' && Number(meta.v6kQueryResumeAt) > Date.now()) continue;
     if (row.type === 'video' && videoSubmissionPending(row.id, meta)) continue;
+    if (meta.wanfengRejection && !meta.videoId) {
+      if (!meta.refundPending) {
+        try { failTask(row.id, meta.wanfengRejection); }
+        catch (error: any) { console.error('[specification] 晚风退款恢复失败', row.id, error.message); }
+      }
+      continue;
+    }
+    if (Number(meta.wanfengResumeAt || 0) > Date.now()) continue;
     if (row.type === 'video' && meta.zhiyingOrder) {
       if ((!meta.zhiyingReplayStopped || meta.videoId || meta.upstreamTaskId) && !meta.refundPending && !meta.billingShortfall && meta.reviewKind !== 'settlement' && Number(meta.zhiyingResumeAt || 0) <= Date.now())
         scheduleZhiyingRecovery(row.id);
@@ -1313,7 +1356,10 @@ export function resumeSpecificationTasks() {
       ? sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(meta.billingReservationId) as any : null;
     const resumableMini = miniReservation && ['reserved','review'].includes(miniReservation.state)
       && ['query','local'].includes(meta.reviewKind) && !meta.billingShortfall && !meta.refundPending;
-    if (row.status === 'review' && !knownMjResult && !resumableMj && !resumableHuss && !resumableMini) continue;
+    const resumableWanfeng = meta.wanfengCredential && meta.wanfengReceipt?.id === meta.videoId
+      && meta.videoId && !meta.billingShortfall && !meta.refundPending && !meta.queueRefunded
+      && !['refunded', 'settled', 'charged'].includes(meta.billingStatus) && ['query', 'local'].includes(meta.reviewKind);
+    if (row.status === 'review' && !knownMjResult && !resumableMj && !resumableHuss && !resumableMini && !resumableWanfeng) continue;
     if (resumableHuss) {
       meta.videoId = meta.videoId || meta.upstreamTaskId;
       patch(row.id, { videoId: meta.videoId, requiresReview: false, reviewKind: null, error: null }, 'processing');
@@ -1338,6 +1384,7 @@ export function resumeSpecificationTasks() {
   }
 }
 import { transportDiagnostic } from './upstreamDiagnostic.js';
+import { matchesWanfengCredential } from './wanfengVideoAdapter.js';
 
 /** Resume the original specification executor and reservation; never create a new paid task. */
 export function recoverSpecificationVideo(id: number) {

@@ -58,6 +58,7 @@ export const SUDA_SHUI_CATALOG_MODELS = [
 ];
 
 function dedicatedBindings(sqlite: Database.Database, c: ChannelBindings): Map<string, string> | undefined {
+  if (c.type === 'wanfeng') return new Map();
   if (c.type === ZHIYING_CHANNEL_TYPE) return new Map([...identity(ZHIYING_VIDEO_MODELS), ...zhiyingBindings(sqlite).filter(row => row.channelId === c.id).map(row => [row.modelId, row.upstreamModel] as [string, string])]);
   if (isDedicatedPidoiImageChannel(c)) return identity([PIDOI_IMAGE_MODEL]);
   if (isPidoiImageChannel(c)) return new Map();
@@ -134,6 +135,7 @@ function supportsPair(channel: Channel, bindings: Map<string, string>, id: strin
 }
 
 export function getChannelVideoProtocol(channel: ChannelBindings): ChannelVideoProtocol | undefined {
+  if (channel.type === 'wanfeng') return 'wanfeng';
   if (isAsyncVideoChannel(channel)) return 'async-video';
   if (isMegabyChannel(channel)) return 'megaby';
   if (isMjNewApiChannel(channel)) return 'mjnewapi';

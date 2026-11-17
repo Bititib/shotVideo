@@ -5,7 +5,9 @@ export const ASYNC_VIDEO_MODEL_ROUTE_PREFIX = CHANNEL_MODEL_ROUTE_PREFIX + 'asyn
 export const MJ_NEW_API_MODEL_ROUTE_PREFIX = CHANNEL_MODEL_ROUTE_PREFIX + 'mjnewapi-';
 export const NEW_TOKEN_MODEL_ROUTE_PREFIX = CHANNEL_MODEL_ROUTE_PREFIX + 'newtoken-';
 export const MEGABY_MODEL_ROUTE_PREFIX = CHANNEL_MODEL_ROUTE_PREFIX + 'megaby-';
+export const WANFENG_MODEL_ROUTE_PREFIX = CHANNEL_MODEL_ROUTE_PREFIX + 'wanfeng-';
 export const channelVideoProtocols = {
+  wanfeng: { prefix: WANFENG_MODEL_ROUTE_PREFIX, label: '晚风统一视频', multimedia: true },
   'async-video': { prefix: ASYNC_VIDEO_MODEL_ROUTE_PREFIX, label: 'Vx-乐异步视频', multimedia: false },
   mjnewapi: { prefix: MJ_NEW_API_MODEL_ROUTE_PREFIX, label: 'MJNewAPI 视频 JSON', multimedia: true },
   newtoken: { prefix: NEW_TOKEN_MODEL_ROUTE_PREFIX, label: 'NewToken Seedance 视频', multimedia: true },

@@ -11,6 +11,7 @@ import { isFunAiChannel, shouldSendFunAiAuthorization, funAiTaskUrl } from './fu
 import { isZonghengChannel } from './zonghengAdapter.js';
 import { isHayaChannel, shouldSendHayaAuthorization, hayaTaskUrl } from './hayaVideoAdapter.js';
 import crypto from 'crypto';
+import { matchesWanfengCredential, fetchWanfengVideoContent } from './wanfengVideoAdapter.js';
 import fs from 'fs';
 import path from 'path';
 import { saveHussVideo, type HussDownloadProgress } from './hussResumableDownload.js';
@@ -48,6 +49,7 @@ export async function downloadAndLocalizeVideo(
   originalCredential?: string,
   originalMinikeyCredential?: string,
   originalSiYueTianCredential?: string,
+  originalWanfengCredential?: string,
 ): Promise<string> {
   const originalZhiying = Boolean(originalCredential) || isZhiyingVideoModel(model);
   if (!url && !originalZhiying) throw new Error('Upstream completed without a video URL');
@@ -57,6 +59,9 @@ export async function downloadAndLocalizeVideo(
   }
 
   const exactChannel = channelId ? ChannelService.getChannelRaw(channelId, channelApiKeyId) : null;
+  if (originalWanfengCredential && (!exactChannel || !matchesWanfengCredential(exactChannel, originalWanfengCredential))) {
+    throw new Error('晚风原渠道或 Key 已变化，停止下载');
+  }
   if (originalMinikeyCredential && (!exactChannel || !isMinikeyChannel(exactChannel) || minikeyCredential(exactChannel)!==originalMinikeyCredential)) throw new Error('miniKey 原任务渠道或凭据已变化，停止下载');
   if (originalSiYueTianCredential && (!exactChannel || siYueTianVideoCredential(exactChannel) !== originalSiYueTianCredential))
     throw new Error('四月天原任务渠道或凭据已变化，停止下载');
@@ -67,7 +72,7 @@ export async function downloadAndLocalizeVideo(
   const headers: Record<string, string> = {};
   const maySendAuthorization = originalSiYueTianCredential
     ? url === siYueTianVideoOrigin(exactChannel!.baseUrl) + '/v1/videos/' + encodeURIComponent(videoId) + '/content'
-    : channel?.type==='image2pro' ? false : isMinikeyChannel(channel) ? false : channel?.type === 'zhiying' ? false : isHussChannel(channel) ? false : isMegabyChannel(channel) ? false : isAsyncVideoChannel(channel) ? false : isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isZonghengChannel(channel) ? Boolean(authenticatedV6kContent) : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
+    : channel?.type === 'wanfeng' ? false : channel?.type==='image2pro' ? false : isMinikeyChannel(channel) ? false : channel?.type === 'zhiying' ? false : isHussChannel(channel) ? false : isMegabyChannel(channel) ? false : isAsyncVideoChannel(channel) ? false : isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isZonghengChannel(channel) ? Boolean(authenticatedV6kContent) : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
     ? shouldSendHmStudioAuthorization(url, channel.baseUrl)
     : isWxHaidiYueChannel(channel)
       ? shouldSendWxHaidiYueAuthorization(url, channel.baseUrl)
@@ -79,7 +84,9 @@ export async function downloadAndLocalizeVideo(
   const uploadDir = path.join(process.cwd(), 'data', 'uploads', 'videos');
   fs.mkdirSync(uploadDir, { recursive: true });
 
-  const safeId = channel?.type === 'zhiying'
+  const safeId = channel?.type === 'wanfeng'
+    ? 'wanfeng_' + channel.id + '_' + crypto.createHash('sha256').update(JSON.stringify([originalWanfengCredential, videoId])).digest('hex')
+    : channel?.type === 'zhiying'
     ? 'zhiying_' + channel.id + '_' + crypto.createHash('sha256').update(JSON.stringify([originalCredential, videoId])).digest('hex')
     : `${model}_${videoId}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 160);
   for (const extension of ['mp4', 'webm']) {
@@ -99,7 +106,7 @@ export async function downloadAndLocalizeVideo(
   if (channel?.type === 'zhiying') {
     buffer = await fetchZhiyingVideoContent(channel, videoId, url, model);
   } else {
-    let response = isMinikeyChannel(channel) ? await fetchMinikeyFile(channel, 'videos', videoId) : authenticatedV6kContent ? await fetchV6kVideoContent(channel, videoId) : isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000),
+    let response = channel?.type === 'wanfeng' ? await fetchWanfengVideoContent(channel, videoId, url) : isMinikeyChannel(channel) ? await fetchMinikeyFile(channel, 'videos', videoId) : authenticatedV6kContent ? await fetchV6kVideoContent(channel, videoId) : isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000),
       ...(originalSiYueTianCredential && headers.Authorization ? { redirect: 'error' } : {}) });
     if (isMegabyChannel(channel) && [401, 403, 404].includes(response.status) && url !== megabyContentUrl(channel.baseUrl, videoId)) response = await fetchMegabyVideoContent(channel, megabyContentUrl(channel.baseUrl, videoId), videoId);
     if (!response.ok && isMegabyChannel(channel)) await readMegabyJson(channel, response, 'query');

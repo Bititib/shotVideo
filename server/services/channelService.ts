@@ -7,6 +7,7 @@ import { channelCatalogBindings, pruneChannelCatalogBindings } from './channelCa
 import { configuredSyncBindings } from './modelSyncScope.js';
 import { isSupportedChannelType } from '../../shared/channelTypes.js';
 import { isConfiguredZhiyingModel as isZhiyingVideoModel } from './zhiyingModelRegistry.js';
+import { WANFENG_BASE_URL, wanfengBaseUrl } from '../../shared/wanfengVideo.js';
 import { ZHIYING_CHANNEL_TYPE, zhiyingApiBase } from '../../shared/zhiyingVideo.js';
 import { SNUMOM_VIDEO_MODELS } from './snumomWanAdapter.js';
 import { isMegabyChannel, megabyBaseUrl, fetchMegabyVideoModels } from './megabyVideoAdapter.js';
@@ -411,6 +412,11 @@ export class ChannelService {
   static createChannel(data: any) {
     let { name, type, baseUrl, apiKey, modelMapping, supportedModels, priority, weight, maxRetries, timeout } = data;
     if(type===SUNO_CHANNEL_TYPE){baseUrl=sunoBase(baseUrl||'');apiKey=apiKey?.trim();maxRetries=0;}
+    if (type === 'wanfeng') {
+      try { baseUrl = wanfengBaseUrl(baseUrl || WANFENG_BASE_URL); }
+      catch (error) { throw { status: 400, message: (error as Error).message }; }
+      maxRetries = 0;
+    }
     if (type === ZHIYING_CHANNEL_TYPE) {
       baseUrl = zhiyingApiBase(baseUrl);
       maxRetries = 0;
@@ -478,6 +484,13 @@ export class ChannelService {
     if (data.type === 'blobdraw') data = { ...data, type: HUSS_CHANNEL_TYPE, baseUrl: 'https://www.huss.top',
       ...(isHussChannel({ baseUrl: data.baseUrl ?? channel.baseUrl }) ? {} : { apiKey: '' }), maxRetries: 0 };
     const nextType = data.type ?? channel.type;
+    if (nextType === 'wanfeng') {
+      try { data = { ...data, baseUrl: wanfengBaseUrl(data.baseUrl ?? channel.baseUrl), maxRetries: 0 }; }
+      catch (error) { throw { status: 400, message: (error as Error).message }; }
+    }
+    if (nextType !== channel.type && [nextType, channel.type].includes('wanfeng') && !data.apiKey) {
+      data = { ...data, apiKey: '' };
+    }
     if (nextType === ZHIYING_CHANNEL_TYPE) {
       data = { ...data, baseUrl: zhiyingApiBase(data.baseUrl ?? channel.baseUrl), maxRetries: 0 };
     }
@@ -689,6 +702,10 @@ export class ChannelService {
     if (!channel) throw { status: 404, message: '渠道不存在' };
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
     if(channel.type==='image2pro'){const {syncImage2proModels}=await import('./image2proCatalogService.js');return syncImage2proModels(channel);}
+    if (channel.type === 'wanfeng') {
+      const models = [...(channelCatalogBindings(sqlite, channel)?.keys() ?? [])];
+      return { count: models.length, added: 0, models, warnings: ['请在“模型与参数”从晚风公开目录选择型号并保存映射。'] };
+    }
     if (channel.type === 'minikey') {
       const { listMinikeyModelConfigurations, listMinikeyCatalogOptions } = await import('./minikeyModelConfigurationService.js');
       await listMinikeyCatalogOptions(id);

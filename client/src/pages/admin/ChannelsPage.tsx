@@ -1,5 +1,6 @@
 import { SUNO_BASE_URL, SUNO_CHANNEL_TYPE } from '../../../../shared/sunoMusic';
 import { MEGABY_BASE_URL } from '../../../../shared/megabyVideo';
+import { WANFENG_BASE_URL } from '../../../../shared/wanfengVideo';
 import { ZHIYING_BASE_URL, ZHIYING_CHANNEL_TYPE, ZHIYING_VIDEO_MODELS, zhiyingVideoDisplayName } from '../../../../shared/zhiyingVideo';
 import React, { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import AdminCollection from '../../components/AdminCollection';
@@ -573,8 +574,8 @@ export default function ChannelsPage() {
                       apiKeys: e.target.value === 'hmstudio' && (!edit.apiKeys || edit.apiKeys.length === 0)
                         ? [newHmKey()]
                         : edit.apiKeys,
-                      maxRetries: ['image2pro', 'minikey', 'suno-api', 'zongheng-v6k', 'funai', 'megaby', 'async-video', 'mj', 'huss', ZHIYING_CHANNEL_TYPE].includes(e.target.value) ? 0 : edit.maxRetries,
-                      baseUrl: e.target.value === 'image2pro' ? 'https://nicolessss.com/v1' : e.target.value === SUNO_CHANNEL_TYPE ? SUNO_BASE_URL : e.target.value === 'minikey' ? 'https://minikey.work' : e.target.value === ZHIYING_CHANNEL_TYPE ? ZHIYING_BASE_URL : e.target.value === 'megaby' && !edit.baseUrl ? MEGABY_BASE_URL : e.target.value === 'async-video' && !edit.baseUrl
+                      maxRetries: ['wanfeng', 'image2pro', 'minikey', 'suno-api', 'zongheng-v6k', 'funai', 'megaby', 'async-video', 'mj', 'huss', ZHIYING_CHANNEL_TYPE].includes(e.target.value) ? 0 : edit.maxRetries,
+                      baseUrl: e.target.value === 'wanfeng' ? WANFENG_BASE_URL : e.target.value === 'image2pro' ? 'https://nicolessss.com/v1' : e.target.value === SUNO_CHANNEL_TYPE ? SUNO_BASE_URL : e.target.value === 'minikey' ? 'https://minikey.work' : e.target.value === ZHIYING_CHANNEL_TYPE ? ZHIYING_BASE_URL : e.target.value === 'megaby' && !edit.baseUrl ? MEGABY_BASE_URL : e.target.value === 'async-video' && !edit.baseUrl
                         ? ASYNC_VIDEO_BASE_URL
                         : e.target.value === 'funai' && !edit.baseUrl
                         ? FUNAI_BASE_URL
@@ -611,6 +612,7 @@ export default function ChannelsPage() {
                       <option value="huss">HUSS（视频 / Midjourney 图片）</option>
                       <option value="megaby">Megaby（视频生成）</option>
                       <option value="image2pro">Image2Pro（文本 / 图片 / 视频）</option>
+                      <option value="wanfeng">晚风 API（视频）</option>
                       <option value="minikey">miniKey（图片和视频）</option>
                       <option value="suno-api">Suno（音乐）</option>
                       <option value={ZHIYING_CHANNEL_TYPE}>智赢 AI（视频生成）</option>

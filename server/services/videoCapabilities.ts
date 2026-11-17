@@ -1,3 +1,4 @@
+import { WANFENG_MODEL_ROUTE_PREFIX } from '../../shared/channelModelConfiguration.js';
 import { configuredZhiyingProfile } from './zhiyingModelRegistry.js';
 import { funAiModelKind, funAiModelLimits, FUNAI_MODEL_PREFIX } from '../../shared/funAi.js';
 import { publicApiModelId } from '../../shared/publicApiModelId.js';
@@ -93,7 +94,10 @@ export function videoCapabilities(modelId: string, specification?: ModelSpecific
   } : limits || undefined;
   // Managed models can use several adapters: only advertise a field every enabled route consumes.
   const ids = (spec ? spec.routes.filter(r => r.enabled).map(r => r.executionModel) : [modelId]).map(getHmStudioPublicVideoModel);
-  const schemas = ids.map(id => VIDEO_PARAMETER_SCHEMAS[id] || emptySchema());
+  const enabledRoutes = spec?.routes.filter(route => route.enabled);
+  const schemas = enabledRoutes?.length && enabledRoutes.every(route => route.id.startsWith(WANFENG_MODEL_ROUTE_PREFIX))
+    ? [{ ...emptySchema(), properties: { generate_audio: { type: 'boolean', title: '生成配乐和音效', default: true } as ParameterRule } }]
+    : ids.map(id => VIDEO_PARAMETER_SCHEMAS[id] || emptySchema());
   const first = schemas[0] || emptySchema();
   const properties = Object.fromEntries(Object.entries(first.properties).filter(([key, rule]) =>
     schemas.every(schema => JSON.stringify(schema.properties[key]) === JSON.stringify(rule))));

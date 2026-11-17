@@ -1,3 +1,6 @@
+import { wanfengVideoCatalog, wanfengVideoLimits } from '../../shared/wanfengVideo.js';
+import { allowsDuration } from '../../shared/modelRouting.js';
+import { buildWanfengVideoPayload } from './wanfengVideoAdapter.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { channelVideoProtocols, CHANNEL_MODEL_ROUTE_PREFIX, STANDARD_CHANNEL_IMAGE_RATIOS, STANDARD_CHANNEL_VIDEO_RATIOS,
@@ -77,6 +80,7 @@ export function listChannelModelConfigurations(channelId: number) {
 async function fetchCatalog(channel: Channel): Promise<ChannelModelCatalogEntry[]> {
   if (!channel.apiKey.trim()) throw fail('请先在渠道配置中保存 API Key', 409);
   const protocol = getChannelVideoProtocol(channel);
+  if (protocol === 'wanfeng') return wanfengVideoCatalog();
   if (protocol === 'async-video' || protocol === 'megaby') {
     try {
       if (protocol === 'megaby') return (await fetchMegabyAuthorizedModels(channel))
@@ -130,7 +134,7 @@ function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol
   validateLimits(draft.limits);
   const limits = draft.limits;
   if (protocol && draft.kind !== 'video') throw fail('此协议只支持视频模型');
-  if (limits.firstFrame || limits.lastFrame || ((!protocol || !channelVideoProtocols[protocol].multimedia) && (limits.maxVideos || limits.maxAudios))) {
+  if ((protocol !== 'wanfeng' && (limits.firstFrame || limits.lastFrame)) || ((!protocol || !channelVideoProtocols[protocol].multimedia) && (limits.maxVideos || limits.maxAudios))) {
     throw fail('此协议不支持所设置的音视频参考或独立首尾帧');
   }
   if (draft.kind === 'video') {
@@ -145,6 +149,19 @@ function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol
   }
   if (protocol === 'newtoken' && (limits.maxImages > 9 || limits.maxVideos > 3 || limits.maxAudios > 3)) {
     throw fail('NewToken Seedance 最多支持 9 图、3 视频、3 音频');
+  }
+  if (protocol === 'wanfeng') {
+    const supported = wanfengVideoLimits(draft.upstreamModel);
+    if (!supported) throw fail('请从晚风公开视频目录选择上游型号');
+    const { duration } = limits;
+    const seconds = duration.mode === 'options' ? duration.values : duration.mode === 'fixed' ? [duration.min]
+      : Array.from({ length: Math.floor((duration.max - duration.min) / duration.step) + 1 }, (_, i) => duration.min + i * duration.step);
+    if (!seconds.length || !seconds.every(value => allowsDuration(supported.duration, value))
+      || limits.maxImages > supported.maxImages || limits.maxVideos > supported.maxVideos || limits.maxAudios > supported.maxAudios
+      || limits.resolutions.some(value => !supported.resolutions.includes(value)) || limits.ratios.some(value => !supported.ratios.includes(value))) {
+      throw fail('配置超出该晚风模型支持的时长、画幅、分辨率或素材数量');
+    }
+    return;
   }
   if (protocol && protocol !== 'newtoken') {
     if (!limits.ratios.every(ratio => /^[1-9]\d{0,3}:[1-9]\d{0,3}$/.test(ratio))) throw fail('请填写有效画幅');
@@ -187,6 +204,7 @@ export function previewChannelModelRequest(channelId: number, draft: ChannelMode
   if (protocol === 'mjnewapi') return preview('/v1/videos', buildMjNewApiVideoPayload({ model, prompt, duration: seconds, aspectRatio: ratio, resolution, ...media }));
   if (protocol === 'newtoken') return preview('/v1/videos', buildNewTokenVideoPayload({ model: NEWTOKEN_SEEDANCE_PROTOCOL_MODEL, upstreamModel: model, prompt, duration: seconds, aspectRatio: ratio, ...media }));
   if (protocol === 'megaby') return preview('/v1/videos', buildMegabyVideoPayload({ model, prompt, seconds, ratio, resolution, ...media, firstFrame: '', lastFrame: '' }, true));
+  if (protocol === 'wanfeng') return preview('/v1/videos', buildWanfengVideoPayload({ model, prompt, seconds, ratio, resolution, ...media, firstFrame: '', lastFrame: '' }));
   if (draft.kind === 'image') return preview(images ? '/v1/images/edits' : '/v1/images/generations', { model, prompt, n: 1, size: imageSize(ratio), response_format: 'url', ...(images ? { 'image[]': media.images } : {}) });
   return preview('/v1/videos', { ...standardVideoFormFields(model, prompt, { seconds, ratio, resolution }), ...(images ? { 'input_reference[]': media.images } : {}) });
 }

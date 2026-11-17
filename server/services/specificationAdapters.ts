@@ -54,6 +54,8 @@ import { isVideoQueryErrorPayload } from './videoFailureService.js';
 import { classifyHmSubmission } from './hmStudioSubmission.js';
 import { submitSiYueTianMinimax, pollSiYueTianMinimax, SiYueTianMinimaxError } from './siYueTianMinimaxAdapter.js';
 
+import { buildWanfengVideoPayload, createWanfengVideo, pollWanfengVideo, wanfengCredential, WanfengSubmissionError } from './wanfengVideoAdapter.js';
+
 export type SpecificationRequest = { prompt: string; input: RoutingInput; images: string[]; videos: string[]; audios: string[]; firstFrame: string; lastFrame: string; body: Record<string, any>; publicBaseUrl: string; submissionKey?: string; ownerId?: number; v6kConfigured?: boolean };
 /** Validate extra-parameter/media combinations before reserving money or creating a task. */
 export function validateSpecificationVideoParameters(request: SpecificationRequest, candidates: RouteCandidate[]) {
@@ -87,6 +89,13 @@ export function validateSpecificationVideoParameters(request: SpecificationReque
       seconds: request.input.seconds, ratio: request.input.ratio, resolution: request.input.resolution,
       images: request.images, videos: request.videos, audios: request.audios, firstFrame: request.firstFrame,
       lastFrame: request.lastFrame, publicBaseUrl: request.publicBaseUrl, idempotencyKey: 'input-validation' });
+    if (target.channel.type === 'wanfeng') {
+      const { generateAudio, generate_audio } = request.body;
+      if (generateAudio !== undefined && generate_audio !== undefined && generateAudio !== generate_audio) {
+        throw new Error('晚风生成音频参数重复且不一致');
+      }
+      if (generateAudio !== undefined && typeof generateAudio !== 'boolean') throw new Error('晚风生成音频参数须为布尔值');
+    }
     if (isFunAiChannel(target.channel)) validateFunAiReferenceMode(target.route.upstreamModel, request);
     if (target.channel.type === 'hmstudio' && request.body.function_mode !== undefined) {
       const error = validateHmStudioAdditionalVideoInput(getHmStudioPublicVideoModel(target.route.upstreamModel), {
@@ -256,6 +265,31 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   }
   const c = { ...target.channel, videoSubmission: true }, model = target.route.upstreamModel, exec = target.route.executionModel, i = request.input;
   const standard = target.route.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX);
+  if (c.type === 'wanfeng') {
+    let payload: ReturnType<typeof buildWanfengVideoPayload>;
+    let credential: string;
+    try {
+      const publish = (source: string) => publishSpecificationAsset(source, request.publicBaseUrl);
+      payload = buildWanfengVideoPayload({ model, prompt: request.prompt, seconds: i.seconds, ratio: i.ratio, resolution: i.resolution,
+        images: request.images.map(publish), videos: request.videos.map(publish), audios: request.audios.map(publish),
+        firstFrame: request.firstFrame ? publish(request.firstFrame) : '', lastFrame: request.lastFrame ? publish(request.lastFrame) : '',
+        generateAudio: request.body.generateAudio ?? request.body.generate_audio });
+      credential = wanfengCredential(c);
+    } catch (error) {
+      throw new SpecificationUpstreamError((error as Error).message, false, false, false, 0, true);
+    }
+    onStarting({ wanfengCredential: credential });
+    try {
+      const job = await createWanfengVideo(c, payload);
+      onStarting({ wanfengReceipt: job });
+      return job.id;
+    } catch (error) {
+      if (error instanceof WanfengSubmissionError) {
+        throw new SpecificationUpstreamError(error.message, false, !error.confirmedFailure, false, error.status, error.confirmedFailure);
+      }
+      throw error;
+    }
+  }
   if (c.type === 'zhiying') {
     if (exec !== request.body.model || !configuredZhiyingProfile(exec, c.id, model)) throw new SpecificationUpstreamError('智赢视频型号映射不一致', false, false, false, 0, true);
     let payload: Awaited<ReturnType<typeof prepareZhiyingVideo>>;
@@ -497,6 +531,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   return String(id);
 }
 export async function pollSpecificationVideo(channel: any, taskId: string, executionModel?: string, referenceVideoSeconds = 0) {
+  if (channel.type === 'wanfeng') return pollWanfengVideo(channel, taskId);
   if(isImage2proChannel(channel))return pollImage2pro(channel,'video',taskId);
   if (isMinikeyChannel(channel)) return pollMinikey(channel, 'videos', taskId);
   if (channel.type === 'zhiying') return pollZhiyingVideo(channel, taskId, executionModel);

@@ -155,7 +155,8 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
   const duration = limits?.duration;
   const protocol = data?.protocol ? channelVideoProtocols[data.protocol] : null;
   const asyncVideo = data?.protocol === 'async-video';
-  const chooseFromCatalog = asyncVideo || data?.protocol === 'megaby';
+  const wanfeng = data?.protocol === 'wanfeng';
+  const chooseFromCatalog = wanfeng || asyncVideo || data?.protocol === 'megaby';
   const availableModels = catalog?.filter(entry => !data?.models.some(row => row.modelId !== selected?.modelId && row.upstreamModel === entry.id));
 
   return <AdminDrawer modal panelClassName="v6k-model-dialog" title={channelName + ' · 模型与参数'}
@@ -221,7 +222,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                     setRatios(entry.limits.ratios.join(','));
                     setSeconds(entry.limits.duration.values.join(','));
                   }}>
-                  <option value="" disabled>读取授权目录后选择</option>
+                  <option value="" disabled>{wanfeng ? '读取公开目录后选择' : '读取授权目录后选择'}</option>
                   {selected?.upstreamModel && !availableModels?.some(entry => entry.id === selected.upstreamModel) &&
                     <option value={selected.upstreamModel}>{selected.upstreamModel}</option>}
                   {availableModels?.map(entry => <option key={entry.id} value={entry.id}>{entry.id}</option>)}
@@ -234,11 +235,12 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                   }}><option value="video">视频</option><option value="image">图片</option></select></label>}
               </div>
               <div>
-                <button type="button" className={button} onClick={() => void loadCatalog()}>读取已授权的上游型号</button>
+                <button type="button" className={button} onClick={() => void loadCatalog()}>{wanfeng ? '读取晚风公开型号' : '读取已授权的上游型号'}</button>
+                {wanfeng && <p className="v6k-field-help">公开目录用于配置模型，实际可用型号取决于晚风 Key 的权限。</p>}
                 {catalog && <>
                   {!chooseFromCatalog && <datalist id="channel-model-catalog">{availableModels?.map(({ id }) => <option key={id} value={id} />)}</datalist>}
                   <p className="v6k-field-help" role="status">{availableModels?.length
-                    ? `可选 ${availableModels.length} 个型号。请确认所选型号支持当前生成协议。` : '授权目录里暂无可添加的型号。'}</p>
+                    ? `可选 ${availableModels.length} 个型号。请确认所选型号支持当前生成协议。` : wanfeng ? '公开目录里暂无可添加的型号。' : '授权目录里暂无可添加的型号。'}</p>
                 </>}
               </div>
               <section className="v6k-section">
@@ -260,6 +262,12 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                       onChange={event => setLimits({ maxAudios: Number(event.target.value) })} /></label>
                     <label>参考素材合计上限<input className={field} type="number" min="0" max="300" value={draft.limits.maxReferences ?? ''}
                       onChange={event => setLimits({ maxReferences: event.target.value ? Number(event.target.value) : undefined })} /></label>
+                  </>}
+                  {wanfeng && <>
+                    <label><input type="checkbox" checked={draft.limits.firstFrame}
+                      onChange={event => setLimits({ firstFrame: event.target.checked })} />独立首帧</label>
+                    <label><input type="checkbox" checked={draft.limits.lastFrame}
+                      onChange={event => setLimits({ lastFrame: event.target.checked })} />独立尾帧</label>
                   </>}
                   {draft.kind === 'image' && <label>最多输出图片<input className={field} type="number" min="1" max="4" value={draft.limits.maxOutputs}
                     onChange={event => setLimits({ maxOutputs: Number(event.target.value) })} /></label>}
@@ -330,7 +338,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
               {busy ? '正在同步…' : '同步已接入模型'}</button>}
           </>}
           {draft && <button type="submit" form="channel-model-form" className={button + ' v6k-button-primary'} disabled={busy || !dirty || tab !== '参数与媒体'}>
-            {busy ? '正在处理…' : selected ? '保存配置' : '校验授权并添加模型'}</button>}
+            {busy ? '正在处理…' : selected ? '保存配置' : wanfeng ? '添加模型映射' : '校验授权并添加模型'}</button>}
         </footer>}
       </div>
     </div>
