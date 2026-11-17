@@ -295,6 +295,57 @@ it('returns a rejected external order to the original token balance',async()=>{
     expect(ledger(task.id).map((row:any)=>[row.account_type,row.delta])).toEqual([['token_usage',2],['token',-2],['token_usage',-2],['token',2]]);
   });
 });
+it.each(['upload','voice'])('exposes an explicit HTTP 500 catalog rejection through the %s API without retry or billing',async operation=>{
+  db.insert(apiTokens).values({id:11,tokenKey:'music-token',name:'music',userId:1,balance:30,allowedModels:'["suno-v6"]'}).run();
+  const message='This audio matches an existing recording in our catalog.';
+  calls.mockResolvedValueOnce(Response.json({error:{code:'bad_response_status_code',type:'bad_response_status_code',param:'',message}},
+    {status:500,headers:{'x-oneapi-request-id':'catalog-rejection-trace'}}));
+  await withApp(async url=>{
+    const headers={Authorization:'Bearer music-token'};
+    const form=new FormData();
+    form.append('options',JSON.stringify(input(operation,operation==='upload'?{rights_confirmed:true}:{self_voice_confirmed:true})));
+    form.append('file',new Blob([wav()],{type:'audio/wav'}),'recording.wav');
+    const response=await localFetch(url+'/v1/music/'+(operation==='upload'?'assets':'voices'),{method:'POST',headers,body:form});
+    expect(response.status).toBe(202);const task=await response.json();
+    files.add(JSON.parse(job(task.id).payload).multipart.file);
+    await until(()=>job(task.id).state==='failed');
+    const status=await (await localFetch(url+task.status_url,{headers})).json();
+    expect(status).toMatchObject({status:'failed',stage:'failed',error_code:'bad_response_status_code',
+      error:expect.stringContaining(message),can_recover:false,poll_after_seconds:null,billing_status:'free'});
+    expect(job(task.id).error).toContain('catalog-rejection-trace');
+    await run(task.id);await resumeMusicTasks();
+    expect(calls).toHaveBeenCalledTimes(1);
+    expect(ledger(task.id)).toEqual([]);
+    expect(sqlite.prepare('SELECT balance FROM api_tokens WHERE id=11').get()).toEqual({balance:30});
+  });
+});
+it('keeps unknown upload errors and conflicting clip receipts unresolved without resubmission',async()=>{
+  const message='This audio matches an existing recording in our catalog.';
+  for(const response of [
+    {error:{code:'bad_response_status_code',message:'upstream connection closed'},prompt:message},
+    {error:{code:'unrecognized_code',message}},
+    {code:'bad_response_status_code',prompt:message},
+    {clip_id:'existing_clip',status:'complete',error:{code:'bad_response_status_code',message}},
+  ]) {
+    const task=create(input('upload',{rights_confirmed:true}),await localFile());
+    calls.mockResolvedValueOnce(Response.json(response,{status:500}));await run(task.id);
+    expect(getMusicTask(task.id,owner).status).toBe('review');
+    expect(job(task.id).upstream_id).toBe('clip_id' in response?'existing_clip':null);
+    await run(task.id);
+    expect(ledger(task.id)).toEqual([]);
+  }
+  expect(calls).toHaveBeenCalledTimes(4);
+});
+it('does not apply the free upload catalog rejection rule to paid generation',async()=>{
+  const asset=create(input('upload',{rights_confirmed:true}),await localFile());
+  calls.mockResolvedValueOnce(Response.json({clip_id:'source_clip',status:'complete'}));await run(asset.id);
+  const task=create(input('cover',{asset_id:asset.id}));
+  calls.mockResolvedValueOnce(Response.json({error:{code:'bad_response_status_code',message:'This audio matches an existing recording in our catalog.'}},{status:500}));
+  await run(task.id);await run(task.id);
+  expect(getMusicTask(task.id,owner)).toMatchObject({status:'review',review_kind:'submission'});
+  expect(ledger(task.id).map((entry:any)=>entry.delta)).toEqual([-2]);
+  expect(calls).toHaveBeenCalledTimes(2);
+});
 it('returns rejected website purchase to the original organization after the user moves',async()=>{
   db.insert(organizations).values({id:1,name:'A',balance:40}).run();
   db.insert(organizations).values({id:2,name:'B',balance:40}).run();

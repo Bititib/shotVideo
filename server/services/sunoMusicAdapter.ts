@@ -67,7 +67,8 @@ function checked(r: Reply, op?: MusicOperation) {
   if (r.response.ok && !envelopeError) return;
   const code = d?.error?.code ?? d?.error_code ?? d?.error?.type ?? d?.code;
   const reason = d?.error?.message ?? d?.message;
-  // These are documented pre-acceptance errors. Gateways/non-JSON/ambiguous 5xx
+  // Documented pre-acceptance errors and the observed upload rejection below.
+  // Gateways/non-JSON/ambiguous 5xx
   // must never be used as proof that a paid request was rejected.
   const declared = envelopeError && typeof reason === 'string' && reason.trim();
   const selectedVoice = op === 'sing' || op === 'voice_cover';
@@ -75,6 +76,10 @@ function checked(r: Reply, op?: MusicOperation) {
   const confirmed = Boolean(op && declared && (
     [400,401,402,403,429].includes(r.response.status) ||
     documentedReject.test(String(code)) ||
+    // upload-source returned this exact business rejection inside HTTP 500 on
+    // 2026-11-17. The code alone is a generic wrapper, not rejection evidence.
+    (op === 'upload' && code === 'bad_response_status_code' &&
+      reason.trim() === 'This audio matches an existing recording in our catalog.') ||
     (selectedVoice && /^(?:model is required|voice not found(?::|$)|voice is not ready yet|voice_id is required)/i.test(reason)) ||
     (voiceManagement && /^(?:one of file_path|voice audio is required|Uploaded audio is too short|This audio matches an existing recording|audio file exceeds |source audio (?:not found|is invalid)|source_song_id is required)/i.test(reason))
   ));

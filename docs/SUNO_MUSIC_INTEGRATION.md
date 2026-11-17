@@ -40,7 +40,7 @@ stage 表示队列阶段，client_request_id 为原调用编号，error 和 erro
 
 自助恢复限定免费 upload 和 voice，既有待核实订单同样适用。恢复请求通过原订单处理锁防并发，保持原文件、原凭据和原提交标识，持久化恢复意图后由后台执行。普通音色先从列表按精确 client_request_id 查找原音色并查询详情，找到后恢复原回执；未找到时按上游幂等约定使用同一个 client_request_id 提交。每次用户恢复最多重发一次，连续异常再次返回可查询的具体错误和恢复等待时间。普通上传的明确拒绝结束订单；音色已有未知受理历史时保留核对信息。原文件丢失、配置变化或回执冲突仍需要按具体错误处理。
 
-调用示例见站内 API 文档的上传歌曲素材、创建本人演唱音色和恢复原订单条目，包含上传、断线查单、轮询、一次自助恢复及最终素材编号读取。上述流程使用模拟上游验证，普通上传的生产 ECONNRESET 根因及 JSON base64 对照结果仍待现场确认。
+调用示例见站内 API 文档的上传歌曲素材、创建本人演唱音色和恢复原订单条目，包含上传、断线查单、轮询、一次自助恢复及最终素材编号读取。上述流程使用模拟上游验证；普通上传的生产对照结果及尚未确认的断线原因见下方诊断记录。
 
 ## 上游协议与恢复
 
@@ -67,6 +67,25 @@ stage 表示队列阶段，client_request_id 为原调用编号，error 和 erro
 
 输出记录原文件和请求体摘要、TLS 对端、发送耗时、HTTP 状态、上游请求编号及断开耗时，密钥和音频正文不输出。X-Request-ID 仅供上游日志关联，不表示幂等保证；普通上传成功可能在上游新建免费素材。诊断不回填本站订单，成功的 clipId 保留在输出。BODY_SENT 只表示客户端写入完成，不能证明上游应用已处理完整请求。固定 IP 对照仍可能受到后端负载分配和时间变化影响，精确定位入口/后端关闭连接原因需要上游同期日志。
 
-本地模拟验证了免费操作限制、固定地址、相同原音频、准确 Content-Length、连接重置捕获及成功回执保留。VPS 实际结果待返回后判断。
+本地模拟验证了免费操作限制、固定地址、相同原音频、准确 Content-Length、连接重置捕获及成功回执保留。
+
+### 2026-11-17 VPS 实测及处理修复
+
+北京时间 10:09:50–10:12:08，内容 #16028 的同一份 1,058,444 字节 WAV（SHA256：404830284c05ade3536d61ea05257d8244c0953c302886f29392d175b4c1d34a）在两个 IP、两种编码下得到以下结果：
+
+| 固定上游 IP | 请求格式 | 结果 |
+| --- | --- | --- |
+| 43.159.99.85 | multipart | 13.30 秒返回 HTTP 500，code=bad_response_status_code，原因 This audio matches an existing recording in our catalog. |
+| 43.159.99.85 | JSON base64 | 41.75 秒 ECONNRESET，无 HTTP 响应 |
+| 43.159.98.82 | JSON base64 | 42.07 秒 ECONNRESET，无 HTTP 响应 |
+| 43.159.98.82 | multipart | 40.94 秒 ECONNRESET，无 HTTP 响应 |
+
+HTTP 500 请求的上游编号为 202611170209519990845008268d9d6c2ovYkaJ。该响应确认本次上传被音频曲库匹配规则拒绝，不能据此判断版权归属，也不能用新探测的拒绝回执批量改写历史未知订单。其余三个请求均通过 TLS 证书校验、客户端写入完成在 173 ms 内，诊断截止时间为 310 秒。两种格式均存在重置，不能以切换 base64 为修复。约 41–42 秒的集中断开提示需核对网关或后端处理期限，但客户端日志不能证明具体断开组件，也不能证明三个断开均由曲库匹配引起。
+
+后续上游定位依据：上述 UTC 02:09:50–02:12:08 时间段、上游请求编号、脚本输出的 X-Request-ID 与客户端连接端口，结合上游网关访问/错误日志、请求体读取记录、后端上传处理及回包日志，确认是否进入应用及在哪一层断开。单靠 VPS 重传无法取得这些服务器内部证据。
+
+本站修复限定普通 upload 的明确错误封装：错误码 bad_response_status_code 与指定错误原因精确匹配、且没有有效 clip_id 时，结束为 failed，API 状态查询保留 error_code 和具体原因，停止轮询及自动重发；免费上传不扣退费。有效 clip_id 与错误冲突时仍先保存编号供核对，其他模糊 5xx 保留未知状态；不套用到付费生成。
+
+验证：三个相关测试文件共 41 项通过，TypeScript 检查通过。新增实际 API 上传/音色入口用例覆盖 HTTP 500 曲库拒绝、状态与错误反馈、停止重发及无资金变化；补测未知错误、提示词含相同文字、有效 clip_id 冲突、付费翻唱不误退款。生产断线根因仍需上游日志确认，没有新增真实上游或付费调用。
 
 协议：[灵感生成](https://www.suno-api.io/docs/current-music-create/) · [专业生成](https://www.suno-api.io/docs/current-music-create-custom/) · [普通上传](https://www.suno-api.io/docs/current-music-upload-source/) · [强化上传](https://www.suno-api.io/docs/current-music-enhanced-upload/) · [普通翻唱](https://www.suno-api.io/docs/current-music-generate-from-source/) · [音色](https://www.suno-api.io/docs/current-clone-voice/) · [歌曲查询](https://www.suno-api.io/docs/current-music-query/) · [免费 MP3 下载](https://www.suno-api.io/docs/current-music-media-download/) · [余额查询](https://www.suno-api.io/docs/current-user-balance/)
