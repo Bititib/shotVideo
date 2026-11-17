@@ -73,7 +73,7 @@ export async function createWanfengVideo(channel: Channel, payload: ReturnType<t
   catch (error) { throw new WanfengSubmissionError((error as Error).message, response.status); }
   const id = validId(raw?.id) ? raw.id : undefined;
   const taskId = validId(raw?.task_id) ? raw.task_id : undefined;
-  const code = raw?.error?.code;
+  const { code, message } = raw?.error ?? {};
   const reason = upstreamDiagnostic('晚风', '提交', { error: raw?.error, status: raw?.status }, channel.apiKey, response.status, requestId);
   if (id && taskId && id !== taskId) throw new WanfengSubmissionError(reason + '，创建回执的 id 与 task_id 不一致', response.status);
   const queryId = id || taskId;
@@ -81,8 +81,15 @@ export async function createWanfengVideo(channel: Channel, payload: ReturnType<t
     return { id: queryId, taskId,
       initial: raw.status === 'completed' || raw.status === 'failed' ? normalizeTask(channel, queryId, raw) : undefined };
   }
-  const rejected = code === 'invalid_request_error' && typeof raw.error.message === 'string'
-    && (response.ok || [400, 422].includes(response.status)) && !['queued', 'processing', 'in_progress', 'completed'].includes(raw?.status);
+  // The distributor can reject before dispatch while using HTTP 503.
+  const distributorRejected = response.status === 503 && code === 'model_not_found'
+    && typeof message === 'string'
+    && message.startsWith('No available channel for model ' + payload.model + ' under group ')
+    && message.includes(': the model is claimed by a task plugin, which has no enabled channel serving it (distributor)');
+  const invalidRequest = code === 'invalid_request_error' && typeof message === 'string'
+    && (response.ok || [400, 422].includes(response.status));
+  const rejected = (invalidRequest || distributorRejected)
+    && !['queued', 'processing', 'in_progress', 'completed'].includes(raw?.status);
   throw new WanfengSubmissionError(rejected ? reason : reason + '，未取得可查询任务编号', response.status, rejected);
 }
 

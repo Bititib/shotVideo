@@ -22,6 +22,8 @@ const modelId = 'seedance-configured-test';
 const draft = {
   modelId, displayName: 'Seedance 测试', kind: 'video', upstreamModel: 'sd2.5', limits: wanfengVideoLimits('sd2.5'),
 };
+const distributorMessage = 'No available channel for model ' + draft.upstreamModel
+  + ' under group default: the model is claimed by a task plugin, which has no enabled channel serving it (distributor)';
 const input = { model: modelId, prompt: '海浪冲向礁石', seconds: 5, aspect_ratio: '16:9', resolution: '720p' };
 let server: import('node:http').Server;
 let origin: string;
@@ -96,18 +98,19 @@ it('submits the mapped video from the website and preserves the creation identif
   expect(balance()).toBe(before - 2);
 });
 
-it('refunds a rejected API order once and retains the late provider error', async () => {
-  const tokenKey = 'sk-wanfeng-api-test';
+it.each([
+  { status: 400, code: 'invalid_request_error', message: 'resolution is not supported by this model' },
+  { status: 503, code: 'model_not_found', message: distributorMessage },
+])('refunds a rejected API order once and retains the provider error ($code)', async ({ status, code, message }) => {
+  const tokenKey = 'sk-wanfeng-api-test-' + status;
   db.insert(apiTokens).values({ userId, name: 'WanFeng API test', tokenKey, balance: 10 }).run();
-  const upstream = vi.fn(async () => Response.json({
-    error: { code: 'invalid_request_error', message: 'resolution is not supported by this model' },
-  }, { status: 400 }));
+  const upstream = vi.fn(async () => Response.json({ error: { code, message } }, { status }));
   vi.stubGlobal('fetch', upstream);
   const result = await post('/v1/videos', 'Bearer ' + tokenKey, input);
   expect(result.ok, await result.clone().text()).toBe(true);
   await vi.waitFor(() => expect(last().status).toBe('failed'));
   expect(JSON.parse(last().metadata)).toMatchObject({
-    billingStatus: 'refunded', requiresReview: false, error: expect.stringContaining('invalid_request_error'),
+    billingStatus: 'refunded', requiresReview: false, error: expect.stringContaining('HTTP ' + status + ' code=' + code),
   });
   resumeSpecificationTasks();
   resumeSpecificationTasks();
@@ -115,27 +118,63 @@ it('refunds a rejected API order once and retains the late provider error', asyn
   expect(db.select().from(apiTokens).where(eq(apiTokens.tokenKey, tokenKey)).get()?.balance).toBe(10);
 });
 
-it('keeps an uncertain batch reservation and never redispatches the paid POST', async () => {
+it.each(['disconnect', 'ambiguous-503'])('keeps an uncertain batch reservation without redispatching (%s)', async scenario => {
   const before = balance();
+  const previousId = last().id;
   const upstream = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/api/video/generate')) return localFetch(origin + '/api/video/generate', init);
     expect(url).toBe(WANFENG_BASE_URL + '/v1/videos');
+    if (scenario === 'ambiguous-503') {
+      return Response.json({ error: { code: 'model_not_found', message: 'upstream status unavailable' } }, { status: 503 });
+    }
     throw new Error('connection dropped after submission');
   });
   vi.stubGlobal('fetch', upstream);
-  batchStore.create(userId, 'wanfeng-batch-test', {
+  batchStore.create(userId, 'wanfeng-batch-test-' + scenario, {
     name: '晚风测试批次', model: modelId, resolution: '720p', video_length: 5, aspect_ratio: '16:9',
     creatives: [{ prompt: '海浪', count: 1, reference_images: [], reference_videos: [], audio_urls: [] }],
     autoRetry: true, maxRetries: 2,
   }, 2, origin);
   tickVideoBatches();
-  await vi.waitFor(() => expect(last().status).toBe('review'));
+  await vi.waitFor(() => {
+    expect(last().id).not.toBe(previousId);
+    expect(last().status).toBe('review');
+  });
   resumeSpecificationTasks();
   tickVideoBatches();
   tickVideoBatches();
   expect(last().status).toBe('review');
   expect(upstream.mock.calls.filter(([url]) => url.startsWith(WANFENG_BASE_URL))).toHaveLength(1);
   expect(balance()).toBe(before - 2);
+});
+
+it('settles the distributor rejection in the batch ledger once', async () => {
+  const before = balance();
+  const previousId = last().id;
+  const upstream = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/api/video/generate')) return localFetch(origin + '/api/video/generate', init);
+    expect(url).toBe(WANFENG_BASE_URL + '/v1/videos');
+    return Response.json({ error: { code: 'model_not_found', message: distributorMessage } }, { status: 503 });
+  });
+  vi.stubGlobal('fetch', upstream);
+  batchStore.create(userId, 'wanfeng-batch-distributor-rejection', {
+    name: '晚风测试批次', model: modelId, resolution: '720p', video_length: 5, aspect_ratio: '16:9',
+    creatives: [{ prompt: '海浪', count: 1, reference_images: [], reference_videos: [], audio_urls: [] }],
+    autoRetry: false, maxRetries: 0,
+  }, 2, origin);
+  tickVideoBatches();
+  await vi.waitFor(() => {
+    expect(last().id).not.toBe(previousId);
+    expect(last().status).toBe('failed');
+  });
+  await vi.waitFor(() => {
+    tickVideoBatches();
+    expect(JSON.parse(last().metadata)).toMatchObject({ billingStatus: 'refunded', batchConfirmedFailure: true });
+  });
+  resumeSpecificationTasks();
+  tickVideoBatches();
+  expect(balance()).toBe(before);
+  expect(upstream.mock.calls.filter(([url]) => url.startsWith(WANFENG_BASE_URL))).toHaveLength(1);
 });
 
 it('resumes an accepted original task after the query window without submitting again', async () => {
