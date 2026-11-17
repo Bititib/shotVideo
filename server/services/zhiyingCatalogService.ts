@@ -15,7 +15,7 @@ import { allowsDuration } from '../../shared/modelRouting.js';
 type Channel = typeof channels.$inferSelect;
 const conflict = (message: string) => Object.assign(new Error(message), { status: 409 });
 
-export async function fetchZhiyingVideoModels(channel: Pick<Channel, 'baseUrl' | 'apiKey' | 'timeout'>, includeAll = false) {
+export async function fetchZhiyingVideoModels(channel: Pick<Channel, 'baseUrl' | 'apiKey' | 'timeout'> & Partial<Pick<Channel, 'id'>>, includeAll = false) {
   const url = zhiyingApiBase(channel.baseUrl) + '/v1/models';
   let response: Response;
   try {
@@ -54,7 +54,13 @@ export async function fetchZhiyingVideoModels(channel: Pick<Channel, 'baseUrl' |
     if (typeof row?.id !== 'string' || !includeAll && !isZhiyingVideoModel(row.id)) continue;
     blocked.set(row.id, available.has(row.id) ? '同时出现在 data 和 unavailable' : '出现在 unavailable 列表');
   }
-  const warnings = [...blocked].map(([id, reason]) => failure(`${id} ${reason}，暂不接收该线路的新任务`).message);
+  // A mixed catalog normally includes images and unopened products. Those are
+  // not failed video routes. Diagnose only built-in or configured video models,
+  // while keeping every blocked ID excluded from authorization below.
+  const managed = new Set<string>([...ZHIYING_VIDEO_MODELS,
+    ...(channel.id === undefined ? [] : zhiyingBindings(sqlite).filter(row => row.channelId === channel.id).map(row => row.upstreamModel))]);
+  const warnings = [...blocked].filter(([id]) => managed.has(id))
+    .map(([id, reason]) => failure(`${id} ${reason}，暂不接收该线路的新任务`).message);
   return { available: (includeAll ? [...available] : [...ZHIYING_VIDEO_MODELS]).filter(id => available.has(id) && !blocked.has(id)), warnings, rows: raw.data as Record<string, any>[] };
 }
 

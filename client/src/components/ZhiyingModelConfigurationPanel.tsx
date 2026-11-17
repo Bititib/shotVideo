@@ -22,7 +22,7 @@ export default function ZhiyingModelConfigurationPanel({ channelId, onClose, onS
   const [listRevision, setListRevision] = useState(0);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState('');
-  const [catalogNotice, setCatalogNotice] = useState('');
+  const [catalogWarnings, setCatalogWarnings] = useState<string[]>([]);
   const [catalogRevision, setCatalogRevision] = useState(0);
   const [manual, setManual] = useState(false);
   const [error, setError] = useState('');
@@ -40,9 +40,9 @@ export default function ZhiyingModelConfigurationPanel({ channelId, onClose, onS
   }, [channelId, listRevision]);
   useEffect(() => {
     let active = true;
-    setCatalogLoading(true); setCatalogError(''); setCatalogNotice('');
+    setCatalogLoading(true); setCatalogError(''); setCatalogWarnings([]);
     adminApi.getZhiyingModelCatalog(channelId)
-      .then(catalog => { if (active) { setOptions(catalog.options); setCatalogNotice(catalog.warnings.join('；')); } })
+      .then(catalog => { if (active) { setOptions(catalog.options); setCatalogWarnings(catalog.warnings); } })
       .catch(err => { if (active) { setOptions([]); setCatalogError(err.message); setManual(true); } })
       .finally(() => { if (active) setCatalogLoading(false); });
     return () => { active = false; };
@@ -75,6 +75,7 @@ export default function ZhiyingModelConfigurationPanel({ channelId, onClose, onS
   const changeLimits = (changes: Partial<typeof limits>) => update({ limits: { ...limits, ...changes } });
   const disabled = busy || selected?.editable === false;
   const profile = options.find(row => row.id === draft.upstreamModel)?.profile;
+  const selectableCount = options.filter(row => row.profile).length;
   const incomplete = !loaded || !draft.modelId.trim() || !draft.upstreamModel.trim();
   return <AdminDrawer modal panelClassName="v6k-model-dialog" title="智赢 · 模型与参数" blocked={busy} onClose={() => navigate({ close: true })}>
     <div className="v6k-workspace">
@@ -91,8 +92,14 @@ export default function ZhiyingModelConfigurationPanel({ channelId, onClose, onS
         <p className="text-sm">可以从目录选择型号，也可以手动填写上游 ID 和参数。前端和本站 API 使用相同的本站名称，保存时校验上游授权与参数。</p>
         <div className="flex flex-wrap items-center gap-3">
           <button type="button" className="v6k-button" disabled={busy || catalogLoading} onClick={() => setCatalogRevision(n => n + 1)}>{catalogLoading ? '正在读取上游目录…' : '重新读取上游目录'}</button>
-          {catalogNotice && <p role="status">{catalogNotice}</p>}
+          {!catalogLoading && !catalogError && <p role="status" className="text-sm">目录已读取，可选择 {selectableCount} 个视频型号。{!selectableCount && '当前目录没有可直接添加的型号。'}</p>}
         </div>
+        {catalogWarnings.length > 0 && <details className="rounded-lg border p-3 text-sm" key={catalogRevision}>
+          <summary className="cursor-pointer">已接入型号有 {catalogWarnings.length} 条目录提示（展开查看）</summary>
+          <ul className="mt-3 max-h-40 overflow-y-auto space-y-2 break-words" aria-label="目录诊断详情">
+            {catalogWarnings.map((warning, index) => <li key={index}>{warning}</li>)}
+          </ul>
+        </details>}
         {catalogError && <div role="alert" className="text-red-700"><p>{catalogError}</p><p>上游目录读取失败，仍可查看已有配置、添加并填写新模型。保存需要上游连接恢复；已填写的内容会保留在当前表单。</p></div>}
         {busy && <p role="status">正在校验模型配置…</p>}
         {error && <p role="alert" className="text-red-700">{error}</p>}

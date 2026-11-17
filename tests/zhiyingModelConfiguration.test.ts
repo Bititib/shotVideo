@@ -18,6 +18,40 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); sqlite.exec('ROLLBACK TO manual_zhiying; RELEASE manual_zhiying'); });
 const input = { images: 0, videos: 0, audios: 0, outputs: 1, seconds: 5, resolution: '720p', ratio: '16:9', firstFrame: false, lastFrame: false };
 
+it('filters unrelated images and unopened products from a mixed catalog without warning or changing configured routes', async () => {
+  await installManualZhiying(channelId);
+  const before = listZhiyingModelConfigurations(channelId);
+  catalog = { data: [manualCatalogRow, { id: 'gpt-image-2-line1', media_type: 'image', status: 'available' }],
+    unavailable: [{ id: 'minimax-h3' }, { id: 'seedance-2.0' }] };
+  const result = await listZhiyingCatalogOptions(channelId);
+  expect(result.options.map(row => row.id)).toEqual([manualUpstream]);
+  expect(result.options[0].profile).toBeDefined();
+  expect(result.warnings).toEqual([]);
+  const sync = await ChannelService.syncModels(channelId);
+  expect(sync.models).toContain(manualId);
+  expect(sync.warnings ?? []).toEqual([]);
+  expect(listZhiyingModelConfigurations(channelId)[0].limits).toEqual(before[0].limits);
+  expect(wire.mock.calls.every(([, init]: any) => !init.method || init.method === 'GET')).toBe(true);
+});
+
+it.each([
+  { data: [{ ...manualCatalogRow, media_type: 'image' }], unavailable: [] },
+  { data: [manualCatalogRow], unavailable: [{ id: manualUpstream }] },
+  { data: [], unavailable: [{ id: manualUpstream }] },
+])('retains actionable diagnostics for a configured model even when it changes type or availability %#', async value => {
+  await installManualZhiying(channelId);
+  catalog = value;
+  const result = await listZhiyingCatalogOptions(channelId);
+  expect(result.options).toEqual([]);
+  expect(result.warnings).toHaveLength(1);
+  expect(result.warnings[0]).toContain(manualUpstream);
+  const sync = await ChannelService.syncModels(channelId);
+  expect(sync.models).not.toContain(manualId);
+  expect(sync.warnings?.join(' ')).toContain(manualUpstream);
+  expect(zhiyingBindings(sqlite)[0].upstreamModel).toBe(manualUpstream);
+  await expect(saveZhiyingModelConfiguration(channelId, { ...manualDraft(), modelId: 'Lx-Unavailable' }, null)).rejects.toThrow();
+});
+
 it('previews without generating, saves the public name and real mapping disabled, then preserves pricing and switches on sync', async () => {
   expect(await previewZhiyingModelRequest(channelId, manualDraft())).toMatchObject({ path: '/v1/generations', body: { model: manualUpstream, duration: 5 } });
   const saved = await installManualZhiying(channelId);

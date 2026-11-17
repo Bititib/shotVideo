@@ -19,6 +19,27 @@ beforeEach(() => {
   api.save.mockImplementation(async (_id, draft) => ({ ...draft, version: 'saved', editable: true }));
 });
 afterEach(cleanup);
+
+it('keeps lengthy catalog diagnostics collapsed with the video selection and add form available', async () => {
+  const warnings = Array.from({ length: 12 }, (_, i) => `HTTP 200 request_id=req-${i} 已接入型号 ${i} 暂不可用`);
+  api.catalog.mockResolvedValue({ options: [{ id: 'real-upstream', profile: { limits, promptMax: 20000 } }], warnings });
+  render(<ZhiyingModelConfigurationPanel channelId={4} onClose={vi.fn()} onSaved={vi.fn()} />);
+  await screen.findByText('目录已读取，可选择 1 个视频型号。');
+  const summary = screen.getByText('已接入型号有 12 条目录提示（展开查看）');
+  const details = summary.closest('details')!;
+  expect(details).not.toHaveAttribute('open');
+  expect(screen.getByText(warnings[0])).not.toBeVisible();
+  expect(screen.getByText('添加新模型')).toBeEnabled();
+  fireEvent.change(screen.getByLabelText('本站名称 / API 模型 ID'), { target: { value: 'Lx-Clean' } });
+  fireEvent.change(screen.getByLabelText('智赢上游型号'), { target: { value: 'real-upstream' } });
+  fireEvent.click(summary);
+  expect(details).toHaveAttribute('open');
+  expect(screen.getByText(warnings[0])).toBeVisible();
+  expect(screen.getByText(warnings[11])).toBeVisible();
+  expect(screen.getByLabelText('本站名称 / API 模型 ID')).toHaveValue('Lx-Clean');
+  fireEvent.click(screen.getByText('校验并保存'));
+  await waitFor(() => expect(api.save).toHaveBeenCalledWith(4, expect.objectContaining({ modelId: 'Lx-Clean', upstreamModel: 'real-upstream' }), null));
+});
 it('loads the authorized catalog, fills limits, previews and saves one public/API name with an independent mapping', async () => {
   const onSaved = vi.fn(); render(<ZhiyingModelConfigurationPanel channelId={4} onClose={vi.fn()} onSaved={onSaved} />);
   await screen.findByRole('option', { name: 'real-upstream' });
