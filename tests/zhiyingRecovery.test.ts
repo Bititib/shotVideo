@@ -14,10 +14,14 @@ import { cancelVideoContent } from '../server/services/videoCancellationService.
 import { ZHIYING_BASE_URL } from '../shared/zhiyingVideo.js';
 
 import { manualId, manualUpstream, manualCatalogRow, installManualZhiying } from './helpers/zhiyingManualModel.js';
+import { documentedZhiyingRows } from './helpers/zhiyingDocumentedModels.js';
+import { zhiyingCatalogProfile } from '../server/services/zhiyingCatalogProfile.js';
+import { saveZhiyingModelConfiguration } from '../server/services/zhiyingModelConfigurationService.js';
 afterAll(() => sqlite.close());
-describe.each(['builtin', 'manual'])('%s registration', mode => {
-const model = mode === 'manual' ? manualId : 'sd-2.5-fullblood-line2';
-const upstream = mode === 'manual' ? manualUpstream : model;
+describe.each(['builtin', 'manual', 'seedance-2.5-discount', 'seedance-2.5-dedicated-line1'])('%s registration', mode => {
+const documented = documentedZhiyingRows.find(row => row.id === mode);
+const model = documented ? 'Lx-Documented' : mode === 'manual' ? manualId : 'sd-2.5-fullblood-line2';
+const upstream = documented ? documented.id : mode === 'manual' ? manualUpstream : model;
 const taskId = 'video_original_abcdefghijklmn';
 const balance = () => db.select().from(users).get()!.balance;
 const order = () => db.select().from(contents).get()!;
@@ -29,9 +33,11 @@ beforeEach(async () => {
   for (const { name } of sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[]) sqlite.exec('DELETE FROM "' + name + '"');
   sent.length = 0;
   db.insert(users).values({ id: 1, username:'test', email:'recover@example.test', passwordHash:'unused', balance:100 }).run();
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [mode === 'manual' ? manualCatalogRow : { id:model, media_type:'video', status:'available' }] })));
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ data: [documented ?? (mode === 'manual' ? manualCatalogRow : { id:model, media_type:'video', status:'available' })] })));
   channelId = ChannelService.createChannel({ name:'智赢', type:'zhiying', baseUrl:ZHIYING_BASE_URL, apiKey:'original-secret' });
-  if (mode === 'manual') await installManualZhiying(channelId); else await ChannelService.syncModels(channelId);
+  if (documented) await saveZhiyingModelConfiguration(channelId, { modelId: model, upstreamModel: upstream,
+    limits: zhiyingCatalogProfile(documented).limits, enabled: true, routeEnabled: true }, null);
+  else if (mode === 'manual') await installManualZhiying(channelId); else await ChannelService.syncModels(channelId);
   db.update(models).set({ isActive:1 }).where(eq(models.modelId,model)).run();
   db.insert(modelPricing).values({ modelPattern:model, billingType:'per_call', inputPrice:2, outputPrice:0 }).run();
 });

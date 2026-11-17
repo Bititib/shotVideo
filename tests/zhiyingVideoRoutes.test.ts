@@ -27,7 +27,10 @@ import { bindReferences, resolveReferenceMentions } from '../client/src/canvas/r
 import { newNode } from '../client/src/canvas/model';
 vi.mock('../server/services/videoDurationProbe.js', () => ({ probeVideoBufferDuration: vi.fn(async () => 1) }));
 
-import { manualId, manualUpstream, manualCatalogRow, installManualZhiying } from './helpers/zhiyingManualModel.js';
+import { manualId, manualUpstream, manualCatalogRow } from './helpers/zhiyingManualModel.js';
+import { documentedZhiyingRows } from './helpers/zhiyingDocumentedModels.js';
+import { zhiyingCatalogProfile } from '../server/services/zhiyingCatalogProfile.js';
+import { saveZhiyingModelConfiguration } from '../server/services/zhiyingModelConfigurationService.js';
 const localFetch = globalThis.fetch;
 const token = 'sk-zhiying-local-test';
 const websiteToken = jwt.sign({ userId: 1, role: 'user' }, env.JWT_SECRET);
@@ -49,9 +52,10 @@ function call(path: string, body?: object, key?: string) {
 const accountBalance = () => db.select().from(users).get()!.balance;
 const tokenBalance = () => db.select().from(apiTokens).get()!.balance;
 
-async function enableManual() {
+async function enableManual(row: Record<string, any> = manualCatalogRow) {
   const channel = ChannelService.getChannels().find(c => c.type === 'zhiying')!;
-  await installManualZhiying(channel.id);
+  await saveZhiyingModelConfiguration(channel.id, { modelId: manualId, upstreamModel: row.id,
+    limits: zhiyingCatalogProfile(row).limits, enabled: true, routeEnabled: true }, null);
   db.update(models).set({ isActive: 1 }).where(eq(models.modelId, manualId)).run();
   db.insert(modelPricing).values({ modelPattern: manualId, billingType: 'per_call', inputPrice: 2 }).run();
 }
@@ -82,7 +86,7 @@ beforeEach(async () => {
     const target = new URL(url);
     if (target.origin === origin) return localFetch(url, init);
     if (target.origin !== ZHIYING_BASE_URL) throw new Error('Unexpected test destination: ' + target.origin);
-    if (target.pathname === '/v1/models') return Response.json({ data: [...ZHIYING_VIDEO_MODELS.map(id => ({id, media_type:'video', status:'available'})), manualCatalogRow] });
+    if (target.pathname === '/v1/models') return Response.json({ data: [...ZHIYING_VIDEO_MODELS.map(id => ({id, media_type:'video', status:'available'})), manualCatalogRow, ...documentedZhiyingRows] });
     if (target.pathname === '/v1/files' && init?.method === 'POST') {
       const file = (init.body as FormData).get('file') as Blob;
       uploaded.push(Buffer.from(await file.arrayBuffer()));
@@ -292,10 +296,12 @@ it('uses the upstream receipt and original credential to recover a missing API d
   expect(tokenBalance()).toBe(98);
 });
 
-it.each(['/api/video/generate', '/v1/videos'])('dispatches a backend-added model through %s with matching public names and the mapped upstream', async endpoint => {
-  await enableManual();
+it.each([manualCatalogRow, ...documentedZhiyingRows].flatMap(row => ['/api/video/generate', '/v1/videos'].map(endpoint => ({ row, endpoint }))))
+('dispatches $row.id through $endpoint with matching public names and the mapped upstream', async ({ row, endpoint }) => {
+  const manualUpstream = row.id;
+  await enableManual(row);
   const catalog = await (await call('/api/video/models')).json() as any[];
-  expect(catalog.find(row => row.id === manualId)).toMatchObject({ name: manualId, strictReferences: true, routingLimits: { defaultSeconds: 5 } });
+  expect(catalog.find(item => item.id === manualId)).toMatchObject({ name: manualId, strictReferences: true, routingLimits: { defaultSeconds: row.default_duration } });
   const apiCatalog = await (await call('/v1/models')).json() as any;
   expect(apiCatalog.data).toContainEqual(expect.objectContaining({ id: manualId }));
   expect(JSON.stringify(apiCatalog)).not.toContain(manualUpstream);
@@ -306,7 +312,7 @@ it.each(['/api/video/generate', '/v1/videos'])('dispatches a backend-added model
   expect(response.ok).toBe(true);
   const responseBody = endpoint.startsWith('/v1') ? await response.json() as any : await response.text();
   await vi.waitFor(() => expect(db.select().from(contents).get()?.status).toBe('completed'));
-  expect(created[0].payload).toMatchObject({ model: manualUpstream, duration: 5 });
+  expect(created[0].payload).toMatchObject({ model: manualUpstream, duration: row.default_duration });
   const meta = JSON.parse(db.select().from(contents).get()!.metadata);
   expect(meta).toMatchObject({ zhiyingOrder: true, upstreamModel: manualUpstream, actualModel: manualId });
   if (endpoint.startsWith('/v1')) {
@@ -318,15 +324,15 @@ it.each(['/api/video/generate', '/v1/videos'])('dispatches a backend-added model
   } else expect(accountBalance()).toBe(98);
 });
 
-it('refunds a backend-added batch model rejection once and preserves the specific reason', async () => {
-  await enableManual(); reject = true;
+it.each([manualCatalogRow, ...documentedZhiyingRows])('refunds a backend-added $id batch rejection once and preserves the specific reason', async row => {
+  await enableManual(row); reject = true;
   const batch = { name: 'manual', model: manualId, resolution: '720p', aspect_ratio: '16:9', video_length: 5,
     autoRetry: false, maxRetries: 0, creatives: [{ prompt: 'sea', count: 1 }], requestKey: 'manual-batch-001', expectedUnitCost: 2 };
   const result = await (await call('/api/video-batches', batch)).json() as any;
   expect(result.items).toHaveLength(1);
   await vi.waitFor(() => { tickVideoBatches(); expect(batchStore.item(result.items[0].id)).toMatchObject({ status: 'failed', billing_state: 'refunded', attempts: 1 }); });
   tickVideoBatches(); expect(accountBalance()).toBe(100); expect(created).toHaveLength(1);
-  expect(created[0].payload.model).toBe(manualUpstream);
+  expect(created[0].payload.model).toBe(row.id);
   expect(JSON.parse(db.select().from(contents).get()!.metadata).error).toContain('测试渠道积分不足');
 });
 

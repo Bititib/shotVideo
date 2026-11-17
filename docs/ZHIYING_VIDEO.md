@@ -76,6 +76,16 @@ TypeScript 检查与生产构建通过。构建临时目录使用工作区目录
 
 ## 验证记录
 
+### 2026-11-17：已公开视频分支的目录兼容
+
+重新读取 `https://zhiyingai.org/api/openapi`：五款 `seedance-2.0-mini-discount`、`seedance-2.0-fast-discount`、`seedance-2.0-discount`、`seedance-2.5-discount2`、`seedance-2.5-discount` 在 `POST /v1/generations` 的独立分支中声明，目录示例未携带 `create_endpoint`；`seedance-2.5-dedicated-line1` 的创建协议也已明确，但实际目录截图显示未携带该字段。为这六个精确 ID 增加已核对协议的缺省兼容。显式返回其他创建接口仍拒绝，包括原官渠和专线3，不按名字前缀放行未知型号。
+
+特价分支只允许最多 9 张图片，720p、提示词不超过 10000；2.0 系列 4–15 秒、默认 15 秒，2.5 系列 4–30 秒、默认 30 秒。视频与音频数量上限均为 0，目录文件大小为 0 表示不支持该素材类型，只有数量也为 0 时接受。图片大小按目录 30 MiB；不发送这些分支未声明的视频时长统计或处理模式。2.5 专线1 保留 480p/720p、5–30 秒、默认5秒及独立素材限制，参考视频仍按协议统计实际上传字节的时长。
+
+模型仅可由管理员按需添加，不自动导入或启用特价型号，不替换原两条专线映射。网站/API/批量进入 `specificationGenerationService → specificationAdapters → prepareZhiyingVideo/createZhiyingVideo`，使用已保存的型号规格与原任务快照；查询、恢复和结算仍走原链路。
+
+六个文件 174 项测试通过，含全部六款保存映射、规格、上传/提交/查询、网站/API 入口及批量明确拒绝退款一次，以及特价和新专线的原请求恢复、不重复扣退费；补测未知 ID、显式接口冲突、零字节与可上传数量矛盾。TypeScript 与生产构建通过，既有的大包提示保留。官方目录字段快照在 `tests/helpers/zhiyingDocumentedModels.ts`，未使用生产 Key、未进行付费生成或生产部署验证。
+
 ### 2026-11-17：混合目录提示与后台布局
 
 上游 `/v1/models` 返回图片、视频及 `unavailable` 列表，HTTP 200 的目录并不代表每项都是本站已接入的视频线路。此前 `includeAll` 将所有图片和未开放产品都生成“暂停接收新任务”的提示，前端再将其拼接为一个长段落，挤占添加表单。

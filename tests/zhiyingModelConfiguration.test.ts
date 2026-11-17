@@ -6,6 +6,7 @@ import { listZhiyingCatalogOptions, listZhiyingModelConfigurations, previewZhiyi
 import { getEnabledPublicModels } from '../server/services/modelCatalogService.js';
 import { zhiyingBindings } from '../server/services/zhiyingModelBindings.js';
 import { manualCatalogRow, manualDraft, manualId, manualUpstream, installManualZhiying } from './helpers/zhiyingManualModel.js';
+import { documentedZhiyingRows } from './helpers/zhiyingDocumentedModels.js';
 vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 
 let channelId: number, catalog: any, wire: ReturnType<typeof vi.fn>;
@@ -17,6 +18,45 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); sqlite.exec('ROLLBACK TO manual_zhiying; RELEASE manual_zhiying'); });
 const input = { images: 0, videos: 0, audios: 0, outputs: 1, seconds: 5, resolution: '720p', ratio: '16:9', firstFrame: false, lastFrame: false };
+
+it.each(documentedZhiyingRows)('registers documented $id without an endpoint field, preserving its own limits and upstream mapping', async row => {
+  catalog = { data: [{ ...row, create_endpoint: undefined }] };
+  const result = await listZhiyingCatalogOptions(channelId);
+  expect(result.options[0].reason).toBeUndefined();
+  const profile = result.options[0].profile!;
+  const draft = { modelId: 'Lx-Test', upstreamModel: row.id, limits: profile.limits, enabled: true, routeEnabled: true };
+  expect(profile.limits.maxImages).toBe(row.reference_limits.images);
+  expect(profile.limits.maxVideos).toBe(row.reference_limits.videos);
+  expect(profile.limits.maxAudios).toBe(row.reference_limits.audios);
+  expect(profile.limits.defaultSeconds).toBe(row.default_duration);
+  expect(profile.limits.resolutions).toEqual(expect.arrayContaining(Object.keys(row.resolutions)));
+  expect(await previewZhiyingModelRequest(channelId, draft)).toMatchObject({ path: '/v1/generations', body: { model: row.id, duration: row.default_duration } });
+  await saveZhiyingModelConfiguration(channelId, draft, null);
+  expect(zhiyingBindings(sqlite)[0]).toMatchObject({ upstreamModel: row.id, profile });
+  expect(sqlite.prepare('SELECT display_name,is_active FROM models WHERE model_id=?').get(draft.modelId)).toEqual({ display_name: draft.modelId, is_active: 0 });
+  expect((await ChannelService.syncModels(channelId)).models).toContain(draft.modelId);
+  expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping)[draft.modelId]).toBe(row.id);
+});
+
+it('does not use known-model exceptions to override a different explicit endpoint or authorize an unknown ID', async () => {
+  const rows = [...documentedZhiyingRows, { ...manualCatalogRow, id: 'seedance-2.5-official' }, manualCatalogRow];
+  catalog = { data: rows.map(row => ({ ...row, create_endpoint: '/v2/jobs' })) };
+  expect((await listZhiyingCatalogOptions(channelId)).options.every(row => !row.profile && row.reason?.includes('协议'))).toBe(true);
+  catalog = { data: [{ ...documentedZhiyingRows[0], id: 'unknown-dedicated', create_endpoint: undefined }] };
+  expect((await listZhiyingCatalogOptions(channelId)).options[0].profile).toBeUndefined();
+});
+
+it('accepts zero byte limits only for unsupported media and rejects unsupported discount capabilities', async () => {
+  const row = documentedZhiyingRows.find(row => row.id === 'seedance-2.5-discount')!;
+  for (const change of [
+    { reference_file_max_bytes: { image: 0, video: 0, audio: 0 } },
+    { reference_limits: { images: 9, videos: 1, audios: 0 } },
+    { reference_file_max_bytes: { image: 31457280, video: -1, audio: 0 } },
+  ]) {
+    catalog = { data: [{ ...row, ...change }] };
+    expect((await listZhiyingCatalogOptions(channelId)).options[0].profile).toBeUndefined();
+  }
+});
 
 it('filters unrelated images and unopened products from a mixed catalog without warning or changing configured routes', async () => {
   await installManualZhiying(channelId);

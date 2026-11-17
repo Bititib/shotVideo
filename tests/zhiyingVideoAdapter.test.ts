@@ -8,6 +8,8 @@ import { probeVideoBufferDuration, probeAudioBufferDuration } from '../server/se
 import type { ZhiyingModelProfile } from '../shared/zhiyingModelConfiguration.js';
 import { defaultRoutingLimits } from '../shared/modelRouting.js';
 import { signedMediaUrl } from '../server/services/mediaSignature.js';
+import { documentedZhiyingRows } from './helpers/zhiyingDocumentedModels.js';
+import { zhiyingCatalogProfile } from '../server/services/zhiyingCatalogProfile.js';
 
 vi.mock('../server/services/publicImageDownload.js', () => ({ downloadPublicMedia: vi.fn() }));
 vi.mock('../server/services/videoDurationProbe.js', () => ({ probeVideoBufferDuration: vi.fn(), probeAudioBufferDuration: vi.fn() }));
@@ -24,6 +26,30 @@ const inline = (mime: string, buf: Buffer) => 'data:' + mime + ';base64,' + buf.
 
 beforeEach(() => { vi.resetAllMocks(); vi.stubGlobal('fetch', request); });
 afterEach(() => vi.unstubAllGlobals());
+
+it.each(documentedZhiyingRows)('submits documented $id with its own uploaded references and supported fields', async row => {
+  const profile = zhiyingCatalogProfile({ ...row, create_endpoint: undefined });
+  const dedicated = row.id === 'seedance-2.5-dedicated-line1';
+  request.mockImplementation(async () => json({ id: 'file_abcdefghijklmnop' }, 201));
+  vi.mocked(probeVideoBufferDuration).mockResolvedValueOnce(2.5);
+  const payload = await prepareZhiyingVideo(channel, { model: row.id, prompt: 'sea',
+    input: { images: [inline('image/png', img)], ...(dedicated ? { videos: [inline('video/mp4', video)], resolution: '480p' } : {}) } }, { profile });
+  expect(payload).toMatchObject({ model: row.id, duration: row.default_duration,
+    resolution: dedicated ? '480p' : '720p', reference_images: ['file_abcdefghijklmnop'] });
+  if (dedicated) expect(payload.reference_video_duration_total).toBe(2.5);
+  else {
+    expect(payload.reference_videos).toBeUndefined(); expect(payload.reference_audios).toBeUndefined();
+    expect(payload.reference_video_duration_total).toBeUndefined();
+    expect(profile.fileMaxBytes).toEqual({ image: 31457280, video: 0, audio: 0 });
+    const count = request.mock.calls.length;
+    await expect(prepareZhiyingVideo(channel, { model: row.id, prompt: 'sea', input: { videos: [inline('video/mp4', video)] } }, { profile })).rejects.toThrow();
+    expect(request).toHaveBeenCalledTimes(count);
+  }
+  request.mockResolvedValueOnce(json({ id, model: row.id, object: 'video', status: 'queued' }, 202));
+  expect(await createZhiyingVideo(channel, payload, key, row.id)).toMatchObject({ taskId: id });
+  request.mockResolvedValueOnce(json({ id, model: row.id, object: 'video', status: 'succeeded', result_url: cdn }));
+  expect(await pollZhiyingVideo(channel, id, row.id)).toMatchObject({ status: 'completed', resultUrl: cdn });
+});
 
 it.each([
   ['https://zhiyingai.org', 'sd-2.5-fullblood'],
