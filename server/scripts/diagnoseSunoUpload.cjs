@@ -178,7 +178,7 @@ async function main() {
   }
   log('SUMMARY', { results });
 }
-if (require.main === module) {
+if (require.main === module || module.id === '[stdin]') {
   main().catch(error => {
     log('STOP', { code: error.code || error.name, message: String(error.message).replace(/https?:\/\/\S+/g, '[URL]').slice(0, 500) });
     process.exitCode = 1;
