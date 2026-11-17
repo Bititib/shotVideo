@@ -87,3 +87,15 @@ it('rejects a credential change during authorization without writing models or m
   await expect(installManualZhiying(channelId)).rejects.toThrow(/变化/);
   expect(zhiyingBindings(sqlite)).toEqual([]); expect(getModelSpecification(manualId)).toBeUndefined();
 });
+
+it('preserves a manual draft validation failure without creating a model or overwriting existing configuration when DNS is down', async () => {
+  await installManualZhiying(channelId);
+  const original = listZhiyingModelConfigurations(channelId)[0];
+  const before = ChannelService.getChannelRaw(channelId)!;
+  wire.mockRejectedValue(Object.assign(new TypeError('fetch failed'), { cause: { code: 'ENOTFOUND', message: 'getaddrinfo ENOTFOUND zhiyingai.xyz' } }));
+  await expect(saveZhiyingModelConfiguration(channelId, { ...manualDraft(), modelId: 'Lx-Manual' }, null)).rejects.toThrow(/ENOTFOUND/);
+  await expect(saveZhiyingModelConfiguration(channelId, { ...manualDraft(), upstreamModel: 'manual-upstream' }, original.version)).rejects.toThrow(/ENOTFOUND/);
+  expect(listZhiyingModelConfigurations(channelId)).toEqual([original]);
+  expect(ChannelService.getChannelRaw(channelId)!.modelMapping).toBe(before.modelMapping);
+  expect(sqlite.prepare('SELECT model_id FROM models WHERE model_id=?').get('Lx-Manual')).toBeUndefined();
+});
