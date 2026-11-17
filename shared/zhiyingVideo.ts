@@ -1,18 +1,20 @@
 import { routingMismatches, type ModelInputLimits, type RoutingInput } from './modelRouting.js';
 import { zhiyingReferenceMentions } from './zhiyingReferences.js';
 
-export const ZHIYING_BASE_URL = 'https://zhiyingai.xyz';
+export const ZHIYING_BASE_URL = 'https://zhiyingai.org';
+const ZHIYING_OFFICIAL_ORIGINS = [ZHIYING_BASE_URL, 'https://zhiyingai.xyz'];
 export const ZHIYING_CHANNEL_TYPE = 'zhiying';
 export const ZHIYING_VIDEO_MODELS = ['sd-2.5-fullblood', 'sd-2.5-fullblood-line2'] as const;
 export type ZhiyingVideoModel = typeof ZHIYING_VIDEO_MODELS[number];
 
-/** Accept both forms shown in the provider's instructions, without forwarding credentials to another host. */
+/** Preserve the configured official host; never redirect credentials or old tasks during a domain migration. */
 export function zhiyingApiBase(baseUrl?: string | null): string {
   const value = (baseUrl?.trim() || ZHIYING_BASE_URL).replace(/\/+$/, '');
-  if (value !== ZHIYING_BASE_URL && value !== ZHIYING_BASE_URL + '/v1') {
-    throw Object.assign(new Error('智赢渠道地址必须为 https://zhiyingai.xyz 或 https://zhiyingai.xyz/v1'), { status: 400 });
+  const origin = ZHIYING_OFFICIAL_ORIGINS.find(host => value === host || value === host + '/v1');
+  if (!origin) {
+    throw Object.assign(new Error('智赢渠道地址请填写 https://zhiyingai.org 或 https://zhiyingai.org/v1（兼容原 zhiyingai.xyz 地址）'), { status: 400 });
   }
-  return ZHIYING_BASE_URL;
+  return origin;
 }
 
 export function isZhiyingVideoModel(id: unknown): id is ZhiyingVideoModel {

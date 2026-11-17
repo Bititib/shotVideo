@@ -25,6 +25,34 @@ const inline = (mime: string, buf: Buffer) => 'data:' + mime + ';base64,' + buf.
 beforeEach(() => { vi.resetAllMocks(); vi.stubGlobal('fetch', request); });
 afterEach(() => vi.unstubAllGlobals());
 
+it.each([
+  ['https://zhiyingai.org', 'sd-2.5-fullblood'],
+  ['https://zhiyingai.org/v1/', 'sd-2.5-fullblood-line2'],
+])('uses the configured new host throughout upload, create, query and download: %s %s', async (baseUrl, model) => {
+  const migrated = { ...channel, baseUrl };
+  request.mockResolvedValueOnce(json({ id: 'file_abcdefghijklmnop' }, 201));
+  const payload = await prepareZhiyingVideo(migrated, { model, prompt: '海浪', input: { images: [inline('image/png', img)] } });
+  request.mockResolvedValueOnce(json({ id, model, status: 'queued', object: 'video' }, 202));
+  expect(await createZhiyingVideo(migrated, payload, key)).toMatchObject({ taskId: id });
+  const result = '/v1/generations/' + id + '/content?token=a%2Fb';
+  request.mockResolvedValueOnce(json({ id, model, status: 'succeeded', result_url: result }));
+  const task = await pollZhiyingVideo(migrated, id, model);
+  expect(task.resultUrl).toBe('https://zhiyingai.org' + result);
+  vi.mocked(downloadPublicMedia).mockResolvedValueOnce(video);
+  expect(await fetchZhiyingVideoContent(migrated, id, task.resultUrl, model)).toEqual(video);
+  expect(request.mock.calls.map(([url]) => url)).toEqual([
+    'https://zhiyingai.org/v1/files', 'https://zhiyingai.org/v1/generations', 'https://zhiyingai.org/v1/generations/' + id,
+  ]);
+  for (const [, init] of request.mock.calls) {
+    expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer ' + channel.apiKey);
+    expect(init?.redirect).toBe('error');
+  }
+  expect(JSON.parse(String(request.mock.calls[1][1]?.body))).toMatchObject({ model, reference_images: ['file_abcdefghijklmnop'] });
+  expect(new Headers(request.mock.calls[1][1]?.headers).get('Idempotency-Key')).toBe(key);
+  expect(vi.mocked(downloadPublicMedia).mock.calls[0][0]).toBe(task.resultUrl);
+  expect(JSON.stringify(vi.mocked(downloadPublicMedia).mock.calls)).not.toContain(channel.apiKey);
+});
+
 it('keeps same key and exactly the same JSON for an idempotent replay', async () => {
   request.mockImplementation(async () => json({ id, status:'queued', object:'video', cost_points:498 }, 202));
   await expect(create()).resolves.toMatchObject({taskId:id, status:'pending', upstreamStatus:'queued', costPoints:498});

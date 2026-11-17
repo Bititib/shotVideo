@@ -44,6 +44,32 @@ afterEach(() => {
 });
 
 describe('智赢渠道目录', () => {
+  it('saves the new domain on an existing channel and syncs there without changing its mappings or price', async () => {
+    ChannelService.updateChannel(channelId, { baseUrl: 'https://zhiyingai.xyz/v1' });
+    await ChannelService.syncModels(channelId);
+    expect(fetchPage.mock.calls[0][0]).toBe('https://zhiyingai.xyz/v1/models');
+    sqlite.prepare('INSERT INTO model_pricing(model_pattern,billing_type,input_price) VALUES(?,?,?)').run(line1, 'per_call', 3.9);
+    const previous = ChannelService.getChannelRaw(channelId)!;
+    fetchPage.mockClear();
+    ChannelService.updateChannel(channelId, { baseUrl: ' https://zhiyingai.org/v1/ ' });
+    expect(ChannelService.getChannelRaw(channelId)).toMatchObject({ baseUrl: 'https://zhiyingai.org', apiKey: key,
+      supportedModels: previous.supportedModels, modelMapping: previous.modelMapping });
+    expect(await ChannelService.testChannel(channelId)).toMatchObject({ success: true });
+    expect((await ChannelService.syncModels(channelId)).added).toBe(0);
+    expect(fetchPage.mock.calls.map(([url]) => url)).toEqual(['https://zhiyingai.org/v1/models', 'https://zhiyingai.org/v1/models']);
+    expect(sqlite.prepare('SELECT input_price FROM model_pricing WHERE model_pattern=?').get(line1)).toEqual({ input_price: 3.9 });
+  });
+
+  it.each(['http://zhiyingai.org', 'https://zhiyingai.org.evil.test', 'https://zhiyingai.org@evil.test',
+    'https://user:secret@zhiyingai.org', 'https://zhiyingai.org/api', 'https://zhiyingai.org?host=evil.test'])
+  ('rejects unapproved addresses before changing a channel or sending credentials: %s', baseUrl => {
+    const previous = ChannelService.getChannelRaw(channelId);
+    expect(() => ChannelService.updateChannel(channelId, { baseUrl })).toThrow('智赢渠道地址');
+    expect(() => ChannelService.createChannel({ name: 'invalid', type: 'zhiying', baseUrl, apiKey: key })).toThrow('智赢渠道地址');
+    expect(ChannelService.getChannelRaw(channelId)).toEqual(previous);
+    expect(fetchPage).not.toHaveBeenCalled();
+  });
+
   it('tests credentials with GET only, then registers just the two supported models disabled', async () => {
     fetchPage.mockImplementation(async () => Response.json(catalog([...ZHIYING_VIDEO_MODELS, excluded, 'wan3.0', 'nano-banana-2.1'])));
     expect(await ChannelService.testChannel(channelId)).toMatchObject({ success: true });

@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 vi.mock('../server/services/videoLocalizationService.js', () => ({ downloadAndLocalizeVideo: vi.fn(async () => '/uploads/videos/recovered.mp4') }));
 import { db, sqlite } from '../server/db/index.js';
-import { channels, contents, models, modelPricing, users } from '../server/db/schema.js';
+import { contents, models, modelPricing, users } from '../server/db/schema.js';
 import { ChannelService } from '../server/services/channelService.js';
 import { handleSpecificationGeneration, resumeSpecificationTasks } from '../server/services/specificationGenerationService.js';
 import { downloadAndLocalizeVideo } from '../server/services/videoLocalizationService.js';
@@ -106,9 +106,9 @@ it('recovers a lost receipt with exactly the same payload and key and settles on
   expect(downloadAndLocalizeVideo).toHaveBeenCalledOnce();
 });
 
-it('keeps the original reservation when the original credential changed', async () => {
+it.each([{ apiKey: 'new-secret' }, { baseUrl: 'https://zhiyingai.xyz' }])('keeps the original reservation without replaying when the credential or domain changed: %j', async change => {
   await loseFirstReceipt();
-  db.update(channels).set({apiKey:'new-secret'}).where(eq(channels.id,channelId)).run();
+  ChannelService.updateChannel(channelId, change);
   const wire = vi.fn();
   vi.stubGlobal('fetch',wire);
   resumeSpecificationTasks();
