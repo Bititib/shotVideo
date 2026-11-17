@@ -596,6 +596,33 @@ it('keeps the existing Suno key and model bindings on a rejected replacement key
 });
 
 const uploadReset=()=>new TypeError('fetch failed',{cause:Object.assign(new Error('read ECONNRESET'),{code:'ECONNRESET'})});
+it('serves both saved API songs to admins and reports missing or zero-byte files without touching the order',async()=>{
+  const apiOwner={userId:1,tokenId:11},task=createMusicTask(input(),apiOwner).task;
+  calls.mockResolvedValueOnce(accepted([song('admin_first'),song('admin_second')],'completed'))
+    .mockResolvedValueOnce(mp3()).mockResolvedValueOnce(mp3());
+  await run(task.id);const completed=getMusicTask(task.id,apiOwner),before=job(task.id),funds=ledger(task.id);
+  calls.mockClear();
+  await withApp(async(url,admin)=>{
+    sqlite.prepare("UPDATE users SET role='user' WHERE id=2").run();
+    const regular=jwt.sign({userId:2},env.JWT_SECRET),headers={Authorization:'Bearer '+admin};
+    const endpoint=(id:string)=>url+'/api/admin/music/'+task.id+'/results/'+id+'/file';
+    expect((await localFetch(endpoint(completed.results[0].id))).status).toBe(401);
+    expect((await localFetch(endpoint(completed.results[0].id),{headers:{Authorization:'Bearer '+regular}})).status).toBe(403);
+    for(const track of completed.results) {
+      const response=await localFetch(endpoint(track.id),{headers});
+      expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toContain('no-store');
+      expect(await response.text()).toBe('ID3 mock song');
+    }
+    expect((await localFetch(endpoint(randomUUID()),{headers})).status).toBe(404);
+    await fs.writeFile(musicFile(task.id,apiOwner,completed.results[0].id),'');
+    const empty=await localFetch(endpoint(completed.results[0].id),{headers});
+    expect(empty.status).toBe(409);expect((await empty.json()).error).toContain('文件为空');
+    await fs.rm(musicFile(task.id,apiOwner,completed.results[1].id));
+    const missing=await localFetch(endpoint(completed.results[1].id),{headers});
+    expect(missing.status).toBe(404);expect((await missing.json()).error).toContain('不存在或无法读取');
+  });
+  expect(job(task.id)).toEqual(before);expect(ledger(task.id)).toEqual(funds);expect(calls).not.toHaveBeenCalled();
+});
 it('downloads API-created music in the account history with JWT while preserving token and other-account isolation',async()=>{
   const task=createMusicTask(input(),{userId:1,tokenId:11}).task;
   calls.mockResolvedValueOnce(accepted([song('history_first'),song('history_second')],'completed'))

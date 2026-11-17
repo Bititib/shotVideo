@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
+import AdminMusicResultAudio from './AdminMusicResultAudio';
 
 type Diagnostic = {
   id:string; operation:string; canImportUploadReceipt?:boolean; canLookupVoice?:boolean; allowsSupplement?:boolean; state:string; providerStatus?:string; upstreamId?:string; relatedTaskId?:string; submissionId:string; error?:string;
@@ -43,6 +44,7 @@ export default function MusicOrderRecovery({id,onChange}:{id:string;onChange:()=
       {info.providerStatus&&<p>上游状态 {info.providerStatus}</p>}
       {info.error&&<p className="break-words text-amber-300">{info.error}</p>}
       {info.results.map(item=><p className="break-all" key={item.id}>{item.upstreamId} · {item.status}{item.saved?' · 已保存':''}{item.error?' · '+item.error:''}</p>)}
+      {info.results.map((item,index)=>item.saved&&<AdminMusicResultAudio key={item.id} id={info.id} resultId={item.id} index={index+1}/>)}
       {['review','accepted','submitting'].includes(info.state)&&(info.canImportUploadReceipt||!needsId||info.operation!=='upload')&&<>
         {info.canImportUploadReceipt?<label className="block">原上传成功回执（JSON）
           <textarea className="mt-1 w-full rounded border p-2 text-zinc-900" maxLength={16000} value={receipt} onChange={e=>setReceipt(e.target.value)}/>

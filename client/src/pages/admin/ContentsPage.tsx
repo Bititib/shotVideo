@@ -757,7 +757,7 @@ export default function ContentsPage() {
                   <div className="content-detail-section-heading"><span>生成结果</span><span>#{previewItem.id}</span></div>
                   {previewMusicId&&<button className="mb-3 text-sm underline" onClick={()=>setPreviewTab('refs')}>查看用户上传音频</button>}
                   {/* Generated asset */}
-                  {previewItem.resultUrl && previewItem.resultUrl.trim() !== '' && (
+                  {previewItem.resultUrl && previewItem.resultUrl.trim() !== '' && !previewMusicId && (
                     previewItem.type === 'image'
                       ? <img src={previewItem.resultUrl} alt={previewItem.title || '生成图片'} className="content-detail-media" />
                       : previewItem.type === 'music' ? <audio controls preload="none" src={previewItem.resultUrl} className="w-full" />

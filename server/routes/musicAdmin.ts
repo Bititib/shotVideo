@@ -2,11 +2,18 @@ import { Router } from 'express';
 import { authMiddleware, type AuthRequest } from '../middleware/auth.js';
 import { adminMiddleware } from '../middleware/admin.js';
 import { ensureMusicJobs, processMusicTask } from '../services/musicGenerationService.js';
-import { adminMusicDiagnostics, adminRecoverMusic, adminMusicSources, adminMusicSourceFile } from '../services/sunoMusicJobs.js';
+import { adminMusicDiagnostics, adminRecoverMusic, adminMusicSources, adminMusicSourceFile, adminMusicResultFile } from '../services/sunoMusicJobs.js';
 
 const router=Router();
 router.use(authMiddleware,adminMiddleware);
 router.use((_req,res,next)=>{res.setHeader('Cache-Control','private, no-store');next();});
+router.get('/:id/results/:resultId/file',(req,res,next)=>{
+  ensureMusicJobs();
+  void adminMusicResultFile(req.params.id,req.params.resultId).then(file=>{
+    res.setHeader('X-Content-Type-Options','nosniff');
+    res.type('audio/mpeg').sendFile(file,{cacheControl:false},error=>{if(error)next(error);});
+  }).catch(next);
+});
 router.get('/:id/sources',(req,res,next)=>{
   ensureMusicJobs();
   void adminMusicSources(req.params.id).then(sources=>res.json(sources)).catch(next);

@@ -62,3 +62,25 @@ it('shows uploaded input in the actual admin reference tab for a review order wi
   expect(screen.getByLabelText('original.wav')).toHaveAttribute('src','blob:private-audio');
   expect(screen.queryByText('该任务没有参考素材')).toBeNull();
 });
+it('loads both saved songs through admin authentication in the actual detail page instead of a raw user file URL',async()=>{
+  const item={id:16045,userId:1,type:'music',title:'已完成的音乐',inputText:'',resultUrl:'/api/music/job/results/first/file',resultText:null,
+    modelId:'suno-v6',cost:3,status:'completed',createdAt:'2026-11-17T00:00:00Z',userName:'API 用户',userEmail:'api@test.invalid',
+    metadata:JSON.stringify({musicTaskId:'job',musicOperation:'sing',billingStatus:'settled'})};
+  mock.getContents.mockResolvedValue({items:[item],total:1});
+  mock.get.mockImplementation(async(url:string)=>url.endsWith('/file')?new Blob(['audio']):url.endsWith('/sources')?[]:
+    {id:'job',operation:'sing',state:'completed',submissionId:'job',results:[
+      {id:'first',upstreamId:'up-first',status:'completed',saved:true},
+      {id:'second',upstreamId:'up-second',status:'completed',saved:true},
+    ]});
+  render(<MemoryRouter><ContentsPage/></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button',{name:'查看本地记录 16045 详情'}));
+  await screen.findByText('下载歌曲 2');
+  expect(document.querySelectorAll('audio')).toHaveLength(2);
+  for(const audio of document.querySelectorAll('audio')) {
+    expect(audio).toHaveAttribute('src','blob:private-audio');expect(audio).toHaveAttribute('preload','metadata');
+  }
+  expect(mock.get).toHaveBeenCalledWith('/admin/music/job/results/first/file',expect.objectContaining({responseType:'blob'}));
+  expect(mock.get).toHaveBeenCalledWith('/admin/music/job/results/second/file',expect.objectContaining({responseType:'blob'}));
+  fireEvent.click(screen.getByRole('button',{name:'关闭详情'}));
+  await waitFor(()=>expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2));
+});

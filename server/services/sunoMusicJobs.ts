@@ -420,6 +420,17 @@ export function sunoMusicFile(id:string,resultId?:string) {
   if(!track)throw musicFailure('音乐文件尚未就绪',409);
   return outputFile(id,track.id);
 }
+export async function adminMusicResultFile(id:string,resultId:string) {
+  const row=job(id);
+  if(!row||row.provider!==SUNO_CHANNEL_TYPE||!sqlite.prepare('SELECT id FROM contents WHERE id=?').get(row.content_id))
+    throw musicFailure('音乐订单不存在',404);
+  if(!tracks(id).some(track=>track.id===resultId))throw musicFailure('该歌曲不属于此音乐订单',404);
+  const file=sunoMusicFile(id,resultId);
+  let stat;
+  try{stat=await fs.stat(file);}catch{throw musicFailure('已记录成品，但本站音频文件不存在或无法读取',404);}
+  if(!stat.isFile()||!stat.size)throw musicFailure('本站音频文件为空或无效',409);
+  return file;
+}
 export function sunoSourceFile(id:string) {
   const row=job(id);
   if(!row || row.deleted || songOperation(row.operation)||row.state!=='completed')throw musicFailure('素材不可用',404);
