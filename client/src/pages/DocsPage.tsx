@@ -46,7 +46,7 @@ while time.monotonic() < deadline:
         print(task["__RESULT__"])
         break
     if task:
-        print(task["id"], task["status"], task.get("stage"), task.get("error"))
+        print(task["id"], task["status"], task.get("stage"), task.get("error"), task.get("recovery_hint"))
         delay = task.get("poll_after_seconds")
         if delay is None:
             if not task.get("can_recover") or recovered:
@@ -129,7 +129,7 @@ export default function DocsPage({ embedded = false }: { embedded?: boolean }) {
     },
     {
       id:'music-assets',title:'上传歌曲素材',method:'POST',path:'/v1/music/assets',
-      description:'multipart 上传 file 与 JSON 字符串 options。upload 免费，enhanced_upload 强化上传须传 expected_cost。202 表示本站已接收，按 status_url 和 poll_after_seconds 查询至 completed 后取 asset_id。error 保留具体原因，can_recover=true 时等待 recovery_after_seconds 后向 recovery_url POST 空对象恢复原订单。全程使用同一 API Key。',
+      description:'multipart 上传 file 与 JSON 字符串 options。upload 免费，enhanced_upload 强化上传须传 expected_cost。202 表示本站已接收，按 status_url 和 poll_after_seconds 查询至 completed 后取 asset_id。error 保留具体原因。recovery_mode=receipt_required 表示普通上传缺少原成功回执，需管理员核实回填；继续按原订单查询，不重复上传。全程使用同一 API Key。',
       parameters:[
         {name:'file',type:'file',required:true,description:'可解码音乐文件，最大 40 MB'},
         {name:'options',type:'string',required:true,description:'JSON，包含 operation、model、client_request_id、rights_confirmed=true，可填 title'},
@@ -151,11 +151,11 @@ export default function DocsPage({ embedded = false }: { embedded?: boolean }) {
     },
     {
       id:'music-recovery',title:'恢复原上传或本人音色订单',method:'POST',path:'/v1/music/{id}/recover',
-      description:'仅支持免费 upload 和 voice，使用原 API Key。先 GET /v1/music/{id}，有 poll_after_seconds 时继续查询；can_recover=true 时等待 recovery_after_seconds，再发送空对象。恢复沿用原文件、原渠道和原请求编号。返回 202 后继续查询原订单，已完成返回 200。429 按 Retry-After 等待，409 查看具体原因。强化操作和付费生成由原任务查询及账单核对处理。',
+      description:'使用原 API Key，仅查询免费本人音色原回执，不重传文件或重新创建。先 GET /v1/music/{id}，有 poll_after_seconds 时继续查询；can_recover=true 时等待 recovery_after_seconds，再发送空对象。返回 202 后继续查询原订单，已完成返回 200。普通上传缺回执时返回 recovery_mode=receipt_required，需管理员核实原成功回执并回填，空对象恢复返回 409。429 按 Retry-After 等待。强化操作和付费生成按原任务处理。',
       parameters:[],
       curlExample:'curl "'+getBaseUrl()+'/music/ORIGINAL_ORDER_ID/recover" -H "Authorization: Bearer sk-YOUR_API_KEY" -H "Content-Type: application/json" -d \'{}\'',
       pythonExample:'import requests\nr = requests.post("'+getBaseUrl()+'/music/ORIGINAL_ORDER_ID/recover", headers={"Authorization": "Bearer sk-YOUR_API_KEY"}, json={}, timeout=30)\nr.raise_for_status()\nprint(r.json())\n# 使用上传示例的轮询流程继续查询 status_url',
-      responseExample:JSON.stringify({id:'original-order-id',operation:'upload',status:'processing',stage:'submitting',status_url:'/v1/music/original-order-id',poll_after_seconds:8,can_recover:false,cost:0},null,2),
+      responseExample:JSON.stringify({id:'original-order-id',operation:'voice',status:'processing',stage:'submitting',status_url:'/v1/music/original-order-id',poll_after_seconds:8,can_recover:false,cost:0},null,2),
     },
     {
       id: 'models',

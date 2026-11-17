@@ -38,22 +38,28 @@ generate 默认用灵感模式，传 prompt。专业模式传 custom=true、tags
 
 stage 表示队列阶段，client_request_id 为原调用编号，error 和 error_code 保留脱敏后的具体原因。poll_after_seconds 非空表示后台仍在处理或恢复，客户端按间隔查询。即使 status 为 review，只要该字段非空仍应查询原订单。poll_after_seconds 为空且 can_recover 为 true 时，等待 recovery_after_seconds 后 POST recovery_url，正文为 {}。成功返回 202 并继续查询同一订单，已完成的重复恢复返回 200。429 提供 Retry-After；409 的错误说明具体阻碍。查询响应禁用缓存。
 
-自助恢复限定免费 upload 和 voice，既有待核实订单同样适用。恢复请求通过原订单处理锁防并发，保持原文件、原凭据和原提交标识，持久化恢复意图后由后台执行。普通音色先从列表按精确 client_request_id 查找原音色并查询详情，找到后恢复原回执；未找到时按上游幂等约定使用同一个 client_request_id 提交。每次用户恢复最多重发一次，连续异常再次返回可查询的具体错误和恢复等待时间。普通上传的明确拒绝结束订单；音色已有未知受理历史时保留核对信息。原文件丢失、配置变化或回执冲突仍需要按具体错误处理。
+当前恢复只读查询或回填原回执，不重传文件，不重新创建音色，不发起付费生成。本人音色 can_recover=true 时可按原 API Key POST recovery_url 空对象；按原 client_request_id 查询音色列表和详情，查不到时最多连续查询三次，然后保留原单及具体原因。音色原文件已经丢失也不妨碍查询已有音色。渠道凭据变化、结果冲突和关联错误仍需核对。
+
+普通上传缺少回执时返回 recovery_mode=receipt_required、can_recover=false 和 recovery_hint。上游文档未提供按请求编号查回普通上传的接口，歌曲历史明确排除上传素材，不能按标题/时间猜测归属。管理员核实该原请求的成功响应后，在原订单提交 uploadReceipt（含 clip_id、status=complete）、originalRequestId（该订单的原追踪号）和 evidence。后台只回填这一原订单，API 用户继续按原订单号或 client_request_id 查询后获得本站 asset_id。回填是管理员对原始证据的确认，不代表本站通过一个未公开查询接口独立核实了上传。普通 API 用户不能自行关联任意上游 clip_id。重复回填相同回执幂等，其他订单已占用的素材、编号冲突、变更凭据及付费订单均拒绝。
 
 调用示例见站内 API 文档的上传歌曲素材、创建本人演唱音色和恢复原订单条目，包含上传、断线查单、轮询、一次自助恢复及最终素材编号读取。上述流程使用模拟上游验证；普通上传的生产对照结果及尚未确认的断线原因见下方诊断记录。
 
 ## 上游协议与恢复
 
 - 普通素材：POST /api/music/upload-source。素材完成态为 complete，存 clip_id。普通翻唱使用 POST /api/music/generate-from-source 的 sourceClipId，强化素材另外带上游音频地址与标题。
-- 普通上传遇到连接重置、连接断管或 socket 中断且没有 clip_id 时，后台等待至少 10 秒，在同一订单、原 Key 和原音频上重试一次。连续断开保留最后一次错误待核实。此前已在待核实的普通上传，可在原订单填写原因后点「重试免费上传」，使用同一份留存文件。该操作只重试免费的素材上传；上游没有提供按本站订单号查找普通上传回执或请求去重的保证。
+- 普通上传在首次提交后丢失回执即保留待核实，恢复及重启不再重传。旧 retryUpload 请求被拒绝，旧版遗留的重传标志也不会触发上传。上游成功回执由管理员核实后回填到原订单。
 - 强化上传：POST /api/music/enhanced-upload，先保存 task_id，再查询原任务。completed 后保存真实 song_id 及媒体。只有原队列确认取消才退款；取消响应中断后查询原任务。
 - 音色：POST /api/music/voice-profile/create（普通或 enhanced=true），或者 /create-from-clip。保存 voice_id 并查询到 ready。后续 POST /api/music/voice-profile/cover 检查 resolved_scene，按真实 song_id 保存两首结果。
-- 文字生成：POST /api/music/create 或 /create/custom 使用 accept_mode=async、上游 Idempotency-Key。持久化回执后查 /api/music/requests/{request_id}，再逐首用逗号分隔的 song_ids 查询。后台只允许一次同键、同参数、同凭据的受保护回放。普通创建音色及已有音频创建同样只在文档去重范围内使用原 client_request_id 回放。
+- 文字生成：POST /api/music/create 或 /create/custom 使用 accept_mode=async、上游 Idempotency-Key。持久化回执后查 /api/music/requests/{request_id}，再逐首用逗号分隔的 song_ids 查询。后台只允许一次同键、同参数、同凭据的受保护回放。普通创建音色及已有音频创建在本实现中仅查原 client_request_id 对应音色，禁止回放创建请求。
 - 音色翻唱追踪头不具备上游去重。断线后历史详情必须匹配精确追踪号、模型、来源和两个结果位置才关联原歌曲。强化克隆优先在原凭据的音色列表按精确 client_request_id 查找并查询详情。普通翻唱、强化上传或无法精确匹配的强化克隆缺少回执时保留原订单，供人工核对。下载、查询和结算异常只恢复原步骤。
 - 一次预扣一笔操作。明确拒绝、确认未提交、全失败或确认取消才全退。素材处理和下游生成分别结算。单首成功可以交付；部分金额由管理员按账单核对，未设自动比例。本站流水与上游扣退证据分开。已完成的单首不会因重新查询而重复扣费。
-- 管理员可 GET /api/admin/music/{id} 核对原回执和阶段，POST /api/admin/music/{id}/recover 提交 evidence。缺少回执时，强化／音色／文字生成传上游 upstreamId，普通或音色翻唱传经核实的 songIds；已有回执可提交 evidence 重新查询或保存；翻唱只收到一首且补查到第二首原单结果时，传入原单两首的 songIds。所有操作只读查上游原任务。账单核对页负责实收与退款。
+- 管理员可 GET /api/admin/music/{id} 核对原回执和阶段，POST /api/admin/music/{id}/recover 提交 evidence。普通上传使用上文 uploadReceipt 回填；普通音色可留空编号按原请求只读查回，也可传已核实的 upstreamId。强化／文字生成传原 upstreamId，普通或音色翻唱传经核实的 songIds；已有回执可提交 evidence 重新查询或保存；翻唱只收到一首且补查到第二首原单结果时，传入原单两首的 songIds。回填与查询都不会重新上传或创建歌曲。账单核对页负责实收与退款。
 
 ## 验证范围
+
+### 只读恢复原订单（2026-11-17，当前规则）
+
+五个相关测试文件共 52 项通过，TypeScript 检查与生产构建通过。验证实际外部 API、管理员恢复入口、后台表单、原订单归属、普通上传回填幂等、旧恢复请求禁用、重启不重传、音色空列表仅查询、音色编号先保存再查详情、详情断线后续查原编号、并发恢复、无扣退费及 miniKey 历史兼容。本次没有执行任何真实上游请求。代码与模拟验证完成不代表历史生产订单已经恢复；#16028 仍缺少已核实的原成功 clip_id/回执，#16040 需部署后用原凭据查询确认。
 
 ### 后台原始音频查看（2026-11-17）
 
@@ -65,15 +71,15 @@ stage 表示队列阶段，client_request_id 为原调用编号，error 和 erro
 
 验证：相关四个测试文件累计 48 项通过，包含实际后台详情页切换参考素材、待核实 API 上传/音色读取、组合来源、权限拒绝、文件丢失/删除、越界路径和跨所有者引用拒绝。类型检查、生产构建通过；未执行真实上游请求。部署后的实际历史文件可用性需以服务器留存文件为准。
 
-本次 API 自助恢复修复通过 Suno、miniKey 历史音乐及音乐页面三个测试文件的 37 项回归，覆盖实际上传/查询/恢复入口、同用户不同 API Key 隔离、并发恢复、持久化后重启扫描、原音色只读找回、同键重提、连续断线、明确拒绝结束和免费操作无资金流水。两个 Python 示例通过模拟的上传、轮询和恢复流程，TypeScript 检查及生产构建通过。构建临时目录使用本地工作盘以避开 Windows 系统临时目录的文件删除权限错误。
+此前版本（已由当前只读恢复规则替代）的 API 自助恢复修复通过 Suno、miniKey 历史音乐及音乐页面三个测试文件的 37 项回归，覆盖实际上传/查询/恢复入口、同用户不同 API Key 隔离、并发恢复、持久化后重启扫描、原音色只读找回、同键重提、连续断线、明确拒绝结束和免费操作无资金流水。两个 Python 示例通过模拟的上传、轮询和恢复流程，TypeScript 检查及生产构建通过。构建临时目录使用本地工作盘以避开 Windows 系统临时目录的文件删除权限错误。
 
 相关回归共 15 个测试文件、113 项通过，覆盖网站和外部 API、队列恢复、多人及组织资金、取消和部分结果。扩大到目录、渠道管理等共 19 个测试文件时，184 项通过，6 项既有失败在同一基线 8aa456e 复现。TypeScript 检查、生产构建和 git diff --check 通过。
 
 本实现使用隔离 SQLite 与模拟上游。真实型号权限、歌曲素材与音色的组合可用性、部分退款净额、强化操作丢回包之后的上游人工找回、音色删除后上游样本清理仍待联调。没有真实付费调用。浏览器录音的正常路径用模拟麦克风覆盖。
 
-## 普通上传连接重置诊断
+## 普通上传连接重置诊断（历史记录，当前恢复不要运行重传诊断）
 
-在 VPS 仓库拉取诊断脚本后执行 `docker exec -i -w /app shot-video node < server/scripts/diagnoseSunoUpload.cjs`。默认读取内容 #16028，可通过 docker exec 的 `-e SUNO_DIAG_CONTENT_ID=编号` 指定其他普通上传原订单。脚本只读数据库，校验免费操作、原凭据、原文件范围及处理状态，最多对当前 DNS 返回的两个 IPv4 地址各发送一次 multipart 和 JSON base64 免费上传。保持相同音频和业务字段、固定每组 IP、校验证书/SNI、显式按字节计算请求长度，并交替两组格式的顺序。
+此前对照诊断执行过 `docker exec -i -w /app shot-video node < server/scripts/diagnoseSunoUpload.cjs`。默认读取内容 #16028，可通过 docker exec 的 `-e SUNO_DIAG_CONTENT_ID=编号` 指定其他普通上传原订单。脚本只读数据库，校验免费操作、原凭据、原文件范围及处理状态，最多对当前 DNS 返回的两个 IPv4 地址各发送一次 multipart 和 JSON base64 免费上传。保持相同音频和业务字段、固定每组 IP、校验证书/SNI、显式按字节计算请求长度，并交替两组格式的顺序。
 
 输出记录原文件和请求体摘要、TLS 对端、发送耗时、HTTP 状态、上游请求编号及断开耗时，密钥和音频正文不输出。X-Request-ID 仅供上游日志关联，不表示幂等保证；普通上传成功可能在上游新建免费素材。诊断不回填本站订单，成功的 clipId 保留在输出。BODY_SENT 只表示客户端写入完成，不能证明上游应用已处理完整请求。固定 IP 对照仍可能受到后端负载分配和时间变化影响，精确定位入口/后端关闭连接原因需要上游同期日志。
 

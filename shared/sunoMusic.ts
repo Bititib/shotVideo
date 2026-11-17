@@ -23,4 +23,5 @@ export type MusicTask = {
   client_request_id?: string; stage?: string; error_code?: string | null;
   poll_after_seconds?: number | null; can_recover?: boolean; recovery_after_seconds?: number | null;
   status_url?: string; recovery_url?: string | null;
+  recovery_mode?: 'lookup' | 'receipt_required' | null; recovery_hint?: string | null;
 };

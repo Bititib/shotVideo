@@ -145,11 +145,12 @@ function MusicWorkspace({storageKey}:{storageKey:string;key?:number}) {
       if(err.status&&[400,401,402,403,404,409].includes(err.status))clearPending();
     } finally {setBusy(false);}
   }
-  async function action(task:MusicTask,kind:'cancel'|'delete') {
+  async function action(task:MusicTask,kind:'cancel'|'delete'|'recover') {
     if(kind==='delete'&&!window.confirm('删除后，此音色无法继续生成。已生成的歌曲会保留。'))return;
     setBusy(true);setError('');
     try{
       if(kind==='cancel')await api.post('/music/assets/'+task.id+'/cancel');
+      else if(kind==='recover')await api.post('/music/'+task.id+'/recover',{});
       else await api.delete('/music/voices/'+task.id);
       await refresh();
     }catch(e){setError((e as Error).message);await refresh();}finally{setBusy(false);}
@@ -193,8 +194,10 @@ function MusicWorkspace({storageKey}:{storageKey:string;key?:number}) {
         <div className="music-entry-details">
           {renderStatus(item)}
           {item.error && <p className="music-error">{item.error}</p>}
+          {item.recovery_hint&&<p className="music-error">{item.recovery_hint}</p>}
           <p className="music-order-id">订单 {item.id}</p>
           <div className="music-track-actions">
+            {item.can_recover&&<button type="button" className="music-button" disabled={busy} onClick={()=>void action(item,'recover')}>查询原音色回执</button>}
             {item.can_cancel && <button type="button" className="music-button" disabled={busy} onClick={() => void action(item, 'cancel')}>取消强化上传</button>}
             {!isAsset && ['completed', 'deleting'].includes(item.status) && <button type="button" className="music-button" disabled={busy} onClick={() => void action(item, 'delete')}>
               {item.status === 'deleting' ? '继续核实删除' : '删除音色'}
@@ -224,6 +227,7 @@ function MusicWorkspace({storageKey}:{storageKey:string;key?:number}) {
         {renderStatus(task)}
       </div>
       {task.error && <p className="music-error">{task.error}</p>}
+      {task.recovery_hint&&<p className="music-error">{task.recovery_hint}</p>}
       {task.results?.map((item, index) => <div key={item.id}>
         {renderTrack(item.title || '版本 ' + (index + 1), statusName[item.status] || item.status, item.result_url, item.error)}
       </div>)}

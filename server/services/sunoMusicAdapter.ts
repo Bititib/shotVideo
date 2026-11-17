@@ -159,7 +159,7 @@ export async function readSunoReceipt(channel:SunoChannel, op:MusicOperation, id
   if (result.kind==='songs' || result.id!==id) throw new SunoError('上游回执编号不一致，需要核对原任务');
   return result;
 }
-export async function findSunoVoiceByRequest(channel:SunoChannel,tracking:string,enhanced=true) {
+export async function findSunoVoiceByRequest(channel:SunoChannel,tracking:string,enhanced=true,onFound?:(id:string)=>void) {
   const r=await request(channel,enhanced?'查询强化音色列表':'查询本人音色列表','/api/music/voice-profile/list');
   checked(r);
   const items=r.data?.data?.items;
@@ -170,6 +170,7 @@ export async function findSunoVoiceByRequest(channel:SunoChannel,tracking:string
     return matchingKind&&item.client_request_id===tracking&&id?.startsWith('vp_')?[id]:[];
   }))];
   if(ids.length>1)throw responseError(r,'原请求对应多条音色，需要核对');
+  if(ids[0])onFound?.(ids[0]);
   return ids[0]?readSunoReceipt(channel,enhanced?'enhanced_voice':'voice',ids[0]):undefined;
 }
 export async function querySunoSongs(channel:SunoChannel,ids:string[],model:string) {

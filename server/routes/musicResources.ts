@@ -84,7 +84,7 @@ export function createMusicResourceRouter(ownerFor:(req:Request)=>MusicOwner,wri
   router.post('/assets',writeAuth,ownerMiddleware,musicMultipart,(req,res,next)=>void createMusicResource(req,res,owner(res),'asset',permission,present).catch(next));
   router.post('/voices',writeAuth,ownerMiddleware,musicMultipart,(req,res,next)=>void createMusicResource(req,res,owner(res),'voice',permission,present).catch(next));
   router.post('/:id/recover',ownerMiddleware,(req,res,next)=>{
-    if(req.body&&Object.keys(req.body).length)return next(musicFailure('恢复原订单请发送空对象，沿用原音频和请求标识'));
+    if(req.body&&Object.keys(req.body).length)return next(musicFailure('恢复原订单请发送空对象，仅查询原请求回执，不接受任意素材编号'));
     void recoverMusicSource(req.params.id,owner(res)).then(task=>{
       const response=present(task);
       if(response.status_url)res.setHeader('Location',response.status_url);

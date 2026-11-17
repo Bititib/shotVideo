@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 
 type Diagnostic = {
-  id:string; operation:string; canRetryUpload?:boolean; allowsSupplement?:boolean; state:string; providerStatus?:string; upstreamId?:string; relatedTaskId?:string; submissionId:string; error?:string;
+  id:string; operation:string; canImportUploadReceipt?:boolean; canLookupVoice?:boolean; allowsSupplement?:boolean; state:string; providerStatus?:string; upstreamId?:string; relatedTaskId?:string; submissionId:string; error?:string;
   results:{id:string;upstreamId:string;status:string;error?:string;saved:boolean}[];
 };
 export default function MusicOrderRecovery({id,onChange}:{id:string;onChange:()=>void}) {
@@ -22,8 +22,11 @@ export default function MusicOrderRecovery({id,onChange}:{id:string;onChange:()=
     try {
       const evidence=note.trim();
       const ids=receipt.split(/[,，\s]+/).filter(Boolean);
-      const input=info.canRetryUpload?{evidence,retryUpload:true}:info.allowsSupplement&&ids.length?{evidence,songIds:[...info.results.map(item=>item.upstreamId),...ids]}
-        :!needsId?{evidence}:songs?{evidence,songIds:ids}:{evidence,upstreamId:receipt.trim()};
+      let uploadReceipt;
+      if(info.canImportUploadReceipt){try{uploadReceipt=JSON.parse(receipt);}catch{throw new Error('请粘贴原上传成功的 JSON 回执');}}
+      const input=info.canImportUploadReceipt?{evidence,uploadReceipt,originalRequestId:info.submissionId}:
+        info.allowsSupplement&&ids.length?{evidence,songIds:[...info.results.map(item=>item.upstreamId),...ids]}
+        :!needsId||info.canLookupVoice&&!receipt.trim()?{evidence}:songs?{evidence,songIds:ids}:{evidence,upstreamId:receipt.trim()};
       setInfo(await api.post<Diagnostic>(endpoint+'/recover',input));setNote('');onChange();
     }catch(e){setError((e as Error).message);}finally{setBusy(false);}
   }
@@ -40,13 +43,15 @@ export default function MusicOrderRecovery({id,onChange}:{id:string;onChange:()=
       {info.providerStatus&&<p>上游状态 {info.providerStatus}</p>}
       {info.error&&<p className="break-words text-amber-300">{info.error}</p>}
       {info.results.map(item=><p className="break-all" key={item.id}>{item.upstreamId} · {item.status}{item.saved?' · 已保存':''}{item.error?' · '+item.error:''}</p>)}
-      {['review','accepted','submitting'].includes(info.state)&&(info.canRetryUpload||!needsId||info.operation!=='upload')&&<>
-        {!info.canRetryUpload&&(needsId||info.allowsSupplement)&&<label className="block">{info.allowsSupplement?'已核实的第二首原歌曲 ID（可选）':songs?'已核实的原歌曲 ID（逗号分隔）':'已核实的原受理编号'}
+      {['review','accepted','submitting'].includes(info.state)&&(info.canImportUploadReceipt||!needsId||info.operation!=='upload')&&<>
+        {info.canImportUploadReceipt?<label className="block">原上传成功回执（JSON）
+          <textarea className="mt-1 w-full rounded border p-2 text-zinc-900" maxLength={16000} value={receipt} onChange={e=>setReceipt(e.target.value)}/>
+          <span className="block mt-1">须包含 clip_id 和 status=complete，并确认来自上述原请求；回填不重新上传。</span>
+        </label>:(needsId||info.allowsSupplement)&&<label className="block">{info.allowsSupplement?'已核实的第二首原歌曲 ID（可选）':songs?'已核实的原歌曲 ID（逗号分隔）':info.canLookupVoice?'已核实的原音色 ID（可选，留空按原请求查询）':'已核实的原受理编号'}
           <input className="mt-1 w-full rounded border p-2 text-zinc-900" value={receipt} onChange={e=>setReceipt(e.target.value)}/>
         </label>}
-        {info.canRetryUpload&&<p>使用原音频重试一次免费上传，成功后素材会回到原订单。</p>}
         <label className="block">原单核对依据<textarea className="mt-1 w-full rounded border p-2 text-zinc-900" value={note} maxLength={1000} onChange={e=>setNote(e.target.value)}/></label>
-        <button className="rounded border px-3 py-2 disabled:opacity-40" disabled={busy||note.trim().length<6||needsId&&!info.canRetryUpload&&!receipt.trim()} onClick={()=>void recover()}>{info.canRetryUpload?'重试免费上传':'恢复原订单查询'}</button>
+        <button className="rounded border px-3 py-2 disabled:opacity-40" disabled={busy||note.trim().length<6||needsId&&!info.canLookupVoice&&!receipt.trim()} onClick={()=>void recover()}>{info.canImportUploadReceipt?'回填原成功回执':'查询并恢复原订单'}</button>
       </>}
     </>}
   </section>;
