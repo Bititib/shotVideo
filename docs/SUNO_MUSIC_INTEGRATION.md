@@ -61,4 +61,12 @@ stage 表示队列阶段，client_request_id 为原调用编号，error 和 erro
 
 本实现使用隔离 SQLite 与模拟上游。真实型号权限、歌曲素材与音色的组合可用性、部分退款净额、强化操作丢回包之后的上游人工找回、音色删除后上游样本清理仍待联调。没有真实付费调用。浏览器录音的正常路径用模拟麦克风覆盖。
 
+## 普通上传连接重置诊断
+
+在 VPS 仓库拉取诊断脚本后执行 `docker exec -i -w /app shot-video node < server/scripts/diagnoseSunoUpload.cjs`。默认读取内容 #16028，可通过 docker exec 的 `-e SUNO_DIAG_CONTENT_ID=编号` 指定其他普通上传原订单。脚本只读数据库，校验免费操作、原凭据、原文件范围及处理状态，最多对当前 DNS 返回的两个 IPv4 地址各发送一次 multipart 和 JSON base64 免费上传。保持相同音频和业务字段、固定每组 IP、校验证书/SNI、显式按字节计算请求长度，并交替两组格式的顺序。
+
+输出记录原文件和请求体摘要、TLS 对端、发送耗时、HTTP 状态、上游请求编号及断开耗时，密钥和音频正文不输出。X-Request-ID 仅供上游日志关联，不表示幂等保证；普通上传成功可能在上游新建免费素材。诊断不回填本站订单，成功的 clipId 保留在输出。BODY_SENT 只表示客户端写入完成，不能证明上游应用已处理完整请求。固定 IP 对照仍可能受到后端负载分配和时间变化影响，精确定位入口/后端关闭连接原因需要上游同期日志。
+
+本地模拟验证了免费操作限制、固定地址、相同原音频、准确 Content-Length、连接重置捕获及成功回执保留。VPS 实际结果待返回后判断。
+
 协议：[灵感生成](https://www.suno-api.io/docs/current-music-create/) · [专业生成](https://www.suno-api.io/docs/current-music-create-custom/) · [普通上传](https://www.suno-api.io/docs/current-music-upload-source/) · [强化上传](https://www.suno-api.io/docs/current-music-enhanced-upload/) · [普通翻唱](https://www.suno-api.io/docs/current-music-generate-from-source/) · [音色](https://www.suno-api.io/docs/current-clone-voice/) · [歌曲查询](https://www.suno-api.io/docs/current-music-query/) · [免费 MP3 下载](https://www.suno-api.io/docs/current-music-media-download/) · [余额查询](https://www.suno-api.io/docs/current-user-balance/)
