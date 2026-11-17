@@ -28,6 +28,8 @@ import {
   X,
 } from 'lucide-react';
 import { contentApi } from '../../api/content';
+import { api } from '../../api/client';
+import HistoryMusicAudio, { historyMusicFile } from '../../components/HistoryMusicAudio';
 import { downloadGeneratedImage } from '../../api/imageGen';
 import { getContentFailureInfo } from '../../utils/contentFailure';
 import { formatBeijingTime as formatDate } from '../../../../shared/time';
@@ -130,6 +132,7 @@ export default function HistoryPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
+  const [downloadingId,setDownloadingId]=useState<number|null>(null);
   const pageSize = type === 'video' ? VIDEO_PAGE_SIZE : DEFAULT_PAGE_SIZE;
 
   useEffect(() => {
@@ -220,6 +223,17 @@ export default function HistoryPage() {
   };
 
   const handleDownload = async (item: ContentItem, url: string, index = 0) => {
+    if(item.type==='music') {
+      setDownloadingId(item.id);setError('');
+      try {
+        const blob=await api.get<Blob>(historyMusicFile(item.id),{responseType:'blob',timeoutMs:60000});
+        const objectUrl=URL.createObjectURL(blob),anchor=document.createElement('a');
+        anchor.href=objectUrl;anchor.download=`generated-music-${item.id}.mp3`;
+        document.body.appendChild(anchor);anchor.click();anchor.remove();
+        window.setTimeout(()=>URL.revokeObjectURL(objectUrl),10000);
+      }catch(e){setError((e as Error).message);}finally{setDownloadingId(null);}
+      return;
+    }
     if (item.type === 'image') {
       await downloadGeneratedImage(url, `generated-image-${item.id}-${index + 1}.png`);
       return;
@@ -325,7 +339,7 @@ export default function HistoryPage() {
                 {item.inputText && item.inputText !== item.title && <span className="history-prompt">{item.inputText}</span>}
               </button>
               <div className="history-actions">
-                {isCompleted && firstUrl && <button onClick={() => handleDownload(item, firstUrl)}><Download />下载</button>}
+                {isCompleted && firstUrl && <button disabled={downloadingId===item.id} onClick={() => handleDownload(item, firstUrl)}><Download />{downloadingId===item.id?'下载中…':'下载'}</button>}
                 <button onClick={() => openDetail(item)}><ExternalLink />详情</button>
                 <button className="is-danger" disabled={deletingId === item.id} onClick={() => handleDelete(item)}>
                   {deletingId === item.id ? <Loader2 className="animate-spin" /> : <Trash2 />}删除
@@ -370,8 +384,8 @@ export default function HistoryPage() {
                           ? <img src={url} alt={`${selected.title || '生成图片'} ${index + 1}`} />
                           : selected.type === 'video'
                             ? <video src={getVideoPlayUrl(url)} controls preload="metadata" />
-                            : <audio src={url} controls />}
-                        <button onClick={() => handleDownload(selected, url, index)}><Download />下载{mediaUrls.length > 1 ? ` ${index + 1}` : ''}</button>
+                            : selected.type==='music'?<HistoryMusicAudio id={selected.id}/>:<audio src={url} controls />}
+                        <button disabled={downloadingId===selected.id} onClick={() => handleDownload(selected, url, index)}><Download />{downloadingId===selected.id?'下载中…':'下载'}{mediaUrls.length > 1 ? ` ${index + 1}` : ''}</button>
                       </div>
                     ))}
                   </section>

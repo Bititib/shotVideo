@@ -62,6 +62,17 @@ export function musicFile(id:string,owner:MusicOwner,resultId?:string) {
   if (task.status!=='completed' || !task.result_url) throw fail('音乐文件尚未就绪',409);
   return path.resolve('data/uploads/music',id+'.mp3');
 }
+/** Website history may read its account's API-created results without exposing
+ * the API Key or changing the token-scoped music API's ownership rules. */
+export function musicHistoryFile(contentId:number,userId:number) {
+  ensureMusicJobs();
+  const row=sqlite.prepare("SELECT j.id,j.owner FROM music_jobs j JOIN contents c ON c.id=j.content_id WHERE c.id=? AND c.user_id=? AND c.type='music'")
+    .get(contentId,userId) as {id:string;owner:string}|undefined;
+  if(!row)throw fail('音乐记录不存在或无权访问',404);
+  const token=/^token:(\d+)$/.exec(row.owner);
+  if(!token&&row.owner!=='user:'+userId)throw fail('音乐记录归属不一致',404);
+  return musicFile(row.id,token?{userId,tokenId:Number(token[1])}:{userId});
+}
 export function createMusicTask(input:unknown,owner:MusicOwner,file?:{path:string; name:string; mime:string; digest:string}) {
   ensureMusicJobs();
   return createSunoMusicTask(input,owner,file);

@@ -596,6 +596,28 @@ it('keeps the existing Suno key and model bindings on a rejected replacement key
 });
 
 const uploadReset=()=>new TypeError('fetch failed',{cause:Object.assign(new Error('read ECONNRESET'),{code:'ECONNRESET'})});
+it('downloads API-created music in the account history with JWT while preserving token and other-account isolation',async()=>{
+  const task=createMusicTask(input(),{userId:1,tokenId:11}).task;
+  calls.mockResolvedValueOnce(accepted([song('history_first'),song('history_second')],'completed'))
+    .mockResolvedValueOnce(mp3()).mockResolvedValueOnce(mp3());
+  await run(task.id);expect(job(task.id).state).toBe('completed');
+  const before=job(task.id),funds=ledger(task.id);calls.mockClear();
+  await withApp(async(url,web)=>{
+    const endpoint=url+'/api/music/history/'+before.content_id+'/file';
+    expect((await localFetch(endpoint)).status).toBe(401);
+    const stranger=jwt.sign({userId:2},env.JWT_SECRET);
+    expect((await localFetch(endpoint,{headers:{Authorization:'Bearer '+stranger}})).status).toBe(404);
+    const headers={Authorization:'Bearer '+web};
+    const file=await localFetch(endpoint,{headers});
+    expect(file.status).toBe(200);expect(file.headers.get('content-type')).toContain('audio/mpeg');
+    expect(file.headers.get('cache-control')).toContain('no-store');expect(await file.text()).toBe('ID3 mock song');
+    expect((await localFetch(url+'/api/music/'+task.id+'/file',{headers})).status).toBe(404);
+    expect(()=>getMusicTask(task.id,{userId:1,tokenId:12})).toThrow('不存在');
+    sqlite.prepare('DELETE FROM contents WHERE id=?').run(before.content_id);
+    expect((await localFetch(endpoint,{headers})).status).toBe(404);
+  });
+  expect(job(task.id)).toEqual(before);expect(ledger(task.id)).toEqual(funds);expect(calls).not.toHaveBeenCalled();
+});
 it('never repeats an ordinary upload after reset, including legacy queued recovery flags and restart',async()=>{
   const file=await localFile(),i=input('upload',{rights_confirmed:true}),task=create(i,file);
   calls.mockRejectedValueOnce(uploadReset());await run(task.id);
