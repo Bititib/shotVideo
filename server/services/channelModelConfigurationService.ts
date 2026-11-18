@@ -1,3 +1,6 @@
+import { image2proModels } from './image2proAdapter.js';
+import { image2proLimits, image2proMediaSupported } from './image2proCapabilities.js';
+import { buildImage2proVideoPayload } from './image2proPayload.js';
 import { wanfengVideoCatalog, wanfengVideoLimits } from '../../shared/wanfengVideo.js';
 import { allowsDuration } from '../../shared/modelRouting.js';
 import { buildWanfengVideoPayload } from './wanfengVideoAdapter.js';
@@ -43,14 +46,14 @@ function readConfiguration(channel: Channel) {
   const linkedSpecs = specs.filter(spec => spec.routes.some(route => route.channelId === channel.id));
   const ids = new Set([...supported, ...Object.keys(mapping), ...linkedSpecs.map(spec => spec.modelId)]);
   const protocol = getChannelVideoProtocol(channel);
-  const canAdd = Boolean(protocol || allowsStandardChannelModelConfiguration(sqlite, channel));
+  const canAdd = Boolean(channel.type === 'image2pro' || protocol || allowsStandardChannelModelConfiguration(sqlite, channel));
   const rows = [...ids].filter(id => id !== '*' && !isRetiredVideoModel(id)).map(modelId => {
     const model = savedModels.get(modelId);
     const spec = linkedSpecs.find(row => row.modelId === modelId);
     const routes = spec?.routes.filter(route => route.channelId === channel.id) ?? [];
     const capabilities: string[] = JSON.parse(model?.capabilities || '[]');
     const kind = capabilities.includes('video') ? 'video' : capabilities.some(capability => ['image', 'image_gen'].includes(capability)) ? 'image' : null;
-    const editable = Boolean(canAdd && model && spec?.routes.length === 1 && routes[0]?.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX)
+    const editable = Boolean(channel.type === 'image2pro' && model?.provider === 'image2pro' && capabilities.includes('text') && !spec && mapping[modelId] === modelId) || Boolean(canAdd && model && spec?.routes.length === 1 && routes[0]?.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX)
       && routes[0].executionModel === modelId && allowsChannelModelConfigurationRoute(sqlite, channel, routes[0].id));
     return {
       modelId, displayName: model?.displayName || modelId,
@@ -67,6 +70,7 @@ function readConfiguration(channel: Channel) {
   const canSync = isSupportedChannelType(channel.type);
   const result: ChannelModelConfigurations = { models: rows, version, canAdd, canSync };
   if (protocol) result.protocol = protocol;
+  if (channel.type === 'image2pro') result.image2pro = true;
   if (!canAdd) result.addUnavailableReason = canSync
     ? '此渠道尚未开放后台新增型号。可同步和查看已接入的型号。'
     : '当前版本未接入此渠道类型的生成协议。可以查看已有配置。';
@@ -80,6 +84,9 @@ export function listChannelModelConfigurations(channelId: number) {
 async function fetchCatalog(channel: Channel): Promise<ChannelModelCatalogEntry[]> {
   if (!channel.apiKey.trim()) throw fail('请先在渠道配置中保存 API Key', 409);
   const protocol = getChannelVideoProtocol(channel);
+  if (channel.type === 'image2pro') return (await image2proModels(channel))
+    .filter(m => m.metadata.type === 'text' || image2proMediaSupported(m))
+    .map(m => ({ id: m.id, kind: m.metadata.type, ...(m.metadata.type === 'text' ? {} : { limits: image2proLimits(m) }) }));
   if (protocol === 'wanfeng') return wanfengVideoCatalog();
   if (protocol === 'async-video' || protocol === 'megaby') {
     try {
@@ -116,22 +123,29 @@ async function fetchCatalog(channel: Channel): Promise<ChannelModelCatalogEntry[
 
 export function listAuthorizedChannelModels(channelId: number) {
   const channel = getChannel(channelId);
-  if (!getChannelVideoProtocol(channel) && !allowsStandardChannelModelConfiguration(sqlite, channel)) throw fail('请使用该渠道的专用同步或配置入口', 409);
+  if (channel.type !== 'image2pro' && !getChannelVideoProtocol(channel) && !allowsStandardChannelModelConfiguration(sqlite, channel)) throw fail('请使用该渠道的专用同步或配置入口', 409);
   return fetchCatalog(channel);
 }
 
-function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol) {
+function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol, image2pro = false) {
   if (!draft || typeof draft.modelId !== 'string' || !modelIdPattern.test(draft.modelId)
     || typeof draft.displayName !== 'string' || !draft.displayName.trim() || draft.displayName.length > 120
     || typeof draft.upstreamModel !== 'string' || !draft.upstreamModel.trim()
     || draft.upstreamModel !== draft.upstreamModel.trim() || draft.upstreamModel.length > 160 || draft.upstreamModel === '*'
     || /[\x00-\x1f\x7f]/.test(draft.upstreamModel)
-    || !['image', 'video'].includes(draft.kind)
+    || !(image2pro ? ['image', 'video', 'text'] : ['image', 'video']).includes(draft.kind)
     || [draft.specificationEnabled, draft.routeEnabled].some(value => value !== undefined && typeof value !== 'boolean')) {
     throw fail('请填写有效的本站模型 ID、名称和上游型号');
   }
   if (isRetiredVideoModel(draft.modelId) || isRetiredVideoModel(draft.upstreamModel)) throw fail(RETIRED_VIDEO_MODEL_MESSAGE, 409);
+  if (image2pro && draft.modelId !== draft.upstreamModel) throw fail('Image2Pro 本站模型 ID 必须与上游公开 ID 一致，不添加渠道前缀');
+  if (image2pro && draft.kind === 'text') return;
   validateLimits(draft.limits);
+  if (image2pro) {
+    if (draft.limits.maxOutputs !== 1 || draft.limits.qualities.length || draft.limits.outputsPerTask && draft.limits.outputsPerTask !== 1) throw fail('Image2Pro 当前入口每次输出一份，不支持质量档位');
+    if (draft.kind === 'image' && draft.limits.resolutions.length !== 1) throw fail('图片型号请选择一个固定分辨率');
+    return;
+  }
   const limits = draft.limits;
   if (protocol && draft.kind !== 'video') throw fail('此协议只支持视频模型');
   if ((protocol !== 'wanfeng' && (limits.firstFrame || limits.lastFrame)) || ((!protocol || !channelVideoProtocols[protocol].multimedia) && (limits.maxVideos || limits.maxAudios))) {
@@ -186,7 +200,8 @@ function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol
 export function previewChannelModelRequest(channelId: number, draft: ChannelModelDraft, sample: V6kRequestSample = {}): ChannelModelRequestPreview {
   const channel = getChannel(channelId), protocol = getChannelVideoProtocol(channel);
   if (!protocol && !allowsStandardChannelModelConfiguration(sqlite, channel)) throw fail('此渠道尚未开放后台新增型号', 409);
-  validateDraft(draft, protocol);
+  validateDraft(draft, protocol, channel.type === 'image2pro');
+  if (draft.kind === 'text') throw fail('文本预览请使用授权目录预览入口');
   const { limits } = draft, rule = limits.duration;
   if (!sample || typeof sample !== 'object' || Array.isArray(sample)) throw fail('预览参数无效');
   const seconds = sample.seconds ?? limits.defaultSeconds ?? (rule.mode === 'options' ? rule.values[0] : rule.min);
@@ -212,7 +227,7 @@ export function previewChannelModelRequest(channelId: number, draft: ChannelMode
 export async function saveChannelModelConfiguration(channelId: number, draft: ChannelModelDraft, version: string) {
   const channel = getChannel(channelId);
   const protocol = getChannelVideoProtocol(channel);
-  validateDraft(draft, protocol);
+  validateDraft(draft, protocol, channel.type === 'image2pro');
   const original = readConfiguration(channel);
   const assertVersion = (current: typeof original) => {
     if (!current.result.canAdd) throw fail(current.result.addUnavailableReason!, 409);
@@ -243,6 +258,7 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
   assertVersion(original);
   const catalogEntry = (await fetchCatalog(channel)).find(entry => entry.id === draft.upstreamModel);
   if (!catalogEntry) throw fail('该上游型号未出现在此 Key 的授权目录中，或不支持在此添加', 409);
+  if (channel.type === 'image2pro') validateImage2proCatalogDraft(draft, catalogEntry);
   if (protocol === 'async-video') {
     const { duration, ratios } = catalogEntry.limits!;
     const rule = draft.limits.duration;
@@ -266,12 +282,13 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
       rememberPublicModelNames(model);
       db.update(models).set({ displayName: draft.displayName.trim() }).where(eq(models.id, model.id)).run();
     }
+    if (draft.kind !== 'text') {
     const spec = current.specs.find(row => row.modelId === draft.modelId);
     const originalRoute = spec?.routes[0];
     const cost = originalRoute?.upstreamModel === draft.upstreamModel ? originalRoute : undefined;
     const { limits } = draft;
     const route: ModelRoute = {
-      id: originalRoute?.id ?? (protocol ? channelVideoProtocols[protocol].prefix : CHANNEL_MODEL_ROUTE_PREFIX) + randomUUID(), channelId, executionModel: draft.modelId,
+      id: originalRoute?.id ?? (live.type === 'image2pro' ? 'admin-channel-model-image2pro-' : protocol ? channelVideoProtocols[protocol].prefix : CHANNEL_MODEL_ROUTE_PREFIX) + randomUUID(), channelId, executionModel: draft.modelId,
       upstreamModel: draft.upstreamModel, enabled: draft.routeEnabled ?? originalRoute?.enabled ?? true, limits,
       cost: cost?.cost ?? null, costUnit: cost?.costUnit ?? 'unknown',
       resolutionCosts: cost?.resolutionCosts ?? {}, priority: originalRoute?.priority ?? live.priority,
@@ -280,6 +297,7 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
       modelId: draft.modelId, kind: draft.kind, enabled: draft.specificationEnabled ?? spec?.enabled ?? true,
       aliases: spec?.aliases ?? [], limits, routes: [route],
     });
+    }
     db.update(channels).set({
       supportedModels: JSON.stringify([...new Set([...current.supported, draft.modelId])]),
       modelMapping: JSON.stringify({ ...current.mapping, [draft.modelId]: draft.upstreamModel }),
@@ -287,4 +305,45 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
     }).where(eq(channels.id, channelId)).run();
     return readConfiguration(getChannel(channelId)).result;
   }).immediate();
+}
+
+function validateImage2proCatalogDraft(draft: ChannelModelDraft, entry: ChannelModelCatalogEntry) {
+  if (entry.kind !== draft.kind) throw fail('Image2Pro 型号类型与授权目录不一致');
+  if (draft.kind === 'text') return;
+  const supported = entry.limits!;
+  const l = draft.limits;
+  const rule = l.duration;
+  const seconds = rule.mode === 'options' ? rule.values : rule.mode === 'fixed' ? [rule.min]
+    : Array.from({ length: Math.floor((rule.max-rule.min)/rule.step)+1 }, (_,i)=>rule.min+i*rule.step);
+  if (l.maxImages > supported.maxImages || l.minImages < supported.minImages
+    || l.maxVideos > supported.maxVideos || l.maxAudios > supported.maxAudios
+    || l.firstFrame && !supported.firstFrame || l.lastFrame && !supported.lastFrame
+    || l.resolutions.some(v => !supported.resolutions.includes(v)) || l.ratios.some(v => !supported.ratios.includes(v))
+    || draft.kind === 'video' && (!seconds.length || seconds.some(v => !Number.isSafeInteger(v) || !allowsDuration(supported.duration,v)))) {
+    throw fail('Image2Pro 配置超出授权目录公布的时长、分辨率、画幅或素材能力');
+  }
+}
+
+/** The Image2Pro preview reads current capabilities but never sends a generation request. */
+export async function previewAuthorizedChannelModelRequest(channelId: number, draft: ChannelModelDraft, sample: V6kRequestSample = {}): Promise<ChannelModelRequestPreview> {
+  const channel = getChannel(channelId);
+  if (channel.type !== 'image2pro') return previewChannelModelRequest(channelId, draft, sample);
+  validateDraft(draft, undefined, true);
+  const model = (await image2proModels(channel)).find(m => m.id === draft.upstreamModel);
+  if (!model) throw fail('该上游型号未出现在此 Key 的授权目录中',409);
+  const kind = model.metadata.type;
+  validateImage2proCatalogDraft(draft, {id:model.id, kind, ...(kind === 'text' ? {} : {limits:image2proLimits(model)})});
+  const prompt = '请求体预览示例';
+  if (draft.kind === 'text') return {method:'POST',path:'/v1/chat/completions',body:{model:model.id,messages:[{role:'user',content:prompt}]}};
+  if (!sample || typeof sample !== 'object' || Array.isArray(sample)) throw fail('预览参数无效');
+  const l=draft.limits;
+  const input={seconds:sample.seconds ?? l.defaultSeconds ?? (l.duration.mode==='options'?l.duration.values[0]:l.duration.min),ratio:sample.ratio??l.ratios[0],resolution:sample.resolution??l.resolutions[0],images:sample.images??l.minImages,videos:sample.videos??0,audios:sample.audios??0,outputs:1,firstFrame:false,lastFrame:false};
+  if (!Number.isSafeInteger(input.seconds) || typeof input.ratio !== 'string' || typeof input.resolution !== 'string') throw fail('预览参数无效');
+  if (![input.images,input.videos,input.audios].every(v=>Number.isSafeInteger(v)&&v>=0&&v<=100)) throw fail('预览素材数量无效');
+  const mismatches=routingMismatches(l,input,draft.kind); if(mismatches.length)throw fail(mismatches.join('；'));
+  const urls=(count:number,ext:string)=>Array.from({length:count},(_,i)=>'https://example.invalid/'+ext+'-'+(i+1)+'.'+ext);
+  const images=urls(input.images,'jpg');
+  if(draft.kind==='image')return {method:'POST',path:'/v1/images/tasks',body:{model:model.id,prompt,n:1,response_format:'url',...(input.ratio==='auto'?{}:{aspect_ratio:input.ratio}),...(input.resolution==='auto'?{}:{resolution:input.resolution}),...(images.length?{images}:{})}};
+  const built=buildImage2proVideoPayload(model,{prompt,input,images,videos:urls(input.videos,'mp4'),audios:urls(input.audios,'wav'),firstFrame:'',lastFrame:''});
+  return {method:'POST',path:'/v1/videos',body:built.payload,...(built.standard?{headers:{'X-Xiaojuzi-Media-Contract':'1'}}:{})};
 }

@@ -1,3 +1,4 @@
+import { buildImage2proVideoPayload } from './image2proPayload.js';
 import { image2proCredential, isImage2proChannel, submitImage2pro, pollImage2pro, normalizeImage2pro, image2proModels, Image2proError } from './image2proAdapter.js';
 import { isMinikeyChannel, submitMinikey, pollMinikey, MinikeyError, minikeyCredential, normalizeMinikeyTask } from './minikeyAdapter.js';
 import { minikeyImageSize } from '../../shared/minikeyModelConfiguration.js';
@@ -214,32 +215,15 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
 
     const model=(await image2proModels(target.channel)).find((m:any)=>m.id===target.route.upstreamModel);
     if(!model || model.metadata.media_contract!==1 && typeof model.metadata.supports_frame_control!=='boolean' && !(Number.isInteger(model.metadata.duration_min)&&Number.isInteger(model.metadata.duration_max)))throw new SpecificationUpstreamError('Image2Pro 此视频型号尚未接入专属协议',true);
-    const md=model.metadata, standard=md.media_contract===1, flow=!standard&&typeof md.supports_frame_control==='boolean', legacy=!standard&&!flow;
-    const durations=md.durations || (Number.isInteger(md.duration_min)&&Number.isInteger(md.duration_max)&&md.duration_max>=md.duration_min&&md.duration_max<=120?Array.from({length:md.duration_max-md.duration_min+1},(_,i)=>md.duration_min+i):[]);
-    if(request.videos.length>(legacy?(md.max_video_references||0):0)||request.audios.length>(legacy?(md.max_audio_references||0):0))throw new SpecificationUpstreamError('Image2Pro 视频或音频参考数量不符合模型能力',true);
-    if((request.firstFrame||request.lastFrame)&&(request.videos.length||request.audios.length))throw new SpecificationUpstreamError('Image2Pro 首尾帧不能与视频音频混用',true);
-    if((request.firstFrame||request.lastFrame)&&(!(md.supports_frame_control||legacy&&md.modes?.includes('keyframe'))||flow&&!request.firstFrame||request.images.length))throw new SpecificationUpstreamError('Image2Pro 首尾帧组合不支持：必须有首帧且不能混用普通参考图',true);
-    if(flow && request.images.length && !md.supports_reference_images)throw new SpecificationUpstreamError('Image2Pro 此型号不支持普通参考图',true);
-    if(!durations.includes(request.input.seconds))throw new SpecificationUpstreamError('Image2Pro 时长与模型能力不符',true);
-    const payload:Record<string,unknown>={model:model.id,prompt:request.prompt,duration:request.input.seconds,images:request.images.map(s=>publishSpecificationAsset(s,request.publicBaseUrl))};
-    if(request.images.length<(md.min_images||0)||request.images.length>(md.max_images??(md.supports_reference_images?3:0)))throw new SpecificationUpstreamError('Image2Pro 参考图数量超出模型能力',true);
-    for(const [key,value,allowed] of [['ratio',request.input.ratio,md.aspect_ratios],['resolution',request.input.resolution,md.resolutions]] as const) {
-      if(Array.isArray(allowed)&&allowed.length){const selected=allowed.find((option:unknown)=>typeof option==='string'&&option.toLowerCase()===value.toLowerCase());if(!selected)throw new SpecificationUpstreamError('Image2Pro '+key+' 不支持所选值',true);payload[key]=selected;}
-    }
-    if(flow){
-      payload.reference_images=payload.images;delete payload.images;
-      if(payload.ratio){payload.aspect_ratio=payload.ratio;delete payload.ratio;}
-      if(request.firstFrame)payload.reference_images=[{url:publishSpecificationAsset(request.firstFrame,request.publicBaseUrl),role:'first_frame'},...(request.lastFrame?[{url:publishSpecificationAsset(request.lastFrame,request.publicBaseUrl),role:'last_frame'}]:[])];
-    }
-    if(legacy){
-      if(md.size && request.input.resolution!=='auto' && request.input.resolution.toLowerCase()!==String(md.size).toLowerCase())throw new SpecificationUpstreamError('Image2Pro 固定清晰度与所选规格不一致',true);
-      if(md.size)payload.size=md.size;
-      if(request.audios.length)payload.audios=request.audios.map(s=>publishSpecificationAsset(s,request.publicBaseUrl));
-      if(request.videos.length)payload.videos=request.videos.map(s=>({url:publishSpecificationAsset(s,request.publicBaseUrl)}));
-      if(request.firstFrame)payload.first_frame=publishSpecificationAsset(request.firstFrame,request.publicBaseUrl);
-      if(request.lastFrame)payload.last_frame=publishSpecificationAsset(request.lastFrame,request.publicBaseUrl);
-      if(Array.isArray(md.modes)){const mode=request.firstFrame||request.lastFrame?'keyframe':request.images.length||request.videos.length||request.audios.length?'reference':'text';if(!md.modes.includes(mode))throw new SpecificationUpstreamError('Image2Pro 此模型不支持 '+mode,true);payload.mode=mode;}
-    }
+    let built: ReturnType<typeof buildImage2proVideoPayload>;
+    try { built = buildImage2proVideoPayload(model, { ...request,
+      images: request.images.map(s => publishSpecificationAsset(s, request.publicBaseUrl)),
+      videos: request.videos.map(s => publishSpecificationAsset(s, request.publicBaseUrl)),
+      audios: request.audios.map(s => publishSpecificationAsset(s, request.publicBaseUrl)),
+      firstFrame: request.firstFrame ? publishSpecificationAsset(request.firstFrame, request.publicBaseUrl) : '',
+      lastFrame: request.lastFrame ? publishSpecificationAsset(request.lastFrame, request.publicBaseUrl) : '',
+    }); } catch (error) { throw new SpecificationUpstreamError((error as Error).message, true); }
+    const { payload, standard, legacy, md } = built;
     const key=randomUUID();
     try {
       const job=await submitImage2pro(target.channel,'video',payload,key,()=>onStarting({image2proRequest:{key,payload,credential:image2proCredential(target.channel)},image2proPollInterval:legacy&&Array.isArray(md.modes)?60000:10000}),id=>onStarting({videoId:id,upstreamTaskId:id}),fetch,standard);

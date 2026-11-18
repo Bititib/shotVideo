@@ -1,3 +1,4 @@
+import { image2proLimits } from './image2proCapabilities.js';
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { channels, models } from '../db/schema.js';
@@ -17,13 +18,8 @@ export async function syncImage2proModels(c: Image2proChannel & { id: number; pr
         if(!old){db.insert(models).values({provider:'image2pro',modelId:m.id,displayName:m.name||m.id,capabilities:'["text"]',description:'Image2Pro Chat Completions；配置售价后启用。',isActive:0}).run();added++;}
         continue;
       }
-      const md = m.metadata, kind = md.type as 'image' | 'video';
-      const durationValues = Array.isArray(md.durations) ? md.durations.filter((v: unknown) => Number.isInteger(v) && Number(v) > 0) : Number.isInteger(md.duration_min)&&Number.isInteger(md.duration_max)&&md.duration_min>0&&md.duration_max>=md.duration_min&&md.duration_max<=120 ? Array.from({length:md.duration_max-md.duration_min+1},(_,i)=>md.duration_min+i) : [];
-      if (kind === 'video' && !durationValues.length) throw new Error('Image2Pro 未公布视频时长：' + m.id);
-      const limits: ModelInputLimits = { ...defaultRoutingLimits(), maxImages: Number.isSafeInteger(md.max_images) ? md.max_images : md.supports_reference_images ? 3 : md.supports_frame_control ? 2 : 0, firstFrame: md.supports_frame_control === true || md.modes?.includes('keyframe')===true, lastFrame: md.supports_frame_control === true || md.modes?.includes('keyframe')===true, maxVideos: Number.isSafeInteger(md.max_video_references)?md.max_video_references:0, maxAudios: Number.isSafeInteger(md.max_audio_references)?md.max_audio_references:0,
-        minImages: Number.isSafeInteger(md.min_images) ? md.min_images : 0, maxOutputs: 1,
-        resolutions: Array.isArray(md.resolutions) ? md.resolutions.length ? md.resolutions : ['auto'] : typeof md.size==='string'?[md.size]:['auto'], ratios: Array.isArray(md.aspect_ratios) ? md.aspect_ratios.length ? md.aspect_ratios : ['auto'] : ['auto'],
-        duration: kind === 'video' ? { mode:'options', min: Math.min(...durationValues), max: Math.max(...durationValues), step:1, values:durationValues } : defaultRoutingLimits().duration };
+      const kind = m.metadata.type as 'image' | 'video';
+      const limits = image2proLimits(m);
       if (!old) { db.insert(models).values({ provider:'image2pro', modelId:m.id, displayName:m.name || m.id,
         capabilities:JSON.stringify([kind]), description:'Image2Pro 异步任务；配置售价与模型支持的参数后启用。', isActive:0 }).run(); added++; }
       const existing = getModelSpecification(m.id);

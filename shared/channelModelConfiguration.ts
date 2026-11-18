@@ -21,7 +21,7 @@ export type ChannelModelDraft = {
   modelId: string;
   displayName: string;
   upstreamModel: string;
-  kind: MediaKind;
+  kind: MediaKind | 'text';
   limits: ModelInputLimits;
   specificationEnabled?: boolean;
   routeEnabled?: boolean;
@@ -42,11 +42,12 @@ export type ChannelModelConfiguration = {
 export type ChannelModelConfigurations = {
   models: ChannelModelConfiguration[];
   canAdd: boolean;
+  image2pro?: boolean;
   canSync: boolean;
   protocol?: ChannelVideoProtocol;
   addUnavailableReason?: string;
   version: string;
 };
 
-export type ChannelModelCatalogEntry = { id: string; limits?: ModelInputLimits };
-export type ChannelModelRequestPreview = { method: string; path: string; body: Record<string, unknown> };
+export type ChannelModelCatalogEntry = { id: string; kind?: MediaKind | 'text'; limits?: ModelInputLimits };
+export type ChannelModelRequestPreview = { method: string; path: string; headers?: Record<string,string>; body: Record<string, unknown> };
