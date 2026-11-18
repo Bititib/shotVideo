@@ -25,6 +25,7 @@ export async function submitImage2pro(c: Image2proChannel, kind: Image2proKind, 
   beforeSend: () => void, persistId: (id: string) => void, transport: typeof fetch = fetch, mediaContract = false) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{5,99}$/.test(key)) throw new Image2proError('Image2Pro 逻辑请求编号无效', 'submit', 0, true);
   const body = JSON.stringify(payload);
+  if (kind === 'image' && Buffer.byteLength(body,'utf8') > 8*1024*1024) throw new Image2proError('Image2Pro 图片 JSON 请求体不能超过 8MiB','submit',0,true);
   beforeSend();
   let response: Response;
   try { response = await transport(image2proBase(c.baseUrl) + endpoint(kind), { method: 'POST', headers: {

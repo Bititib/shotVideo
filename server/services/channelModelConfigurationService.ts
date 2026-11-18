@@ -1,6 +1,6 @@
 import { image2proModels } from './image2proAdapter.js';
-import { image2proLimits, image2proMediaSupported } from './image2proCapabilities.js';
-import { buildImage2proVideoPayload } from './image2proPayload.js';
+import { image2proLimits, image2proMediaSupported, image2proImageOptions, validImage2proRatio, validImage2proResolution } from './image2proCapabilities.js';
+import { buildImage2proVideoPayload, buildImage2proImagePayload } from './image2proPayload.js';
 import { wanfengVideoCatalog, wanfengVideoLimits } from '../../shared/wanfengVideo.js';
 import { allowsDuration } from '../../shared/modelRouting.js';
 import { buildWanfengVideoPayload } from './wanfengVideoAdapter.js';
@@ -53,7 +53,7 @@ function readConfiguration(channel: Channel) {
     const routes = spec?.routes.filter(route => route.channelId === channel.id) ?? [];
     const capabilities: string[] = JSON.parse(model?.capabilities || '[]');
     const kind = capabilities.includes('video') ? 'video' : capabilities.some(capability => ['image', 'image_gen'].includes(capability)) ? 'image' : null;
-    const editable = Boolean(channel.type === 'image2pro' && model?.provider === 'image2pro' && capabilities.includes('text') && !spec && mapping[modelId] === modelId) || Boolean(canAdd && model && spec?.routes.length === 1 && routes[0]?.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX)
+    const editable = Boolean(channel.type === 'image2pro' && model?.provider === 'image2pro' && capabilities.includes('text') && !spec && mapping[modelId] === modelId) || Boolean(canAdd && model && spec?.routes.length === 1 && (routes[0]?.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX) || channel.type === 'image2pro' && routes[0]?.id.startsWith('image2pro-' + channel.id + '-'))
       && routes[0].executionModel === modelId && allowsChannelModelConfigurationRoute(sqlite, channel, routes[0].id));
     return {
       modelId, displayName: model?.displayName || modelId,
@@ -86,7 +86,7 @@ async function fetchCatalog(channel: Channel): Promise<ChannelModelCatalogEntry[
   const protocol = getChannelVideoProtocol(channel);
   if (channel.type === 'image2pro') return (await image2proModels(channel))
     .filter(m => m.metadata.type === 'text' || image2proMediaSupported(m))
-    .map(m => ({ id: m.id, kind: m.metadata.type, ...(m.metadata.type === 'text' ? {} : { limits: image2proLimits(m) }) }));
+    .map(m => ({ id: m.id, kind: m.metadata.type, ...(m.metadata.type === 'text' ? {} : { limits: image2proLimits(m), ...(m.metadata.type === 'image' ? {imageOptions:image2proImageOptions(m)} : {}) }) }));
   if (protocol === 'wanfeng') return wanfengVideoCatalog();
   if (protocol === 'async-video' || protocol === 'megaby') {
     try {
@@ -143,7 +143,7 @@ function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol
   validateLimits(draft.limits);
   if (image2pro) {
     if (draft.limits.maxOutputs !== 1 || draft.limits.qualities.length || draft.limits.outputsPerTask && draft.limits.outputsPerTask !== 1) throw fail('Image2Pro 当前入口每次输出一份，不支持质量档位');
-    if (draft.kind === 'image' && draft.limits.resolutions.length !== 1) throw fail('图片型号请选择一个固定分辨率');
+
     return;
   }
   const limits = draft.limits;
@@ -315,10 +315,10 @@ function validateImage2proCatalogDraft(draft: ChannelModelDraft, entry: ChannelM
   const rule = l.duration;
   const seconds = rule.mode === 'options' ? rule.values : rule.mode === 'fixed' ? [rule.min]
     : Array.from({ length: Math.floor((rule.max-rule.min)/rule.step)+1 }, (_,i)=>rule.min+i*rule.step);
-  if (l.maxImages > supported.maxImages || l.minImages < supported.minImages
+  if (l.maxImages > (entry.imageOptions?.maxImages ?? supported.maxImages) || l.minImages < supported.minImages
     || l.maxVideos > supported.maxVideos || l.maxAudios > supported.maxAudios
     || l.firstFrame && !supported.firstFrame || l.lastFrame && !supported.lastFrame
-    || l.resolutions.some(v => !supported.resolutions.includes(v)) || l.ratios.some(v => !supported.ratios.includes(v))
+    || l.resolutions.some(v => entry.imageOptions?.customResolutions ? !validImage2proResolution(v) : !supported.resolutions.includes(v)) || l.ratios.some(v => entry.imageOptions?.customRatios ? !validImage2proRatio(v) : !supported.ratios.includes(v))
     || draft.kind === 'video' && (!seconds.length || seconds.some(v => !Number.isSafeInteger(v) || !allowsDuration(supported.duration,v)))) {
     throw fail('Image2Pro 配置超出授权目录公布的时长、分辨率、画幅或素材能力');
   }
@@ -332,18 +332,19 @@ export async function previewAuthorizedChannelModelRequest(channelId: number, dr
   const model = (await image2proModels(channel)).find(m => m.id === draft.upstreamModel);
   if (!model) throw fail('该上游型号未出现在此 Key 的授权目录中',409);
   const kind = model.metadata.type;
-  validateImage2proCatalogDraft(draft, {id:model.id, kind, ...(kind === 'text' ? {} : {limits:image2proLimits(model)})});
+  validateImage2proCatalogDraft(draft, {id:model.id, kind, ...(kind === 'text' ? {} : {limits:image2proLimits(model), ...(kind === 'image'?{imageOptions:image2proImageOptions(model)}:{})})});
   const prompt = '请求体预览示例';
   if (draft.kind === 'text') return {method:'POST',path:'/v1/chat/completions',body:{model:model.id,messages:[{role:'user',content:prompt}]}};
   if (!sample || typeof sample !== 'object' || Array.isArray(sample)) throw fail('预览参数无效');
   const l=draft.limits;
-  const input={seconds:sample.seconds ?? l.defaultSeconds ?? (l.duration.mode==='options'?l.duration.values[0]:l.duration.min),ratio:sample.ratio??l.ratios[0],resolution:sample.resolution??l.resolutions[0],images:sample.images??l.minImages,videos:sample.videos??0,audios:sample.audios??0,outputs:1,firstFrame:false,lastFrame:false};
+  const input={seconds:sample.seconds ?? l.defaultSeconds ?? (l.duration.mode==='options'?l.duration.values[0]:l.duration.min),ratio:sample.ratio??l.ratios[0],resolution:sample.resolution??l.resolutions[0],images:sample.images??l.minImages,videos:sample.videos??0,audios:sample.audios??0,outputs:1,firstFrame:sample.firstFrame??false,lastFrame:sample.lastFrame??false};
   if (!Number.isSafeInteger(input.seconds) || typeof input.ratio !== 'string' || typeof input.resolution !== 'string') throw fail('预览参数无效');
   if (![input.images,input.videos,input.audios].every(v=>Number.isSafeInteger(v)&&v>=0&&v<=100)) throw fail('预览素材数量无效');
+  if(typeof input.firstFrame!=='boolean'||typeof input.lastFrame!=='boolean')throw fail('首尾帧预览参数无效');
   const mismatches=routingMismatches(l,input,draft.kind); if(mismatches.length)throw fail(mismatches.join('；'));
   const urls=(count:number,ext:string)=>Array.from({length:count},(_,i)=>'https://example.invalid/'+ext+'-'+(i+1)+'.'+ext);
   const images=urls(input.images,'jpg');
-  if(draft.kind==='image')return {method:'POST',path:'/v1/images/tasks',body:{model:model.id,prompt,n:1,response_format:'url',...(input.ratio==='auto'?{}:{aspect_ratio:input.ratio}),...(input.resolution==='auto'?{}:{resolution:input.resolution}),...(images.length?{images}:{})}};
-  const built=buildImage2proVideoPayload(model,{prompt,input,images,videos:urls(input.videos,'mp4'),audios:urls(input.audios,'wav'),firstFrame:'',lastFrame:''});
+  if(draft.kind==='image')return {method:'POST',path:'/v1/images/tasks',body:buildImage2proImagePayload(model.id,{prompt,input,images})};
+  const built=buildImage2proVideoPayload(model,{prompt,input,images,videos:urls(input.videos,'mp4'),audios:urls(input.audios,'wav'),firstFrame:input.firstFrame?'https://example.invalid/first.jpg':'',lastFrame:input.lastFrame?'https://example.invalid/last.jpg':''});
   return {method:'POST',path:'/v1/videos',body:built.payload,...(built.standard?{headers:{'X-Xiaojuzi-Media-Contract':'1'}}:{})};
 }

@@ -16,6 +16,8 @@ export type V6kModelConfiguration = V6kModelDraft & {
 };
 
 export type V6kRequestSample = {
+  firstFrame?: boolean;
+  lastFrame?: boolean;
   seconds?: number;
   resolution?: string;
   ratio?: string;

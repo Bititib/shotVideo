@@ -49,5 +49,6 @@ export type ChannelModelConfigurations = {
   version: string;
 };
 
-export type ChannelModelCatalogEntry = { id: string; kind?: MediaKind | 'text'; limits?: ModelInputLimits };
+export type Image2proImageOptions = { customRatios: boolean; customResolutions: boolean; maxImages: number };
+export type ChannelModelCatalogEntry = { id: string; kind?: MediaKind | 'text'; imageOptions?: Image2proImageOptions; limits?: ModelInputLimits };
 export type ChannelModelRequestPreview = { method: string; path: string; headers?: Record<string,string>; body: Record<string, unknown> };

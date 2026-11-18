@@ -1,4 +1,4 @@
-import { buildImage2proVideoPayload } from './image2proPayload.js';
+import { buildImage2proVideoPayload, buildImage2proImagePayload } from './image2proPayload.js';
 import { image2proCredential, isImage2proChannel, submitImage2pro, pollImage2pro, normalizeImage2pro, image2proModels, Image2proError } from './image2proAdapter.js';
 import { isMinikeyChannel, submitMinikey, pollMinikey, MinikeyError, minikeyCredential, normalizeMinikeyTask } from './minikeyAdapter.js';
 import { minikeyImageSize } from '../../shared/minikeyModelConfiguration.js';
@@ -216,7 +216,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
     const model=(await image2proModels(target.channel)).find((m:any)=>m.id===target.route.upstreamModel);
     if(!model || model.metadata.media_contract!==1 && typeof model.metadata.supports_frame_control!=='boolean' && !(Number.isInteger(model.metadata.duration_min)&&Number.isInteger(model.metadata.duration_max)))throw new SpecificationUpstreamError('Image2Pro 此视频型号尚未接入专属协议',true);
     let built: ReturnType<typeof buildImage2proVideoPayload>;
-    try { built = buildImage2proVideoPayload(model, { ...request,
+    try { built = buildImage2proVideoPayload(model, { ...request, mode:request.body.mode, videoOptions:request.body.image2proVideoOptions,
       images: request.images.map(s => publishSpecificationAsset(s, request.publicBaseUrl)),
       videos: request.videos.map(s => publishSpecificationAsset(s, request.publicBaseUrl)),
       audios: request.audios.map(s => publishSpecificationAsset(s, request.publicBaseUrl)),
@@ -642,10 +642,9 @@ export async function generateSpecificationImage(target: RouteCandidate, request
   if(isImage2proChannel(c)) {
     if(request.videos.length||request.audios.length||request.firstFrame||request.lastFrame)throw new SpecificationUpstreamError('Image2Pro 图片不接受视频音频或独立首尾帧',true);
     for(const key of ['quality','background','output_format','output_compression','mask'])if(request.body[key]!==undefined)throw new SpecificationUpstreamError('Image2Pro 当前入口未接入 '+key,true);
-    const payload:Record<string,unknown>={model,prompt:request.prompt,n:1,response_format:'url'};
-    if(i.ratio&&i.ratio!=='auto')payload.aspect_ratio=i.ratio;if(i.resolution&&i.resolution!=='auto')payload.resolution=i.resolution;
-    if(request.body.size)payload.size=request.body.size;
-    if(request.images.length)payload.images=request.images.map(s=>publishSpecificationAsset(s,request.publicBaseUrl));
+    let payload: Record<string,unknown>;
+    try { payload=buildImage2proImagePayload(model,{...request,images:request.images.map(s=>publishSpecificationAsset(s,request.publicBaseUrl))}); }
+    catch(error){throw new SpecificationUpstreamError((error as Error).message,true);}
     const key=randomUUID();
     try {
       const job=await submitImage2pro(c,'image',payload,key,()=>onStarting({image2proRequest:{key,payload,credential:image2proCredential(target.channel)}}),onSubmitted);

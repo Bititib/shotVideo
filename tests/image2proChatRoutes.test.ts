@@ -69,3 +69,15 @@ it.each([true,false])('requires a complete stream terminator (%s)',async complet
 it('rejects multiple choices before submitting or charging',async()=>{const f=vi.fn();vi.stubGlobal('fetch',f);const res=await invoke(apiRouter,'/chat/completions',{model:'test-chat',messages:[{role:'user',content:'hi'}],n:2});expect(res.code).toBe(400);expect(f).not.toHaveBeenCalled();expect(tokenBalance()).toBe(100);});
 
 it('does not settle an SSE error carrying usage and DONE',async()=>{vi.stubGlobal('fetch',vi.fn(async()=>new Response('data: '+JSON.stringify({error:{message:'quota fake'},usage:{prompt_tokens:1,completion_tokens:1}})+'\n\ndata: [DONE]\n\n')));const res=await invoke(apiRouter,'/chat/completions',{model:'test-chat',messages:[{role:'user',content:'hi'}],stream:true});expect(records()[0].state).toBe('review');expect(res.chunks.join('')).not.toContain('fake');});
+
+it('preserves multi-turn vision, sampling, structured output and tool calls',async()=>{
+ sqlite.exec('UPDATE api_tokens SET balance=1000 WHERE id=1');
+ const messages=[{role:'system',content:'Be concise'},{role:'user',content:[{type:'text',text:'Describe it'},{type:'image_url',image_url:{url:'https://assets.test/a.png'}}]},{role:'assistant',content:'A cup'},{role:'user',content:'Find its price'}];
+ const tools=[{type:'function',function:{name:'price',parameters:{type:'object',properties:{}}}}];
+ const f=vi.fn(async(_url:any,init:any)=>{expect(JSON.parse(init.body)).toMatchObject({messages,tools,tool_choice:'auto',temperature:0.4,top_p:0.8,max_completion_tokens:128,response_format:{type:'json_object'}});return Response.json({choices:[{message:{content:null,tool_calls:[{id:'call1',type:'function',function:{name:'price',arguments:'{}'}}]},finish_reason:'tool_calls'}],usage:{prompt_tokens:10,completion_tokens:20}});});vi.stubGlobal('fetch',f);
+ const res=await invoke(apiRouter,'/chat/completions',{model:'test-chat',messages,tools,tool_choice:'auto',temperature:0.4,top_p:0.8,max_completion_tokens:128,response_format:{type:'json_object'}});
+ expect(res.body.choices[0].finish_reason).toBe('tool_calls');expect(records()[0].state).toBe('settled');expect(f).toHaveBeenCalledOnce();
+});
+it.each([{temperature:3},{top_p:-1},{frequency_penalty:3},{seed:1.5},{stop:['a','b','c','d','e']},{response_format:{type:'unknown'}}])('rejects invalid text parameters without submission or deduction: %j',async params=>{
+ const f=vi.fn();vi.stubGlobal('fetch',f);const res=await invoke(apiRouter,'/chat/completions',{model:'test-chat',messages:[{role:'user',content:'hi'}],...params});expect(res.code).toBe(400);expect(f).not.toHaveBeenCalled();expect(tokenBalance()).toBe(100);
+});

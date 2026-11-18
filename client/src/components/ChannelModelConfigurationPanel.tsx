@@ -236,6 +236,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                     setResolutions(event.target.value === 'image' ? '1K' : '');
                   }}><option value="video">视频</option><option value="image">图片</option></select></label>}
               </div>
+              {image2pro && draft.kind === 'text' && <p className="v6k-field-help">支持 Chat Completions 多轮消息、流式、输出长度和采样参数；看图、结构化输出和工具调用需具体模型支持，由请求传入相应参数。</p>}
               <div>
                 <button type="button" className={button} onClick={() => void loadCatalog()}>{wanfeng ? '读取晚风公开型号' : '读取已授权的上游型号'}</button>
                 {wanfeng && <p className="v6k-field-help">公开目录用于配置模型，实际可用型号取决于晚风 Key 的权限。</p>}
@@ -247,9 +248,10 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
               </div>
               {draft.kind !== 'text' && <section className="v6k-section">
                 <div className="v6k-section-heading"><h4>规格与素材</h4>
+                  {image2pro && draft.kind === 'image' && <p>分辨率和比例可用逗号分隔多个选项，例如 1K,2K 和 1:1,16:9。目录未公布时可按模型说明配置；接口最多接收 16 张参考图，实际支持数量由模型决定。</p>}
                   {asyncVideo && <p>画幅与时长可从授权目录给出的选项中选择，分辨率由上游决定。</p>}</div>
                 <div className="v6k-spec-grid">
-                  {!asyncVideo && <label>{draft.kind === 'image' ? '固定分辨率' : '可选分辨率'}<input className={field} value={resolutions} required
+                  {!asyncVideo && <label>{draft.kind === 'image' && !image2pro ? '固定分辨率' : '可选分辨率'}<input className={field} value={resolutions} required
                     readOnly={draft.kind === 'image' && !image2pro} placeholder={draft.kind === 'image' ? '1K' : '例如 720p,1080p'}
                     onChange={event => setResolutions(event.target.value)} /></label>}
                   <label>可选比例<input className={field} value={ratios} placeholder="例如 16:9,9:16" required onChange={event => setRatios(event.target.value)} /></label>
@@ -315,6 +317,10 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
             {draft.kind !== 'text' && <div className="v6k-sample-grid">
               {draft.kind === 'video' && <label>样例时长<input className={field} type="number" min="1" value={sample.seconds ?? ''}
                 onChange={event => { setPreview(null); setSample({ ...sample, seconds: event.target.value ? Number(event.target.value) : undefined }); }} /></label>}
+              {image2pro && draft.kind === 'video' && <>
+                {draft.limits.firstFrame && <label><input type="checkbox" checked={sample.firstFrame??false} onChange={event=>{setPreview(null);setSample({...sample,firstFrame:event.target.checked});}}/>样例首帧</label>}
+                {draft.limits.lastFrame && <label><input type="checkbox" checked={sample.lastFrame??false} onChange={event=>{setPreview(null);setSample({...sample,lastFrame:event.target.checked});}}/>样例尾帧</label>}
+              </>}
               {(['ratio', 'resolution'] as const).map(key => <label key={key}>{key === 'ratio' ? '样例比例' : '样例分辨率'}
                 <select className={field} value={sample[key] ?? ''} onChange={event => { setPreview(null); setSample({ ...sample, [key]: event.target.value || undefined }); }}>
                   <option value="">使用规格默认值</option>

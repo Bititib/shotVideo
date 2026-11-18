@@ -1,3 +1,4 @@
+vi.mock('../server/routes/imageGen.js',()=>({localizeGeneratedImage:vi.fn(async()=>'/uploads/manual-i2p.png')}));
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import { env } from '../server/config/env.js';
@@ -135,4 +136,69 @@ it('serves admin catalog, async preview and save while blocking non-admin writes
   expect(saved.status).toBe(200);expect(await saved.json()).toMatchObject({models:[{modelId:model,editable:true,enabled:false}]});
   expect(fetcher.mock.calls.every(([,o])=>o?.method!=='POST')).toBe(true);
  } finally {await new Promise<void>(resolve=>server.close(()=>resolve()));}
+});
+
+it('allows documented configurable image fields when the directory omits enumerations, but caps references at 16',async()=>{
+ const {channelId,draft}=setup('image',{resolutions:undefined,aspect_ratios:undefined,max_images:undefined,image_to_image_price:0.6});
+ const [entry]=await listAuthorizedChannelModels(channelId);expect(entry).toMatchObject({limits:{maxImages:1},imageOptions:{customRatios:true,customResolutions:true,maxImages:16}});
+ draft.limits={...draft.limits,resolutions:['1K','2K'],ratios:['1:1','3:2','16:9'],maxImages:4};
+ const saved=await saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version);
+ expect(saved.models[0].limits).toMatchObject({resolutions:['1K','2K'],maxImages:4});
+ expect(await previewAuthorizedChannelModelRequest(channelId,draft,{resolution:'2K',ratio:'3:2',images:2})).toMatchObject({path:'/v1/images/tasks',body:{resolution:'2K',aspect_ratio:'3:2',images:['https://example.invalid/jpg-1.jpg','https://example.invalid/jpg-2.jpg']}});
+ await expect(saveChannelModelConfiguration(channelId,{...draft,limits:{...draft.limits,maxImages:17}},saved.version)).rejects.toThrow('超出');
+});
+it('edits an already synchronized Image2Pro image without changing its price or activation',async()=>{
+ const {channelId,model,draft}=setup('image',{resolutions:undefined,aspect_ratios:undefined,max_images:undefined,image_to_image_price:1});
+ await ChannelService.syncModels(channelId);const listed=listChannelModelConfigurations(channelId);expect(listed.models[0].editable).toBe(true);
+ db.insert(modelPricing).values({modelPattern:model,billingType:'per_call',inputPrice:3}).run();
+ draft.limits={...draft.limits,resolutions:['1K','2K'],ratios:['1:1','16:9'],maxImages:3};
+ await saveChannelModelConfiguration(channelId,draft,listed.version);await ChannelService.syncModels(channelId);
+ expect(getModelSpecification(model)?.limits).toEqual(draft.limits);expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,model)).get()?.inputPrice).toBe(3);
+ expect(db.select().from(models).where(eq(models.modelId,model)).get()?.isActive).toBe(0);
+});
+it.each(['website','api'] as const)('passes image-to-image references, ratio and resolution through the %s entry and charges once',async entryType=>{
+ const {channelId,model,draft,fetcher}=setup('image',{resolutions:undefined,aspect_ratios:undefined,max_images:undefined,image_to_image_price:1});
+ draft.limits={...draft.limits,resolutions:['1K','2K'],ratios:['1:1','3:2'],maxImages:3};
+ await saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version);
+ db.update(models).set({isActive:1}).where(eq(models.modelId,model)).run();db.insert(modelPricing).values({modelPattern:model,billingType:'per_call',inputPrice:2}).run();
+ const userId=Number(db.insert(users).values({username:model,email:model+'@test.invalid',passwordHash:'unused',balance:10}).run().lastInsertRowid);
+ const tokenKey='i2i-'+model;sqlite.prepare('INSERT INTO api_tokens(name,token_key,allowed_models,balance,used_amount,status) VALUES(?,?,?,?,?,?)').run(model,tokenKey,'[]',10,0,1);
+ fetcher.mockImplementation(async()=>Response.json({id:'c'.repeat(32),status:'completed',data:[{url:'https://result.test/image.png'}]}));
+ const body={model,prompt:'保留主体，改变颜色',input_image:['https://assets.test/a.png','https://assets.test/b.png'],ratio:'3:2',image_size:'2K',size:'1200x800'};
+ const req:any={userId,body,headers:{authorization:'Bearer '+tokenKey},socket:{},protocol:'https',get:()=> 'site.test'};
+ const res:any={status(code:number){this.code=code;return this;},json(body:any){this.body=body;return this;},setHeader:vi.fn(),flushHeaders:vi.fn(),write:vi.fn(),end:vi.fn()};
+ if(entryType==='website')await handleSpecificationGeneration(req,res,'image');
+ else {const layer=apiRouter.stack.find((l:any)=>l.route?.path==='/images/edits'&&l.route.methods.post)!;await layer.route.stack.at(-1)!.handle(req,res,()=>{});}
+ expect(db.select().from(contents).where(eq(contents.modelId,model)).get()).toMatchObject({status:'completed',cost:2});
+ const posts=fetcher.mock.calls.filter(([,o])=>o?.method==='POST');expect(posts).toHaveLength(1);expect(JSON.parse(String(posts[0][1]?.body))).toMatchObject({model,images:body.input_image,resolution:'2K',aspect_ratio:'3:2',size:'1200x800'});
+ if(entryType==='website')expect(db.select().from(users).where(eq(users.id,userId)).get()?.balance).toBe(8);
+ else expect((sqlite.prepare('SELECT balance FROM api_tokens WHERE token_key=?').get(tokenKey) as any).balance).toBe(8);
+});
+it('previews Flow first/last frames and rejects mixing ordinary references',async()=>{
+ const {channelId,draft}=setup('video',{media_contract:undefined,supports_frame_control:true,supports_reference_images:true});draft.limits.firstFrame=true;draft.limits.lastFrame=true;
+ const preview=await previewAuthorizedChannelModelRequest(channelId,draft,{firstFrame:true,lastFrame:true,images:0});
+ expect(preview.body.reference_images).toEqual([{url:'https://example.invalid/first.jpg',role:'first_frame'},{url:'https://example.invalid/last.jpg',role:'last_frame'}]);
+ await expect(previewAuthorizedChannelModelRequest(channelId,draft,{firstFrame:true,images:1})).rejects.toThrow('混用');
+});
+
+it.each(['reference','keyframe'] as const)('preserves H3 %s inputs through the website entry',async mode=>{
+ const {channelId,model,draft,fetcher,entry}=setup('video',{media_contract:undefined,duration_min:5,duration_max:10,modes:['text','reference','keyframe'],max_video_references:1,max_audio_references:1,size:'720p'});
+ draft.limits.maxVideos=1;draft.limits.maxAudios=1;draft.limits.firstFrame=true;draft.limits.lastFrame=true;
+ await saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version);
+ db.update(models).set({isActive:1}).where(eq(models.modelId,model)).run();db.insert(modelPricing).values({modelPattern:model,billingType:'per_call',inputPrice:2}).run();
+ const userId=Number(db.insert(users).values({username:model,email:model+'@test.invalid',passwordHash:'unused',balance:10}).run().lastInsertRowid);
+ fetcher.mockImplementation(async(url,options)=>String(url).endsWith('/models')?Response.json({data:[entry]}):Response.json({id:'e'.repeat(32),status:'completed',url:'https://result.test/video.mp4'}));
+ const req:any={userId,body:{model,prompt:'使用这些参考素材',duration:5,ratio:'16:9',resolution:'720p',images:['https://assets.test/a.png'],audios:['https://assets.test/a.mp3'],videos:[{url:'https://assets.test/a.mp4',start_seconds:2,require_audio:false}]},headers:{},protocol:'https',get:()=> 'site.test'};
+ const res:any={status(code:number){this.code=code;return this;},json(body:any){this.body=body;return this;},setHeader:vi.fn(),flushHeaders:vi.fn(),write:vi.fn(),end:vi.fn()};
+ if(mode==='keyframe'){delete req.body.images;delete req.body.audios;delete req.body.videos;req.body.reference_images=[{url:'https://assets.test/first.png',role:'first_frame'},{url:'https://assets.test/last.png',role:'last_frame'}];}
+ await handleSpecificationGeneration(req,res,'video');
+ expect(db.select().from(contents).where(eq(contents.modelId,model)).get()).toMatchObject({status:'completed',cost:2});
+ const paid=fetcher.mock.calls.filter(([,o])=>o?.method==='POST');expect(paid).toHaveLength(1);expect(JSON.parse(String(paid[0][1]?.body))).toMatchObject(mode==='reference'?{mode,audios:req.body.audios,videos:req.body.videos}:{mode,first_frame:'https://assets.test/first.png',last_frame:'https://assets.test/last.png'});
+});
+it('rejects conflicting aliases before creating an order or sending a request',async()=>{
+ const {channelId,model,draft,fetcher}=setup('image');await saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version);
+ db.update(models).set({isActive:1}).where(eq(models.modelId,model)).run();fetcher.mockClear();
+ const res:any={status(code:number){this.code=code;return this;},json(body:any){this.body=body;return this;},setHeader:vi.fn(),end:vi.fn()};
+ await handleSpecificationGeneration({body:{model,prompt:'test',ratio:'1:1',aspect_ratio:'16:9'},headers:{},protocol:'https',get:()=> 'site.test'} as any,res,'image');
+ expect(res.code).toBe(400);expect(res.body.error).toContain('不一致');expect(fetcher).not.toHaveBeenCalled();expect(db.select().from(contents).where(eq(contents.modelId,model)).get()).toBeUndefined();
 });

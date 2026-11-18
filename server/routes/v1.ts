@@ -1,3 +1,4 @@
+import { image2proChatParameterError } from '../services/image2proInput.js';
 import { createMusicResourceRouter, apiMusicResult } from './musicResources.js';
 import { songOperation } from '../../shared/sunoMusic.js';
 import { musicBinding, musicPrices } from '../services/musicModelRegistry.js';
@@ -908,6 +909,7 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
 
   const upstreamModel = channel.modelMapping[model] || model;
   if(isImage2proChannel(channel) && (choices!==1 || typeof stream!=='boolean' || req.body.max_tokens!==undefined && req.body.max_completion_tokens!==undefined))return res.status(400).json({error:{message:'Image2Pro 文本 n 只能为 1，stream 必须为布尔值，max_tokens 与 max_completion_tokens 不能同时传入',type:'invalid_request_error'}});
+  if(isImage2proChannel(channel)){const message=image2proChatParameterError(req.body);if(message)return res.status(400).json({error:{message,type:'invalid_request_error'}});}
   const upstreamUrl = isImage2proChannel(channel) ? image2proBase(channel.baseUrl)+'/chat/completions' : (isZonghengChannel(channel) ? zonghengBaseUrl(channel.baseUrl) : channel.baseUrl.replace(/\/+$/, '')) + '/v1/chat/completions';
   const upstreamBody = JSON.stringify({
     model: upstreamModel,

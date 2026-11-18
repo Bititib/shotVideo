@@ -32,5 +32,5 @@ export async function syncImage2proModels(c: Image2proChannel & { id: number; pr
     db.update(channels).set({ supportedModels:JSON.stringify([...new Set([...JSON.parse(saved.supportedModels || '[]'),...entries.map((m:any)=>m.id)])]),
       modelMapping:JSON.stringify({...Object.fromEntries(entries.map((m:any)=>[m.id,m.id])),...JSON.parse(saved.modelMapping || '{}')}), updatedAt:new Date().toISOString() }).where(eq(channels.id,c.id)).run();
   })();
-  return {count:entries.length,added,models:entries.map((m:any)=>m.id),skipped:discovered.length-entries.length,warnings:['新模型默认停用；未公布图片规格时使用 auto（沿用上游默认），未公布参考图上限时不开放参考图。',...(discovered.length>entries.length?['部分视频型号尚未提供已接入的能力协议，本次未同步：'+discovered.filter((m:any)=>!entries.includes(m)).map((m:any)=>m.id).join('、')]:[])]};
+  return {count:entries.length,added,models:entries.map((m:any)=>m.id),skipped:discovered.length-entries.length,warnings:['新模型默认停用；未公布图片规格时使用 auto（沿用上游默认），图生图单价已公布但缺少张数上限时默认 1 张参考图；可在模型与参数中按文档配置比例、分辨率和参考图上限。',...(discovered.length>entries.length?['部分视频型号尚未提供已接入的能力协议，本次未同步：'+discovered.filter((m:any)=>!entries.includes(m)).map((m:any)=>m.id).join('、')]:[])]};
 }

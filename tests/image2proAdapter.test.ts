@@ -25,3 +25,9 @@ it('rejects mismatched IDs and unknown states',()=>{
  expect(()=>normalizeImage2pro(c,'video',id,{id:'b'.repeat(32),status:'completed'})).toThrow('编号不一致');
  expect(()=>normalizeImage2pro(c,'video',id,{id,status:'new_state'})).toThrow('未知');
 });
+
+it('rejects an oversized image body before persisting or sending a submission',async()=>{
+ const fetcher=vi.fn(),persist=vi.fn(),receipt=vi.fn();
+ await expect(submitImage2pro(c,'image',{prompt:'x'.repeat(8*1024*1024)},key,persist,receipt,fetcher)).rejects.toMatchObject({confirmedFailure:true});
+ expect(fetcher).not.toHaveBeenCalled();expect(persist).not.toHaveBeenCalled();expect(receipt).not.toHaveBeenCalled();
+});

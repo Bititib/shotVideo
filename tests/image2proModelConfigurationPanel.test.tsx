@@ -18,7 +18,7 @@ it.each(['text','image'])('adds %s via the actual panel without a provider prefi
  fireEvent.change(screen.getByLabelText('上游模型 ID'),{target:{value:kind+'-new'}});
  expect(screen.getByLabelText('模型类型')).toHaveValue(kind==='text'?'文本':'图片');
  if(kind==='text')expect(screen.queryByText('规格与素材')).not.toBeInTheDocument();
- else {expect(screen.getByLabelText('固定分辨率')).toHaveValue('auto');expect(screen.getByLabelText('最多参考图')).toHaveValue(0);}
+ else {expect(screen.getByLabelText('可选分辨率')).toHaveValue('auto');expect(screen.getByLabelText('最多参考图')).toHaveValue(0);}
  fireEvent.submit(document.querySelector('#channel-model-form')!);
  await waitFor(()=>expect(saved).toHaveBeenCalledOnce());
  expect(api.save).toHaveBeenCalledWith(34,expect.objectContaining({modelId:kind+'-new',upstreamModel:kind+'-new',kind}), 'v1');
@@ -28,4 +28,12 @@ it('retains configuration on a failed authorization check',async()=>{
  render(<Panel channelId={34} channelName="QQ-78ai" onClose={vi.fn()} onSaved={vi.fn()} onManage={vi.fn()}/>);
  fireEvent.click(await screen.findByText('添加新模型'));fireEvent.click(screen.getByText('读取已授权的上游型号'));await screen.findByRole('option',{name:'image-new'});fireEvent.change(screen.getByLabelText('上游模型 ID'),{target:{value:'image-new'}});
  fireEvent.submit(document.querySelector('#channel-model-form')!);expect(await screen.findByRole('alert')).toHaveTextContent('上游型号未授权');expect(screen.getByLabelText('上游模型 ID')).toHaveValue('image-new');
+});
+
+it('saves multiple image resolutions, ratios and reference images from the panel',async()=>{
+ render(<Panel channelId={34} channelName="QQ-78ai" onClose={vi.fn()} onSaved={vi.fn()} onManage={vi.fn()}/>);
+ fireEvent.click(await screen.findByText('添加新模型'));fireEvent.click(screen.getByText('读取已授权的上游型号'));await screen.findByRole('option',{name:'image-new'});fireEvent.change(screen.getByLabelText('上游模型 ID'),{target:{value:'image-new'}});
+ fireEvent.change(screen.getByLabelText('可选分辨率'),{target:{value:'1K,2K'}});fireEvent.change(screen.getByLabelText('可选比例'),{target:{value:'1:1,3:2,16:9'}});fireEvent.change(screen.getByLabelText('最多参考图'),{target:{value:'4'}});
+ fireEvent.submit(document.querySelector('#channel-model-form')!);
+ await waitFor(()=>expect(api.save).toHaveBeenCalledWith(34,expect.objectContaining({kind:'image',limits:expect.objectContaining({resolutions:['1K','2K'],ratios:['1:1','3:2','16:9'],maxImages:4})}),'v1'));
 });

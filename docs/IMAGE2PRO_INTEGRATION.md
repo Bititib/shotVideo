@@ -84,3 +84,19 @@ Image2Pro 的“模型与参数”面板现已支持手动选择并新增文本�
 实际调用链：后台 channels 路由 → channelModelConfigurationService 授权目录/保存/预览 → models、channels 与 modelRoutingService 事务保存；图片/视频网站和 API 经 specificationGenerationService → specificationAdapters → image2proAdapter；文本走 v1 Chat Completions。新增配置不改变既有结算与恢复规则。视频预览和实际提交共用 image2proPayload 构造器，标准媒体协议预览附带协议头；预览只读取模型目录，不提交付费任务。其他渠道继续使用其原协议规则。
 
 验证：9 个测试文件共 81 项通过，覆盖后台权限与真实 HTTP 保存/预览、前端添加/错误保留、未授权或超范围拒绝、并发版本/Key 变化、实际图片与视频提交和原任务查询、网站订单扣费、文本 Chat Completions 结算、重同步保留售价，以及原 Image2Pro 错误/恢复测试和其他渠道配置回归。TypeScript 检查、前端生产构建通过。未部署 VPS，未进行真实付费生成。
+
+## 图片规格、图生图与媒体参数补齐（2026-11-18）
+
+本节取代上一节“图片固定一个分辨率”的限制。再次核对官方 api-docs 的图片/图片编辑、异步图片、模型目录、视频以及 Chat Completions 章节，使用普通线路。
+
+- 图片可保存多个分辨率和比例。目录公布枚举时按枚举校验；缺少枚举时允许管理员按具体模型说明填写 auto、1K/2K 等清晰度与正整数比例，不凭模型名称宣称支持全部档位。接口参考图总上限为 16，具体模型限制优先；仅公布图生图价格时新配置保守默认 1 张，管理员可按模型说明调整。没有能力资料时仍不默认开启参考图。
+- 已同步的 Image2Pro 独立规格也能在“模型与参数”中编辑，无须删除重建。旧 auto/0 配置不会静默覆盖，须按模型实际能力保存；同步继续保留管理员定价、开关和规格。新模型仍默认停用。
+- 网站和对外图片生成/编辑入口支持 input_image/reference_image/image/images 等引用字段、ratio/aspect_ratio、resolution/image_size，按已保存规格路由；size 支持像素尺寸，未提供比例时按宽高约分，显式比例按上游规则优先。字段冲突或多个素材别名同时出现会明确拒绝，避免丢素材。预览和实际异步图片提交共用构造器；异步图片 JSON 超过 8 MiB 在提交前拒绝。
+- 视频继续分开构造标准媒体、Flow 和 H3 等已识别协议；支持按目录配置时长、比例、清晰度及素材。Flow 首尾帧角色、H3 独立首尾帧、视频参考的 start_seconds/require_audio 与音频引用保留到实际请求。预览增加首尾帧选项。不把 Flow 扩展视频或专属 Midjourney 协议当成已完成能力。
+- 大模型通过现有对外 Chat Completions 支持多轮、流式、看图消息、工具和结构化输出参数透传，增加文档中采样/惩罚/seed/stop 等格式校验。视觉、工具和结构化能力由具体模型决定；没有新增 Responses API 或改造 Gemini 专用网站视频分析。
+
+实际链路：网站/外部 API → specificationGenerationService（Image2Pro 专属字段归一化在创建订单前）→ 已保存规格匹配与预扣 → specificationAdapters → image2proPayload → image2proAdapter；文本仍走 v1 Chat Completions。未增加生成重放，沿用请求持久化、原 ID 查询恢复和幂等结算。其他渠道仍按原字段与能力规则执行。
+
+验证：10 个相关测试文件共 156 项通过，覆盖前端配置保存、后台授权/同步、网站及外部 API 图生图参数和一次扣费、视频参考/首尾帧实际提交、文本多轮视觉与工具参数、未知受理/查询恢复、退款以及其他渠道配置和预扣回归。TypeScript 检查及生产构建通过（保留既有大 chunk 提示）。扩大回归另有 specificationImageTaskMetadata 的旧循环引用加载错误和 videoBatchService 的 3 项数据库测试夹具失败；在未修改的 main 93981e5 导出副本复跑完全相同，未混入本次业务修改。
+
+未部署 VPS，未使用真实 Key 进行付费调用，不能视为每个上游型号的生产验证。局部重绘 mask、Flow 视频扩展、专属 Midjourney 接口不在本次完成范围。

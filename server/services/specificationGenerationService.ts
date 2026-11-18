@@ -1,3 +1,4 @@
+import { normalizeImage2proInput } from './image2proInput.js';
 import { image2proCredential } from './image2proAdapter.js';
 import { isMinikeyChannel, minikeyCredential } from './minikeyAdapter.js';
 import { prepareMediaSubmission } from '../../shared/mediaReferences.js';
@@ -86,7 +87,7 @@ function list(body: any, keys: string[]): string[] {
   if (!Array.isArray(value) || !value.every(item => typeof item === 'string' && item.trim())) throw fail('素材必须为有效 URL 或 Base64 数组');
   return value;
 }
-export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: string, v6kConfigured = false): SpecificationRequest {
+export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: string, v6kConfigured = false, image2proConfigured = false): SpecificationRequest {
   if (v6kConfigured && body.aspect_ratio && body.ratio && body.aspect_ratio !== body.ratio)
     throw fail('aspect_ratio 与 ratio 不一致');
   if (kind === 'video' && isZhiyingVideoModel(body.model)) {
@@ -116,8 +117,8 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
   if (kind === 'image' && (videos.length || audios.length || firstFrame || lastFrame)) throw fail('图片生成不能传入视频、音频或独立首尾帧');
   const sizeRatios: Record<string,string> = { '1024x1024': '1:1', '1536x864': '16:9', '864x1536': '9:16', '1536x1152': '4:3', '1152x1536': '3:4', '1536x1024': '3:2', '1024x1536': '2:3', '1280x720': '16:9', '720x1280': '9:16', '1024x768': '4:3', '768x1024': '3:4' };
   const resolution = String(body.output_resolution || body.resolution || (kind === 'image' ? '2K' : '720p'));
-  if (kind === 'image' && body.size && !sizeRatios[body.size]) throw fail('此规格不支持该 size，请使用 aspect_ratio 和 resolution');
-  if (kind === 'image' && body.size && (body.aspect_ratio || body.ratio) && sizeRatios[body.size] !== (body.aspect_ratio || body.ratio)) throw fail('size 与宽高比不一致');
+  if (kind === 'image' && body.size && !image2proConfigured && !sizeRatios[body.size]) throw fail('此规格不支持该 size，请使用 aspect_ratio 和 resolution');
+  if (kind === 'image' && !image2proConfigured && body.size && (body.aspect_ratio || body.ratio) && sizeRatios[body.size] !== (body.aspect_ratio || body.ratio)) throw fail('size 与宽高比不一致');
   const ratio = String(body.aspect_ratio || body.ratio || (sizeRatios[body.size] ? sizeRatios[body.size] : kind === 'image' ? '1:1' : '16:9'));
   let media = { prompt: body.prompt.trim(), images, videos, audios };
   if (kind === 'video') {
@@ -946,6 +947,8 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
       && !(isZhiyingVideoModel(modelId) && token.allowedModels.includes(publicApiModelId(modelId)))
       && !spec.aliases.some(alias => token.allowedModels.includes(alias) && !checkAlias(spec, alias))) throw fail('Token 无权调用此模型', 403);
     const body = { ...req.body };
+    const image2proConfigured = model.provider === 'image2pro';
+    if (image2proConfigured) { try { normalizeImage2proInput(body); } catch (error:any) { throw fail(error.message); } }
     if (kind === 'video') normalizeVideoParameters(body, videoCapabilities(modelId, spec).parameterSchema, Boolean(req.is?.('multipart/form-data')));
     if (isZhiyingVideoModel(modelId)) {
       body.model = modelId;
@@ -983,7 +986,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     const defaultSeconds = (v6kConfigured || configuredSiYueTian ? spec.limits.defaultSeconds : undefined)
       ?? (model.provider === 'megaby' && !spec.routes.some(route => route.id.startsWith(MEGABY_MODEL_ROUTE_PREFIX)) ? 5
         : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min);
-    const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (modelId === SNUMOM_WAN_NSFW_MODEL ? body.parameters?.duration ?? body.duration_seconds : undefined) ?? defaultSeconds }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'), v6kConfigured);
+    const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (modelId === SNUMOM_WAN_NSFW_MODEL ? body.parameters?.duration ?? body.duration_seconds : undefined) ?? defaultSeconds }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'), v6kConfigured, image2proConfigured);
     let snumomBilling: Awaited<ReturnType<typeof prepareSnumomNsfwReferences>> | undefined;
     if (isZhiyingVideoModel(modelId)) request.ownerId = userId;
     try { snumomBilling = kind === 'video' && isSnumomWanVideoModel(modelId) ? await prepareSnumomNsfwReferences(request) : undefined; }
