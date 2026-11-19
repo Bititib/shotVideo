@@ -7,7 +7,8 @@ import { HUSS_MJ_MODEL } from '../../shared/hussMidjourney.js';
 import { bbHssKkManaged } from './bbHssKkMigration.js';
 import { matchesBbHssSource } from './bbHssSourcePolicy.js';
 import type { ModelAvailability } from '../../shared/upstreamAvailability.js';
-import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { isRetiredVideoModel, isReconnectedSnumomRoute, isSnumomReconnectChannel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { isBlockedRetiredVideoModel } from './snumomReconnectedModels.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
 import { MJ_OVERFLOW_VIDEO_MODEL } from './videoFailoverService.js';
 import { randomUUID } from 'node:crypto';
@@ -131,7 +132,10 @@ export function claimRouteProbe(_key: string): boolean {
 export function inspectModelRoutes(spec: ModelSpecification, input?: RoutingInput, activeChannels = ChannelService.getActiveChannels()) {
   const health = getRouteHealth(), registry = db.select().from(models).all(), model = registry.find(m => m.modelId === spec.modelId);
   return spec.routes.map(route => {
-    const retired = [spec.modelId,route.executionModel,route.upstreamModel].some(isRetiredVideoModel);
+    const retired = [spec.modelId,route.executionModel,route.upstreamModel].some(isRetiredVideoModel)
+      && !(spec.kind === 'video' && !spec.aliases.length && spec.routes.length === 1
+        && isReconnectedSnumomRoute(spec.modelId, route) && activeChannels.some(c => isSnumomReconnectChannel(c)
+          && c.supportedModels.includes(spec.modelId) && c.modelMapping?.[spec.modelId] === spec.modelId));
     const executions = activeChannels.filter(c => c.id === route.channelId && Boolean(String(c.apiKey || '').trim())
       && (c.supportedModels.includes(route.executionModel) || c.supportedModels.includes('*'))
       && (!route.siYueTianVideo || c.type === 'openai' && isSiYueTianVideoHost(c.baseUrl) && c.modelMapping?.[route.executionModel] === route.upstreamModel)
@@ -173,7 +177,9 @@ export function specificationAvailable(spec: ModelSpecification) { return specif
 
 /** Re-check operator switches and capability edits after any queue wait, without releasing a claimed probe. */
 export function routeUnavailableReason(modelId: string, target: RouteCandidate, input: RoutingInput): string {
-  if ([modelId,target.route.executionModel,target.route.upstreamModel].some(isRetiredVideoModel)) return RETIRED_VIDEO_MODEL_MESSAGE;
+  if ([modelId,target.route.executionModel,target.route.upstreamModel].some(isRetiredVideoModel)
+    && !(isSnumomReconnectChannel(target.channel) && isReconnectedSnumomRoute(modelId, target.route)
+      && !isBlockedRetiredVideoModel(sqlite, modelId))) return RETIRED_VIDEO_MODEL_MESSAGE;
   const spec = getModelSpecification(modelId), route = spec?.routes.find(r => r.id === target.route.id);
   if (!spec) return '提交前检查：模型规格不存在';
   if (!spec.enabled) return '提交前检查：模型规格已禁用';

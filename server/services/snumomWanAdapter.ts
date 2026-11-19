@@ -150,7 +150,7 @@ export function normalizeSnumomMuseRequestBody(value: any): any {
 
 export function buildSnumomWanPayload(input: SnumomWanPayloadInput): Record<string, unknown> {
   if (input.model === SNUMOM_MUSE_MODEL) validateSnumomMuseInput(input);
-  if (isRetiredVideoModel(input.model)) throw new Error(RETIRED_VIDEO_MODEL_MESSAGE);
+  if (isRetiredVideoModel(input.model) && !input.configured) throw new Error(RETIRED_VIDEO_MODEL_MESSAGE);
   if (isSnumomWanVideoModel(input.model)) validateSnumomNsfwInput(input);
   const images = (input.images || []).filter(item => item?.url);
   const videos = (input.videos || []).filter(item => item?.url);

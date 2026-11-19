@@ -56,6 +56,8 @@ import * as snumomAdapter from '../server/services/snumomWanAdapter';
 import { settleDirectVideoBilling } from '../server/services/directVideoBillingService';
 import { ensureBillingReservations } from '../server/services/billingReservation';
 import { RETIRED_VIDEO_MODELS } from '../shared/retiredVideoModels';
+import { retireRemovedVideoModels } from '../server/services/retiredVideoModelsMigration';
+import { pruneChannelCatalogBindings } from '../server/services/channelCatalogBindings';
 import { getEnabledPublicModels } from '../server/services/modelCatalogService';
 import { ChannelService } from '../server/services/channelService';
 import { getModelSpecification } from '../server/services/modelRoutingService';
@@ -546,6 +548,71 @@ it('Muse website model list exposes fixed 10s/720p, eight images, no video/audio
 });
 
 for (const retired of RETIRED_VIDEO_MODELS) {
+  it.each([
+    ['/v1/videos', 'completed'], ['/api/video/generate', 'completed'],
+    ['/v1/videos', 'failed'], ['/api/video/generate', 'failed'],
+  ])(`reconnected ${retired} at %s: %s uses channel 14 and exact reference billing`, async (endpoint, outcome) => {
+    const isApi = endpoint === '/v1/videos';
+    const { saveChannelModelConfiguration, listChannelModelConfigurations } = await import('../server/services/channelModelConfigurationService');
+    db.insert(channels).values({ id: 14, name: 'snumom reconnect', type: 'snumom', baseUrl: 'https://snumom.com', apiKey: 'test', status: 1 }).run();
+    db.insert(models).values({ modelId: retired, displayName: retired, provider: 'snumom', capabilities: '["video"]', isActive: 0 }).run();
+    db.insert(modelPricing).values({ modelPattern: retired, billingType: 'per_second', inputPrice: 1 }).run();
+    const pricesBefore = db.select().from(modelPricing).all();
+    const draft = {
+      modelId: retired, displayName: retired, upstreamModel: retired, kind: 'video' as const,
+      limits: { ...defaultRoutingLimits(), maxVideos: 2, maxAudios: 2 },
+      snumom: { billingType: 'per_second' as const, referenceVideoBilling: true },
+    };
+    const catalog = vi.fn(async () => Response.json({ data: [{ id: retired }] }));
+    vi.stubGlobal('fetch', catalog);
+    const version = listChannelModelConfigurations(14).version;
+    await expect(saveChannelModelConfiguration(1, draft, listChannelModelConfigurations(1).version)).rejects.toThrow('已下架');
+    await expect(saveChannelModelConfiguration(14, { ...draft, snumom: { ...draft.snumom, referenceVideoBilling: false } }, version)).rejects.toThrow('参考视频计费');
+    expect(catalog).not.toHaveBeenCalled();
+    const saved = await saveChannelModelConfiguration(14, draft, version);
+    expect(saved.models).toContainEqual(expect.objectContaining({ modelId: retired, enabled: false, editable: true }));
+    expect(db.select().from(modelPricing).all()).toEqual(pricesBefore);
+    expect(wallet()).toBe(100); expect(tokenWallet()).toBe(100);
+    db.update(models).set({ isActive: 1 }).where(eq(models.modelId, retired)).run();
+    expect((await ChannelService.syncModels(14)).models).toContain(retired);
+    expect(pruneChannelCatalogBindings(sqlite, db.select().from(channels).where(eq(channels.id,14)).get()!)).not.toContain(retired);
+    retireRemovedVideoModels(sqlite);
+    expect(getEnabledPublicModels('video').map(m => m.modelId)).toContain(retired);
+    const { quoteVideoRequestWithReferences } = await import('../server/services/videoQuoteService');
+    const request = { ...body, model: retired, seconds: 10, video_length: 10,
+      reference_videos: ['https://example.com/reference.mp4'], reference_audios: ['https://example.com/audio.mp3'],
+      reference_video_seconds: 0.01 };
+    expect(await quoteVideoRequestWithReferences(request, 1)).toMatchObject({ billableSeconds: 15.1, cost: 15.1 });
+    expect(wallet()).toBe(100); expect(tokenWallet()).toBe(100);
+    probes.video.mockClear();
+    const calls: any[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: any, options: any) => {
+      if (options?.method === 'POST') {
+        calls.push({ url: String(url), body: JSON.parse(options.body) });
+        return Response.json({ id: 'task_reconnected_wan' });
+      }
+      return Response.json({ id: 'task_reconnected_wan', status: outcome,
+        ...(outcome === 'completed' ? { metadata: { url: 'https://media.invalid/result.mp4' } } : { error: { message: 'upstream rejected video' } }) });
+    }));
+    probes.video.mockResolvedValueOnce({ rawDurations: [20.01], durations: [20.1], total: 20.1 });
+    const overLimit = await post(endpoint, request);
+    expect(overLimit.status).toBeGreaterThanOrEqual(400);
+    expect(await overLimit.text()).toContain('合计不能超过 30 秒');
+    expect(db.select().from(contents).all()).toHaveLength(0);
+    expect(calls).toHaveLength(0);
+    expect(wallet()).toBe(100); expect(tokenWallet()).toBe(100);
+    probes.video.mockClear();
+    const response = await post(endpoint, request);
+    await response.text();
+    await vi.waitFor(() => expect(row()?.status).toBe(outcome));
+    expect(calls).toEqual([{url:'https://snumom.com/v1/videos',body:expect.objectContaining({
+      model:retired, seconds:'10', size:'720P', reference_videos:[{url:'https://example.com/reference.mp4'}],
+      reference_audios:[{url:'https://example.com/audio.mp3'}],
+    })}]);
+    expect(probes.video).toHaveBeenCalledTimes(1);
+    expect(isApi ? tokenWallet() : wallet()).toBeCloseTo(outcome === 'completed' ? 84.9 : 100);
+    expect(db.select().from(modelPricing).all()).toEqual(pricesBefore);
+  });
   it.each([false,true])(`retired ${retired} managed=%s: all website/API aliases and batch entrances reject before debit or POST`,async spec=>{
     db.update(models).set({modelId:retired,displayName:'old operator name'}).run();
     db.update(modelPricing).set({modelPattern:retired}).run();

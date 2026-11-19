@@ -1,6 +1,11 @@
 import type { ModelSpecification } from '../../shared/modelRouting.js';
 import type { SpecificationRequest } from './specificationAdapters.js';
 import { probeReferenceVideoSeconds } from './videoDurationProbe.js';
+import { isRetiredVideoModel } from '../../shared/retiredVideoModels.js';
+
+export function assertReconnectedSnumomDuration(model: string, billableSeconds: number) {
+  if (isRetiredVideoModel(model) && billableSeconds > 30) throw new Error('输出时长与参考视频总时长合计不能超过 30 秒');
+}
 
 export function snumomConfiguredPolicy(spec: ModelSpecification) {
   const policies = spec.routes.map(r=>r.snumom);
@@ -36,6 +41,8 @@ export async function prepareConfiguredSnumomBilling(spec: ModelSpecification, r
   if(!policy)return undefined;
   validateConfiguredSnumomRequest(request);
   const measured=policy.referenceVideoBilling && request.videos.length ? await probeReferenceVideoSeconds(request.videos) : {total:0,durations:[]};
+  const billableSeconds = request.input.seconds + measured.total;
+  assertReconnectedSnumomDuration(spec.modelId, billableSeconds);
   return { snumomConfiguredBilling:structuredClone(policy), referenceVideoSeconds:measured.total,
-    referenceVideoDurations:measured.durations, billableSeconds:request.input.seconds+measured.total };
+    referenceVideoDurations:measured.durations, billableSeconds };
 }

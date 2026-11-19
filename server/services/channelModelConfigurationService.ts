@@ -17,7 +17,8 @@ import { LEGACY_VX_LE_SEEDANCE_MODEL, VX_LE_SEEDANCE_MODEL } from '../../shared/
 import { megabyVideoLimits, MEGABY_VIDEO_MODELS } from '../../shared/megabyVideo.js';
 import { routingMismatches, type ModelRoute } from '../../shared/modelRouting.js';
 import type { V6kRequestSample } from '../../shared/v6kModelConfiguration.js';
-import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { isRetiredVideoModel, isSnumomReconnectChannel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { reconnectedSnumomModels } from './snumomReconnectedModels.js';
 import { isSupportedChannelType } from '../../shared/channelTypes.js';
 import { db, sqlite } from '../db/index.js';
 import { channels, models } from '../db/schema.js';
@@ -51,7 +52,8 @@ function readConfiguration(channel: Channel) {
   const ids = new Set([...supported, ...Object.keys(mapping), ...linkedSpecs.map(spec => spec.modelId)]);
   const protocol = getChannelVideoProtocol(channel);
   const canAdd = Boolean(channel.type === 'image2pro' || protocol || allowsStandardChannelModelConfiguration(sqlite, channel));
-  const rows = [...ids].filter(id => id !== '*' && !isRetiredVideoModel(id)).map(modelId => {
+  const restored = isSnumomReconnectChannel(channel) ? reconnectedSnumomModels(sqlite) : new Set<string>();
+  const rows = [...ids].filter(id => id !== '*' && (!isRetiredVideoModel(id) || restored.has(id))).map(modelId => {
     const model = savedModels.get(modelId);
     const spec = linkedSpecs.find(row => row.modelId === modelId);
     const routes = spec?.routes.filter(route => route.channelId === channel.id) ?? [];
@@ -133,7 +135,7 @@ export async function listAuthorizedChannelModels(channelId: number) {
   return channel.type === 'image2pro' ? enrichImage2proCatalog(catalog) : catalog;
 }
 
-function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol, image2pro = false) {
+function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol, image2pro = false, reconnect = false) {
   if (!draft || typeof draft.modelId !== 'string' || (!image2pro && !modelIdPattern.test(draft.modelId))
     || typeof draft.displayName !== 'string' || !draft.displayName.trim() || draft.displayName.length > 120
     || typeof draft.upstreamModel !== 'string' || !draft.upstreamModel.trim()
@@ -143,7 +145,11 @@ function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol
     || [draft.specificationEnabled, draft.routeEnabled].some(value => value !== undefined && typeof value !== 'boolean')) {
     throw fail('请填写有效的本站模型 ID、名称和上游型号');
   }
-  if (isRetiredVideoModel(draft.modelId) || isRetiredVideoModel(draft.upstreamModel)) throw fail(RETIRED_VIDEO_MODEL_MESSAGE, 409);
+  if (isRetiredVideoModel(draft.modelId) || isRetiredVideoModel(draft.upstreamModel)) {
+    if (!reconnect || protocol !== 'snumom' || draft.modelId !== draft.upstreamModel) throw fail(RETIRED_VIDEO_MODEL_MESSAGE, 409);
+    if (draft.snumom?.billingType !== 'per_second' || draft.snumom.referenceVideoBilling !== true)
+      throw fail('重新接入此型号须按秒计费，并开启参考视频计费（音频不计费）');
+  }
   if (image2pro && draft.modelId !== draft.upstreamModel) throw fail('Image2Pro 本站模型 ID 必须与上游公开 ID 一致，不添加渠道前缀');
   if (image2pro && draft.kind === 'text') return;
   validateLimits(draft.limits);
@@ -156,6 +162,11 @@ function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol
   if (protocol === 'snumom') {
     if (draft.kind !== 'video' || draft.modelId !== draft.upstreamModel) throw fail('snumom 视频型号请使用上游原始 ID，不添加渠道前缀');
     try { validateSnumomConfiguration(limits, draft.snumom); } catch(error:any) { throw fail(error.message); }
+    if (isRetiredVideoModel(draft.modelId) && (limits.duration.min < 2 || limits.duration.max > 30
+      || limits.duration.values.some(value => value < 2 || value > 30)
+      || limits.maxImages > 10 || limits.maxVideos > 5 || limits.maxAudios > 5)) {
+      throw fail('此型号仅支持 2–30 秒，最多 10 图、5 视频、5 音频');
+    }
     return;
   }
   if (protocol && draft.kind !== 'video') throw fail('此协议只支持视频模型');
@@ -211,7 +222,7 @@ function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol
 export function previewChannelModelRequest(channelId: number, draft: ChannelModelDraft, sample: V6kRequestSample = {}): ChannelModelRequestPreview {
   const channel = getChannel(channelId), protocol = getChannelVideoProtocol(channel);
   if (!protocol && !allowsStandardChannelModelConfiguration(sqlite, channel)) throw fail('此渠道尚未开放后台新增型号', 409);
-  validateDraft(draft, protocol, channel.type === 'image2pro');
+  validateDraft(draft, protocol, channel.type === 'image2pro', isSnumomReconnectChannel(channel));
   if (draft.kind === 'text') throw fail('文本预览请使用授权目录预览入口');
   const { limits } = draft, rule = limits.duration;
   if (!sample || typeof sample !== 'object' || Array.isArray(sample)) throw fail('预览参数无效');
@@ -244,7 +255,8 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
   draft = structuredClone(draft);
   const channel = getChannel(channelId);
   const protocol = getChannelVideoProtocol(channel);
-  validateDraft(draft, protocol, channel.type === 'image2pro');
+  const reconnect = isSnumomReconnectChannel(channel) && isRetiredVideoModel(draft.modelId);
+  validateDraft(draft, protocol, channel.type === 'image2pro', reconnect);
   const original = readConfiguration(channel);
   const assertVersion = (current: typeof original) => {
     if (!current.result.canAdd) throw fail(current.result.addUnavailableReason!, 409);
@@ -261,7 +273,9 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
       }
     }
     const occupied = current.savedModels.get(draft.modelId);
-    if (!existing && (occupied || current.specs.some(spec => spec.modelId === draft.modelId
+    const reusable = reconnect && occupied?.provider === 'snumom' && occupied.isActive === 0
+      && JSON.parse(occupied.capabilities || '[]').includes('video');
+    if (!existing && (occupied && !reusable || current.specs.some(spec => spec.modelId === draft.modelId && !(reconnect && spec.kind === 'video' && !spec.routes.length && !spec.aliases.length)
       || spec.aliases.includes(draft.modelId) || spec.routes.some(route => route.executionModel === draft.modelId))
       || resolvePublicModelId(draft.modelId) !== draft.modelId
       || db.select().from(channels).all().some(other => other.id !== channelId

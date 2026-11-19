@@ -1,7 +1,8 @@
-import { db } from '../db/index.js';
-import { snumomConfiguredPolicy } from './snumomConfiguredExecution.js';
+import { db, sqlite } from '../db/index.js';
+import { assertReconnectedSnumomDuration, snumomConfiguredPolicy } from './snumomConfiguredExecution.js';
 import { probeReferenceVideoSeconds } from './videoDurationProbe.js';
-import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { isBlockedRetiredVideoModel } from './snumomReconnectedModels.js';
 import { SNUMOM_MUSE_MODEL } from '../../shared/snumomMuse.js';
 import { normalizeSnumomMuseRequestBody } from './snumomWanAdapter.js';
 import { models } from '../db/schema.js';
@@ -17,7 +18,7 @@ const fail = (message: string, status = 400) => Object.assign(new Error(message)
 export function quoteVideoRequest(body: any, userId?: number, probedReferenceSeconds = 0) {
   const model = resolvePublicModelId(String(body?.model || ''));
   if (model === SNUMOM_MUSE_MODEL) body = normalizeSnumomMuseRequestBody({...body,model});
-  if (isRetiredVideoModel(model)) throw fail(RETIRED_VIDEO_MODEL_MESSAGE,410);
+  if (isBlockedRetiredVideoModel(sqlite, model)) throw fail(RETIRED_VIDEO_MODEL_MESSAGE,410);
   assertUserModelAccess(userId, model);
   const row = db.select().from(models).all().find(m => m.modelId === model);
   const spec = getModelSpecification(model);
@@ -39,6 +40,10 @@ export function quoteVideoRequest(body: any, userId?: number, probedReferenceSec
     throw fail('参考视频总时长无效');
   }
   const billableSeconds = configured ? seconds+referenceVideoSeconds : snumomWanBillableSeconds(model, seconds, referenceVideoSeconds);
+  if (configured) {
+    try { assertReconnectedSnumomDuration(model, billableSeconds); }
+    catch (error) { throw fail((error as Error).message); }
+  }
   if (isSnumomWan30VideoModel(model) && billableSeconds > 30) throw fail('输出时长与参考视频总时长合计不能超过 30 秒');
   const quote = PricingService.quote(model, { resolution, seconds: billableSeconds, count: 1 }, false, userId);
   if(configured && quote.billingType!==configured.billingType)throw fail('售价计费方式与 snumom 参数配置不一致');

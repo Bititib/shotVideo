@@ -1,6 +1,7 @@
 import { isConfiguredZhiyingModel as isZhiyingVideoModel } from '../services/zhiyingModelRegistry.js';
 import { getModelSpecification } from '../services/modelRoutingService.js';
-import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { isBlockedRetiredVideoModel } from '../services/snumomReconnectedModels.js';
 import type { PricingSnapshot } from '../services/pricingService.js';
 import { SNUMOM_WAN_NSFW_MODEL } from '../../shared/snumomWanNsfw.js';
 import { Router } from 'express';
@@ -61,7 +62,7 @@ export function validateBatchInput(body: any): VideoBatchInput {
   const extras = body.model_parameters;
   if (extras !== undefined && (!extras || typeof extras !== 'object' || Array.isArray(extras) || Object.keys(extras).length > 48
     || Object.values(extras).some(v => !['string','number','boolean'].includes(typeof v) || typeof v === 'number' && !Number.isFinite(v)))) throw new Error('model_parameters 必须为标量参数对象');
-  if (isRetiredVideoModel(body.model)) throw Object.assign(new Error(RETIRED_VIDEO_MODEL_MESSAGE),{status:410});
+  if (isBlockedRetiredVideoModel(sqlite, body.model)) throw Object.assign(new Error(RETIRED_VIDEO_MODEL_MESSAGE),{status:410});
   const limits = getModelSpecification(body.model)?.limits;
   if (!(limits?.ratios || ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']).includes(body.aspect_ratio)) throw new Error('请选择正确画面比例');
   if (!Number.isFinite(body.video_length) || (!limits && !Number.isInteger(body.video_length)) || body.video_length < 1 || body.video_length > (limits ? 3600 : 120)) throw new Error('视频时长必须为 1–120 秒的整数');

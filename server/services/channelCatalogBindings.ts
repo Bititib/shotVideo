@@ -15,7 +15,8 @@ import { FUNAI_IMAGE_MODELS, FUNAI_VIDEO_MODELS, FUNAI_MODEL_PREFIX, FUNAI_OMNI_
 import { VX_LE_SEEDANCE_MODEL, LEGACY_VX_LE_SEEDANCE_MODEL, asyncVideoPublicModelId } from '../../shared/asyncVideo.js';
 import { ZHIYING_CHANNEL_TYPE, ZHIYING_VIDEO_MODELS } from '../../shared/zhiyingVideo.js';
 import { LONGXIA_MODELS } from '../../shared/longxiaVideo.js';
-import { isRetiredVideoModel } from '../../shared/retiredVideoModels.js';
+import { isRetiredVideoModel, isReconnectedSnumomRoute, isSnumomReconnectChannel } from '../../shared/retiredVideoModels.js';
+import { reconnectedSnumomModels } from './snumomReconnectedModels.js';
 import { BB_HSS_KK_ENTRIES } from '../../shared/bbHssKk.js';
 import { BB_HSS_SOURCES } from '../../shared/bbHssSources.js';
 import { isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
@@ -153,7 +154,9 @@ export function channelCatalogBindings(sqlite: Database.Database, channel: Chann
       for (const route of spec.routes) {
         if (spec.kind === 'video' && route.channelId === channel.id && route.id.startsWith(channelVideoProtocols[protocol].prefix)
           && spec.modelId === route.executionModel && mapping[spec.modelId] === route.upstreamModel
-          && !isRetiredVideoModel(spec.modelId) && !isRetiredVideoModel(route.upstreamModel) && !bindings.has(spec.modelId)) {
+          && (!isRetiredVideoModel(spec.modelId) && !isRetiredVideoModel(route.upstreamModel)
+            || isSnumomReconnectChannel(channel) && spec.routes.length === 1 && !spec.aliases.length && isReconnectedSnumomRoute(spec.modelId, route))
+          && !bindings.has(spec.modelId)) {
           bindings.set(spec.modelId, route.upstreamModel);
         }
       }
@@ -195,14 +198,16 @@ export function pruneChannelCatalogBindings(sqlite: Database.Database, channel: 
     const approved = channelCatalogBindings(sqlite, channel);
     const specs = loadRoutes(sqlite);
     const routes = specs.flatMap(spec => spec.routes.filter(route => route.channelId === channel.id));
-    const retainedRoutes = routes.filter(route => !isRetiredVideoModel(route.executionModel)
+    const restored = isSnumomReconnectChannel(channel) ? reconnectedSnumomModels(sqlite) : new Set<string>();
+    const retainedRoutes = routes.filter(route => (!isRetiredVideoModel(route.executionModel) && !isRetiredVideoModel(route.upstreamModel)
+      || restored.has(route.executionModel) && isReconnectedSnumomRoute(route.executionModel, route))
       && (!approved || supportsPair(channel, approved, route.executionModel, route.upstreamModel)
         || (isFunAiChannel(channel) && approved.has(route.executionModel))));
     const approvedRouteIds = new Set(retainedRoutes.map(route => route.executionModel));
-    const keepMapping = (id: string) => !isRetiredVideoModel(id)
+    const keepMapping = (id: string) => (!isRetiredVideoModel(id) && !isRetiredVideoModel(mapping[id]) || restored.has(id) && mapping[id] === id)
       && (approved ? supportsPair(channel, approved, id, mapping[id])
         : id !== '*' && Boolean(mapping[id]?.trim() && mapping[id].trim() !== '*'));
-    const keepSupported = (id: string) => !isRetiredVideoModel(id)
+    const keepSupported = (id: string) => (!isRetiredVideoModel(id) || restored.has(id))
       && (approvedRouteIds.has(id) || (approved
         ? approved.has(id) && (!Object.hasOwn(mapping, id) || keepMapping(id))
         : id === '*' || keepMapping(id)));

@@ -16,7 +16,8 @@ import { isBbHssKkEntry } from '../../shared/bbHssKk.js';
 import { HAYA_MO_MODEL } from '../../shared/hayaMoVideo.js';
 import { isHayaChannel } from './hayaVideoAdapter.js';
 import { validateHayaMedia } from './hayaMediaService.js';
-import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { isBlockedRetiredVideoModel } from './snumomReconnectedModels.js';
 import { activeSpecificationTasks } from './videoRecoveryAction.js';
 import { normalizeSiYueTianMinimaxTask, pollSiYueTianMinimax, siYueTianVideoCredential } from './siYueTianMinimaxAdapter.js';
 import { isMegabyChannel, normalizeMegabyTask, validateMegabyVideoInput, validateMegabyReferenceDurations } from './megabyVideoAdapter.js';
@@ -917,7 +918,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
   let suppliedId: string;
   try { suppliedId = typeof req.body?.model === 'string' ? resolvePublicModelId(req.body.model, req.body) : ''; }
   catch (error: any) { res.status(error.status || 400).json({ error:error.message }); return true; }
-  if (isRetiredVideoModel(suppliedId)) { res.status(410).json({ error:RETIRED_VIDEO_MODEL_MESSAGE }); return true; }
+  if (isBlockedRetiredVideoModel(sqlite, suppliedId)) { res.status(410).json({ error:RETIRED_VIDEO_MODEL_MESSAGE }); return true; }
   const spec = getModelSpecification(suppliedId);
   if (!spec && isZhiyingVideoModel(suppliedId)) {
     res.status(503).json({ error: '智赢视频缺少模型规格与原渠道映射，请先同步渠道模型' }); return true;

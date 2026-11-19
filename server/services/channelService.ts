@@ -13,6 +13,8 @@ import { SNUMOM_VIDEO_MODELS } from './snumomWanAdapter.js';
 import { isMegabyChannel, megabyBaseUrl, fetchMegabyVideoModels } from './megabyVideoAdapter.js';
 import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
 import { isRetiredVideoModel } from '../../shared/retiredVideoModels.js';
+import { isSnumomReconnectChannel } from '../../shared/retiredVideoModels.js';
+import { reconnectedSnumomModels } from './snumomReconnectedModels.js';
 import { isMjChannel, normalizeMjBaseUrl, fetchMjModels } from './mjAdapter.js';
 import { isAsyncVideoChannel, asyncVideoBaseUrl, fetchAsyncVideoModels, AsyncVideoCatalogError } from './asyncVideoAdapter.js';
 import { syncV6kVideoModels } from './v6kCatalogService.js';
@@ -824,7 +826,9 @@ export class ChannelService {
             ? 'image'
             : 'text';
       return approved.map(([id]) => ({ modelId: id, displayName: id === rawModelId ? displayName || id : id, capability }));
-    }).filter((item: any) => item.modelId && !isRetiredVideoModel(item.modelId) && (!isHayaChannel(channel) || HAYA_MODEL_IDS.includes(item.modelId) || isBbHssKkEntry(item.modelId)));
+    }).filter((item: any) => item.modelId
+      && (!isRetiredVideoModel(item.modelId) || isSnumomReconnectChannel(channel) && reconnectedSnumomModels(sqlite).has(item.modelId))
+      && (!isHayaChannel(channel) || HAYA_MODEL_IDS.includes(item.modelId) || isBbHssKkEntry(item.modelId)));
 
     const unique = [...new Map(normalized.map((item: any) => [item.modelId, item])).values()] as Array<{
       modelId: string; displayName: string; capability: string;

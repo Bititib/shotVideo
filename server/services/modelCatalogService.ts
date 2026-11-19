@@ -1,10 +1,11 @@
 import { musicModelAvailable } from './musicModelRegistry.js';
 import { getModelSpecifications, hiddenRouteModelIds } from './modelRoutingService.js';
 import { isRetiredVideoModel } from '../../shared/retiredVideoModels.js';
+import { reconnectedSnumomModels } from './snumomReconnectedModels.js';
 import { isZhiyingVideoModel, ZHIYING_CHANNEL_TYPE, zhiyingVideoSpec } from '../../shared/zhiyingVideo.js';
 import { configuredZhiyingProfile } from './zhiyingModelRegistry.js';
 import { eq } from 'drizzle-orm';
-import { db } from '../db/index.js';
+import { db, sqlite } from '../db/index.js';
 import { models } from '../db/schema.js';
 import { MJ_OVERFLOW_VIDEO_MODEL } from './videoFailoverService.js';
 import { PricingService } from './pricingService.js';
@@ -13,8 +14,9 @@ import { PricingService } from './pricingService.js';
 export function getEnabledPublicModels(capability?: string, userId?: number | null) {
   const specs = getModelSpecifications(), hidden = hiddenRouteModelIds(), disabled = new Set(specs.filter(s => !s.enabled).map(s => s.modelId));
   let exactPrice: ReturnType<typeof PricingService.createQuoteResolver> | undefined;
+  const restored = reconnectedSnumomModels(sqlite);
   return db.select().from(models).where(eq(models.isActive, 1)).all()
-    .filter(model => !isRetiredVideoModel(model.modelId))
+    .filter(model => !isRetiredVideoModel(model.modelId) || restored.has(model.modelId))
     .filter(model => !JSON.parse(model.capabilities || '[]').includes('music') || musicModelAvailable(model.modelId,userId))
     .filter(model => model.modelId !== MJ_OVERFLOW_VIDEO_MODEL && !hidden.has(model.modelId) && !disabled.has(model.modelId))
     .filter(model => {

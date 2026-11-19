@@ -6,7 +6,8 @@ import { normalizeConfiguredSnumomBody, prepareConfiguredSnumomBilling } from '.
 import { normalizeVideoParameters } from '../services/videoCapabilities.js';
 import { validateSpecificationVideoParameters } from '../services/specificationAdapters.js';
 import { v6kManualBinding } from '../services/v6kApprovedBindings.js';
-import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { isBlockedRetiredVideoModel } from '../services/snumomReconnectedModels.js';
 import { SNUMOM_MUSE_MODEL } from '../../shared/snumomMuse.js';
 import { VideoPollTimeout, withVideoPollDeadline, fetchVideoTaskResponse } from '../services/videoPollDeadline.js';
 import { refundConfirmedZonghengVideo } from '../services/zonghengSubmissionResolutionService.js';
@@ -725,7 +726,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   } catch (error: any) { return res.status(409).json({ error: error.message }); }
   if (typeof req.body?.model === 'string') {
     try {
-      if (isRetiredVideoModel(resolvePublicModelId(req.body.model))) return res.status(410).json({error:RETIRED_VIDEO_MODEL_MESSAGE});
+      if (isBlockedRetiredVideoModel(sqlite, resolvePublicModelId(req.body.model))) return res.status(410).json({error:RETIRED_VIDEO_MODEL_MESSAGE});
       const canonicalModel=resolvePublicModelId(req.body.model);
       normalizeVideoParameters(req.body, videoCapabilities(canonicalModel).parameterSchema, Boolean(req.is('multipart/form-data')));
       if(isSnumomWanVideoModel(canonicalModel) || canonicalModel === SNUMOM_MUSE_MODEL)req.body.model=canonicalModel;

@@ -16,7 +16,8 @@ import { videoCapabilities, normalizeVideoParameters } from '../services/videoCa
 import { zonghengProtocol, zonghengProtocolSnapshot } from '../services/zonghengProtocol.js';
 import { publicGenerationError } from '../../shared/generationMessages.js';
 import { normalizeSnumomNsfwRequestBody, validateSnumomMuseInput } from '../services/snumomWanAdapter.js';
-import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
+import { isBlockedRetiredVideoModel } from '../services/snumomReconnectedModels.js';
 import { SNUMOM_MUSE_MODEL } from '../../shared/snumomMuse.js';
 import { publicApiErrorResponse } from '../middleware/publicApiErrorResponse.js';
 import { publicApiDiagnostics } from '../services/publicApiDiagnostics.js';
@@ -1762,7 +1763,7 @@ async function handleVideoCreation(req: Request, res: Response) {
       return res.status(400).json({error:(error as Error).message});
     }
   }
-  if (isRetiredVideoModel(req.body?.model)) { cleanupFiles(req.files);return res.status(410).json({error:RETIRED_VIDEO_MODEL_MESSAGE}); }
+  if (isBlockedRetiredVideoModel(sqlite, req.body?.model)) { cleanupFiles(req.files);return res.status(410).json({error:RETIRED_VIDEO_MODEL_MESSAGE}); }
   // Discovery hides disabled models; direct video submissions must honor that same switch.
   const registeredVideoModel = db.select().from(models).where(eq(models.modelId, String(req.body?.model || ''))).get();
   if (registeredVideoModel?.isActive === 0) {
