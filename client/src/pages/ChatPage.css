@@ -1,3 +1,19 @@
+.chat-file-drop-overlay {
+  position: absolute;
+  inset: 0.5rem;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  pointer-events: none;
+  border: 2px dashed var(--earth-focus);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--earth-surface-raised) 94%, transparent);
+  color: var(--earth-primary);
+  font-weight: 600;
+}
+
 .chat-composer {
   width: min(100%, 48rem);
   margin-inline: auto;

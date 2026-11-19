@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowUp, ChevronDown, FileText, Image as ImageIcon, MessageCircle, Plus, Trash2, X } from 'lucide-react';
+import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react';
+import { ArrowUp, ChevronDown, FileText, Image as ImageIcon, MessageCircle, Plus, Trash2, Upload, X } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { chatApi, streamChatTurn } from '../api/chat';
 import { useAuthStore } from '../stores/authStore';
@@ -8,6 +8,7 @@ import './ChatPage.css';
 
 const button = 'rounded-lg px-3 py-2 text-sm text-[var(--earth-ink)] hover:bg-[var(--earth-primary-soft)] disabled:cursor-not-allowed disabled:opacity-40';
 const describeAttachment = (file: File): ChatAttachment => ({ name: file.name, kind: chatImageExtension.test(file.name) ? 'image' : 'document' });
+const hasDraggedFiles = (event: DragEvent) => event.dataTransfer.types.includes('Files');
 
 export default function ChatPage() {
   const { user, isAuthenticated, isLoading, openLoginModal } = useAuthStore();
@@ -31,6 +32,8 @@ function ChatWorkspace() {
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const filePicker = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
+  const [draggingFiles, setDraggingFiles] = useState(false);
   const [sending, setSending] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
@@ -41,6 +44,7 @@ function ChatWorkspace() {
   const follow = useRef(true);
   const turns = activeId && activeId === view?.id ? view.turns : [];
   const running = turns.some(turn => turn.status === 'running');
+  const attachmentPickerDisabled = sending || deleting || files.length >= chatAttachmentLimit;
   const hasImages = files.some(file => chatImageExtension.test(file.name)) || turns.some(turn =>
     turn.status === 'complete' && turn.attachments?.some(item => item.kind === 'image'));
   const modelCannotSeeImages = hasImages && !models?.find(item => item.id === model)?.imageInput;
@@ -153,6 +157,7 @@ function ChatWorkspace() {
   }
 
   function addFiles(selected: File[]) {
+    if (!selected.length) return;
     const next = [...files, ...selected];
     if (next.length > chatAttachmentLimit) return setError('每轮最多添加 3 个附件');
     const invalid = selected.find(file => !file.size || file.size > chatAttachmentMaxBytes ||
@@ -160,6 +165,25 @@ function ChatWorkspace() {
     if (invalid) return setError(`${invalid.name} · 支持 4 MB 以内的 PNG、JPEG、WebP、PDF 和 Word .docx`);
     setFiles(next);
     setError('');
+  }
+
+  function enterFileDropArea(event: DragEvent<HTMLDivElement>) {
+    if (!hasDraggedFiles(event)) return;
+    event.preventDefault();
+    dragDepth.current += 1;
+    if (!attachmentPickerDisabled) setDraggingFiles(true);
+  }
+
+  function leaveFileDropArea() {
+    if (dragDepth.current && --dragDepth.current === 0) setDraggingFiles(false);
+  }
+
+  function dropFiles(event: DragEvent<HTMLDivElement>) {
+    if (!hasDraggedFiles(event) && !event.dataTransfer.files.length) return;
+    event.preventDefault();
+    dragDepth.current = 0;
+    setDraggingFiles(false);
+    if (!sending && !deleting) addFiles(Array.from(event.dataTransfer.files));
   }
 
   async function remove() {
@@ -188,7 +212,15 @@ function ChatWorkspace() {
         </div>
       </aside>
 
-      <div className="flex min-h-[62dvh] min-w-0 flex-col rounded-2xl border border-[var(--earth-line)] bg-[var(--earth-surface-raised)] md:h-[calc(100dvh-3rem)]">
+      <div role="region" aria-label="聊天区" className="relative flex min-h-[62dvh] min-w-0 flex-col rounded-2xl border border-[var(--earth-line)] bg-[var(--earth-surface-raised)] md:h-[calc(100dvh-3rem)]"
+        onDragEnter={enterFileDropArea} onDragLeave={leaveFileDropArea} onDrop={dropFiles} onDragOver={event => {
+          if (!hasDraggedFiles(event)) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = attachmentPickerDisabled ? 'none' : 'copy';
+        }}>
+        {draggingFiles && !attachmentPickerDisabled && <div className="chat-file-drop-overlay" role="status">
+          <Upload aria-hidden="true" className="size-6" /> 松开鼠标添加附件
+        </div>}
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--earth-line)] px-4 py-4 md:px-6">
           <h1 className="text-lg font-semibold text-[var(--earth-ink)]">大模型对话</h1>
           {activeId && <button type="button" className={button} aria-label="删除当前对话" disabled={sending || running || deleting || activeId !== view?.id} onClick={remove}><Trash2 className="size-4" /></button>}
@@ -231,7 +263,7 @@ function ChatWorkspace() {
               event.currentTarget.value = '';
             }} />
             <button type="button" className="chat-composer-attach" aria-label="添加图片或文档" title="添加图片、PDF 或 Word 文档"
-              disabled={sending || deleting || files.length >= chatAttachmentLimit} onClick={() => filePicker.current?.click()}><Plus className="size-5" /></button>
+              disabled={attachmentPickerDisabled} onClick={() => filePicker.current?.click()}><Plus className="size-5" /></button>
             <textarea aria-label="消息" placeholder="输入消息" className="chat-composer-input"
               rows={1} maxLength={16_000} value={input} onChange={event => setInput(event.target.value)}
               onKeyDown={event => {

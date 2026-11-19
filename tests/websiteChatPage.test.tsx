@@ -61,7 +61,7 @@ it('renders streamed text before the turn completes and reopens saved history', 
   expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
 });
 
-it('queues an attachment and sends it without requiring a text prompt', async () => {
+it('queues picked or dropped attachments and sends a dropped PDF without a text prompt', async () => {
   localStorage.setItem('token', 'test-session');
   const profile = { id: 1, username: 'test' } as NonNullable<ReturnType<typeof useAuthStore.getState>['user']>;
   useAuthStore.setState({ user: profile, isAuthenticated: true, isLoading: false });
@@ -84,8 +84,14 @@ it('queues an attachment and sends it without requiring a text prompt', async ()
   fireEvent.change(picker, { target: { files: [new File(['image'], 'draft.png', { type: 'image/png' })] } });
   expect(screen.getByText('请选择支持看图的模型')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: '移除 draft.png' }));
-  fireEvent.change(picker, { target: { files: [new File(['document'], 'notes.pdf', { type: 'application/pdf' })] } });
+  const chat = screen.getByRole('region', { name: '聊天区' });
+  const dataTransfer = { types: ['Files'], files: [new File(['document'], 'notes.pdf', { type: 'application/pdf' })] };
+  fireEvent.dragEnter(chat, { dataTransfer });
+  expect(screen.getByText('松开鼠标添加附件')).toBeTruthy();
+  expect(fireEvent.drop(chat, { dataTransfer })).toBe(false);
+  expect(screen.queryByText('松开鼠标添加附件')).toBeNull();
   expect(screen.getByText('notes.pdf')).toBeTruthy();
+  expect(uploaded).toBeUndefined();
   fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
   expect(uploaded?.get('question')).toBe('');
   expect((uploaded?.get('attachments') as File).name).toBe('notes.pdf');
