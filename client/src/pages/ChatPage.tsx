@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowUp, MessageCircle, Plus, Trash2 } from 'lucide-react';
+import { ArrowUp, ChevronDown, MessageCircle, Plus, Trash2 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { chatApi, streamChatTurn } from '../api/chat';
 import { useAuthStore } from '../stores/authStore';
 import type { ChatConversation, ChatModel, ChatTurn } from '../../../shared/websiteChat';
+import './ChatPage.css';
 
 const button = 'rounded-lg px-3 py-2 text-sm text-[var(--earth-ink)] hover:bg-[var(--earth-primary-soft)] disabled:cursor-not-allowed disabled:opacity-40';
 
@@ -171,14 +172,7 @@ function ChatWorkspace() {
       <div className="flex min-h-[62dvh] min-w-0 flex-col rounded-2xl border border-[var(--earth-line)] bg-[var(--earth-surface-raised)] md:h-[calc(100dvh-3rem)]">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--earth-line)] px-4 py-4 md:px-6">
           <h1 className="text-lg font-semibold text-[var(--earth-ink)]">大模型对话</h1>
-          <div className="flex min-w-0 items-center gap-2">
-            <select aria-label="对话模型" className="max-w-56 rounded-lg border border-[var(--earth-line-strong)] bg-[var(--earth-surface-raised)] px-2 py-2 text-sm text-[var(--earth-ink)]"
-              value={model} disabled={!models?.length || sending || deleting} onChange={event => setModel(event.target.value)}>
-              {!models?.length && <option value="">{models ? '暂无可用模型' : '正在加载模型…'}</option>}
-              {models?.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}
-            </select>
-            {activeId && <button type="button" className={button} aria-label="删除当前对话" disabled={sending || running || deleting || activeId !== view?.id} onClick={remove}><Trash2 className="size-4" /></button>}
-          </div>
+          {activeId && <button type="button" className={button} aria-label="删除当前对话" disabled={sending || running || deleting || activeId !== view?.id} onClick={remove}><Trash2 className="size-4" /></button>}
         </header>
 
         <div ref={transcript} className="max-h-[58dvh] min-h-60 flex-1 space-y-5 overflow-y-auto px-4 py-5 md:max-h-none md:px-8" aria-label="对话消息"
@@ -198,20 +192,27 @@ function ChatWorkspace() {
           </article>)}
         </div>
 
-        <form onSubmit={send} className="border-t border-[var(--earth-line)] px-4 py-3 md:px-6">
+        <form onSubmit={send} className="chat-composer">
           {error && <p role="alert" className="mb-2 text-sm text-[var(--earth-danger)]">{error} <button type="button" className="underline" onClick={() => { setError(''); setReload(value => value + 1); }}>刷新</button></p>}
-          <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-xl border border-[var(--earth-line-strong)] bg-[var(--earth-surface-raised)] p-2 focus-within:border-[var(--earth-focus)]">
-            <textarea aria-label="消息" placeholder="输入消息" className="min-w-0 flex-1 resize-y bg-transparent px-2 py-2 text-sm text-[var(--earth-ink)] outline-none"
-              rows={2} maxLength={16_000} value={input} onChange={event => setInput(event.target.value)}
+          <div className="chat-composer-bar">
+            <textarea aria-label="消息" placeholder="输入消息" className="chat-composer-input"
+              rows={1} maxLength={16_000} value={input} onChange={event => setInput(event.target.value)}
               onKeyDown={event => {
                 if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
                 event.preventDefault();
                 event.currentTarget.form?.requestSubmit();
               }} />
-            <button type="submit" aria-label="发送消息" className="rounded-lg bg-[var(--earth-primary)] p-2.5 text-[var(--earth-surface-raised)] disabled:opacity-35"
+            <div className="chat-composer-model">
+              <select aria-label="对话模型" value={model} disabled={!models?.length || sending || deleting} onChange={event => setModel(event.target.value)}>
+                {!models?.length && <option value="">{models ? '暂无可用模型' : '加载模型…'}</option>}
+                {models?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+              <ChevronDown aria-hidden="true" className="size-3.5" />
+            </div>
+            <button type="submit" aria-label="发送消息" className="chat-composer-send"
               disabled={!model || !input.trim() || running || sending || deleting || Boolean(activeId && activeId !== view?.id)}><ArrowUp className="size-5" /></button>
           </div>
-          <p className="mx-auto mt-2 max-w-3xl text-xs text-[var(--earth-muted)]">按 Token 用量从账户余额计费 · Shift + Enter 换行</p>
+          <p className="mt-2.5 text-center text-xs text-[var(--earth-muted)]">按 Token 用量计费</p>
         </form>
       </div>
     </section>
