@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowUp, ChevronDown, MessageCircle, Plus, Trash2 } from 'lucide-react';
+import { ArrowUp, ChevronDown, FileText, Image as ImageIcon, MessageCircle, Plus, Trash2, X } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { chatApi, streamChatTurn } from '../api/chat';
 import { useAuthStore } from '../stores/authStore';
-import type { ChatConversation, ChatModel, ChatTurn } from '../../../shared/websiteChat';
+import { chatAttachmentAccept, chatAttachmentLimit, chatAttachmentMaxBytes, chatImageExtension, type ChatAttachment, type ChatConversation, type ChatModel, type ChatTurn } from '../../../shared/websiteChat';
 import './ChatPage.css';
 
 const button = 'rounded-lg px-3 py-2 text-sm text-[var(--earth-ink)] hover:bg-[var(--earth-primary-soft)] disabled:cursor-not-allowed disabled:opacity-40';
+const describeAttachment = (file: File): ChatAttachment => ({ name: file.name, kind: chatImageExtension.test(file.name) ? 'image' : 'document' });
 
 export default function ChatPage() {
   const { user, isAuthenticated, isLoading, openLoginModal } = useAuthStore();
@@ -28,6 +29,8 @@ function ChatWorkspace() {
   const [view, setView] = useState<{ id: string; turns: ChatTurn[] }>();
   const [model, setModel] = useState('');
   const [input, setInput] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const filePicker = useRef<HTMLInputElement>(null);
   const [sending, setSending] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
@@ -38,6 +41,9 @@ function ChatWorkspace() {
   const follow = useRef(true);
   const turns = activeId && activeId === view?.id ? view.turns : [];
   const running = turns.some(turn => turn.status === 'running');
+  const hasImages = files.some(file => chatImageExtension.test(file.name)) || turns.some(turn =>
+    turn.status === 'complete' && turn.attachments?.some(item => item.kind === 'image'));
+  const modelCannotSeeImages = hasImages && !models?.find(item => item.id === model)?.imageInput;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -94,6 +100,7 @@ function ChatWorkspace() {
     setError('');
     setRecovering(undefined);
     setInput('');
+    setFiles([]);
     follow.current = true;
     setParams(id ? { conversation: id } : {});
   }
@@ -101,7 +108,7 @@ function ChatWorkspace() {
   async function send(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const question = input.trim();
-    if (!question || !model || running || request.current || deleting || (activeId && activeId !== view?.id)) return;
+    if ((!question && !files.length) || !model || modelCannotSeeImages || running || request.current || deleting || (activeId && activeId !== view?.id)) return;
 
     const id = activeId || crypto.randomUUID();
     const requestId = crypto.randomUUID();
@@ -110,15 +117,16 @@ function ChatWorkspace() {
     setSending(true);
     setError('');
     setInput('');
+    setFiles([]);
     follow.current = true;
-    const optimistic: ChatTurn = { id: requestId, model, question, answer: '', status: 'running', error: null };
+    const optimistic: ChatTurn = { id: requestId, model, question, answer: '', status: 'running', error: null, attachments: files.map(describeAttachment) };
     setView({ id, turns: [...turns, optimistic] });
     if (!activeId) setParams({ conversation: id });
 
     const update = (change: (turn: ChatTurn) => ChatTurn) => setView(current => current?.id === id
       ? { id, turns: current.turns.map(turn => turn.id === requestId ? change(turn) : turn) } : current);
     try {
-      const turn = await streamChatTurn(id, { requestId, model, question, create: !activeId },
+      const turn = await streamChatTurn(id, { requestId, model, question, create: !activeId, files },
         delta => update(current => ({ ...current, answer: current.answer + delta })), controller.signal);
       update(() => turn);
     } catch (failure) {
@@ -128,6 +136,7 @@ function ChatWorkspace() {
         setView({ id, turns });
         if (!activeId) setParams({}, { replace: true });
         setInput(question);
+        setFiles(files);
         setError((failure as Error).message);
       } else {
         setRecovering(id);
@@ -141,6 +150,16 @@ function ChatWorkspace() {
         void useAuthStore.getState().checkAuth();
       }
     }
+  }
+
+  function addFiles(selected: File[]) {
+    const next = [...files, ...selected];
+    if (next.length > chatAttachmentLimit) return setError('每轮最多添加 3 个附件');
+    const invalid = selected.find(file => !file.size || file.size > chatAttachmentMaxBytes ||
+      !chatAttachmentAccept.split(',').includes('.' + file.name.split('.').at(-1)?.toLowerCase()));
+    if (invalid) return setError(`${invalid.name} · 支持 4 MB 以内的 PNG、JPEG、WebP、PDF 和 Word .docx`);
+    setFiles(next);
+    setError('');
   }
 
   async function remove() {
@@ -182,7 +201,12 @@ function ChatWorkspace() {
             <p>{activeId && activeId !== view?.id ? '正在读取对话…' : '输入消息，开始对话'}</p>
           </div>}
           {turns.map(turn => <article key={turn.id} className="mx-auto max-w-3xl space-y-4">
-            <p className="ml-auto w-fit max-w-[90%] whitespace-pre-wrap break-words rounded-2xl bg-[var(--earth-primary-soft)] px-4 py-3 text-[var(--earth-ink)]">{turn.question}</p>
+            <div className="ml-auto w-fit max-w-[90%] rounded-2xl bg-[var(--earth-primary-soft)] px-4 py-3 text-[var(--earth-ink)]">
+              {turn.attachments?.length ? <ul className="chat-attachment-list">{turn.attachments.map((item, index) => (
+                <li key={index} className="chat-attachment-chip" title={item.name}>{item.kind === 'image' ? <ImageIcon /> : <FileText />}<span>{item.name}</span></li>
+              ))}</ul> : null}
+              {turn.question && <p className="whitespace-pre-wrap break-words">{turn.question}</p>}
+            </div>
             <div className="space-y-2 rounded-2xl border border-[var(--earth-line)] bg-[var(--earth-surface)] px-4 py-3">
               <p className="text-xs font-medium text-[var(--earth-primary)]">{turn.model}</p>
               {turn.answer && <p className="whitespace-pre-wrap break-words text-sm leading-7 text-[var(--earth-ink)]">{turn.answer}</p>}
@@ -194,7 +218,20 @@ function ChatWorkspace() {
 
         <form onSubmit={send} className="chat-composer">
           {error && <p role="alert" className="mb-2 text-sm text-[var(--earth-danger)]">{error} <button type="button" className="underline" onClick={() => { setError(''); setReload(value => value + 1); }}>刷新</button></p>}
+          {modelCannotSeeImages && <p role="status" className="mb-2 text-sm text-[var(--earth-danger)]">请选择支持看图的模型</p>}
+          {files.length > 0 && <ul className="chat-attachment-list" aria-label="待发送的附件">{files.map((file, index) => (
+            <li key={index} className="chat-attachment-chip" title={file.name}>
+              {describeAttachment(file).kind === 'image' ? <ImageIcon /> : <FileText />}<span>{file.name}</span>
+              <button type="button" aria-label={`移除 ${file.name}`} onClick={() => setFiles(current => current.filter((_, i) => i !== index))}><X /></button>
+            </li>
+          ))}</ul>}
           <div className="chat-composer-bar">
+            <input ref={filePicker} type="file" hidden multiple accept={chatAttachmentAccept} onChange={event => {
+              addFiles(Array.from(event.currentTarget.files || []));
+              event.currentTarget.value = '';
+            }} />
+            <button type="button" className="chat-composer-attach" aria-label="添加图片或文档" title="添加图片、PDF 或 Word 文档"
+              disabled={sending || deleting || files.length >= chatAttachmentLimit} onClick={() => filePicker.current?.click()}><Plus className="size-5" /></button>
             <textarea aria-label="消息" placeholder="输入消息" className="chat-composer-input"
               rows={1} maxLength={16_000} value={input} onChange={event => setInput(event.target.value)}
               onKeyDown={event => {
@@ -205,12 +242,12 @@ function ChatWorkspace() {
             <div className="chat-composer-model">
               <select aria-label="对话模型" value={model} disabled={!models?.length || sending || deleting} onChange={event => setModel(event.target.value)}>
                 {!models?.length && <option value="">{models ? '暂无可用模型' : '加载模型…'}</option>}
-                {models?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                {models?.map(item => <option key={item.id} value={item.id} disabled={hasImages && !item.imageInput}>{item.name}{item.imageInput && hasImages ? ' · 看图' : ''}</option>)}
               </select>
               <ChevronDown aria-hidden="true" className="size-3.5" />
             </div>
             <button type="submit" aria-label="发送消息" className="chat-composer-send"
-              disabled={!model || !input.trim() || running || sending || deleting || Boolean(activeId && activeId !== view?.id)}><ArrowUp className="size-5" /></button>
+              disabled={!model || (!input.trim() && !files.length) || modelCannotSeeImages || running || sending || deleting || Boolean(activeId && activeId !== view?.id)}><ArrowUp className="size-5" /></button>
           </div>
           <p className="mt-2.5 text-center text-xs text-[var(--earth-muted)]">按 Token 用量计费</p>
         </form>

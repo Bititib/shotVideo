@@ -11,15 +11,26 @@ export const chatApi = {
 
 export async function streamChatTurn(
   id: string,
-  input: { requestId: string; model: string; question: string; create: boolean },
+  input: { requestId: string; model: string; question: string; create: boolean; files?: File[] },
   onDelta: (text: string) => void,
   signal: AbortSignal,
 ): Promise<ChatTurn> {
   const session = getAuthSession();
+  const { files, ...fields } = input;
+  const headers: Record<string, string> = { Authorization: 'Bearer ' + session.token };
+  let body: string | FormData;
+  if (files?.length) {
+    const form = new FormData();
+    for (const [key, value] of Object.entries(fields)) form.append(key, String(value));
+    for (const file of files) form.append('attachments', file);
+    body = form;
+  } else {
+    headers['Content-Type'] = 'application/json';
+    body = JSON.stringify(fields);
+  }
   const response = await fetch('/api/chat/conversations/' + encodeURIComponent(id) + '/turns', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.token },
-    body: JSON.stringify(input), signal,
+    headers, body, signal,
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null);

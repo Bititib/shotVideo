@@ -60,3 +60,33 @@ it('renders streamed text before the turn completes and reopens saved history', 
   await screen.findByText(turns[0].answer);
   expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
 });
+
+it('queues an attachment and sends it without requiring a text prompt', async () => {
+  localStorage.setItem('token', 'test-session');
+  const profile = { id: 1, username: 'test' } as NonNullable<ReturnType<typeof useAuthStore.getState>['user']>;
+  useAuthStore.setState({ user: profile, isAuthenticated: true, isLoading: false });
+  let uploaded: FormData | undefined;
+  const requests = vi.fn(async (path: string, options?: RequestInit) => {
+    if (path === '/api/chat/models') return Response.json([{ id: 'test-model', name: 'test-model' }]);
+    if (path === '/api/auth/me') return Response.json(profile);
+    if (options?.method === 'POST') {
+      uploaded = options.body as FormData;
+      return Response.json({ id: uploaded.get('requestId'), model: 'test-model', question: '', answer: '已读',
+        status: 'complete', error: null, attachments: [{ name: 'notes.pdf', kind: 'document' }] });
+    }
+    return Response.json([]);
+  });
+  vi.stubGlobal('fetch', requests);
+  const { container } = render(<MemoryRouter><ChatPage /></MemoryRouter>);
+  await screen.findByRole('option', { name: 'test-model' });
+  expect(screen.getByRole('button', { name: '添加图片或文档' })).toBeTruthy();
+  const picker = container.querySelector<HTMLInputElement>('input[type=file]')!;
+  fireEvent.change(picker, { target: { files: [new File(['image'], 'draft.png', { type: 'image/png' })] } });
+  expect(screen.getByText('请选择支持看图的模型')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: '移除 draft.png' }));
+  fireEvent.change(picker, { target: { files: [new File(['document'], 'notes.pdf', { type: 'application/pdf' })] } });
+  expect(screen.getByText('notes.pdf')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
+  expect(uploaded?.get('question')).toBe('');
+  expect((uploaded?.get('attachments') as File).name).toBe('notes.pdf');
+});

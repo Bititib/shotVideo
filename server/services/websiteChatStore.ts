@@ -2,11 +2,20 @@ import { sqlite } from '../db/index.js';
 import type { ChatConversation, ChatTurn } from '../../shared/websiteChat.js';
 import { reserveUserCharge } from './billingReservation.js';
 import type { PricingSnapshot } from './pricingService.js';
+import type { PreparedChatAttachment } from './websiteChatAttachments.js';
 
 const replyDeadlineMs = 5 * 60_000;
 const recoveryGraceMs = 60_000;
 const contextLimitBytes = 120_000;
-const turnFields = 'id, model, question, answer, status, error';
+const turnFields = `id, model, question, answer, status, error,
+  (SELECT json_group_array(json_object('name', json_extract(value, '$.name'), 'kind', json_extract(value, '$.kind')))
+   FROM json_each(attachments)) AS attachmentMetadata`;
+type ChatTurnRow = Omit<ChatTurn, 'attachments'> & { attachmentMetadata: string };
+
+function publicTurn({ attachmentMetadata, ...turn }: ChatTurnRow): ChatTurn {
+  const attachments = JSON.parse(attachmentMetadata);
+  return attachments.length ? { ...turn, attachments } : turn;
+}
 
 sqlite.exec(`
   CREATE TABLE IF NOT EXISTS website_chat_conversations (
@@ -22,6 +31,11 @@ sqlite.exec(`
   );
   CREATE UNIQUE INDEX IF NOT EXISTS website_chat_one_active ON website_chat_turns(conversation_id) WHERE status = 'running';
 `);
+sqlite.transaction(() => {
+  if (!(sqlite.pragma('table_info(website_chat_turns)') as Array<{ name: string }>).some(column => column.name === 'attachments')) {
+    sqlite.exec("ALTER TABLE website_chat_turns ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
+  }
+}).immediate();
 
 function chatError(status: number, message: string) {
   return Object.assign(new Error(message), { status });
@@ -53,7 +67,7 @@ export const reserveChatTurn = sqlite.transaction((userId: number, id: string, r
 });
 
 function getTurns(id: string) {
-  return sqlite.prepare(`SELECT ${turnFields} FROM website_chat_turns WHERE conversation_id = ? ORDER BY rowid`).all(id) as ChatTurn[];
+  return (sqlite.prepare(`SELECT ${turnFields} FROM website_chat_turns WHERE conversation_id = ? ORDER BY rowid`).all(id) as ChatTurnRow[]).map(publicTurn);
 }
 
 export function listChatConversations(userId: number) {
@@ -75,33 +89,59 @@ export const deleteChatConversation = sqlite.transaction((userId: number, id: st
     .run(Date.now(), id, userId);
 });
 
-export const claimChatTurn = sqlite.transaction((userId: number, id: string, requestId: string, model: string, question: string, create: boolean) => {
+type ChatPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
+
+export const claimChatTurn = sqlite.transaction((userId: number, id: string, requestId: string, model: string, question: string, create: boolean,
+  attachments: PreparedChatAttachment[], imageInput: boolean) => {
   const now = Date.now();
   if (create) {
     sqlite.prepare(`INSERT OR IGNORE INTO website_chat_conversations (id, user_id, title, updated_at) VALUES (?, ?, ?, ?)`)
-      .run(id, userId, [...question.replace(/\s+/g, ' ')].slice(0, 48).join(''), now);
+      .run(id, userId, [...(question || attachments[0]?.name || '新对话').replace(/\s+/g, ' ')].slice(0, 48).join(''), now);
   }
   const turns = listChatTurns(userId, id);
   const existing = turns.find(turn => turn.id === requestId);
   if (existing) {
-    if (existing.model !== model || existing.question !== question) throw chatError(409, '请求编号已用于另一条消息');
+    const { attachments: raw } = sqlite.prepare('SELECT attachments FROM website_chat_turns WHERE conversation_id = ? AND id = ?')
+      .get(id, requestId) as { attachments: string };
+    const saved = JSON.parse(raw) as PreparedChatAttachment[];
+    if (existing.model !== model || existing.question !== question || saved.length !== attachments.length ||
+      saved.some((item, i) => item.digest !== attachments[i].digest || item.name !== attachments[i].name)) {
+      throw chatError(409, '请求编号已用于另一条消息');
+    }
     return { existing } as const;
   }
   if (turns.some(turn => turn.status === 'running')) throw chatError(409, '当前对话正在回复');
-  const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  const messages: Array<{ role: 'user' | 'assistant'; content: string | ChatPart[] }> = [];
+  const getAttachments = sqlite.prepare('SELECT attachments FROM website_chat_turns WHERE conversation_id = ? AND id = ?');
+  let imageCount = 0;
+  let imageBytes = 0;
+  const appendUser = (question: string, files: PreparedChatAttachment[]) => {
+    const documents = files.filter(file => file.kind === 'document');
+    const text = [question || '请阅读并概述附件。', ...documents.map(file =>
+      `［附件 ${file.name} 的正文开始］\n${file.content}\n［附件正文结束］`)].join('\n\n');
+    const images = files.filter(file => file.kind === 'image');
+    imageCount += images.length;
+    imageBytes += images.reduce((size, file) => size + file.content.length, 0);
+    messages.push({ role: 'user', content: images.length ? [{ type: 'text', text }, ...images.map(file =>
+      ({ type: 'image_url' as const, image_url: { url: file.content } }))] : text });
+  };
   for (const turn of turns) {
     if (turn.status !== 'complete') continue;
-    messages.push({ role: 'user', content: turn.question }, { role: 'assistant', content: turn.answer });
+    const files = turn.attachments?.length ? JSON.parse((getAttachments.get(id, turn.id) as { attachments: string }).attachments) : [];
+    appendUser(turn.question, files);
+    messages.push({ role: 'assistant', content: turn.answer });
   }
-  messages.push({ role: 'user', content: question });
-  if (Buffer.byteLength(JSON.stringify(messages)) > contextLimitBytes) {
+  appendUser(question, attachments);
+  if (imageCount && !imageInput) throw chatError(400, '这段对话含有图片，请切换到支持看图的模型');
+  if (imageCount > 6 || imageBytes > 16 * 1024 * 1024) throw chatError(400, '此对话的图片已超过上下文上限，请开启新对话');
+  if (Buffer.byteLength(JSON.stringify(messages, (key, value) => key === 'url' ? undefined : value)) > contextLimitBytes) {
     throw chatError(400, '此对话已超过网页上下文长度上限，请开启新对话');
   }
   const deadline = now + replyDeadlineMs;
-  sqlite.prepare(`INSERT INTO website_chat_turns (conversation_id, id, model, question, status, deadline)
-    VALUES (?, ?, ?, ?, 'running', ?)`).run(id, requestId, model, question, deadline);
+  sqlite.prepare(`INSERT INTO website_chat_turns (conversation_id, id, model, question, status, deadline, attachments)
+    VALUES (?, ?, ?, ?, 'running', ?, ?)`).run(id, requestId, model, question, deadline, JSON.stringify(attachments));
   sqlite.prepare('UPDATE website_chat_conversations SET updated_at = ? WHERE id = ?').run(now, id);
-  return { deadline, messages } as const;
+  return { deadline, messages, imageCount } as const;
 });
 
 export function saveChatAnswer(id: string, requestId: string, answer: string) {
@@ -110,7 +150,8 @@ export function saveChatAnswer(id: string, requestId: string, answer: string) {
 }
 
 export function finishChatTurn(id: string, requestId: string, answer: string, status: Exclude<ChatTurn['status'], 'running'>, error?: string) {
-  return sqlite.prepare(`UPDATE website_chat_turns SET answer = ?, status = ?, error = ?
+  const row = sqlite.prepare(`UPDATE website_chat_turns SET answer = ?, status = ?, error = ?
     WHERE conversation_id = ? AND id = ? AND status = 'running' RETURNING ${turnFields}`)
-    .get(answer, status, error || null, id, requestId) as ChatTurn | undefined;
+    .get(answer, status, error || null, id, requestId) as ChatTurnRow | undefined;
+  return row && publicTurn(row);
 }

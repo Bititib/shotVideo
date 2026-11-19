@@ -1,4 +1,5 @@
 import { image2proChatParameterError } from '../services/image2proInput.js';
+import { channelSupportsChatImages } from '../services/websiteChatAttachments.js';
 import { createMusicResourceRouter, apiMusicResult } from './musicResources.js';
 import { songOperation } from '../../shared/sunoMusic.js';
 import { musicBinding, musicPrices } from '../services/musicModelRegistry.js';
@@ -865,6 +866,7 @@ router.get('/music/:id',(req,res,next)=>{try{res.json(apiMusicResult(getMusicTas
 export interface WebsiteChatReply {
   userId: number;
   deadline: number;
+  imageCount?: number;
   reserve(cost: number, model: string, snapshot?: PricingSnapshot): Pick<ReturnType<typeof reserveApiCharge>, 'id' | 'settle' | 'review' | 'cancel'>;
   delta(text: string): void;
   finish(result: { status: 'complete' | 'failed' | 'review'; error?: string }): void;
@@ -912,8 +914,10 @@ export async function handleChatCompletion(req: Request, res: Response, website?
   else otherParams.max_tokens = outputLimit;
   if (stream) otherParams.stream_options = { ...otherParams.stream_options, include_usage: true };
   // UTF-8 bytes conservatively cover text tokens; reserve extra for each media item.
-  const serialized = JSON.stringify({ messages, ...otherParams });
-  const mediaCount = (serialized.match(/"(?:image_url|input_audio|video_url)"/g) || []).length;
+  const serialized = website?.imageCount
+    ? JSON.stringify({ messages, ...otherParams }, (key, value) => key === 'url' ? undefined : value)
+    : JSON.stringify({ messages, ...otherParams });
+  const mediaCount = website?.imageCount ?? (serialized.match(/"(?:image_url|input_audio|video_url)"/g) || []).length;
   const quote = PricingService.createQuoteResolver(true, userId);
   const calculateCost = (promptTokens: number, completionTokens: number) => quote(model, {promptTokens, completionTokens}).cost;
   const reservedCost = calculateCost(Buffer.byteLength(serialized, 'utf8') + 1024 + mediaCount * 65536, outputLimit * choices);
@@ -924,7 +928,9 @@ export async function handleChatCompletion(req: Request, res: Response, website?
     return res.status(402).json({ error: { message: `Insufficient balance. Current: ¥${currentBalance.toFixed(2)}`, type: 'insufficient_balance_error' } });
   }
 
-  const channel = ChannelService.findChannelForModel(model);
+  const channel = website?.imageCount
+    ? ChannelService.findChannelForModel(model, ChannelService.getActiveChannels().filter(channelSupportsChatImages))
+    : ChannelService.findChannelForModel(model);
   if (!channel) {
     return invalid(404, 'No available channel for model ' + model, 'not_found_error');
   }

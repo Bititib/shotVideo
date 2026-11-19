@@ -63,16 +63,37 @@
   pointer-events: none;
 }
 
-.chat-composer-send {
+.chat-composer-send,
+.chat-composer-attach {
   display: grid;
   place-items: center;
   flex: 0 0 44px;
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  background: var(--earth-primary);
-  color: var(--earth-surface-raised);
 }
+
+.chat-composer-send { background: var(--earth-primary); color: var(--earth-surface-raised); }
+.chat-composer-attach { background: var(--earth-surface-raised); color: var(--earth-primary); }
+.chat-composer-attach:not(:disabled):hover { background: var(--earth-primary-soft); }
+.chat-composer-attach:disabled { opacity: 0.45; }
+
+.chat-attachment-list { display: flex; flex-wrap: wrap; gap: 0.375rem; margin-bottom: 0.5rem; }
+.chat-attachment-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  max-width: 100%;
+  min-height: 2rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.5rem;
+  background: var(--earth-surface-raised);
+  color: var(--earth-ink);
+  font-size: 0.75rem;
+}
+.chat-attachment-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-attachment-chip svg { width: 1rem; height: 1rem; flex-shrink: 0; }
+.earth-app-shell .chat-attachment-chip button { display: grid; place-items: center; min-width: 44px; min-height: 44px; }
 
 .chat-composer-send:not(:disabled):hover { background: var(--earth-primary-hover); }
 .chat-composer-send:disabled { background: var(--earth-primary-soft); color: var(--earth-muted); }

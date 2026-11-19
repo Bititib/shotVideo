@@ -2,7 +2,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vite
 import express from 'express';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
+import sharp from 'sharp';
 import jwt from 'jsonwebtoken';
 import { db, sqlite } from '../server/db/index.js';
 import { ensureFundLedger } from '../server/db/fundLedger.js';
@@ -31,13 +33,19 @@ const auth = (userId: number) => 'Bearer ' + jwt.sign({ userId }, env.JWT_SECRET
 
 function request(path: string, options: RequestInit = {}, userId = 1) {
   return localFetch('http://127.0.0.1:' + (server.address() as AddressInfo).port + '/api/chat' + path, {
-    ...options, headers: { Authorization: auth(userId), 'Content-Type': 'application/json' },
+    ...options, headers: { Authorization: auth(userId), ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }) },
   });
 }
 
 const conversation = (id: string) => '/conversations/' + id;
 const submit = (id: string, requestId: string, question = '第一条消息', create = true, signal?: AbortSignal) =>
   request(conversation(id) + '/turns', { method: 'POST', body: JSON.stringify({ model, question, requestId, create }), signal });
+function submitFiles(id: string, requestId: string, files: Array<[string, Buffer]>) {
+  const body = new FormData();
+  for (const [name, value] of Object.entries({ requestId, model, question: '', create: 'true' })) body.append(name, value);
+  for (const [name, contents] of files) body.append('attachments', new Blob([new Uint8Array(contents)]), name);
+  return request(conversation(id) + '/turns', { method: 'POST', body });
+}
 const balance = () => (sqlite.prepare('SELECT balance FROM users WHERE id=1').get() as { balance: number }).balance;
 const bills = () => sqlite.prepare('SELECT state,actual FROM billing_reservations ORDER BY rowid').all();
 const sse = (value: unknown) => 'data: ' + (value === '[DONE]' ? value : JSON.stringify(value)) + '\n\n';
@@ -149,6 +157,49 @@ it('keeps a partial stream and its single reservation under review', async () =>
   expect(upstream).toHaveBeenCalledOnce();
   expect(bills()).toEqual([{ state: 'review', actual: null }]);
   expect(balance()).toBeLessThan(100);
+});
+
+it('reads PDF and Word together, keeps their text in the next turn and does not expose attachment contents in history', async () => {
+  const id = randomUUID(), requestId = randomUUID();
+  const pdf = readFileSync(new URL('./fixtures/website-chat.pdf', import.meta.url));
+  const docx = readFileSync(new URL('./fixtures/website-chat.docx', import.meta.url));
+  const files: Array<[string, Buffer]> = [['说明.pdf', pdf], ['产品.docx', docx]];
+  upstream.mockResolvedValueOnce(reply('已梳理')).mockResolvedValueOnce(reply('已补充'));
+  const result = await events(await submitFiles(id, requestId, files));
+  expect(result.at(-1)).toEqual({ turn: expect.objectContaining({ question: '', status: 'complete', attachments: [
+    { name: '说明.pdf', kind: 'document' }, { name: '产品.docx', kind: 'document' },
+  ] }) });
+  const duplicate = await submitFiles(id, requestId, files);
+  expect(await duplicate.json()).toMatchObject({ id: requestId, status: 'complete' });
+  expect((await submitFiles(id, requestId, [['其他.pdf', pdf]])).status).toBe(409);
+  await events(await submit(id, randomUUID(), '继续', false));
+  for (const [, options] of upstream.mock.calls) {
+    const messages = JSON.parse(String(options?.body)).messages;
+    expect(messages[0].content).toContain('PDF fixture body for chat.');
+    expect(messages[0].content).toContain('Word fixture body for chat.');
+  }
+  const history = await (await request(conversation(id))).text();
+  expect(history).not.toContain('fixture body');
+  expect(upstream).toHaveBeenCalledTimes(2);
+  expect(bills()).toHaveLength(2);
+});
+
+it('validates image format and rejects unsupported models before charging, then uses the verified image route', async () => {
+  const id = randomUUID();
+  const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: '#aabbcc' } }).png().toBuffer();
+  expect((await submitFiles(id, randomUUID(), [['demo.png', png]])).status).toBe(400);
+  expect((await submitFiles(id, randomUUID(), [['fake.jpg', png]])).status).toBe(400);
+  expect(upstream).not.toHaveBeenCalled();
+  expect(bills()).toHaveLength(0);
+  sqlite.prepare('UPDATE models SET capabilities = ? WHERE model_id = ?').run('["text","image"]', model);
+  expect(await (await request('/models')).json()).toEqual([{ id: model, name: model, imageInput: true }]);
+  upstream.mockResolvedValueOnce(reply('已看图'));
+  const result = await events(await submitFiles(id, randomUUID(), [['图片.png', png]]));
+  expect(result.at(-1)).toEqual({ turn: expect.objectContaining({ status: 'complete', attachments: [{ name: '图片.png', kind: 'image' }] }) });
+  expect(JSON.parse(String(upstream.mock.calls[0][1]?.body)).messages[0].content).toEqual([
+    { type: 'text', text: '请阅读并概述附件。' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,' + png.toString('base64') } },
+  ]);
+  expect(bills()).toEqual([{ state: 'settled', actual: 0.05 }]);
 });
 
 it('recovers an expired in-flight request after an interruption without replay or refund', async () => {
