@@ -12,6 +12,7 @@ export type ModelInputLimits = {
   firstFrame: boolean; lastFrame: boolean; qualities: string[];
 };
 export type ModelRoute = {
+  snumom?: { billingType: 'per_call' | 'per_second'; referenceVideoBilling: boolean };
   siYueTianVideo?: true;
   minikey?: { upstreamChannel: number | null; imageProtocol: 'banana' | 'size' };
   id: string; channelId: number; executionModel: string; upstreamModel: string; enabled: boolean;

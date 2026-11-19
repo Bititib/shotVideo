@@ -2,6 +2,7 @@ import { prepareMediaSubmission, renderMediaReferences } from '../../shared/medi
 import { isHussChannel } from '../services/hussVideoAdapter.js';
 import { zonghengProtocol, zonghengProtocolSnapshot, zonghengTaskChannel, v6kQueryRetryDelay, isRetiredZonghengTask, RETIRED_ZONGHENG_MESSAGE } from '../services/zonghengProtocol.js';
 import { normalizeSnumomNsfwRequestBody } from '../services/snumomWanAdapter.js';
+import { normalizeConfiguredSnumomBody, prepareConfiguredSnumomBilling } from '../services/snumomConfiguredExecution.js';
 import { normalizeVideoParameters } from '../services/videoCapabilities.js';
 import { validateSpecificationVideoParameters } from '../services/specificationAdapters.js';
 import { v6kManualBinding } from '../services/v6kApprovedBindings.js';
@@ -733,6 +734,7 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
   try { req.body=normalizeSnumomNsfwRequestBody(req.body); } catch(error:any) { return res.status(400).json({error:error.message}); }
   if (req.path === '/validate' && !isSnumomWanVideoModel(req.body?.model) && getModelSpecification(resolvePublicModelId(req.body?.model || ''))) {
     try { const spec = getModelSpecification(resolvePublicModelId(req.body.model))!;
+      if(spec.routes.some(r=>r.snumom)) { req.body={...req.body};normalizeConfiguredSnumomBody(req.body); }
       if (isZhiyingVideoModel(spec.modelId)) {
         req.body = { ...req.body, model: spec.modelId };
         normalizeZhiyingRequest(req.body, spec.limits.defaultSeconds);
@@ -744,8 +746,12 @@ router.post(['/generate', '/validate'], authMiddleware, canvasRequestMiddleware,
       if ((v6kBinding || spec.routes.some(route => route.siYueTianVideo)) && !body.aspect_ratio && !body.ratio)
         body.aspect_ratio = spec.limits.ratios[0];
       const origin = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
+      if(spec.routes.some(r=>r.snumom))normalizeConfiguredSnumomBody(body);
       const request = specificationRequest(body, 'video', origin, Boolean(v6kBinding)), input = request.input;
-      const candidates = selectModelRoutes(spec, input); const quote = PricingService.quote(spec.modelId, { resolution: input.resolution, seconds: input.seconds, count: 1 }, false, req.userId);
+      const candidates = selectModelRoutes(spec, input);
+      const configuredBilling=await prepareConfiguredSnumomBilling(spec,request);
+      const quote = PricingService.quote(spec.modelId, { resolution: input.resolution, seconds: configuredBilling?.billableSeconds??input.seconds, count: 1 }, false, req.userId);
+      if(configuredBilling && quote.billingType!==configuredBilling.snumomConfiguredBilling.billingType)throw new Error('售价计费方式与 snumom 参数配置不一致，未扣费');
       if (v6kBinding && candidates.some(target => target.route.channelId !== v6kBinding.channelId
         || target.route.upstreamModel !== v6kBinding.upstreamModel)) throw Object.assign(new Error('V6K 线路与后台核对的型号不一致'), { status: 503 });
       validateSpecificationVideoParameters(request, candidates);

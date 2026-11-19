@@ -1,3 +1,4 @@
+import { validateSnumomConfiguration } from '../../shared/snumomConfiguration.js';
 import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
 import { isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
 import { CHANNEL_MODEL_ROUTE_PREFIX } from '../../shared/channelModelConfiguration.js';
@@ -75,6 +76,10 @@ export function saveModelSpecification(value: ModelSpecification): ModelSpecific
   const routes = value.routes.map(r => {
     validateLimits(r.limits);
     const ch = channelRows.find(c => c.id === r.channelId);
+    if (r.snumom) {
+      if (ch?.type !== 'snumom' || value.kind !== 'video') throw error('snumom 配置只能关联 snumom 视频线路');
+      validateSnumomConfiguration(r.limits, r.snumom);
+    }
     if (r.siYueTianVideo !== undefined && (r.siYueTianVideo !== true || value.kind !== 'video'
       || ch?.type !== 'openai' || !isSiYueTianVideoHost(ch.baseUrl))) throw error('四月天异步视频线路配置无效');
     if (r.minikey && (ch?.type !== 'minikey' || !['banana','size'].includes(r.minikey.imageProtocol)

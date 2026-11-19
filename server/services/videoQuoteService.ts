@@ -1,4 +1,6 @@
 import { db } from '../db/index.js';
+import { snumomConfiguredPolicy } from './snumomConfiguredExecution.js';
+import { probeReferenceVideoSeconds } from './videoDurationProbe.js';
 import { isRetiredVideoModel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { SNUMOM_MUSE_MODEL } from '../../shared/snumomMuse.js';
 import { normalizeSnumomMuseRequestBody } from './snumomWanAdapter.js';
@@ -12,7 +14,7 @@ import { isSnumomWan30VideoModel, snumomWanBillableSeconds } from './snumomWanAd
 import { isSnumomWanVideoModel, snumomOutputOnlySpec, SNUMOM_WAN_NSFW_MODEL } from '../../shared/snumomWanNsfw.js';
 const fail = (message: string, status = 400) => Object.assign(new Error(message), { status });
 /** Quote customer prices only. No uploads, upstream calls, reservations or task creation. */
-export function quoteVideoRequest(body: any, userId?: number) {
+export function quoteVideoRequest(body: any, userId?: number, probedReferenceSeconds = 0) {
   const model = resolvePublicModelId(String(body?.model || ''));
   if (model === SNUMOM_MUSE_MODEL) body = normalizeSnumomMuseRequestBody({...body,model});
   if (isRetiredVideoModel(model)) throw fail(RETIRED_VIDEO_MODEL_MESSAGE,410);
@@ -31,17 +33,29 @@ export function quoteVideoRequest(body: any, userId?: number) {
     if (!(d.mode === 'fixed' ? seconds === d.min : d.mode === 'options' ? d.values.includes(seconds)
       : seconds >= d.min && seconds <= d.max && Math.abs((seconds-d.min)/d.step - Math.round((seconds-d.min)/d.step)) < 1e-8)) throw fail('该模型不支持所选时长');
   }
-  const referenceVideoSeconds = isSnumomWan30VideoModel(model) ? Number(body.reference_video_seconds || 0) : 0;
-  if (!Number.isFinite(referenceVideoSeconds) || referenceVideoSeconds < 0 || referenceVideoSeconds > 15) {
+  const configured = spec && snumomConfiguredPolicy(spec);
+  const referenceVideoSeconds = configured?.referenceVideoBilling ? probedReferenceSeconds : isSnumomWan30VideoModel(model) ? Number(body.reference_video_seconds || 0) : 0;
+  if (!Number.isFinite(referenceVideoSeconds) || referenceVideoSeconds < 0 || !configured && referenceVideoSeconds > 15) {
     throw fail('参考视频总时长无效');
   }
-  const billableSeconds = snumomWanBillableSeconds(model, seconds, referenceVideoSeconds);
+  const billableSeconds = configured ? seconds+referenceVideoSeconds : snumomWanBillableSeconds(model, seconds, referenceVideoSeconds);
   if (isSnumomWan30VideoModel(model) && billableSeconds > 30) throw fail('输出时长与参考视频总时长合计不能超过 30 秒');
   const quote = PricingService.quote(model, { resolution, seconds: billableSeconds, count: 1 }, false, userId);
+  if(configured && quote.billingType!==configured.billingType)throw fail('售价计费方式与 snumom 参数配置不一致');
   if (model === SNUMOM_MUSE_MODEL && quote.billingType !== 'per_call') throw fail('Muse Video 需配置按次售价，本次未扣费');
   if (isSnumomWanVideoModel(model) && quote.billingType !== 'per_second') throw fail('Wan 3.0 NSFW 需配置按秒售价');
   if (!['per_call', 'per_second'].includes(quote.billingType || '') || !Number.isFinite(quote.cost) || quote.cost < 0) throw fail('该模型尚未配置有效视频售价');
   return { model, resolution, seconds, referenceVideoSeconds, billableSeconds, cost: quote.cost, rate: quote.rate, billingType: quote.billingType };
+}
+export async function quoteVideoRequestWithReferences(body: any, userId?: number) {
+  // Check access and price before doing any media I/O.
+  const initial=quoteVideoRequest(body,userId);
+  const spec=getModelSpecification(initial.model), policy=spec && snumomConfiguredPolicy(spec);
+  if(!policy?.referenceVideoBilling)return initial;
+  const videos=body.reference_videos??[];
+  if(!Array.isArray(videos)||videos.length>spec!.limits.maxVideos||!videos.every((v:any)=>typeof v==='string'&&v.trim()))throw fail('参考视频格式或数量无效');
+  const measured=await probeReferenceVideoSeconds(videos).catch((error:any)=>{throw fail(error.message);});
+  return quoteVideoRequest(body,userId,measured.total);
 }
 /** Browser clients pin the displayed total; old API clients may omit expectedCost. */
 export function assertExpectedVideoCost(body: any, actualCost: number) {

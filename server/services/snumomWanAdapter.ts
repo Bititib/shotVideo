@@ -50,6 +50,8 @@ export interface SnumomChannelLike {
 }
 
 export interface SnumomWanPayloadInput {
+  /** Administrator-verified same JSON contract; do not apply name-based legacy overrides. */
+  configured?: boolean;
   model: string;
   prompt: string;
   seconds: number;
@@ -153,9 +155,9 @@ export function buildSnumomWanPayload(input: SnumomWanPayloadInput): Record<stri
   const images = (input.images || []).filter(item => item?.url);
   const videos = (input.videos || []).filter(item => item?.url);
   const audios = (input.audios || []).filter(item => item?.url);
-  const normalizedModel = canonicalSnumomVideoModel(input.model);
+  const normalizedModel = input.configured ? input.model : canonicalSnumomVideoModel(input.model);
   const normalizedResolution = normalizeSnumomResolution(input.resolution);
-  const frameMode = isSnumomWan30VideoModel(normalizedModel)
+  const frameMode = (input.configured || isSnumomWan30VideoModel(normalizedModel))
     && images.some(item => item.role === 'first_frame' || item.role === 'last_frame');
   const parameters = {
     ...(input.smartDuration ? { duration: -1 } : {}),
@@ -165,7 +167,7 @@ export function buildSnumomWanPayload(input: SnumomWanPayloadInput): Record<stri
     model: normalizedModel,
     prompt: input.prompt.trim(),
     ...(!input.smartDuration ? { seconds: String(input.seconds) } : {}),
-    size: normalizedModel.startsWith('grok-imagine-video-1.5') && normalizedResolution === '1080P' ? '720P' : normalizedResolution,
+    size: !input.configured && normalizedModel.startsWith('grok-imagine-video-1.5') && normalizedResolution === '1080P' ? '720P' : normalizedResolution,
     aspect_ratio: frameMode ? 'adaptive' : input.aspectRatio,
     ...(Object.keys(parameters).length ? { parameters } : {}),
     ...(images.length ? { reference_images: images } : {}),

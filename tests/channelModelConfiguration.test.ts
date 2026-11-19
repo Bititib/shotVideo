@@ -32,6 +32,26 @@ const makeDraft = (modelId: string, kind: ChannelModelDraft['kind'] = 'video'): 
   modelId, kind, displayName: modelId, upstreamModel: 'actual-provider-model',
   limits: { ...defaultRoutingLimits(), resolutions: kind === 'image' ? ['1K'] : ['720p'], ratios: ['1:1'] },
 });
+
+it('snumom: administrator adds a disabled same-protocol model; edits and sync preserve prices, balances and bindings', async()=>{
+  const id=addChannel('snumom configurable','https://snumom.com','snumom');
+  const draft={...makeDraft('configurable-snumom-video'),upstreamModel:'configurable-snumom-video',snumom:{billingType:'per_second' as const,referenceVideoBilling:true}};
+  vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{id:draft.modelId,type:'video'}]})));
+  const beforePrices=db.select().from(modelPricing).all(),beforeUsers=db.select().from(users).all();
+  const saved=await saveChannelModelConfiguration(id,draft,listChannelModelConfigurations(id).version);
+  expect(saved.canAdd).toBe(true);
+  expect(saved.models).toContainEqual(expect.objectContaining({modelId:draft.modelId,enabled:false,editable:true,snumom:draft.snumom}));
+  const preview=previewChannelModelRequest(id,draft,{seconds:10});
+  expect(preview).toMatchObject({method:'POST',path:'/v1/videos',body:{model:draft.modelId,seconds:'10',size:'720P'}});
+  await ChannelService.syncModels(id);
+  expect(getModelSpecification(draft.modelId)?.routes[0].snumom).toEqual(draft.snumom);
+  const current=listChannelModelConfigurations(id);
+  await saveChannelModelConfiguration(id,{...draft,limits:{...draft.limits,maxImages:8}},current.version);
+  expect(db.select().from(modelPricing).all()).toEqual(beforePrices);
+  expect(db.select().from(users).all()).toEqual(beforeUsers);
+  await expect(saveChannelModelConfiguration(id,{...draft,snumom:{billingType:'per_call',referenceVideoBilling:true}},listChannelModelConfigurations(id).version)).rejects.toThrow('参考视频计费');
+  await expect(saveChannelModelConfiguration(id,draft,saved.version)).rejects.toThrow('配置已变化');
+});
 const request = (resolution: string) => ({
   prompt: 'test', images: [], videos: [], audios: [], firstFrame: '', lastFrame: '', body: {}, publicBaseUrl: 'https://site.example.test',
   input: { images: 0, videos: 0, audios: 0, outputs: 1, seconds: 5, resolution, ratio: '1:1', firstFrame: false, lastFrame: false },

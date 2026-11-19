@@ -48,7 +48,9 @@ export function useVideoQuote(model: string, resolution: string, seconds: number
     const controller = new AbortController();
     setState({ key, loading: true });
     const timer = window.setTimeout(() => {
-      const request = (probe.seconds || 0) > 0
+      const request = !WAN_VIDEO_MODELS.has(model) && referenceVideos.length
+        ? fetchVideoQuote(model, resolution, seconds, controller.signal, 0, referenceVideos)
+        : (probe.seconds || 0) > 0
         ? fetchVideoQuote(model, resolution, seconds, controller.signal, probe.seconds)
         : fetchVideoQuote(model, resolution, seconds, controller.signal);
       request.then(quote => {

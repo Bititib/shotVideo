@@ -1,3 +1,4 @@
+import { normalizeConfiguredSnumomBody, prepareConfiguredSnumomBilling } from './snumomConfiguredExecution.js';
 import { normalizeImage2proInput } from './image2proInput.js';
 import { image2proCredential } from './image2proAdapter.js';
 import { isMinikeyChannel, minikeyCredential } from './minikeyAdapter.js';
@@ -353,7 +354,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
               patch(id, { siYueTianMinimaxInitialTask: null });
             } else if (configuredSiYueTian) {
               task = await pollSiYueTianMinimax(channel, taskId);
-            } else if ((meta.snumomReferenceBilling || meta.actualModel === SNUMOM_MUSE_MODEL) && isSnumomWanChannel(channel)) {
+            } else if ((meta.snumomConfiguredBilling || meta.snumomReferenceBilling || meta.actualModel === SNUMOM_MUSE_MODEL) && isSnumomWanChannel(channel)) {
               if (meta.snumomInitialTask) { task=normalizeSnumomWanTask(meta.snumomInitialTask,meta.referenceVideoSeconds || 0,meta.actualModel);patch(id,{snumomInitialTask:null}); }
               else task = await pollSpecificationVideo(channel,taskId,meta.actualModel,meta.referenceVideoSeconds || 0);
             }
@@ -947,6 +948,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
       && !(isZhiyingVideoModel(modelId) && token.allowedModels.includes(publicApiModelId(modelId)))
       && !spec.aliases.some(alias => token.allowedModels.includes(alias) && !checkAlias(spec, alias))) throw fail('Token 无权调用此模型', 403);
     const body = { ...req.body };
+    if (spec.routes.some(r=>r.snumom)) { try { normalizeConfiguredSnumomBody(body); } catch(error:any) { throw fail(error.message); } }
     const image2proConfigured = model.provider === 'image2pro';
     if (image2proConfigured) { try { normalizeImage2proInput(body); } catch (error:any) { throw fail(error.message); } }
     if (kind === 'video') normalizeVideoParameters(body, videoCapabilities(modelId, spec).parameterSchema, Boolean(req.is?.('multipart/form-data')));
@@ -983,7 +985,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     }
     if (nativeImageOutputs && body.n !== undefined && ![1, 4].includes(Number(body.n))) throw fail('MJ 每次仅提交一次任务，图片数量以上游实际结果为准');
     if (configuredSiYueTian) body.model = modelId;
-    const defaultSeconds = (v6kConfigured || configuredSiYueTian ? spec.limits.defaultSeconds : undefined)
+    const defaultSeconds = (v6kConfigured || configuredSiYueTian || spec.routes.some(r=>r.snumom) ? spec.limits.defaultSeconds : undefined)
       ?? (model.provider === 'megaby' && !spec.routes.some(route => route.id.startsWith(MEGABY_MODEL_ROUTE_PREFIX)) ? 5
         : spec.limits.duration.mode === 'options' ? spec.limits.duration.values[0] : spec.limits.duration.min);
     const request = specificationRequest({ ...body, ...(nativeImageOutputs ? { n: nativeImageOutputs } : {}), resolution: body.resolution || body.output_resolution || spec.limits.resolutions[0], video_length: body.video_length ?? body.seconds ?? body.duration ?? (modelId === SNUMOM_WAN_NSFW_MODEL ? body.parameters?.duration ?? body.duration_seconds : undefined) ?? defaultSeconds }, kind, process.env.BACKEND_URL || req.protocol + '://' + req.get('host'), v6kConfigured, image2proConfigured);
@@ -999,6 +1001,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     if (v6kBinding && candidates.some(target => target.route.channelId !== v6kBinding.channelId
       || target.route.upstreamModel !== v6kBinding.upstreamModel)) throw fail('V6K 线路与后台核对的型号不一致，请重新保存配置', 503);
     if (kind === 'video') { try { validateSpecificationVideoParameters(request, candidates); } catch (error: any) { throw fail(error.message); } }
+    const configuredSnumomBilling = await prepareConfiguredSnumomBilling(spec, request).catch((error:any)=>{throw fail(error.message);});
     if (snumomBilling && !candidates.every(t => isSnumomWanChannel(t.channel) && t.route.upstreamModel === modelId && t.route.executionModel === modelId)) throw fail('Wan 3.0 必须关联对应型号的 snumom 线路，未扣费');
     if (kind === 'video' && candidates.every(target => isMegabyChannel(target.channel))) {
       try {
@@ -1012,10 +1015,12 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     const trustedOrigins = [request.publicBaseUrl, req.protocol + '://' + req.get('host')];
     await prepareSpecificationReferenceImages(request, kind === 'video' ? candidates : [], trustedOrigins);
     const batch = !apiContext && kind === 'video' ? batchContextForRequest(req as any) : null;
-    const usage = { resolution: request.input.resolution, seconds: snumomBilling?.billableSeconds ?? request.input.seconds, count: nativeImageOutputs ? 1 : request.input.outputs };
+    const usage = { resolution: request.input.resolution, seconds: configuredSnumomBilling?.billableSeconds ?? snumomBilling?.billableSeconds ?? request.input.seconds, count: nativeImageOutputs ? 1 : request.input.outputs };
     const quote = batch?.pricingSnapshot ? { ...PricingService.quoteSnapshot(batch.pricingSnapshot, usage), pricingSnapshot: batch.pricingSnapshot }
       : PricingService.quote(modelId, usage, false, userId || null);
     if (!quote.billingType) throw fail('该规格尚未配置用户售价');
+    if(configuredSnumomBilling && quote.billingType!==configuredSnumomBilling.snumomConfiguredBilling.billingType)throw fail('售价计费方式与 snumom 参数配置不一致，未扣费');
+    if(configuredSnumomBilling && batch && Math.abs(quote.cost-batch.item.unit_cost)>0.000001)throw fail('参考素材或价格已变化，请重新预估批次，未提交');
     if ((modelId === SNUMOM_MUSE_MODEL || candidates.some(t=>t.route.upstreamModel===SNUMOM_MUSE_MODEL)) && quote.billingType !== 'per_call') throw fail('Muse Video 需配置按次售价，本次未扣费');
     if (nativeImageOutputs && quote.billingType !== 'per_call') throw fail('MJ 图片任务请配置按次售价，完整保留原结果');
     if (kind === 'video') {
@@ -1031,6 +1036,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
         ...(isZhiyingVideoModel(modelId) ? { zhiyingOrder: true } : {}),
         ...(modelId === KK_VIDEO_MODEL ? { kkLogicalRequestId: randomUUID() } : {}),
         ...snumomBilling,
+        ...configuredSnumomBilling,
         ...(kind === 'video' ? videoSubmissionPreparation() : {}),
         pricingSnapshot: quote.pricingSnapshot,
         seconds: request.input.seconds, resolution: request.input.resolution, aspect_ratio: request.input.ratio,

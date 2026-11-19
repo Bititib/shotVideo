@@ -1,4 +1,6 @@
 import { image2proUpstreamPricing } from './image2proUpstreamPricing.js';
+import { buildSnumomWanPayload } from './snumomWanAdapter.js';
+import { validateSnumomConfiguration } from '../../shared/snumomConfiguration.js';
 import { enrichImage2proCatalog } from './image2proPublicCapabilities.js';
 import { image2proModels } from './image2proAdapter.js';
 import { image2proLimits, image2proMediaSupported, image2proImageOptions, validImage2proRatio, validImage2proResolution } from './image2proCapabilities.js';
@@ -64,6 +66,7 @@ function readConfiguration(channel: Channel) {
       capabilities, enabled: model?.isActive === 1 && spec?.enabled !== false && (!routes.length || routes.some(route => route.enabled)),
       limits: spec?.limits ?? (kind ? existingModelLimits(modelId, kind) : null), editable,
       specificationEnabled: spec?.enabled, routeEnabled: routes.length === 1 ? routes[0].enabled : undefined,
+      ...(routes[0]?.snumom ? { snumom: routes[0].snumom } : {}),
     };
   });
   const version = createHash('sha256').update(JSON.stringify([
@@ -150,6 +153,11 @@ function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol
     return;
   }
   const limits = draft.limits;
+  if (protocol === 'snumom') {
+    if (draft.kind !== 'video' || draft.modelId !== draft.upstreamModel) throw fail('snumom 视频型号请使用上游原始 ID，不添加渠道前缀');
+    try { validateSnumomConfiguration(limits, draft.snumom); } catch(error:any) { throw fail(error.message); }
+    return;
+  }
   if (protocol && draft.kind !== 'video') throw fail('此协议只支持视频模型');
   if ((protocol !== 'wanfeng' && (limits.firstFrame || limits.lastFrame)) || ((!protocol || !channelVideoProtocols[protocol].multimedia) && (limits.maxVideos || limits.maxAudios))) {
     throw fail('此协议不支持所设置的音视频参考或独立首尾帧');
@@ -210,14 +218,19 @@ export function previewChannelModelRequest(channelId: number, draft: ChannelMode
   const seconds = sample.seconds ?? limits.defaultSeconds ?? (rule.mode === 'options' ? rule.values[0] : rule.min);
   const ratio = sample.ratio ?? limits.ratios[0], resolution = sample.resolution ?? limits.resolutions[0];
   const images = sample.images ?? limits.minImages, videos = sample.videos ?? 0, audios = sample.audios ?? 0;
+  const firstFrame=protocol==='snumom'?(sample.firstFrame??false):false,lastFrame=protocol==='snumom'?(sample.lastFrame??false):false;
+  if(typeof firstFrame!=='boolean'||typeof lastFrame!=='boolean')throw fail('首尾帧参数无效');
+  if(protocol==='snumom' && (lastFrame&&!firstFrame || (firstFrame||lastFrame)&&(images||videos||audios)))throw fail('首尾帧不能和普通素材混用，尾帧需要首帧');
   if (![images, videos, audios].every(count => Number.isSafeInteger(count) && count >= 0) || !Number.isSafeInteger(seconds)
     || typeof ratio !== 'string' || typeof resolution !== 'string') throw fail('预览参数无效');
-  const mismatches = routingMismatches(limits, { seconds, ratio, resolution, images, videos, audios, outputs: 1, firstFrame: false, lastFrame: false }, draft.kind);
+  const mismatches = routingMismatches(limits, { seconds, ratio, resolution, images, videos, audios, outputs: 1, firstFrame, lastFrame }, draft.kind);
   if (mismatches.length) throw fail(mismatches.join('；'));
   const urls = (count: number, extension: string) => Array.from({ length: count }, (_, index) => `https://example.invalid/${extension}-${index + 1}.${extension}`);
   const model = draft.upstreamModel, prompt = '请求体预览示例';
   const media = { images: urls(images, 'jpg'), videos: urls(videos, 'mp4'), audios: urls(audios, 'wav') };
   const preview = (path: string, body: Record<string, unknown>) => ({ method: 'POST', path, body });
+  if (protocol === 'snumom') return preview('/v1/videos', buildSnumomWanPayload({ model, configured:true, prompt, seconds, resolution, aspectRatio: ratio,
+    images: [...media.images.map(url => ({url, role:'reference_image' as const})),...(firstFrame?[{url:'https://example.invalid/first.jpg',role:'first_frame' as const}]:[]),...(lastFrame?[{url:'https://example.invalid/last.jpg',role:'last_frame' as const}]:[])], videos:media.videos.map(url=>({url})), audios:media.audios.map(url=>({url})) }));
   if (protocol === 'async-video') return preview('/v1/videos/generations', buildAsyncVideoPayload({ model, prompt, seconds, ratio, ...media, firstFrame: '', lastFrame: '' }));
   if (protocol === 'mjnewapi') return preview('/v1/videos', buildMjNewApiVideoPayload({ model, prompt, duration: seconds, aspectRatio: ratio, resolution, ...media }));
   if (protocol === 'newtoken') return preview('/v1/videos', buildNewTokenVideoPayload({ model: NEWTOKEN_SEEDANCE_PROTOCOL_MODEL, upstreamModel: model, prompt, duration: seconds, aspectRatio: ratio, ...media }));
@@ -228,6 +241,7 @@ export function previewChannelModelRequest(channelId: number, draft: ChannelMode
 }
 
 export async function saveChannelModelConfiguration(channelId: number, draft: ChannelModelDraft, version: string) {
+  draft = structuredClone(draft);
   const channel = getChannel(channelId);
   const protocol = getChannelVideoProtocol(channel);
   validateDraft(draft, protocol, channel.type === 'image2pro');
@@ -291,6 +305,7 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
     const cost = originalRoute?.upstreamModel === draft.upstreamModel ? originalRoute : undefined;
     const { limits } = draft;
     const route: ModelRoute = {
+      ...(protocol === 'snumom' ? { snumom: structuredClone(draft.snumom!) } : {}),
       id: originalRoute?.id ?? (live.type === 'image2pro' ? 'admin-channel-model-image2pro-' : protocol ? channelVideoProtocols[protocol].prefix : CHANNEL_MODEL_ROUTE_PREFIX) + randomUUID(), channelId, executionModel: draft.modelId,
       upstreamModel: draft.upstreamModel, enabled: draft.routeEnabled ?? originalRoute?.enabled ?? true, limits,
       cost: cost?.cost ?? null, costUnit: cost?.costUnit ?? 'unknown',

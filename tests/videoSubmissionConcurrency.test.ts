@@ -120,6 +120,142 @@ function managed(targetModel = model) {
 }
 const body = { model, prompt: '并发提交测试', seconds: 15, video_length: 15, resolution: '720p', aspect_ratio: '16:9' };
 
+async function configuredSnumom(billingType:'per_call'|'per_second'='per_call', referenceVideoBilling=false) {
+  const id='admin-test-snumom';
+  const {saveChannelModelConfiguration,listChannelModelConfigurations}=await import('../server/services/channelModelConfigurationService');
+  vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{id,type:'video'}]})));
+  const limits={...defaultRoutingLimits(),maxVideos:2,maxImages:8,defaultSeconds:10};
+  await saveChannelModelConfiguration(1,{modelId:id,displayName:id,upstreamModel:id,kind:'video',limits,snumom:{billingType,referenceVideoBilling}},listChannelModelConfigurations(1).version);
+  db.update(models).set({isActive:1}).where(eq(models.modelId,id)).run();
+  db.insert(modelPricing).values({modelPattern:id,billingType,inputPrice:1}).run();
+  return {...body,model:id,seconds:10,video_length:10};
+}
+for(const endpoint of ['/v1/videos','/api/video/generate']) {
+  it.each(['completed','failed'])(`configured snumom ${endpoint}: immediate %s receipt is saved before settlement`,async state=>{
+    const request=await configuredSnumom();
+    const upstream=vi.fn(async()=>Response.json({id:'task_immediate_custom',status:state,metadata:state==='completed'?{url:'https://media.invalid/result.mp4'}:undefined,error:state==='failed'?{message:'image rejected'}:undefined}));
+    vi.stubGlobal('fetch',upstream);await(await post(endpoint,request)).text();
+    await vi.waitFor(()=>expect(row().status).toBe(state));
+    expect(meta().videoId).toBe('task_immediate_custom');
+    expect(endpoint==='/v1/videos'?tokenWallet():wallet()).toBe(state==='failed'?100:99);
+    expect(upstream).toHaveBeenCalledOnce();
+  });
+  it.each(['completed','failed','rejected','timeout','malformed','missing'])(`configured snumom ${endpoint} %s: one submission and idempotent balance`,async state=>{
+    const request=await configuredSnumom();
+    const upstream=vi.fn(async(_url:any,options:any)=>{
+      if(options?.method==='POST') {
+        if(state==='timeout')throw new Error('socket hang up');
+        if(state==='malformed')return new Response('<html>gateway</html>');
+        if(state==='missing')return Response.json({status:'queued'});
+        if(state==='rejected')return Response.json({error:{message:'No available channel for model admin-test-snumom under group default (distributor)'}},{status:503});
+        return Response.json({id:'task_custom'});
+      }
+      return Response.json({id:'task_custom',status:state,metadata:state==='completed'?{url:'https://media.invalid/result.mp4'}:undefined,error:state==='failed'?{message:'DataInspectionFailed'}:undefined});
+    });vi.stubGlobal('fetch',upstream);
+    await(await post(endpoint,request)).text();
+    const failed=['failed','rejected'].includes(state),unknown=['timeout','missing','malformed'].includes(state);
+    if(unknown)await vi.waitFor(()=>expect(meta().billingStatus).toBe('review'));
+    else await vi.waitFor(()=>expect(row().status).toBe(failed?'failed':'completed'));
+    const balance=endpoint==='/v1/videos'?tokenWallet:wallet;
+    expect(balance()).toBe(failed?100:99);
+    const before=balance();
+    await resumeSpecificationTasks(); video.resumeAllPendingVideoTasks();
+    expect(balance()).toBe(before);
+    expect(upstream.mock.calls.filter(([,opts])=>opts?.method==='POST')).toHaveLength(1);
+  });
+  it.each([false,true])(`configured snumom ${endpoint}: reference billing=%s uses server probe`,async reference=>{
+    const request=await configuredSnumom('per_second',reference);
+    const calls:any[]=[];
+    vi.stubGlobal('fetch',vi.fn(async(_url:any,options:any)=>{
+      if(options?.method==='POST'){calls.push(JSON.parse(options.body));return Response.json({id:'task_custom_ref'});}
+      return Response.json({id:'task_custom_ref',status:'completed',metadata:{url:'https://media.invalid/result.mp4'}});
+    }));
+    await(await post(endpoint,{...request,reference_videos:['https://example.com/ref.mp4'],reference_video_seconds:0.01})).text();
+    await vi.waitFor(()=>expect(row().status).toBe('completed'));
+    expect(endpoint==='/v1/videos'?tokenWallet():wallet()).toBeCloseTo(reference?84.9:90);
+    expect(probes.video).toHaveBeenCalledTimes(reference?1:0);
+    expect(calls).toHaveLength(1);expect(calls[0].reference_videos).toHaveLength(1);
+  });
+  it(`configured snumom ${endpoint}: probe failure and billing mismatch never charge or submit`,async()=>{
+    const request=await configuredSnumom('per_second',true);
+    probes.video.mockRejectedValue(new Error('无法探测视频'));
+    const calls=extraUpstream('snumom');
+    await(await post(endpoint,{...request,reference_videos:['https://example.com/ref.mp4']})).text();
+    expect(calls).toHaveLength(0);expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);expect(db.select().from(contents).all()).toHaveLength(0);
+    db.update(modelPricing).set({billingType:'per_call'}).where(eq(modelPricing.modelPattern,request.model)).run();
+    await(await post(endpoint,request)).text();
+    expect(calls).toHaveLength(0);expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);
+  });
+}
+
+it('configured snumom concurrent identical API request uses one reservation and refunds unlimited token once',async()=>{
+  const request=await configuredSnumom();db.update(apiTokens).set({balance:-1}).run();
+  const upstream=vi.fn(async()=>Response.json({error:{message:'No available channel for model admin-test-snumom under group default (distributor)'}},{status:503}));vi.stubGlobal('fetch',upstream);
+  const key=crypto.randomUUID(),send=()=>nativeFetch(origin+'/v1/videos',{method:'POST',headers:{Authorization:'Bearer '+tokenKey,'Content-Type':'application/json','Idempotency-Key':key},body:JSON.stringify(request)}).then(r=>r.text());
+  await Promise.all([send(),send(),send()]);
+  await vi.waitFor(()=>expect(row().status).toBe('failed'));
+  expect(db.select().from(contents).all()).toHaveLength(1);expect(wallet()).toBe(100);expect(db.select().from(apiTokens).get()!.usedAmount).toBe(0);
+  await resumeSpecificationTasks();expect(upstream).toHaveBeenCalledOnce();expect(wallet()).toBe(100);
+});
+
+it('configured snumom batch uses probed quote, persists reservation, and does not replay duplicate batch',async()=>{
+  await configuredSnumom('per_second',true);const calls:any[]=[];
+  vi.stubGlobal('fetch',vi.fn(async(url:any,options:any)=>{
+    if(String(url).startsWith('http://127.0.0.1:9876/'))return nativeFetch(origin+new URL(String(url)).pathname,options);
+    if(options?.method==='POST'){calls.push(JSON.parse(options.body));return Response.json({id:'task_custom_batch_'+calls.length});}
+    return Response.json({id:String(url).split('/').at(-1),status:'completed',url:'https://media.invalid/batch.mp4'});
+  }));
+  const input={model:'admin-test-snumom',name:'configured batch',aspect_ratio:'16:9',resolution:'720p',video_length:10,autoRetry:false,maxRetries:0,
+    requestKey:'custom-snumom-batch-111',expectedUnitCost:15.1,creatives:[{prompt:'自然风景',count:2,reference_images:[],reference_videos:['https://example.com/ref.mp4']}]};
+  const response=await post('/api/video-batches',input);expect(response.status,await response.clone().text()).toBe(200);const batch:any=await response.json();
+  await vi.waitFor(()=>{tickVideoBatches();expect(db.select().from(contents).all()).toHaveLength(2);expect(db.select().from(contents).all().every(c=>c.status==='completed')).toBe(true);});
+  expect(wallet()).toBeCloseTo(69.8);expect(calls).toHaveLength(2);
+  expect((await(await post('/api/video-batches',input)).json()).id).toBe(batch.id);tickVideoBatches();expect(calls).toHaveLength(2);expect(wallet()).toBeCloseTo(69.8);
+});
+
+it.each(['/v1/videos','/api/video/generate'])('configured snumom %s rejects invalid parameters before charging',async endpoint=>{
+  const request=await configuredSnumom();const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);
+  for(const change of [{seconds:31,video_length:31},{resolution:'4k'},{seconds:9},{reference_videos:Array(3).fill('https://example.com/ref.mp4')},{last_frame:'https://example.com/end.jpg'},{input:{media:[]}}]) {
+    const response=await post(endpoint,{...request,...change});expect(response.status).toBe(400);await response.text();
+  }
+  expect(fetcher).not.toHaveBeenCalled();expect(wallet()).toBe(100);expect(tokenWallet()).toBe(100);expect(db.select().from(contents).all()).toHaveLength(0);
+});
+
+it('configured snumom quote ignores client duration and uses server probe without balance changes',async()=>{
+  const request=await configuredSnumom('per_second',true);
+  const {quoteVideoRequestWithReferences}=await import('../server/services/videoQuoteService');
+  const quote=await quoteVideoRequestWithReferences({...request,reference_videos:['https://example.com/ref.mp4'],reference_video_seconds:0.001},1);
+  expect(quote.cost).toBe(15.1);expect(quote.referenceVideoSeconds).toBe(5.1);expect(wallet()).toBe(100);expect(db.select().from(contents).all()).toHaveLength(0);
+});
+
+it('configured snumom retains original price/policy across admin edits, transient query error and repeated recovery',async()=>{
+  const request=await configuredSnumom('per_second',true),gate=deferred<Response>();let queries=0;
+  const upstream=vi.fn(async(_url:any,options:any)=>{
+    if(options?.method==='POST')return Response.json({id:'task_snapshot',error:{message:'receipt delivered after gateway error'}},{status:500});
+    queries++;if(queries===1)return new Response('query unavailable',{status:503});return gate.promise;
+  });vi.stubGlobal('fetch',upstream);
+  await(await post('/v1/videos',{...request,reference_videos:['https://example.com/ref.mp4']})).text();
+  await vi.waitFor(()=>expect(queries).toBeGreaterThan(1));
+  expect(meta().videoId).toBe('task_snapshot');expect(tokenWallet()).toBeCloseTo(84.9);
+  const spec=getModelSpecification(request.model)!;
+  saveModelSpecification({...spec,routes:spec.routes.map(r=>({...r,snumom:{billingType:'per_call',referenceVideoBilling:false}}))});
+  db.update(modelPricing).set({billingType:'per_call',inputPrice:9}).where(eq(modelPricing.modelPattern,request.model)).run();
+  gate.resolve(Response.json({id:'task_snapshot',status:'completed',url:'https://media.invalid/result.mp4'}));
+  await vi.waitFor(()=>expect(row().status).toBe('completed'));
+  await resumeSpecificationTasks();expect(tokenWallet()).toBeCloseTo(84.9);expect(meta().snumomConfiguredBilling).toEqual({billingType:'per_second',referenceVideoBilling:true});
+  expect(upstream.mock.calls.filter(([,o])=>o?.method==='POST')).toHaveLength(1);
+});
+
+it.each([200,502])('configured snumom HTTP %s header task receipt survives unreadable JSON',async status=>{
+  const request=await configuredSnumom();let posted=0;
+  vi.stubGlobal('fetch',vi.fn(async(_url:any,options:any)=>{
+    if(options?.method==='POST'){posted++;return new Response('<html>gateway</html>',{status,headers:{'x-task-id':'task_header_custom'}});}
+    return Response.json({id:'task_header_custom',status:'completed',url:'https://media.invalid/result.mp4'});
+  }));
+  await(await post('/v1/videos',request)).text();await vi.waitFor(()=>expect(row().status).toBe('completed'));
+  expect(meta().videoId).toBe('task_header_custom');expect(posted).toBe(1);expect(tokenWallet()).toBe(99);
+});
+
 function extraSetup(id: string, provider: 'hmstudio'|'funai', spec: boolean) {
   const upstream=provider==='hmstudio'?getHmStudioUpstreamVideoModel(id):id.replace(/^funai-/,'');
   db.delete(channelApiKeys).run();

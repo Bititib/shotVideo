@@ -7,6 +7,7 @@ export const NEW_TOKEN_MODEL_ROUTE_PREFIX = CHANNEL_MODEL_ROUTE_PREFIX + 'newtok
 export const MEGABY_MODEL_ROUTE_PREFIX = CHANNEL_MODEL_ROUTE_PREFIX + 'megaby-';
 export const WANFENG_MODEL_ROUTE_PREFIX = CHANNEL_MODEL_ROUTE_PREFIX + 'wanfeng-';
 export const channelVideoProtocols = {
+  snumom: { prefix: CHANNEL_MODEL_ROUTE_PREFIX + 'snumom-', label: 'snumom 视频 JSON', multimedia: true },
   wanfeng: { prefix: WANFENG_MODEL_ROUTE_PREFIX, label: '晚风统一视频', multimedia: true },
   'async-video': { prefix: ASYNC_VIDEO_MODEL_ROUTE_PREFIX, label: 'Vx-乐异步视频', multimedia: false },
   mjnewapi: { prefix: MJ_NEW_API_MODEL_ROUTE_PREFIX, label: 'MJNewAPI 视频 JSON', multimedia: true },
@@ -18,6 +19,7 @@ export const STANDARD_CHANNEL_IMAGE_RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4
 export const STANDARD_CHANNEL_VIDEO_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4'] as const;
 
 export type ChannelModelDraft = {
+  snumom?: { billingType: 'per_call' | 'per_second'; referenceVideoBilling: boolean };
   modelId: string;
   displayName: string;
   upstreamModel: string;
@@ -28,6 +30,7 @@ export type ChannelModelDraft = {
 };
 
 export type ChannelModelConfiguration = {
+  snumom?: ChannelModelDraft['snumom'];
   modelId: string;
   displayName: string;
   upstreamModel: string;

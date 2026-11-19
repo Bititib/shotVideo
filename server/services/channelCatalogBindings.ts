@@ -135,6 +135,7 @@ function supportsPair(channel: Channel, bindings: Map<string, string>, id: strin
 }
 
 export function getChannelVideoProtocol(channel: ChannelBindings): ChannelVideoProtocol | undefined {
+  if (channel.type === 'snumom') return 'snumom';
   if (channel.type === 'wanfeng') return 'wanfeng';
   if (isAsyncVideoChannel(channel)) return 'async-video';
   if (isMegabyChannel(channel)) return 'megaby';

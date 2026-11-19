@@ -9,7 +9,7 @@ import { ttsVoices } from '../../../shared/tts';
 import ReferencePrompt from './ReferencePrompt';
 import { bindReferences, referenceLabel, insertReference, resolveReferenceMentions, type ReferenceBindings } from './referenceMentions';
 import type { CSSProperties } from 'react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUpRight, Video, Sparkles, X, RefreshCw, Paperclip, Crosshair } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { ImageModel } from '../api/imageGen';
@@ -131,7 +131,8 @@ export default function GeneratorPanel({ onPreviewReference, document: canvasDoc
   const supportsFrames = managedLimits ? managedLimits.firstFrame : /^(veo|wan3\.0)/i.test(model);
   const frameInvalid = kind === 'video' && videoMode === 'frames' && (!supportsFrames || !imageRefs.some(n => n.id === (firstFrameId || imageRefs[0]?.id)) || Boolean(lastFrameId && !imageRefs.some(n => n.id === lastFrameId)));
   const imagePrice = kind === 'image' ? (activeModel as ImageModel | undefined)?.resolutionPrices?.[resolution] ?? (activeModel as ImageModel | undefined)?.rate : undefined;
-  const videoQuote = useVideoQuote(model, resolution, seconds, Boolean(user && kind === 'video' && video));
+  const quoteReferences = useMemo(()=>references.filter(n=>n.kind==='video'&&n.src).map(n=>n.src!),[references]);
+  const videoQuote = useVideoQuote(model, resolution, seconds, Boolean(user && kind === 'video' && video), quoteReferences);
   const videoPrice = videoQuote.quote?.cost;
   const estimatedCost = kind === 'image' && imagePrice != null ? imagePrice * (isMj || managedLimits?.outputsPerTask ? 1 : count) : kind === 'audio' && activeModel?.rate != null ? activeModel.rate * combined.length : videoPrice;
   return <aside className="studio-inspector" aria-label="创作面板">

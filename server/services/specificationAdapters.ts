@@ -1,3 +1,4 @@
+import { validateConfiguredSnumomRequest } from './snumomConfiguredExecution.js';
 import { buildImage2proVideoPayload, buildImage2proImagePayload } from './image2proPayload.js';
 import { image2proCredential, isImage2proChannel, submitImage2pro, pollImage2pro, normalizeImage2pro, image2proModels, Image2proError } from './image2proAdapter.js';
 import { isMinikeyChannel, submitMinikey, pollMinikey, MinikeyError, minikeyCredential, normalizeMinikeyTask } from './minikeyAdapter.js';
@@ -65,6 +66,10 @@ export function validateSpecificationVideoParameters(request: SpecificationReque
     if (problems.length) throw new Error(problems.join('；'));
   }
   for (const target of candidates) {
+    if(target.route.snumom) {
+      if(target.channel.type!=='snumom')throw new Error('snumom 原渠道配置已变化');
+      validateConfiguredSnumomRequest(request);
+    }
     if (target.route.siYueTianVideo && (request.firstFrame || request.lastFrame)
       && (request.images.length || request.videos.length || request.audios.length))
       throw new Error('四月天独立首尾帧不能与普通参考素材混用');
@@ -181,13 +186,27 @@ async function post(url: string, channel: any, payload: unknown, onStarting: () 
       throw new SpecificationUpstreamError(upstreamDiagnostic(channel.type || 'OpenAI-compatible', '上游错误响应读取中断，请核实原请求', { message: error.message, code: error.cause?.code }, channel.apiKey, response.status, response.headers.get('x-request-id') || undefined), false, true);
     }
     let body: unknown; try { body = JSON.parse(text); } catch {}
+    if(channel.configuredSnumom && extractSnumomTaskId(body,response.headers)) {
+      const receipt=body && typeof body==='object'?body:{id:extractSnumomTaskId(body,response.headers)};
+      onParsed?.(receipt,response.headers);
+      return receipt;
+    }
     onResponse?.(evidenceFor(body, response.headers, response.status, 'response_without_id'));
     throw submissionFailure(response.status, channel.apiKey ? text.split(channel.apiKey).join('[REDACTED]') : text, channel, channel.videoSubmission === true, response.headers);
   }
   let result: any;
   try { result = await diagnosticJson(channel.type || 'OpenAI-compatible', '提交响应；请勿重复提交', response, channel.apiKey); }
-  catch (error: any) { onResponse?.(evidenceFor(undefined, response.headers, response.status, 'response_unreadable')); throw new SpecificationUpstreamError(error.message, false, true); }
+  catch (error: any) {
+    const headerId=channel.configuredSnumom && extractSnumomTaskId(undefined,response.headers);
+    if(headerId){const receipt={id:headerId};onParsed?.(receipt,response.headers);return receipt;}
+    onResponse?.(evidenceFor(undefined, response.headers, response.status, 'response_unreadable')); throw new SpecificationUpstreamError(error.message, false, true);
+  }
   onResponse?.(evidenceFor(result, response.headers, response.status, 'response_without_id'));
+  if(channel.configuredSnumom && extractSnumomTaskId(result,response.headers)) {
+    const receipt=result && typeof result==='object'?result:{id:extractSnumomTaskId(result,response.headers)};
+    onParsed?.(receipt,response.headers);
+    return receipt;
+  }
   if (channel.type === 'hmstudio' && classifyHmSubmission(response.status, result, response.headers).outcome !== 'accepted')
     throw submissionFailure(response.status, JSON.stringify(result), channel, channel.videoSubmission === true, response.headers);
   if (channel.videoSubmission && (isSnumomSubmissionRejection(response.status, JSON.stringify(result), channel, response.headers)
@@ -247,7 +266,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
     }
     catch (e) { if (e instanceof MinikeyError) throw new SpecificationUpstreamError(e.message, false, e.uncertain, false, e.httpStatus, e.confirmedFailure); throw e; }
   }
-  const c = { ...target.channel, videoSubmission: true }, model = target.route.upstreamModel, exec = target.route.executionModel, i = request.input;
+  const c = { ...target.channel, videoSubmission: true, configuredSnumom: Boolean(target.route.snumom) }, model = target.route.upstreamModel, exec = target.route.executionModel, i = request.input;
   const standard = target.route.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX);
   if (c.type === 'wanfeng') {
     let payload: ReturnType<typeof buildWanfengVideoPayload>;
@@ -453,7 +472,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
     payload = buildMjNewApiVideoPayload({ model, prompt: request.prompt, duration: i.seconds, aspectRatio: i.ratio, resolution: i.resolution,
       images, videos, audios });
   } else if (isSnumomWanChannel(c)) {
-    payload = buildSnumomWanPayload({ model, prompt: request.prompt, seconds: i.seconds, aspectRatio: i.ratio, resolution: i.resolution,
+    payload = buildSnumomWanPayload({ model, configured:Boolean(target.route.snumom), prompt: request.prompt, seconds: i.seconds, aspectRatio: i.ratio, resolution: i.resolution,
       ...(isSnumomWanVideoModel(model) ? { smartDuration:Number(request.body.parameters?.duration ?? request.body.duration_seconds ?? request.body.video_length ?? request.body.seconds ?? request.body.duration) === -1,
         promptExtend:request.body.parameters?.prompt_extend ?? request.body.prompt_extend,inputMedia:normalizeSnumomWanInputMedia(request.body.input?.media) } : {}),
       images: [...refs(request.images).map(url => ({ url, role: 'reference_image' as const })),
@@ -511,7 +530,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   const id = isSnumomWanChannel(c) ? extractSnumomTaskId(job, taskHeaders)
     : job.task_id || job.taskId || job.id || job.data?.task_id || job.data?.id || job.request_id;
   if (!id) throw new SpecificationUpstreamError(upstreamDiagnostic(c.type || 'OpenAI-compatible', '上游未返回任务 ID，提交结果待核实，请勿重复提交', job, c.apiKey, undefined, taskHeaders?.get('x-request-id') || undefined), false, true);
-  if ((isSnumomWanVideoModel(exec) || exec === SNUMOM_MUSE_MODEL) && isSnumomWanChannel(c) && ['completed','failed'].includes(String(job.status).toLowerCase())) onStarting({videoId:String(id),upstreamTaskId:String(id),snumomInitialTask:job});
+  if ((target.route.snumom || isSnumomWanVideoModel(exec) || exec === SNUMOM_MUSE_MODEL) && isSnumomWanChannel(c) && ['completed','failed'].includes(String(job.status).toLowerCase())) onStarting({videoId:String(id),upstreamTaskId:String(id),snumomInitialTask:job});
   return String(id);
 }
 export async function pollSpecificationVideo(channel: any, taskId: string, executionModel?: string, referenceVideoSeconds = 0) {
