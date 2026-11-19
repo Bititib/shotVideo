@@ -52,6 +52,48 @@ it('snumom: administrator adds a disabled same-protocol model; edits and sync pr
   await expect(saveChannelModelConfiguration(id,{...draft,snumom:{billingType:'per_call',referenceVideoBilling:true}},listChannelModelConfigurations(id).version)).rejects.toThrow('参考视频计费');
   await expect(saveChannelModelConfiguration(id,draft,saved.version)).rejects.toThrow('配置已变化');
 });
+
+it('snumom admin HTTP: reports protocol, rejects tail-only, saves both frames and retains video/audio counts', async () => {
+  const id = addChannel('snumom frames', 'https://snumom.com', 'snumom');
+  const userId = Number(db.insert(users).values({
+    username: 'snumom-admin', email: 'snumom-admin@example.test', role: 'super_admin', passwordHash: 'unused',
+  }).run().lastInsertRowid);
+  const headers = { Authorization: 'Bearer ' + jwt.sign({ userId }, env.JWT_SECRET), 'Content-Type': 'application/json' };
+  const modelId = 'snumom-frames-test';
+  const draft: ChannelModelDraft = {
+    ...makeDraft(modelId), upstreamModel: modelId, snumom: { billingType: 'per_call', referenceVideoBilling: false },
+    limits: { ...makeDraft(modelId).limits, maxImages: 4, maxVideos: 2, maxAudios: 3, firstFrame: true, lastFrame: true },
+  };
+  const app = express();
+  app.use(express.json());
+  app.use('/api/admin/channels', channelRoutes);
+  const server = app.listen(0, '127.0.0.1');
+  const localFetch = globalThis.fetch;
+  const upstream = vi.fn(async () => Response.json({ data: [{ id: modelId, type: 'video' }] }));
+  vi.stubGlobal('fetch', upstream);
+  try {
+    await new Promise<void>((resolve, reject) => { server.once('listening', resolve); server.once('error', reject); });
+    const url = 'http://127.0.0.1:' + (server.address() as import('node:net').AddressInfo).port + '/api/admin/channels/' + id + '/model-configurations';
+    const initial = await localFetch(url, { headers });
+    expect(initial.status).toBe(200);
+    expect(initial.headers.get('cache-control')).toBe('private, no-store');
+    const configuration = await initial.json();
+    expect(configuration).toMatchObject({ protocol: 'snumom', canAdd: true });
+    const put = (value: ChannelModelDraft) => localFetch(url, { method: 'PUT', headers, body: JSON.stringify({ draft: value, version: configuration.version }) });
+    const rejected = await put({ ...draft, limits: { ...draft.limits, firstFrame: false } });
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toMatchObject({ error: expect.stringContaining('尾帧须同时支持首帧') });
+    expect(upstream).not.toHaveBeenCalled();
+    const saved = await put(draft);
+    expect(saved.status).toBe(200);
+    const reloaded = await (await localFetch(url, { headers })).json();
+    expect(reloaded.models).toContainEqual(expect.objectContaining({ modelId, enabled: false, limits: draft.limits }));
+    const preview = previewChannelModelRequest(id, draft, { firstFrame: true, lastFrame: true });
+    expect(preview.body).toMatchObject({ aspect_ratio: 'adaptive', reference_images: [{ role: 'first_frame' }, { role: 'last_frame' }] });
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
 const request = (resolution: string) => ({
   prompt: 'test', images: [], videos: [], audios: [], firstFrame: '', lastFrame: '', body: {}, publicBaseUrl: 'https://site.example.test',
   input: { images: 0, videos: 0, audios: 0, outputs: 1, seconds: 5, resolution, ratio: '1:1', firstFrame: false, lastFrame: false },

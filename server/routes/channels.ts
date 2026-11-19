@@ -111,6 +111,7 @@ function channelOperationError(res: Response, error: any) {
 }
 
 router.get('/:id/model-configurations', (req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
   try { res.json(listChannelModelConfigurations(Number(req.params.id))); }
   catch (error) { channelOperationError(res, error); }
 });

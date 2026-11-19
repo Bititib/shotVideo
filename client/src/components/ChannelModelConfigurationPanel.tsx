@@ -30,8 +30,8 @@ function draftWithFields(draft: ChannelModelDraft, resolutions: string, ratios: 
     limits: { ...draft.limits, resolutions: split(resolutions), ratios: split(ratios), duration } };
 }
 
-export default function ChannelModelConfigurationPanel({ channelId, channelName, onClose, onSaved, onManage }: {
-  channelId: number; channelName: string; onClose: () => void; onSaved: () => void; onManage: () => void;
+export default function ChannelModelConfigurationPanel({ channelId, channelName, channelType, onClose, onSaved, onManage }: {
+  channelId: number; channelName: string; channelType?: string; onClose: () => void; onSaved: () => void; onManage: () => void;
 }) {
   const [data, setData] = useState<ChannelModelConfigurations | null>(null);
   const [selected, setSelected] = useState<ChannelModelConfiguration | null>(null);
@@ -163,11 +163,15 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
   };
   const limits = draft?.limits ?? selected?.limits;
   const duration = limits?.duration;
-  const protocol = data?.protocol ? channelVideoProtocols[data.protocol] : null;
+  // A missing protocol must not silently turn a typed snumom channel into a
+  // generic form. An explicit server protocol remains authoritative.
+  const protocolId = data?.protocol ?? (channelType === 'snumom' ? 'snumom' : undefined);
+  const protocol = protocolId ? channelVideoProtocols[protocolId] : null;
+  const snumom = protocolId === 'snumom';
   const asyncVideo = data?.protocol === 'async-video';
   const wanfeng = data?.protocol === 'wanfeng';
   const image2pro = data?.image2pro === true;
-  const chooseFromCatalog = image2pro || wanfeng || asyncVideo || data?.protocol === 'megaby' || data?.protocol === 'snumom';
+  const chooseFromCatalog = image2pro || wanfeng || asyncVideo || data?.protocol === 'megaby' || snumom;
   const upstreamPricing = catalog?.find(entry => entry.id === draft?.upstreamModel)?.upstreamPricing;
   const availableModels = catalog?.filter(entry => !data?.models.some(row => row.modelId !== selected?.modelId && row.upstreamModel === entry.id));
 
@@ -221,16 +225,16 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
           {draft ? <form id="channel-model-form" className="v6k-model-form" style={tab === '参数与媒体' ? undefined : { display: 'none' }} onSubmit={event => void save(event)}>
             <fieldset disabled={busy} className="v6k-model-form">
               <div className="v6k-identity-grid">
-                <label>本站 API 模型 ID<input className={field} value={draft.modelId} required readOnly={Boolean(selected) || image2pro || data?.protocol==='snumom'}
+                <label>本站 API 模型 ID<input className={field} value={draft.modelId} required readOnly={Boolean(selected) || image2pro || snumom}
                   onChange={event => setDraft({ ...draft, modelId: event.target.value })} /></label>
                 <label>显示名称<input className={field} value={draft.displayName} required
                   onChange={event => setDraft({ ...draft, displayName: event.target.value })} /></label>
-                <label>上游模型 ID{chooseFromCatalog ? <select className={field} value={draft.upstreamModel} required disabled={(image2pro || data?.protocol==='snumom') && Boolean(selected)}
+                <label>上游模型 ID{chooseFromCatalog ? <select className={field} value={draft.upstreamModel} required disabled={(image2pro || snumom) && Boolean(selected)}
                   onChange={event => {
                     const entry = availableModels?.find(model => model.id === event.target.value);
-                    if (!entry || !entry.limits && entry.kind !== 'text' && data?.protocol!=='snumom') return;
-                    const limits = entry.limits ?? (data?.protocol==='snumom'?draft.limits:defaultRoutingLimits());
-                    setDraft({ ...draft, upstreamModel: entry.id, limits, ...(image2pro ? {modelId:entry.id,displayName:entry.id,kind:entry.kind!} : data?.protocol==='snumom'?{modelId:entry.id,displayName:entry.id}:{}) });
+                    if (!entry || !entry.limits && entry.kind !== 'text' && !snumom) return;
+                    const limits = entry.limits ?? (snumom ? draft.limits : defaultRoutingLimits());
+                    setDraft({ ...draft, upstreamModel: entry.id, limits, ...(image2pro ? {modelId:entry.id,displayName:entry.id,kind:entry.kind!} : snumom ? {modelId:entry.id,displayName:entry.id} : {}) });
                     setResolutions(limits.resolutions.join(','));
                     setRatios(limits.ratios.join(','));
                     setSeconds(limits.duration.values.join(','));
@@ -299,16 +303,16 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                     <label>参考素材合计上限<input className={field} type="number" min="0" max="300" value={draft.limits.maxReferences ?? ''}
                       onChange={event => setLimits({ maxReferences: event.target.value ? Number(event.target.value) : undefined })} /></label>
                   </>}
-                  {(wanfeng || image2pro || data?.protocol==='snumom') && <>
+                  {(wanfeng || image2pro || snumom) && <>
                     <label><input type="checkbox" checked={draft.limits.firstFrame}
-                      onChange={event => setLimits({ firstFrame: event.target.checked })} />独立首帧</label>
-                    <label><input type="checkbox" checked={draft.limits.lastFrame}
+                      onChange={event => setLimits({ firstFrame: event.target.checked, ...(snumom && !event.target.checked ? { lastFrame: false } : {}) })} />独立首帧</label>
+                    <label><input type="checkbox" checked={draft.limits.lastFrame} disabled={snumom && !draft.limits.firstFrame}
                       onChange={event => setLimits({ lastFrame: event.target.checked })} />独立尾帧</label>
                   </>}
                   {draft.kind === 'image' && <label>最多输出图片<input className={field} type="number" min="1" max="4" value={draft.limits.maxOutputs}
                     onChange={event => setLimits({ maxOutputs: Number(event.target.value) })} /></label>}
                 </div>
-                {data?.protocol==='snumom' && <fieldset><legend>snumom 同接口计费规则</legend>
+                {snumom && <fieldset><legend>snumom 同接口计费规则</legend>
                   <p>仅适用于 /v1/videos JSON 协议。按次/按秒不适用于 Token 计费型号。售价请到“关联型号与价格”单独设置；不会自动修改已有价格。</p>
                   <label>计费方式<select className={field} required value={draft.snumom?.billingType??''} onChange={e=>setDraft({...draft,snumom:{billingType:e.target.value as 'per_call'|'per_second',referenceVideoBilling:false}})}>
                     <option value="" disabled>请选择</option><option value="per_call">按次（每条视频）</option><option value="per_second">按秒（输出时长）</option>

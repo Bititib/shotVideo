@@ -82,7 +82,7 @@ export const adminApi = {
   },
   testChannel(id: number) { return api.post<any>(`/admin/channels/${id}/test`); },
   syncChannelModels(id: number) { return api.post<any>(`/admin/channels/${id}/sync-models`); },
-  getChannelModelConfigurations(id: number) { return api.get<ChannelModelConfigurations>(`/admin/channels/${id}/model-configurations`); },
+  getChannelModelConfigurations(id: number) { return client.get<ChannelModelConfigurations>(`/admin/channels/${id}/model-configurations`, { cache: 'no-store' }); },
   getAuthorizedChannelModels(id: number) { return api.get<ChannelModelCatalogEntry[]>(`/admin/channels/${id}/model-configurations/catalog`); },
   previewChannelModelRequest(id: number, draft: ChannelModelDraft, sample: V6kRequestSample) {
     return api.post<ChannelModelRequestPreview>(`/admin/channels/${id}/model-configurations/preview`, { draft, sample });

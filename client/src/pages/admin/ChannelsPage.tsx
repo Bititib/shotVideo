@@ -29,12 +29,12 @@ const HUSS_BASE_URL = 'https://www.huss.top';
 const MIAOWU_BASE_URL = 'https://api.miaowuai.store';
 
 const ModelsPage = lazy(() => import('./ModelsPage'));
-type ModelEditor = { id: number; name: string; kind: 'minikey' | 'zhiying' | 'v6k' | 'siyuetian' | 'default' };
+type ModelEditor = { id: number; name: string; type: string; kind: 'minikey' | 'zhiying' | 'v6k' | 'siyuetian' | 'default' };
 function modelEditorFor(channel: { id: number; name: string; type: string; baseUrl: string }): ModelEditor {
   const { id, name, type, baseUrl } = channel;
   const kind = type === 'openai' && isSiYueTianVideoHost(baseUrl) ? 'siyuetian'
     : type === 'zongheng-v6k' ? 'v6k' : type === 'minikey' || type === ZHIYING_CHANNEL_TYPE ? type : 'default';
-  return { id, name, kind };
+  return { id, name, type, kind };
 }
 const modelEditorLabels: Record<ModelEditor['kind'], string> = {
   minikey: 'miniKey 模型与参数', zhiying: '智赢 模型与参数', v6k: 'V6K 模型与参数',
@@ -542,7 +542,7 @@ export default function ChannelsPage() {
         siYueTian={modelEditor.kind === 'siyuetian'} onClose={closeModelEditor} onSaved={refreshChannelModels} />}
       {modelEditor?.kind === 'zhiying' && <ZhiyingModelConfigurationPanel channelId={modelEditor.id} onClose={closeModelEditor} onSaved={refreshChannelModels} />}
       {modelEditor?.kind === 'minikey' && <MinikeyModelConfigurationPanel channelId={modelEditor.id} onClose={closeModelEditor} onSaved={refreshChannelModels} />}
-      {modelEditor?.kind === 'default' && <ChannelModelConfigurationPanel channelId={modelEditor.id} channelName={modelEditor.name}
+      {modelEditor?.kind === 'default' && <ChannelModelConfigurationPanel channelId={modelEditor.id} channelName={modelEditor.name} channelType={modelEditor.type}
         onClose={closeModelEditor} onSaved={refreshChannelModels}
         onManage={() => {
           const channel = channels.find(row => row.id === modelEditor.id);
