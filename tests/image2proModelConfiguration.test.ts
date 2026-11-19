@@ -235,3 +235,18 @@ it.each(['video','text'] as const)('queries public %s reference prices without c
  expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,model)).get()?.inputPrice).toBe(12);
  expect(fetcher.mock.calls.some(([,o])=>o?.method==='POST')).toBe(false);
 });
+
+it.each(['image','video','text'] as const)('saves authorized Unicode %s IDs unchanged and previews them',async kind=>{
+ const {channelId,draft,entry}=setup(kind);
+ const id=kind==='image'?'gpt-image-2.6-sunburst原生':kind==='video'?'无限制-MiniMax-H3-特惠':'中文大模型';
+ entry.id=id;draft.modelId=id;draft.upstreamModel=id;draft.displayName=id;
+ await saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version);
+ expect(listChannelModelConfigurations(channelId).models[0]).toMatchObject({modelId:id,upstreamModel:id,editable:true});
+ const preview=await previewAuthorizedChannelModelRequest(channelId,draft);expect(preview.body.model).toBe(id);
+ expect(db.select().from(models).where(eq(models.modelId,id)).get()?.isActive).toBe(0);
+});
+it.each(['未授权型号','模型\n名称',' 模型','*'])('does not accept invalid or unauthorized Unicode ID %s',async id=>{
+ const {channelId,draft}=setup('image');draft.modelId=id;draft.upstreamModel=id;draft.displayName=id;
+ await expect(saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version)).rejects.toThrow();
+ expect(db.select().from(models).where(eq(models.modelId,id)).get()).toBeUndefined();
+});

@@ -131,7 +131,7 @@ export async function listAuthorizedChannelModels(channelId: number) {
 }
 
 function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol, image2pro = false) {
-  if (!draft || typeof draft.modelId !== 'string' || !modelIdPattern.test(draft.modelId)
+  if (!draft || typeof draft.modelId !== 'string' || (!image2pro && !modelIdPattern.test(draft.modelId))
     || typeof draft.displayName !== 'string' || !draft.displayName.trim() || draft.displayName.length > 120
     || typeof draft.upstreamModel !== 'string' || !draft.upstreamModel.trim()
     || draft.upstreamModel !== draft.upstreamModel.trim() || draft.upstreamModel.length > 160 || draft.upstreamModel === '*'
