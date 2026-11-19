@@ -257,15 +257,18 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                     ? `可选 ${availableModels.length} 个型号。请确认所选型号支持当前生成协议。` : wanfeng ? '公开目录里暂无可添加的型号。' : '授权目录里暂无可添加的型号。'}</p>
                 </>}
               </div>
-              {image2pro && draft.kind === 'image' && upstreamPricing && <section className="v6k-section" aria-label="上游价格参考">
+              {image2pro && upstreamPricing && <section className="v6k-section" aria-label="上游价格参考">
                 <h4>上游价格参考（不修改本站售价）</h4>
                 <dl>
-                  <dt>文生图价格</dt><dd>{upstreamPricing.textToImage === null ? '未公布' : upstreamPricing.textToImage}</dd>
-                  <dt>图生图价格</dt><dd>{upstreamPricing.imageToImage === null ? '未公布' : upstreamPricing.imageToImage}</dd>
+                  {draft.kind === 'image' && <><dt>文生图价格</dt><dd>{upstreamPricing.textToImage === null ? '未公布' : upstreamPricing.textToImage}</dd>
+                  <dt>图生图价格</dt><dd>{upstreamPricing.imageToImage === null ? '未公布' : upstreamPricing.imageToImage}</dd></>}
+                  {draft.kind === 'video' && <><dt>视频价格</dt><dd>{upstreamPricing.video ?? '未公布'}</dd></>}
+                  {draft.kind === 'text' && <><dt>文本请求价格</dt><dd>{upstreamPricing.textPerRequest ?? '未公布'}</dd></>}
                   <dt>计价单位</dt><dd>{upstreamPricing.unit}</dd>
                   <dt>查询时间</dt><dd>{upstreamPricing.checkedAt}</dd>
                   <dt>来源</dt><dd>{upstreamPricing.source}</dd>
                 </dl>
+                {upstreamPricing.note && <p>{upstreamPricing.note}</p>}
                 <p>仅供上游成本参考，不是人民币或本站售价。未公布的价格不按零处理；未返回分辨率分档价格，不据此推断各档同价。</p>
               </section>}
               {image2pro && draft.kind === 'image' && catalog?.find(row => row.id === draft.upstreamModel)?.imageEvidence && <section className="v6k-section" aria-label="图片参数查询依据">

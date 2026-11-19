@@ -51,6 +51,9 @@ export type ChannelModelConfigurations = {
 
 export type Image2proImageOptions = { referenceLimitPublished?: boolean; customRatios: boolean; customResolutions: boolean; maxImages: number };
 export type Image2proUpstreamPricing = {
+  video?: number | null;
+  textPerRequest?: number | null;
+  note?: string;
   textToImage: number | null;
   imageToImage: number | null;
   unit: string;

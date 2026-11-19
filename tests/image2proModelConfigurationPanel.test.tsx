@@ -60,3 +60,12 @@ it('displays upstream zero/missing prices separately and never includes them in 
  expect(screen.getByText('文生图价格').nextElementSibling).toHaveTextContent('0');expect(screen.getByText('图生图价格').nextElementSibling).toHaveTextContent('未公布');expect(screen.getByText(pricing.checkedAt)).toBeInTheDocument();expect(screen.getByText(pricing.unit)).toBeInTheDocument();
  fireEvent.submit(document.querySelector('#channel-model-form')!);await waitFor(()=>expect(api.save).toHaveBeenCalled());expect(api.save.mock.calls[0][1]).not.toHaveProperty('upstreamPricing');
 });
+
+it.each(['text','video'] as const)('shows %s public prices and units but excludes prices from saving',async kind=>{
+ const pricing={textToImage:null,imageToImage:null,video:45,textPerRequest:0,unit:kind==='text'?'上游 API 积分 / 次请求':'上游 API 积分 / 条视频',checkedAt:'2026-11-19T10:00:00Z',source:'公开目录（参考价）',note:'公开参考价不代表当前 Key 实际结算价'};
+ api.catalog.mockResolvedValue([{id:'new-model',kind,limits:{...defaultRoutingLimits(),resolutions:['720p'],ratios:['16:9']},upstreamPricing:pricing}]);
+ render(<Panel channelId={34} channelName="QQ-78ai" onClose={vi.fn()} onSaved={vi.fn()} onManage={vi.fn()}/>);
+ fireEvent.click(await screen.findByText('添加新模型'));fireEvent.click(screen.getByText('读取已授权的上游型号'));await screen.findByRole('option',{name:'new-model'});fireEvent.change(screen.getByLabelText('上游模型 ID'),{target:{value:'new-model'}});
+ expect(screen.getByText(kind==='text'?'文本请求价格':'视频价格').nextElementSibling).toHaveTextContent(kind==='text'?'0':'45');expect(screen.getByText(pricing.unit)).toBeInTheDocument();expect(screen.getByText(pricing.note)).toBeInTheDocument();
+ fireEvent.submit(document.querySelector('#channel-model-form')!);await waitFor(()=>expect(api.save).toHaveBeenCalled());expect(api.save.mock.calls[0][1]).not.toHaveProperty('upstreamPricing');
+});

@@ -222,3 +222,16 @@ it('reads key-scoped upstream prices without changing the site price during quer
  await saveChannelModelConfiguration(channelId,{...draft,limits:result.limits!},listChannelModelConfigurations(channelId).version);
  expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,model)).get()?.inputPrice).toBe(9);
 });
+
+it.each(['video','text'] as const)('queries public %s reference prices without changing site pricing',async kind=>{
+ const {channelId,model,entry,draft,fetcher}=setup(kind);
+ await saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version);
+ db.insert(modelPricing).values({modelPattern:model,billingType:'per_call',inputPrice:12}).run();
+ fetcher.mockImplementation(async(url)=>String(url).includes('public-models')?Response.json({ok:true,models:[{id:model,type:kind,billingUnit:kind==='video'?'video':'request',videoPrice:45,textPricePerRequest:0},{id:'not-authorized',type:kind,videoPrice:1}]}):Response.json({data:[entry]}));
+ const catalog=await listAuthorizedChannelModels(channelId);expect(catalog).toHaveLength(1);
+ expect(catalog[0].upstreamPricing).toMatchObject(kind==='video'?{video:45,unit:'上游 API 积分 / 条视频'}:{textPerRequest:0,unit:'上游 API 积分 / 次请求'});
+ expect(catalog[0].upstreamPricing?.source).toContain('参考价');
+ await saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version);
+ expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,model)).get()?.inputPrice).toBe(12);
+ expect(fetcher.mock.calls.some(([,o])=>o?.method==='POST')).toBe(false);
+});

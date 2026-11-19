@@ -26,3 +26,8 @@ it('fails open to authorized values without exposing upstream errors or inventin
 it('does not infer capabilities from model name without an exact public mapping',async()=>{
  const e={...entry(),id:'unknown-4K'};const [result]=await enrichImage2proCatalog([e],source());expect(result.limits).toEqual(e.limits);
 });
+
+it('shows unavailable public pricing on lookup failure and makes only one public request for text',async()=>{
+ const fetcher=vi.fn(async()=>{throw Error('network failed');});const result=await enrichImage2proCatalog([{id:'text-model',kind:'text'}],fetcher);
+ expect(result[0].upstreamPricing).toMatchObject({textPerRequest:null,unit:'未公布或未识别'});expect(fetcher).toHaveBeenCalledTimes(1);
+});

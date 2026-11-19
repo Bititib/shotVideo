@@ -12,3 +12,20 @@ export function image2proUpstreamPricing(metadata: Record<string, unknown>): Ima
     checkedAt: new Date().toISOString(),
   };
 }
+
+// These camelCase fields and billing units are from /api-console/public-models,
+// not inferred aliases for the key-scoped /v1/models metadata.
+export function image2proPublicPricing(kind: 'video' | 'text', model?: Record<string, unknown>): Image2proUpstreamPricing {
+  const expectedUnit = kind === 'video' ? 'video' : 'request';
+  const raw = model?.[kind === 'video' ? 'videoPrice' : 'textPricePerRequest'];
+  const validUnit = model?.billingUnit === expectedUnit;
+  const value = validUnit && typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 ? raw : null;
+  return {
+    textToImage: null, imageToImage: null,
+    ...(kind === 'video' ? {video:value} : {textPerRequest:value}),
+    unit: validUnit ? (kind === 'video' ? '上游 API 积分 / 条视频' : '上游 API 积分 / 次请求') : '未公布或未识别',
+    checkedAt: new Date().toISOString(),
+    source: 'Image2Pro 公开型号目录 /api-console/public-models（参考价）',
+    note: '公开参考价不代表当前 Key 分组的实际结算价；时长、清晰度、Token 或附加费用分档未公布，不据此推算。',
+  };
+}

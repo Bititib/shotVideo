@@ -1,10 +1,12 @@
+import { image2proPublicPricing } from './image2proUpstreamPricing.js';
 import type { ChannelModelCatalogEntry } from '../../shared/channelModelConfiguration.js';
 
 const sources = ['https://api.image2pro.top/api-console/public-models', 'https://vpn.image2pro.top/models', 'https://image2pro.top/'] as const;
 // Public, read-only sources. Never forward a channel key or execute website JavaScript.
 export async function enrichImage2proCatalog(catalog: ChannelModelCatalogEntry[], fetcher: typeof fetch = fetch) {
-  if (!catalog.some(entry => entry.kind === 'image')) return catalog;
+  const hasImages = catalog.some(entry => entry.kind === 'image');
   const results = await Promise.allSettled(sources.map(async (url, index) => {
+    if (index > 0 && !hasImages) return index === 2 ? '' : [];
     const response = await fetcher(url, { redirect: 'error', signal: AbortSignal.timeout(8000) });
     if (!response.ok) throw new Error('HTTP ' + response.status);
     const text = await response.text();
@@ -21,6 +23,13 @@ export async function enrichImage2proCatalog(catalog: ChannelModelCatalogEntry[]
   const pickerLimit = Number(html.match(/const MAX_REF_IMAGES\s*=\s*(\d+);/)?.[1]);
   const checkedAt = new Date().toISOString();
   return catalog.map(entry => {
+    if (entry.kind === 'text' || entry.kind === 'video') {
+      const matches = publicModels.filter(m => m.type === entry.kind && m.id === entry.id);
+      const upstreamPricing = image2proPublicPricing(entry.kind, matches.length === 1 ? matches[0] : undefined);
+      if (results[0].status === 'rejected') upstreamPricing.note = '公开价格查询失败；本次未取得报价。' + upstreamPricing.note;
+      else if (matches.length !== 1) upstreamPricing.note = '公开目录未找到唯一对应型号；价格未公布。' + upstreamPricing.note;
+      return { ...entry, upstreamPricing };
+    }
     if (entry.kind !== 'image' || !entry.limits) return entry;
     const limits = { ...entry.limits };
     const notes: string[] = [];
