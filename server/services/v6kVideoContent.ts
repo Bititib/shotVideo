@@ -36,7 +36,20 @@ async function publicContent(value: string, base: string): Promise<Response> {
 export async function fetchV6kVideoContent(channel: { baseUrl: string; apiKey: string }, taskId: string): Promise<Response> {
   const taskUrl = zonghengTaskUrl(channel.baseUrl, taskId), contentUrl = taskUrl + '/content';
   const headers = { Authorization: 'Bearer ' + channel.apiKey, 'Cache-Control': 'no-cache, no-store' };
-  const response = await fetch(contentUrl, { headers, redirect: 'error', signal: AbortSignal.timeout(300_000) });
+  let response = await fetch(contentUrl, { headers, redirect: 'manual', signal: AbortSignal.timeout(300_000) });
+  if ([301, 302, 303, 307, 308].includes(response.status)) {
+    const status = response.status;
+    const location = response.headers.get('location');
+    await response.body?.cancel();
+    try {
+      if (!location) throw new Error('成品下载跳转缺少 Location');
+      // Signed result URLs and further redirects must never inherit the platform key.
+      response = await publicContent(location, contentUrl);
+    } catch (error) {
+      throw new V6kVideoContentError(transportDiagnostic('V6K', '成品下载跳转 HTTP ' + status + ' task_id=' + taskId,
+        error, channel.apiKey), status, taskId);
+    }
+  }
   if (response.ok) return response;
   const original = await contentError(response, taskId, channel.apiKey);
   if (original.status !== 410) throw original;

@@ -5,6 +5,42 @@ const task = 'task_original', endpoint = channel.baseUrl + '/v1/videos/' + task;
 const gone = () => Response.json({ error: { code: 'task_not_found', message: '任务或文件不存在或已失效 private-key https://secret.example/file?signature=secret' } }, { status: 410 });
 afterEach(() => vi.unstubAllGlobals());
 describe('V6K original result retrieval', () => {
+  it.each([301,302,303,307,308])('follows an authenticated content HTTP %s to a public URL without forwarding the key', async status => {
+    const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+      expect(init.method).not.toBe('POST');
+      if (url === endpoint + '/content') {
+        expect(init).toMatchObject({ redirect: 'manual', headers: { Authorization: 'Bearer private-key' } });
+        return new Response(null, { status, headers: { Location: '/v1/tasks/' + task + '/artifacts/video/content?access=signed' } });
+      }
+      expect(init.headers).toBeUndefined();
+      if (url.includes('/artifacts/')) return new Response(null, { status:302, headers:{ Location:'https://cdn.example/result.mp4?access=signed' } });
+      return new Response('original-video');
+    });
+    vi.stubGlobal('fetch', fetcher);
+    expect(await (await fetchV6kVideoContent(channel, task)).text()).toBe('original-video');
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+  it.each(['http://cdn.example/file','https://127.0.0.1/file','https://localhost/file','https://name:password@cdn.example/file'])('refuses an unsafe content redirect %s before requesting it', async url => {
+    const fetcher = vi.fn(async () => new Response(null, { status:303, headers:{ Location:url } }));
+    vi.stubGlobal('fetch', fetcher);
+    await expect(fetchV6kVideoContent(channel,task)).rejects.toMatchObject({status:303,taskId:task});
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it('bounds redirect loops and retains a sanitized error for missing Location', async () => {
+    const loop = vi.fn(async () => new Response(null, { status:303, headers:{ Location:'https://cdn.example/loop' } }));
+    vi.stubGlobal('fetch', loop);
+    await expect(fetchV6kVideoContent(channel,task)).rejects.toMatchObject({status:303,taskId:task});
+    expect(loop).toHaveBeenCalledTimes(5);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null,{status:303})));
+    await expect(fetchV6kVideoContent(channel,task)).rejects.toThrow('缺少 Location');
+  });
+  it('preserves the concrete error when the redirected content request fails', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(new Response(null,{status:303,headers:{Location:'https://cdn.example/result'}}))
+      .mockResolvedValueOnce(Response.json({error:{code:'expired',message:'result expired'}},{status:403}));
+    vi.stubGlobal('fetch',fetcher);
+    await expect(fetchV6kVideoContent(channel,task)).rejects.toMatchObject({status:403,taskId:task,upstreamCode:'expired'});
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
   it('retains the concrete 410 cause after ONE original receipt check and never generates again', async () => {
     const fetcher = vi.fn(async (url: any, init: any) => {
       expect(init.method).not.toBe('POST'); expect(init.headers.Authorization).toBe('Bearer private-key');

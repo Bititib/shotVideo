@@ -55,6 +55,8 @@ shared/zonghengVideo.ts 仅保留 2026-10-24 从新站模型广场核对的规�
 - POST /v1/videos，使用 seconds/images/videos/audios，保存返回的 id。
 - GET /v1/videos/{id}，识别 queued/in_progress/completed/failed，通常每 20 秒查询，临时错误退避并尊重 Retry-After。
 - GET /v1/videos/{id}/content，由服务器携带新站令牌下载并保存；浏览器和其他下载域名不会收到令牌。
+- 成品接口返回 301/302/303/307/308 时，读取 Location 并以 GET 下载签名地址。跳转链仅接受既有公网 HTTPS 校验允许的地址，后续请求不携带平台令牌，最多跟随四次跳转。
+- 成品网络或保存错误会在规格订单的 resultSaveError 中保留脱敏原因，下一次继续取回原任务；保存完成后清除该错误。
 - 明确提交拒绝或任务失败只退款一次；查询和下载错误继续处理原任务。504、断网或缺少 ID 且接单结果不明时待核实，禁止自动重提。
 - 文档未确认首尾帧、quality、negative_prompt、generate_audio；这些选项会在生成前明确报错。
 

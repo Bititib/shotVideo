@@ -15,6 +15,23 @@ import { V6kVideoContentError } from '../server/services/v6kVideoContent';
 const files: string[] = [];
 afterEach(() => { vi.unstubAllGlobals(); for (const file of files.splice(0)) fs.rmSync(file, { force: true }); });
 describe('V6K authenticated result download', () => {
+  it('saves video bytes after the authenticated content endpoint returns a 303 signed download', async () => {
+    const id = randomUUID(), content = 'https://www.v6k.top/v1/videos/' + id + '/content';
+    const fetcher = vi.fn(async (url: string, init: RequestInit) => {
+      expect(init.method).not.toBe('POST');
+      if (url === content) {
+        expect(init).toMatchObject({ redirect: 'manual', headers: { Authorization: 'Bearer private-key' } });
+        return new Response(null, { status: 303, headers: { Location: 'https://cdn.example/original.mp4?access=signed' } });
+      }
+      expect(init.headers).toBeUndefined();
+      return new Response(Buffer.from('0000ftypisom-original'), { headers: { 'Content-Type': 'video/mp4' } });
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const result = await downloadAndLocalizeVideo(content, id, 'V6K-test', 7);
+    const file = path.resolve('data', result.slice(1)); files.push(file);
+    expect(fs.readFileSync(file).toString()).toBe('0000ftypisom-original');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
   it('saves the original result from a refreshed URL after content returned 410', async () => {
     const id=randomUUID(), content='https://www.v6k.top/v1/videos/'+id+'/content';
     const fetcher=vi.fn(async (url:any,init:any)=>{
@@ -39,7 +56,7 @@ describe('V6K authenticated result download', () => {
     expect(result).toMatch(/^\/uploads\/videos\/video_/);
     const file = path.resolve('data', result.slice(1)); files.push(file);
     expect(fs.readFileSync(file).toString()).toBe('0000ftypisom-video');
-    expect(fetcher.mock.calls[0][1]).toMatchObject({ headers: { Authorization: 'Bearer private-key' }, redirect: 'error' });
+    expect(fetcher.mock.calls[0][1]).toMatchObject({ headers: { Authorization: 'Bearer private-key' }, redirect: 'manual' });
   });
   it('never forwards the key to a CDN or a different path on the same site', async () => {
     for (const url of ['https://cdn.example/video.mp4', 'https://www.v6k.top/not-the-content-endpoint']) {

@@ -24,6 +24,7 @@ import { saveModelSpecification, getModelSpecification, selectModelRoutes, inspe
 import { getEnabledPublicModels } from '../server/services/modelCatalogService.js';
 import { handleSpecificationGeneration, specificationRequest, resumeSpecificationTasks, recoverSpecificationVideo } from '../server/services/specificationGenerationService.js';
 import { V6kVideoContentError } from '../server/services/v6kVideoContent';
+import { fetchV6kVideoContent } from '../server/services/v6kVideoContent';
 import { resolvePublicModelId } from '../server/services/publicModelNameService.js';
 import { hmStudioQueue, HmStudioQueueFullError } from '../server/services/hmStudioQueueService.js';
 import specificationRoutes from '../server/routes/modelSpecifications.js';
@@ -228,6 +229,60 @@ describe('managed image execution and single reservation', () => {
 
 
 describe('managed video execution', () => {
+  it('records V6K download failures and completes the original task after a 303 without another charge or submission', async () => {
+    const l = { ...limits(), resolutions: ['480p'] };
+    const c = { ...channel(1), type: 'zongheng-v6k', baseUrl: 'https://www.v6k.top' };
+    const s = { ...spec(), aliases: [], limits: l, routes: [{ ...route(1), upstreamModel: 'TTseadanco2.5-480', limits: l }] };
+    vi.mocked(ChannelService.getActiveChannels).mockReturnValue([c]);
+    vi.mocked(ChannelService.getChannelRaw).mockReturnValue(c as any);
+    saveModelSpecification(s);
+    const { downloadAndLocalizeVideo } = await import('../server/services/videoLocalizationService');
+    vi.mocked(downloadAndLocalizeVideo)
+      .mockRejectedValueOnce(Object.assign(new TypeError('fetch failed'), { cause: { code:'ECONNRESET', message:'connection reset' } }))
+      .mockImplementationOnce(async (_url, id) => {
+        const file = await fetchV6kVideoContent(c, id);
+        expect(await file.text()).toBe('original-video');
+        return '/uploads/recovered-original.mp4';
+      });
+    const nativeTimer = globalThis.setTimeout;
+    const timer = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((fn: any, ms: number, ...args: any[]) =>
+      nativeTimer(fn, ms >= 1000 && ms <= 300000 ? 5 : ms, ...args)) as any);
+    let posts = 0, queries = 0, files = 0;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: any) => {
+      if (init.method === 'POST') {
+        posts++;
+        return Response.json({ id:'original_redirect_task', status:'completed' });
+      }
+      if (url.endsWith('/content')) {
+        expect(init.redirect).toBe('manual');
+        return new Response(null, { status:303, headers:{ Location:'https://cdn.example/original.mp4?access=private-signature' } });
+      }
+      if (url.startsWith('https://cdn.example/')) {
+        files++;
+        expect(init.headers).toBeUndefined();
+        return new Response('original-video');
+      }
+      queries++;
+      const row = db.select().from(contents).all().at(-1)!;
+      expect(row.status).toBe('processing');
+      expect(JSON.parse(row.metadata)).toMatchObject({ videoId:'original_redirect_task',
+        resultSaveError:expect.stringContaining('ECONNRESET') });
+      expect(findVideoSubmissionReceipt(row.id)).toMatchObject({ upstreamTaskId:'original_redirect_task' });
+      return Response.json({ id:'original_redirect_task', status:'completed' });
+    }));
+    try {
+      await handleSpecificationGeneration({ body:{ model:s.modelId, prompt:'场景', seconds:6, resolution:'480p' },
+        headers:{}, protocol:'https', get:() => 'app.invalid', userId } as any, response(), 'video');
+      const row = db.select().from(contents).all().at(-1)!;
+      expect(row).toMatchObject({ status:'completed', resultUrl:'/uploads/recovered-original.mp4', cost:2 });
+      expect(JSON.parse(row.metadata)).toMatchObject({ videoId:'original_redirect_task', resultSaveError:null });
+      expect(sqlite.prepare('SELECT state FROM billing_reservations WHERE id=?').get(JSON.parse(row.metadata).billingReservationId))
+        .toMatchObject({ state:'settled' });
+      resumeSpecificationTasks(); resumeSpecificationTasks();
+      expect({ posts, queries, files }).toEqual({ posts:1, queries:1, files:1 });
+      expect(db.select().from(users).where(eq(users.id,userId)).get()!.balance).toBe(98);
+    } finally { timer.mockRestore(); }
+  });
   it('pauses V6K 410 without settling its reservation and restores the original sale task without resubmitting',async()=>{
     const l={...limits(),resolutions:['480p']},c={...channel(1),type:'zongheng-v6k',baseUrl:'https://www.v6k.top'};
     vi.mocked(ChannelService.getActiveChannels).mockReturnValue([c]);vi.mocked(ChannelService.getChannelRaw).mockReturnValue(c as any);

@@ -427,7 +427,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         }
         console.warn('[specification] result save failed', id, error.message);
         const detail = transportDiagnostic(channel.type, '上游已完成，结果保存失败；正在重试保存', error, channel.apiKey);
-        patch(id, wanfeng || zhiying || isMegabyChannel(channel) || isHussChannel(channel) || isMinikeyChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
+        patch(id, wanfeng || zhiying || isZonghengChannel(channel) || isMegabyChannel(channel) || isHussChannel(channel) || isMinikeyChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
         if (isHussChannel(channel)) {
           saveRetryMs = Math.max(60_000, Number(error?.retryAfterMs) || 0);
           onEvent({ type: 'status', message: detail, contentId: id });
