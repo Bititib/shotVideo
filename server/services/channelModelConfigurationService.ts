@@ -1,3 +1,4 @@
+import { enrichImage2proCatalog } from './image2proPublicCapabilities.js';
 import { image2proModels } from './image2proAdapter.js';
 import { image2proLimits, image2proMediaSupported, image2proImageOptions, validImage2proRatio, validImage2proResolution } from './image2proCapabilities.js';
 import { buildImage2proVideoPayload, buildImage2proImagePayload } from './image2proPayload.js';
@@ -121,10 +122,11 @@ async function fetchCatalog(channel: Channel): Promise<ChannelModelCatalogEntry[
       && (protocol !== 'newtoken' || /seedance/i.test(id))))].sort().map(id => ({ id }));
 }
 
-export function listAuthorizedChannelModels(channelId: number) {
+export async function listAuthorizedChannelModels(channelId: number) {
   const channel = getChannel(channelId);
   if (channel.type !== 'image2pro' && !getChannelVideoProtocol(channel) && !allowsStandardChannelModelConfiguration(sqlite, channel)) throw fail('请使用该渠道的专用同步或配置入口', 409);
-  return fetchCatalog(channel);
+  const catalog = await fetchCatalog(channel);
+  return channel.type === 'image2pro' ? enrichImage2proCatalog(catalog) : catalog;
 }
 
 function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol, image2pro = false) {

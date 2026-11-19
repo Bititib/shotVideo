@@ -202,3 +202,12 @@ it('rejects conflicting aliases before creating an order or sending a request',a
  await handleSpecificationGeneration({body:{model,prompt:'test',ratio:'1:1',aspect_ratio:'16:9'},headers:{},protocol:'https',get:()=> 'site.test'} as any,res,'image');
  expect(res.code).toBe(400);expect(res.body.error).toContain('不一致');expect(fetcher).not.toHaveBeenCalled();expect(db.select().from(contents).where(eq(contents.modelId,model)).get()).toBeUndefined();
 });
+
+it('enriches the authorized catalog and saves defaults without replacing prices or authorizing public-only models',async()=>{
+ const {channelId,model,entry,draft,fetcher}=setup('image',{resolutions:undefined,aspect_ratios:undefined,max_images:undefined});
+ fetcher.mockImplementation(async(url)=>String(url)==='https://api.image2pro.top/v1/models'?Response.json({data:[entry]}):String(url).includes('public-models')?Response.json({ok:true,models:[{id:model,name:'Website Name',type:'image',supportsReference:true},{id:'not-authorized',type:'image'}]}):String(url)==='https://vpn.image2pro.top/models'?Response.json({ok:true,models:[{name:'Website Name',type:'image',protocol:'openai',openaiResolution:'4K'}]}):new Response('const RATIO_OPTIONS_BY_PROTOCOL = {\n"openai": [{ value: "1:1" }]\n};\nconst MAX_REF_IMAGES=6;'));
+ const catalog=await listAuthorizedChannelModels(channelId);expect(catalog).toHaveLength(1);expect(catalog[0].limits).toMatchObject({resolutions:['4K'],ratios:['1:1'],maxImages:6});
+ await saveChannelModelConfiguration(channelId,{...draft,limits:catalog[0].limits!},listChannelModelConfigurations(channelId).version);
+ expect(getModelSpecification(model)?.limits.maxImages).toBe(6);expect(db.select().from(models).where(eq(models.modelId,model)).get()?.isActive).toBe(0);
+ expect(fetcher.mock.calls.some(([,o])=>o?.method==='POST')).toBe(false);
+});

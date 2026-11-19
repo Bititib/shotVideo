@@ -20,7 +20,7 @@ export function image2proLimits(m:any): ModelInputLimits {
 // Missing catalog enumerations must not disable documented configurable fields.
 export function image2proImageOptions(m: any): Image2proImageOptions {
  const md=m.metadata;
- return {customRatios:!Array.isArray(md.aspect_ratios)||!md.aspect_ratios.length,
+ return {referenceLimitPublished:Number.isSafeInteger(md.max_images),customRatios:!Array.isArray(md.aspect_ratios)||!md.aspect_ratios.length,
  customResolutions:!Array.isArray(md.resolutions)||!md.resolutions.length,
  maxImages:Number.isSafeInteger(md.max_images)?Math.min(16,md.max_images):16};
 }

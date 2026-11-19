@@ -37,3 +37,17 @@ it('saves multiple image resolutions, ratios and reference images from the panel
  fireEvent.submit(document.querySelector('#channel-model-form')!);
  await waitFor(()=>expect(api.save).toHaveBeenCalledWith(34,expect.objectContaining({kind:'image',limits:expect.objectContaining({resolutions:['1K','2K'],ratios:['1:1','3:2','16:9'],maxImages:4})}),'v1'));
 });
+
+it('shows evidence and applies queried defaults only on explicit click for existing models',async()=>{
+ const limits={...defaultRoutingLimits(),resolutions:['2K'],ratios:['1:1'],maxImages:1};
+ api.list.mockResolvedValue({...config,models:[{modelId:'image-new',upstreamModel:'image-new',displayName:'Existing',capabilities:['image'],limits,enabled:true,editable:true}]});
+ api.catalog.mockResolvedValue([{id:'image-new',kind:'image',limits:{...limits,resolutions:['4K'],maxImages:6},imageEvidence:{checkedAt:'2026-11-19T00:00:00Z',notes:['分辨率：官网默认值 4K；完整可选范围未公布','参考图：官网限制 6 张']}}]);
+ render(<Panel channelId={34} channelName="QQ-78ai" onClose={vi.fn()} onSaved={vi.fn()} onManage={vi.fn()}/>);
+ fireEvent.click(await screen.findByText('读取已授权的上游型号'));
+ expect(await screen.findByText('分辨率：官网默认值 4K；完整可选范围未公布')).toBeInTheDocument();
+ expect(screen.getByLabelText('可选分辨率')).toHaveValue('2K');expect(api.save).not.toHaveBeenCalled();
+ fireEvent.click(screen.getByText('填入查询参数'));
+ expect(screen.getByLabelText('可选分辨率')).toHaveValue('4K');expect(screen.getByLabelText('最多参考图')).toHaveValue(6);
+ fireEvent.submit(document.querySelector('#channel-model-form')!);
+ await waitFor(()=>expect(api.save).toHaveBeenCalledWith(34,expect.objectContaining({limits:expect.objectContaining({resolutions:['4K'],maxImages:6})}),'v1'));
+});

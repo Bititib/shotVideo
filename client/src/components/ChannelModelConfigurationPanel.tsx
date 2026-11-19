@@ -105,6 +105,16 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
     finally { setBusy(false); }
   }
 
+  function applyImageParameters() {
+    const entry = catalog?.find(row => row.id === draft?.upstreamModel);
+    if (!draft || !entry?.limits) return;
+    setDraft({ ...draft, limits: entry.limits });
+    setResolutions(entry.limits.resolutions.join(','));
+    setRatios(entry.limits.ratios.join(','));
+    setPreview(null);
+    setNotice('已填写查询参数，请检查来源说明后保存。');
+  }
+
   async function showPreview() {
     if (!currentValues) return;
     setBusy(true);
@@ -246,6 +256,13 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                     ? `可选 ${availableModels.length} 个型号。请确认所选型号支持当前生成协议。` : wanfeng ? '公开目录里暂无可添加的型号。' : '授权目录里暂无可添加的型号。'}</p>
                 </>}
               </div>
+              {image2pro && draft.kind === 'image' && catalog?.find(row => row.id === draft.upstreamModel)?.imageEvidence && <section className="v6k-section" aria-label="图片参数查询依据">
+                <h4>图片参数查询依据</h4>
+                <p>查询时间：{catalog.find(row => row.id === draft.upstreamModel)!.imageEvidence!.checkedAt}</p>
+                <ul>{catalog.find(row => row.id === draft.upstreamModel)!.imageEvidence!.notes.map((note, i) => <li key={i}>{note}</li>)}</ul>
+                <p>新型号选择时自动填写；已有配置读取后不会覆盖，点击下方按钮才应用。保存后生效。</p>
+                <button type="button" className={button} onClick={applyImageParameters}>填入查询参数</button>
+              </section>}
               {draft.kind !== 'text' && <section className="v6k-section">
                 <div className="v6k-section-heading"><h4>规格与素材</h4>
                   {image2pro && draft.kind === 'image' && <p>分辨率和比例可用逗号分隔多个选项，例如 1K,2K 和 1:1,16:9。目录未公布时可按模型说明配置；接口最多接收 16 张参考图，实际支持数量由模型决定。</p>}
