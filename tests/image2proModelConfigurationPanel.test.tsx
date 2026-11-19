@@ -51,3 +51,12 @@ it('shows evidence and applies queried defaults only on explicit click for exist
  fireEvent.submit(document.querySelector('#channel-model-form')!);
  await waitFor(()=>expect(api.save).toHaveBeenCalledWith(34,expect.objectContaining({limits:expect.objectContaining({resolutions:['4K'],maxImages:6})}),'v1'));
 });
+
+it('displays upstream zero/missing prices separately and never includes them in save payload',async()=>{
+ const pricing={textToImage:0,imageToImage:null,unit:'上游 API 积分 / 张',checkedAt:'2026-11-19T10:00:00Z',source:'当前渠道 Key 的 /v1/models 授权目录'};
+ api.catalog.mockResolvedValue([{id:'image-new',kind:'image',limits:{...defaultRoutingLimits(),resolutions:['auto'],ratios:['auto']},upstreamPricing:pricing}]);
+ render(<Panel channelId={34} channelName="QQ-78ai" onClose={vi.fn()} onSaved={vi.fn()} onManage={vi.fn()}/>);
+ fireEvent.click(await screen.findByText('添加新模型'));fireEvent.click(screen.getByText('读取已授权的上游型号'));await screen.findByRole('option',{name:'image-new'});fireEvent.change(screen.getByLabelText('上游模型 ID'),{target:{value:'image-new'}});
+ expect(screen.getByText('文生图价格').nextElementSibling).toHaveTextContent('0');expect(screen.getByText('图生图价格').nextElementSibling).toHaveTextContent('未公布');expect(screen.getByText(pricing.checkedAt)).toBeInTheDocument();expect(screen.getByText(pricing.unit)).toBeInTheDocument();
+ fireEvent.submit(document.querySelector('#channel-model-form')!);await waitFor(()=>expect(api.save).toHaveBeenCalled());expect(api.save.mock.calls[0][1]).not.toHaveProperty('upstreamPricing');
+});

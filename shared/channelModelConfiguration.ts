@@ -50,5 +50,12 @@ export type ChannelModelConfigurations = {
 };
 
 export type Image2proImageOptions = { referenceLimitPublished?: boolean; customRatios: boolean; customResolutions: boolean; maxImages: number };
-export type ChannelModelCatalogEntry = { id: string; kind?: MediaKind | 'text'; imageOptions?: Image2proImageOptions; imageEvidence?: { checkedAt: string; notes: string[] }; limits?: ModelInputLimits };
+export type Image2proUpstreamPricing = {
+  textToImage: number | null;
+  imageToImage: number | null;
+  unit: string;
+  checkedAt: string;
+  source: string;
+};
+export type ChannelModelCatalogEntry = { id: string; kind?: MediaKind | 'text'; imageOptions?: Image2proImageOptions; upstreamPricing?: Image2proUpstreamPricing; imageEvidence?: { checkedAt: string; notes: string[] }; limits?: ModelInputLimits };
 export type ChannelModelRequestPreview = { method: string; path: string; headers?: Record<string,string>; body: Record<string, unknown> };

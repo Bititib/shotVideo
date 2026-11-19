@@ -1,3 +1,4 @@
+import { image2proUpstreamPricing } from './image2proUpstreamPricing.js';
 import { enrichImage2proCatalog } from './image2proPublicCapabilities.js';
 import { image2proModels } from './image2proAdapter.js';
 import { image2proLimits, image2proMediaSupported, image2proImageOptions, validImage2proRatio, validImage2proResolution } from './image2proCapabilities.js';
@@ -87,7 +88,7 @@ async function fetchCatalog(channel: Channel): Promise<ChannelModelCatalogEntry[
   const protocol = getChannelVideoProtocol(channel);
   if (channel.type === 'image2pro') return (await image2proModels(channel))
     .filter(m => m.metadata.type === 'text' || image2proMediaSupported(m))
-    .map(m => ({ id: m.id, kind: m.metadata.type, ...(m.metadata.type === 'text' ? {} : { limits: image2proLimits(m), ...(m.metadata.type === 'image' ? {imageOptions:image2proImageOptions(m)} : {}) }) }));
+    .map(m => ({ id: m.id, kind: m.metadata.type, ...(m.metadata.type === 'text' ? {} : { limits: image2proLimits(m), ...(m.metadata.type === 'image' ? {imageOptions:image2proImageOptions(m),upstreamPricing:image2proUpstreamPricing(m.metadata)} : {}) }) }));
   if (protocol === 'wanfeng') return wanfengVideoCatalog();
   if (protocol === 'async-video' || protocol === 'megaby') {
     try {

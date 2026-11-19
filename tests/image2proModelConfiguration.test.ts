@@ -211,3 +211,14 @@ it('enriches the authorized catalog and saves defaults without replacing prices 
  expect(getModelSpecification(model)?.limits.maxImages).toBe(6);expect(db.select().from(models).where(eq(models.modelId,model)).get()?.isActive).toBe(0);
  expect(fetcher.mock.calls.some(([,o])=>o?.method==='POST')).toBe(false);
 });
+
+it('reads key-scoped upstream prices without changing the site price during query or save',async()=>{
+ const {channelId,model,draft}=setup('image',{text_to_image_price:0,image_to_image_price:1.5});
+ await saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version);
+ db.insert(modelPricing).values({modelPattern:model,billingType:'per_call',inputPrice:9}).run();
+ const [result]=await listAuthorizedChannelModels(channelId);
+ expect(result.upstreamPricing).toMatchObject({textToImage:0,imageToImage:1.5,unit:'上游 API 积分 / 张'});
+ expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,model)).get()?.inputPrice).toBe(9);
+ await saveChannelModelConfiguration(channelId,{...draft,limits:result.limits!},listChannelModelConfigurations(channelId).version);
+ expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,model)).get()?.inputPrice).toBe(9);
+});

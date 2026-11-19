@@ -168,6 +168,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
   const wanfeng = data?.protocol === 'wanfeng';
   const image2pro = data?.image2pro === true;
   const chooseFromCatalog = image2pro || wanfeng || asyncVideo || data?.protocol === 'megaby';
+  const upstreamPricing = catalog?.find(entry => entry.id === draft?.upstreamModel)?.upstreamPricing;
   const availableModels = catalog?.filter(entry => !data?.models.some(row => row.modelId !== selected?.modelId && row.upstreamModel === entry.id));
 
   return <AdminDrawer modal panelClassName="v6k-model-dialog" title={channelName + ' · 模型与参数'}
@@ -256,6 +257,17 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                     ? `可选 ${availableModels.length} 个型号。请确认所选型号支持当前生成协议。` : wanfeng ? '公开目录里暂无可添加的型号。' : '授权目录里暂无可添加的型号。'}</p>
                 </>}
               </div>
+              {image2pro && draft.kind === 'image' && upstreamPricing && <section className="v6k-section" aria-label="上游价格参考">
+                <h4>上游价格参考（不修改本站售价）</h4>
+                <dl>
+                  <dt>文生图价格</dt><dd>{upstreamPricing.textToImage === null ? '未公布' : upstreamPricing.textToImage}</dd>
+                  <dt>图生图价格</dt><dd>{upstreamPricing.imageToImage === null ? '未公布' : upstreamPricing.imageToImage}</dd>
+                  <dt>计价单位</dt><dd>{upstreamPricing.unit}</dd>
+                  <dt>查询时间</dt><dd>{upstreamPricing.checkedAt}</dd>
+                  <dt>来源</dt><dd>{upstreamPricing.source}</dd>
+                </dl>
+                <p>仅供上游成本参考，不是人民币或本站售价。未公布的价格不按零处理；未返回分辨率分档价格，不据此推断各档同价。</p>
+              </section>}
               {image2pro && draft.kind === 'image' && catalog?.find(row => row.id === draft.upstreamModel)?.imageEvidence && <section className="v6k-section" aria-label="图片参数查询依据">
                 <h4>图片参数查询依据</h4>
                 <p>查询时间：{catalog.find(row => row.id === draft.upstreamModel)!.imageEvidence!.checkedAt}</p>
