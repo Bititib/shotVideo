@@ -862,55 +862,79 @@ router.get('/music/:id/file',(req,res,next)=>{
 router.get('/music/by-request/:key',(req,res,next)=>{try{res.json(apiMusicResult(getMusicTaskByRequest(req.params.key,musicApiOwner(req))));}catch(e){next(e);}});
 router.get('/music/:id',(req,res,next)=>{try{res.json(apiMusicResult(getMusicTask(req.params.id,musicApiOwner(req))));}catch(e){next(e);}});
 
-router.post('/chat/completions', async (req: Request, res: Response) => {
+export interface WebsiteChatReply {
+  userId: number;
+  deadline: number;
+  reserve(cost: number, model: string, snapshot?: PricingSnapshot): Pick<ReturnType<typeof reserveApiCharge>, 'id' | 'settle' | 'review' | 'cancel'>;
+  delta(text: string): void;
+  finish(result: { status: 'complete' | 'failed' | 'review'; error?: string }): void;
+}
+
+export async function handleChatCompletion(req: Request, res: Response, website?: WebsiteChatReply) {
   const startTime = Date.now();
   const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || '';
 
-  const tokenKey = extractToken(req);
-  if (!tokenKey) return res.status(401).json({ error: { message: 'Missing API key', type: 'invalid_request_error' } });
-
-  const { valid, error, token } = TokenService.validateToken(tokenKey);
-  if (!valid) return res.status(401).json({ error: { message: error, type: 'invalid_request_error' } });
-
-  if (!normalizeApiModel(req, res)) return;
-  const { model, messages, stream = false, ...otherParams } = req.body;
-  if (!model) return res.status(400).json({ error: { message: 'model is required', type: 'invalid_request_error' } });
-  if (getModelSpecification(model)?.routes.some(route => route.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX))) {
-    return res.status(400).json({ error: { message: '模型类型与聊天接口不匹配', type: 'invalid_request_error' } });
+  const tokenKey = website ? null : extractToken(req);
+  const auth = tokenKey ? TokenService.validateToken(tokenKey) : null;
+  if (!website && !auth?.valid) {
+    return res.status(401).json({ error: { message: auth?.error || 'Missing API key', type: 'invalid_request_error' } });
   }
-  if (!messages) return res.status(400).json({ error: { message: 'messages is required', type: 'invalid_request_error' } });
+  const token = auth?.token;
+  const userId = website?.userId ?? token?.userId ?? null;
+  const tokenId = token?.id ?? null;
+  if (!website && !normalizeApiModel(req, res)) return;
 
-  if (userModelDenied(token.userId, model) || (token.allowedModels.length > 0 && !token.allowedModels.includes(model))) {
-    return res.status(403).json({ error: { message: `Token has no access to model ${model}`, type: 'permission_error' } });
+  const replyError = (status: number, error: unknown, review = false, names?: readonly string[]) => {
+    if (!website) return res.status(status).json({ error });
+    const safe = publicApiDiagnostics({ error }, names ?? privateChannelNames()).error;
+    const message = typeof safe === 'string' ? safe : safe?.message || '上游未提供错误详情';
+    const code = typeof safe?.code === 'string' ? ' · ' + safe.code : '';
+    website.finish({ status: review ? 'review' : 'failed', error: 'HTTP ' + status + code + ' · ' + message });
+  };
+  const invalid = (status: number, message: string, type = 'invalid_request_error') => replyError(status, { message, type });
+
+  const { model, messages, stream = false, ...otherParams } = req.body;
+  if (!model) return invalid(400, 'model is required');
+  if (getModelSpecification(model)?.routes.some(route => route.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX))) {
+    return invalid(400, '模型类型与聊天接口不匹配');
+  }
+  if (!messages) return invalid(400, 'messages is required');
+
+  if (userModelDenied(userId, model) || (token?.allowedModels.length && !token.allowedModels.includes(model))) {
+    return invalid(403, 'Token has no access to model ' + model, 'permission_error');
   }
 
   const outputLimit = Number(otherParams.max_completion_tokens ?? otherParams.max_tokens ?? 4096);
   const choices = Number(otherParams.n ?? 1);
   if (!Number.isInteger(outputLimit) || outputLimit < 1 || outputLimit > 65536 || !Number.isInteger(choices) || choices < 1 || choices > 4)
-    return res.status(400).json({ error: { message: 'max_tokens must be 1..65536 and n must be 1..4', type: 'invalid_request_error' } });
+    return invalid(400, 'max_tokens must be 1..65536 and n must be 1..4');
   if (otherParams.max_completion_tokens !== undefined) { otherParams.max_completion_tokens = outputLimit; delete otherParams.max_tokens; }
   else otherParams.max_tokens = outputLimit;
   if (stream) otherParams.stream_options = { ...otherParams.stream_options, include_usage: true };
   // UTF-8 bytes conservatively cover text tokens; reserve extra for each media item.
   const serialized = JSON.stringify({ messages, ...otherParams });
   const mediaCount = (serialized.match(/"(?:image_url|input_audio|video_url)"/g) || []).length;
-  const quote = PricingService.createQuoteResolver(true, token.userId ?? null);
+  const quote = PricingService.createQuoteResolver(true, userId);
   const calculateCost = (promptTokens: number, completionTokens: number) => quote(model, {promptTokens, completionTokens}).cost;
   const reservedCost = calculateCost(Buffer.byteLength(serialized, 'utf8') + 1024 + mediaCount * 65536, outputLimit * choices);
   // Check for a useful error first; the reservation below performs the atomic deduction.
-  const { sufficient, balance: currentBalance } = checkTokenOrUserBalance(token, reservedCost);
+  const { sufficient, balance: currentBalance } = website ? BalanceService.checkBalance(website.userId, reservedCost) : checkTokenOrUserBalance(token, reservedCost);
   if (!sufficient) {
+    if (website) return invalid(402, '余额不足。当前余额 ¥' + currentBalance.toFixed(2), 'insufficient_balance_error');
     return res.status(402).json({ error: { message: `Insufficient balance. Current: ¥${currentBalance.toFixed(2)}`, type: 'insufficient_balance_error' } });
   }
 
   const channel = ChannelService.findChannelForModel(model);
   if (!channel) {
-    return res.status(404).json({ error: { message: `No available channel for model ${model}`, type: 'not_found_error' } });
+    return invalid(404, 'No available channel for model ' + model, 'not_found_error');
   }
 
   const upstreamModel = channel.modelMapping[model] || model;
-  if(isImage2proChannel(channel) && (choices!==1 || typeof stream!=='boolean' || req.body.max_tokens!==undefined && req.body.max_completion_tokens!==undefined))return res.status(400).json({error:{message:'Image2Pro 文本 n 只能为 1，stream 必须为布尔值，max_tokens 与 max_completion_tokens 不能同时传入',type:'invalid_request_error'}});
-  if(isImage2proChannel(channel)){const message=image2proChatParameterError(req.body);if(message)return res.status(400).json({error:{message,type:'invalid_request_error'}});}
+  if(isImage2proChannel(channel) && (choices!==1 || typeof stream!=='boolean' || req.body.max_tokens!==undefined && req.body.max_completion_tokens!==undefined))return invalid(400,'Image2Pro 文本 n 只能为 1，stream 必须为布尔值，max_tokens 与 max_completion_tokens 不能同时传入');
+  if (isImage2proChannel(channel)) {
+    const message = image2proChatParameterError(req.body);
+    if (message) return invalid(400, message);
+  }
   const upstreamUrl = isImage2proChannel(channel) ? image2proBase(channel.baseUrl)+'/chat/completions' : (isZonghengChannel(channel) ? zonghengBaseUrl(channel.baseUrl) : channel.baseUrl.replace(/\/+$/, '')) + '/v1/chat/completions';
   const upstreamBody = JSON.stringify({
     model: upstreamModel,
@@ -919,10 +943,13 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
     ...otherParams,
   });
 
-  let reservation: ReturnType<typeof reserveApiCharge> | undefined;
+  let reservation: ReturnType<WebsiteChatReply['reserve']> | undefined;
   try {
-    reservation = reserveApiCharge(token, reservedCost, model, quote(model, {}).pricingSnapshot);
-    res.setHeader('X-Billing-Reservation', reservation.id);
+    const pricingSnapshot = quote(model, {}).pricingSnapshot;
+    reservation = website
+      ? website.reserve(reservedCost, model, pricingSnapshot)
+      : reserveApiCharge(token, reservedCost, model, pricingSnapshot);
+    if (!website) res.setHeader('X-Billing-Reservation', reservation.id);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), channel.timeout || 120000);
 
@@ -935,7 +962,7 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
         ...(isImage2proChannel(channel)?{'Idempotency-Key':reservation.id}:{}),
       },
       body: upstreamBody,
-      signal: controller.signal,
+      signal: website ? AbortSignal.any([controller.signal, AbortSignal.timeout(Math.max(1, website.deadline - Date.now()))]) : controller.signal,
       redirect: isImage2proChannel(channel)?'error':'follow',
     }); } finally { clearTimeout(timer); }
 
@@ -945,27 +972,46 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
         let raw:any;try{raw=JSON.parse(errBody);}catch{}
         const rejected=[400,401,402,403,404,405,413,415,429].includes(upstreamRes.status)&&typeof raw?.error?.message==='string';
         if(!rejected)reservation.review();else reservation.cancel();
-        db.insert(apiLogs).values({tokenId:token.id,channelId:channel.id,model,upstreamModel,durationMs:Date.now()-startTime,status:'error',errorMessage:upstreamDiagnostic('Image2Pro','文本提交',raw||{message:'非 JSON 响应'},channel.apiKey,upstreamRes.status),clientIp}).run();
-        return res.status(upstreamRes.status).json({error:{message:upstreamDiagnostic('Image2Pro','文本提交',raw||{message:'上游未返回 JSON 错误体'},channel.apiKey,upstreamRes.status),type:raw?.error?.type||'upstream_error',code:raw?.error?.code}});
+        db.insert(apiLogs).values({tokenId,channelId:channel.id,model,upstreamModel,durationMs:Date.now()-startTime,status:'error',errorMessage:upstreamDiagnostic('Image2Pro','文本提交',raw||{message:'非 JSON 响应'},channel.apiKey,upstreamRes.status),clientIp}).run();
+        return replyError(upstreamRes.status, {message:upstreamDiagnostic('Image2Pro','文本提交',raw||{message:'上游未返回 JSON 错误体'},channel.apiKey,upstreamRes.status),type:raw?.error?.type||'upstream_error',code:raw?.error?.code}, !rejected, website ? [...privateChannelNames(), channel.apiKey] : undefined);
       }
       const durationMs = Date.now() - startTime;
 
       db.insert(apiLogs).values({
-        tokenId: token.id, channelId: channel.id, model, upstreamModel,
+        tokenId, channelId: channel.id, model, upstreamModel,
         durationMs, status: 'error', errorMessage: `HTTP ${upstreamRes.status}: ${errBody.slice(0, 500)}`, clientIp,
       }).run();
 
+      if (website) {
+        let error: { error?: { message?: string; code?: string } } = {};
+        try { error = JSON.parse(errBody); } catch { /* Non-JSON responses may contain private HTML. */ }
+        const review = upstreamRes.status < 400 || upstreamRes.status >= 500 || typeof error?.error?.message !== 'string';
+        if (review) reservation.review();
+        else reservation.cancel();
+        return replyError(upstreamRes.status, error?.error || '上游未返回结构化错误详情', review, [...privateChannelNames(), channel.apiKey]);
+      }
       return res.status(upstreamRes.status).json(JSON.parse(errBody));
     }
 
+    if (stream && website && upstreamRes.headers.get('content-type')?.includes('application/json')) {
+      const body = await upstreamRes.json();
+      reservation.review();
+      return replyError(502, upstreamDiagnostic(channel.type, '对话响应', body, channel.apiKey), true);
+    }
+
     if (stream) {
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache, no-transform');
-      res.setHeader('Connection', 'keep-alive');
-      res.setHeader('X-Accel-Buffering', 'no');
+      if (!website) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+      }
 
       const reader = upstreamRes.body?.getReader();
-      if (!reader) {if(isImage2proChannel(channel))reservation.review();return res.status(500).json({ error: { message: 'No response body', type: 'server_error' } });}
+      if (!reader) {
+        if (website || isImage2proChannel(channel)) reservation.review();
+        return replyError(website ? 502 : 500, { message: 'No response body', type: 'server_error' }, Boolean(website));
+      }
 
       const decoder = new TextDecoder();
       let totalPromptTokens = 0;
@@ -974,6 +1020,8 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
       let sawDone = false;
       let pending = "";
       let streamError: string | undefined;
+      let websiteStreamReason: string | undefined;
+      let receivedText = false;
 
       try {
         while (true) {
@@ -985,20 +1033,34 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
           for (const line of lines) {
             let forwarded = line;
             if(line.startsWith('data:')&&line.slice(5).trim()==='[DONE]')sawDone=true;
-            if (line.startsWith('data:') && line.slice(5).trim() !== '[DONE]') {
+            if (line.startsWith('data:') && line.slice(5).trim() !== '[DONE]' && (!website || line.slice(5).trim())) {
               let data: any;
               try { data = JSON.parse(line.slice(5).trim()); } catch { if(isImage2proChannel(channel))streamError='Image2Pro 响应流含不完整 JSON，原请求待核对'; }
+              if (website && !data) streamError = '上游对话流包含无效 JSON';
+              const delta = data?.choices?.[0]?.delta?.content;
+              if (website && typeof delta === 'string' && delta) {
+                receivedText = true;
+                website.delta(delta);
+              }
               if (data?.error) {
+                if (website) {
+                  const safe = publicApiDiagnostics({ error: data.error }, [...privateChannelNames(), channel.apiKey]).error;
+                  const code = safe?.code ? ' · ' + safe.code : '';
+                  websiteStreamReason = '对话响应' + code + ' · ' + (safe?.message || safe);
+                }
                 streamError = upstreamDiagnostic(channel.type || 'OpenAI-compatible', '响应流', data, channel.apiKey);
                 forwarded = 'data: ' + JSON.stringify(isImage2proChannel(channel)?{error:{message:streamError}}:publicApiDiagnostics(data, privateChannelNames()));
               }
-              if (data?.usage) {
+              if (data?.usage && (!website || (
+                Number.isSafeInteger(data.usage.prompt_tokens) && data.usage.prompt_tokens >= 0 &&
+                Number.isSafeInteger(data.usage.completion_tokens) && data.usage.completion_tokens >= 0
+              ))) {
                 sawUsage = true;
                 totalPromptTokens = data.usage.prompt_tokens || 0;
                 totalCompletionTokens = data.usage.completion_tokens || 0;
               }
             }
-            res.write(forwarded + '\n');
+            if (!website) res.write(forwarded + '\n');
           }
           if (done) break;
         }
@@ -1007,15 +1069,25 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
       }
 
       const cost = sawUsage ? calculateCost(totalPromptTokens, totalCompletionTokens) : reservedCost;
-      if(isImage2proChannel(channel) && (streamError || !sawDone)){reservation.review();if(!streamError)res.write('data: '+JSON.stringify({error:{message:'Image2Pro 响应流未正常结束，原请求待核对，请勿重发'}})+'\n\n');}
+      if (website) {
+        if (streamError || !sawDone || !sawUsage) reservation.review();
+        else reservation.settle(cost);
+        if (streamError || !sawDone || !sawUsage || cost > reservedCost + 0.000001) {
+          const error = websiteStreamReason || streamError || (!sawDone ? '上游对话流未正常结束'
+            : !sawUsage ? '上游未返回 Token 用量' : '上游用量超过预扣金额');
+          website.finish({ status: 'review', error });
+        } else {
+          website.finish(receivedText ? { status: 'complete' } : { status: 'failed', error: '上游已结束回复，但未返回文本内容' });
+        }
+      } else if(isImage2proChannel(channel) && (streamError || !sawDone)){reservation.review();if(!streamError)res.write('data: '+JSON.stringify({error:{message:'Image2Pro 响应流未正常结束，原请求待核对，请勿重发'}})+'\n\n');}
       else if (sawUsage) reservation.settle(cost); else reservation.review();
-      res.end();
+      if (!website) res.end();
 
       db.insert(apiLogs).values({
-        tokenId: token.id, channelId: channel.id, model, upstreamModel,
+        tokenId, channelId: channel.id, model, upstreamModel,
         promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens,
         totalTokens: totalPromptTokens + totalCompletionTokens,
-        cost, durationMs: Date.now() - startTime, status: streamError ? 'error' : isImage2proChannel(channel)&&!sawDone ? 'billing_review' : sawUsage && cost <= reservedCost ? 'success' : 'billing_review', errorMessage: streamError, clientIp,
+        cost, durationMs: Date.now() - startTime, status: streamError ? 'error' : (website || isImage2proChannel(channel))&&!sawDone ? 'billing_review' : sawUsage && cost <= reservedCost ? 'success' : 'billing_review', errorMessage: streamError, clientIp,
       }).run();
       return;
     }
@@ -1033,26 +1105,32 @@ router.post('/chat/completions', async (req: Request, res: Response) => {
     res.setHeader('X-Billing-Status', responseBody.usage && cost <= reservedCost ? 'settled' : 'review');
 
     db.insert(apiLogs).values({
-      tokenId: token.id, channelId: channel.id, model, upstreamModel,
+      tokenId, channelId: channel.id, model, upstreamModel,
       promptTokens, completionTokens, totalTokens,
       cost, durationMs, status: responseBody.usage && cost <= reservedCost ? 'success' : 'billing_review', clientIp,
     }).run();
 
     res.json(responseBody);
   } catch (err: any) {
-    if(isImage2proChannel(channel))reservation?.review();
+    if (website || isImage2proChannel(channel)) reservation?.review();
     const durationMs = Date.now() - startTime;
     const errorMessage = err.name === 'AbortError' ? 'upstream timeout' : err.message;
 
     db.insert(apiLogs).values({
-      tokenId: token.id, channelId: channel.id, model, upstreamModel,
+      tokenId, channelId: channel.id, model, upstreamModel,
       durationMs, status: 'error', errorMessage, clientIp,
     }).run();
 
+    if (website) {
+      const message = upstreamDiagnostic(channel.type, '对话请求', { message: errorMessage }, channel.apiKey);
+      return replyError(err.status || 502, message, Boolean(reservation));
+    }
     if (res.headersSent) res.end();
     else res.status(err.status || 502).json({ error: { message: `Upstream error: ${errorMessage}`, type: 'server_error' } });
   } finally { reservation?.cancel(); }
-});
+}
+
+router.post('/chat/completions', (req, res) => handleChatCompletion(req, res));
 
 /** Original HUSS image result; exhausted tokens may still retrieve paid tasks. */
 router.get('/images/tasks/:id', (req: Request, res: Response) => {

@@ -24,6 +24,7 @@ import channelRoutes from './routes/channels.js';
 import tokenRoutes from './routes/tokens.js';
 import pricingRoutes from './routes/pricing.js';
 import v1Routes from './routes/v1.js';
+import websiteChatRoutes from './routes/websiteChat.js';
 import videoRoutes from './routes/video.js';
 import videoBatchRoutes from './routes/videoBatches.js';
 import imageGenRoutes from './routes/imageGen.js';
@@ -92,6 +93,7 @@ export async function createApp() {
   app.use('/api/image-gen', privateReferences, imageGenRoutes);
   app.use('/api/tokens', userTokenRoutes);
   app.use('/api/developer', developerRoutes);
+  app.use('/api/chat', websiteChatRoutes);
   app.use('/api/org', orgRoutes);
   app.use('/api/contents', contentRoutes);
   app.use('/api/feedback', feedbackRoutes);

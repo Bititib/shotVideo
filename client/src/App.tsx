@@ -9,6 +9,7 @@ import LoginModal from './components/LoginModal';
 const LandingPage = lazy(() => import('./pages/LandingPage'));
 const CanvasPage = lazy(() => import('./pages/CanvasPage'));
 const GeneralPage = lazy(() => import('./pages/analysis/GeneralPage'));
+const ChatPage = lazy(() => import('./pages/ChatPage'));
 const EcommercePage = lazy(() => import('./pages/analysis/EcommercePage'));
 const ImagePage = lazy(() => import('./pages/analysis/ImagePage'));
 const CopywritingPage = lazy(() => import('./pages/analysis/CopywritingPage'));
@@ -90,6 +91,7 @@ export default function App() {
         {/* 工作台 — 共享同一个持久化布局，切换子页面时不重复挂载侧栏和公共请求 */}
         <Route path="/app" element={<Layout />}>
           <Route index element={<GeneralPage />} />
+          <Route path="chat" element={<ChatPage />} />
           <Route path="ecommerce" element={<EcommercePage />} />
           <Route path="image" element={<ImagePage />} />
           <Route path="copywriting" element={<CopywritingPage />} />

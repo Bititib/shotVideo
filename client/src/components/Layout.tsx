@@ -6,6 +6,7 @@ import { getPublicSettings } from '../api/admin';
 import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Layers3, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2, X, Key, User, FileText, History, Clapperboard, Download } from 'lucide-react';
 
 const navItems: Array<{ to: string; icon: typeof PlaySquare; label: string; color: string; feature: string; requiresApiKey?: boolean }> = [
+  { to: '/app/chat', icon: MessageCircle, label: '大模型对话', color: 'text-amber-400', feature: 'chat' },
   { to: '/app/canvas', icon: Layers3, label: '无限画布', color: 'text-amber-400', feature: 'canvas' },
   { to: '/app', icon: PlaySquare, label: '通用分析', color: 'text-blue-400', feature: 'general' },
   { to: '/app/ecommerce', icon: ShoppingBag, label: '带货分析', color: 'text-purple-400', feature: 'ecommerce' },
