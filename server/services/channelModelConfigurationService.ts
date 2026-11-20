@@ -1,5 +1,5 @@
 import { image2proUpstreamPricing } from './image2proUpstreamPricing.js';
-import { apipathAuthorizedCatalog, validateApipathDraft, bindApipathCatalogEntry, previewApipathRequest, type ApipathCatalogEntry } from './apipathModelConfiguration.js';
+import { manualApipathEntry, apipathAuthorizedCatalog, validateApipathDraft, bindApipathCatalogEntry, previewApipathRequest, type ApipathCatalogEntry } from './apipathModelConfiguration.js';
 import { apipathKeys } from './apipathKeyService.js';
 import { buildSnumomWanPayload } from './snumomWanAdapter.js';
 import { validateSnumomConfiguration } from '../../shared/snumomConfiguration.js';
@@ -12,7 +12,7 @@ import { allowsDuration } from '../../shared/modelRouting.js';
 import { buildWanfengVideoPayload } from './wanfengVideoAdapter.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { channelVideoProtocols, CHANNEL_MODEL_ROUTE_PREFIX, STANDARD_CHANNEL_IMAGE_RATIOS, STANDARD_CHANNEL_VIDEO_RATIOS,
+import { APIPATH_MANUAL_ROUTE_PREFIX, channelVideoProtocols, CHANNEL_MODEL_ROUTE_PREFIX, STANDARD_CHANNEL_IMAGE_RATIOS, STANDARD_CHANNEL_VIDEO_RATIOS,
   type ChannelModelCatalogEntry, type ChannelModelConfigurations, type ChannelModelDraft, type ChannelModelRequestPreview,
   type ChannelVideoProtocol } from '../../shared/channelModelConfiguration.js';
 import { LEGACY_VX_LE_SEEDANCE_MODEL, VX_LE_SEEDANCE_MODEL } from '../../shared/asyncVideo.js';
@@ -70,6 +70,7 @@ function readConfiguration(channel: Channel) {
       capabilities, enabled: model?.isActive === 1 && spec?.enabled !== false && (!routes.length || routes.some(route => route.enabled)),
       limits: spec?.limits ?? (kind ? existingModelLimits(modelId, kind) : null), editable,
       specificationEnabled: spec?.enabled, routeEnabled: routes.length === 1 ? routes[0].enabled : undefined,
+      ...(routes[0]?.id.startsWith(APIPATH_MANUAL_ROUTE_PREFIX) ? { apipathManual: true } : {}),
       ...(routes[0]?.snumom ? { snumom: routes[0].snumom } : {}),
     };
   });
@@ -271,6 +272,7 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
     if (!current.result.canAdd) throw fail(current.result.addUnavailableReason!, 409);
     if (current.result.version !== version) throw fail('渠道模型配置已变化，请重新打开后保存', 409);
     const existing = current.result.models.find(row => row.modelId === draft.modelId);
+    if (existing && channel.type === 'apipath' && Boolean(existing.apipathManual) !== Boolean(draft.apipathManual)) throw fail('已有模型须保留原录入方式', 409);
     if (existing && (!existing.editable || !existing.capabilities.includes(draft.kind))) throw fail('此模型使用已有接入配置，不能通过通用入口更换协议或能力', 409);
     if (protocol && current.result.models.some(row => row.modelId !== draft.modelId && row.upstreamModel === draft.upstreamModel)) {
       throw fail('此上游型号已关联本站模型，请编辑已有配置', 409);
@@ -296,7 +298,8 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
     return occupied;
   };
   assertVersion(original);
-  const catalogEntry = (await fetchCatalog(channel)).find(entry => entry.id === draft.upstreamModel);
+  const manual = channel.type === 'apipath' && draft.apipathManual === true;
+  const catalogEntry = manual ? manualApipathEntry(channelId, draft) : (await fetchCatalog(channel)).find(entry => entry.id === draft.upstreamModel);
   if (!catalogEntry) throw fail('该上游型号未出现在此 Key 的授权目录中，或不支持在此添加', 409);
   if (channel.type === 'image2pro') validateImage2proCatalogDraft(draft, catalogEntry);
   if (channel.type === 'apipath') validateApipathDraft(draft, catalogEntry as ApipathCatalogEntry);
@@ -331,7 +334,7 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
     const route: ModelRoute = {
       ...(channel.type === 'apipath' && (catalogEntry as ApipathCatalogEntry).apipath ? { apipath: (catalogEntry as ApipathCatalogEntry).apipath } : {}),
       ...(protocol === 'snumom' ? { snumom: structuredClone(draft.snumom!) } : {}),
-      id: originalRoute?.id ?? (live.type === 'apipath' ? 'admin-channel-model-apipath-' : live.type === 'image2pro' ? 'admin-channel-model-image2pro-' : protocol ? channelVideoProtocols[protocol].prefix : CHANNEL_MODEL_ROUTE_PREFIX) + randomUUID(), channelId, executionModel: draft.modelId,
+      id: originalRoute?.id ?? (manual ? APIPATH_MANUAL_ROUTE_PREFIX : live.type === 'apipath' ? 'admin-channel-model-apipath-' : live.type === 'image2pro' ? 'admin-channel-model-image2pro-' : protocol ? channelVideoProtocols[protocol].prefix : CHANNEL_MODEL_ROUTE_PREFIX) + randomUUID(), channelId, executionModel: draft.modelId,
       upstreamModel: draft.upstreamModel, enabled: draft.routeEnabled ?? originalRoute?.enabled ?? true, limits,
       cost: cost?.cost ?? null, costUnit: cost?.costUnit ?? 'unknown',
       resolutionCosts: cost?.resolutionCosts ?? {}, priority: originalRoute?.priority ?? live.priority,
@@ -373,7 +376,7 @@ export async function previewAuthorizedChannelModelRequest(channelId: number, dr
   const channel = getChannel(channelId);
   if (channel.type === 'apipath') {
     validateDraft(draft,undefined,false,false,true);
-    const entry=(await apipathAuthorizedCatalog(channel)).find(e=>e.id===draft.upstreamModel);
+    const entry=draft.apipathManual === true ? manualApipathEntry(channelId, draft) : (await apipathAuthorizedCatalog(channel)).find(e=>e.id===draft.upstreamModel);
     if(!entry)throw fail('该型号未出现在对应 Key 的授权目录或当前协议文档中',409);
     validateApipathDraft(draft,entry);
     return previewApipathRequest(draft,entry,sample);

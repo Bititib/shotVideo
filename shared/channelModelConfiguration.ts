@@ -18,7 +18,10 @@ export type ChannelVideoProtocol = keyof typeof channelVideoProtocols;
 export const STANDARD_CHANNEL_IMAGE_RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3'] as const;
 export const STANDARD_CHANNEL_VIDEO_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4'] as const;
 
+export const APIPATH_MANUAL_ROUTE_PREFIX = 'admin-channel-model-apipath-manual-';
+
 export type ChannelModelDraft = {
+  apipathManual?: boolean;
   snumom?: { billingType: 'per_call' | 'per_second'; referenceVideoBilling: boolean };
   modelId: string;
   displayName: string;
@@ -30,6 +33,7 @@ export type ChannelModelDraft = {
 };
 
 export type ChannelModelConfiguration = {
+  apipathManual?: boolean;
   snumom?: ChannelModelDraft['snumom'];
   modelId: string;
   displayName: string;

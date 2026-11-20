@@ -138,6 +138,26 @@ export function apipathDocumentedModel(doc: any): Omit<ApipathCatalogEntry, 'key
   return { id, kind:doc.category, name:doc.model_name||id, limits, description, ...(apipath ? {apipath} : {}) };
 }
 
+export function manualApipathEntry(channelId: number, draft: ChannelModelDraft): ApipathCatalogEntry {
+  const { kind, limits, upstreamModel: id } = draft;
+  if (kind !== 'video' && kind !== 'image') throw fail('请选择图片或视频');
+  const keys = apipathKeys(channelId).filter(key => key.status === 1 && key.kind === kind);
+  if (!keys.length) throw fail('请先配置' + (kind === 'video' ? '视频' : '图片') + ' API Key');
+  if (limits.qualities.length || (limits.outputsPerTask ?? 1) !== 1) throw fail('手动接入每次输出一份，使用默认质量');
+  if (kind === 'video' && ![limits.duration.min, limits.duration.max, limits.duration.step, ...limits.duration.values].every(Number.isSafeInteger))
+    throw fail('视频时长和步长请填写整数秒');
+  if (kind === 'image' && (limits.maxVideos || limits.maxAudios || limits.firstFrame || limits.lastFrame
+    || !isApipathSunburstSpec(id) && limits.resolutions.join() !== 'default'))
+    throw fail('通联同步图片协议支持参考图，通用图片型号的分辨率由上游决定');
+  const known = APIPATH_MODELS.find(model => model.id === id);
+  const entry: ApipathCatalogEntry = { id, kind, limits, name: draft.displayName, keyIds: keys.map(key => key.id),
+    description: known?.description ?? '',
+    ...(kind === 'video' ? { apipath: { fields: APIPATH_VIDEO_FIELDS.filter(field => field !== 'generation_mode'),
+      modes: [], modeOptional: true, checkedAt: new Date().toISOString() } } : {}) };
+  if (known) validateApipathDraft(draft, { ...entry, kind: known.kind, limits: known.limits });
+  return entry;
+}
+
 export function validateApipathDraft(draft: ChannelModelDraft, entry: ApipathCatalogEntry) {
   if (draft.kind !== entry.kind || draft.modelId !== entry.id || draft.upstreamModel !== entry.id) throw fail('Vx-魅影请使用授权目录中的原始模型 ID 和类型');
   const l = draft.limits, s = entry.limits, d = l.duration;

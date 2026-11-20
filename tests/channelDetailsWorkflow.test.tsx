@@ -52,6 +52,24 @@ it('opens the miniKey model editor from the channel row', async () => {
 });
 
 describe('channel details and model sync workflow', () => {
+  it('accepts a typed Apipath video without loading a catalog', async () => {
+    const initial = { models: [], canAdd: true, canSync: true, apipath: true, version: 'v1' };
+    vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, type: 'apipath', name: 'Vx-魅影' }]);
+    vi.mocked(adminApi.getChannelModelConfigurations).mockResolvedValue(initial);
+    vi.mocked(adminApi.saveChannelModelConfiguration).mockResolvedValue(initial);
+    mount(); fireEvent.click(await screen.findByRole('button', { name: '模型与参数', exact: true }));
+    const panel = within(await screen.findByRole('dialog', { name: 'Vx-魅影 · 模型与参数' }));
+    fireEvent.click(await panel.findByRole('button', { name: '添加新模型' }));
+    for (const [label, value] of [['上游模型 ID','手填视频'], ['可选分辨率','720p'], ['可选比例','1:1']]) {
+      fireEvent.change(panel.getByLabelText(label), { target: { value } });
+    }
+    fireEvent.click(panel.getByRole('button', { name: '添加模型', exact: true }));
+    await waitFor(() => expect(adminApi.saveChannelModelConfiguration).toHaveBeenCalledWith(9, expect.objectContaining({
+      modelId: '手填视频', upstreamModel: '手填视频', displayName: '手填视频', apipathManual: true, kind: 'video',
+    }), 'v1'));
+    expect(adminApi.getAuthorizedChannelModels).not.toHaveBeenCalled();
+  });
+
   it('adds a selected Apipath video or image through its authorized catalog and preserves its type and limits', async () => {
     const id='another-apipath-video';
     const limits={...defaultRoutingLimits(),resolutions:['480p'],ratios:['1:1','9:16'],maxImages:9,maxVideos:3,maxAudios:3};
@@ -63,6 +81,7 @@ describe('channel details and model sync workflow', () => {
     mount();fireEvent.click(await screen.findByRole('button',{name:'模型与参数',exact:true}));
     const panel=within(await screen.findByRole('dialog',{name:'Vx-魅影 · 模型与参数'}));
     fireEvent.click(await panel.findByRole('button',{name:'添加新模型'}));
+    fireEvent.change(panel.getByLabelText('录入方式'),{target:{value:'catalog'}});
     fireEvent.click(panel.getByRole('button',{name:'读取已授权的上游型号'}));await panel.findByRole('option',{name:id});
     fireEvent.change(panel.getByLabelText('上游模型 ID'),{target:{value:id}});
     expect(panel.getByLabelText('本站 API 模型 ID')).toHaveValue(id);expect(panel.getByLabelText('模型类型')).toHaveValue('视频');

@@ -1,3 +1,4 @@
+import { APIPATH_MANUAL_ROUTE_PREFIX } from '../../shared/channelModelConfiguration.js';
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { channels, models, apipathChannelKeys, modelPricing } from '../db/schema.js';
@@ -35,8 +36,17 @@ export async function fetchApipathCatalog(channel: ApipathChannel & { id: number
   const configured = getModelSpecifications().flatMap(spec=>spec.routes.filter(r=>r.channelId===channel.id && r.id.startsWith('admin-channel-model-apipath-'))
     .map(route=>({spec,route})));
   if (configured.length) {
-    const authorized = await apipathAuthorizedCatalog(channel);
+    const authorized = configured.some(({route}) => !route.id.startsWith(APIPATH_MANUAL_ROUTE_PREFIX)) ? await apipathAuthorizedCatalog(channel) : [];
     for (const {spec,route} of configured) {
+      if (route.id.startsWith(APIPATH_MANUAL_ROUTE_PREFIX)) {
+        const key = keys.find(key => key.kind === spec.kind);
+        const binding = bindings.find(binding => binding.id === key?.id);
+        if (!binding) { warnings.push('手动型号缺少对应类型的 Key：' + spec.modelId); continue; }
+        if (!binding.models.includes(spec.modelId)) binding.models.push(spec.modelId);
+        if (!entries.some(entry => entry.id === spec.modelId)) entries.push({ id: spec.modelId, name: spec.modelId,
+          upstreamModel: route.upstreamModel, kind: spec.kind, limits: route.limits, description: '' });
+        continue;
+      }
       const entry=authorized.find(e=>e.id===route.upstreamModel && e.kind===spec.kind);
       if(!entry){warnings.push('已添加型号未通过当前文档或对应 Key 授权核对，未开放新任务：'+spec.modelId);continue;}
       if(!entries.some(e=>e.id===spec.modelId)) entries.push({...entry,id:spec.modelId,upstreamModel:route.upstreamModel});
@@ -46,7 +56,7 @@ export async function fetchApipathCatalog(channel: ApipathChannel & { id: number
   const importedUpstream=new Set(entries.map(entry=>entry.upstreamModel||entry.id));
   for(const source of sourceCatalogs){
     const count=source.id===null?entries.filter(entry=>source.names.has(entry.upstreamModel||entry.id)).length:bindings.find(binding=>binding.id===source.id)!.models.length;
-    summaries.push(source.label+'已核实规格 '+count+' 个');
+    summaries.push(source.label+'已绑定 '+count+' 个');
     if(!count)warnings.push(source.label+'没有已选择且通过核验的对应类型模型；可在“模型与参数”读取授权目录后添加');
     const unselected=[...source.names].filter(id=>!importedUpstream.has(id));
     if(unselected.length)warnings.push(source.label+'未自动导入未选择或规格尚未核实的型号：'+unselected.join('、'));

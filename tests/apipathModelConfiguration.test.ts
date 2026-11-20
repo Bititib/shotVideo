@@ -41,6 +41,31 @@ async function draftFor(id:string):Promise<ChannelModelDraft>{const entry=(await
 async function save(draft:ChannelModelDraft){return saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version);}
 const response=()=>{const r:any={headersSent:false,writableEnded:false,destroyed:false};r.status=vi.fn(()=>r);r.json=vi.fn(body=>{r.body=body;return r;});r.setHeader=vi.fn();r.flushHeaders=vi.fn(()=>r.headersSent=true);r.write=vi.fn();r.end=vi.fn(()=>r.writableEnded=true);return r;};
 
+it.each(['image','video'] as const)('saves and previews a manually entered %s offline and retains its typed binding on sync', async kind => {
+  const id = '手填-' + kind;
+  const { defaultRoutingLimits } = await import('../shared/modelRouting.js');
+  const limits = defaultRoutingLimits();
+  if (kind === 'image') limits.resolutions = ['default'];
+  const draft = { modelId: id, upstreamModel: id, displayName: id, kind, limits, apipathManual: true };
+  const preview = await previewAuthorizedChannelModelRequest(channelId, draft);
+  expect(preview.body.model).toBe(id);
+  const saved = await save(draft);
+  expect(saved.models).toMatchObject([{ modelId: id, apipathManual: true, editable: true, enabled: false }]);
+  await save({ ...draft, displayName: '修改名称' });
+  expect(fetch).not.toHaveBeenCalled();
+  await ChannelService.syncModels(channelId);
+  const bound = ChannelService.getActiveChannels().filter(key => key.id === channelId && key.supportedModels.includes(id));
+  expect(bound.map(key => key.apiKey)).toEqual([kind + '-key']);
+  expect(getModelSpecification(id)?.limits).toEqual(limits);
+  db.update(models).set({isActive:1}).where(eq(models.modelId,id)).run();
+  db.insert(modelPricing).values({modelPattern:id,inputPrice:.1,billingType:'per_call'}).run();
+  vi.mocked(fetch).mockClear();
+  const body = {model:id,prompt:'海浪',aspect_ratio:'1:1', ...(kind === 'video' ? {seconds:4,resolution:'720p'} : {})};
+  await handleSpecificationGeneration({userId:1,headers:{},protocol:'https',get:()=> 'app.example',body} as any,response(),kind);
+  expect(db.select().from(contents).all()[0]).toMatchObject({status:'completed',cost:.1});
+  expect(fetch).toHaveBeenCalledOnce();
+});
+
 it('offers documented, type-bound authorized models without importing any catalog entry',async()=>{
   const entries=await listAuthorizedChannelModels(channelId);
   expect(entries.map(e=>e.id).sort()).toEqual([video,image,transformer,'Seedance-2.0-mini-480-GK','gpt-image-2-5-sunburst'].sort());
