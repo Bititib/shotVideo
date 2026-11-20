@@ -12,6 +12,7 @@ export type ModelInputLimits = {
   firstFrame: boolean; lastFrame: boolean; qualities: string[];
 };
 export type ModelRoute = {
+  huss?: { protocol: 'unified-v1' };
   apipath?: { fields: string[]; modes: string[]; checkedAt: string; modeOptional?: boolean; maxPromptChars?: number };
   snumom?: { billingType: 'per_call' | 'per_second'; referenceVideoBilling: boolean };
   siYueTianVideo?: true;

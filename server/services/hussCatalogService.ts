@@ -1,4 +1,5 @@
 import { selectedHssSource } from './hssSourceService.js';
+import { HUSS_CONFIGURATION_PREFIX, hussConfigurationCatalog } from '../../shared/hussConfiguration.js';
 import { bbHssKkManaged } from './bbHssKkMigration.js';
 import { readBbHssSources } from './bbHssSourcePolicy.js';
 import { BB_HSS_SOURCES } from '../../shared/bbHssSources.js';
@@ -7,11 +8,13 @@ import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
 import { channels, models } from '../db/schema.js';
 import { HUSS_HSS_B_MODEL, HUSS_BB_A_MODEL, hussBbAModelLimits, isHussHssModel, HUSS_BB_PUBLIC_MODEL, HUSS_HSS_MODEL, hussHssModelLimits } from '../../shared/hussBbVideo.js';
-import { fetchHussVideoModels, hussBbModelLimits, type HussChannel } from './hussVideoAdapter.js';
-import { getModelSpecification, saveModelSpecification } from './modelRoutingService.js';
+import { fetchHussModelIds, hussBbModelLimits, type HussChannel } from './hussVideoAdapter.js';
+import { getModelSpecification, getModelSpecifications, saveModelSpecification } from './modelRoutingService.js';
 
 export async function syncHussModels(channel: HussChannel & { id: number; name: string; priority: number }) {
-  const upstream = await fetchHussVideoModels(channel);
+  const allowed = new Set(await fetchHussModelIds(channel));
+  if (!allowed.size) throw new Error('HUSS 当前 API Key 未返回授权模型，已保留原配置');
+  const upstream = [HUSS_MJ_MODEL,HUSS_BB_A_MODEL].filter(id=>allowed.has(id)).map(id=>({id}));
   let added = 0;
   const mapping = Object.fromEntries(upstream.map(item => [item.id === HUSS_MJ_MODEL ? HUSS_MJ_MODEL : isHussHssModel(item.id) ? HUSS_HSS_MODEL : HUSS_BB_PUBLIC_MODEL, item.id]));
   if (upstream.some(item => item.id === HUSS_BB_A_MODEL)) {
@@ -48,6 +51,13 @@ export async function syncHussModels(channel: HussChannel & { id: number; name: 
     for (const [id, selection] of Object.entries(readBbHssSources(sqlite))) {
       if (deleted.has(id)) continue;
       if (selection.channelId === channel.id && selection.source !== 'KK' && bbHssKkManaged(sqlite,id)) mapping[id] = BB_HSS_SOURCES[selection.source].upstreamModel;
+    }
+    // Explicit admin configurations survive catalog refreshes without changing their limits or switches.
+    for (const spec of getModelSpecifications()) {
+      if (deleted.has(spec.modelId)) continue;
+      const route = spec.routes.find(r=>r.channelId===channel.id && r.id.startsWith(HUSS_CONFIGURATION_PREFIX)
+        && r.executionModel===spec.modelId && (spec.kind==='video'&&r.huss?.protocol==='unified-v1'||hussConfigurationCatalog().some(e=>e.id===r.upstreamModel&&e.kind===spec.kind)));
+      if (route) mapping[spec.modelId] = route.upstreamModel;
     }
     db.update(channels).set({ type: 'huss', supportedModels: JSON.stringify(Object.keys(mapping)), modelMapping: JSON.stringify(mapping), updatedAt: new Date().toISOString() }).where(eq(channels.id, channel.id)).run();
   })();

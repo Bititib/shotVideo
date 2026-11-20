@@ -31,12 +31,13 @@ describe('HUSS BB Seedance protocol', () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ ...receipt, error: 'invalid input' }, { status: 400 })));
     await expect(submitHussVideo(channel, request(), vi.fn())).rejects.toMatchObject({ uncertain: true });
   });
-  it('preserves HTTP status, provider code, request ID and exact reason without exposing the key', async () => {
+  it('retains request ID in diagnostics while public errors show the reason without IDs or keys', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json({ error: { code: 'QUOTA_EXHAUSTED', message: '余额 0，所需 6；huss-test-key' } }, { status: 403, headers: { 'x-request-id': 'req-42' } })));
     try { await fetchHussVideoModels(channel); throw new Error('expected rejection'); } catch (error: any) {
       const message = publicGenerationError(error.message);
+      expect(error.message).toContain('req-42');
       expect(message).toContain('HTTP 403'); expect(message).toContain('QUOTA_EXHAUSTED');
-      expect(message).toContain('req-42'); expect(message).toContain('余额 0'); expect(message).not.toContain(channel.apiKey);
+      expect(message).not.toContain('req-42'); expect(message).toContain('余额 0'); expect(message).not.toContain(channel.apiKey);
     }
   });
   it('preserves transport diagnosis despite uncertain-submission messaging', async () => {

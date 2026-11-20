@@ -23,7 +23,7 @@ import { syncV6kVideoModels } from './v6kCatalogService.js';
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
 import { isFunAiChannel, funAiBaseUrl, fetchFunAiModels } from './funAiAdapter.js';
 import { isZonghengChannel, zonghengBaseUrl, ZONGHENG_MODEL_PREFIX } from './zonghengAdapter.js';
-import { HUSS_CHANNEL_TYPE, hussApiBase, isHussChannel, fetchHussVideoModels } from './hussVideoAdapter.js';
+import { HUSS_CHANNEL_TYPE, hussApiBase, isHussChannel, fetchHussModelIds } from './hussVideoAdapter.js';
 import { HAYA_MODEL_IDS, HAYA_XG_SEEDANCE_20_MODEL, getHayaVideoSpec, hayaPublicModelId, hayaUpstreamModelId } from '../../shared/hayaVideo.js';
 import { isHayaChannel, hayaApiBaseUrl } from './hayaVideoAdapter.js';
 import { isBbHssKkEntry } from '../../shared/bbHssKk.js';
@@ -664,7 +664,7 @@ export class ChannelService {
             + (missing.length ? '；当前映射未在目录中列出=' + JSON.stringify(missing) : '') }, channel.apiKey);
           if (!names.length || missing.length) throw new AsyncVideoCatalogError(catalogSummary);
         }
-        else if (isFunAiChannel(channel)) await fetchFunAiModels(channel); else await fetchHussVideoModels(channel);
+        else if (isFunAiChannel(channel)) await fetchFunAiModels(channel); else await fetchHussModelIds(channel);
         const durationMs = Date.now() - start;
         const result = { success: true, message: 'success:' + durationMs + 'ms' + (catalogSummary ? '；' + catalogSummary : ''), durationMs };
         db.update(channels).set({ lastTestAt: new Date().toISOString(), lastTestResult: result.message }).where(eq(channels.id, id)).run();

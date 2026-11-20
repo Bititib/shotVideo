@@ -48,11 +48,14 @@ async function request(channel: HussChannel, endpoint: string, body?: Record<str
   }
   return raw;
 }
-export async function submitHussImage(channel: HussChannel, body: Record<string, any>, images: string[], onReceipt: (id: string) => void) {
+export function buildHussImageRequest(body: Record<string, any>, images: string[]) {
   if (images.length > 1) throw new HussImageError('Midjourney V8.2 最多一张普通参考图', true);
   for (const image of images) if (!/^data:image\/(png|jpeg|webp);base64,/.test(image) || Buffer.byteLength(image.split(',')[1] || '', 'base64') > 10*1024*1024) throw new HussImageError('普通参考图须为 PNG/JPEG/WebP，且不超过 10 MiB', true);
-  const payload = { model:HUSS_MJ_MODEL, prompt:body.prompt, n:1, resolution:String(body.resolution).toLowerCase(), aspect_ratio:body.aspect_ratio,
+  return { model:HUSS_MJ_MODEL, prompt:body.prompt, n:1, resolution:String(body.resolution).toLowerCase(), aspect_ratio:body.aspect_ratio,
     response_format:'url', ...hussMjOptions(body), ...(images.length ? {images:images.map(image_url => ({image_url}))} : {}) };
+}
+export async function submitHussImage(channel: HussChannel, body: Record<string, any>, images: string[], onReceipt: (id: string) => void) {
+  const payload = buildHussImageRequest(body, images);
   const raw = await request(channel, images.length ? '/images/edits/async' : '/images/generations/async', payload, onReceipt);
   return normalizeHussImage(raw);
 }

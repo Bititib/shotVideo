@@ -81,6 +81,7 @@ export function saveModelSpecification(value: ModelSpecification): ModelSpecific
   const routes = value.routes.map(r => {
     validateLimits(r.limits);
     const ch = channelRows.find(c => c.id === r.channelId);
+    if (r.huss && (ch?.type!=='huss'||value.kind!=='video'||r.huss.protocol!=='unified-v1')) throw error('HUSS 统一视频协议配置无效');
     if(r.apipath && (ch?.type!=='apipath'||value.kind!=='video'||!Array.isArray(r.apipath.fields)||!Array.isArray(r.apipath.modes)
       || !r.apipath.modes.length && !(r.apipath.modeOptional===true && !r.apipath.fields.includes('generation_mode'))
       || r.apipath.modeOptional!==undefined && typeof r.apipath.modeOptional!=='boolean'

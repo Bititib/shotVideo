@@ -1,4 +1,8 @@
 import { image2proUpstreamPricing } from './image2proUpstreamPricing.js';
+import { HUSS_CONFIGURATION_PREFIX, validateHussConfiguration } from '../../shared/hussConfiguration.js';
+import { buildHussVideoRequest } from './hussVideoAdapter.js';
+import { buildHussImageRequest } from './hussImageAdapter.js';
+import { hussAuthorizedCatalog } from './hussModelConfiguration.js';
 import { listApipathCatalog, manualApipathEntry, apipathAuthorizedCatalog, validateApipathDraft, bindApipathCatalogEntry, previewApipathRequest, type ApipathCatalogEntry } from './apipathModelConfiguration.js';
 import { apipathKeys } from './apipathKeyService.js';
 import { buildSnumomWanPayload } from './snumomWanAdapter.js';
@@ -53,7 +57,7 @@ function readConfiguration(channel: Channel) {
   const linkedSpecs = specs.filter(spec => spec.routes.some(route => route.channelId === channel.id));
   const ids = new Set([...supported, ...Object.keys(mapping), ...linkedSpecs.map(spec => spec.modelId)]);
   const protocol = getChannelVideoProtocol(channel);
-  const canAdd = Boolean(channel.type === 'apipath' || channel.type === 'image2pro' || protocol || allowsStandardChannelModelConfiguration(sqlite, channel));
+  const canAdd = Boolean(channel.type === 'huss' || channel.type === 'apipath' || channel.type === 'image2pro' || protocol || allowsStandardChannelModelConfiguration(sqlite, channel));
   const restored = isSnumomReconnectChannel(channel) ? reconnectedSnumomModels(sqlite) : new Set<string>();
   const rows = [...ids].filter(id => id !== '*' && (!isRetiredVideoModel(id) || restored.has(id))).map(modelId => {
     const model = savedModels.get(modelId);
@@ -61,7 +65,7 @@ function readConfiguration(channel: Channel) {
     const routes = spec?.routes.filter(route => route.channelId === channel.id) ?? [];
     const capabilities: string[] = JSON.parse(model?.capabilities || '[]');
     const kind = capabilities.includes('video') ? 'video' : capabilities.some(capability => ['image', 'image_gen'].includes(capability)) ? 'image' : null;
-    const editable = Boolean(channel.type === 'image2pro' && model?.provider === 'image2pro' && capabilities.includes('text') && !spec && mapping[modelId] === modelId) || Boolean(canAdd && model && spec?.routes.length === 1 && (routes[0]?.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX) || channel.type === 'apipath' && routes[0]?.id.startsWith('apipath-' + channel.id + '-') || channel.type === 'image2pro' && routes[0]?.id.startsWith('image2pro-' + channel.id + '-'))
+    const editable = Boolean(channel.type === 'image2pro' && model?.provider === 'image2pro' && capabilities.includes('text') && !spec && mapping[modelId] === modelId) || Boolean(canAdd && model && spec?.routes.length === 1 && (routes[0]?.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX) || channel.type === 'huss' && routes[0]?.id.startsWith('huss-' + channel.id + '-') || channel.type === 'apipath' && routes[0]?.id.startsWith('apipath-' + channel.id + '-') || channel.type === 'image2pro' && routes[0]?.id.startsWith('image2pro-' + channel.id + '-'))
       && routes[0].executionModel === modelId && allowsChannelModelConfigurationRoute(sqlite, channel, routes[0].id));
     return {
       modelId, displayName: model?.displayName || modelId,
@@ -83,6 +87,7 @@ function readConfiguration(channel: Channel) {
   if (protocol) result.protocol = protocol;
   if (channel.type === 'image2pro') result.image2pro = true;
   if (channel.type === 'apipath') result.apipath = true;
+  if (channel.type === 'huss') result.huss = true;
   if (!canAdd) result.addUnavailableReason = canSync
     ? '此渠道尚未开放后台新增型号。可同步和查看已接入的型号。'
     : '当前版本未接入此渠道类型的生成协议。可以查看已有配置。';
@@ -96,6 +101,9 @@ export function listChannelModelConfigurations(channelId: number) {
 async function fetchCatalog(channel: Channel): Promise<ChannelModelCatalogEntry[]> {
   if (channel.type === 'apipath') return apipathAuthorizedCatalog(channel);
   if (!channel.apiKey.trim()) throw fail('请先在渠道配置中保存 API Key', 409);
+  if (channel.type === 'huss') {
+    return hussAuthorizedCatalog(channel);
+  }
   const protocol = getChannelVideoProtocol(channel);
   if (channel.type === 'image2pro') return (await image2proModels(channel))
     .filter(m => m.metadata.type === 'text' || image2proMediaSupported(m))
@@ -136,14 +144,14 @@ async function fetchCatalog(channel: Channel): Promise<ChannelModelCatalogEntry[
 
 export async function listAuthorizedChannelModels(channelId: number) {
   const channel = getChannel(channelId);
-  if (!['image2pro','apipath'].includes(channel.type) && !getChannelVideoProtocol(channel) && !allowsStandardChannelModelConfiguration(sqlite, channel)) throw fail('请使用该渠道的专用同步或配置入口', 409);
+  if (!['huss','image2pro','apipath'].includes(channel.type) && !getChannelVideoProtocol(channel) && !allowsStandardChannelModelConfiguration(sqlite, channel)) throw fail('请使用该渠道的专用同步或配置入口', 409);
   if (channel.type === 'apipath') return listApipathCatalog(channel);
   const catalog = await fetchCatalog(channel);
   return channel.type === 'image2pro' ? enrichImage2proCatalog(catalog) : catalog;
 }
 
-function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol, image2pro = false, reconnect = false, apipath = false) {
-  if (!draft || typeof draft.modelId !== 'string' || (!image2pro && !apipath && !modelIdPattern.test(draft.modelId))
+function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol, image2pro = false, reconnect = false, apipath = false, huss = false) {
+  if (!draft || typeof draft.modelId !== 'string' || (!image2pro && !apipath && !huss && !modelIdPattern.test(draft.modelId))
     || typeof draft.displayName !== 'string' || !draft.displayName.trim() || draft.displayName.length > 120
     || typeof draft.upstreamModel !== 'string' || !draft.upstreamModel.trim()
     || draft.upstreamModel !== draft.upstreamModel.trim() || draft.upstreamModel.length > 160 || draft.upstreamModel === '*'
@@ -160,6 +168,10 @@ function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol
   if (image2pro && draft.modelId !== draft.upstreamModel) throw fail('Image2Pro 本站模型 ID 必须与上游公开 ID 一致，不添加渠道前缀');
   if (image2pro && draft.kind === 'text') return;
   validateLimits(draft.limits);
+  if (huss) {
+    if (!draft.modelId.trim() || draft.modelId !== draft.modelId.trim() || draft.modelId.length > 160 || /[\x00-\x1f\x7f*]/.test(draft.modelId) || Object.hasOwn(Object.prototype,draft.modelId)) throw fail('请填写有效的本站模型 ID');
+    return;
+  }
   if (apipath) {
     if (draft.kind === 'text' || !draft.modelId.trim() || draft.modelId !== draft.modelId.trim() || draft.modelId.length > 160 || /[\x00-\x1f\x7f*]/.test(draft.modelId) || Object.hasOwn(Object.prototype, draft.modelId) || draft.limits.maxOutputs !== 1) throw fail('Vx-魅影请填写有效的本站模型 ID，每次生成一份图片或视频');
     return;
@@ -267,15 +279,19 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
   const channel = getChannel(channelId);
   const protocol = getChannelVideoProtocol(channel);
   const reconnect = isSnumomReconnectChannel(channel) && isRetiredVideoModel(draft.modelId);
-  validateDraft(draft, protocol, channel.type === 'image2pro', reconnect, channel.type === 'apipath');
+  validateDraft(draft, protocol, channel.type === 'image2pro', reconnect, channel.type === 'apipath', channel.type === 'huss');
   const original = readConfiguration(channel);
   const assertVersion = (current: typeof original) => {
     if (!current.result.canAdd) throw fail(current.result.addUnavailableReason!, 409);
+    if (channel.type === 'huss') {
+      const deleted = sqlite.prepare('SELECT value FROM settings WHERE key=?').get('deleted_model_ids') as {value:string}|undefined;
+      if (deleted && JSON.parse(deleted.value).includes(draft.modelId)) throw fail('此本站模型已删除，请使用新的本站模型 ID；同步不会恢复已删除模型',409);
+    }
     if (current.result.version !== version) throw fail('渠道模型配置已变化，请重新打开后保存', 409);
     const existing = current.result.models.find(row => row.modelId === draft.modelId);
     if (existing && channel.type === 'apipath' && Boolean(existing.apipathManual) !== Boolean(draft.apipathManual)) throw fail('已有模型须保留原录入方式', 409);
     if (existing && (!existing.editable || !existing.capabilities.includes(draft.kind))) throw fail('此模型使用已有接入配置，不能通过通用入口更换协议或能力', 409);
-    if (protocol && current.result.models.some(row => row.modelId !== draft.modelId && row.upstreamModel === draft.upstreamModel)) {
+    if ((protocol || channel.type === 'huss') && current.result.models.some(row => row.modelId !== draft.modelId && row.upstreamModel === draft.upstreamModel)) {
       throw fail('此上游型号已关联本站模型，请编辑已有配置', 409);
     }
     if (!existing && protocol) {
@@ -302,6 +318,7 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
   const manual = channel.type === 'apipath' && draft.apipathManual === true;
   const catalogEntry = manual ? manualApipathEntry(channelId, draft) : (await fetchCatalog(channel)).find(entry => entry.id === draft.upstreamModel);
   if (!catalogEntry) throw fail('该上游型号未出现在此 Key 的授权目录中，或不支持在此添加', 409);
+  if (channel.type === 'huss') { try { validateHussConfiguration(draft,catalogEntry); } catch(error:any) { throw fail(error.message,409); } }
   if (channel.type === 'image2pro') validateImage2proCatalogDraft(draft, catalogEntry);
   if (channel.type === 'apipath') validateApipathDraft(draft, catalogEntry as ApipathCatalogEntry);
   if (protocol === 'async-video') {
@@ -333,9 +350,10 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
     const cost = originalRoute?.upstreamModel === draft.upstreamModel ? originalRoute : undefined;
     const { limits } = draft;
     const route: ModelRoute = {
+      ...(live.type==='huss'&&draft.kind==='video'?{huss:{protocol:'unified-v1' as const}}:{}),
       ...(channel.type === 'apipath' && (catalogEntry as ApipathCatalogEntry).apipath ? { apipath: (catalogEntry as ApipathCatalogEntry).apipath } : {}),
       ...(protocol === 'snumom' ? { snumom: structuredClone(draft.snumom!) } : {}),
-      id: originalRoute?.id ?? (manual ? APIPATH_MANUAL_ROUTE_PREFIX : live.type === 'apipath' ? 'admin-channel-model-apipath-' : live.type === 'image2pro' ? 'admin-channel-model-image2pro-' : protocol ? channelVideoProtocols[protocol].prefix : CHANNEL_MODEL_ROUTE_PREFIX) + randomUUID(), channelId, executionModel: draft.modelId,
+      id: originalRoute?.id ?? (live.type === 'huss' ? HUSS_CONFIGURATION_PREFIX : manual ? APIPATH_MANUAL_ROUTE_PREFIX : live.type === 'apipath' ? 'admin-channel-model-apipath-' : live.type === 'image2pro' ? 'admin-channel-model-image2pro-' : protocol ? channelVideoProtocols[protocol].prefix : CHANNEL_MODEL_ROUTE_PREFIX) + randomUUID(), channelId, executionModel: draft.modelId,
       upstreamModel: draft.upstreamModel, enabled: draft.routeEnabled ?? originalRoute?.enabled ?? true, limits,
       cost: cost?.cost ?? null, costUnit: cost?.costUnit ?? 'unknown',
       resolutionCosts: cost?.resolutionCosts ?? {}, priority: originalRoute?.priority ?? live.priority,
@@ -375,6 +393,23 @@ function validateImage2proCatalogDraft(draft: ChannelModelDraft, entry: ChannelM
 /** The Image2Pro preview reads current capabilities but never sends a generation request. */
 export async function previewAuthorizedChannelModelRequest(channelId: number, draft: ChannelModelDraft, sample: V6kRequestSample = {}): Promise<ChannelModelRequestPreview> {
   const channel = getChannel(channelId);
+  if (channel.type === 'huss') {
+    validateDraft(draft,undefined,false,false,false,true);
+    if (draft.kind === 'text') throw fail('HUSS 当前配置入口支持图片和视频');
+    const entry=(await fetchCatalog(channel)).find(e=>e.id===draft.upstreamModel);
+    if(!entry)throw fail('该 HUSS 型号未出现在此 Key 的授权目录中',409);
+    try { validateHussConfiguration(draft,entry); } catch(error:any) { throw fail(error.message,409); }
+    if (!sample || typeof sample !== 'object' || Array.isArray(sample)) throw fail('预览参数无效');
+    const l=draft.limits;
+    const input={seconds:sample.seconds??l.defaultSeconds??(l.duration.mode==='options'?l.duration.values[0]:l.duration.min),ratio:sample.ratio??l.ratios[0],resolution:sample.resolution??l.resolutions[0],images:sample.images??l.minImages,videos:sample.videos??0,audios:sample.audios??0,outputs:1,firstFrame:sample.firstFrame??false,lastFrame:sample.lastFrame??false};
+    if (![input.images,input.videos,input.audios].every(n=>Number.isSafeInteger(n)&&n>=0&&n<=100) || !Number.isSafeInteger(input.seconds) || typeof input.ratio!=='string' || typeof input.resolution!=='string' || typeof input.firstFrame!=='boolean' || typeof input.lastFrame!=='boolean') throw fail('预览参数无效');
+    const mismatch=routingMismatches(l,input,draft.kind);if(mismatch.length)throw fail(mismatch.join('；'));
+    const prompt='请求体预览示例';
+    if(draft.kind==='image')return {method:'POST',path:input.images?'/v1/images/edits/async':'/v1/images/generations/async',body:buildHussImageRequest({prompt,resolution:input.resolution,aspect_ratio:input.ratio},input.images?['data:image/png;base64,iVBORw0KGgo=']:[])};
+    const urls=(n:number,ext:string)=>Array.from({length:n},(_,i)=>`https://example.invalid/${i+1}.${ext}`);
+    const built=buildHussVideoRequest({unifiedLimits:l,model:draft.upstreamModel,prompt,seconds:input.seconds,ratio:input.ratio,resolution:input.resolution,images:urls(input.images,'jpg'),videos:urls(input.videos,'mp4'),audios:urls(input.audios,'wav'),publicBaseUrl:'',idempotencyKey:'preview-only'});
+    return {method:'POST',path:'/v1/videos',headers:{'X-Huss-Video-API':'unified-v1','Idempotency-Key':'preview-only'},body:built.request};
+  }
   if (channel.type === 'apipath') {
     validateDraft(draft,undefined,false,false,true);
     const entry=draft.apipathManual === true ? manualApipathEntry(channelId, draft) : (await apipathAuthorizedCatalog(channel)).find(e=>e.id===draft.upstreamModel);

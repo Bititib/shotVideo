@@ -1,4 +1,5 @@
 import { zhiyingBindings } from './zhiyingModelBindings.js';
+import { HUSS_CONFIGURATION_PREFIX, hussConfigurationCatalog } from '../../shared/hussConfiguration.js';
 import type Database from 'better-sqlite3';
 import type { ModelSpecification } from '../../shared/modelRouting.js';
 import { channelVideoProtocols, type ChannelVideoProtocol } from '../../shared/channelModelConfiguration.js';
@@ -149,6 +150,14 @@ export function channelCatalogBindings(sqlite: Database.Database, channel: Chann
   if (!bindings) return undefined;
   const mapping: Record<string, string> = JSON.parse(channel.modelMapping || '{}');
   const protocol = getChannelVideoProtocol(channel);
+  if (channel.type === 'huss') {
+    const known = hussConfigurationCatalog();
+    for (const spec of loadRoutes(sqlite)) for (const route of spec.routes) {
+      if (route.channelId === channel.id && route.id.startsWith(HUSS_CONFIGURATION_PREFIX)
+        && route.executionModel === spec.modelId && mapping[spec.modelId] === route.upstreamModel
+        && (spec.kind==='video'&&route.huss?.protocol==='unified-v1'||known.some(e=>e.id===route.upstreamModel&&e.kind===spec.kind))) bindings.set(spec.modelId,route.upstreamModel);
+    }
+  }
   if (protocol) {
     for (const spec of loadRoutes(sqlite)) {
       for (const route of spec.routes) {
@@ -179,6 +188,7 @@ export function allowsStandardChannelModelConfiguration(sqlite: Database.Databas
 }
 
 export function allowsChannelModelConfigurationRoute(sqlite: Database.Database, channel: ChannelBindings, routeId: string) {
+  if (channel.type === 'huss') return routeId.startsWith(HUSS_CONFIGURATION_PREFIX) || routeId.startsWith('huss-' + channel.id + '-');
   if (channel.type === 'apipath') return routeId.startsWith('admin-channel-model-apipath-') || routeId.startsWith('apipath-' + channel.id + '-');
   if (channel.type === 'image2pro') return routeId.startsWith('admin-channel-model-image2pro-') || routeId.startsWith('image2pro-' + channel.id + '-');
   const expected = (Object.keys(channelVideoProtocols) as ChannelVideoProtocol[])

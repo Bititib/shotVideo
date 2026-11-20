@@ -1,4 +1,5 @@
 import type { ModelInputLimits } from './modelRouting.js';
+import { isHussUnifiedVideoModel } from './hussUnifiedModels.js';
 
 // Public BB Seedance model identity. HUSS' /models response remains
 // authoritative for actual submissions.
@@ -29,7 +30,7 @@ export function isHussHssModel(model: unknown): boolean { return model === HUSS_
 // Current channel A; legacy IDs remain parseable only for original task recovery.
 export const HUSS_BB_A_MODEL = 'bb-2.5-301010-渠道A';
 export function isHussPersistentVideoModel(model: unknown): boolean {
-  return model === HUSS_BB_A_MODEL || isHussHssModel(model);
+  return isHussUnifiedVideoModel(model) || isHussHssModel(model);
 }
 export function hussBbAModelLimits(): ModelInputLimits {
   return {...hussBbModelLimits(), ratios:['16:9','9:16','1:1','4:3','3:4','21:9','adaptive'],
