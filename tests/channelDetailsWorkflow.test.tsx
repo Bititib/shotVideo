@@ -60,12 +60,12 @@ describe('channel details and model sync workflow', () => {
     mount(); fireEvent.click(await screen.findByRole('button', { name: '模型与参数', exact: true }));
     const panel = within(await screen.findByRole('dialog', { name: 'Vx-魅影 · 模型与参数' }));
     fireEvent.click(await panel.findByRole('button', { name: '添加新模型' }));
-    for (const [label, value] of [['上游模型 ID','手填视频'], ['可选分辨率','720p'], ['可选比例','1:1']]) {
+    for (const [label, value] of [['本站 API 模型 ID','本站视频'], ['显示名称','视频展示'], ['上游模型 ID','手填视频'], ['可选分辨率','720p'], ['可选比例','1:1']]) {
       fireEvent.change(panel.getByLabelText(label), { target: { value } });
     }
     fireEvent.click(panel.getByRole('button', { name: '添加模型', exact: true }));
     await waitFor(() => expect(adminApi.saveChannelModelConfiguration).toHaveBeenCalledWith(9, expect.objectContaining({
-      modelId: '手填视频', upstreamModel: '手填视频', displayName: '手填视频', apipathManual: true, kind: 'video',
+      modelId: '本站视频', upstreamModel: '手填视频', displayName: '视频展示', apipathManual: true, kind: 'video',
     }), 'v1'));
     expect(adminApi.getAuthorizedChannelModels).not.toHaveBeenCalled();
   });
@@ -84,11 +84,14 @@ describe('channel details and model sync workflow', () => {
     fireEvent.change(panel.getByLabelText('录入方式'),{target:{value:'catalog'}});
     fireEvent.click(panel.getByRole('button',{name:'读取已授权的上游型号'}));await panel.findByRole('option',{name:id});
     fireEvent.change(panel.getByLabelText('上游模型 ID'),{target:{value:id}});
-    expect(panel.getByLabelText('本站 API 模型 ID')).toHaveValue(id);expect(panel.getByLabelText('模型类型')).toHaveValue('视频');
+    expect(panel.getByLabelText('本站 API 模型 ID')).toHaveValue('');
+    fireEvent.change(panel.getByLabelText('本站 API 模型 ID'),{target:{value:'site-video'}});
+    fireEvent.change(panel.getByLabelText('显示名称'),{target:{value:'Video'}});
+    expect(panel.getByLabelText('模型类型')).toHaveValue('视频');
     expect(panel.getByLabelText('可选分辨率')).toHaveValue('480p');
     fireEvent.click(panel.getByRole('button',{name:'校验授权并添加模型'}));
     expect(await panel.findByText(/新模型已添加，默认停用/)).toBeVisible();
-    expect(adminApi.saveChannelModelConfiguration).toHaveBeenCalledWith(9,{modelId:id,upstreamModel:id,displayName:id,kind:'video',limits},'v1');
+    expect(adminApi.saveChannelModelConfiguration).toHaveBeenCalledWith(9,{modelId:'site-video',upstreamModel:id,displayName:'Video',kind:'video',limits},'v1');
     expect(adminApi.syncChannelModels).not.toHaveBeenCalled();
   });
   it('opens the shared model editor from the Siyuetian row and loads the authorized video catalog on demand', async () => {

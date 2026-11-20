@@ -1,5 +1,5 @@
 import { image2proUpstreamPricing } from './image2proUpstreamPricing.js';
-import { manualApipathEntry, apipathAuthorizedCatalog, validateApipathDraft, bindApipathCatalogEntry, previewApipathRequest, type ApipathCatalogEntry } from './apipathModelConfiguration.js';
+import { listApipathCatalog, manualApipathEntry, apipathAuthorizedCatalog, validateApipathDraft, bindApipathCatalogEntry, previewApipathRequest, type ApipathCatalogEntry } from './apipathModelConfiguration.js';
 import { apipathKeys } from './apipathKeyService.js';
 import { buildSnumomWanPayload } from './snumomWanAdapter.js';
 import { validateSnumomConfiguration } from '../../shared/snumomConfiguration.js';
@@ -137,6 +137,7 @@ async function fetchCatalog(channel: Channel): Promise<ChannelModelCatalogEntry[
 export async function listAuthorizedChannelModels(channelId: number) {
   const channel = getChannel(channelId);
   if (!['image2pro','apipath'].includes(channel.type) && !getChannelVideoProtocol(channel) && !allowsStandardChannelModelConfiguration(sqlite, channel)) throw fail('请使用该渠道的专用同步或配置入口', 409);
+  if (channel.type === 'apipath') return listApipathCatalog(channel);
   const catalog = await fetchCatalog(channel);
   return channel.type === 'image2pro' ? enrichImage2proCatalog(catalog) : catalog;
 }
@@ -160,7 +161,7 @@ function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol
   if (image2pro && draft.kind === 'text') return;
   validateLimits(draft.limits);
   if (apipath) {
-    if (draft.kind === 'text' || draft.modelId !== draft.upstreamModel || draft.limits.maxOutputs !== 1) throw fail('Vx-魅影仅支持原始 ID 的单份图片或视频模型');
+    if (draft.kind === 'text' || !draft.modelId.trim() || draft.modelId !== draft.modelId.trim() || draft.modelId.length > 160 || /[\x00-\x1f\x7f*]/.test(draft.modelId) || Object.hasOwn(Object.prototype, draft.modelId) || draft.limits.maxOutputs !== 1) throw fail('Vx-魅影请填写有效的本站模型 ID，每次生成一份图片或视频');
     return;
   }
   if (image2pro) {

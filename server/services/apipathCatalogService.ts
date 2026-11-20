@@ -19,6 +19,12 @@ export async function fetchApipathCatalog(channel: ApipathChannel & { id: number
   const warnings: string[] = [];
   const bindings: { id: number; models: string[] }[] = [];
   const sourceCatalogs: {id:number|null;label:string;names:Set<string>}[]=[];
+  const specs = getModelSpecifications();
+  const configured = specs.flatMap(spec => spec.routes.filter(route =>
+    route.channelId === channel.id && route.id.startsWith('admin-channel-model-apipath-')).map(route => ({spec, route})));
+  const managedIds = new Set(configured.map(({spec}) => spec.modelId));
+  const mappedUpstream = new Set(configured.map(({route}) => route.upstreamModel));
+  const existingIds = new Set(specs.filter(spec => spec.routes.some(route => route.channelId === channel.id)).map(spec => spec.modelId));
   // Resolve every configured key before mutating the catalog. One failed lookup leaves all bindings intact.
   for (const source of sources) {
     const label = source.kind === 'image' ? '图片 Key' : source.kind === 'video' ? '视频 Key' : '原有 Key';
@@ -28,13 +34,13 @@ export async function fetchApipathCatalog(channel: ApipathChannel & { id: number
     if (!Array.isArray(raw?.data) || raw.data.some((x: any) => typeof x?.id !== 'string')) throw new Error('通联' + label + '目录 data/id 格式无效');
     const names = new Set<string>(raw.data.map((x: any) => x.id));
     const allowed = APIPATH_MODELS.filter(x => APIPATH_SYNC_MODEL_IDS.some(id => id === x.id)
+      && !managedIds.has(x.id) && (!mappedUpstream.has(x.upstreamModel || x.id) || existingIds.has(x.id))
       && names.has(x.upstreamModel || x.id) && (source.kind === 'legacy' || x.kind === source.kind));
     entries.push(...allowed);
     if (source.id !== null) bindings.push({ id: source.id, models: allowed.map(x => x.id) });
     sourceCatalogs.push({id:source.id,label,names});
   }
-  const configured = getModelSpecifications().flatMap(spec=>spec.routes.filter(r=>r.channelId===channel.id && r.id.startsWith('admin-channel-model-apipath-'))
-    .map(route=>({spec,route})));
+
   if (configured.length) {
     const authorized = configured.some(({route}) => !route.id.startsWith(APIPATH_MANUAL_ROUTE_PREFIX)) ? await apipathAuthorizedCatalog(channel) : [];
     for (const {spec,route} of configured) {

@@ -68,5 +68,5 @@ export type Image2proUpstreamPricing = {
   checkedAt: string;
   source: string;
 };
-export type ChannelModelCatalogEntry = { id: string; kind?: MediaKind | 'text'; imageOptions?: Image2proImageOptions; upstreamPricing?: Image2proUpstreamPricing; imageEvidence?: { checkedAt: string; notes: string[] }; limits?: ModelInputLimits };
+export type ChannelModelCatalogEntry = { id: string; apipathKeyKinds?: string[]; kind?: MediaKind | 'text'; imageOptions?: Image2proImageOptions; upstreamPricing?: Image2proUpstreamPricing; imageEvidence?: { checkedAt: string; notes: string[] }; limits?: ModelInputLimits };
 export type ChannelModelRequestPreview = { method: string; path: string; headers?: Record<string,string>; body: Record<string, unknown> };

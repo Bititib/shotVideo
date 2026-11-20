@@ -4,7 +4,7 @@ import { models, apipathChannelKeys } from '../db/schema.js';
 import { defaultRoutingLimits, allowsDuration, routingMismatches, type ModelRoute, type ModelInputLimits } from '../../shared/modelRouting.js';
 import type { V6kRequestSample } from '../../shared/v6kModelConfiguration.js';
 import { isApipathSunburstSpec, apipathImageSize } from '../../shared/apipathImageSizes.js';
-import type { ChannelModelDraft } from '../../shared/channelModelConfiguration.js';
+import type { ChannelModelCatalogEntry, ChannelModelDraft } from '../../shared/channelModelConfiguration.js';
 import { APIPATH_MODELS } from '../../shared/apipathModels.js';
 import { apipathBase, apipathRequest, buildApipathVideoPayload, APIPATH_VIDEO_FIELDS, APIPATH_VIDEO_MODES, type ApipathChannel } from './apipathAdapter.js';
 import { apipathKeys } from './apipathKeyService.js';
@@ -13,16 +13,49 @@ const fail = (message: string) => Object.assign(new Error(message), { status: 40
 export type ApipathCatalogEntry = { id: string; name: string; kind: 'image' | 'video'; limits: ModelInputLimits;
   description: string; keyIds: number[]; apipath?: NonNullable<ModelRoute['apipath']> };
 
-/** Published docs plus complete official model configurations, intersected with the matching Key's authorization. */
-export async function apipathAuthorizedCatalog(channel: ApipathChannel & { id: number }): Promise<ApipathCatalogEntry[]> {
-  const response = await fetch(apipathBase(channel.baseUrl) + '/api/api-docs', { redirect: 'error', signal: AbortSignal.timeout(30_000) });
-  if (!response.ok) throw fail('Vx-魅影公开协议读取失败：HTTP ' + response.status);
-  const raw = await response.json();
-  if (raw?.code !== 0 || !Array.isArray(raw?.data?.items)) throw fail('Vx-魅影公开协议格式无效，未添加模型');
+type CatalogChannel = ApipathChannel & { id: number };
+async function readAuthorizedIds(channel: CatalogChannel) {
   const keys = apipathKeys(channel.id).filter(k => k.status === 1);
   const sources = keys.length ? keys : apipathKeys(channel.id).length ? []
     : channel.apiKey ? [{ id: null, kind: 'legacy', apiKey: channel.apiKey }] : [];
   if (!sources.length) throw fail('请先保存图片或视频 API Key');
+  return Promise.all(sources.map(async source => {
+    const catalog = await apipathRequest({ ...channel, apiKey: source.apiKey }, '/v1/models');
+    if (!Array.isArray(catalog?.data) || catalog.data.some((x: any) => typeof x?.id !== 'string')) throw fail('Vx-魅影授权目录格式无效');
+    const authorized = new Set<string>(catalog.data.map((x: any) => x.id));
+    return { id: source.id, kind: source.kind, authorized };
+  }));
+}
+
+export async function listApipathCatalog(channel: CatalogChannel): Promise<ChannelModelCatalogEntry[]> {
+  const sources = await readAuthorizedIds(channel);
+  const listed = new Map<string, ChannelModelCatalogEntry>();
+  for (const { kind, authorized } of sources) {
+    for (const id of authorized) {
+      const entry = listed.get(id) ?? { id, apipathKeyKinds: [] as string[] };
+      entry.apipathKeyKinds!.push(kind);
+      listed.set(id, entry);
+    }
+  }
+  // Public specifications enrich the selector. Only the authenticated API determines membership.
+  let profiles: ApipathCatalogEntry[];
+  try { profiles = await documentedCatalog(channel, sources); }
+  catch { profiles = []; }
+  for (const { id, limits, kind } of profiles) Object.assign(listed.get(id)!, { limits, kind });
+  return [...listed.values()].sort((a,b) => a.id.localeCompare(b.id));
+}
+
+/** Published docs plus complete official model configurations, intersected with the matching Key's authorization. */
+export async function apipathAuthorizedCatalog(channel: ApipathChannel & { id: number }): Promise<ApipathCatalogEntry[]> {
+  return documentedCatalog(channel, await readAuthorizedIds(channel));
+}
+
+async function documentedCatalog(channel: CatalogChannel, sources: Awaited<ReturnType<typeof readAuthorizedIds>>): Promise<ApipathCatalogEntry[]> {
+  const response = await fetch(apipathBase(channel.baseUrl) + '/api/api-docs', { redirect: 'error', signal: AbortSignal.timeout(30_000) });
+  if (!response.ok) throw fail('Vx-魅影公开协议读取失败：HTTP ' + response.status);
+  const raw = await response.json();
+  if (raw?.code !== 0 || !Array.isArray(raw?.data?.items)) throw fail('Vx-魅影公开协议格式无效，未添加模型');
+
   const hasVideoContract = raw.data.items.some((doc:any)=>
     doc.category==='video' && doc.content?.calling_contract?.create_endpoints?.some((e:any)=>e.method==='POST'&&e.path==='/v1/video/generations')
     && doc.content?.calling_contract?.query_endpoints?.some((e:any)=>e.method==='GET'&&e.path==='/v1/video/generations/{task_no}'&&e.terminal_status?.success==='completed'));
@@ -37,9 +70,7 @@ export async function apipathAuthorizedCatalog(channel: ApipathChannel & { id: n
   }
   const entries = new Map<string, ApipathCatalogEntry>();
   for (const source of sources) {
-    const catalog = await apipathRequest({ ...channel, apiKey: source.apiKey }, '/v1/models');
-    if (!Array.isArray(catalog?.data) || catalog.data.some((x: any) => typeof x?.id !== 'string')) throw fail('Vx-魅影授权目录格式无效');
-    const authorized = new Set(catalog.data.map((x: any) => x.id));
+    const authorized = source.authorized;
     for (const doc of raw.data.items) {
       if (!authorized.has(doc.model_code) || !doc.is_published || !['image','video'].includes(doc.category)
         || source.kind !== 'legacy' && source.kind !== doc.category) continue;
@@ -159,7 +190,7 @@ export function manualApipathEntry(channelId: number, draft: ChannelModelDraft):
 }
 
 export function validateApipathDraft(draft: ChannelModelDraft, entry: ApipathCatalogEntry) {
-  if (draft.kind !== entry.kind || draft.modelId !== entry.id || draft.upstreamModel !== entry.id) throw fail('Vx-魅影请使用授权目录中的原始模型 ID 和类型');
+  if (draft.kind !== entry.kind || draft.upstreamModel !== entry.id) throw fail('Vx-魅影的上游模型 ID 和生成类型必须与所选型号一致');
   const l = draft.limits, s = entry.limits, d = l.duration;
   const seconds = d.mode === 'options' ? d.values : d.mode === 'fixed' ? [d.min]
     : Array.from({length:Math.floor((d.max-d.min)/d.step)+1},(_,i)=>d.min+i*d.step);

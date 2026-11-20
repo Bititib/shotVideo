@@ -46,9 +46,10 @@ it.each(['image','video'] as const)('saves and previews a manually entered %s of
   const { defaultRoutingLimits } = await import('../shared/modelRouting.js');
   const limits = defaultRoutingLimits();
   if (kind === 'image') limits.resolutions = ['default'];
-  const draft = { modelId: id, upstreamModel: id, displayName: id, kind, limits, apipathManual: true };
+  const upstream = '上游-' + kind;
+  const draft = { modelId: id, upstreamModel: upstream, displayName: '展示-' + kind, kind, limits, apipathManual: true };
   const preview = await previewAuthorizedChannelModelRequest(channelId, draft);
-  expect(preview.body.model).toBe(id);
+  expect(preview.body.model).toBe(upstream);
   const saved = await save(draft);
   expect(saved.models).toMatchObject([{ modelId: id, apipathManual: true, editable: true, enabled: false }]);
   await save({ ...draft, displayName: '修改名称' });
@@ -57,6 +58,7 @@ it.each(['image','video'] as const)('saves and previews a manually entered %s of
   const bound = ChannelService.getActiveChannels().filter(key => key.id === channelId && key.supportedModels.includes(id));
   expect(bound.map(key => key.apiKey)).toEqual([kind + '-key']);
   expect(getModelSpecification(id)?.limits).toEqual(limits);
+  expect(getModelSpecification(id)?.routes[0].upstreamModel).toBe(upstream);
   db.update(models).set({isActive:1}).where(eq(models.modelId,id)).run();
   db.insert(modelPricing).values({modelPattern:id,inputPrice:.1,billingType:'per_call'}).run();
   vi.mocked(fetch).mockClear();
@@ -64,11 +66,12 @@ it.each(['image','video'] as const)('saves and previews a manually entered %s of
   await handleSpecificationGeneration({userId:1,headers:{},protocol:'https',get:()=> 'app.example',body} as any,response(),kind);
   expect(db.select().from(contents).all()[0]).toMatchObject({status:'completed',cost:.1});
   expect(fetch).toHaveBeenCalledOnce();
+  expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string).model).toBe(upstream);
 });
 
 it('offers documented, type-bound authorized models without importing any catalog entry',async()=>{
   const entries=await listAuthorizedChannelModels(channelId);
-  expect(entries.map(e=>e.id).sort()).toEqual([video,image,transformer,'Seedance-2.0-mini-480-GK','gpt-image-2-5-sunburst'].sort());
+  expect(entries.map(e=>e.id).sort()).toEqual([video,image,transformer,'Seedance-2.0-mini-480-GK','gpt-image-2-5-sunburst','undocumented','unselected'].sort());
   expect(db.select().from(models).all()).toEqual([]);
   expect(listChannelModelConfigurations(channelId)).toMatchObject({apipath:true,canAdd:true,models:[]});
   expect(vi.mocked(fetch).mock.calls.every(c=>!c[1]?.method||c[1].method==='GET')).toBe(true);
@@ -89,6 +92,24 @@ it.each([video,image,transformer])('adds only selected %s, retains it on sync an
   expect(sync.warnings?.some(w=>w.includes('未自动导入')&&w.includes(id))).toBe(false);
   expect(vi.mocked(fetch).mock.calls.every(c=>!c[1]?.method||c[1].method==='GET')).toBe(true);
 });
+it('uses a catalog Sunburst mapping with a separate public ID for tier pricing and the upstream payload', async () => {
+  const upstream = 'gpt-image-2-5-sunburst';
+  const draft = { ...await draftFor(upstream), modelId:'site-image', displayName:'图片展示' };
+  await save(draft);
+  const synced = await ChannelService.syncModels(channelId);
+  expect(synced.models).toContain(draft.modelId);
+  expect(synced.models).not.toContain(upstream);
+  db.update(models).set({isActive:1}).where(eq(models.modelId,draft.modelId)).run();
+  db.insert(modelPricing).values({modelPattern:draft.modelId,inputPrice:1,billingType:'per_call',extraParams:'{"2K":2}'}).run();
+  vi.mocked(fetch).mockClear();
+  await handleSpecificationGeneration({userId:1,headers:{},protocol:'https',get:()=> 'app.example',body:{
+    model:draft.modelId,prompt:'海浪',aspect_ratio:'1:1',resolution:'2K',size:'2048x2048'
+  }} as any,response(),'image');
+  expect(db.select().from(contents).all()[0]).toMatchObject({status:'completed',cost:2});
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)).toMatchObject({model:upstream,size:'2048x2048'});
+});
+
 it('previews and executes a dynamically added video with current standard fields and a single charge',async()=>{
   const draft=await draftFor(video);await save(draft);
   const preview=await previewAuthorizedChannelModelRequest(channelId,draft,{seconds:4,ratio:'1:1',resolution:'480p'});
@@ -134,7 +155,7 @@ it.each(['resolution','duration','key-race','wrong-kind','undocumented'])('rejec
 it('does not offer videos through an image-only Key even if its raw catalog contains video IDs',async()=>{
   const row=db.select().from(apipathChannelKeys).all().find(k=>k.kind==='video')!;
   db.delete(apipathChannelKeys).where(eq(apipathChannelKeys.id,row.id)).run();
-  expect((await listAuthorizedChannelModels(channelId)).every(e=>e.kind==='image')).toBe(true);
+  expect((await listAuthorizedChannelModels(channelId)).filter(e=>e.limits).every(e=>e.kind==='image')).toBe(true);
 });
 
 it('offers Transformers with its own four resolutions and limits when it has no document-list entry',async()=>{
@@ -190,14 +211,27 @@ it.each(['missing-limits','conflicting-size','wrong-media-field','unknown-frame-
     if(String(url).endsWith('/v1/models')&&scenario==='no-api-authorization')return Response.json({data:[{id:video}]});
     return prior(url,init);
   }));
-  expect((await listAuthorizedChannelModels(channelId)).some(e=>e.id===transformer)).toBe(false);
+  const listed=(await listAuthorizedChannelModels(channelId)).find(e=>e.id===transformer);
+  if (scenario==='no-api-authorization') expect(listed).toBeUndefined();
+  else { expect(listed?.id).toBe(transformer); expect(listed?.limits).toBeUndefined(); }
   expect(db.select().from(models).all()).toEqual([]);expect(db.select().from(users).all()[0].balance).toBe(100);
 });
 
 it('does not use runtime fallback to bypass an incompatible model-specific document',async()=>{
   const prior=createFetch();vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>String(url).endsWith('/api/api-docs')
     ?Response.json({...fixture,data:{items:[...fixture.data.items,{model_code:transformer,category:'video',is_published:true,endpoint:'/private/new-protocol',content:{}}]}}):prior(url,init)));
-  expect((await listAuthorizedChannelModels(channelId)).some(e=>e.id===transformer)).toBe(false);
+  expect((await listAuthorizedChannelModels(channelId)).find(e=>e.id===transformer)).toMatchObject({id:transformer});
+  expect((await listAuthorizedChannelModels(channelId)).find(e=>e.id===transformer)?.limits).toBeUndefined();
+});
+
+it('lists the union of distinct authorized IDs even when public documentation is unavailable', async () => {
+  vi.stubGlobal('fetch',vi.fn(async (url,init) => String(url).endsWith('/v1/models')
+    ? Response.json({data: (init.headers.Authorization === 'Bearer image-key' ? ['one','both'] : ['two','both']).map(id=>({id}))})
+    : new Response('',{status:503})));
+  expect(await listAuthorizedChannelModels(channelId)).toEqual([
+    {id:'both',apipathKeyKinds:['image','video']},{id:'one',apipathKeyKinds:['image']},{id:'two',apipathKeyKinds:['video']}
+  ]);
+  expect(db.select().from(models).all()).toEqual([]);
 });
 
 it('preserves existing bindings when official runtime catalog lookup fails',async()=>{

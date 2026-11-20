@@ -726,7 +726,7 @@ export async function generateSpecificationImage(target: RouteCandidate, request
     }
   }
   if (isApipathChannel(c)) {
-    const size = isApipathSunburstSpec(target.route.executionModel) ? apipathImageSize(i.ratio, i.resolution, request.body.size) : request.body.size || 'auto';
+    const size = isApipathSunburstSpec(target.route.upstreamModel) ? apipathImageSize(i.ratio, i.resolution, request.body.size) : request.body.size || 'auto';
     let payload: any = { model, prompt: request.prompt, n: 1, aspect_ratio: i.ratio, size, quality: i.quality || request.body.quality || 'auto' };
     let endpoint = '/v1/images/generations';
     if (request.body.response_format === 'async') throw new SpecificationUpstreamError('通联图片当前使用同步协议，尚未接入异步图片结果结构', false, false, false, 0, true);

@@ -176,7 +176,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
   const manual = apipath && draft?.apipathManual === true;
   const chooseFromCatalog = apipath && !manual || image2pro || wanfeng || asyncVideo || data?.protocol === 'megaby' || snumom;
   const upstreamPricing = catalog?.find(entry => entry.id === draft?.upstreamModel)?.upstreamPricing;
-  const availableModels = catalog?.filter(entry => !data?.models.some(row => row.modelId !== selected?.modelId && row.upstreamModel === entry.id));
+  const availableModels = apipath ? catalog : catalog?.filter(entry => !data?.models.some(row => row.modelId !== selected?.modelId && row.upstreamModel === entry.id));
 
   return <AdminDrawer modal panelClassName="v6k-model-dialog" title={channelName + ' · 模型与参数'}
     blocked={busy} onClose={() => navigate('close')}>
@@ -229,20 +229,27 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
             <fieldset disabled={busy} className="v6k-model-form">
               {apipath && !selected && <label>录入方式<select className={field} value={manual ? 'manual' : 'catalog'}
                 onChange={event => {
-                  setDraft({ ...blank(), ...(event.target.value === 'manual' ? { apipathManual: true } : {}) });
+                  setDraft({ ...blank(), modelId: draft.modelId, displayName: draft.displayName, ...(event.target.value === 'manual' ? { apipathManual: true } : {}) });
                   setResolutions(''); setRatios(''); setSeconds('');
                 }}><option value="manual">手动填写</option><option value="catalog">从授权目录选择</option></select></label>}
               <div className="v6k-identity-grid">
-                <label>本站 API 模型 ID<input className={field} value={draft.modelId} required readOnly={Boolean(selected) || apipath || image2pro || snumom}
+                <label>本站 API 模型 ID<input className={field} value={draft.modelId} required readOnly={Boolean(selected) || image2pro || snumom}
                   onChange={event => setDraft({ ...draft, modelId: event.target.value })} /></label>
                 <label>显示名称<input className={field} value={draft.displayName} required
                   onChange={event => setDraft({ ...draft, displayName: event.target.value })} /></label>
                 <label>上游模型 ID{chooseFromCatalog ? <select className={field} value={draft.upstreamModel} required disabled={(apipath || image2pro || snumom) && Boolean(selected)}
                   onChange={event => {
                     const entry = availableModels?.find(model => model.id === event.target.value);
+                    if (apipath && entry && !entry.limits) {
+                      const kind = entry.apipathKeyKinds?.length === 1 && entry.apipathKeyKinds[0] === 'image' ? 'image' : 'video';
+                      setDraft({ ...draft, upstreamModel: entry.id, kind, limits: defaultRoutingLimits(), apipathManual: true });
+                      setResolutions(kind === 'image' ? 'default' : ''); setRatios(''); setSeconds('');
+                      setNotice('已带入上游型号。请核对生成类型并填写该型号规格。');
+                      return;
+                    }
                     if (!entry || !entry.limits && entry.kind !== 'text' && !snumom) return;
                     const limits = entry.limits ?? (snumom ? draft.limits : defaultRoutingLimits());
-                    setDraft({ ...draft, upstreamModel: entry.id, limits, ...(image2pro || apipath ? {modelId:entry.id,displayName:entry.id,kind:entry.kind!} : snumom ? {modelId:entry.id,displayName:entry.id} : {}) });
+                    setDraft({ ...draft, upstreamModel: entry.id, limits, ...(apipath ? {kind:entry.kind!} : image2pro ? {modelId:entry.id,displayName:entry.id,kind:entry.kind!} : snumom ? {modelId:entry.id,displayName:entry.id} : {}) });
                     setResolutions(limits.resolutions.join(','));
                     setRatios(limits.ratios.join(','));
                     setSeconds(limits.duration.values.join(','));
@@ -250,10 +257,9 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                   <option value="" disabled>{wanfeng ? '读取公开目录后选择' : '读取授权目录后选择'}</option>
                   {selected?.upstreamModel && !availableModels?.some(entry => entry.id === selected.upstreamModel) &&
                     <option value={selected.upstreamModel}>{selected.upstreamModel}</option>}
-                  {availableModels?.map(entry => <option key={entry.id} value={entry.id}>{entry.id}</option>)}
-                </select> : <input className={field} value={draft.upstreamModel} required readOnly={manual && Boolean(selected)} list={catalog ? 'channel-model-catalog' : undefined}
-                  onChange={event => setDraft({ ...draft, upstreamModel: event.target.value, ...(manual ? { modelId: event.target.value,
-                    displayName: draft.displayName && draft.displayName !== draft.upstreamModel ? draft.displayName : event.target.value } : {}) })} />}</label>
+                  {availableModels?.map(entry => <option key={entry.id} value={entry.id}>{entry.id}{apipath && !entry.limits ? '（需手填规格）' : ''}</option>)}
+                </select> : <input className={field} value={draft.upstreamModel} required list={catalog ? 'channel-model-catalog' : undefined}
+                  onChange={event => setDraft({ ...draft, upstreamModel: event.target.value })} />}</label>
                 {image2pro || apipath && !manual ? <label>模型类型<input className={field} readOnly value={kindLabels[draft.kind]} /></label> : protocol ? <label>接入协议<input className={field} value={protocol.label} readOnly /></label> : <label>生成类型<select className={field} value={draft.kind} disabled={Boolean(selected)}
                   onChange={event => {
                     setDraft({ ...draft, kind: event.target.value as MediaKind, ...(manual ? { limits: defaultRoutingLimits() } : {}) });
@@ -265,7 +271,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                 {!manual && <button type="button" className={button} onClick={() => void loadCatalog()}>{wanfeng ? '读取晚风公开型号' : '读取已授权的上游型号'}</button>}
                 {wanfeng && <p className="v6k-field-help">公开目录用于配置模型，实际可用型号取决于晚风 Key 的权限。</p>}
                 {manual && <p className="v6k-field-help">填写上游原始型号，按模型说明填写规格。保存后绑定对应类型的 Key，新模型默认停用。</p>}
-                {apipath && !manual && <p className="v6k-field-help">仅显示对应图片或视频 Key 已授权、且协议和官方型号配置已核实的型号。只添加选中的模型，新模型默认停用；规格不得超过所选型号公布的范围。</p>}
+                {apipath && !manual && <p className="v6k-field-help">列出图片和视频 Key 返回的全部型号。已核实的规格会自动填入，其余型号可选中后手填图片或视频规格。</p>}
                 {catalog && !manual && <>
                   {!chooseFromCatalog && <datalist id="channel-model-catalog">{availableModels?.map(({ id }) => <option key={id} value={id} />)}</datalist>}
                   <p className="v6k-field-help" role="status">{availableModels?.length
