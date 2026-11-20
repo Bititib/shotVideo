@@ -1,4 +1,6 @@
 import { image2proUpstreamPricing } from './image2proUpstreamPricing.js';
+import { apipathAuthorizedCatalog, validateApipathDraft, bindApipathCatalogEntry, previewApipathRequest, type ApipathCatalogEntry } from './apipathModelConfiguration.js';
+import { apipathKeys } from './apipathKeyService.js';
 import { buildSnumomWanPayload } from './snumomWanAdapter.js';
 import { validateSnumomConfiguration } from '../../shared/snumomConfiguration.js';
 import { enrichImage2proCatalog } from './image2proPublicCapabilities.js';
@@ -51,7 +53,7 @@ function readConfiguration(channel: Channel) {
   const linkedSpecs = specs.filter(spec => spec.routes.some(route => route.channelId === channel.id));
   const ids = new Set([...supported, ...Object.keys(mapping), ...linkedSpecs.map(spec => spec.modelId)]);
   const protocol = getChannelVideoProtocol(channel);
-  const canAdd = Boolean(channel.type === 'image2pro' || protocol || allowsStandardChannelModelConfiguration(sqlite, channel));
+  const canAdd = Boolean(channel.type === 'apipath' || channel.type === 'image2pro' || protocol || allowsStandardChannelModelConfiguration(sqlite, channel));
   const restored = isSnumomReconnectChannel(channel) ? reconnectedSnumomModels(sqlite) : new Set<string>();
   const rows = [...ids].filter(id => id !== '*' && (!isRetiredVideoModel(id) || restored.has(id))).map(modelId => {
     const model = savedModels.get(modelId);
@@ -59,7 +61,7 @@ function readConfiguration(channel: Channel) {
     const routes = spec?.routes.filter(route => route.channelId === channel.id) ?? [];
     const capabilities: string[] = JSON.parse(model?.capabilities || '[]');
     const kind = capabilities.includes('video') ? 'video' : capabilities.some(capability => ['image', 'image_gen'].includes(capability)) ? 'image' : null;
-    const editable = Boolean(channel.type === 'image2pro' && model?.provider === 'image2pro' && capabilities.includes('text') && !spec && mapping[modelId] === modelId) || Boolean(canAdd && model && spec?.routes.length === 1 && (routes[0]?.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX) || channel.type === 'image2pro' && routes[0]?.id.startsWith('image2pro-' + channel.id + '-'))
+    const editable = Boolean(channel.type === 'image2pro' && model?.provider === 'image2pro' && capabilities.includes('text') && !spec && mapping[modelId] === modelId) || Boolean(canAdd && model && spec?.routes.length === 1 && (routes[0]?.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX) || channel.type === 'apipath' && routes[0]?.id.startsWith('apipath-' + channel.id + '-') || channel.type === 'image2pro' && routes[0]?.id.startsWith('image2pro-' + channel.id + '-'))
       && routes[0].executionModel === modelId && allowsChannelModelConfigurationRoute(sqlite, channel, routes[0].id));
     return {
       modelId, displayName: model?.displayName || modelId,
@@ -73,11 +75,13 @@ function readConfiguration(channel: Channel) {
   });
   const version = createHash('sha256').update(JSON.stringify([
     channel.id, channel.updatedAt, channel.baseUrl, channel.type, supported, mapping, rows, linkedSpecs,
+    ...(channel.type === 'apipath' ? [apipathKeys(channel.id).map(k=>[k.id,k.status,k.supportedModels])] : []),
   ])).digest('hex');
   const canSync = isSupportedChannelType(channel.type);
   const result: ChannelModelConfigurations = { models: rows, version, canAdd, canSync };
   if (protocol) result.protocol = protocol;
   if (channel.type === 'image2pro') result.image2pro = true;
+  if (channel.type === 'apipath') result.apipath = true;
   if (!canAdd) result.addUnavailableReason = canSync
     ? '此渠道尚未开放后台新增型号。可同步和查看已接入的型号。'
     : '当前版本未接入此渠道类型的生成协议。可以查看已有配置。';
@@ -89,6 +93,7 @@ export function listChannelModelConfigurations(channelId: number) {
 }
 
 async function fetchCatalog(channel: Channel): Promise<ChannelModelCatalogEntry[]> {
+  if (channel.type === 'apipath') return apipathAuthorizedCatalog(channel);
   if (!channel.apiKey.trim()) throw fail('请先在渠道配置中保存 API Key', 409);
   const protocol = getChannelVideoProtocol(channel);
   if (channel.type === 'image2pro') return (await image2proModels(channel))
@@ -130,13 +135,13 @@ async function fetchCatalog(channel: Channel): Promise<ChannelModelCatalogEntry[
 
 export async function listAuthorizedChannelModels(channelId: number) {
   const channel = getChannel(channelId);
-  if (channel.type !== 'image2pro' && !getChannelVideoProtocol(channel) && !allowsStandardChannelModelConfiguration(sqlite, channel)) throw fail('请使用该渠道的专用同步或配置入口', 409);
+  if (!['image2pro','apipath'].includes(channel.type) && !getChannelVideoProtocol(channel) && !allowsStandardChannelModelConfiguration(sqlite, channel)) throw fail('请使用该渠道的专用同步或配置入口', 409);
   const catalog = await fetchCatalog(channel);
   return channel.type === 'image2pro' ? enrichImage2proCatalog(catalog) : catalog;
 }
 
-function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol, image2pro = false, reconnect = false) {
-  if (!draft || typeof draft.modelId !== 'string' || (!image2pro && !modelIdPattern.test(draft.modelId))
+function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol, image2pro = false, reconnect = false, apipath = false) {
+  if (!draft || typeof draft.modelId !== 'string' || (!image2pro && !apipath && !modelIdPattern.test(draft.modelId))
     || typeof draft.displayName !== 'string' || !draft.displayName.trim() || draft.displayName.length > 120
     || typeof draft.upstreamModel !== 'string' || !draft.upstreamModel.trim()
     || draft.upstreamModel !== draft.upstreamModel.trim() || draft.upstreamModel.length > 160 || draft.upstreamModel === '*'
@@ -153,6 +158,10 @@ function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol
   if (image2pro && draft.modelId !== draft.upstreamModel) throw fail('Image2Pro 本站模型 ID 必须与上游公开 ID 一致，不添加渠道前缀');
   if (image2pro && draft.kind === 'text') return;
   validateLimits(draft.limits);
+  if (apipath) {
+    if (draft.kind === 'text' || draft.modelId !== draft.upstreamModel || draft.limits.maxOutputs !== 1) throw fail('Vx-魅影仅支持原始 ID 的单份图片或视频模型');
+    return;
+  }
   if (image2pro) {
     if (draft.limits.maxOutputs !== 1 || draft.limits.qualities.length || draft.limits.outputsPerTask && draft.limits.outputsPerTask !== 1) throw fail('Image2Pro 当前入口每次输出一份，不支持质量档位');
 
@@ -256,7 +265,7 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
   const channel = getChannel(channelId);
   const protocol = getChannelVideoProtocol(channel);
   const reconnect = isSnumomReconnectChannel(channel) && isRetiredVideoModel(draft.modelId);
-  validateDraft(draft, protocol, channel.type === 'image2pro', reconnect);
+  validateDraft(draft, protocol, channel.type === 'image2pro', reconnect, channel.type === 'apipath');
   const original = readConfiguration(channel);
   const assertVersion = (current: typeof original) => {
     if (!current.result.canAdd) throw fail(current.result.addUnavailableReason!, 409);
@@ -290,6 +299,7 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
   const catalogEntry = (await fetchCatalog(channel)).find(entry => entry.id === draft.upstreamModel);
   if (!catalogEntry) throw fail('该上游型号未出现在此 Key 的授权目录中，或不支持在此添加', 409);
   if (channel.type === 'image2pro') validateImage2proCatalogDraft(draft, catalogEntry);
+  if (channel.type === 'apipath') validateApipathDraft(draft, catalogEntry as ApipathCatalogEntry);
   if (protocol === 'async-video') {
     const { duration, ratios } = catalogEntry.limits!;
     const rule = draft.limits.duration;
@@ -319,15 +329,16 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
     const cost = originalRoute?.upstreamModel === draft.upstreamModel ? originalRoute : undefined;
     const { limits } = draft;
     const route: ModelRoute = {
+      ...(channel.type === 'apipath' && (catalogEntry as ApipathCatalogEntry).apipath ? { apipath: (catalogEntry as ApipathCatalogEntry).apipath } : {}),
       ...(protocol === 'snumom' ? { snumom: structuredClone(draft.snumom!) } : {}),
-      id: originalRoute?.id ?? (live.type === 'image2pro' ? 'admin-channel-model-image2pro-' : protocol ? channelVideoProtocols[protocol].prefix : CHANNEL_MODEL_ROUTE_PREFIX) + randomUUID(), channelId, executionModel: draft.modelId,
+      id: originalRoute?.id ?? (live.type === 'apipath' ? 'admin-channel-model-apipath-' : live.type === 'image2pro' ? 'admin-channel-model-image2pro-' : protocol ? channelVideoProtocols[protocol].prefix : CHANNEL_MODEL_ROUTE_PREFIX) + randomUUID(), channelId, executionModel: draft.modelId,
       upstreamModel: draft.upstreamModel, enabled: draft.routeEnabled ?? originalRoute?.enabled ?? true, limits,
       cost: cost?.cost ?? null, costUnit: cost?.costUnit ?? 'unknown',
       resolutionCosts: cost?.resolutionCosts ?? {}, priority: originalRoute?.priority ?? live.priority,
     };
     saveModelSpecification({
       modelId: draft.modelId, kind: draft.kind, enabled: draft.specificationEnabled ?? spec?.enabled ?? true,
-      aliases: spec?.aliases ?? [], limits, routes: [route],
+      ...(spec?.imageFamily ? {imageFamily:spec.imageFamily} : {}), aliases: spec?.aliases ?? [], limits, routes: [route],
     });
     }
     db.update(channels).set({
@@ -335,6 +346,7 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
       modelMapping: JSON.stringify({ ...current.mapping, [draft.modelId]: draft.upstreamModel }),
       updatedAt: new Date().toISOString(),
     }).where(eq(channels.id, channelId)).run();
+    if (channel.type === 'apipath') bindApipathCatalogEntry(channelId, draft.modelId, catalogEntry as ApipathCatalogEntry);
     return readConfiguration(getChannel(channelId)).result;
   }).immediate();
 }
@@ -359,6 +371,13 @@ function validateImage2proCatalogDraft(draft: ChannelModelDraft, entry: ChannelM
 /** The Image2Pro preview reads current capabilities but never sends a generation request. */
 export async function previewAuthorizedChannelModelRequest(channelId: number, draft: ChannelModelDraft, sample: V6kRequestSample = {}): Promise<ChannelModelRequestPreview> {
   const channel = getChannel(channelId);
+  if (channel.type === 'apipath') {
+    validateDraft(draft,undefined,false,false,true);
+    const entry=(await apipathAuthorizedCatalog(channel)).find(e=>e.id===draft.upstreamModel);
+    if(!entry)throw fail('该型号未出现在对应 Key 的授权目录或当前协议文档中',409);
+    validateApipathDraft(draft,entry);
+    return previewApipathRequest(draft,entry,sample);
+  }
   if (channel.type !== 'image2pro') return previewChannelModelRequest(channelId, draft, sample);
   validateDraft(draft, undefined, true);
   const model = (await image2proModels(channel)).find(m => m.id === draft.upstreamModel);

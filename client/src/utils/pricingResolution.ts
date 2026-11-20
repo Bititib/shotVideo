@@ -34,7 +34,7 @@ export function pricingResolutionFields(
   const defaults = [
     ...(snumomOutputOnlySpec(modelPattern) ? [snumomOutputOnlySpec(modelPattern)!.resolution] : []),
     ...(['wan3.0-video-nsfw'].includes(modelPattern) ? WAN_RESOLUTIONS : []),
-    ...(modelPattern === 'gpt-image-2-mingfei' ? MINGFEI_RESOLUTIONS : []),
+    ...(['gpt-image-2-mingfei', 'gpt-image-2-5-sunburst'].includes(modelPattern) ? MINGFEI_RESOLUTIONS : []),
     ...(hmSpec?.resolutions || (hmSpec ? [hmSpec.resolution] : [])),
   ];
   const candidates = [...(configuredResolutions ?? defaults), ...existingKeys].map(key => key.trim()).filter(Boolean);

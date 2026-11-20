@@ -9,6 +9,8 @@ import { matchesBbHssSource } from './bbHssSourcePolicy.js';
 import type { ModelAvailability } from '../../shared/upstreamAvailability.js';
 import { isRetiredVideoModel, isReconnectedSnumomRoute, isSnumomReconnectChannel, RETIRED_VIDEO_MODEL_MESSAGE } from '../../shared/retiredVideoModels.js';
 import { isBlockedRetiredVideoModel } from './snumomReconnectedModels.js';
+import { APIPATH_SUNBURST } from '../../shared/apipathImageSizes.js';
+import { APIPATH_VIDEO_FIELDS, APIPATH_VIDEO_MODES } from './apipathAdapter.js';
 import { createVideoAliasChecker } from './modelSaleService.js';
 import { MJ_OVERFLOW_VIDEO_MODEL } from './videoFailoverService.js';
 import { randomUUID } from 'node:crypto';
@@ -62,7 +64,9 @@ export function saveModelSpecification(value: ModelSpecification): ModelSpecific
   const rows = db.select().from(models).all(), model = rows.find(m => m.modelId === value.modelId);
   if (!model || !JSON.parse(model.capabilities).some((cap: string) => cap === value.kind || (value.kind === 'image' && cap === 'image_gen'))) throw error('请先创建对应的图片或视频模型');
   validateLimits(value.limits);
-  if (value.kind === 'image' && model.provider !== 'image2pro' && value.limits.resolutions.length !== 1 && !(value.modelId === HUSS_MJ_MODEL && model.provider === 'huss' && value.limits.resolutions.length > 0 && value.limits.resolutions.every(r => ['1K','2K'].includes(r)))) throw error('图片入口必须固定一个输出分辨率，请为不同分辨率分别创建规格');
+  const multiResolutionSunburst = value.modelId === APIPATH_SUNBURST && model.provider === 'apipath'
+    && value.limits.resolutions.length > 0 && value.limits.resolutions.every(r => ['1K', '2K', '4K'].includes(r));
+  if (value.kind === 'image' && model.provider !== 'image2pro' && value.limits.resolutions.length !== 1 && !multiResolutionSunburst && !(value.modelId === HUSS_MJ_MODEL && model.provider === 'huss' && value.limits.resolutions.length > 0 && value.limits.resolutions.every(r => ['1K','2K'].includes(r)))) throw error('图片入口必须固定一个输出分辨率，请为不同分辨率分别创建规格');
   if (value.imageFamily !== undefined && (value.kind !== 'image' || typeof value.imageFamily !== 'string' || !value.imageFamily.trim() || value.imageFamily !== value.imageFamily.trim() || value.imageFamily.length > 100)) throw error('所属图片模型无效');
   if (value.limits.maxOutputs > (value.kind === 'image' ? 4 : 1)) throw error('图片每次最多 4 张，视频每次只支持 1 条');
   if (!Array.isArray(value.aliases) || !value.aliases.every(id => typeof id === 'string' && rows.some(m => m.modelId === id && JSON.parse(m.capabilities).includes(value.kind)))) throw error('关联的旧模型不存在或生成类型不一致');
@@ -77,6 +81,8 @@ export function saveModelSpecification(value: ModelSpecification): ModelSpecific
   const routes = value.routes.map(r => {
     validateLimits(r.limits);
     const ch = channelRows.find(c => c.id === r.channelId);
+    if(r.apipath && (ch?.type!=='apipath'||value.kind!=='video'||!Array.isArray(r.apipath.fields)||!Array.isArray(r.apipath.modes)||!r.apipath.modes.length
+      ||r.apipath.fields.some(v=>!APIPATH_VIDEO_FIELDS.includes(v))||r.apipath.modes.some(v=>!APIPATH_VIDEO_MODES.includes(v))||typeof r.apipath.checkedAt!=='string'))throw error('Vx-魅影视频协议配置无效');
     if (r.snumom) {
       if (ch?.type !== 'snumom' || value.kind !== 'video') throw error('snumom 配置只能关联 snumom 视频线路');
       validateSnumomConfiguration(r.limits, r.snumom);

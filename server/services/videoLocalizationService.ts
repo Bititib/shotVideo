@@ -3,6 +3,9 @@ import { isHussChannel } from './hussVideoAdapter.js';
 import { fetchZhiyingVideoContent } from './zhiyingVideoAdapter.js';
 import { isConfiguredZhiyingModel as isZhiyingVideoModel } from './zhiyingModelRegistry.js';
 import { assertZhiyingOriginalChannel } from './zhiyingVideoExecution.js';
+import { responseDiagnostic } from './upstreamDiagnostic.js';
+import { isApipathChannel } from './apipathAdapter.js';
+import { fetchApipathVideoContent } from './apipathVideoContent.js';
 import { isMegabyChannel, megabyContentUrl, fetchMegabyVideoContent, readMegabyJson } from './megabyVideoAdapter.js';
 import { zonghengTaskUrl } from './zonghengAdapter.js';
 import { fetchV6kVideoContent } from './v6kVideoContent.js';
@@ -72,7 +75,7 @@ export async function downloadAndLocalizeVideo(
   const headers: Record<string, string> = {};
   const maySendAuthorization = originalSiYueTianCredential
     ? url === siYueTianVideoOrigin(exactChannel!.baseUrl) + '/v1/videos/' + encodeURIComponent(videoId) + '/content'
-    : channel?.type === 'wanfeng' ? false : channel?.type==='image2pro' ? false : isMinikeyChannel(channel) ? false : channel?.type === 'zhiying' ? false : isHussChannel(channel) ? false : isMegabyChannel(channel) ? false : isAsyncVideoChannel(channel) ? false : isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isZonghengChannel(channel) ? Boolean(authenticatedV6kContent) : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
+    : isApipathChannel(channel) ? false : channel?.type === 'wanfeng' ? false : channel?.type==='image2pro' ? false : isMinikeyChannel(channel) ? false : channel?.type === 'zhiying' ? false : isHussChannel(channel) ? false : isMegabyChannel(channel) ? false : isAsyncVideoChannel(channel) ? false : isFunAiChannel(channel) ? shouldSendFunAiAuthorization(url, channel.baseUrl) : isZonghengChannel(channel) ? Boolean(authenticatedV6kContent) : isHayaChannel(channel) ? shouldSendHayaAuthorization(url, channel.baseUrl) : isHmStudioChannel(channel)
     ? shouldSendHmStudioAuthorization(url, channel.baseUrl)
     : isWxHaidiYueChannel(channel)
       ? shouldSendWxHaidiYueAuthorization(url, channel.baseUrl)
@@ -106,7 +109,7 @@ export async function downloadAndLocalizeVideo(
   if (channel?.type === 'zhiying') {
     buffer = await fetchZhiyingVideoContent(channel, videoId, url, model);
   } else {
-    let response = channel?.type === 'wanfeng' ? await fetchWanfengVideoContent(channel, videoId, url) : isMinikeyChannel(channel) ? await fetchMinikeyFile(channel, 'videos', videoId) : authenticatedV6kContent ? await fetchV6kVideoContent(channel, videoId) : isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000),
+    let response = isApipathChannel(channel) ? await fetchApipathVideoContent(channel!,videoId,url) : channel?.type === 'wanfeng' ? await fetchWanfengVideoContent(channel, videoId, url) : isMinikeyChannel(channel) ? await fetchMinikeyFile(channel, 'videos', videoId) : authenticatedV6kContent ? await fetchV6kVideoContent(channel, videoId) : isMegabyChannel(channel) ? await fetchMegabyVideoContent(channel, url, videoId) : await fetch(url, { headers, signal: AbortSignal.timeout(300_000),
       ...(originalSiYueTianCredential && headers.Authorization ? { redirect: 'error' } : {}) });
     if (isMegabyChannel(channel) && [401, 403, 404].includes(response.status) && url !== megabyContentUrl(channel.baseUrl, videoId)) response = await fetchMegabyVideoContent(channel, megabyContentUrl(channel.baseUrl, videoId), videoId);
     if (!response.ok && isMegabyChannel(channel)) await readMegabyJson(channel, response, 'query');
@@ -125,6 +128,7 @@ export async function downloadAndLocalizeVideo(
         headers: { Authorization: 'Bearer ' + channel.apiKey }, signal: AbortSignal.timeout(300_000), redirect: 'error',
       });
     }
+    if (!response.ok && isApipathChannel(channel)) throw new Error(await responseDiagnostic('通联', '成品下载', response, channel.apiKey));
     if (!response.ok) throw new Error(`Failed to fetch video from upstream: ${response.status} ${response.statusText}`);
 
     buffer = Buffer.from(await response.arrayBuffer());

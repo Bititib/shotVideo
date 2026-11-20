@@ -10,6 +10,8 @@ import { createZhiyingVideo } from './zhiyingVideoAdapter.js';
 import { findVideoSubmissionReceipt } from './videoSubmissionReceiptService.js';
 import { HUSS_MJ_MODEL, hussMjOptions } from '../../shared/hussMidjourney.js';
 import { submitHussImage, queryHussImage, HussImageError } from './hussImageAdapter.js';
+import { isApipathChannel, normalizeApipathVideo, apipathBase } from './apipathAdapter.js';
+import { APIPATH_SUNBURST, APIPATH_IMAGE_SIZES, apipathImageSize, isApipathSunburstSpec } from '../../shared/apipathImageSizes.js';
 import { isHussPersistentVideoModel } from '../../shared/hussBbVideo.js';
 import { bbHssKkManaged } from './bbHssKkMigration.js';
 import { isBbHssKkEntry } from '../../shared/bbHssKk.js';
@@ -118,10 +120,18 @@ export function specificationRequest(body: any, kind: MediaKind, publicBaseUrl: 
   if (typeof firstFrame !== 'string' || typeof lastFrame !== 'string') throw fail('首尾帧必须是图片 URL 或 Base64');
   if (kind === 'image' && (videos.length || audios.length || firstFrame || lastFrame)) throw fail('图片生成不能传入视频、音频或独立首尾帧');
   const sizeRatios: Record<string,string> = { '1024x1024': '1:1', '1536x864': '16:9', '864x1536': '9:16', '1536x1152': '4:3', '1152x1536': '3:4', '1536x1024': '3:2', '1024x1536': '2:3', '1280x720': '16:9', '720x1280': '9:16', '1024x768': '4:3', '768x1024': '3:4' };
-  const resolution = String(body.output_resolution || body.resolution || (kind === 'image' ? '2K' : '720p'));
-  if (kind === 'image' && body.size && !image2proConfigured && !sizeRatios[body.size]) throw fail('此规格不支持该 size，请使用 aspect_ratio 和 resolution');
+  const sunburst = kind === 'image' && isApipathSunburstSpec(String(body.model || ''));
+  const resolution = String(body.output_resolution || body.resolution || (sunburst
+    ? body.model === APIPATH_SUNBURST ? '1K' : String(body.model).split('-').at(-1)
+    : kind === 'image' ? '2K' : '720p'));
+  if (sunburst) for (const [ratio, tiers] of Object.entries(APIPATH_IMAGE_SIZES)) for (const size of Object.values(tiers)) sizeRatios[size] = ratio;
+  if (kind === 'image' && !image2proConfigured && body.size && !sizeRatios[body.size]) throw fail('此规格不支持该 size，请使用 aspect_ratio 和 resolution');
   if (kind === 'image' && !image2proConfigured && body.size && (body.aspect_ratio || body.ratio) && sizeRatios[body.size] !== (body.aspect_ratio || body.ratio)) throw fail('size 与宽高比不一致');
   const ratio = String(body.aspect_ratio || body.ratio || (sizeRatios[body.size] ? sizeRatios[body.size] : kind === 'image' ? '1:1' : '16:9'));
+  if (sunburst) {
+    try { apipathImageSize(ratio, resolution, body.size); }
+    catch (error: any) { throw fail(error.message); }
+  }
   let media = { prompt: body.prompt.trim(), images, videos, audios };
   if (kind === 'video') {
     try {
@@ -288,7 +298,13 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
   const end = Date.now() + 2 * 60 * 60_000;
   let queryFailures = 0;
   if (isHussChannel(channel)) patch(id, { hussQueryResumeAt: null });
+  if (isApipathChannel(channel) && !metadata(id).apipathWaitStartedAt) patch(id,{apipathWaitStartedAt:Date.now()});
   while (Date.now() < end) {
+    if(isApipathChannel(channel) && metadata(id).apipathBaseUrl && metadata(id).apipathBaseUrl!==apipathBase(channel.baseUrl)){
+      holdForReview(id,'Vx-魅影原任务渠道地址已变化，恢复原地址后再查询原任务','query');return;
+    }
+    if (isApipathChannel(channel) && !metadata(id).apipathCompletedReceipt
+      && Date.now()-Number(metadata(id).apipathWaitStartedAt)>=12*60*60_000) break;
     const expectedWanfeng = metadata(id).wanfengCredential;
     if (wanfeng || expectedWanfeng) {
       const current = ChannelService.getChannelRaw(channel.id, channel.apiKeyId);
@@ -318,10 +334,15 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
       }
       const siYueTianReceipt = (configuredSiYueTian || isSiYueTianManagedVideoModel(hussMeta.actualModel)) ? hussMeta.siYueTianMinimaxCompletedReceipt : null;
       const completedReceipt = hussReceipt || metadata(id).megabyCompletedReceipt || siYueTianReceipt;
+      const apipathMeta = metadata(id);
       const miniInitial=channel.type==='image2pro'?hussMeta.image2proInitialTask:isMinikeyChannel(channel)?hussMeta.minikeyInitialTask:null;
       const miniCompleted=isMinikeyChannel(channel)?hussMeta.minikeyCompletedReceipt:null;
       const wanfengReceipt = wanfeng && hussMeta.wanfengReceipt;
-      if (wanfengReceipt?.id === taskId && (hussMeta.wanfengCompletedTask || wanfengReceipt.initial)) {
+      if (isApipathChannel(channel) && apipathMeta.apipathCompletedReceipt?.taskId === taskId) {
+        task = { status: 'completed', progress: 100, resultUrl: apipathMeta.apipathCompletedReceipt.resultUrl }; localCompletion = true;
+      } else if (isApipathChannel(channel) && ['completed', 'failed'].includes(apipathMeta.apipathInitialTask?.status)) {
+        task = normalizeApipathVideo(apipathMeta.apipathInitialTask, channel, taskId); patch(id, { apipathInitialTask: null });
+      } else if (wanfengReceipt?.id === taskId && (hussMeta.wanfengCompletedTask || wanfengReceipt.initial)) {
         task = hussMeta.wanfengCompletedTask || wanfengReceipt.initial;
         localCompletion = true;
       } else if(miniInitial?.taskId===taskId) {task=miniInitial;localCompletion=true;}
@@ -410,6 +431,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
           ...(metadata(id).snumomReferenceBilling && task.billingUsage ? { upstreamBillingUsage:task.billingUsage } : {}),
           ...(metadata(id).siYueTianVideoCredential || isSiYueTianManagedVideoModel(metadata(id).actualModel) ? { siYueTianMinimaxCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}),
           ...(isHussChannel(channel) ? { hussCompletedReceipt: { taskId, resultUrl: task.resultUrl }, upstreamGenerated: true, upstreamDeliveryPending: true } : {}),
+          ...(isApipathChannel(channel) ? { apipathCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}),
           ...(isMegabyChannel(channel) ? { megabyCompletedReceipt: { taskId, resultUrl: task.resultUrl } } : {}) });
         const { downloadAndLocalizeVideo } = await import('./videoLocalizationService.js');
         localized = await downloadAndLocalizeVideo(task.resultUrl, taskId, zhiying ? metadata(id).upstreamModel : metadata(id).actualModel, channel.id, channel.apiKeyId, progress => {
@@ -427,7 +449,8 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         }
         console.warn('[specification] result save failed', id, error.message);
         const detail = transportDiagnostic(channel.type, '上游已完成，结果保存失败；正在重试保存', error, channel.apiKey);
-        patch(id, wanfeng || zhiying || isZonghengChannel(channel) || isMegabyChannel(channel) || isHussChannel(channel) || isMinikeyChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
+        patch(id, isApipathChannel(channel) || wanfeng || zhiying || isZonghengChannel(channel) || isMegabyChannel(channel) || isHussChannel(channel) || isMinikeyChannel(channel) ? { progressText: detail, resultSaveError: detail } : { progressText: '上游已完成，正在保存结果' });
+        if (isApipathChannel(channel)) onEvent({ type: 'status', message: detail, contentId: id });
         if (isHussChannel(channel)) {
           saveRetryMs = Math.max(60_000, Number(error?.retryAfterMs) || 0);
           onEvent({ type: 'status', message: detail, contentId: id });
@@ -439,7 +462,7 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         }
       }
       if (localized) {
-        try { complete(id, [localized]); if (wanfeng || isMegabyChannel(channel) || isHussChannel(channel)) patch(id, { resultSaveError: null, upstreamDeliveryPending:false }); }
+        try { complete(id, [localized]); if (isApipathChannel(channel) || wanfeng || isMegabyChannel(channel) || isHussChannel(channel)) patch(id, { resultSaveError: null, upstreamDeliveryPending:false }); }
         catch (error: any) {
           db.update(contents).set({ resultUrl: localized }).where(eq(contents.id, id)).run();
           holdForReview(id, error.message || '生成结果已保留，费用结算待核实', 'settlement');
@@ -449,7 +472,10 @@ async function pollVideo(id: number, channel: any, taskId: string, onEvent: (dat
         onEvent({ type: 'complete', videoUrl: localized, contentId: id }); return;
       }
     }
-    await wait(saveRetryMs || (channel.type==='image2pro' ? Math.max(10000,task.pollAfterMs||0,metadata(id).image2proPollInterval||0) : isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : isHussChannel(channel) ? 15_000 : 8_000));
+    await wait(saveRetryMs || (isApipathChannel(channel) ? 5_000 : channel.type==='image2pro' ? Math.max(10000,task.pollAfterMs||0,metadata(id).image2proPollInterval||0) : isZonghengChannel(channel) ? 20_000 : isFunAiChannel(channel) ? 5_000 : isHussChannel(channel) ? 15_000 : 8_000));
+  }
+  if (isApipathChannel(channel) && (metadata(id).apipathCompletedReceipt || Date.now()-Number(metadata(id).apipathWaitStartedAt)<12*60*60_000)) {
+    patch(id,{apipathResumeAt:Date.now()+5_000});return;
   }
   if (zhiying) {
     patch(id, { zhiyingResumeAt: Date.now() + 8_000, progressText: '正在后台继续查询或保存智赢原任务' });
@@ -545,9 +571,10 @@ async function runVideo(id: number, candidates: RouteCandidate[], request: Speci
             }).immediate();
             return;
           }
-          if (isZonghengChannel(target.channel) && typeof submissionMetadata?.videoId === 'string') {
+          if ((isZonghengChannel(target.channel) || isApipathChannel(target.channel)) && typeof submissionMetadata?.videoId === 'string') {
             taskId = submissionMetadata.videoId;
-            acceptZonghengVideoReceipt(id, taskId, { channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId });
+            if (isApipathChannel(target.channel)) acceptVideoSubmission(id, taskId, { provider: 'apipath', channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId });
+            else acceptZonghengVideoReceipt(id, taskId, { channelId: target.channel.id, channelApiKeyId: target.channel.apiKeyId });
           }
           patch(id, { ...submissionMetadata, submissionStartedAt: new Date().toISOString() });
           dispatchPrepared = true;
@@ -1334,6 +1361,7 @@ export function resumeSpecificationTasks() {
       continue;
     }
     if (Number(meta.wanfengResumeAt || 0) > Date.now()) continue;
+    if (Number(meta.apipathResumeAt || 0) > Date.now()) continue;
     if (row.type === 'video' && meta.zhiyingOrder) {
       if ((!meta.zhiyingReplayStopped || meta.videoId || meta.upstreamTaskId) && !meta.refundPending && !meta.billingShortfall && meta.reviewKind !== 'settlement' && Number(meta.zhiyingResumeAt || 0) <= Date.now())
         scheduleZhiyingRecovery(row.id);
@@ -1432,12 +1460,13 @@ export function recoverSpecificationVideo(id: number) {
     throw fail('原预扣账本状态、金额或归属不匹配，未恢复也未扣费', 409);
   const channel = ChannelService.getChannelRaw(Number(meta.channelId), Number(meta.channelApiKeyId) || null);
   if (!channel) throw fail('原任务渠道不可用，未重新生成', 409);
+  if(isApipathChannel(channel) && meta.apipathBaseUrl && meta.apipathBaseUrl!==apipathBase(channel.baseUrl))throw fail('Vx-魅影原任务渠道地址已变化，请恢复原地址后查询',409);
   const taskId = String(meta.videoId || meta.upstreamTaskId || '').trim();
   if (!taskId && !(isHussChannel(channel) && meta.hussIdempotencyKey)) throw fail('缺少原任务 ID，请先补录；不会重新提交生成', 409);
   if (videoSubmissionPending(id, meta)) return { status: 'processing', message: '原提交仍在执行，请等待保存任务编号', chargedAmount: 0 };
   active.add(id);
   try {
-    patch(id, { ...(taskId ? { videoId: taskId } : {}), requiresReview: false, reviewKind: null,
+    patch(id, { ...(taskId ? { videoId: taskId } : {}), ...(isApipathChannel(channel)?{apipathWaitStartedAt:Date.now(),apipathResumeAt:null}:{}), requiresReview: false, reviewKind: null,
       error: null, failureReason: null, upstreamQueryError: null, recoveryPreviousError: meta.error || meta.recoveryPreviousError,
       progressText: '正在恢复原任务查询，未重新生成或扣费', recoveryRequestedAt: new Date().toISOString() }, 'processing');
     const pending = taskId ? pollVideo(id, channel, taskId, () => {}) : resumeHussReceipt(id, channel, meta.hussIdempotencyKey);

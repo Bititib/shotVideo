@@ -46,6 +46,7 @@ export type ChannelModelConfigurations = {
   models: ChannelModelConfiguration[];
   canAdd: boolean;
   image2pro?: boolean;
+  apipath?: boolean;
   canSync: boolean;
   protocol?: ChannelVideoProtocol;
   addUnavailableReason?: string;

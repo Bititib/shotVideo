@@ -171,7 +171,8 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
   const asyncVideo = data?.protocol === 'async-video';
   const wanfeng = data?.protocol === 'wanfeng';
   const image2pro = data?.image2pro === true;
-  const chooseFromCatalog = image2pro || wanfeng || asyncVideo || data?.protocol === 'megaby' || snumom;
+  const apipath = data?.apipath === true;
+  const chooseFromCatalog = apipath || image2pro || wanfeng || asyncVideo || data?.protocol === 'megaby' || snumom;
   const upstreamPricing = catalog?.find(entry => entry.id === draft?.upstreamModel)?.upstreamPricing;
   const availableModels = catalog?.filter(entry => !data?.models.some(row => row.modelId !== selected?.modelId && row.upstreamModel === entry.id));
 
@@ -225,16 +226,16 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
           {draft ? <form id="channel-model-form" className="v6k-model-form" style={tab === '参数与媒体' ? undefined : { display: 'none' }} onSubmit={event => void save(event)}>
             <fieldset disabled={busy} className="v6k-model-form">
               <div className="v6k-identity-grid">
-                <label>本站 API 模型 ID<input className={field} value={draft.modelId} required readOnly={Boolean(selected) || image2pro || snumom}
+                <label>本站 API 模型 ID<input className={field} value={draft.modelId} required readOnly={Boolean(selected) || apipath || image2pro || snumom}
                   onChange={event => setDraft({ ...draft, modelId: event.target.value })} /></label>
                 <label>显示名称<input className={field} value={draft.displayName} required
                   onChange={event => setDraft({ ...draft, displayName: event.target.value })} /></label>
-                <label>上游模型 ID{chooseFromCatalog ? <select className={field} value={draft.upstreamModel} required disabled={(image2pro || snumom) && Boolean(selected)}
+                <label>上游模型 ID{chooseFromCatalog ? <select className={field} value={draft.upstreamModel} required disabled={(apipath || image2pro || snumom) && Boolean(selected)}
                   onChange={event => {
                     const entry = availableModels?.find(model => model.id === event.target.value);
                     if (!entry || !entry.limits && entry.kind !== 'text' && !snumom) return;
                     const limits = entry.limits ?? (snumom ? draft.limits : defaultRoutingLimits());
-                    setDraft({ ...draft, upstreamModel: entry.id, limits, ...(image2pro ? {modelId:entry.id,displayName:entry.id,kind:entry.kind!} : snumom ? {modelId:entry.id,displayName:entry.id} : {}) });
+                    setDraft({ ...draft, upstreamModel: entry.id, limits, ...(image2pro || apipath ? {modelId:entry.id,displayName:entry.id,kind:entry.kind!} : snumom ? {modelId:entry.id,displayName:entry.id} : {}) });
                     setResolutions(limits.resolutions.join(','));
                     setRatios(limits.ratios.join(','));
                     setSeconds(limits.duration.values.join(','));
@@ -245,7 +246,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                   {availableModels?.map(entry => <option key={entry.id} value={entry.id}>{entry.id}</option>)}
                 </select> : <input className={field} value={draft.upstreamModel} required list={catalog ? 'channel-model-catalog' : undefined}
                   onChange={event => setDraft({ ...draft, upstreamModel: event.target.value })} />}</label>
-                {image2pro ? <label>模型类型<input className={field} readOnly value={kindLabels[draft.kind]} /></label> : protocol ? <label>接入协议<input className={field} value={protocol.label} readOnly /></label> : <label>生成类型<select className={field} value={draft.kind} disabled={Boolean(selected)}
+                {image2pro || apipath ? <label>模型类型<input className={field} readOnly value={kindLabels[draft.kind]} /></label> : protocol ? <label>接入协议<input className={field} value={protocol.label} readOnly /></label> : <label>生成类型<select className={field} value={draft.kind} disabled={Boolean(selected)}
                   onChange={event => {
                     setDraft({ ...draft, kind: event.target.value as MediaKind });
                     setResolutions(event.target.value === 'image' ? '1K' : '');
@@ -255,6 +256,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
               <div>
                 <button type="button" className={button} onClick={() => void loadCatalog()}>{wanfeng ? '读取晚风公开型号' : '读取已授权的上游型号'}</button>
                 {wanfeng && <p className="v6k-field-help">公开目录用于配置模型，实际可用型号取决于晚风 Key 的权限。</p>}
+                {apipath && <p className="v6k-field-help">仅显示对应图片或视频 Key 已授权、且公开文档协议已确认的型号。只添加选中的模型，新模型默认停用；规格不得超过所选型号公布的范围。</p>}
                 {catalog && <>
                   {!chooseFromCatalog && <datalist id="channel-model-catalog">{availableModels?.map(({ id }) => <option key={id} value={id} />)}</datalist>}
                   <p className="v6k-field-help" role="status">{availableModels?.length
@@ -295,7 +297,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                     onChange={event => setLimits({ maxImages: Number(event.target.value) })} /></label>
                   <label>最少参考图<input className={field} type="number" min="0" max={draft.limits.maxImages} value={draft.limits.minImages}
                     onChange={event => setLimits({ minImages: Number(event.target.value) })} /></label>
-                  {(protocol?.multimedia || image2pro) && <>
+                  {(protocol?.multimedia || image2pro || apipath) && <>
                     <label>最多参考视频<input className={field} type="number" min="0" max="100" value={draft.limits.maxVideos}
                       onChange={event => setLimits({ maxVideos: Number(event.target.value) })} /></label>
                     <label>最多参考音频<input className={field} type="number" min="0" max="100" value={draft.limits.maxAudios}
@@ -303,7 +305,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                     <label>参考素材合计上限<input className={field} type="number" min="0" max="300" value={draft.limits.maxReferences ?? ''}
                       onChange={event => setLimits({ maxReferences: event.target.value ? Number(event.target.value) : undefined })} /></label>
                   </>}
-                  {(wanfeng || image2pro || snumom) && <>
+                  {(wanfeng || image2pro || snumom || apipath) && <>
                     <label><input type="checkbox" checked={draft.limits.firstFrame}
                       onChange={event => setLimits({ firstFrame: event.target.checked, ...(snumom && !event.target.checked ? { lastFrame: false } : {}) })} />独立首帧</label>
                     <label><input type="checkbox" checked={draft.limits.lastFrame} disabled={snumom && !draft.limits.firstFrame}
@@ -363,7 +365,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
             {draft.kind !== 'text' && <div className="v6k-sample-grid">
               {draft.kind === 'video' && <label>样例时长<input className={field} type="number" min="1" value={sample.seconds ?? ''}
                 onChange={event => { setPreview(null); setSample({ ...sample, seconds: event.target.value ? Number(event.target.value) : undefined }); }} /></label>}
-              {image2pro && draft.kind === 'video' && <>
+              {(image2pro || apipath) && draft.kind === 'video' && <>
                 {draft.limits.firstFrame && <label><input type="checkbox" checked={sample.firstFrame??false} onChange={event=>{setPreview(null);setSample({...sample,firstFrame:event.target.checked});}}/>样例首帧</label>}
                 {draft.limits.lastFrame && <label><input type="checkbox" checked={sample.lastFrame??false} onChange={event=>{setPreview(null);setSample({...sample,lastFrame:event.target.checked});}}/>样例尾帧</label>}
               </>}
@@ -372,7 +374,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                   <option value="">使用规格默认值</option>
                   {split(key === 'ratio' ? ratios : resolutions).map(value => <option key={value}>{value}</option>)}
                 </select></label>)}
-              {(['images', 'videos', 'audios'] as const).filter(key => key === 'images' || (protocol?.multimedia || image2pro)).map(key =>
+              {(['images', 'videos', 'audios'] as const).filter(key => key === 'images' || (protocol?.multimedia || image2pro || apipath)).map(key =>
                 <label key={key}>{{ images: '样例图片数', videos: '样例视频数', audios: '样例音频数' }[key]}
                   <input className={field} type="number" min="0" max="100" value={sample[key] ?? ''}
                     onChange={event => { setPreview(null); setSample({ ...sample, [key]: event.target.value ? Number(event.target.value) : undefined }); }} /></label>)}

@@ -2,6 +2,7 @@ import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '
 import { assertZhiyingOriginalChannel } from './zhiyingVideoExecution.js';
 import { pollZhiyingVideo } from './zhiyingVideoAdapter.js';
 import { isHussChannel } from './hussVideoAdapter.js';
+import { isApipathChannel, pollApipathVideo, apipathBase } from './apipathAdapter.js';
 import { isMegabyChannel, megabyTaskUrl, normalizeMegabyTask, readMegabyJson } from './megabyVideoAdapter.js';
 import { normalizeSiYueTianMinimaxTask, pollSiYueTianMinimax, siYueTianVideoCredential } from './siYueTianMinimaxAdapter.js';
 import { isTaskIdPlaceholder } from '../../shared/upstreamTaskId.js';
@@ -330,6 +331,16 @@ export class VideoRecoveryService {
       throw { status: 503, message: '原任务渠道当前不可用' };
     }
 
+    if (isApipathChannel(channel)) {
+      if(metadata.apipathBaseUrl && metadata.apipathBaseUrl!==apipathBase(channel.baseUrl))throw {status:409,message:'Vx-魅影原任务渠道地址已变化，请恢复原地址后查询'};
+      const receipt = metadata.apipathCompletedReceipt;
+      const task = receipt?.taskId === videoId && receipt.resultUrl
+        ? { status: 'completed', progress: 100, resultUrl: receipt.resultUrl, error: '' }
+        : await pollApipathVideo(channel, videoId);
+      return { status: task.status === 'completed' ? 'completed' : task.status === 'failed' ? 'failed' : 'processing',
+        message: task.error || '通联原任务状态：' + task.status, progress: task.progress,
+        upstreamResultUrl: task.resultUrl, videoId, channelId: channel.id, channelApiKeyId: Number(channel.apiKeyId) || null } as any;
+    }
     const configuredSiYueTian = metadata.siYueTianVideoCredential;
     if (configuredSiYueTian && (configuredSiYueTian !== siYueTianVideoCredential(channel)
       || videoId !== (upstreamTaskId(metadata) || receipt?.upstreamTaskId))) {

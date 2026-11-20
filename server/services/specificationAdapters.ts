@@ -10,6 +10,8 @@ import { prepareZhiyingVideo, createZhiyingVideo, pollZhiyingVideo, ZhiyingApiEr
 import { zhiyingCredentialFingerprint, zhiyingPayloadHash } from './zhiyingVideoExecution.js';
 import { SNUMOM_MUSE_MODEL } from '../../shared/snumomMuse.js';
 import { normalizeSnumomMuseRequestBody, validateSnumomMuseInput } from './snumomWanAdapter.js';
+import { isApipathChannel, apipathRequest, apipathTaskId, pollApipathVideo, buildApipathVideoPayload, ApipathError } from './apipathAdapter.js';
+import { apipathImageSize, isApipathSunburstSpec } from '../../shared/apipathImageSizes.js';
 import { isHussPersistentVideoModel } from '../../shared/hussBbVideo.js';
 import { V6K_SEEDANCE_20_MODEL } from '../../shared/v6kSeedance2.js';
 import { KK_VIDEO_MODEL, KK_VIDEO_SOURCES } from '../../shared/kkVideoRouting.js';
@@ -313,6 +315,22 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
     onStarting({ zhiyingInitialTask: task });
     return task.taskId;
   }
+  if (isApipathChannel(c)) {
+    const refs = (urls: string[]) => urls.map(url => publishSpecificationAsset(url, request.publicBaseUrl));
+    try {
+      const payload = buildApipathVideoPayload(model, request.prompt, { ...i, images:refs(request.images),videos:refs(request.videos),audios:refs(request.audios),
+        generationMode:request.body.generation_mode,
+        firstFrame:request.firstFrame?refs([request.firstFrame])[0]:'',lastFrame:request.lastFrame?refs([request.lastFrame])[0]:'' }, target.route.apipath);
+      const raw = await apipathRequest(c, '/v1/video/generations', payload, onStarting, id => onStarting({ videoId: id, upstreamTaskId: id }));
+      const id = apipathTaskId(raw);
+      if (!id) throw new ApipathError('通联提交未返回任务编号，无法确认受理结果');
+      onStarting({ apipathInitialTask: raw });
+      return id;
+    } catch (error) {
+      if (error instanceof ApipathError) throw new SpecificationUpstreamError(error.message, false, error.uncertain, false, error.status, !error.uncertain);
+      throw error;
+    }
+  }
   if (target.route.siYueTianVideo || !standard && isSiYueTianManagedVideoModel(exec)) {
     if (!target.route.siYueTianVideo && model !== siYueTianManagedVideoUpstreamModel(exec)) throw new SpecificationUpstreamError('四月天视频上游模型映射不一致', false, false, false, 0, true);
     try { return await submitSiYueTianMinimax(c, request, url => publishSpecificationAsset(url, request.publicBaseUrl), onStarting, exec, target.route.siYueTianVideo ? model : undefined); }
@@ -534,6 +552,7 @@ export async function submitSpecificationVideo(target: RouteCandidate, request: 
   return String(id);
 }
 export async function pollSpecificationVideo(channel: any, taskId: string, executionModel?: string, referenceVideoSeconds = 0) {
+  if (isApipathChannel(channel)) return pollApipathVideo(channel, taskId);
   if (channel.type === 'wanfeng') return pollWanfengVideo(channel, taskId);
   if(isImage2proChannel(channel))return pollImage2pro(channel,'video',taskId);
   if (isMinikeyChannel(channel)) return pollMinikey(channel, 'videos', taskId);
@@ -704,6 +723,33 @@ export async function generateSpecificationImage(target: RouteCandidate, request
     } catch (e) {
       if (e instanceof MinikeyError) throw new SpecificationUpstreamError(e.message, false, !e.confirmedFailure, false, e.httpStatus, e.confirmedFailure);
       throw e;
+    }
+  }
+  if (isApipathChannel(c)) {
+    const size = isApipathSunburstSpec(target.route.executionModel) ? apipathImageSize(i.ratio, i.resolution, request.body.size) : request.body.size || 'auto';
+    let payload: any = { model, prompt: request.prompt, n: 1, aspect_ratio: i.ratio, size, quality: i.quality || request.body.quality || 'auto' };
+    let endpoint = '/v1/images/generations';
+    if (request.body.response_format === 'async') throw new SpecificationUpstreamError('通联图片当前使用同步协议，尚未接入异步图片结果结构', false, false, false, 0, true);
+    if (request.images.length) {
+      const form = new FormData();
+      for (const [key, value] of Object.entries(payload)) form.append(key, String(value));
+      for (let index = 0; index < request.images.length; index++) {
+        const match = request.images[index].match(/^data:([^;]+);base64,(.+)$/s);
+        if (!match) throw new SpecificationUpstreamError('参考图必须先完成本站图片校验', false, false, false, 0, true);
+        form.append('image[]', new Blob([Buffer.from(match[2], 'base64')], { type: match[1] }), 'ref_' + index + '.png');
+      }
+      payload = form; endpoint = '/v1/images/edits';
+    }
+    let taskId = '';
+    try {
+      const raw = await apipathRequest(c, endpoint, payload, data => onStarting(data), id => { taskId = id; onSubmitted(id); });
+      const value = raw?.data?.[0]?.url;
+      let url: URL; try { url = new URL(value); if (!['https:', 'http:'].includes(url.protocol)) throw new Error(); }
+      catch { throw new ApipathError('通联图片未返回有效 data[0].url，保留原请求待核实'); }
+      return { imageUrl: url.href, reportedImageUrl: url.href, taskId, raw };
+    } catch (error) {
+      if (error instanceof ApipathError) throw new SpecificationUpstreamError(error.message, false, error.uncertain, false, error.status, !error.uncertain);
+      throw error;
     }
   }
   let started = false;

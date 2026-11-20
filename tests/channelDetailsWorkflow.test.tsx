@@ -52,6 +52,26 @@ it('opens the miniKey model editor from the channel row', async () => {
 });
 
 describe('channel details and model sync workflow', () => {
+  it('adds a selected Apipath video or image through its authorized catalog and preserves its type and limits', async () => {
+    const id='another-apipath-video';
+    const limits={...defaultRoutingLimits(),resolutions:['480p'],ratios:['1:1','9:16'],maxImages:9,maxVideos:3,maxAudios:3};
+    const initial={models:[],canAdd:true,canSync:true,apipath:true,version:'v1'};
+    vi.mocked(adminApi.getChannels).mockResolvedValue([{...base,type:'apipath',name:'Vx-魅影'}]);
+    vi.mocked(adminApi.getChannelModelConfigurations).mockResolvedValue(initial);
+    vi.mocked(adminApi.getAuthorizedChannelModels).mockResolvedValue([{id,kind:'video',limits}]);
+    vi.mocked(adminApi.saveChannelModelConfiguration).mockImplementation(async(_id,draft)=>({...initial,version:'v2',models:[{...draft,enabled:false,editable:true,capabilities:['video']}]}));
+    mount();fireEvent.click(await screen.findByRole('button',{name:'模型与参数',exact:true}));
+    const panel=within(await screen.findByRole('dialog',{name:'Vx-魅影 · 模型与参数'}));
+    fireEvent.click(await panel.findByRole('button',{name:'添加新模型'}));
+    fireEvent.click(panel.getByRole('button',{name:'读取已授权的上游型号'}));await panel.findByRole('option',{name:id});
+    fireEvent.change(panel.getByLabelText('上游模型 ID'),{target:{value:id}});
+    expect(panel.getByLabelText('本站 API 模型 ID')).toHaveValue(id);expect(panel.getByLabelText('模型类型')).toHaveValue('视频');
+    expect(panel.getByLabelText('可选分辨率')).toHaveValue('480p');
+    fireEvent.click(panel.getByRole('button',{name:'校验授权并添加模型'}));
+    expect(await panel.findByText(/新模型已添加，默认停用/)).toBeVisible();
+    expect(adminApi.saveChannelModelConfiguration).toHaveBeenCalledWith(9,{modelId:id,upstreamModel:id,displayName:id,kind:'video',limits},'v1');
+    expect(adminApi.syncChannelModels).not.toHaveBeenCalled();
+  });
   it('opens the shared model editor from the Siyuetian row and loads the authorized video catalog on demand', async () => {
     vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, name: '4月天 渠道', type: 'openai', baseUrl: 'https://llm.chre3.com' }]);
     vi.mocked(adminApi.getSiYueTianModelConfigurations).mockResolvedValue([]);
@@ -89,7 +109,7 @@ describe('channel details and model sync workflow', () => {
   });
 
   it('opens model parameters for a stopped legacy channel from either the row or details', async () => {
-    vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, type: 'apipath', status: 0 }]);
+    vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, type: 'unknown-legacy-channel', status: 0 }]);
     vi.mocked(adminApi.getChannelModelConfigurations).mockResolvedValue({
       models: [], canAdd: false, canSync: false, version: 'legacy',
       addUnavailableReason: '当前版本未接入此渠道类型的生成协议。可以查看已有配置。',
@@ -185,6 +205,44 @@ describe('channel details and model sync workflow', () => {
     expect(screen.queryByPlaceholderText(/grok-imagine-video/)).toBeNull();
   });
 
+  it('edits Apipath Sunburst 1K, 2K and 4K prices inside one model', async () => {
+    const id = 'gpt-image-2-5-sunburst';
+    vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, name: 'Vx-魅影', type: 'apipath', supportedModels: [id] }]);
+    vi.mocked(adminApi.getModels).mockResolvedValue([{ id: 500, modelId: id, displayName: 'Sunburst', provider: 'apipath', capabilities: ['image'], isActive: 0 }]);
+    vi.mocked(adminApi.getPricing).mockResolvedValue([{ id: 100, modelPattern: id, displayName: 'Sunburst', category: 'image',
+      billingType: 'per_call', inputPrice: 1, outputPrice: 0, extraParams: { category: 'image' }, configured: true, modelActive: false }]);
+    vi.mocked(adminApi.updatePricing).mockResolvedValue({});
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: '查看Vx-魅影详情' }));
+    fireEvent.click(await screen.findByRole('button', { name: '管理价格' }));
+    const pricing = await screen.findByRole('dialog', { name: id + ' · 价格详情' });
+    fireEvent.click(await within(pricing).findByRole('button', { name: '编辑', exact: true }));
+    for (const [tier, price] of [['1K', '1'], ['2K', '2.5'], ['4K', '4']]) {
+      fireEvent.change(await screen.findByLabelText(tier + ' 单价'), { target: { value: price } });
+    }
+    fireEvent.click(screen.getByRole('button', { name: '保存并立即生效' }));
+    await waitFor(() => expect(adminApi.updatePricing).toHaveBeenCalledExactlyOnceWith(100, {
+      modelPattern: id, billingType: 'per_call', inputPrice: 1, outputPrice: 0,
+      extraParams: { category: 'image', '1K': 1, '2K': 2.5, '4K': 4 },
+    }));
+  });
+  it('edits two Apipath keys under one channel without submitting masked or unchanged credentials', async () => {
+    vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, name: '通联', type: 'apipath', apiKey: '', apipathImageKey: '****1111', apipathVideoKey: '****2222' }]);
+    vi.mocked(adminApi.updateChannel).mockResolvedValue({});
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: '编辑通联' }));
+    const image = screen.getByLabelText('图片 API Key（已配置）');
+    const video = screen.getByLabelText('视频 API Key（已配置）');
+    expect(image).toHaveValue(''); expect(video).toHaveValue('');
+    fireEvent.change(image, { target: { value: 'new-image-key' } });
+    fireEvent.click(screen.getByRole('button', { name: '保存', exact: true }));
+    await waitFor(() => expect(adminApi.updateChannel).toHaveBeenCalledTimes(1));
+    const [id, payload] = vi.mocked(adminApi.updateChannel).mock.calls[0];
+    expect(id).toBe(base.id);
+    expect(payload).toMatchObject({ type: 'apipath', apipathImageKey: 'new-image-key' });
+    expect(payload).not.toHaveProperty('apiKey'); expect(payload).not.toHaveProperty('apipathVideoKey');
+    expect(JSON.stringify(payload)).not.toContain('****');
+  });
   it('opens HM synced nova pricing with independent resolution inputs and preserves blank fallback values', async () => {
     const id = 'sd2.5-301010';
     vi.mocked(adminApi.getChannels).mockImplementation(async () => [{ ...base, name: 'HM Studio', type: 'hmstudio',

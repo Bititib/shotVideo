@@ -1,0 +1,1151 @@
+{
+  "code": 0,
+  "data": {
+    "items": [
+      {
+        "model_code": "gpt-image-2-5-flare",
+        "model_name": "GPT Image 2.5 Flare（渠道1）",
+        "category": "image",
+        "is_published": true,
+        "endpoint": "/v1/images/generations",
+        "content": {
+          "default_mode": "sync",
+          "deprecated": false,
+          "doc_revision": "2026-11-16-site-only-v7",
+          "idempotency": {
+            "header": "Idempotency-Key",
+            "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+            "supported": false
+          },
+          "parameters": [
+            {
+              "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-5-flare",
+              "name": "model",
+              "required": true,
+              "type": "string"
+            },
+            {
+              "description": "生成或编辑指令",
+              "name": "prompt",
+              "required": true,
+              "type": "string"
+            },
+            {
+              "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+              "name": "image",
+              "required": false,
+              "type": "file|file[]"
+            },
+            {
+              "description": "生成数量，默认 1",
+              "name": "n",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+              "name": "size",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "default": "auto",
+              "description": "生成质量",
+              "enum": [
+                "auto",
+                "low",
+                "medium",
+                "high"
+              ],
+              "name": "quality",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "default": "auto",
+              "description": "图片比例",
+              "enum": [
+                "auto",
+                "1:1",
+                "2:3",
+                "3:2",
+                "3:4",
+                "4:3",
+                "9:16",
+                "16:9"
+              ],
+              "name": "aspect_ratio",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "response_example": {
+            "created": 1795144113,
+            "data": [
+              {
+                "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+              }
+            ]
+          },
+          "responses": {
+            "200": {
+              "body": {
+                "created_at": "2026-01-01T00:00:00Z",
+                "estimated_cost": 1,
+                "model_code": "gpt-image-2-5-flare",
+                "poll_url": "/v1/tasks/task_xxx",
+                "status": "pending",
+                "task_no": "task_xxx",
+                "type": "image"
+              },
+              "description": "请求成功"
+            },
+            "400": {
+              "body": {
+                "error": {
+                  "code": "invalid_request_error",
+                  "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                  "type": "invalid_request_error"
+                }
+              },
+              "description": "请求参数错误，例如 model 不存在或未启用"
+            },
+            "401": {
+              "body": {
+                "error": {
+                  "code": "invalid_api_key",
+                  "message": "API Key 无效或已停用",
+                  "type": "invalid_api_key"
+                }
+              },
+              "description": "API Key 无效或已停用"
+            },
+            "502": {
+              "body": {
+                "error": "provider_error"
+              },
+              "description": "模型服务暂时不可用；本次未扣费，请稍后重试。"
+            }
+          }
+        }
+      },
+      {
+        "model_code": "seedance-2.5-YZ",
+        "model_name": "seedance-2.5-YZ",
+        "category": "video",
+        "is_published": true,
+        "endpoint": "/v1/video/generations",
+        "content": {
+          "calling_contract": {
+            "auth": "Authorization: Bearer <你的平台 API Key>（仅使用本站签发的 Key）",
+            "base_url": "https://online.apipath.top",
+            "billing": "提交时按预估金额冻结/预扣，任务完成后按实际用量结算，多退少补；任务失败全额退回。",
+            "content_endpoint": "GET /v1/video/generations/{task_no}/content（服务器中转，速度慢，仅作兜底；优先用返回的 url 直链）",
+            "create_endpoints": [
+              {
+                "contract": "平台 / new-api 任务契约",
+                "method": "POST",
+                "path": "/v1/video/generations",
+                "recommended": true
+              },
+              {
+                "contract": "OpenAI Sora 兼容契约",
+                "method": "POST",
+                "path": "/v1/videos",
+                "recommended": false
+              }
+            ],
+            "create_note": "两个创建端点共用同一套参数校验、计费与镜像逻辑，返回体含 task_id / id / task_no / object / status / progress / poll_url。",
+            "curl_create": "curl -sS -X POST https://online.apipath.top/v1/video/generations -H \"Authorization: Bearer $API_KEY\" -H \"Content-Type: application/json\" -d '{\"model\": \"seedance-2.5-YZ\", \"prompt\": \"一位穿红色风衣的人走在雨夜街头，镜头缓慢推近，霓虹在水面上反射。\", \"ratio\": \"16:9\", \"duration\": 4, \"resolution\": \"720p\"}'",
+            "curl_query": "curl -sS https://online.apipath.top/v1/tasks/{task_no} -H \"Authorization: Bearer $API_KEY\"",
+            "events_endpoint": "GET /v1/tasks/{task_no}/events",
+            "minimal_request": {
+              "duration": 4,
+              "model": "seedance-2.5-YZ",
+              "prompt": "一位穿红色风衣的人走在雨夜街头，镜头缓慢推近，霓虹在水面上反射。",
+              "ratio": "16:9",
+              "resolution": "720p"
+            },
+            "polling": "建议 3–5 秒间隔轮询，最长 12 小时；pending/queued/running/processing 为中间态，到达终态后从 url 取成片永久地址，失败时读 error_code / error_message / error.message。",
+            "query_endpoints": [
+              {
+                "contract": "平台通用契约",
+                "method": "GET",
+                "path": "/v1/tasks/{task_no}",
+                "recommended": true,
+                "result_field": "output / url",
+                "terminal_status": {
+                  "cancelled": "cancelled",
+                  "failed": "failed",
+                  "success": "succeeded"
+                }
+              },
+              {
+                "contract": "new-api / Sora 契约",
+                "method": "GET",
+                "path": "/v1/video/generations/{task_no}",
+                "recommended": false,
+                "result_field": "url",
+                "terminal_status": {
+                  "failed": "failed",
+                  "success": "completed"
+                }
+              },
+              {
+                "contract": "OpenAI Sora 契约",
+                "method": "GET",
+                "path": "/v1/videos/{task_no}",
+                "recommended": false,
+                "result_field": "url",
+                "terminal_status": {
+                  "failed": "failed",
+                  "success": "completed"
+                }
+              }
+            ],
+            "query_note": "两套查询端点都可用，但完成态字段值不同：平台通用端点返回 status=succeeded，Sora 兼容端点返回 status=completed。请勿把两套状态判断混用；响应里的 poll_url 指向 /v1/video/generations/{task_no}。"
+          },
+          "deprecated": false,
+          "doc_revision": "2026-11-16-site-only-v7",
+          "errors": [
+            {
+              "code": "invalid_request",
+              "description": "入参取值不在允许范围。按上面参数表逐项核对：ratio 是否在画幅列表内、duration 是否在时长范围内、resolution 是否在分辨率列表内、参考素材数量是否超限。",
+              "status": 400
+            },
+            {
+              "code": "reference_duration_missing",
+              "description": "提示「参考视频和音频必须提供真实时长」。参考视频/音频缺少有效时长信息；请改用带时长信息、且公网可访问的 URL，或去掉该素材。本次未扣费。",
+              "status": 400
+            },
+            {
+              "code": "unsupported_media",
+              "description": "传了本模型不支持的素材或模式（参考视频/音频/首尾帧/未列出的 generation_mode）。请按参数表移除后重试。本次未扣费。",
+              "status": 400
+            },
+            {
+              "code": "provider_param_rejected",
+              "description": "提示「提交的参数不符合这个模型的要求，但模型没有说明具体是哪一项」：模型服务对参数组合做了笼统拒绝，本站无法定位到具体字段。请只用本文档列出的标准字段名与取值（不要用 aspect_ratio / seconds / size / input_reference 等别名），逐项删减到最小请求体后重试；仍失败请提供任务号给客服。本次未扣费。",
+              "status": 400
+            },
+            {
+              "code": "invalid_api_key",
+              "description": "API Key 无效或已停用。本次未扣费。",
+              "status": 401
+            },
+            {
+              "code": "rate_limit_exceeded",
+              "description": "请求频率超过限制，请稍后重试。本次未扣费。",
+              "status": 429
+            },
+            {
+              "code": "provider_error",
+              "description": "模型服务暂时响应异常，请稍后重试。本次未扣费。",
+              "status": 500
+            }
+          ],
+          "idempotency": {
+            "header": "Idempotency-Key",
+            "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+            "supported": false
+          },
+          "parameters": [
+            {
+              "description": "平台模型编码或后台接入模型名，例如 seedance-2.5-YZ",
+              "name": "model",
+              "required": true,
+              "type": "string"
+            },
+            {
+              "description": "视频生成提示词；是否必填由当前模板形态决定",
+              "name": "prompt",
+              "required": true,
+              "type": "string"
+            },
+            {
+              "description": "生成数量，默认 1",
+              "maximum": 1,
+              "name": "count",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "description": "视频时长（秒），当前模型支持 4-30",
+              "maximum": 30,
+              "minimum": 4,
+              "name": "duration",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "description": "视频时长（秒），当前模型支持 4-30",
+              "maximum": 30,
+              "minimum": 4,
+              "name": "duration_seconds",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "description": "视频时长（秒），当前模型支持 4-30",
+              "maximum": 30,
+              "minimum": 4,
+              "name": "seconds",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "description": "宽x高，例如 1280x720；平台自动换算为画面比例与清晰度（当前模型档位：480p / 720p / 1080p）",
+              "name": "size",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "default": "480P",
+              "description": "清晰度档位，当前模型支持 480p / 720p / 1080p",
+              "enum": [
+                "480p",
+                "720p",
+                "1080p"
+              ],
+              "name": "resolution",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "description": "prompt 的兼容别名（OpenAI 视频接口写法）",
+              "name": "input",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "description": "reference_images 的兼容别名",
+              "name": "input_reference",
+              "required": false,
+              "type": "string[]"
+            },
+            {
+              "description": "画面方向，例如 portrait / landscape",
+              "name": "orientation",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "description": "画面比例，当前模型支持 1:1 / 3:4 / 4:3 / 4:5 / 5:4 / 9:16 / 9:21 / 16:9 / 21:9；ratio 是它的兼容别名，二选一即可",
+              "enum": [
+                "1:1",
+                "3:4",
+                "4:3",
+                "4:5",
+                "5:4",
+                "9:16",
+                "9:21",
+                "16:9",
+                "21:9"
+              ],
+              "name": "aspect_ratio",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "description": "兼容素材别名：首帧模板映射到 first_frame，参考图模板映射到 reference_images",
+              "name": "image",
+              "required": false,
+              "type": "string|string[]"
+            },
+            {
+              "description": "首帧图片 URL；first_frame_image 为兼容别名",
+              "name": "first_frame",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "description": "尾帧图片 URL；last_frame_image 为兼容别名",
+              "name": "last_frame",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "description": "参考图片 URL 数组",
+              "name": "reference_images",
+              "required": false,
+              "type": "string[]"
+            },
+            {
+              "description": "参考视频 URL 数组",
+              "name": "reference_videos",
+              "required": false,
+              "type": "string[]"
+            },
+            {
+              "description": "参考音频 URL 数组",
+              "name": "reference_audios",
+              "required": false,
+              "type": "string[]"
+            }
+          ],
+          "quick_reference": {
+            "api_model_field": "seedance-2.5-YZ",
+            "aspect_ratios": [
+              "1:1",
+              "3:4",
+              "4:3",
+              "4:5",
+              "5:4",
+              "9:16",
+              "9:21",
+              "16:9",
+              "21:9"
+            ],
+            "billing": {
+              "currency": "¥",
+              "rates": [
+                {
+                  "enabled": true,
+                  "label": "480P",
+                  "mode": "per_second",
+                  "price": 0.32,
+                  "value": "480P"
+                },
+                {
+                  "enabled": true,
+                  "label": "720P",
+                  "mode": "per_second",
+                  "price": 0.42,
+                  "value": "720P"
+                },
+                {
+                  "enabled": true,
+                  "label": "1080P",
+                  "mode": "per_second",
+                  "price": 1.7,
+                  "value": "1080P"
+                }
+              ],
+              "text": "按分辨率 × 秒数计费（480P ¥0.32/秒、720P ¥0.42/秒、1080P ¥1.7/秒）；默认 480P",
+              "type": "video_resolution"
+            },
+            "count_options": [
+              1
+            ],
+            "display_name": "seedance-2.5-YZ",
+            "doc_id": 849,
+            "doc_slug": "seedance-2.5-YZ",
+            "doc_title": "seedance-2.5-YZ",
+            "duration": {
+              "example": 4,
+              "max": 30,
+              "min": 4,
+              "mode": "range",
+              "options": [],
+              "step": 1,
+              "text": "4–30 秒的整数（step 1）"
+            },
+            "endpoints": {
+              "auth": "Authorization: Bearer <平台 API Key>",
+              "base_url": "https://online.apipath.top",
+              "create": [
+                "POST /v1/video/generations",
+                "POST /v1/videos"
+              ],
+              "create_note": "两个创建端点等价，共用同一套参数校验与计费逻辑",
+              "estimate": "POST /api/models/{code}/estimate（公开接口，无需 Bearer Key）",
+              "query_events": "GET /v1/tasks/{task_no}/events",
+              "query_sora": [
+                "GET /v1/video/generations/{task_no}",
+                "GET /v1/videos/{task_no}"
+              ],
+              "query_sora_done": "completed",
+              "query_standard": "GET /v1/tasks/{task_no}",
+              "query_standard_done": "succeeded",
+              "wait_budget": "异步任务；等待硬上限 12 小时"
+            },
+            "frames": {
+              "first_frame_max": 1,
+              "last_frame_max": 1,
+              "supported": true,
+              "text": "支持首尾帧 first_frame / last_frame 各 1 / 1 张"
+            },
+            "generated_at": "2026-11-15",
+            "generation_modes": {
+              "configured": true,
+              "model_variant": null,
+              "text": "生成模式 1 种：multimodal",
+              "values": [
+                "multimodal"
+              ]
+            },
+            "include_fields": [
+              "count",
+              "generation_mode",
+              "duration",
+              "ratio",
+              "resolution",
+              "first_frame",
+              "last_frame",
+              "reference_images",
+              "reference_videos",
+              "reference_audios"
+            ],
+            "max_total_images": 30,
+            "model_code": "seedance-2.5-YZ",
+            "model_id": 306,
+            "note": "本对象只描述这一个模型；23 个启用视频模型参数各不相同，严禁跨模型套用。",
+            "prompt_required": true,
+            "reference_audios": {
+              "field": "reference_audios",
+              "max": 10,
+              "supported": true,
+              "text": "参考音频 ≤ 10（字段 reference_audios，公网 URL 字符串数组）"
+            },
+            "reference_images": {
+              "field": "reference_images",
+              "max": 30,
+              "supported": true,
+              "text": "参考图 ≤ 30（字段 reference_images，公网 URL 字符串数组）"
+            },
+            "reference_videos": {
+              "field": "reference_videos",
+              "max": 10,
+              "supported": true,
+              "text": "参考视频 ≤ 10（字段 reference_videos，公网 URL 字符串数组）"
+            },
+            "resolutions": [
+              "480p",
+              "720p",
+              "1080p"
+            ],
+            "revision": "2026-11-15-video-norm-v1",
+            "source": "本站线上实时配置",
+            "standard_fields": [
+              "model",
+              "prompt",
+              "ratio",
+              "duration",
+              "resolution",
+              "count",
+              "generation_mode",
+              "reference_images",
+              "reference_videos",
+              "reference_audios",
+              "first_frame",
+              "last_frame"
+            ]
+          },
+          "response_example": {
+            "created_at": "2026-01-01T00:00:00Z",
+            "id": "task_xxx",
+            "object": "video",
+            "poll_url": "/v1/video/generations/task_xxx",
+            "progress": 0,
+            "status": "queued",
+            "task_id": "task_xxx",
+            "task_no": "task_xxx"
+          },
+          "responses": {
+            "200": {
+              "body": {
+                "error": null,
+                "progress": 0,
+                "result": null,
+                "status": "processing",
+                "task_no": "task_20261109_xxxxxxxx"
+              },
+              "description": "任务已受理，返回异步任务号；视频为异步长任务，最长等待 12 小时。"
+            },
+            "400": {
+              "body": {
+                "error": "参数说明，见错误码表"
+              },
+              "description": "入参不符合模型要求；任务未落库、未扣费。"
+            },
+            "401": {
+              "body": {
+                "error": "invalid_api_key"
+              },
+              "description": "API Key 无效或已停用。"
+            },
+            "429": {
+              "body": {
+                "error": "rate_limit_exceeded"
+              },
+              "description": "请求频率超过限制。"
+            },
+            "500": {
+              "body": {
+                "error": "provider_error"
+              },
+              "description": "模型服务异常；本次未扣费。"
+            },
+            "502": {
+              "body": {
+                "error": "provider_error"
+              },
+              "description": "模型服务暂时不可用；本次未扣费，请稍后重试。"
+            }
+          }
+        }
+      },
+      {
+        "model_code": "Seedance-2.0-mini-480-GK",
+        "model_name": "Seedance-2.0-mini-480-GK",
+        "category": "video",
+        "is_published": true,
+        "endpoint": "/v1/video/generations",
+        "content": {
+          "calling_contract": {
+            "auth": "Authorization: Bearer <你的平台 API Key>（仅使用本站签发的 Key）",
+            "base_url": "https://online.apipath.top",
+            "billing": "提交时按预估金额冻结/预扣，任务完成后按实际用量结算，多退少补；任务失败全额退回。",
+            "content_endpoint": "GET /v1/video/generations/{task_no}/content（服务器中转，速度慢，仅作兜底；优先用返回的 url 直链）",
+            "create_endpoints": [
+              {
+                "contract": "平台 / new-api 任务契约",
+                "method": "POST",
+                "path": "/v1/video/generations",
+                "recommended": true
+              },
+              {
+                "contract": "OpenAI Sora 兼容契约",
+                "method": "POST",
+                "path": "/v1/videos",
+                "recommended": false
+              }
+            ],
+            "create_note": "两个创建端点共用同一套参数校验、计费与镜像逻辑，返回体含 task_id / id / task_no / object / status / progress / poll_url。",
+            "curl_create": "curl -sS -X POST https://online.apipath.top/v1/video/generations -H \"Authorization: Bearer $API_KEY\" -H \"Content-Type: application/json\" -d '{\"model\": \"Seedance-2.0-mini-480-GK\", \"prompt\": \"一位穿红色风衣的人走在雨夜街头，镜头缓慢推近，霓虹在水面上反射。\", \"ratio\": \"16:9\", \"duration\": 4, \"resolution\": \"480p\"}'",
+            "curl_query": "curl -sS https://online.apipath.top/v1/tasks/{task_no} -H \"Authorization: Bearer $API_KEY\"",
+            "events_endpoint": "GET /v1/tasks/{task_no}/events",
+            "minimal_request": {
+              "duration": 4,
+              "model": "Seedance-2.0-mini-480-GK",
+              "prompt": "一位穿红色风衣的人走在雨夜街头，镜头缓慢推近，霓虹在水面上反射。",
+              "ratio": "16:9",
+              "resolution": "480p"
+            },
+            "polling": "建议 3–5 秒间隔轮询，最长 12 小时；pending/queued/running/processing 为中间态，到达终态后从 url 取成片永久地址，失败时读 error_code / error_message / error.message。",
+            "query_endpoints": [
+              {
+                "contract": "平台通用契约",
+                "method": "GET",
+                "path": "/v1/tasks/{task_no}",
+                "recommended": true,
+                "result_field": "output / url",
+                "terminal_status": {
+                  "cancelled": "cancelled",
+                  "failed": "failed",
+                  "success": "succeeded"
+                }
+              },
+              {
+                "contract": "new-api / Sora 契约",
+                "method": "GET",
+                "path": "/v1/video/generations/{task_no}",
+                "recommended": false,
+                "result_field": "url",
+                "terminal_status": {
+                  "failed": "failed",
+                  "success": "completed"
+                }
+              },
+              {
+                "contract": "OpenAI Sora 契约",
+                "method": "GET",
+                "path": "/v1/videos/{task_no}",
+                "recommended": false,
+                "result_field": "url",
+                "terminal_status": {
+                  "failed": "failed",
+                  "success": "completed"
+                }
+              }
+            ],
+            "query_note": "两套查询端点都可用，但完成态字段值不同：平台通用端点返回 status=succeeded，Sora 兼容端点返回 status=completed。请勿把两套状态判断混用；响应里的 poll_url 指向 /v1/video/generations/{task_no}。"
+          },
+          "deprecated": false,
+          "doc_revision": "2026-11-16-site-only-v7",
+          "errors": [
+            {
+              "code": "invalid_request",
+              "description": "入参取值不在允许范围。按上面参数表逐项核对：ratio 是否在画幅列表内、duration 是否在时长范围内、resolution 是否在分辨率列表内、参考素材数量是否超限。",
+              "status": 400
+            },
+            {
+              "code": "reference_duration_missing",
+              "description": "提示「参考视频和音频必须提供真实时长」。参考视频/音频缺少有效时长信息；请改用带时长信息、且公网可访问的 URL，或去掉该素材。本次未扣费。",
+              "status": 400
+            },
+            {
+              "code": "unsupported_media",
+              "description": "传了本模型不支持的素材或模式（参考视频/音频/首尾帧/未列出的 generation_mode）。请按参数表移除后重试。本次未扣费。",
+              "status": 400
+            },
+            {
+              "code": "provider_param_rejected",
+              "description": "提示「提交的参数不符合这个模型的要求，但模型没有说明具体是哪一项」：模型服务对参数组合做了笼统拒绝，本站无法定位到具体字段。请只用本文档列出的标准字段名与取值（不要用 aspect_ratio / seconds / size / input_reference 等别名），逐项删减到最小请求体后重试；仍失败请提供任务号给客服。本次未扣费。",
+              "status": 400
+            },
+            {
+              "code": "invalid_api_key",
+              "description": "API Key 无效或已停用。本次未扣费。",
+              "status": 401
+            },
+            {
+              "code": "rate_limit_exceeded",
+              "description": "请求频率超过限制，请稍后重试。本次未扣费。",
+              "status": 429
+            },
+            {
+              "code": "provider_error",
+              "description": "模型服务暂时响应异常，请稍后重试。本次未扣费。",
+              "status": 500
+            }
+          ],
+          "idempotency": {
+            "header": "Idempotency-Key",
+            "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+            "supported": false
+          },
+          "parameters": [
+            {
+              "description": "平台模型编码或后台接入模型名，例如 Seedance-2.0-mini-480-GK",
+              "name": "model",
+              "required": true,
+              "type": "string"
+            },
+            {
+              "description": "视频生成提示词；是否必填由当前模板形态决定",
+              "name": "prompt",
+              "required": true,
+              "type": "string"
+            },
+            {
+              "description": "生成数量，默认 1",
+              "maximum": 1,
+              "name": "count",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "description": "视频时长（秒），当前模型支持 4-15",
+              "maximum": 15,
+              "minimum": 4,
+              "name": "duration",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "description": "视频时长（秒），当前模型支持 4-15",
+              "maximum": 15,
+              "minimum": 4,
+              "name": "duration_seconds",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "description": "视频时长（秒），当前模型支持 4-15",
+              "maximum": 15,
+              "minimum": 4,
+              "name": "seconds",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "description": "宽x高，例如 1280x720；平台自动换算为画面比例与清晰度（当前模型档位：480p）",
+              "name": "size",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "description": "清晰度档位，当前模型支持 480p",
+              "enum": [
+                "480p"
+              ],
+              "name": "resolution",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "description": "prompt 的兼容别名（OpenAI 视频接口写法）",
+              "name": "input",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "description": "reference_images 的兼容别名",
+              "name": "input_reference",
+              "required": false,
+              "type": "string[]"
+            },
+            {
+              "description": "画面方向，例如 portrait / landscape",
+              "name": "orientation",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "description": "画面比例，当前模型支持 1:1 / 3:4 / 4:3 / 9:16 / 16:9 / 21:9；ratio 是它的兼容别名，二选一即可",
+              "enum": [
+                "1:1",
+                "3:4",
+                "4:3",
+                "9:16",
+                "16:9",
+                "21:9"
+              ],
+              "name": "aspect_ratio",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "description": "兼容素材别名：首帧模板映射到 first_frame，参考图模板映射到 reference_images",
+              "name": "image",
+              "required": false,
+              "type": "string|string[]"
+            },
+            {
+              "description": "首帧图片 URL；first_frame_image 为兼容别名",
+              "name": "first_frame",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "description": "尾帧图片 URL；last_frame_image 为兼容别名",
+              "name": "last_frame",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "description": "参考图片 URL 数组",
+              "name": "reference_images",
+              "required": false,
+              "type": "string[]"
+            },
+            {
+              "description": "参考视频 URL 数组",
+              "name": "reference_videos",
+              "required": false,
+              "type": "string[]"
+            },
+            {
+              "description": "参考音频 URL 数组",
+              "name": "reference_audios",
+              "required": false,
+              "type": "string[]"
+            }
+          ],
+          "quick_reference": {
+            "api_model_field": "Seedance-2.0-mini-480-GK",
+            "aspect_ratios": [
+              "1:1",
+              "3:4",
+              "4:3",
+              "9:16",
+              "16:9",
+              "21:9"
+            ],
+            "billing": {
+              "currency": "¥",
+              "text": "按秒计费 ¥0.09/秒（成片时长 × 单价）",
+              "type": "per_second",
+              "unit_price": 0.09
+            },
+            "count_options": [
+              1
+            ],
+            "display_name": "Seedance-2.0-mini-480-GK",
+            "doc_id": 967,
+            "doc_slug": "Seedance-2.0-mini-480-GK",
+            "doc_title": "全能视频2.0 Mini Miao",
+            "duration": {
+              "example": 4,
+              "max": 15,
+              "min": 4,
+              "mode": "range",
+              "options": [],
+              "step": 1,
+              "text": "4–15 秒的整数（step 1）"
+            },
+            "endpoints": {
+              "auth": "Authorization: Bearer <平台 API Key>",
+              "base_url": "https://online.apipath.top",
+              "create": [
+                "POST /v1/video/generations",
+                "POST /v1/videos"
+              ],
+              "create_note": "两个创建端点等价，共用同一套参数校验与计费逻辑",
+              "estimate": "POST /api/models/{code}/estimate（公开接口，无需 Bearer Key）",
+              "query_events": "GET /v1/tasks/{task_no}/events",
+              "query_sora": [
+                "GET /v1/video/generations/{task_no}",
+                "GET /v1/videos/{task_no}"
+              ],
+              "query_sora_done": "completed",
+              "query_standard": "GET /v1/tasks/{task_no}",
+              "query_standard_done": "succeeded",
+              "wait_budget": "异步任务；等待硬上限 12 小时"
+            },
+            "frames": {
+              "first_frame_max": 1,
+              "last_frame_max": 1,
+              "supported": true,
+              "text": "支持首尾帧 first_frame / last_frame 各 1 / 1 张"
+            },
+            "generated_at": "2026-11-15",
+            "generation_modes": {
+              "configured": true,
+              "model_variant": null,
+              "text": "生成模式 11 种：text / first_frame / last_frame / first_last / reference / multimodal / image_video / image_audio / first_frame_reference / last_frame_reference / first_last_reference",
+              "values": [
+                "text",
+                "first_frame",
+                "last_frame",
+                "first_last",
+                "reference",
+                "multimodal",
+                "image_video",
+                "image_audio",
+                "first_frame_reference",
+                "last_frame_reference",
+                "first_last_reference"
+              ]
+            },
+            "include_fields": [
+              "count",
+              "generation_mode",
+              "duration",
+              "ratio",
+              "resolution",
+              "aigc_watermark",
+              "first_frame",
+              "last_frame",
+              "reference_images",
+              "reference_videos",
+              "reference_audios"
+            ],
+            "max_total_images": 9,
+            "model_code": "Seedance-2.0-mini-480-GK",
+            "model_id": 352,
+            "note": "本对象只描述这一个模型；23 个启用视频模型参数各不相同，严禁跨模型套用。",
+            "prompt_required": true,
+            "reference_audios": {
+              "field": "reference_audios",
+              "max": 3,
+              "supported": true,
+              "text": "参考音频 ≤ 3（字段 reference_audios，公网 URL 字符串数组）"
+            },
+            "reference_images": {
+              "field": "reference_images",
+              "max": 9,
+              "supported": true,
+              "text": "参考图 ≤ 9（字段 reference_images，公网 URL 字符串数组）"
+            },
+            "reference_videos": {
+              "field": "reference_videos",
+              "max": 3,
+              "supported": true,
+              "text": "参考视频 ≤ 3（字段 reference_videos，公网 URL 字符串数组）"
+            },
+            "resolutions": [
+              "480p"
+            ],
+            "revision": "2026-11-15-video-norm-v1",
+            "source": "本站线上实时配置",
+            "standard_fields": [
+              "model",
+              "prompt",
+              "ratio",
+              "duration",
+              "resolution",
+              "count",
+              "generation_mode",
+              "reference_images",
+              "reference_videos",
+              "reference_audios",
+              "first_frame",
+              "last_frame"
+            ]
+          },
+          "response_example": {
+            "created_at": "2026-01-01T00:00:00Z",
+            "id": "task_xxx",
+            "object": "video",
+            "poll_url": "/v1/video/generations/task_xxx",
+            "progress": 0,
+            "status": "queued",
+            "task_id": "task_xxx",
+            "task_no": "task_xxx"
+          },
+          "responses": {
+            "200": {
+              "body": {
+                "error": null,
+                "progress": 0,
+                "result": null,
+                "status": "processing",
+                "task_no": "task_20261109_xxxxxxxx"
+              },
+              "description": "任务已受理，返回异步任务号；视频为异步长任务，最长等待 12 小时。"
+            },
+            "400": {
+              "body": {
+                "error": "参数说明，见错误码表"
+              },
+              "description": "入参不符合模型要求；任务未落库、未扣费。"
+            },
+            "401": {
+              "body": {
+                "error": "invalid_api_key"
+              },
+              "description": "API Key 无效或已停用。"
+            },
+            "429": {
+              "body": {
+                "error": "rate_limit_exceeded"
+              },
+              "description": "请求频率超过限制。"
+            },
+            "500": {
+              "body": {
+                "error": "provider_error"
+              },
+              "description": "模型服务异常；本次未扣费。"
+            },
+            "502": {
+              "body": {
+                "error": "provider_error"
+              },
+              "description": "模型服务暂时不可用；本次未扣费，请稍后重试。"
+            }
+          }
+        }
+      },
+      {
+        "model_code": "gpt-image-2-5-sunburst",
+        "model_name": "GPT Image 2.5 Sunburst（渠道1）",
+        "category": "image",
+        "is_published": true,
+        "endpoint": "/v1/images/generations",
+        "content": {
+          "default_mode": "sync",
+          "deprecated": false,
+          "doc_revision": "2026-11-16-site-only-v7",
+          "idempotency": {
+            "header": "Idempotency-Key",
+            "note": "当前版本未启用幂等键，请使用 task_no 追踪异步任务",
+            "supported": false
+          },
+          "parameters": [
+            {
+              "description": "平台模型编码或后台接入模型名，例如 gpt-image-2-5-sunburst",
+              "name": "model",
+              "required": true,
+              "type": "string"
+            },
+            {
+              "description": "生成或编辑指令",
+              "name": "prompt",
+              "required": true,
+              "type": "string"
+            },
+            {
+              "description": "参考图文件；上传后使用 POST /v1/images/edits（multipart/form-data）",
+              "name": "image",
+              "required": false,
+              "type": "file|file[]"
+            },
+            {
+              "description": "生成数量，默认 1",
+              "name": "n",
+              "required": false,
+              "type": "integer"
+            },
+            {
+              "description": "OpenAI Images 尺寸，例如 auto、1024x1024、1536x1024、1024x1536",
+              "name": "size",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "default": "auto",
+              "description": "生成质量",
+              "enum": [
+                "auto",
+                "low",
+                "medium",
+                "high"
+              ],
+              "name": "quality",
+              "required": false,
+              "type": "string"
+            },
+            {
+              "default": "auto",
+              "description": "图片比例",
+              "enum": [
+                "auto",
+                "1:1",
+                "2:3",
+                "3:2",
+                "3:4",
+                "4:3",
+                "9:16",
+                "16:9"
+              ],
+              "name": "aspect_ratio",
+              "required": false,
+              "type": "string"
+            }
+          ],
+          "response_example": {
+            "created": 1795144113,
+            "data": [
+              {
+                "url": "https://assets-1310816460.cos.ap-singapore.myqcloud.com/works/image/task_xxx/image_1.png"
+              }
+            ]
+          },
+          "responses": {
+            "200": {
+              "body": {
+                "created_at": "2026-01-01T00:00:00Z",
+                "estimated_cost": 1,
+                "model_code": "gpt-image-2-5-sunburst",
+                "poll_url": "/v1/tasks/task_xxx",
+                "status": "pending",
+                "task_no": "task_xxx",
+                "type": "image"
+              },
+              "description": "请求成功"
+            },
+            "400": {
+              "body": {
+                "error": {
+                  "code": "invalid_request_error",
+                  "message": "模型不存在或未启用，请检查 model 是否为后台模型编码或接入模型名",
+                  "type": "invalid_request_error"
+                }
+              },
+              "description": "请求参数错误，例如 model 不存在或未启用"
+            },
+            "401": {
+              "body": {
+                "error": {
+                  "code": "invalid_api_key",
+                  "message": "API Key 无效或已停用",
+                  "type": "invalid_api_key"
+                }
+              },
+              "description": "API Key 无效或已停用"
+            },
+            "502": {
+              "body": {
+                "error": "provider_error"
+              },
+              "description": "模型服务暂时不可用；本次未扣费，请稍后重试。"
+            }
+          }
+        }
+      }
+    ]
+  }
+}

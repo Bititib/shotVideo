@@ -22,6 +22,7 @@ import { adminApi } from '../../api/admin';
 import { Plus, Radio, Trash2, RefreshCw, KeyRound, Activity, CircleCheck, CircleX, Timer, ScanFace } from 'lucide-react';
 import { FUNAI_BASE_URL } from '../../../../shared/funAi';
 import { ASYNC_VIDEO_BASE_URL } from '../../../../shared/asyncVideo';
+import { APIPATH_SYNC_MODEL_IDS } from '../../../../shared/apipathModels';
 
 const HM_STUDIO_BASE_URL = 'https://dnyovzpgyokm.sealosbja.site';
 const HAYA_BASE_URL = 'https://hayaai.cc';
@@ -138,7 +139,7 @@ export default function ChannelsPage() {
   }, 5000), []);
 
   const openNew = () => setEdit({
-    name: '', type: 'openai', baseUrl: '', apiKey: '',
+    name: '', type: 'openai', baseUrl: '', apiKey: '', apipathImageKey: '', apipathVideoKey: '',
     apiKeys: [],
     modelMapping: {}, supportedModels: [],
     priority: 0, weight: 1, maxRetries: 3, timeout: 120000,
@@ -152,8 +153,9 @@ export default function ChannelsPage() {
   const openEdit = (ch: any) => setEdit({
     ...ch,
     apiKeys: (ch.apiKeys || []).map((key: any) => ({ ...key })),
-    apiKey: '',
-    isNew: false,
+    apiKey: '', apipathImageKey: '', apipathVideoKey: '',
+    apipathImageKeyConfigured: Boolean(ch.apipathImageKey), apipathVideoKeyConfigured: Boolean(ch.apipathVideoKey),
+    apipathLegacyKeyConfigured: Boolean(ch.apiKey), isNew: false,
     mappingText: Object.entries(ch.modelMapping || {}).map(([k, v]) => `${k}:${v}`).join('\n'),
     modelsText: (ch.supportedModels || []).join('\n'),
   });
@@ -247,6 +249,9 @@ export default function ChannelsPage() {
           concurrencyLimit: Math.max(1, Number.parseInt(key.concurrencyLimit, 10) || 1),
           status: key.status === 0 ? 0 : 1,
         }));
+      } else if (edit.type === 'apipath') {
+        if (edit.apipathImageKey?.trim()) data.apipathImageKey = edit.apipathImageKey.trim();
+        if (edit.apipathVideoKey?.trim()) data.apipathVideoKey = edit.apipathVideoKey.trim();
       } else if (edit.apiKey) {
         data.apiKey = edit.apiKey;
       }
@@ -306,7 +311,7 @@ export default function ChannelsPage() {
     try {
       const result = await adminApi.syncChannelModels(ch.id);
       const message = `同步完成：上游 ${result.count} 个模型，新增 ${result.added} 个模型配置`
-        + (result.count === 0 ? '。请检查渠道 Key 的模型授权。' : ['zongheng', 'zongheng-v6k', 'funai', 'mj', 'megaby', 'hmstudio', ZHIYING_CHANNEL_TYPE, SUNO_CHANNEL_TYPE].includes(ch.type) ? '。新模型默认停用，请配置价格后启用。' : '。')
+        + (result.count === 0 ? '。请检查渠道 Key 的模型授权。' : ['apipath', 'zongheng', 'zongheng-v6k', 'funai', 'mj', 'megaby', 'hmstudio', ZHIYING_CHANNEL_TYPE, SUNO_CHANNEL_TYPE].includes(ch.type) ? '。新模型默认停用，请配置价格后启用。' : '。')
         + (Array.isArray(result.warnings) ? result.warnings.map((warning: string) => ` ${warning}`).join('') : '');
       setNotice(message);
       setChannelFeedback({ channelId: ch.id, kind: 'success', message });
@@ -574,8 +579,8 @@ export default function ChannelsPage() {
                       apiKeys: e.target.value === 'hmstudio' && (!edit.apiKeys || edit.apiKeys.length === 0)
                         ? [newHmKey()]
                         : edit.apiKeys,
-                      maxRetries: ['wanfeng', 'image2pro', 'minikey', 'suno-api', 'zongheng-v6k', 'funai', 'megaby', 'async-video', 'mj', 'huss', ZHIYING_CHANNEL_TYPE].includes(e.target.value) ? 0 : edit.maxRetries,
-                      baseUrl: e.target.value === 'wanfeng' ? WANFENG_BASE_URL : e.target.value === 'image2pro' ? 'https://api.image2pro.top/v1' : e.target.value === SUNO_CHANNEL_TYPE ? SUNO_BASE_URL : e.target.value === 'minikey' ? 'https://minikey.work' : e.target.value === ZHIYING_CHANNEL_TYPE ? ZHIYING_BASE_URL : e.target.value === 'megaby' && !edit.baseUrl ? MEGABY_BASE_URL : e.target.value === 'async-video' && !edit.baseUrl
+                      maxRetries: ['apipath', 'wanfeng', 'image2pro', 'minikey', 'suno-api', 'zongheng-v6k', 'funai', 'megaby', 'async-video', 'mj', 'huss', ZHIYING_CHANNEL_TYPE].includes(e.target.value) ? 0 : edit.maxRetries,
+                      baseUrl: e.target.value === 'apipath' ? 'https://online.apipath.top' : e.target.value === 'wanfeng' ? WANFENG_BASE_URL : e.target.value === 'image2pro' ? 'https://api.image2pro.top/v1' : e.target.value === SUNO_CHANNEL_TYPE ? SUNO_BASE_URL : e.target.value === 'minikey' ? 'https://minikey.work' : e.target.value === ZHIYING_CHANNEL_TYPE ? ZHIYING_BASE_URL : e.target.value === 'megaby' && !edit.baseUrl ? MEGABY_BASE_URL : e.target.value === 'async-video' && !edit.baseUrl
                         ? ASYNC_VIDEO_BASE_URL
                         : e.target.value === 'funai' && !edit.baseUrl
                         ? FUNAI_BASE_URL
@@ -610,6 +615,7 @@ export default function ChannelsPage() {
                       <option value="haya">Haya AI（素材上传／视频异步任务）</option>
                       <option value="miaowu">喵呜 API（视频异步任务）</option>
                       <option value="huss">HUSS（视频 / Midjourney 图片）</option>
+                      <option value="apipath">Vx-魅影（图片和视频）</option>
                       <option value="megaby">Megaby（视频生成）</option>
                       <option value="image2pro">Image2Pro（文本 / 图片 / 视频）</option>
                       <option value="wanfeng">晚风 API（视频）</option>
@@ -628,7 +634,28 @@ export default function ChannelsPage() {
                 <input type="text" value={edit.baseUrl} readOnly={edit.type === SUNO_CHANNEL_TYPE} onChange={e => setEdit({ ...edit, baseUrl: e.target.value })} placeholder={edit.type === 'mj' ? '留空使用默认接口' : 'http://vps-ip:8080'}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono" />
               </div>
-              {edit.type !== 'hmstudio' && (
+              {edit.type === 'apipath' && (
+                <section className="space-y-3" aria-label="通联分类密钥">
+                  {(['image', 'video'] as const).map(kind => {
+                    const field = kind === 'image' ? 'apipathImageKey' : 'apipathVideoKey';
+                    const label = kind === 'image' ? '图片 API Key' : '视频 API Key';
+                    return <div key={kind}>
+                      <label htmlFor={field} className="block text-xs text-zinc-400 mb-1.5">{label}{edit[field + 'Configured'] ? '（已配置）' : '（未配置）'}</label>
+                      <input id={field} type="password" autoComplete="new-password" value={edit[field] || ''}
+                        onChange={e => setEdit({ ...edit, [field]: e.target.value })} placeholder={edit.isNew ? '填写对应类型的密钥，可稍后补充' : '留空保留原密钥'}
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
+                    </div>;
+                  })}
+                  <p className="text-xs leading-5 text-zinc-400">图片和视频分别使用对应的 Key。保存后可同步原有型号，或在“模型与参数”中选择添加其他已授权型号；未填写的类型不开放生成。</p>
+                  <section aria-label="通联指定同步范围" className="rounded-xl border border-white/10 p-3 text-xs leading-5 text-zinc-400">
+                    <p className="mb-1">原有接入范围（3 款视频 + 1 款图片，图片内选 1K / 2K / 4K 并分别定价）：</p>
+                    <ul className="space-y-1">{APIPATH_SYNC_MODEL_IDS.map(id => <li key={id} className="break-all">{id}</li>)}</ul>
+                    <p className="mt-2">可在“模型与参数”读取对应 Key 的授权目录，选择添加其他图片或视频模型。同步只更新原有型号和已明确添加的型号，不批量导入整个上游目录。已下架或未授权的型号不会新增。</p>
+                  </section>
+                  {edit.apipathLegacyKeyConfigured && <p className="text-xs leading-5 text-amber-300">当前保留旧版通用 Key。填写分类 Key 后，新任务仅使用分类 Key；旧任务继续按原凭据查询。</p>}
+                </section>
+              )}
+              {edit.type !== 'hmstudio' && edit.type !== 'apipath' && (
                 <div>
                   <label htmlFor="channel-api-key" className="block text-xs text-zinc-400 mb-1.5">API Key（上游密钥）</label>
                   <input id="channel-api-key" type="password" value={edit.apiKey} onChange={e => setEdit({ ...edit, apiKey: e.target.value })} autoComplete='off' placeholder={edit.type === SUNO_CHANNEL_TYPE ? '填写 Suno API Key' : edit.isNew ? '可选' : '留空=不修改'}
@@ -755,13 +782,13 @@ export default function ChannelsPage() {
               <div>
                 <label className="block text-xs text-zinc-400 mb-1.5">支持的模型名（每行一个，对外暴露的名字）</label>
                 <textarea value={edit.modelsText} onChange={e => setEdit({ ...edit, modelsText: e.target.value })} rows={3}
-                  placeholder="grok-4\ngrok-imagine-video\ngrok-imagine-image"
+                  placeholder={edit.type === 'apipath' ? '尚未绑定模型。保存对应 Key 后，请点击“同步模型”。' : "grok-4\ngrok-imagine-video\ngrok-imagine-image"}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono resize-none" />
               </div>
               <div>
                 <label className="block text-xs text-zinc-400 mb-1.5">模型名映射（每行一条，格式: 对外名:上游名）</label>
                 <textarea value={edit.mappingText} onChange={e => setEdit({ ...edit, mappingText: e.target.value })} rows={3}
-                  placeholder="grok-4:grok-4.20-0309-super\ngrok-video:grok-imagine-video"
+                  placeholder={edit.type === 'apipath' ? '同步成功后自动填写指定模型与上游型号的映射。' : "grok-4:grok-4.20-0309-super\ngrok-video:grok-imagine-video"}
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono resize-none" />
               </div>
               </>}

@@ -179,6 +179,7 @@ export function allowsStandardChannelModelConfiguration(sqlite: Database.Databas
 }
 
 export function allowsChannelModelConfigurationRoute(sqlite: Database.Database, channel: ChannelBindings, routeId: string) {
+  if (channel.type === 'apipath') return routeId.startsWith('admin-channel-model-apipath-') || routeId.startsWith('apipath-' + channel.id + '-');
   if (channel.type === 'image2pro') return routeId.startsWith('admin-channel-model-image2pro-') || routeId.startsWith('image2pro-' + channel.id + '-');
   const expected = (Object.keys(channelVideoProtocols) as ChannelVideoProtocol[])
     .find(protocol => routeId.startsWith(channelVideoProtocols[protocol].prefix));

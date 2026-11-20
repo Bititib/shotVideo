@@ -9,7 +9,9 @@ import { isSupportedChannelType } from '../../shared/channelTypes.js';
 import { isConfiguredZhiyingModel as isZhiyingVideoModel } from './zhiyingModelRegistry.js';
 import { WANFENG_BASE_URL, wanfengBaseUrl } from '../../shared/wanfengVideo.js';
 import { ZHIYING_CHANNEL_TYPE, zhiyingApiBase } from '../../shared/zhiyingVideo.js';
+import { isApipathChannel, apipathBase } from './apipathAdapter.js';
 import { SNUMOM_VIDEO_MODELS } from './snumomWanAdapter.js';
+import { apipathKeys, saveApipathKeys, apipathExecutions, apipathKeyForReceipt } from './apipathKeyService.js';
 import { isMegabyChannel, megabyBaseUrl, fetchMegabyVideoModels } from './megabyVideoAdapter.js';
 import { V6K_CHANNEL_TYPE } from './zonghengProtocol.js';
 import { isRetiredVideoModel } from '../../shared/retiredVideoModels.js';
@@ -27,7 +29,7 @@ import { isHayaChannel, hayaApiBaseUrl } from './hayaVideoAdapter.js';
 import { isBbHssKkEntry } from '../../shared/bbHssKk.js';
 import { ensureBbHssMoMapping } from './bbHssMoMigration.js';
 import { db, sqlite } from '../db/index.js';
-import { channelApiKeys, channels, models, modelPricing } from '../db/schema.js';
+import { channelApiKeys, channels, models, modelPricing, apipathChannelKeys } from '../db/schema.js';
 import { isSiYueTianVideoHost } from '../../shared/siYueTianMinimax.js';
 import { ensureSiYueTianMinimaxModel, SiYueTianCatalogConflictError } from './siYueTianMinimaxCatalog.js';
 import { and, desc, eq } from 'drizzle-orm';
@@ -230,6 +232,10 @@ export class ChannelService {
 
       return {
         ...channel,
+        ...(channel.type === 'apipath' ? {
+          apipathImageKey: maskApiKey(apipathKeys(channel.id).find(k => k.kind === 'image' && k.status === 1)?.apiKey || ''),
+          apipathVideoKey: maskApiKey(apipathKeys(channel.id).find(k => k.kind === 'video' && k.status === 1)?.apiKey || ''),
+        } : {}),
         modelMapping: parseJsonObject(channel.modelMapping),
         supportedModels: parseJsonArray(channel.supportedModels),
         apiKey: channel.type === 'hmstudio'
@@ -250,6 +256,10 @@ export class ChannelService {
   static getChannelRaw(id: number, apiKeyId?: number | null) {
     const channel = db.select().from(channels).where(eq(channels.id, id)).get();
     if (!channel || !isSupportedChannelType(channel.type)) return undefined;
+    if (channel.type === 'apipath' && apiKeyId) {
+      const key = apipathKeyForReceipt(id, apiKeyId);
+      return key ? { ...channel, apiKey: key.apiKey, apiKeyId: key.id } : undefined;
+    }
     if (channel.type !== 'hmstudio') return { ...channel, apiKeyId: null };
 
     const keys = db.select().from(channelApiKeys)
@@ -295,6 +305,7 @@ export class ChannelService {
       if (channel.type === ZHIYING_CHANNEL_TYPE) {
         return [{ ...base, supportedModels: base.supportedModels.filter(isZhiyingVideoModel) }];
       }
+      if (channel.type === 'apipath') return apipathExecutions(base);
       if (channel.type !== 'hmstudio') return [base];
       return hmKeys
         .filter(key => key.channelId === channel.id)
@@ -423,6 +434,7 @@ export class ChannelService {
       baseUrl = zhiyingApiBase(baseUrl);
       maxRetries = 0;
     }
+    if (type === 'apipath') { baseUrl = apipathBase(baseUrl || 'https://online.apipath.top'); maxRetries = 0; }
     if (type === 'blobdraw') {
       const alreadyHuss = isHussChannel({ baseUrl });
       type = HUSS_CHANNEL_TYPE;
@@ -465,6 +477,11 @@ export class ChannelService {
         : 0,
     }).run();
     const channelId = Number(result.lastInsertRowid);
+
+    if (type === 'apipath') {
+      try { saveApipathKeys(channelId, data); }
+      catch (error) { db.delete(channels).where(eq(channels.id, channelId)).run(); throw error; }
+    }
 
     if (type === 'hmstudio') {
       const entries = Array.isArray(data.apiKeys) ? data.apiKeys : (apiKey ? [{ apiKey, concurrencyLimit: data.concurrencyLimit }] : []);
@@ -575,6 +592,7 @@ export class ChannelService {
     }
     updates.updatedAt = new Date().toISOString();
 
+    if (nextType === 'apipath') { updates.maxRetries = 0; updates.baseUrl = apipathBase(String(data.baseUrl ?? channel.baseUrl)); }
     if (nextType === 'hmstudio') {
       if (Array.isArray(data.apiKeys)) {
         saveHmStudioKeys(id, data.apiKeys, true);
@@ -583,12 +601,14 @@ export class ChannelService {
       }
     }
     sqlite.transaction(() => {
+      if (nextType === 'apipath') saveApipathKeys(id, data);
       db.update(channels).set(updates).where(eq(channels.id, id)).run();
     })();
     syncHmStudioPools();
   }
 
   static deleteChannel(id: number) {
+    db.delete(apipathChannelKeys).where(eq(apipathChannelKeys.channelId, id)).run();
     db.delete(channelApiKeys).where(eq(channelApiKeys.channelId, id)).run();
     db.delete(channels).where(eq(channels.id, id)).run();
     syncHmStudioPools();
@@ -597,10 +617,16 @@ export class ChannelService {
   static async testChannel(id: number): Promise<{ success: boolean; message: string; durationMs: number }> {
     const channel = this.getChannelRaw(id);
     if (!channel) throw { status: 404, message: '渠道不存在' };
+    if (!channel.apiKey && !(isApipathChannel(channel) && apipathKeys(id).some(k => k.status === 1))) throw { status: 400, message: '请先为渠道添加 API Key' };
 
-    if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
     const start = Date.now();
     try {
+      if (isApipathChannel(channel)) {
+        const catalog = await (await import('./apipathCatalogService.js')).fetchApipathCatalog(channel);
+        const message = '通联连接成功；' + catalog.summaries.join('；');
+        db.update(channels).set({ lastTestAt: new Date().toISOString(), lastTestResult: message }).where(eq(channels.id, id)).run();
+        return { success: true, message, durationMs: Date.now() - start };
+      }
       if(channel.type==='image2pro'){const entries=await image2proModels(channel);return {success:true,message:'Image2Pro 鉴权成功，共 '+entries.length+' 个文本、图片及视频模型',durationMs:Date.now()-start};}
       if(channel.type===SUNO_CHANNEL_TYPE) {
         const balance=await getSunoBalance(channel);
@@ -702,6 +728,7 @@ export class ChannelService {
   private static async syncChannelModels(id: number): Promise<{ count: number; added: number; models: string[]; warnings?: string[] }> {
     const channel = this.getChannelRaw(id);
     if (!channel) throw { status: 404, message: '渠道不存在' };
+    if (isApipathChannel(channel)) return (await import('./apipathCatalogService.js')).syncApipathModels(channel);
     if (!channel.apiKey) throw { status: 400, message: '请先为渠道添加 API Key' };
     if(channel.type==='image2pro'){const {syncImage2proModels}=await import('./image2proCatalogService.js');return syncImage2proModels(channel);}
     if (channel.type === 'wanfeng') {

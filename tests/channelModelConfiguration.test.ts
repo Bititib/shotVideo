@@ -203,7 +203,7 @@ it.each([
 
 it('exposes fixed and removed channels for inspection and rejects unsupported additions without making a request', async () => {
   const fixed = addChannel('Pidoi 图片渠道', 'https://pidoi.com');
-  const removed = addChannel('已停用旧渠道', 'https://removed.example.test', 'apipath');
+  const removed = addChannel('已停用旧渠道', 'https://removed.example.test', 'unknown-legacy-channel');
   const fetcher = vi.fn();
   vi.stubGlobal('fetch', fetcher);
   for (const [id, canSync] of [[fixed, true], [removed, false]] as const) {
