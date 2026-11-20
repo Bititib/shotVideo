@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { models, apipathChannelKeys } from '../db/schema.js';
+import { models, channels, apipathChannelKeys } from '../db/schema.js';
 import { defaultRoutingLimits, allowsDuration, routingMismatches, type ModelRoute, type ModelInputLimits } from '../../shared/modelRouting.js';
 import type { V6kRequestSample } from '../../shared/v6kModelConfiguration.js';
 import { isApipathSunburstSpec, apipathImageSize } from '../../shared/apipathImageSizes.js';
@@ -19,12 +19,14 @@ async function readAuthorizedIds(channel: CatalogChannel) {
   const sources = keys.length ? keys : apipathKeys(channel.id).length ? []
     : channel.apiKey ? [{ id: null, kind: 'legacy', apiKey: channel.apiKey }] : [];
   if (!sources.length) throw fail('请先保存图片或视频 API Key');
-  return Promise.all(sources.map(async source => {
-    const catalog = await apipathRequest({ ...channel, apiKey: source.apiKey }, '/v1/models');
+  const byKey = new Map<string, Set<string>>();
+  for (const apiKey of new Set(sources.map(source => source.apiKey))) {
+    const catalog = await apipathRequest({ ...channel, apiKey }, '/v1/models');
     if (!Array.isArray(catalog?.data) || catalog.data.some((x: any) => typeof x?.id !== 'string')) throw fail('Vx-魅影授权目录格式无效');
     const authorized = new Set<string>(catalog.data.map((x: any) => x.id));
-    return { id: source.id, kind: source.kind, authorized };
-  }));
+    byKey.set(apiKey, authorized);
+  }
+  return sources.map(source => ({ id: source.id, kind: source.kind, authorized: byKey.get(source.apiKey)! }));
 }
 
 export async function listApipathCatalog(channel: CatalogChannel): Promise<ChannelModelCatalogEntry[]> {
@@ -172,8 +174,10 @@ export function apipathDocumentedModel(doc: any): Omit<ApipathCatalogEntry, 'key
 export function manualApipathEntry(channelId: number, draft: ChannelModelDraft): ApipathCatalogEntry {
   const { kind, limits, upstreamModel: id } = draft;
   if (kind !== 'video' && kind !== 'image') throw fail('请选择图片或视频');
-  const keys = apipathKeys(channelId).filter(key => key.status === 1 && key.kind === kind);
-  if (!keys.length) throw fail('请先配置' + (kind === 'video' ? '视频' : '图片') + ' API Key');
+  const allKeys = apipathKeys(channelId);
+  const legacy = !allKeys.length && db.select({apiKey:channels.apiKey}).from(channels).where(eq(channels.id,channelId)).get()?.apiKey;
+  const keys = allKeys.filter(key => key.status === 1 && key.kind === kind);
+  if (!keys.length && !legacy) throw fail('请先配置通联 API Key');
   if (limits.qualities.length || (limits.outputsPerTask ?? 1) !== 1) throw fail('手动接入每次输出一份，使用默认质量');
   if (kind === 'video' && ![limits.duration.min, limits.duration.max, limits.duration.step, ...limits.duration.values].every(Number.isSafeInteger))
     throw fail('视频时长和步长请填写整数秒');

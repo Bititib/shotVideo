@@ -14,7 +14,7 @@ import { apipathKeys } from './apipathKeyService.js';
 export async function fetchApipathCatalog(channel: ApipathChannel & { id: number }) {
   const allKeys = apipathKeys(channel.id), keys = allKeys.filter(k => k.status === 1);
   const sources = allKeys.length ? keys : channel.apiKey ? [{ id: null, kind: 'legacy', apiKey: channel.apiKey }] : [];
-  if (!sources.length) throw new Error('请先填写通联图片 API Key 或视频 API Key');
+  if (!sources.length) throw new Error('请先填写通联 API Key');
   const entries: (typeof APIPATH_MODELS[number] & {apipath?: ModelRoute['apipath']})[] = [], summaries: string[] = [];
   const warnings: string[] = [];
   const bindings: { id: number; models: string[] }[] = [];
@@ -25,11 +25,15 @@ export async function fetchApipathCatalog(channel: ApipathChannel & { id: number
   const managedIds = new Set(configured.map(({spec}) => spec.modelId));
   const mappedUpstream = new Set(configured.map(({route}) => route.upstreamModel));
   const existingIds = new Set(specs.filter(spec => spec.routes.some(route => route.channelId === channel.id)).map(spec => spec.modelId));
+  const catalogs = new Map<string, any>();
   // Resolve every configured key before mutating the catalog. One failed lookup leaves all bindings intact.
   for (const source of sources) {
     const label = source.kind === 'image' ? '图片 Key' : source.kind === 'video' ? '视频 Key' : '原有 Key';
     let raw: any;
-    try { raw = await apipathRequest({ ...channel, apiKey: source.apiKey }, '/v1/models'); }
+    try {
+      raw = catalogs.get(source.apiKey) ?? await apipathRequest({ ...channel, apiKey: source.apiKey }, '/v1/models');
+      catalogs.set(source.apiKey, raw);
+    }
     catch (error: any) { throw new Error('通联' + label + '目录查询失败：' + error.message); }
     if (!Array.isArray(raw?.data) || raw.data.some((x: any) => typeof x?.id !== 'string')) throw new Error('通联' + label + '目录 data/id 格式无效');
     const names = new Set<string>(raw.data.map((x: any) => x.id));
@@ -47,8 +51,8 @@ export async function fetchApipathCatalog(channel: ApipathChannel & { id: number
       if (route.id.startsWith(APIPATH_MANUAL_ROUTE_PREFIX)) {
         const key = keys.find(key => key.kind === spec.kind);
         const binding = bindings.find(binding => binding.id === key?.id);
-        if (!binding) { warnings.push('手动型号缺少对应类型的 Key：' + spec.modelId); continue; }
-        if (!binding.models.includes(spec.modelId)) binding.models.push(spec.modelId);
+        if (!binding && allKeys.length) { warnings.push('手动型号缺少对应类型的 Key：' + spec.modelId); continue; }
+        if (binding && !binding.models.includes(spec.modelId)) binding.models.push(spec.modelId);
         if (!entries.some(entry => entry.id === spec.modelId)) entries.push({ id: spec.modelId, name: spec.modelId,
           upstreamModel: route.upstreamModel, kind: spec.kind, limits: route.limits, description: '' });
         continue;

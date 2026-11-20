@@ -53,9 +53,7 @@ export default function ChannelDetails({ channel, tab, onTabChange, busy, testin
           <div><dt>渠道类型</dt><dd>{provider}</dd></div>
           <div><dt>接口地址</dt><dd className="channel-details-url">{channel.baseUrl || '默认接口'}</dd></div>
           {channel.type === 'apipath' ? <>
-            <div><dt>图片 API Key</dt><dd>{channel.apipathImageKey ? '已配置' : '未配置'}</dd></div>
-            <div><dt>视频 API Key</dt><dd>{channel.apipathVideoKey ? '已配置' : '未配置'}</dd></div>
-            {channel.apiKey && <div><dt>旧版通用 Key</dt><dd>已保留</dd></div>}
+            <div><dt>渠道 API Key</dt><dd>{channel.apiKey || channel.apipathImageKey || channel.apipathVideoKey ? '已配置' : '未配置'}</dd></div>
           </> : <div><dt>API Key</dt><dd>{channel.apiKey || channel.apiKeyCount ? '已配置' : '未配置'}</dd></div>}
         </dl></section>
         <section><h3>调度与运行</h3><dl>

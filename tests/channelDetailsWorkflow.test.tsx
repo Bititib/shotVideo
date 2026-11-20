@@ -248,20 +248,19 @@ describe('channel details and model sync workflow', () => {
       extraParams: { category: 'image', '1K': 1, '2K': 2.5, '4K': 4 },
     }));
   });
-  it('edits two Apipath keys under one channel without submitting masked or unchanged credentials', async () => {
+  it('edits one shared Apipath key without submitting masked or unchanged credentials', async () => {
     vi.mocked(adminApi.getChannels).mockResolvedValue([{ ...base, name: '通联', type: 'apipath', apiKey: '', apipathImageKey: '****1111', apipathVideoKey: '****2222' }]);
     vi.mocked(adminApi.updateChannel).mockResolvedValue({});
     mount();
     fireEvent.click(await screen.findByRole('button', { name: '编辑通联' }));
-    const image = screen.getByLabelText('图片 API Key（已配置）');
-    const video = screen.getByLabelText('视频 API Key（已配置）');
-    expect(image).toHaveValue(''); expect(video).toHaveValue('');
-    fireEvent.change(image, { target: { value: 'new-image-key' } });
+    const key = screen.getByLabelText('渠道 API Key（已配置）');
+    expect(key).toHaveValue('');
+    fireEvent.change(key, { target: { value: 'new-shared-key' } });
     fireEvent.click(screen.getByRole('button', { name: '保存', exact: true }));
     await waitFor(() => expect(adminApi.updateChannel).toHaveBeenCalledTimes(1));
     const [id, payload] = vi.mocked(adminApi.updateChannel).mock.calls[0];
     expect(id).toBe(base.id);
-    expect(payload).toMatchObject({ type: 'apipath', apipathImageKey: 'new-image-key' });
+    expect(payload).toMatchObject({ type: 'apipath', apipathSharedKey: 'new-shared-key' });
     expect(payload).not.toHaveProperty('apiKey'); expect(payload).not.toHaveProperty('apipathVideoKey');
     expect(JSON.stringify(payload)).not.toContain('****');
   });

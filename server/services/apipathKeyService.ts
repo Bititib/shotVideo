@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
-import { apipathChannelKeys, models } from '../db/schema.js';
+import { apipathChannelKeys, channels, models } from '../db/schema.js';
 
 export function apipathKeys(channelId: number) {
   return db.select().from(apipathChannelKeys).where(eq(apipathChannelKeys.channelId, channelId)).all();
@@ -9,19 +9,24 @@ export function apipathKeys(channelId: number) {
 /** Blank edits retain the current key; replacement retires it without breaking existing receipts. */
 export function saveApipathKeys(channelId: number, data: any) {
   const values = (['image', 'video'] as const).map(kind => {
-    const value = data[kind === 'image' ? 'apipathImageKey' : 'apipathVideoKey'];
+    const value = data.apipathSharedKey || data[kind === 'image' ? 'apipathImageKey' : 'apipathVideoKey'];
     if (value !== undefined && typeof value !== 'string') throw { status: 400, message: '通联 API Key 必须为文本' };
     const apiKey = String(value || '').trim();
     if (apiKey.startsWith('****')) throw { status: 400, message: '请填写完整的通联 API Key，不能保存脱敏值' };
     return { kind, apiKey };
   });
   sqlite.transaction(() => {
+    const previous = apipathKeys(channelId);
+    const legacy = data.apipathSharedKey && !previous.length
+      ? db.select().from(channels).where(eq(channels.id,channelId)).get() : undefined;
+    const legacyModels: string[] = legacy?.apiKey ? JSON.parse(legacy.supportedModels) : [];
     for (const { kind, apiKey } of values) {
       if (!apiKey) continue;
-      const current = apipathKeys(channelId).find(k => k.kind === kind && k.status === 1);
+      const current = previous.find(k => k.kind === kind && k.status === 1);
       if (current?.apiKey === apiKey) continue;
       if (current) db.update(apipathChannelKeys).set({ status: 0 }).where(eq(apipathChannelKeys.id, current.id)).run();
-      db.insert(apipathChannelKeys).values({ channelId, kind, apiKey }).run();
+      db.insert(apipathChannelKeys).values({ channelId, kind, apiKey,
+        supportedModels: data.apipathSharedKey ? current?.supportedModels ?? JSON.stringify(legacyModels) : '[]' }).run();
     }
   })();
 }

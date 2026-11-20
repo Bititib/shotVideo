@@ -69,6 +69,34 @@ it.each(['image','video'] as const)('saves and previews a manually entered %s of
   expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string).model).toBe(upstream);
 });
 
+it('uses a single replacement key for discovery and both generation endpoints while retaining original receipt keys', async () => {
+  for (const id of [image,video]) await save(await draftFor(id));
+  const previous = db.select().from(apipathChannelKeys).all();
+  ChannelService.updateChannel(channelId,{apipathSharedKey:'one-upstream-key'});
+  const originalFetch=createFetch();
+  const upstream=vi.fn(async (url:any,init:any={})=>{
+    if (String(url).includes('/v1/')) expect(init.headers.Authorization).toBe('Bearer one-upstream-key');
+    if (init.method === 'POST') return String(url).endsWith('/images/generations')
+      ? Response.json({data:[{url:'https://cdn.example/image.png'}]})
+      : Response.json({task_no:'original-video',status:'completed',url:'https://cdn.example/video.mp4'});
+    return originalFetch(url,init);
+  });
+  vi.stubGlobal('fetch',upstream);
+  await listAuthorizedChannelModels(channelId);
+  expect(upstream.mock.calls.filter(([url])=>String(url).endsWith('/v1/models'))).toHaveLength(1);
+  for (const row of previous) expect(ChannelService.getChannelRaw(channelId,row.id)?.apiKey).toBe(row.apiKey);
+  for (const [kind,id] of [['image',image],['video',video]] as const) {
+    db.update(models).set({isActive:1}).where(eq(models.modelId,id)).run();
+    db.insert(modelPricing).values({modelPattern:id,inputPrice:.5,billingType:'per_call'}).run();
+    await handleSpecificationGeneration({userId:1,headers:{},protocol:'https',get:()=> 'app.example',body:{
+      model:id,prompt:'海浪',aspect_ratio:'1:1',...(kind==='video'?{seconds:4,resolution:'480p'}:{})
+    }} as any,response(),kind);
+  }
+  expect(db.select().from(contents).all().map(row=>row.status)).toEqual(['completed','completed']);
+  expect(db.select().from(users).all()[0].balance).toBe(99);
+  expect(upstream.mock.calls.filter(([,init])=>init.method==='POST')).toHaveLength(2);
+});
+
 it('offers documented, type-bound authorized models without importing any catalog entry',async()=>{
   const entries=await listAuthorizedChannelModels(channelId);
   expect(entries.map(e=>e.id).sort()).toEqual([video,image,transformer,'Seedance-2.0-mini-480-GK','gpt-image-2-5-sunburst','undocumented','unselected'].sort());

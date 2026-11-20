@@ -139,7 +139,7 @@ export default function ChannelsPage() {
   }, 5000), []);
 
   const openNew = () => setEdit({
-    name: '', type: 'openai', baseUrl: '', apiKey: '', apipathImageKey: '', apipathVideoKey: '',
+    name: '', type: 'openai', baseUrl: '', apiKey: '', apipathSharedKey: '',
     apiKeys: [],
     modelMapping: {}, supportedModels: [],
     priority: 0, weight: 1, maxRetries: 3, timeout: 120000,
@@ -153,9 +153,8 @@ export default function ChannelsPage() {
   const openEdit = (ch: any) => setEdit({
     ...ch,
     apiKeys: (ch.apiKeys || []).map((key: any) => ({ ...key })),
-    apiKey: '', apipathImageKey: '', apipathVideoKey: '',
-    apipathImageKeyConfigured: Boolean(ch.apipathImageKey), apipathVideoKeyConfigured: Boolean(ch.apipathVideoKey),
-    apipathLegacyKeyConfigured: Boolean(ch.apiKey), isNew: false,
+    apiKey: '', apipathSharedKey: '',
+    apipathConfigured: Boolean(ch.apipathImageKey || ch.apipathVideoKey || ch.apiKey), isNew: false,
     mappingText: Object.entries(ch.modelMapping || {}).map(([k, v]) => `${k}:${v}`).join('\n'),
     modelsText: (ch.supportedModels || []).join('\n'),
   });
@@ -250,8 +249,7 @@ export default function ChannelsPage() {
           status: key.status === 0 ? 0 : 1,
         }));
       } else if (edit.type === 'apipath') {
-        if (edit.apipathImageKey?.trim()) data.apipathImageKey = edit.apipathImageKey.trim();
-        if (edit.apipathVideoKey?.trim()) data.apipathVideoKey = edit.apipathVideoKey.trim();
+        if (edit.apipathSharedKey?.trim()) data.apipathSharedKey = edit.apipathSharedKey.trim();
       } else if (edit.apiKey) {
         data.apiKey = edit.apiKey;
       }
@@ -635,24 +633,18 @@ export default function ChannelsPage() {
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none font-mono" />
               </div>
               {edit.type === 'apipath' && (
-                <section className="space-y-3" aria-label="通联分类密钥">
-                  {(['image', 'video'] as const).map(kind => {
-                    const field = kind === 'image' ? 'apipathImageKey' : 'apipathVideoKey';
-                    const label = kind === 'image' ? '图片 API Key' : '视频 API Key';
-                    return <div key={kind}>
-                      <label htmlFor={field} className="block text-xs text-zinc-400 mb-1.5">{label}{edit[field + 'Configured'] ? '（已配置）' : '（未配置）'}</label>
-                      <input id={field} type="password" autoComplete="new-password" value={edit[field] || ''}
-                        onChange={e => setEdit({ ...edit, [field]: e.target.value })} placeholder={edit.isNew ? '填写对应类型的密钥，可稍后补充' : '留空保留原密钥'}
-                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
-                    </div>;
-                  })}
-                  <p className="text-xs leading-5 text-zinc-400">图片和视频分别使用对应的 Key。保存后可同步原有型号，或在“模型与参数”中选择添加其他已授权型号；未填写的类型不开放生成。</p>
+                <section className="space-y-3" aria-label="通联密钥">
+                  <label htmlFor="apipath-key" className="block text-xs text-zinc-400">渠道 API Key{edit.apipathConfigured ? '（已配置）' : ''}</label>
+                  <input id="apipath-key" type="password" autoComplete="new-password" value={edit.apipathSharedKey || ''}
+                    onChange={e => setEdit({ ...edit, apipathSharedKey: e.target.value })} placeholder={edit.isNew ? '填写上游 API Key' : '留空保留当前配置'}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none" />
+                  <p className="text-xs leading-5 text-zinc-400">填写一把 Key 即可读取型号，并用于图片和视频请求。</p>
                   <section aria-label="通联指定同步范围" className="rounded-xl border border-white/10 p-3 text-xs leading-5 text-zinc-400">
                     <p className="mb-1">原有接入范围（3 款视频 + 1 款图片，图片内选 1K / 2K / 4K 并分别定价）：</p>
                     <ul className="space-y-1">{APIPATH_SYNC_MODEL_IDS.map(id => <li key={id} className="break-all">{id}</li>)}</ul>
                     <p className="mt-2">可在“模型与参数”读取对应 Key 的授权目录，选择添加其他图片或视频模型。同步只更新原有型号和已明确添加的型号，不批量导入整个上游目录。已下架或未授权的型号不会新增。</p>
                   </section>
-                  {edit.apipathLegacyKeyConfigured && <p className="text-xs leading-5 text-amber-300">当前保留旧版通用 Key。填写分类 Key 后，新任务仅使用分类 Key；旧任务继续按原凭据查询。</p>}
+
                 </section>
               )}
               {edit.type !== 'hmstudio' && edit.type !== 'apipath' && (
