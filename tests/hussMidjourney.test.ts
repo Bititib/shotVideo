@@ -10,7 +10,7 @@ import {reserveUserCharge} from '../server/services/billingReservation.js';
 import {initDatabase} from '../server/db/seed.js';
 import {models,users,contents,settings,channels} from '../server/db/schema.js';
 import {ChannelService} from '../server/services/channelService.js';
-import {saveModelSpecification} from '../server/services/modelRoutingService.js';
+import {saveModelSpecification,getModelSpecification} from '../server/services/modelRoutingService.js';
 import {handleSpecificationGeneration,resumeSpecificationTasks} from '../server/services/specificationGenerationService.js';
 import {HUSS_MJ_MODEL,hussMjLimits,hussMjOptions} from '../shared/hussMidjourney.js';
 import {syncHussModels} from '../server/services/hussCatalogService.js';
@@ -104,6 +104,48 @@ it('syncs an image-only HUSS key, preserves admin price and enabled status',asyn
  const model=db.select().from(models).where(eq(models.modelId,HUSS_MJ_MODEL)).get()!;
  expect(model.isActive).toBe(1);expect(JSON.parse(model.capabilities)).toEqual(['image']);
  expect(sqlite.prepare('SELECT input_price FROM model_pricing WHERE model_pattern=?').get(HUSS_MJ_MODEL)).toMatchObject({input_price:2});
+});
+
+it.each([false,true])('never restores deleted videos, including saved source selections (%s)',async(managed)=>{
+ const ids=['bb-2.5-301010','hss-2.5-301010'];
+ for(const id of ids)db.delete(models).where(eq(models.modelId,id)).run();
+ const put=(key:string,value:unknown)=>db.insert(settings).values({key,value:JSON.stringify(value)}).run();
+ put('deleted_model_ids',ids);
+ db.insert(settings).values({key:'hss_manual_video_source',value:'A'}).run();
+ if(managed){
+  put('bb_hss_kk_source_v1',{products:Object.fromEntries(ids.map(id=>[id,{}]))});
+  put('bb_hss_video_sources_v1',Object.fromEntries(ids.map(id=>[id,{source:'A',channelId:55}])));
+ }
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{id:'bb-2.5-301010-渠道A'},{id:HUSS_MJ_MODEL}]})));
+ for(let attempt=0;attempt<2;attempt++){
+  expect(await syncHussModels({...channel,name:'HUSS'})).toEqual({count:1,added:0,models:[HUSS_MJ_MODEL]});
+  for(const id of ids){
+   expect(db.select().from(models).where(eq(models.modelId,id)).get()).toBeUndefined();
+   expect(getModelSpecification(id)).toBeUndefined();
+  }
+  const saved=db.select().from(channels).where(eq(channels.id,55)).get()!;
+  expect(JSON.parse(saved.supportedModels)).toEqual([HUSS_MJ_MODEL]);
+  expect(JSON.parse(saved.modelMapping)).toEqual({[HUSS_MJ_MODEL]:HUSS_MJ_MODEL});
+ }
+ expect(db.select().from(models).where(eq(models.modelId,HUSS_MJ_MODEL)).get()!.isActive).toBe(1);
+ expect(getModelSpecification(HUSS_MJ_MODEL)!.routes[0].enabled).toBe(true);
+ expect(sqlite.prepare('SELECT input_price FROM model_pricing WHERE model_pattern=?').get(HUSS_MJ_MODEL)).toMatchObject({input_price:2});
+});
+
+it('honors deletion performed while upstream catalog request is pending',async()=>{
+ vi.stubGlobal('fetch',vi.fn(async()=>{
+  db.insert(settings).values({key:'deleted_model_ids',value:JSON.stringify(['bb-2.5-301010','hss-2.5-301010'])}).run();
+  return Response.json({data:[{id:'bb-2.5-301010-渠道A'},{id:HUSS_MJ_MODEL}]});
+ }));
+ expect((await syncHussModels({...channel,name:'HUSS'})).models).toEqual([HUSS_MJ_MODEL]);
+});
+
+it('aborts sync instead of ignoring a malformed deleted-model list',async()=>{
+ db.insert(settings).values({key:'deleted_model_ids',value:'{}'}).run();
+ const before=db.select().from(channels).where(eq(channels.id,55)).get();
+ vi.stubGlobal('fetch',vi.fn(async()=>Response.json({data:[{id:'bb-2.5-301010-渠道A'},{id:HUSS_MJ_MODEL}]})));
+ await expect(syncHussModels({...channel,name:'HUSS'})).rejects.toThrow('已删除模型记录格式异常');
+ expect(db.select().from(channels).where(eq(channels.id,55)).get()).toEqual(before);
 });
 
 it('keeps partial downloads and retries only the missing candidate',async()=>{

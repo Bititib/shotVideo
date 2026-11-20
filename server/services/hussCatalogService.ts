@@ -21,6 +21,12 @@ export async function syncHussModels(channel: HussChannel & { id: number; name: 
   if (manual && (mapping[HUSS_HSS_MODEL] || getModelSpecification(HUSS_HSS_MODEL)?.routes.some(r=>r.channelId===channel.id))) mapping[HUSS_HSS_MODEL] = manual === 'A' ? HUSS_BB_A_MODEL : HUSS_HSS_B_MODEL;
   for(const id of [HUSS_BB_PUBLIC_MODEL,HUSS_HSS_MODEL])if(bbHssKkManaged(sqlite,id))delete mapping[id];
   sqlite.transaction(() => {
+    // Read after discovery: an administrator may delete a model while the GET is in flight.
+    const deletedRow = sqlite.prepare('SELECT value FROM settings WHERE key=?').get('deleted_model_ids') as { value: string } | undefined;
+    const deletedIds: unknown = deletedRow ? JSON.parse(deletedRow.value) : [];
+    if (!Array.isArray(deletedIds) || deletedIds.some(id => typeof id !== 'string')) throw new Error('已删除模型记录格式异常，HUSS 同步未修改配置');
+    const deleted = new Set<string>(deletedIds);
+    for (const id of deleted) delete mapping[id];
     for (const [publicId, upstreamId] of Object.entries(mapping)) {
       const existing = db.select().from(models).where(eq(models.modelId, publicId)).get();
       if (!existing) { db.insert(models).values({ provider: 'huss', modelId: publicId, displayName: publicId, description: '由 ' + channel.name + '（HUSS）同步；请配置本站售价后启用。', capabilities: JSON.stringify([publicId === HUSS_MJ_MODEL ? 'image' : 'video']), isActive: 0 }).run(); added++; }
@@ -40,6 +46,7 @@ export async function syncHussModels(channel: HussChannel & { id: number; name: 
     }
     // Synchronization cannot replace an explicit source choice or its switches/limits.
     for (const [id, selection] of Object.entries(readBbHssSources(sqlite))) {
+      if (deleted.has(id)) continue;
       if (selection.channelId === channel.id && selection.source !== 'KK' && bbHssKkManaged(sqlite,id)) mapping[id] = BB_HSS_SOURCES[selection.source].upstreamModel;
     }
     db.update(channels).set({ type: 'huss', supportedModels: JSON.stringify(Object.keys(mapping)), modelMapping: JSON.stringify(mapping), updatedAt: new Date().toISOString() }).where(eq(channels.id, channel.id)).run();
