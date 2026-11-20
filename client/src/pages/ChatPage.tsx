@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from 'react';
 import { ArrowUp, ChevronDown, FileText, Image as ImageIcon, MessageCircle, Plus, Trash2, Upload, X } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { chatApi, streamChatTurn } from '../api/chat';
@@ -9,6 +9,49 @@ import './ChatPage.css';
 const button = 'rounded-lg px-3 py-2 text-sm text-[var(--earth-ink)] hover:bg-[var(--earth-primary-soft)] disabled:cursor-not-allowed disabled:opacity-40';
 const describeAttachment = (file: File): ChatAttachment => ({ name: file.name, kind: chatImageExtension.test(file.name) ? 'image' : 'document' });
 const hasDraggedFiles = (event: DragEvent) => event.dataTransfer.types.includes('Files');
+
+function ReplyText({ answer, animate, running, onReveal }: {
+  answer: string;
+  animate: boolean;
+  running: boolean;
+  onReveal: () => void;
+}) {
+  const [reducedMotion, setReducedMotion] = useState(() => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
+  useEffect(() => {
+    if (!animate) return;
+    const query = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    if (!query) return;
+    const change = () => setReducedMotion(query.matches);
+    change();
+    query.addEventListener('change', change);
+    return () => query.removeEventListener('change', change);
+  }, [animate]);
+
+  const type = animate && !reducedMotion;
+  const characters = useMemo(() => type ? Array.from(answer) : [], [type, answer]);
+  const [revealed, setRevealed] = useState(0);
+  const available = useRef(0);
+  useLayoutEffect(() => { available.current = characters.length; }, [characters.length]);
+
+  const pending = type && revealed < characters.length;
+  useEffect(() => {
+    if (!pending) return;
+    const timer = window.setTimeout(() => {
+      setRevealed(current => Math.min(available.current, current + Math.max(1, Math.ceil((available.current - current) / 32))));
+    }, 24);
+    return () => window.clearTimeout(timer);
+  }, [pending, revealed]);
+
+  const text = type ? characters.slice(0, revealed).join('') : answer;
+  useLayoutEffect(() => { if (type) onReveal(); }, [type, text, onReveal]);
+  const showCursor = type && Boolean(text) && (pending || running);
+  return <>
+    {text && <p className="whitespace-pre-wrap break-words text-sm leading-7 text-[var(--earth-ink)]">
+      {text}{showCursor && <span className="chat-reply-cursor" aria-hidden="true" />}
+    </p>}
+    {running && <p role="status" className={text ? 'sr-only' : 'text-xs text-[var(--earth-muted)]'}>正在回复…</p>}
+  </>;
+}
 
 export default function ChatPage() {
   const { user, isAuthenticated, isLoading, openLoginModal } = useAuthStore();
@@ -35,6 +78,7 @@ function ChatWorkspace() {
   const dragDepth = useRef(0);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const [sending, setSending] = useState(false);
+  const [typingTurnId, setTypingTurnId] = useState<string>();
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
   const [recovering, setRecovering] = useState<string>();
@@ -95,14 +139,16 @@ function ChatWorkspace() {
   }, [activeId, sending, reload, recovering]);
 
   useEffect(() => () => request.current?.abort(), []);
-  useEffect(() => {
+  const scrollToLatest = useCallback(() => {
     const box = transcript.current;
     if (follow.current && box) box.scrollTop = box.scrollHeight;
-  }, [view]);
+  }, []);
+  useEffect(() => { scrollToLatest(); }, [view, scrollToLatest]);
 
   function open(id?: string) {
     setError('');
     setRecovering(undefined);
+    setTypingTurnId(undefined);
     setInput('');
     setFiles([]);
     follow.current = true;
@@ -119,6 +165,7 @@ function ChatWorkspace() {
     const controller = new AbortController();
     request.current = controller;
     setSending(true);
+    setTypingTurnId(requestId);
     setError('');
     setInput('');
     setFiles([]);
@@ -198,7 +245,7 @@ function ChatWorkspace() {
   }
 
   return (
-    <section className="mx-auto grid w-full max-w-[1400px] gap-4 px-3 py-4 md:grid-cols-[220px_minmax(0,1fr)] md:px-6">
+    <section className="chat-workspace">
       <aside className="min-w-0 rounded-2xl border border-[var(--earth-line)] bg-[var(--earth-surface)] p-3" aria-label="对话历史">
         <div className="mb-2 flex items-center justify-between gap-2">
           <h2 className="pl-2 text-sm font-medium text-[var(--earth-muted)]">对话历史</h2>
@@ -212,7 +259,7 @@ function ChatWorkspace() {
         </div>
       </aside>
 
-      <div role="region" aria-label="聊天区" className="relative flex min-h-[62dvh] min-w-0 flex-col rounded-2xl border border-[var(--earth-line)] bg-[var(--earth-surface-raised)] md:h-[calc(100dvh-3rem)]"
+      <div role="region" aria-label="聊天区" className="chat-panel relative flex min-w-0 flex-col rounded-2xl border border-[var(--earth-line)] bg-[var(--earth-surface-raised)]"
         onDragEnter={enterFileDropArea} onDragLeave={leaveFileDropArea} onDrop={dropFiles} onDragOver={event => {
           if (!hasDraggedFiles(event)) return;
           event.preventDefault();
@@ -221,31 +268,32 @@ function ChatWorkspace() {
         {draggingFiles && !attachmentPickerDisabled && <div className="chat-file-drop-overlay" role="status">
           <Upload aria-hidden="true" className="size-6" /> 松开鼠标添加附件
         </div>}
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--earth-line)] px-4 py-4 md:px-6">
+        <header className="flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-[var(--earth-line)] px-4 py-1 md:px-5">
           <h1 className="text-lg font-semibold text-[var(--earth-ink)]">大模型对话</h1>
           {activeId && <button type="button" className={button} aria-label="删除当前对话" disabled={sending || running || deleting || activeId !== view?.id} onClick={remove}><Trash2 className="size-4" /></button>}
         </header>
 
-        <div ref={transcript} className="max-h-[58dvh] min-h-60 flex-1 space-y-5 overflow-y-auto px-4 py-5 md:max-h-none md:px-8" aria-label="对话消息"
+        <div ref={transcript} className="chat-transcript" aria-label="对话消息"
           onScroll={() => { const box = transcript.current; if (box) follow.current = box.scrollHeight - box.scrollTop - box.clientHeight < 72; }}>
-          {!turns.length && <div className="grid justify-items-center gap-3 py-12 text-[var(--earth-muted)]">
-            <MessageCircle aria-hidden="true" className="size-8 text-[var(--earth-primary)]" />
-            <p>{activeId && activeId !== view?.id ? '正在读取对话…' : '输入消息，开始对话'}</p>
-          </div>}
-          {turns.map(turn => <article key={turn.id} className="mx-auto max-w-3xl space-y-4">
-            <div className="ml-auto w-fit max-w-[90%] rounded-2xl bg-[var(--earth-primary-soft)] px-4 py-3 text-[var(--earth-ink)]">
-              {turn.attachments?.length ? <ul className="chat-attachment-list">{turn.attachments.map((item, index) => (
-                <li key={index} className="chat-attachment-chip" title={item.name}>{item.kind === 'image' ? <ImageIcon /> : <FileText />}<span>{item.name}</span></li>
-              ))}</ul> : null}
-              {turn.question && <p className="whitespace-pre-wrap break-words">{turn.question}</p>}
-            </div>
-            <div className="space-y-2 rounded-2xl border border-[var(--earth-line)] bg-[var(--earth-surface)] px-4 py-3">
-              <p className="text-xs font-medium text-[var(--earth-primary)]">{turn.model}</p>
-              {turn.answer && <p className="whitespace-pre-wrap break-words text-sm leading-7 text-[var(--earth-ink)]">{turn.answer}</p>}
-              {turn.status === 'running' && <p role="status" className="text-xs text-[var(--earth-muted)]">正在回复…</p>}
-              {turn.error && <p className="text-sm text-[var(--earth-primary)]" role="status">{turn.status === 'review' ? '待核实 · ' : ''}{turn.error}</p>}
-            </div>
-          </article>)}
+          <div className="chat-transcript-inner">
+            {!turns.length && <div className="chat-empty text-[var(--earth-muted)]">
+              <MessageCircle aria-hidden="true" className="size-8 text-[var(--earth-primary)]" />
+              <p>{activeId && activeId !== view?.id ? '正在读取对话…' : '输入消息，开始对话'}</p>
+            </div>}
+            {turns.map(turn => <article key={turn.id} className="min-w-0 space-y-3">
+              <div className="ml-auto w-fit max-w-[90%] rounded-2xl bg-[var(--earth-primary-soft)] px-4 py-3 text-[var(--earth-ink)]">
+                {turn.attachments?.length ? <ul className="chat-attachment-list">{turn.attachments.map((item, index) => (
+                  <li key={index} className="chat-attachment-chip" title={item.name}>{item.kind === 'image' ? <ImageIcon /> : <FileText />}<span>{item.name}</span></li>
+                ))}</ul> : null}
+                {turn.question && <p className="whitespace-pre-wrap break-words">{turn.question}</p>}
+              </div>
+              <div className="space-y-2 rounded-2xl border border-[var(--earth-line)] bg-[var(--earth-surface)] px-4 py-3">
+                <p className="text-xs font-medium text-[var(--earth-primary)]">{turn.model}</p>
+                <ReplyText answer={turn.answer} running={turn.status === 'running'} animate={turn.id === typingTurnId} onReveal={scrollToLatest} />
+                {turn.error && <p className="text-sm text-[var(--earth-primary)]" role="status">{turn.status === 'review' ? '待核实 · ' : ''}{turn.error}</p>}
+              </div>
+            </article>)}
+          </div>
         </div>
 
         <form onSubmit={send} className="chat-composer">

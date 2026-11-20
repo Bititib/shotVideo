@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import ChatPage from '../client/src/pages/ChatPage';
 import { useAuthStore } from '../client/src/stores/authStore';
@@ -15,7 +15,7 @@ it('opens the login modal from the chat page', () => {
   expect(useAuthStore.getState().showLoginModal).toBe(true);
 });
 
-it('renders streamed text before the turn completes and reopens saved history', async () => {
+it('reveals streamed replies gradually even when the entire remainder arrives at once', async () => {
   localStorage.setItem('token', 'test-session');
   const profile = { id: 1, username: 'test' } as NonNullable<ReturnType<typeof useAuthStore.getState>['user']>;
   useAuthStore.setState({ user: profile, isAuthenticated: true, isLoading: false });
@@ -27,7 +27,7 @@ it('renders streamed text before the turn completes and reopens saved history', 
   const requests = vi.fn(async (path: string, options?: RequestInit) => {
     if (path === '/api/chat/models') return Response.json([{ id: 'test-model', name: 'test-model' }]);
     if (path === '/api/chat/conversations') return Response.json(history);
-    if (path === '/api/auth/profile') return Response.json(profile);
+    if (path === '/api/auth/me') return Response.json(profile);
     if (options?.method === 'POST') {
       id = path.split('/').at(-2)!;
       payload = JSON.parse(String(options.body));
@@ -49,15 +49,21 @@ it('renders streamed text before the turn completes and reopens saved history', 
   expect(screen.getByText('正在回复…')).toBeTruthy();
 
   history = [{ id, title: '你好', updatedAt: 1 }];
-  turns = [{ id: payload.requestId, model: payload.model, question: payload.question, answer: '你好，很高兴见到你。', status: 'complete', error: null }];
+  const answer = '你好，很高兴见到你。🙂 即使模型一次返回整段文字，回复也会逐步显示。';
+  turns = [{ id: payload.requestId, model: payload.model, question: payload.question, answer, status: 'complete', error: null }];
   controller.enqueue(encoder.encode('data: ' + JSON.stringify({ turn: turns[0] }) + '\n\n'));
   controller.close();
-  await screen.findByText(turns[0].answer);
+  await waitFor(() => {
+    const partial = screen.getByText(/^你好，很/).textContent!;
+    expect(answer.startsWith(partial)).toBe(true);
+    expect(partial).not.toBe(answer);
+  });
+  await screen.findByText(answer, {}, { timeout: 2_000 });
   const saved = await screen.findByRole('button', { name: '你好' });
   fireEvent.click(screen.getByRole('button', { name: '新对话' }));
-  expect(screen.queryByText(turns[0].answer)).toBeNull();
+  expect(screen.queryByText(answer)).toBeNull();
   fireEvent.click(saved);
-  await screen.findByText(turns[0].answer);
+  await screen.findByText(answer);
   expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
 });
 
