@@ -80,12 +80,17 @@ export function buildApipathVideoPayload(model: string, prompt: string, input: {
   seconds: number; ratio: string; resolution: string; images: string[]; videos: string[]; audios: string[]; firstFrame?: string; lastFrame?: string; generationMode?: unknown;
 }, profile?: ModelRoute['apipath']) {
   const { images, videos, audios, firstFrame, lastFrame } = input;
+  if (profile?.maxPromptChars && Array.from(prompt).length > profile.maxPromptChars)
+    throw new ApipathError('通联该型号提示词最多 ' + profile.maxPromptChars + ' 字符，当前 ' + Array.from(prompt).length + ' 字符',false);
   if (!profile && (firstFrame || lastFrame)) throw new ApipathError('通联此历史型号尚未核实独立首尾帧组合', false);
   if (!profile && input.generationMode!==undefined)throw new ApipathError('通联此历史型号尚未核实 generation_mode',false);
   const payload: Record<string,unknown> = { model,prompt,ratio:input.ratio,duration:input.seconds,resolution:input.resolution,count:1,
     ...(images.length?{reference_images:images}:{}),...(videos.length?{reference_videos:videos}:{}),...(audios.length?{reference_audios:audios}:{}),
     ...(firstFrame?{first_frame:firstFrame}:{}),...(lastFrame?{last_frame:lastFrame}:{}) };
   if (profile) {
+    if(profile.modeOptional && !profile.modes.length){
+      if(input.generationMode!==undefined)throw new ApipathError('通联该型号未公布可选 generation_mode，请使用默认模式',false);
+    } else {
     const refs = images.length + videos.length + audios.length;
     let mode = firstFrame && lastFrame ? refs ? 'first_last_reference' : 'first_last'
       : firstFrame ? refs ? 'first_frame_reference' : 'first_frame' : lastFrame ? refs ? 'last_frame_reference' : 'last_frame'
@@ -95,6 +100,7 @@ export function buildApipathVideoPayload(model: string, prompt: string, input: {
     if(input.generationMode!==undefined){if(typeof input.generationMode!=='string')throw new ApipathError('通联 generation_mode 必须为文本',false);mode=input.generationMode;}
     if (!profile.modes.includes(mode)) throw new ApipathError('通联该型号未公布此素材组合对应的生成模式：' + mode, false);
     payload.generation_mode=mode;
+    }
     for (const field of Object.keys(payload)) if (!['model','prompt'].includes(field) && !profile.fields.includes(field)) {
       if (field.startsWith('reference_') || ['first_frame','last_frame','generation_mode'].includes(field)) throw new ApipathError('通联该型号不接受字段：'+field,false);
       delete payload[field]; // Fixed resolution/count are not transmitted when the model's allowlist excludes them.

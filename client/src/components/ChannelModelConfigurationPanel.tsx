@@ -256,7 +256,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
               <div>
                 <button type="button" className={button} onClick={() => void loadCatalog()}>{wanfeng ? '读取晚风公开型号' : '读取已授权的上游型号'}</button>
                 {wanfeng && <p className="v6k-field-help">公开目录用于配置模型，实际可用型号取决于晚风 Key 的权限。</p>}
-                {apipath && <p className="v6k-field-help">仅显示对应图片或视频 Key 已授权、且公开文档协议已确认的型号。只添加选中的模型，新模型默认停用；规格不得超过所选型号公布的范围。</p>}
+                {apipath && <p className="v6k-field-help">仅显示对应图片或视频 Key 已授权、且协议和官方型号配置已核实的型号。只添加选中的模型，新模型默认停用；规格不得超过所选型号公布的范围。</p>}
                 {catalog && <>
                   {!chooseFromCatalog && <datalist id="channel-model-catalog">{availableModels?.map(({ id }) => <option key={id} value={id} />)}</datalist>}
                   <p className="v6k-field-help" role="status">{availableModels?.length

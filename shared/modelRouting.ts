@@ -12,7 +12,7 @@ export type ModelInputLimits = {
   firstFrame: boolean; lastFrame: boolean; qualities: string[];
 };
 export type ModelRoute = {
-  apipath?: { fields: string[]; modes: string[]; checkedAt: string };
+  apipath?: { fields: string[]; modes: string[]; checkedAt: string; modeOptional?: boolean; maxPromptChars?: number };
   snumom?: { billingType: 'per_call' | 'per_second'; referenceVideoBilling: boolean };
   siYueTianVideo?: true;
   minikey?: { upstreamChannel: number | null; imageProtocol: 'banana' | 'size' };

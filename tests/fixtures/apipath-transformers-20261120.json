@@ -1,0 +1,160 @@
+{
+  "source": "https://online.apipath.top/api/models/Seedance2.5-满参-变形金刚",
+  "retrieved": "2026-11-20",
+  "model": {
+    "id": 848,
+    "code": "Seedance2.5-满参-变形金刚",
+    "display_name": "Seedance2.5-满参-变形金刚",
+    "category": "video",
+    "icon_url": "https://online.apipath.top/uploads-local/logo/wending.jpg",
+    "description": "Seedance 2.5 满参视频生成，支持 480P / 720P / 1080P / 4K 四档输出，按条计费：480P ¥4/条、720P ¥5.2/条、1080P ¥7.5/条、4K ¥9/条。1080P 和 4K 不太稳定，建议优先选择 480P / 720P。支持 4–30 秒自由时长，可组合最多 30 张参考图、10 段参考视频、10 段参考音频，素材需为公网可访问链接并在生成期间保持有效。支持 16:9、9:16、1:1、3:4、4:3、21:9 六种画幅。提示词最长 15000 字符，建议写清主体、动作、运镜、光线与节奏。",
+    "tags": [
+      "视频",
+      "Seedance2.5"
+    ],
+    "sub_categories": [],
+    "runtime_rule": {
+      "capabilities": {
+        "deep_think": false,
+        "web_search": false
+      },
+      "max_concurrency": 500,
+      "video": {
+        "count_allow_custom": false,
+        "count_max": 1,
+        "count_options": [
+          1
+        ],
+        "count_toward_total": true,
+        "duration_max": 30,
+        "duration_min": 4,
+        "duration_step": 1,
+        "frames": {},
+        "max_reference_images": 30,
+        "max_total_images": 30,
+        "min_reference_images": 0,
+        "mode_param": "generation_mode",
+        "prompt_hint": "描述目标视频：建议写清主体、动作、运镜、光线与台词节奏。可上传最多 30 张参考图、10 段参考视频、10 段参考音频，素材需为公网可访问链接并在生成期间保持有效。时长 4–30 秒整数，输出支持 480P / 720P / 1080P / 4K 四档，其中 1080P 和 4K 不太稳定；支持 16:9、9:16、1:1、3:4、4:3、21:9 画幅。",
+        "prompt_required": true,
+        "reference_audios": {
+          "key": "reference_audios",
+          "max": 10
+        },
+        "reference_images": {
+          "key": "reference_images",
+          "max": 30
+        },
+        "reference_videos": {
+          "key": "reference_videos",
+          "max": 10
+        },
+        "show_audio": false,
+        "show_channel": false,
+        "show_prompt_extend": false,
+        "show_watermark": false,
+        "show_web_search": false,
+        "supported_aspect_ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "3:4",
+          "4:3",
+          "21:9"
+        ],
+        "supported_generation_modes": [],
+        "supported_resolutions": [
+          "480p",
+          "720p",
+          "1080p",
+          "4k"
+        ],
+        "upload_profile": "custom_media"
+      }
+    },
+    "input_schema": {
+      "properties": {
+        "ratio": {
+          "default": "16:9",
+          "enum": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:3",
+            "3:4",
+            "21:9"
+          ],
+          "title": "画面比例",
+          "type": "string",
+          "x-icon": "ratio",
+          "x-order": 3,
+          "x-widget": "option_menu"
+        },
+        "resolution": {
+          "default": "480p",
+          "enum": [
+            "480p",
+            "720p",
+            "1080p",
+            "4k"
+          ],
+          "enumLabels": {
+            "1080p": "1080P ¥7.5/条（不太稳定）",
+            "480p": "480P ¥4/条",
+            "4k": "4K ¥9/条（不太稳定）",
+            "720p": "720P ¥5.2/条"
+          },
+          "title": "分辨率",
+          "type": "string",
+          "x-highlight": true,
+          "x-icon": "4k",
+          "x-order": 5,
+          "x-widget": "option_menu"
+        }
+      },
+      "type": "object"
+    },
+    "default_params": {
+      "duration": 5,
+      "ratio": "16:9",
+      "resolution": "480p"
+    },
+    "price_rule": {
+      "billing_type": "video_resolution",
+      "currency": "¥",
+      "default_resolution": "480p",
+      "resolution_rates": [
+        {
+          "enabled": true,
+          "label": "480P",
+          "mode": "per_request",
+          "price": 4,
+          "value": "480p"
+        },
+        {
+          "enabled": true,
+          "label": "720P",
+          "mode": "per_request",
+          "price": 5.2,
+          "value": "720p"
+        },
+        {
+          "enabled": true,
+          "label": "1080P",
+          "mode": "per_request",
+          "price": 7.5,
+          "value": "1080p"
+        },
+        {
+          "enabled": true,
+          "label": "4K",
+          "mode": "per_request",
+          "price": 9,
+          "value": "4k"
+        }
+      ],
+      "unit_price": 4
+    },
+    "is_enabled": true,
+    "sort_order": 0
+  }
+}

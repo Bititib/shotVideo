@@ -17,6 +17,7 @@ export async function fetchApipathCatalog(channel: ApipathChannel & { id: number
   const entries: (typeof APIPATH_MODELS[number] & {apipath?: ModelRoute['apipath']})[] = [], summaries: string[] = [];
   const warnings: string[] = [];
   const bindings: { id: number; models: string[] }[] = [];
+  const sourceCatalogs: {id:number|null;label:string;names:Set<string>}[]=[];
   // Resolve every configured key before mutating the catalog. One failed lookup leaves all bindings intact.
   for (const source of sources) {
     const label = source.kind === 'image' ? '图片 Key' : source.kind === 'video' ? '视频 Key' : '原有 Key';
@@ -29,10 +30,7 @@ export async function fetchApipathCatalog(channel: ApipathChannel & { id: number
       && names.has(x.upstreamModel || x.id) && (source.kind === 'legacy' || x.kind === source.kind));
     entries.push(...allowed);
     if (source.id !== null) bindings.push({ id: source.id, models: allowed.map(x => x.id) });
-    summaries.push(label + '已核实规格 ' + allowed.length + ' 个');
-    if (!allowed.length) warnings.push(label + '没有返回可接入的对应类型模型，请检查该 Key 的授权');
-    const unknown = [...names].filter(id => !APIPATH_MODELS.some(x => (x.upstreamModel || x.id) === id));
-    if (unknown.length) warnings.push(label + '未导入规格尚未核实或非图片/视频模型：' + unknown.join('、'));
+    sourceCatalogs.push({id:source.id,label,names});
   }
   const configured = getModelSpecifications().flatMap(spec=>spec.routes.filter(r=>r.channelId===channel.id && r.id.startsWith('admin-channel-model-apipath-'))
     .map(route=>({spec,route})));
@@ -44,6 +42,14 @@ export async function fetchApipathCatalog(channel: ApipathChannel & { id: number
       if(!entries.some(e=>e.id===spec.modelId)) entries.push({...entry,id:spec.modelId,upstreamModel:route.upstreamModel});
       for(const binding of bindings) if(entry.keyIds.includes(binding.id)&&!binding.models.includes(spec.modelId))binding.models.push(spec.modelId);
     }
+  }
+  const importedUpstream=new Set(entries.map(entry=>entry.upstreamModel||entry.id));
+  for(const source of sourceCatalogs){
+    const count=source.id===null?entries.filter(entry=>source.names.has(entry.upstreamModel||entry.id)).length:bindings.find(binding=>binding.id===source.id)!.models.length;
+    summaries.push(source.label+'已核实规格 '+count+' 个');
+    if(!count)warnings.push(source.label+'没有已选择且通过核验的对应类型模型；可在“模型与参数”读取授权目录后添加');
+    const unselected=[...source.names].filter(id=>!importedUpstream.has(id));
+    if(unselected.length)warnings.push(source.label+'未自动导入未选择或规格尚未核实的型号：'+unselected.join('、'));
   }
   return { entries, warnings, bindings, summaries, keyIds: keys.map(k => k.id) };
 }

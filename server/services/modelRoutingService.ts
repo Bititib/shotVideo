@@ -81,7 +81,10 @@ export function saveModelSpecification(value: ModelSpecification): ModelSpecific
   const routes = value.routes.map(r => {
     validateLimits(r.limits);
     const ch = channelRows.find(c => c.id === r.channelId);
-    if(r.apipath && (ch?.type!=='apipath'||value.kind!=='video'||!Array.isArray(r.apipath.fields)||!Array.isArray(r.apipath.modes)||!r.apipath.modes.length
+    if(r.apipath && (ch?.type!=='apipath'||value.kind!=='video'||!Array.isArray(r.apipath.fields)||!Array.isArray(r.apipath.modes)
+      || !r.apipath.modes.length && !(r.apipath.modeOptional===true && !r.apipath.fields.includes('generation_mode'))
+      || r.apipath.modeOptional!==undefined && typeof r.apipath.modeOptional!=='boolean'
+      || r.apipath.maxPromptChars!==undefined && (!Number.isSafeInteger(r.apipath.maxPromptChars)||r.apipath.maxPromptChars<1||r.apipath.maxPromptChars>100000)
       ||r.apipath.fields.some(v=>!APIPATH_VIDEO_FIELDS.includes(v))||r.apipath.modes.some(v=>!APIPATH_VIDEO_MODES.includes(v))||typeof r.apipath.checkedAt!=='string'))throw error('Vx-魅影视频协议配置无效');
     if (r.snumom) {
       if (ch?.type !== 'snumom' || value.kind !== 'video') throw error('snumom 配置只能关联 snumom 视频线路');

@@ -13,7 +13,7 @@ const fail = (message: string) => Object.assign(new Error(message), { status: 40
 export type ApipathCatalogEntry = { id: string; name: string; kind: 'image' | 'video'; limits: ModelInputLimits;
   description: string; keyIds: number[]; apipath?: NonNullable<ModelRoute['apipath']> };
 
-/** Only documented contracts are offered, intersected with the matching type's Key authorization. */
+/** Published docs plus complete official model configurations, intersected with the matching Key's authorization. */
 export async function apipathAuthorizedCatalog(channel: ApipathChannel & { id: number }): Promise<ApipathCatalogEntry[]> {
   const response = await fetch(apipathBase(channel.baseUrl) + '/api/api-docs', { redirect: 'error', signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw fail('Vx-魅影公开协议读取失败：HTTP ' + response.status);
@@ -23,6 +23,18 @@ export async function apipathAuthorizedCatalog(channel: ApipathChannel & { id: n
   const sources = keys.length ? keys : apipathKeys(channel.id).length ? []
     : channel.apiKey ? [{ id: null, kind: 'legacy', apiKey: channel.apiKey }] : [];
   if (!sources.length) throw fail('请先保存图片或视频 API Key');
+  const hasVideoContract = raw.data.items.some((doc:any)=>
+    doc.category==='video' && doc.content?.calling_contract?.create_endpoints?.some((e:any)=>e.method==='POST'&&e.path==='/v1/video/generations')
+    && doc.content?.calling_contract?.query_endpoints?.some((e:any)=>e.method==='GET'&&e.path==='/v1/video/generations/{task_no}'&&e.terminal_status?.success==='completed'));
+  let runtimeModels:any[]=[];
+  if (hasVideoContract && sources.some(source=>source.kind==='video'||source.kind==='legacy')) {
+    const runtimeResponse=await fetch(apipathBase(channel.baseUrl)+'/api/models',{redirect:'error',signal:AbortSignal.timeout(30_000)});
+    if(!runtimeResponse.ok)throw fail('Vx-魅影官方型号配置读取失败：HTTP '+runtimeResponse.status);
+    const runtime=await runtimeResponse.json();
+    if(runtime?.code!==0||!Array.isArray(runtime?.data))throw fail('Vx-魅影官方型号配置格式无效，未修改模型绑定');
+    const documented=new Set(raw.data.items.map((doc:any)=>doc.model_code));
+    runtimeModels=runtime.data.filter((model:any)=>!documented.has(model.code));
+  }
   const entries = new Map<string, ApipathCatalogEntry>();
   for (const source of sources) {
     const catalog = await apipathRequest({ ...channel, apiKey: source.apiKey }, '/v1/models');
@@ -37,8 +49,53 @@ export async function apipathAuthorizedCatalog(channel: ApipathChannel & { id: n
       if (source.id !== null) entry.keyIds.push(source.id);
       entries.set(entry.id, entry);
     }
+    if(source.kind==='video'||source.kind==='legacy')for(const model of runtimeModels){
+      if(!authorized.has(model.code))continue;
+      const parsed=apipathRuntimeVideoModel(model);
+      if(!parsed)continue;
+      const entry=entries.get(parsed.id)||{...parsed,keyIds:[]};
+      if(source.id!==null)entry.keyIds.push(source.id);
+      entries.set(entry.id,entry);
+    }
   }
   return [...entries.values()];
+}
+
+/** The same provider's standard video API contract, with this model's own official runtime limits.
+ * Missing or conflicting specifications never inherit another model's capabilities. */
+export function apipathRuntimeVideoModel(model:any):Omit<ApipathCatalogEntry,'keyIds'>|null {
+  const v=model?.runtime_rule?.video, id=model?.code;
+  if(model?.is_enabled!==true||model?.category!=='video'||typeof id!=='string'||!id.trim()||id!==id.trim()||id.length>160||/[\x00-\x1f\x7f]/.test(id)
+    ||!v||v.upload_profile!=='custom_media'||v.mode_param!=='generation_mode'||v.prompt_required!==true
+    ||!Array.isArray(v.count_options)||v.count_options.length!==1||v.count_options[0]!==1
+    ||!v.frames||typeof v.frames!=='object'||Object.keys(v.frames).length) return null;
+  const strings=(a:unknown):a is string[]=>Array.isArray(a)&&a.length>0&&a.length<=50&&a.every(x=>typeof x==='string'&&x.trim()===x&&x.length>0&&x.length<=80)&&new Set(a).size===a.length;
+  const same=(a:string[],b:unknown)=>strings(b)&&a.length===b.length&&a.every(x=>b.includes(x));
+  if(!strings(v.supported_resolutions)||!strings(v.supported_aspect_ratios)
+    ||!same(v.supported_resolutions,model.input_schema?.properties?.resolution?.enum)
+    ||!same(v.supported_aspect_ratios,model.input_schema?.properties?.ratio?.enum)
+    ||!Array.isArray(v.supported_generation_modes)||v.supported_generation_modes.some((m:unknown)=>typeof m!=='string'||!APIPATH_VIDEO_MODES.includes(m)))return null;
+  const max=(ref:any,field:string)=>ref?.key===field&&Number.isSafeInteger(ref.max)&&ref.max>=0&&ref.max<=100?ref.max:null;
+  const images=max(v.reference_images,'reference_images'),videos=max(v.reference_videos,'reference_videos'),audios=max(v.reference_audios,'reference_audios');
+  if(images===null||videos===null||audios===null||v.max_reference_images!==images
+    ||![v.duration_min,v.duration_max,v.duration_step,v.min_reference_images,v.max_total_images].every(Number.isSafeInteger)
+    ||v.duration_min<1||v.duration_max<v.duration_min||v.duration_max>3600||v.duration_step<1
+    ||v.min_reference_images<0||v.min_reference_images>images||v.max_total_images<v.min_reference_images||v.max_total_images>100)return null;
+  const limits:ModelInputLimits={...defaultRoutingLimits(),maxImages:Math.min(images,v.max_total_images),maxVideos:videos,maxAudios:audios,minImages:v.min_reference_images,
+    resolutions:v.supported_resolutions,ratios:v.supported_aspect_ratios,
+    duration:{mode:'range',min:v.duration_min,max:v.duration_max,step:v.duration_step,values:[]}};
+  const defaultSeconds=model.default_params?.duration;
+  if(!Number.isSafeInteger(defaultSeconds)||!allowsDuration(limits.duration,defaultSeconds))return null;
+  limits.defaultSeconds=defaultSeconds;
+  const modes:string[]=v.supported_generation_modes;
+  const fields=['duration','ratio','resolution','count',...(images?['reference_images']:[]),...(videos?['reference_videos']:[]),...(audios?['reference_audios']:[]),...(modes.length?['generation_mode']:[])];
+  // This exact model's public description states the prompt limit; do not assign it to other models.
+  const maxPromptChars=id==='Seedance2.5-满参-变形金刚'?15000:undefined;
+  const description=`${model.display_name||id}；分辨率：${limits.resolutions.join(' / ')}；时长 ${v.duration_min}–${v.duration_max} 秒（步长 ${v.duration_step} 秒）；`
+    +`比例：${limits.ratios.join(' / ')}；最多 ${limits.maxImages} 张参考图、${videos} 条参考视频、${audios} 条参考音频；不支持独立首尾帧；每次 1 条。`
+    +(maxPromptChars?'提示词最多 15000 字符；上游提示 1080p 和 4K 稳定性较低。':'');
+  return {id,name:model.display_name||id,kind:'video',limits,description,
+    apipath:{fields,modes,checkedAt:new Date().toISOString(),...(!modes.length?{modeOptional:true}:{}),...(maxPromptChars?{maxPromptChars}:{})}};
 }
 
 export function apipathDocumentedModel(doc: any): Omit<ApipathCatalogEntry, 'keyIds'> | null {
