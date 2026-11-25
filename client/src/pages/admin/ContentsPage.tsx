@@ -374,6 +374,7 @@ export default function ContentsPage() {
     const meta = parseMeta(item.metadata);
     if (!['processing', 'queued', 'review'].includes(item.status)) return item.status;
     if (meta.imageProtocol === 'pidoi-async-v1') return item.status; // Worker owns recovery/settlement, not a browser timer.
+    if (item.type === 'image' && (meta.serverTracksImage || meta.actualChannel === 'image2pro')) return meta.requiresReview ? 'review' : item.status;
     const overdue = item.type === 'image' && Date.now() - new Date(item.createdAt).getTime()
       > Math.max(30 * 60_000, Number(meta.requestTimeoutMs || 0) + 60_000);
     return meta.requiresReview || overdue ? 'review' : item.status;

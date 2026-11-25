@@ -9,6 +9,7 @@ const endpoint = (kind: Image2proKind) => kind === 'image' ? '/images/tasks' : '
 const validId = (id: unknown): id is string => typeof id === 'string' && /^[a-f0-9]{16,80}$/i.test(id);
 export class Image2proError extends Error {
   retryAfterMs = 10000;
+  retryableQuery = false;
   constructor(message: string, public phase: 'submit' | 'query', public status = 0, public confirmedFailure = false) { super(message); }
   get uncertain() { return !this.confirmedFailure; }
 }
@@ -55,8 +56,24 @@ export async function pollImage2pro(c: Image2proChannel, kind: Image2proKind, id
   if (!validId(id)) throw new Image2proError('Image2Pro 原任务编号无效', 'query');
   let response: Response;
   try { response = await transport(image2proBase(c.baseUrl) + endpoint(kind) + '/' + id, { headers: { Authorization: 'Bearer ' + c.apiKey }, redirect: 'error', signal: AbortSignal.timeout(30000) }); }
-  catch(e) { throw new Image2proError(transportDiagnostic('Image2Pro', '查询 ' + id, e, c.apiKey), 'query'); }
-  let raw: any; try { raw = await response.json(); } catch { throw new Image2proError('Image2Pro 查询响应不完整；任务 ' + id, 'query', response.status); }
-  if (!response.ok) {const error=new Image2proError(detail(c, '查询 ' + id, raw, response.status), 'query', response.status);const retry=response.headers.get('retry-after');error.retryAfterMs=Math.max(10000,retry ? (/^\d+$/.test(retry)?Number(retry)*1000:Date.parse(retry)-Date.now())||0:0);throw error;}
+  catch (cause) {
+    const error = new Image2proError(transportDiagnostic('Image2Pro', '查询 ' + id, cause, c.apiKey), 'query');
+    error.retryableQuery = true;
+    throw error;
+  }
+  let raw: any;
+  let diagnostic: string | undefined;
+  try { raw = await response.json(); }
+  catch { diagnostic = 'Image2Pro 查询响应不完整；任务 ' + id; }
+  if (diagnostic || !response.ok) {
+    const error = new Image2proError(diagnostic || detail(c, '查询 ' + id, raw, response.status), 'query', response.status);
+    error.retryableQuery = response.ok || response.status >= 500 || [408, 429].includes(response.status);
+    const retry = response.headers.get('retry-after');
+    if (retry) {
+      const delay = /^\d+$/.test(retry) ? Number(retry) * 1000 : Date.parse(retry) - Date.now();
+      if (Number.isFinite(delay)) error.retryAfterMs = Math.max(error.retryAfterMs, delay);
+    }
+    throw error;
+  }
   return normalizeImage2pro(c, kind, id, raw);
 }

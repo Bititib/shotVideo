@@ -675,7 +675,8 @@ export async function pollMjSpecificationImage(channel: any, initial: MjAsyncIma
 
 export async function generateSpecificationImage(target: RouteCandidate, request: SpecificationRequest, onStarting: (metadata?: Record<string, unknown>) => void, onSubmitted: (id: string) => void, onResponse?: (evidence: ImageResponseEvidence) => void,
   onMjAsyncState: (state: MjAsyncImageState) => void = () => {}, checkMjReservation: () => void = () => {},
-  onPidoiFallback?: (state: import('./pidoiImageAdapter.js').PidoiFallbackState) => void) {
+  onPidoiFallback?: (state: import('./pidoiImageAdapter.js').PidoiFallbackState) => void,
+  onImageQuery?: (error: string | null) => void) {
   const c = { ...target.channel, timeout: imageGenerationTimeout(target.channel) }, model = target.route.upstreamModel, i = request.input;
   if(isImage2proChannel(c)) {
     if(request.videos.length||request.audios.length||request.firstFrame||request.lastFrame)throw new SpecificationUpstreamError('Image2Pro 图片不接受视频音频或独立首尾帧',true);
@@ -687,16 +688,27 @@ export async function generateSpecificationImage(target: RouteCandidate, request
     try {
       const job=await submitImage2pro(c,'image',payload,key,()=>onStarting({image2proRequest:{key,payload,credential:image2proCredential(target.channel)}}),onSubmitted);
       let task=normalizeImage2pro(c,'image',job.id,job.raw);
-      const deadline=Date.now()+20*60_000;
-      while(Date.now()<deadline){
+      let firstQueryErrorAt: number | undefined;
+      let delay = task.pollAfterMs;
+      for (;;) {
         if(task.status==='failed')throw new SpecificationUpstreamError(task.error,false,false,false,200,true);
         if(task.status==='completed'){
           if(task.imageUrls.length!==1)throw new SpecificationUpstreamError('Image2Pro 单图请求返回多图，保留原任务待完整恢复',false,true);
           return {imageUrl:task.imageUrl,reportedImageUrl:task.imageUrl,taskId:job.id,raw:job.raw};
         }
-        await new Promise(resolve=>setTimeout(resolve,Math.max(10000,task.pollAfterMs)));task=await pollImage2pro(c,'image',job.id);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        try {
+          task = await pollImage2pro(c, 'image', job.id);
+          delay = task.pollAfterMs;
+          if (firstQueryErrorAt !== undefined) onImageQuery?.(null);
+          firstQueryErrorAt = undefined;
+        } catch (error) {
+          firstQueryErrorAt ??= Date.now();
+          if (!(error instanceof Image2proError) || !error.retryableQuery || Date.now() - firstQueryErrorAt >= 20 * 60_000) throw error;
+          onImageQuery?.(error.message);
+          delay = error.retryAfterMs;
+        }
       }
-      throw new SpecificationUpstreamError('Image2Pro 原图片任务仍在处理中',false,true);
     }catch(e){if(e instanceof Image2proError)throw new SpecificationUpstreamError(e.message,false,e.uncertain,false,e.status,e.confirmedFailure);throw e;}
   }
 

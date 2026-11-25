@@ -1,6 +1,6 @@
 import { normalizeConfiguredSnumomBody, prepareConfiguredSnumomBilling } from './snumomConfiguredExecution.js';
 import { normalizeImage2proInput } from './image2proInput.js';
-import { image2proCredential } from './image2proAdapter.js';
+import { image2proCredential, Image2proError } from './image2proAdapter.js';
 import { isMinikeyChannel, minikeyCredential } from './minikeyAdapter.js';
 import { prepareMediaSubmission } from '../../shared/mediaReferences.js';
 import { isSiYueTianManagedVideoModel, siYueTianManagedVideoInputErrors } from '../../shared/siYueTianManagedVideo.js';
@@ -654,7 +654,7 @@ async function runImages(id: number, candidates: RouteCandidate[], request: Spec
         const invoke = () => {
           if (!routeStillEnabled(metadata(id).requestedModel, target, request.input)) throw new SpecificationUpstreamError('线路已手动禁用或修改', true);
           return generateSpecificationImage(target, request, (receipt) => patch(id, { submissionStartedAt: new Date().toISOString(), imageSubmissionIndex: index, ...(receipt ? {image2proRequests:{...(metadata(id).image2proRequests || {}),[index]:receipt.image2proRequest}} : {}) }),
-            taskId => { accepted = true; taskIds.push(taskId); jobs.push({ index, taskId, ...(isMinikeyChannel(target.channel)?{minikeyCredential:minikeyCredential(target.channel)}:{}), channelId: target.channel.id, apiKeyId: target.channel.apiKeyId, healthKey: target.healthKey, status: 'pending' }); patch(id, { upstreamTaskIds: taskIds, upstreamTaskId: taskId, imageJobs: jobs }); },
+            taskId => { accepted = true; taskIds.push(taskId); jobs.push({ index, taskId, ...(isMinikeyChannel(target.channel)?{minikeyCredential:minikeyCredential(target.channel)}:{}), channelId: target.channel.id, apiKeyId: target.channel.apiKeyId, healthKey: target.healthKey, status: 'pending' }); patch(id, { upstreamTaskIds: taskIds, upstreamTaskId: taskId, imageJobs: jobs, ...(target.channel.type === 'image2pro' ? { serverTracksImage: true } : {}) }, target.channel.type === 'image2pro' ? 'processing' : undefined); },
             evidence => {
               const meta = metadata(id), responses = [...(meta.upstreamResponses || [])];
               responses[index] = evidence;
@@ -665,7 +665,7 @@ async function runImages(id: number, candidates: RouteCandidate[], request: Spec
               if (state.status === 'submitting' && fallbacks[index]) throw new SpecificationUpstreamError('备用已执行，请核对原任务', false, true);
               fallbacks[index] = { ...fallbacks[index], ...state, updatedAt: new Date().toISOString() };
               patch(id, { pidoiFallbacks: fallbacks, progressText: '正在使用异步备用生成' });
-            });
+            }, error => patch(id, { upstreamQueryError: error, progressText: error ? '正在重新查询原图片任务' : '图片生成中' }));
         };
         const result = target.channel.type === 'hmstudio' ? await hmStudioQueue.enqueue({ id: 'spec-image-' + id + '-' + index + '-' + target.route.id,
           userKey: metadata(id).queueUserKey, poolKey: hmStudioPoolKey(target.channel), task: invoke,
@@ -1164,9 +1164,10 @@ async function recoverImages(id: number) {
     return;
   }
 
-  const deadline = Date.now() + 20 * 60_000;
+  let deadline = Date.now() + 20 * 60_000;
   while (Date.now() < deadline) {
     let pending = false;
+    let pollDelay = initial.image2proRequests ? 10000 : 8000;
     for (const job of jobs) {
       if (['completed','failed'].includes(job.status)) continue;
       const channel = ChannelService.getChannelRaw(job.channelId, job.apiKeyId || null);
@@ -1177,7 +1178,14 @@ async function recoverImages(id: number) {
         if (!job.sourceUrl) {
           const result = await pollSpecificationImage(channel, job.taskId);
           if (result.status === 'failed') { job.status = 'failed'; job.error = result.error || '图片生成失败'; noteRouteResult(job.healthKey, false, job.error, false, true); continue; }
-          if (result.status !== 'completed' || !result.imageUrl) { pending = true; continue; }
+          if (result.status !== 'completed' || !result.imageUrl) {
+            if (channel.type === 'image2pro' && ['queued', 'processing'].includes(result.status)) {
+              const interval = Number('pollAfterMs' in result && result.pollAfterMs) || 10000;
+              pollDelay = Math.max(pollDelay, interval);
+              deadline = Date.now() + pollDelay + 20 * 60_000;
+            }
+            pending = true; continue;
+          }
           job.sourceUrl = result.imageUrl; patch(id, { imageJobs: jobs });
         }
         const { localizeGeneratedImage } = await import('../routes/imageGen.js');
@@ -1185,6 +1193,7 @@ async function recoverImages(id: number) {
         job.status = 'completed'; noteRouteResult(job.healthKey, true);
       } catch (error: any) {
         pending = true;
+        if (error instanceof Image2proError) pollDelay = Math.max(pollDelay, error.retryAfterMs);
         const message = transportDiagnostic(channel.type || 'OpenAI-compatible', '图片恢复查询或保存 task_id=' + job.taskId + '；请勿重复提交', error, channel.apiKey);
         job.queryError = message; patch(id, { upstreamQueryError: message, progressText: message });
       }
@@ -1195,7 +1204,7 @@ async function recoverImages(id: number) {
       if (initial.submissionStartedAt && !jobs.some(j => j.index === initial.imageSubmissionIndex)) { holdForReview(id, '有一张图片的提交结果仍待核实，请勿重提'); return; }
       if (urls.length) complete(id, urls); else failTask(id, jobs.map(j => j.error).filter(Boolean).join('；') || '图片生成失败'); return;
     }
-    await wait(initial.image2proRequests ? 10000 : 8000);
+    await wait(pollDelay);
   }
   holdForReview(id, '图片原任务仍在处理中，请勿重复提交');
 }

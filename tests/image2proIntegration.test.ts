@@ -93,16 +93,58 @@ it.each([
  if(profile==='flow'){expect(sent[0].reference_images).toEqual([{url:'https://cdn.example/first.png',role:'first_frame'}]);expect(sent[0].aspect_ratio).toBe('9:16');expect(sent[0].images).toBeUndefined();}
  else {expect(sent[0].first_frame).toBe('https://cdn.example/first.png');expect(sent[0].mode).toBe('keyframe');expect(sent[0].size).toBe('720p');}
 });
+it('keeps an accepted image processing across a long wait and temporary query failure', async () => {
+ const request = imageRequest(), id = 'f'.repeat(32);
+ let posts = 0, queries = 0;
+ vi.useFakeTimers();
+ try {
+  vi.stubGlobal('fetch', vi.fn(async (url: any, init: any) => {
+   if (init?.method === 'POST') {
+    posts++;
+    return Response.json({id, status:'processing', poll_after_ms: 21 * 60_000});
+   }
+   expect(String(url)).toContain('/images/tasks/' + id);
+   queries++;
+   if (queries === 1) return Response.json({id, status:'processing'});
+   if (queries === 2) return Response.json({error:{message:'temporary'}}, {status:503, headers:{'Retry-After':'30'}});
+   return Response.json({id,status:'completed',data:[{url:'https://cdn.example/original.png'}]});
+  }));
+  const run = handleSpecificationGeneration(request, res(), 'image');
+  await vi.advanceTimersByTimeAsync(21 * 60_000 + 10_000);
+  const row = db.select().from(contents).get()!;
+  expect(row.status).toBe('processing');
+  const meta = JSON.parse(row.metadata);
+  expect(meta.requiresReview).toBeFalsy();
+  expect(meta.upstreamQueryError).toContain('503');
+  expect(meta.upstreamTaskId).toBe(id);
+  resumeSpecificationTasks();
+  await vi.advanceTimersByTimeAsync(29_999);
+  expect(queries).toBe(2);
+  await vi.advanceTimersByTimeAsync(1);
+  await run;
+  expect(db.select().from(contents).get()?.status).toBe('completed');
+  expect(posts).toBe(1);
+  expect(queries).toBe(3);
+  expect(db.select().from(users).get()?.balance).toBe(98);
+ } finally { vi.useRealTimers(); }
+});
+
 it.each([false,true])('image recovery keeps the original task after remapping or identity/type change (%s)',async rename=>{
  const request=imageRequest(),id='f'.repeat(32);let queries=0,posts=0;
  vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
   if(init?.method==='POST'){posts++;return Response.json({id,status:'processing'});}
   queries++;expect(String(url)).toContain('/images/tasks/'+id);
-  if(queries===1)return Response.json({error:{message:'临时查询故障'}},{status:503});
+  if(queries===1)return Response.json({error:{message:'渠道鉴权异常'}},{status:403});
   return Response.json({id,status:'completed',data:[{url:'https://cdn.example/original.png'}]});
  }));
  await handleSpecificationGeneration(request,res(),'image');expect(db.select().from(users).get()?.balance).toBe(98);
  expect(JSON.parse(db.select().from(contents).get()!.metadata).requiresReview).toBe(true);
+ const model = db.select().from(models).all().find(m => m.modelId === 'test-image')!;
+ if (rename) sqlite.transaction(() => migrateImage2proIdentity(model, {modelId:'renamed-image-as-text',displayName:'new text',upstreamModel:'new-text',kind:'text',limits:defaultRoutingLimits()}, db.select().from(channels).get()!.id))();
+ else {
+  const spec = getModelSpecification('test-image')!;
+  saveModelSpecification({...spec, routes:spec.routes.map(route => ({...route, upstreamModel:'new-image'}))});
+ }
  resumeSpecificationTasks();await vi.waitFor(()=>expect(db.select().from(contents).get()?.status).toBe('completed'));
  expect(posts).toBe(1);expect(queries).toBe(2);expect(db.select().from(users).get()?.balance).toBe(98);
 });

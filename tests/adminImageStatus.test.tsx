@@ -100,3 +100,14 @@ it.each(['upstreamQueryError', 'resultSaveError'])('生成中视频展示实际�
   expect(within(diagnostics).getByText('查询 HTTP 状态：401')).toBeTruthy();
   expect(adminApi.recoverContentUpstream).not.toHaveBeenCalled();
 });
+
+it.each([false, true])('Image2Pro 图片等待超过半小时仍按后台记录展示 (%s)', async review => {
+  const item = { id: 16821, userId: 1, type: 'image', title: 'image', modelId: 'test-image', cost: 0.08,
+    status: 'processing', createdAt: new Date(Date.now() - 3600000).toISOString(),
+    metadata: JSON.stringify({ actualChannel: 'image2pro', requiresReview: review }) };
+  vi.mocked(adminApi.getContents).mockResolvedValue({items:[item],total:1});
+  render(<MemoryRouter><ContentsPage /></MemoryRouter>);
+  const table = await screen.findByRole('table');
+  await within(table).findByRole('button', {name:'查看本地记录 16821 详情'});
+  expect(Boolean(within(table).queryByText('待核实'))).toBe(review);
+});
