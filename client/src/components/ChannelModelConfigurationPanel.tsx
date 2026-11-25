@@ -177,7 +177,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
   const manual = apipath && draft?.apipathManual === true;
   const chooseFromCatalog = huss || apipath && !manual || image2pro || wanfeng || asyncVideo || data?.protocol === 'megaby' || snumom;
   const upstreamPricing = catalog?.find(entry => entry.id === draft?.upstreamModel)?.upstreamPricing;
-  const availableModels = apipath || huss ? catalog : catalog?.filter(entry => !data?.models.some(row => row.modelId !== selected?.modelId && row.upstreamModel === entry.id));
+  const availableModels = image2pro && selected ? catalog?.filter(entry => entry.kind === draft?.kind) : apipath || huss ? catalog : catalog?.filter(entry => !data?.models.some(row => row.modelId !== selected?.modelId && row.upstreamModel === entry.id));
 
   return <AdminDrawer modal panelClassName="v6k-model-dialog" title={channelName + ' · 模型与参数'}
     blocked={busy} onClose={() => navigate('close')}>
@@ -238,7 +238,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                   onChange={event => setDraft({ ...draft, modelId: event.target.value })} /></label>
                 <label>显示名称<input className={field} value={draft.displayName} required
                   onChange={event => setDraft({ ...draft, displayName: event.target.value })} /></label>
-                <label>上游模型 ID{chooseFromCatalog ? <select className={field} value={draft.upstreamModel} required disabled={(apipath || image2pro || snumom) && Boolean(selected)}
+                <label>上游模型 ID{chooseFromCatalog ? <select className={field} value={draft.upstreamModel} required disabled={(apipath || snumom) && Boolean(selected)}
                   onChange={event => {
                     const entry = availableModels?.find(model => model.id === event.target.value);
                     if (apipath && entry && !entry.limits) {
@@ -250,7 +250,8 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                     }
                     if (!entry || !entry.limits && entry.kind !== 'text' && !snumom) return;
                     const limits = entry.limits ?? (snumom ? draft.limits : defaultRoutingLimits());
-                    setDraft({ ...draft, upstreamModel: entry.id, limits, ...(huss ? {kind:entry.kind!,...(!selected ? {modelId:entry.id === 'Midjourney V8.2' ? entry.id : draft.modelId,displayName:draft.displayName || entry.id} : {})} : apipath ? {kind:entry.kind!} : image2pro ? {modelId:entry.id,displayName:entry.id,kind:entry.kind!} : snumom ? {modelId:entry.id,displayName:entry.id} : {}) });
+                    setDraft({ ...draft, upstreamModel: entry.id, limits, ...(huss ? {kind:entry.kind!,...(!selected ? {modelId:entry.id === 'Midjourney V8.2' ? entry.id : draft.modelId,displayName:draft.displayName || entry.id} : {})} : apipath ? {kind:entry.kind!} : image2pro ? {kind:entry.kind!,...(!selected ? {modelId:entry.id,displayName:entry.id} : {})} : snumom ? {modelId:entry.id,displayName:entry.id} : {}) });
+                    if (image2pro && selected) setNotice('已更换草稿中的上游型号并带入参数，请核对后保存。本站 ID、名称和售价保留；在途任务继续查询原任务。');
                     setResolutions(limits.resolutions.join(','));
                     setRatios(limits.ratios.join(','));
                     setSeconds(limits.duration.values.join(','));

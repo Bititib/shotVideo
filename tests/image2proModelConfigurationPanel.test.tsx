@@ -69,3 +69,15 @@ it.each(['text','video'] as const)('shows %s public prices and units but exclude
  expect(screen.getByText(kind==='text'?'文本请求价格':'视频价格').nextElementSibling).toHaveTextContent(kind==='text'?'0':'45');expect(screen.getByText(pricing.unit)).toBeInTheDocument();expect(screen.getByText(pricing.note)).toBeInTheDocument();
  fireEvent.submit(document.querySelector('#channel-model-form')!);await waitFor(()=>expect(api.save).toHaveBeenCalled());expect(api.save.mock.calls[0][1]).not.toHaveProperty('upstreamPricing');
 });
+
+it('switches only same-kind upstream models without renaming the saved product',async()=>{
+ const limits={...defaultRoutingLimits(),resolutions:['2K'],ratios:['1:1'],maxImages:1};
+ api.list.mockResolvedValue({...config,models:[{modelId:'original',upstreamModel:'original',displayName:'My product',capabilities:['image'],limits,enabled:true,editable:true}]});
+ api.catalog.mockResolvedValue([{id:'replacement',kind:'image',limits:{...limits,resolutions:['4K']}},{id:'wrong-type',kind:'text'}]);
+ render(<Panel channelId={34} channelName="QQ-78ai" onClose={vi.fn()} onSaved={vi.fn()} onManage={vi.fn()}/>);
+ fireEvent.click(await screen.findByText('读取已授权的上游型号'));await screen.findByRole('option',{name:'replacement'});
+ expect(screen.queryByRole('option',{name:'wrong-type'})).not.toBeInTheDocument();expect(screen.getByLabelText('上游模型 ID')).not.toBeDisabled();
+ fireEvent.change(screen.getByLabelText('上游模型 ID'),{target:{value:'replacement'}});
+ expect(screen.getByLabelText('本站 API 模型 ID')).toHaveValue('original');expect(screen.getByLabelText('显示名称')).toHaveValue('My product');expect(screen.getByLabelText('可选分辨率')).toHaveValue('4K');
+ fireEvent.submit(document.querySelector('#channel-model-form')!);await waitFor(()=>expect(api.save).toHaveBeenCalledWith(34,expect.objectContaining({modelId:'original',displayName:'My product',upstreamModel:'replacement',kind:'image'}),'v1'));
+});

@@ -65,7 +65,7 @@ function readConfiguration(channel: Channel) {
     const routes = spec?.routes.filter(route => route.channelId === channel.id) ?? [];
     const capabilities: string[] = JSON.parse(model?.capabilities || '[]');
     const kind = capabilities.includes('video') ? 'video' : capabilities.some(capability => ['image', 'image_gen'].includes(capability)) ? 'image' : null;
-    const editable = Boolean(channel.type === 'image2pro' && model?.provider === 'image2pro' && capabilities.includes('text') && !spec && mapping[modelId] === modelId) || Boolean(canAdd && model && spec?.routes.length === 1 && (routes[0]?.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX) || channel.type === 'huss' && routes[0]?.id.startsWith('huss-' + channel.id + '-') || channel.type === 'apipath' && routes[0]?.id.startsWith('apipath-' + channel.id + '-') || channel.type === 'image2pro' && routes[0]?.id.startsWith('image2pro-' + channel.id + '-'))
+    const editable = Boolean(channel.type === 'image2pro' && model?.provider === 'image2pro' && capabilities.includes('text') && !spec && typeof mapping[modelId] === 'string') || Boolean(canAdd && model && spec?.routes.length === 1 && (routes[0]?.id.startsWith(CHANNEL_MODEL_ROUTE_PREFIX) || channel.type === 'huss' && routes[0]?.id.startsWith('huss-' + channel.id + '-') || channel.type === 'apipath' && routes[0]?.id.startsWith('apipath-' + channel.id + '-') || channel.type === 'image2pro' && routes[0]?.id.startsWith('image2pro-' + channel.id + '-'))
       && routes[0].executionModel === modelId && allowsChannelModelConfigurationRoute(sqlite, channel, routes[0].id));
     return {
       modelId, displayName: model?.displayName || modelId,
@@ -165,7 +165,7 @@ function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol
     if (draft.snumom?.billingType !== 'per_second' || draft.snumom.referenceVideoBilling !== true)
       throw fail('重新接入此型号须按秒计费，并开启参考视频计费（音频不计费）');
   }
-  if (image2pro && draft.modelId !== draft.upstreamModel) throw fail('Image2Pro 本站模型 ID 必须与上游公开 ID 一致，不添加渠道前缀');
+  if (image2pro && (!draft.modelId.trim() || draft.modelId !== draft.modelId.trim() || draft.modelId.length > 160 || draft.modelId === '*' || /[\x00-\x1f\x7f]/.test(draft.modelId))) throw fail('Image2Pro 本站模型 ID 无效');
   if (image2pro && draft.kind === 'text') return;
   validateLimits(draft.limits);
   if (huss) {
@@ -289,6 +289,7 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
     }
     if (current.result.version !== version) throw fail('渠道模型配置已变化，请重新打开后保存', 409);
     const existing = current.result.models.find(row => row.modelId === draft.modelId);
+    if (channel.type === 'image2pro' && !existing && draft.modelId !== draft.upstreamModel) throw fail('Image2Pro 新型号的本站 ID 必须与上游公开 ID 一致');
     if (existing && channel.type === 'apipath' && Boolean(existing.apipathManual) !== Boolean(draft.apipathManual)) throw fail('已有模型须保留原录入方式', 409);
     if (existing && (!existing.editable || !existing.capabilities.includes(draft.kind))) throw fail('此模型使用已有接入配置，不能通过通用入口更换协议或能力', 409);
     if ((protocol || channel.type === 'huss') && current.result.models.some(row => row.modelId !== draft.modelId && row.upstreamModel === draft.upstreamModel)) {
@@ -419,6 +420,8 @@ export async function previewAuthorizedChannelModelRequest(channelId: number, dr
   }
   if (channel.type !== 'image2pro') return previewChannelModelRequest(channelId, draft, sample);
   validateDraft(draft, undefined, true);
+  const existing = readConfiguration(channel).result.models.find(row => row.modelId === draft.modelId);
+  if (existing ? !existing.editable || !existing.capabilities.includes(draft.kind) : draft.modelId !== draft.upstreamModel) throw fail('Image2Pro 仅允许已有可编辑型号切换同类型上游');
   const model = (await image2proModels(channel)).find(m => m.id === draft.upstreamModel);
   if (!model) throw fail('该上游型号未出现在此 Key 的授权目录中',409);
   const kind = model.metadata.type;

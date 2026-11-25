@@ -10,7 +10,7 @@ import { activeSpecificationTasks } from '../server/services/videoRecoveryAction
 import { db, sqlite } from '../server/db/index.js';
 import { channels, contents, models, modelPricing, settings, users } from '../server/db/schema.js';
 import { ChannelService } from '../server/services/channelService.js';
-import { saveModelSpecification } from '../server/services/modelRoutingService.js';
+import { saveModelSpecification, getModelSpecification } from '../server/services/modelRoutingService.js';
 import { handleSpecificationGeneration, resumeSpecificationTasks } from '../server/services/specificationGenerationService.js';
 import { defaultRoutingLimits } from '../shared/modelRouting.js';
 beforeEach(() => {
@@ -92,7 +92,7 @@ it.each([
  if(profile==='flow'){expect(sent[0].reference_images).toEqual([{url:'https://cdn.example/first.png',role:'first_frame'}]);expect(sent[0].aspect_ratio).toBe('9:16');expect(sent[0].images).toBeUndefined();}
  else {expect(sent[0].first_frame).toBe('https://cdn.example/first.png');expect(sent[0].mode).toBe('keyframe');expect(sent[0].size).toBe('720p');}
 });
-it('image query interruption recovers only the original task',async()=>{
+it('image query interruption recovers only the original task after an upstream mapping change',async()=>{
  const request=imageRequest(),id='f'.repeat(32);let queries=0,posts=0;
  vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
   if(init?.method==='POST'){posts++;return Response.json({id,status:'processing'});}

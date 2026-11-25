@@ -250,3 +250,38 @@ it.each(['未授权型号','模型\n名称',' 模型','*'])('does not accept inv
  await expect(saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version)).rejects.toThrow();
  expect(db.select().from(models).where(eq(models.modelId,id)).get()).toBeUndefined();
 });
+
+it.each(['image','video','text'] as const)('switches an existing %s mapping while preserving identity, price, activation and sync',async kind=>{
+ const {channelId,model,draft,entry,fetcher}=setup(kind);await saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version);
+ db.update(models).set({isActive:1}).where(eq(models.modelId,model)).run();db.insert(modelPricing).values({modelPattern:model,billingType:'per_call',inputPrice:7}).run();
+ const next={...entry,id:model+'-replacement'};fetcher.mockImplementation(async()=>Response.json({data:[entry,next]}));
+ const changed={...draft,upstreamModel:next.id};await saveChannelModelConfiguration(channelId,changed,listChannelModelConfigurations(channelId).version);
+ expect((await previewAuthorizedChannelModelRequest(channelId,changed)).body.model).toBe(next.id);
+ await ChannelService.syncModels(channelId);
+ const row=listChannelModelConfigurations(channelId).models.find(m=>m.modelId===model)!;expect(row).toMatchObject({upstreamModel:next.id,displayName:model,editable:true,enabled:true});
+ expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,model)).get()?.inputPrice).toBe(7);
+ expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping)[model]).toBe(next.id);
+ if(kind==='text') {
+   const tokenKey='switch-'+model;sqlite.prepare('INSERT INTO api_tokens(name,token_key,allowed_models,balance,used_amount,status) VALUES(?,?,?,?,?,?)').run(model,tokenKey,'[]',100,0,1);
+   fetcher.mockImplementation(async()=>Response.json({choices:[{message:{content:'ok'}}],usage:{prompt_tokens:1,completion_tokens:1}}));
+   const layer=apiRouter.stack.find((l:any)=>l.route?.path==='/chat/completions'&&l.route.methods.post)!;
+   const response:any={setHeader:vi.fn(),status(code:number){this.code=code;return this;},json(body:any){this.body=body;return this;}};
+   await layer.route.stack.at(-1)!.handle({body:{model,stream:false,messages:[{role:'user',content:'hello'}]},headers:{authorization:'Bearer '+tokenKey},socket:{},protocol:'http',get:()=> 'localhost'} as any,response,()=>{});
+   expect(response.body.choices[0].message.content).toBe('ok');expect(JSON.parse(String(fetcher.mock.calls.find(([,o])=>o?.method==='POST')![1]?.body)).model).toBe(next.id);
+ }
+ if(kind!=='text') {
+   const spec=getModelSpecification(model)!;const input={seconds:5,ratio:'16:9',resolution:'720p',images:0,videos:0,audios:0,outputs:1,firstFrame:false,lastFrame:false};
+   const [target]=selectModelRoutes(spec,input);expect(target.route.upstreamModel).toBe(next.id);
+   fetcher.mockImplementation(async(url)=>String(url).endsWith('/models')?Response.json({data:[entry,next]}):Response.json({id:'a'.repeat(32),status:'completed',data:[{url:'https://result.test/image.png'}],url:'https://result.test/video.mp4'}));
+   const request={prompt:'switch',input,images:[],videos:[],audios:[],firstFrame:'',lastFrame:'',body:{},publicBaseUrl:'https://site.test'};
+   if(kind==='image')await generateSpecificationImage(target,request,()=>{},()=>{});else await submitSpecificationVideo(target,request,()=>{});
+   expect(JSON.parse(String(fetcher.mock.calls.find(([,o])=>o?.method==='POST')![1]?.body)).model).toBe(next.id);
+ }
+});
+it.each(['wrong-kind','unknown','bad-limits'] as const)('rejects unsafe remapping %s without changing the saved mapping',async scenario=>{
+ const {channelId,model,draft,entry,fetcher}=setup('image');await saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version);
+ const next={...entry,id:model+'-next',metadata:{...entry.metadata,type:scenario==='wrong-kind'?'text':'image'}};
+ fetcher.mockImplementation(async()=>Response.json({data:scenario==='unknown'?[entry]:[entry,next]}));
+ await expect(saveChannelModelConfiguration(channelId,{...draft,upstreamModel:next.id,limits:{...draft.limits,...(scenario==='bad-limits'?{resolutions:['4K']}:{})}},listChannelModelConfigurations(channelId).version)).rejects.toThrow();
+ expect(getModelSpecification(model)?.routes[0].upstreamModel).toBe(model);
+});
