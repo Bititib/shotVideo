@@ -24,7 +24,7 @@ describe('model-specific API examples', () => {
   it('builds multipart image edits for both languages', () => {
     expect(modelExample(model, '/v1/images/edits', 'https://test.invalid', 'curl')).toContain('-F "image=@/path/to/reference.png"');
     expect(modelExample({ ...model, id: '@model-name' }, '/v1/images/edits', 'https://test.invalid', 'curl')).toContain("--form-string 'model=@model-name'");
-    expect(modelExample(model, '/v1/images/edits', 'https://test.invalid', 'python')).toContain('files={"image": image}');
+    expect(modelExample(model, '/v1/images/edits', 'https://test.invalid', 'python')).toContain('files={"image": ("reference.png", image, "image/png")}');
   });
   it('distinguishes missing prices from zero prices and renders token units', () => {
     expect(formatModelPrice(null)).toBe('价格未配置');

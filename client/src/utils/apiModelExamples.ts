@@ -40,7 +40,7 @@ export function modelExample(model: DeveloperModel, endpoint: DeveloperEndpoint,
   if (endpoint === '/v1/images/edits') {
     if (language === 'curl') return [`curl ${shellQuote(url)} \\`, '  -H "Authorization: Bearer sk-YOUR_API_KEY" \\',
       ...Object.entries(payload).map(([key, value]) => `  --form-string ${shellQuote(`${key}=${value}`)} \\`), '  -F "image=@/path/to/reference.png"'].join('\n');
-    return `import requests\n\nwith open("/path/to/reference.png", "rb") as image:\n    response = requests.post(\n        ${JSON.stringify(url)},\n        headers={"Authorization": "Bearer sk-YOUR_API_KEY"},\n        data=${JSON.stringify(payload)},\n        files={"image": image},\n        timeout=180,\n    )\nresponse.raise_for_status()\nprint(response.json())`;
+    return `import requests\n\nwith open("/path/to/reference.png", "rb") as image:\n    response = requests.post(\n        ${JSON.stringify(url)},\n        headers={"Authorization": "Bearer sk-YOUR_API_KEY"},\n        data=${JSON.stringify(payload)},\n        files={"image": ("reference.png", image, "image/png")},\n        timeout=180,\n    )\nresponse.raise_for_status()\nprint(response.json())`;
   }
   const json = JSON.stringify(payload, null, 2);
   const video = endpoint === '/v1/videos';

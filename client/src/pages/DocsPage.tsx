@@ -105,6 +105,11 @@ export default function DocsPage({ embedded = false }: { embedded?: boolean }) {
     return `${window.location.protocol}//${window.location.host}/v1`;
   };
 
+  const imageSpecificationParameters: Parameter[] = [
+    { name: 'resolution', type: 'string', required: false, description: '统一规格模型的清晰度，例如 1K。可选档位见模型详情。省略时取模型配置的首档，Image2Pro 指定下列方形尺寸时按尺寸选档。本站优先按该档售价计费，未配置分档价时使用基础价。' },
+    { name: 'aspect_ratio', type: 'string', required: false, description: '画面宽高比，例如 1:1 或 3:4。请从模型详情的可选比例中选择。' },
+    { name: 'size', type: 'string', required: false, description: '输出像素尺寸。Image2Pro 将 1024x1024、2048x2048、4096x4096 分别对应到 1K、2K、4K。型号须开放该档，同时传入的分辨率须匹配。其他尺寸请显式指定 resolution。' },
+  ];
   const endpoints: EndpointDoc[] = [
     {
       id:'music',title:'音乐生成与翻唱',method:'POST',path:'/v1/music',
@@ -292,24 +297,24 @@ print(response.choices[0].message.content)`,
       title: '文生图 (Text to Image)',
       method: 'POST',
       path: '/v1/images/generations',
-      description: '生成全新高质感 AI 场景摄影或设计图像，支持指定分辨率和多样控制参数。',
+      description: '以下示例使用支持 1K、1:1 的统一规格图片模型。请从模型详情复制本站 API 模型 ID，并按需替换档位和比例。',
       parameters: [
-        { name: 'model', type: 'string', required: true, description: '图像生成模型 ID；当前可用示例：gpt-image-2' },
+        { name: 'model', type: 'string', required: true, description: '模型详情中的本站 API 模型 ID' },
         { name: 'prompt', type: 'string', required: true, description: '生图提示词，用于精细刻画生成画面' },
-        { name: 'size', type: 'string', required: false, defaultVal: '1024x1024', description: '图片画幅：1024x1024 / 1280x720 / 720x1280 等' },
-        { name: 'n', type: 'integer', required: false, defaultVal: '1', description: '一次生成的图片张数，支持 1~4 张' },
-        { name: 'quality', type: 'string', required: false, defaultVal: 'medium', description: '画质等级（仅GPT-Image 2支持）：low, medium, high' },
-        { name: 'output_format', type: 'string', required: false, defaultVal: 'png', description: '输出文件格式：png, jpeg, webp' }
+        ...imageSpecificationParameters,
+        { name: 'n', type: 'integer', required: false, defaultVal: '1', description: '输出张数，上限见模型详情。' },
+        { name: 'quality', type: 'string', required: false, description: '仅在型号支持时填写。Image2Pro 请省略此字段。' },
+        { name: 'output_format', type: 'string', required: false, description: '仅在型号支持时填写。Image2Pro 请省略此字段。' }
       ],
       curlExample: `curl -X POST "${getBaseUrl()}/images/generations" \\
   -H "Authorization: Bearer sk-你的令牌Key" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "gpt-image-2",
+    "model": "YOUR_IMAGE_MODEL",
     "prompt": "一只现代极简主义设计水杯, 3D 渲染, 白色背景",
-    "size": "1024x1024",
-    "n": 1,
-    "output_format": "webp"
+    "resolution": "1K",
+    "aspect_ratio": "1:1",
+    "n": 1
   }'`,
       pythonExample: `from openai import OpenAI
 
@@ -319,9 +324,9 @@ client = OpenAI(
 )
 
 response = client.images.generate(
-    model="gpt-image-2",
+    model="YOUR_IMAGE_MODEL",
     prompt="一只现代极简主义设计水杯, 3D 渲染, 白色背景",
-    size="1024x1024",
+    extra_body={"resolution": "1K", "aspect_ratio": "1:1"},
     n=1
 )
 print(response.data[0].url)`,
@@ -339,30 +344,36 @@ print(response.data[0].url)`,
       title: '图生图与编辑 (Image Edit)',
       method: 'POST',
       path: '/v1/images/edits',
-      description: '提供参考图生图和局部细节修改能力。需要通过 multipart/form-data 方式发送文件。',
+      description: '使用 multipart/form-data 上传参考图。以下示例使用支持图生图、1K 和 1:1 的型号。请替换为本站模型 ID。',
       parameters: [
         { name: 'model', type: 'string', required: true, description: '支持图片编辑的模型 ID；请以 GET /v1/models 返回结果和模型能力为准' },
         { name: 'prompt', type: 'string', required: true, description: '图像改写/编辑修改描述词' },
-        { name: 'image', type: 'file', required: true, description: '参考图文件（多文件时使用 image[]，最大可传 5 张）' },
-        { name: 'size', type: 'string', required: false, defaultVal: '1024x1024', description: '目前固定输出 1024x1024 分辨率' }
+        { name: 'image', type: 'file', required: true, description: '参考图文件，多文件可重复使用 image[]。统一规格模型的数量范围见模型详情。' },
+        ...imageSpecificationParameters
       ],
       curlExample: `curl -X POST "${getBaseUrl()}/images/edits" \\
   -H "Authorization: Bearer sk-你的令牌Key" \\
-  -F "model=gpt-image-2" \\
+  -F "model=YOUR_IMAGE_MODEL" \\
   -F "prompt=将图片中的背景替换为繁华霓虹都市" \\
-  -F "image=@/local/path/to/origin.png"`,
+  -F "resolution=1K" \\
+  -F "aspect_ratio=1:1" \\
+  -F "image=@/local/path/to/origin.png;type=image/png"`,
       pythonExample: `# 使用 requests 发送 multipart/form-data
 import requests
 
 url = "${getBaseUrl()}/images/edits"
 headers = {"Authorization": "Bearer sk-你的令牌Key"}
-files = {"image": ("origin.png", open("origin.png", "rb"), "image/png")}
 data = {
-    "model": "gpt-image-2",
+    "model": "YOUR_IMAGE_MODEL",
+    "resolution": "1K",
+    "aspect_ratio": "1:1",
     "prompt": "将图片中的背景替换为繁华霓虹都市"
 }
 
-resp = requests.post(url, headers=headers, data=data, files=files)
+with open("origin.png", "rb") as image:
+    files = {"image": ("origin.png", image, "image/png")}
+    resp = requests.post(url, headers=headers, data=data, files=files, timeout=300)
+resp.raise_for_status()
 print(resp.json()["data"][0]["url"])`,
       responseExample: `{
   "created": 1783309300,
