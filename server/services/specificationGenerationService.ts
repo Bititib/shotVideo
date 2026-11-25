@@ -979,7 +979,7 @@ export async function handleSpecificationGeneration(req: Request, res: Response,
     const body = { ...req.body };
     if (spec.routes.some(r=>r.snumom)) { try { normalizeConfiguredSnumomBody(body); } catch(error:any) { throw fail(error.message); } }
     const image2proConfigured = model.provider === 'image2pro';
-    if (image2proConfigured) { try { normalizeImage2proInput(body); } catch (error:any) { throw fail(error.message); } }
+    if (image2proConfigured) { try { normalizeImage2proInput(body, kind); } catch (error:any) { throw fail(error.message); } }
     if (kind === 'video') normalizeVideoParameters(body, videoCapabilities(modelId, spec).parameterSchema, Boolean(req.is?.('multipart/form-data')));
     if (isZhiyingVideoModel(modelId)) {
       body.model = modelId;

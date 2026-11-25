@@ -59,6 +59,32 @@ function imageRequest(){
  saveModelSpecification({modelId:'test-image',kind:'image',enabled:true,aliases:[],limits,routes:[{id:'image',channelId:channel.id,upstreamModel:'test-image',executionModel:'test-image',enabled:true,limits,cost:null,costUnit:'unknown',resolutionCosts:{},priority:0}]});
  return {...req(),body:{model:'test-image',prompt:'海边',resolution:'2K',aspect_ratio:'1:1'}};
 }
+it.each(['supported', 'unsupported', 'conflict'])('prices a 1024x1024 Image2Pro request before reservation (%s)', async scenario => {
+ const request = imageRequest();
+ const spec = getModelSpecification('test-image')!;
+ const limits = {...spec.limits, maxImages:1, resolutions: scenario === 'unsupported' ? ['4K'] : ['4K', '1K']};
+ saveModelSpecification({...spec, limits, routes:spec.routes.map(route => ({...route, limits}))});
+ sqlite.prepare('UPDATE model_pricing SET extra_params=? WHERE model_pattern=?').run(JSON.stringify({'1K':1,'4K':4}), 'test-image');
+ request.path = '/images/edits';
+ request.files = [{fieldname:'image', mimetype:'image/png', buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/6n8AAAAASUVORK5CYII=', 'base64')}];
+ request.body = {model:'test-image', prompt:'海边', size:'1024x1024', ...(scenario === 'conflict' ? {resolution:'4K'} : {})};
+ vi.stubGlobal('fetch', vi.fn(async (_url:any, init:any) => {
+  expect(JSON.parse(init.body)).toMatchObject({size:'1024x1024', resolution:'1K', aspect_ratio:'1:1', images:[expect.any(String)]});
+  return Response.json({id:'d'.repeat(32),status:'completed',data:[{url:'https://cdn.example/image.png'}]});
+ }));
+ const response = res();
+ await handleSpecificationGeneration(request, response, 'image');
+ if (scenario === 'supported') {
+  expect(db.select().from(contents).get()).toMatchObject({status:'completed', cost:1});
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(db.select().from(users).get()?.balance).toBe(99);
+ } else {
+  expect(response.status).toHaveBeenCalledWith(400);
+  expect(fetch).not.toHaveBeenCalled();
+  expect(db.select().from(contents).get()).toBeUndefined();
+  expect(db.select().from(users).get()?.balance).toBe(100);
+ }
+});
 it('image rejection refunds once through the image generation entry',async()=>{
  const request=imageRequest();vi.stubGlobal('fetch',vi.fn(async()=>Response.json({error:{message:'参数不支持'}},{status:400})));
  await handleSpecificationGeneration(request,res(),'image');expect(db.select().from(contents).get()?.status).toBe('failed');expect(db.select().from(users).get()?.balance).toBe(100);

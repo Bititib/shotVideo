@@ -1,5 +1,5 @@
 /** Normalize only Image2Pro's documented aliases before shared routing and billing. */
-export function normalizeImage2proInput(body: Record<string, any>) {
+export function normalizeImage2proInput(body: Record<string, any>, kind: 'image' | 'video') {
   delete body.image2proVideoOptions;
   for (const keys of [['aspect_ratio','ratio'],['resolution','output_resolution','image_size'],['video_length','duration','seconds']]) {
     const supplied=keys.filter(k=>body[k]!==undefined && body[k]!=='');
@@ -38,6 +38,17 @@ export function normalizeImage2proInput(body: Record<string, any>) {
   if(body.size && body.size!=='auto') {
     const match=/^([1-9]\d{1,4})x([1-9]\d{1,4})$/i.exec(body.size);
     if(!match)throw new Error('Image2Pro size 须为宽x高，例如 1024x1024');
+    if (kind === 'image' && match[1] === match[2]) {
+      const squareTiers: Record<string, string> = { '1024': '1K', '2048': '2K', '4096': '4K' };
+      const tier = squareTiers[match[1]];
+      if (tier) {
+        if (body.resolution && String(body.resolution).toLowerCase() !== 'auto' && String(body.resolution).toUpperCase() !== tier) {
+          throw new Error('Image2Pro size 与 resolution 不一致：' + body.size + ' 对应 ' + tier);
+        }
+        body.resolution = tier;
+        if (body.output_resolution !== undefined) body.output_resolution = tier;
+      }
+    }
     if(!body.aspect_ratio){const w=Number(match[1]),h=Number(match[2]);const gcd=(a:number,b:number):number=>b?gcd(b,a%b):a;const g=gcd(w,h);body.aspect_ratio=(w/g)+':'+(h/g);}
   }
 }
