@@ -285,3 +285,38 @@ it.each(['wrong-kind','unknown','bad-limits'] as const)('rejects unsafe remappin
  await expect(saveChannelModelConfiguration(channelId,{...draft,upstreamModel:next.id,limits:{...draft.limits,...(scenario==='bad-limits'?{resolutions:['4K']}:{})}},listChannelModelConfigurations(channelId).version)).rejects.toThrow();
  expect(getModelSpecification(model)?.routes[0].upstreamModel).toBe(model);
 });
+
+it('renames the model atomically with pricing, token permissions, route identity and old API alias',async()=>{
+ const {channelId,model,draft,entry,fetcher}=setup('image');await saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version);
+ const original=db.select().from(models).where(eq(models.modelId,model)).get()!;
+ db.insert(modelPricing).values({modelPattern:model,billingType:'per_call',inputPrice:11}).run();
+ sqlite.prepare('INSERT INTO api_tokens(name,token_key,allowed_models,balance,used_amount,status) VALUES(?,?,?,?,?,?)').run(model,model,JSON.stringify([model]),100,0,1);
+ const next={...draft,originalModelId:model,modelId:model+'-renamed',displayName:'Custom '+model};
+ await saveChannelModelConfiguration(channelId,next,listChannelModelConfigurations(channelId).version);
+ expect(db.select().from(models).where(eq(models.modelId,next.modelId)).get()?.id).toBe(original.id);
+ expect(getModelSpecification(model)).toBeUndefined();expect(getModelSpecification(next.modelId)?.routes[0]).toMatchObject({executionModel:next.modelId,upstreamModel:model});
+ expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,next.modelId)).get()?.inputPrice).toBe(11);
+ expect(JSON.parse((sqlite.prepare('SELECT allowed_models FROM api_tokens WHERE token_key=?').get(model) as any).allowed_models)).toEqual([next.modelId]);
+ const {resolvePublicModelId}=await import('../server/services/publicModelNameService.js');expect(resolvePublicModelId(model)).toBe(next.modelId);
+ await ChannelService.syncModels(channelId);expect(listChannelModelConfigurations(channelId).models.map(m=>m.modelId)).toEqual([next.modelId]);
+ expect(db.select().from(models).where(eq(models.modelId,model)).get()).toBeUndefined();
+});
+it.each([['image','text'],['text','video'],['video','image']] as const)('changes %s to %s with valid new capabilities, preserving prices and disabling until reviewed',async(from,to)=>{
+ const {channelId,model,draft,entry,fetcher}=setup(from);await saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version);
+ db.update(models).set({isActive:1}).where(eq(models.modelId,model)).run();db.insert(modelPricing).values({modelPattern:model,billingType:'per_call',inputPrice:9}).run();
+ const replacement={id:model+'-next',metadata:{...entry.metadata,type:to,...(to==='video'?{media_contract:1,durations:[5,10]}:{})}};
+ fetcher.mockImplementation(async()=>Response.json({data:[entry,replacement]}));
+ const changed={...draft,originalModelId:model,kind:to,upstreamModel:replacement.id};
+ await saveChannelModelConfiguration(channelId,changed,listChannelModelConfigurations(channelId).version);
+ expect(db.select().from(models).where(eq(models.modelId,model)).get()).toMatchObject({capabilities:JSON.stringify([to]),isActive:0});
+ if(to==='text')expect(getModelSpecification(model)).toBeUndefined();else expect(getModelSpecification(model)?.kind).toBe(to);
+ expect((await previewAuthorizedChannelModelRequest(channelId,changed)).body.model).toBe(replacement.id);
+ await ChannelService.syncModels(channelId);expect(db.select().from(models).where(eq(models.modelId,model)).get()?.capabilities).toBe(JSON.stringify([to]));
+ expect(db.select().from(modelPricing).where(eq(modelPricing.modelPattern,model)).get()?.inputPrice).toBe(9);
+});
+it('rolls back a rename conflicting with an existing price',async()=>{
+ const {channelId,model,draft}=setup('image');await saveChannelModelConfiguration(channelId,draft,listChannelModelConfigurations(channelId).version);
+ db.insert(modelPricing).values({modelPattern:model+'-taken',billingType:'per_call',inputPrice:5}).run();
+ await expect(saveChannelModelConfiguration(channelId,{...draft,originalModelId:model,modelId:model+'-taken'},listChannelModelConfigurations(channelId).version)).rejects.toThrow('售价');
+ expect(db.select().from(models).where(eq(models.modelId,model)).get()).toBeTruthy();expect(getModelSpecification(model)).toBeTruthy();
+});

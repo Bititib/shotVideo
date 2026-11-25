@@ -1,3 +1,4 @@
+import { resolvePublicModelId } from './publicModelNameService.js';
 import { image2proLimits } from './image2proCapabilities.js';
 import { eq } from 'drizzle-orm';
 import { db, sqlite } from '../db/index.js';
@@ -8,11 +9,13 @@ import { getModelSpecification, saveModelSpecification } from './modelRoutingSer
 export async function syncImage2proModels(c: Image2proChannel & { id: number; priority: number }) {
   const discovered = await image2proModels(c);
   // Synchronize only self describing media and Veo/Omni capabilities; legacy profiles are not guessed.
-  const entries = discovered.filter((m: any) => m.metadata.type === 'text' || m.metadata.type === 'image' || m.metadata.media_contract === 1 || typeof m.metadata.supports_frame_control === 'boolean' || Number.isInteger(m.metadata.duration_min) && Number.isInteger(m.metadata.duration_max));
+  const entries = discovered.filter((m: any) => resolvePublicModelId(m.id) === m.id).filter((m: any) => m.metadata.type === 'text' || m.metadata.type === 'image' || m.metadata.media_contract === 1 || typeof m.metadata.supports_frame_control === 'boolean' || Number.isInteger(m.metadata.duration_min) && Number.isInteger(m.metadata.duration_max));
   let added = 0;
   sqlite.transaction(() => {
     for (const m of entries) {
+      if (resolvePublicModelId(m.id) !== m.id) continue; // A renamed product owns its historical ID.
       const old = db.select().from(models).where(eq(models.modelId, m.id)).get();
+      if (old?.provider === 'image2pro' && !JSON.parse(old.capabilities).includes(m.metadata.type)) continue; // Preserve an explicitly changed product type.
       if (old && old.provider !== 'image2pro') throw new Error('模型 ID 已存在，需核对产品身份：' + m.id);
       if(m.metadata.type==='text'){
         if(!old){db.insert(models).values({provider:'image2pro',modelId:m.id,displayName:m.name||m.id,capabilities:'["text"]',description:'Image2Pro Chat Completions；配置售价后启用。',isActive:0}).run();added++;}
@@ -32,5 +35,5 @@ export async function syncImage2proModels(c: Image2proChannel & { id: number; pr
     db.update(channels).set({ supportedModels:JSON.stringify([...new Set([...JSON.parse(saved.supportedModels || '[]'),...entries.map((m:any)=>m.id)])]),
       modelMapping:JSON.stringify({...Object.fromEntries(entries.map((m:any)=>[m.id,m.id])),...JSON.parse(saved.modelMapping || '{}')}), updatedAt:new Date().toISOString() }).where(eq(channels.id,c.id)).run();
   })();
-  return {count:entries.length,added,models:entries.map((m:any)=>m.id),skipped:discovered.length-entries.length,warnings:['新模型默认停用；未公布图片规格时使用 auto（沿用上游默认），图生图单价已公布但缺少张数上限时默认 1 张参考图；可在模型与参数中按文档配置比例、分辨率和参考图上限。',...(discovered.length>entries.length?['部分视频型号尚未提供已接入的能力协议，本次未同步：'+discovered.filter((m:any)=>!entries.includes(m)).map((m:any)=>m.id).join('、')]:[])]};
+  return {count:entries.length,added,models:entries.map((m:any)=>m.id),skipped:discovered.length-entries.length,warnings:['新模型默认停用；未公布图片规格时使用 auto（沿用上游默认），图生图单价已公布但缺少张数上限时默认 1 张参考图；可在模型与参数中按文档配置比例、分辨率和参考图上限。',...(discovered.length>entries.length?['部分型号已归属于重命名模型或未提供已接入协议，本次未重复同步：'+discovered.filter((m:any)=>!entries.includes(m)).map((m:any)=>m.id).join('、')]:[])]};
 }

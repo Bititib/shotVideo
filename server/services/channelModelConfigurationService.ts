@@ -1,3 +1,4 @@
+import { migrateImage2proIdentity } from './image2proModelIdentity.js';
 import { image2proUpstreamPricing } from './image2proUpstreamPricing.js';
 import { HUSS_CONFIGURATION_PREFIX, validateHussConfiguration } from '../../shared/hussConfiguration.js';
 import { buildHussVideoRequest } from './hussVideoAdapter.js';
@@ -165,7 +166,7 @@ function validateDraft(draft: ChannelModelDraft, protocol?: ChannelVideoProtocol
     if (draft.snumom?.billingType !== 'per_second' || draft.snumom.referenceVideoBilling !== true)
       throw fail('重新接入此型号须按秒计费，并开启参考视频计费（音频不计费）');
   }
-  if (image2pro && (!draft.modelId.trim() || draft.modelId !== draft.modelId.trim() || draft.modelId.length > 160 || draft.modelId === '*' || /[\x00-\x1f\x7f]/.test(draft.modelId))) throw fail('Image2Pro 本站模型 ID 无效');
+  if (image2pro && (!draft.modelId.trim() || draft.modelId !== draft.modelId.trim() || draft.modelId.length > 160 || ['*','__proto__','constructor','prototype'].includes(draft.modelId) || /[\x00-\x1f\x7f]/.test(draft.modelId))) throw fail('Image2Pro 本站模型 ID 无效');
   if (image2pro && draft.kind === 'text') return;
   validateLimits(draft.limits);
   if (huss) {
@@ -281,6 +282,8 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
   const reconnect = isSnumomReconnectChannel(channel) && isRetiredVideoModel(draft.modelId);
   validateDraft(draft, protocol, channel.type === 'image2pro', reconnect, channel.type === 'apipath', channel.type === 'huss');
   const original = readConfiguration(channel);
+  const originalId = channel.type === 'image2pro' ? draft.originalModelId ?? draft.modelId : draft.modelId;
+  if (draft.originalModelId !== undefined && (channel.type !== 'image2pro' || typeof draft.originalModelId !== 'string' || !original.result.models.some(row => row.modelId === originalId))) throw fail('原模型不存在，请重新打开后编辑',409);
   const assertVersion = (current: typeof original) => {
     if (!current.result.canAdd) throw fail(current.result.addUnavailableReason!, 409);
     if (channel.type === 'huss') {
@@ -288,10 +291,10 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
       if (deleted && JSON.parse(deleted.value).includes(draft.modelId)) throw fail('此本站模型已删除，请使用新的本站模型 ID；同步不会恢复已删除模型',409);
     }
     if (current.result.version !== version) throw fail('渠道模型配置已变化，请重新打开后保存', 409);
-    const existing = current.result.models.find(row => row.modelId === draft.modelId);
-    if (channel.type === 'image2pro' && !existing && draft.modelId !== draft.upstreamModel) throw fail('Image2Pro 新型号的本站 ID 必须与上游公开 ID 一致');
+    const existing = current.result.models.find(row => row.modelId === originalId);
+
     if (existing && channel.type === 'apipath' && Boolean(existing.apipathManual) !== Boolean(draft.apipathManual)) throw fail('已有模型须保留原录入方式', 409);
-    if (existing && (!existing.editable || !existing.capabilities.includes(draft.kind))) throw fail('此模型使用已有接入配置，不能通过通用入口更换协议或能力', 409);
+    if (existing && (!existing.editable || channel.type !== 'image2pro' && !existing.capabilities.includes(draft.kind))) throw fail('此模型使用已有接入配置，不能通过通用入口更换协议或能力', 409);
     if ((protocol || channel.type === 'huss') && current.result.models.some(row => row.modelId !== draft.modelId && row.upstreamModel === draft.upstreamModel)) {
       throw fail('此上游型号已关联本站模型，请编辑已有配置', 409);
     }
@@ -301,7 +304,7 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
         throw fail('该型号属于渠道内置配置，请通过已接入型号管理', 409);
       }
     }
-    const occupied = current.savedModels.get(draft.modelId);
+    const occupied = current.savedModels.get(originalId);
     const reusable = reconnect && occupied?.provider === 'snumom' && occupied.isActive === 0
       && JSON.parse(occupied.capabilities || '[]').includes('video');
     if (!existing && (occupied && !reusable || current.specs.some(spec => spec.modelId === draft.modelId && !(reconnect && spec.kind === 'video' && !spec.routes.length && !spec.aliases.length)
@@ -335,8 +338,9 @@ export async function saveChannelModelConfiguration(channelId: number, draft: Ch
   return sqlite.transaction(() => {
     const live = getChannel(channelId);
     if (live.apiKey !== channel.apiKey) throw fail('核对授权期间渠道 Key 已修改，请重新打开后保存', 409);
-    const current = readConfiguration(live);
+    let current = readConfiguration(live);
     const model = assertVersion(current);
+    if (channel.type === 'image2pro' && model) { migrateImage2proIdentity(model,draft,channelId); current=readConfiguration(getChannel(channelId)); }
     if (!model) db.insert(models).values({
       provider: live.type, modelId: draft.modelId, displayName: draft.displayName.trim(),
       capabilities: JSON.stringify([draft.kind]), isActive: 0,
@@ -420,8 +424,8 @@ export async function previewAuthorizedChannelModelRequest(channelId: number, dr
   }
   if (channel.type !== 'image2pro') return previewChannelModelRequest(channelId, draft, sample);
   validateDraft(draft, undefined, true);
-  const existing = readConfiguration(channel).result.models.find(row => row.modelId === draft.modelId);
-  if (existing ? !existing.editable || !existing.capabilities.includes(draft.kind) : draft.modelId !== draft.upstreamModel) throw fail('Image2Pro 仅允许已有可编辑型号切换同类型上游');
+  const existing = readConfiguration(channel).result.models.find(row => row.modelId === (draft.originalModelId ?? draft.modelId));
+  if (draft.originalModelId && !existing || existing && !existing.editable) throw fail('Image2Pro 原型号不存在或不可编辑');
   const model = (await image2proModels(channel)).find(m => m.id === draft.upstreamModel);
   if (!model) throw fail('该上游型号未出现在此 Key 的授权目录中',409);
   const kind = model.metadata.type;

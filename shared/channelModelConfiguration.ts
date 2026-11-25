@@ -21,6 +21,7 @@ export const STANDARD_CHANNEL_VIDEO_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4
 export const APIPATH_MANUAL_ROUTE_PREFIX = 'admin-channel-model-apipath-manual-';
 
 export type ChannelModelDraft = {
+  originalModelId?: string;
   apipathManual?: boolean;
   snumom?: { billingType: 'per_call' | 'per_second'; referenceVideoBilling: boolean };
   modelId: string;

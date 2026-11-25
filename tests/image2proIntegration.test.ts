@@ -10,6 +10,7 @@ import { activeSpecificationTasks } from '../server/services/videoRecoveryAction
 import { db, sqlite } from '../server/db/index.js';
 import { channels, contents, models, modelPricing, settings, users } from '../server/db/schema.js';
 import { ChannelService } from '../server/services/channelService.js';
+import { migrateImage2proIdentity } from '../server/services/image2proModelIdentity.js';
 import { saveModelSpecification, getModelSpecification } from '../server/services/modelRoutingService.js';
 import { handleSpecificationGeneration, resumeSpecificationTasks } from '../server/services/specificationGenerationService.js';
 import { defaultRoutingLimits } from '../shared/modelRouting.js';
@@ -92,7 +93,7 @@ it.each([
  if(profile==='flow'){expect(sent[0].reference_images).toEqual([{url:'https://cdn.example/first.png',role:'first_frame'}]);expect(sent[0].aspect_ratio).toBe('9:16');expect(sent[0].images).toBeUndefined();}
  else {expect(sent[0].first_frame).toBe('https://cdn.example/first.png');expect(sent[0].mode).toBe('keyframe');expect(sent[0].size).toBe('720p');}
 });
-it('image query interruption recovers only the original task after an upstream mapping change',async()=>{
+it.each([false,true])('image recovery keeps the original task after remapping or identity/type change (%s)',async rename=>{
  const request=imageRequest(),id='f'.repeat(32);let queries=0,posts=0;
  vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
   if(init?.method==='POST'){posts++;return Response.json({id,status:'processing'});}
@@ -104,4 +105,18 @@ it('image query interruption recovers only the original task after an upstream m
  expect(JSON.parse(db.select().from(contents).get()!.metadata).requiresReview).toBe(true);
  resumeSpecificationTasks();await vi.waitFor(()=>expect(db.select().from(contents).get()?.status).toBe('completed'));
  expect(posts).toBe(1);expect(queries).toBe(2);expect(db.select().from(users).get()?.balance).toBe(98);
+});
+
+it('finishes an original video after an in-flight rename and conversion to text without submitting again',async()=>{
+ const id='b'.repeat(32);let posts=0;
+ vi.mocked(downloadAndLocalizeVideo).mockImplementationOnce(async()=>{const model=db.select().from(models).get()!;sqlite.transaction(()=>migrateImage2proIdentity(model,{modelId:'renamed-video-as-text',displayName:'renamed-video-as-text',upstreamModel:'new-text',kind:'text',limits:defaultRoutingLimits()},db.select().from(channels).get()!.id))();throw new Error('temporary storage failure');});
+ vi.stubGlobal('fetch',vi.fn(async(url:any,init:any)=>{
+  if(String(url).endsWith('/models'))return Response.json(catalog);
+  if(init?.method==='POST')posts++;else expect(String(url)).toContain('/videos/'+id);
+  return Response.json({id,status:'completed',metadata:{url:'https://cdn.example/old.mp4'}});
+ }));
+ await handleSpecificationGeneration(req(),res(),'video');
+ expect(db.select().from(contents).get()?.status).toBe('completed');
+ expect(db.select().from(models).get()).toMatchObject({modelId:'renamed-video-as-text',isActive:0});
+ expect(posts).toBe(1);expect(db.select().from(users).get()?.balance).toBe(98);expect(db.select().from(contents).get()?.modelId).toBe('30video');
 });

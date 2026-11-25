@@ -77,8 +77,8 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
     return () => { active = false; };
   }, [channelId, reload, select]);
 
-  const currentValues = draft && draftWithFields(draft, resolutions, ratios, seconds);
-  const serialized = JSON.stringify(currentValues);
+  const currentValues = draft && {...draftWithFields(draft, resolutions, ratios, seconds), ...(data?.image2pro && selected ? {originalModelId:selected.modelId} : {})};
+  const serialized = JSON.stringify(currentValues && draftWithFields(draft!, resolutions, ratios, seconds));
   const dirty = currentValues && serialized !== baseline;
   useEffect(() => { setPreview(null); }, [serialized]);
   const matching = data?.models.filter(model => [model.modelId, model.displayName, model.upstreamModel]
@@ -177,7 +177,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
   const manual = apipath && draft?.apipathManual === true;
   const chooseFromCatalog = huss || apipath && !manual || image2pro || wanfeng || asyncVideo || data?.protocol === 'megaby' || snumom;
   const upstreamPricing = catalog?.find(entry => entry.id === draft?.upstreamModel)?.upstreamPricing;
-  const availableModels = image2pro && selected ? catalog?.filter(entry => entry.kind === draft?.kind) : apipath || huss ? catalog : catalog?.filter(entry => !data?.models.some(row => row.modelId !== selected?.modelId && row.upstreamModel === entry.id));
+  const availableModels = image2pro || apipath || huss ? catalog : catalog?.filter(entry => !data?.models.some(row => row.modelId !== selected?.modelId && row.upstreamModel === entry.id));
 
   return <AdminDrawer modal panelClassName="v6k-model-dialog" title={channelName + ' · 模型与参数'}
     blocked={busy} onClose={() => navigate('close')}>
@@ -234,7 +234,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                   setResolutions(''); setRatios(''); setSeconds('');
                 }}><option value="manual">手动填写</option><option value="catalog">从授权目录选择</option></select></label>}
               <div className="v6k-identity-grid">
-                <label>本站 API 模型 ID<input className={field} value={draft.modelId} required readOnly={Boolean(selected) || image2pro || snumom || huss && draft.kind === 'image'}
+                <label>本站 API 模型 ID<input className={field} value={draft.modelId} required readOnly={!image2pro && (Boolean(selected) || snumom || huss && draft.kind === 'image')}
                   onChange={event => setDraft({ ...draft, modelId: event.target.value })} /></label>
                 <label>显示名称<input className={field} value={draft.displayName} required
                   onChange={event => setDraft({ ...draft, displayName: event.target.value })} /></label>
@@ -250,8 +250,8 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                     }
                     if (!entry || !entry.limits && entry.kind !== 'text' && !snumom) return;
                     const limits = entry.limits ?? (snumom ? draft.limits : defaultRoutingLimits());
-                    setDraft({ ...draft, upstreamModel: entry.id, limits, ...(huss ? {kind:entry.kind!,...(!selected ? {modelId:entry.id === 'Midjourney V8.2' ? entry.id : draft.modelId,displayName:draft.displayName || entry.id} : {})} : apipath ? {kind:entry.kind!} : image2pro ? {kind:entry.kind!,...(!selected ? {modelId:entry.id,displayName:entry.id} : {})} : snumom ? {modelId:entry.id,displayName:entry.id} : {}) });
-                    if (image2pro && selected) setNotice('已更换草稿中的上游型号并带入参数，请核对后保存。本站 ID、名称和售价保留；在途任务继续查询原任务。');
+                    setDraft({ ...draft, upstreamModel: entry.id, limits, ...(huss ? {kind:entry.kind!,...(!selected ? {modelId:entry.id === 'Midjourney V8.2' ? entry.id : draft.modelId,displayName:draft.displayName || entry.id} : {})} : apipath ? {kind:entry.kind!} : image2pro ? {kind:entry.kind!,...(!selected ? {modelId:draft.modelId || entry.id,displayName:draft.displayName || entry.id} : {})} : snumom ? {modelId:entry.id,displayName:entry.id} : {}) });
+                    if (image2pro && selected) setNotice(entry.kind !== (selected.capabilities.includes('text') ? 'text' : selected.capabilities.includes('video') ? 'video' : 'image') ? '跨类型保存后模型将停用；原售价保留，请核对计费方式后再启用。历史任务继续查询原任务。' : '已带入上游参数。本站 ID 和名称可编辑，售价保留；历史任务继续查询原任务。');
                     setResolutions(limits.resolutions.join(','));
                     setRatios(limits.ratios.join(','));
                     setSeconds(limits.duration.values.join(','));
@@ -268,6 +268,7 @@ export default function ChannelModelConfigurationPanel({ channelId, channelName,
                     setResolutions(event.target.value === 'image' ? (manual ? 'default' : '1K') : '');
                   }}><option value="video">视频</option><option value="image">图片</option></select></label>}
               </div>
+              {image2pro && <p className="v6k-field-help">本站 ID、显示名称和上游均可编辑；模型类型由所选授权上游决定。跨类型保存后会停用，请核对本站计费后重新启用。</p>}
               {image2pro && draft.kind === 'text' && <p className="v6k-field-help">支持 Chat Completions 多轮消息、流式、输出长度和采样参数；看图、结构化输出和工具调用需具体模型支持，由请求传入相应参数。</p>}
               <div>
                 {!manual && <button type="button" className={button} onClick={() => void loadCatalog()}>{wanfeng ? '读取晚风公开型号' : '读取已授权的上游型号'}</button>}

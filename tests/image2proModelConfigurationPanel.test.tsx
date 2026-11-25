@@ -70,14 +70,26 @@ it.each(['text','video'] as const)('shows %s public prices and units but exclude
  fireEvent.submit(document.querySelector('#channel-model-form')!);await waitFor(()=>expect(api.save).toHaveBeenCalled());expect(api.save.mock.calls[0][1]).not.toHaveProperty('upstreamPricing');
 });
 
-it('switches only same-kind upstream models without renaming the saved product',async()=>{
+it('switches upstream models without renaming the saved product',async()=>{
  const limits={...defaultRoutingLimits(),resolutions:['2K'],ratios:['1:1'],maxImages:1};
  api.list.mockResolvedValue({...config,models:[{modelId:'original',upstreamModel:'original',displayName:'My product',capabilities:['image'],limits,enabled:true,editable:true}]});
  api.catalog.mockResolvedValue([{id:'replacement',kind:'image',limits:{...limits,resolutions:['4K']}},{id:'wrong-type',kind:'text'}]);
  render(<Panel channelId={34} channelName="QQ-78ai" onClose={vi.fn()} onSaved={vi.fn()} onManage={vi.fn()}/>);
  fireEvent.click(await screen.findByText('读取已授权的上游型号'));await screen.findByRole('option',{name:'replacement'});
- expect(screen.queryByRole('option',{name:'wrong-type'})).not.toBeInTheDocument();expect(screen.getByLabelText('上游模型 ID')).not.toBeDisabled();
+ expect(screen.getByRole('option',{name:'wrong-type'})).toBeInTheDocument();expect(screen.getByLabelText('上游模型 ID')).not.toBeDisabled();
  fireEvent.change(screen.getByLabelText('上游模型 ID'),{target:{value:'replacement'}});
  expect(screen.getByLabelText('本站 API 模型 ID')).toHaveValue('original');expect(screen.getByLabelText('显示名称')).toHaveValue('My product');expect(screen.getByLabelText('可选分辨率')).toHaveValue('4K');
  fireEvent.submit(document.querySelector('#channel-model-form')!);await waitFor(()=>expect(api.save).toHaveBeenCalledWith(34,expect.objectContaining({modelId:'original',displayName:'My product',upstreamModel:'replacement',kind:'image'}),'v1'));
+});
+
+it('edits local ID/name and switches kind while identifying the original model on save',async()=>{
+ const limits={...defaultRoutingLimits(),resolutions:['2K'],ratios:['1:1']};
+ api.list.mockResolvedValue({...config,models:[{modelId:'old-id',upstreamModel:'old-id',displayName:'old-name',capabilities:['image'],limits,enabled:true,editable:true}]});
+ api.catalog.mockResolvedValue([{id:'text-upstream',kind:'text'}]);
+ render(<Panel channelId={34} channelName="QQ-78ai" onClose={vi.fn()} onSaved={vi.fn()} onManage={vi.fn()}/>);
+ fireEvent.click(await screen.findByText('读取已授权的上游型号'));await screen.findByRole('option',{name:'text-upstream'});
+ expect(screen.getByLabelText('本站 API 模型 ID')).not.toHaveAttribute('readonly');
+ fireEvent.change(screen.getByLabelText('本站 API 模型 ID'),{target:{value:'new-id'}});fireEvent.change(screen.getByLabelText('显示名称'),{target:{value:'new-name'}});fireEvent.change(screen.getByLabelText('上游模型 ID'),{target:{value:'text-upstream'}});
+ expect(screen.getByLabelText('模型类型')).toHaveValue('文本');expect(screen.getByText(/跨类型保存后模型将停用/)).toBeInTheDocument();
+ fireEvent.submit(document.querySelector('#channel-model-form')!);await waitFor(()=>expect(api.save).toHaveBeenCalledWith(34,expect.objectContaining({originalModelId:'old-id',modelId:'new-id',displayName:'new-name',upstreamModel:'text-upstream',kind:'text'}),'v1'));
 });
