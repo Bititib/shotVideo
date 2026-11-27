@@ -12,6 +12,7 @@ import { existingModelLimits } from './modelInputPresets.js';
 import { rememberPublicModelNames, validatePublicModelName } from './publicModelNameService.js';
 import { buildSiYueTianVideoPayload, siYueTianVideoOrigin } from './siYueTianMinimaxAdapter.js';
 import { responseDiagnostic, transportDiagnostic, upstreamDiagnostic } from './upstreamDiagnostic.js';
+import { renameSiYueTianModelId } from './modelIdRenameService.js';
 
 const fail = (message: string, status = 400) => Object.assign(new Error(message), { status });
 
@@ -137,19 +138,25 @@ export function previewSiYueTianModelRequest(channelId: number, value: V6kModelD
   }, url => url, draft.upstreamModel) };
 }
 
-export async function saveSiYueTianModelConfiguration(channelId: number, value: V6kModelDraft, version: string | null) {
+export async function saveSiYueTianModelConfiguration(channelId: number, value: V6kModelDraft, version: string | null, originalModelId?: string) {
   const draft = checkedDraft(value);
-  const channel = getChannel(channelId), original = readConfiguration(channel, draft.modelId);
+  if (originalModelId !== undefined && (typeof originalModelId !== 'string' || !originalModelId.trim())) throw fail('原模型 ID 无效');
+  const sourceId = originalModelId ?? draft.modelId;
+  const channel = getChannel(channelId), original = readConfiguration(channel, sourceId);
+  const renaming = sourceId !== draft.modelId;
+  if (renaming && !original.model) throw fail('原模型不存在，请重新打开后保存', 409);
+  if (renaming && isSiYueTianManagedVideoModel(draft.modelId)) throw fail('新 ID 属于内置专用型号，请使用其他 ID', 409);
   if (!original.configuration.editable) throw fail(original.configuration.reason!, 409);
   if (version !== (original.model ? original.configuration.version : null)) throw fail('模型配置已变化，请重新打开后保存', 409);
   const catalog = await listSiYueTianVideoCatalog(channelId);
   if (!catalog.some(item => item.id === draft.upstreamModel)) throw fail('此 Key 的目录中没有支持四月天异步视频协议的该型号', 409);
 
   return sqlite.transaction(() => {
-    const live = getChannel(channelId), current = readConfiguration(live, draft.modelId);
+    const live = getChannel(channelId), current = readConfiguration(live, sourceId);
     if (live.apiKey !== channel.apiKey || live.baseUrl !== channel.baseUrl || !current.configuration.editable
       || current.configuration.version !== original.configuration.version) throw fail('授权查询期间配置已变化，请重新打开后保存', 409);
     validatePublicModelName(draft.modelId, draft.displayName, current.model?.id);
+    if (renaming) renameSiYueTianModelId(channelId, sourceId, draft.modelId, draft.displayName);
     if (!current.model) db.insert(models).values({
       modelId: draft.modelId, displayName: draft.displayName, provider: 'siyuetian', capabilities: '["video"]', isActive: 0,
     }).run();
@@ -166,9 +173,11 @@ export async function saveSiYueTianModelConfiguration(channelId: number, value: 
         cost: originalCost?.cost ?? null, costUnit: originalCost?.costUnit ?? 'unknown', resolutionCosts: originalCost?.resolutionCosts ?? {},
       }],
     });
+    const savedMapping = { ...current.mapping };
+    if (renaming) delete savedMapping[sourceId];
     db.update(channels).set({
-      supportedModels: JSON.stringify([...new Set([...current.supported, draft.modelId])]),
-      modelMapping: JSON.stringify({ ...current.mapping, [draft.modelId]: draft.upstreamModel }),
+      supportedModels: JSON.stringify([...new Set([...current.supported.map(id => renaming && id === sourceId ? draft.modelId : id), draft.modelId])]),
+      modelMapping: JSON.stringify({ ...savedMapping, [draft.modelId]: draft.upstreamModel }),
       updatedAt: new Date().toISOString(),
     }).where(eq(channels.id, channelId)).run();
     return readConfiguration(getChannel(channelId), draft.modelId).configuration;

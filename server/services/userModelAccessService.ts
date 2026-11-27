@@ -1,5 +1,6 @@
 import { sqlite } from '../db/index.js';
 import { ensureUserModelTables } from '../db/userModelMigration.js';
+import { resolveRenamedModelId } from './renamedModelIds.js';
 
 /** Missing override preserves each entry point's existing permission policy. */
 export function modelAccessMode(userId: number | null | undefined, modelId: number): 'inherit' | 'allow' | 'deny' {
@@ -20,7 +21,7 @@ export function filterUserModels<T extends { id: number }>(userId: number | null
 /** Enforced at execution as well as discovery, including legacy media routes. */
 export function assertUserModelAccess(userId: number | null | undefined, modelName: string) {
   if (!userId) return;
-  const model = sqlite.prepare('SELECT id,is_active FROM models WHERE model_id=?').get(modelName) as any;
+  const model = sqlite.prepare('SELECT id,is_active FROM models WHERE model_id=?').get(resolveRenamedModelId(modelName)) as any;
   if (model?.is_active === 0) throw Object.assign(new Error('该模型已被平台禁用'), { status: 404 });
   if (model && modelAccessMode(userId, model.id) === 'deny') {
     throw Object.assign(new Error('该用户已被禁止使用此模型'), { status: 403 });
@@ -29,6 +30,6 @@ export function assertUserModelAccess(userId: number | null | undefined, modelNa
 
 export function userModelDenied(userId: number | null | undefined, modelName: string): boolean {
   if (!userId) return false;
-  const model = sqlite.prepare('SELECT id,is_active FROM models WHERE model_id=?').get(modelName) as any;
+  const model = sqlite.prepare('SELECT id,is_active FROM models WHERE model_id=?').get(resolveRenamedModelId(modelName)) as any;
   return Boolean(model && modelAccessMode(userId, model.id) === 'deny');
 }

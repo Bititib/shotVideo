@@ -19,6 +19,7 @@ import { db, sqlite } from '../db/index.js';
 import { channels, models, settings } from '../db/schema.js';
 import { ChannelService } from './channelService.js';
 import { allowsChannelModelConfigurationRoute } from './channelCatalogBindings.js';
+import { resolveRenamedModelId } from './renamedModelIds.js';
 import { allowsDuration, routingMismatches, routeRequestCost, canShareImageAliases, type ModelSpecification, type ModelRoute, type RoutingInput, type ModelInputLimits } from '../../shared/modelRouting.js';
 
 const CONFIG_KEY = 'model_specification_routes_v1';
@@ -35,7 +36,13 @@ function write(key: string, value: unknown) {
     .onConflictDoUpdate({ target: settings.key, set: { value: JSON.stringify(value), updatedAt: new Date().toISOString() } }).run();
 }
 export function getModelSpecifications(): ModelSpecification[] { return read(CONFIG_KEY, []); }
-export function getModelSpecification(modelId: string) { return getModelSpecifications().find(spec => spec.modelId === modelId); }
+export function getModelSpecification(modelId: string) {
+  const specs = getModelSpecifications();
+  const exact = specs.find(spec => spec.modelId === modelId);
+  if (exact) return exact;
+  const canonical = resolveRenamedModelId(modelId);
+  return specs.find(spec => spec.modelId === canonical);
+}
 export function hiddenRouteModelIds(): Set<string> {
   const specs = getModelSpecifications(), publicIds = new Set(specs.map(spec => spec.modelId));
   const check = createVideoAliasChecker();
@@ -199,12 +206,14 @@ export function routeUnavailableReason(modelId: string, target: RouteCandidate, 
     if (route.channelId !== spec.kkRouting.channelId || route.executionModel !== KK_VIDEO_MODEL || !Object.values(KK_VIDEO_SOURCES).includes(route.upstreamModel as any)) return '提交前检查：KK 分流配置已变更';
     if (!spec.kkRouting.fallback && route.upstreamModel !== KK_VIDEO_SOURCES[spec.kkRouting.primary]) return '提交前检查：自动分流已关闭';
   }
-  if (JSON.stringify(route) !== JSON.stringify(target.route)) return '提交前检查：线路配置已变更，请重新核对参数';
+  const originalRoute = target.route.siYueTianVideo
+    ? { ...target.route, executionModel: resolveRenamedModelId(target.route.executionModel) } : target.route;
+  if (JSON.stringify(route) !== JSON.stringify(originalRoute)) return '提交前检查：线路配置已变更，请重新核对参数';
   const mismatches = [...routingMismatches(spec.limits, input, spec.kind), ...routingMismatches(route.limits, input, spec.kind)];
   if (isSiYueTianManagedVideoModel(route.executionModel)) mismatches.push(...siYueTianManagedVideoInputErrors(route.executionModel, input));
   if (mismatches.length) return '提交前检查：' + [...new Set(mismatches)].join('；');
   const registry = db.select().from(models).all();
-  if (registry.find(m => m.modelId === modelId)?.isActive !== 1) return '提交前检查：对外模型已禁用';
+  if (registry.find(m => m.modelId === spec.modelId)?.isActive !== 1) return '提交前检查：对外模型已禁用';
   const execution = registry.find(m => m.modelId === route.executionModel);
   if (execution?.isActive === 0 && execution.modelId !== MJ_OVERFLOW_VIDEO_MODEL) return '提交前检查：执行模型已禁用';
   const candidates = ChannelService.getActiveChannels().filter(c => c.id === target.channel.id);

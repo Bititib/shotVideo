@@ -143,7 +143,7 @@ router.post('/:id/siyuetian-models/preview', (req, res) => {
   catch (error) { channelOperationError(res, error); }
 });
 router.put('/:id/siyuetian-models', async (req, res) => {
-  try { res.json(await saveSiYueTianModelConfiguration(Number(req.params.id), req.body?.draft, req.body?.version)); }
+  try { res.json(await saveSiYueTianModelConfiguration(Number(req.params.id), req.body?.draft, req.body?.version, req.body?.originalModelId)); }
   catch (error) { channelOperationError(res, error); }
 });
 

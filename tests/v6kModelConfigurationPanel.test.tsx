@@ -10,6 +10,7 @@ import V6kModelConfigurationPanel from '../client/src/components/V6kModelConfigu
 const api = vi.hoisted(() => ({ list: vi.fn(), preview: vi.fn(), save: vi.fn() }));
 vi.mock('../client/src/api/admin', () => ({ adminApi: {
   getV6kModelConfigurations: api.list, previewV6kModel: api.preview, saveV6kModel: api.save,
+  getSiYueTianModelConfigurations: api.list, previewSiYueTianModel: api.preview, saveSiYueTianModel: api.save,
 } }));
 
 const configuration = (): V6kModelConfiguration => ({ modelId: 'public-video', displayName: '原名称',
@@ -30,6 +31,20 @@ beforeEach(() => {
   });
 });
 afterEach(cleanup);
+
+it('edits an existing Siyuetian API ID and sends the original identity for an atomic rename', async () => {
+  const onSaved = vi.fn();
+  render(<V6kModelConfigurationPanel channelId={5} siYueTian onClose={vi.fn()} onSaved={onSaved} />);
+  const id = await screen.findByLabelText('本站 API 模型 ID');
+  await waitFor(() => expect(id).toHaveValue('public-video'));
+  expect(id).not.toHaveAttribute('readonly');
+  fireEvent.change(id, { target: { value: 'renamed-video' } });
+  fireEvent.click(screen.getByRole('button', { name: '校验授权并保存修改' }));
+  await waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+  expect(api.save).toHaveBeenCalledWith(5, expect.objectContaining({ modelId: 'renamed-video' }), 'version-one', 'public-video');
+  expect(screen.getByLabelText('本站 API 模型 ID')).toHaveValue('renamed-video');
+  expect(screen.getByRole('button', { name: '编辑模型 原名称' })).toHaveAttribute('aria-current', 'true');
+});
 
 it('keeps the public ID read-only, previews the unsaved draft and saves it with the original version', async () => {
   const onSaved = vi.fn();

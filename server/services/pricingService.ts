@@ -1,6 +1,7 @@
 import { MUSIC_OPERATIONS, SUNO_CHANNEL_TYPE, freeMusicOperation, musicPriceField, type MusicOperation } from '../../shared/sunoMusic.js';
 import { archivedApipathModelIds } from './apipathModelArchive.js';
 import { canonicalZonghengModelId } from '../../shared/zonghengVideo.js';
+import { renamedModelIds, resolveRenamedModelId } from './renamedModelIds.js';
 import { db, sqlite } from '../db/index.js';
 import { ensureUserModelTables } from '../db/userModelMigration.js';
 import { modelPricing, models, settings } from '../db/schema.js';
@@ -78,9 +79,10 @@ export class PricingService {
   }
 
   private static getRule(modelName: string, allowWildcard = true, userId?: number | null): PriceRule | undefined {
-    const custom = this.userRules(userId).find(rule => rule.modelPattern === canonicalZonghengModelId(modelName));
+    const canonical = resolveRenamedModelId(canonicalZonghengModelId(modelName));
+    const custom = this.userRules(userId).find(rule => rule.modelPattern === canonical);
     if (custom) return custom;
-    const exact = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, canonicalZonghengModelId(modelName))).get();
+    const exact = db.select().from(modelPricing).where(eq(modelPricing.modelPattern, canonical)).get();
     if (exact || !allowWildcard) return exact;
     return db.select().from(modelPricing).where(eq(modelPricing.modelPattern, '*')).get();
   }
@@ -136,9 +138,11 @@ export class PricingService {
     const rules: PriceRule[] = [...db.select().from(modelPricing).all(), ...this.userRules(userId)];
     const ruleByPattern = new Map(rules.map(rule => [rule.modelPattern, rule]));
     const wildcardRule = allowWildcard ? ruleByPattern.get('*') : undefined;
+    const renamed = renamedModelIds();
 
     return (modelName: string, usage: PricingUsage = {}) => {
-      const canonical = canonicalZonghengModelId(modelName);
+      const previous = canonicalZonghengModelId(modelName);
+      const canonical = renamed.get(previous) ?? previous;
       const rule = ruleByPattern.get(canonical) || wildcardRule;
       return this.quoteRule(rule, usage, userId !== undefined, canonical);
     };
@@ -409,7 +413,7 @@ export class PricingService {
   /** 返回单价及最终费用。视频等非文本业务默认不使用全局 Token 兜底。 */
   static quote(modelName: string, usage: PricingUsage = {}, allowWildcard = true, userId?: number | null) {
     const rule = this.getRule(modelName, allowWildcard, userId);
-    return this.quoteRule(rule, usage, userId !== undefined, canonicalZonghengModelId(modelName));
+    return this.quoteRule(rule, usage, userId !== undefined, resolveRenamedModelId(canonicalZonghengModelId(modelName)));
   }
 
   static quoteSnapshot(snapshot: PricingSnapshot, usage: PricingUsage = {}) {

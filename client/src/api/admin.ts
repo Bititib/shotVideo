@@ -96,8 +96,8 @@ export const adminApi = {
   previewSiYueTianModel(id: number, draft: V6kModelDraft, sample: V6kRequestSample) {
     return client.post<{ method: string; path: string; body: object }>(`/admin/channels/${id}/siyuetian-models/preview`, { draft, sample });
   },
-  saveSiYueTianModel(id: number, draft: V6kModelDraft, version: string | null) {
-    return api.put<V6kModelConfiguration>(`/admin/channels/${id}/siyuetian-models`, { draft, version });
+  saveSiYueTianModel(id: number, draft: V6kModelDraft, version: string | null, originalModelId?: string) {
+    return api.put<V6kModelConfiguration>(`/admin/channels/${id}/siyuetian-models`, { draft, version, originalModelId });
   },
   previewV6kModel(id: number, draft: V6kModelDraft, sample: V6kRequestSample) {
     return client.post<{ method: string; path: string; body: object }>(`/admin/channels/${id}/v6k-models/preview`, { draft, sample });

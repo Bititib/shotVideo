@@ -121,15 +121,17 @@ export default function V6kModelConfigurationPanel({ channelId, onClose, onSaved
   async function save() {
     setBusy(true); setError(''); setNotice('');
     try {
-      const result = await saveModel(channelId, config(), selected?.version ?? null);
+      const result = siYueTian && selected && selected.modelId !== draft.modelId.trim()
+        ? await adminApi.saveSiYueTianModel(channelId, config(), selected.version, selected.modelId)
+        : await saveModel(channelId, config(), selected?.version ?? null);
       let refreshed: V6kModelConfiguration[] | null = null;
       try { refreshed = await list(channelId); }
       catch { /* The save succeeded; keep its result even if refreshing the list fails. */ }
       const saved = refreshed?.find(row => row.modelId === result.modelId) ?? result;
       setModels(rows => {
         const current = refreshed ?? rows;
-        return current.some(row => row.modelId === saved.modelId)
-          ? current.map(row => row.modelId === saved.modelId ? saved : row) : [...current, saved];
+        return current.some(row => row.modelId === saved.modelId || row.modelId === selected?.modelId)
+          ? current.map(row => row.modelId === saved.modelId || row.modelId === selected?.modelId ? saved : row) : [...current, saved];
       });
       choose(saved);
       setSearch('');
@@ -200,9 +202,11 @@ export default function V6kModelConfigurationPanel({ channelId, onClose, onSaved
               <div className="v6k-section-heading"><h4 id="v6k-model-identity">模型信息</h4></div>
               <div className="v6k-identity-grid">
                 <label className="v6k-api-id"><span>本站 API 模型 ID</span><input ref={modelIdInput} className={field} value={draft.modelId}
-                  readOnly={Boolean(selected)} placeholder="例如 seedance-720"
+                  readOnly={Boolean(selected) && !siYueTian} placeholder="例如 seedance-720"
                   onChange={event => update({ modelId: event.target.value })} /></label>
-                <p className="v6k-field-help">{selected ? '本站 API 调用仍使用这个 ID，编辑时保持不变。' : '供用户调用；使用英文、数字或 . _ / -，添加后保持不变。'}</p>
+                <p className="v6k-field-help">{selected && siYueTian
+                  ? '修改后同步迁移价格与权限，旧 ID 继续兼容调用。'
+                  : selected ? '本站 API 调用仍使用这个 ID，编辑时保持不变。' : '供用户调用；使用英文、数字或 . _ / -。'}</p>
                 <label><span>显示名称</span><input className={field} value={draft.displayName} placeholder="填写前台展示名称"
                   onChange={event => update({ displayName: event.target.value })} /></label>
                 <label><span>上游模型 ID</span><input className={field} value={draft.upstreamModel} placeholder="粘贴上游复制的完整 ID"
