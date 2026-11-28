@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../server/config/env.js', () => ({ env: { GEMINI_API_BASE_URL: 'https://tts.invalid', GEMINI_API_KEY: 'test-key' } }));
-vi.mock('../server/services/channelService.js', () => ({ ChannelService: { findChannelByType: () => null } }));
+vi.mock('../server/services/channelService.js', () => ({ ChannelService: { findChannelByType: () => null, findChannelsByType: () => [] } }));
 import { AIService } from '../server/services/aiService';
 import { createTtsCatalogLoader, parseTtsVoices } from '../server/services/ttsCatalogService';
 const DEFAULT_TTS_MODEL = 'gemini-3.8-flash-tts'; // Test fixture, not a production default.
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
-describe('AIStudio2API speech', () => {
+describe('Gemini channel speech', () => {
   it('reads the deployed /v1/voices response and preserves metadata without duplicates', () => {
     expect(parseTtsVoices({voices:[{id:'Sulafat',name:'Sulafat',gender:'female',description:'温暖治愈的声音',scenario:'陪伴'}, {id:'Sulafat'}, null, {id:''}]})).toEqual([{id:'Sulafat',name:'Sulafat',gender:'female',description:'温暖治愈的声音',scenario:'陪伴'}]);
     expect(() => parseTtsVoices(null)).toThrow();

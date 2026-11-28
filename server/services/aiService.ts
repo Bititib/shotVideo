@@ -7,6 +7,8 @@ import { env } from '../config/env.js';
 import { loadTtsVoiceCatalog } from './ttsCatalogService.js';
 import { ClonedVoiceService } from './clonedVoiceService.js';
 import { ChannelService } from './channelService.js';
+import { resolveGeminiEndpoints, type GeminiEndpoint } from './geminiEndpoint.js';
+import { getRotatableGeminiKeysForChannel, markGeminiKeyRateLimited } from './geminiKeyPool.js';
 import { generalPrompt, generalSchema } from '../prompts/general.js';
 import { ecommercePrompt, ecommerceSchema } from '../prompts/ecommerce.js';
 import { imagePrompt, imageSchema } from '../prompts/image.js';
@@ -26,11 +28,37 @@ interface ModelConfig {
   apiKey: string | null;
 }
 
-function getApiKey(modelConfig?: ModelConfig): string {
-  if (modelConfig?.apiKey) return modelConfig.apiKey;
-  const geminiChannel = ChannelService.findChannelByType('gemini');
-  if (geminiChannel?.apiKey) return geminiChannel.apiKey;
-  return env.GEMINI_API_KEY;
+function geminiEndpoints(modelConfig?: ModelConfig): GeminiEndpoint[] {
+  let channelsList: any[] = [];
+  try { channelsList = ChannelService.findChannelsByType('gemini'); } catch {}
+  return resolveGeminiEndpoints(channelsList, env, modelConfig?.apiKey, getRotatableGeminiKeysForChannel);
+}
+
+function geminiEndpoint(modelConfig?: ModelConfig): GeminiEndpoint {
+  return geminiEndpoints(modelConfig)[0];
+}
+
+function geminiHeaders(apiKey: string, extra: Record<string, string> = {}) {
+  return { 'x-goog-api-key': apiKey, 'Authorization': `Bearer ${apiKey}`, ...extra };
+}
+
+async function withGeminiKeyFailover<T>(modelConfig: ModelConfig | undefined, fn: (endpoint: GeminiEndpoint) => Promise<T>): Promise<T> {
+  const candidates = geminiEndpoints(modelConfig);
+  let lastError: unknown;
+  for (let i = 0; i < candidates.length; i++) {
+    const ep = candidates[i];
+    try {
+      return await fn(ep);
+    } catch (error: any) {
+      lastError = error;
+      if (error?.upstreamStatus === 429 || error?.status === 429) {
+        markGeminiKeyRateLimited(ep.keyId);
+        if (i < candidates.length - 1) continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
 }
 
 export class AIService {
@@ -225,27 +253,28 @@ export class AIService {
 
   /** 核心接口调用：请求 Gemini 的 generateContent 端点 */
   static async callGenerateContent(modelId: string, payload: any, modelConfig?: ModelConfig, imageAnalysis = false) {
-    const apiKey = getApiKey(modelConfig);
-    const url = `${env.GEMINI_API_BASE_URL}/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
+    return await withGeminiKeyFailover(modelConfig, async ({ baseUrl, apiKey }) => {
+      const url = `${baseUrl}/v1beta/models/${encodeURIComponent(modelId)}:generateContent`;
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(payload),
-      ...(imageAnalysis ? { signal: AbortSignal.timeout(180_000) } : {}),
-    }).catch(error => { if (imageAnalysis) error.imageOutcome = 'unknown'; throw error; });
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: geminiHeaders(apiKey, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload),
+        ...(imageAnalysis ? { signal: AbortSignal.timeout(180_000) } : {}),
+      }).catch(error => { if (imageAnalysis) error.imageOutcome = 'unknown'; throw error; });
 
-    if (!res.ok) {
-      const body = imageAnalysis ? await res.clone().json().catch(() => null) : null;
-      const rejected = body?.error?.code === res.status && ['INVALID_ARGUMENT', 'FAILED_PRECONDITION', 'UNAUTHENTICATED', 'PERMISSION_DENIED', 'NOT_FOUND', 'RESOURCE_EXHAUSTED'].includes(body?.error?.status);
-      throw Object.assign(new Error(await responseDiagnostic('Gemini', '内容生成', res, apiKey)), imageAnalysis ? { imageOutcome: rejected ? 'rejected' : 'unknown' } : {});
-    }
+      if (!res.ok) {
+        const body = imageAnalysis ? await res.clone().json().catch(() => null) : null;
+        const rejected = body?.error?.code === res.status && ['INVALID_ARGUMENT', 'FAILED_PRECONDITION', 'UNAUTHENTICATED', 'PERMISSION_DENIED', 'NOT_FOUND', 'RESOURCE_EXHAUSTED'].includes(body?.error?.status);
+        throw Object.assign(new Error(await responseDiagnostic('Gemini', '内容生成', res, apiKey)), {
+          upstreamStatus: res.status,
+          ...(imageAnalysis ? { imageOutcome: rejected ? 'rejected' : 'unknown' } : {}),
+        });
+      }
 
-    try { return await diagnosticJson('Gemini', '内容生成响应', res, apiKey); }
-    catch (error: any) { if (imageAnalysis) error.imageOutcome = 'unknown'; throw error; }
+      try { return await diagnosticJson('Gemini', '内容生成响应', res, apiKey); }
+      catch (error: any) { if (imageAnalysis) error.imageOutcome = 'unknown'; throw error; }
+    });
   }
 
   /** 通用短视频分析 */
@@ -326,7 +355,7 @@ export class AIService {
 
       const text = response.candidates?.[0]?.content?.parts?.filter((part: any) => typeof part.text === 'string').map((part: any) => part.text).join('') || '';
       if (!text) throw new Error(upstreamDiagnostic('Gemini', '图片分析未返回文本', { error: response.error,
-        reason: response.promptFeedback?.blockReason, detail: response.candidates?.map((candidate: any) => ({ reason: candidate.finishReason, message: candidate.finishMessage })) }, getApiKey(modelConfig)));
+        reason: response.promptFeedback?.blockReason, detail: response.candidates?.map((candidate: any) => ({ reason: candidate.finishReason, message: candidate.finishMessage })) }, geminiEndpoint(modelConfig).apiKey));
       return JSON.parse(text);
     } finally {
       await this.deleteUploadedFile(uploadedFile.name, modelConfig, 10_000);
@@ -447,13 +476,9 @@ export class AIService {
     }
   }
 
-  /** AI 图像生成 — 使用代理端图像生成接口 */
+  /** AI 图像生成 — Gemini 原生 generateContent */
   static async generateImage(prompt: string, aspectRatio: string, referenceFile?: Express.Multer.File, modelConfig?: ModelConfig) {
     const modelId = modelConfig?.modelId || 'gemini-3-pro-image';
-    const apiKey = getApiKey(modelConfig);
-    // 代理端图片生成模型需要 models%2F 前缀
-    const url = `${env.GEMINI_API_BASE_URL}/v1beta/models/models%2F${modelId}:generateContent?key=${apiKey}`;
-
     let parts: any[] = [{ text: `${prompt} (aspect ratio: ${aspectRatio})` }];
 
     if (referenceFile) {
@@ -466,50 +491,49 @@ export class AIService {
       try { fs.unlinkSync(referenceFile.path); } catch {}
     }
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({ contents: [{ role: 'user', parts }] }),
-    });
+    return await withGeminiKeyFailover(modelConfig, async ({ baseUrl, apiKey }) => {
+      const url = `${baseUrl}/v1beta/models/${encodeURIComponent(modelId)}:generateContent`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: geminiHeaders(apiKey, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ contents: [{ role: 'user', parts }] }),
+      });
 
-    if (!res.ok) {
-      throw new Error(await responseDiagnostic('Gemini', '图片生成', res, apiKey));
-    }
-
-    const response = await diagnosticJson('Gemini', '图片生成响应', res, apiKey);
-
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        return { imageBase64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'image/png' };
+      if (!res.ok) {
+        throw Object.assign(new Error(await responseDiagnostic('Gemini', '图片生成', res, apiKey)), { upstreamStatus: res.status });
       }
-    }
-    throw new Error(upstreamDiagnostic('Gemini', '未返回图片数据', { error: response.error, reason: response.promptFeedback?.blockReason, detail: response.candidates?.map((candidate: any) => ({ reason: candidate.finishReason, message: candidate.finishMessage, detail: candidate.safetyRatings?.filter((rating: any) => rating.blocked).map((rating: any) => ({ reason: rating.category })) })) }, apiKey));
+
+      const response = await diagnosticJson('Gemini', '图片生成响应', res, apiKey);
+
+      for (const part of response.candidates?.[0]?.content?.parts || []) {
+        if (part.inlineData) {
+          return { imageBase64: part.inlineData.data, mimeType: part.inlineData.mimeType || 'image/png' };
+        }
+      }
+      throw new Error(upstreamDiagnostic('Gemini', '未返回图片数据', { error: response.error, reason: response.promptFeedback?.blockReason, detail: response.candidates?.map((candidate: any) => ({ reason: candidate.finishReason, message: candidate.finishMessage, detail: candidate.safetyRatings?.filter((rating: any) => rating.blocked).map((rating: any) => ({ reason: rating.category })) })) }, apiKey));
+    });
   }
 
   static getTtsVoiceCatalog() {
-    return loadTtsVoiceCatalog(env.GEMINI_API_BASE_URL, getApiKey());
+    const { baseUrl, apiKey } = geminiEndpoint();
+    return loadTtsVoiceCatalog(baseUrl, apiKey);
   }
 
   static clonedVoices(userId: number, modelConfig?: ModelConfig) {
-    return new ClonedVoiceService(userId, env.GEMINI_API_BASE_URL, getApiKey(modelConfig));
+    const { baseUrl, apiKey } = geminiEndpoint(modelConfig);
+    return new ClonedVoiceService(userId, baseUrl, apiKey);
   }
 
-  /** AIStudio2API Gemini-compatible speech configuration (including Gemini 3.8). */
+  /** Gemini 原生语音合成（responseModalities: AUDIO），地址来自后台 gemini 渠道。 */
   static async generateTts(text: string, voice: string, modelConfig?: ModelConfig) {
     if (!modelConfig?.modelId) throw new Error('请先选择可用的语音模型');
     const modelId = modelConfig.modelId;
-    const apiKey = getApiKey(modelConfig);
-    const url = `${env.GEMINI_API_BASE_URL}/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
+    return await withGeminiKeyFailover(modelConfig, async ({ baseUrl, apiKey }) => {
+      const url = `${baseUrl}/v1beta/models/${encodeURIComponent(modelId)}:generateContent`;
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: geminiHeaders(apiKey, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         contents: [{
           role: 'user',
@@ -545,6 +569,7 @@ export class AIService {
       }
     }
     throw new Error(upstreamDiagnostic('Gemini TTS', '语音合成失败：未返回音频数据', { error: response.error, reason: response.promptFeedback?.blockReason, detail: response.candidates?.map((c: any) => ({ reason: c.finishReason, message: c.finishMessage })) }, apiKey));
+    });
   }
 
   /** 将原始 PCM base64 封装为 WAV base64（添加 44 字节 WAV header） */
@@ -577,25 +602,24 @@ export class AIService {
   // === 内部工具函数 ===
 
   private static async uploadAndWait(file: Express.Multer.File, modelConfig?: ModelConfig, timeoutMs?: number) {
-    const apiKey = getApiKey(modelConfig);
+    const { baseUrl, apiKey } = geminiEndpoint(modelConfig);
     const filePath = file.path;
     const fileSize = fs.statSync(filePath).size;
     const mimeType = file.mimetype;
     const displayName = file.originalname;
 
     // Step 1: 开启分片/可断点上传会话
-    const startUrl = `${env.GEMINI_API_BASE_URL}/upload/v1beta/files?key=${apiKey}`;
+    const startUrl = `${baseUrl}/upload/v1beta/files`;
     const startRes = await fetch(startUrl, {
       method: 'POST',
       ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
-      headers: {
+      headers: geminiHeaders(apiKey, {
         'X-Goog-Upload-Protocol': 'resumable',
         'X-Goog-Upload-Command': 'start',
         'X-Goog-Upload-Header-Content-Length': fileSize.toString(),
         'X-Goog-Upload-Header-Content-Type': mimeType,
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
+      }),
       body: JSON.stringify({
         file: { display_name: displayName }
       })
@@ -645,10 +669,8 @@ export class AIService {
       while (state === 'PROCESSING') {
         await new Promise(resolve => setTimeout(resolve, 3000));
         try {
-          const statusRes = await fetch(`${env.GEMINI_API_BASE_URL}/v1beta/files/${fileId}?key=${apiKey}`, {
-            headers: {
-              'Authorization': `Bearer ${apiKey}`,
-            }
+          const statusRes = await fetch(`${baseUrl}/v1beta/files/${encodeURIComponent(fileId)}`, {
+            headers: geminiHeaders(apiKey),
           });
           if (statusRes.ok) {
             const statusInfo = await diagnosticJson('Gemini', '文件状态查询', statusRes, apiKey);
@@ -686,15 +708,13 @@ export class AIService {
 
   private static async deleteUploadedFile(fileName: string, modelConfig?: ModelConfig, timeoutMs?: number) {
     try {
-      const apiKey = getApiKey(modelConfig);
+      const { baseUrl, apiKey } = geminiEndpoint(modelConfig);
       const fileId = fileName.startsWith('files/') ? fileName.replace('files/', '') : fileName;
-      const url = `${env.GEMINI_API_BASE_URL}/v1beta/files/${fileId}?key=${apiKey}`;
+      const url = `${baseUrl}/v1beta/files/${encodeURIComponent(fileId)}`;
       await fetch(url, {
         method: 'DELETE',
         ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-        },
+        headers: geminiHeaders(apiKey),
       });
     } catch (e) {
       console.error('[deleteFile] 警告: 清理云端临时文件失败:', e);

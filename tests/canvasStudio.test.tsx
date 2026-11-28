@@ -1403,3 +1403,137 @@ it('Midjourney canvas continues original-task queries after review and recovers 
   expect(contentApi.getById).toHaveBeenCalledWith(4243,expect.any(AbortSignal));
   expect(streamGeneration).not.toHaveBeenCalled();
 },12000);
+
+describe('smooth canvas ergonomics & sections', () => {
+  it('drags a card by its title bar and only focuses title input on click-when-selected or double-click', () => {
+    const node = { ...newNode('image', { x: 100, y: 120 }), title: '标题栏可拖拽' };
+    const board = mount({ ...newDocument(), nodes: [node], view: { x: 0, y: 0, zoom: 1 } });
+    const titleInput = screen.getByLabelText('素材名称') as HTMLInputElement;
+    const stage = screen.getByLabelText('无限画布编辑区');
+
+    fireEvent.pointerDown(titleInput, { button: 0, pointerId: 1, clientX: 150, clientY: 140 });
+    fireEvent.pointerMove(stage, { pointerId: 1, clientX: 210, clientY: 190 });
+    fireEvent.pointerUp(stage, { pointerId: 1, clientX: 210, clientY: 190 });
+    expect(board.current().nodes[0]).toMatchObject({ x: 160, y: 170 });
+    expect(document.activeElement).not.toBe(titleInput);
+
+    fireEvent.pointerDown(titleInput, { button: 0, pointerId: 2, clientX: 210, clientY: 190 });
+    fireEvent.pointerUp(stage, { pointerId: 2, clientX: 210, clientY: 190 });
+    expect(document.activeElement).toBe(titleInput);
+  });
+
+  it('zooms on gentle mouse wheel ticks, keeps world dot grid proportional, and pans on right-click drag', () => {
+    const flushFrame = controlledFrames();
+    const node = { ...newNode('text', { x: 0, y: 0 }), title: '测试节点' };
+    const board = mount({ ...newDocument(), nodes: [node], view: { x: 0, y: 0, zoom: 0.4 } });
+    const stage = screen.getByLabelText('无限画布编辑区');
+
+    expect(stage.style.backgroundSize).toBe(`${96 * 0.4}px ${96 * 0.4}px`);
+
+    const z0 = board.current().view.zoom;
+    fireEvent.wheel(stage, { deltaMode: 0, deltaX: 0, deltaY: 24, clientX: 200, clientY: 200 });
+    flushFrame();
+    expect(board.current().view.zoom).toBeLessThan(z0);
+
+    const beforePan = board.current().view;
+    fireEvent.pointerDown(stage, { button: 2, buttons: 2, pointerId: 5, clientX: 300, clientY: 300 });
+    fireEvent.pointerMove(stage, { buttons: 2, pointerId: 5, clientX: 360, clientY: 340 });
+    fireEvent.pointerUp(stage, { button: 2, pointerId: 5, clientX: 360, clientY: 340 });
+    fireEvent.contextMenu(stage, { clientX: 360, clientY: 340 });
+    expect(board.current().view.x).toBe(beforePan.x + 60);
+    expect(board.current().view.y).toBe(beforePan.y + 40);
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('pans directly on left-drag of blank space, box-selects on Shift+blank-drag, Alt-clones on drag, and Shift-locks axis on card drag', () => {
+    const a = { ...newNode('image', { x: 50, y: 60 }), title: '原卡A', src: '/a.png' };
+    const b = { ...newNode('text', { x: 420, y: 60 }), title: '原卡B', text: '文本' };
+    const board = mount({ ...newDocument(), nodes: [a, b], view: { x: 0, y: 0, zoom: 1 } });
+    const stage = screen.getByLabelText('无限画布编辑区');
+    const cardA = screen.getByRole('article', { name: '原卡A' });
+
+    fireEvent.pointerDown(cardA, { button: 0, pointerId: 1, clientX: 80, clientY: 90 });
+    fireEvent.pointerUp(stage, { pointerId: 1, clientX: 80, clientY: 90 });
+    expect(cardA.className).toContain('is-selected');
+
+    fireEvent.pointerDown(stage, { button: 0, pointerId: 2, clientX: 800, clientY: 500 });
+    fireEvent.pointerMove(stage, { pointerId: 2, clientX: 870, clientY: 545 });
+    fireEvent.pointerUp(stage, { pointerId: 2, clientX: 870, clientY: 545 });
+    expect(board.current().view).toMatchObject({ x: 70, y: 45, zoom: 1 });
+    expect(cardA.className).toContain('is-selected');
+
+    fireEvent.pointerDown(stage, { button: 0, pointerId: 3, clientX: 800, clientY: 500 });
+    fireEvent.pointerUp(stage, { pointerId: 3, clientX: 800, clientY: 500 });
+    expect(cardA.className).not.toContain('is-selected');
+
+    fireEvent.pointerDown(stage, { button: 0, shiftKey: true, pointerId: 4, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(stage, { shiftKey: true, pointerId: 4, clientX: 900, clientY: 600 });
+    fireEvent.pointerUp(stage, { shiftKey: true, pointerId: 4, clientX: 900, clientY: 600 });
+    expect(screen.getByText('2 项已选')).toBeTruthy();
+
+    const cardB = screen.getByRole('article', { name: '原卡B' });
+    fireEvent.pointerDown(cardB, { button: 0, shiftKey: true, pointerId: 5, clientX: 500, clientY: 120 });
+    fireEvent.pointerUp(stage, { shiftKey: true, pointerId: 5, clientX: 500, clientY: 120 });
+    expect(screen.getByText('1 项已选')).toBeTruthy();
+
+    fireEvent.pointerDown(cardA, { button: 0, altKey: true, pointerId: 6, clientX: 150, clientY: 150 });
+    fireEvent.pointerMove(stage, { altKey: true, pointerId: 6, clientX: 250, clientY: 230 });
+    fireEvent.pointerUp(stage, { altKey: true, pointerId: 6, clientX: 250, clientY: 230 });
+    expect(board.current().nodes).toHaveLength(3);
+    expect(board.current().nodes[0]).toMatchObject({ id: a.id, x: 50, y: 60 });
+    const clone = board.current().nodes[2];
+    expect(clone).toMatchObject({ x: 150, y: 140 });
+
+    const cloneEl = screen.getByRole('article', { name: clone.title });
+    fireEvent.pointerDown(cloneEl, { button: 0, shiftKey: true, pointerId: 7, clientX: 250, clientY: 230 });
+    fireEvent.pointerMove(stage, { shiftKey: true, pointerId: 7, clientX: 340, clientY: 248 });
+    fireEvent.pointerUp(stage, { shiftKey: true, pointerId: 7, clientX: 340, clientY: 248 });
+    expect(board.current().nodes[2]).toMatchObject({ x: 240, y: 140 });
+
+    fireEvent.click(screen.getByRole('button', { name: '撤销', exact: true }));
+    expect(board.current().nodes[2]).toMatchObject({ x: 150, y: 140 });
+    fireEvent.click(screen.getByRole('button', { name: '撤销', exact: true }));
+    expect(board.current().nodes).toHaveLength(2);
+  });
+
+  it('draws a section around cards, recolors/renames it, drags contained cards together, and unframes safely with undo', () => {
+    const insideA = { ...newNode('image', { x: 100, y: 120 }), title: '区内图A', src: '/a.png' };
+    const insideB = { ...newNode('text', { x: 440, y: 120 }), title: '区内文B', text: '台词' };
+    const outsideC = { ...newNode('image', { x: 1100, y: 120 }), title: '区外图C', src: '/c.png' };
+    const board = mount({ ...newDocument(), nodes: [insideA, insideB, outsideC], view: { x: 0, y: 0, zoom: 1 } });
+    const stage = screen.getByLabelText('无限画布编辑区');
+
+    fireEvent.click(screen.getByRole('button', { name: '划定分区' }));
+    fireEvent.pointerDown(stage, { button: 0, pointerId: 10, clientX: 60, clientY: 70 });
+    fireEvent.pointerMove(stage, { pointerId: 10, clientX: 800, clientY: 460 });
+    expect(screen.getByTestId('section-draft').textContent).toContain('包入 2 项');
+    fireEvent.pointerUp(stage, { pointerId: 10, clientX: 800, clientY: 460 });
+
+    expect(board.current().sections).toHaveLength(1);
+    expect(board.current().sections![0]).toMatchObject({ x: 60, y: 70, width: 740, height: 390 });
+
+    const secInput = screen.getByLabelText('分区名称') as HTMLInputElement;
+    fireEvent.focus(secInput);
+    fireEvent.change(secInput, { target: { value: '第一幕 · 危机降临' } });
+    fireEvent.blur(secInput);
+    fireEvent.click(screen.getByRole('button', { name: '分区颜色 晴空蓝' }));
+    expect(board.current().sections![0]).toMatchObject({ title: '第一幕 · 危机降临', color: 'sky' });
+
+    fireEvent.pointerDown(secInput, { button: 0, pointerId: 11, clientX: 120, clientY: 50 });
+    fireEvent.pointerMove(stage, { pointerId: 11, clientX: 220, clientY: 110 });
+    fireEvent.pointerUp(stage, { pointerId: 11, clientX: 220, clientY: 110 });
+
+    expect(board.current().sections![0]).toMatchObject({ x: 160, y: 130 });
+    expect(board.current().nodes[0]).toMatchObject({ id: insideA.id, x: 200, y: 180 });
+    expect(board.current().nodes[1]).toMatchObject({ id: insideB.id, x: 540, y: 180 });
+    expect(board.current().nodes[2]).toMatchObject({ id: outsideC.id, x: 1100, y: 120 });
+
+    fireEvent.click(screen.getByRole('button', { name: '移除分区框' }));
+    expect(board.current().sections).toBeUndefined();
+    expect(board.current().nodes).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole('button', { name: '撤销', exact: true }));
+    expect(board.current().sections).toHaveLength(1);
+    expect(board.current().sections![0].title).toBe('第一幕 · 危机降临');
+  });
+});

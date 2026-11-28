@@ -5,6 +5,17 @@ import { normalizeMjModelId } from './mj.js';
 export type Point = { x: number; y: number };
 export type View = Point & { zoom: number };
 export type NodeKind = 'text' | 'image' | 'video' | 'audio';
+export type SectionColor = 'sage' | 'sky' | 'amber' | 'lavender' | 'rose' | 'slate';
+export const SECTION_COLORS: readonly { id: SectionColor; label: string; hex: string }[] = [
+  { id: 'sage', label: '松石绿', hex: '#689f73' },
+  { id: 'sky', label: '晴空蓝', hex: '#5b8fd4' },
+  { id: 'amber', label: '暖珀黄', hex: '#cf9440' },
+  { id: 'lavender', label: '暮光紫', hex: '#9072cc' },
+  { id: 'rose', label: '珊瑚粉', hex: '#cf6b7d' },
+  { id: 'slate', label: '星岩灰', hex: '#788496' },
+];
+const SECTION_COLOR_IDS = new Set<string>(SECTION_COLORS.map(c => c.id));
+export type CanvasSection = Point & { id: string; title: string; width: number; height: number; color: SectionColor };
 export type CanvasVersion = { mjOptions?: HussMjOptions; id: string; src: string; prompt: string; model?: string; ratio?: string; resolution?: string; createdAt: number; requestId?: string; contentId?: number };
 export type CanvasNode = Point & {
   id: string; kind: NodeKind; title: string; text: string; width: number; height: number;
@@ -16,9 +27,9 @@ export type CanvasNode = Point & {
 };
 export type Edge = { id: string; from: string; to: string };
 export type GenerationDraft = { mjOptions?: HussMjOptions; kind: 'image' | 'video' | 'audio'; prompt: string; model: string; ratio: string; resolution: string; seconds: number; count?: number; videoMode?: 'text' | 'reference' | 'frames' | 'edit' | 'multimodal'; firstFrameId?: string; lastFrameId?: string; voice?: string; referenceBindings?: Record<string, string> };
-export type CanvasDocument = { assetFolders?: string[]; id: string; title: string; nodes: CanvasNode[]; edges: Edge[]; view: View; updatedAt: number; drafts?: Record<string, GenerationDraft> };
+export type CanvasDocument = { assetFolders?: string[]; id: string; title: string; nodes: CanvasNode[]; edges: Edge[]; sections?: CanvasSection[]; view: View; updatedAt: number; drafts?: Record<string, GenerationDraft> };
 export type Workspace = { version: 2; activeId: string; projects: CanvasDocument[]; cloudRevision?: number; cloudPending?: boolean };
-export type Snapshot = Pick<CanvasDocument, 'nodes' | 'edges'>;
+export type Snapshot = Pick<CanvasDocument, 'nodes' | 'edges'> & { sections?: CanvasSection[] };
 export const uid = () => globalThis.crypto?.randomUUID?.() ?? `canvas-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
 export function newDocument(title = '未命名画布'): CanvasDocument {
@@ -32,10 +43,29 @@ export function zoomAround(view: View, point: Point, factor: number): View {
   const zoom = clamp(view.zoom * factor, .15, 2.5), ratio = zoom / view.zoom;
   return { zoom, x: point.x - (point.x - view.x) * ratio, y: point.y - (point.y - view.y) * ratio };
 }
-export function bounds(nodes: CanvasNode[]) {
-  if (!nodes.length) return { x: 0, y: 0, width: 600, height: 400 };
-  const x = Math.min(...nodes.map(n => n.x)), y = Math.min(...nodes.map(n => n.y));
-  return { x, y, width: Math.max(...nodes.map(n => n.x + n.width)) - x, height: Math.max(...nodes.map(n => n.y + n.height)) - y };
+export function newSection(at: Point, size = { width: 680, height: 460 }, index = 1, title?: string): CanvasSection {
+  const palette = SECTION_COLORS[(Math.max(1, index) - 1) % SECTION_COLORS.length].id;
+  return {
+    id: uid(),
+    x: Math.round(at.x),
+    y: Math.round(at.y),
+    width: clamp(Math.round(size.width), 240, 12000),
+    height: clamp(Math.round(size.height), 180, 12000),
+    title: (title || `分区 ${String(index).padStart(2, '0')}`).slice(0, 80),
+    color: palette,
+  };
+}
+export function nodesInSection(section: Pick<CanvasSection, 'x' | 'y' | 'width' | 'height'>, nodes: CanvasNode[]): CanvasNode[] {
+  return nodes.filter(n => {
+    const cx = n.x + n.width / 2, cy = n.y + n.height / 2;
+    return cx >= section.x && cx <= section.x + section.width && cy >= section.y && cy <= section.y + section.height;
+  });
+}
+export function bounds(nodes: CanvasNode[], sections: CanvasSection[] = []) {
+  const items: Array<Point & { width: number; height: number }> = [...nodes, ...sections];
+  if (!items.length) return { x: 0, y: 0, width: 600, height: 400 };
+  const x = Math.min(...items.map(n => n.x)), y = Math.min(...items.map(n => n.y));
+  return { x, y, width: Math.max(...items.map(n => n.x + n.width)) - x, height: Math.max(...items.map(n => n.y + n.height)) - y };
 }
 export function fitView(nodes: CanvasNode[], width: number, height: number): View {
   const b = bounds(nodes), zoom = clamp(Math.min(Math.max(1, width - (width < 600 ? 48 : 160)) / b.width, Math.max(1, height - (height < 500 ? 48 : 160)) / b.height), .15, 1.25);
@@ -153,6 +183,21 @@ export function parseDocument(raw: any): CanvasDocument {
       indexConnection(connectionIndex, e.from, e.to);
     }
   }
+  const sectionIds = new Set<string>();
+  const sections: CanvasSection[] = [];
+  for (const s of (Array.isArray(raw.sections) ? raw.sections : []).slice(0, 200)) {
+    if (!s || !finite(s.x) || !finite(s.y) || typeof s.id !== 'string' || !s.id || sectionIds.has(s.id)) continue;
+    sectionIds.add(s.id);
+    sections.push({
+      id: s.id.slice(0, 120),
+      x: s.x,
+      y: s.y,
+      width: finite(s.width) ? clamp(s.width, 200, 12000) : 680,
+      height: finite(s.height) ? clamp(s.height, 160, 12000) : 460,
+      title: typeof s.title === 'string' && s.title.trim() ? s.title.slice(0, 80) : '未命名分区',
+      color: typeof s.color === 'string' && SECTION_COLOR_IDS.has(s.color) ? (s.color as SectionColor) : 'sage',
+    });
+  }
   const v = raw.view;
   const drafts: Record<string, GenerationDraft> = Object.create(null);
   for (const [key, value] of Object.entries(raw.drafts && typeof raw.drafts === 'object' ? raw.drafts : {}).slice(0, 1001)) {
@@ -161,6 +206,7 @@ export function parseDocument(raw: any): CanvasDocument {
       drafts[key.slice(0, 160)] = { mjOptions:storedHussMjOptions(d.mjOptions), kind: d.kind, prompt: d.prompt, model: normalizeHmStudioPublicModelId(normalizeMjModelId(d.model.slice(0, 200))), ratio: d.ratio.slice(0, 20), resolution: d.resolution.slice(0, 20), seconds: d.seconds, count: [1, 2, 4].includes(d.count) ? d.count : 1, videoMode: ['text', 'reference', 'frames', 'edit', 'multimodal'].includes(d.videoMode) ? d.videoMode : 'reference', firstFrameId: typeof d.firstFrameId === 'string' ? d.firstFrameId : '', lastFrameId: typeof d.lastFrameId === 'string' ? d.lastFrameId : '', voice: typeof d.voice === 'string' ? d.voice.slice(0, 40) : 'Zephyr', referenceBindings: d.referenceBindings && typeof d.referenceBindings === 'object' ? Object.fromEntries(Object.entries(d.referenceBindings).filter(([label, id]) => /^(图片|视频|音频)[1-9][0-9]{0,4}$/.test(label) && typeof id === 'string').slice(0, 1000).map(([label, id]) => [label, (id as string).slice(0, 160)])) : undefined };
   }
   return { id: typeof raw.id === 'string' ? raw.id : uid(), title: typeof raw.title === 'string' ? raw.title.slice(0, 80) : '我的画布', nodes, edges,
+    ...(sections.length ? { sections } : {}),
     assetFolders: Array.isArray(raw.assetFolders) ? [...new Set<string>(raw.assetFolders.filter((f:unknown)=>typeof f === 'string' && f.trim()).map((f:string)=>f.trim().slice(0,40)))].slice(0,100) : undefined,
     drafts: Object.keys(drafts).length ? drafts : undefined,
     view: v && finite(v.x) && finite(v.y) && finite(v.zoom) ? { x: v.x, y: v.y, zoom: clamp(v.zoom, .15, 2.5) } : { x: 0, y: 0, zoom: 1 }, updatedAt: Number.isSafeInteger(raw.updatedAt) && raw.updatedAt > 0 ? raw.updatedAt : Date.now() };

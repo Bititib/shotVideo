@@ -15,6 +15,7 @@ const ImagePage = lazy(() => import('./pages/analysis/ImagePage'));
 const CopywritingPage = lazy(() => import('./pages/analysis/CopywritingPage'));
 const AccountPage = lazy(() => import('./pages/analysis/AccountPage'));
 const VideoPage = lazy(() => import('./pages/analysis/VideoPage'));
+const VideoReconstructionPage = lazy(() => import('./pages/analysis/VideoReconstructionPage'));
 const VideoBatchPage = lazy(() => import('./pages/analysis/VideoBatchPage'));
 const VideoStudioPage = lazy(() => import('./pages/analysis/VideoStudioPage'));
 const ComicDramaPage = lazy(() => import('./pages/analysis/ComicDramaPage'));
@@ -32,6 +33,7 @@ const UsersPage = lazy(() => import('./pages/admin/UsersPage'));
 const TiersPage = lazy(() => import('./pages/admin/TiersPage'));
 const ModelsPage = lazy(() => import('./pages/admin/ModelsPage'));
 const ChannelsPage = lazy(() => import('./pages/admin/ChannelsPage'));
+const GeminiKeysPage = lazy(() => import('./pages/admin/GeminiKeysPage'));
 const TokensPage = lazy(() => import('./pages/admin/TokensPage'));
 const PricingPage = lazy(() => import('./pages/admin/PricingPage'));
 const OrgsPage = lazy(() => import('./pages/admin/OrgsPage'));
@@ -109,12 +111,14 @@ export default function App() {
           <Route path="profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
         </Route>
         <Route path="/app/video/studio" element={<VideoStudioPage />} />
+        <Route path="/app/video-reconstruction/*" element={<VideoReconstructionPage />} />
         <Route path="/app/canvas" element={<CanvasPage />} />
 
         {/* Admin — 仍需登录+超级管理员权限 */}
         <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
           <Route index element={<DashboardPage />} />
           <Route path="channels" element={<ChannelsPage />} />
+          <Route path="gemini-keys" element={<GeminiKeysPage />} />
           <Route path="tokens" element={<TokensPage />} />
           <Route path="pricing" element={<PricingPage />} />
           <Route path="users" element={<UsersPage />} />

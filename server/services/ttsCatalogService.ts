@@ -1,6 +1,16 @@
 import type { TtsVoice } from '../../shared/tts.js';
 
-/** The deployed proxy returns { voices: [{ id, name, ... }] } from /v1/voices. */
+/** Gemini TTS 官方预置音色（ai.google.dev 语音生成文档）。 */
+export const GEMINI_PREBUILT_VOICES: TtsVoice[] = ([
+  ['Zephyr', 'Bright'], ['Puck', 'Upbeat'], ['Charon', 'Informative'], ['Kore', 'Firm'], ['Fenrir', 'Excitable'],
+  ['Leda', 'Youthful'], ['Orus', 'Firm'], ['Aoede', 'Breezy'], ['Callirrhoe', 'Easy-going'], ['Autonoe', 'Bright'],
+  ['Enceladus', 'Breathy'], ['Iapetus', 'Clear'], ['Umbriel', 'Easy-going'], ['Algieba', 'Smooth'], ['Despina', 'Smooth'],
+  ['Erinome', 'Clear'], ['Algenib', 'Gravelly'], ['Rasalgethi', 'Informative'], ['Laomedeia', 'Upbeat'], ['Achernar', 'Soft'],
+  ['Alnilam', 'Firm'], ['Schedar', 'Even'], ['Gacrux', 'Mature'], ['Pulcherrima', 'Forward'], ['Achird', 'Friendly'],
+  ['Zubenelgenubi', 'Casual'], ['Vindemiatrix', 'Gentle'], ['Sadachbia', 'Lively'], ['Sadaltager', 'Knowledgeable'], ['Sulafat', 'Warm'],
+] as const).map(([id, style]) => ({ id, name: id, style }));
+
+/** Some upstreams expose { voices: [{ id, name, ... }] } from /v1/voices. */
 export function parseTtsVoices(payload: unknown): TtsVoice[] {
   const rows = (payload as { voices?: unknown })?.voices;
   if (!Array.isArray(rows)) throw new Error('Invalid upstream voice catalog');
@@ -25,8 +35,13 @@ export function createTtsCatalogLoader() {
     const promise = (async () => {
       try {
         const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/v1/voices`, {
-          headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8000),
+          headers: { 'x-goog-api-key': key, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8000),
         });
+        if (response.status === 404) {
+          const data = GEMINI_PREBUILT_VOICES.map(voice => ({ ...voice }));
+          cache = { baseUrl, key, expires: Date.now() + 5 * 60_000, data };
+          return data;
+        }
         if (!response.ok) throw new Error('Voice catalog unavailable');
         const data = parseTtsVoices(await response.json());
         cache = { baseUrl, key, expires: Date.now() + 5 * 60_000, data };

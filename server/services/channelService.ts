@@ -1,4 +1,6 @@
 import { SUNO_CHANNEL_TYPE } from '../../shared/sunoMusic.js';
+import { normalizeGeminiBaseUrl } from './geminiEndpoint.js';
+import { getRotatableGeminiKeysForChannel } from './geminiKeyPool.js';
 import { getSunoBalance, sunoBase } from './sunoMusicAdapter.js';
 import { image2proModels } from './image2proAdapter.js';
 import { SI_YUE_TIAN_MANAGED_VIDEO_MODELS } from '../../shared/siYueTianManagedVideo.js';
@@ -670,8 +672,14 @@ export class ChannelService {
         db.update(channels).set({ lastTestAt: new Date().toISOString(), lastTestResult: result.message }).where(eq(channels.id, id)).run();
         return result;
       }
-      const baseUrl = channel.baseUrl.replace(/\/+$/, '');
-      const url = isZonghengChannel(channel) ? zonghengBaseUrl(channel.baseUrl) + '/v1/models' : isHayaChannel(channel) ? hayaApiBaseUrl(channel.baseUrl) + '/v1/models' : isLongxiaChannel(channel)
+      const isGemini = channel.type === 'gemini';
+      const baseUrl = isGemini ? normalizeGeminiBaseUrl(channel.baseUrl) : channel.baseUrl.replace(/\/+$/, '');
+      const effectiveKey = isGemini
+        ? (getRotatableGeminiKeysForChannel(channel.id, channel.apiKey)[0]?.apiKey || channel.apiKey)
+        : channel.apiKey;
+      const url = isGemini
+        ? `${baseUrl}/v1beta/models?pageSize=200`
+        : isZonghengChannel(channel) ? zonghengBaseUrl(channel.baseUrl) + '/v1/models' : isHayaChannel(channel) ? hayaApiBaseUrl(channel.baseUrl) + '/v1/models' : isLongxiaChannel(channel)
         ? longxiaApiBaseUrl(channel.baseUrl) + '/v1/models'
         : isMiaowuChannel(channel)
         ? miaowuVideoModelListUrl(baseUrl)
@@ -681,7 +689,7 @@ export class ChannelService {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), channel.timeout || 15000);
       const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${channel.apiKey}` },
+        headers: isGemini ? { 'x-goog-api-key': effectiveKey } : { Authorization: `Bearer ${effectiveKey}` },
         signal: controller.signal,
       });
       clearTimeout(timer);
@@ -798,21 +806,27 @@ export class ChannelService {
       return { count: WX_HAIDIYUE_MODELS.length, added: 0, models: [...WX_HAIDIYUE_MODELS] };
     }
 
-    const url = isHayaChannel(channel) ? hayaApiBaseUrl(channel.baseUrl) + '/v1/models' : isLongxiaChannel(channel)
+    const isGemini = channel.type === 'gemini';
+    const effectiveKey = isGemini
+      ? (getRotatableGeminiKeysForChannel(channel.id, channel.apiKey)[0]?.apiKey || channel.apiKey)
+      : channel.apiKey;
+    const url = isGemini
+      ? `${normalizeGeminiBaseUrl(channel.baseUrl)}/v1beta/models?pageSize=200`
+      : isHayaChannel(channel) ? hayaApiBaseUrl(channel.baseUrl) + '/v1/models' : isLongxiaChannel(channel)
         ? longxiaApiBaseUrl(channel.baseUrl) + '/v1/models'
         : isMiaowuChannel(channel)
       ? miaowuVideoModelListUrl(channel.baseUrl)
       : channel.baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, '') + '/v1/models';
     const response = await fetch(url, {
-      headers: { Authorization: `Bearer ${channel.apiKey}` },
+      headers: isGemini ? { 'x-goog-api-key': effectiveKey } : { Authorization: `Bearer ${effectiveKey}` },
       signal: AbortSignal.timeout(channel.timeout || 30_000),
     });
     if (!response.ok) {
-      throw { status: 502, upstreamStatus: response.status, message: await responseDiagnostic(channel.type, '同步模型', response, channel.apiKey) };
+      throw { status: 502, upstreamStatus: response.status, message: await responseDiagnostic(channel.type, '同步模型', response, effectiveKey) };
     }
 
-    const payload = await diagnosticJson(channel.type, '同步模型响应', response, channel.apiKey);
-    if (payload?.error) throw { status: 502, upstreamStatus: response.status, message: upstreamDiagnostic(channel.type, '同步模型', payload, channel.apiKey, response.status) };
+    const payload = await diagnosticJson(channel.type, '同步模型响应', response, effectiveKey);
+    if (payload?.error) throw { status: 502, upstreamStatus: response.status, message: upstreamDiagnostic(channel.type, '同步模型', payload, effectiveKey, response.status) };
     const rawModels = Array.isArray(payload) ? payload
       : Array.isArray(payload?.data) ? payload.data
       : Array.isArray(payload?.models) ? payload.models
@@ -832,7 +846,8 @@ export class ChannelService {
       : channelCatalogBindings(sqlite, channel) ?? configuredSyncBindings(channel);
     let ignored = 0;
     const normalized = rawModels.flatMap((item: any) => {
-      const value = typeof item === 'string' ? item : item?.id || item?.model || item?.model_id;
+      const rawValue = typeof item === 'string' ? item : item?.id || item?.model || item?.model_id || (isGemini ? item?.name : '');
+      const value = isGemini && typeof rawValue === 'string' ? rawValue.replace(/^models\//, '') : rawValue;
       if (typeof value !== 'string' || !value.trim()) throw { status: 502, message: '同步模型列表包含无效模型标识，原配置未修改' };
       const rawModelId = value.trim();
       const approved = [...bindings].filter(([, upstream]) => upstream === rawModelId);

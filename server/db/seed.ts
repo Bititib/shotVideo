@@ -1,4 +1,5 @@
 import { SUNO_BASE_URL, SUNO_CHANNEL_TYPE } from '../../shared/sunoMusic.js';
+import { GeminiEndpointError, resolveGeminiEndpoint } from '../services/geminiEndpoint.js';
 import { migrateHmDdlongNaming } from './hmDdlongNamingMigration.js';
 import { GOOGLE_SYNC_MODEL_IDS } from '../../shared/googleSyncModels.js';
 import { SNUMOM_WAN_NSFW_MODEL, SNUMOM_OUTPUT_ONLY_MODELS } from '../../shared/snumomWanNsfw.js';
@@ -98,18 +99,27 @@ export function shouldRemoveMissingGoogleModel(
 export async function syncModelsFromAPI() {
   migrateHmDdlongNaming(sqlite);
   const existingModels = db.select().from(models).all();
-  const apiKey = env.GEMINI_API_KEY;
+  let endpoint: { baseUrl: string; apiKey: string } | null = null;
+  try {
+    const geminiChannels = db.select().from(channels).all()
+      .filter(c => c.type === 'gemini' && c.status === 1)
+      .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0) || a.id - b.id);
+    endpoint = resolveGeminiEndpoint(geminiChannels, env);
+  } catch (error) {
+    if (!(error instanceof GeminiEndpointError)) throw error;
+  }
+  const apiKey = endpoint?.apiKey;
 
   let allVerified: ModelEntry[] = [];
   const allowedGoogleModels = new Set<string>(GOOGLE_SYNC_MODEL_IDS);
 
-  if (!apiKey) {
-    console.warn('⚠️ 未配置 API Key，使用默认模型');
+  if (!apiKey || !endpoint) {
+    console.warn('⚠️ 未配置 Gemini 渠道，跳过上游模型发现，使用默认模型');
   } else {
     try {
-      // 通过代理端 /v1/models 拉取可用模型列表
-      const res = await fetch(`${env.GEMINI_API_BASE_URL}/v1/models`, {
-        headers: { 'Authorization': `Bearer ${apiKey}` },
+      // 通过 Gemini 渠道 /v1/models 拉取可用模型列表
+      const res = await fetch(`${endpoint.baseUrl}/v1/models`, {
+        headers: { 'x-goog-api-key': apiKey, 'Authorization': `Bearer ${apiKey}` },
         signal: AbortSignal.timeout(8000),
       });
 

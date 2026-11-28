@@ -120,3 +120,17 @@ it('preserves asset folders across serialization without losing existing nodes',
   expect(restored.nodes[0]).toMatchObject({id:node.id,assetFolder:'角色',src:'/hero.png'});
   expect(parseDocument(newDocument()).assetFolders).toBeUndefined();
 });
+
+it('preserves canvas sections, computes section containment by card center, and includes sections in bounds', async () => {
+  const { newSection, nodesInSection } = await import('../client/src/canvas/model');
+  const inside = newNode('image', { x: 100, y: 120 });
+  const outside = newNode('text', { x: 900, y: 120 });
+  const sec = newSection({ x: 40, y: 60 }, { width: 520, height: 400 }, 1, 'sky');
+  expect(nodesInSection(sec, [inside, outside]).map(n => n.id)).toEqual([inside.id]);
+  const b = bounds([inside], [sec]);
+  expect(b.x).toBe(40);
+  expect(b.y).toBe(60);
+  expect(b.width).toBeGreaterThanOrEqual(520);
+  const restored = parseDocument(JSON.parse(JSON.stringify({ ...newDocument(), nodes: [inside, outside], sections: [sec] })));
+  expect(restored.sections).toEqual([sec]);
+});

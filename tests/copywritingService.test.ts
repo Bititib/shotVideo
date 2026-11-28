@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 vi.mock('../server/config/env.js', () => ({ env: { GEMINI_API_BASE_URL: 'https://upstream.invalid', GEMINI_API_KEY: 'test-key' } }));
-vi.mock('../server/services/channelService.js', () => ({ ChannelService: { findChannelByType: () => null } }));
+vi.mock('../server/services/channelService.js', () => ({ ChannelService: { findChannelByType: () => null, findChannelsByType: () => [] } }));
 import { AIService } from '../server/services/aiService';
 import { defaultCopywritingOptions } from '../shared/copywriting';
 import { copywritingSystemPrompt } from '../server/prompts/copywriting';

@@ -33,6 +33,7 @@ import contentRoutes from './routes/content.js';
 import userTokenRoutes from './routes/userTokens.js';
 import feedbackRoutes from './routes/feedback.js';
 import canvasRoutes from './routes/canvas.js';
+import videoReconstructionRoutes from './routes/videoReconstruction.js';
 import developerRoutes from './routes/developer.js';
 import { pluginUpdateRouter } from './routes/pluginUpdates.js';
 
@@ -99,6 +100,8 @@ export async function createApp() {
   app.use('/api/feedback', feedbackRoutes);
   app.use('/api/canvas', canvasRoutes);
   app.use('/api/media', mediaRoutes);
+  app.use('/demo', videoReconstructionRoutes);
+  app.use('/api/video-reconstruction', videoReconstructionRoutes);
 
   // 公开设置接口（联系方式等）
   app.get('/api/settings', (req, res) => {

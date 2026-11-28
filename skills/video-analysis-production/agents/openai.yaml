@@ -1,0 +1,3 @@
+interface:
+  display_name: "视频拉片拆解技能"
+  short_description: "真实切镜分割、人货主体建档、12类运镜识别与一键复刻JSON提示词生成"

@@ -14,7 +14,7 @@ export function createCanvasWorkspaceStore(database: Database.Database) {
     if (Buffer.byteLength(JSON.stringify(raw)) > 80 * 1024 * 1024) throw new Error('云端空间超过 80 MB，请导出备份并精简素材后重试');
     const ids = new Set<string>();
     const projects = raw.projects.map(p => {
-      if (!p || typeof p.id !== 'string' || p.id.length > 160 || ids.has(p.id) || !Array.isArray(p.nodes) || p.nodes.length > 1000 || !Array.isArray(p.edges) || p.edges.length > 5000) throw new Error('项目格式无效或素材过多');
+      if (!p || typeof p.id !== 'string' || p.id.length > 160 || ids.has(p.id) || !Array.isArray(p.nodes) || p.nodes.length > 1000 || !Array.isArray(p.edges) || p.edges.length > 5000 || (p.sections !== undefined && (!Array.isArray(p.sections) || p.sections.length > 200))) throw new Error('项目格式无效或素材过多');
       ids.add(p.id); return parseDocument(p);
     });
     const current = get(owner);

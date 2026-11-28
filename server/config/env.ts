@@ -12,7 +12,8 @@ export const env = {
   JWT_SECRET: process.env.JWT_SECRET || 'dev-secret-change-in-production',
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
-  GEMINI_API_BASE_URL: process.env.GEMINI_API_BASE_URL || 'http://172.245.16.80:7860',
+  // 不内置默认上游：Gemini 地址由后台「渠道管理」的 gemini 渠道提供，此处仅作部署方显式覆盖。
+  GEMINI_API_BASE_URL: process.env.GEMINI_API_BASE_URL || '',
   HM_STUDIO_API_KEY: process.env.HM_STUDIO_API_KEY || '',
   WX_HAIDIYUE_API_KEY: process.env.WX_HAIDIYUE_API_KEY || '',
   WX_HAIDIYUE_IMAGE_BASE_URL: process.env.WX_HAIDIYUE_IMAGE_BASE_URL || '',

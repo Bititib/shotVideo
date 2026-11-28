@@ -9,7 +9,8 @@ import './CanvasPage.css';
 export default function CanvasPage() {
   const user = useAuthStore(state => state.user);
   const isLoading = useAuthStore(state => state.isLoading);
-  if (isLoading) return <div className="studio-loading" role="status">正在打开创作空间…</div>;
+  const isDark = typeof localStorage !== 'undefined' && localStorage.getItem('canvas-theme') !== 'light';
+  if (isLoading) return <div className={`studio-loading ${isDark ? 'studio-dark' : ''}`} role="status">正在打开创作空间…</div>;
   const owner = user ? `user-${user.id}` : 'guest';
   return <CanvasWorkspace key={owner} owner={owner} />;
 }
@@ -119,9 +120,22 @@ function CanvasWorkspace({ owner }: { owner: string; key?: string }) {
     setWorkspace(next); setStatus('正在保存…');
     scheduleFlush();
   };
+  const viewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const update = (doc: CanvasDocument) => {
     const current = latest.current;
-    if (current) change({ ...current, projects: current.projects.map(p => p.id === doc.id ? doc : p) });
+    if (!current) return;
+    const prev = current.projects.find(p => p.id === doc.id);
+    const contentChanged = !prev || prev.nodes !== doc.nodes || prev.edges !== doc.edges || prev.sections !== doc.sections || prev.title !== doc.title || prev.drafts !== doc.drafts || prev.assetFolders !== doc.assetFolders;
+    const next: Workspace = { ...current, projects: current.projects.map(p => p.id === doc.id ? doc : p) };
+    if (!contentChanged) {
+      latest.current = next;
+      if (!mounted.current) { void saveWorkspace(owner, next); return; }
+      if (viewTimer.current !== null) clearTimeout(viewTimer.current);
+      viewTimer.current = setTimeout(() => { viewTimer.current = null; if (latest.current) void saveWorkspace(owner, latest.current); }, 800);
+      return;
+    }
+    if (viewTimer.current !== null) { clearTimeout(viewTimer.current); viewTimer.current = null; }
+    change(next);
   };
   const retrySave = () => {
     if (!latest.current) return;
@@ -131,7 +145,8 @@ function CanvasWorkspace({ owner }: { owner: string; key?: string }) {
     dirty.current = true;
     flush();
   };
-  if (!workspace) return <main className="studio-loading"><p role="status">{error || '正在打开创作空间…'}</p>{error && <button onClick={() => setRetry(n => n + 1)}>重新读取</button>}<a href="/">返回首页</a></main>;
+  const isDark = typeof localStorage !== 'undefined' && localStorage.getItem('canvas-theme') !== 'light';
+  if (!workspace) return <main className={`studio-loading ${isDark ? 'studio-dark' : ''}`}><p role="status">{error || '正在打开创作空间…'}</p>{error && <button onClick={() => setRetry(n => n + 1)}>重新读取</button>}<a href="/">返回首页</a></main>;
   const doc = workspace.projects.find(p => p.id === workspace.activeId) ?? workspace.projects[0];
   return <CanvasStudio key={doc.id} initial={doc} projects={workspace.projects} status={status} onChange={update} onPersist={() => saveWorkspace(owner, latest.current!)} onSync={retrySave}
     onImportGuest={signedIn ? async () => {

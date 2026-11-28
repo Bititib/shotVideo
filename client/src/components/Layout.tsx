@@ -3,10 +3,11 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { getPublicSettings } from '../api/admin';
-import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Layers3, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2, X, Key, User, FileText, History, Clapperboard, Download } from 'lucide-react';
+import { PlaySquare, ShoppingBag, Image as ImageIcon, Megaphone, Users, Shield, Layers3, LogOut, LogIn, Crown, MessageCircle, Video, Building2, Volume2, X, Key, User, FileText, History, Clapperboard, Download, Menu } from 'lucide-react';
 
 const navItems: Array<{ to: string; icon: typeof PlaySquare; label: string; color: string; feature: string; requiresApiKey?: boolean }> = [
   { to: '/app/chat', icon: MessageCircle, label: '大模型对话', color: 'text-amber-400', feature: 'chat' },
+  { to: '/app/video-reconstruction', icon: Clapperboard, label: '一键视频复刻', color: 'text-emerald-400', feature: 'video' },
   { to: '/app/canvas', icon: Layers3, label: '无限画布', color: 'text-amber-400', feature: 'canvas' },
   { to: '/app', icon: PlaySquare, label: '通用分析', color: 'text-blue-400', feature: 'general' },
   { to: '/app/ecommerce', icon: ShoppingBag, label: '带货分析', color: 'text-purple-400', feature: 'ecommerce' },
@@ -86,6 +87,9 @@ export default function Layout({ children }: { children?: React.ReactNode }) {
     }
   };
 
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  useEffect(() => { setMobileNavOpen(false); }, [location.pathname]);
+
   const handleLogout = () => { logout(); navigate('/'); };
 
   const allowedFeatures = user?.tier?.allowedFeatures || [];
@@ -93,10 +97,58 @@ export default function Layout({ children }: { children?: React.ReactNode }) {
 
   return (
     <div className="earth-app-shell min-h-screen bg-black text-white font-sans flex flex-col md:flex-row">
+      {/* Mobile Top Bar */}
+      <div
+        className="md:hidden sticky top-0 z-40 flex items-center justify-between px-3.5 py-2.5 border-b"
+        style={{ background: 'var(--earth-surface, #fdfcf8)', borderColor: 'var(--earth-border, rgba(31, 42, 30, 0.08))' }}
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <button
+            type="button"
+            aria-label="打开导航菜单"
+            aria-expanded={mobileNavOpen}
+            onClick={() => setMobileNavOpen(true)}
+            className="p-2 rounded-lg bg-black/[0.05] text-zinc-700 hover:bg-black/[0.08]"
+          >
+            <Menu className="w-4 h-4" />
+          </button>
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="earth-brand-mark w-7 h-7 rounded-lg flex items-center justify-center" aria-hidden="true">
+              <BrandMark />
+            </div>
+            <span className="earth-brand-name text-sm font-bold truncate">灵序 AI</span>
+          </div>
+        </div>
+        {!isAuthenticated && (
+          <button
+            type="button"
+            onClick={() => openLoginModal()}
+            className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-orange-500 text-black text-xs font-semibold rounded-lg shrink-0"
+          >
+            登录
+          </button>
+        )}
+      </div>
+
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          onClick={() => setMobileNavOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="earth-sidebar w-full md:w-64 shrink-0 bg-black flex flex-col md:h-screen sticky top-0 z-50 border-r border-white/5 md:overflow-hidden" aria-label="主导航">
-        <div className="p-4 md:p-6 flex flex-col gap-3 md:gap-6 h-full">
-          <header className="flex-shrink-0 flex items-center justify-between md:block">
+      <aside
+        className={`earth-sidebar bg-black flex-col border-r border-white/5 ${
+          mobileNavOpen
+            ? 'fixed inset-y-0 left-0 z-50 w-[270px] max-w-[85vw] flex h-screen overflow-hidden shadow-2xl'
+            : 'hidden md:flex md:w-64 md:shrink-0 md:h-screen md:sticky md:top-0 md:z-50 md:overflow-hidden'
+        }`}
+        aria-label="主导航"
+      >
+        <div className="p-4 md:p-6 flex flex-col gap-3 md:gap-6 h-full min-h-0">
+          <header className="flex-shrink-0 flex items-center justify-between">
             <div className="earth-brand flex items-center gap-3">
               <div className="earth-brand-mark w-9 h-9 rounded-xl flex items-center justify-center" aria-hidden="true">
                 <BrandMark />
@@ -106,9 +158,19 @@ export default function Layout({ children }: { children?: React.ReactNode }) {
                 <p className="earth-brand-subtitle hidden md:block">AI CREATIVE STUDIO</p>
               </div>
             </div>
+            {mobileNavOpen && (
+              <button
+                type="button"
+                aria-label="关闭导航菜单"
+                onClick={() => setMobileNavOpen(false)}
+                className="md:hidden p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/[0.08]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </header>
 
-          <nav className="flex flex-row md:flex-col gap-1.5 flex-shrink-0 md:flex-1 overflow-x-auto overflow-y-hidden md:overflow-y-auto pb-1 md:pb-0 [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
+          <nav className="flex flex-col gap-1.5 flex-1 min-h-0 overflow-y-auto pb-1 md:pb-0 [&::-webkit-scrollbar]:hidden" style={{ msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
             {navItems.filter(item => !item.requiresApiKey || user?.hasActiveApiKey).map(item => {
               return (
                 <NavLink

@@ -82,6 +82,19 @@ export const adminApi = {
   },
   testChannel(id: number) { return api.post<any>(`/admin/channels/${id}/test`); },
   syncChannelModels(id: number) { return api.post<any>(`/admin/channels/${id}/sync-models`); },
+
+  // Gemini 免费层 Key 池
+  getGeminiKeys() { return api.get<any>('/admin/gemini-keys'); },
+  addGeminiKeys(data: { rawText?: string; apiKey?: string; label?: string; baseUrl?: string }) {
+    return api.post<any>('/admin/gemini-keys', data);
+  },
+  updateGeminiKey(id: number, data: { status?: number; label?: string }) {
+    return api.put<any>(`/admin/gemini-keys/${id}`, data);
+  },
+  deleteGeminiKey(id: number) { return api.delete<any>(`/admin/gemini-keys/${id}`); },
+  testGeminiKey(id: number) { return api.post<any>(`/admin/gemini-keys/${id}/test`); },
+  testAllGeminiKeys() { return api.post<any>('/admin/gemini-keys/test-all'); },
+  syncGeminiPoolModels() { return api.post<any>('/admin/gemini-keys/sync-models'); },
   getChannelModelConfigurations(id: number) { return client.get<ChannelModelConfigurations>(`/admin/channels/${id}/model-configurations`, { cache: 'no-store' }); },
   getAuthorizedChannelModels(id: number) { return api.get<ChannelModelCatalogEntry[]>(`/admin/channels/${id}/model-configurations/catalog`); },
   previewChannelModelRequest(id: number, draft: ChannelModelDraft, sample: V6kRequestSample) {

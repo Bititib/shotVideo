@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+vi.mock('../server/config/env.js', () => ({ env: { GEMINI_API_BASE_URL: 'https://gemini.invalid', GEMINI_API_KEY: '' } }));
 import { AIService } from '../server/services/aiService';
 const model={id:1,modelId:'gemini-2.5-flash',apiKey:'test-secret'};
 afterEach(()=>vi.unstubAllGlobals());

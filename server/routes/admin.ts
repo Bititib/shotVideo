@@ -15,6 +15,15 @@ import { OrgService } from '../services/orgService.js';
 import { FeedbackService } from '../services/feedbackService.js';
 import { ChannelService } from '../services/channelService.js';
 import { hmStudioQueue } from '../services/hmStudioQueueService.js';
+import {
+  addGeminiKeys,
+  deleteGeminiKey,
+  getOrCreateGeminiPoolChannel,
+  listGeminiKeys,
+  testAllGeminiKeys,
+  testGeminiKey,
+  updateGeminiKey,
+} from '../services/geminiKeyPool.js';
 
 const router = Router();
 
@@ -436,6 +445,97 @@ router.put('/feedback/:id', (req: AuthRequest, res: Response) => {
     res.json({ message: '反馈已更新' });
   } catch (err: any) {
     res.status(err.status || 500).json({ error: err.message || '更新反馈失败' });
+  }
+});
+
+// ============ Gemini 免费层 Key 池管理 ============
+router.get('/gemini-keys', (_req: AuthRequest, res: Response) => {
+  try {
+    res.json(listGeminiKeys());
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '获取 Gemini Key 池失败' });
+  }
+});
+
+router.post('/gemini-keys', async (req: AuthRequest, res: Response) => {
+  try {
+    const entries: Array<{ apiKey: string; label?: string }> = [];
+    if (Array.isArray(req.body?.entries)) {
+      for (const item of req.body.entries) {
+        if (item?.apiKey) entries.push({ apiKey: String(item.apiKey), label: item.label ? String(item.label) : undefined });
+      }
+    } else if (typeof req.body?.rawText === 'string') {
+      for (const line of req.body.rawText.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const hashIdx = trimmed.indexOf('#');
+        const commaIdx = trimmed.indexOf(',');
+        const sepIdx = hashIdx >= 0 ? hashIdx : commaIdx;
+        if (sepIdx > 0) {
+          entries.push({ apiKey: trimmed.slice(0, sepIdx).trim(), label: trimmed.slice(sepIdx + 1).trim() });
+        } else {
+          entries.push({ apiKey: trimmed, label: req.body?.label ? String(req.body.label) : undefined });
+        }
+      }
+    } else if (typeof req.body?.apiKey === 'string') {
+      entries.push({ apiKey: req.body.apiKey, label: req.body?.label ? String(req.body.label) : undefined });
+    }
+    const result = addGeminiKeys(entries, req.body?.baseUrl ? String(req.body.baseUrl) : undefined);
+    res.json(result);
+  } catch (err: any) {
+    res.status(err.status || 400).json({ error: err.message || '添加 Gemini Key 失败' });
+  }
+});
+
+router.put('/gemini-keys/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: '无效 Key ID' });
+    res.json(updateGeminiKey(id, {
+      status: req.body?.status !== undefined ? Number(req.body.status) : undefined,
+      label: req.body?.label !== undefined ? String(req.body.label) : undefined,
+    }));
+  } catch (err: any) {
+    res.status(err.status || 400).json({ error: err.message || '更新 Gemini Key 失败' });
+  }
+});
+
+router.delete('/gemini-keys/:id', (req: AuthRequest, res: Response) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: '无效 Key ID' });
+    res.json(deleteGeminiKey(id));
+  } catch (err: any) {
+    res.status(err.status || 400).json({ error: err.message || '删除 Gemini Key 失败' });
+  }
+});
+
+router.post('/gemini-keys/test-all', async (_req: AuthRequest, res: Response) => {
+  try {
+    res.json(await testAllGeminiKeys());
+  } catch (err: any) {
+    res.status(err.status || 500).json({ error: err.message || '批量检测 Gemini Key 失败' });
+  }
+});
+
+router.post('/gemini-keys/:id/test', async (req: AuthRequest, res: Response) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: '无效 Key ID' });
+    const result = await testGeminiKey(id);
+    res.json({ result, pool: listGeminiKeys() });
+  } catch (err: any) {
+    res.status(err.status || 400).json({ error: err.message || '检测 Gemini Key 失败' });
+  }
+});
+
+router.post('/gemini-keys/sync-models', async (_req: AuthRequest, res: Response) => {
+  try {
+    const channel = getOrCreateGeminiPoolChannel();
+    const synced = await ChannelService.syncModels(channel.id);
+    res.json({ synced, pool: listGeminiKeys() });
+  } catch (err: any) {
+    res.status(err.status || 502).json({ error: err.message || '同步 Gemini 模型失败' });
   }
 });
 

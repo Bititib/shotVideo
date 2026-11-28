@@ -2,13 +2,14 @@ import BrandMark from '../../components/BrandMark';
 import React, { Suspense } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
-import { LayoutDashboard, Users, Star, Cpu, ArrowLeft, LogOut, Radio, Key, Coins, Building2, Film, MessageSquareWarning } from 'lucide-react';
+import { LayoutDashboard, Users, Star, Cpu, ArrowLeft, LogOut, Radio, Key, Coins, Building2, Film, MessageSquareWarning, Sparkles } from 'lucide-react';
 
 const adminNavItems = [
   { to: '/admin/fund-ledger', icon: Coins, label: '资金流水' },
   { to: '/admin/billing-review', icon: Coins, label: '异常账单' },
   { to: '/admin', icon: LayoutDashboard, label: '仪表盘', end: true },
   { to: '/admin/channels', icon: Radio, label: '渠道管理' },
+  { to: '/admin/gemini-keys', icon: Sparkles, label: 'Gemini Key 池' },
   { to: '/admin/tokens', icon: Key, label: 'Token 管理' },
   { to: '/admin/pricing', icon: Coins, label: '计费设置' },
   { to: '/admin/users', icon: Users, label: '用户管理' },
@@ -24,6 +25,7 @@ const adminPagePreloads: Record<string, () => Promise<unknown>> = {
   '/admin/billing-review': () => import('./BillingReviewPage'),
   '/admin': () => import('./DashboardPage'),
   '/admin/channels': () => import('./ChannelsPage'),
+  '/admin/gemini-keys': () => import('./GeminiKeysPage'),
   '/admin/tokens': () => import('./TokensPage'),
   '/admin/pricing': () => import('./PricingPage'),
   '/admin/users': () => import('./UsersPage'),

@@ -82,7 +82,7 @@ export function reconcileWorkspace(local: Workspace, cloud: CloudWorkspace): Wor
   const pending = local.cloudPending !== false;
   let activeId = remote.some(p => p.id === local.activeId) ? local.activeId : cloud.workspace.activeId;
   if (pending) for (const project of local.projects) {
-    if (!local.cloudRevision && !project.nodes.length && project.title === '我的灵感画布') continue;
+    if (!local.cloudRevision && !project.nodes.length && !project.sections?.length && project.title === '我的灵感画布') continue;
     const other = remote.find(p => p.id === project.id);
     if (!other) { remote.push(project); if (project.id === local.activeId) activeId = project.id; }
     else if (JSON.stringify(other) !== JSON.stringify(parseDocument(project))) {
