@@ -7,6 +7,9 @@ export type ZhiyingModelProfile = {
   videoDurationTotal: boolean;
   fileMaxBytes: { image: number; video: number; audio: number };
   avDurationMax?: number;
+  videoDurationMin?: number;
+  videoDurationMax?: number;
+  videoDurationTotalMax?: number;
   referenceMode: boolean;
   directProcessing: boolean;
 };

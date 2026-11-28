@@ -185,10 +185,17 @@ export async function prepareZhiyingVideo(channel: Channel, request: Request, op
     for (const [index, source] of values.entries()) {
       try {
         const { bytes, mime } = await readReference(source, kind, maxBytes, request.publicBaseUrl, options.userId);
-        if (kind === 'video' && (profile?.videoDurationTotal ?? model === 'sd-2.5-fullblood') || kind !== 'image' && profile?.avDurationMax) {
+        if (kind === 'video' && ((profile?.videoDurationTotal ?? model === 'sd-2.5-fullblood') || profile?.videoDurationMin !== undefined || profile?.videoDurationMax !== undefined || profile?.videoDurationTotalMax !== undefined) || kind !== 'image' && profile?.avDurationMax) {
           // Probe the bytes being uploaded, never a second fetch of a possibly changed URL.
           const seconds = await (kind === 'audio' ? probeAudioBufferDuration(bytes) : probeVideoBufferDuration(bytes));
+          if (!Number.isFinite(seconds) || seconds <= 0) throw new Error('无法确认参考素材时长');
+          if (kind === 'video' && profile?.videoDurationMin !== undefined && seconds < profile.videoDurationMin)
+            throw new Error('每段参考视频不能少于 ' + profile.videoDurationMin + ' 秒');
+          if (kind === 'video' && profile?.videoDurationMax !== undefined && seconds > profile.videoDurationMax)
+            throw new Error('每段参考视频不能超过 ' + profile.videoDurationMax + ' 秒');
           if (kind === 'video') videoSeconds += seconds;
+          if (profile?.videoDurationTotalMax !== undefined && videoSeconds > profile.videoDurationTotalMax)
+            throw new Error('参考视频总时长不能超过 ' + profile.videoDurationTotalMax + ' 秒');
           avSeconds += seconds;
           if (profile?.avDurationMax && avSeconds > profile.avDurationMax) throw new Error('参考音视频总时长不能超过 ' + profile.avDurationMax + ' 秒');
         }

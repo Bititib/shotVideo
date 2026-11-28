@@ -29,6 +29,8 @@ vi.mock('../server/services/videoDurationProbe.js', () => ({ probeVideoBufferDur
 
 import { manualId, manualUpstream, manualCatalogRow } from './helpers/zhiyingManualModel.js';
 import { documentedZhiyingRows } from './helpers/zhiyingDocumentedModels.js';
+import { novemberZhiyingRows } from './helpers/zhiyingNovemberModels.js';
+import { probeVideoBufferDuration } from '../server/services/videoDurationProbe.js';
 import { zhiyingCatalogProfile } from '../server/services/zhiyingCatalogProfile.js';
 import { saveZhiyingModelConfiguration } from '../server/services/zhiyingModelConfigurationService.js';
 const localFetch = globalThis.fetch;
@@ -78,6 +80,7 @@ beforeEach(async () => {
   }
   created.length = 0;
   uploaded.length = 0;
+  vi.mocked(probeVideoBufferDuration).mockReset().mockResolvedValue(1);
   reject = false;
   db.insert(tiers).values({ id: 1, name: 'test', displayName: 'test', dailyQuota: -1, allowedFeatures: '["video"]' }).run();
   db.insert(users).values({ id: 1, username: 'test', email: 'video@example.test', passwordHash: 'unused', balance: 100 }).run();
@@ -86,7 +89,7 @@ beforeEach(async () => {
     const target = new URL(url);
     if (target.origin === origin) return localFetch(url, init);
     if (target.origin !== ZHIYING_BASE_URL) throw new Error('Unexpected test destination: ' + target.origin);
-    if (target.pathname === '/v1/models') return Response.json({ data: [...ZHIYING_VIDEO_MODELS.map(id => ({id, media_type:'video', status:'available'})), manualCatalogRow, ...documentedZhiyingRows] });
+    if (target.pathname === '/v1/models') return Response.json({ data: [...ZHIYING_VIDEO_MODELS.map(id => ({id, media_type:'video', status:'available'})), manualCatalogRow, ...documentedZhiyingRows, ...novemberZhiyingRows] });
     if (target.pathname === '/v1/files' && init?.method === 'POST') {
       const file = (init.body as FormData).get('file') as Blob;
       uploaded.push(Buffer.from(await file.arrayBuffer()));
@@ -296,7 +299,7 @@ it('uses the upstream receipt and original credential to recover a missing API d
   expect(tokenBalance()).toBe(98);
 });
 
-it.each([manualCatalogRow, ...documentedZhiyingRows].flatMap(row => ['/api/video/generate', '/v1/videos'].map(endpoint => ({ row, endpoint }))))
+it.each([manualCatalogRow, ...documentedZhiyingRows, ...novemberZhiyingRows].flatMap(row => ['/api/video/generate', '/v1/videos'].map(endpoint => ({ row, endpoint }))))
 ('dispatches $row.id through $endpoint with matching public names and the mapped upstream', async ({ row, endpoint }) => {
   const manualUpstream = row.id;
   await enableManual(row);
@@ -324,9 +327,9 @@ it.each([manualCatalogRow, ...documentedZhiyingRows].flatMap(row => ['/api/video
   } else expect(accountBalance()).toBe(98);
 });
 
-it.each([manualCatalogRow, ...documentedZhiyingRows])('refunds a backend-added $id batch rejection once and preserves the specific reason', async row => {
+it.each([manualCatalogRow, ...documentedZhiyingRows, ...novemberZhiyingRows])('refunds a backend-added $id batch rejection once and preserves the specific reason', async row => {
   await enableManual(row); reject = true;
-  const batch = { name: 'manual', model: manualId, resolution: '720p', aspect_ratio: '16:9', video_length: 5,
+  const batch = { name: 'manual', model: manualId, resolution: row.default_resolution, aspect_ratio: '16:9', video_length: 5,
     autoRetry: false, maxRetries: 0, creatives: [{ prompt: 'sea', count: 1 }], requestKey: 'manual-batch-001', expectedUnitCost: 2 };
   const result = await (await call('/api/video-batches', batch)).json() as any;
   expect(result.items).toHaveLength(1);
@@ -334,6 +337,47 @@ it.each([manualCatalogRow, ...documentedZhiyingRows])('refunds a backend-added $
   tickVideoBatches(); expect(accountBalance()).toBe(100); expect(created).toHaveLength(1);
   expect(created[0].payload.model).toBe(row.id);
   expect(JSON.parse(db.select().from(contents).get()!.metadata).error).toContain('测试渠道积分不足');
+});
+
+it.each(novemberZhiyingRows.flatMap(row => ['/api/video/generate', '/v1/videos', '/api/video-batches'].map(endpoint => ({ row, endpoint }))))
+('preserves $row.id resolution, ratio and video references through $endpoint', async ({ row, endpoint }) => {
+  await enableManual(row);
+  vi.mocked(probeVideoBufferDuration).mockResolvedValueOnce(2);
+  const video = 'data:video/mp4;base64,' + Buffer.from([0,0,0,24,102,116,121,112,105,115,111,109]).toString('base64');
+  const ratio = row.id.startsWith('fast-') ? 'adaptive' : '16:9';
+  const body = { model: manualId, resolution: row.default_resolution, aspect_ratio: ratio, video_length: row.default_duration,
+    reference_videos: [video], prompt: 'sea' };
+  if (endpoint === '/api/video-batches') {
+    const { prompt, reference_videos, ...config } = body;
+    const result = await (await call(endpoint, { ...config, name: 'new model', autoRetry: false, maxRetries: 0,
+      creatives: [{ prompt, reference_videos, count: 1 }], requestKey: 'new-model-batch-001', expectedUnitCost: 2 })).json() as any;
+    expect(result.items).toHaveLength(1);
+    await vi.waitFor(() => { tickVideoBatches(); expect(batchStore.item(result.items[0].id)?.status).toBe('completed'); });
+  } else {
+    const result = await call(endpoint, body);
+    expect(result.ok).toBe(true); await result.text();
+    await vi.waitFor(() => expect(db.select().from(contents).get()?.status).toBe('completed'));
+  }
+  expect(created).toHaveLength(1);
+  expect(created[0].payload).toMatchObject({ model: row.id, resolution: row.default_resolution, aspect_ratio: ratio,
+    duration: row.default_duration, reference_videos: ['file_1'] });
+  expect(created[0].payload).not.toHaveProperty('reference_video_duration_total');
+  expect(endpoint.startsWith('/v1') ? tokenBalance() : accountBalance()).toBe(98);
+});
+
+it.each(['/api/video/generate', '/v1/videos'])('settles an H3 local reference rejection once without a paid submission: %s', async endpoint => {
+  await enableManual(novemberZhiyingRows[0]);
+  vi.mocked(probeVideoBufferDuration).mockResolvedValueOnce(16);
+  const video = 'data:video/mp4;base64,' + Buffer.from([0,0,0,24,102,116,121,112,105,115,111,109]).toString('base64');
+  const result = await call(endpoint, { model: manualId, prompt: 'sea', reference_videos: [video] });
+  await result.text();
+  await vi.waitFor(() => expect(db.select().from(contents).get()?.status).toBe('failed'));
+  expect(created).toHaveLength(0); expect(uploaded).toHaveLength(0);
+  expect(accountBalance()).toBe(100); expect(tokenBalance()).toBe(100);
+  const meta = JSON.parse(db.select().from(contents).get()!.metadata);
+  expect(meta.error).toContain('每段参考视频不能超过 15 秒');
+  expect(meta.requiresReview).toBe(false);
+  tickVideoBatches(); expect(accountBalance()).toBe(100); expect(tokenBalance()).toBe(100);
 });
 
 it('keeps a backend-added API model private media scoped to its token owner', async () => {

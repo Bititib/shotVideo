@@ -119,6 +119,8 @@ export async function syncZhiyingModels(channel: Channel) {
           || (['maxImages', 'maxVideos', 'maxAudios', 'maxReferences'] as const).some(k => saved.limits[k]! > live.limits[k]!)
           || (['image', 'video', 'audio'] as const).some(k => saved.fileMaxBytes[k] > live.fileMaxBytes[k])
           || live.avDurationMax !== undefined && (saved.avDurationMax === undefined || saved.avDurationMax > live.avDurationMax)
+          || live.videoDurationMin !== undefined && (saved.videoDurationMin === undefined || saved.videoDurationMin < live.videoDurationMin)
+          || (['videoDurationMax', 'videoDurationTotalMax'] as const).some(k => live[k] !== undefined && (saved[k] === undefined || saved[k]! > live[k]!))
           || saved.videoDurationTotal !== live.videoDurationTotal || saved.referenceMode && !live.referenceMode || saved.directProcessing && !live.directProcessing)
           throw new Error('上游参数已变化，请重新核对并保存模型配置');
         return true;

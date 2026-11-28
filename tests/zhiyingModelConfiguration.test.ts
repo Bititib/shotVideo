@@ -7,6 +7,7 @@ import { getEnabledPublicModels } from '../server/services/modelCatalogService.j
 import { zhiyingBindings } from '../server/services/zhiyingModelBindings.js';
 import { manualCatalogRow, manualDraft, manualId, manualUpstream, installManualZhiying } from './helpers/zhiyingManualModel.js';
 import { documentedZhiyingRows } from './helpers/zhiyingDocumentedModels.js';
+import { novemberZhiyingRows } from './helpers/zhiyingNovemberModels.js';
 vi.mock('../server/db/index.js', async () => (await import('./helpers/memoryDatabase.js')).createMemoryDatabase());
 
 let channelId: number, catalog: any, wire: ReturnType<typeof vi.fn>;
@@ -18,6 +19,39 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); sqlite.exec('ROLLBACK TO manual_zhiying; RELEASE manual_zhiying'); });
 const input = { images: 0, videos: 0, audios: 0, outputs: 1, seconds: 5, resolution: '720p', ratio: '16:9', firstFrame: false, lastFrame: false };
+
+it.each(novemberZhiyingRows)('registers and syncs $id with its exact resolution and full ratio list', async row => {
+  catalog = { data: [row] };
+  const option = (await listZhiyingCatalogOptions(channelId)).options[0];
+  expect(option.reason).toBeUndefined();
+  const profile = option.profile!;
+  expect(profile.limits.resolutions).toEqual(Object.keys(row.resolutions));
+  expect(profile.limits.ratios).toEqual(expect.arrayContaining(row.aspect_ratios));
+  expect(profile.limits.ratios[0]).toBe('16:9');
+  expect(profile.videoDurationTotal).toBe(false);
+  const draft = { modelId: 'Lx-NewVideo', upstreamModel: row.id, limits: profile.limits, enabled: true, routeEnabled: true };
+  await saveZhiyingModelConfiguration(channelId, draft, null);
+  expect(zhiyingBindings(sqlite)[0]).toMatchObject({ upstreamModel: row.id, profile });
+  expect(sqlite.prepare('SELECT display_name,is_active FROM models WHERE model_id=?').get(draft.modelId)).toEqual({ display_name: draft.modelId, is_active: 0 });
+  expect((await ChannelService.syncModels(channelId)).models).toContain(draft.modelId);
+  expect(JSON.parse(ChannelService.getChannelRaw(channelId)!.modelMapping)[draft.modelId]).toBe(row.id);
+  if (row.id === 'minimax-h3-line1') {
+    catalog.data = [{ ...row, reference_video_total_max_seconds: 10 }];
+    expect((await ChannelService.syncModels(channelId)).models).not.toContain(draft.modelId);
+    expect(zhiyingBindings(sqlite)[0].profile.videoDurationTotalMax).toBe(15);
+  }
+});
+
+it('does not accept undocumented resolution/ratio tokens or conflicting endpoints', async () => {
+  for (const row of novemberZhiyingRows) {
+    for (const change of [{ create_endpoint: '/v2/jobs' }, { aspect_ratios: ['cinema'] }, { resolutions: { ultra: { durations: [10] } } }]) {
+      catalog = { data: [{ ...row, ...change }] };
+      expect((await listZhiyingCatalogOptions(channelId)).options[0].profile).toBeUndefined();
+    }
+  }
+  catalog = { data: [{ ...novemberZhiyingRows[1], id: 'unknown-video' }] };
+  expect((await listZhiyingCatalogOptions(channelId)).options[0].reason).toContain('尚未适配');
+});
 
 it.each(documentedZhiyingRows)('registers documented $id without an endpoint field, preserving its own limits and upstream mapping', async row => {
   catalog = { data: [{ ...row, create_endpoint: undefined }] };

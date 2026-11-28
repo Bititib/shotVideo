@@ -13,12 +13,15 @@ export function zhiyingCatalogProfile(row: any): ZhiyingModelProfile {
     fail('当前目录未开放此视频模型');
   const official = officialModels.includes(row.id), line3 = row.id === 'sd-2.5-fullblood-line3';
   const discount = discountModels.includes(row.id);
+  // Verified against the provider's 2026-11-28 model-specific request schemas.
+  const minimax = row.id === 'minimax-h3-line1';
+  const fastVideo = ['fast-video-seedance25', 'fast-video-magi2'].includes(row.id);
   const documented = official || line3 || discount || row.id === 'seedance-2.5-dedicated-line1';
   if (row.create_endpoint !== '/v1/generations' && !(row.create_endpoint === undefined && documented))
     fail('目录未确认支持 /v1/generations 视频协议');
   if (!Number.isSafeInteger(row.prompt_max) || row.prompt_max < 1 || row.prompt_max > 1000000) fail('目录缺少有效提示词上限');
   const resolutions = Object.keys(row.resolutions || {});
-  if (!resolutions.length || resolutions.some(r => !/^\d{3,4}p$/.test(r))) fail('目录缺少有效视频清晰度');
+  if (!resolutions.length || resolutions.some(r => !/^\d{3,4}p$/.test(r) && !(minimax && r === '2k'))) fail('目录清晰度缺失或包含尚未适配的格式');
   const durations = resolutions.map(r => row.resolutions[r]?.durations);
   if (durations.some(values => !Array.isArray(values) || !values.length || values.some((n: any) => !Number.isSafeInteger(n) || n <= 0 || n > 3600)))
     fail('目录缺少有效时长');
@@ -31,8 +34,8 @@ export function zhiyingCatalogProfile(row: any): ZhiyingModelProfile {
   if (discount && (refs.images > 9 || refs.videos !== 0 || refs.audios !== 0 || row.prompt_max > 10000
     || resolutions.some(r => r !== '720p') || values.some(n => n < 4 || n > (row.id.startsWith('seedance-2.5-') ? 30 : 15))))
     fail('目录参数超出已核对的特价型号协议，请重新确认上游规格');
-  if (!Array.isArray(row.aspect_ratios) || !row.aspect_ratios.length || row.aspect_ratios.some((r: any) => typeof r !== 'string' || !/^\d{1,4}:\d{1,4}$/.test(r)))
-    fail('目录缺少有效宽高比');
+  if (!Array.isArray(row.aspect_ratios) || !row.aspect_ratios.length || row.aspect_ratios.some((r: any) => typeof r !== 'string' || !/^\d{1,4}:\d{1,4}$/.test(r) && !(fastVideo && r === 'adaptive')))
+    fail('目录宽高比缺失或包含尚未适配的格式');
   if (!values.includes(row.default_duration) || !resolutions.includes(row.default_resolution)) fail('目录默认时长或清晰度无效');
   resolutions.sort((a, b) => Number(b === row.default_resolution) - Number(a === row.default_resolution));
   const ratios: string[] = [...row.aspect_ratios];
@@ -45,11 +48,20 @@ export function zhiyingCatalogProfile(row: any): ZhiyingModelProfile {
       duration: { mode: 'options', min: values[0], max: values[values.length - 1], step: 1, values },
       firstFrame: false, lastFrame: false, qualities: [] },
     promptMax: row.prompt_max,
-    videoDurationTotal: !official && !line3 && !discount && row.id !== 'sd-2.5-fullblood-line2',
+    videoDurationTotal: !official && !line3 && !discount && !minimax && !fastVideo && row.id !== 'sd-2.5-fullblood-line2',
     fileMaxBytes: { image: 20 * 1024 ** 2, video: 100 * 1024 ** 2, audio: 100 * 1024 ** 2 },
     referenceMode: !discount && Array.isArray(row.reference_modes) && row.reference_modes.includes('multi_reference'),
     directProcessing: !discount && Array.isArray(row.reference_image_processing) && row.reference_image_processing.includes('direct'),
   };
+  if (minimax) {
+    // The H3 schema accepts only references, not reference_video_duration_total.
+    // Measure locally to enforce its per-clip and combined video limits instead.
+    if (![row.reference_video_max_seconds, row.reference_video_total_max_seconds].every(n => Number.isFinite(n) && n >= 2 && n <= 15))
+      fail('Minimax 目录参考视频时长限制缺失或超出已核对范围');
+    profile.videoDurationMin = 2;
+    profile.videoDurationMax = row.reference_video_max_seconds;
+    profile.videoDurationTotalMax = row.reference_video_total_max_seconds;
+  }
   for (const kind of ['image', 'video', 'audio'] as const) {
     const bytes = typeof row.reference_file_max_bytes === 'number' ? row.reference_file_max_bytes : row.reference_file_max_bytes?.[kind];
     if (bytes !== undefined) {

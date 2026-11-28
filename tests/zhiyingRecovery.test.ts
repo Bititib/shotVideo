@@ -15,11 +15,12 @@ import { ZHIYING_BASE_URL } from '../shared/zhiyingVideo.js';
 
 import { manualId, manualUpstream, manualCatalogRow, installManualZhiying } from './helpers/zhiyingManualModel.js';
 import { documentedZhiyingRows } from './helpers/zhiyingDocumentedModels.js';
+import { novemberZhiyingRows } from './helpers/zhiyingNovemberModels.js';
 import { zhiyingCatalogProfile } from '../server/services/zhiyingCatalogProfile.js';
 import { saveZhiyingModelConfiguration } from '../server/services/zhiyingModelConfigurationService.js';
 afterAll(() => sqlite.close());
-describe.each(['builtin', 'manual', 'seedance-2.5-discount', 'seedance-2.5-dedicated-line1'])('%s registration', mode => {
-const documented = documentedZhiyingRows.find(row => row.id === mode);
+describe.each(['builtin', 'manual', 'seedance-2.5-discount', 'seedance-2.5-dedicated-line1', ...novemberZhiyingRows.map(row => row.id)])('%s registration', mode => {
+const documented = [...documentedZhiyingRows, ...novemberZhiyingRows].find(row => row.id === mode);
 const model = documented ? 'Lx-Documented' : mode === 'manual' ? manualId : 'sd-2.5-fullblood-line2';
 const upstream = documented ? documented.id : mode === 'manual' ? manualUpstream : model;
 const taskId = 'video_original_abcdefghijklmn';

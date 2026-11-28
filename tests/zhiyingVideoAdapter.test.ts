@@ -9,6 +9,7 @@ import type { ZhiyingModelProfile } from '../shared/zhiyingModelConfiguration.js
 import { defaultRoutingLimits } from '../shared/modelRouting.js';
 import { signedMediaUrl } from '../server/services/mediaSignature.js';
 import { documentedZhiyingRows } from './helpers/zhiyingDocumentedModels.js';
+import { novemberZhiyingRows } from './helpers/zhiyingNovemberModels.js';
 import { zhiyingCatalogProfile } from '../server/services/zhiyingCatalogProfile.js';
 
 vi.mock('../server/services/publicImageDownload.js', () => ({ downloadPublicMedia: vi.fn() }));
@@ -26,6 +27,33 @@ const inline = (mime: string, buf: Buffer) => 'data:' + mime + ';base64,' + buf.
 
 beforeEach(() => { vi.resetAllMocks(); vi.stubGlobal('fetch', request); });
 afterEach(() => vi.unstubAllGlobals());
+
+it.each(novemberZhiyingRows)('uploads and submits $id without unsupported optional fields', async row => {
+  const profile = zhiyingCatalogProfile(row);
+  vi.mocked(probeVideoBufferDuration).mockResolvedValue(15);
+  request.mockImplementation(async () => json({ id: 'file_abcdefghijklmnop' }, 201));
+  const payload = await prepareZhiyingVideo(channel, { model: row.id, prompt: 'sea', input: {
+    resolution: row.default_resolution, ratio: row.id.startsWith('fast-') ? 'adaptive' : '16:9',
+    images: [inline('image/png', img)], videos: [inline('video/mp4', video)], audios: [inline('audio/mpeg', Buffer.from('ID3voice'))],
+  } }, { profile });
+  expect(payload).toEqual({ model: row.id, prompt: 'sea', duration: row.default_duration,
+    resolution: row.default_resolution, aspect_ratio: row.id.startsWith('fast-') ? 'adaptive' : '16:9',
+    reference_images: ['file_abcdefghijklmnop'], reference_videos: ['file_abcdefghijklmnop'], reference_audios: ['file_abcdefghijklmnop'] });
+  request.mockResolvedValueOnce(json({ id, model: row.id, object: 'video', status: 'queued' }, 202));
+  expect(await createZhiyingVideo(channel, payload, key, row.id)).toMatchObject({ taskId: id });
+  expect(JSON.parse(String(request.mock.calls.at(-1)![1]!.body))).toEqual(payload);
+  request.mockResolvedValueOnce(json({ id, model: row.id, object: 'video', status: 'succeeded', result_url: cdn }));
+  expect(await pollZhiyingVideo(channel, id, row.id)).toMatchObject({ status: 'completed', resultUrl: cdn });
+});
+
+it.each([[1], [16], [8, 8], [NaN]].map(seconds => ({ seconds })))('rejects invalid H3 reference durations $seconds before creating a generation', async ({ seconds }) => {
+  const profile = zhiyingCatalogProfile(novemberZhiyingRows[0]);
+  for (const value of seconds) vi.mocked(probeVideoBufferDuration).mockResolvedValueOnce(value);
+  request.mockImplementation(async () => json({ id: 'file_abcdefghijklmnop' }, 201));
+  await expect(prepareZhiyingVideo(channel, { model: 'minimax-h3-line1', prompt: 'sea',
+    input: { videos: seconds.map(() => inline('video/mp4', video)) } }, { profile })).rejects.toMatchObject({ confirmedFailure: true });
+  expect(request.mock.calls.every(([url]) => String(url).endsWith('/v1/files'))).toBe(true);
+});
 
 it.each(documentedZhiyingRows)('submits documented $id with its own uploaded references and supported fields', async row => {
   const profile = zhiyingCatalogProfile({ ...row, create_endpoint: undefined });
